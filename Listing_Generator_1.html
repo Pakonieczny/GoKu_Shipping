@@ -2508,8 +2508,10 @@
 <!-- ===================== CME_ENGINE_BEGIN =====================
      Charm Miniaturisation Engine — deterministic post-generation charm scaling.
      Diffusion models cannot hit small relative sizes on command; this replaces
-     prompt-based sizing with pixel arithmetic. See comments inside for the
-     full rationale. Self-contained: no backend change required.
+     prompt-based sizing with pixel arithmetic. Hoop slots are generated BARE
+     (and the charm reference image is withheld from that request), the hoop is
+     measured, and the charm is composited at exactly ratio x diameter.
+     Self-contained: no backend change required.
      ========================================================== -->
 <script>
 /* ============================================================================
@@ -3375,9 +3377,23 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
   g.cmeDownscaleRGBA = cmeDownscaleRGBA;
 })();
 /* ============================================================================
-   CME — orchestration, calibration and control panel.
-   Depends on the geometry layer (cmeRefineHoop/cmeDetectHoops) and the
-   compositor already present on window.CME.
+   CME — orchestration, measurement, rescue UI and control panel.
+
+   The engine takes charm SIZE away from the image model entirely:
+
+     1. For hoop slots the model is asked for a CLEAN PLATE — the model wearing a
+        BARE hoop — and the charm reference image is WITHHELD from the request.
+        (Sending the charm image while asking for "no charm" is a fight image
+        conditioning always wins; withholding the second input is what actually
+        yields a bare hoop.)
+     2. The hoop is then measured in the returned frame. A bare hoop is by far
+        the easiest possible detection target — nothing is hanging off it to
+        merge with, which is what defeated measurement before.
+     3. The charm is composited by pixel arithmetic at exactly ratio x diameter.
+
+   Nothing here needs the operator to do anything. If measurement fails the slot
+   is REGENERATED the old way automatically, so the worst case is the previous
+   behaviour plus one extra render — never a bare hoop with no charm.
    ========================================================================== */
 (function () {
   "use strict";
@@ -3395,6 +3411,8 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
     return !!t && t.indexOf(Number(slotNum)) !== -1;
   };
 
+  function calKey(p) { return String(p || "").toLowerCase(); }
+
   /* --------------------------------------------------- template bookkeeping */
   var LS_TPL = "lg1_cme_tpl_v1";
   function tplMap() { try { return JSON.parse(localStorage.getItem(LS_TPL) || "{}"); } catch (e) { return {}; } }
@@ -3405,8 +3423,8 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
   };
   C.getTemplate = function (setPath, slotIndex) { return tplMap()[setPath + "#" + slotIndex] || null; };
 
-  /* Calibration is stored in NORMALISED coordinates (fractions of frame width /
-     height) so one calibration survives any output resolution. */
+  /* Geometry is stored in NORMALISED coordinates (fractions of frame width /
+     height) so one measurement survives any output resolution. */
   function toFrame(h, W, H) {
     var D = h.dn * W;
     return {
@@ -3440,99 +3458,232 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
     return await fb.getDownloadURL(r);
   }
 
+  /* --------------------------------------------------------------- toasts */
+  /* Non-blocking status chips. The operator should never have to guess whether
+     the engine ran on a slot, and should never be blocked by it either. */
+  C.toast = function (text, opts) {
+    opts = opts || {};
+    var host = document.getElementById("cmeToasts");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "cmeToasts";
+      host.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:100000;display:flex;flex-direction:column;gap:8px;max-width:340px;font:12.5px system-ui,sans-serif";
+      document.body.appendChild(host);
+    }
+    var el = document.createElement("div");
+    var tone = opts.tone === "bad" ? "#5a2230" : (opts.tone === "good" ? "#1d6f3f" : "#22222c");
+    el.style.cssText = "background:" + tone + ";color:#f0f0f4;border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:10px 12px;line-height:1.45;box-shadow:0 6px 20px rgba(0,0,0,.45)";
+    el.textContent = text;
+    if (opts.action && opts.onAction) {
+      var b = document.createElement("button");
+      b.textContent = opts.action;
+      b.style.cssText = "margin-top:8px;padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.10);color:#fff;cursor:pointer;font:12px system-ui";
+      b.onclick = function () { el.remove(); opts.onAction(); };
+      el.appendChild(b);
+    }
+    host.appendChild(el);
+    setTimeout(function () { el.remove(); }, opts.ms || 9000);
+    return el;
+  };
+
+  /* ------------------------------------------------------- measurement ladder */
+  /* One detector, run at escalating working resolutions and loosening shape
+     tolerances, stopping as soon as a confident hit appears. A huggie hoop is
+     only ~5-13% of the frame and its metal band is a few pixels wide, so at the
+     default 480px working width the ring can fragment below the threshold. The
+     later rungs cost more time and are only reached when the cheap ones miss. */
+  var LADDER = [
+    { workW: 560,  minScore: 0.44, maxResidual: 0.22 },
+    { workW: 820,  minScore: 0.40, maxResidual: 0.24 },
+    { workW: 1100, minScore: 0.38, maxResidual: 0.26 },
+    { workW: 820,  minScore: 0.34, maxResidual: 0.30, dMinFrac: 0.035, dMaxFrac: 0.45 },
+    { workW: 1300, minScore: 0.31, maxResidual: 0.33, dMinFrac: 0.030, dMaxFrac: 0.50 }
+  ];
+
+  /* Returns the best hoop found in an ImageData, or null. Never throws. */
+  C.measure = function (id, opts) {
+    opts = opts || {};
+    var best = null;
+    for (var i = 0; i < LADDER.length; i++) {
+      var o = Object.assign({ maxResults: 1 }, LADDER[i], opts.extra || {});
+      var hit = null;
+      try { hit = (C.cmeDetectHoops(id.data, id.width, id.height, o) || [])[0] || null; }
+      catch (e) { hit = null; }
+      if (hit) {
+        hit._rung = i;
+        if (!best || hit.score > best.score) best = hit;
+        if (hit.score >= (opts.stopAt || 0.55)) break;
+      }
+    }
+    return best;
+  };
+
+  /* The hang point is computed in closed form from the ellipse rather than taken
+     from the lowest lit pixel, which would inherit segmentation noise. */
+  function withAnalyticAttach(h) {
+    var A = h.diameter / 2, B = A * (h.aspect || 0.6);
+    var ux = Math.cos((h.angleDeg || 0) * Math.PI / 180);
+    var uy = Math.sin((h.angleDeg || 0) * Math.PI / 180);
+    var t = Math.atan2(B * ux, A * uy);
+    var o = Object.assign({}, h);
+    o.ux = ux; o.uy = uy;
+    o.attach = { x: h.cx + A * Math.cos(t) * ux - B * Math.sin(t) * uy, y: h.cy + Math.hypot(A * uy, B * ux) };
+    return o;
+  }
+  C.withAnalyticAttach = withAnalyticAttach;
+
+  /* A measurement learned from a real frame is written back against the TEMPLATE
+     that produced it. Every later generation from that template then starts from
+     a known prior and only refines it — which is what makes the size identical
+     render after render instead of merely close. */
+  C.learn = function (templatePath, hoop, W, H, how) {
+    if (!templatePath) return;
+    var m = C.allCal();
+    var k = calKey(templatePath);
+    if (m[k] && m[k].manual) return;                 // never overwrite a human measurement
+    m[k] = { hoops: [toNorm(hoop, W, H)], auto: true, how: how || "frame", ts: Date.now() };
+    C.saveCal(m);
+    C._geom[k] = m[k];
+  };
+
+  C._geom = {};
+  C.getGeometry = function (templatePath) {
+    var k = calKey(templatePath);
+    if (C._geom[k]) return C._geom[k];
+    var cal = C.getCal(templatePath);
+    if (cal && cal.hoops && cal.hoops.length) { C._geom[k] = cal; return cal; }
+    return null;
+  };
+
   /* ----------------------------------------------------------- orchestration */
   C.lastRun = {};
 
-  /* Runs immediately after a slot image lands. Returns {url} when it rewrote the
-     frame, {needsCalibration:true} when geometry could not be trusted, or null
-     when the slot is out of scope. On ANY failure the original frame is left
-     untouched — a wrong composite is worse than no composite. */
+  /* Called BEFORE the image request goes out. Decides whether this slot is the
+     engine's to own. Geometry is NOT required up front — the hoop is measured in
+     the returned clean plate, which is the easiest frame there will ever be to
+     measure. If that measurement fails, maybeShrink reports failure and the
+     caller regenerates the slot the old way. */
+  C.prepare = async function (category, slotNum, templatePath) {
+    try {
+      var c = C.cfg();
+      if (!c.enabled) return { ok: false, reason: "disabled" };
+      if (!C._fb) return { ok: false, reason: "no-storage" };
+      if (!C.isTargetSlot(category, slotNum)) return { ok: false, reason: "not-target" };
+      var known = !!C.getGeometry(templatePath);
+      return { ok: true, known: known, templatePath: templatePath };
+    } catch (e) {
+      console.warn("[CME] prepare failed:", e);
+      return { ok: false, reason: "error" };
+    }
+  };
+
+  /* Runs immediately after a slot image lands.
+       {url, source}   — the frame was rewritten with a correctly sized charm
+       {failed:true}   — the engine owned this slot but could not place the charm;
+                         the caller must regenerate it the old way
+       null            — not this engine's slot
+     On ANY internal failure the original frame is left untouched. */
   C.maybeShrink = async function (o) {
     var c = C.cfg();
     if (!c.enabled || !C._fb) return null;
     if (!C.isTargetSlot(o.category, o.slotIndex + 1)) return null;
     if (!o.charmPath) return null;
+    if (o.cleanPlate === false) return null;
 
+    var key = o.setPath + "#" + o.slotIndex;
     var framePath = o.storagePath || (o.setPath + "/Slot_" + (o.slotIndex + 1) + ".png");
     C.noteTemplate(o.setPath, o.slotIndex, o.templatePath, framePath);
 
-    var frameBmp = await loadBitmap(framePath);
-    var id = C.bmpToImageData(frameBmp);
-    var W = id.width, H = id.height;
-
-    // Geometry priority ladder:
-    //   1. per-template calibration (exact, user-authored, perfectly repeatable)
-    //   2. windowed auto-refine constrained by that calibration
-    //   3. unconstrained detection, only at high confidence
-    //   4. nothing trustworthy -> leave the frame alone
-    var hoops = null, source = "";
-    var cal = C.getCal(o.templatePath);
-    if (cal && cal.hoops && cal.hoops.length) {
-      hoops = cal.hoops.map(function (h) { return toFrame(h, W, H); });
-      source = "calibrated";
-      if (c.autoRefine) {
-        hoops = hoops.map(function (h) {
-          var r = C.cmeRefineHoop(id.data, W, H, h);
-          if (!r) return h;
-          // Refine may only nudge. Diameter stays locked to calibration and the
-          // centre may not run away, so a bad frame cannot corrupt placement.
-          if (Math.hypot(r.cx - h.cx, r.cy - h.cy) > h.diameter * 0.45) return h;
-          return r;
-        });
-        source = "calibrated+refined";
-      }
-    } else {
-      var det = C.cmeDetectHoops(id.data, W, H) || [];
-      det = det.filter(function (d) { return d.score >= 0.55; });
-      if (!det.length) {
-        C.lastRun[o.setPath + "#" + o.slotIndex] = { ok: false, reason: "needs-calibration" };
-        return { needsCalibration: true, framePath: framePath, templatePath: o.templatePath };
-      }
-      hoops = det.slice(0, 1);
-      source = "auto-detected";
+    function fail(reason) {
+      C.lastRun[key] = { ok: false, reason: reason, templatePath: o.templatePath, framePath: framePath };
+      if (C.refreshPanel) C.refreshPanel();
+      return { failed: true, reason: reason, framePath: framePath, templatePath: o.templatePath };
     }
 
-    var charmBmp = await loadBitmap(o.charmPath);
-    var sprite = C.makeSprite(charmBmp);
-    if (!sprite) return null;
+    var id, W, H;
+    try {
+      var frameBmp = await loadBitmap(framePath);
+      id = C.bmpToImageData(frameBmp);
+      W = id.width; H = id.height;
+    } catch (e) { console.warn("[CME] frame load failed:", e); return fail("frame-load"); }
+
+    // Geometry ladder, strongest first:
+    //   1. known measurement for this template, refined against THIS frame
+    //      (diameter stays locked to the known value -> identical size every run)
+    //   2. fresh measurement of this frame (a bare hoop: the easy case), which is
+    //      then learned against the template so step 1 applies from now on
+    //   3. nothing trustworthy -> report failure, caller regenerates the old way
+    var hoop = null, source = "";
+    var cal = C.getGeometry(o.templatePath);
+    if (cal && cal.hoops && cal.hoops.length) {
+      var prior = toFrame(cal.hoops[0], W, H);
+      source = cal.manual ? "measured (manual)" : "measured";
+      if (c.autoRefine) {
+        var r = null;
+        try { r = C.cmeRefineHoop(id.data, W, H, prior); } catch (e) { r = null; }
+        // Refine may only nudge. Diameter stays locked to the stored value and
+        // the centre may not run away, so one bad frame cannot corrupt placement.
+        if (r && Math.hypot(r.cx - prior.cx, r.cy - prior.cy) <= prior.diameter * 0.45) {
+          hoop = r; source += " + refined";
+        } else { hoop = prior; }
+      } else { hoop = prior; }
+    } else {
+      var det = C.measure(id);
+      if (!det) return fail("no-hoop");
+      hoop = withAnalyticAttach(det);
+      source = "auto (rung " + (det._rung + 1) + ", score " + det.score.toFixed(2) + ")";
+      C.learn(o.templatePath, hoop, W, H, "clean-plate");
+    }
+
+    var sprite;
+    try {
+      var charmBmp = await loadBitmap(o.charmPath);
+      sprite = C.makeSprite(charmBmp);
+    } catch (e) { console.warn("[CME] charm load failed:", e); return fail("charm-load"); }
+    if (!sprite) return fail("charm-matte");
 
     var canvas = C.idToCanvas(id);
     var ctx = canvas.getContext("2d");
     var conf = Object.assign({}, c);
+    var hl = C.sampleHoopExposure(id, hoop), sl = C.spriteLuma(sprite);
+    conf._exposure = (hl && sl) ? (hl / sl) : null;
+    var placed = C.compositeCharm(ctx, sprite, hoop, conf);
 
-    var placed = [];
-    hoops.forEach(function (h) {
-      var hl = C.sampleHoopExposure(id, h), sl = C.spriteLuma(sprite);
-      conf._exposure = (hl && sl) ? (hl / sl) : null;
-      placed.push(C.compositeCharm(ctx, sprite, h, conf));
-    });
+    var url;
+    try { url = await uploadCanvas(canvas, framePath); }
+    catch (e) { console.warn("[CME] upload failed:", e); return fail("upload"); }
 
-    var url = await uploadCanvas(canvas, framePath);
-    C.lastRun[o.setPath + "#" + o.slotIndex] = {
+    C.lastRun[key] = {
       ok: true, source: source, ratio: c.ratio,
-      hoopD: hoops[0].diameter, charmPx: Math.max(placed[0].w, placed[0].h),
-      frameW: W, templatePath: o.templatePath
+      hoopD: hoop.diameter, charmPx: Math.max(placed.w, placed.h),
+      frameW: W, templatePath: o.templatePath, framePath: framePath
     };
+    if (C.refreshPanel) C.refreshPanel();
+    C.toast("Slot " + (o.slotIndex + 1) + ": charm placed at " + Math.round(c.ratio * 100) +
+            "% of the hoop (" + Math.max(placed.w, placed.h) + "px on a " +
+            Math.round(hoop.diameter) + "px hoop).", { tone: "good", ms: 6000 });
     return { url: url, source: source };
   };
 
   /* --------------------------------------------------------- prompt override */
   /* The model is asked for a CLEAN PLATE. "No charm at all" is a categorical
      instruction with no quantity to get wrong, so compliance is far higher than
-     any percentage-based size request — and it leaves nothing to erase. */
+     any percentage-based size request — and it leaves nothing to erase.
+     Critically, the caller also WITHHOLDS the charm reference image when this
+     prompt is used; the text alone loses to image conditioning. */
   C.cleanPlatePrompt = function (base) {
     return base + "\n\n" +
       "=== ABSOLUTE OVERRIDE — CLEAN PLATE MODE (supersedes every charm sizing, placement or attachment instruction above) ===\n" +
       "Render the huggie hoop earring COMPLETELY BARE. There must be NO charm, NO pendant, NO dangle, NO drop, NO bead and NO attachment of any kind on or below the hoop.\n" +
-      "Ignore the charm reference image entirely for this render. Do not infer, imagine or add any hanging element.\n" +
+      "You have been given ONE input image only. Do not invent, infer, imagine or add any hanging element.\n" +
       "The ear must show a plain, empty, unadorned huggie hoop and nothing else hanging from it.\n" +
       "Keep the model, pose, framing, lighting, skin, hair and the hoop's own size, metal and position exactly as specified above.\n" +
+      "The hoop itself must be fully visible, unobstructed and in sharp focus, with clean separation from hair and skin all the way around its rim.\n" +
       "The area directly below the hoop must be clean, unobstructed background (skin, hair, neck or jaw) with no jewellery.\n" +
       "=== END OVERRIDE ===";
   };
 
-  /* Applied at both dispatch sites. Only rewrites the prompt for slots the engine
-     will actually take over — everything else passes through untouched. */
+  /* Legacy entry point kept so an older patched build still behaves sanely. */
   C.wrapPrompt = function (basePrompt, category, slotNum) {
     try {
       if (!C.cfg().enabled) return basePrompt;
@@ -3541,8 +3692,9 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
     } catch (e) { return basePrompt; }
   };
 
-  /* ------------------------------------------------------------ calibration UI */
-  /* Three clicks fully determine a tilted ellipse hanging point:
+  /* ------------------------------------------------------------ manual rescue */
+  /* Only ever reached from the panel, by choice. Three clicks fully determine a
+     tilted ellipse and its hanging point:
        A,B = the two ends of the hoop's WIDEST span (its major axis, i.e. the
              true outer diameter — the measurement a circle fit gets wrong)
        C   = the point the charm hangs from (bottom of the ring)
@@ -3571,8 +3723,8 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
       b.style.cssText = "padding:7px 14px;border-radius:6px;border:1px solid #444;background:" + bg + ";color:#fff;cursor:pointer;font:13px system-ui";
       return b;
     }
-    var bUndo = mkBtn("Undo", "#2a2a30"), bZoom = mkBtn("Zoom to hoop", "#2a2a30"),
-        bSave = mkBtn("Save calibration", "#1d6f3f"), bCancel = mkBtn("Cancel", "#5a2230");
+    var bUndo = mkBtn("Undo", "#2a2a30"), bZoom = mkBtn("Find it for me", "#2a2a30"),
+        bSave = mkBtn("Save", "#1d6f3f"), bCancel = mkBtn("Cancel", "#5a2230");
     row.append(bUndo, bZoom, bSave, bCancel);
     wrap.append(cv); ov.append(msg, hint, wrap, row); document.body.append(ov);
 
@@ -3696,11 +3848,10 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
 
     bUndo.onclick = function () { pts.pop(); draw(); };
     bZoom.onclick = async function () {
-      // Auto-detect purely as a convenience pre-fill for the human measurement.
       msg.textContent = "Looking for the hoop…";
       await new Promise(function (r) { setTimeout(r, 20); });
       var idz = C.bmpToImageData(bmp);
-      var det = (C.cmeDetectHoops(idz.data, W, H) || [])[0];
+      var det = C.measure(idz);
       if (!det) { hint.textContent = "Could not find a hoop automatically — place the three points by hand."; return; }
       var nw = Math.min(W, det.diameter * 3.2), nh = nw * (H / W);
       view.x = Math.max(0, Math.min(W - nw, det.cx - nw / 2));
@@ -3712,7 +3863,10 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
     bSave.onclick = function () {
       var g = pts.length === 3 ? solve() : null;
       if (!g) { hint.textContent = "Place all three points first."; return; }
-      C.putCal(templatePath, [toNorm(g, W, H)]);
+      var m = C.allCal();
+      m[calKey(templatePath)] = { hoops: [toNorm(g, W, H)], manual: true, ts: Date.now() };
+      C.saveCal(m);
+      C._geom[calKey(templatePath)] = m[calKey(templatePath)];
       ov.remove();
       if (onDone) onDone(g);
     };
@@ -3722,20 +3876,19 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
   /* ------------------------------------------------------------ control panel */
   C.mountPanel = function () {
     if (document.getElementById("cmePanel")) return;
-    var c = C.cfg();
     var tab = document.createElement("button");
     tab.id = "cmeTab";
     tab.textContent = "Charm Size";
     tab.style.cssText = "position:fixed;right:0;top:38%;z-index:9998;transform:translateX(0);padding:9px 12px;border:1px solid #3a3a44;border-right:0;border-radius:8px 0 0 8px;background:#16161c;color:#ddd;font:12px system-ui;cursor:pointer;box-shadow:-2px 0 10px rgba(0,0,0,.35)";
     var p = document.createElement("div");
     p.id = "cmePanel";
-    p.style.cssText = "position:fixed;right:0;top:14%;z-index:9999;width:308px;max-height:72vh;overflow:auto;background:#14141a;border:1px solid #3a3a44;border-right:0;border-radius:10px 0 0 10px;padding:14px;color:#e8e8ee;font:12.5px system-ui,sans-serif;display:none;box-shadow:-4px 0 18px rgba(0,0,0,.45)";
+    p.style.cssText = "position:fixed;right:0;top:12%;z-index:9999;width:318px;max-height:76vh;overflow:auto;background:#14141a;border:1px solid #3a3a44;border-right:0;border-radius:10px 0 0 10px;padding:14px;color:#e8e8ee;font:12.5px system-ui,sans-serif;display:none;box-shadow:-4px 0 18px rgba(0,0,0,.45)";
     p.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">' +
-        '<strong style="font-size:13.5px">Charm Miniaturisation</strong>' +
+        '<strong style="font-size:13.5px">Charm Size — Hoop slots 1 &amp; 4</strong>' +
         '<button id="cmeClose" style="background:none;border:0;color:#999;font-size:17px;cursor:pointer;line-height:1">&times;</button></div>' +
-      '<div style="opacity:.62;line-height:1.45;margin-bottom:11px">Charm size is set by pixel maths after the image is generated, not by the prompt. Same template and ratio always give the identical result.</div>' +
-      '<label style="display:flex;align-items:center;gap:8px;margin:9px 0"><input type="checkbox" id="cmeEnabled"> <span>Enabled (Hoop slots 1 &amp; 4)</span></label>' +
+      '<div style="opacity:.62;line-height:1.45;margin-bottom:11px">The charm is placed by pixel maths after the hoop image is generated, not by the prompt. The same template and the same percentage always give an identical result.</div>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin:9px 0"><input type="checkbox" id="cmeEnabled"> <span>Turn this on</span></label>' +
       '<div style="margin:13px 0 4px;display:flex;justify-content:space-between"><span>Charm size</span><b id="cmeRatioVal"></b></div>' +
       '<input type="range" id="cmeRatio" min="3" max="80" step="1" style="width:100%">' +
       '<div style="opacity:.55;margin-top:3px">% of the hoop\'s outer diameter</div>' +
@@ -3746,11 +3899,12 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
       '<label style="display:flex;align-items:center;gap:8px;margin:11px 0"><input type="checkbox" id="cmeRefine"> <span>Re-locate hoop in each frame</span></label>' +
       '<label style="display:flex;align-items:center;gap:8px;margin:9px 0"><input type="checkbox" id="cmeDebug"> <span>Draw measurement overlay</span></label>' +
       '<hr style="border:0;border-top:1px solid #2e2e38;margin:13px 0">' +
-      '<div style="font-weight:600;margin-bottom:6px">Calibration</div>' +
-      '<div style="opacity:.62;line-height:1.45;margin-bottom:8px">Measure each template\'s hoop once. Stored permanently and reused on every generation from that template.</div>' +
-      '<div id="cmeCalList" style="max-height:130px;overflow:auto;margin-bottom:8px"></div>' +
-      '<button id="cmeCalBtn" style="width:100%;padding:8px;border-radius:6px;border:1px solid #3a5;background:#1d6f3f;color:#fff;cursor:pointer;font:12.5px system-ui">Calibrate last hoop slot</button>' +
-      '<div id="cmeStatus" style="margin-top:9px;opacity:.72;line-height:1.45;min-height:16px"></div>';
+      '<div style="font-weight:600;margin-bottom:6px">What happened last run</div>' +
+      '<div id="cmeStatus" style="opacity:.82;line-height:1.5;min-height:18px;margin-bottom:9px">Nothing yet.</div>' +
+      '<button id="cmeCalBtn" style="width:100%;padding:8px;border-radius:6px;border:1px solid #3a5;background:#1d6f3f;color:#fff;cursor:pointer;font:12.5px system-ui">Show me the hoop (only if a slot failed)</button>' +
+      '<hr style="border:0;border-top:1px solid #2e2e38;margin:13px 0">' +
+      '<div style="font-weight:600;margin-bottom:6px">Hoops the app has measured</div>' +
+      '<div id="cmeCalList" style="max-height:130px;overflow:auto"></div>';
     document.body.append(tab, p);
 
     tab.onclick = function () { p.style.display = "block"; tab.style.display = "none"; refresh(); };
@@ -3775,35 +3929,64 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
       el.onchange = function () { var cc = C.cfg(); cc[s[1]] = el.checked; C.saveCfg(cc); };
     });
 
+    var REASON = {
+      "no-hoop": "could not find the hoop in the generated photo",
+      "frame-load": "could not read the generated photo",
+      "charm-load": "could not read the charm artwork",
+      "charm-matte": "could not cut the charm out of its background",
+      "upload": "could not save the finished photo"
+    };
+
     function refresh() {
       var list = p.querySelector("#cmeCalList");
       var m = C.allCal(), keys = Object.keys(m);
       list.innerHTML = keys.length
         ? keys.map(function (k) {
+            var rec = m[k];
             return '<div style="display:flex;justify-content:space-between;gap:6px;padding:3px 0;border-bottom:1px solid #24242c">' +
-              '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8" title="' + k + '">' + k.split("/").pop() + '</span>' +
-              '<button data-k="' + k + '" class="cmeDel" style="background:none;border:0;color:#c66;cursor:pointer">del</button></div>';
+              '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8" title="' + k + '">' +
+              (rec && rec.manual ? "✎ " : "✓ ") + k.split("/").pop() + '</span>' +
+              '<button data-k="' + k + '" class="cmeDel" style="background:none;border:0;color:#c66;cursor:pointer">forget</button></div>';
           }).join("")
-        : '<div style="opacity:.5">No templates calibrated yet.</div>';
+        : '<div style="opacity:.5">None yet — the app measures each one the first time it is used.</div>';
       list.querySelectorAll(".cmeDel").forEach(function (b) {
-        b.onclick = function () { var m2 = C.allCal(); delete m2[b.dataset.k]; C.saveCal(m2); refresh(); };
+        b.onclick = function () {
+          var m2 = C.allCal(); delete m2[b.dataset.k]; C.saveCal(m2);
+          delete C._geom[b.dataset.k]; refresh();
+        };
       });
+
       var runs = Object.keys(C.lastRun);
-      var last = runs.length ? C.lastRun[runs[runs.length - 1]] : null;
-      p.querySelector("#cmeStatus").textContent = last
-        ? (last.ok
-            ? "Last: " + last.source + " — hoop " + last.hoopD.toFixed(0) + "px, charm " + last.charmPx + "px (" + Math.round(last.ratio * 100) + "%)."
-            : "Last slot needs calibration — press the button below after generating.")
-        : "";
+      var el = p.querySelector("#cmeStatus");
+      if (!runs.length) { el.textContent = "Nothing yet."; return; }
+      el.innerHTML = runs.slice(-4).map(function (k) {
+        var r = C.lastRun[k];
+        var slot = Number(k.split("#")[1]) + 1;
+        return r.ok
+          ? '<div style="color:#7fd8a0">Slot ' + slot + ': charm at ' + Math.round(r.ratio * 100) + '% — ' +
+            r.charmPx + 'px on a ' + Math.round(r.hoopD) + 'px hoop <span style="opacity:.55">(' + r.source + ')</span></div>'
+          : '<div style="color:#e59">Slot ' + slot + ': ' + (REASON[r.reason] || r.reason) +
+            ' — that slot was regenerated the old way.</div>';
+      }).join("");
     }
     C.refreshPanel = refresh;
 
     p.querySelector("#cmeCalBtn").onclick = async function () {
-      var keys = Object.keys(C._lastSlotSeen || {});
-      if (!keys.length) { p.querySelector("#cmeStatus").textContent = "Generate a hoop slot first, then calibrate."; return; }
-      var rec = C._lastSlotSeen[keys[keys.length - 1]];
-      await C.openCalibrator(rec.framePath, rec.templatePath, function (g) {
-        if (g) p.querySelector("#cmeStatus").textContent = "Saved. Re-run that slot to apply.";
+      // Prefer a slot that actually failed; otherwise the most recent hoop slot.
+      var keys = Object.keys(C.lastRun);
+      var pick = null;
+      for (var i = keys.length - 1; i >= 0; i--) { var r = C.lastRun[keys[i]]; if (!r.ok) { pick = r; break; } }
+      if (!pick && keys.length) pick = C.lastRun[keys[keys.length - 1]];
+      if (!pick) {
+        var seen = Object.keys(C._lastSlotSeen || {});
+        if (seen.length) pick = C._lastSlotSeen[seen[seen.length - 1]];
+      }
+      if (!pick || !pick.framePath) {
+        p.querySelector("#cmeStatus").textContent = "Generate a hoop slot first, then come back here.";
+        return;
+      }
+      await C.openCalibrator(pick.framePath, pick.templatePath, function (g) {
+        if (g) C.toast("Saved. Redo that slot and the charm will use this measurement.", { tone: "good" });
         refresh();
       });
     };
@@ -4637,6 +4820,9 @@ function cmeTrimBox(alpha, W, H, thresh = 12) {
           setStatus(`Redo Slot ${slotIndex + 1}…`);
       }
 
+      // CME: does the deterministic charm compositor own this redo, and what
+      // would it take to put the slot back the old way if it cannot finish?
+      let _cmeCleanPlate = false, _cmeRedo = null;
       const srcFolder = slotRefFolder(ctxCategory, spec.folder);
       // In adjustment mode we re-process the existing slot image, so there
       // is no need to pick a fresh random reference. Skipping listAll here
@@ -4758,8 +4944,15 @@ The output must look like the input image with ONLY the user's requested change 
               inputPath = srcRandom.fullPath;
               charmPath = charmLatest.fullPath;
               finalPrompt = buildSlotPrompt(ctxCategory, spec.folder, slotIndex + 1);
-              // CME: ask for a BARE hoop so there is nothing oversized to erase.
-              if (window.CME) finalPrompt = window.CME.wrapPrompt(finalPrompt, ctxCategory, slotIndex + 1);
+              // CME: hoop slots are rendered BARE and the charm is composited in
+              // afterwards at an exact fraction of the measured hoop diameter.
+              if (window.CME) {
+                const _p = await window.CME.prepare(ctxCategory, slotIndex + 1, inputPath);
+                if (_p && _p.ok) {
+                  _cmeCleanPlate = true;
+                  finalPrompt = window.CME.cleanPlatePrompt(finalPrompt);
+                }
+              }
             }
 
             // Build the request body. input_charm_storage_path is omitted
@@ -4778,7 +4971,18 @@ The output must look like the input image with ONLY the user's requested change 
               slotIndex,
               prompt: finalPrompt,
             };
-            if (charmPath) editsBody.input_charm_storage_path = charmPath;
+            // The charm reference image is deliberately WITHHELD in clean-plate
+            // mode. Instructing the model to omit the charm while still handing it
+            // the charm image is a fight image conditioning always wins — that is
+            // exactly why earlier attempts still produced an oversized charm. The
+            // backend already treats this field as optional (see adjustment mode).
+            if (charmPath && !_cmeCleanPlate) editsBody.input_charm_storage_path = charmPath;
+            if (_cmeCleanPlate) {
+              _cmeRedo = {
+                inputPath: inputPath, charmPath: charmPath, model: redoModel,
+                prompt: buildSlotPrompt(ctxCategory, spec.folder, slotIndex + 1),
+              };
+            }
 
             await postImageGeneration(editsBody, undefined, redoModel);
 
@@ -4789,15 +4993,36 @@ The output must look like the input image with ONLY the user's requested change 
           }
           
       // CME: composite the charm at an exact fraction of the measured hoop.
-      // Any failure leaves the generated frame exactly as the model produced it.
       try {
-        if (window.CME) {
+        if (window.CME && _cmeCleanPlate && _cmeRedo) {
           const _cme = await window.CME.maybeShrink({
             setPath: ctxSetPath, slotIndex, category: ctxCategory,
-            charmPath, templatePath: inputPath, storagePath: waitedResult.storagePath,
+            charmPath: _cmeRedo.charmPath, templatePath: _cmeRedo.inputPath,
+            storagePath: waitedResult.storagePath, cleanPlate: true,
           });
-          if (_cme && _cme.url) waitedResult = Object.assign({}, waitedResult, { url: _cme.url });
-          if (window.CME.refreshPanel) window.CME.refreshPanel();
+          if (_cme && _cme.url) {
+            waitedResult = Object.assign({}, waitedResult, { url: _cme.url });
+          } else if (_cme && _cme.failed) {
+            // The hoop could not be measured in the returned frame. Rather than
+            // ship a bare hoop, rebuild the slot exactly the way it was made
+            // before this engine existed. Worst case is the old behaviour plus
+            // one extra render — never a missing charm.
+            let _after = { updatedMs: 0, generation: 0 };
+            try {
+              const _mt = await getMetadata(ref(storage, waitedResult.storagePath));
+              _after.updatedMs = Date.parse(_mt?.updated || _mt?.timeCreated || "") || 0;
+              _after.generation = Number(_mt?.generation || 0) || 0;
+            } catch (_e) {}
+            await postImageGeneration({
+              kind: "edits", activeCategory: ctxCategory,
+              input_storage_path: _cmeRedo.inputPath,
+              input_charm_storage_path: _cmeRedo.charmPath,
+              output_base_path: ctxSetPath, slotIndex, prompt: _cmeRedo.prompt,
+            }, undefined, _cmeRedo.model);
+            waitedResult = await waitForSlotPngUrl(ctxSetPath, slotIndex, {
+              afterUpdatedMs: _after.updatedMs, afterGeneration: _after.generation,
+            });
+          }
         }
       } catch (e) { console.warn("[CME] skipped:", e); }
 
@@ -7091,6 +7316,8 @@ function updateApproveButtonState() {
         // Process slots in parallel, but stagger the API requests to prevent rate limiting
         const generationPromises = slotResolved.map(async (r, index) => {
           const { spec, i, slotNum, srcLatest } = r;
+          // CME: does the deterministic charm compositor own this slot?
+          let _cmeCleanPlate = false;
           
           // Delay each request by 2.5 seconds multiplied by its index (0s, 2.5s, 5s, 7.5s...)
           await sleep(index * 2500); 
@@ -7111,15 +7338,28 @@ function updateApproveButtonState() {
               slotIndex: i,
             });
           } else {
-            await postImageGeneration({
+            const _cmePrep = window.CME
+              ? await window.CME.prepare(category, slotNum, srcLatest.fullPath)
+              : null;
+            _cmeCleanPlate = !!(_cmePrep && _cmePrep.ok);
+
+            const _editsBody = {
               kind: "edits",
               activeCategory: category,
               input_storage_path: srcLatest.fullPath,
-              input_charm_storage_path: charmLatest.fullPath, 
               output_base_path: outputBasePath,
               slotIndex: i,
-              prompt: (window.CME ? window.CME.wrapPrompt(buildSlotPrompt(category, spec.folder, slotNum), category, slotNum) : buildSlotPrompt(category, spec.folder, slotNum)),
-            }, undefined, generationModel);
+              prompt: _cmeCleanPlate
+                ? window.CME.cleanPlatePrompt(buildSlotPrompt(category, spec.folder, slotNum))
+                : buildSlotPrompt(category, spec.folder, slotNum),
+            };
+            // In clean-plate mode the charm reference image is WITHHELD. Asking
+            // for "no charm" while still supplying the charm image loses to image
+            // conditioning every time; omitting the second input is what actually
+            // produces a bare hoop for the compositor to work on.
+            if (!_cmeCleanPlate) _editsBody.input_charm_storage_path = charmLatest.fullPath;
+
+            await postImageGeneration(_editsBody, undefined, generationModel);
           }
 
           // Explicitly pass the extended 20-min timeout and 5s interval to the call
@@ -7127,20 +7367,44 @@ function updateApproveButtonState() {
           
           // Instant Cache Write and UI Update
           // CME: deterministic charm scaling (hoop slots only; no-op elsewhere).
-          let _cmeUrl = null;
+          let _cmeUrl = null, _cmeStorage = null;
           try {
-            if (window.CME) {
+            if (window.CME && _cmeCleanPlate) {
               const _cme = await window.CME.maybeShrink({
                 setPath: outputBasePath, slotIndex: i, category,
                 charmPath: charmLatest && charmLatest.fullPath,
-                templatePath: srcLatest.fullPath, storagePath: waited.storagePath,
+                templatePath: srcLatest.fullPath,
+                storagePath: waited.storagePath, cleanPlate: true,
               });
-              if (_cme && _cme.url) _cmeUrl = _cme.url;
-              if (window.CME.refreshPanel) window.CME.refreshPanel();
+              if (_cme && _cme.url) {
+                _cmeUrl = _cme.url;
+              } else if (_cme && _cme.failed) {
+                // Hoop not measurable in this frame. Put the slot back exactly the
+                // way it was made before this engine existed, so a failed
+                // measurement can never ship as a bare hoop.
+                let _after = { updatedMs: 0, generation: 0 };
+                try {
+                  const _mt = await getMetadata(ref(storage, waited.storagePath));
+                  _after.updatedMs = Date.parse(_mt?.updated || _mt?.timeCreated || "") || 0;
+                  _after.generation = Number(_mt?.generation || 0) || 0;
+                } catch (_e) {}
+                await postImageGeneration({
+                  kind: "edits", activeCategory: category,
+                  input_storage_path: srcLatest.fullPath,
+                  input_charm_storage_path: charmLatest.fullPath,
+                  output_base_path: outputBasePath, slotIndex: i,
+                  prompt: buildSlotPrompt(category, spec.folder, slotNum),
+                }, undefined, generationModel);
+                const _re = await waitForSlotPngUrl(outputBasePath, i, {
+                  timeoutMs: 1200000, intervalMs: 5000,
+                  afterUpdatedMs: _after.updatedMs, afterGeneration: _after.generation,
+                });
+                _cmeUrl = _re.url; _cmeStorage = _re.storagePath;
+              }
             }
           } catch (e) { console.warn("[CME] skipped:", e); }
 
-          const newBlob = await fetchAndCacheBlob(_cmeUrl || waited.url, waited.storagePath, Date.now());
+          const newBlob = await fetchAndCacheBlob(_cmeUrl || waited.url, _cmeStorage || waited.storagePath, Date.now());
           if (prevBox) {
               prevBox.classList.remove("working-box");
               setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(waited.url));
