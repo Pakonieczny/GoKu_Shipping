@@ -9811,6 +9811,31 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // 4. // HOOP EARRINGS PROMPTS
     // =========================================================================
 
+    // Shared rule blocks appended to every Hoop_Earrings (Huggie) prompt so that
+    // charm-to-hoop scale and template bleed-over are enforced identically
+    // across all slots (gen + redo paths both consume these constants).
+    const HUGGIE_CHARM_SCALE_RULES =
+    `CHARM-TO-HOOP SIZE LOCK — HIGHEST-PRIORITY SIZING RULE (FIXED PRODUCT SPECIFICATION):
+        • The charm body's LONGEST dimension (the larger of its width or height, excluding only the integrated eyelet) must equal 25% — exactly ONE QUARTER — of the hoop earring's OUTER diameter, with a strict tolerance of ±3 percentage points. It must NEVER exceed 28% of the hoop's outer diameter under any circumstance.
+        • CONCRETE VISUAL ANCHOR — USE THIS TO JUDGE SIZE: FOUR full copies of the charm body, stacked end-to-end, must fit across the hoop's outer diameter. Equivalently, the entire charm body fits easily INSIDE the hoop's opening with generous empty space all around it. The charm is a TINY accent dangling from a clearly larger hoop.
+        • WARNING — KNOWN FAILURE MODE: image models consistently render this charm 1.5–2× TOO LARGE. Whatever size feels natural to you is WRONG. Deliberately render the charm noticeably smaller than your instinct says, then verify it against the four-charms-across-the-hoop anchor.
+        • MULTIPLE HOOPS / MULTIPLE EARRINGS IN ONE IMAGE: size the charm at 25% of the LARGEST hoop's outer diameter, then render EVERY charm instance in the image at that SAME identical absolute size — the charm is one fixed physical product and never changes size between earrings. On a smaller hoop the same charm will correctly appear slightly larger relative to that hoop; never re-shrink it.
+        • CONSISTENCY LOCK: this 1:4 charm-to-hoop ratio is a FIXED product specification — identical on the left and right earring, and identical across every render of this graphic. Never let composition, style, or aesthetics influence it.
+        • MANDATORY SELF-MEASUREMENT BEFORE RETURNING: for EACH earring, compare the charm body's longest dimension to its hoop's outer diameter. If charm ÷ hoop is greater than 0.28 on the largest hoop — i.e., if four charm lengths would NOT fit across that hoop — the render is WRONG: shrink all charms uniformly and re-render. Repeat until it passes.
+        • HARD FAIL: any charm body's longest dimension exceeds 28% of the largest hoop's outer diameter.
+        • HARD FAIL: the charm would not fit inside its hoop's opening with clear empty space around it.
+        • HARD FAIL: two earrings in the same image show visibly different absolute charm sizes.`;
+
+    const HUGGIE_CHARM_NO_BLEED_RULES =
+    `TEMPLATE CHARMS ARE THROWAWAY PLACEHOLDERS — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
+        • The reference/template image's charm designs are PLACEHOLDERS ONLY. They exist solely to mark WHERE each charm hangs and HOW BIG it is. Their design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
+        • EVERY visible charm instance in the output — every earring, view, angle, duplicate, or reflection — must show the NEW charm from the Charm Reference image: its exact outer silhouette, cutouts, and engraving topology. No exceptions, no instance left unreplaced.
+        • ZERO TOLERANCE for bleed-over: no silhouette, outline, disc, shape, animal, or design element from the template's placeholder charms may survive anywhere in the output. Never blend, average, or hybridize a placeholder design with the new charm design.
+        • KNOWN FAILURE MODE TO AVOID: replacing some charm instances while another instance keeps the template's old placeholder shape. Count the charm instances in the template FIRST; each and every one must be re-rendered as the NEW charm.
+        • SELF-CHECK BEFORE RETURNING: for EVERY charm visible in the output, ask "does its outer silhouette exactly match the Charm Reference image?" If ANY instance answers no, the render is WRONG — replace that instance with the new charm and re-render.
+        • HARD FAIL: any charm in the output retains the template placeholder's silhouette, shape, or design, in whole or in part.
+        • HARD FAIL: two charm instances in the output show different silhouettes from each other.`;
+
     const HOOP_MODEL_PROMPT =
     `TASK (Force the Charm to be ULTRA TINY, EXTREMELY TINY, BARELY VISIBLE AS TINY AS POSSIBLE)
     • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
@@ -9823,19 +9848,35 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • You must ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
     • Match the subject identity from reference image; Enhance the models skin realism. 
     • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.
-    • Do NOT make engravings, brown, or black, ensure all engravings are a shade of copper in colour`;
+    • Do NOT make engravings, brown, or black, ensure all engravings are a shade of copper in colour
+
+      ${HUGGIE_CHARM_SCALE_RULES}
+
+      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
     const HOOP_METAL_OPTIONS_PROMPT =
     `  TASK:
         • Duplicate the Reference product image exactly and update all 4 charm (2 Yellow Gold & 2 Silver) using the Charm Reference image
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
-        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth. `;
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
+
+      ${HUGGIE_CHARM_SCALE_RULES}
+
+      ${HUGGIE_CHARM_NO_BLEED_RULES}
+
+      METAL-OPTION NOTE: the 2 Yellow Gold charms and 2 Silver charms differ ONLY in metal colour — all 4 must share the identical silhouette, engraving topology, and identical absolute size per the rules above.`;
 
     const HOOP_SIZE_PROMPT =
     `  TASK:
         • Duplicate the Reference product image exactly and update all 4 charm from the Charm Reference image
-        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
-        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.`;
+        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
+
+      ${HUGGIE_CHARM_SCALE_RULES}
+
+      ${HUGGIE_CHARM_NO_BLEED_RULES}
+
+      SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it at 25% of the LARGEST (11 mm) hoop's outer diameter and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.`;
 
     const HOOP_SEC_MODEL_PROMPT =
     `TASK (Force the Charm to be ULTRA TINY, EXTREMELY TINY, BARELY VISIBLE AS TINY AS POSSIBLE)
@@ -9846,8 +9887,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
         • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
         • You must ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
-        • Match the subject identity from reference image; Enhance the models skin realism. 
-        • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.`;
+        • Match the subject identity from reference image; Enhance the models skin realism.
+        • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.
+
+      ${HUGGIE_CHARM_SCALE_RULES}
+
+      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
     const HOOP_DIMENSION_PROMPT =
     `TASK
@@ -9855,15 +9900,23 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Preserve all engravings as they appear in the Charm Reference image.
         • Force the Charm to be TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Hoop Earring Reference Image.
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
-        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.`;
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
 
-    const HOOP_PRIMARY_PRODUCT_PROMPT = 
+      ${HUGGIE_CHARM_SCALE_RULES}
+
+      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
+
+    const HOOP_PRIMARY_PRODUCT_PROMPT =
     `  TASK:
         • Duplicate the Reference product image exactly and only update the 2 charms from the Charm Reference image.
         • Force the Charm to be TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Hoop Earring Reference Image.
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
-        • Do NOT make engravings, brown, or black, ensure all engravings are a shade of copper in colour`;
+        • Do NOT make engravings, brown, or black, ensure all engravings are a shade of copper in colour
+
+      ${HUGGIE_CHARM_SCALE_RULES}
+
+      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
     // =========================================================================
     // 5. // CHARM ONLY PROMPTS 
