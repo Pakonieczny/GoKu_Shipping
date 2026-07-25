@@ -88,6 +88,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .apiWidget .awUpdate{min-width:62px;height:20px;flex:0 0 auto;border:1px solid var(--goldLine);border-radius:999px;background:var(--goldSoft);color:var(--gold);font:700 9.5px var(--sans);letter-spacing:.02em;cursor:pointer;padding:0 8px;transition:background .12s,border-color .12s,color .12s}
 .apiWidget .awUpdate:hover{background:#f0e2bb;border-color:var(--gold);color:var(--ink)}
 .apiWidget .awUpdate:disabled{cursor:wait;opacity:.65}
+.apiWidget.awUnavailable{border-color:var(--clay);background:var(--claySoft)}
 .apiWidget .awInfo{position:absolute;top:50%;right:12px;transform:translateY(-50%);border:none;background:none;color:var(--ink45);font-size:15px;cursor:help;padding:0;line-height:1}
 .apiWidget .awInfo:hover{color:var(--ink)}
 .apiWidget .awInfo.warnDot{color:var(--gold)}
@@ -1033,54 +1034,200 @@ async function batchRun(){
     }else toast('Could not start batch: '+e.message,'bad')
   }
 }
-let apiUsageRefreshPromise=null;
-async function refreshApiUsage(manual=false){
-  const btn=$('#awUpdateBtn');
-  if(apiUsageRefreshPromise){
-    if(manual){
-      btn.disabled=true;btn.textContent='Updating';
-      try{await apiUsageRefreshPromise;toast('API information updated.','ok')}
-      catch(e){toast('Could not update API information: '+e.message,'bad')}
-      finally{btn.disabled=false;btn.textContent='Update'}
+/* ── Verified Etsy API usage ────────────────────────────────────────────
+   Identical integration to the Listing Generator (Index.html). Replaces
+   the older POST /etsyPricingStore {action:'apiUsage'} readout with the
+   shared verified endpoints:
+
+     GET /etsyApiUsage  — Firestore-backed counters. Rejected unless the
+                          server marks the payload verified:true, so a
+                          partial/unverified reading can never be shown
+                          as if it were authoritative.
+     GET /etsyApiProbe  — spends ONE real Etsy call to refresh the
+                          whole-key headers, and only when the existing
+                          reading is actually stale (>5 min) — never on a
+                          timer, and throttled to once a minute even on
+                          failure so it can't probe-loop.
+
+   The app row is this console's own transactional count; the key row is
+   derived only from Etsy's own x-limit-per-day / x-remaining-today
+   response headers. No browser-side estimation anywhere. Failures are
+   surfaced exactly (widget turns red, tooltip carries the real error)
+   rather than falling back to a stale or guessed number. */
+const ApiUsage=(()=>{
+  let refreshInFlight=false;
+  let probeInFlight=false;
+  let lastProbeAt=0;
+  let lastUsageSnapshot=null;
+
+  const byId=id=>document.getElementById(id);
+  const abbreviate=n=>{
+    const value=Number(n||0);
+    return value>=1000?(value/1000).toFixed(value%1000===0?0:1)+'k':String(value);
+  };
+  const ageText=ms=>{
+    if(!Number.isFinite(ms)||ms<0)return 'unknown';
+    if(ms<60000)return 'under a minute';
+    if(ms<3600000)return Math.round(ms/60000)+' min';
+    return Math.round(ms/3600000)+' hr';
+  };
+  const setBar=(id,percent,state)=>{
+    const bar=byId(id);
+    if(!bar)return;
+    bar.style.width=Math.max(0,Math.min(100,percent))+'%';
+    bar.parentElement.className='awBar'+(state?' '+state:'');
+  };
+
+  async function refreshApiUsage(){
+    if(refreshInFlight)return lastUsageSnapshot;
+    refreshInFlight=true;
+    const widget=byId('apiWidget');
+    try{
+      const response=await fetch(FUNCTIONS_BASE+'/etsyApiUsage?t='+Date.now(),{
+        method:'GET',
+        cache:'no-store',
+        headers:{Accept:'application/json'},
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok||data.ok===false||data.verified!==true){
+        throw new Error(data.error||'API statistics unavailable');
+      }
+      lastUsageSnapshot=data;
+
+      const used=Number(data.count||0);
+      const budget=Number(data.budget||2500);
+      const appPercent=budget>0?Math.round((used/budget)*100):0;
+      byId('awAppNum').textContent=abbreviate(used)+' / '+abbreviate(budget);
+      setBar('awAppBar',appPercent,used>=budget?'bad':used>=budget*0.8?'warn':'');
+
+      const qps=Number(data.max_qps||0);
+      const qpsCap=Number(data.qps_cap||2.5);
+      byId('awQps').textContent=qps+'/'+qpsCap+' QPS';
+
+      const keyLimit=data.etsy_limit_per_day==null?null:Number(data.etsy_limit_per_day);
+      const keyRemaining=data.etsy_remaining_today==null?null:Number(data.etsy_remaining_today);
+      const hasKeyReading=Number.isFinite(keyLimit)&&keyLimit>0&&Number.isFinite(keyRemaining);
+
+      if(hasKeyReading){
+        const keyUsed=Math.max(0,keyLimit-keyRemaining);
+        const keyPercent=Math.round((keyUsed/keyLimit)*100);
+        byId('awKeyNum').textContent=abbreviate(keyUsed)+' / '+abbreviate(keyLimit);
+        byId('awKeyNum').title=keyRemaining.toLocaleString()+' calls left on the whole Etsy key';
+        setBar('awKeyBar',keyPercent,keyRemaining<=100?'bad':keyPercent>=80?'warn':'');
+      }else{
+        byId('awKeyNum').textContent='\u2014';
+        byId('awKeyNum').title='Waiting for Etsy\u2019s verified rate-limit headers from the next API response.';
+        setBar('awKeyBar',0,'');
+      }
+
+      const now=Number(data.server_time||Date.now());
+      const counterAge=data.count_since?now-Number(data.count_since):null;
+      const headerAge=data.etsy_reported_at?now-Number(data.etsy_reported_at):null;
+      const counterIsPartial=counterAge!=null&&counterAge>=0&&counterAge<20*3600000;
+      const headerIsStale=headerAge!=null&&headerAge>30*60000;
+
+      const base=
+        'App = this console\u2019s verified Etsy calls today, resets 11:59 PM Toronto, capped at '+
+        budget.toLocaleString()+' (50% of Etsy\u2019s '+(keyLimit||5000).toLocaleString()+'/day).\n'+
+        'Key = Etsy\u2019s own meter for the WHOLE API key (every app), reset at midnight UTC.\n'+
+        'QPS = highest calls-per-second observed across all server instances, hard-capped at '+qpsCap+'.';
+      const notes=[];
+      if(counterIsPartial){
+        notes.push('\u26a0 App tracking began '+ageText(counterAge)+' ago, so today\u2019s app count may be partial.');
+      }
+      if(headerAge!=null){
+        notes.push((headerIsStale?'\u26a0 ':'')+'Whole-key reading last verified from Etsy '+ageText(headerAge)+' ago.');
+      }else{
+        notes.push('Whole-key reading will appear after Etsy returns its first rate-limit header.');
+      }
+
+      const info=byId('awInfo');
+      info.title=base+'\n\n'+notes.join('\n');
+      info.classList.toggle('warnDot',counterIsPartial||headerIsStale);
+      widget.classList.remove('awUnavailable');
+      widget.title='';
+      return data;
+    }catch(error){
+      widget.classList.add('awUnavailable');
+      widget.title='Verified API statistics are temporarily unavailable: '+error.message;
+      byId('awAppNum').textContent='Unavailable';
+      byId('awKeyNum').textContent='\u2014';
+      byId('awQps').textContent='\u2014 QPS';
+      setBar('awAppBar',0,'bad');
+      setBar('awKeyBar',0,'');
+      throw error;
+    }finally{
+      refreshInFlight=false;
     }
-    return apiUsageRefreshPromise.catch(()=>null);
   }
-  if(manual){btn.disabled=true;btn.textContent='Updating'}
-  const request=(async()=>{
-    const d=await fbCall({action:'apiUsage'});
-    const used=Number(d.count||0),budget=Number(d.budget||2500);
-    const keyLimit=d.etsy_limit_per_day,keyRemaining=d.etsy_remaining_today;
-    const keyUsed=(keyLimit!=null&&keyRemaining!=null)?(keyLimit-keyRemaining):null;
-    const abbr=n=>n>=1000?(n/1000).toFixed(n%1000===0?0:1)+'k':String(n);
-    const appPct=Math.min(100,Math.round((used/budget)*100));
-    $('#awAppNum').textContent=abbr(used)+' / '+abbr(budget);
-    const appBar=$('#awAppBar');appBar.style.width=appPct+'%';
-    appBar.parentElement.className='awBar '+(used>=budget?'bad':used>=budget*0.8?'warn':'');
-    $('#awQps').textContent=Number(d.max_qps||0)+'/'+d.qps_cap+' QPS';
-    if(keyUsed!=null){
-      const keyPct=Math.min(100,Math.round((keyUsed/keyLimit)*100));
-      $('#awKeyNum').textContent=abbr(keyUsed)+' / '+abbr(keyLimit);
-      const keyBar=$('#awKeyBar');keyBar.style.width=keyPct+'%';
-      keyBar.parentElement.className='awBar '+(keyRemaining<=100?'bad':keyPct>=80?'warn':'');
-      $('#awKeyNum').title=Number(keyRemaining).toLocaleString()+' left on the whole key today';
-    }else{$('#awKeyNum').textContent='\u2014';}
-    const counterAge=d.count_since?(Date.now()-Number(d.count_since))/3600000:null;
-    const info=$('#awInfo');
-    const base='App = this console\u2019s own Etsy calls today, resets 11:59 PM Toronto, capped at '+budget.toLocaleString()+' (50% of Etsy\u2019s '+(keyLimit||5000).toLocaleString()+'/day).\nKey = Etsy\u2019s own meter for the WHOLE API key (every app, incl. EtsyMail), resets midnight UTC (8 PM Toronto).\nQPS = highest calls-per-second observed, hard-capped at '+d.qps_cap+'.';
-    info.title=base+(counterAge!=null&&counterAge<20?'\n\n\u26a0 Tracking since '+(counterAge<1?'under an hour':Math.round(counterAge)+'h')+' ago \u2014 not a full day yet, so \u201cApp\u201d may undercount today.':'');
-    info.classList.toggle('warnDot',counterAge!=null&&counterAge<20);
-  })();
-  apiUsageRefreshPromise=request;
+
+  async function primeEtsyApiUsage(force=false){
+    if(probeInFlight)return;
+    // Every real Etsy request already captures authoritative rate headers.
+    // Read those free Firestore-backed statistics first and only spend a
+    // probe call when the shared-key reading is actually stale/missing.
+    const snapshot=await refreshApiUsage().catch(()=>null);
+    const headerAge=snapshot?.etsy_reported_at?Date.now()-Number(snapshot.etsy_reported_at):Infinity;
+    if(Number.isFinite(headerAge)&&headerAge>=0&&headerAge<5*60*1000){
+      return;
+    }
+    if(!force&&lastProbeAt&&Date.now()-lastProbeAt<60000){
+      return;
+    }
+    probeInFlight=true;
+    lastProbeAt=Date.now(); // throttle failures too; never probe-loop
+    try{
+      const response=await fetch(FUNCTIONS_BASE+'/etsyApiProbe?t='+Date.now(),{
+        method:'GET',
+        cache:'no-store',
+        headers:{Accept:'application/json'},
+      });
+      const result=await response.json().catch(()=>({}));
+      if(!response.ok||result.verified!==true){
+        console.warn('Etsy API statistics verification did not complete:',response.status,result);
+      }else{
+        lastProbeAt=Date.now();
+      }
+    }catch(error){
+      console.warn('Etsy API statistics verification failed:',error);
+    }finally{
+      probeInFlight=false;
+      await refreshApiUsage().catch(()=>null);
+    }
+  }
+
+  return {refreshApiUsage,primeEtsyApiUsage};
+})();
+
+// Silent variants for timers/init — a transient outage must not spam toasts.
+function refreshApiUsage(){return ApiUsage.refreshApiUsage().catch(()=>null)}
+function primeEtsyApiUsage(force){return ApiUsage.primeEtsyApiUsage(force)}
+window.refreshEtsyApiUsage=refreshApiUsage;
+window.primeEtsyApiUsage=primeEtsyApiUsage;
+
+// The console's manual Update button forces a probe (the only path that
+// deliberately spends an Etsy call) and reports the real outcome.
+async function manualApiUpdate(){
+  const btn=$('#awUpdateBtn');
+  if(btn){btn.disabled=true;btn.textContent='Updating'}
   try{
-    await request;
-    if(manual)toast('API information updated.','ok');
-  }catch(e){if(manual)toast('Could not update API information: '+e.message,'bad')}
-  finally{
-    if(apiUsageRefreshPromise===request)apiUsageRefreshPromise=null;
-    if(manual){btn.disabled=false;btn.textContent='Update'}
+    await ApiUsage.primeEtsyApiUsage(true);
+    await ApiUsage.refreshApiUsage();
+    toast('API information updated.','ok');
+  }catch(e){
+    toast('Could not update API information: '+e.message,'bad');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Update'}
   }
 }
+
+// Same wiring as Index.html: cheap verified read on a timer, and a
+// stale-only probe on the events that mean the operator is looking at it.
+document.addEventListener('DOMContentLoaded',()=>primeEtsyApiUsage());
+window.addEventListener('focus',()=>primeEtsyApiUsage());
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)primeEtsyApiUsage()});
 setInterval(refreshApiUsage,15000);
+setInterval(()=>{if(!document.hidden)primeEtsyApiUsage()},5*60*1000);
 function pushServerToken(){
   try{
     const rt=localStorage.getItem(TOKEN_KEYS.refresh);
@@ -1260,7 +1407,7 @@ async function promptDialog(title,label,placeholder){const d=await formDialog(ti
 function confirmDialog(title,message){return new Promise(resolve=>{const dlg=$('#formDialog');if(dlg.open){resolve(false);return}dlg.returnValue='';$('#dlgTitle').textContent=title;$('#dlgConfirmBtn').textContent='Continue';$('#dlgBody').innerHTML='<p style="margin:0;line-height:1.6">'+esc(message)+'</p>';dlg.showModal();dlg.addEventListener('close',()=>resolve(dlg.returnValue==='ok'),{once:true})})}
 
 /* ---------------- Events ---------------- */
-$('#connectBtn').addEventListener('click',startOAuth);$('#loadBtn').addEventListener('click',loadCatalog);$('#emptyLoadBtn').addEventListener('click',loadCatalog);$('#refreshBtn').addEventListener('click',refreshCurrent);$('#awUpdateBtn').addEventListener('click',()=>refreshApiUsage(true));$('#prevBtn').addEventListener('click',()=>navigate(-1));$('#nextBtn').addEventListener('click',()=>navigate(1));$('#menuBtn').addEventListener('click',()=>$('#rail').classList.toggle('open'));$('#stopScanBtn').addEventListener('click',()=>S.stopScan=true);
+$('#connectBtn').addEventListener('click',startOAuth);$('#loadBtn').addEventListener('click',loadCatalog);$('#emptyLoadBtn').addEventListener('click',loadCatalog);$('#refreshBtn').addEventListener('click',refreshCurrent);$('#awUpdateBtn').addEventListener('click',manualApiUpdate);$('#prevBtn').addEventListener('click',()=>navigate(-1));$('#nextBtn').addEventListener('click',()=>navigate(1));$('#menuBtn').addEventListener('click',()=>$('#rail').classList.toggle('open'));$('#stopScanBtn').addEventListener('click',()=>S.stopScan=true);
 $('#queue').addEventListener('click',e=>{const b=e.target.closest('.qitem');if(b){focusListing(b.dataset.id);$('#rail').classList.remove('open')}});$('#storeFilterSelect').addEventListener('change',e=>setStoreFilter(e.target.value));
 $('#searchInput').addEventListener('input',e=>{S.stopScan=true;S.search=e.target.value;if(S.search.trim().length>=2)setView('results');S.searchResults=null;applyFilter();updateSearchUi(S.search.trim()?'Waiting for Etsy…':'Live Etsy title search');scheduleLiveSearch()});
 $('#searchInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();runLiveSearch()}if(e.key==='Escape'){e.preventDefault();clearSearch()}});$('#clearSearchBtn').addEventListener('click',clearSearch);
@@ -1278,7 +1425,7 @@ $('#copyInvBtn').addEventListener('click',async()=>{if(!S.original){toast('Open 
   await navigator.clipboard.writeText(JSON.stringify(dump,null,2));toast('Live inventory JSON copied to clipboard.','ok')});
 addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);if(!typing&&e.key==='/'){e.preventDefault();$('#searchInput').focus();return}if(typing)return;if(e.key==='ArrowLeft')navigate(-1);if(e.key==='ArrowRight')navigate(1);if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(S.dirty)saveListing()}if(e.key.toLowerCase()==='a'&&!e.metaKey&&!e.ctrlKey&&S.view==='editor')approveListing()});
 
-(async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();refreshApiUsage();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
+(async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();primeEtsyApiUsage();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
 </script>
 </body>
 </html>
