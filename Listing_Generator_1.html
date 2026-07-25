@@ -10651,11 +10651,67 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ The necklace chain and its connector remain exactly as in IMAGE 1.
       ☐ Text, layout, crop, scale, background, lighting, and hardware remain unchanged.`;
 
+    // Numbers, not adjectives. Every anchor below was measured off a real
+    // rendered output the user rejected: the charm came out at ~21% of the
+    // frame width and ~43% of the model's visible neck width, against a
+    // physical charm that is 11-13mm across -- a ~3.5x linear over-render.
+    const CHARM_MODEL_MICRO_SIZE_RULES =
+    `MANDATORY CHARM MINIATURISATION (TOP PRIORITY — OUTRANKS EVERY OTHER SIZE CUE, INCLUDING THE REFERENCE IMAGES)
+
+      DOCUMENTED FAILURE MODE — READ THIS FIRST:
+        • This slot has a measured, repeatable over-render: the charm comes out roughly 3 to 4 times too large in LINEAR dimension, which is about 10 times too large by area. Every previous instruction to make it "extremely small" has failed, because "small" was never given a number. It now has numbers, and they are not negotiable.
+        • Your instinct for how large a pendant should look in a photograph like this is WRONG for this product. Whatever size you are about to render it at, that size is about 3.5 times too wide. Divide it.
+        • Bias AGGRESSIVELY toward the SMALL end of every range below. Where two anchors disagree, take the SMALLER answer — never the larger one, and never the average.
+
+      PRECEDENCE (SETTLES EVERY CONFLICT IN THIS PROMPT):
+        • This block, and only this block, sets the charm's SIZE. Any other rule anywhere in this prompt about preserving template fidelity, layout, coordinates or proportions governs WHERE the charm hangs and how the rest of the image is framed — it does NOT grant the template authority over how big the charm is rendered.
+        • Where any other instruction, or the reference image itself, implies a larger charm than the anchors below, this block wins and the charm is shrunk.
+
+      REAL-WORLD GROUND TRUTH (THE PHYSICAL OBJECT BEING PHOTOGRAPHED):
+        • These charms measure 11mm to 13mm across at their widest point. That is the actual manufactured product, not an approximation.
+        • For scale: narrower than an adult fingernail, about the width of a shirt button, roughly the width of a standard pencil. This is jewellery a viewer has to lean in to read.
+        • It is NOT a statement pendant, NOT a locket, NOT a coin-sized disc. Any render that reads as "a bold pendant" is wrong by definition, however attractive it looks.
+
+      ANCHOR 1 — MEASURE AGAINST THE CHAIN (USE THIS FIRST — THE CHAIN IS LOCKED, SO IT IS THE ONE TRUSTWORTHY RULER IN THE FRAME):
+        • The chain must not change in any way from the reference image, which is precisely what makes it a reliable measuring stick for the charm.
+        • BEADED / SATELLITE CHAIN (small balls spaced along the wire): the charm's LONGEST dimension must be about 6 bead diameters. Acceptable range 5 to 7. HARD MAXIMUM 8.
+        • PLAIN CABLE, CURB OR ROLO CHAIN (no beads): the charm's LONGEST dimension must be about 9 chain widths, measuring the chain's full outer width across a link. Acceptable range 8 to 11. HARD MAXIMUM 13.
+        • VERIFICATION: mentally lay beads (or link widths) end to end along the charm's longest dimension. About six beads, or about nine link widths, must span it. If only two or three beads span the charm, it is grossly oversized — shrink it until six do.
+
+      ANCHOR 2 — MEASURE AGAINST THE MODEL (CROSS-CHECK):
+        • The charm's LONGEST dimension must be about 1/8 of the model's visible neck or throat width at its widest visible point. Acceptable range 1/7 to 1/9. HARD MAXIMUM 1/6.
+        • VERIFICATION: eight charm widths must fit side by side across the model's neck. Rejected renders fitted only two — that is the exact error this rule corrects.
+
+      ANCHOR 3 — MEASURE AGAINST THE FRAME (COARSE LAST RESORT ONLY):
+        • The charm's LONGEST dimension must be about 6% of the image's shorter side. Acceptable range 5% to 7%. HARD MAXIMUM 9%.
+        • Rejected renders came out at roughly 21% of the frame width. That is the failure this rule exists to stop.
+
+      THE TEMPLATE'S PLACEHOLDER CHARM HAS NO AUTHORITY OVER SIZE:
+        • The placeholder charm in the reference template marks WHERE the charm hangs. It does NOT establish HOW BIG the charm is. Copying the placeholder's size is the specific behaviour that produced the over-render.
+        • If the placeholder appears larger than the anchors above allow, the placeholder is wrong and the anchors win. Shrink to the anchors regardless of how the placeholder looks.
+
+      DO NOT COMPENSATE — SHRINK THE CHARM AND NOTHING ELSE:
+        • Do NOT zoom out, reframe, crop, change the camera position or focal length, change the chain scale, change the chain thickness, change the model's scale, change the wardrobe scale, or change the engraving thickness in order to make the charm "fit" these numbers.
+        • The chain, model, wardrobe, lighting, crop and camera must match the reference image exactly. The charm alone changes size.
+
+      LEGIBILITY FLOOR (DO NOT OVERSHOOT DOWNWARD):
+        • The charm must remain identifiable as the animal or shape it depicts at normal viewing distance. Do not render it as an unreadable speck. The bottom of the ranges above is the floor — render at the floor, never below it.
+
+      HARD FAILS:
+        • The charm's longest dimension exceeds 8 bead diameters on a beaded chain, or 13 chain widths on a plain chain.
+        • The charm's longest dimension exceeds 1/6 of the model's visible neck width.
+        • The charm's longest dimension exceeds 9% of the image's shorter side.
+        • The charm reads as a prominent or statement pendant rather than a delicate minimalist accent. The chain must be at least as visually prominent as the charm.
+        • The charm was sized to match the template placeholder instead of the anchors above.
+        • The camera, crop, framing, chain size or model scale was altered to accommodate the charm's size.`;
+
     const CHARM_MODEL_PROMPT =
     `${CHARM_GRAVITY_RULES}
 
+      ${CHARM_MODEL_MICRO_SIZE_RULES}
+
       TEMPLATE CHARM IS A THROWAWAY PLACEHOLDER — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
-        • The reference image's charm/pendant design is a PLACEHOLDER ONLY. It marks WHERE the charm hangs and HOW BIG it is — but NOT the angle it hangs at; that is set by the gravity block above. Its design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
+        • The reference image's charm/pendant design is a PLACEHOLDER ONLY. It marks WHERE the charm hangs — but NOT how big it is (that is set by the miniaturisation block above, which overrides the placeholder's apparent size) and NOT the angle it hangs at (that is set by the gravity block above). Its design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
         • The output charm must show ONLY the NEW charm from the Charm Reference image: its exact outer silhouette, cutouts, and engraving topology.
         • ZERO TOLERANCE for bleed-over: no silhouette, outline, disc, shape, animal, or design element from the reference image's placeholder charm may survive in the output. Never blend, average, or hybridize the placeholder design with the new charm design.
         • SELF-CHECK BEFORE RETURNING: does the output charm's outer silhouette exactly match the Charm Reference image? If no, the render is WRONG — replace it and re-render.
