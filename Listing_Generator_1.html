@@ -6996,6 +6996,51 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // ------------------------------------------------------------
     // Per-slot prompt pipelines (Slots 1–8)
     // ------------------------------------------------------------
+
+    const CHARM_GRAVITY_RULES =
+    `CHARM HANGING ORIENTATION — GRAVITY IS NOT OPTIONAL (CRITICAL; APPLIES TO EVERY CHARM IN THIS IMAGE):
+
+    WHEN THIS RULE APPLIES — DECIDE THIS FIRST, FROM THE SETTING AND BACKGROUND:
+        • APPLIES whenever a charm is SUSPENDED and free to swing: hanging from a necklace chain, a huggie or hoop earring, a bracelet chain, a jump ring, a bail, or a display hook — on a model, on a bust, on a plain studio background, or in a white-background diagram or size-guide graphic. If it dangles, it obeys gravity.
+        • DOES NOT APPLY when the charm is not free to swing: lying flat on a surface in a flat-lay or top-down shot, resting on fabric, stone or paper, pinned or adhered to a display card, held between fingers, or rigidly mounted on a stud earring post. In those settings render the charm exactly as placed and ignore everything below.
+        • WHICH WAY IS DOWN: "down" is the scene's true vertical, not the charm's own axis and not necessarily the edge of the frame. Read it from the rest of the picture — the direction the chain falls, the model's posture, the direction every other shadow falls. If the camera is tilted, gravity tilts with the scene.
+
+    THE PIVOT:
+        • The charm swings about ONE point: the place where the charm's own eyelet or integrated hoop rests on the ring, wire or chain link carrying it. That contact point is the pivot, and it does NOT move — it stays exactly where the design places it.
+
+    THE PLUMB-LINE TEST — THIS IS THE ENTIRE RULE:
+        • Drop an imaginary vertical line straight down from the pivot. The charm must come to rest with its CENTRE OF MASS sitting ON that line, directly below the pivot.
+        • The charm is a flat sheet of uniform thickness, so its centre of mass is simply the centre of its silhouette area. In practice: there must be as much charm to the LEFT of the plumb line as to the RIGHT of it. If one side clearly outweighs the other, the charm has not finished falling — keep rotating it.
+        • Physical check before you render: imagine pinching the ring, letting the charm go, and letting it swing to a stop. Draw the position it settles in — not the position it was drawn in.
+
+    DIRECTION AND AMOUNT:
+        • Pivot sits LEFT of the charm's centre of mass → the charm rotates CLOCKWISE (the heavier right side falls) until balanced.
+        • Pivot sits RIGHT of the charm's centre of mass → the charm rotates COUNTER-CLOCKWISE (the heavier left side falls) until balanced.
+        • Pivot already directly above the centre of mass → the charm hangs exactly as drawn, with NO rotation whatsoever. Hearts, discs, and symmetrical shapes with a top-centre eyelet are designed this way and must be left level.
+        • THE TILT IS NOT CAPPED AT "SLIGHT". The angle is whatever balance requires, however large that is. A charm whose attachment point sits far off to one end — a side-profile animal with the ring at its head or neck, a long horizontal bar with a loop at one end, an asymmetric name or letter — will hang at a STEEP angle, frequently 45° or more, sometimes approaching vertical. That is correct and required, not an error to be softened.
+        • WORKED EXAMPLE — SIDE-PROFILE ANIMAL WITH THE RING AT THE HEAD OR NECK (e.g. a dachshund): almost all of the mass — body, legs, tail — sits to one side of the pivot, so the charm swings until the MIDDLE OF THE BODY hangs under the ring. The head end rises toward the chain and the tail end drops well below it, leaving the animal hanging at a pronounced diagonal, nose-up. A four-legged animal charm attached at the head and rendered standing perfectly level, as though on invisible ground, is the single most common and most obviously fake failure of this rule.
+        • DO NOT OVERSHOOT AND DO NOT STYLISE: render exactly the angle balance requires and no more. Do not add a decorative or "jaunty" tilt for visual interest, do not swing the charm past the point where it balances, and do not invent motion, swing or sway.
+
+    ROTATE — DO NOT REDRAW:
+        • This is a RIGID rotation of the finished charm about the pivot: the whole charm turns as one solid object. Its silhouette, engravings, cutouts, proportions, thickness and SIZE are completely unchanged. Nothing is stretched, skewed, squashed, bent, re-posed or re-drawn.
+        • The charm stays flat-on to the camera. This is an in-plane rotation — a roll within the picture plane — and NEVER a perspective tilt, a foreshortening, or a turn into 3D space. The charm must not begin to face away from the viewer.
+        • The charm's eyelet is part of the charm and rotates WITH it, so its opening will no longer point straight up. It stays cleanly threaded on the ring or hoop wire, with no gap, no break, and no extra ring added to hide the angle.
+        • What does NOT rotate: the chain, the huggie hoop, the jump ring, the model, the background, the framing, and every printed label, callout, leader line and caption in the graphic. Only the charm turns.
+        • Rotating the charm must not move where it hangs from and must not change how big it is. The hanging point and the charm's size remain exactly as the other rules in this prompt specify.
+
+    EVERY INSTANCE, EVERY TIME:
+        • Apply the plumb-line test independently to EVERY charm visible in the output — both earrings, every duplicate, every alternate view, every reflection.
+        • Two instances showing the SAME face of the charm hang at the SAME angle in the SAME direction; gravity does not change between them. Two instances showing MIRRORED faces of the charm hang at mirrored angles.
+        • Shadows, reflections, and any contact with skin or fabric must follow the charm's final rotated position, not its original one.
+
+    HARD FAIL: a charm hangs with visibly more of its mass on one side of the vertical line through its pivot than on the other.
+    HARD FAIL: a side-profile animal or figure charm attached at its head, neck or one end is rendered level and upright, floating as if standing on invisible ground.
+    HARD FAIL: the charm is tilted in the direction opposite to the one gravity requires.
+    HARD FAIL: the tilt is exaggerated, decorative or arbitrary rather than exactly the resting angle.
+    HARD FAIL: the charm was distorted, skewed, re-posed, resized or redrawn instead of rigidly rotated.
+    HARD FAIL: the charm was rotated out of the picture plane into a 3D or perspective view instead of rolled within it.
+    HARD FAIL: a symmetrical, already-balanced charm was given a tilt it should not have.`;
+
     
     // =========================================================================
     // 0. BEADY_NECKLACE
@@ -7155,15 +7200,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
-    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
-    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
-    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -7593,15 +7630,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
-    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
-    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
-    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -7766,15 +7795,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around either charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near either charm without clearly threading through its actual integrated hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • Each charm hangs under real gravity, suspended from the single point where its jump ring passes through the charm's integrated hoop. Render each charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary.
-    • Apply this rule to BOTH charms independently. Because the silver charm is a mirror image of the gold charm, its hoop offset will be mirrored too, so its gravity-correct tilt direction is the OPPOSITE of the gold charm's tilt direction (they should mirror each other in tilt as well as silhouette).
-    • HARD FAIL: either charm rendered perfectly level/vertical when its hoop is clearly offset to one side of its centre of mass — real physics never allows this.
-    • HARD FAIL: charms tilted in the same direction when they should be tilted in mirrored opposite directions.
+    ${CHARM_GRAVITY_RULES}
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -8058,15 +8079,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
-    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
-    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
-    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -8311,15 +8324,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
-    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
-    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
-    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -8485,15 +8490,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
-    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
-    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
-    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -8923,15 +8920,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
-    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
-    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
-    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -9096,15 +9085,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around either charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near either charm without clearly threading through its actual integrated hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • Each charm hangs under real gravity, suspended from the single point where its jump ring passes through the charm's integrated hoop. Render each charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary.
-    • Apply this rule to BOTH charms independently. Because the silver charm is a mirror image of the gold charm, its hoop offset will be mirrored too, so its gravity-correct tilt direction is the OPPOSITE of the gold charm's tilt direction (they should mirror each other in tilt as well as silhouette).
-    • HARD FAIL: either charm rendered perfectly level/vertical when its hoop is clearly offset to one side of its centre of mass — real physics never allows this.
-    • HARD FAIL: charms tilted in the same direction when they should be tilted in mirrored opposite directions.
+    ${CHARM_GRAVITY_RULES}
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -9389,15 +9370,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
-    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
-    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
-    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -9641,15 +9614,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
-    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
-    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
-    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
-    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
-    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
-    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
-    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
-    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -9677,7 +9642,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+
+      ${CHARM_GRAVITY_RULES}`;
     
     const BRACELET_CREATIVE_PROMPT =
    `  TASK:
@@ -9688,7 +9655,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+
+      ${CHARM_GRAVITY_RULES}`;
     
     const BRACELET_SIZE_GUIDE_PROMPT =
    `  TASK:
@@ -9699,7 +9668,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const BRACELET_ENGRAVING_PROMPT =
    `  TASK:
@@ -9710,7 +9681,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+
+      ${CHARM_GRAVITY_RULES}`;
     
     const BRACELET_SEC_MODEL_PROMPT =
    `  TASK:
@@ -9721,7 +9694,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+
+      ${CHARM_GRAVITY_RULES}`;
     const BRACELET_PRODUCT_PROMPT =
    `  TASK:
         • Generate a photorealistic hoop earring model image based on the attached reference. 
@@ -9731,7 +9706,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+
+      ${CHARM_GRAVITY_RULES}`;
 
 
 
@@ -9885,7 +9862,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_TINY_EMPHASIS}
 
-      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
+      ${HUGGIE_CHARM_NO_BLEED_RULES}
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const HOOP_METAL_OPTIONS_PROMPT =
     `  TASK:
@@ -9897,7 +9876,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_NO_BLEED_RULES}
 
-      METAL-OPTION NOTE: the 2 Yellow Gold charms and 2 Silver charms differ ONLY in metal colour — all 4 must share the identical silhouette, engraving topology, and identical absolute size per the rules above.`;
+      METAL-OPTION NOTE: the 2 Yellow Gold charms and 2 Silver charms differ ONLY in metal colour — all 4 must share the identical silhouette, engraving topology, and identical absolute size per the rules above.
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const HOOP_SIZE_PROMPT =
     `  TASK:
@@ -9911,7 +9892,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${SKIN_UNIFORMITY_RULES}
 
-      SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it per the CHARM-TO-HOOP SIZE LOCK above (7% of the LARGEST / 11 mm hoop's outer diameter, never above 9%) and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.`;
+      SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it per the CHARM-TO-HOOP SIZE LOCK above (7% of the LARGEST / 11 mm hoop's outer diameter, never above 9%) and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const HOOP_SEC_MODEL_PROMPT =
     `TASK (Render the Charm EXTREMELY SMALL — TINY, the SMALLEST POSSIBLE charm that is still recognisable: roughly 7% of the hoop's OUTER diameter, fourteen charm-lengths across the hoop, thinner than the hoop's own wire. Sizing is governed EXCLUSIVELY by the CHARM-TO-HOOP SIZE LOCK below, which overrides every other size cue including the reference image.)
@@ -9929,7 +9912,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_TINY_EMPHASIS}
 
-      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
+      ${HUGGIE_CHARM_NO_BLEED_RULES}
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const HOOP_DIMENSION_PROMPT =
     `TASK
@@ -9941,7 +9926,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_SCALE_RULES}
 
-      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
+      ${HUGGIE_CHARM_NO_BLEED_RULES}
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const HOOP_PRIMARY_PRODUCT_PROMPT =
     `  TASK:
@@ -9953,7 +9940,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_SCALE_RULES}
 
-      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
+      ${HUGGIE_CHARM_NO_BLEED_RULES}
+
+      ${CHARM_GRAVITY_RULES}`;
 
     // =========================================================================
     // 5. // CHARM ONLY PROMPTS 
@@ -9997,7 +9986,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       COLOR VERIFICATION TEST:
         • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
-        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const CHARM_TYPES_PROMPT =
     `STRICT IMAGE EDIT — CHARM ONLY / CHARM TYPES
@@ -10077,7 +10068,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ Each huggie hoop wire passes directly through the charm's integrated eyelet with no intermediary jump ring.
       ☐ RING COUNT: each huggie earring contains exactly TWO ring elements — the hoop and the charm's single eyelet — and nothing ring-shaped in between.
       ☐ The necklace chain and its connector remain exactly as in IMAGE 1.
-      ☐ Text, layout, crop, scale, background, lighting, and hardware remain unchanged.`;
+      ☐ Text, layout, crop, scale, background, lighting, and hardware remain unchanged.
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const CHARM_MODEL_PROMPT =
     `TEMPLATE CHARM IS A THROWAWAY PLACEHOLDER — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
@@ -10123,7 +10116,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       COLOR VERIFICATION TEST:
         • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
-        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
+
+      ${CHARM_GRAVITY_RULES}`;
 
     const CHARM_ENGRAVING_PROMPT = 
     `  TASK:
@@ -10171,7 +10166,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       COLOR VERIFICATION TEST:
         • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
-        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
+
+      ${CHARM_GRAVITY_RULES}`;
 
 
     const CHARM_HOOP_GUIDE_PROMPT =
@@ -10260,7 +10257,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ RING COUNT: exactly TWO ring elements exist in the graphic — the 11 mm hoop and the charm's single integrated eyelet — with nothing ring-shaped in between.
       ☐ Inner-diameter bracket touches the inner opening's true left/right measurement points.
       ☐ Charm-size leader points precisely to the charm-body boundary.
-      ☐ All text, layout, hoop geometry, background, and annotation styling remain unchanged.`;
+      ☐ All text, layout, hoop geometry, background, and annotation styling remain unchanged.
+
+      ${CHARM_GRAVITY_RULES}`;
 
 
     const CHARM_SIZE_GUIDE_PROMPT =
@@ -10303,7 +10302,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       COLOR VERIFICATION TEST:
         • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
-        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
+
+      ${CHARM_GRAVITY_RULES}`;
 
 
     // =========================================================================
