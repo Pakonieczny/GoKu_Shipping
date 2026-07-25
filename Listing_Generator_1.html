@@ -399,10 +399,14 @@
     flex-direction: column;
     max-height: 360px;
   }
-  /* The display above outranks the UA's [hidden] rule, so the attribute that
-     openMultisetPanel / closeMultisetPanel toggle has to be honoured here or
-     the panel can never close. */
+  /* Safety net only: the panel is permanent UI and nothing sets `hidden`
+     any more, but if something ever does, honour it (the display above
+     would otherwise outrank the UA's [hidden] rule). */
   .multiset-panel[hidden] { display: none; }
+  /* With the list always open, the trigger is a "current set" readout, not
+     a dropdown button. */
+  .multiset-trigger { cursor: default; }
+  .multiset-trigger .multiset-trigger-arrow { display: none; }
   .multiset-toolbar {
     display: flex;
     align-items: center;
@@ -2000,15 +2004,24 @@
   .wrap.sb-mid #reviewSection .multiset-trigger { padding: 6px 8px; font-size: 11px; }
   .wrap.sb-mid #reviewSection select { padding-right: 22px; background-position: right 6px center; }
   .wrap.sb-mid #reviewSection .multiset-trigger-meta { display: none; }
-  /* The popdown would be unusable at 128px, so in this state it floats
-     out over the grid instead of sitting inline. */
-  .wrap.sb-mid #reviewSection .multiset-panel {
-    position: absolute;
-    left: 0;
-    top: calc(100% + 4px);
-    width: 300px;
-    z-index: 40;
-    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+  /* The always-open set list, condensed to fit the 148px column: the
+     checkboxes, names, current-row highlight and toolbar all stay live;
+     the per-row status is ellipsised into whatever width is left. */
+  .wrap.sb-mid #reviewSection .multiset-panel { max-height: 250px; }
+  .wrap.sb-mid #reviewSection .multiset-toolbar { padding: 4px; gap: 4px; flex-wrap: wrap; }
+  .wrap.sb-mid #reviewSection .multiset-toolbar .btn {
+    padding: 3px 6px !important;
+    font-size: 9px !important;
+  }
+  .wrap.sb-mid #reviewSection #multisetCount { font-size: 9px !important; }
+  .wrap.sb-mid #reviewSection .multiset-row { padding: 3px 4px; gap: 4px; }
+  .wrap.sb-mid #reviewSection .multiset-row-name { font-size: 10px; }
+  .wrap.sb-mid #reviewSection .multiset-row-status {
+    font-size: 8px;
+    max-width: 52px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .wrap.sb-mid #reviewSection .action-bar { grid-template-columns: 1fr; gap: 6px; margin-top: 8px; }
   .wrap.sb-mid #reviewSection .btn {
@@ -2218,17 +2231,25 @@
     #reviewGrid .skipToggle { padding: 3px 5px; }
     #reviewGrid .redoAdjustInput { padding: 4px 6px !important; }
 
-    /* The open panel is the only thing left that overflows a 634px window,
-       so it scrolls itself rather than the page. #sidebarRail is a sibling,
-       not a child, so the state control stays put. Not applied to sb-mid /
-       sb-min: there the set picker's popdown floats out over the grid on
-       purpose, and a scroll box here would clip it. */
-    .wrap.review-compact:not(.sb-mid):not(.sb-min) #reviewSection {
+    /* The always-open set list stays a bounded box so Approve / Delete and
+       the Downloads group remain within one short scroll of the top. */
+    .wrap.review-compact .multiset-panel { max-height: 240px; }
+
+    /* The left panel is the only thing left that can overflow a 634px
+       window (the always-open set list adds height in both the full and
+       condensed states), so it scrolls itself rather than the page.
+       #sidebarRail is a sibling, not a child, so the state control stays
+       put. Not applied to sb-min, where the section is hidden anyway. */
+    .wrap.review-compact:not(.sb-min) #reviewSection {
       max-height: calc(100vh - 116px);
       overflow-y: auto;
       overscroll-behavior: contain;
       padding-right: 6px;
     }
+    /* sb-mid stacks the rail control ABOVE the section (it is static there,
+       not absolutely positioned), so the section's budget is smaller. The
+       :not(.sb-min) is only there to match the rule above's specificity. */
+    .wrap.review-compact.sb-mid:not(.sb-min) #reviewSection { max-height: calc(100vh - 152px); }
   }
 
   /* ---- the card loses its header line ------------------------------- */
@@ -2480,7 +2501,7 @@
               <span class="multiset-trigger-meta" id="reviewSetTriggerMeta"></span>
               <span class="multiset-trigger-arrow">▾</span>
             </button>
-            <div class="multiset-panel" id="reviewSetPanel" hidden>
+            <div class="multiset-panel" id="reviewSetPanel">
               <div class="multiset-toolbar">
                 <button type="button" class="btn btnSmall" id="multisetSelectAllBtn">Select all</button>
                 <button type="button" class="btn btnSmall" id="multisetClearBtn">Clear</button>
@@ -5643,11 +5664,9 @@ async function updateTotalAllTimeCounter() {
 
         row.addEventListener("click", (e) => {
           // Click on the row body (not the checkbox) navigates to the
-          // set: update the hidden select and load images. Panel stays
-          // OPEN so the user gets a clear visual confirmation — the
+          // set: update the hidden select and load images. The
           // .is-current highlight moves to the row they just clicked.
-          // They close the panel manually (click trigger, or click
-          // outside) when they're ready to focus on the grid.
+          // (The list is permanent UI — it never closes.)
           if (e.target.tagName === "INPUT") return;
           if (reviewSetSelect.value === setName) return; // already loaded; nothing to do
           reviewSetSelect.value = setName;
@@ -5667,18 +5686,14 @@ async function updateTotalAllTimeCounter() {
     }
 
     function closeMultisetPanel() {
-      const panel = document.getElementById("reviewSetPanel");
-      const trigger = document.getElementById("reviewSetTrigger");
-      if (!panel || !trigger) return;
-      panel.hidden = true;
-      trigger.classList.remove("is-open");
+      // The set list is permanent UI now — always visible whenever the left
+      // panel is open (full or condensed). Kept as a no-op because callers
+      // remain; hiding it again is exactly what the user asked to remove.
     }
 
     function toggleMultisetPanel() {
-      const panel = document.getElementById("reviewSetPanel");
-      if (!panel) return;
-      if (panel.hidden) openMultisetPanel();
-      else closeMultisetPanel();
+      // No open/closed state left to toggle; just refresh the rows.
+      openMultisetPanel();
     }
 
     function multisetSelectAll() {
@@ -5765,9 +5780,6 @@ async function updateTotalAllTimeCounter() {
     function cycleSidebarState() {
       SIDEBAR_STATE = (SIDEBAR_STATE + 1) % SIDEBAR_STATES.length;
       try { localStorage.setItem("lg1_sidebar_state", String(SIDEBAR_STATE)); } catch (_) {}
-      // Closing the popdown avoids leaving a 300px floating panel anchored
-      // to a control that just shrank or disappeared.
-      try { closeMultisetPanel(); } catch (_) {}
       applyReviewLayout(appMode);
     }
 
@@ -5917,12 +5929,6 @@ async function updateTotalAllTimeCounter() {
     document.getElementById("multisetClearBtn")?.addEventListener("click", (e) => {
       e.stopPropagation();
       multisetClearAll();
-    });
-    // Click outside closes the panel.
-    document.addEventListener("click", (e) => {
-      const picker = document.getElementById("reviewSetPicker");
-      if (!picker) return;
-      if (!picker.contains(e.target)) closeMultisetPanel();
     });
 
     // Bulk approve/delete handlers — invoked by the existing Approve/Delete
