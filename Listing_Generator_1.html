@@ -3084,8 +3084,8 @@
     // charm then gets the same file back, so the model is never left to
     // improvise a jump ring of its own — which is what made the ring land in a
     // different place in every image.
-    async function hoopIntegratedCharmPath(charmPath) {
-      const folder = `${HOOP_REPAIR_DIR}/${_gravityKey(charmPath)}`;
+    async function hoopIntegratedCharmPath(charmPath, slug) {
+      const folder = `${HOOP_REPAIR_DIR}/${slug}`;
       const outPath = `${folder}/Slot_1.png`;
       try {
         await getMetadata(ref(storage, outPath));
@@ -3108,36 +3108,63 @@
       return res.storagePath;
     }
 
-    // Main entry point. Given a charm storage path, returns the path of the
-    // reference the model should actually be shown — hoop-repaired if it had
-    // no bail, gravity-corrected if it hangs off-balance — or the original
-    // path if nothing is needed or anything at all goes wrong.
-    async function gravityCorrectedCharmPath(charmPath, allowHoopRepair) {
-      if (!charmPath) return charmPath;
+    // Resolves what the model should actually be shown for a given charm, and
+    // does it ONCE per charm — every slot of every listing then gets the
+    // identical file back. That is the whole point: the model is never left to
+    // improvise a hoop of its own, which is what put the jump ring in a
+    // different place in every image.
+    //
+    // Two answers come out, because they are needed in different places.
+    // `base` is the charm with a hoop guaranteed present, at its original
+    // angle. `rotated` is that same charm turned to the angle it hangs at.
+    // Slots that photograph the charm dangling want `rotated`; the sizing-guide
+    // slots lay the charm out flat and must NOT be turned, but they must still
+    // show the SAME hoop as the rest of the listing, so they take `base`.
+    //
+    // Anything going wrong collapses both answers back to the original path, so
+    // a charm can never be lost to this code.
+    async function _resolveCharmReference(charmPath, allowHoopRepair) {
+      // The charm's IDENTITY is its filename, not its path: batch_collect moves
+      // a charm into the Used_*_Charm_Pool folders right after a listing is
+      // saved, so the same charm is reached by different paths before and after
+      // a redo (see resolveOriginalCharm, which chases it by filename for the
+      // same reason). Keying on the path would miss on every redo of a batch
+      // listing and build a second, different hoop.
+      const charmName = (charmPath.split("/").pop() || charmPath);
+      const slug = _gravityKey(charmName) + "_" + charmName.replace(/[^A-Za-z0-9._-]/g, "_");
+      const key = slug + "|" + (allowHoopRepair ? "1" : "0");
       // Memoise the PROMISE, not the result, so two slots asking at the same
       // moment share one repair instead of racing into two generations.
-      if (_gravityMemo.has(charmPath)) return await _gravityMemo.get(charmPath);
+      if (_gravityMemo.has(key)) return await _gravityMemo.get(key);
       const work = (async () => {
         try {
-          const cacheName = _gravityKey(charmPath) + "_" + charmPath.split("/").pop().replace(/[^A-Za-z0-9._-]/g, "_");
-          const cachePath = `${GRAVITY_CACHE_DIR}/${cacheName}`;
+          const cachePath = `${GRAVITY_CACHE_DIR}/${slug}`;
+          const repairPath = `${HOOP_REPAIR_DIR}/${slug}/Slot_1.png`;
 
-          // Reuse a previous correction if one exists.
+          // A hoop built on any previous run is reused, never rebuilt — this is
+          // what keeps one listing (and every later redo of it) on one charm.
+          let basePath = charmPath;
+          let repaired = false;
+          try {
+            await getMetadata(ref(storage, repairPath));
+            basePath = repairPath; repaired = true;
+            console.log("[gravity] reusing hoop-repaired charm:", repairPath);
+          } catch (_) { /* never repaired */ }
+
+          // ...and so is a previously computed rotation.
           try {
             await getMetadata(ref(storage, cachePath));
-            return cachePath;
+            return { base: basePath, rotated: cachePath };
           } catch (_) { /* not cached yet */ }
 
-          let basePath = charmPath;
           let bitmap = await _loadCharmBitmap(basePath);
           let info = analyseCharmHang(bitmap);
-          let repaired = false;
 
-          // No bail in the artwork: build one, once, and work from that copy
-          // for the rest of this charm's life.
-          if (allowHoopRepair && (!info || info.pivot !== "hoop")) {
+          // No bail anywhere in the artwork: build one, once, and work from
+          // that copy for the rest of this charm's life.
+          if (allowHoopRepair && !repaired && (!info || info.pivot !== "hoop")) {
             try {
-              const hooped = await hoopIntegratedCharmPath(charmPath);
+              const hooped = await hoopIntegratedCharmPath(charmPath, slug);
               if (hooped && hooped !== basePath) {
                 const hoopedBitmap = await _loadCharmBitmap(hooped);
                 const hoopedInfo = analyseCharmHang(hoopedBitmap);
@@ -3157,15 +3184,15 @@
           if (!info) {
             console.warn("[gravity] could not analyse charm silhouette, leaving as-is:", charmPath);
             if (bitmap.close) bitmap.close();
-            return repaired ? basePath : charmPath;
+            return { base: basePath, rotated: basePath };
           }
 
           const rawDeg = info.angle * 180 / Math.PI;
           const deg = softenHangAngle(rawDeg, info.pivot, info.lever);
-          if (!repaired && Math.abs(deg) < GRAVITY_MIN_DEGREES) {
-            console.log(`[gravity] ${charmPath} hangs true (${info.pivot} pivot, measured ${rawDeg.toFixed(1)}°, applied ${deg.toFixed(1)}°) — left alone`);
+          if (Math.abs(deg) < GRAVITY_MIN_DEGREES) {
+            console.log(`[gravity] ${basePath} hangs true (${info.pivot} pivot, measured ${rawDeg.toFixed(1)}°, applied ${deg.toFixed(1)}°) — left alone`);
             if (bitmap.close) bitmap.close();
-            return charmPath;
+            return { base: basePath, rotated: basePath };
           }
 
           const canvas = renderRotatedCharm(bitmap, deg * Math.PI / 180, info.cx, info.cy);
@@ -3174,35 +3201,41 @@
           if (!blob) throw new Error("canvas.toBlob returned null");
           await uploadBytesResumable(ref(storage, cachePath), blob, { contentType: "image/png" });
           console.log(`[gravity] ${charmPath}${repaired ? " (hoop added)" : ""} ${info.pivot} pivot, measured ${rawDeg.toFixed(1)}° -> applied ${deg.toFixed(1)}° -> ${cachePath}`);
-          return cachePath;
+          return { base: basePath, rotated: cachePath };
         } catch (err) {
           console.warn("[gravity] correction failed, using original charm:", charmPath, err);
-          return charmPath;
+          return { base: charmPath, rotated: charmPath };
         }
       })();
-      _gravityMemo.set(charmPath, work);
+      _gravityMemo.set(key, work);
       try {
         return await work;
       } catch (err) {
-        _gravityMemo.delete(charmPath);
+        _gravityMemo.delete(key);
         console.warn("[gravity] correction threw, using original charm:", charmPath, err);
-        return charmPath;
+        return { base: charmPath, rotated: charmPath };
       }
     }
 
-    // A slot gets the corrected charm only if its own prompt carries the
-    // gravity block. That keeps this gated by a single source of truth — the
-    // prompt itself — instead of a second exclusion list that could drift out
-    // of sync (studs are on a rigid post; sizing guides measure the charm
-    // flat).
     const GRAVITY_PROMPT_MARKER = "CHARM HANGING ANGLE — GRAVITY";
     async function charmPathForSlot(charmPath, category, folder, slotNum) {
       try {
         if (!charmPath) return charmPath;
+        // ROTATION is gated by the prompt itself — one source of truth, rather
+        // than a second exclusion list that could drift out of sync. Studs sit
+        // on a rigid post and the sizing guides measure the charm laid flat, so
+        // neither carries the gravity block and neither gets turned.
         const p = buildSlotPrompt(category, folder, slotNum);
-        if (!p || p.indexOf(GRAVITY_PROMPT_MARKER) < 0) return charmPath;
+        const wantsRotation = !!p && p.indexOf(GRAVITY_PROMPT_MARKER) >= 0;
+        // HOOP REPAIR is gated separately, by category. The earring pools are
+        // stripped of their bails on purpose (see promptStrEarring), so a
+        // missing hoop there is correct and must never be "fixed". Everywhere
+        // else EVERY slot must show the same hoop — including the flat sizing
+        // guides, which is exactly why this is not folded into the gate above.
         const allowHoopRepair = !HOOPLESS_CHARM_CATEGORIES.includes(category);
-        return await gravityCorrectedCharmPath(charmPath, allowHoopRepair);
+        if (!wantsRotation && !allowHoopRepair) return charmPath;
+        const refs = await _resolveCharmReference(charmPath, allowHoopRepair);
+        return wantsRotation ? refs.rotated : refs.base;
       } catch (err) {
         console.warn("[gravity] slot gating failed, using original charm:", err);
         return charmPath;
