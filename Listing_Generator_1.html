@@ -6997,49 +6997,43 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // Per-slot prompt pipelines (Slots 1–8)
     // ------------------------------------------------------------
 
-    const CHARM_GRAVITY_RULES =
-    `CHARM HANGING ORIENTATION — GRAVITY IS NOT OPTIONAL (CRITICAL; APPLIES TO EVERY CHARM IN THIS IMAGE):
+    const CHARM_GRAVITY_RULES = `CHARM HANGING ANGLE — GRAVITY (CRITICAL, HIGHEST PRIORITY, OVERRIDES THE TEMPLATE):
+      • The charm in the reference/template image is hanging at the WRONG angle. Its angle is a placeholder and carries NO authority. Do not copy it.
+      • Any rule in this prompt about preserving position, coordinates, layout or template fidelity applies to WHERE the charm hangs from and HOW BIG it is — it does NOT apply to the angle it hangs at. The angle is decided by this block alone.
 
-    WHEN THIS RULE APPLIES — DECIDE THIS FIRST, FROM THE SETTING AND BACKGROUND:
-        • APPLIES whenever a charm is SUSPENDED and free to swing: hanging from a necklace chain, a huggie or hoop earring, a bracelet chain, a jump ring, a bail, or a display hook — on a model, on a bust, on a plain studio background, or in a white-background diagram or size-guide graphic. If it dangles, it obeys gravity.
-        • DOES NOT APPLY when the charm is not free to swing: lying flat on a surface in a flat-lay or top-down shot, resting on fabric, stone or paper, pinned or adhered to a display card, held between fingers, or rigidly mounted on a stud earring post. In those settings render the charm exactly as placed and ignore everything below.
-        • WHICH WAY IS DOWN: "down" is the scene's true vertical, not the charm's own axis and not necessarily the edge of the frame. Read it from the rest of the picture — the direction the chain falls, the model's posture, the direction every other shadow falls. If the camera is tilted, gravity tilts with the scene.
+      HOW TO SET THE ANGLE:
+      • The charm dangles from a single point: where its eyelet touches the ring, chain link or hoop. That point does not move.
+      • Let it swing. It comes to rest when the heavy part of the charm sits DIRECTLY BELOW that point.
+      • So: look at the charm's shape, find where most of its metal is, and turn the charm until that bulk hangs underneath the eyelet.
+      • Equal amounts of charm to the left and right of a vertical line dropped from the eyelet. That is the finished angle.
 
-    THE PIVOT:
-        • The charm swings about ONE point: the place where the charm's own eyelet or integrated hoop rests on the ring, wire or chain link carrying it. That contact point is the pivot, and it does NOT move — it stays exactly where the design places it.
+      THE ANGLE IS OFTEN LARGE — DO NOT MAKE IT A GENTLE LEAN:
+      • There is no cap. 30°, 45°, 60° or steeper is normal and correct. A charm whose eyelet is off to one side hangs STEEPLY.
+      • Only a charm whose eyelet sits at the top centre of a balanced shape (heart, disc, round pendant) hangs level. Leave those upright.
 
-    THE PLUMB-LINE TEST — THIS IS THE ENTIRE RULE:
-        • Drop an imaginary vertical line straight down from the pivot. The charm must come to rest with its CENTRE OF MASS sitting ON that line, directly below the pivot.
-        • The charm is a flat sheet of uniform thickness, so its centre of mass is simply the centre of its silhouette area. In practice: there must be as much charm to the LEFT of the plumb line as to the RIGHT of it. If one side clearly outweighs the other, the charm has not finished falling — keep rotating it.
-        • Physical check before you render: imagine pinching the ring, letting the charm go, and letting it swing to a stop. Draw the position it settles in — not the position it was drawn in.
+      SIDE-PROFILE ANIMALS — THE MOST COMMON FAILURE:
+      • A four-legged animal charm (dog, cat, horse) with its ring at the HEAD or NECK does NOT stand level as if on invisible ground. That is the single most common mistake and it looks fake.
+      • It hangs NOSE-UP: the head lifts toward the chain and the body and tail swing down and back, until the middle of the body is under the ring. Expect roughly 40°–70° of rotation.
+      • If the finished image shows the animal standing horizontally, the image is WRONG.
 
-    DIRECTION AND AMOUNT:
-        • Pivot sits LEFT of the charm's centre of mass → the charm rotates CLOCKWISE (the heavier right side falls) until balanced.
-        • Pivot sits RIGHT of the charm's centre of mass → the charm rotates COUNTER-CLOCKWISE (the heavier left side falls) until balanced.
-        • Pivot already directly above the centre of mass → the charm hangs exactly as drawn, with NO rotation whatsoever. Hearts, discs, and symmetrical shapes with a top-centre eyelet are designed this way and must be left level.
-        • THE TILT IS NOT CAPPED AT "SLIGHT". The angle is whatever balance requires, however large that is. A charm whose attachment point sits far off to one end — a side-profile animal with the ring at its head or neck, a long horizontal bar with a loop at one end, an asymmetric name or letter — will hang at a STEEP angle, frequently 45° or more, sometimes approaching vertical. That is correct and required, not an error to be softened.
-        • WORKED EXAMPLE — SIDE-PROFILE ANIMAL WITH THE RING AT THE HEAD OR NECK (e.g. a dachshund): almost all of the mass — body, legs, tail — sits to one side of the pivot, so the charm swings until the MIDDLE OF THE BODY hangs under the ring. The head end rises toward the chain and the tail end drops well below it, leaving the animal hanging at a pronounced diagonal, nose-up. A four-legged animal charm attached at the head and rendered standing perfectly level, as though on invisible ground, is the single most common and most obviously fake failure of this rule.
-        • DO NOT OVERSHOOT AND DO NOT STYLISE: render exactly the angle balance requires and no more. Do not add a decorative or "jaunty" tilt for visual interest, do not swing the charm past the point where it balances, and do not invent motion, swing or sway.
+      ROTATE — DO NOT REDRAW:
+      • This is a rigid turn of the finished charm about its eyelet, within the flat picture plane — like turning a sticker on glass.
+      • NEVER a perspective tilt, 3D lean, foreshortening or skew. The charm stays perfectly front-facing and flat.
+      • Silhouette, engraving, cutouts, proportions, thickness and SIZE are unchanged. The eyelet stays threaded on its ring. The hanging point does not move.
+      • Nothing else in the picture turns: not the chain, hoops, hardware, background, text, labels, callouts or captions. Only the charm.
 
-    ROTATE — DO NOT REDRAW:
-        • This is a RIGID rotation of the finished charm about the pivot: the whole charm turns as one solid object. Its silhouette, engravings, cutouts, proportions, thickness and SIZE are completely unchanged. Nothing is stretched, skewed, squashed, bent, re-posed or re-drawn.
-        • The charm stays flat-on to the camera. This is an in-plane rotation — a roll within the picture plane — and NEVER a perspective tilt, a foreshortening, or a turn into 3D space. The charm must not begin to face away from the viewer.
-        • The charm's eyelet is part of the charm and rotates WITH it, so its opening will no longer point straight up. It stays cleanly threaded on the ring or hoop wire, with no gap, no break, and no extra ring added to hide the angle.
-        • What does NOT rotate: the chain, the huggie hoop, the jump ring, the model, the background, the framing, and every printed label, callout, leader line and caption in the graphic. Only the charm turns.
-        • Rotating the charm must not move where it hangs from and must not change how big it is. The hanging point and the charm's size remain exactly as the other rules in this prompt specify.
+      WHEN IT DOES NOT APPLY:
+      • If the charm is not free to swing, leave it as the template has it: flat-lay or top-down shots, resting on fabric/stone/paper, pinned to a display card, held in fingers, or a stud earring fixed on its post.
+      • Otherwise it applies — on a model, on a bust, on a studio background, and equally on a plain white-background diagram or size guide.
+      • "Down" is the scene's true vertical, read from the fall of the chain, the model's posture and the other shadows.
 
-    EVERY INSTANCE, EVERY TIME:
-        • Apply the plumb-line test independently to EVERY charm visible in the output — both earrings, every duplicate, every alternate view, every reflection.
-        • Two instances showing the SAME face of the charm hang at the SAME angle in the SAME direction; gravity does not change between them. Two instances showing MIRRORED faces of the charm hang at mirrored angles.
-        • Shadows, reflections, and any contact with skin or fabric must follow the charm's final rotated position, not its original one.
-
-    HARD FAIL: a charm hangs with visibly more of its mass on one side of the vertical line through its pivot than on the other.
-    HARD FAIL: a side-profile animal or figure charm attached at its head, neck or one end is rendered level and upright, floating as if standing on invisible ground.
-    HARD FAIL: the charm is tilted in the direction opposite to the one gravity requires.
-    HARD FAIL: the tilt is exaggerated, decorative or arbitrary rather than exactly the resting angle.
-    HARD FAIL: the charm was distorted, skewed, re-posed, resized or redrawn instead of rigidly rotated.
-    HARD FAIL: the charm was rotated out of the picture plane into a 3D or perspective view instead of rolled within it.
-    HARD FAIL: a symmetrical, already-balanced charm was given a tilt it should not have.`;
+      • Apply this to EVERY charm instance in the image independently. Same face shown twice → same angle. Mirrored faces → mirrored angles. Shadows, reflections and any contact with skin or fabric follow the charm's final rotated position.
+      • HARD FAIL: a side-profile animal charm rendered standing level.
+      • HARD FAIL: more charm mass on one side of the vertical through the eyelet than the other.
+      • HARD FAIL: the template placeholder's angle copied through to the output.
+      • HARD FAIL: a timid decorative lean substituted for the true resting angle.
+      • HARD FAIL: the charm skewed, squashed, re-posed, resized, redrawn or tilted out of the flat picture plane instead of simply turned.
+      • HARD FAIL: a balanced top-centre-eyelet charm (heart, disc) given a tilt it should not have.`;
 
     
     // =========================================================================
@@ -7047,7 +7041,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // =========================================================================
 
     const SLOT2_DUPLICATE_PROMPT = 
-    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    `${CHARM_GRAVITY_RULES}
+
+      ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be very small: final on-image charm height MUST be approximately 9 pixels tall (acceptable range: 9 to 10 pixels, target the LOW END of this range — i.e. aim at 9, not 10). HARD MAXIMUM: 10 pixels — never exceed. HARD MINIMUM: 9 pixels — never go below. The previous render bias has STILL been 7–8% too large despite the prior range correction; this new range dials back another 7–8% on top. Bias correction must be AGGRESSIVE — render at the floor of this range, not the cap.
 
     • Critical: Never Cut out darkened areas of the Charm/Pendant. Darkened portions of the Charm/Pendant are typically hatched engravings.
@@ -7200,7 +7196,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -7388,7 +7383,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     - Any second/phantom hoop added near the charm.`;
 
     const DEFAULT_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+    `${CHARM_GRAVITY_RULES}
+
+      CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY — BARELY VISIBLE)
     • Force the Charm to be VERY SMALL, TINY: final on-image charm height MUST be approximately 6 pixels tall (acceptable range: 6 to 7 pixels, target the LOW END of this range — i.e. aim at 6, not 7). HARD MAXIMUM: 7 pixels — never exceed. HARD MINIMUM: 6 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
@@ -7630,7 +7627,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -7644,7 +7640,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
     const SLOT4_PROMPT =
-    `PROCESS ORDER (NON-NEGOTIABLE)
+    `${CHARM_GRAVITY_RULES}
+
+      PROCESS ORDER (NON-NEGOTIABLE)
     • Use reference image as the base sizing-guide graphic.
     • Replace BOTH charms in the reference image with the charm from Charm image.
 
@@ -7713,7 +7711,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     CHARM ORIENTATION & DIRECTION LOCK FOR BOTH CHARMS (ABSOLUTE — TOP PRIORITY):
     • GOLD FRONT-FACING CHARM: orientation and facing direction MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the gold output faces LEFT. If facing RIGHT, output faces RIGHT. NEVER mirror, flip, or horizontally reverse the gold charm. A mirrored gold charm is a WRONG-FACING charm and is unacceptable.
     • SILVER BACK-FACING CHARM: this represents the BACK of the same physical charm, so it is necessarily a HORIZONTAL MIRROR of the gold front charm. If the new charm image (and therefore the gold front) faces LEFT, the silver back faces RIGHT. This specific mirroring is intentional and physically correct — you ARE looking at the back of the charm — and is the ONLY allowed mirror operation.
-    • Do NOT rotate either charm to any orientation other than what these rules specify (other than small natural gravity-induced hanging tilt).
+    • Do NOT rotate either charm to any orientation other than what these rules specify (other than the gravity hanging angle required above, which may be large).
     • HARD FAIL: gold front charm facing the opposite direction from the new charm image.
     • HARD FAIL: silver back charm facing the SAME direction as the new charm image (it MUST mirror the gold, which means opposite of the source).
     • HARD FAIL: either charm rotated/oriented differently than these rules specify.
@@ -7795,7 +7793,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around either charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near either charm without clearly threading through its actual integrated hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -7837,7 +7834,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     - Any gemstone, diamond, bead, dot, or decorative element added to either charm that is not in the source artwork.`;
 
     const SLOT5_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+    `${CHARM_GRAVITY_RULES}
+
+      CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY — BARELY VISIBLE)
     • Force the Charm to be VERY SMALL, TINY: final on-image charm height MUST be approximately 6 pixels tall (acceptable range: 6 to 7 pixels, target the LOW END of this range — i.e. aim at 6, not 7). HARD MAXIMUM: 7 pixels — never exceed. HARD MINIMUM: 6 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
@@ -8079,7 +8078,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -8093,7 +8091,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
     const SLOT7_PROMPT =
-    `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
+    `${CHARM_GRAVITY_RULES}
+
+          ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
     • Force the Charm to be VERY SMALL, TINY, SUPER SMALL: final on-image charm height MUST be approximately 12 pixels tall (a soft baseline only — the chin-to-dip 1/8 ratio below is the actual primary rule).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
      • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
@@ -8324,7 +8324,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -8340,7 +8339,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // 1. // REGULAR NECKLACE
     // =========================================================================
     const REGULAR_SLOT2_DUPLICATE_PROMPT = 
-    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    `${CHARM_GRAVITY_RULES}
+
+      ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be small: final on-image charm height MUST be approximately 12 pixels tall (acceptable range: 12 to 13 pixels, target the LOW END of this range — i.e. aim at 12, not 13). HARD MAXIMUM: 13 pixels — never exceed. HARD MINIMUM: 12 pixels — never go below. The previous render bias has STILL been 7–8% too large despite the prior range correction; this new range dials back another 7–8% on top. Bias correction must be AGGRESSIVE — render at the floor of this range, not the cap.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
@@ -8490,7 +8491,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -8677,7 +8677,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     - Any second/phantom hoop added near the charm.`;
 
     const REGULAR_DEFAULT_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+    `${CHARM_GRAVITY_RULES}
+
+      CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY — BARELY VISIBLE)
     • Force the Charm to be VERY SMALL, TINY: final on-image charm height MUST be approximately 9 pixels tall (acceptable range: 9 to 10 pixels, target the LOW END of this range — i.e. aim at 9, not 10). HARD MAXIMUM: 10 pixels — never exceed. HARD MINIMUM: 9 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
@@ -8920,7 +8922,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -8934,7 +8935,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
     const REGULAR_SLOT4_PROMPT =
-    `PROCESS ORDER (NON-NEGOTIABLE)
+    `${CHARM_GRAVITY_RULES}
+
+      PROCESS ORDER (NON-NEGOTIABLE)
     • Use reference image as the base sizing-guide graphic.
     • Replace BOTH charms in the reference image with the charm from Charm image.
 
@@ -9003,7 +9006,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     CHARM ORIENTATION & DIRECTION LOCK FOR BOTH CHARMS (ABSOLUTE — TOP PRIORITY):
     • GOLD FRONT-FACING CHARM: orientation and facing direction MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the gold output faces LEFT. If facing RIGHT, output faces RIGHT. NEVER mirror, flip, or horizontally reverse the gold charm. A mirrored gold charm is a WRONG-FACING charm and is unacceptable.
     • SILVER BACK-FACING CHARM: this represents the BACK of the same physical charm, so it is necessarily a HORIZONTAL MIRROR of the gold front charm. If the new charm image (and therefore the gold front) faces LEFT, the silver back faces RIGHT. This specific mirroring is intentional and physically correct — you ARE looking at the back of the charm — and is the ONLY allowed mirror operation.
-    • Do NOT rotate either charm to any orientation other than what these rules specify (other than small natural gravity-induced hanging tilt).
+    • Do NOT rotate either charm to any orientation other than what these rules specify (other than the gravity hanging angle required above, which may be large).
     • HARD FAIL: gold front charm facing the opposite direction from the new charm image.
     • HARD FAIL: silver back charm facing the SAME direction as the new charm image (it MUST mirror the gold, which means opposite of the source).
     • HARD FAIL: either charm rotated/oriented differently than these rules specify.
@@ -9085,7 +9088,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around either charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near either charm without clearly threading through its actual integrated hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -9127,7 +9129,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     - Any gemstone, diamond, bead, dot, or decorative element added to either charm that is not in the source artwork.`;
 
     const REGULAR_SLOT5_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+    `${CHARM_GRAVITY_RULES}
+
+      CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY — BARELY VISIBLE)
     • Force the Charm to be VERY SMALL, TINY: final on-image charm height MUST be approximately 8 pixels tall (acceptable range: 8 to 9 pixels, target the LOW END of this range — i.e. aim at 8, not 9). HARD MAXIMUM: 9 pixels — never exceed. HARD MINIMUM: 8 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
@@ -9370,7 +9374,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -9384,7 +9387,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
     const REGULAR_SLOT7_PROMPT =
-    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
+    `${CHARM_GRAVITY_RULES}
+
+      ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
     • Force the Charm to be VERY SMALL, TINY, SUPER SMALL: final on-image charm height MUST be approximately 14 pixels tall (a soft baseline only — the chin-to-dip 1/8 ratio below is the actual primary rule).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
@@ -9614,7 +9619,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
     • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
 
-    ${CHARM_GRAVITY_RULES}
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -9634,7 +9638,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // 2. // BRACELET PROMPTS
     // =========================================================================
     const BRACELET_MODEL_PROMPT =
-    `  TASK:
+    `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Generate a photorealistic hoop earring model image based on the attached reference. 
         • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
         • Critical: You must vary the model, ear, accessories but keep the style somewhat similar 
@@ -9642,12 +9648,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
     
     const BRACELET_CREATIVE_PROMPT =
-   `  TASK:
+   `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Generate a photorealistic hoop earring model image based on the attached reference. 
         • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
         • Critical: You must vary the model, ear, accessories but keep the style somewhat similar 
@@ -9655,12 +9661,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
     
     const BRACELET_SIZE_GUIDE_PROMPT =
-   `  TASK:
+   `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Generate a photorealistic hoop earring model image based on the attached reference. 
         • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
         • Critical: You must vary the model, ear, accessories but keep the style somewhat similar 
@@ -9668,12 +9674,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
 
     const BRACELET_ENGRAVING_PROMPT =
-   `  TASK:
+   `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Generate a photorealistic hoop earring model image based on the attached reference. 
         • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
         • Critical: You must vary the model, ear, accessories but keep the style somewhat similar 
@@ -9681,12 +9687,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
     
     const BRACELET_SEC_MODEL_PROMPT =
-   `  TASK:
+   `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Generate a photorealistic hoop earring model image based on the attached reference. 
         • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
         • Critical: You must vary the model, ear, accessories but keep the style somewhat similar 
@@ -9694,11 +9700,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
     const BRACELET_PRODUCT_PROMPT =
-   `  TASK:
+   `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Generate a photorealistic hoop earring model image based on the attached reference. 
         • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
         • Critical: You must vary the model, ear, accessories but keep the style somewhat similar 
@@ -9706,9 +9712,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Maintain zoom level and frame.
         • The Huggie/Hoop earring must be Yellow 14K gold colour 
         • DO NOT allow the Huggie/Hoop earring to be dark, grey, black, the Huggie/Hoop earring must be bright and light. 
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.`;
 
 
 
@@ -9845,7 +9849,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • HARD FAIL: the charm is any bigger than the smallest size at which its shape remains identifiable.`;
 
     const HOOP_MODEL_PROMPT =
-    `TASK (Render the Charm EXTREMELY SMALL — TINY, the SMALLEST POSSIBLE charm that is still recognisable: roughly 7% of the hoop's OUTER diameter, fourteen charm-lengths across the hoop, thinner than the hoop's own wire. Sizing is governed EXCLUSIVELY by the CHARM-TO-HOOP SIZE LOCK below, which overrides every other size cue including the reference image.)
+    `${CHARM_GRAVITY_RULES}
+
+      TASK (Render the Charm EXTREMELY SMALL — TINY, the SMALLEST POSSIBLE charm that is still recognisable: roughly 7% of the hoop's OUTER diameter, fourteen charm-lengths across the hoop, thinner than the hoop's own wire. Sizing is governed EXCLUSIVELY by the CHARM-TO-HOOP SIZE LOCK below, which overrides every other size cue including the reference image.)
     • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
     • The new Charm must be EXTREMELY SMALL — render it TINY, at the SMALLEST POSSIBLE size at which its shape is still recognisable, and DRAMATICALLY SMALLER than the charm shown in the Reference Image. The reference charm is grossly oversized and is NEVER a size guide. Size the new charm solely from the CHARM-TO-HOOP SIZE LOCK below.
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
@@ -9862,12 +9868,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_TINY_EMPHASIS}
 
-      ${HUGGIE_CHARM_NO_BLEED_RULES}
-
-      ${CHARM_GRAVITY_RULES}`;
+      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
     const HOOP_METAL_OPTIONS_PROMPT =
-    `  TASK:
+    `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Duplicate the Reference product image exactly and update all 4 charm (2 Yellow Gold & 2 Silver) using the Charm Reference image
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
@@ -9876,12 +9882,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_NO_BLEED_RULES}
 
-      METAL-OPTION NOTE: the 2 Yellow Gold charms and 2 Silver charms differ ONLY in metal colour — all 4 must share the identical silhouette, engraving topology, and identical absolute size per the rules above.
-
-      ${CHARM_GRAVITY_RULES}`;
+      METAL-OPTION NOTE: the 2 Yellow Gold charms and 2 Silver charms differ ONLY in metal colour — all 4 must share the identical silhouette, engraving topology, and identical absolute size per the rules above.`;
 
     const HOOP_SIZE_PROMPT =
-    `  TASK:
+    `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Duplicate the Reference product image exactly and update all 4 charm from the Charm Reference image
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
@@ -9892,12 +9898,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${SKIN_UNIFORMITY_RULES}
 
-      SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it per the CHARM-TO-HOOP SIZE LOCK above (7% of the LARGEST / 11 mm hoop's outer diameter, never above 9%) and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.
-
-      ${CHARM_GRAVITY_RULES}`;
+      SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it per the CHARM-TO-HOOP SIZE LOCK above (7% of the LARGEST / 11 mm hoop's outer diameter, never above 9%) and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.`;
 
     const HOOP_SEC_MODEL_PROMPT =
-    `TASK (Render the Charm EXTREMELY SMALL — TINY, the SMALLEST POSSIBLE charm that is still recognisable: roughly 7% of the hoop's OUTER diameter, fourteen charm-lengths across the hoop, thinner than the hoop's own wire. Sizing is governed EXCLUSIVELY by the CHARM-TO-HOOP SIZE LOCK below, which overrides every other size cue including the reference image.)
+    `${CHARM_GRAVITY_RULES}
+
+      TASK (Render the Charm EXTREMELY SMALL — TINY, the SMALLEST POSSIBLE charm that is still recognisable: roughly 7% of the hoop's OUTER diameter, fourteen charm-lengths across the hoop, thinner than the hoop's own wire. Sizing is governed EXCLUSIVELY by the CHARM-TO-HOOP SIZE LOCK below, which overrides every other size cue including the reference image.)
         • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
         • The new Charm must be EXTREMELY SMALL — render it TINY, at the SMALLEST POSSIBLE size at which its shape is still recognisable, and DRAMATICALLY SMALLER than the charm shown in the Reference Image. The reference charm is grossly oversized and is NEVER a size guide. Size the new charm solely from the CHARM-TO-HOOP SIZE LOCK below.
         • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
@@ -9912,12 +9918,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_TINY_EMPHASIS}
 
-      ${HUGGIE_CHARM_NO_BLEED_RULES}
-
-      ${CHARM_GRAVITY_RULES}`;
+      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
     const HOOP_DIMENSION_PROMPT =
-    `TASK
+    `${CHARM_GRAVITY_RULES}
+
+      TASK
         • Duplicate the Reference product image exactly and only update the 1 charm from the Charm Reference image.
         • Preserve all engravings as they appear in the Charm Reference image.
         • Force the Charm to be TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Hoop Earring Reference Image.
@@ -9926,12 +9932,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_SCALE_RULES}
 
-      ${HUGGIE_CHARM_NO_BLEED_RULES}
-
-      ${CHARM_GRAVITY_RULES}`;
+      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
     const HOOP_PRIMARY_PRODUCT_PROMPT =
-    `  TASK:
+    `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Duplicate the Reference product image exactly and only update the 2 charms from the Charm Reference image.
         • Force the Charm to be TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Hoop Earring Reference Image.
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
@@ -9940,15 +9946,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_SCALE_RULES}
 
-      ${HUGGIE_CHARM_NO_BLEED_RULES}
-
-      ${CHARM_GRAVITY_RULES}`;
+      ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
     // =========================================================================
     // 5. // CHARM ONLY PROMPTS 
     // =========================================================================
     const CHARM_TEMPLATE_PROMPT =
-    `  TASK:
+    `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • All engravings must be coloured-in/filled-in using a light shade of copper colour, and must be flat having only superficial depth.
@@ -9986,12 +9992,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       COLOR VERIFICATION TEST:
         • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
-        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
 
     const CHARM_TYPES_PROMPT =
-    `STRICT IMAGE EDIT — CHARM ONLY / CHARM TYPES
+    `${CHARM_GRAVITY_RULES}
+
+      STRICT IMAGE EDIT — CHARM ONLY / CHARM TYPES
 
       IMAGE ROLES (DO NOT CONFUSE THEM):
       • IMAGE 1 is the LOCKED SOURCE TEMPLATE and the destination canvas.
@@ -10000,7 +10006,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       • Do NOT redraw or reinterpret the charm independently three times. All three instances must have identical silhouette and identical engraving topology.
 
       PIXEL-LOCK IMAGE 1 — ONLY THE THREE CHARM DESIGNS MAY CHANGE:
-      • Treat IMAGE 1 as read-only outside the three existing charm regions.
+      • Treat IMAGE 1 as read-only outside the three existing charm regions. Inside those regions the charm's hanging ANGLE is not locked and must follow the gravity block above.
       • Preserve the canvas size, aspect ratio, crop, zoom, framing, object coordinates, white background, shadows, lighting, exposure, chain, both huggie hoops, necklace hardware, spacing, and margins exactly.
       • Preserve every visible text character exactly, including the same wording, font appearance, line breaks, size, position, and black colour. Do not re-typeset, move, enlarge, shrink, or rewrite the text.
       • Do not move, resize, redraw, replace, or restyle the huggie hoops or necklace chain.
@@ -10068,13 +10074,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ Each huggie hoop wire passes directly through the charm's integrated eyelet with no intermediary jump ring.
       ☐ RING COUNT: each huggie earring contains exactly TWO ring elements — the hoop and the charm's single eyelet — and nothing ring-shaped in between.
       ☐ The necklace chain and its connector remain exactly as in IMAGE 1.
-      ☐ Text, layout, crop, scale, background, lighting, and hardware remain unchanged.
-
-      ${CHARM_GRAVITY_RULES}`;
+      ☐ Text, layout, crop, scale, background, lighting, and hardware remain unchanged.`;
 
     const CHARM_MODEL_PROMPT =
-    `TEMPLATE CHARM IS A THROWAWAY PLACEHOLDER — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
-        • The reference image's charm/pendant design is a PLACEHOLDER ONLY. It marks WHERE the charm hangs and HOW BIG it is. Its design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
+    `${CHARM_GRAVITY_RULES}
+
+      TEMPLATE CHARM IS A THROWAWAY PLACEHOLDER — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
+        • The reference image's charm/pendant design is a PLACEHOLDER ONLY. It marks WHERE the charm hangs and HOW BIG it is — but NOT the angle it hangs at; that is set by the gravity block above. Its design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
         • The output charm must show ONLY the NEW charm from the Charm Reference image: its exact outer silhouette, cutouts, and engraving topology.
         • ZERO TOLERANCE for bleed-over: no silhouette, outline, disc, shape, animal, or design element from the reference image's placeholder charm may survive in the output. Never blend, average, or hybridize the placeholder design with the new charm design.
         • SELF-CHECK BEFORE RETURNING: does the output charm's outer silhouette exactly match the Charm Reference image? If no, the render is WRONG — replace it and re-render.
@@ -10116,12 +10122,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       COLOR VERIFICATION TEST:
         • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
-        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
 
     const CHARM_ENGRAVING_PROMPT = 
-    `  TASK:
+    `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
         • All engravings must be coloured-in/filled-in using a light shade of copper colour, and must be flat having only superficial depth.
@@ -10166,13 +10172,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       COLOR VERIFICATION TEST:
         • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
-        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
 
 
     const CHARM_HOOP_GUIDE_PROMPT =
-    `STRICT IMAGE EDIT — CHARM ONLY / HOOP CHARM SIZE GUIDE (SLOT 5)
+    `${CHARM_GRAVITY_RULES}
+
+      STRICT IMAGE EDIT — CHARM ONLY / HOOP CHARM SIZE GUIDE (SLOT 5)
 
       IMAGE ROLES (DO NOT CONFUSE THEM):
       • IMAGE 1 is the LOCKED SOURCE TEMPLATE and destination canvas.
@@ -10180,7 +10186,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       • Replace only IMAGE 1's existing charm design with IMAGE 2's master design. Do not blend the two charm designs and do not redraw the whole graphic.
 
       PIXEL-LOCK IMAGE 1:
-      • Preserve the exact canvas size, aspect ratio, crop, zoom, white background, title, footer, typography, huggie hoop, lighting, shadows, object coordinates, margins, dimension text, and overall layout.
+      • Preserve the exact canvas size, aspect ratio, crop, zoom, white background, title, footer, typography, huggie hoop, lighting, shadows, object coordinates, margins, dimension text, and overall layout. This locks WHERE things sit and HOW BIG they are; it does NOT lock the charm's hanging angle, which must follow the gravity block above.
       • Preserve every visible character exactly, including:
         "Available huggie charm sizing"
         "2.1mm Inner Diameter"
@@ -10257,13 +10263,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ RING COUNT: exactly TWO ring elements exist in the graphic — the 11 mm hoop and the charm's single integrated eyelet — with nothing ring-shaped in between.
       ☐ Inner-diameter bracket touches the inner opening's true left/right measurement points.
       ☐ Charm-size leader points precisely to the charm-body boundary.
-      ☐ All text, layout, hoop geometry, background, and annotation styling remain unchanged.
-
-      ${CHARM_GRAVITY_RULES}`;
+      ☐ All text, layout, hoop geometry, background, and annotation styling remain unchanged.`;
 
 
     const CHARM_SIZE_GUIDE_PROMPT =
-    `  TASK:
+    `${CHARM_GRAVITY_RULES}
+
+        TASK:
         • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • All engravings must be coloured-in/filled-in using a light shade of copper colour, and must be flat having only superficial depth.
@@ -10302,9 +10308,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       COLOR VERIFICATION TEST:
         • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
-        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
-
-      ${CHARM_GRAVITY_RULES}`;
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
 
 
     // =========================================================================
