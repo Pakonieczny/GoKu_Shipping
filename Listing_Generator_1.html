@@ -399,6 +399,10 @@
     flex-direction: column;
     max-height: 360px;
   }
+  /* The display above outranks the UA's [hidden] rule, so the attribute that
+     openMultisetPanel / closeMultisetPanel toggle has to be honoured here or
+     the panel can never close. */
+  .multiset-panel[hidden] { display: none; }
   .multiset-toolbar {
     display: flex;
     align-items: center;
@@ -1929,6 +1933,325 @@
     font-size: 10px;
     color: var(--muted);
   }
+
+  /* ===================================================================
+     REVIEW TAB — DENSITY PASS + THREE-STATE LEFT PANEL
+     -------------------------------------------------------------------
+     Goal: all 8 slots of a set visible at once with no scrolling. Every
+     rule here is scoped to #reviewGrid or to .wrap.review-compact, which
+     is only ever applied while appMode === "review", so the Generate,
+     Charm Maker and Approved tabs render exactly as they did before.
+
+     The 200px .slotPrev image box is deliberately NOT touched. The height
+     comes out of the card's chrome instead: padding, the header, the
+     source line, and the six stacked controls that are now one row.
+     =================================================================== */
+
+  /* ---- the panel-state control ------------------------------------- */
+  .wrap > .card:first-child { position: relative; }
+
+  #sidebarRail {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 6;
+    display: none;
+    align-items: center;
+    gap: 8px;
+  }
+  #sidebarToggleBtn {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border-radius: 6px;
+    border: 1px solid var(--line-2);
+    background: var(--card-2);
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color 120ms ease, border-color 120ms ease;
+  }
+  #sidebarToggleBtn:hover { color: var(--text); border-color: var(--accent-line); }
+  #sidebarRailStatus { display: none; }
+
+  /* ---- state 2: ~70% collapsed (480px -> 148px) --------------------- */
+  /* Everything still on screen and still live — category, set picker,
+     Approve / Delete, both counters. Only the prose is dropped. */
+  .wrap.sb-mid { grid-template-columns: 148px 1fr; }
+  .wrap.sb-mid > .card:first-child { padding: 12px 10px; }
+  .wrap.sb-mid #sidebarRail { position: static; display: flex; justify-content: flex-end; margin-bottom: 4px; }
+  .wrap.sb-mid #reviewSection h1,
+  .wrap.sb-mid #reviewSection .lede,
+  .wrap.sb-mid #reviewSection .group-head .count,
+  .wrap.sb-mid #reviewSection .counter-row .muted,
+  .wrap.sb-mid #reviewSection #completedSetsBreakdown,
+  .wrap.sb-mid #reviewSection #backgroundQueueStatus { display: none; }
+  .wrap.sb-mid #reviewSection .group { margin-top: 12px; padding-top: 10px; }
+  .wrap.sb-mid #reviewSection .group-head { margin-bottom: 8px; }
+  .wrap.sb-mid #reviewSection .group-head h3 { font-size: 12px; }
+  .wrap.sb-mid #reviewSection label { margin: 8px 0 4px; font-size: 9px; letter-spacing: 0.05em; }
+  .wrap.sb-mid #reviewSection select,
+  .wrap.sb-mid #reviewSection .multiset-trigger { padding: 6px 8px; font-size: 11px; }
+  .wrap.sb-mid #reviewSection select { padding-right: 22px; background-position: right 6px center; }
+  .wrap.sb-mid #reviewSection .multiset-trigger-meta { display: none; }
+  /* The popdown would be unusable at 128px, so in this state it floats
+     out over the grid instead of sitting inline. */
+  .wrap.sb-mid #reviewSection .multiset-panel {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 4px);
+    width: 300px;
+    z-index: 40;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+  }
+  .wrap.sb-mid #reviewSection .action-bar { grid-template-columns: 1fr; gap: 6px; margin-top: 8px; }
+  .wrap.sb-mid #reviewSection .btn {
+    padding: 6px 8px !important;
+    font-size: 11px !important;
+    white-space: normal;
+    line-height: 1.25;
+  }
+  .wrap.sb-mid #reviewSection .counter-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px;
+    margin-top: 8px;
+  }
+  .wrap.sb-mid #reviewSection .counter-label { font-size: 9px; margin-bottom: 0; }
+  /* font-size:0 hides the label's bare text node while the number, which
+     carries its own size, stays readable. */
+  .wrap.sb-mid #reviewSection .counter-value { font-size: 0; }
+  .wrap.sb-mid #reviewSection .counter-value > span {
+    font-size: 16px !important;
+    margin-left: 0 !important;
+  }
+
+  /* ---- state 3: ~95% collapsed (480px -> 30px) ---------------------- */
+  /* A thin rail: one vertical status line and the button that cycles back
+     out. Keyboard nav and Cmd+S keep working in this state. */
+  .wrap.sb-min { grid-template-columns: 30px 1fr; }
+  .wrap.sb-min > .card:first-child { padding: 8px 2px; }
+  .wrap.sb-min #reviewSection { display: none !important; }
+  .wrap.sb-min #sidebarRail {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .wrap.sb-min #sidebarRailStatus {
+    display: block;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-height: 72vh;
+  }
+
+  /* ---- page chrome, review mode only -------------------------------- */
+  .wrap.review-compact { padding: 12px 14px; gap: 14px; }
+  .wrap.review-compact > .card { padding: 14px; }
+  .wrap.review-compact .right-head { padding-bottom: 8px; margin-bottom: 10px; }
+  .wrap.review-compact .right-head h1 { font-size: 17px; }
+
+  /* ---- the review grid ---------------------------------------------- */
+  /* 8 slots in 4 columns = 2 rows. The id beats .grid's width-based media
+     queries, which would otherwise drop to 3 columns (3 rows) at 1400px. */
+  #reviewGrid { gap: 10px; }
+  @media (min-width: 1000px) {
+    #reviewGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+  @media (max-width: 999px) {
+    #reviewGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* ---- the compact slot card ---------------------------------------- */
+  #reviewGrid .slot { padding: 8px; }
+  /* Explicit and intentional: the preview box keeps its original size. */
+  #reviewGrid .slotPrev { height: 200px; }
+  #reviewGrid .rev-meta { margin-top: 4px; font-size: 10px; line-height: 1.3; }
+
+  #reviewGrid .rev-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 5px;
+  }
+  #reviewGrid .rev-actions .redoBtn {
+    flex-shrink: 0;
+    padding: 5px 7px !important;
+    font-size: 10px !important;
+    letter-spacing: 0;
+  }
+  /* The wrapper keeps a fixed height and the field is absolutely positioned
+     inside it, anchored to the bottom. updateAdjustCounter's auto-grow then
+     expands the field UPWARD over the preview instead of making the card
+     taller — which is what used to push the second row of slots off screen.
+     While it has focus the field also widens leftward to something typable,
+     since a 4-column grid on a narrow window leaves it only ~50px. */
+  #reviewGrid .rev-adjust {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 34px;
+    height: 25px;
+    align-self: stretch;
+  }
+  #reviewGrid .rev-adjust .redoAdjustInput {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto !important;
+    max-height: 96px;
+    transition: width 110ms ease;
+  }
+  #reviewGrid .rev-adjust:focus-within .redoAdjustInput {
+    left: auto;
+    width: 210px !important;
+    max-width: calc(100vw - 60px);
+    z-index: 30;
+    border-color: var(--line-2);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
+  }
+  /* The 0/120 counter costs no height either: it rides in the field's
+     bottom-right corner and only appears while the field has focus. */
+  #reviewGrid .rev-count {
+    position: absolute;
+    right: 3px;
+    bottom: 2px;
+    z-index: 31;
+    font-size: 9px;
+    line-height: 1.4;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 4px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+  #reviewGrid .rev-adjust:focus-within .rev-count { opacity: 1; }
+  #reviewGrid .rev-nogen {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #reviewGrid .skipToggle {
+    margin: 0;
+    padding: 4px 6px;
+    gap: 5px;
+    flex-shrink: 0;
+    font-size: 10px;
+  }
+  #reviewGrid .skipToggleSwitch { width: 24px; height: 13px; }
+  #reviewGrid .skipToggleSwitch::after { width: 9px; height: 9px; }
+  #reviewGrid .skipToggle input:checked + .skipToggleSwitch::after { transform: translateX(11px); }
+  /* ============ REVIEW MODE: PAGE CHROME COMPACTION ==================
+     Seeing all 8 slots at once is the whole point of this tab, and the
+     preview boxes are fixed at 200px, so two rows cost 400px of image
+     before a single pixel of chrome. These rules claw back the rest.
+     Every one is scoped to body.review-mode, which is set only while the
+     Review tab is open, so Generate / Charm Maker / Approved Sets keep
+     the full-size chrome they have today. */
+  body.review-mode .app-header { padding: 7px 22px; }
+  body.review-mode .app-header .brand-mark { font-size: 17px; }
+  body.review-mode .app-header .brand-tag { padding: 2px 7px; font-size: 9px; }
+  body.review-mode .app-header .header-meta { gap: 14px; }
+  body.review-mode .app-header .image-model-switcher {
+    margin: 0;
+    padding: 3px 4px 3px 9px;
+  }
+  body.review-mode .tabnav-wrap { padding: 6px 22px 0; }
+  body.review-mode .tabnav { padding: 3px; }
+  body.review-mode .tabnav .btn { padding: 5px 18px !important; }
+  body.review-mode .pipeline-bar { padding: 5px 22px; gap: 6px 18px; }
+  body.review-mode .pipeline-bar .lane-stage { padding: 2px 10px; }
+  body.review-mode .pipeline-bar .num { font-size: 13px; }
+
+  /* Short windows (the 634px-tall case) give up the pipeline bar and the
+     grid's own title: the tab strip already says Review, and the same
+     buffer / archive numbers are in the left panel and on the collapsed
+     rail. Everything else stays exactly where it was. */
+  @media (max-height: 820px) {
+    body.review-mode .pipeline-bar { display: none; }
+    body.review-mode .app-header { padding: 5px 22px; }
+    body.review-mode .tabnav-wrap { padding: 5px 22px 0; }
+    body.review-mode .tabnav .btn { padding: 4px 18px !important; }
+    .wrap.review-compact { padding: 8px 12px 4px; gap: 12px; }
+    .wrap.review-compact > .card { padding: 10px; }
+    .wrap.review-compact .right-head {
+      padding-bottom: 0;
+      margin-bottom: 4px;
+      border-bottom: none;
+    }
+    .wrap.review-compact .right-head h1 { display: none; }
+    .wrap.review-compact .right-head #status { padding: 2px 8px; font-size: 10px; }
+    #reviewGrid { gap: 8px; }
+
+    /* The source path is the one thing on the card that is already
+       truncated to uselessness at this width. It moves into the slot
+       chip's tooltip — updateAdjustCounter's counter and the redo
+       handler's "Adjusted: …" message both still land on it. */
+    #reviewGrid .rev-meta { display: none; }
+    #reviewGrid .rev-actions { margin-top: 3px; }
+    #reviewGrid .rev-actions .redoBtn { padding: 4px 7px !important; }
+    #reviewGrid .skipToggle { padding: 3px 5px; }
+    #reviewGrid .redoAdjustInput { padding: 4px 6px !important; }
+
+    /* The open panel is the only thing left that overflows a 634px window,
+       so it scrolls itself rather than the page. #sidebarRail is a sibling,
+       not a child, so the state control stays put. Not applied to sb-mid /
+       sb-min: there the set picker's popdown floats out over the grid on
+       purpose, and a scroll box here would clip it. */
+    .wrap.review-compact:not(.sb-mid):not(.sb-min) #reviewSection {
+      max-height: calc(100vh - 116px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 6px;
+    }
+  }
+
+  /* ---- the card loses its header line ------------------------------- */
+  /* "Slot N" moves into the action row as a numbered chip and the folder
+     name rides along in its tooltip, which buys back ~21px per card —
+     42px over two rows, the difference between fitting and scrolling. */
+  #reviewGrid .slot { padding: 6px; }
+  #reviewGrid .rev-meta { margin-top: 3px; font-size: 9px; }
+  #reviewGrid .rev-actions { gap: 5px; margin-top: 4px; }
+  #reviewGrid .rev-idx {
+    flex-shrink: 0;
+    min-width: 17px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--line);
+    border-radius: 5px;
+    padding: 3px 4px;
+    cursor: default;
+  }
+  #reviewGrid .slot.skipped .rev-idx { color: #fdba74; }
 </style>
 </head>
 <body>
@@ -1989,6 +2312,14 @@
 
     <!-- ============== LEFT CARD: section controls ============== -->
     <div class="card">
+
+      <!-- Three-state panel control. Sits outside #reviewSection so it is
+           still clickable when that section is hidden in the fully
+           collapsed state. Shown only while the Review tab is active. -->
+      <div id="sidebarRail">
+        <button type="button" id="sidebarToggleBtn" aria-label="Cycle panel width">&laquo;</button>
+        <div id="sidebarRailStatus"></div>
+      </div>
 
       <!-- ===== GENERATE SECTION ===== -->
       <div id="generateSection">
@@ -3941,9 +4272,17 @@ The output must look like the input image with ONLY the user's requested change 
                   prevBox.classList.add("success-border"); 
               }
               if (metaEl) {
-                metaEl.textContent = isAdjustmentMode
+                const metaText = isAdjustmentMode
                   ? `Adjusted: "${userAdjust}"`
                   : `Source: ${srcRandom.fullPath}`;
+                metaEl.textContent = metaText;
+                metaEl.title = metaText;
+                // On short windows the source line is hidden and this text
+                // lives in the slot chip's tooltip instead, so update both.
+                const tagEl = document.getElementById(`${prefix}_slotTag_${slotIndex}`);
+                if (tagEl) {
+                  tagEl.title = tagEl.title.split("\n")[0] + "\n" + metaText;
+                }
               }
               if (redoBtn) redoBtn.disabled = false;
               setStatus(`Ready (Set_${ctxSetN})`);
@@ -4828,6 +5167,10 @@ The output must look like the input image with ONLY the user's requested change 
       if (wrapEl) {
         wrapEl.classList.toggle('wrap--full-right', mode === 'approvedCharms');
       }
+
+      // Review-tab density + the three-state left panel. Scoped to review
+      // mode; every other tab keeps its original layout.
+      applyReviewLayout(mode);
       
       generateSection.style.display = "none";
       reviewSection.style.display = "none";
@@ -5368,13 +5711,108 @@ async function updateTotalAllTimeCounter() {
           ? `Delete ${n} selected`
           : "Delete set";
       }
+
+      // This runs on every selection and navigation change, which makes it
+      // the cheapest correct place to refresh the collapsed rail's status.
+      try { updateSidebarRail(); } catch (_) {}
     }
 
+
+
+    // =====================================================================
+    // REVIEW TAB — THREE-STATE LEFT PANEL
+    // ---------------------------------------------------------------------
+    //   0 open  480px, the original layout, nothing hidden
+    //   1 mid   148px (~70% collapsed): category, set picker, Approve /
+    //           Delete and both counters all still present and live, with
+    //           the prose, the pipeline captions and the breakdown dropped
+    //           and the buttons stacked. The set popdown floats out over
+    //           the grid in this state so it stays readable.
+    //   2 min   30px (~95% collapsed): a thin rail with one vertical status
+    //           line and the cycle button. Keyboard navigation and Cmd+S
+    //           keep working here, since both read the hidden <select>.
+    //
+    // The whole thing is one class on .wrap, so no existing markup moves and
+    // every existing id keeps resolving. State is held in a module variable
+    // and mirrored into localStorage on a best-effort basis.
+    // =====================================================================
+    const SIDEBAR_STATES = ["open", "mid", "min"];
+    let SIDEBAR_STATE = 0;
+    try {
+      const saved = parseInt(localStorage.getItem("lg1_sidebar_state"), 10);
+      if (saved >= 0 && saved < SIDEBAR_STATES.length) SIDEBAR_STATE = saved;
+    } catch (_) {}
+
+    // Called by setAppMode on every tab switch. Outside review mode all the
+    // classes come off, so the other tabs are byte-for-byte the old layout.
+    function applyReviewLayout(mode) {
+      const w = document.querySelector(".wrap");
+      const rail = document.getElementById("sidebarRail");
+      if (!w) return;
+      const isReview = mode === "review";
+      // The header / tab strip / pipeline bar live outside .wrap, so the
+      // chrome-compaction rules hang off the body instead.
+      document.body.classList.toggle("review-mode", isReview);
+      w.classList.toggle("review-compact", isReview);
+      w.classList.remove("sb-mid", "sb-min");
+      if (rail) rail.style.display = isReview ? "flex" : "none";
+      if (!isReview) return;
+      if (SIDEBAR_STATE === 1) w.classList.add("sb-mid");
+      else if (SIDEBAR_STATE === 2) w.classList.add("sb-min");
+      updateSidebarRail();
+    }
+
+    function cycleSidebarState() {
+      SIDEBAR_STATE = (SIDEBAR_STATE + 1) % SIDEBAR_STATES.length;
+      try { localStorage.setItem("lg1_sidebar_state", String(SIDEBAR_STATE)); } catch (_) {}
+      // Closing the popdown avoids leaving a 300px floating panel anchored
+      // to a control that just shrank or disappeared.
+      try { closeMultisetPanel(); } catch (_) {}
+      applyReviewLayout(appMode);
+    }
+
+    // The rail's single line. Every value is read straight off the widget it
+    // stands in for, so it cannot drift out of agreement with them.
+    function updateSidebarRail() {
+      const btn = document.getElementById("sidebarToggleBtn");
+      const out = document.getElementById("sidebarRailStatus");
+      if (btn) {
+        btn.textContent = SIDEBAR_STATE === 2 ? "\u00bb" : "\u00ab";
+        btn.title = "Panel: " + SIDEBAR_STATES[SIDEBAR_STATE] + " \u2014 click to " +
+          (SIDEBAR_STATE === 2 ? "reopen" : "collapse further");
+      }
+      if (!out) return;
+      let set = "no set";
+      try { set = reviewSetSelect.value || "no set"; } catch (_) {}
+      let cat = "";
+      try { cat = activeCategoryEl.value || ""; } catch (_) {}
+      let sel = 0;
+      try { sel = MULTISET_SELECTED.size; } catch (_) {}
+      const num = (id) => {
+        const el = document.querySelector("#" + id + " span");
+        return (el && el.textContent.trim()) || "0";
+      };
+      out.textContent = "REVIEW \u00b7 " + (cat || "\u2014") + " \u00b7 " + set +
+        " \u00b7 " + sel + " selected \u00b7 buffer " + num("completedSetsCounter") +
+        " \u00b7 archive " + num("totalAllTimeCounter");
+      out.title = out.textContent;
+    }
+
+    document.getElementById("sidebarToggleBtn")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cycleSidebarState();
+    });
 
     // =====================================================================
     // REVIEW-QUEUE KEYBOARD SHORTCUTS
     // ---------------------------------------------------------------------
-    //   ← / →        move to the previous / next listing set
+    //   ← / →        move to the older / newer listing set
+    //
+    //   The set list is sorted newest-first, so a HIGHER index is an OLDER
+    //   set. Right therefore steps -1 and Left steps +1: Right walks toward
+    //   newer, higher-numbered sets, which is the same direction Approve's
+    //   auto-advance (findNextHigherSet) moves in.
     //   Cmd+S / Ctrl+S   toggle the current set's approval checkbox
     //
     // Both act on the hidden <select id="reviewSetSelect">, which is the
@@ -5461,9 +5899,9 @@ async function updateTotalAllTimeCounter() {
       if (mod || e.altKey || e.shiftKey) return;
       if (_isTypingTarget(e.target)) return;
       if (e.key === "ArrowLeft") {
-        if (navigateReviewSet(-1)) e.preventDefault();
-      } else if (e.key === "ArrowRight") {
         if (navigateReviewSet(1)) e.preventDefault();
+      } else if (e.key === "ArrowRight") {
+        if (navigateReviewSet(-1)) e.preventDefault();
       }
     });
 
@@ -5679,21 +6117,28 @@ function updateApproveButtonState() {
           // required because the global `textarea { min-height: 120px }`
           // rule (around line 235) would otherwise force this textarea to
           // ~3 lines tall on first render.
+          // Compact form: the field sits inline in the action row and the
+          // 0/120 counter is absolutely positioned above it, revealed on
+          // focus. Same id, same maxlength, same oninput handler, so
+          // updateAdjustCounter and redoSlot's prefix_adjust_slotIndex
+          // lookup are both unchanged. The long explanations moved into
+          // title attributes rather than being deleted.
           const adjustmentBlock = spec.type === "gen" ? `
-            <div style="margin-top:8px;">
+            <div class="rev-adjust">
               <textarea
                 id="rev_adjust_${i}"
                 class="redoAdjustInput"
                 maxlength="120"
                 rows="1"
-                placeholder="Optional: what should change? (e.g. 'darker engraving') — max 120 chars"
+                placeholder="Adjust…"
+                title="Optional: what should change on this slot? e.g. 'darker engraving'. Max 120 chars. Leave empty to fully regenerate."
                 oninput="updateAdjustCounter(${i})"
-                style="width:100%; box-sizing:border-box; resize:none; overflow:hidden; min-height:0; padding:6px 8px; background:#0e1220; color:var(--text); border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:12px; line-height:1.35;"
+                style="width:100%; box-sizing:border-box; resize:none; overflow:hidden; min-height:0; padding:5px 7px; background:#0e1220; color:var(--text); border:1px solid var(--line); border-radius:7px; font-family:inherit; font-size:11px; line-height:1.35; display:block;"
               ></textarea>
-              <div class="muted" id="rev_adjust_counter_${i}" style="font-size:11px; text-align:right; margin-top:2px;">0 / 120</div>
+              <span class="rev-count" id="rev_adjust_counter_${i}">0 / 120</span>
             </div>
           ` : `
-            <div class="muted" style="font-size:11px; margin-top:6px; opacity:0.6;">No adjustment input — this slot is copied from storage, not generated.</div>
+            <div class="rev-nogen" title="No adjustment input — this slot is copied from storage, not generated.">copied slot</div>
           `;
 
           // Skip-this-slot toggle. Available on every slot (gen and copy) so
@@ -5702,7 +6147,7 @@ function updateApproveButtonState() {
           // the manifest's `skipped` field; toggling writes back through
           // window.onSkipToggle.
           const skipBlock = `
-            <label class="skipToggle" for="rev_skip_${i}">
+            <label class="skipToggle" for="rev_skip_${i}" title="Skip this slot — don't include it when the set is approved">
               <input
                 type="checkbox"
                 id="rev_skip_${i}"
@@ -5710,20 +6155,23 @@ function updateApproveButtonState() {
                 onchange="onSkipToggle(${i}, this.checked)"
               />
               <span class="skipToggleSwitch"></span>
-              <span class="skipToggleText">Skip this slot (don't include on approve)</span>
+              <span class="skipToggleText">Skip</span>
             </label>
           `;
 
+          // The untouched 200px preview, one ellipsised source line, and one
+          // action row carrying the slot number, Redo, adjust and Skip.
+          // Nothing was removed — the slot's folder and the wording that used
+          // to occupy whole lines now live in title attributes.
           slotCard.innerHTML = `
-            <div class="slotTop">
-              <b>Slot ${slotNum}</b>
-              <div class="muted" style="font-size:12px;">Review: ${spec.folder}</div>
-            </div>
             <div class="slotPrev" id="rev_slotPrev_${i}"><div class="slotRefEmpty">Loading…</div></div>
-            <div class="small" id="rev_slotMeta_${i}">Source: ${sourceStr}</div>
-            ${skipBlock}
-            <button class="btn btnSmall redoBtn" id="rev_redo_${i}" style="margin-top:8px; width:100%;" onclick="redoSlot(${i}, 'rev')">Redo Slot ${slotNum}</button>
-            ${adjustmentBlock}
+            <div class="small rev-meta" id="rev_slotMeta_${i}" title="Source: ${sourceStr}">Source: ${sourceStr}</div>
+            <div class="rev-actions">
+              <span class="rev-idx" id="rev_slotTag_${i}" title="Slot ${slotNum} — review folder: ${spec.folder}&#10;Source: ${sourceStr}">${slotNum}</span>
+              <button class="btn btnSmall redoBtn" id="rev_redo_${i}" onclick="redoSlot(${i}, 'rev')" title="Redo Slot ${slotNum}">↻ Redo</button>
+              ${adjustmentBlock}
+              ${skipBlock}
+            </div>
           `;
           reviewGrid.appendChild(slotCard);
         });
@@ -5790,6 +6238,7 @@ function updateApproveButtonState() {
         }));
 
         setStatus(`Viewing ${category} / ${setName}`);
+        try { updateSidebarRail(); } catch (_) {}
       } catch (e) {
         if (e.code === 'storage/object-not-found') {
              reviewGrid.innerHTML = `<div class='slotRefEmpty'>Set '${setName}' not found (might be deleted/moved).</div>`;
