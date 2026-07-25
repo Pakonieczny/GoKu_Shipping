@@ -5124,6 +5124,103 @@ async function updateTotalAllTimeCounter() {
       }
     }
 
+
+    // =====================================================================
+    // REVIEW-QUEUE KEYBOARD SHORTCUTS
+    // ---------------------------------------------------------------------
+    //   ← / →        move to the previous / next listing set
+    //   Cmd+S / Ctrl+S   toggle the current set's approval checkbox
+    //
+    // Both act on the hidden <select id="reviewSetSelect">, which is the
+    // single source of truth for "which set am I looking at", and on
+    // MULTISET_SELECTED, which backs the blue checkboxes. Everything is
+    // routed through the same code paths the mouse uses, so the UI, the
+    // Approve/Delete button labels and the bulk-selection count all stay
+    // in step with no extra bookkeeping.
+    // =====================================================================
+    function _reviewSetNames() {
+      return Array.from(reviewSetSelect.options)
+        .map((o) => o.value)
+        .filter((v) => v && v !== "");
+    }
+
+    // True when a modal is covering the page, so shortcuts do not fire
+    // behind it.
+    function _shortcutsBlocked() {
+      const gal = document.getElementById("galleryModal");
+      return !!(gal && gal.classList.contains("open"));
+    }
+
+    // True when the user is typing, so arrow keys keep moving the caret
+    // instead of jumping between sets.
+    function _isTypingTarget(el) {
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      const t = el.tagName;
+      return t === "INPUT" || t === "TEXTAREA" || t === "SELECT";
+    }
+
+    // Move by delta through the set list. Clamps at both ends rather than
+    // wrapping, so holding an arrow key cannot loop around unnoticed.
+    function navigateReviewSet(delta) {
+      if (appMode !== "review") return false;
+      const names = _reviewSetNames();
+      if (names.length === 0) return false;
+      const cur = names.indexOf(reviewSetSelect.value);
+      const next = (cur < 0) ? 0 : cur + delta;
+      if (next < 0 || next >= names.length) return false;
+      const name = names[next];
+      if (name === reviewSetSelect.value) return false;
+
+      reviewSetSelect.value = name;
+      reviewSetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      renderMultisetWidget();
+
+      // Keep the highlighted row visible when the panel is open.
+      try {
+        const row = document.querySelector('.multiset-row.is-current');
+        if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+      } catch (_) {}
+      return true;
+    }
+
+    // Toggle the blue checkbox on the currently-loaded set — exactly what
+    // clicking it does, including refreshing the "N selected" count and the
+    // Approve/Delete button labels.
+    function toggleCurrentSetApproval() {
+      if (appMode !== "review") return false;
+      const name = reviewSetSelect.value;
+      if (!name || !_reviewSetNames().includes(name)) return false;
+      if (MULTISET_SELECTED.has(name)) MULTISET_SELECTED.delete(name);
+      else MULTISET_SELECTED.add(name);
+      renderMultisetWidget();
+      return true;
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (appMode !== "review" || _shortcutsBlocked()) return;
+
+      // Cmd+S (mac) / Ctrl+S (windows). Fires even from a text field,
+      // because it is a modifier chord and cannot be confused with typing.
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && !e.altKey && (e.key === "s" || e.key === "S")) {
+        // Suppress the browser's "Save page" dialog whether or not a set is
+        // loaded, so the shortcut never half-works.
+        e.preventDefault();
+        toggleCurrentSetApproval();
+        return;
+      }
+
+      // Arrow navigation. Plain presses only, and never while typing.
+      if (mod || e.altKey || e.shiftKey) return;
+      if (_isTypingTarget(e.target)) return;
+      if (e.key === "ArrowLeft") {
+        if (navigateReviewSet(-1)) e.preventDefault();
+      } else if (e.key === "ArrowRight") {
+        if (navigateReviewSet(1)) e.preventDefault();
+      }
+    });
+
     // Wire up trigger and toolbar buttons.
     document.getElementById("reviewSetTrigger")?.addEventListener("click", (e) => {
       e.stopPropagation();
