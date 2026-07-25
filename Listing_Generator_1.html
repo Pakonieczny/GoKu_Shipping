@@ -2789,6 +2789,213 @@
     let modApp;
     try { modApp = getApp(); } catch { modApp = initializeApp(firebase.app().options); }
     const storage = getStorage(modApp);
+
+    // =====================================================================
+    // CHARM GRAVITY ENGINE
+    // ---------------------------------------------------------------------
+    // Words alone could not make the image model hang a charm correctly —
+    // it copies the orientation it SEES in the charm reference. So we rotate
+    // the reference itself before it is ever sent, and the prompt then only
+    // has to say "match the reference", which models obey reliably.
+    //
+    // Physics: a charm is a flat sheet of uniform thickness, so its centre of
+    // mass is the centroid of its silhouette. Hung from a point, it rests
+    // with that centroid directly below the attachment point. Charm designs
+    // are generated without a bail, and the bail is attached at the top of
+    // the charm as drawn, so the attachment point is the topmost point of the
+    // silhouette. Those two facts together define a self-consistent state:
+    // rotate until the topmost point sits directly above the centroid. We
+    // find it by damped fixed-point iteration over the convex hull.
+    //
+    // Every failure path returns the ORIGINAL path, so a charm can never be
+    // lost to this code — worst case the behaviour is exactly as before.
+    // =====================================================================
+    const GRAVITY_CACHE_DIR = `${ROOT}/_gravity_cache`;
+    const GRAVITY_MIN_DEGREES = 3;      // below this, rotating is pointless
+    const GRAVITY_SAMPLE_MAX = 400;     // silhouette analysis resolution
+    const GRAVITY_LUMA_THRESHOLD = 38;  // background is pure #000
+    const _gravityMemo = new Map();
+
+    function _gravityKey(str) {
+      let h = 5381;
+      for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
+      return h.toString(36);
+    }
+
+    // Andrew's monotone chain.
+    function _convexHull(pts) {
+      if (pts.length < 4) return pts.slice();
+      const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+      const lo = [], up = [];
+      for (const q of p) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+      for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+      lo.pop(); up.pop();
+      return lo.concat(up);
+    }
+
+    // Returns { angle (radians, clockwise-positive on screen), cx, cy } in the
+    // coordinate space of the supplied bitmap, or null if unanalysable.
+    function analyseCharmHang(bitmap) {
+      const w = bitmap.width, h = bitmap.height;
+      if (!w || !h) return null;
+      const scale = Math.min(1, GRAVITY_SAMPLE_MAX / Math.max(w, h));
+      const sw = Math.max(8, Math.round(w * scale)), sh = Math.max(8, Math.round(h * scale));
+      const c = document.createElement("canvas");
+      c.width = sw; c.height = sh;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(bitmap, 0, 0, sw, sh);
+      const d = ctx.getImageData(0, 0, sw, sh).data;
+
+      let sx = 0, sy = 0, n = 0;
+      const pts = [];
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const i = (y * sw + x) * 4;
+          if (d[i + 3] < 16) continue;
+          const luma = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+          if (luma < GRAVITY_LUMA_THRESHOLD) continue;
+          sx += x; sy += y; n++;
+          pts.push([x, y]);
+        }
+      }
+      const coverage = n / (sw * sh);
+      // Too little = we found nothing; too much = the background is not black
+      // and we are measuring the whole frame. Either way, do not guess.
+      if (n < 64 || coverage < 0.005 || coverage > 0.92) return null;
+
+      const cx = sx / n, cy = sy / n;
+      const hull = _convexHull(pts).map(p => [p[0] - cx, p[1] - cy]);
+      if (hull.length < 3) return null;
+
+      // The bail sits at the top of the charm, so the pivot is the topmost
+      // point. A flat or rounded top (a disc, a heart, the flat crown of a
+      // head) has many points at nearly the same height, and picking one
+      // arbitrarily both invents a tilt on symmetric charms and makes the
+      // iteration oscillate. So the pivot is the CENTRE of the topmost run:
+      // every hull point within a small tolerance of the highest, averaged.
+      let extent = 0;
+      for (const [dx, dy] of hull) extent = Math.max(extent, Math.hypot(dx, dy));
+      const topTol = Math.max(1, extent * 0.03);
+
+      // Damped fixed point: rotate until that pivot is directly above the
+      // centroid — the charm's true resting position.
+      let theta = 0, alpha = 0;
+      for (let it = 0; it < 200; it++) {
+        const co = Math.cos(theta), si = Math.sin(theta);
+        let top = Infinity;
+        for (const [dx, dy] of hull) {
+          const ry = -dx * si + dy * co;           // rotated y (screen, down+)
+          if (ry < top) top = ry;
+        }
+        let bx = 0, by = 0, k = 0;
+        for (const [dx, dy] of hull) {
+          const ry = -dx * si + dy * co;
+          if (ry <= top + topTol) { bx += dx * co + dy * si; by += ry; k++; }
+        }
+        if (!k) return null;
+        bx /= k; by /= k;
+        if (by >= 0) return null;                   // degenerate: nothing above the centroid
+        alpha = Math.atan2(bx, -by);                // pivot's offset from vertical
+        if (!isFinite(alpha)) return null;
+        theta += alpha * 0.35;
+        if (Math.abs(alpha) < 1e-4) break;
+      }
+      // Refuse to guess if it never settled, rather than emit a wrong angle.
+      if (!isFinite(theta) || Math.abs(alpha) > 0.02) return null;
+      // Normalise to (-pi, pi]
+      while (theta > Math.PI) theta -= 2 * Math.PI;
+      while (theta <= -Math.PI) theta += 2 * Math.PI;
+      // The iteration works in a matrix whose sense is the inverse of the one
+      // canvas ctx.rotate() uses, so negate: `angle` is now directly the value
+      // to hand to ctx.rotate().
+      return { angle: -theta, cx: cx / scale, cy: cy / scale };
+    }
+
+    // Draws the bitmap rotated about its silhouette centroid onto a canvas of
+    // the same pixel dimensions, on pure black, scaled down only if the
+    // rotated silhouette would otherwise clip.
+    function renderRotatedCharm(bitmap, angle, cx, cy) {
+      const w = bitmap.width, h = bitmap.height;
+      const co = Math.abs(Math.cos(angle)), si = Math.abs(Math.sin(angle));
+      const rw = w * co + h * si, rh = w * si + h * co;
+      const fit = Math.min(1, (w * 0.98) / rw, (h * 0.98) / rh);
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, w, h);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.translate(w / 2, h / 2);
+      ctx.scale(fit, fit);
+      ctx.rotate(angle);
+      ctx.drawImage(bitmap, -cx, -cy);
+      return c;
+    }
+
+    // Main entry point. Given a charm storage path, returns the path of a
+    // gravity-corrected copy, or the original path if no correction is needed
+    // or anything at all goes wrong.
+    async function gravityCorrectedCharmPath(charmPath) {
+      if (!charmPath) return charmPath;
+      if (_gravityMemo.has(charmPath)) return _gravityMemo.get(charmPath);
+      let result = charmPath;
+      try {
+        const cacheName = _gravityKey(charmPath) + "_" + charmPath.split("/").pop().replace(/[^A-Za-z0-9._-]/g, "_");
+        const cachePath = `${GRAVITY_CACHE_DIR}/${cacheName}`;
+
+        // Reuse a previous correction if one exists.
+        try {
+          await getMetadata(ref(storage, cachePath));
+          _gravityMemo.set(charmPath, cachePath);
+          return cachePath;
+        } catch { /* not cached yet */ }
+
+        const buf = await getBytes(ref(storage, charmPath));
+        const bitmap = await createImageBitmap(new Blob([buf]));
+        const info = analyseCharmHang(bitmap);
+        if (!info) {
+          console.warn("[gravity] could not analyse charm silhouette, leaving as-is:", charmPath);
+        } else {
+          const deg = info.angle * 180 / Math.PI;
+          if (Math.abs(deg) < GRAVITY_MIN_DEGREES) {
+            console.log(`[gravity] ${charmPath} already balanced (${deg.toFixed(1)}°), no rotation`);
+          } else {
+            const canvas = renderRotatedCharm(bitmap, info.angle, info.cx, info.cy);
+            const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+            if (!blob) throw new Error("canvas.toBlob returned null");
+            await uploadBytesResumable(ref(storage, cachePath), blob, { contentType: "image/png" });
+            console.log(`[gravity] ${charmPath} rotated ${deg.toFixed(1)}° -> ${cachePath}`);
+            result = cachePath;
+          }
+        }
+        if (bitmap.close) bitmap.close();
+      } catch (err) {
+        console.warn("[gravity] correction failed, using original charm:", charmPath, err);
+        result = charmPath;
+      }
+      _gravityMemo.set(charmPath, result);
+      return result;
+    }
+
+    // A slot gets the rotated charm only if its own prompt carries the gravity
+    // block. That keeps this gated by a single source of truth — the prompt
+    // itself — instead of a second exclusion list that could drift out of sync
+    // (studs are on a rigid post; sizing guides measure the charm flat).
+    const GRAVITY_PROMPT_MARKER = "CHARM HANGING ANGLE — GRAVITY";
+    async function charmPathForSlot(charmPath, category, folder, slotNum) {
+      try {
+        if (!charmPath) return charmPath;
+        const p = buildSlotPrompt(category, folder, slotNum);
+        if (!p || p.indexOf(GRAVITY_PROMPT_MARKER) < 0) return charmPath;
+        return await gravityCorrectedCharmPath(charmPath);
+      } catch (err) {
+        console.warn("[gravity] slot gating failed, using original charm:", err);
+        return charmPath;
+      }
+    }
+
     const modAuth = getAuth(modApp);
 
     async function ensureStorageSignedIn() {
@@ -3375,7 +3582,8 @@
             if (isAdjustmentMode) {
               if (isStrictCharmReferenceSlot) {
                 inputPath = slotStoragePath;
-                charmPath = charmLatest.fullPath;
+                charmPath = await charmPathForSlot(
+                  charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1);
                 const strictReferencePrompt =
                   spec.folder === "Charm_Types"
                     ? CHARM_TYPES_PROMPT
@@ -3436,7 +3644,8 @@ The output must look like the input image with ONLY the user's requested change 
               // Random source reference + the listing's originally-allocated
               // charm + the slot's base prompt.
               inputPath = srcRandom.fullPath;
-              charmPath = charmLatest.fullPath;
+              charmPath = await charmPathForSlot(
+                charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1);
               finalPrompt = buildSlotPrompt(ctxCategory, spec.folder, slotIndex + 1);
             }
 
@@ -6998,42 +7207,28 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // ------------------------------------------------------------
 
     const CHARM_GRAVITY_RULES = `CHARM HANGING ANGLE — GRAVITY (CRITICAL, HIGHEST PRIORITY, OVERRIDES THE TEMPLATE):
-      • The charm in the reference/template image is hanging at the WRONG angle. Its angle is a placeholder and carries NO authority. Do not copy it.
-      • Any rule in this prompt about preserving position, coordinates, layout or template fidelity applies to WHERE the charm hangs from and HOW BIG it is — it does NOT apply to the angle it hangs at. The angle is decided by this block alone.
+      • The Charm Reference image has ALREADY been rotated to the exact angle at which this charm hangs under gravity. Its orientation is correct and authoritative. Reproduce it EXACTLY.
+      • Copy the charm's angle from the Charm Reference image, pixel for pixel. Do not straighten it, do not level it, do not "correct" it, do not add or remove any tilt of your own.
+      • If the charm in the Charm Reference looks tilted, nose-up, or steeply angled, that is DELIBERATE and physically correct. It is how the charm really hangs. Render it at that same angle.
+      • The charm in the template/placeholder image is at the WRONG angle. Its angle is a placeholder and carries NO authority. Do not copy it.
+      • Any rule in this prompt about preserving position, coordinates, layout or template fidelity applies to WHERE the charm hangs from and HOW BIG it is — it does NOT apply to the angle it hangs at. The angle comes from the Charm Reference alone.
 
-      HOW TO SET THE ANGLE:
-      • The charm dangles from a single point: where its eyelet touches the ring, chain link or hoop. That point does not move.
-      • Let it swing. It comes to rest when the heavy part of the charm sits DIRECTLY BELOW that point.
-      • So: look at the charm's shape, find where most of its metal is, and turn the charm until that bulk hangs underneath the eyelet.
-      • Equal amounts of charm to the left and right of a vertical line dropped from the eyelet. That is the finished angle.
-
-      THE ANGLE IS OFTEN LARGE — DO NOT MAKE IT A GENTLE LEAN:
-      • There is no cap. 30°, 45°, 60° or steeper is normal and correct. A charm whose eyelet is off to one side hangs STEEPLY.
-      • Only a charm whose eyelet sits at the top centre of a balanced shape (heart, disc, round pendant) hangs level. Leave those upright.
-
-      SIDE-PROFILE ANIMALS — THE MOST COMMON FAILURE:
-      • A four-legged animal charm (dog, cat, horse) with its ring at the HEAD or NECK does NOT stand level as if on invisible ground. That is the single most common mistake and it looks fake.
-      • It hangs NOSE-UP: the head lifts toward the chain and the body and tail swing down and back, until the middle of the body is under the ring. Expect roughly 40°–70° of rotation.
-      • If the finished image shows the animal standing horizontally, the image is WRONG.
+      HOW TO PLACE IT:
+      • Take the charm exactly as it appears in the Charm Reference, at that exact rotation, and hang it from the chain, jump ring or hoop.
+      • The topmost point of the charm is where the bail attaches. Put that point at the ring and let the rest of the charm sit below it.
+      • The result must look like the charm is dangling freely and has settled — not standing, not propped, not posed.
 
       ROTATE — DO NOT REDRAW:
-      • This is a rigid turn of the finished charm about its eyelet, within the flat picture plane — like turning a sticker on glass.
+      • Any difference in angle between the reference and your output must come from nothing but a rigid turn within the flat picture plane — like turning a sticker on glass.
       • NEVER a perspective tilt, 3D lean, foreshortening or skew. The charm stays perfectly front-facing and flat.
       • Silhouette, engraving, cutouts, proportions, thickness and SIZE are unchanged. The eyelet stays threaded on its ring. The hanging point does not move.
       • Nothing else in the picture turns: not the chain, hoops, hardware, background, text, labels, callouts or captions. Only the charm.
 
-      WHEN IT DOES NOT APPLY:
-      • If the charm is not free to swing, leave it as the template has it: flat-lay or top-down shots, resting on fabric/stone/paper, pinned to a display card, held in fingers, or a stud earring fixed on its post.
-      • Otherwise it applies — on a model, on a bust, on a studio background, and equally on a plain white-background diagram or size guide.
-      • "Down" is the scene's true vertical, read from the fall of the chain, the model's posture and the other shadows.
-
-      • Apply this to EVERY charm instance in the image independently. Same face shown twice → same angle. Mirrored faces → mirrored angles. Shadows, reflections and any contact with skin or fabric follow the charm's final rotated position.
-      • HARD FAIL: a side-profile animal charm rendered standing level.
-      • HARD FAIL: more charm mass on one side of the vertical through the eyelet than the other.
+      • Apply this to EVERY charm instance in the image. Same face shown twice → same angle. Mirrored faces → mirrored angles. Shadows, reflections and any contact with skin or fabric follow the charm's final position.
+      • HARD FAIL: the charm rendered more upright, more level or more "standing" than it appears in the Charm Reference image.
       • HARD FAIL: the template placeholder's angle copied through to the output.
-      • HARD FAIL: a timid decorative lean substituted for the true resting angle.
-      • HARD FAIL: the charm skewed, squashed, re-posed, resized, redrawn or tilted out of the flat picture plane instead of simply turned.
-      • HARD FAIL: a balanced top-centre-eyelet charm (heart, disc) given a tilt it should not have.`;
+      • HARD FAIL: a side-profile animal charm rendered standing level as if on invisible ground.
+      • HARD FAIL: the charm skewed, squashed, re-posed, resized, redrawn or tilted out of the flat picture plane instead of simply turned.`;
 
     
     // =========================================================================
@@ -10830,7 +11025,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 type: "edits",
                 slotIndex: s,
                 input_storage_path: srcRandom.fullPath,
-                input_charm_storage_path: charmPathForSet,
+                input_charm_storage_path:
+                  await charmPathForSlot(charmPathForSet, category, spec.folder, s + 1),
                 prompt: buildSlotPrompt(category, spec.folder, s + 1),
               });
             }
@@ -11498,7 +11694,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 type: "edits",
                 slotIndex: s,
                 input_storage_path: srcRandom.fullPath,
-                input_charm_storage_path: charmPathForSet,
+                input_charm_storage_path:
+                  await charmPathForSlot(charmPathForSet, category, spec.folder, s + 1),
                 prompt: buildSlotPrompt(category, spec.folder, s + 1),
               });
             }
