@@ -9839,6 +9839,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • HARD FAIL: any charm in the output retains the template placeholder's silhouette, shape, or design, in whole or in part.
         • HARD FAIL: two charm instances in the output show different silhouettes from each other.`;
 
+    const SKIN_UNIFORMITY_RULES =
+    `SKIN AROUND THE CHARM — ZERO COLOUR VARIATION (CRITICAL; applies wherever skin is visible in this graphic):
+        • The skin immediately touching and surrounding the charm/pendant — and every other piece of metal that meets skin in this graphic, including its eyelet, the hoop, the chain and each individual chain link — must be the SAME hue, the SAME saturation and the SAME brightness as the skin a short distance away. There must be NO visible transition of any kind.
+        • KNOWN FAILURE MODE — GREY OUTLINE: a thin grey, ashen, olive, desaturated, muddy or dull fringe appears on the skin tracing the outline of the charm — and sometimes following the chain as well. This is a compositing/masking artefact, not real lighting. It must not appear anywhere in the output.
+        • DO NOT OVERCOMPENSATE — THIS IS EQUALLY IMPORTANT: do not counteract the grey by brightening, warming, reddening, tanning, saturating, pinkening or adding glow to the skin near the charm. A warm ring is exactly as wrong as a grey ring. Do not retouch, repaint, smooth, blur or feather that area at all — simply leave the skin exactly as it reads everywhere else.
+        • NO EDGE TREATMENT: do not add an outline, edge stroke, matte line, rim light, halo, glow, dark keyline, vignette or transitional band where the charm meets skin. The charm's edge against skin is a clean, hard, precise cut with no intermediate band of altered skin.
+        • The ONLY permissible tonal variation near the charm is the small, natural contact shadow the charm physically casts. That shadow must be soft, subtle, neutral in hue (a darker version of the SAME skin tone — never grey, never blue, never green), and consistent in direction and softness with every other shadow in the image. It must never read as an outline tracing the charm silhouette.
+        • Do not desaturate, neutralise, cool or dull the skin near the metal in order to make the gold stand out. The gold must read correctly against completely untouched skin.
+        • Match THIS model's actual skin tone. Never shift the area toward any default or generic skin colour.
+        • SELF-CHECK BEFORE RETURNING: mentally sample the skin one charm-width away from the charm and compare it to skin far from the charm. If the hue, saturation or brightness differ noticeably in ANY direction — greyer or warmer, duller or brighter — the render is WRONG: restore that region to the surrounding skin tone and re-render.
+        • CHAIN AND CLOSE SURROUNDINGS: the same rule applies to the skin beneath and beside the chain. The chain must not leave a grey, dulled or smudged trail on the skin, and the wider area of skin framed by the necklace must not be darkened, flattened or colour-shifted relative to the rest of the body.
+        • HARD FAIL: any grey, ashen, desaturated, olive or dulled ring, halo, fringe or outline on the skin around the charm/pendant, its eyelet, the hoop, or anywhere along the chain.
+        • HARD FAIL: any brighter, warmer, pinker, redder, tanned or glowing ring of skin around the charm — the overcorrection of the same defect.
+        • HARD FAIL: any blurred, smudged, feathered, painted-over or visibly retouched patch of skin near the charm.
+        • HARD FAIL: a viewer can tell where the charm was placed by looking at the skin alone.`;
+
     /* Slots 1 & 4 (on-ear / model-worn) use the SAME size lock as slots 2, 3, 5
        and 7. This block adds emphasis only — it changes no numbers. */
     const HUGGIE_CHARM_TINY_EMPHASIS =
@@ -9892,6 +9908,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ${HUGGIE_CHARM_SCALE_RULES}
 
       ${HUGGIE_CHARM_NO_BLEED_RULES}
+
+      ${SKIN_UNIFORMITY_RULES}
 
       SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it per the CHARM-TO-HOOP SIZE LOCK above (7% of the LARGEST / 11 mm hoop's outer diameter, never above 9%) and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.`;
 
@@ -10073,7 +10091,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         •Generate a high-end photorealistic commercial jewelry image based on the attached reference image, use soft studio lighting and sharp focus on the necklace chain and charm/pendant details.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour, and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
-        • Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+        • The skin around the Charm/Pendant and chain must read as completely uniform with the rest of the body — no grey outline, and equally no brighter or warmer ring. This is governed by the SKIN AROUND THE CHARM block below, which is a HIGH-PRIORITY requirement for this graphic.
         • All engravings must be coloured-in/filled-in using a light shade of copper colour, and must be flat having only superficial depth.
         • Ensure all engravings are a light shade of copper colour.
         • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin. 
@@ -10081,6 +10099,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
         • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
         • The chain must remain exactly the same size and detail as in the reference image.
+
+      ${SKIN_UNIFORMITY_RULES}
 
       GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
         • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
