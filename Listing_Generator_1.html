@@ -2799,22 +2799,40 @@
     // has to say "match the reference", which models obey reliably.
     //
     // Physics: a charm is a flat sheet of uniform thickness, so its centre of
-    // mass is the centroid of its silhouette. Hung from a point, it rests
-    // with that centroid directly below the attachment point. Charm designs
-    // are generated without a bail, and the bail is attached at the top of
-    // the charm as drawn, so the attachment point is the topmost point of the
-    // silhouette. Those two facts together define a self-consistent state:
-    // rotate until the topmost point sits directly above the centroid. We
-    // find it by damped fixed-point iteration over the convex hull.
+    // mass is the centroid of its silhouette, and it hangs with that centroid
+    // directly below whatever it is threaded on. The thing it is threaded on
+    // is the charm's own bail — the enclosed hole at the top — so when that
+    // hole is visible the resting angle is a measurement, not a guess, and it
+    // is closed-form. Only when no bail can be found do we fall back to
+    // inferring one at the top of the silhouette, and that inference is
+    // applied far more gently because it is only an assumption about intent.
+    //
+    // Two further brakes keep the result from looking contrived. A few
+    // degrees of lean is treated as zero, and a bail sitting close to the
+    // centre of mass has almost no leverage — in that case a small offset
+    // implies a large angle for no real physical reason, so the correction is
+    // faded out rather than trusted.
     //
     // Every failure path returns the ORIGINAL path, so a charm can never be
     // lost to this code — worst case the behaviour is exactly as before.
     // =====================================================================
     const GRAVITY_CACHE_DIR = `${ROOT}/_gravity_cache`;
-    const GRAVITY_MIN_DEGREES = 3;      // below this, rotating is pointless
+    const HOOP_REPAIR_DIR = `${ROOT}/_gravity_cache/_hooped`;
+    const GRAVITY_MIN_DEGREES = 3;      // below this, rewriting the file is pointless
     const GRAVITY_SAMPLE_MAX = 400;     // silhouette analysis resolution
     const GRAVITY_LUMA_THRESHOLD = 38;  // background is pure #000
+    const GRAVITY_DEADBAND_DEG = 6;     // a measured lean under this reads as upright
+    const GRAVITY_STRENGTH = 0.85;      // how much of the remainder to apply
+    const GRAVITY_APEX_DEADBAND_DEG = 12; // wider when the hang point was inferred
+    const GRAVITY_APEX_STRENGTH = 0.55;   // and weaker, for the same reason
+    const GRAVITY_LEVER_MIN = 0.15;     // bail this close to the centroid: ignore
+    const GRAVITY_LEVER_FULL = 0.60;    // bail this far out: trust the measurement
     const _gravityMemo = new Map();
+
+    // The earring pools are made hoopless on purpose (promptStrEarring strips
+    // the bail), so a missing hoop there is correct and must never be
+    // "repaired".
+    const HOOPLESS_CHARM_CATEGORIES = ["Stud_Earrings", "Hoop_Earrings"];
 
     function _gravityKey(str) {
       let h = 5381;
@@ -2834,8 +2852,85 @@
       return lo.concat(up);
     }
 
-    // Returns { angle (radians, clockwise-positive on screen), cx, cy } in the
-    // coordinate space of the supplied bitmap, or null if unanalysable.
+    // Finds the bail: the hole you would thread a chain through. Any patch of
+    // background completely walled in by metal is a hole; the bail is the
+    // large, roughly round one near the top. An engraved dot (an eye, a
+    // nostril) is far too small to qualify, and a decorative cutout low on the
+    // charm loses to the height weighting. Returns { cx, cy, area, r } or null.
+    function _findBailHole(mask, sw, sh, metalArea, bbox) {
+      // Flood the background inward from the frame edge. Whatever background
+      // it cannot reach is enclosed by metal.
+      const outside = new Uint8Array(sw * sh);
+      const queue = new Int32Array(sw * sh);
+      let qh = 0, qt = 0;
+      const seed = (x, y) => {
+        const i = y * sw + x;
+        if (mask[i] || outside[i]) return;
+        outside[i] = 1; queue[qt++] = i;
+      };
+      for (let x = 0; x < sw; x++) { seed(x, 0); seed(x, sh - 1); }
+      for (let y = 0; y < sh; y++) { seed(0, y); seed(sw - 1, y); }
+      while (qh < qt) {
+        const i = queue[qh++], x = i % sw, y = (i - x) / sw;
+        if (x > 0) seed(x - 1, y);
+        if (x < sw - 1) seed(x + 1, y);
+        if (y > 0) seed(x, y - 1);
+        if (y < sh - 1) seed(x, y + 1);
+      }
+
+      const minArea = Math.max(12, metalArea * 0.004);
+      const maxArea = metalArea * 0.35;
+      const silTop = bbox[1], silH = Math.max(1, bbox[3] - bbox[1]);
+      const done = new Uint8Array(sw * sh);
+      let best = null, bestScore = 0;
+
+      for (let start = 0; start < sw * sh; start++) {
+        if (mask[start] || outside[start] || done[start]) continue;
+        qh = 0; qt = 0; queue[qt++] = start; done[start] = 1;
+        let area = 0, sx = 0, sy = 0;
+        let x0 = sw, x1 = -1, y0 = sh, y1 = -1;
+        while (qh < qt) {
+          const i = queue[qh++], x = i % sw, y = (i - x) / sw;
+          area++; sx += x; sy += y;
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+          const nb = [];
+          if (x > 0) nb.push(i - 1);
+          if (x < sw - 1) nb.push(i + 1);
+          if (y > 0) nb.push(i - sw);
+          if (y < sh - 1) nb.push(i + sw);
+          for (const j of nb) {
+            if (mask[j] || outside[j] || done[j]) continue;
+            done[j] = 1; queue[qt++] = j;
+          }
+        }
+        if (area < minArea || area > maxArea) continue;
+
+        const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+        const squareness = Math.min(bw, bh) / Math.max(bw, bh);
+        const fill = area / (bw * bh);
+        // A threading hole is a rounded pocket, not a long slot or a thin
+        // decorative sliver.
+        if (squareness < 0.45 || fill < 0.5) continue;
+
+        const hcx = sx / area, hcy = sy / area;
+        const relY = Math.min(1, Math.max(0, (hcy - silTop) / silH));
+        if (relY > 0.5) continue;              // only the upper half can hold a bail
+        const score = area / (1 + 3 * relY);   // big and high beats big and middling
+        if (score > bestScore) {
+          bestScore = score;
+          best = { cx: hcx, cy: hcy, area, r: Math.sqrt(area / Math.PI) };
+        }
+      }
+      return best;
+    }
+
+    // Returns { angle (radians, ready to hand to ctx.rotate), cx, cy, pivot,
+    // lever } in the coordinate space of the supplied bitmap, or null if
+    // unanalysable. `pivot` is "hoop" when the charm's own bail hole was
+    // measured and "apex" when the hang point had to be inferred instead.
     function analyseCharmHang(bitmap) {
       const w = bitmap.width, h = bitmap.height;
       if (!w || !h) return null;
@@ -2847,7 +2942,9 @@
       ctx.drawImage(bitmap, 0, 0, sw, sh);
       const d = ctx.getImageData(0, 0, sw, sh).data;
 
+      const mask = new Uint8Array(sw * sh);
       let sx = 0, sy = 0, n = 0;
+      let x0 = sw, x1 = -1, y0 = sh, y1 = -1;
       const pts = [];
       for (let y = 0; y < sh; y++) {
         for (let x = 0; x < sw; x++) {
@@ -2855,7 +2952,12 @@
           if (d[i + 3] < 16) continue;
           const luma = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
           if (luma < GRAVITY_LUMA_THRESHOLD) continue;
+          mask[y * sw + x] = 1;
           sx += x; sy += y; n++;
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
           pts.push([x, y]);
         }
       }
@@ -2865,21 +2967,43 @@
       if (n < 64 || coverage < 0.005 || coverage > 0.92) return null;
 
       const cx = sx / n, cy = sy / n;
+
+      // --- Preferred pivot: the charm's own bail ---------------------------
+      // A charm hangs from the hole the chain runs through, so if that hole is
+      // in the picture the resting angle is exact: turn until the centre of
+      // mass sits directly beneath it.
+      const hole = _findBailHole(mask, sw, sh, n, [x0, y0, x1, y1]);
+      if (hole) {
+        const vx = cx - hole.cx, vy = cy - hole.cy;
+        const arm = Math.hypot(vx, vy);
+        if (arm < Math.max(2, hole.r)) return null;   // bail sits on the centroid
+        const angle = Math.atan2(vx, vy);
+        if (!isFinite(angle)) return null;
+        // How long the lever is, as a fraction of the charm's own radius. A
+        // bail out at the rim swings the charm decisively; a bail near the
+        // middle barely swings it at all, and a couple of pixels of noise
+        // there would read as a big angle. This ratio is what stops a
+        // roughly-centred hoop coming out weirdly twisted.
+        let reach = 1;
+        for (const [px, py] of pts) reach = Math.max(reach, Math.hypot(px - cx, py - cy));
+        return { angle, cx: cx / scale, cy: cy / scale, pivot: "hoop", lever: arm / reach };
+      }
+
+      // --- Fallback: no bail in the picture, so infer where one would go ---
+      // Assume it would be fitted at the top of the charm as drawn. That is a
+      // guess about the maker's intent rather than a measurement, which is why
+      // the caller applies it much more gently.
       const hull = _convexHull(pts).map(p => [p[0] - cx, p[1] - cy]);
       if (hull.length < 3) return null;
 
-      // The bail sits at the top of the charm, so the pivot is the topmost
-      // point. A flat or rounded top (a disc, a heart, the flat crown of a
-      // head) has many points at nearly the same height, and picking one
-      // arbitrarily both invents a tilt on symmetric charms and makes the
-      // iteration oscillate. So the pivot is the CENTRE of the topmost run:
-      // every hull point within a small tolerance of the highest, averaged.
+      // A flat or rounded top has many points at nearly the same height, and
+      // picking one arbitrarily both invents a tilt on symmetric charms and
+      // makes the iteration oscillate. So the pivot is the CENTRE of the
+      // topmost run: every hull point within a small tolerance of the highest.
       let extent = 0;
       for (const [dx, dy] of hull) extent = Math.max(extent, Math.hypot(dx, dy));
       const topTol = Math.max(1, extent * 0.03);
 
-      // Damped fixed point: rotate until that pivot is directly above the
-      // centroid — the charm's true resting position.
       let theta = 0, alpha = 0;
       for (let it = 0; it < 200; it++) {
         const co = Math.cos(theta), si = Math.sin(theta);
@@ -2896,20 +3020,36 @@
         if (!k) return null;
         bx /= k; by /= k;
         if (by >= 0) return null;                   // degenerate: nothing above the centroid
-        alpha = Math.atan2(bx, -by);                // pivot's offset from vertical
+        alpha = Math.atan2(bx, -by);
         if (!isFinite(alpha)) return null;
         theta += alpha * 0.35;
         if (Math.abs(alpha) < 1e-4) break;
       }
       // Refuse to guess if it never settled, rather than emit a wrong angle.
       if (!isFinite(theta) || Math.abs(alpha) > 0.02) return null;
-      // Normalise to (-pi, pi]
       while (theta > Math.PI) theta -= 2 * Math.PI;
       while (theta <= -Math.PI) theta += 2 * Math.PI;
       // The iteration works in a matrix whose sense is the inverse of the one
       // canvas ctx.rotate() uses, so negate: `angle` is now directly the value
       // to hand to ctx.rotate().
-      return { angle: -theta, cx: cx / scale, cy: cy / scale };
+      return { angle: -theta, cx: cx / scale, cy: cy / scale, pivot: "apex", lever: 1 };
+    }
+
+    // How much of the measured angle to actually apply. A charm whose bail is
+    // already near its balance point should read as upright rather than as a
+    // physics demo, so a few degrees is treated as zero, the rest is eased off
+    // slightly, and a short lever fades the whole thing out. An inferred hang
+    // point gets a wider dead zone and a weaker pull on top of that, because
+    // the pivot itself is only an assumption.
+    function softenHangAngle(deg, pivot, lever) {
+      const dead = pivot === "hoop" ? GRAVITY_DEADBAND_DEG : GRAVITY_APEX_DEADBAND_DEG;
+      const gain = pivot === "hoop" ? GRAVITY_STRENGTH : GRAVITY_APEX_STRENGTH;
+      const mag = Math.abs(deg);
+      if (!isFinite(mag) || mag <= dead) return 0;
+      const arm = (lever == null) ? 1 : lever;
+      const conf = Math.min(1, Math.max(0,
+        (arm - GRAVITY_LEVER_MIN) / (GRAVITY_LEVER_FULL - GRAVITY_LEVER_MIN)));
+      return Math.sign(deg) * (mag - dead) * gain * conf;
     }
 
     // Draws the bitmap rotated about its silhouette centroid onto a canvas of
@@ -2934,62 +3074,135 @@
       return c;
     }
 
-    // Main entry point. Given a charm storage path, returns the path of a
-    // gravity-corrected copy, or the original path if no correction is needed
-    // or anything at all goes wrong.
-    async function gravityCorrectedCharmPath(charmPath) {
-      if (!charmPath) return charmPath;
-      if (_gravityMemo.has(charmPath)) return _gravityMemo.get(charmPath);
-      let result = charmPath;
-      try {
-        const cacheName = _gravityKey(charmPath) + "_" + charmPath.split("/").pop().replace(/[^A-Za-z0-9._-]/g, "_");
-        const cachePath = `${GRAVITY_CACHE_DIR}/${cacheName}`;
-
-        // Reuse a previous correction if one exists.
-        try {
-          await getMetadata(ref(storage, cachePath));
-          _gravityMemo.set(charmPath, cachePath);
-          return cachePath;
-        } catch { /* not cached yet */ }
-
-        const buf = await getBytes(ref(storage, charmPath));
-        const bitmap = await createImageBitmap(new Blob([buf]));
-        const info = analyseCharmHang(bitmap);
-        if (!info) {
-          console.warn("[gravity] could not analyse charm silhouette, leaving as-is:", charmPath);
-        } else {
-          const deg = info.angle * 180 / Math.PI;
-          if (Math.abs(deg) < GRAVITY_MIN_DEGREES) {
-            console.log(`[gravity] ${charmPath} already balanced (${deg.toFixed(1)}°), no rotation`);
-          } else {
-            const canvas = renderRotatedCharm(bitmap, info.angle, info.cx, info.cy);
-            const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
-            if (!blob) throw new Error("canvas.toBlob returned null");
-            await uploadBytesResumable(ref(storage, cachePath), blob, { contentType: "image/png" });
-            console.log(`[gravity] ${charmPath} rotated ${deg.toFixed(1)}° -> ${cachePath}`);
-            result = cachePath;
-          }
-        }
-        if (bitmap.close) bitmap.close();
-      } catch (err) {
-        console.warn("[gravity] correction failed, using original charm:", charmPath, err);
-        result = charmPath;
-      }
-      _gravityMemo.set(charmPath, result);
-      return result;
+    async function _loadCharmBitmap(path) {
+      const buf = await getBytes(ref(storage, path));
+      return await createImageBitmap(new Blob([buf]));
     }
 
-    // A slot gets the rotated charm only if its own prompt carries the gravity
-    // block. That keeps this gated by a single source of truth — the prompt
-    // itself — instead of a second exclusion list that could drift out of sync
-    // (studs are on a rigid post; sizing guides measure the charm flat).
+    // Redraws this exact charm with a bail integrated into it, ONCE, and
+    // parks the result in storage. Every slot of every listing that uses this
+    // charm then gets the same file back, so the model is never left to
+    // improvise a jump ring of its own — which is what made the ring land in a
+    // different place in every image.
+    async function hoopIntegratedCharmPath(charmPath) {
+      const folder = `${HOOP_REPAIR_DIR}/${_gravityKey(charmPath)}`;
+      const outPath = `${folder}/Slot_1.png`;
+      try {
+        await getMetadata(ref(storage, outPath));
+        console.log("[gravity] reusing hoop-repaired charm:", outPath);
+        return outPath;
+      } catch (_) { /* not built yet */ }
+
+      try { setStatus("Charm has no hoop — generating one…"); } catch (_) {}
+      console.log("[gravity] no bail found, generating a hooped version of:", charmPath);
+      await postImageGeneration({
+        kind: "edits",
+        activeCategory: "Charms",
+        input_storage_path: charmPath,
+        input_charm_storage_path: charmPath,
+        output_base_path: folder,
+        slotIndex: 0,
+        prompt: promptStrAddHoop,
+      });
+      const res = await waitForSlotPngUrl(folder, 0, { timeoutMs: 420000, intervalMs: 5000 });
+      return res.storagePath;
+    }
+
+    // Main entry point. Given a charm storage path, returns the path of the
+    // reference the model should actually be shown — hoop-repaired if it had
+    // no bail, gravity-corrected if it hangs off-balance — or the original
+    // path if nothing is needed or anything at all goes wrong.
+    async function gravityCorrectedCharmPath(charmPath, allowHoopRepair) {
+      if (!charmPath) return charmPath;
+      // Memoise the PROMISE, not the result, so two slots asking at the same
+      // moment share one repair instead of racing into two generations.
+      if (_gravityMemo.has(charmPath)) return await _gravityMemo.get(charmPath);
+      const work = (async () => {
+        try {
+          const cacheName = _gravityKey(charmPath) + "_" + charmPath.split("/").pop().replace(/[^A-Za-z0-9._-]/g, "_");
+          const cachePath = `${GRAVITY_CACHE_DIR}/${cacheName}`;
+
+          // Reuse a previous correction if one exists.
+          try {
+            await getMetadata(ref(storage, cachePath));
+            return cachePath;
+          } catch (_) { /* not cached yet */ }
+
+          let basePath = charmPath;
+          let bitmap = await _loadCharmBitmap(basePath);
+          let info = analyseCharmHang(bitmap);
+          let repaired = false;
+
+          // No bail in the artwork: build one, once, and work from that copy
+          // for the rest of this charm's life.
+          if (allowHoopRepair && (!info || info.pivot !== "hoop")) {
+            try {
+              const hooped = await hoopIntegratedCharmPath(charmPath);
+              if (hooped && hooped !== basePath) {
+                const hoopedBitmap = await _loadCharmBitmap(hooped);
+                const hoopedInfo = analyseCharmHang(hoopedBitmap);
+                if (hoopedInfo) {
+                  if (bitmap.close) bitmap.close();
+                  basePath = hooped; bitmap = hoopedBitmap; info = hoopedInfo;
+                  repaired = true;
+                } else if (hoopedBitmap.close) {
+                  hoopedBitmap.close();
+                }
+              }
+            } catch (err) {
+              console.warn("[gravity] hoop repair failed, continuing with the original charm:", err);
+            }
+          }
+
+          if (!info) {
+            console.warn("[gravity] could not analyse charm silhouette, leaving as-is:", charmPath);
+            if (bitmap.close) bitmap.close();
+            return repaired ? basePath : charmPath;
+          }
+
+          const rawDeg = info.angle * 180 / Math.PI;
+          const deg = softenHangAngle(rawDeg, info.pivot, info.lever);
+          if (!repaired && Math.abs(deg) < GRAVITY_MIN_DEGREES) {
+            console.log(`[gravity] ${charmPath} hangs true (${info.pivot} pivot, measured ${rawDeg.toFixed(1)}°, applied ${deg.toFixed(1)}°) — left alone`);
+            if (bitmap.close) bitmap.close();
+            return charmPath;
+          }
+
+          const canvas = renderRotatedCharm(bitmap, deg * Math.PI / 180, info.cx, info.cy);
+          const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+          if (bitmap.close) bitmap.close();
+          if (!blob) throw new Error("canvas.toBlob returned null");
+          await uploadBytesResumable(ref(storage, cachePath), blob, { contentType: "image/png" });
+          console.log(`[gravity] ${charmPath}${repaired ? " (hoop added)" : ""} ${info.pivot} pivot, measured ${rawDeg.toFixed(1)}° -> applied ${deg.toFixed(1)}° -> ${cachePath}`);
+          return cachePath;
+        } catch (err) {
+          console.warn("[gravity] correction failed, using original charm:", charmPath, err);
+          return charmPath;
+        }
+      })();
+      _gravityMemo.set(charmPath, work);
+      try {
+        return await work;
+      } catch (err) {
+        _gravityMemo.delete(charmPath);
+        console.warn("[gravity] correction threw, using original charm:", charmPath, err);
+        return charmPath;
+      }
+    }
+
+    // A slot gets the corrected charm only if its own prompt carries the
+    // gravity block. That keeps this gated by a single source of truth — the
+    // prompt itself — instead of a second exclusion list that could drift out
+    // of sync (studs are on a rigid post; sizing guides measure the charm
+    // flat).
     const GRAVITY_PROMPT_MARKER = "CHARM HANGING ANGLE — GRAVITY";
     async function charmPathForSlot(charmPath, category, folder, slotNum) {
       try {
         if (!charmPath) return charmPath;
         const p = buildSlotPrompt(category, folder, slotNum);
         if (!p || p.indexOf(GRAVITY_PROMPT_MARKER) < 0) return charmPath;
-        return await gravityCorrectedCharmPath(charmPath);
+        const allowHoopRepair = !HOOPLESS_CHARM_CATEGORIES.includes(category);
+        return await gravityCorrectedCharmPath(charmPath, allowHoopRepair);
       } catch (err) {
         console.warn("[gravity] slot gating failed, using original charm:", err);
         return charmPath;
@@ -6207,6 +6420,35 @@ function updateApproveButtonState() {
     • Do not introduce any new elements, 3D thickness, or styling changes.
     • The final output MUST be the exact same charm, just missing the top hoop, on a PURE BLACK background.`;
 
+    // Used only when a charm in the pool turns out to have no bail at all.
+    // The point is a faithful copy plus one ring — anything else redrawn would
+    // break the promise that every image in a listing shows the same charm.
+    const promptStrAddHoop = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm.
+    Your task is to reproduce that EXACT charm, 100% identical in every respect, with ONE addition:
+
+    Addition 1: Integrate a hoop/bail into the charm so it can be threaded onto a chain.
+
+    THE CHARM ITSELF MUST NOT CHANGE:
+    • Silhouette, outline, proportions, pose, engravings, cutouts, gold tone, polish and level of detail must all be IDENTICAL to the reference. This is a copy, not a reinterpretation.
+    • Do NOT restyle, redraw, re-pose, resize, mirror, crop or re-centre the charm. Do NOT add or remove any feature other than the hoop.
+    • Keep the charm at the same position and the same scale within the frame as in the reference.
+
+    THE HOOP (CRITICAL):
+    • Add exactly ONE closed hoop, fused into the charm as a single continuous piece of the same metal — as if the whole thing were cut from one sheet. It must NOT look like a separate jump ring clipped on.
+    • The hoop must have a clear open hole through it, big enough to read as threadable at a glance.
+    • Place it at the TOP of the charm, at the point where the charm would balance when hanging: directly above the charm's centre of mass, so the charm hangs upright and level rather than tipping nose-up or nose-down. For a side-profile animal that usually means above the middle of the back or the shoulders, NOT above the nose and NOT above the tail.
+    • The hoop must merge into the charm's outline cleanly, following the existing contour where they meet.
+    • Exactly one hoop. NEVER a second ring, NEVER a chain, NEVER a clasp.
+
+    HARD CONSTRAINTS (NON-NEGOTIABLE):
+    • BACKGROUND COLOR (CRITICAL): The background MUST be 100% PURE SOLID BLACK (#000000). ABSOLUTELY NO white, grey, gradient or transparent backgrounds.
+    • FLAT SHEET METAL: the charm and its hoop are one perfectly flat, thin sheet of high-polish metal.
+    • VIEWPOINT: perfectly front-facing (orthographic), 0% perspective tilt.
+    • NO TEXT: never render letters, numbers or words.
+    • HARD FAIL: the charm redrawn differently from the reference in any way other than the added hoop.
+    • HARD FAIL: more than one ring, or a ring that reads as a separate attached jump ring rather than part of the charm.
+    • HARD FAIL: a hoop placed so far off-centre that the charm would hang badly tilted.`;
+
 const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a specific Black & White line art style. 
 
     The SECOND image is strictly a STYLE REFERENCE. You must NEVER copy, merge, or include the subject matter or object shown in the second image. 
@@ -7310,9 +7552,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       • The charm in the template/placeholder image is at the WRONG angle. Its angle is a placeholder and carries NO authority. Do not copy it.
       • Any rule in this prompt about preserving position, coordinates, layout or template fidelity applies to WHERE the charm hangs from and HOW BIG it is — it does NOT apply to the angle it hangs at. The angle comes from the Charm Reference alone.
 
+      USE THE CHARM'S OWN HOOP — DO NOT INVENT ONE:
+      • Look at the Charm Reference. If the charm already has a hoop, bail, ring or eyelet built into it, that is the ONLY attachment point. It is part of the charm's design and it is already in the right place.
+      • Thread the chain, jump ring or earring hoop THROUGH that existing hole. Do not draw a second ring. Do not draw your own ring somewhere else. Do not move, resize, restyle or hide the one that is there.
+      • The existing hoop must appear in your output in exactly the same place on the charm, at the same size and in the same style, as it appears in the Charm Reference — it turns with the charm and nothing more.
+      • ONLY if the Charm Reference genuinely has no hoop, bail, ring or hole anywhere may you attach one yourself, and then it goes at the top of the charm, directly above its centre of mass.
+      • Whatever the charm hangs from, it hangs from ONE point. Never two rings, never a ring plus a solder joint, never a different attachment in different images of the same listing.
+
       HOW TO PLACE IT:
       • Take the charm exactly as it appears in the Charm Reference, at that exact rotation, and hang it from the chain, jump ring or hoop.
-      • The topmost point of the charm is where the bail attaches. Put that point at the ring and let the rest of the charm sit below it.
       • The result must look like the charm is dangling freely and has settled — not standing, not propped, not posed.
 
       ROTATE — DO NOT REDRAW:
@@ -7325,7 +7573,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       • HARD FAIL: the charm rendered more upright, more level or more "standing" than it appears in the Charm Reference image.
       • HARD FAIL: the template placeholder's angle copied through to the output.
       • HARD FAIL: a side-profile animal charm rendered standing level as if on invisible ground.
-      • HARD FAIL: the charm skewed, squashed, re-posed, resized, redrawn or tilted out of the flat picture plane instead of simply turned.`;
+      • HARD FAIL: the charm skewed, squashed, re-posed, resized, redrawn or tilted out of the flat picture plane instead of simply turned.
+      • HARD FAIL: a jump ring, bail or connection point invented anywhere on the charm when the Charm Reference already shows one.
+      • HARD FAIL: the same charm shown with its connection point in different places across the images of one listing.`;
 
     
     // =========================================================================
