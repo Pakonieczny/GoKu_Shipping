@@ -2092,8 +2092,17 @@
 
   /* ---- the compact slot card ---------------------------------------- */
   #reviewGrid .slot { padding: 8px; }
-  /* Explicit and intentional: the preview box keeps its original size. */
-  #reviewGrid .slotPrev { height: 200px; }
+  /* 200px is a FLOOR, not a fixed size: the preview never gets smaller than
+     it was, but when the left panel collapses and the card widens, the box
+     grows square with it instead of letterboxing the image into dead space.
+     The cap is the honest two-row vertical budget - previews, card chrome and
+     the row gap must still fit under the grid's top edge. */
+  #reviewGrid .slotPrev {
+    height: auto;
+    aspect-ratio: 1 / 1;
+    min-height: 200px;
+    max-height: calc((100vh - 348px) / 2);
+  }
   #reviewGrid .rev-meta { margin-top: 4px; font-size: 10px; line-height: 1.3; }
 
   #reviewGrid .rev-actions {
@@ -2230,6 +2239,12 @@
     #reviewGrid .rev-actions .redoBtn { padding: 4px 7px !important; }
     #reviewGrid .skipToggle { padding: 3px 5px; }
     #reviewGrid .redoAdjustInput { padding: 4px 6px !important; }
+
+    /* Short windows carry less chrome above the grid (123px vs 194px) and
+       a leaner card (43px vs 58px), so the two-row budget is recomputed
+       here. At 634px this lands at ~204px - the previews still grow as the
+       panel collapses, just by as much as the window actually allows. */
+    #reviewGrid .slotPrev { max-height: calc((100vh - 233px) / 2); }
 
     /* The always-open set list stays a bounded box so Approve / Delete and
        the Downloads group remain within one short scroll of the top. */
