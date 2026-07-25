@@ -1059,6 +1059,13 @@ const ApiUsage=(()=>{
   let probeInFlight=false;
   let lastProbeAt=0;
   let lastUsageSnapshot=null;
+  // Endpoint capability, resolved once from a real 404 (never from a
+  // transient network error, which must stay an error rather than
+  // silently downgrading the source).
+  //   'fn'    → shared /etsyApiUsage (same as Index.html)
+  //   'store' → this console's own POST /etsyPricingStore {action:'apiUsage'}
+  let usageMode=null;
+  let probeAvailable=true;
 
   const byId=id=>document.getElementById(id);
   const abbreviate=n=>{
@@ -1078,20 +1085,43 @@ const ApiUsage=(()=>{
     bar.parentElement.className='awBar'+(state?' '+state:'');
   };
 
+  // Reads the counters, preferring the shared verified endpoint. Returns
+  // the payload with __viaStore set when it came from the fallback, so the
+  // tooltip can say plainly that this deployment isn't serving the
+  // verified endpoint rather than passing the numbers off as verified.
+  async function readUsage(){
+    if(usageMode!=='store'){
+      const response=await fetch(FUNCTIONS_BASE+'/etsyApiUsage?app=pricing-console&t='+Date.now(),{
+        method:'GET',
+        cache:'no-store',
+        headers:{Accept:'application/json'},
+      });
+      if(response.status!==404){
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok||data.ok===false||data.verified!==true){
+          throw new Error(data.error||'API statistics unavailable');
+        }
+        usageMode='fn';
+        return data;
+      }
+      // Genuine 404 — this site doesn't serve the shared endpoint.
+      if(usageMode!=='store'){
+        usageMode='store';
+        console.info('etsyApiUsage not deployed on this origin — using this console\u2019s own /etsyPricingStore apiUsage transport instead.');
+      }
+    }
+    const data=await fbCall({action:'apiUsage'});
+    if(!data||data.count==null)throw new Error(data&&data.error||'API statistics unavailable');
+    data.__viaStore=true;
+    return data;
+  }
+
   async function refreshApiUsage(){
     if(refreshInFlight)return lastUsageSnapshot;
     refreshInFlight=true;
     const widget=byId('apiWidget');
     try{
-      const response=await fetch(FUNCTIONS_BASE+'/etsyApiUsage?t='+Date.now(),{
-        method:'GET',
-        cache:'no-store',
-        headers:{Accept:'application/json'},
-      });
-      const data=await response.json().catch(()=>({}));
-      if(!response.ok||data.ok===false||data.verified!==true){
-        throw new Error(data.error||'API statistics unavailable');
-      }
+      const data=await readUsage();
       lastUsageSnapshot=data;
 
       const used=Number(data.count||0);
@@ -1132,6 +1162,12 @@ const ApiUsage=(()=>{
         'Key = Etsy\u2019s own meter for the WHOLE API key (every app), reset at midnight UTC.\n'+
         'QPS = highest calls-per-second observed across all server instances, hard-capped at '+qpsCap+'.';
       const notes=[];
+      if(data.__viaStore){
+        notes.push('\u26a0 Read from this console\u2019s own counter store \u2014 the shared /etsyApiUsage endpoint isn\u2019t deployed on this site, so these numbers are not server-verified.');
+      }
+      if(!probeAvailable){
+        notes.push('\u26a0 /etsyApiProbe isn\u2019t deployed here, so the whole-key reading only refreshes when this console makes its own Etsy calls.');
+      }
       if(counterIsPartial){
         notes.push('\u26a0 App tracking began '+ageText(counterAge)+' ago, so today\u2019s app count may be partial.');
       }
@@ -1143,7 +1179,7 @@ const ApiUsage=(()=>{
 
       const info=byId('awInfo');
       info.title=base+'\n\n'+notes.join('\n');
-      info.classList.toggle('warnDot',counterIsPartial||headerIsStale);
+      info.classList.toggle('warnDot',counterIsPartial||headerIsStale||!!data.__viaStore||!probeAvailable);
       widget.classList.remove('awUnavailable');
       widget.title='';
       return data;
@@ -1167,6 +1203,9 @@ const ApiUsage=(()=>{
     // Read those free Firestore-backed statistics first and only spend a
     // probe call when the shared-key reading is actually stale/missing.
     const snapshot=await refreshApiUsage().catch(()=>null);
+    // Probe endpoint isn't deployed on this site — the usage read above is
+    // all we can do. Don't keep firing 404s on every focus/interval.
+    if(!probeAvailable)return;
     const headerAge=snapshot?.etsy_reported_at?Date.now()-Number(snapshot.etsy_reported_at):Infinity;
     if(Number.isFinite(headerAge)&&headerAge>=0&&headerAge<5*60*1000){
       return;
@@ -1177,11 +1216,16 @@ const ApiUsage=(()=>{
     probeInFlight=true;
     lastProbeAt=Date.now(); // throttle failures too; never probe-loop
     try{
-      const response=await fetch(FUNCTIONS_BASE+'/etsyApiProbe?t='+Date.now(),{
+      const response=await fetch(FUNCTIONS_BASE+'/etsyApiProbe?app=pricing-console&t='+Date.now(),{
         method:'GET',
         cache:'no-store',
         headers:{Accept:'application/json'},
       });
+      if(response.status===404){
+        probeAvailable=false;
+        console.info('etsyApiProbe not deployed on this origin — whole-key headers will refresh only from this console\u2019s own Etsy calls.');
+        return;
+      }
       const result=await response.json().catch(()=>({}));
       if(!response.ok||result.verified!==true){
         console.warn('Etsy API statistics verification did not complete:',response.status,result);
