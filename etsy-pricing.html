@@ -73,7 +73,17 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 #batchPanel .bbar{height:8px;border-radius:999px;background:var(--paper2);overflow:hidden;margin-bottom:8px}
 #batchPanel .bbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--sage));transition:width .25s}
 #batchPanel .bcur{font-size:11.5px;color:var(--ink45);margin-bottom:6px}
-#batchPanel .berrs{max-height:110px;overflow:auto;font-size:11.5px;color:var(--clay);display:flex;flex-direction:column;gap:3px}
+#batchPanel .berrs{max-height:220px;overflow:auto;font-size:11.5px;color:var(--clay);display:flex;flex-direction:column;gap:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.45}
+#batchPanel .berrs .halt{font-weight:700;color:var(--clay);white-space:pre-wrap}
+#batchPanel .berrs .warn{color:#8a6a1f}
+#batchPanel .berrs .muted{color:var(--ink45)}
+#batchPanel .berrs .empty{color:var(--ink45);font-style:italic;font-family:inherit}
+#batchPanel .bloghead{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink45);margin:8px 0 5px;border-top:1px solid var(--line);padding-top:8px}
+#batchPanel .bloghead span{flex:1}
+#batchPanel .bblocked{font-size:11.5px;background:var(--goldSoft,#faf5e8);border:1px solid var(--goldLine,#e6d9b8);color:#6f551f;border-radius:8px;padding:8px 10px;margin-bottom:8px}
+#batchPanel .bblocked b{display:block;margin-bottom:4px}
+#batchPanel .bblocked .row{margin:2px 0}
+#batchPanel .bblocked button{margin-top:7px}
 .schedBar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:10px;border:1.5px dashed var(--velvet);border-radius:var(--rsm);background:var(--card)}
 .schedBar .mlabel{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--clay)}
 .apiWidget{display:flex;flex-direction:column;gap:7px;padding:10px 40px 10px 16px;border:1px solid var(--line);border-radius:12px;background:var(--card);min-width:320px;max-width:380px;position:relative;flex:0 1 auto}
@@ -223,6 +233,11 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
           <div class="bstats"><span>To batch <b id="bTotal">0</b></span><span>Succeeded <b id="bOk" style="color:var(--sage)">0</b></span><span>Failed <b id="bFail" style="color:var(--clay)">0</b></span><span>Remaining <b id="bLeft">0</b></span></div>
           <div class="bbar"><i id="bBar"></i></div>
           <div class="bcur" id="bCur"></div>
+          <div class="bblocked hidden" id="bBlocked"></div>
+          <div class="bloghead">
+            <span id="bLogTitle">Run log</span>
+            <button class="btn ghost xs" id="bLogCopy" type="button">Copy</button>
+          </div>
           <div class="berrs" id="bErrs"></div>
         </div>
 
@@ -1280,7 +1295,25 @@ async function hydrateFromStore(skipResume){
   if(!skipResume){resumeActiveRun();loadSchedule();pushServerToken()}
 }
 function isPrepared(d){return !!(d&&d.chain_set&&d.engrave_set)}
-function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.batched).map(([id])=>id)}
+/*  A listing the server flagged `batch_blocked` cannot be priced from its own
+    data (no chain/kind recorded, the planner refused, or Etsy's read-back
+    disagreed after the write landed). It is NOT batched and NOT lost — it is
+    simply out of the automatic queue until someone looks at it, because
+    leaving it at the head of the queue is what used to halt every run.     */
+function isBlocked(d){return !!(d&&d.batch_blocked)}
+function blockedEntries(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.batched&&isBlocked(d))}
+function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.batched&&!isBlocked(d)).map(([id])=>id)}
+// Every failed attempt the server recorded on a listing doc, newest first.
+// Independent of the run document, so it survives a page reload and is still
+// there after the run object is gone.
+function failureLog(){
+  return [...S.prep]
+    .filter(([,d])=>d&&d.last_batch&&d.last_batch.ok===false&&d.last_batch.error)
+    .map(([id,d])=>({id,title:d.title||'',at:Number(d.last_batch.at||0),
+                     err:String(d.last_batch.error),blocking:!!d.last_batch.blocking}))
+    .sort((a,b)=>b.at-a.at);
+}
+function fmtWhen(t){if(!t)return'';const d=new Date(t);return d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}
 function normalizedRunCounts(run={}){
   const total=Math.max(0,Math.floor(Number(run.total)||0));
   const done=Math.max(0,Math.min(total,Math.floor(Number(run.done)||0)));
@@ -1301,6 +1334,7 @@ function batchReadySummary(){
   return c.source==='run'?(c.remaining+' remaining in the active batch; new approvals are queued for the next run'):(c.remaining+' ready');
 }
 function renderPrepUi(){
+  renderBlockedPanel();
   const ready=preparedReadyIds();
   const counts=batchDisplayCounts();
   const tb=$('#tabBatchCount');if(tb){tb.textContent=counts.remaining;tb.title=counts.source==='run'?'Live remaining count from the active batch run':'Listings ready for the next batch'}
@@ -1361,11 +1395,71 @@ function applyRunToUi(run){
     else if(['queued','running'].includes(run.status)){bb.dataset.mode='pause';bb.firstChild.textContent='\u275a\u275a Pause';if(bc)bc.textContent=counts.done+' / '+counts.total}
   }
   $('#batchState').textContent=run.status==='running'?'Running on server':run.status==='queued'?'Queued':run.status==='paused'?'Paused':run.status==='stopped'?(run.stop_reason?'Auto-halted':'Stopped'):'Done';
-  if(run.stop_reason){const box=$('#bErrs');if(box&&!box.dataset.reasonShown){const div=document.createElement('div');div.style.fontWeight='700';div.textContent=run.stop_reason;box.prepend(div);box.dataset.reasonShown='1'}}
-
   $('#bCur').textContent=staleMessage||(run.current||'');
-  const errs=run.errors||[];const box=$('#bErrs');box.innerHTML='';for(const e of errs.slice(-50)){const div=document.createElement('div');div.textContent=e;box.appendChild(div)}
-  if(run.fatal_error){const div=document.createElement('div');div.textContent='FATAL: '+run.fatal_error;box.appendChild(div)}
+  renderRunLog(run);
+  renderBlockedPanel();
+}
+/*  THE LOG IS BUILT IN ONE PASS.
+    It used to prepend run.stop_reason and then, two lines later, do
+    box.innerHTML='' before appending run.errors — wiping the halt reason it
+    had just written. `reasonShown` was already set, so it never came back:
+    the badge said "Auto-halted" and the box explained nothing. That is why
+    there appeared to be no log at all.
+
+    It now also falls back to the per-listing failures the server writes on
+    every failed attempt, so there is something to read even when the run
+    document is gone or its errors array did not survive the round trip.   */
+function renderRunLog(run){
+  const box=$('#bErrs');if(!box)return;
+  box.innerHTML='';
+  const add=(text,cls)=>{const div=document.createElement('div');if(cls)div.className=cls;div.textContent=text;box.appendChild(div)};
+  let n=0;
+  if(run&&run.fatal_error){add('FATAL \u2014 '+run.fatal_error,'halt');n++}
+  if(run&&run.stop_reason){add(run.stop_reason,'halt');n++}
+  const errs=(run&&run.errors)||[];
+  for(const e of errs.slice(-80)){add(e,/NEEDS ATTENTION/.test(e)?'warn':null);n++}
+  if(!errs.length){
+    const fl=failureLog().slice(0,80);
+    if(fl.length){
+      add('From each listing\u2019s own record (the run log was unavailable):','muted');
+      for(const f of fl) add((f.blocking?'\u26a0 NEEDS ATTENTION ':'\u2717 ')+'#'+f.id+(f.title?' \u00b7 '+f.title:'')+
+        (f.at?' \u00b7 '+fmtWhen(f.at):'')+': '+f.err, f.blocking?'warn':null);
+      n+=fl.length+1;
+    }
+  }
+  if(!n) add(run&&['queued','running'].includes(run.status)?'No errors yet \u2014 running.':'No errors recorded.','empty');
+  const t=$('#bLogTitle');if(t)t.textContent='Run log'+(n?' ('+n+')':'');
+}
+function runLogText(){return [...$('#bErrs').children].map(d=>d.textContent).join('\n')}
+/*  Listings pulled out of the auto-queue, with the reason and a way back in. */
+function renderBlockedPanel(){
+  const box=$('#bBlocked');if(!box)return;
+  const list=blockedEntries();
+  if(!list.length){box.classList.add('hidden');box.innerHTML='';return}
+  box.classList.remove('hidden');
+  box.innerHTML='';
+  const h=document.createElement('b');
+  h.textContent=list.length+' listing'+(list.length===1?'':'s')+' need attention \u2014 held out of the batch so they cannot halt it again';
+  box.appendChild(h);
+  for(const [id,d] of list.slice(0,25)){
+    const r=document.createElement('div');r.className='row';
+    r.textContent='#'+id+(d.title?' \u00b7 '+d.title:'')+' \u2014 '+String((d.batch_blocked&&d.batch_blocked.error)||(d.batch_blocked&&d.batch_blocked.reason)||'unpriceable');
+    box.appendChild(r);
+  }
+  if(list.length>25){const m=document.createElement('div');m.className='row';m.textContent='\u2026 and '+(list.length-25)+' more';box.appendChild(m)}
+  const btn=document.createElement('button');btn.className='btn ghost xs';btn.type='button';
+  btn.textContent='Put all '+list.length+' back in the queue';
+  btn.addEventListener('click',requeueBlocked);
+  box.appendChild(btn);
+}
+async function requeueBlocked(){
+  const list=blockedEntries();
+  if(!list.length)return;
+  if(!await confirmDialog('Re-queue '+list.length+' listing'+(list.length===1?'':'s')+'?',
+    'They were held back because the server could not price them from their own data. Nothing about them has changed unless you fixed it \u2014 if not, they will be held back again on the next run.'))return;
+  for(const [id] of list) fbSet(id,{batch_blocked:null});
+  renderPrepUi();renderBlockedPanel();
+  toast(list.length+' listing'+(list.length===1?'':'s')+' returned to the batch queue.','ok');
 }
 async function pollRun(runId){
   clearTimeout(pollTimer);
@@ -1399,7 +1493,7 @@ async function batchRun(){
     if(!pushed&&!localStorage.getItem(TOKEN_KEYS.refresh)){toast('Connect to Etsy first \u2014 the server needs your Etsy authorization to run the batch.','bad');return}
     const {run_id}=await fbCall({action:'startRun',ids});
     S.currentRunId=run_id;
-    showBatchPanel();$('#bErrs').innerHTML='';delete $('#bErrs').dataset.reasonShown;
+    showBatchPanel();$('#bErrs').innerHTML='';
     applyRunToUi({status:'queued',total:ids.length,done:0,ok:0,fail:0,remaining_ids:ids});
     await launchBatchWorker(run_id);
     pollRun(run_id);
@@ -1846,6 +1940,8 @@ $('#priceBody').addEventListener('input',e=>{const t=e.target;if(!t.dataset.fiel
 $('#priceHead').addEventListener('change',e=>{if(e.target.id==='masterCheck'){S.selected=new Set(e.target.checked?S.draft.products.map((_,i)=>i):[]);renderTable()}});$('#selectAllBtn').addEventListener('click',()=>{S.selected=new Set(S.draft.products.map((_,i)=>i));renderTable()});$('#clearSelectionBtn').addEventListener('click',()=>{S.selected.clear();renderTable()});$('#applyBulkBtn').addEventListener('click',applyBulk);
 $('#variationGrid').addEventListener('click',e=>{const b=e.target.closest('[data-vact]');if(!b){if(e.target.id==='inlineAddMenu')addMenu();return}const pid=Number(b.dataset.pid),act=b.dataset.vact;if(act==='add-tier')addTier(pid);if(act==='remove-tier')removeTier(pid,decodeURIComponent(b.dataset.value));if(act==='rename')renameMenu(pid);if(act==='remove-menu')removeMenu(pid)});$('#addMenuBtn').addEventListener('click',addMenu);
 $('#dependencyCard').addEventListener('click',e=>{if(e.target.closest('#autoMapSwitch'))setAutoMap(!autoMapOn())});$('#dependencyCard').addEventListener('change',e=>{if(e.target.dataset.mapfield)toggleMap(e.target.dataset.mapfield,Number(e.target.dataset.pid),e.target.checked)});
+$('#bLogCopy')?.addEventListener('click',async()=>{const t=runLogText();if(!t){toast('Nothing in the log yet.','bad');return}
+  try{await navigator.clipboard.writeText(t);toast('Run log copied.','ok')}catch(_){toast('Could not copy \u2014 select the text instead.','bad')}});
 $('#saveBtn').addEventListener('click',saveListing);$('#approveBtn').addEventListener('click',approveListing);$('#resetBtn').addEventListener('click',resetDraft);$('#openEtsyBtn').addEventListener('click',()=>window.open(currentListing().url||('https://www.etsy.com/listing/'+S.currentId),'_blank','noopener'));$('#copyIdBtn').addEventListener('click',async()=>{await navigator.clipboard.writeText(S.currentId);toast('Listing ID copied.','ok')});
 $('#copyInvBtn').addEventListener('click',async()=>{if(!S.original){toast('Open a listing first.','bad');return}
   const d=S.cache.get(S.currentId)||{};
