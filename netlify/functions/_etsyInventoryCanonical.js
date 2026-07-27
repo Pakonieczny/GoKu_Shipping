@@ -29,6 +29,59 @@ function toQuantity(offering) {
   return Number.isInteger(q) && q >= 0 ? q : 0;
 }
 
+/* ---------- HTML-escaped variation values ----------
+ *
+ *  Etsy HTML-ESCAPES variation values on the way OUT. A 14-inch chain is
+ *  stored as  14"  and served as  14&quot;  .
+ *
+ *  That made read-back verification impossible for any listing whose values
+ *  contain a quote, an apostrophe or an ampersand. The write lands correctly,
+ *  Etsy serves the escaped form, the two combination keys differ, and every
+ *  affected row is reported as BOTH missing and unexpected:
+ *
+ *    Missing on Etsy after update: 513:14"|514:10k Solid Gold
+ *    Unexpected combination on Etsy after update: 513:14&quot;|514:10k Solid Gold
+ *
+ *  — the same row, twice, in two encodings. A 12-metal Beady necklace with
+ *  14/16/18 produced 36 of each.
+ *
+ *  Decoding here rather than at the call sites means the comparison, the
+ *  snapshot hash and the health scan all agree, and it fixes the write path
+ *  and the read path together — which is the whole reason this module is
+ *  shared by both proxies.
+ *
+ *  NOTE ON THE SNAPSHOT HASH: for a listing with escaped values the hash
+ *  changes with this deploy, because it is now taken over decoded text. Both
+ *  sides compute it with this same code, so they agree from the first read
+ *  onward; a console tab opened BEFORE the deploy holds the old hash and will
+ *  get one STALE_INVENTORY rejection, which the console already handles by
+ *  reloading the listing. Refreshing the page avoids even that.
+ */
+const HTML_ENTITIES = {
+  quot: '"', apos: "'", amp: '&', lt: '<', gt: '>', nbsp: ' ',
+  ldquo: '\u201c', rdquo: '\u201d', lsquo: '\u2018', rsquo: '\u2019',
+  ndash: '\u2013', mdash: '\u2014', hellip: '\u2026', deg: '\u00b0',
+  times: '\u00d7', frac12: '\u00bd', frac14: '\u00bc', frac34: '\u00be',
+  Prime: '\u2033', prime: '\u2032'
+};
+function decodeEntities(v) {
+  let s = String(v == null ? '' : v);
+  if (s.indexOf('&') < 0) return s;
+  for (let pass = 0; pass < 3 && s.indexOf('&') >= 0; pass++) {
+    const before = s;
+    s = s.replace(/&#x([0-9a-f]+);/gi, function (m, h) {
+          try { return String.fromCodePoint(parseInt(h, 16)); } catch (_) { return m; } })
+         .replace(/&#(\d+);/g, function (m, d) {
+          try { return String.fromCodePoint(parseInt(d, 10)); } catch (_) { return m; } })
+         .replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, function (m, n) {
+          const k = n.toLowerCase();
+          if (Object.prototype.hasOwnProperty.call(HTML_ENTITIES, n)) return HTML_ENTITIES[n];
+          return Object.prototype.hasOwnProperty.call(HTML_ENTITIES, k) ? HTML_ENTITIES[k] : m; });
+    if (s === before) break;
+  }
+  return s;
+}
+
 /* ---------- Canonical product form ---------- */
 
 function firstOffering(p) {
@@ -37,7 +90,7 @@ function firstOffering(p) {
 
 function comboKey(p) {
   return (p?.property_values || [])
-    .map(v => Number(v.property_id) + ":" + (v.values || []).map(String).join("/"))
+    .map(v => Number(v.property_id) + ":" + (v.values || []).map(decodeEntities).join("/"))
     .sort()
     .join("|");
 }
@@ -55,8 +108,8 @@ function canonicalProduct(p) {
     properties: (p.property_values || [])
       .map(v => ({
         property_id: Number(v.property_id),
-        property_name: String(v.property_name || ""),
-        values: (v.values || []).map(String)
+        property_name: decodeEntities(v.property_name || ""),
+        values: (v.values || []).map(decodeEntities)
       }))
       .sort((a, b) => a.property_id - b.property_id),
     sku: String(p.sku || "").trim(),
@@ -245,5 +298,6 @@ module.exports = {
   pricingHealth,
   deriveOnProperty,
   verifyAgainst,
-  comboKey
+  comboKey,
+  decodeEntities
 };
