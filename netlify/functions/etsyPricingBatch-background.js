@@ -58,95 +58,21 @@ const FN = SITE + "/.netlify/functions";
 const TIME_BUDGET_MS = 13 * 60 * 1000; // leave headroom under Netlify's 15 min
 
 /* ---------------- Pricing scheme (mirror of the console) ---------------- */
-const CANON_ORDER=['Silver','Gold','Rose','Silver + Engrave','Gold + Engrave','Rose + Engrave','10k Solid Gold','10k Gold + Engrave','14k Solid Gold','14k Gold + Engrave','Gold-Charm Only','Silver-Charm Only','Rose-Charm Only','10k Solid-Charm Only','14k Solid-Charm Only'];
-const CHARM_ONLY_METALS=['Gold-Charm Only','Silver-Charm Only','Rose-Charm Only','10k Solid-Charm Only','14k Solid-Charm Only'];
-const NO_CHAIN_VALUE='Charm Only-No Chain';
-const REGULAR_PRICES={'Silver':[39.69,40.00,40.31],'Gold':[46.56,46.88,47.19],'Rose':[49.69,50.00,50.31],'Silver + Engrave':[46.56,46.88,47.19],'Gold + Engrave':[51.56,51.88,52.19],'Rose + Engrave':[54.69,55.00,55.31],'10k Solid Gold':[252.81,253.13,253.44],'10k Gold + Engrave':[266.56,266.88,267.19],'14k Solid Gold':[315.94,316.56,316.88],'14k Gold + Engrave':[333.13,333.75,334.06]};
-const BEADY_FLAT_PRICES={'Silver':[56.56,56.88,57.19],'Gold':[65.94,66.25,66.56],'Silver + Engrave':[63.75,64.06,64.38],'Gold + Engrave':[73.13,73.44,73.75]};
-const BEADY_SOLID_BY_LENGTH={'10k Solid Gold':{14:[439.69,440.00,440.31],16:[470.63,470.94,471.25],18:[501.56,501.88,502.19]},'10k Gold + Engrave':{14:[467.81,468.13,468.44],16:[491.88,492.19,492.50],18:[515.63,515.94,516.25]},'14k Solid Gold':{14:[549.69,550.00,550.31],16:[588.44,588.75,589.06],18:[627.19,627.50,627.81]},'14k Gold + Engrave':{14:[584.69,585.00,585.31],16:[614.69,615.00,615.31],18:[644.69,645.00,645.31]}};
-const CHARM_ONLY_PRICE_POOLS={'Gold-Charm Only':[28.13,28.75,29.38],'Silver-Charm Only':[27.81,28.44,29.06],'Rose-Charm Only':[29.06,29.38,30.00],'10k Solid-Charm Only':[110.63,111.56,112.50],'14k Solid-Charm Only':[138.44,139.38,140.63]};
-const ENGRAVE_INSTRUCTIONS='To include back engraving on your piece, choose the "+ engrave" option and leave us your instructions here.';
-function normOpt(v){return String(v).toLowerCase().replace(/[\u2013\u2014]/g,'-').replace(/\s*-\s*/g,'-').replace(/\s*\+\s*/g,' + ').replace(/\s+/g,' ').trim()}
-const CANON_ALIASES=(()=>{const m=new Map();const add=(c,...alts)=>{m.set(normOpt(c),c);for(const a of alts)m.set(normOpt(a),c)};
-  add('Silver');add('Gold');add('Rose','rose gold');
-  add('Silver + Engrave');add('Gold + Engrave');add('Rose + Engrave','rose gold + engrave');
-  add('10k Solid Gold');add('10k Gold + Engrave');add('14k Solid Gold');add('14k Gold + Engrave');
-  add('Gold-Charm Only','charm only gold','gold charm only');
-  add('Silver-Charm Only','charm only silver','silver charm only');
-  add('Rose-Charm Only','charm only rose','rose charm only');
-  add('10k Solid-Charm Only','charm only 10k solid','10k solid charm only');
-  add('14k Solid-Charm Only','charm only 14k solid','14k solid charm only');
-  return m})();
-function canonFor(v){return CANON_ALIASES.get(normOpt(v))||null}
-function isNoChainVal(v){const c=String(v);return /^no\s*chain/i.test(c)||/charm\s*only.?no\s*chain/i.test(c)}
-function parseLen(v){const m=String(v).match(/(\d+)/);return m?parseInt(m[1],10):null}
-function titleCaseOpt(v){return String(v).split(/\s+/).map(w=>/^[a-z]/i.test(w)?w[0].toUpperCase()+w.slice(1).toLowerCase():w.toLowerCase()).join(' ')}
-function firstOffering(p){return (p&&p.offerings||[])[0]||{}}
-function propValue2(p,id){const v=(p.property_values||[]).find(x=>Number(x.property_id)===Number(id));return v?(v.values||[]).join('/'):''}
-function deep(v){return JSON.parse(JSON.stringify(v))}
-function priceFor(opt,lengthValue,version,chainType){
-  if(CHARM_ONLY_PRICE_POOLS[opt])return CHARM_ONLY_PRICE_POOLS[opt][version];
-  if(chainType==='beady'){
-    if(BEADY_SOLID_BY_LENGTH[opt]){const len=parseLen(lengthValue);const col=BEADY_SOLID_BY_LENGTH[opt][len];
-      if(!col)throw new Error('No Beady '+opt+' price for chain length "'+lengthValue+'" (sheet covers 14/16/18 only).');
-      return col[version]}
-    const flat=BEADY_FLAT_PRICES[opt];
-    if(!flat)throw new Error('No Beady price for "'+opt+'".');
-    return flat[version];
-  }
-  const reg=REGULAR_PRICES[opt];
-  if(!reg)throw new Error('No Regular price for "'+opt+'".');
-  return reg[version];
-}
-function planStandardRebuild(products,chainType,engraving){
-  const propsMap=new Map();
-  for(const p of (products||[]))for(const v of (p.property_values||[])){const id=Number(v.property_id);
-    if(!propsMap.has(id))propsMap.set(id,{property_id:id,property_name:v.property_name||'Variation',values:[]});
-    for(const val of (v.values||[]))if(!propsMap.get(id).values.includes(val))propsMap.get(id).values.push(val)}
-  const props=[...propsMap.values()];
-  const find=res=>{for(const re of res){const h=props.find(p=>re.test(String(p.property_name||'')));if(h)return h}return null};
-  const metalProp=find([/metal/i,/material/i,/colou?r/i]);
-  if(!metalProp)return {error:'No metal dropdown found. Dropdowns: '+props.map(p=>p.property_name).join(', ')};
-  const lengthProp=find([/chain\s*length/i,/length/i,/chain/i,/size/i]);
-  if(!lengthProp)return {error:'No chain-length dropdown found. Dropdowns: '+props.map(p=>p.property_name).join(', ')};
-  if(metalProp.property_id===lengthProp.property_id)return {error:'Metal and chain-length detection matched the same dropdown.'};
-  const skipRose=chainType==='beady';
-  const targetMetals=CANON_ORDER.filter(o=>!(skipRose&&/rose/i.test(o))&&!(!engraving&&/engrave/i.test(o)));
-  const realLengths=[...new Set(lengthProp.values.filter(v=>!isNoChainVal(v)&&parseLen(v)!==20).map(titleCaseOpt))];
-  if(!realLengths.length)return {error:'No usable chain lengths (only 20-inch or no-chain values).'};
-  if(chainType==='beady'){const bad=realLengths.filter(l=>![14,16,18].includes(parseLen(l)));
-    if(bad.length)return {error:'Beady pricing covers only 14/16/18-inch chains; listing also has: '+bad.join(', ')}}
-  const allLengths=[...realLengths,NO_CHAIN_VALUE];
-  const tmpl=(products||[])[0];
-  if(!tmpl)return {error:'Listing has no inventory products to rebuild from.'};
-  const enabledRow=products.find(p=>firstOffering(p).is_enabled!==false)||tmpl;
-  const baseSku=String(enabledRow.sku||'').trim();
-  const baseQty=Math.max(1,Number(firstOffering(enabledRow).quantity)||1);
-  const plan=[];
-  try{
-    for(const opt of targetMetals){
-      const version=Math.floor(Math.random()*3);
-      const isCharm=CHARM_ONLY_METALS.includes(opt);
-      const priceBy={};
-      for(const len of allLengths){const isNC=isNoChainVal(len);
-        priceBy[len]=priceFor(opt,isCharm?null:(isNC?realLengths[0]:len),version,chainType)}
-      plan.push({opt,priceBy,isCharm});
-    }
-  }catch(e){return {error:e.message}}
-  const rows=[];
-  for(const {opt,priceBy,isCharm} of plan){
-    const sku=isCharm?((baseSku?baseSku+'-CO':'CO-'+opt.replace(/[^A-Za-z0-9]+/g,'').slice(0,10)).slice(0,32)):baseSku;
-    for(const len of allLengths){const isNC=isNoChainVal(len);const enabled=isCharm?isNC:!isNC;
-      const c=deep(tmpl);c.product_id=null;
-      if(c.offerings&&c.offerings[0]){c.offerings[0].offering_id=null;c.offerings[0].price=priceBy[len];c.offerings[0].is_enabled=enabled;c.offerings[0].quantity=enabled?baseQty:0}
-      c.sku=sku;
-      const mv=c.property_values.find(v=>Number(v.property_id)===Number(metalProp.property_id));mv.values=[opt];mv.value_ids=[];
-      const lv=c.property_values.find(v=>Number(v.property_id)===Number(lengthProp.property_id));lv.values=[len];lv.value_ids=[];
-      rows.push(c);
-    }
-  }
-  return {rows};
-}
+/* ---------------- Pricing scheme ----------------
+ * Price sheets, priceFor() and planStandardRebuild() now live in the shared
+ * module so this batch runner and etsyPricingApplyOne (called by the Listing
+ * Generator) can never price the same listing differently. Update prices in
+ * _etsyPricingScheme.js — and in etsy-pricing.html, which still carries its
+ * own browser-side copy for the live preview.
+ */
+const {
+  CANON_ORDER, CHARM_ONLY_METALS, NO_CHAIN_VALUE, ENGRAVE_INSTRUCTIONS,
+  REGULAR_PRICES, BEADY_FLAT_PRICES, BEADY_SOLID_BY_LENGTH,
+  CHARM_ONLY_PRICE_POOLS, CHARM_LISTING_PRICES,
+  isNoChainVal, parseLen, titleCaseOpt, firstOffering, deep,
+  priceFor, planStandardRebuild, planCharmListingRebuild, planStudRebuild,
+  normalizeChainType, listingKindFor,
+} = require("./_etsyPricingScheme");
 async function logEvent(db, e) {
   try { await db.collection("EtsyPricing_Log").add({ at: Date.now(), listing_id: String(e.listing_id||""), title: String(e.title||"").slice(0,200), type: e.type, ok: e.ok !== false, detail: String(e.detail||"").slice(0,800) }); } catch (_) {}
 }
@@ -206,9 +132,36 @@ exports.handler = async (event) => {
 
     try {
       const detail = await callFn("/etsyListingInventoryDetailProxy?listingId=" + encodeURIComponent(id) + "&inventory_only=1", { headers: authHeaders });
-      const plan = planStandardRebuild(detail.inventory.products, d.chain_type === "beady" ? "beady" : "regular", d.engraving !== false);
+      // Chain type must be EXPLICIT. This line used to read
+      //   d.chain_type === "beady" ? "beady" : "regular"
+      // so a listing whose prep doc was missing or had no chain_type (d defaults
+      // to {} above) was silently priced off the REGULAR sheet. The generator's
+      // endpoint refuses to guess for exactly this reason, which meant the same
+      // Beady listing could be skipped by one path and mispriced by the other —
+      // Silver $39.69 instead of $56.56. Both paths now use the shared resolver.
+      // Which planner this listing needs, resolved the SAME way the generator's
+      // endpoint resolves it. Order of preference:
+      //   1. an explicit listing_kind on the prep doc
+      //   2. queue_id / category, via the shared listingKindFor()
+      //   3. the legacy chain_type field (necklaces only)
+      // Nothing is ever guessed — an unresolved listing throws and stays queued.
+      const kind = ["regular", "beady", "charm", "stud"].includes(String(d.listing_kind || "").toLowerCase())
+        ? String(d.listing_kind).toLowerCase()
+        : (listingKindFor(d.queue_id, d.category) || normalizeChainType(d.chain_type));
+      if (!kind) throw new Error(
+        "No listing kind recorded for this listing (listing_kind=" + JSON.stringify(d.listing_kind || null) +
+        ", category=" + JSON.stringify(d.category || null) + ", chain_type=" + JSON.stringify(d.chain_type || null) + "). " +
+        "Set chain_type to \"regular\" or \"beady\", or listing_kind to \"charm\" or \"stud\", before batching — " +
+        "refusing to guess, because pricing a Beady necklace off the Regular sheet is a silent money error.");
+      const plan = kind === "charm" ? planCharmListingRebuild(detail.inventory.products)
+                 : kind === "stud"  ? planStudRebuild(detail.inventory.products)
+                 : planStandardRebuild(detail.inventory.products, kind, d.engraving !== false);
       if (plan.error) throw new Error(plan.error);
-      const pers = (d.engraving !== false) ? { enabled: true, required: true, max_chars: 1000, instructions: ENGRAVE_INSTRUCTIONS } : null;
+      // Necklaces only. A charm listing expresses engraving through its Charm Type
+      // dropdown and a stud listing has none, so a REQUIRED personalization field
+      // would block checkout for every buyer of those listings.
+      const wantsPers = (d.engraving !== false) && (kind === "regular" || kind === "beady");
+      const pers = wantsPers ? { enabled: true, required: true, max_chars: 1000, instructions: ENGRAVE_INSTRUCTIONS } : null;
       const res = await callFn("/etsyUpdateListingInventoryProxy", {
         method: "POST", headers: authHeaders,
         body: JSON.stringify({ listing_id: Number(id), expected_snapshot_hash: detail.snapshot_hash, inventory: { products: plan.rows }, auto_on_property: true, personalization: pers })
@@ -230,7 +183,7 @@ exports.handler = async (event) => {
         patch.original_saved = true;
       }
       await db.collection("EtsyPricing_Listings").doc(id).set(patch, { merge: true });
-      await logEvent(db, { listing_id: id, title: d.title, type: "batch_ok", detail: "Rebuilt (" + (d.chain_type === "beady" ? "Beady" : "Regular") + " \u00b7 Engraving " + (d.engraving !== false ? "ON" : "OFF") + ") and verified on Etsy." });
+      await logEvent(db, { listing_id: id, title: d.title, type: "batch_ok", detail: "Rebuilt (" + kind + " \u00b7 Engraving " + (wantsPers ? "ON" : "OFF") + ") and verified on Etsy." });
       run.ok = (run.ok || 0) + 1;
       run.consec_fail = 0;
     } catch (e) {
