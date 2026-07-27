@@ -1,128 +1,168 @@
-/*  netlify/functions/etsyApiProbe.js
- *
- *  GET /.netlify/functions/etsyApiProbe?app=<appId>
- *
- *  Spends EXACTLY ONE Etsy API call to refresh the authoritative whole-key
- *  rate-limit headers (x-limit-per-day / x-remaining-today), then records
- *  them so etsyApiUsage can serve them for free afterwards.
- *
- *  ═══ WHY A PROBE EXISTS AT ALL ══════════════════════════════════════════
- *
- *  Etsy only reports the whole-key meter in response headers. If the shop
- *  has been idle, the newest header reading may be hours old — and a stale
- *  "Key" row is worse than no row, because it looks live. One ping refreshes
- *  it. The endpoint Etsy provides for exactly this is openapi-ping: the
- *  cheapest call in the API, key-only (no OAuth, no shop scope), returning
- *  just the application id — but carrying the same rate-limit headers as
- *  every other response.
- *
- *  ═══ WHY IT IS CALLED SPARINGLY ════════════════════════════════════════
- *
- *  A probe is not free — it consumes one of the 5,000 daily calls. The
- *  clients therefore only probe when the stored header reading is actually
- *  stale (>5 min) and never more than once a minute even when it fails.
- *  This endpoint deliberately holds the same line server-side so a
- *  misbehaving or out-of-date client cannot burn quota on probes:
- *  a probe within PROBE_MIN_INTERVAL_MS of the last recorded header returns
- *  the existing reading and reports skipped:true instead of calling Etsy.
- *  Pass ?force=1 to override (the console's manual "Update" button does).
- *
- *  Response mirrors etsyApiUsage's contract and adds:
- *    probed  : true|false   whether an Etsy call was actually made
- *    skipped : "fresh"      why it declined to spend a call, when applicable
- */
+// netlify/functions/etsyApiProbe.js
+//
+// Spends ONE cheap Etsy call so the whole-key rate-limit headers
+// (x-limit-per-day / x-remaining-today) can be refreshed on demand, and
+// returns nothing but the outcome — never the response body.
+//
+// ═══ WHY THIS FILE CHANGED ══════════════════════════════════════════════
+//
+// It was returning:
+//
+//   Etsy ping returned HTTP 403: {"error":"Shared secret is required in
+//   x-api-key header."}
+//
+// which turned the whole API widget red even though the counters behind it
+// were fine. Etsy's x-api-key header is not one fixed shape: depending on how
+// the app is registered it wants either the keystring alone, or
+// "keystring:shared_secret". This app wants the pair — the sibling site's
+// probe has always sent the pair and has always worked; this one sent the
+// keystring alone and got refused.
+//
+// Rather than hardcode the pair and be wrong again if the registration
+// changes, the probe now NEGOTIATES and REMEMBERS:
+//
+//   * the pair form is tried first, because Etsy explicitly asked for it
+//   * on a 401/403 it retries the other form once, and the endpoint fallback
+//     once, then stops
+//   * the combination that worked is cached for the life of the process, so
+//     the steady state is exactly ONE Etsy call per probe
+//   * a 429 or 5xx is NOT treated as an auth problem — those are transient
+//     and must not cause a re-negotiation
+//
+// Every attempt goes through etsyFetch, so it is rate-limited and metered
+// like any other call; the negotiation can therefore never outrun the budget.
 
-"use strict";
+const { etsyFetch } = require("./etsyRateLimiter");
 
-const fetch = require("node-fetch");
-const usage = require("./_etsyApiUsage");
-
-const PING_URL = "https://openapi.etsy.com/v3/application/openapi-ping";
-// Server-side floor. The clients throttle themselves too; this exists so
-// quota can't be burned by a stale deploy or an over-eager tab.
-const PROBE_MIN_INTERVAL_MS = 5 * 60 * 1000;
-
-const CORS = {
+const HEADERS = {
+  "Content-Type": "application/json",
+  "Cache-Control": "no-store",
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type, Accept",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "GET,OPTIONS",
 };
+const json = (statusCode, payload) => ({ statusCode, headers: HEADERS, body: JSON.stringify(payload) });
 
-const json = (statusCode, body) => ({
-  statusCode,
-  headers: {
-    "Content-Type": "application/json",
-    "Cache-Control": "no-store, max-age=0",
-    ...CORS,
-  },
-  body: JSON.stringify(body),
-});
+// openapi-ping is the cheapest endpoint Etsy publishes and needs no OAuth
+// scope. listings/active is the proven fallback: it is what the Listing
+// Generator's probe has always called.
+const ENDPOINTS = [
+  { name: "openapi-ping", url: "https://api.etsy.com/v3/application/openapi-ping" },
+  { name: "listings-active", url: "https://api.etsy.com/v3/application/listings/active?limit=1" },
+];
 
-exports.handler = async (event) => {
-  if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: CORS, body: "" };
-  if (event.httpMethod !== "GET") {
-    return json(405, { ok: false, verified: false, error: "Method not allowed" });
+function creds() {
+  const id = process.env.CLIENT_ID || process.env.ETSY_CLIENT_ID ||
+             process.env.ETSY_API_KEY || process.env.API_KEY;
+  const secret = process.env.CLIENT_SECRET || process.env.ETSY_CLIENT_SECRET ||
+                 process.env.ETSY_SHARED_SECRET;
+  return { id: id ? String(id).trim() : "", secret: secret ? String(secret).trim() : "" };
+}
+
+// Auth shapes, most-likely first. "pair" is first because Etsy's own 403 text
+// asks for the shared secret.
+function authForms({ id, secret }) {
+  const forms = [];
+  if (id && secret) forms.push({ name: "pair", value: id + ":" + secret });
+  if (id) forms.push({ name: "keystring", value: id });
+  return forms;
+}
+
+// Learned across warm invocations. Reset on any auth failure so a credential
+// or registration change re-negotiates instead of failing forever.
+let learned = null;   // { endpoint, form }
+
+const isAuthFailure = (status) => status === 401 || status === 403;
+
+async function attempt(endpoint, form) {
+  const res = await etsyFetch(endpoint.url, {
+    method: "GET",
+    headers: { Accept: "application/json", "x-api-key": form.value },
+  }, { retries: 2 });
+  // Drain the body so the connection is released; the content is never used.
+  const body = res.ok ? "" : await res.text().catch(() => "");
+  return { status: res.status, ok: res.ok, body: String(body).slice(0, 300) };
+}
+
+exports.handler = async function (event) {
+  if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: HEADERS, body: "" };
+  if (event.httpMethod !== "GET") return json(405, { ok: false, verified: false, error: "Method not allowed" });
+
+  const c = creds();
+  if (!c.id) {
+    return json(500, { ok: false, verified: false,
+      error: "Missing Etsy CLIENT_ID (or ETSY_CLIENT_ID / ETSY_API_KEY) environment variable." });
   }
 
-  const q = event.queryStringParameters || {};
-  const appId = String(q.app || "unattributed").trim() || "unattributed";
-  const force = q.force === "1" || q.force === "true";
+  const forms = authForms(c);
+  const tried = [];
 
-  try {
-    // Same key the working Etsy proxies on this site use.
-    const key = process.env.CLIENT_ID;
-    if (!key) {
-      return json(500, {
-        ok: false,
-        verified: false,
-        error: "Missing CLIENT_ID — cannot reach Etsy to verify rate limits.",
-        server_time: Date.now(),
-      });
-    }
-
-    // Don't spend a call if the stored reading is already fresh.
-    const before = await usage.readUsage(appId);
-    const reportedAt = before && before.etsy_reported_at ? Number(before.etsy_reported_at) : 0;
-    const age = reportedAt ? Date.now() - reportedAt : Infinity;
-    if (!force && Number.isFinite(age) && age >= 0 && age < PROBE_MIN_INTERVAL_MS) {
-      return json(200, { ...before, probed: false, skipped: "fresh" });
-    }
-
-    const res = await fetch(PING_URL, {
-      method: "GET",
-      headers: { "x-api-key": key, Accept: "application/json" },
-    });
-
-    // Headers are the entire point of the call — capture them whatever the
-    // status was. Etsy returns rate-limit headers on errors too, and a 429
-    // in particular carries the most important reading of all.
-    usage.captureHeaders(res);
-    // The probe is itself an Etsy call against our budget; count it honestly
-    // rather than letting monitoring traffic go untracked.
-    usage.recordCall(appId, res);
-    await usage.flushNow();
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      const after = await usage.readUsage(appId);
-      return json(res.status === 429 ? 200 : 502, {
-        ...after,
-        // A 429 still refreshed the headers, so the reading is valid.
-        verified: res.status === 429 ? after.verified : false,
-        probed: true,
-        error: "Etsy ping returned HTTP " + res.status + (text ? ": " + text.slice(0, 200) : ""),
-      });
-    }
-
-    const after = await usage.readUsage(appId);
-    return json(200, { ...after, probed: true });
-  } catch (e) {
-    return json(503, {
-      ok: false,
-      verified: false,
-      probed: false,
-      error: "Rate-limit verification failed: " + (e && e.message ? e.message : e),
-      server_time: Date.now(),
-    });
+  // Steady state: one call, using whatever worked last time.
+  const order = [];
+  if (learned) {
+    const e = ENDPOINTS.find(x => x.name === learned.endpoint);
+    const f = forms.find(x => x.name === learned.form);
+    if (e && f) order.push({ endpoint: e, form: f });
   }
+  for (const e of ENDPOINTS) for (const f of forms) {
+    if (!order.some(o => o.endpoint.name === e.name && o.form.name === f.name)) order.push({ endpoint: e, form: f });
+  }
+
+  let lastStatus = 0, lastBody = "", lastNote = "";
+  for (const { endpoint, form } of order) {
+    let r;
+    try {
+      r = await attempt(endpoint, form);
+    } catch (err) {
+      // Network-level failure. Not an auth problem — stop rather than burn
+      // the remaining combinations on what is almost certainly transient.
+      return json(502, { ok: false, verified: false, probed: true,
+        error: "Etsy could not be reached: " + (err && err.message ? err.message : String(err)),
+        tried: tried.concat([endpoint.name + "/" + form.name]) });
+    }
+    tried.push(endpoint.name + "/" + form.name + " -> " + r.status);
+
+    if (r.ok) {
+      learned = { endpoint: endpoint.name, form: form.name };
+      return json(200, { ok: true, verified: true, probed: true,
+        endpoint: endpoint.name, auth_form: form.name, calls_spent: tried.length,
+        // Surfaced so the console can say WHY the first shape was refused,
+        // instead of the operator seeing a red widget with no explanation.
+        renegotiated: tried.length > 1 ? tried : undefined });
+    }
+
+    lastStatus = r.status; lastBody = r.body;
+
+    if (isAuthFailure(r.status)) {
+      // The learned combination just stopped working — forget it and keep
+      // trying the remaining shapes.
+      learned = null;
+      lastNote = /shared secret/i.test(r.body)
+        ? "Etsy wants keystring:shared_secret in x-api-key."
+        : /api key|x-api-key/i.test(r.body)
+          ? "Etsy rejected the x-api-key value."
+          : "Etsy refused the request.";
+      continue;
+    }
+    if (r.status === 429) {
+      return json(429, { ok: false, verified: false, probed: true, retryable: true,
+        error: "Etsy rate-limited the probe (HTTP 429). The whole-key reading will refresh on the next real call.",
+        tried });
+    }
+    if (r.status >= 500) {
+      return json(502, { ok: false, verified: false, probed: true, retryable: true,
+        error: "Etsy returned HTTP " + r.status + " on " + endpoint.name + ". Transient — not an authorization problem.",
+        tried });
+    }
+    // 4xx that is not an auth failure: try the next endpoint, not the next key.
+  }
+
+  return json(lastStatus && lastStatus < 500 ? lastStatus : 502, {
+    ok: false, verified: false, probed: true,
+    error: "Etsy refused every x-api-key form the probe knows" +
+           (c.secret ? "" : " — and CLIENT_SECRET is NOT set on this site, so the keystring:shared_secret form could not even be attempted") +
+           ". " + lastNote + " Last response: HTTP " + lastStatus + " " + lastBody,
+    missing_secret: !c.secret,
+    tried,
+  });
 };

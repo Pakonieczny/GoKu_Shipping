@@ -60,7 +60,142 @@ const CHARM_ONLY_PRICE_POOLS={'Gold-Charm Only':[28.13,28.75,29.38],'Silver-Char
 // premiums already used in REGULAR_PRICES.
 const CHARM_LISTING_PRICES={'Silver':[21.75,22.85,23.94],'Gold':[22.00,23.10,24.20],'Rose':[22.73,23.61,24.71],'Silver + Engrave':[26.75,28.85,29.94],'Gold + Engrave':[27.00,29.10,30.20],'Rose + Engrave':[27.73,29.61,30.71],'10k Solid Gold':[102.50,103.81,105.12],'10k Gold + Engrave':[112.50,114.81,116.12],'14k Solid Gold':[130.31,131.63,133.25],'14k Gold + Engrave':[140.31,142.63,144.25]};
 const ENGRAVE_INSTRUCTIONS='To include back engraving on your piece, choose the "+ engrave" option and leave us your instructions here.';
-function normOpt(v){return String(v).toLowerCase().replace(/[\u2013\u2014]/g,'-').replace(/\s*-\s*/g,'-').replace(/\s*\+\s*/g,' + ').replace(/\s+/g,' ').trim()}
+/* ═══ HTML-ESCAPED VARIATION VALUES ══════════════════════════════════════
+ *
+ *  Etsy hands back variation values HTML-ESCAPED: a 16-inch chain arrives as
+ *  16&quot; , not 16" . Every length test in this file looks for a real inch
+ *  marker, so an escaped listing failed all of them:
+ *
+ *    parseLen('14&quot;')  ->  null        (should be 14)
+ *
+ *  and null is not in [14,16,18], which is why a Beady necklace carrying
+ *  exactly 14/16/18 was rejected with "Beady pricing covers only 14/16/18-inch
+ *  chains; listing also has: 14&quot;, 16&quot;, 18&quot;" — the sheet and the
+ *  listing agreeing with each other, in two different encodings.
+ *
+ *  It was also silently WRONG in the other direction: the 20-inch filter is
+ *  `parseLen(v) !== 20`, so an escaped 20&quot; parsed as null, survived the
+ *  filter, and was priced as a real chain length on Regular necklaces.
+ *
+ *  Values are now decoded once, at the point they enter a planner, so every
+ *  downstream test sees plain text AND the value written back to Etsy is
+ *  plain text rather than a literal "16&quot;" shown to shoppers.
+ */
+const HTML_ENTITIES = {
+  quot: '"', apos: "'", amp: '&', lt: '<', gt: '>', nbsp: ' ',
+  ldquo: '“', rdquo: '”', lsquo: '‘', rsquo: '’',
+  ndash: '–', mdash: '—', hellip: '…', deg: '°',
+  times: '×', frac12: '½', frac14: '¼', frac34: '¾',
+  Prime: '″', prime: '′'
+};
+function decodeEntities(v) {
+  let s = String(v == null ? '' : v);
+  if (s.indexOf('&') < 0) return s;
+  // Bounded loop: some values are DOUBLE encoded (&amp;quot;). Three passes is
+  // plenty and cannot spin, because it stops as soon as a pass changes nothing.
+  for (let pass = 0; pass < 3 && s.indexOf('&') >= 0; pass++) {
+    const before = s;
+    s = s.replace(/&#x([0-9a-f]+);/gi, function (m, h) {
+          try { return String.fromCodePoint(parseInt(h, 16)); } catch (_) { return m; } })
+         .replace(/&#(\d+);/g, function (m, d) {
+          try { return String.fromCodePoint(parseInt(d, 10)); } catch (_) { return m; } })
+         .replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, function (m, n) {
+          const k = n.toLowerCase();
+          if (Object.prototype.hasOwnProperty.call(HTML_ENTITIES, n)) return HTML_ENTITIES[n];
+          return Object.prototype.hasOwnProperty.call(HTML_ENTITIES, k) ? HTML_ENTITIES[k] : m; });
+    if (s === before) break;
+  }
+  return s;
+}
+/*  One decoded copy of the inventory, made before anything reads it. Doing it
+ *  here rather than at each test site means the ROWS WRITTEN BACK are decoded
+ *  too — including menus this planner does not touch. */
+function decodeProducts(products) {
+  return (products || []).map(function (p) {
+    const c = deep(p);
+    for (const pv of (c.property_values || [])) {
+      if (pv.property_name != null) pv.property_name = decodeEntities(pv.property_name);
+      if (Array.isArray(pv.values)) pv.values = pv.values.map(decodeEntities);
+    }
+    return c;
+  });
+}
+
+/* ═══ WHICH DROPDOWN IS WHICH ════════════════════════════════════════════
+ *
+ *  Detection used to be purely NAME-based, in a fixed order, with the metal
+ *  and length searches run independently over the same list. Two failures
+ *  came straight out of that:
+ *
+ *    "No metal dropdown found. Dropdowns: Finish, Initial"
+ *        The metal menu is called Finish. Its VALUES are metals; only its
+ *        name is unusual.
+ *
+ *    "Metal and chain-length detection matched the same dropdown."
+ *        One menu satisfied both name patterns, and because the two searches
+ *        never knew about each other they both claimed it.
+ *
+ *  Both are now decided by what the menu CONTAINS, with the name as a hint
+ *  rather than the rule, and the two picks are made in sequence so they can
+ *  never land on the same menu.
+ *
+ *  The one thing deliberately NOT loosened: a menu of bare numbers counts as
+ *  chain lengths ONLY if its name says so. A ring's "Ring Size" of 7 would
+ *  otherwise read as a 7-inch chain and get the necklace sheet.
+ */
+const METAL_NAME_RE  = /metal|material|colou?r|finish|plating|karat|carat|\btone\b/i;
+const LENGTH_NAME_RE = /chain\s*length|length|chain/i;
+function menuScores(p) {
+  const vals = (p && p.values) || [];
+  if (!vals.length) return { metal: 0, length: 0, inchy: 0, n: 0 };
+  let metal = 0, length = 0, inchy = 0;
+  for (const raw of vals) {
+    const v = decodeEntities(raw);
+    if (canonFor(v) || (typeof mlMetalFor === 'function' && mlMetalFor(v))) metal++;
+    if (parseLen(v) != null || isNoChainVal(v)) length++;
+    // An explicit inch marker (or the chainless value) is unambiguous, so it
+    // identifies a length menu whatever the menu happens to be called.
+    if (isNoChainVal(v) || /(?:"|”|″|''|\bin\b|inch)/i.test(String(v))) inchy++;
+  }
+  return { metal: metal / vals.length, length: length / vals.length, inchy: inchy / vals.length, n: vals.length };
+}
+function pickMetalMenu(props) {
+  const scored = (props || []).map(function (p) {
+    return { p: p, s: menuScores(p), named: METAL_NAME_RE.test(String(p.property_name || '')) };
+  });
+  // Values first: a menu of recognisable metals IS the metal menu, whatever
+  // it is called. Name only breaks ties.
+  const byValue = scored.filter(function (x) { return x.s.metal >= 0.5; })
+    .sort(function (a, b) { return (b.s.metal - a.s.metal) || ((b.named ? 1 : 0) - (a.named ? 1 : 0)); });
+  if (byValue.length) return byValue[0].p;
+  // Fall back to the old name-only behaviour, but never claim a menu whose
+  // values are plainly chain lengths.
+  const byName = scored.filter(function (x) { return x.named && x.s.inchy < 0.5; });
+  return byName.length ? byName[0].p : null;
+}
+function pickLengthMenu(props, exclude) {
+  const cand = (props || []).filter(function (p) {
+    return !exclude || Number(p.property_id) !== Number(exclude.property_id);
+  });
+  const scored = cand.map(function (p) {
+    return { p: p, s: menuScores(p), named: LENGTH_NAME_RE.test(String(p.property_name || '')) };
+  });
+  const inchy = scored.filter(function (x) { return x.s.inchy >= 0.5; })
+    .sort(function (a, b) { return (b.s.inchy - a.s.inchy) || ((b.named ? 1 : 0) - (a.named ? 1 : 0)); });
+  if (inchy.length) return inchy[0].p;
+  // Bare numbers: name must say length. This is the Ring Size guard.
+  const named = scored.filter(function (x) { return x.named && x.s.length >= 0.5; });
+  return named.length ? named[0].p : null;
+}
+// Menus, with a few of their values, for an error a human can act on.
+function describeMenus(props) {
+  return (props || []).map(function (p) {
+    const v = (p.values || []).slice(0, 4).map(decodeEntities).join(', ');
+    return '"' + p.property_name + '"' + (v ? ' (' + v + (p.values.length > 4 ? ', …' : '') + ')' : '');
+  }).join('; ') || 'none';
+}
+
+function normOpt(v){return String(decodeEntities(v)).toLowerCase().replace(/[\u2013\u2014]/g,'-').replace(/\s*-\s*/g,'-').replace(/\s*\+\s*/g,' + ').replace(/\s+/g,' ').trim()}
 const CANON_ALIASES=(()=>{const m=new Map();const add=(c,...alts)=>{m.set(normOpt(c),c);for(const a of alts)m.set(normOpt(a),c)};
   add('Silver');add('Gold');add('Rose','rose gold');
   add('Silver + Engrave');add('Gold + Engrave');add('Rose + Engrave','rose gold + engrave');
@@ -87,7 +222,7 @@ function isNoChainVal(v){const c=normOpt(v);
   // (exactly one char) and MISSED 'Charm Only - No Chain', which then survived
   // as a real chain length and shipped enabled full-price necklace rows.
   return /^no-?\s*chain/.test(c)||/charm-?\s*only[-\s]*no-?\s*chain/.test(c)||c==='charm only'}
-function parseLen(v){const s=String(v);
+function parseLen(v){const s=decodeEntities(v);
   // A range ('20-22 inch') or a metric value ('20 cm') is NOT an inch length.
   // The old /(\d+)/ took the first integer anywhere, so both read as 20 and were
   // silently deleted from the live listing by the 20-inch filter.
@@ -95,7 +230,7 @@ function parseLen(v){const s=String(v);
   if(/\d\s*(?:cm|mm)\b/i.test(s))return null;
   const m=s.match(/(\d+)\s*(?:"|\u201d|''|in\b|inch)/i)||s.match(/^\s*(\d+)\s*$/);
   return m?parseInt(m[1],10):null}
-function titleCaseOpt(v){return String(v).split(/\s+/).map(w=>/^[a-z]/i.test(w)?w[0].toUpperCase()+w.slice(1).toLowerCase():w.toLowerCase()).join(' ')}
+function titleCaseOpt(v){return String(decodeEntities(v)).split(/\s+/).map(w=>/^[a-z]/i.test(w)?w[0].toUpperCase()+w.slice(1).toLowerCase():w.toLowerCase()).join(' ')}
 function firstOffering(p){return (p&&p.offerings||[])[0]||{price:null,quantity:0,is_enabled:true}}
 function propValue2(p,id){const v=(p.property_values||[]).find(x=>Number(x.property_id)===Number(id));return v?(v.values||[]).join('/'):''}
 function deep(v){return JSON.parse(JSON.stringify(v))}
@@ -114,29 +249,29 @@ function priceFor(opt,lengthValue,version,chainType){
   return reg[version];
 }
 function planStandardRebuild(products,chainType,engraving){
+  // Decode ONCE, up front. Every test below and every row written back then
+  // works on plain text instead of 16&quot; .
+  products=decodeProducts(products);
   const propsMap=new Map();
   for(const p of (products||[]))for(const v of (p.property_values||[])){const id=Number(v.property_id);
     if(!propsMap.has(id))propsMap.set(id,{property_id:id,property_name:v.property_name||'Variation',values:[]});
     for(const val of (v.values||[]))if(!propsMap.get(id).values.includes(val))propsMap.get(id).values.push(val)}
   const props=[...propsMap.values()];
-  const find=res=>{for(const re of res){const h=props.find(p=>re.test(String(p.property_name||'')));if(h)return h}return null};
-  const metalProp=find([/metal/i,/material/i,/colou?r/i]);
-  if(!metalProp)return {error:'No metal dropdown found. Dropdowns: '+props.map(p=>p.property_name).join(', ')};
-  // '/size/i' used to be an unconditional fallback, which made a Hoop Earring's
-  // "Hoop Size" menu look like a chain-length menu and let the console rebuild an
-  // earring as a necklace. A bare Size menu now only qualifies if its values
-  // actually read as lengths.
-  let lengthProp=find([/chain\s*length/i,/length/i,/chain/i]);
-  if(!lengthProp)lengthProp=props.find(p=>/size/i.test(String(p.property_name||''))
-    &&(p.values||[]).some(v=>/inch|\"|\u201d|''/i.test(String(v))||isNoChainVal(v)))||null;
-  if(!lengthProp)return {error:'No chain-length dropdown found. Dropdowns: '+props.map(p=>p.property_name).join(', ')};
-  if(metalProp.property_id===lengthProp.property_id)return {error:'Metal and chain-length detection matched the same dropdown.'};
+  // Metal first, by what the menu CONTAINS ("Finish" full of metal names is a
+  // metal menu); then the chain length from what is LEFT, so the two can never
+  // claim the same dropdown.
+  const metalProp=pickMetalMenu(props);
+  if(!metalProp)return {error:'No metal dropdown found \u2014 no menu is named like a metal and none holds recognisable metal values. Dropdowns: '+describeMenus(props)};
+  const lengthProp=pickLengthMenu(props,metalProp);
+  if(!lengthProp)return {error:'No chain-length dropdown found. The metal menu is "'+metalProp.property_name+'"; no other dropdown holds inch values. Dropdowns: '+describeMenus(props)};
   const skipRose=chainType==='beady';
   const targetMetals=CANON_ORDER.filter(o=>!(skipRose&&/rose/i.test(o))&&!(!engraving&&/engrave/i.test(o)));
   const realLengths=[...new Set(lengthProp.values.filter(v=>!isNoChainVal(v)&&parseLen(v)!==20).map(titleCaseOpt))];
   if(!realLengths.length)return {error:'No usable chain lengths (only 20-inch or no-chain values).'};
   if(chainType==='beady'){const bad=realLengths.filter(l=>![14,16,18].includes(parseLen(l)));
-    if(bad.length)return {error:'Beady pricing covers only 14/16/18-inch chains; listing also has: '+bad.join(', ')}}
+    if(bad.length)return {error:'Beady pricing covers only 14/16/18-inch chains; this listing also has: '+
+      bad.map(l=>'"'+l+'"'+(parseLen(l)==null?' (no inch value could be read from it)':' ('+parseLen(l)+' inch)')).join(', ')+
+      '. Menu: "'+lengthProp.property_name+'".'}}
   const allLengths=[...realLengths,NO_CHAIN_VALUE];
   // The property map is the UNION across all products, but the row template used
   // to be products[0] unconditionally. If products[0] lacked one of the two
@@ -269,7 +404,7 @@ function mlMoney(n) { return Math.round(Number(n) * 100) / 100; }
 // Shared: collect the listing's dropdowns.
 function mlProps(products) {
   const map = new Map();
-  for (const p of (products || [])) for (const v of (p.property_values || [])) {
+  for (const p of decodeProducts(products)) for (const v of (p.property_values || [])) {
     const id = Number(v.property_id);
     if (!map.has(id)) map.set(id, { property_id: id, property_name: v.property_name || 'Variation', values: [] });
     for (const val of (v.values || [])) if (!map.get(id).values.includes(val)) map.get(id).values.push(val);
@@ -277,7 +412,9 @@ function mlProps(products) {
   return [...map.values()];
 }
 function mlFindMetal(props) {
-  return props.find(p => /metal|material|colou?r/i.test(String(p.property_name || ''))) || null;
+  // Same value-driven pick the necklace planner uses, so a Charm or Stud
+  // listing whose metal menu is called "Finish" resolves here too.
+  return pickMetalMenu(props);
 }
 // Build canonical -> original display string, preserving the listing's own text.
 function mlDisplayMap(values) {
