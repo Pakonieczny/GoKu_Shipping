@@ -76,6 +76,40 @@ const {
 async function logEvent(db, e) {
   try { await db.collection("EtsyPricing_Log").add({ at: Date.now(), listing_id: String(e.listing_id||""), title: String(e.title||"").slice(0,200), type: e.type, ok: e.ok !== false, detail: String(e.detail||"").slice(0,800) }); } catch (_) {}
 }
+/*  ═══ WHY A RUN USED TO DEADLOCK ═══════════════════════════════════════
+ *
+ *  The halt rule was "3 consecutive failures -> stop", and a failed listing is
+ *  deliberately never marked `batched`, so it stays at the FRONT of the queue.
+ *  Together those two rules lock the run: the same three listings that cannot
+ *  be priced are re-attempted first on every run, fail again, and halt it
+ *  again — 0 succeeded, 3 failed, 134 never touched, forever.
+ *
+ *  The halt exists to catch a SYSTEMIC fault (token dead, Etsy down, rate
+ *  limit) before it burns the whole queue. It was never meant to fire on a
+ *  listing whose own data cannot be priced. So failures are now classified:
+ *
+ *    "blocked"  — this listing needs a human. No chain/kind recorded, the
+ *                 planner refused, or Etsy's read-back disagreed after the
+ *                 write landed. Recorded on the listing with a reason, does
+ *                 NOT count toward the halt, and does NOT hold up the queue.
+ *    "systemic" — anything else: HTTP, network, auth, rate limit. Counts
+ *                 toward the halt, exactly as before.
+ *
+ *  Nothing is hidden and nothing is lost: a blocked listing is still not
+ *  marked `batched`, it is flagged `batch_blocked` with the reason so the
+ *  console can list it under "Needs attention", and clearing that flag puts
+ *  it straight back in the queue.                                          */
+function blockingError(msg, reason) {
+  const e = new Error(msg);
+  e.blocking = true;
+  e.blockReason = reason || "unpriceable";
+  return e;
+}
+// A budget error must PAUSE the run, never fail listings. Matching only the
+// exact token meant a differently-worded budget error from the proxy layer
+// counted as three ordinary failures and auto-halted the run instead.
+const BUDGET_RE = /DAILY_BUDGET_EXHAUSTED|daily (?:api |call )?budget|budget exhausted|quota exhausted/i;
+
 function compactHealth(h){return h?{error_count:h.error_count||0,warning_count:h.warning_count||0,product_count:h.product_count||0,min_price:h.min_price??null,max_price:h.max_price??null}:null}
 
 /* ---------------- Worker ---------------- */
@@ -113,6 +147,10 @@ exports.handler = async (event) => {
   const authHeaders = { "access-token": accessToken, "Content-Type": "application/json" };
 
   const ids = run.ids || [];
+  // Consecutive SYSTEM failures before halting. Listing-data problems no
+  // longer count, so this can stay tight without deadlocking the queue.
+  const HALT_AFTER = Math.max(2, Number(process.env.ETSY_BATCH_HALT_AFTER || 3));
+  const lastSystemic = [];
   for (let i = run.done; i < ids.length; i++) {
     // Stop flag + time budget, checked per listing.
     const fresh = (await runRef.get()).data();
@@ -148,15 +186,19 @@ exports.handler = async (event) => {
       const kind = ["regular", "beady", "charm", "stud"].includes(String(d.listing_kind || "").toLowerCase())
         ? String(d.listing_kind).toLowerCase()
         : (listingKindFor(d.queue_id, d.category) || normalizeChainType(d.chain_type));
-      if (!kind) throw new Error(
+      if (!kind) throw blockingError(
         "No listing kind recorded for this listing (listing_kind=" + JSON.stringify(d.listing_kind || null) +
         ", category=" + JSON.stringify(d.category || null) + ", chain_type=" + JSON.stringify(d.chain_type || null) + "). " +
         "Set chain_type to \"regular\" or \"beady\", or listing_kind to \"charm\" or \"stud\", before batching — " +
-        "refusing to guess, because pricing a Beady necklace off the Regular sheet is a silent money error.");
+        "refusing to guess, because pricing a Beady necklace off the Regular sheet is a silent money error.",
+        "no_listing_kind");
       const plan = kind === "charm" ? planCharmListingRebuild(detail.inventory.products)
                  : kind === "stud"  ? planStudRebuild(detail.inventory.products)
                  : planStandardRebuild(detail.inventory.products, kind, d.engraving !== false);
-      if (plan.error) throw new Error(plan.error);
+      // The planner refused — wrong sheet for this listing's variation menus
+      // ("No metal dropdown found", "Beady pricing covers only 14/16/18"...).
+      // That is a fact about this listing, not about the run.
+      if (plan.error) throw blockingError(plan.error, "plan_refused");
       // Necklaces only. A charm listing expresses engraving through its Charm Type
       // dropdown and a stud listing has none, so a REQUIRED personalization field
       // would block checkout for every buyer of those listings.
@@ -166,7 +208,13 @@ exports.handler = async (event) => {
         method: "POST", headers: authHeaders,
         body: JSON.stringify({ listing_id: Number(id), expected_snapshot_hash: detail.snapshot_hash, inventory: { products: plan.rows }, auto_on_property: true, personalization: pers })
       });
-      if (!res.verified) throw new Error(res.verification_error || "Etsy verification did not match.");
+      /*  The PUT already landed on Etsy; only the read-back disagreed. Never
+       *  retried blindly: the price tier is drawn at random per listing, so a
+       *  re-run would write DIFFERENT prices. Blocked for review.          */
+      if (!res.verified) throw blockingError(
+        (res.verification_error || "Etsy verification did not match after the write.") +
+        " The write was sent \u2014 check this listing before re-queuing it.",
+        "not_verified");
 
       const patch = {
         batched: true,
@@ -187,7 +235,7 @@ exports.handler = async (event) => {
       run.ok = (run.ok || 0) + 1;
       run.consec_fail = 0;
     } catch (e) {
-      if (/DAILY_BUDGET_EXHAUSTED/.test(String(e.message))) {
+      if (BUDGET_RE.test(String(e.message))) {
         // Not a listing failure: the shared daily budget ran out. Pause the
         // run holding position at this listing; the cron auto-resumes it
         // after the 11:59 PM Toronto reset. done is NOT advanced.
@@ -195,25 +243,50 @@ exports.handler = async (event) => {
         await logEvent(db, { type: "run_end", ok: false, detail: "Run paused: " + String(e.message).slice(0, 250) });
         return { statusCode: 200, body: "budget-paused" };
       }
-      run.fail = (run.fail || 0) + 1;
-      run.consec_fail = (run.consec_fail || 0) + 1;
+      const blocking = !!(e && e.blocking);
       const msg = String(e.message).slice(0, 400);
-      // NOTE: `batched` is deliberately NOT set on failure, so the listing
-      // stays in the prepared/ready queue and is re-processed on the next
-      // batch run — failed listings are never lost.
-      await db.collection("EtsyPricing_Listings").doc(id).set({ last_batch: { at: Date.now(), ok: false, error: msg }, updated_at: Date.now() }, { merge: true });
-      await runRef.set({ errors: admin.firestore.FieldValue.arrayUnion("#" + id + (d.title ? " \u00b7 " + d.title : "") + ": " + msg), updated_at: Date.now() }, { merge: true });
-      await logEvent(db, { listing_id: id, title: d.title, type: "batch_fail", ok: false, detail: msg });
+      run.fail = (run.fail || 0) + 1;
+      // Only a systemic fault moves the halt counter. A blocked listing RESETS
+      // it, because reaching it at all proves the pipeline is working.
+      run.consec_fail = blocking ? 0 : (run.consec_fail || 0) + 1;
+      run.blocked = (run.blocked || 0) + (blocking ? 1 : 0);
+
+      // `batched` is deliberately NOT set on failure, so nothing is ever lost.
+      // `batch_blocked` marks the listing as needing a human and takes it out
+      // of the auto-queue until someone clears it in the console.
+      const patch = { last_batch: { at: Date.now(), ok: false, error: msg, blocking: blocking }, updated_at: Date.now() };
+      if (blocking) patch.batch_blocked = { at: Date.now(), reason: e.blockReason || "unpriceable", error: msg };
+      await db.collection("EtsyPricing_Listings").doc(id).set(patch, { merge: true });
+
+      const line = (blocking ? "\u26a0 NEEDS ATTENTION " : "\u2717 ") + "#" + id + (d.title ? " \u00b7 " + d.title : "") + ": " + msg;
+      await runRef.set({ errors: admin.firestore.FieldValue.arrayUnion(line),
+                         blocked: run.blocked || 0, updated_at: Date.now() }, { merge: true });
+      await logEvent(db, { listing_id: id, title: d.title, type: blocking ? "batch_blocked" : "batch_fail", ok: false, detail: msg });
+      if (!blocking) lastSystemic.push(msg);
     }
     run.done = i + 1;
-    await runRef.set({ done: run.done, ok: run.ok || 0, fail: run.fail || 0, consec_fail: run.consec_fail || 0, updated_at: Date.now() }, { merge: true });
-    if ((run.consec_fail || 0) >= 3) {
-      await runRef.set({ status: "stopped", stop_reason: "Auto-halted: 3 consecutive listings failed to update on Etsy. Un-attempted and failed listings remain queued and will be re-processed on the next run.", current: "", updated_at: Date.now() }, { merge: true });
+    await runRef.set({ done: run.done, ok: run.ok || 0, fail: run.fail || 0,
+                       blocked: run.blocked || 0, consec_fail: run.consec_fail || 0,
+                       updated_at: Date.now() }, { merge: true });
+    if ((run.consec_fail || 0) >= HALT_AFTER) {
+      /*  The halt badge used to say only "3 consecutive listings failed",
+          which told nobody what to fix. The actual error text goes in the
+          reason so the console can explain itself without a log dive.      */
+      const why = lastSystemic.slice(-HALT_AFTER).map(function (m, n) { return (n + 1) + ") " + m; }).join("  |  ");
+      await runRef.set({
+        status: "stopped",
+        stop_reason: "Auto-halted after " + HALT_AFTER + " consecutive SYSTEM failures (not listing-data problems). " +
+                     "Everything not yet attempted stays queued. Last errors \u2014 " + (why || "no detail captured"),
+        current: "", updated_at: Date.now()
+      }, { merge: true });
+      await logEvent(db, { type: "run_end", ok: false, detail: "Auto-halted: " + (why || "no detail captured") });
       return { statusCode: 200, body: "auto-halted" };
     }
   }
 
-  await runRef.set({ status: "done", current: "", finished_at: Date.now(), updated_at: Date.now() }, { merge: true });
-  await logEvent(db, { type: "run_end", detail: "Batch run finished: " + (run.ok || 0) + " succeeded, " + (run.fail || 0) + " failed." });
+  await runRef.set({ status: "done", current: "", blocked: run.blocked || 0,
+                     finished_at: Date.now(), updated_at: Date.now() }, { merge: true });
+  await logEvent(db, { type: "run_end", detail: "Batch run finished: " + (run.ok || 0) + " succeeded, " +
+    (run.fail || 0) + " failed" + (run.blocked ? " (" + run.blocked + " need attention)" : "") + "." });
   return { statusCode: 200, body: "done" };
 };
