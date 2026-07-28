@@ -54,10 +54,18 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .tabCtl button.on b{color:var(--gold2)}
 .tabCtl.sm button{padding:5px 10px;font-size:11.5px}
 .modeBar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 14px;padding:8px 12px;border:1.5px solid var(--gold);border-left:4px solid var(--gold);border-radius:var(--rsm);background:linear-gradient(90deg,var(--goldSoft),var(--card) 55%)}
-.modeBar .mlabel{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--clay);white-space:nowrap}
+.modeBar .mlabel{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--clay);white-space:nowrap;margin-left:auto}
+/*  The cluster never wraps and never gets a gap wider than 7px: Fitts's law
+    says the cost of a click is distance AND target size, so the run is kept
+    short while every target inside it is made BIGGER, not smaller. */
+.modeBar .mset{display:flex;align-items:center;gap:7px;flex-wrap:nowrap}
+.modeBar .msep{width:1px;align-self:stretch;background:var(--goldLine,var(--line));margin:3px 4px;flex:0 0 1px}
+.modeBar .mset .btn{min-height:36px;padding:9px 15px;font-size:12.5px;white-space:nowrap}
+.modeBar .mkeys{font:10px var(--mono);color:var(--ink45);white-space:nowrap;letter-spacing:.06em}
+@media(max-width:1180px){.modeBar .mlabel,.modeBar .mkeys{display:none}}
 .modeBar .mhint{margin-left:auto;font-size:11px;color:var(--ink45);white-space:nowrap}
 .modeBar .tabCtl{border:1.5px solid var(--velvet);background:var(--card);padding:2px;flex-wrap:nowrap}
-.modeBar .tabCtl button{font-weight:700;font-size:12px;padding:6px 12px;color:var(--ink70);white-space:nowrap;line-height:1.2}
+.modeBar .tabCtl button{font-weight:700;font-size:12.5px;padding:9px 15px;min-height:36px;color:var(--ink70);white-space:nowrap;line-height:1.2}
 .modeBar .tabCtl button.on{background:var(--velvet);color:var(--gold2);box-shadow:inset 0 0 0 1.5px var(--gold)}
 .modeBar .tabCtl#engraveToggle button.on[data-eg="on"]{background:var(--sage);color:#fff}
 .modeBar .tabCtl#engraveToggle button.on[data-eg="off"]{background:var(--clay);color:#fff}
@@ -280,7 +288,26 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
         </div>
 
         <div class="sectionHead"><div><h3>Variation menus</h3><div class="sub">Add tiers, rename custom menus or remove options. New combinations inherit their source tier values.</div></div><div class="right"><button class="btn ghost sm" id="charmOnlyBtn">✦ Charm Only setup</button><button class="btn ghost sm" id="addMenuBtn">+ Add dropdown</button></div></div>
-        <div class="modeBar hidden" id="modeBar"><span class="mlabel">Required — set per listing</span><div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on">Regular</button><button data-ct="beady">Beady</button></div><div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on">Engraving ON</button><button data-eg="off">Engraving OFF</button></div><span class="pill neutral" id="prepBadge">Not prepared</span><button class="btn sage sm" id="approvePrepBtn" title="Queue this listing for the batch using the toggle positions shown">✓ Approve</button><button class="btn ghost sm hidden" id="unprepBtn" title="Remove this listing from the batch queue">✕ Remove from batch</button></div>
+        <!--  ACTION CLUSTER.  Every control that gets CLICKED on the repeat loop
+              sits in one uninterrupted run, in the order the hand uses them:
+              chain -> engraving -> commit. Nothing passive is allowed between
+              two click targets, because a label you never click still costs the
+              travel across it several hundred times a day. The wording, the
+              status pill and the shortcut legend are read, not clicked, so they
+              are pushed to the far right where they cost nothing.          -->
+        <div class="modeBar hidden" id="modeBar">
+          <div class="mset">
+            <div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on" title="Price from the Regular chain sheet  (R)">Regular</button><button data-ct="beady" title="Price from the Beady chain sheet  (B)">Beady</button></div>
+            <div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on" title="Include engraving options  (E toggles)">Engrave ON</button><button data-eg="off" title="Exclude engraving options  (E toggles)">Engrave OFF</button></div>
+            <span class="msep"></span>
+            <button class="btn sage sm" id="approvePrepBtn" title="Queue this listing for the batch using the toggles shown  (A)">✓ Approve</button>
+            <button class="btn velvet sm" id="approveNextBtn" title="Queue this listing and open the next one in the current filter  (Enter)">✓ Approve &amp; next ›</button>
+            <button class="btn ghost sm hidden" id="unprepBtn" title="Remove this listing from the batch queue">✕ Remove</button>
+          </div>
+          <span class="mlabel">Required — set per listing</span>
+          <span class="pill neutral" id="prepBadge">Not prepared</span>
+          <span class="mkeys" title="Keyboard: R Regular · B Beady · E toggle engraving · A Approve · Enter Approve &amp; next">R·B·E·A·⏎</span>
+        </div>
         <div class="grid variationGrid" id="variationGrid"></div>
         <div class="card depCard" id="dependencyCard"></div>
 
@@ -1486,6 +1513,14 @@ function renderPrepUi(){
     else{badge.textContent='Not in batch \u2014 press Approve to queue with the shown toggles';badge.className='pill neutral'}}
   const un=$('#unprepBtn');if(un)un.classList.toggle('hidden',!isPrepared(dCur));
   const ap=$('#approvePrepBtn');if(ap){ap.classList.toggle('hidden',isPrepared(dCur));ap.disabled=!S.currentId}
+  /*  Approve & next stays in ONE fixed position whether or not this listing is
+      already queued — a control that moves is a control you have to look for. */
+  const an=$('#approveNextBtn');
+  if(an){
+    an.disabled=!S.currentId;
+    const last=S.currentId&&!hasNextListing();
+    an.firstChild.textContent=isPrepared(dCur)?(last?'\u2713 Queued':'\u2713 Next \u203a'):(last?'\u2713 Approve':'\u2713 Approve & next \u203a');
+  }
 }
 function persistToggle(kind){
   if(!S.currentId)return; // toggles only persist against an open listing
@@ -1503,6 +1538,28 @@ function approvePrep(){
   fbSet(S.currentId,{chain_type:S.chainType,engraving:S.engraving,chain_set:true,engrave_set:true,batched:false,title:(l&&l.title)||''});
   logEvent({listing_id:S.currentId,title:(l&&l.title)||'',type:'queue',detail:'Approved for batch: '+(S.chainType==='beady'?'Beady':'Regular')+' \u00b7 Engraving '+(S.engraving?'ON':'OFF')});
   toast('#'+S.currentId+' approved for the batch ('+(S.chainType==='beady'?'Beady':'Regular')+' \u00b7 Engraving '+(S.engraving?'ON':'OFF')+') \u2014 '+batchReadySummary()+'.','ok');
+}
+/*  The repeat loop used to be four clicks with a long traverse: two toggles,
+    Approve, then all the way up to the topbar's next arrow. This collapses the
+    last two into one button that never moves.
+
+    It does NOT blindly re-approve. A listing already queued with exactly these
+    toggles AND already batched is left alone — approvePrep() sets batched:false,
+    so using this purely to move on would silently push a finished listing back
+    into the queue. */
+function hasNextListing(){
+  const i=S.filtered.findIndex(l=>String(l.listing_id)===String(S.currentId));
+  return i>=0&&i<S.filtered.length-1;
+}
+async function approveAndNext(){
+  if(!S.currentId){toast('Open a listing first.','bad');return}
+  const d=S.prep.get(String(S.currentId))||{};
+  const sameToggles=isPrepared(d)&&
+    ((d.chain_type==='beady')===(S.chainType==='beady'))&&
+    ((d.engraving!==false)===S.engraving);
+  if(!(sameToggles&&d.batched))approvePrep();
+  if(hasNextListing())await navigate(1);
+  else toast('Approved \u2014 that was the last listing in this filter.','ok');
 }
 function unprepare(id){
   if(!id)return;
@@ -2064,7 +2121,33 @@ $('#diagList').addEventListener('click',e=>{const b=e.target.closest('button[dat
 $('#schedArmBtn').addEventListener('click',armSchedule);
 $('#schedCancelBtn').addEventListener('click',cancelSchedule);
 $('#approvePrepBtn').addEventListener('click',approvePrep);
+$('#approveNextBtn').addEventListener('click',approveAndNext);
 $('#unprepBtn').addEventListener('click',()=>unprepare(S.currentId));
+/*  Zero-travel path for the same loop. Single letters, no modifiers, and only
+    while the mode bar is actually showing an open listing. Suppressed inside
+    any field, any dialog, and whenever a modifier is held, so it can never
+    swallow typing or a browser shortcut. */
+function setChain(ct){ if(S.chainType===ct)return; S.chainType=ct; renderChainToggle(); persistToggle('chain'); }
+document.addEventListener('keydown',e=>{
+  if(e.metaKey||e.ctrlKey||e.altKey)return;
+  const t=e.target;
+  if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||'')))return;
+  if(document.querySelector('dialog[open]'))return;
+  const bar=$('#modeBar');
+  if(!bar||bar.classList.contains('hidden')||!S.currentId)return;
+  const k=(e.key||'').toLowerCase();
+  if(k==='r'){e.preventDefault();setChain('regular');return}
+  if(k==='b'){e.preventDefault();setChain('beady');return}
+  if(k==='e'){e.preventDefault();
+    // Route through the real button so the engraving side effects (row
+    // stripping, the explanatory toast) happen exactly as they do on a click.
+    const want=S.engraving?'off':'on';
+    const btn=document.querySelector('#engraveToggle button[data-eg="'+want+'"]');
+    if(btn)btn.click();
+    return}
+  if(k==='a'){e.preventDefault();const ap=$('#approvePrepBtn');if(ap&&!ap.classList.contains('hidden')&&!ap.disabled)approvePrep();return}
+  if(e.key==='Enter'){e.preventDefault();approveAndNext();return}
+});
 $('#batchBtn').addEventListener('click',async()=>{
   const mode=$('#batchBtn').dataset.mode||'start';
   if(mode==='start'){batchRun();return}
