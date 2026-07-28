@@ -10811,6 +10811,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • CUTOUT TOPOLOGY IS PART OF THE SILHOUETTE: if IMAGE 2 has a hole, slot, gap or pierced opening, the output must have that same opening at the same relative position and the same relative size, with background visible through it. If IMAGE 2 has no opening in an area, the output has none there.
         • If IMAGE 2 has no mark in an area, leave that area PLAIN, smooth and empty. If IMAGE 2 has a mark, it MUST appear.
 
+      MANDATORY TRANSCRIPTION PASS — DO THIS BEFORE YOU RENDER ANYTHING:
+        • Step 1: Examine IMAGE 2 and COUNT the engraved strokes on the charm. Get an exact integer.
+        • Step 2: For each stroke in turn, note where it STARTS, the path it FOLLOWS, where it ENDS, and whether it touches or crosses any other stroke. Note which strokes run parallel and how the gaps between them vary along their length.
+        • Step 3: Count the cutouts / pierced openings separately. Note the shape and position of each.
+        • Step 4: Render exactly that inventory — that number of strokes, following those paths, plus that number of openings. Not one more, not one fewer.
+        • Step 5: Before returning, re-count the strokes and openings in your output and compare the totals to Step 1 and Step 3. If the numbers differ, the render is WRONG — redo it.
+        • This transcription is the whole task. A charm that "looks like" IMAGE 2 but carries a different number of strokes, or strokes that end in different places, is a FAILED render even if it is attractive.
+
       THE CHARM IS A PHYSICAL OBJECT, NOT AN ILLUSTRATION (MENTAL MODEL — READ FIRST):
         • You are not drawing "an animal" or "an object". You are rendering a real piece of jewellery: a shape laser-cut from a flat sheet of metal, photographed from the seller's actual inventory. IMAGE 2 shows the entire physical object as it really exists.
         • If IMAGE 2 shows a shape with little or no interior detail, then the real physical charm HAS little or no interior detail. Mostly-empty inside the outline is CORRECT — that is how it was cut.
@@ -10896,7 +10904,52 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Do not over-saturate the gold. It should read as real polished metal, not as a yellow graphic.
         • HARD FAIL: any rose, pink, peach, salmon or red-orange cast on the charm body or post.
         • HARD FAIL: engraving rendered black, brown, charcoal, grey or gunmetal.
-        • HARD FAIL: the charm body reading as a noticeably different alloy from IMAGE 1's metal.`;
+        • HARD FAIL: the charm body reading as a noticeably different alloy from IMAGE 1's metal.
+
+      THE COPPER INSTRUCTION IS SCOPED TO THE STROKES ONLY — DOCUMENTED FAILURE MODE:
+        • READ THIS CAREFULLY: "light copper" describes the colour INSIDE the engraved grooves. It describes NOTHING else. It is not the charm's colour, not the post's colour, not the metal's colour.
+        • THE OBSERVED FAILURE: the model reads "engravings are light copper", and because the engraved pattern covers much of the charm's face, it tints the ENTIRE charm copper/rose. The result is a pink charm with barely-visible engraving — the exact inverse of what is wanted. Do not do this.
+        • The correct result is HIGH CONTRAST IN HUE BETWEEN THE TWO ZONES: a warm YELLOW gold body, with COPPER strokes sitting inside it. If body and strokes are the same colour, the render has failed regardless of how attractive it looks.
+        • If the engraved pattern is dense and covers most of the charm's face, that changes NOTHING. The un-engraved metal between the strokes stays yellow gold, however little of it there is.
+        • HARD FAIL: the charm body rendered in the same copper/rose tone as its engravings.
+        • HARD FAIL: the copper tone spreading beyond the strokes onto the surrounding metal, the post, or the charm's edges.
+        • HARD FAIL: the engraving and the body reading as the same colour, so the pattern is only visible through shading.`;
+
+    // Added after a live render came back as a uniformly rose/copper disc with
+    // soft embossed-looking waves and blotchy tonal drift between them. The
+    // engraved / not-engraved distinction has to be stated as a binary
+    // partition of the surface, or the model renders a continuous gradient.
+    const STUD_SURFACE_RULES =
+    `SURFACE RENDERING — THE CHARM FACE IS A BINARY PARTITION (CRITICAL):
+        • Every point on the charm's face belongs to exactly ONE of two zones, and there is no third state and no blend between them:
+            ZONE A — UN-ENGRAVED BASE METAL: flat, smooth, unbroken, polished warm yellow gold.
+            ZONE B — INSIDE AN ENGRAVED STROKE: the light copper etched line.
+        • The boundary between Zone A and Zone B is a HARD, CRISP, CLEAN EDGE. No feathering, no soft falloff, no gradient ramp, no anti-aliased smear, no glow, no halo, no blurred transition band.
+        • A viewer must be able to point at any square millimetre of the charm and say instantly "engraved" or "not engraved". If any area is ambiguous, the render is WRONG.
+
+      ZONE A — THE UN-ENGRAVED METAL MUST BE UNIFORM:
+        • The un-engraved metal is ONE continuous polished surface of ONE consistent colour and tone across the whole charm.
+        • FORBIDDEN: patchy blotches, cloudy mottling, soft dark or light pools, airbrushed shading, dirty or smudged regions, tonal drift from one side of the charm to the other, or any local darkening that does not come from IMAGE 1's actual light source.
+        • The only permitted tonal variation on Zone A is the smooth, physically consistent specular response of polished metal to IMAGE 1's lighting — a clean broad highlight and a clean broad falloff, matching the direction, softness and intensity of every other light response in IMAGE 1.
+        • DOCUMENTED FAILURE MODE: the metal comes back looking like matte clay or putty with soft uneven patches. That is not polished metal. Polished gold has crisp specular highlights and clean reflections, not diffuse cloudiness.
+        • HARD FAIL: uneven, blotchy, mottled or cloudy shading anywhere on the un-engraved metal.
+        • HARD FAIL: the charm surface reading as matte, dusty, clay-like, powdery or putty-like rather than polished metal.
+
+      ZONE B — THE STROKES ARE CUT IN, NOT RAISED UP:
+        • Each engraved stroke is a shallow line CUT DOWN INTO a flat sheet. It is NOT a raised ridge, NOT embossed, NOT repoussé, NOT a relief, NOT a puffed or swollen line standing proud of the surface.
+        • DO NOT render each stroke with a highlight on one side and a shadow on the other in a way that makes it read as a raised ridge. The sheet is flat; the only permitted depth cue is a hairline-thin darker edge where the cut breaks the surface.
+        • Each stroke holds a CONSTANT WIDTH along its length unless IMAGE 2 shows it tapering. Do not thicken, taper, swell, bloom or flare a stroke for style.
+        • Strokes stay SEPARATE. Two neighbouring strokes never merge, bleed together or close the gap between them. The un-engraved gold between them stays clearly visible along their entire length.
+        • DOCUMENTED FAILURE MODE: the strokes come back soft, thick, blurry and swollen, reading as moulded ridges on a puffy surface rather than lines etched into a flat one.
+        • HARD FAIL: any engraved stroke reading as raised, embossed, moulded or standing proud of the surface.
+        • HARD FAIL: engraved strokes blurred, feathered, soft-edged, or bleeding into the surrounding metal.
+        • HARD FAIL: two adjacent strokes merging into one another or into a solid mass.
+        • HARD FAIL: strokes varying in width along their length when IMAGE 2 shows them constant.
+
+      THE WHOLE CHARM IS ONE FLAT PLANE:
+        • The charm's face is perfectly planar. It does not dome, bow, curve, swell, cup or bulge. Its thickness is uniform edge to edge and extremely thin.
+        • The outer edge and every cutout edge is a clean square cut through the sheet — no rolled edge, no bevel, no rounded lip, no thick rim.
+        • HARD FAIL: the charm face rendered domed, swollen, pillowed or three-dimensionally sculpted.`;
 
     // This is the block that stops "make it tiny" from being satisfied by
     // dropping engravings. Every previous Stud prompt led with EXTREMELY SMALL
@@ -10923,7 +10976,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         ☐ All instances are identical to each other in silhouette, engraving, size and colour.
         ☐ No bail, hoop or jump ring on the charm; no earring backing anywhere; the post is unchanged from IMAGE 1.
         ☐ Charm is flat and thin with sharp square cutout edges — no bevel, no dome, no 3D relief.
-        ☐ Engravings are light copper and shallow; the body and post are warm yellow gold, not rose.
+        ☐ Engravings are light copper and shallow; the body and post are warm yellow gold — two clearly DIFFERENT colours, not one.
+        ☐ The un-engraved metal is uniform and polished — no blotches, no cloudy patches, no matte clay look.
+        ☐ Every engraved stroke has hard crisp edges, constant width, and reads as cut IN, not raised up.
+        ☐ Stroke count and cutout count in the output match the counts transcribed from IMAGE 2.
         ☐ Composition, crop, zoom, lighting, background and model are unchanged from IMAGE 1.`;
 
     // --- Slot 1 — Primary_Models (on-ear model shot) ---------------------------
@@ -10948,6 +11004,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${STUD_MATERIAL_RULES}
 
+      ${STUD_SURFACE_RULES}
+
       ${STUD_FINAL_CHECK}`;
 
     // --- Slot 2 — Background_AI_Images (styled product / creative) --------------
@@ -10968,6 +11026,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ${STUD_POST_RULES}
 
       ${STUD_MATERIAL_RULES}
+
+      ${STUD_SURFACE_RULES}
 
       ${STUD_LEGIBILITY_FLOOR}
 
@@ -11025,6 +11085,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${STUD_MATERIAL_RULES}
 
+      ${STUD_SURFACE_RULES}
+
       FINAL VALIDATION — REVISE BEFORE RETURNING IF ANY ITEM FAILS:
         ☐ Only the charm body design changed; the pencil, background, shadows and layout are pixel-identical to IMAGE 1.
         ☐ "Sizing Guide", "PENCIL 2", "~8mm x 8mm" and "*Charm Size Varies based on Shape" are reproduced exactly, unmoved and unrestyled.
@@ -11032,7 +11094,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         ☐ The charm's silhouette, every cutout and every engraved stroke exactly match IMAGE 2 — counted, not estimated.
         ☐ The charm's longest dimension matches the placeholder's longest dimension, with IMAGE 2's true aspect ratio preserved.
         ☐ No bail, hoop or jump ring on the charm; no earring backing; the post is unchanged.
-        ☐ Charm is flat and thin with sharp square cutout edges; engravings are light copper; body and post are warm yellow gold.`;
+        ☐ Charm is flat and thin with sharp square cutout edges; engravings are light copper; body and post are warm yellow gold — two clearly DIFFERENT colours.
+        ☐ The un-engraved metal is uniform and polished — no blotches, no cloudy patches, no matte clay look.
+        ☐ Every engraved stroke has hard crisp edges, constant width, and reads as cut IN, not raised up.
+        ☐ Stroke count and cutout count in the output match the counts transcribed from IMAGE 2.`;
 
     // --- Slot 4 — Product_Shots -------------------------------------------------
     const STUD_PRODUCT_PROMPT =
@@ -11053,6 +11118,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ${STUD_POST_RULES}
 
       ${STUD_MATERIAL_RULES}
+
+      ${STUD_SURFACE_RULES}
 
       ${STUD_LEGIBILITY_FLOOR}
 
@@ -11080,6 +11147,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${STUD_MATERIAL_RULES}
 
+      ${STUD_SURFACE_RULES}
+
       ${STUD_FINAL_CHECK}`;
 
     // --- Slot 6 — Product_Shots_2 ----------------------------------------------
@@ -11101,6 +11170,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ${STUD_POST_RULES}
 
       ${STUD_MATERIAL_RULES}
+
+      ${STUD_SURFACE_RULES}
 
       ${STUD_LEGIBILITY_FLOOR}
 
