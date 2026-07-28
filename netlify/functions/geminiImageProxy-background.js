@@ -611,7 +611,7 @@ async function callGeminiGenerateContentImage({
   const wantAR = sizeToAspectRatio(size) || "1:1";
 
   const promptText =
-    `${String(prompt || "").trim()}\\n\\n` +
+    `${String(prompt || "").trim()}\n\n` +
     `OUTPUT (NON-NEGOTIABLE): Return a photorealistic ${wantAR} image. ` +
     `Exact size ${wantW}x${wantH}. ` +
     `Return an image suitable for a product photo.`;
@@ -704,7 +704,7 @@ async function callGeminiGenerateContentImage({
     const textOnly = partsOut
       .map((p) => p?.text)
       .filter(Boolean)
-      .join("\\n")
+      .join("\n")
       .slice(0, 600);
     throw new Error(
       `Gemini response missing inline_data image payload. Text: ${
