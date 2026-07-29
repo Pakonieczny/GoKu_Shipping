@@ -1441,8 +1441,45 @@ async function charmOnlySetup(){
   }catch(e){clearActivity();toast(e.message,'bad')}
 }
 /* ---------------- Firebase-backed prep + batch ---------------- */
-async function fbCall(body){const r=await fetch(FUNCTIONS_BASE+'/etsyPricingStore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const t=await r.text();let d;try{d=JSON.parse(t)}catch{throw new Error('Store returned non-JSON: '+t.slice(0,160))}if(!r.ok)throw new Error(d.error||('Store error HTTP '+r.status));return d}
-function fbSet(id,patch){const cur=S.prep.get(String(id))||{};S.prep.set(String(id),{...cur,...patch});renderPrepUi();renderResults();return fbCall({action:'set',id:String(id),patch}).catch(e=>toast('Cloud save failed for #'+id+': '+e.message,'bad'))}
+/*  A single 502 from the store, or a laptop that slept for a second, used to
+    surface as a red console line and a "Cloud save failed" toast for something
+    that a 400ms retry fixes.
+
+    RETRIED ONLY WHERE REPLAY IS SAFE. `set` is a Firestore merge patch and
+    `log` is an append, so sending either twice is harmless; the reads are
+    obviously safe. `startRun` is NOT on the list — replaying it would create a
+    SECOND batch run against the same listings.                              */
+const FB_TRANSIENT=new Set([408,425,429,500,502,503,504]);
+const FB_REPLAY_SAFE=new Set(['getAll','getRun','apiUsage','set','log','getLog','schedule','getSchedule']);
+const netIsDown=()=>typeof navigator!=='undefined'&&navigator.onLine===false;
+async function fbCall(body){
+  const tries=FB_REPLAY_SAFE.has(String(body&&body.action||''))?3:1;
+  let last;
+  for(let n=0;n<tries;n++){
+    if(n)await new Promise(r=>setTimeout(r,300*n*n+200));
+    try{
+      const r=await fetch(FUNCTIONS_BASE+'/etsyPricingStore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const t=await r.text();
+      let d;try{d=JSON.parse(t)}catch{d=null}
+      if(r.ok){ if(d)return d; throw Object.assign(new Error('Store returned non-JSON: '+t.slice(0,160)),{__transient:true}); }
+      const e=new Error((d&&d.error)||('Store error HTTP '+r.status));
+      if(FB_TRANSIENT.has(r.status))e.__transient=true;
+      throw e;
+    }catch(e){
+      last=e;
+      // fetch() rejects for offline/DNS/reset — all worth one more attempt.
+      if(e&&!e.__transient&&e instanceof TypeError){e.__transient=true;e.__offline=true}
+      if(!e||!e.__transient||n===tries-1)throw last;
+    }
+  }
+  throw last;
+}
+function fbSet(id,patch){const cur=S.prep.get(String(id))||{};S.prep.set(String(id),{...cur,...patch});renderPrepUi();renderResults();
+  return fbCall({action:'set',id:String(id),patch}).catch(e=>{
+    // Only shout once the retries are exhausted, and say plainly when the
+    // cause is the network rather than the store.
+    toast((e&&e.__offline?'No connection \u2014 #'+id+' was not saved to the cloud yet. It will need re-saving.':'Cloud save failed for #'+id+': '+e.message),'bad');
+  })}
 function compactHealth(h){return h?{error_count:h.error_count||0,warning_count:h.warning_count||0,product_count:h.product_count||0,min_price:h.min_price??null,max_price:h.max_price??null}:null}
 async function hydrateFromStore(skipResume){
   try{
@@ -1757,12 +1794,25 @@ const ApiUsage=(()=>{
   // verified endpoint rather than passing the numbers off as verified.
   async function readUsage(){
     if(usageMode!=='store'){
-      const response=await fetch(FUNCTIONS_BASE+'/etsyApiUsage?app=pricing-console&t='+Date.now(),{
-        method:'GET',
-        cache:'no-store',
-        headers:{Accept:'application/json'},
-      });
+      let response;
+      try{
+        response=await fetch(FUNCTIONS_BASE+'/etsyApiUsage?app=pricing-console&t='+Date.now(),{
+          method:'GET',
+          cache:'no-store',
+          headers:{Accept:'application/json'},
+        });
+      }catch(e){
+        // ERR_INTERNET_DISCONNECTED / ERR_CONNECTION_RESET land here.
+        throw Object.assign(new Error(netIsDown()?'No internet connection':'Connection lost while reading API statistics'),
+                            {__transient:true,__offline:true});
+      }
       if(response.status!==404){
+        /*  A gateway blip or a sleeping laptop is not "statistics unavailable" —
+            it is "not right now". Tagging it lets the widget keep the last good
+            reading on screen instead of blanking to Unavailable mid-batch.   */
+        if(FB_TRANSIENT.has(response.status)){
+          throw Object.assign(new Error('Statistics server is briefly unavailable (HTTP '+response.status+')'),{__transient:true});
+        }
         const data=await response.json().catch(()=>({}));
         if(!response.ok||data.ok===false){
           throw new Error(data.error||'API statistics unavailable');
@@ -1867,13 +1917,32 @@ const ApiUsage=(()=>{
       widget.title='';
       return data;
     }catch(error){
-      widget.classList.add('awUnavailable');
-      widget.title='Verified API statistics are temporarily unavailable: '+error.message;
-      byId('awAppNum').textContent='Unavailable';
-      byId('awKeyNum').textContent='\u2014';
-      byId('awQps').textContent='\u2014 QPS';
-      setBar('awAppBar',0,'bad');
-      setBar('awKeyBar',0,'');
+      /*  Blanking the widget mid-batch for a two-second network drop threw away
+          a perfectly good reading and made it look like something had broken.
+          A TRANSIENT failure now leaves the numbers exactly where they are and
+          only marks them as not currently refreshing. A real failure still
+          blanks, because a real failure means the numbers cannot be trusted.
+          Either way the error is still THROWN, so the manual Update button
+          keeps reporting the exact cause.                                    */
+      const transient=!!(error&&error.__transient);
+      if(transient&&lastUsageSnapshot){
+        const info=byId('awInfo');
+        if(info){
+          info.classList.add('warnDot');
+          info.title=String(info.title||'').split('\n\n')[0]+
+            '\n\n\u26a0 '+error.message+' \u2014 showing the last reading until it recovers.';
+        }
+        widget.classList.remove('awUnavailable');
+        widget.title=error.message+' \u2014 last good reading still shown.';
+      }else{
+        widget.classList.add('awUnavailable');
+        widget.title='Verified API statistics are temporarily unavailable: '+error.message;
+        byId('awAppNum').textContent='Unavailable';
+        byId('awKeyNum').textContent='\u2014';
+        byId('awQps').textContent='\u2014 QPS';
+        setBar('awAppBar',0,'bad');
+        setBar('awKeyBar',0,'');
+      }
       throw error;
     }finally{
       refreshInFlight=false;
@@ -1896,6 +1965,9 @@ const ApiUsage=(()=>{
     if(!force&&lastProbeAt&&Date.now()-lastProbeAt<60000){
       return;
     }
+    // Nothing to gain from spending a probe with no connection — and it would
+    // only print another red line.
+    if(netIsDown())return;
     probeInFlight=true;
     lastProbeAt=Date.now(); // throttle failures too; never probe-loop
     try{
@@ -1910,13 +1982,19 @@ const ApiUsage=(()=>{
         return;
       }
       const result=await response.json().catch(()=>({}));
-      if(!response.ok||result.verified!==true){
-        console.warn('Etsy API statistics verification did not complete:',response.status,result);
-      }else{
+      if(result&&result.verified===true){
         lastProbeAt=Date.now();
+      }else if(result&&result.retryable){
+        /*  Etsy was briefly unreachable or rate-limited this one probe. The
+            whole-key reading refreshes from the next real API call anyway, so
+            this needs no action and no red line. */
+        console.debug('Etsy whole-key reading not refreshed this cycle (transient):',result.error||'');
+      }else{
+        console.warn('Etsy API statistics verification did not complete:',response.status,result);
       }
     }catch(error){
-      console.warn('Etsy API statistics verification failed:',error);
+      // fetch() itself failed — offline, DNS, reset. Not actionable.
+      console.debug('Etsy whole-key probe skipped (connection unavailable):',error&&error.message);
     }finally{
       probeInFlight=false;
       await refreshApiUsage().catch(()=>null);
@@ -1930,6 +2008,8 @@ const ApiUsage=(()=>{
 function refreshApiUsage(){return ApiUsage.refreshApiUsage().catch(()=>null)}
 function primeEtsyApiUsage(force){return ApiUsage.primeEtsyApiUsage(force)}
 window.refreshEtsyApiUsage=refreshApiUsage;
+/*  Coming back from a dropout should not wait for the next timer tick. */
+window.addEventListener('online',()=>{refreshApiUsage();hydrateFromStore(true).catch(()=>{})});
 window.primeEtsyApiUsage=primeEtsyApiUsage;
 
 // The console's manual Update button forces a probe (the only path that
