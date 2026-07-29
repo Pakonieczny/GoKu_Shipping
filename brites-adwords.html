@@ -787,8 +787,9 @@ async function api(action, extra){
   const res = await fetch(ENDPOINT, { method:"POST",
     headers:{ "Content-Type":"application/json", "X-Edit-Passcode": PASS },
     body: JSON.stringify(Object.assign({action, passcode:PASS}, extra||{})) });
-  if(res.status===401) throw new Error("401 — wrong passcode");
-  if(!res.ok){ const t=await res.text().catch(()=> ""); throw new Error("HTTP "+res.status+" "+t.slice(0,140)); }
+  if(res.status===401){ const e=new Error("401 — wrong passcode"); e.status=401; throw e; }
+  if(!res.ok){ const t=await res.text().catch(()=> "");
+    const e=new Error("HTTP "+res.status+(t?" "+t.slice(0,140):"")); e.status=res.status; e.bodyText=t; throw e; }
   const j = await res.json();
   if(API_MUTATING.has(action) && !(j&&j.error) && j!==false) scheduleReload();
   return j;
@@ -805,9 +806,97 @@ async function api(action, extra){
 var API_MUTATING=new Set(["approve","reject","apply","applyRec","applyRemedy","dismissRec","setBudget","setStatus","setCountries","setApprovalCountries","setApprovalDates","setControl","startNow","syncConversions","generate","generatePmax","retryStuck","releaseOpportunity","kill","resume","dryRun","backfillOrders","clearLedger","enforceCeiling","runNow","pmaxUpgradeAdStrength","pmaxBackfillImages"]);
 var _rlFast=null,_rlSettle=null;
 function scheduleReload(){
+  if(syncBlocked)return;               // nothing to re-sync while the API is refusing us
   clearTimeout(_rlFast);clearTimeout(_rlSettle);
   _rlFast=setTimeout(function(){try{reload();}catch(e){}},1200);
   _rlSettle=setTimeout(function(){try{reload();}catch(e){}},9000);
+}
+
+/* ═══ AUTO-REFRESH STATE  ══════════════════════════════════════════════════
+ *
+ *  THE BUG THIS FIXES.  The 1-second housekeeping timer decided whether to
+ *  refresh with
+ *
+ *      else if((Date.now()-lastSync)>600000){ reload(); }
+ *
+ *  and `lastSync` was only ever advanced INSIDE reload()'s try block, after
+ *  api() had already succeeded. So the moment a refresh started failing,
+ *  lastSync froze, the condition stayed true, and reload() fired EVERY SECOND
+ *  for as long as the failure lasted — a 1 Hz hammer on a Netlify function,
+ *  which is exactly the wall of identical 403s in the console. Retry state
+ *  must advance on failure too, or a failure becomes a flood.
+ *
+ *  Three rules now:
+ *    1. the clock always advances, success or failure
+ *    2. 401 / 403 / 404 are PERMANENT — retrying cannot fix a passcode, a
+ *       permission rule or a missing function, so auto-refresh stops and says
+ *       so instead of hiding it in a scrolling console
+ *    3. everything else backs off 30s -> 1m -> 2m -> 5m -> 10m
+ *
+ *  User-initiated actions are never blocked; only the automatic loop pauses.
+ *  A successful call of any kind clears the block immediately.              */
+var syncFail=0, syncBlocked=null, reloadInFlight=false, nextSyncAt=0;
+var SYNC_BACKOFF=[30000,60000,120000,300000,600000];
+var SYNC_PERMANENT={401:1,403:1,404:1};
+function syncBackoff(n){ return SYNC_BACKOFF[Math.min(n,SYNC_BACKOFF.length)-1]||600000; }
+function syncDueAt(){ return syncBlocked?Infinity:(nextSyncAt||(lastSync+600000)); }
+function syncOk(){
+  syncFail=0; nextSyncAt=0; lastSync=Date.now();
+  if(syncBlocked){ syncBlocked=null; syncBanner(null); }
+  var d=$("#connDot"),t=$("#connText");
+  if(d)d.style.background="var(--sage)"; if(t)t.textContent="connected";
+}
+function syncFailed(x){
+  var code=(x&&x.status)||0;
+  var permanent=!!SYNC_PERMANENT[code];
+  lastSync=Date.now();                 // rule 1 — the clock moves regardless
+  var d=$("#connDot"),t=$("#connText");
+  if(d)d.style.background="var(--clay)";
+  if(permanent){
+    var first=!syncBlocked;
+    syncBlocked={code:code,message:(x&&x.message)||"request refused"};
+    nextSyncAt=Infinity;
+    if(t)t.textContent=code===401?"signed out":(code===403?"blocked ("+code+")":"unavailable ("+code+")");
+    syncBanner(syncBlocked);
+    if(first)toast(syncMessage(syncBlocked),false);
+    if(code===401){ try{sessClear();}catch(e){} }
+  }else{
+    syncFail++;
+    var wait=syncBackoff(syncFail);
+    nextSyncAt=Date.now()+wait;
+    if(t)t.textContent="retrying in "+(wait>=60000?Math.round(wait/60000)+"m":Math.round(wait/1000)+"s");
+    if(syncFail===1)toast((x&&x.message)||"Refresh failed",false);
+  }
+}
+function syncMessage(b){
+  if(!b)return "";
+  if(b.code===401)return "Signed out \u2014 the saved passcode was rejected. Enter it again to reconnect.";
+  if(b.code===403)return "The server refused this request (403). Auto-refresh is paused so it stops retrying. "+
+    "This function returns 401 for a wrong passcode, never 403 \u2014 so the block is in front of it: "+
+    "check this site\u2019s Netlify access rules (visitor access / role-based access / traffic rules).";
+  if(b.code===404)return "The API endpoint was not found (404). Auto-refresh is paused. Is googleAdsAutopilotKick deployed on this site?";
+  return b.message||"Auto-refresh paused.";
+}
+/*  A blocked state has to be visible without opening DevTools. Built in JS so
+    it cannot disturb the existing layout, and it removes itself on recovery. */
+function syncBanner(b){
+  var el=document.getElementById("syncBanner");
+  if(!b){ if(el)el.remove(); return; }
+  if(!el){
+    el=document.createElement("div"); el.id="syncBanner";
+    el.style.cssText="position:fixed;left:0;right:0;top:0;z-index:9999;background:#b42424;color:#fff;"+
+      "font:13px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:10px 14px;display:flex;"+
+      "gap:10px;align-items:center;box-shadow:0 4px 18px rgba(0,0,0,.2)";
+    var msg=document.createElement("span"); msg.id="syncBannerMsg"; msg.style.flex="1";
+    el._msg=msg;                       // hold the node directly; never re-query for it
+    var retry=document.createElement("button"); retry.textContent="Retry now";
+    retry.style.cssText="font:inherit;background:#fff;color:#b42424;border:0;border-radius:7px;padding:6px 12px;cursor:pointer;font-weight:700";
+    retry.onclick=function(){ syncBlocked=null; nextSyncAt=0; syncFail=0; syncBanner(null); reload(true); };
+    el.appendChild(msg); el.appendChild(retry);
+    document.body.appendChild(el);
+  }
+  var m=el._msg||document.getElementById("syncBannerMsg");
+  if(m)m.textContent=syncMessage(b);
 }
 
 /* ---- charts (pure SVG) ---- */
@@ -2648,8 +2737,8 @@ async function livePull(){
     try{ await api("enforceCeiling",{}); }catch(e){}
     try{ var mg=await api("monthlyGuard",{}); if(mg&&mg.tripped){toast("Monthly cap reached \u2014 all campaigns paused",false);} }catch(e){}
     DASH=await api("dashboard"); renderAll();
-    $("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();
-  }catch(x){ /* quiet on background pulls */ }
+    syncOk();
+  }catch(x){ syncFailed(x); }
   finally{ livePulling=false; }
 }
 /* Pending budget overrides: campaign budgets the user changed (and Google verified) that the
@@ -2664,7 +2753,20 @@ function applyBudgetOverrides(){var lm=(DASH&&DASH.lastMetrics)||[];var now=Date
     var c=lm.filter(function(x){return String(x.id)===String(id);})[0];if(!c)return;
     if(Math.abs((+c.budget||0)-o.budget)<0.01){delete BUDGET_OVERRIDES[id];return;} // server caught up
     c.budget=o.budget;});}
-async function reload(toastOk){try{DASH=await api("dashboard");applyBudgetOverrides();renderAll();loadDiagnostics(true);$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
+async function reload(toastOk){
+  if(reloadInFlight)return;            // overlapping refreshes collapse into one
+  reloadInFlight=true;
+  try{
+    DASH=await api("dashboard");applyBudgetOverrides();renderAll();loadDiagnostics(true);
+    syncOk();
+    if(toastOk)toast("Refreshed",true);
+    if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}
+  }catch(x){
+    syncFailed(x);
+  }finally{
+    reloadInFlight=false;
+  }
+}
 /* ---- UI-state preservation: re-renders update DATA ONLY; whatever the user
    has expanded stays expanded, collapsed stays collapsed. Keys are stable
    (campaign id / summary text scoped to its campaign or view), never DOM
@@ -2703,12 +2805,21 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
     if(timer)clearInterval(timer);timer=setInterval(async ()=>{
       var since=Math.floor((Date.now()-lastSync)/1000);
       var lp=Math.floor((Date.now()-lastLivePull)/60000);
-      var el=$("#sync");if(el){var nxt=Math.max(0,600-since);el.textContent="synced "+(since<60?since+"s":Math.floor(since/60)+"m")+" ago \u00b7 auto-refresh in "+(nxt>=60?Math.ceil(nxt/60)+"m":nxt+"s");}
+      var el=$("#sync");
+      if(el){
+        if(syncBlocked){ el.textContent="auto-refresh paused \u2014 "+(syncBlocked.code===401?"signed out":"server refused ("+syncBlocked.code+")"); }
+        else{
+          var due=Math.max(0,Math.ceil((syncDueAt()-Date.now())/1000));
+          el.textContent="synced "+(since<60?since+"s":Math.floor(since/60)+"m")+" ago \u00b7 "+
+            (syncFail?("retrying in "):("auto-refresh in "))+(due>=60?Math.ceil(due/60)+"m":due+"s");
+        }
+      }
       if(livePulling)return;
       // Cadence: one refresh every 10 minutes (was 30s reload + 5min live pull —
       // the constant re-render collapsed every open menu in the app).
+      if(syncBlocked)return;           // paused until the operator retries
       if((Date.now()-lastLivePull)>=600000){ await livePull(); }
-      else if((Date.now()-lastSync)>600000){ reload(); }
+      else if(Date.now()>=syncDueAt()){ reload(); }
     },1000);
   }catch(x){ if(x.message.indexOf("401")>=0){sessClear();$("#gateErr").textContent=(e&&e.__cachedPass)?"Saved sign-in expired \u2014 enter the passcode once to refresh it.":"Wrong passcode.";}
     else $("#gateErr").textContent=x.message; }
