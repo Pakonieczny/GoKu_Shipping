@@ -10908,7 +10908,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ENGRAVING APPEARANCE:
         • Engravings are SHALLOW SURFACE ETCHING with only superficial depth — never embossed, never raised, never deeply carved or gouged.
-        • Fill/colour every engraved stroke a LIGHT SHADE OF COPPER. Never dark brown, never black, never charcoal, never grey, never gunmetal. If a viewer would describe the engraving as "dark", it is wrong — go lighter.
+        • Colour every engraved stroke a LIGHT SHADE OF COPPER. "Coloured-in" refers to the inside of the GROOVE ITSELF — the narrow channel of the cut line. It NEVER refers to any area that a stroke encloses. An engraved outline is a line, not a filled shape. Never dark brown, never black, never charcoal, never grey, never gunmetal. If a viewer would describe the engraving as "dark", it is wrong — go lighter.
         • The copper colour applies ONLY to the engraved strokes themselves. It must never spread onto, tint, or bleed into the surrounding charm body, the post, or any other metal.
 
       METAL COLOUR — SAMPLE FROM IMAGE 1, NOT IMAGE 2:
@@ -10928,6 +10928,40 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • HARD FAIL: the charm body rendered in the same copper/rose tone as its engravings.
         • HARD FAIL: the copper tone spreading beyond the strokes onto the surrounding metal, the post, or the charm's edges.
         • HARD FAIL: the engraving and the body reading as the same colour, so the pattern is only visible through shading.`;
+
+    // Added after renders came back with the interior of an outlined shape
+    // (e.g. the heart inside a tooth charm) filled with hatching or shading,
+    // when the master charm shows only a thin closed outline. The model
+    // treats a closed contour as a region to render rather than a line to
+    // trace, so the outline / fill / cutout distinction is made explicit.
+    const STUD_OUTLINE_FILL_RULES =
+    `OUTLINE vs FILL vs CUTOUT — CLASSIFY EVERY CLOSED SHAPE, THEN REPRODUCE ITS CLASS EXACTLY (CRITICAL):
+        • Any closed shape inside the charm — a heart, a star, a circle, a leaf, a letter, an eye, a paw — exists in IMAGE 2 in exactly ONE of three states. Identify which, then reproduce THAT state and no other:
+            STATE 1 — ENGRAVED OUTLINE (by far the most common): a thin closed line traces the shape's contour. The area INSIDE that line is plain, untouched base metal, identical to the metal outside the shape. The shape is drawn, not coloured in.
+            STATE 2 — SOLID ENGRAVED FILL: the entire area within the contour is recessed and coloured. Rare. Only render this if IMAGE 2 unmistakably shows it.
+            STATE 3 — TRUE CUTOUT: the shape is a hole cut clean through the sheet, with the background (skin, surface, whatever is behind the charm) visible through it.
+        • DEFAULT WHEN UNCERTAIN: STATE 1, OUTLINE ONLY. If you cannot tell whether an area is filled, it is NOT filled. Never invent fill, and never promote an outline to a fill or a cutout.
+        • HARD FAIL: a shape shown as an outline in IMAGE 2 rendered filled, shaded, textured or hatched in the output.
+        • HARD FAIL: a shape shown as a cutout in IMAGE 2 rendered as an outline, or vice versa.
+
+      THE ENCLOSED INTERIOR IS UNTOUCHED METAL — ZERO TOLERANCE:
+        • For every outlined shape, the metal INSIDE the outline must be IDENTICAL to the metal immediately OUTSIDE it: same hue, same brightness, same polish, same specular response. There is no difference of any kind between them, because it is one continuous piece of metal and only the contour line was cut.
+        • TEST: if the outline were erased, the interior would blend seamlessly into the surrounding metal with no visible trace of where the shape had been. If your render would leave a visible patch, the interior has been wrongly treated.
+        • ABSOLUTELY FORBIDDEN inside an outlined shape: hatching, cross-hatching, parallel line fill, stippling, dots, speckle, engraved texture, brushed or matte finish, gradient, shading, tinting, darkening, lightening, an inner shadow, a drop shadow, an inner glow, a concentric echo line, a second offset outline, or a copper wash across the enclosed area.
+        • DOCUMENTED FAILURE MODE: the model reads a closed contour as "a region to be rendered" and fills it with hatching or tone to make it "read" better. It is NOT a region. It is a LINE. The enclosure is a consequence of the line's path, nothing more.
+
+      ONE STROKE PER CONTOUR:
+        • Each contour in IMAGE 2 is drawn with exactly ONE line. Never double it, never add an inner or outer echo line, never outline the outline.
+        • Each stroke keeps the same relative thickness IMAGE 2 shows. Do NOT thicken a stroke to make it more visible at small size — a thickened stroke closes up the shape and turns an outline into a blob. That is the exact mechanism by which outlines become fills.
+        • Where two strokes run close together, the plain metal between them stays clearly visible for their whole length. They never merge into a solid mass.
+        • HARD FAIL: any doubled, echoed or offset duplicate of a contour line.
+        • HARD FAIL: a stroke thickened beyond IMAGE 2's relative weight, or two strokes merging into a filled area.
+
+      SELF-CHECK BEFORE RETURNING — RUN THIS FOR EVERY CLOSED SHAPE ON THE CHARM:
+        1. In IMAGE 2, is this shape an outline, a solid fill, or a cutout?
+        2. In my output, is it the SAME one of those three?
+        3. If it is an outline: is the metal inside it indistinguishable from the metal outside it?
+        • If any answer is no, the render is WRONG — correct that shape and re-render.`;
 
     // Added after a live render came back as a uniformly rose/copper disc with
     // soft embossed-looking waves and blotchy tonal drift between them. The
@@ -11073,6 +11107,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         ☐ Engravings are light copper and shallow; the body and post are warm yellow gold — two clearly DIFFERENT colours, not one.
         ☐ The un-engraved metal is uniform and polished — no blotches, no cloudy patches, no matte clay look.
         ☐ Every engraved stroke has hard crisp edges, constant width, and reads as cut IN, not raised up.
+        ☐ Every outlined shape is a LINE only — the metal inside it is identical to the metal outside it. No hatching, shading, texture or fill anywhere inside a contour.
         ☐ Stroke count and cutout count in the output match the counts transcribed from IMAGE 2.
         ☐ Composition, crop, zoom, lighting, background and model are unchanged from IMAGE 1.
         ☐ ON-MODEL SHOTS ONLY: the charm is ~57% the linear size of IMAGE 1's placeholder, 8 charm lengths fit up the visible ear height, and two charms fit side by side across the earlobe.`;
@@ -11103,6 +11138,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${STUD_SURFACE_RULES}
 
+      ${STUD_OUTLINE_FILL_RULES}
+
       ${STUD_FINAL_CHECK}`;
 
     // --- Slot 2 — Background_AI_Images (styled product / creative) --------------
@@ -11125,6 +11162,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ${STUD_MATERIAL_RULES}
 
       ${STUD_SURFACE_RULES}
+
+      ${STUD_OUTLINE_FILL_RULES}
 
       ${STUD_LEGIBILITY_FLOOR}
 
@@ -11184,6 +11223,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${STUD_SURFACE_RULES}
 
+      ${STUD_OUTLINE_FILL_RULES}
+
       FINAL VALIDATION — REVISE BEFORE RETURNING IF ANY ITEM FAILS:
         ☐ Only the charm body design changed; the pencil, background, shadows and layout are pixel-identical to IMAGE 1.
         ☐ "Sizing Guide", "PENCIL 2", "~8mm x 8mm" and "*Charm Size Varies based on Shape" are reproduced exactly, unmoved and unrestyled.
@@ -11195,6 +11236,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         ☐ Charm is flat and thin with sharp square cutout edges; engravings are light copper; body and post are warm yellow gold — two clearly DIFFERENT colours.
         ☐ The un-engraved metal is uniform and polished — no blotches, no cloudy patches, no matte clay look.
         ☐ Every engraved stroke has hard crisp edges, constant width, and reads as cut IN, not raised up.
+        ☐ Every outlined shape is a LINE only — the metal inside it is identical to the metal outside it. No hatching, shading, texture or fill anywhere inside a contour.
         ☐ Stroke count and cutout count in the output match the counts transcribed from IMAGE 2.`;
 
     // --- Slot 4 — Product_Shots -------------------------------------------------
@@ -11218,6 +11260,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ${STUD_MATERIAL_RULES}
 
       ${STUD_SURFACE_RULES}
+
+      ${STUD_OUTLINE_FILL_RULES}
 
       ${STUD_LEGIBILITY_FLOOR}
 
@@ -11249,6 +11293,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${STUD_SURFACE_RULES}
 
+      ${STUD_OUTLINE_FILL_RULES}
+
       ${STUD_FINAL_CHECK}`;
 
     // --- Slot 6 — Product_Shots_2 ----------------------------------------------
@@ -11272,6 +11318,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ${STUD_MATERIAL_RULES}
 
       ${STUD_SURFACE_RULES}
+
+      ${STUD_OUTLINE_FILL_RULES}
 
       ${STUD_LEGIBILITY_FLOOR}
 
