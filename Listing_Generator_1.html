@@ -10981,7 +10981,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     //   value by 1/N. e.g. still 1.5x too big at 57 -> set it to 38.
     //   Lower = smaller charm. Applies to both on-model slots (1 and 5).
     // ========================================================================
-    const STUD_MODEL_PLACEHOLDER_SCALE = 57;
+    const STUD_MODEL_PLACEHOLDER_SCALE = 46;
 
     // Anatomical CEILING only — not the primary instruction. The charm's
     // longest dimension may never exceed 1/STUD_EAR_DIVISOR of visible ear
@@ -10992,9 +10992,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     `ON-EAR CHARM SIZE LOCK — HIGHEST-PRIORITY SIZING RULE (OVERRIDES EVERY OTHER SIZE CUE IN THIS PROMPT):
 
       DOCUMENTED FAILURE MODE — READ THIS FIRST:
-        • This slot has a measured, repeatable over-render. The charm comes back roughly 1.75x too large in LINEAR dimension — about 3x too large by AREA.
+        • This slot has a measured, repeatable over-render. Left to its own judgement the charm comes back roughly 2x too large in LINEAR dimension — about 4x too large by AREA.
         • A previous version of this instruction asked for a ratio against the ear and was ignored: the renders came back at 22-24% of the ear's height where 12.5% was specified. Asking you to measure anatomy does not work. So this version asks you to do something simpler and more reliable instead — SCALE DOWN the charm that is already in IMAGE 1.
-        • Whatever size feels correct to you for this earring is about 1.75x too wide. It is not a matter of taste. Divide it.
+        • Whatever size feels correct to you for this earring is about 2x too wide. It is not a matter of taste. Divide it.
         • Where any two rules below disagree, take the SMALLER answer — never the larger, never the average.
 
       PRIMARY RULE — SCALE FROM IMAGE 1'S PLACEHOLDER (THIS IS THE INSTRUCTION THAT GOVERNS; DO THIS ONE):
