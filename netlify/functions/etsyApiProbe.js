@@ -43,6 +43,22 @@ const HEADERS = {
 };
 const json = (statusCode, payload) => ({ statusCode, headers: HEADERS, body: JSON.stringify(payload) });
 
+/*  A TRANSIENT OUTCOME IS NOT AN HTTP ERROR.
+ *
+ *  Etsy being briefly unreachable, or rate-limiting one probe, is an expected
+ *  event on a long batch run — the whole-key reading simply refreshes from the
+ *  next real API call. Reporting it as 502/429 made the browser print
+ *
+ *      etsyApiProbe...: Failed to load resource: the server responded with 502
+ *
+ *  in red, several times per run, for something that needed no action and
+ *  changed nothing. HTTP status now describes whether the FUNCTION worked;
+ *  the body describes whether ETSY answered. Genuine misconfiguration —
+ *  missing credentials, every key form refused — still returns a real error
+ *  status, because that one does need attention.                            */
+const transient = (error, tried) =>
+  json(200, { ok: false, verified: false, probed: true, retryable: true, error, tried });
+
 // openapi-ping is the cheapest endpoint Etsy publishes and needs no OAuth
 // scope. listings/active is the proven fallback: it is what the Listing
 // Generator's probe has always called.
@@ -116,9 +132,8 @@ exports.handler = async function (event) {
     } catch (err) {
       // Network-level failure. Not an auth problem — stop rather than burn
       // the remaining combinations on what is almost certainly transient.
-      return json(502, { ok: false, verified: false, probed: true,
-        error: "Etsy could not be reached: " + (err && err.message ? err.message : String(err)),
-        tried: tried.concat([endpoint.name + "/" + form.name]) });
+      return transient("Etsy could not be reached: " + (err && err.message ? err.message : String(err)),
+                       tried.concat([endpoint.name + "/" + form.name]));
     }
     tried.push(endpoint.name + "/" + form.name + " -> " + r.status);
 
@@ -145,14 +160,11 @@ exports.handler = async function (event) {
       continue;
     }
     if (r.status === 429) {
-      return json(429, { ok: false, verified: false, probed: true, retryable: true,
-        error: "Etsy rate-limited the probe (HTTP 429). The whole-key reading will refresh on the next real call.",
-        tried });
+      return transient("Etsy rate-limited the probe (HTTP 429). The whole-key reading will refresh on the next real call.", tried);
     }
     if (r.status >= 500) {
-      return json(502, { ok: false, verified: false, probed: true, retryable: true,
-        error: "Etsy returned HTTP " + r.status + " on " + endpoint.name + ". Transient — not an authorization problem.",
-        tried });
+      return transient("Etsy returned HTTP " + r.status + " on " + endpoint.name +
+                       ". Transient \u2014 not an authorization problem.", tried);
     }
     // 4xx that is not an auth failure: try the next endpoint, not the next key.
   }
