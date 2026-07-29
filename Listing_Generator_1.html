@@ -10966,62 +10966,83 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • HARD FAIL: the charm face rendered domed, swollen, pillowed or three-dimensionally sculpted.`;
 
     // ==== ON-MODEL CHARM SIZE — ONE NUMBER TO TUNE ==========================
-    // The charm's longest dimension = 1/STUD_EAR_DIVISOR of the model's visible
-    // EAR HEIGHT (top of helix to bottom of lobe). The ear is the ideal ruler
-    // here: it is always fully in frame on these shots, it is locked by IMAGE 1
-    // so the model cannot resize it, and its real-world size barely varies
-    // between adults (~60mm). An ~8mm charm on a ~60mm ear = 1/8 (12.5%).
+    // WHY THIS WORKS OFF THE PLACEHOLDER RATHER THAN OFF ANATOMY:
+    // The first version of this block asked for a ratio against the ear
+    // (1/8 of ear height). The model ignored it and rendered at ~22-24% of
+    // ear height instead — it does not actually measure anatomy, it copies
+    // the size of the placeholder charm already sitting in IMAGE 1. So this
+    // version stops fighting that instinct and uses it: the placeholder is
+    // declared the size BASELINE, and the model is asked to scale it by a
+    // fixed factor — a relative operation it can genuinely perform. The
+    // anatomical ratios are retained below as CEILINGS that catch failures.
     //
-    // Raise this number to shrink the charm, lower it to grow it. Every anchor,
-    // range and HARD FAIL below is derived from it, so ONE edit re-lays the
-    // entire size lock consistently across both on-model slots.
-    //   8 = physically accurate (default)    9-10 = deliberately daintier
+    // TUNING — the only number you ever need to change:
+    //   If the next batch still comes back N times too large, multiply this
+    //   value by 1/N. e.g. still 1.5x too big at 57 -> set it to 38.
+    //   Lower = smaller charm. Applies to both on-model slots (1 and 5).
     // ========================================================================
+    const STUD_MODEL_PLACEHOLDER_SCALE = 57;
+
+    // Anatomical CEILING only — not the primary instruction. The charm's
+    // longest dimension may never exceed 1/STUD_EAR_DIVISOR of visible ear
+    // height. Raise to tighten the ceiling.
     const STUD_EAR_DIVISOR = 8;
 
     const STUD_MODEL_SIZE_RULES =
-    `ON-EAR CHARM SIZE LOCK — HIGHEST-PRIORITY SIZING RULE (OVERRIDES EVERY OTHER SIZE CUE, INCLUDING IMAGE 1):
+    `ON-EAR CHARM SIZE LOCK — HIGHEST-PRIORITY SIZING RULE (OVERRIDES EVERY OTHER SIZE CUE IN THIS PROMPT):
 
       DOCUMENTED FAILURE MODE — READ THIS FIRST:
-        • This slot has a measured, repeatable over-render: the charm comes back roughly 1.6x too large in LINEAR dimension, about 2.5x too large by area. Rejected renders measured ~21% of the visible ear height and ~74% of the earlobe's width, against correct figures of ~12.5% and ~45%.
-        • Every earlier instruction to make the charm "extremely small" failed, because "small" was never given a number. It now has numbers, and they are not negotiable.
-        • Whatever size you are about to render, it is about 1.6x too wide. Divide it.
-        • Bias toward the SMALL end of every range below. Where two anchors disagree, take the SMALLER answer — never the larger, never the average.
+        • This slot has a measured, repeatable over-render. The charm comes back roughly 1.75x too large in LINEAR dimension — about 3x too large by AREA.
+        • A previous version of this instruction asked for a ratio against the ear and was ignored: the renders came back at 22-24% of the ear's height where 12.5% was specified. Asking you to measure anatomy does not work. So this version asks you to do something simpler and more reliable instead — SCALE DOWN the charm that is already in IMAGE 1.
+        • Whatever size feels correct to you for this earring is about 1.75x too wide. It is not a matter of taste. Divide it.
+        • Where any two rules below disagree, take the SMALLER answer — never the larger, never the average.
 
-      REAL-WORLD GROUND TRUTH:
-        • These charms measure about 8mm at their widest point. An adult ear is about 60mm from the top of the helix to the bottom of the lobe. That ratio — 8 to 60 — is what the anchors below encode.
+      PRIMARY RULE — SCALE FROM IMAGE 1'S PLACEHOLDER (THIS IS THE INSTRUCTION THAT GOVERNS; DO THIS ONE):
+        • IMAGE 1 already contains a charm on the ear. Note its size — specifically its LONGEST dimension. That is your BASELINE.
+        • Render the new charm at exactly ${STUD_MODEL_PLACEHOLDER_SCALE}% of that baseline's LINEAR size. Not ${STUD_MODEL_PLACEHOLDER_SCALE}% of its area — ${STUD_MODEL_PLACEHOLDER_SCALE}% of its width and ${STUD_MODEL_PLACEHOLDER_SCALE}% of its height, scaled uniformly together.
+        • Put plainly: the new charm is a little over HALF as wide and HALF as tall as the charm currently shown in IMAGE 1. It occupies roughly ONE THIRD of the placeholder's footprint on the ear.
+        • CONCRETE PIXEL MAPPING — apply linearly at whatever zoom the image is at:
+            - placeholder charm reads ~400 px across -> render the new charm at ~${Math.round(4 * STUD_MODEL_PLACEHOLDER_SCALE)} px across
+            - placeholder charm reads ~300 px across -> render at ~${Math.round(3 * STUD_MODEL_PLACEHOLDER_SCALE)} px across
+            - placeholder charm reads ~200 px across -> render at ~${Math.round(2 * STUD_MODEL_PLACEHOLDER_SCALE)} px across
+            - placeholder charm reads ~150 px across -> render at ~${Math.round(1.5 * STUD_MODEL_PLACEHOLDER_SCALE)} px across
+          Whatever the placeholder measures, multiply by ${(STUD_MODEL_PLACEHOLDER_SCALE / 100).toFixed(2)}.
+        • This is a SIZE change only. The charm's position stays centred on the placeholder's centre point, and the empty skin revealed around the smaller charm is intentional and correct — do not fill it, do not recentre the composition, do not enlarge the charm to cover it.
+        • The placeholder's DESIGN still carries no authority whatsoever (see the placeholder-discard block). Its SIZE is used as a measuring baseline and for nothing else.
+
+      CEILING 1 — THE EAR (CROSS-CHECK; IF THE PRIMARY RULE WAS FOLLOWED THIS PASSES AUTOMATICALLY):
+        • The charm's LONGEST dimension must never exceed 1/${STUD_EAR_DIVISOR} of the model's VISIBLE EAR HEIGHT, measured from the highest point of the helix to the lowest point of the earlobe.
+        • COUNTABLE TEST: stack copies of the charm end to end up the ear. At least ${STUD_EAR_DIVISOR} must fit within the ear's height. If only four or five fit, the charm is grossly oversized — this is the exact failure state of every rejected render so far.
+        • HARD FAIL: fewer than ${STUD_EAR_DIVISOR - 2} charm lengths fit up the visible ear height.
+
+      CEILING 2 — THE EARLOBE (CROSS-CHECK):
+        • The charm's LONGEST dimension must never exceed 55% of the EARLOBE'S WIDTH at its widest point. Target about 45%.
+        • Put plainly: the charm occupies a bit less than HALF the lobe, with clear untouched skin visible on both sides of it and above and below it. It never spans the lobe, never touches the lobe's edges, and never overhangs it.
+        • COUNTABLE TEST: two copies of the charm placed side by side must fit across the lobe with room to spare. Rejected renders fitted only one.
+        • HARD FAIL: the charm covers more than 55% of the lobe's width, or touches / overhangs the lobe's edge.
+
+      REAL-WORLD GROUND TRUTH (WHY THESE NUMBERS):
+        • The charm measures about 8mm at its widest point. An adult ear is about 60mm from helix to lobe, and an adult earlobe about 18mm wide. 8-to-60 and 8-to-18 are what the ceilings above encode.
         • This is a delicate minimalist stud, not a statement earring. If a render reads as "a bold earring", it is wrong by definition however attractive it looks.
-
-      ANCHOR 1 — MEASURE AGAINST THE EAR (USE THIS FIRST; THE EAR IS LOCKED BY IMAGE 1, SO IT IS THE ONE TRUSTWORTHY RULER IN THE FRAME):
-        • The charm's LONGEST dimension must be 1/8 of the model's VISIBLE EAR HEIGHT, measured from the highest point of the helix to the lowest point of the earlobe.
-        • Acceptable range: 1/7 to 1/9. HARD MAXIMUM 1/6.
-        • COUNTABLE VERIFICATION: mentally stack copies of the charm end to end up the ear. 8 of them must span the ear's full height. If only four or five span it, the charm is grossly oversized — shrink it until 8 fit.
-
-      ANCHOR 2 — MEASURE AGAINST THE EARLOBE (CROSS-CHECK):
-        • The charm's LONGEST dimension must be about 45% of the EARLOBE'S WIDTH at its widest point. Acceptable range 40% to 50%. HARD MAXIMUM 55%.
-        • Put plainly: the charm occupies a bit less than HALF the lobe, with clear untouched skin visible on BOTH sides of it and above and below it. It never spans the lobe, never touches the lobe's edges, and never overhangs it.
-        • VERIFICATION: two charms placed side by side must fit across the lobe with room to spare. Rejected renders fitted only one — that is the exact error this rule corrects.
-
-      IMAGE 1'S PLACEHOLDER CHARM HAS NO AUTHORITY OVER SIZE:
-        • The placeholder charm in IMAGE 1 marks WHERE the charm sits. It does NOT establish HOW BIG it is. Copying the placeholder's size is the specific behaviour that produced the over-render.
-        • If the placeholder looks larger than the anchors above allow, the placeholder is WRONG and the anchors WIN. Shrink to the anchors regardless of how the placeholder looks.
 
       DO NOT COMPENSATE — SHRINK THE CHARM AND NOTHING ELSE:
         • Do NOT zoom out, reframe, crop, change the camera, change the focal length, change the model's scale, change the ear's scale, change the post's length or thickness, or change the engraving's thickness in order to make the charm "fit" these numbers.
         • The ear, model, hair, skin, lighting, crop and camera must match IMAGE 1 exactly. THE CHARM ALONE CHANGES SIZE.
-        • If IMAGE 1 shows other jewellery on the ear (a second stud, a cuff, a hoop), leave every one of those at IMAGE 1's size. Only the charm being replaced is resized.
+        • If IMAGE 1 shows other jewellery on the ear — a second stud, a cuff, a hoop, a helix piercing — leave every one of those at IMAGE 1's exact size and position. ONLY the lobe charm being replaced is resized.
 
-      MANDATORY SELF-MEASUREMENT BEFORE RETURNING:
-        • Compare the charm's longest dimension to the visible ear height. If charm / ear is greater than 1/6 — i.e. if 6 charm lengths would NOT fit up the ear — the render is WRONG: shrink the charm and re-render. Repeat until it passes.
-        • Then check the lobe: if the charm covers more than half the lobe's width, it is still too large.
+      MANDATORY SELF-MEASUREMENT BEFORE RETURNING — RUN ALL THREE:
+        1. Is the new charm a little over half the linear size of the charm that was in IMAGE 1? If it looks the same size, or only slightly smaller, the render is WRONG.
+        2. Do at least ${STUD_EAR_DIVISOR} charm lengths fit up the visible ear height?
+        3. Do two charms fit side by side across the earlobe?
+        • If ANY answer is no, shrink the charm and re-render. Repeat until all three pass. Do not return a render that fails any of them.
 
       HARD FAILS:
-        • HARD FAIL: the charm's longest dimension exceeds 1/6 of the visible ear height.
-        • HARD FAIL: the charm's longest dimension exceeds 55% of the earlobe's width.
-        • HARD FAIL: the charm touches, spans, or overhangs the edges of the earlobe.
-        • HARD FAIL: the charm was sized to match IMAGE 1's placeholder instead of the anchors above.
+        • HARD FAIL: the charm rendered at or near the same size as IMAGE 1's placeholder charm (i.e. no reduction applied).
+        • HARD FAIL: the charm rendered at more than 75% of the placeholder's linear size — the documented over-render this rule exists to eliminate.
+        • HARD FAIL: fewer than ${STUD_EAR_DIVISOR - 2} charm lengths fit up the visible ear height.
+        • HARD FAIL: the charm exceeds 55% of the earlobe's width, or touches / overhangs the lobe's edges.
         • HARD FAIL: the camera, crop, framing, ear scale or model scale was altered to accommodate the charm's size.
-        • HARD FAIL: other jewellery already present on the ear was resized.`;
+        • HARD FAIL: other jewellery already present on the ear was resized or moved.`;
 
     // This is the block that stops "make it tiny" from being satisfied by
     // dropping engravings. Every previous Stud prompt led with EXTREMELY SMALL
@@ -11054,7 +11075,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         ☐ Every engraved stroke has hard crisp edges, constant width, and reads as cut IN, not raised up.
         ☐ Stroke count and cutout count in the output match the counts transcribed from IMAGE 2.
         ☐ Composition, crop, zoom, lighting, background and model are unchanged from IMAGE 1.
-        ☐ ON-MODEL SHOTS ONLY: 8 charm lengths fit up the visible ear height, and the charm covers under half the earlobe's width with clear skin on both sides.`;
+        ☐ ON-MODEL SHOTS ONLY: the charm is ~57% the linear size of IMAGE 1's placeholder, 8 charm lengths fit up the visible ear height, and two charms fit side by side across the earlobe.`;
 
     // --- Slot 1 — Primary_Models (on-ear model shot) ---------------------------
     const STUD_MODEL_PROMPT =
