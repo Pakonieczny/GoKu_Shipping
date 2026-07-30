@@ -10827,10 +10827,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       • OUTER SHAPE: the contour in IMAGE 2, followed exactly.
       • OPENINGS: every hole, slot and pierced gap in IMAGE 2 appears in your render at the same relative position and size, with the background visible through it. Areas that are solid metal in IMAGE 2 stay solid metal.
-      • ENGRAVED MARKS: every line, curve and dot in IMAGE 2 appears — the same number of them, starting and ending in the same places, with the same curvature, the same spacing and the same relative thickness. Count the marks in IMAGE 2, count the marks in your render, and make the two counts agree.
-      • BARE AREAS: wherever IMAGE 2 shows no mark, your render shows smooth plain unbroken metal.
+      • ENGRAVED MARKS: read IMAGE 2 and take an inventory of its marks before you render anything. Say to yourself how many separate lines, curves and dots there are, where each one begins, the path it follows, and where it ends. That inventory is the complete and final list of marks on this charm.
+      • Your render contains that list and consists of exactly that list. Every mark on it traces back to a mark you found in IMAGE 2. When you have finished, take the same inventory of your own render and set the two side by side: the same count, the same positions, the same lengths, the same curves, the same spacing, the same relative thickness.
+      • BARE AREAS: wherever IMAGE 2 shows no mark, your render shows smooth plain unbroken metal. The maker chose where to cut and where to leave the metal plain, and the plain areas are as deliberate as the cut ones — they are the finished design, exactly as the customer receives it.
 
-      The charm is a real object — a shape laser-cut from flat sheet metal, photographed from the seller's own stock. Render that object as it is. A cut-out with a bare interior is a complete, finished piece of jewellery; its plainness is the design, and it arrives at the customer looking exactly like IMAGE 2.
+      This is transcription, the way copying a signature is transcription. The value is in the exactness. An extra flourish, however well drawn, makes it a different signature.
+
+      ONE PIECE OF JEWELLERY, PHOTOGRAPHED SEVERAL TIMES
+
+      This listing shows a single physical charm across several photographs — on the ear, on a surface, beside a pencil. It is one object, photographed more than once, so the marks a customer counts in this image are the same marks they count in every other image of the listing. Rendering IMAGE 2's inventory and nothing besides is what keeps all of those photographs showing the same product.
 
       CLOSED SHAPES: when a mark in IMAGE 2 traces around a shape — a heart, a star, a circle, a letter — that mark is a line. The metal inside it is the same continuous metal as the metal outside it, at the same colour and the same brightness, so that covering the line would leave one unbroken surface. When IMAGE 2 instead shows a shape as solid tone, or as a hole through the sheet, render it that way.
 
@@ -10838,13 +10843,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     // ---- The earring itself -------------------------------------------------
     const STUD_HARDWARE =
-    `THE EARRING
+    `THE EARRING, PART BY PART
 
-      Each earring is two pieces of metal joined together: the flat charm, and the straight post soldered flat against its back. A pair is two such earrings — four pieces of metal in the frame, and nothing else.
+      This earring is made of exactly two pieces of metal, and you can see both of them: the flat charm, and the straight post soldered flat against the back of it. Count them in your render — a single earring shows two pieces, and a pair shows four.
 
-      The post is the one already in IMAGE 1, at its original position, length, thickness and angle. It emerges from behind the charm and ends in a bare blunt tip with open air all around that tip.
+      These earrings are photographed the way they leave the workshop: loose, bare and unpackaged, the way a jeweller lays a finished piece on the bench. The post's whole length is open to the air. It leaves the back of the charm, runs straight out, and finishes in a smooth rounded tip with clear background visible all the way around that tip and along both sides of the post's full length. From charm to tip, the post is one clean uninterrupted line of gold.
 
-      The charm sits rigid and square on the post, facing the way IMAGE 2 faces it. The charm in IMAGE 2 has no hoop or hole at the top, because this charm meets the post directly.`;
+      The post is the one already in IMAGE 1, kept at its original position, length, thickness and angle, and the charm sits rigid and square on it, facing the way IMAGE 2 faces it. IMAGE 2's charm meets that post directly at its back.
+
+      Everything else in the frame is the surface, the background and the light that IMAGE 1 already contains.`;
 
     // ---- Metal, finish, engraving -------------------------------------------
     const STUD_FINISH =
@@ -10866,11 +10873,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       1. It is one continuous photograph on IMAGE 1's canvas, and every part of IMAGE 1 is still present and complete within it.
       2. Everything other than the charm design is as IMAGE 1 has it.
-      3. Every charm in the frame carries IMAGE 2's shape, openings and marks, with the mark count matching.
+      3. Taking the inventory of marks in your render and the inventory of marks in IMAGE 2 gives the same list — the same count, in the same places, at the same lengths and curves. Every mark present traces back to one in IMAGE 2.
       4. All charms in the frame are the same design at the same size.
       5. The charm is at the size this prompt asks for.
       6. The gold is yellow, the marks are copper lines, and plain gold shows between them.
-      7. Each earring is a charm plus a post, and the post's free end is bare.
+      7. Counting the metal: two pieces per earring, four for a pair — each post one clean line of gold from the charm to a bare rounded tip, with background visible all around it.
 
       Where one is not yet true, adjust that one thing and render again.`;
 
@@ -10912,7 +10919,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       WHAT IMAGE 1 SHOWS HERE
 
-      A styled photograph of the pair of stud earrings resting on a surface. Your output is that same photograph: the same surface and its texture, the same props, the same background, the same shadows and reflections, the same light, the same framing, with the earrings in their original positions.
+      A styled photograph of the pair of stud earrings resting loose on a surface, bare and unpackaged, posts open to the air. Your output is that same photograph: the same surface and its texture, the same props, the same background, the same shadows and reflections, the same light, the same framing, with the earrings in their original positions.
 
       ${STUD_CHARM_TRUTH}
 
@@ -10975,7 +10982,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       2. The pencil is still a photograph of a real pencil, at its original size and position, with "PENCIL 2" printed on its barrel.
       3. "Sizing Guide", "~8mm x 8mm" and "*Charm Size Varies based on Shape" each appear in full, in their original places, with every character inside the canvas.
       4. The canvas is IMAGE 1's canvas at IMAGE 1's scale, holding one continuous graphic.
-      5. The charm carries IMAGE 2's shape, openings and marks, with the mark count matching.
+      5. Taking the inventory of marks in the rendered charm and the inventory in IMAGE 2 gives the same list — same count, same places, same lengths and curves.
       6. The charm's longest dimension is about ${STUD_PENCIL_RATIO}x the pencil barrel's diameter.
       7. The gold is yellow, the marks are copper lines, and plain gold shows between them.
 
@@ -10989,7 +10996,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       WHAT IMAGE 1 SHOWS HERE
 
-      A product photograph of the pair of stud earrings. Your output is that same photograph: the same surface, background, props, shadows, reflections, light and framing, with the earrings in their original positions and at their original angles.
+      A product photograph of the pair of stud earrings lying loose and bare, posts open to the air. Your output is that same photograph: the same surface, background, props, shadows, reflections, light and framing, with the earrings in their original positions and at their original angles.
 
       ${STUD_CHARM_TRUTH}
 
@@ -11047,7 +11054,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       WHAT IMAGE 1 SHOWS HERE
 
-      A second product photograph of the stud earrings. Your output is that same photograph: the same surface, background, props, shadows, reflections, light and framing, with every earring in its original position and at its original angle.
+      A second product photograph of the stud earrings lying loose and bare, posts open to the air. Your output is that same photograph: the same surface, background, props, shadows, reflections, light and framing, with every earring in its original position and at its original angle.
 
       Look through the whole frame first and note every charm it contains — each earring, and any further view, angle or reflection of one. Each of those carries IMAGE 2's design in your output, all at the same size as one another.
 
