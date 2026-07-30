@@ -11028,8 +11028,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // 1/STUD_EAR_DIVISOR of visible ear height. Raise to tighten the ceiling.
     const STUD_EAR_DIVISOR = 8;
 
-    const STUD_SCALE_SLOT1_PRIMARY   = 28;   // Slot 1 — Primary_Models
-    const STUD_SCALE_SLOT5_SECONDARY = 39;   // Slot 5 — Secondary_Models  (the preferred result)
+    const STUD_SCALE_SLOT1_PRIMARY   = 24;   // Slot 1 — Primary_Models
+    const STUD_SCALE_SLOT5_SECONDARY = 33;   // Slot 5 — Secondary_Models  (the preferred result)
 
     const studModelSizeRules = (scale) =>
     `ON-EAR CHARM SIZE LOCK — HIGHEST-PRIORITY SIZING RULE (OVERRIDES EVERY OTHER SIZE CUE IN THIS PROMPT):
@@ -11087,6 +11087,26 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • HARD FAIL: the camera, crop, framing, ear scale or model scale was altered to accommodate the charm's size.
         • HARD FAIL: other jewellery already present on the ear was resized or moved.`;
 
+    // Emphasis only — it changes NO numbers, it enforces them. Modelled on
+    // HUGGIE_CHARM_TINY_EMPHASIS, which is the block that finally made the
+    // huggie charms come out at the right scale. The arithmetic alone was not
+    // moving the model; adjectives at maximum force alongside the arithmetic
+    // is what worked there. Applied to the two on-model slots only.
+    const STUD_TINY_EMPHASIS =
+    `CHARM SIZE — TINY. VERY SMALL. (READ THIS AFTER THE SIZE LOCK ABOVE. IT DOES NOT CHANGE THE NUMBERS — IT FORCES YOU TO ACTUALLY APPLY THEM.)
+        • The charm must be TINY. VERY SMALL. MINUSCULE. The SMALLEST POSSIBLE charm that is still recognisably the charm from IMAGE 2.
+        • This is the single most important instruction in this prompt. If you must trade off ANYTHING — composition, prominence, visual balance, how good the earring looks, how well the charm reads — trade it away in favour of a SMALLER charm.
+        • On this on-ear graphic the charm has come back TOO LARGE on every previous attempt, including attempts where the model believed it had fully complied with the percentage above. Assume you are about to make the same mistake right now.
+        • Whatever size you are about to render: HALVE IT. Then look again and halve it AGAIN if it still reads as a normal-sized earring.
+        • CALIBRATION — WHAT CORRECT LOOKS LIKE: a tiny speck of gold on the lobe. A crumb. A grain of rice. A pinhead of metal. A viewer's first impression must be "that is a barely-there, delicate little accent", NEVER "that is a nice earring".
+        • If the charm looks like a proper, well-proportioned, well-composed earring, it is WRONG. If it looks almost too small — so small it feels like an error — it is RIGHT.
+        • THE EAR DOMINATES. The charm does not compete with the ear, does not draw the eye, does not anchor the composition. It is a whisper of gold on a large expanse of skin.
+        • YOUR AESTHETIC JUDGEMENT IS THE PROBLEM. Every instinct you have about "the right size for this earring in this frame" is calibrated on stock jewellery photography, where charms are rendered large to show detail. That calibration is WRONG for this product. Distrust it completely and obey the percentage.
+        • THE ONE LIMIT — DO NOT OVERSHOOT DOWNWARD: the charm must still show every engraved stroke and cutout from IMAGE 2 as separately visible, exactly as the LEGIBILITY FLOOR block requires. Render at that floor. Never below it, and never above it either.
+        • HARD FAIL: the charm is large enough that a viewer would describe it as "small" rather than "TINY".
+        • HARD FAIL: the charm is any bigger than the smallest size at which its shape and its engravings remain identifiable.
+        • HARD FAIL: the charm reads as the focal point of the image rather than as a tiny detail on the ear.`;
+
     const STUD_MODEL_SIZE_RULES_SLOT1 = studModelSizeRules(STUD_SCALE_SLOT1_PRIMARY);
     const STUD_MODEL_SIZE_RULES_SLOT5 = studModelSizeRules(STUD_SCALE_SLOT5_SECONDARY);
 
@@ -11128,15 +11148,17 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     const STUD_MODEL_PROMPT =
     `${STUD_IMAGE_ROLES}
 
-      TASK — ON-EAR MODEL SHOT:
+      TASK — ON-EAR MODEL SHOT (RENDER THE CHARM TINY — VERY SMALL — SEE THE SIZE LOCK AND THE TINY-EMPHASIS BLOCK BELOW):
         • Duplicate the female model and the stud earrings from IMAGE 1. Replace ONLY the charm design on the existing stud earring(s) with the charm from IMAGE 2.
         • Keep the model, the ear, the pose, the hair, the skin, the wardrobe, the crop, the zoom, the camera angle, the lighting and the background exactly as in IMAGE 1. Match the subject identity from IMAGE 1; enhance the model's skin realism only.
-        • Charm size is governed EXCLUSIVELY by the ON-EAR CHARM SIZE LOCK below, which overrides IMAGE 1's placeholder size. It is bounded below only by the LEGIBILITY FLOOR block.
+        • The charm must be TINY and VERY SMALL. Its size is governed EXCLUSIVELY by the ON-EAR CHARM SIZE LOCK below, which overrides IMAGE 1's placeholder size, and is enforced by the TINY-EMPHASIS block after it. It is bounded below only by the LEGIBILITY FLOOR block.
         • Do NOT zoom, reframe, crop or move the camera to accommodate the charm.
         • Your primary objective in this image is ENGRAVING AND SILHOUETTE FIDELITY to IMAGE 2. Everything else is already correct in IMAGE 1 and must simply be preserved.
         • The skin immediately around and under the earring must read as completely uniform with the rest of the ear — no grey, ashen or desaturated fringe tracing the metal, and equally no brighter, warmer or pinker ring. Do not retouch, blur or feather that area at all.
 
       ${STUD_MODEL_SIZE_RULES_SLOT1}
+
+      ${STUD_TINY_EMPHASIS}
 
       ${STUD_LEGIBILITY_FLOOR}
 
@@ -11283,15 +11305,17 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     const STUD_SEC_MODEL_PROMPT =
     `${STUD_IMAGE_ROLES}
 
-      TASK — SECOND ON-EAR MODEL SHOT:
+      TASK — SECOND ON-EAR MODEL SHOT (RENDER THE CHARM TINY — VERY SMALL — SEE THE SIZE LOCK AND THE TINY-EMPHASIS BLOCK BELOW):
         • Duplicate the female model and the stud earrings from IMAGE 1. Replace ONLY the charm design on the existing stud earring(s) with the charm from IMAGE 2.
         • Keep the model, the ear, the pose, the hair, the skin, the wardrobe, the crop, the zoom, the camera angle, the lighting and the background exactly as in IMAGE 1. Match the subject identity from IMAGE 1; enhance the model's skin realism only.
-        • Charm size is governed EXCLUSIVELY by the ON-EAR CHARM SIZE LOCK below, which overrides IMAGE 1's placeholder size. It is bounded below only by the LEGIBILITY FLOOR block.
+        • The charm must be TINY and VERY SMALL. Its size is governed EXCLUSIVELY by the ON-EAR CHARM SIZE LOCK below, which overrides IMAGE 1's placeholder size, and is enforced by the TINY-EMPHASIS block after it. It is bounded below only by the LEGIBILITY FLOOR block.
         • Do NOT zoom, reframe, crop or move the camera to accommodate the charm.
         • The charm rendered here must be the SAME physical product as in every other image of this listing: identical silhouette, identical engraving, identical metal colour.
         • The skin immediately around and under the earring must read as completely uniform with the rest of the ear — no grey, ashen or desaturated fringe tracing the metal, and equally no brighter, warmer or pinker ring. Do not retouch, blur or feather that area at all.
 
       ${STUD_MODEL_SIZE_RULES_SLOT5}
+
+      ${STUD_TINY_EMPHASIS}
 
       ${STUD_LEGIBILITY_FLOOR}
 
