@@ -10,6 +10,30 @@
 //
 // Only THIS function is scheduled (one netlify.toml entry). The worker and console
 // are triggered, not scheduled — so the whole system adds exactly one cron line.
+//
+// ═══ WHY JOBS 2 AND 3 NOW LIVE IN googleAdsAutopilotApi.js ═══════════════════
+//
+// A scheduled Netlify function CANNOT be reached over HTTP. Netlify's own docs:
+//
+//     "You can't invoke scheduled functions directly with a URL."
+//     "Scheduled functions only run on their schedule for published deploys
+//      and ... you can't invoke them directly with a URL."
+//
+// Netlify answers any direct request to a scheduled function with a bare
+// 403 — no body, no log line. So the moment this function got its cron entry,
+// the console it also served became unreachable: every unlock attempt showed
+// "HTTP 403" with nothing to explain it, and the passcode was never the issue
+// (authed() returns 401, never 403).
+//
+// The three jobs are therefore SPLIT, with no logic duplicated:
+//
+//   this file                     the cron entry. Scheduled invocation only.
+//   googleAdsAutopilotApi.js      the console HTML + the POST actions. NOT
+//                                 scheduled, so HTTP works normally.
+//
+// handleAction, kick and CONSOLE_HTML are exported below and required by that
+// file, so there is exactly one copy of each. DO NOT add a schedule entry for
+// googleAdsAutopilotApi — that is the whole bug, reintroduced.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require("node-fetch");
@@ -358,28 +382,42 @@ async function handleAction(body) {
 }
 
 /* --------------------------------- handler -------------------------------- */
+//  SCHEDULED ONLY. The HTTP surface moved to googleAdsAutopilotApi.js because
+//  Netlify refuses HTTP requests to a scheduled function (403, empty body).
+//  The GET/POST branches are kept below the scheduled path purely so a LOCAL
+//  `netlify dev` invocation still works; in production this handler is only
+//  ever reached by the scheduler.
 exports.handler = async (event) => {
-  // 1) scheduled invocation
   const scheduled = !!(event && event.headers &&
     (event.headers["x-nf-event"] === "schedule" || event.isScheduled));
   if (scheduled) {
     try { const out = await kick(); console.log("[gadsKick] scheduled:", JSON.stringify(out)); return ok(out); }
     catch (e) { console.error("[gadsKick] scheduled error", e.message); return ok({ status: "error", error: e.message }); }
   }
+  return httpHandler(event);
+};
 
+/*  The HTTP behaviour, exported so googleAdsAutopilotApi.js is a two-line file
+    rather than a second copy of anything. */
+async function httpHandler(event) {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: HEADERS };
 
-  // 2) GET → console HTML
+  // GET → console HTML
   if (event.httpMethod === "GET") {
     return { statusCode: 200, headers: { "Content-Type": "text/html; charset=utf-8" }, body: CONSOLE_HTML };
   }
 
-  // 3) POST → actions (auth required)
+  // POST → actions (auth required)
   let body = {}; try { body = JSON.parse(event.body || "{}"); } catch {}
   if (!authed(event, body)) return { statusCode: 401, headers: HEADERS, body: JSON.stringify({ error: "unauthorized" }) };
   try { return ok(await handleAction(body)); }
   catch (e) { return { statusCode: 500, headers: HEADERS, body: JSON.stringify({ error: e.message }) }; }
-};
+}
+
+// Reused by googleAdsAutopilotApi.js — one implementation, two entry points.
+module.exports.httpHandler = httpHandler;
+module.exports.handleAction = handleAction;
+module.exports.kick = kick;
 
 /* ------------------------------ console (HTML) ----------------------------- */
 const CONSOLE_HTML = `<!doctype html><html><head><meta charset="utf-8">
