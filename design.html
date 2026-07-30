@@ -123,6 +123,8 @@ html[data-rail=lg] .railIcon{width:36px;height:36px;font-size:15px}
 .brandStrip{display:none;align-items:center;gap:9px;padding:8px var(--railPad);border-bottom:1px solid var(--velvetLine);flex:0 0 auto;font-size:11.5px;color:var(--rTxt2)}
 .rail.hdrOff .brandStrip{display:flex}
 .rail.hdrOff #railHeader{display:none}
+.app[data-mode=history] .rail.hdrOff .calWrap{display:none}
+.app[data-mode=history] .brandStrip{display:none}
 .brandStrip .stripConn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .brandStrip .stripDue{flex:0 0 auto;font:700 10.5px var(--mono);border-radius:20px;padding:2px 8px;background:#3a2620;color:#f2a58e;border:1px solid #71392b}
 .brandStrip .stripDue.calm{background:var(--velvet2);color:var(--rTxt3);border-color:var(--velvetLine)}
@@ -371,6 +373,116 @@ html[data-tile=s] .tFind{padding:2px 5px;font-size:8px}
 .activity .bar i{height:100%;display:block;background:var(--gold2);width:0;transition:width .2s}
 
 /* ── toasts ───────────────────────────────────────────────────────────── */
+/* ══ mode switching ══════════════════════════════════════════════════════ */
+.railPane{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+.app[data-mode=live] #railHistory,
+.app[data-mode=live] #histTop,
+.app[data-mode=live] #histView,
+.app[data-mode=history] #railLive,
+.app[data-mode=history] .filterbar,
+.app[data-mode=history] #view,
+.app[data-mode=history] .liveOnly,
+.app[data-mode=live] .histOnly{display:none!important}
+.modeSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:3px;gap:2px;flex:0 0 auto}
+.modeSeg button{border:0;background:transparent;border-radius:999px;padding:7px 15px;font-size:12.5px;font-weight:700;color:var(--ink70);white-space:nowrap;display:flex;align-items:center;gap:6px}
+.modeSeg button:hover{color:var(--ink)}
+.modeSeg button.on{background:var(--velvet);color:#fff}
+.modeSeg button.on .sw{background:var(--gold2)}
+.modeSeg .sw{width:7px;height:7px;border-radius:50%;background:var(--ink25)}
+
+/* ══ history rail ════════════════════════════════════════════════════════ */
+.histPanel{padding:11px var(--railPad) 0;flex:0 0 auto}
+.histSyncRow{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--rTxt2);margin-bottom:10px}
+.histSyncRow .spacer{flex:1 1 auto}
+.calWrap{padding:0 var(--railPad) 10px;flex:0 0 auto;border-bottom:1px solid var(--velvetLine)}
+.calHead{display:flex;align-items:center;gap:6px;margin:2px 0 8px}
+.calHead .mn{flex:1 1 auto;text-align:center;font-size:12.5px;font-weight:700;color:var(--rTxt);white-space:nowrap}
+.calNav{width:26px;height:26px;border:1px solid var(--velvetLine);background:var(--velvet2);color:var(--rTxt2);border-radius:7px;display:grid;place-items:center;font-size:13px;flex:0 0 auto}
+.calNav:hover{background:#3c3630;color:#fff}
+.calGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.calDow{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:3px}
+.calDow span{text-align:center;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--rTxt3);font-weight:750}
+.calCell{position:relative;aspect-ratio:1/1;border:1px solid transparent;background:transparent;border-radius:7px;color:var(--rDim);font:11px var(--mono);display:grid;place-items:center;padding:0;min-height:26px}
+.calCell.pad{visibility:hidden}
+.calCell.has{background:var(--velvet2);border-color:var(--velvetLine);color:var(--rTxt);font-weight:700;cursor:pointer}
+.calCell.has:hover{background:#3f382f;border-color:#5f5648}
+.calCell.today{box-shadow:inset 0 0 0 1px var(--gold2)}
+.calCell.on{background:var(--gold);border-color:var(--gold);color:#2a2013}
+.calCell .n{position:absolute;right:2px;top:1px;font-size:8px;font-weight:800;color:var(--gold2);line-height:1}
+.calCell.on .n{color:#4a3a17}
+.calFoot{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:10.5px;color:var(--rTxt3)}
+.calFoot .spacer{flex:1 1 auto}
+
+.histListWrap{flex:1 1 auto;overflow:auto;min-height:0;padding:0 calc(var(--railPad) - 5px) 8px;overscroll-behavior:contain}
+.histRow{padding:var(--rowPadY) var(--rowPadX);border-radius:9px;cursor:pointer;position:relative;border:1px solid transparent}
+.histRow + .histRow::before{content:"";position:absolute;left:var(--rowPadX);right:var(--rowPadX);top:-1px;height:1px;background:var(--rLine)}
+.histRow:hover{background:#332e28}
+.histRow.on{background:#3c4952;box-shadow:inset 3px 0 0 #7ea8ba}
+.hrTop{display:flex;align-items:baseline;gap:8px}
+.hrNum{font:var(--rowNum) var(--mono);font-weight:700;color:var(--rTxt);flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hrDay{font:calc(var(--rowShip) - .5px) var(--mono);color:var(--rTxt3);flex:0 0 auto}
+.hrSub{display:flex;align-items:center;gap:8px;margin-top:2px}
+.hrBuyer{font-size:calc(var(--rowShip) + .5px);color:var(--rTxt2);flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hrDots{display:flex;gap:3px;flex:0 0 auto}
+.mdot{width:7px;height:7px;border-radius:2px;display:inline-block;background:var(--ink25)}
+.mdot[data-m=gold]{background:var(--m-gold)}.mdot[data-m=silver]{background:var(--m-silver)}
+.mdot[data-m=rose]{background:var(--m-rose)}.mdot[data-m="10k"]{background:var(--m-10k)}
+.mdot[data-m="14k"]{background:var(--m-14k)}
+.histEmpty{padding:26px 14px;text-align:center;color:var(--rTxt2);font-size:12.5px;line-height:1.6}
+
+/* ══ history main ════════════════════════════════════════════════════════ */
+.histTop{flex:0 0 auto;background:var(--paper2);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;align-items:center;gap:14px}
+.histTop h2{margin:0;font:19px var(--serif);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.histTop .sub{font-size:11.5px;color:var(--ink45);margin-top:1px;white-space:nowrap}
+.histTop .spacer{flex:1 1 auto}
+.histGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--tile),1fr));gap:var(--tileGap);align-content:start}
+.histCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);overflow:hidden;display:flex;flex-direction:column;cursor:pointer;transition:box-shadow .12s,border-color .12s,transform .08s}
+.histCard:hover{border-color:var(--ink25);box-shadow:0 2px 4px rgba(30,26,20,.05),0 12px 32px rgba(30,26,20,.09);transform:translateY(-1px)}
+.hcImg{position:relative;width:100%;aspect-ratio:1/1;background:var(--paper2);overflow:hidden;flex:0 0 auto}
+.hcImg img{width:100%;height:100%;object-fit:cover;display:block}
+.hcImg .ph{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink45);font-size:10.5px}
+.hcImg .ph.err{color:var(--clay)}
+.hcBody{padding:8px;display:grid;gap:4px;align-content:start}
+.hcNum{font:700 11.5px var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hcBuyer{font-size:10.5px;color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hcChips{display:flex;flex-wrap:wrap;gap:3px}
+.hcFoot{display:flex;align-items:center;justify-content:space-between;gap:6px;font:9.5px var(--mono);color:var(--ink45);margin-top:2px}
+.gridSentinel{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:9px;padding:20px;color:var(--ink45);font-size:12px}
+.gridSentinel .spin{width:13px;height:13px;border:2px solid var(--ink25);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
+
+/* ══ archive detail ══════════════════════════════════════════════════════ */
+.amLoading{display:flex;align-items:center;gap:10px;padding:34px;justify-content:center;color:var(--ink45);font-size:13px}
+.amLoading.err{color:var(--clay)}
+.amLoading .spin{width:15px;height:15px;border:2px solid var(--ink25);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
+.amGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.amCard{border:1px solid var(--line);background:var(--card2);border-radius:12px;padding:13px 14px;margin-bottom:12px}
+.amCard h4{margin:0 0 9px;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);font-weight:750}
+.amAddr{font-size:13px;line-height:1.55}
+.amAddr .dim,.dim{color:var(--ink45)}
+.amKV{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12.5px;padding:3px 0;border-bottom:1px solid var(--line2)}
+.amKV:last-child{border-bottom:0}
+.amKV span{color:var(--ink45);flex:0 0 auto}
+.amKV b{text-align:right;min-width:0;overflow-wrap:anywhere}
+.amKV.total b{font-size:15px}
+.amNote{margin-bottom:9px}
+.amNote span{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:750}
+.amNote p{margin:3px 0 0;font-size:13px;line-height:1.5;white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+.amItems{display:grid;gap:11px}
+.amItem{display:grid;grid-template-columns:88px minmax(0,1fr);gap:12px;align-items:start}
+.amItemImg{position:relative;width:88px;height:88px;border-radius:10px;overflow:hidden;background:var(--paper2);border:1px solid var(--line)}
+.amItemImg img{width:100%;height:100%;object-fit:cover;display:block}
+.amItemImg .ph{position:absolute;inset:0;display:grid;place-items:center;font-size:9.5px;color:var(--ink45);text-align:center;padding:4px}
+.amItemTitle{font-size:13.5px;font-weight:650;line-height:1.35}
+.amItemMeta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;font-size:11.5px}
+.amPers{margin-top:7px}
+.amPers span{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:750}
+.amPers p{margin:2px 0 0;font:13px var(--mono);background:var(--goldSoft);border:1px solid var(--goldLine);border-radius:8px;padding:6px 9px;white-space:pre-wrap}
+.amVars{margin-top:6px;display:flex;flex-wrap:wrap;gap:9px;font-size:11.5px;color:var(--ink70)}
+.amLive{margin-top:9px;font-size:12.5px}
+.amLiveHead{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--sage);font-weight:750;margin-bottom:5px}
+.amLiveHead.err{color:var(--clay)}
+.amLive .spin{width:12px;height:12px;border:2px solid var(--ink25);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:-2px;margin-right:6px}
+
 .toasts{position:fixed;right:18px;bottom:18px;z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none}
 .toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:360px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;animation:tin .18s ease;pointer-events:auto}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
@@ -479,6 +591,7 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       <button class="stripBtn" id="stripRefreshBtn" aria-label="Refresh order list" title="Refresh order list">⟳</button>
     </div>
 
+    <div class="railPane" id="railLive">
     <div id="railHeader">
     <div class="railStatus">
       <span class="dot" id="connDot"></span>
@@ -528,12 +641,70 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       <span class="spacer"></span>
       <button class="btn ghost xs" id="clearBtn">Clear<span class="footWord">&nbsp;selection</span></button>
     </div>
+    </div><!-- /#railLive -->
+
+    <!-- ══════════ HISTORY RAIL ══════════ -->
+    <div class="railPane" id="railHistory">
+      <div class="histPanel">
+        <div class="histSyncRow">
+          <span class="dot" id="histSyncDot"></span>
+          <span id="histSyncText">Opening the archive…</span>
+          <span class="spacer"></span>
+          <button class="btn ghost xs" id="histResync" title="Rebuild the local index from Firebase">Resync</button>
+        </div>
+        <div class="searchBox">
+          <svg class="searchIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input id="histSearch" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Search every completed order…" aria-label="Search completed orders">
+          <button class="searchClear hidden" id="histSearchClear" aria-label="Clear search">×</button>
+        </div>
+        <div class="searchHint">Order number, buyer, city, SKU, engraving, tracking — searched as you type.</div>
+      </div>
+
+      <div class="calWrap">
+        <div class="calHead">
+          <button class="calNav" id="histPrevMonth" aria-label="Previous month">‹</button>
+          <span class="mn" id="histMonthLabel">—</span>
+          <button class="calNav" id="histNextMonth" aria-label="Next month">›</button>
+        </div>
+        <div class="calDow"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+        <div class="calGrid" id="histCal"></div>
+        <div class="calFoot">
+          <span id="histMonthTotal">none</span>
+          <span class="spacer"></span>
+          <button class="btn ghost xs" id="histToday">Today</button>
+          <button class="btn ghost xs hidden" id="histClearDay">All dates</button>
+        </div>
+      </div>
+
+      <div class="queueHead">
+        <span>Completed</span>
+        <span class="qhCount" id="histMeta">0</span>
+      </div>
+
+      <div class="histListWrap" id="histListWrap">
+        <div id="histList"></div>
+        <div class="histEmpty hidden" id="histEmpty">Nothing matches.<br>Try a different date or search.</div>
+      </div>
+
+      <div class="railFoot">
+        <span id="histTiming" class="mono"></span>
+        <span class="spacer"></span>
+        <button class="btn ghost xs" id="histBackfillBtn" title="Import previously completed orders from Etsy, once">Backfill</button>
+        <button class="btn danger xs hidden" id="histBackfillStop">Stop</button>
+      </div>
+    </div>
   </aside>
 
   <!-- ══════════════ MAIN ══════════════ -->
   <main class="main">
     <header class="topbar">
       <button class="navBtn" id="railToggle" aria-label="Toggle order list" title="Toggle order list (\)">☰</button>
+
+      <div class="modeSeg" id="modeToggle" role="tablist" aria-label="Application mode">
+        <button type="button" data-mode="live" class="on" role="tab" title="Work the open order queue (M)"><span class="sw"></span>Live</button>
+        <button type="button" data-mode="history" role="tab" title="Search and review every completed order (M)"><span class="sw"></span>History</button>
+      </div>
       <div class="topTitle">
         <h1 id="topTitle">Design Station</h1>
         <div class="sub" id="topSub">Connect Etsy, then refresh to load open orders.</div>
@@ -547,8 +718,8 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
         <span>Calls <b id="etsyTotal">0</b></span>
       </div>
 
-      <button class="btn ghost sm" id="undoCompleteBtn" disabled title="Restore the last printed batch">↩ Undo</button>
-      <button class="btn sage" id="completeBtn" title="Build QR labels for the selected orders">Generate QR</button>
+      <button class="btn ghost sm liveOnly" id="undoCompleteBtn" disabled title="Restore the last printed batch">↩ Undo</button>
+      <button class="btn sage liveOnly" id="completeBtn" title="Build QR labels for the selected orders">Generate QR</button>
       <button class="navBtn" id="settingsBtn" aria-label="Settings" title="Settings">⚙</button>
     </header>
 
@@ -578,6 +749,18 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       </div>
 
       <div class="gridWrap" id="photoGridContainer"></div>
+    </div>
+
+    <!-- ══════════ HISTORY MAIN ══════════ -->
+    <div class="histTop" id="histTop">
+      <div>
+        <h2 id="histHeadTitle">All completed orders</h2>
+        <div class="sub" id="histHeadSub">—</div>
+      </div>
+      <span class="spacer"></span>
+    </div>
+    <div class="view" id="histView">
+      <div class="histGrid" id="histGrid"></div>
     </div>
   </main>
 </div>
@@ -639,6 +822,27 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       <div class="left"><span style="font-size:11.5px;color:var(--ink45)">Printing marks these orders design-complete and releases their locks.</span></div>
       <button class="btn ghost" id="qrCancelBtn">Cancel</button>
       <button class="btn sage" id="qrPreviewPrintBtn">Print labels</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ══════════════ ARCHIVED ORDER ══════════════ -->
+<dialog id="archiveModal" class="wide" aria-labelledby="amTitle">
+  <div class="dlg">
+    <div class="dlgHead">
+      <div style="min-width:0">
+        <h3 id="amTitle">Order</h3>
+        <div class="sub" id="amSub" style="font-size:11.5px;color:var(--ink45);margin-top:2px"></div>
+      </div>
+      <div class="right">
+        <button class="btn ghost sm" id="amShipBtn" title="The only Etsy call in History: live shipping and delivery status">Check shipping</button>
+        <button class="btn ghost sm" id="amClose">✕ Close</button>
+      </div>
+    </div>
+    <div class="dlgBody" id="amBody"></div>
+    <div class="dlgFoot">
+      <div class="left"><span style="font-size:11.5px;color:var(--ink45)">Served from the Firebase archive — no Etsy call unless you ask for shipping.</span></div>
+      <button class="btn ghost" id="amClose2">Close</button>
     </div>
   </div>
 </dialog>
@@ -803,6 +1007,7 @@ const SETTINGS_DEFAULTS = {
   tileSize   : "m",            // s | m | l
   density    : "comfortable",  // comfortable | compact
   railOpen   : true,
+  mode       : "live",         // live | history — the master toggle
   railSize   : "md",           // sm (compact) | md (normal) | lg (large)
   railHeader : true,           // is the status/search/stats panel expanded
   lazyImages : true,           // only fetch listing images for tiles near the viewport
@@ -1788,6 +1993,21 @@ const CACHE_MAX     = 1200;
 let detailCache = new Map();     // rid → { at, ut, txs:[slim] }
 let __cacheDirty = false, __cacheTimer = null;
 
+/* The receipt-level fields the archive needs if Etsy is unreachable later.
+   Kept deliberately small — the full payload goes to Firestore, not here. */
+function slimReceipt(rc) {
+  if (!rc) return null;
+  const k = ["receipt_id","order_number","name","first_line","second_line","city","state","zip",
+             "country_iso","formatted_address","buyer_user_id","buyer_email","status",
+             "message_from_buyer","message_from_seller","is_gift","gift_message","gift_sender",
+             "is_paid","is_shipped","create_timestamp","update_timestamp",
+             "subtotal","total_price","total_shipping_cost","total_tax_cost","discount_amt",
+             "gift_wrap_price","grandtotal","shipments"];
+  const out = {};
+  k.forEach(f => { if (rc[f] !== undefined) out[f] = rc[f]; });
+  return out;
+}
+
 function slimTx(t) {
   return {
     transaction_id: t.transaction_id,
@@ -1863,12 +2083,17 @@ function receiptStampFor(rid) {
   return r?._stamp || 0;
 }
 
-function cachePut(rid, txs, stamp) {
+function cachePut(rid, txs, stamp, receipt) {
   rid = String(rid);
   // Fall back to the receipt's own stamp — an entry saved with ut:0 could
   // never be invalidated afterwards.
   const ut = Number(stamp) || receiptStampFor(rid) || 0;
-  detailCache.set(rid, { at: Date.now(), ut, txs: (txs || []).map(slimTx) });
+  const prev = detailCache.get(rid);
+  detailCache.set(rid, {
+    at: Date.now(), ut,
+    txs: (txs || []).map(slimTx),
+    rc : slimReceipt(receipt) || prev?.rc || null,
+  });
   saveDetailCacheSoon();
 }
 
@@ -1960,7 +2185,7 @@ async function hydrateOrder(rid, { force = false } = {}) {
   const data = await pullEtsyOrderDetails(rid);
   const txs  = data?.transactions || [];
   orderCache[rid] = txs;
-  if (txs.length) cachePut(rid, txs, stamp);
+  if (txs.length) cachePut(rid, txs, stamp, data?.receipt);
   return txs;
 }
 
@@ -3584,6 +3809,10 @@ async function proceedToPrint() {
   try { await markBritesDesigned(printedIDs); }
   catch (e) { console.warn("markBritesDesigned failed:", e); }
 
+  // Archive last and in the background: the operator is already at the printer
+  // and this must never be the thing that delays them.
+  archiveOrders(printedIDs).catch(e => console.warn("archive after print failed", e));
+
   pendingJobs = pendingLists = null;
 }
 
@@ -3771,6 +4000,7 @@ async function toggleSkipOrder() {
     try { await rtSet(rid, false); } catch (_) {}
     persistSelection();
     closeDlg($("#listingModal"));
+    archiveOrders([rid], { quiet:true }).catch(e => console.warn("archive after skip failed", e));
     toast(`Order ${rid} skipped`, "ok");
   } else {
     completedOrders.delete(rid);
@@ -3842,7 +4072,981 @@ async function exitSearch() {
   applyFilters();
 }
 
+/* ═══ 19 · ARCHIVE — permanent history of completed orders ═══════════════ */
+
+/*  The live half of this app is a queue: orders arrive, get printed, and leave.
+    Everything below is the other half — a durable, searchable record of every
+    order that has ever left, so "what did we ship on the 12th" and "which order
+    had ANNA engraved on it" are answerable in milliseconds, offline, without
+    asking Etsy anything.
+
+    Shape of the system:
+      write  · completing an order posts a full record to Firestore
+      sync   · the client keeps a slim index of every record in IndexedDB
+      search · filtering runs in memory over that index, per keystroke
+      detail · opening a record reads the full document once and caches it
+      Etsy   · touched only when the operator asks for live shipping status   */
+
+const ARCHIVE_FN  = `${FN}/designArchive`;
+const IDB_NAME    = "designStationArchive";
+const IDB_VERSION = 1;
+
+let archiveIndex   = [];        // slim rows, newest first — the search corpus
+let archiveById    = new Map(); // receiptId → slim row
+let archiveDetail  = new Map(); // receiptId → full record (session cache)
+let archiveSyncAt  = 0;
+let archiveReady   = false;
+
+/* ── 19a · IndexedDB ─────────────────────────────────────────────────────
+   localStorage is the wrong tool here: the index grows without bound and the
+   writes must not block the main thread while the operator is typing. */
+
+let __idb = null;
+function idb() {
+  if (__idb) return __idb;
+  __idb = new Promise((resolve, reject) => {
+    if (!window.indexedDB) return resolve(null);
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if (!d.objectStoreNames.contains("index")) d.createObjectStore("index", { keyPath: "receiptId" });
+      if (!d.objectStoreNames.contains("meta"))  d.createObjectStore("meta",  { keyPath: "k" });
+      if (!d.objectStoreNames.contains("detail")) d.createObjectStore("detail", { keyPath: "receiptId" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => { console.warn("IndexedDB unavailable", req.error); resolve(null); };
+  });
+  return __idb;
+}
+
+function idbTx(store, mode, fn) {
+  return idb().then(d => {
+    if (!d) return null;
+    return new Promise((resolve, reject) => {
+      const tx = d.transaction(store, mode);
+      const os = tx.objectStore(store);
+      let out;
+      try { out = fn(os); } catch (e) { return reject(e); }
+      tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+      tx.onerror    = () => reject(tx.error);
+    });
+  }).catch(e => { console.warn("idb op failed", e); return null; });
+}
+
+const idbGetAll = store => idbTx(store, "readonly", os => os.getAll());
+const idbPutAll = (store, rows) => idbTx(store, "readwrite", os => { rows.forEach(r => os.put(r)); });
+const idbGet    = (store, key) => idbTx(store, "readonly", os => os.get(key));
+const idbPut    = (store, row) => idbTx(store, "readwrite", os => os.put(row));
+const idbClear  = store => idbTx(store, "readwrite", os => os.clear());
+
+/* ── 19b · sync ──────────────────────────────────────────────────────────── */
+
+function sortArchive() {
+  archiveIndex.sort((a, b) => (b.at || 0) - (a.at || 0));
+  archiveById = new Map(archiveIndex.map(r => [String(r.receiptId), r]));
+}
+
+function mergeArchiveRows(rows) {
+  let added = 0;
+  rows.forEach(r => {
+    const id = String(r.receiptId);
+    const existing = archiveById.get(id);
+    if (existing) Object.assign(existing, r);
+    else { archiveIndex.push(r); added++; }
+  });
+  sortArchive();
+  return added;
+}
+
+/** Load whatever we already have on disk so History opens instantly offline. */
+async function loadArchiveFromDisk() {
+  const [rows, meta] = await Promise.all([idbGetAll("index"), idbGet("meta", "sync")]);
+  archiveIndex = Array.isArray(rows) ? rows : [];
+  sortArchive();
+  archiveSyncAt = meta?.at || 0;
+  archiveReady = true;
+  return archiveIndex.length;
+}
+
+/**
+ * Pull everything new since the last sync. Paged, so a first run over a large
+ * archive streams in rather than stalling, and the UI repaints as it lands.
+ */
+let __archiveSyncing = false;
+async function syncArchive({ full = false, onProgress } = {}) {
+  if (__archiveSyncing) return { added: 0, busy: true };
+  __archiveSyncing = true;
+  setHistSync("syncing", "Syncing…");
+
+  let since = full ? 0 : archiveSyncAt;
+  if (full) { archiveIndex = []; archiveById.clear(); await idbClear("index"); }
+
+  let cursor = null, added = 0, pages = 0, newest = archiveSyncAt;
+  try {
+    while (pages < 200) {
+      const url = `${ARCHIVE_FN}?op=index&limit=400&since=${since}` + (cursor ? `&cursor=${cursor}` : "");
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      const rows = j.rows || [];
+      if (rows.length) {
+        added += mergeArchiveRows(rows);
+        await idbPutAll("index", rows);
+        newest = Math.max(newest, ...rows.map(x => x.at || 0));
+        onProgress?.(archiveIndex.length);
+        renderHistory();
+      }
+      pages++;
+      if (!j.nextCursor) break;
+      cursor = j.nextCursor;
+    }
+    archiveSyncAt = newest ? newest + 1 : Date.now();
+    await idbPut("meta", { k: "sync", at: archiveSyncAt, count: archiveIndex.length });
+    setHistSync("ok", `${archiveIndex.length.toLocaleString()} archived`);
+    return { added, total: archiveIndex.length };
+  } catch (e) {
+    console.warn("Archive sync failed", e);
+    setHistSync("bad", "Sync failed — showing the local copy");
+    return { added, error: e.message };
+  } finally {
+    __archiveSyncing = false;
+    renderHistory();
+  }
+}
+
+function setHistSync(kind, text) {
+  const d = $("#histSyncDot"), t = $("#histSyncText");
+  if (d) d.className = "dot" + (kind === "ok" ? " ok" : kind === "bad" ? " bad" : kind === "syncing" ? " warn" : "");
+  if (t) t.textContent = text;
+}
+
+/* ── 19c · building a record ─────────────────────────────────────────────── */
+
+const dayKey = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+function pickShip(rc) {
+  return {
+    name        : str(rc.name),
+    first_line  : str(rc.first_line),
+    second_line : str(rc.second_line),
+    city        : str(rc.city),
+    state       : str(rc.state),
+    zip         : str(rc.zip),
+    country     : str(rc.country_iso || rc.country),
+    formatted   : str(rc.formatted_address),
+  };
+}
+
+const str = v => (v == null ? "" : String(v));
+const numOr0 = v => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const money = m => (m && typeof m === "object" ? numOr0(m.amount) / (numOr0(m.divisor) || 100) : numOr0(m));
+
+/**
+ * Turn an Etsy receipt into an archive record. `raw` carries the untouched
+ * payload so nothing Etsy exposed is ever lost, even fields this UI has no
+ * use for today.
+ */
+function buildArchiveRecord(rid, data, { completedBy } = {}) {
+  const rc  = data?.receipt || {};
+  const txs = data?.transactions || [];
+  const completedAtMs = Date.now();
+
+  const items = txs.map(t => {
+    const variations = (t.variations || []).map(v => ({
+      name : str(v?.formatted_name), value: str(v?.formatted_value).replace(/&quot;/g, '"'),
+    }));
+    const pers = Array.isArray(t.personalization) ? t.personalization.join("\n")
+               : str(t.personalization);
+    const imgs = __imagesCache.get(String(t.listing_id));
+    const first = Array.isArray(imgs) ? imgs[0] : null;
+    return {
+      transactionId : str(t.transaction_id),
+      listingId     : str(t.listing_id),
+      productId     : str(t.product_id),
+      title         : str(t.title),
+      sku           : str(t.sku),
+      quantity      : numOr0(t.quantity) || 1,
+      price         : money(t.price),
+      shippingCost  : money(t.shipping_cost),
+      metal         : resolveTxMetal(t) || resolveTxMetal(t, { wide:true }) || "",
+      personalization: pers,
+      variations,
+      expectedShipDate: numOr0(t.expected_ship_date),
+      imageUrl      : str(first?.url_fullxfull || first?.url || first?.image_url || first?.fullsize_url || ""),
+      listingImageId: str(t.listing_image_id),
+      isDigital     : !!t.is_digital,
+    };
+  });
+
+  const metals = metalCountsFor(txs);
+  const rawReceipt = { ...rc };
+  delete rawReceipt.transactions;
+
+  return {
+    receiptId    : String(rid),
+    orderNumber  : str(rc.order_number || rid),
+    completedAtMs,
+    completedDay : dayKey(completedAtMs),
+    completedBy  : completedBy || (localStorage.getItem(LS.employee) || "Design"),
+    buyer: {
+      name  : str(rc.name),
+      userId: str(rc.buyer_user_id),
+      email : str(rc.buyer_email),
+    },
+    ship: pickShip(rc),
+    messages: {
+      fromBuyer  : str(rc.message_from_buyer),
+      fromSeller : str(rc.message_from_seller),
+      fromPayment: str(rc.message_from_payment),
+      isGift     : !!rc.is_gift,
+      giftMessage: str(rc.gift_message),
+      giftSender : str(rc.gift_sender),
+    },
+    money: {
+      currency : str(rc.total_price?.currency_code || rc.grandtotal?.currency_code || "USD"),
+      subtotal : money(rc.subtotal),
+      total    : money(rc.total_price),
+      shipping : money(rc.total_shipping_cost),
+      tax      : money(rc.total_tax_cost),
+      vat      : money(rc.total_vat_cost),
+      discount : money(rc.discount_amt),
+      giftWrap : money(rc.gift_wrap_price),
+      grand    : money(rc.grandtotal),
+    },
+    status: {
+      etsyStatus: str(rc.status),
+      isPaid    : !!rc.is_paid,
+      isShipped : !!rc.is_shipped,
+      createdTs : numOr0(rc.create_timestamp || rc.created_timestamp),
+      updatedTs : numOr0(rc.update_timestamp || rc.updated_timestamp),
+    },
+    shipments: (rc.shipments || []).map(s => ({
+      carrier          : str(s.carrier_name),
+      trackingCode     : str(s.tracking_code),
+      buyerNote        : str(s.buyer_note),
+      notificationTs   : numOr0(s.shipment_notification_timestamp || s.notification_date),
+      receiptShippingId: str(s.receipt_shipping_id),
+    })),
+    items,
+    metals,
+    totals: { items: items.length, quantity: items.reduce((n, i) => n + i.quantity, 0) },
+    raw: { receipt: rawReceipt, transactions: txs },
+  };
+}
+
+/**
+ * Archive a set of receipts. Runs in the background after printing so it never
+ * delays the operator, and falls back to the cached copy if Etsy is unreachable
+ * — losing detail is better than losing the record.
+ */
+async function archiveOrders(ids, { completedBy, quiet = false } = {}) {
+  const list = [...new Set((ids || []).map(String))];
+  if (!list.length) return { saved: 0 };
+
+  if (!quiet) Activity.show(`Archiving ${list.length} order${list.length !== 1 ? "s" : ""}…`);
+  let done = 0, failed = 0;
+  const records = [];
+
+  try {
+    for (const rid of list) {
+      try {
+        // Fetch fresh so the archive holds everything Etsy exposes, not the
+        // slimmed copy the live view keeps.
+        let data = null;
+        try { data = await pullEtsyOrderDetails(rid); } catch (_) {}
+        if (!data || !(data.transactions || []).length) {
+          const rc = detailCache.get(rid)?.rc || {};
+          data = { receipt: { ...rc, receipt_id: rid }, transactions: orderCache[rid] || [] };
+        }
+        const rec = buildArchiveRecord(rid, data, { completedBy });
+        // A record with no items, no buyer and no address means the read failed
+        // outright. Writing it would poison the archive with an empty document
+        // that then looks "already archived" and never gets retried.
+        const usable = rec.items.length || rec.ship?.name || rec.buyer?.name || rec.money?.total;
+        if (!usable) { failed++; console.warn("archive skipped, nothing readable for", rid); }
+        else records.push(rec);
+      } catch (e) { failed++; console.warn("archive build failed", rid, e); }
+      done++;
+      if (!quiet) { Activity.msg(`Archiving… ${done}/${list.length}`); Activity.progress(done, list.length); }
+    }
+
+    for (let i = 0; i < records.length; i += 10) {
+      const chunk = records.slice(i, i + 10);
+      const r = await fetch(`${ARCHIVE_FN}`, {
+        method : "POST",
+        headers: { "Content-Type": "application/json" },
+        body   : JSON.stringify({ op: "put", orders: chunk }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      // Reflect it locally straight away so History is correct before the sync.
+      mergeArchiveRows(chunk.map(localSlim));
+      await idbPutAll("index", chunk.map(localSlim));
+    }
+
+    renderHistory();
+    if (!quiet) {
+      if (records.length) toast(`${records.length} order${records.length !== 1 ? "s" : ""} archived`, "ok");
+      if (failed) toast(`${failed} order${failed !== 1 ? "s" : ""} could not be read — they will be retried`, "bad", 6000);
+    }
+    return { saved: records.length, failed };
+  } catch (e) {
+    console.error("archiveOrders failed", e);
+    if (!quiet) toast("Archiving failed — the orders are still marked complete", "bad", 6000);
+    return { saved: 0, failed: list.length, error: e.message };
+  } finally {
+    if (!quiet) Activity.hide();
+  }
+}
+
+/** The same projection the server makes, computed locally for instant display. */
+function localSlim(rec) {
+  const searchBlob = [
+    rec.receiptId, rec.orderNumber, rec.completedDay, rec.completedBy,
+    rec.buyer?.name, rec.buyer?.email,
+    rec.ship?.name, rec.ship?.first_line, rec.ship?.second_line, rec.ship?.city,
+    rec.ship?.state, rec.ship?.zip, rec.ship?.country,
+    rec.messages?.fromBuyer, rec.messages?.giftMessage, rec.messages?.giftSender,
+    ...(rec.items || []).flatMap(i => [i.title, i.sku, i.personalization, i.metal,
+      ...(i.variations || []).map(v => `${v.name} ${v.value}`)]),
+    ...(rec.shipments || []).flatMap(s => [s.carrier, s.trackingCode]),
+    ...Object.entries(rec.metals || {}).filter(([, n]) => n).map(([k]) => k),
+  ].filter(Boolean).join(" ").toLowerCase().replace(/\s+/g, " ");
+
+  return {
+    receiptId: rec.receiptId, orderNumber: rec.orderNumber,
+    day: rec.completedDay, at: rec.completedAtMs,
+    buyer: rec.buyer?.name || rec.ship?.name || "",
+    city: rec.ship?.city || "", state: rec.ship?.state || "", country: rec.ship?.country || "",
+    items: rec.totals?.items || 0, qty: rec.totals?.quantity || 0,
+    metals: rec.metals || {},
+    thumb: rec.items?.[0]?.mirrorUrl || rec.items?.[0]?.imageUrl || "",
+    shipped: !!rec.status?.isShipped, tracked: (rec.shipments || []).length > 0,
+    search: searchBlob,
+  };
+}
+
+/* ── 19d · search ────────────────────────────────────────────────────────
+   Runs synchronously on every keystroke against the in-memory index. A
+   50,000-row scan is a couple of milliseconds, so there is no debounce and no
+   request — the list simply is correct by the time the character is painted. */
+
+let histQuery = "";
+let histDay   = null;      // "YYYY-MM-DD" or null for every day
+let histResults = [];
+let histCursor  = 0;
+let histSelected = null;
+
+function archiveSearch(query, day) {
+  const tokens = String(query || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const t0 = performance.now();
+  let rows = archiveIndex;
+  if (day) rows = rows.filter(r => r.day === day);
+  if (tokens.length) {
+    rows = rows.filter(r => {
+      const hay = r.search || "";
+      for (let i = 0; i < tokens.length; i++) if (hay.indexOf(tokens[i]) === -1) return false;
+      return true;
+    });
+  }
+  return { rows, ms: +(performance.now() - t0).toFixed(1) };
+}
+
+function runHistSearch({ keepScroll = false } = {}) {
+  const { rows, ms } = archiveSearch(histQuery, histDay);
+  histResults = rows;
+  histCursor = 0;
+  renderHistList({ keepScroll });
+  paintHistMeta(ms);
+  renderHistGrid();
+}
+
+function paintHistMeta(ms) {
+  const el = $("#histMeta");
+  if (!el) return;
+  const n = histResults.length;
+  const total = archiveIndex.length;
+  const bits = [`${n.toLocaleString()} of ${total.toLocaleString()}`];
+  if (histDay) bits.push(fmtDay(histDay));
+  if (histQuery) bits.push(`“${histQuery}”`);
+  el.textContent = bits.join(" · ");
+  const t = $("#histTiming");
+  if (t) t.textContent = ms != null ? `${ms} ms` : "";
+}
+
+const fmtDay = d => {
+  if (!d) return "";
+  const [y, m, dd] = d.split("-").map(Number);
+  return new Date(y, m - 1, dd).toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric", year:"numeric" });
+};
+
+/* ── 19e · calendar ──────────────────────────────────────────────────────── */
+
+let histMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+function archiveDayCounts() {
+  const counts = {};
+  archiveIndex.forEach(r => { if (r.day) counts[r.day] = (counts[r.day] || 0) + 1; });
+  return counts;
+}
+
+function renderCalendar() {
+  const host = $("#histCal");
+  if (!host) return;
+  const counts = archiveDayCounts();
+  const y = histMonth.getFullYear(), m = histMonth.getMonth();
+  const first = new Date(y, m, 1);
+  const startPad = first.getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const todayKey = dayKey(Date.now());
+
+  const label = $("#histMonthLabel");
+  if (label) label.textContent = first.toLocaleDateString(undefined, { month:"long", year:"numeric" });
+
+  const cells = [];
+  for (let i = 0; i < startPad; i++) cells.push('<div class="calCell pad"></div>');
+  let monthTotal = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const n = counts[key] || 0;
+    monthTotal += n;
+    const cls = ["calCell"];
+    if (n) cls.push("has");
+    if (key === histDay) cls.push("on");
+    if (key === todayKey) cls.push("today");
+    cells.push(`<button type="button" class="${cls.join(" ")}" data-day="${key}"${n ? "" : " disabled"} title="${fmtDay(key)} — ${n} order${n !== 1 ? "s" : ""}">
+      <span class="d">${d}</span>${n ? `<span class="n">${n}</span>` : ""}</button>`);
+  }
+  host.innerHTML = cells.join("");
+
+  const tot = $("#histMonthTotal");
+  if (tot) tot.textContent = monthTotal ? `${monthTotal} completed` : "none";
+}
+
+function shiftMonth(delta) {
+  histMonth = new Date(histMonth.getFullYear(), histMonth.getMonth() + delta, 1);
+  renderCalendar();
+}
+
+function setHistDay(day) {
+  histDay = day || null;
+  if (day) {
+    const [y, m] = day.split("-").map(Number);
+    histMonth = new Date(y, m - 1, 1);
+  }
+  renderCalendar();
+  $("#histClearDay")?.classList.toggle("hidden", !histDay);
+  runHistSearch();
+}
+
+/* ── 19f · result list + card grid, both lazily rendered ─────────────────── */
+
+const HIST_CHUNK = 40;
+let histSentinel = null;
+
+const histSentinelObserver = ("IntersectionObserver" in window)
+  ? new IntersectionObserver(e => { if (e.some(x => x.isIntersecting)) appendHistChunk(); },
+      { root: document.getElementById("histListWrap"), rootMargin: "600px 0px", threshold: 0.01 })
+  : null;
+
+function renderHistList({ keepScroll = false } = {}) {
+  const host = $("#histList");
+  if (!host) return;
+  const wrap = $("#histListWrap");
+  const top = keepScroll && wrap ? wrap.scrollTop : 0;
+  histSentinel?.remove(); histSentinel = null;
+  host.replaceChildren();
+  histCursor = 0;
+  appendHistChunk();
+  let guard = 0;
+  while (wrap && wrap.scrollHeight <= wrap.clientHeight + 40 && histCursor < histResults.length && guard++ < 40) appendHistChunk();
+  if (wrap) wrap.scrollTop = top;
+  $("#histEmpty")?.classList.toggle("hidden", histResults.length > 0);
+}
+
+function appendHistChunk() {
+  const host = $("#histList");
+  if (!host) return;
+  const slice = histResults.slice(histCursor, histCursor + HIST_CHUNK);
+  if (!slice.length) { histSentinel?.remove(); histSentinel = null; return; }
+  const frag = document.createDocumentFragment();
+  slice.forEach(r => frag.appendChild(makeHistRow(r)));
+  host.appendChild(frag);
+  histCursor += slice.length;
+
+  histSentinel?.remove(); histSentinel = null;
+  if (histCursor < histResults.length) {
+    histSentinel = document.createElement("div");
+    histSentinel.className = "listSentinel";
+    histSentinel.innerHTML = `<span class="spin"></span><span>${histCursor} of ${histResults.length}</span>`;
+    host.appendChild(histSentinel);
+    histSentinelObserver?.observe(histSentinel);
+  }
+}
+
+function makeHistRow(r) {
+  const el = document.createElement("div");
+  el.className = "histRow" + (histSelected === r.receiptId ? " on" : "");
+  el.dataset.receipt = r.receiptId;
+  el.tabIndex = 0;
+  el.setAttribute("role", "button");
+
+  const chips = METAL_ORDER.filter(k => r.metals?.[k])
+    .map(k => `<i class="mdot" data-m="${k}" title="${METAL_BY_KEY[k].label}"></i>`).join("");
+
+  el.innerHTML = `
+    <div class="hrTop"><span class="hrNum"></span><span class="hrDay"></span></div>
+    <div class="hrSub"><span class="hrBuyer"></span><span class="hrDots">${chips}</span></div>`;
+  el.querySelector(".hrNum").textContent   = r.orderNumber || r.receiptId;
+  el.querySelector(".hrDay").textContent   = r.day || "";
+  el.querySelector(".hrBuyer").textContent = [r.buyer, r.city].filter(Boolean).join(" · ") || `${r.items} item${r.items !== 1 ? "s" : ""}`;
+  el.title = `${r.orderNumber} · ${fmtDay(r.day)} · ${r.qty} item${r.qty !== 1 ? "s" : ""}`;
+  return el;
+}
+
+/* the card grid in the main pane */
+const histImgObserver = ("IntersectionObserver" in window)
+  ? new IntersectionObserver((entries, obs) => {
+      entries.forEach(e => {
+        if (!e.isIntersecting) return;
+        obs.unobserve(e.target);
+        const url = e.target.dataset.src;
+        if (!url) return;
+        const img = document.createElement("img");
+        img.alt = ""; img.loading = "lazy";
+        img.onload  = () => { e.target.querySelector(".ph")?.remove(); };
+        img.onerror = () => { const p = e.target.querySelector(".ph"); if (p) { p.textContent = "No image"; p.classList.add("err"); } img.remove(); };
+        img.src = `${FN}/imageProxy?url=${encodeURIComponent(url)}`;
+        e.target.insertBefore(img, e.target.firstChild);
+      });
+    }, { root: document.getElementById("histView"), rootMargin: "500px 0px", threshold: 0.01 })
+  : null;
+
+let histGridCursor = 0;
+let histGridSentinel = null;
+
+const histGridObserver = ("IntersectionObserver" in window)
+  ? new IntersectionObserver(e => { if (e.some(x => x.isIntersecting)) appendHistCards(); },
+      { root: document.getElementById("histView"), rootMargin: "700px 0px", threshold: 0.01 })
+  : null;
+
+function renderHistGrid() {
+  const host = $("#histGrid");
+  if (!host) return;
+  host.replaceChildren();
+  histGridCursor = 0;
+  histGridSentinel?.remove(); histGridSentinel = null;
+  appendHistCards();
+  const v = $("#histView");
+  let guard = 0;
+  while (v && v.scrollHeight <= v.clientHeight + 40 && histGridCursor < histResults.length && guard++ < 20) appendHistCards();
+  paintHistHeader();
+}
+
+function appendHistCards() {
+  const host = $("#histGrid");
+  if (!host) return;
+  const slice = histResults.slice(histGridCursor, histGridCursor + HIST_CHUNK);
+  if (!slice.length) { histGridSentinel?.remove(); histGridSentinel = null; return; }
+  const frag = document.createDocumentFragment();
+  slice.forEach(r => frag.appendChild(makeHistCard(r)));
+  host.appendChild(frag);
+  histGridCursor += slice.length;
+
+  host.querySelectorAll(".histCard .hcImg:not([data-obs])").forEach(el => {
+    el.dataset.obs = "1";
+    if (el.dataset.src) histImgObserver?.observe(el);
+    else { const p = el.querySelector(".ph"); if (p) p.textContent = "No image"; }
+  });
+
+  histGridSentinel?.remove(); histGridSentinel = null;
+  if (histGridCursor < histResults.length) {
+    histGridSentinel = document.createElement("div");
+    histGridSentinel.className = "gridSentinel";
+    histGridSentinel.innerHTML = `<span class="spin"></span><span>Loading more… ${histGridCursor} of ${histResults.length}</span>`;
+    host.appendChild(histGridSentinel);
+    histGridObserver?.observe(histGridSentinel);
+  }
+}
+
+function makeHistCard(r) {
+  const el = document.createElement("div");
+  el.className = "histCard";
+  el.dataset.receipt = r.receiptId;
+  el.tabIndex = 0;
+  const chips = METAL_ORDER.filter(k => r.metals?.[k])
+    .map(k => `<span class="tMetal" data-m="${k}"><span class="sw"></span><span class="lbl">${METAL_BY_KEY[k].short}${r.metals[k] > 1 ? " ×" + r.metals[k] : ""}</span></span>`).join("");
+  el.innerHTML = `
+    <div class="hcImg"${r.thumb ? ` data-src="${r.thumb}"` : ""}><div class="ph">Loading…</div></div>
+    <div class="hcBody">
+      <div class="hcNum"></div>
+      <div class="hcBuyer"></div>
+      <div class="hcChips">${chips}</div>
+      <div class="hcFoot"><span class="hcDay"></span><span class="hcQty"></span></div>
+    </div>`;
+  el.querySelector(".hcNum").textContent   = r.orderNumber || r.receiptId;
+  el.querySelector(".hcBuyer").textContent = [r.buyer, [r.city, r.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ") || "—";
+  el.querySelector(".hcDay").textContent   = r.day || "";
+  el.querySelector(".hcQty").textContent   = `${r.qty} pc${r.qty !== 1 ? "s" : ""}`;
+  return el;
+}
+
+function paintHistHeader() {
+  const h = $("#histHeadTitle"), s = $("#histHeadSub");
+  if (h) h.textContent = histDay ? fmtDay(histDay) : (histQuery ? "Search results" : "All completed orders");
+  if (s) {
+    const n = histResults.length;
+    const qty = histResults.reduce((a, r) => a + (r.qty || 0), 0);
+    s.textContent = archiveIndex.length
+      ? `${n.toLocaleString()} order${n !== 1 ? "s" : ""} · ${qty.toLocaleString()} piece${qty !== 1 ? "s" : ""}`
+      : "Nothing archived yet";
+  }
+}
+
+function renderHistory() {
+  if (!archiveReady) return;
+  renderCalendar();
+  runHistSearch({ keepScroll: true });
+}
+
+/* ── 19g · detail ───────────────────────────────────────────────────────── */
+
+async function openArchiveOrder(rid) {
+  rid = String(rid);
+  histSelected = rid;
+  $$("#histList .histRow").forEach(el => el.classList.toggle("on", el.dataset.receipt === rid));
+
+  const dlg = $("#archiveModal");
+  $("#amTitle").textContent = "Order " + rid;
+  $("#amBody").innerHTML = `<div class="amLoading"><span class="spin"></span> Reading the archive…</div>`;
+  $("#amShipBtn").disabled = true;
+  openDlg(dlg);
+
+  let rec = archiveDetail.get(rid) || await idbGet("detail", rid).then(r => r?.rec).catch(() => null);
+  if (!rec) {
+    try {
+      const r = await fetch(`${ARCHIVE_FN}?op=get&id=${encodeURIComponent(rid)}`);
+      const j = await r.json();
+      if (j.success && j.row) { rec = j.row; await idbPut("detail", { receiptId: rid, rec }); }
+    } catch (e) { console.warn("archive detail fetch failed", e); }
+  }
+  if (!rec) { $("#amBody").innerHTML = `<div class="amLoading err">This order is not in the archive.</div>`; return; }
+
+  archiveDetail.set(rid, rec);
+  paintArchiveDetail(rec);
+  $("#amShipBtn").disabled = false;
+  $("#amShipBtn").dataset.rid = rid;
+}
+
+function paintArchiveDetail(rec) {
+  const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+  const cur = rec.money?.currency || "USD";
+  const fmtMoney = v => (v ? `${cur} ${Number(v).toFixed(2)}` : "—");
+
+  $("#amTitle").textContent = `Order ${rec.orderNumber || rec.receiptId}`;
+  const sub = $("#amSub");
+  if (sub) sub.textContent = `Completed ${fmtDay(rec.completedDay)}${rec.completedBy ? ` by ${rec.completedBy}` : ""}`;
+
+  const addr = rec.ship || {};
+  const addrLines = [addr.name, addr.first_line, addr.second_line,
+    [addr.city, addr.state, addr.zip].filter(Boolean).join(" "), addr.country].filter(Boolean);
+
+  const notes = [];
+  if (rec.messages?.fromBuyer)   notes.push(["Buyer message", rec.messages.fromBuyer]);
+  if (rec.messages?.isGift)      notes.push(["Gift message", rec.messages.giftMessage || "(no message)"]);
+  if (rec.messages?.giftSender)  notes.push(["Gift from", rec.messages.giftSender]);
+  if (rec.messages?.fromSeller)  notes.push(["Note to buyer", rec.messages.fromSeller]);
+
+  $("#amBody").innerHTML = `
+    <div class="amGrid">
+      <section class="amCard">
+        <h4>Ship to</h4>
+        <div class="amAddr">${addrLines.map(l => `<div>${esc(l)}</div>`).join("") || "<div class='dim'>No address stored</div>"}</div>
+        ${rec.buyer?.email ? `<div class="amKV"><span>Email</span><b>${esc(rec.buyer.email)}</b></div>` : ""}
+        ${rec.buyer?.userId ? `<div class="amKV"><span>Etsy buyer</span><b>${esc(rec.buyer.userId)}</b></div>` : ""}
+      </section>
+
+      <section class="amCard">
+        <h4>Totals</h4>
+        <div class="amKV"><span>Items</span><b>${rec.totals?.items || 0} · ${rec.totals?.quantity || 0} pcs</b></div>
+        <div class="amKV"><span>Subtotal</span><b>${fmtMoney(rec.money?.subtotal)}</b></div>
+        <div class="amKV"><span>Shipping</span><b>${fmtMoney(rec.money?.shipping)}</b></div>
+        <div class="amKV"><span>Tax</span><b>${fmtMoney(rec.money?.tax)}</b></div>
+        <div class="amKV total"><span>Total</span><b>${fmtMoney(rec.money?.grand || rec.money?.total)}</b></div>
+      </section>
+
+      <section class="amCard amShip" id="amShipCard">
+        <h4>Shipping</h4>
+        <div class="amKV"><span>Etsy status</span><b>${rec.status?.isShipped ? "Shipped" : "Not shipped"}${rec.status?.etsyStatus ? ` · ${esc(rec.status.etsyStatus)}` : ""}</b></div>
+        ${(rec.shipments || []).map(s => `
+          <div class="amKV"><span>${esc(s.carrier || "Carrier")}</span><b class="mono">${esc(s.trackingCode || "—")}</b></div>
+          ${s.notificationTs ? `<div class="amKV"><span>Notified</span><b>${new Date(s.notificationTs * 1000).toLocaleDateString()}</b></div>` : ""}
+        `).join("") || `<div class="dim">No tracking recorded at completion.</div>`}
+        <div class="amLive" id="amLive"></div>
+      </section>
+    </div>
+
+    ${notes.length ? `<section class="amCard amNotes">
+      <h4>Messages</h4>
+      ${notes.map(([k, v]) => `<div class="amNote"><span>${esc(k)}</span><p>${esc(v)}</p></div>`).join("")}
+    </section>` : ""}
+
+    <section class="amCard">
+      <h4>Items</h4>
+      <div class="amItems">
+        ${(rec.items || []).map(i => `
+          <div class="amItem">
+            <div class="amItemImg"${(i.mirrorUrl || i.imageUrl) ? ` data-src="${esc(i.mirrorUrl || i.imageUrl)}"` : ""}><div class="ph">No image</div></div>
+            <div class="amItemBody">
+              <div class="amItemTitle">${esc(i.title || "Untitled")}</div>
+              <div class="amItemMeta">
+                ${i.metal ? `<span class="tMetal" data-m="${esc(i.metal)}"><span class="sw"></span><span class="lbl">${esc(METAL_BY_KEY[i.metal]?.label || i.metal)}</span></span>` : ""}
+                <span class="pill neutral">×${i.quantity}</span>
+                <span class="mono dim">${esc(i.sku || "no SKU")}</span>
+              </div>
+              ${i.personalization ? `<div class="amPers"><span>Personalisation</span><p>${esc(i.personalization)}</p></div>` : ""}
+              ${(i.variations || []).length ? `<div class="amVars">${i.variations.map(v => `<span>${esc(v.name)}: <b>${esc(v.value)}</b></span>`).join("")}</div>` : ""}
+            </div>
+          </div>`).join("")}
+      </div>
+    </section>`;
+
+  // item images, through the proxy, lazily
+  $$("#amBody .amItemImg[data-src]").forEach(el => {
+    const img = document.createElement("img");
+    img.alt = ""; img.loading = "lazy";
+    img.onload  = () => el.querySelector(".ph")?.remove();
+    img.onerror = () => img.remove();
+    img.src = `${FN}/imageProxy?url=${encodeURIComponent(el.dataset.src)}`;
+    el.insertBefore(img, el.firstChild);
+  });
+}
+
+/**
+ * The one place History talks to Etsy: live shipping and delivery status for a
+ * single archived order, on request. Everything else on this screen is served
+ * from Firestore and the local index.
+ */
+async function checkLiveShipping(rid) {
+  const box = $("#amLive");
+  const btn = $("#amShipBtn");
+  if (!box) return;
+  box.innerHTML = `<span class="spin"></span> Asking Etsy…`;
+  btn.disabled = true;
+  try {
+    const resp = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(rid)}`);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    const rc = data?.receipt || data || {};
+    const ships = rc.shipments || [];
+    const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+    box.innerHTML = `
+      <div class="amLiveHead">Live from Etsy · ${new Date().toLocaleTimeString()}</div>
+      <div class="amKV"><span>Shipped</span><b>${rc.is_shipped ? "Yes" : "No"}</b></div>
+      ${rc.status ? `<div class="amKV"><span>Status</span><b>${esc(rc.status)}</b></div>` : ""}
+      ${ships.length ? ships.map(s => `
+        <div class="amKV"><span>${esc(s.carrier_name || "Carrier")}</span><b class="mono">${esc(s.tracking_code || "—")}</b></div>
+        ${s.shipment_notification_timestamp ? `<div class="amKV"><span>Notified</span><b>${new Date(s.shipment_notification_timestamp * 1000).toLocaleString()}</b></div>` : ""}
+      `).join("") : `<div class="dim">Etsy has no tracking on this receipt.</div>`}`;
+
+    // fold the fresh status back into the archive so it is right next time
+    const rec = archiveDetail.get(String(rid));
+    if (rec) {
+      rec.status = { ...(rec.status || {}), isShipped: !!rc.is_shipped, etsyStatus: String(rc.status || "") };
+      rec.shipments = ships.map(s => ({
+        carrier: String(s.carrier_name || ""), trackingCode: String(s.tracking_code || ""),
+        buyerNote: String(s.buyer_note || ""),
+        notificationTs: Number(s.shipment_notification_timestamp || 0) || 0,
+        receiptShippingId: String(s.receipt_shipping_id || ""),
+      }));
+      await idbPut("detail", { receiptId: String(rid), rec });
+      fetch(ARCHIVE_FN, {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ op:"put", orders:[{ ...rec, completedAtMs: rec.completedAtMs }] }),
+      }).catch(() => {});
+    }
+  } catch (e) {
+    box.innerHTML = `<div class="amLiveHead err">Could not reach Etsy: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── 19h · backfill ─────────────────────────────────────────────────────── */
+
+let backfillStop = false;
+
+/**
+ * Bring historical completions into the archive. Everything completed before
+ * this system existed is a boolean in `Design_Completed Orders` and nothing
+ * else; this walks that list, skips anything already archived, and reads the
+ * rest from Etsy at the normal pace.
+ */
+async function backfillArchive() {
+  if (!confirmish("Backfill the archive?",
+      "This reads every previously completed order from Etsy once and stores it permanently. It respects the usual rate limit, so a large history takes a while. You can stop at any time.")) return;
+
+  backfillStop = false;
+  $("#histBackfillBtn").classList.add("hidden");
+  $("#histBackfillStop").classList.remove("hidden");
+  Activity.show("Backfill: reading the completed list…");
+
+  try {
+    const r = await fetch(`${FN}/firebaseOrders?designCompleted=1`);
+    const j = await r.json();
+    const all = (j.orderNumbers || []).map(String);
+    if (!all.length) { toast("Nothing to backfill"); return; }
+
+    // Ask the archive which ones it already has, 150 at a time.
+    const missing = [];
+    for (let i = 0; i < all.length; i += 150) {
+      if (backfillStop) break;
+      const chunk = all.slice(i, i + 150);
+      try {
+        const hr = await fetch(`${ARCHIVE_FN}?op=have&ids=${encodeURIComponent(chunk.join(","))}`);
+        const hj = await hr.json();
+        const have = new Set(hj.have || []);
+        chunk.forEach(id => { if (!have.has(id)) missing.push(id); });
+      } catch (_) { chunk.forEach(id => missing.push(id)); }
+      Activity.msg(`Backfill: checking ${Math.min(i + 150, all.length)}/${all.length}…`);
+    }
+
+    if (!missing.length) { toast("The archive is already complete", "ok"); return; }
+
+    let done = 0;
+    for (let i = 0; i < missing.length; i += 10) {
+      if (backfillStop) break;
+      const chunk = missing.slice(i, i + 10);
+      await archiveOrders(chunk, { completedBy: "backfill", quiet: true });
+      done += chunk.length;
+      Activity.msg(`Backfill: ${done}/${missing.length} archived`);
+      Activity.progress(done, missing.length);
+    }
+    toast(backfillStop ? `Backfill stopped after ${done} orders` : `Backfilled ${done} order${done !== 1 ? "s" : ""}`, "ok", 6000);
+    await syncArchive();
+  } catch (e) {
+    console.error("backfill failed", e);
+    toast("Backfill failed: " + e.message, "bad", 6000);
+  } finally {
+    Activity.hide();
+    $("#histBackfillBtn").classList.remove("hidden");
+    $("#histBackfillStop").classList.add("hidden");
+    renderHistory();
+  }
+}
+
+function confirmish(title, body) {
+  return window.confirm(`${title}\n\n${body}`);
+}
+
+/* ── 19i · mode switching ───────────────────────────────────────────────── */
+
+let APP_MODE = "live";
+
+async function setMode(mode) {
+  mode = mode === "history" ? "history" : "live";
+  if (APP_MODE === mode) return;
+  APP_MODE = mode;
+  SETTINGS.mode = mode;
+  saveSettings();
+
+  document.getElementById("app").dataset.mode = mode;
+  $$("#modeToggle button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+
+  if (mode === "history") {
+    if (!archiveReady) {
+      setHistSync("syncing", "Opening the archive…");
+      await loadArchiveFromDisk();
+      renderHistory();
+      syncArchive();
+    } else {
+      renderHistory();
+      syncArchive();
+    }
+    setTimeout(() => $("#histSearch")?.focus(), 80);
+  } else {
+    applyFilters();
+  }
+  refreshChrome();
+}
+
+function wireHistory() {
+  const search = $("#histSearch");
+  // No debounce: the corpus is in memory, so every keystroke can be answered
+  // synchronously and the list is correct by the time the character paints.
+  search?.addEventListener("input", () => {
+    histQuery = search.value;
+    $("#histSearchClear")?.classList.toggle("hidden", !histQuery);
+    runHistSearch();
+  });
+  search?.addEventListener("keydown", ev => {
+    if (ev.key === "Escape") { search.value = ""; histQuery = ""; $("#histSearchClear")?.classList.add("hidden"); runHistSearch(); }
+  });
+  $("#histSearchClear")?.addEventListener("click", () => {
+    search.value = ""; histQuery = ""; $("#histSearchClear").classList.add("hidden");
+    runHistSearch(); search.focus();
+  });
+
+  $("#histPrevMonth")?.addEventListener("click", () => shiftMonth(-1));
+  $("#histNextMonth")?.addEventListener("click", () => shiftMonth(1));
+  $("#histToday")?.addEventListener("click", () => setHistDay(dayKey(Date.now())));
+  $("#histClearDay")?.addEventListener("click", () => setHistDay(null));
+  $("#histCal")?.addEventListener("click", ev => {
+    const b = ev.target.closest(".calCell[data-day]");
+    if (!b || b.disabled) return;
+    setHistDay(b.dataset.day === histDay ? null : b.dataset.day);
+  });
+
+  $("#histList")?.addEventListener("click", ev => {
+    const row = ev.target.closest(".histRow");
+    if (row) openArchiveOrder(row.dataset.receipt);
+  });
+  $("#histGrid")?.addEventListener("click", ev => {
+    const card = ev.target.closest(".histCard");
+    if (card) openArchiveOrder(card.dataset.receipt);
+  });
+  $("#histList")?.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const row = ev.target.closest(".histRow");
+    if (row) { ev.preventDefault(); openArchiveOrder(row.dataset.receipt); }
+  });
+
+  $("#histResync")?.addEventListener("click", () => syncArchive({ full:true }));
+  $("#histBackfillBtn")?.addEventListener("click", backfillArchive);
+  $("#histBackfillStop")?.addEventListener("click", () => { backfillStop = true; toast("Stopping after the current batch…"); });
+
+  $("#amClose")?.addEventListener("click", () => closeDlg($("#archiveModal")));
+  $("#amClose2")?.addEventListener("click", () => closeDlg($("#archiveModal")));
+  $("#amShipBtn")?.addEventListener("click", function () { checkLiveShipping(this.dataset.rid); });
+  $("#archiveModal")?.addEventListener("click", ev => { if (ev.target === $("#archiveModal")) closeDlg($("#archiveModal")); });
+
+  $("#modeToggle")?.addEventListener("click", ev => {
+    const b = ev.target.closest("button[data-mode]");
+    if (b) setMode(b.dataset.mode);
+  });
+}
+
 /* ═══ 18 · CHROME SYNC, SETTINGS UI, WIRING, BOOT ════════════════════════ */
+
+function refreshChromeHistory() {
+  const title = $("#topTitle"), sub = $("#topSub");
+  if (title) title.textContent = "Order History";
+  if (sub) {
+    const bits = [];
+    if (!archiveIndex.length) bits.push("No completed orders archived yet — use Backfill to import them");
+    else {
+      bits.push(`${archiveIndex.length.toLocaleString()} archived`);
+      if (histResults.length !== archiveIndex.length) bits.push(`${histResults.length.toLocaleString()} shown`);
+      const newest = archiveIndex[0]?.day, oldest = archiveIndex[archiveIndex.length - 1]?.day;
+      if (oldest && newest) bits.push(oldest === newest ? oldest : `${oldest} → ${newest}`);
+    }
+    sub.textContent = bits.join(" · ");
+  }
+  const empty = $("#emptyState");
+  empty?.classList.add("hidden");
+}
 
 function scrollQueue(dir) {
   const w = $("#queueWrap");
@@ -3850,6 +5054,7 @@ function scrollQueue(dir) {
 }
 
 function refreshChrome() {
+  if (APP_MODE === "history") { paintHistHeader(); paintBrandStrip(); return refreshChromeHistory(); }
   const sel  = selectedOrders.size;
   const rowEls  = $$("#newOrderContainer .orderRow");
   const shown   = rowEls.filter(r => r.style.display !== "none").length;
@@ -4180,11 +5385,19 @@ function wireUI() {
     if (ev.key === "\\" && !typing) { ev.preventDefault(); setRailOpen(!SETTINGS.railOpen); return; }
     if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     if (ev.shiftKey && ev.key !== "H") return;
-    if (ev.key === "/") { ev.preventDefault(); $("#etsyOrderNumber")?.focus(); return; }
+    if (ev.key === "/") {
+      ev.preventDefault();
+      // Focus on the next frame. Moving focus inside the keydown lets Chromium
+      // deliver the "/" itself to the newly focused input.
+      const box = APP_MODE === "history" ? $("#histSearch") : $("#etsyOrderNumber");
+      if (box) requestAnimationFrame(() => { box.focus(); box.select(); });
+      return;
+    }
     if (ev.key === "[") { ev.preventDefault(); scrollQueue(-1); return; }
     if (ev.key === "]") { ev.preventDefault(); scrollQueue(1);  return; }
     if (ev.key.toLowerCase() === "c") { ev.preventDefault(); resetFilters(); applyFilters({ rerender:true }); return; }
     if (ev.key === "H") { ev.preventDefault(); cycleRailSize(); return; }
+    if (ev.key.toLowerCase() === "m") { ev.preventDefault(); setMode(APP_MODE === "live" ? "history" : "live"); return; }
     if (ev.key === "h") { ev.preventDefault(); setRailHeader(!SETTINGS.railHeader); return; }
     if (ev.key.toLowerCase() === "g") { ev.preventDefault(); $("#completeBtn")?.click(); return; }
   });
@@ -4214,6 +5427,7 @@ async function boot() {
   buildChipStrips();
   wireQueueInteractions();
   wireUI();
+  wireHistory();
   buildSettingsUI();
 
   bootOAuth();
@@ -4231,6 +5445,14 @@ async function boot() {
   scheduleHealMissingLocks();
   applyFilters({ rerender:true });
   setInterval(refreshConnBadge, 60000);
+
+  // Warm the archive index in the background so History opens instantly even
+  // on the first click of the session.
+  loadArchiveFromDisk().then(n => {
+    setHistSync(n ? "ok" : "", n ? `${n.toLocaleString()} archived` : "No local copy yet");
+    if (SETTINGS.mode === "history") setMode("history");
+    else syncArchive();
+  });
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
@@ -4244,6 +5466,9 @@ window.DesignStation = {
   repairMissingReceiptData, healZeroMetalRows, refreshStaffNoteIDs,
   filters: F, applyFilters, resetFilters, computeStats, revealOrder,
   setRailSize, cycleRailSize, setRailHeader,
+  setMode, syncArchive, archiveSearch, archiveOrders, backfillArchive,
+  buildArchiveRecord, openArchiveOrder, setHistDay,
+  archive: () => ({ index: archiveIndex, query: histQuery, day: histDay, results: histResults, mode: APP_MODE }),
   cache: { detailCache, flushDetailCache, clear(){ detailCache.clear(); localStorage.removeItem(CACHE_KEY); } },
 };
 
