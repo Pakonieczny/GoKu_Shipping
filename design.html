@@ -28,11 +28,62 @@
   /* layout knobs driven by Settings */
   --railW:344px;
   --tile:152px;
+
+  /* Rail text ramp. Measured against the rail background (#221f1b):
+     rTxt 15.6:1 · rTxt2 9.1:1 · rTxt3 6.3:1 · rDim 3.6:1 (non-text only).
+     The old ramp bottomed out near 3:1, which is why it read as murky. */
+  --rTxt:#f6f1e6;--rTxt2:#cdc4b2;--rTxt3:#ada393;--rDim:#7d7466;
+  --rLine:rgba(246,241,230,.085);
+
+  /* Size-dependent — overridden by html[data-rail] below. */
+  --railPad:13px;
+  --rowNum:12px;--rowShip:11px;--rowMinH:34px;--rowPadY:7px;--rowPadX:9px;
+  --mcellW:21px;--mcellFont:11px;
+  --chipFont:10.5px;--chipPadY:4px;--chipPadX:10px;
+  --statN:14px;--statL:8.5px;--statPad:6px;
+  --hdrFont:9.5px;
   --rowPadY:7px;
   --tileGap:12px;
   /* order-row / sort-header column track — regenerated from METALS at boot */
-  --rowCols:minmax(0,1.5fr) minmax(0,1.05fr) repeat(5,23px);
+  --rowCols:minmax(0,1.6fr) minmax(0,0.92fr) repeat(5,21px);
 }
+
+/* ── three rail density tiers ────────────────────────────────────────────
+   COMPACT  keeps only what the operator scans: id, date, metal counts and
+            the status flags. Chrome shrinks hard, the list does not.
+   NORMAL   the default balance.
+   LARGE    everything scales up for a shop-floor screen or tired eyes.     */
+html[data-rail=sm]{
+  --railW:272px;--railPad:9px;
+  --rowNum:11.5px;--rowShip:10px;--rowMinH:27px;--rowPadY:4px;--rowPadX:7px;
+  --mcellW:18px;--mcellFont:10px;
+  --chipFont:9.5px;--chipPadY:3px;--chipPadX:8px;
+  --statN:12.5px;--statL:7.5px;--statPad:4px;
+  --hdrFont:8.5px;
+}
+html[data-rail=md]{
+  --railW:344px;--railPad:13px;
+  --rowNum:12px;--rowShip:11px;--rowMinH:34px;--rowPadY:7px;--rowPadX:9px;
+  --mcellW:21px;--mcellFont:11px;
+  --chipFont:10.5px;--chipPadY:4px;--chipPadX:10px;
+  --statN:14px;--statL:8.5px;--statPad:6px;
+  --hdrFont:9.5px;
+}
+html[data-rail=lg]{
+  --railW:428px;--railPad:17px;
+  --rowNum:15px;--rowShip:12.5px;--rowMinH:46px;--rowPadY:11px;--rowPadX:12px;
+  --mcellW:28px;--mcellFont:13px;
+  --chipFont:12.5px;--chipPadY:7px;--chipPadX:14px;
+  --statN:19px;--statL:10px;--statPad:10px;
+  --hdrFont:11px;
+}
+/* Compact drops decoration, never information. */
+html[data-rail=sm] .brand .tag,
+html[data-rail=sm] .searchHint,
+html[data-rail=sm] .footWord{display:none}
+.footAbbr{display:none}
+html[data-rail=sm] .footAbbr{display:inline}
+html[data-rail=lg] .statMetal .l .full{display:inline}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{background:var(--paper);color:var(--ink);font:14px/1.45 var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden}
@@ -55,46 +106,71 @@ button{cursor:pointer}
 .main{min-width:0;display:flex;flex-direction:column;overflow:hidden}
 
 /* ── rail head ────────────────────────────────────────────────────────── */
-.brand{padding:16px 18px 14px;border-bottom:1px solid var(--velvetLine);flex:0 0 auto}
-.brand .logo{font:19px var(--serif);color:#fff;white-space:nowrap}
+.brand{padding:calc(var(--railPad) + 2px) var(--railPad);border-bottom:1px solid var(--velvetLine);flex:0 0 auto;display:flex;align-items:center;gap:8px}
+.brand .brandMain{min-width:0;flex:1 1 auto}
+.brand .logo{font:19px var(--serif);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html[data-rail=sm] .brand .logo{font-size:16px}
+html[data-rail=lg] .brand .logo{font-size:23px}
 .brand .logo b{color:var(--gold2);font-weight:400}
-.brand .tag{margin-top:3px;font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:#9a9183}
-.railStatus{margin:12px 14px 0;padding:9px 11px;border:1px solid var(--velvetLine);border-radius:11px;background:var(--velvet2);display:flex;align-items:center;gap:9px;font-size:11.5px;color:#cfc7b8;flex:0 0 auto}
+.brand .tag{margin-top:3px;font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--rTxt3)}
+.brandBtns{display:flex;gap:5px;flex:0 0 auto}
+.railIcon{width:30px;height:30px;border:1px solid var(--velvetLine);background:var(--velvet2);color:var(--rTxt2);border-radius:8px;display:grid;place-items:center;font-size:13px;line-height:1;transition:background .12s,color .12s,border-color .12s}
+.railIcon:hover{background:#3c3630;color:#fff;border-color:#574f44}
+.railIcon .sz{font:750 10px var(--sans);letter-spacing:.02em}
+html[data-rail=lg] .railIcon{width:36px;height:36px;font-size:15px}
+
+/* the one-line stand-in shown while the panel is collapsed */
+.brandStrip{display:none;align-items:center;gap:9px;padding:8px var(--railPad);border-bottom:1px solid var(--velvetLine);flex:0 0 auto;font-size:11.5px;color:var(--rTxt2)}
+.rail.hdrOff .brandStrip{display:flex}
+.rail.hdrOff #railHeader{display:none}
+.brandStrip .stripConn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.brandStrip .stripDue{flex:0 0 auto;font:700 10.5px var(--mono);border-radius:20px;padding:2px 8px;background:#3a2620;color:#f2a58e;border:1px solid #71392b}
+.brandStrip .stripDue.calm{background:var(--velvet2);color:var(--rTxt3);border-color:var(--velvetLine)}
+.brandStrip .stripSpacer{flex:1 1 auto}
+.brandStrip .stripBtn{width:26px;height:26px;border:1px solid var(--velvetLine);background:transparent;color:var(--rTxt2);border-radius:7px;display:grid;place-items:center;font-size:14px;line-height:1;flex:0 0 auto}
+.brandStrip .stripBtn:hover{background:var(--velvet2);color:#fff}
+.railStatus{margin:11px var(--railPad) 0;padding:9px 11px;border:1px solid var(--velvetLine);border-radius:11px;background:var(--velvet2);display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--rTxt2);flex:0 0 auto}
+html[data-rail=lg] .railStatus{font-size:13px;padding:11px 13px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--ink45);flex:0 0 auto}
 .dot.ok{background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.18)}
 .dot.warn{background:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.16)}
 .dot.bad{background:var(--clay);box-shadow:0 0 0 3px rgba(176,86,63,.18)}
-.railActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 14px 10px;flex:0 0 auto}
+.railActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:11px var(--railPad) 10px;flex:0 0 auto}
+html[data-rail=lg] .railActions .btn{padding:11px 14px;font-size:14px}
 .railActions .wide{grid-column:1/-1}
 
 /* ── rail search ──────────────────────────────────────────────────────── */
-.searchPanel{padding:0 14px 10px;flex:0 0 auto}
+.searchPanel{padding:0 var(--railPad) 10px;flex:0 0 auto}
 .searchBox{position:relative;display:flex;align-items:center}
-.searchIcon{position:absolute;left:10px;width:16px;height:16px;color:#8f8779;pointer-events:none}
+.searchIcon{position:absolute;left:10px;width:16px;height:16px;color:var(--rTxt3);pointer-events:none}
 .searchBox input{width:100%;height:40px;background:#302c27;border:1px solid var(--velvetLine);color:#fff;border-radius:11px;padding:9px 34px 9px 34px;outline:none;transition:border-color .15s,box-shadow .15s}
 .searchBox input:focus{border-color:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.12)}
-.searchBox input::placeholder{color:#80786c}
+.searchBox input::placeholder{color:var(--rTxt3)}
+html[data-rail=lg] .searchBox input{height:48px;font-size:15px}
+html[data-rail=sm] .searchBox input{height:36px}
 .searchClear{position:absolute;right:7px;width:26px;height:26px;border:0;background:transparent;color:#aaa193;border-radius:7px;font-size:17px;display:grid;place-items:center}
 .searchClear:hover{background:#3c3731;color:#fff}
-.searchHint{margin:6px 2px 0;color:#8f8779;font-size:10px;line-height:1.35}
+.searchHint{margin:6px 2px 0;color:var(--rTxt3);font-size:10px;line-height:1.4}
 
 /* ── rail queue ───────────────────────────────────────────────────────── */
-.queueHead{padding:9px 14px 7px;border-top:1px solid var(--velvetLine);display:flex;align-items:center;gap:8px;color:#8f8779;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;flex:0 0 auto}
-.queueHead .qhCount{margin-left:auto;font-family:var(--mono);letter-spacing:0;font-size:11px;color:#bdb4a5}
-.sortBar{display:grid;gap:2px;padding:0 10px 6px;flex:0 0 auto;font-size:10px;color:#9a9183}
+.queueHead{padding:9px var(--railPad) 7px;border-top:1px solid var(--velvetLine);display:flex;align-items:center;gap:8px;color:var(--rTxt3);font-size:var(--hdrFont);letter-spacing:.12em;text-transform:uppercase;font-weight:750;flex:0 0 auto}
+.queueHead .qhCount{margin-left:auto;font-family:var(--mono);letter-spacing:0;font-size:calc(var(--hdrFont) + 2px);color:var(--rTxt);font-weight:700}
+.sortBar{display:grid;gap:2px;padding:0 calc(var(--railPad) - 3px) 6px;flex:0 0 auto;color:var(--rTxt3)}
 .sortBar .hdr{display:grid;grid-template-columns:var(--rowCols);align-items:center;gap:4px;padding:5px 6px;border-radius:7px;background:var(--velvet2);border:1px solid var(--velvetLine)}
-.sortBar .hdr>button{border:0;background:transparent;color:#a59c8d;padding:2px 0;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:750;border-radius:5px;display:flex;align-items:center;justify-content:center;gap:3px;white-space:nowrap;min-width:0}
-.sortBar .hdr>button:hover{color:#fff;background:#3a342d}
+.sortBar .hdr>button{border:0;background:transparent;color:var(--rTxt2);padding:3px 0;font-size:var(--hdrFont);letter-spacing:.06em;text-transform:uppercase;font-weight:750;border-radius:5px;display:flex;align-items:center;justify-content:center;gap:3px;white-space:nowrap;min-width:0}
+.sortBar .hdr>button:hover{color:#fff;background:#3f382f}
 .sortBar .hdr>button.on{color:var(--gold2)}
-.sortBar .hdr>button .cv{font-size:8px;opacity:.55}
+.sortBar .hdr>button .cv{font-size:calc(var(--hdrFont) - 1px);opacity:.6}
 
 /* rail statistics */
-.railStats{padding:11px 13px 2px;display:grid;gap:8px;flex:0 0 auto}
+.railStats{padding:11px var(--railPad) 2px;display:grid;gap:8px;flex:0 0 auto}
 .statMetals{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
-.statMetal{background:var(--velvet2);border:1px solid var(--velvetLine);border-radius:8px;padding:6px 2px 5px;text-align:center;transition:opacity .12s}
+.statMetal{background:var(--velvet2);border:1px solid var(--velvetLine);border-radius:8px;padding:var(--statPad) 2px calc(var(--statPad) - 1px);text-align:center;transition:opacity .12s}
 .statMetal.off{opacity:.32}
-.statMetal .n{font:14px var(--mono);font-weight:700;color:#fff;line-height:1}
-.statMetal .l{display:flex;align-items:center;justify-content:center;gap:3px;font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;color:#8f8779;margin-top:4px}
+.statMetal .n{font:var(--statN) var(--mono);font-weight:700;color:#fff;line-height:1}
+.statMetal .l{display:flex;align-items:center;justify-content:center;gap:3px;font-size:var(--statL);letter-spacing:.06em;text-transform:uppercase;color:var(--rTxt2);font-weight:700;margin-top:4px}
+.statMetal .l .full{display:none}
+html[data-rail=lg] .statMetal .l .short{display:none}
 .statMetal .sw{width:6px;height:6px;border-radius:2px;flex:0 0 auto;background:var(--ink45)}
 .statMetal[data-m=gold] .sw{background:var(--m-gold)}
 .statMetal[data-m=silver] .sw{background:var(--m-silver)}
@@ -105,20 +181,23 @@ button{cursor:pointer}
 .statDue.hot{border-color:#71392b;background:#3a2620}
 .statDue .big{font:17px var(--mono);font-weight:700;color:#fff;line-height:1;flex:0 0 auto}
 .statDue.hot .big{color:#f2a58e}
-.statDue .lbl{font-size:10.5px;line-height:1.35;color:#9a9183;min-width:0}
+.statDue .lbl{font-size:10.5px;line-height:1.4;color:var(--rTxt2);min-width:0}
+html[data-rail=lg] .statDue .lbl{font-size:12.5px}
+html[data-rail=lg] .statDue .big{font-size:22px}
+html[data-rail=sm] .statDue{padding:6px 9px}
 .statDue .sep{opacity:.4;margin:0 5px}
-.statNote{display:flex;align-items:center;gap:7px;font-size:10px;color:#8f8779;padding:0 2px}
+.statNote{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--rTxt3);padding:0 2px}
 .statNote .bar{flex:1 1 auto;height:3px;border-radius:9px;background:#39332c;overflow:hidden;min-width:30px}
 .statNote .bar i{display:block;height:100%;width:0;background:var(--gold2);transition:width .3s}
 
 /* filter chips — rail (velvet) and grid (paper) share one class */
-.fchips{display:flex;flex-wrap:wrap;gap:5px;padding:8px 13px 10px;flex:0 0 auto}
-.fchip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--velvetLine);background:transparent;color:#a59c8d;border-radius:20px;padding:4px 10px;font-size:10.5px;font-weight:650;white-space:nowrap;line-height:1.5;transition:background .12s,color .12s,border-color .12s}
-.fchip .c{font-family:var(--mono);opacity:.65;font-size:10px}
-.fchip:hover{background:var(--velvet2);color:#fff;border-color:#544b40}
+.fchips{display:flex;flex-wrap:wrap;gap:5px;padding:8px var(--railPad) 10px;flex:0 0 auto}
+.fchip{display:inline-flex;align-items:center;gap:5px;border:1px solid #4a4239;background:var(--velvet2);color:var(--rTxt2);border-radius:20px;padding:var(--chipPadY) var(--chipPadX);font-size:var(--chipFont);font-weight:700;white-space:nowrap;line-height:1.5;transition:background .12s,color .12s,border-color .12s}
+.fchip .c{font-family:var(--mono);color:var(--rTxt3);font-size:calc(var(--chipFont) - .5px)}
+.fchip:hover{background:#3f382f;color:#fff;border-color:#5f5648}
 .fchip.on{background:var(--gold);border-color:var(--gold);color:#2a2013}
-.fchip.on .c{opacity:.8}
-.fchip.clear{border-style:dashed;color:#c99a86;border-color:#6a4438}
+.fchip.on .c{color:#4a3a17}
+.fchip.clear{border-style:dashed;color:#e8a992;border-color:#7a4c3d;background:transparent}
 .fchip.clear:hover{background:#3a2620;color:#f2c0ad}
 .filterbar .fchip{border-color:var(--line);background:var(--card2);color:var(--ink70)}
 .filterbar .fchip:hover{background:#fff;border-color:var(--ink25);color:var(--ink)}
@@ -127,47 +206,55 @@ button{cursor:pointer}
 .fbDiv{width:1px;align-self:stretch;background:var(--line);margin:2px 3px;flex:0 0 auto}
 
 /* infinite-scroll sentinel + pending rows */
-.listSentinel{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 8px;color:#7d7568;font-size:11px}
+.listSentinel{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 8px;color:var(--rTxt3);font-size:11px}
 .listSentinel .spin{width:12px;height:12px;border:2px solid #4a443b;border-top-color:var(--gold2);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 auto}
-.orderRow.pending .mcell{opacity:.3}
-.orderRow.pending .oNum{opacity:.72}
-.orderRow.attn .oShip:after{content:"!";margin-left:5px;color:#e0a08d;font-weight:700}
+.orderRow.pending .mcell{opacity:.35}
+.orderRow.pending .oNum{color:var(--rTxt2)}
+.orderRow.attn .oShip:after{content:"!";margin-left:5px;color:#ffb08f;font-weight:800}
 @keyframes findFlash{0%,100%{box-shadow:inset 0 0 0 0 rgba(202,168,97,0)}
   15%,60%{box-shadow:inset 0 0 0 2px var(--gold2),0 0 0 1px var(--gold2)}}
 .orderRow.findFlash{animation:findFlash 1.1s ease 2}
 .sortBar .hdr>button.on .cv{opacity:1}
 
-.queueWrap{flex:1 1 auto;overflow:auto;padding:0 8px 8px;min-height:0;overscroll-behavior:contain}
-.orderRow{display:grid;grid-template-columns:var(--rowCols);align-items:center;gap:4px;width:100%;padding:var(--rowPadY) 7px;border-radius:9px;color:#cfc7b8;cursor:pointer;border:1px solid transparent;position:relative;user-select:none;transition:background .1s}
-.orderRow:hover{background:var(--velvet2)}
-.orderRow .oNum{font:11.5px var(--mono);color:#e6e0d3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.orderRow .oShip{font:10.5px var(--mono);color:#948b7d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.orderRow .mcell{font:10.5px var(--mono);text-align:center;color:#6f675c;border-radius:5px;padding:1px 0}
-.orderRow .mcell.has{color:#0f0d0a;font-weight:700}
+.queueWrap{flex:1 1 auto;overflow:auto;padding:0 calc(var(--railPad) - 5px) 8px;min-height:0;overscroll-behavior:contain}
+.orderRow{display:grid;grid-template-columns:var(--rowCols);align-items:center;gap:5px;width:100%;min-height:var(--rowMinH);padding:var(--rowPadY) var(--rowPadX);border-radius:9px;color:var(--rTxt2);cursor:pointer;border:1px solid transparent;position:relative;user-select:none;transition:background .1s}
+/* hairline separator — keeps a long list scannable without adding padding */
+.orderRow + .orderRow::before{content:"";position:absolute;left:var(--rowPadX);right:var(--rowPadX);top:-1px;height:1px;background:var(--rLine)}
+.orderRow:hover::before,.orderRow:hover + .orderRow::before,
+.orderRow.selected::before,.orderRow.selected + .orderRow::before,
+.orderRow.rtLocked::before,.orderRow.rtLocked + .orderRow::before{opacity:0}
+.orderRow:hover{background:#332e28}
+.orderRow .oNum{font:var(--rowNum) var(--mono);font-weight:600;color:var(--rTxt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.01em}
+.orderRow .oShip{font:var(--rowShip) var(--mono);color:var(--rTxt2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.orderRow .mcell{font:var(--mcellFont) var(--mono);text-align:center;color:var(--rDim);border-radius:5px;padding:2px 0;font-weight:700}
+.orderRow .mcell.has{color:#100e0a;font-weight:800}
 .orderRow .mcell[data-m=gold].has{background:var(--m-gold)}
 .orderRow .mcell[data-m=silver].has{background:var(--m-silver)}
 .orderRow .mcell[data-m=rose].has{background:var(--m-rose)}
 .orderRow .mcell[data-m="10k"].has{background:var(--m-10k);color:#fff}
 .orderRow .mcell[data-m="14k"].has{background:var(--m-14k);color:#fff}
-.orderRow.selected{background:#3d3527;box-shadow:inset 2px 0 0 var(--gold2)}
-.orderRow.selected .oNum{color:#fff}
-.orderRow.completed{opacity:.5}
+.orderRow.selected{background:#493d27;box-shadow:inset 3px 0 0 var(--gold2)}
+.orderRow.selected .oNum{color:#fff5df}
+.orderRow.selected .oShip{color:#d9cba7}
+.orderRow.completed{opacity:.55}
 .orderRow.completed .oNum{text-decoration:line-through}
-.orderRow.rtLocked{background:#4a2f28;box-shadow:inset 2px 0 0 var(--clay);cursor:not-allowed;opacity:.85}
-.orderRow.rtLocked .oNum{color:#f0c9bd}
-.orderRow.rtLocked:after{content:"⊘";position:absolute;right:5px;top:50%;transform:translateY(-50%);font-size:11px;color:#e0a08d}
-.orderRow.hasNote .oNum:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--slate);box-shadow:0 0 0 2px rgba(74,107,120,.3);margin-right:5px;vertical-align:middle}
+.orderRow.rtLocked{background:#54332a;box-shadow:inset 3px 0 0 var(--clay);cursor:not-allowed}
+.orderRow.rtLocked .oNum{color:#ffd6c8}
+.orderRow.rtLocked .oShip{color:#e0ab9b}
+.orderRow.rtLocked:after{content:"⊘";position:absolute;right:3px;top:50%;transform:translateY(-50%);font-size:11px;color:#ffb9a4}
+.orderRow.hasNote .oNum:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#7ec4dd;box-shadow:0 0 0 2px rgba(126,196,221,.28);margin-right:6px;vertical-align:middle}
 .orderRow.hoverPeer{background:#3c4952;box-shadow:inset 3px 0 0 #7ea8ba,0 0 0 1px rgba(126,168,186,.4)}
 .orderRow.hoverPeer .oNum{color:#e8f2f6}
-.queueEmpty{padding:26px 14px;text-align:center;color:#7d7568;font-size:12px;line-height:1.5}
+.queueEmpty{padding:26px 14px;text-align:center;color:var(--rTxt2);font-size:12.5px;line-height:1.6}
 
 .pager{display:flex;flex-wrap:wrap;gap:5px;padding:9px 12px;border-top:1px solid var(--velvetLine);flex:0 0 auto;max-height:104px;overflow:auto}
 .pager:empty{display:none}
 .pager button{min-width:28px;height:26px;border:1px solid var(--velvetLine);background:transparent;color:#bdb4a5;border-radius:7px;font:11px var(--mono);padding:0 6px}
 .pager button:hover{background:var(--velvet2);color:#fff}
 .pager button.on{background:var(--gold);border-color:var(--gold);color:#2a2013;font-weight:700}
-.railFoot{padding:10px 14px;border-top:1px solid var(--velvetLine);font-size:10.5px;color:#827a6e;display:flex;align-items:center;gap:8px;flex:0 0 auto}
-.railFoot b{color:#cfc7b8;font-family:var(--mono);font-weight:700}
+.railFoot{padding:10px var(--railPad);border-top:1px solid var(--velvetLine);font-size:11.5px;color:var(--rTxt2);display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.railFoot b{color:var(--rTxt);font-family:var(--mono);font-weight:700;font-size:13px}
+html[data-rail=lg] .railFoot{font-size:13px}
 
 /* ── topbar ───────────────────────────────────────────────────────────── */
 .topbar{flex:0 0 auto;background:rgba(243,240,234,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:9px 16px;display:flex;align-items:center;gap:9px;flex-wrap:nowrap;z-index:30}
@@ -197,7 +284,7 @@ button{cursor:pointer}
 .btn.velvet{background:var(--velvet);border-color:var(--velvet);color:#fff}
 .btn.sm{padding:6px 10px;font-size:12px}
 .btn.xs{padding:4px 8px;font-size:11px}
-.rail .btn.ghost{color:#cfc7b8;border-color:var(--velvetLine)}
+.rail .btn.ghost{color:var(--rTxt2);border-color:#4a4239}
 .rail .btn.ghost:hover{background:var(--velvet2);color:#fff}
 .btn .spin{width:12px;height:12px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:-2px;margin-right:6px}
 .btn.ghost .spin,.btn.gold .spin{border-color:rgba(0,0,0,.2);border-top-color:currentColor}
@@ -346,7 +433,9 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
 /* ── responsive ───────────────────────────────────────────────────────── */
 @media(max-width:1040px){
   .app{grid-template-columns:1fr}
-  .rail{position:fixed;left:0;top:0;bottom:0;width:min(88vw,320px);z-index:80;transform:translateX(-102%);transition:transform .2s;visibility:visible}
+  /* the drawer follows the chosen size tier, so Large is not silently
+     squeezed back to a width its own type size cannot fit */
+  .rail{position:fixed;left:0;top:0;bottom:0;width:min(94vw,var(--railW));z-index:80;transform:translateX(-102%);transition:transform .2s;visibility:visible}
   .app:not(.railOff) .rail{transform:none;box-shadow:0 0 60px rgba(0,0,0,.4)}
   .app.railOff .rail{visibility:hidden}
   .scrim{position:fixed;inset:0;background:rgba(20,18,15,.45);z-index:70}
@@ -371,10 +460,26 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
   <!-- ══════════════ RAIL ══════════════ -->
   <aside class="rail" id="rail">
     <div class="brand">
-      <div class="logo">Brites <b>Design</b></div>
-      <div class="tag">Sorting &amp; label station</div>
+      <div class="brandMain">
+        <div class="logo">Brites <b>Design</b></div>
+        <div class="tag">Sorting &amp; label station</div>
+      </div>
+      <div class="brandBtns">
+        <button class="railIcon" id="railSizeBtn" aria-label="Change order list size"><span class="sz">Aa</span></button>
+        <button class="railIcon" id="railHdrToggle" aria-label="Collapse the panel">⌃</button>
+      </div>
     </div>
 
+    <div class="brandStrip" id="brandStrip">
+      <span class="dot" id="stripDot"></span>
+      <span class="stripConn" id="stripConn">Not connected</span>
+      <span class="stripDue calm" id="stripDue">0 due</span>
+      <span class="stripSpacer"></span>
+      <button class="stripBtn" id="stripSearchBtn" aria-label="Search orders" title="Search orders (/)">⌕</button>
+      <button class="stripBtn" id="stripRefreshBtn" aria-label="Refresh order list" title="Refresh order list">⟳</button>
+    </div>
+
+    <div id="railHeader">
     <div class="railStatus">
       <span class="dot" id="connDot"></span>
       <span id="connText">Not connected</span>
@@ -402,6 +507,7 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       </div>
       <div class="statNote hidden" id="statNote"></div>
     </div>
+    </div><!-- /#railHeader -->
 
     <div class="fchips" id="railFilters"></div>
 
@@ -418,9 +524,9 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
     </div>
 
     <div class="railFoot">
-      <span><b id="selCount">0</b> selected</span>
+      <span><b id="selCount">0</b><span class="footWord"> selected</span><span class="footAbbr"> sel</span></span>
       <span class="spacer"></span>
-      <button class="btn ghost xs" id="clearBtn">Clear selection</button>
+      <button class="btn ghost xs" id="clearBtn">Clear<span class="footWord">&nbsp;selection</span></button>
     </div>
   </aside>
 
@@ -697,7 +803,8 @@ const SETTINGS_DEFAULTS = {
   tileSize   : "m",            // s | m | l
   density    : "comfortable",  // comfortable | compact
   railOpen   : true,
-  railWidth  : "normal",       // narrow | normal | wide
+  railSize   : "md",           // sm (compact) | md (normal) | lg (large)
+  railHeader : true,           // is the status/search/stats panel expanded
   lazyImages : true,           // only fetch listing images for tiles near the viewport
   autoHydrate: true,           // pull an order's items as its row nears the viewport
   bgTopUp    : true,           // then quietly finish the rest so the totals are exact
@@ -705,11 +812,19 @@ const SETTINGS_DEFAULTS = {
 };
 let SETTINGS = { ...SETTINGS_DEFAULTS };
 
+const RAIL_SIZES = ["sm", "md", "lg"];
+const RAIL_SIZE_LABEL = { sm:"Compact", md:"Normal", lg:"Large" };
+
 function loadSettings() {
   try {
     const raw = JSON.parse(localStorage.getItem(LS.settings) || "{}");
     SETTINGS = { ...SETTINGS_DEFAULTS, ...raw };
   } catch (_) { SETTINGS = { ...SETTINGS_DEFAULTS }; }
+  // migrate the old narrow/normal/wide width setting
+  if (!RAIL_SIZES.includes(SETTINGS.railSize)) {
+    SETTINGS.railSize = ({ narrow:"sm", normal:"md", wide:"lg" })[SETTINGS.railWidth] || "md";
+  }
+  delete SETTINGS.railWidth;
 }
 function saveSettings() {
   try { localStorage.setItem(LS.settings, JSON.stringify(SETTINGS)); } catch (_) {}
@@ -720,9 +835,11 @@ function applySettings() {
   document.documentElement.dataset.tile = SETTINGS.tileSize;
   root.setProperty("--tileGap", SETTINGS.density === "compact" ? "8px" : "12px");
   root.setProperty("--rowPadY", SETTINGS.density === "compact" ? "4px" : "7px");
-  root.setProperty("--railW", ({ narrow:"300px", normal:"344px", wide:"400px" })[SETTINGS.railWidth] || "344px");
+  document.documentElement.dataset.rail = SETTINGS.railSize;
   root.setProperty("--rowCols",
-    `minmax(0,1.6fr) minmax(0,0.92fr) repeat(${METAL_ORDER.length},21px)`);
+    `minmax(0,1.6fr) minmax(0,0.92fr) repeat(${METAL_ORDER.length},var(--mcellW))`);
+  $("#rail")?.classList.toggle("hdrOff", !SETTINGS.railHeader);
+  paintRailControls();
   $("#app")?.classList.toggle("railOff", !SETTINGS.railOpen);
 }
 
@@ -1069,6 +1186,7 @@ function setConn(kind, text) {
   const dot = $("#connDot"), t = $("#connText");
   if (dot) dot.className = "dot" + (kind ? " " + kind : "");
   if (t) t.textContent = text;
+  paintBrandStrip();
 }
 
 function refreshConnBadge() {
@@ -2860,6 +2978,8 @@ function onChipClick(ev) {
 
 /* ── counts that drive the chips and the stats block ─────────────────────── */
 
+let lastStats = null;
+
 function computeStats() {
   const base = (searchActive ? currentReceipts : allOpenReceipts)
     .filter(r => F.completed ? completedOrders.has(String(r.receipt_id))
@@ -2901,7 +3021,7 @@ function paintStats(s) {
         d.className = "statMetal";
         d.dataset.m = k;
         d.title = `${METAL_BY_KEY[k].label} — number of open orders containing this metal`;
-        d.innerHTML = `<div class="n">0</div><div class="l"><i class="sw"></i>${METAL_BY_KEY[k].short}</div>`;
+        d.innerHTML = `<div class="n">0</div><div class="l"><i class="sw"></i><span class="short">${METAL_BY_KEY[k].short}</span><span class="full">${METAL_BY_KEY[k].label}</span></div>`;
         host.appendChild(d);
       });
     }
@@ -3063,10 +3183,12 @@ function applyFilters({ rerender = false } = {}) {
   });
 
   const s = computeStats();
+  lastStats = s;
   updateCounters();
   paintStats(s);
   paintChips(s);
   paintTopUp();
+  paintBrandStrip();
   refreshChrome();
   return s;
 }
@@ -3805,8 +3927,9 @@ function buildSettingsUI() {
       seg:[["s","Small"],["m","Medium"],["l","Large"]] },
     { id:"density", nm:"Density", ds:"Compact tightens the order list and the gaps between tiles.",
       seg:[["comfortable","Comfortable"],["compact","Compact"]] },
-    { id:"railWidth", nm:"Order list width", ds:"How much room the left list gets. Wider fits longer order numbers without truncating.",
-      seg:[["narrow","Narrow"],["normal","Normal"],["wide","Wide"]] },
+    { id:"railSize", nm:"Order list size", ds:"Compact fits the most rows on screen. Large enlarges every label, number and control in the left panel for easier reading at a distance. Cycle it any time with the Aa button or Shift+H.",
+      seg:[["sm","Compact"],["md","Normal"],["lg","Large"]] },
+    { id:"railHeader", nm:"Show the top panel", ds:"Connection, Connect/Refresh, search and the statistics block. Collapsing it hands that space to the order list; filters and sorting stay visible either way. Toggle with H.", sw:true },
     { id:"lazyImages", nm:"Load images on scroll", ds:"Only fetch a listing photo once its tile is near the screen. Strongly recommended — it is the single biggest saving on Etsy API calls.", sw:true },
     { id:"autoHydrate", nm:"Read order details while scrolling", ds:"Pulls each order's items as its row nears the screen, so metal columns fill in as you go. Cached results are reused and never re-fetched.", sw:true },
     { id:"bgTopUp", nm:"Finish reading in the background", ds:"After the visible rows are done, quietly read the rest one at a time so the per-metal order totals and the overdue count are exact. Cached, so it only ever happens once per order.", sw:true },
@@ -3847,11 +3970,74 @@ function buildSettingsUI() {
         b.classList.toggle("on", SETTINGS[r.id]);
         b.setAttribute("aria-checked", String(SETTINGS[r.id]));
         saveSettings(); applySettings();
+        if (r.id === "railHeader") setRailHeader(SETTINGS.railHeader);
       });
       row.appendChild(b);
     }
     body.appendChild(row);
   });
+}
+
+/* ── rail size + collapsible panel ───────────────────────────────────────
+   Three tiers, because one operator wants everything on screen at once and
+   another wants to read it from two feet back. Compact keeps the same
+   columns — dropping information would make it a different tool, not a
+   smaller one — and shrinks only the chrome around them. */
+function setRailSize(sz) {
+  if (!RAIL_SIZES.includes(sz)) sz = "md";
+  SETTINGS.railSize = sz;
+  saveSettings();
+  applySettings();
+  buildSettingsUI();
+  toast(`Order list: ${RAIL_SIZE_LABEL[sz]}`);
+}
+function cycleRailSize() {
+  setRailSize(RAIL_SIZES[(RAIL_SIZES.indexOf(SETTINGS.railSize) + 1) % RAIL_SIZES.length]);
+}
+
+/**
+ * Collapse the status / actions / search / statistics panel so the order
+ * list takes the whole rail. Filters, the sort header and the list itself
+ * stay put in both states — they are the controls in continuous use.
+ */
+function setRailHeader(open) {
+  SETTINGS.railHeader = !!open;
+  saveSettings();
+  $("#rail")?.classList.toggle("hdrOff", !SETTINGS.railHeader);
+  paintRailControls();
+  refreshChrome();
+}
+
+function paintRailControls() {
+  const t = $("#railHdrToggle");
+  if (t) {
+    t.textContent = SETTINGS.railHeader ? "⌃" : "⌄";
+    t.title = SETTINGS.railHeader
+      ? "Collapse the panel and give the space to the order list  (H)"
+      : "Show connection, search and statistics  (H)";
+    t.setAttribute("aria-expanded", String(SETTINGS.railHeader));
+  }
+  const z = $("#railSizeBtn");
+  if (z) {
+    z.title = `Order list size: ${RAIL_SIZE_LABEL[SETTINGS.railSize]} — click to cycle  (Shift+H)`;
+    const el = z.querySelector(".sz");
+    if (el) el.textContent = ({ sm:"A", md:"Aa", lg:"AA" })[SETTINGS.railSize] || "Aa";
+  }
+}
+
+/** Keep the collapsed one-liner in sync with what it stands in for. */
+function paintBrandStrip() {
+  const dot = $("#stripDot"), conn = $("#stripConn"), due = $("#stripDue");
+  const srcDot = $("#connDot"), srcTxt = $("#connText");
+  if (dot && srcDot) dot.className = srcDot.className;
+  if (conn && srcTxt) conn.textContent = srcTxt.textContent;
+  if (due) {
+    const n = lastStats?.overdue || 0;
+    const t = lastStats?.today || 0;
+    due.textContent = n ? `${n} overdue` : (t ? `${t} today` : "on time");
+    due.classList.toggle("calm", !n);
+    due.title = `${n} overdue · ${t} due today`;
+  }
 }
 
 const isNarrow = () => window.matchMedia("(max-width:1040px)").matches;
@@ -3897,6 +4083,14 @@ function wireQueueScroll() {
 
 function wireUI() {
   wireQueueScroll();
+
+  $("#railHdrToggle")?.addEventListener("click", () => setRailHeader(!SETTINGS.railHeader));
+  $("#railSizeBtn")?.addEventListener("click", cycleRailSize);
+  $("#stripSearchBtn")?.addEventListener("click", () => {
+    setRailHeader(true);
+    setTimeout(() => $("#etsyOrderNumber")?.focus(), 60);
+  });
+  $("#stripRefreshBtn")?.addEventListener("click", () => $("#updateOrderListBtn")?.click());
   $("#railToggle")?.addEventListener("click", () => setRailOpen(!SETTINGS.railOpen));
 
   $("#connectEtsyBtn")?.addEventListener("click", () => startOAuth("manual"));
@@ -3985,10 +4179,13 @@ function wireUI() {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target?.tagName || "");
     if (ev.key === "\\" && !typing) { ev.preventDefault(); setRailOpen(!SETTINGS.railOpen); return; }
     if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (ev.shiftKey && ev.key !== "H") return;
     if (ev.key === "/") { ev.preventDefault(); $("#etsyOrderNumber")?.focus(); return; }
     if (ev.key === "[") { ev.preventDefault(); scrollQueue(-1); return; }
     if (ev.key === "]") { ev.preventDefault(); scrollQueue(1);  return; }
     if (ev.key.toLowerCase() === "c") { ev.preventDefault(); resetFilters(); applyFilters({ rerender:true }); return; }
+    if (ev.key === "H") { ev.preventDefault(); cycleRailSize(); return; }
+    if (ev.key === "h") { ev.preventDefault(); setRailHeader(!SETTINGS.railHeader); return; }
     if (ev.key.toLowerCase() === "g") { ev.preventDefault(); $("#completeBtn")?.click(); return; }
   });
 
@@ -4046,6 +4243,7 @@ window.DesignStation = {
   metalKeyFromText, metalCountsFor, buildPrintJobs,
   repairMissingReceiptData, healZeroMetalRows, refreshStaffNoteIDs,
   filters: F, applyFilters, resetFilters, computeStats, revealOrder,
+  setRailSize, cycleRailSize, setRailHeader,
   cache: { detailCache, flushDetailCache, clear(){ detailCache.clear(); localStorage.removeItem(CACHE_KEY); } },
 };
 
