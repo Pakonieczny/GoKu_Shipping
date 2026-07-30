@@ -150,6 +150,12 @@ exports.handler = async (event) => {
   // Consecutive SYSTEM failures before halting. Listing-data problems no
   // longer count, so this can stay tight without deadlocking the queue.
   const HALT_AFTER = Math.max(2, Number(process.env.ETSY_BATCH_HALT_AFTER || 3));
+  /*  The run doc's `errors` array was appended to with arrayUnion and never
+      bounded. A full-catalogue run with many failures walks toward Firestore's
+      1 MB per-document limit, at which point the PROGRESS WRITE ITSELF starts
+      failing and the run appears to freeze. Bounded here; nothing is lost —
+      every failure is also written to EtsyPricing_Log permanently. */
+  const RUN_ERR_CAP = Number(process.env.ETSY_RUN_ERR_CAP || 300);
   const lastSystemic = [];
   for (let i = run.done; i < ids.length; i++) {
     // Stop flag + time budget, checked per listing.
@@ -259,8 +265,17 @@ exports.handler = async (event) => {
       await db.collection("EtsyPricing_Listings").doc(id).set(patch, { merge: true });
 
       const line = (blocking ? "\u26a0 NEEDS ATTENTION " : "\u2717 ") + "#" + id + (d.title ? " \u00b7 " + d.title : "") + ": " + msg;
-      await runRef.set({ errors: admin.firestore.FieldValue.arrayUnion(line),
-                         blocked: run.blocked || 0, updated_at: Date.now() }, { merge: true });
+      const prevErrs = Array.isArray(fresh.errors) ? fresh.errors : [];
+      if (prevErrs.length >= RUN_ERR_CAP) {
+        // At the cap: rewrite a trimmed tail instead of appending forever.
+        const kept = prevErrs.slice(-(RUN_ERR_CAP - 1)).concat([line]);
+        await runRef.set({ errors: kept,
+                           errors_dropped: (Number(fresh.errors_dropped) || 0) + (prevErrs.length - (RUN_ERR_CAP - 1)),
+                           blocked: run.blocked || 0, updated_at: Date.now() }, { merge: true });
+      } else {
+        await runRef.set({ errors: admin.firestore.FieldValue.arrayUnion(line),
+                           blocked: run.blocked || 0, updated_at: Date.now() }, { merge: true });
+      }
       await logEvent(db, { listing_id: id, title: d.title, type: blocking ? "batch_blocked" : "batch_fail", ok: false, detail: msg });
       if (!blocking) lastSystemic.push(msg);
     }

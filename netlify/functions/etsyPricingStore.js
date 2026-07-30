@@ -29,6 +29,42 @@ function json(statusCode, body) {
 
 const COLLECTION = "EtsyPricing_Listings";
 
+/*  ═══ WHY getAll STOPPED WORKING MID-RUN ════════════════════════════════
+ *
+ *  getAll returned each document RAW, and every batched listing carries an
+ *  `original_inventory` — the full pre-change Etsy inventory kept so a listing
+ *  can be rolled back. Measured on a real 12-metal x 4-length Beady matrix
+ *  that snapshot is ~21 KB of JSON, so the response grew by ~21 KB for every
+ *  listing the batch completed:
+ *
+ *      100 batched -> 2.1 MB      300 batched -> 6.2 MB      1000 -> 20.7 MB
+ *
+ *  Netlify caps a function response at 6 MB. Somewhere around 300 batched
+ *  listings this handler stopped being able to answer and the gateway returned
+ *  a bodiless 502 — surfacing in the console as
+ *
+ *      "Cloud state could not be loaded: Store error HTTP 502"
+ *
+ *  in the middle of an autorun, and only ever after enough listings had been
+ *  processed. Every byte of it was wasted: the browser reads `original_saved`
+ *  (a boolean) and never once reads original_inventory.
+ *
+ *  ROLLBACK IS UNAFFECTED — it reads the single listing's document directly,
+ *  where the snapshot still lives untouched.
+ */
+const HEAVY_FIELDS = ["original_inventory", "original_snapshot_hash"];
+
+/*  Second line of defence. If some future field bloats this response again,
+ *  fall back to exactly what the console reads instead of failing outright —
+ *  a trimmed payload keeps the operator working; a 502 does not. */
+const CONSOLE_FIELDS = [
+  "chain_type", "chain_set", "engraving", "engrave_set", "batched",
+  "last_batch", "batch_blocked", "health", "scanned", "approval",
+  "last_save", "title", "original_saved", "queue_id", "category",
+  "listing_kind", "updated_at"
+];
+const MAX_PAYLOAD_BYTES = Number(process.env.ETSY_STORE_MAX_BYTES || 4000000);
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
@@ -43,8 +79,27 @@ exports.handler = async (event) => {
     if (body.action === "getAll") {
       const snap = await db.collection(COLLECTION).get();
       const docs = {};
-      snap.forEach(d => { docs[d.id] = d.data(); });
-      return json(200, { docs });
+      snap.forEach(d => {
+        const o = d.data() || {};
+        for (const k of HEAVY_FIELDS) delete o[k];
+        docs[d.id] = o;
+      });
+
+      let payload = { docs, count: Object.keys(docs).length };
+      const bytes = Buffer.byteLength(JSON.stringify(payload));
+      if (bytes > MAX_PAYLOAD_BYTES) {
+        const lean = {};
+        for (const id of Object.keys(docs)) {
+          const o = docs[id], t = {};
+          for (const k of CONSOLE_FIELDS) if (o[k] !== undefined) t[k] = o[k];
+          lean[id] = t;
+        }
+        payload = { docs: lean, count: Object.keys(lean).length,
+                    trimmed: true, trimmed_from_bytes: bytes };
+        console.warn("[etsyPricingStore] getAll trimmed to console fields: " +
+          bytes + " bytes exceeded " + MAX_PAYLOAD_BYTES);
+      }
+      return json(200, payload);
     }
 
     if (body.action === "set") {
@@ -71,17 +126,27 @@ exports.handler = async (event) => {
       });
       return json(200, { run_id: ref.id });
     }
+    /*  The run document is polled every ~3.5 seconds for the whole run and its
+        `errors` array only grows. The console renders the last 80 lines, so
+        shipping thousands of them on every poll is the same mistake as above,
+        one collection over. The permanent record is EtsyPricing_Log.        */
+    const trimRun = (d) => {
+      delete d.ids;
+      if (Array.isArray(d.errors) && d.errors.length > 120) {
+        d.errors_total = d.errors.length;
+        d.errors = d.errors.slice(-120);
+      }
+      return d;
+    };
     if (body.action === "getRun") {
       const snap = await db.collection("EtsyPricing_Runs").doc(String(body.run_id || "")).get();
       if (!snap.exists) return json(404, { error: "Run not found." });
-      const d = snap.data(); delete d.ids;
-      return json(200, { run: d, run_id: snap.id });
+      return json(200, { run: trimRun(snap.data()), run_id: snap.id });
     }
     if (body.action === "activeRun") {
       const active = await db.collection("EtsyPricing_Runs").where("status", "in", ["queued", "running", "paused"]).limit(1).get();
       if (active.empty) return json(200, { run: null });
-      const d = active.docs[0].data(); delete d.ids;
-      return json(200, { run: d, run_id: active.docs[0].id });
+      return json(200, { run: trimRun(active.docs[0].data()), run_id: active.docs[0].id });
     }
     if (body.action === "pauseRun") {
       await db.collection("EtsyPricing_Runs").doc(String(body.run_id || "")).set({ paused: true, updated_at: Date.now() }, { merge: true });
