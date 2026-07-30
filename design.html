@@ -26,8 +26,8 @@
   --m-gold:#c8a24e;--m-silver:#8d95a0;--m-rose:#c08578;--m-10k:#b8862c;--m-14k:#8a6a1f;
 
   /* layout knobs driven by Settings */
-  --railW:296px;
-  --tile:132px;
+  --railW:344px;
+  --tile:152px;
   --rowPadY:7px;
   --tileGap:12px;
   /* order-row / sort-header column track — regenerated from METALS at boot */
@@ -87,6 +87,54 @@ button{cursor:pointer}
 .sortBar .hdr>button:hover{color:#fff;background:#3a342d}
 .sortBar .hdr>button.on{color:var(--gold2)}
 .sortBar .hdr>button .cv{font-size:8px;opacity:.55}
+
+/* rail statistics */
+.railStats{padding:11px 13px 2px;display:grid;gap:8px;flex:0 0 auto}
+.statMetals{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
+.statMetal{background:var(--velvet2);border:1px solid var(--velvetLine);border-radius:8px;padding:6px 2px 5px;text-align:center;transition:opacity .12s}
+.statMetal.off{opacity:.32}
+.statMetal .n{font:14px var(--mono);font-weight:700;color:#fff;line-height:1}
+.statMetal .l{display:flex;align-items:center;justify-content:center;gap:3px;font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;color:#8f8779;margin-top:4px}
+.statMetal .sw{width:6px;height:6px;border-radius:2px;flex:0 0 auto;background:var(--ink45)}
+.statMetal[data-m=gold] .sw{background:var(--m-gold)}
+.statMetal[data-m=silver] .sw{background:var(--m-silver)}
+.statMetal[data-m=rose] .sw{background:var(--m-rose)}
+.statMetal[data-m="10k"] .sw{background:var(--m-10k)}
+.statMetal[data-m="14k"] .sw{background:var(--m-14k)}
+.statDue{display:flex;align-items:center;gap:10px;background:var(--velvet2);border:1px solid var(--velvetLine);border-radius:9px;padding:7px 11px;color:#cfc7b8}
+.statDue.hot{border-color:#71392b;background:#3a2620}
+.statDue .big{font:17px var(--mono);font-weight:700;color:#fff;line-height:1;flex:0 0 auto}
+.statDue.hot .big{color:#f2a58e}
+.statDue .lbl{font-size:10.5px;line-height:1.35;color:#9a9183;min-width:0}
+.statDue .sep{opacity:.4;margin:0 5px}
+.statNote{display:flex;align-items:center;gap:7px;font-size:10px;color:#8f8779;padding:0 2px}
+.statNote .bar{flex:1 1 auto;height:3px;border-radius:9px;background:#39332c;overflow:hidden;min-width:30px}
+.statNote .bar i{display:block;height:100%;width:0;background:var(--gold2);transition:width .3s}
+
+/* filter chips — rail (velvet) and grid (paper) share one class */
+.fchips{display:flex;flex-wrap:wrap;gap:5px;padding:8px 13px 10px;flex:0 0 auto}
+.fchip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--velvetLine);background:transparent;color:#a59c8d;border-radius:20px;padding:4px 10px;font-size:10.5px;font-weight:650;white-space:nowrap;line-height:1.5;transition:background .12s,color .12s,border-color .12s}
+.fchip .c{font-family:var(--mono);opacity:.65;font-size:10px}
+.fchip:hover{background:var(--velvet2);color:#fff;border-color:#544b40}
+.fchip.on{background:var(--gold);border-color:var(--gold);color:#2a2013}
+.fchip.on .c{opacity:.8}
+.fchip.clear{border-style:dashed;color:#c99a86;border-color:#6a4438}
+.fchip.clear:hover{background:#3a2620;color:#f2c0ad}
+.filterbar .fchip{border-color:var(--line);background:var(--card2);color:var(--ink70)}
+.filterbar .fchip:hover{background:#fff;border-color:var(--ink25);color:var(--ink)}
+.filterbar .fchip.on{background:var(--velvet);border-color:var(--velvet);color:#fff}
+.filterbar .fchip.on .c{color:var(--gold2);opacity:1}
+.fbDiv{width:1px;align-self:stretch;background:var(--line);margin:2px 3px;flex:0 0 auto}
+
+/* infinite-scroll sentinel + pending rows */
+.listSentinel{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 8px;color:#7d7568;font-size:11px}
+.listSentinel .spin{width:12px;height:12px;border:2px solid #4a443b;border-top-color:var(--gold2);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 auto}
+.orderRow.pending .mcell{opacity:.3}
+.orderRow.pending .oNum{opacity:.72}
+.orderRow.attn .oShip:after{content:"!";margin-left:5px;color:#e0a08d;font-weight:700}
+@keyframes findFlash{0%,100%{box-shadow:inset 0 0 0 0 rgba(202,168,97,0)}
+  15%,60%{box-shadow:inset 0 0 0 2px var(--gold2),0 0 0 1px var(--gold2)}}
+.orderRow.findFlash{animation:findFlash 1.1s ease 2}
 .sortBar .hdr>button.on .cv{opacity:1}
 
 .queueWrap{flex:1 1 auto;overflow:auto;padding:0 8px 8px;min-height:0;overscroll-behavior:contain}
@@ -109,7 +157,8 @@ button{cursor:pointer}
 .orderRow.rtLocked .oNum{color:#f0c9bd}
 .orderRow.rtLocked:after{content:"⊘";position:absolute;right:5px;top:50%;transform:translateY(-50%);font-size:11px;color:#e0a08d}
 .orderRow.hasNote .oNum:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--slate);box-shadow:0 0 0 2px rgba(74,107,120,.3);margin-right:5px;vertical-align:middle}
-.orderRow.hoverPeer{background:#3a4249;box-shadow:inset 2px 0 0 var(--slate)}
+.orderRow.hoverPeer{background:#3c4952;box-shadow:inset 3px 0 0 #7ea8ba,0 0 0 1px rgba(126,168,186,.4)}
+.orderRow.hoverPeer .oNum{color:#e8f2f6}
 .queueEmpty{padding:26px 14px;text-align:center;color:#7d7568;font-size:12px;line-height:1.5}
 
 .pager{display:flex;flex-wrap:wrap;gap:5px;padding:9px 12px;border-top:1px solid var(--velvetLine);flex:0 0 auto;max-height:104px;overflow:auto}
@@ -126,6 +175,7 @@ button{cursor:pointer}
 .filterbar{flex:0 0 auto;background:var(--paper2);border-bottom:1px solid var(--line);padding:7px 16px;display:flex;align-items:center;gap:12px;z-index:29;min-width:0}
 .filterbar .fbScroll{display:flex;align-items:center;gap:9px;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;padding:1px}
 .filterbar .fbScroll::-webkit-scrollbar{display:none}
+.filterbar .fbScroll .fchips{padding:0;flex-wrap:nowrap}
 .filterbar .fbNote{margin-left:auto;font-size:11px;color:var(--ink45);white-space:nowrap;display:flex;align-items:center;gap:10px;flex:0 0 auto}
 .filterbar .fbNote b{font-family:var(--mono);color:var(--ink70);font-weight:700}
 .navBtn{width:36px;height:36px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:17px;display:grid;place-items:center;flex:0 0 auto}
@@ -193,7 +243,7 @@ button{cursor:pointer}
 .tile.selected{border-color:var(--gold);box-shadow:0 0 0 2px var(--goldSoft),var(--sh)}
 .tile.attn{border-color:var(--clay)}
 .tile.attn:before{content:"!";position:absolute;top:6px;left:6px;z-index:3;width:17px;height:17px;border-radius:50%;background:var(--clay);color:#fff;font:700 11px var(--sans);display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.25)}
-.tile.hoverPeer{border-color:var(--slate);box-shadow:0 0 0 2px var(--slateSoft),var(--sh)}
+.tile.hoverPeer{border-color:var(--slate);box-shadow:0 0 0 3px var(--slateSoft),0 6px 18px rgba(30,26,20,.10);transform:translateY(-1px)}
 .tile.isDone{opacity:.62}
 .tileImg{position:relative;width:100%;aspect-ratio:1/1;background:var(--paper2);overflow:hidden;cursor:zoom-in;flex:0 0 auto}
 .tileImg img{width:100%;height:100%;object-fit:cover;display:block;transform-origin:center center;will-change:transform}
@@ -205,7 +255,13 @@ button{cursor:pointer}
 .tRow{display:flex;align-items:baseline;gap:5px;font-size:10.5px;line-height:1.25;min-width:0}
 .tRow .k{color:var(--ink45);flex:0 0 auto;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;font-weight:750}
 .tRow .v{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:10.5px}
-.tOrder{font:700 11.5px var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tOrderRow{display:flex;align-items:center;gap:6px;min-width:0}
+.tOrder{font:700 11.5px var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0}
+.tFind{flex:0 0 auto;border:1px solid var(--line);background:var(--card2);color:var(--ink45);border-radius:6px;padding:2px 6px;font:750 8.5px var(--sans);letter-spacing:.06em;text-transform:uppercase;line-height:1.5;transition:background .12s,color .12s,border-color .12s}
+html[data-tile=s] .tOrder{font-size:10.5px}
+html[data-tile=s] .tFind{padding:2px 5px;font-size:8px}
+.tFind:hover{background:var(--gold);border-color:var(--gold);color:#2a2013}
+.tile:hover .tFind{color:var(--ink70)}
 .tMetal{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;border-radius:6px;padding:2px 6px;background:var(--paper2);color:var(--ink70);max-width:100%;overflow:hidden}
 .tMetal .sw{width:7px;height:7px;border-radius:2px;flex:0 0 auto;background:var(--ink25)}
 .tMetal[data-m=gold]{background:#f7efd9;color:#6f5518}.tMetal[data-m=gold] .sw{background:var(--m-gold)}
@@ -338,6 +394,17 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       <div class="searchHint">One order number, or paste several separated by commas.</div>
     </div>
 
+    <div class="railStats">
+      <div class="statMetals" id="statMetals"></div>
+      <div class="statDue" id="statDue" role="status">
+        <span class="big">0</span>
+        <span class="lbl">overdue</span>
+      </div>
+      <div class="statNote hidden" id="statNote"></div>
+    </div>
+
+    <div class="fchips" id="railFilters"></div>
+
     <div class="queueHead">
       <span>Orders</span>
       <span class="qhCount" id="queueCount">0</span>
@@ -350,8 +417,6 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       <div class="queueEmpty" id="queueEmpty">No orders loaded.<br>Press <b>Refresh</b> to pull open Etsy orders.</div>
     </div>
 
-    <div class="pager" id="pageButtonsContainer"></div>
-
     <div class="railFoot">
       <span><b id="selCount">0</b> selected</span>
       <span class="spacer"></span>
@@ -363,9 +428,6 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
   <main class="main">
     <header class="topbar">
       <button class="navBtn" id="railToggle" aria-label="Toggle order list" title="Toggle order list (\)">☰</button>
-      <button class="navBtn" id="prevPageBtn" aria-label="Previous page" title="Previous page">‹</button>
-      <button class="navBtn" id="nextPageBtn" aria-label="Next page" title="Next page">›</button>
-
       <div class="topTitle">
         <h1 id="topTitle">Design Station</h1>
         <div class="sub" id="topSub">Connect Etsy, then refresh to load open orders.</div>
@@ -385,7 +447,11 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
     </header>
 
     <div class="filterbar">
-      <div class="fbScroll"><div class="metalBar" id="metalBar"><!-- built from METALS --></div></div>
+      <div class="fbScroll">
+        <div class="metalBar" id="metalBar"><!-- built from METALS --></div>
+        <span class="fbDiv"></span>
+        <div class="fchips" id="itemFilters"></div>
+      </div>
       <div class="fbNote"><span id="fbSummary">No items shown</span></div>
     </div>
 
@@ -541,7 +607,8 @@ const LS = {
   ledger    : "designCompletedLedger.v1",
   ledgerPurge:"designCompletedLedger.lastPurge",
   settings  : "designStation.settings.v1",
-  verifier  : "etsy_code_verifier",
+  verifier  : "etsy_code_verifier",      // legacy single slot, still written
+  pkce      : "etsy_pkce_v2",             // { [state]: {v, at} } — see stashVerifier
   clientId  : "rt_client_id",
   employee  : "employee_name",
   printJobs : "metalOrderJobs",
@@ -630,8 +697,10 @@ const SETTINGS_DEFAULTS = {
   tileSize   : "m",            // s | m | l
   density    : "comfortable",  // comfortable | compact
   railOpen   : true,
+  railWidth  : "normal",       // narrow | normal | wide
   lazyImages : true,           // only fetch listing images for tiles near the viewport
-  autoHydrate: true,           // pull transactions for the whole page after listing it
+  autoHydrate: true,           // pull an order's items as its row nears the viewport
+  bgTopUp    : true,           // then quietly finish the rest so the totals are exact
   autoHeal   : true,           // run the repair/heal passes after a refresh
 };
 let SETTINGS = { ...SETTINGS_DEFAULTS };
@@ -647,11 +716,13 @@ function saveSettings() {
 }
 function applySettings() {
   const root = document.documentElement.style;
-  root.setProperty("--tile", ({ s:"104px", m:"132px", l:"172px" })[SETTINGS.tileSize] || "132px");
+  root.setProperty("--tile", ({ s:"118px", m:"152px", l:"192px" })[SETTINGS.tileSize] || "152px");
+  document.documentElement.dataset.tile = SETTINGS.tileSize;
   root.setProperty("--tileGap", SETTINGS.density === "compact" ? "8px" : "12px");
   root.setProperty("--rowPadY", SETTINGS.density === "compact" ? "4px" : "7px");
+  root.setProperty("--railW", ({ narrow:"300px", normal:"344px", wide:"400px" })[SETTINGS.railWidth] || "344px");
   root.setProperty("--rowCols",
-    `minmax(0,1.5fr) minmax(0,1.05fr) repeat(${METAL_ORDER.length},23px)`);
+    `minmax(0,1.6fr) minmax(0,0.92fr) repeat(${METAL_ORDER.length},21px)`);
   $("#app")?.classList.toggle("railOff", !SETTINGS.railOpen);
 }
 
@@ -666,8 +737,6 @@ let   staffNoteIDs    = new Set();   // ONE binding. Nothing else may declare th
 
 let allOpenReceipts  = [];
 let currentReceipts  = [];
-let orderListOffset  = 0;
-let totalPages       = 1;
 let sortKey = "ship", sortDir = 1;
 
 let lastClearedReceipts = [];
@@ -1093,19 +1162,49 @@ async function codeChallengeFor(verifier) {
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/* ── PKCE verifier store ─────────────────────────────────────────────────
+   Etsy returns our `state` on the callback, so the verifier is stored UNDER
+   that state rather than in one shared slot.
+
+   This is the fix for `invalid_grant: code_verifier is invalid`. With a single
+   slot, any second authorize request — a stale tab, a double click on Connect,
+   or an automatic reconnect firing while you were mid-login — overwrote the
+   verifier, and the code that eventually came back was then checked against
+   the wrong one. Keyed by state, each callback finds the verifier that
+   actually generated its challenge. Entries expire after 15 minutes.        */
+function stashVerifier(state, verifier) {
+  let m = {};
+  try { m = JSON.parse(localStorage.getItem(LS.pkce) || "{}"); } catch (_) {}
+  const now = Date.now();
+  Object.keys(m).forEach(k => { if (now - (m[k]?.at || 0) > 15 * 60 * 1000) delete m[k]; });
+  m[state] = { v: verifier, at: now };
+  try { localStorage.setItem(LS.pkce, JSON.stringify(m)); } catch (_) {}
+  try { localStorage.setItem(LS.verifier, verifier); } catch (_) {}   // legacy fallback
+}
+
+function takeVerifier(state) {
+  let m = {};
+  try { m = JSON.parse(localStorage.getItem(LS.pkce) || "{}"); } catch (_) {}
+  if (state && m[state]?.v) return m[state].v;
+  // No state match: fall back to the most recent verifier we issued.
+  const newest = Object.values(m).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+  return newest?.v || localStorage.getItem(LS.verifier) || "";
+}
+
 let __oauthInFlight = false;
 async function startOAuth(reason = "auto") {
   if (__oauthInFlight) return;
   __oauthInFlight = true;
   try {
     const verifier = randomString(64);
-    localStorage.setItem(LS.verifier, verifier);
+    const state    = `design_${Date.now()}_${randomString(8)}_${reason}`;
+    stashVerifier(state, verifier);
     const challenge = await codeChallengeFor(verifier);
     const url = "https://www.etsy.com/oauth/connect?response_type=code"
       + "&client_id="  + ETSY_CLIENT_ID
       + "&redirect_uri=" + encodeURIComponent(ETSY_REDIRECT)
       + "&scope="      + encodeURIComponent(ETSY_SCOPE)
-      + "&state="      + encodeURIComponent(`design_${Date.now()}_${reason}`)
+      + "&state="      + encodeURIComponent(state)
       + "&code_challenge=" + encodeURIComponent(challenge)
       + "&code_challenge_method=S256";
     window.location.href = url;
@@ -1134,16 +1233,42 @@ function bootOAuth() {
     return;
   }
 
+  const err = url.get("error");
+  if (err) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setConn("bad", "Etsy sign-in declined");
+    toast(`Etsy sign-in failed: ${url.get("error_description") || err}`, "bad", 7000);
+    return;
+  }
+
   const code = url.get("code");
   if (code) {
-    const v = localStorage.getItem(LS.verifier);
+    const state = url.get("state") || "";
+    const v = takeVerifier(state);
+
+    // Guard against the same authorisation code being exchanged twice (a
+    // reload or a back-navigation) — Etsy rejects the second attempt.
+    let lastCode = null;
+    try { lastCode = sessionStorage.getItem("etsy_last_code"); } catch (_) {}
+    if (lastCode === code) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setConn("bad", "Sign-in did not complete");
+      toast("That sign-in link was already used — press Connect Etsy to try again", "bad", 7000);
+      return;
+    }
+
     if (v) {
+      try { sessionStorage.setItem("etsy_last_code", code); } catch (_) {}
       const qs = new URLSearchParams({ code, code_verifier: v, redirect_domain: "design" });
       window.location.href = `${FN}/exchangeToken?` + qs.toString();
       return;
     }
-    console.error("OAuth callback had no code_verifier in localStorage.");
-    toast("Sign-in could not be completed — try Connect again", "bad");
+
+    console.error("OAuth callback arrived with no stored code_verifier.", { state });
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setConn("bad", "Sign-in did not complete");
+    toast("Sign-in could not be completed on this browser — press Connect Etsy to start again", "bad", 8000);
+    return;
   }
 
   if (localStorage.getItem(TOKEN_KEYS.access))       scheduleTokenRefresh();
@@ -1439,8 +1564,17 @@ async function unsetDesignCompletedBulk(ids) {
 const COMPLETE_STEPS = [750, 1500, 3000, 6000, 12000, 30000];
 let __completeIdle = 0, __completeTimer = null;
 
-function visibleReceiptIds() {
-  return $$("#newOrderContainer .orderRow").map(el => el.dataset.receipt).filter(Boolean);
+/* Rows currently on screen (plus a little either side). Capped, because with
+   infinite scroll the rendered list can run to hundreds of rows and these ids
+   go into a query string. */
+function visibleReceiptIds(limit = 120) {
+  const wrap = $("#queueWrap");
+  const rows = $$("#newOrderContainer .orderRow");
+  if (!wrap || rows.length <= limit) return rows.map(el => el.dataset.receipt).filter(Boolean);
+
+  const top = wrap.scrollTop - 400, bottom = wrap.scrollTop + wrap.clientHeight + 400;
+  const near = rows.filter(el => el.offsetTop + el.offsetHeight >= top && el.offsetTop <= bottom);
+  return (near.length ? near : rows).slice(0, limit).map(el => el.dataset.receipt).filter(Boolean);
 }
 
 function removeCompletedRows(idSet) {
@@ -1519,7 +1653,119 @@ function markStaffNoteOrders() {
   });
 }
 
-/* ═══ 11 · ORDER LIST ════════════════════════════════════════════════════ */
+/* ═══ 11 · ORDER CACHE, LIST, INFINITE SCROLL ════════════════════════════ */
+
+/* ── 11a · persistent order-detail cache ─────────────────────────────────
+   Etsy's receipt endpoint is the expensive call in this app. Every detail we
+   fetch is slimmed and written to localStorage, keyed by receipt id and
+   stamped with the receipt's own `update_timestamp`. On the next refresh an
+   order is only re-fetched if it is NEW or if Etsy says it CHANGED. Everything
+   else is served from disk, so a reload costs one `listOpenOrders` sweep and
+   nothing more.                                                            */
+
+const CACHE_KEY     = "designStation.orders.v2";
+const CACHE_TTL_MS  = 14 * 864e5;
+const CACHE_MAX     = 1200;
+
+let detailCache = new Map();     // rid → { at, ut, txs:[slim] }
+let __cacheDirty = false, __cacheTimer = null;
+
+function slimTx(t) {
+  return {
+    transaction_id: t.transaction_id,
+    receipt_id    : t.receipt_id,
+    listing_id    : t.listing_id,
+    title         : t.title,
+    quantity      : t.quantity,
+    sku           : t.sku,
+    expected_ship_date: t.expected_ship_date,
+    variations    : (t.variations || []).map(v => ({
+      formatted_name : v?.formatted_name,
+      formatted_value: v?.formatted_value,
+    })),
+    personalization  : t.personalization,
+    message_from_buyer: t.message_from_buyer,
+    _metalKey     : t._metalKey,
+    // NOTE: `image` (a data: URL) is deliberately never persisted.
+  };
+}
+
+function loadDetailCache() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    if (!raw || raw.v !== 2 || !raw.orders) return;
+    const now = Date.now();
+    for (const [rid, rec] of Object.entries(raw.orders)) {
+      if (!rec || !Array.isArray(rec.txs)) continue;
+      if (now - (rec.at || 0) > CACHE_TTL_MS) continue;
+      detailCache.set(String(rid), rec);
+      orderCache[String(rid)] = rec.txs.map(t => ({ ...t }));
+    }
+    console.log(`Order cache: ${detailCache.size} orders restored from disk`);
+  } catch (e) { console.warn("Order cache unreadable, starting fresh", e); }
+}
+
+function saveDetailCacheSoon() {
+  __cacheDirty = true;
+  clearTimeout(__cacheTimer);
+  __cacheTimer = setTimeout(flushDetailCache, 1500);
+}
+
+function flushDetailCache() {
+  if (!__cacheDirty) return;
+  __cacheDirty = false;
+  try {
+    // Evict oldest first if we're over the cap.
+    if (detailCache.size > CACHE_MAX) {
+      const byAge = [...detailCache.entries()].sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+      for (let i = 0; i < detailCache.size - CACHE_MAX; i++) detailCache.delete(byAge[i][0]);
+    }
+    const orders = {};
+    detailCache.forEach((rec, rid) => { orders[rid] = rec; });
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ v:2, at:Date.now(), orders }));
+  } catch (e) {
+    // Quota blown — halve the cache and try once more, then give up quietly.
+    console.warn("Order cache write failed, trimming", e);
+    const byAge = [...detailCache.entries()].sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+    byAge.slice(0, Math.floor(byAge.length / 2)).forEach(([rid]) => detailCache.delete(rid));
+    try {
+      const orders = {};
+      detailCache.forEach((rec, rid) => { orders[rid] = rec; });
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ v:2, at:Date.now(), orders }));
+    } catch (_) {}
+  }
+}
+window.addEventListener("beforeunload", flushDetailCache);
+
+const receiptStamp = r => Number(r?.update_timestamp || r?.updated_timestamp || r?.last_modified_tsz || 0);
+
+function receiptStampFor(rid) {
+  const r = allOpenReceipts.find(x => String(x.receipt_id) === String(rid))
+         || currentReceipts.find(x => String(x.receipt_id) === String(rid));
+  return r?._stamp || 0;
+}
+
+function cachePut(rid, txs, stamp) {
+  rid = String(rid);
+  // Fall back to the receipt's own stamp — an entry saved with ut:0 could
+  // never be invalidated afterwards.
+  const ut = Number(stamp) || receiptStampFor(rid) || 0;
+  detailCache.set(rid, { at: Date.now(), ut, txs: (txs || []).map(slimTx) });
+  saveDetailCacheSoon();
+}
+
+/** Is our cached copy still good for this receipt? */
+function cacheIsFresh(rid, stamp) {
+  const rec = detailCache.get(String(rid));
+  if (!rec) return false;
+  if (Date.now() - (rec.at || 0) > CACHE_TTL_MS) return false;
+  const s = Number(stamp) || 0;
+  if (!s) return true;                 // Etsy told us nothing — trust the cache
+  if (!rec.ut) return false;           // we never recorded one — re-read once
+  return s <= rec.ut;                  // stale if Etsy's copy is newer
+}
+
+/* ── 11b · fetching ──────────────────────────────────────────────────────── */
 
 async function fetchOpenOrdersSequential(onPage) {
   const all = [];
@@ -1544,15 +1790,17 @@ async function fetchOpenOrdersSequential(onPage) {
 
 /** Decorate a raw Etsy receipt with the fields the UI sorts and renders on. */
 function decorateReceipt(r) {
-  if (!r._shipTS) {
-    let ts = null;
-    if (Array.isArray(r.transactions) && r.transactions[0]?.expected_ship_date) {
-      ts = r.transactions[0].expected_ship_date;
-    }
-    if (!ts) ts = r.dispatch_date || r.ship_by_date || 0;
-    r._shipTS  = ts;
-    r._shipStr = ts ? new Date(ts * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" }) : "N/A";
+  const rid = String(r.receipt_id);
+
+  if (!Array.isArray(r.transactions) || !r.transactions.length) {
+    const cached = orderCache[rid];
+    if (Array.isArray(cached) && cached.length) r.transactions = cached;
   }
+
+  const ts = (Array.isArray(r.transactions) && r.transactions[0]?.expected_ship_date)
+    || r.expected_ship_date || r.dispatch_date || r.ship_by_date || 0;
+  r._shipTS  = ts;
+  r._shipStr = ts ? new Date(ts * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" }) : "N/A";
 
   const buyerMsg = r.message_from_buyer || "";
   (r.transactions || []).forEach(t => {
@@ -1566,10 +1814,59 @@ function decorateReceipt(r) {
     resolveTxMetal(t);
   });
 
+  r._stamp       = receiptStamp(r);
   r._metalCounts = metalCountsFor(r.transactions || []);
   r._rowMetal    = rowMetalFor(r._metalCounts);
+  r._hydrated    = Array.isArray(r.transactions) && r.transactions.length > 0;
+  r._attn        = (r.transactions || []).some(txNeedsAttention);
   return r;
 }
+
+/** Load one order's items — memory, then disk, then Etsy. */
+async function hydrateOrder(rid, { force = false } = {}) {
+  rid = String(rid);
+  const rec = allOpenReceipts.find(r => String(r.receipt_id) === rid)
+           || currentReceipts.find(r => String(r.receipt_id) === rid);
+  const stamp = rec?._stamp || 0;
+
+  if (!force) {
+    const mem = orderCache[rid];
+    if (Array.isArray(mem) && mem.length && cacheIsFresh(rid, stamp)) return mem;
+    const disk = detailCache.get(rid);
+    if (disk && cacheIsFresh(rid, stamp)) {
+      orderCache[rid] = disk.txs.map(t => ({ ...t }));
+      return orderCache[rid];
+    }
+  }
+
+  const data = await pullEtsyOrderDetails(rid);
+  const txs  = data?.transactions || [];
+  orderCache[rid] = txs;
+  if (txs.length) cachePut(rid, txs, stamp);
+  return txs;
+}
+
+/** Fold freshly-loaded items back into a receipt + its row. */
+function applyHydration(rid, txs) {
+  rid = String(rid);
+  const rec = allOpenReceipts.find(r => String(r.receipt_id) === rid)
+           || currentReceipts.find(r => String(r.receipt_id) === rid);
+  if (rec) {
+    rec.transactions  = txs;
+    rec._metalCounts  = metalCountsFor(txs);
+    rec._rowMetal     = rowMetalFor(rec._metalCounts);
+    rec._hydrated     = txs.length > 0;
+    rec._attn         = txs.some(txNeedsAttention);
+    if (!rec._shipTS && txs[0]?.expected_ship_date) {
+      rec._shipTS  = txs[0].expected_ship_date;
+      rec._shipStr = new Date(rec._shipTS * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" });
+    }
+  }
+  paintRow(rid);
+  scheduleFilterRefresh();
+}
+
+/* ── 11c · sorting ───────────────────────────────────────────────────────── */
 
 function sortReceipts(list) {
   const key = sortKey || "ship";
@@ -1584,9 +1881,7 @@ function sortReceipts(list) {
         return sortDir * (av - bv);
       }
       default:
-        if (METAL_BY_KEY[key]) {
-          return sortDir * ((a._metalCounts?.[key] || 0) - (b._metalCounts?.[key] || 0));
-        }
+        if (METAL_BY_KEY[key]) return sortDir * ((a._metalCounts?.[key] || 0) - (b._metalCounts?.[key] || 0));
         return 0;
     }
   });
@@ -1610,8 +1905,7 @@ function buildSortHeader() {
     b.innerHTML = `<span>${c.label}</span><span class="cv"></span>`;
     hdr.appendChild(b);
   });
-  bar.innerHTML = "";
-  bar.appendChild(hdr);
+  bar.replaceChildren(hdr);
 
   bar.addEventListener("click", ev => {
     const btn = ev.target.closest("button[data-key]");
@@ -1620,8 +1914,7 @@ function buildSortHeader() {
     sortDir = (sortKey === key) ? -sortDir : (key === "ship" ? 1 : -1);
     sortKey = key;
     paintSortHeader();
-    currentReceipts = sortReceipts(currentReceipts.slice());
-    renderOrderRows(currentReceipts);
+    applyFilters({ rerender:true });
   });
   paintSortHeader();
 }
@@ -1634,7 +1927,8 @@ function paintSortHeader() {
   });
 }
 
-/** Render one order row. Columns are generated from METAL_ORDER. */
+/* ── 11d · rows ──────────────────────────────────────────────────────────── */
+
 function makeOrderRow(r) {
   const rid = String(r.receipt_id);
   const row = document.createElement("div");
@@ -1642,186 +1936,340 @@ function makeOrderRow(r) {
   row.dataset.receipt = rid;
   row.setAttribute("role", "button");
   row.tabIndex = 0;
+  row.title = String(r.order_number || rid);
 
-  const counts = r._metalCounts || {};
-  const rowMetal = r._rowMetal || rowMetalFor(counts);
-  if (rowMetal) row.dataset.metal = rowMetal;
-
-  const num  = document.createElement("span");
+  const num = document.createElement("span");
   num.className = "oNum";
-  num.textContent = r.order_number || rid;
   row.appendChild(num);
 
   const ship = document.createElement("span");
   ship.className = "oShip";
-  ship.textContent = r._shipStr || "N/A";
   row.appendChild(ship);
 
   METAL_ORDER.forEach(k => {
     const c = document.createElement("span");
-    c.className = "mcell" + (counts[k] ? " has" : "");
+    c.className = "mcell";
     c.dataset.m = k;
-    c.textContent = counts[k] || "";
     c.title = METAL_BY_KEY[k].label;
     row.appendChild(c);
   });
 
-  if (completedOrders.has(rid))      row.classList.add("completed");
-  else if (selectedOrders.has(rid))  row.classList.add("selected");
-  if (staffNoteIDs.has(rid))         row.classList.add("hasNote");
-  const owner = rtSelected.get(rid);
-  if (owner && owner !== RT.clientId) row.classList.add("rtLocked");
-
+  paintRow(rid, row, r);
   return row;
 }
 
-function renderOrderRows(list) {
-  const host = $("#newOrderContainer");
-  if (!host) return;
-  const frag = document.createDocumentFragment();
-  list.forEach(r => frag.appendChild(makeOrderRow(r)));
-  host.replaceChildren(frag);
-  $("#queueEmpty")?.classList.toggle("hidden", list.length > 0);
-  markStaffNoteOrders();
-  applyAllLocksToDOM();
-  refreshChrome();
-}
+/** Repaint one row from current state. Safe to call at any time. */
+function paintRow(rid, rowEl, recEl) {
+  rid = String(rid);
+  const rows = rowEl ? [rowEl] : $$(`#newOrderContainer .orderRow[data-receipt='${cssEsc(rid)}']`);
+  if (!rows.length) return;
+  const r = recEl
+    || currentReceipts.find(x => String(x.receipt_id) === rid)
+    || allOpenReceipts.find(x => String(x.receipt_id) === rid);
+  if (!r) return;
 
-/** Refresh a single row's metal cells + row tag from orderCache. */
-function refreshRowMetalCounts(rid) {
-  const row = $(`#newOrderContainer .orderRow[data-receipt='${cssEsc(rid)}']`);
-  if (!row) return;
-  const counts = metalCountsFor(orderCache[rid] || []);
-  METAL_ORDER.forEach(k => {
-    const cell = row.querySelector(`.mcell[data-m='${k}']`);
-    if (!cell) return;
-    cell.textContent = counts[k] || "";
-    cell.classList.toggle("has", !!counts[k]);
+  const counts = r._metalCounts || {};
+  const rowMetal = r._rowMetal || rowMetalFor(counts);
+
+  rows.forEach(row => {
+    row.querySelector(".oNum").textContent  = r.order_number || rid;
+    row.querySelector(".oShip").textContent = r._shipStr || "N/A";
+    if (rowMetal) row.dataset.metal = rowMetal; else delete row.dataset.metal;
+
+    METAL_ORDER.forEach(k => {
+      const c = row.querySelector(`.mcell[data-m='${k}']`);
+      if (!c) return;
+      c.textContent = counts[k] || "";
+      c.classList.toggle("has", !!counts[k]);
+    });
+
+    row.classList.toggle("pending",   !r._hydrated);
+    row.classList.toggle("completed", completedOrders.has(rid));
+    row.classList.toggle("selected",  selectedOrders.has(rid));
+    row.classList.toggle("hasNote",   staffNoteIDs.has(rid));
+    row.classList.toggle("attn",      !!r._attn);
+    const owner = rtSelected.get(rid);
+    row.classList.toggle("rtLocked", !!owner && owner !== RT.clientId);
   });
-  const rm = rowMetalFor(counts);
-  if (rm) row.dataset.metal = rm;
-
-  const rec = currentReceipts.find(r => String(r.receipt_id) === String(rid))
-           || allOpenReceipts.find(r => String(r.receipt_id) === String(rid));
-  if (rec) { rec._metalCounts = counts; rec._rowMetal = rm; }
 }
 
-function updatePager() {
-  const holder = $("#pageButtonsContainer");
-  if (!holder) return;
-  holder.innerHTML = "";
-  if (totalPages <= 1) { refreshChrome(); return; }
-  const current = Math.floor(orderListOffset / PAGE_SIZE) + 1;
-  for (let i = 1; i <= totalPages; i++) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = String(i);
-    if (i === current) b.classList.add("on");
-    b.addEventListener("click", withLock(b, async () => { await goToPage(i); }, 400));
-    holder.appendChild(b);
+function refreshRowMetalCounts(rid) {
+  rid = String(rid);
+  const txs = orderCache[rid] || [];
+  const rec = currentReceipts.find(r => String(r.receipt_id) === rid)
+           || allOpenReceipts.find(r => String(r.receipt_id) === rid);
+  if (rec) {
+    rec._metalCounts = metalCountsFor(txs);
+    rec._rowMetal    = rowMetalFor(rec._metalCounts);
+    rec._hydrated    = txs.length > 0;
+    rec._attn        = txs.some(txNeedsAttention);
   }
-  refreshChrome();
+  paintRow(rid);
 }
 
-async function goToPage(pageNum) {
-  const target = Math.max(1, Math.min(totalPages || 1, pageNum));
-  orderListOffset = (target - 1) * PAGE_SIZE;
-  await buildNewOrderList(orderListOffset);
-  await refreshStaffNoteIDs({ mode:"all" });
-  markStaffNoteOrders();
-  await fetchAllLocksOnce();
-  if (SETTINGS.autoHeal) await healZeroMetalRows({ passes:1, concurrency:4 });
-  $("#queueWrap")?.scrollTo({ top:0 });
+/* ── 11e · infinite scroll ───────────────────────────────────────────────── */
+
+const RENDER_CHUNK = 60;
+let renderCursor = 0;
+let listSentinel = null;
+
+/** Fires when a row nears the viewport → pull its items. */
+const rowHydrateObserver = ("IntersectionObserver" in window)
+  ? new IntersectionObserver((entries, obs) => {
+      entries.forEach(e => {
+        if (!e.isIntersecting) return;
+        // Only stop watching once we've actually acted, otherwise a row seen
+        // while auto-hydrate was off could never be filled in later.
+        if (!SETTINGS.autoHydrate) return;
+        obs.unobserve(e.target);
+        const rid = e.target.dataset.receipt;
+        if (rid) queueRowHydration(rid);
+      });
+    }, { root: document.getElementById("queueWrap"), rootMargin: "700px 0px", threshold: 0.01 })
+  : null;
+
+const runRowHydration = makeQueue(4);
+const __hydrating = new Set();
+
+function queueRowHydration(rid) {
+  rid = String(rid);
+  if (__hydrating.has(rid)) return;
+  const rec = currentReceipts.find(r => String(r.receipt_id) === rid);
+  if (rec && rec._hydrated && cacheIsFresh(rid, rec._stamp)) return;
+  __hydrating.add(rid);
+  runRowHydration(async () => {
+    const myRun = updateRunId;
+    try {
+      const txs = await hydrateOrder(rid);
+      if (myRun !== updateRunId) return;
+      applyHydration(rid, txs);
+    } catch (e) { console.warn("row hydrate failed", rid, e); }
+    finally { __hydrating.delete(rid); }
+  });
 }
 
 /**
- * Build (or re-page) the order list.
- * First call fetches every open receipt and decorates it; later calls slice
- * the cached master list.
+ * Anything on screen that is still blank gets queued. IntersectionObserver can
+ * miss rows during a fast or programmatic scroll, so this runs on scroll-idle
+ * as a backstop — it is cheap because queueRowHydration is idempotent and
+ * cache-aware.
  */
-async function buildNewOrderList(offset = 0) {
+function hydrateVisibleRows() {
+  if (!SETTINGS.autoHydrate) return;
+  const wrap = $("#queueWrap");
+  if (!wrap) return;
+  const top = wrap.scrollTop - 200, bottom = wrap.scrollTop + wrap.clientHeight + 200;
+  $$("#newOrderContainer .orderRow").forEach(row => {
+    if (row.style.display === "none") return;
+    if (row.offsetTop + row.offsetHeight < top || row.offsetTop > bottom) return;
+    if (!row.classList.contains("pending")) return;
+    queueRowHydration(row.dataset.receipt);
+  });
+}
+
+/**
+ * Background top-up. Once the visible rows are dealt with, the remaining
+ * orders are read one at a time with a gap, so the per-metal order totals and
+ * the overdue count become exact without a burst of API calls. Every result is
+ * cached, so this is a one-time cost — a later reload starts complete.
+ */
+let __topUpTimer = null;
+function startBackgroundTopUp() {
+  clearTimeout(__topUpTimer);
+  if (!SETTINGS.bgTopUp || !SETTINGS.autoHydrate) return;
+  const step = async () => {
+    if (document.hidden) { __topUpTimer = setTimeout(step, 3000); return; }
+    const next = currentReceipts.find(r => !r._hydrated && !__hydrating.has(String(r.receipt_id)));
+    if (!next) { paintTopUp(); return; }
+    if (__hydrating.size >= 2) { __topUpTimer = setTimeout(step, 700); return; }
+    queueRowHydration(String(next.receipt_id));
+    paintTopUp();
+    __topUpTimer = setTimeout(step, 420);
+  };
+  __topUpTimer = setTimeout(step, 900);
+}
+
+function paintTopUp() {
+  const el = $("#statNote");
+  if (!el) return;
+  const total = currentReceipts.length;
+  const left  = currentReceipts.filter(r => !r._hydrated).length;
+  if (!total || !left) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  el.innerHTML = `<span>Reading ${total - left} / ${total}</span><span class="bar"><i></i></span>`;
+  el.querySelector(".bar i").style.width = Math.round(((total - left) / total) * 100) + "%";
+  el.title = "Order details still being read in the background. Metal totals become exact as this finishes; results are cached, so this only happens once.";
+}
+
+/** Append the next slice of rows. Returns how many were added. */
+function appendChunk() {
+  const host = $("#newOrderContainer");
+  if (!host) return 0;
+  const slice = currentReceipts.slice(renderCursor, renderCursor + RENDER_CHUNK);
+  if (!slice.length) { removeSentinel(); return 0; }
+
+  const frag = document.createDocumentFragment();
+  slice.forEach(r => {
+    const row = makeOrderRow(r);
+    frag.appendChild(row);
+  });
+  host.appendChild(frag);
+
+  slice.forEach(r => {
+    const row = host.querySelector(`.orderRow[data-receipt='${cssEsc(r.receipt_id)}']`);
+    if (row && rowHydrateObserver) rowHydrateObserver.observe(row);
+  });
+
+  renderCursor += slice.length;
+  placeSentinel();
+  refreshChrome();
+  return slice.length;
+}
+
+function placeSentinel() {
+  const host = $("#newOrderContainer");
+  if (!host) return;
+  removeSentinel();
+  if (renderCursor >= currentReceipts.length) return;
+  listSentinel = document.createElement("div");
+  listSentinel.className = "listSentinel";
+  listSentinel.innerHTML = `<span class="spin"></span><span>Loading more… ${renderCursor} of ${currentReceipts.length}</span>`;
+  host.appendChild(listSentinel);
+  sentinelObserver?.observe(listSentinel);
+}
+function removeSentinel() {
+  if (!listSentinel) return;
+  try { sentinelObserver?.unobserve(listSentinel); } catch (_) {}
+  listSentinel.remove();
+  listSentinel = null;
+}
+
+const sentinelObserver = ("IntersectionObserver" in window)
+  ? new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) appendChunk();
+    }, { root: document.getElementById("queueWrap"), rootMargin: "800px 0px", threshold: 0.01 })
+  : null;
+
+/** Rebuild the rail list from `currentReceipts`, from the top. */
+function renderOrderRows(list) {
+  if (Array.isArray(list)) currentReceipts = list;
+  const host = $("#newOrderContainer");
+  if (!host) return;
+  removeSentinel();
+  host.replaceChildren();
+  renderCursor = 0;
+  appendChunk();
+  // Fill the viewport if the first chunk didn't reach the fold.
+  const wrap = $("#queueWrap");
+  let guard = 0;
+  while (wrap && wrap.scrollHeight <= wrap.clientHeight + 40 && renderCursor < currentReceipts.length && guard++ < 40) {
+    appendChunk();
+  }
+  $("#queueEmpty")?.classList.toggle("hidden", currentReceipts.length > 0);
+  markStaffNoteOrders();
+  applyAllLocksToDOM();
+  refreshChrome();
+  hydrateVisibleRows();
+  startBackgroundTopUp();
+}
+
+/** Render rows until `rid` exists in the DOM, then return it. */
+function ensureRowRendered(rid) {
+  rid = String(rid);
+  let row = $(`#newOrderContainer .orderRow[data-receipt='${cssEsc(rid)}']`);
+  let guard = 0;
+  while (!row && renderCursor < currentReceipts.length && guard++ < 200) {
+    appendChunk();
+    row = $(`#newOrderContainer .orderRow[data-receipt='${cssEsc(rid)}']`);
+  }
+  return row;
+}
+
+/**
+ * "Find" — scroll the rail to an order and flash it. If a filter is hiding
+ * it, the filters that hide it are cleared automatically rather than making
+ * the operator work out which one is at fault.
+ */
+function revealOrder(rid, { flash = true } = {}) {
+  rid = String(rid);
+  const inList = currentReceipts.some(r => String(r.receipt_id) === rid);
+  if (!inList) {
+    const known = allOpenReceipts.some(r => String(r.receipt_id) === rid);
+    if (!known) { toast(`Order ${rid} is not in the open order list`, "bad"); return false; }
+    if (searchActive) {
+      searchActive = false;
+      searchSnapshot = null;
+      const inp = $("#etsyOrderNumber");
+      if (inp) inp.value = "";
+      $("#clearSearchBtn")?.classList.add("hidden");
+    }
+    resetFilters({ silent:true });
+    applyFilters({ rerender:true });
+    toast("Filters cleared to show that order");
+  }
+  if (!SETTINGS.railOpen) setRailOpen(true);
+
+  const row = ensureRowRendered(rid);
+  if (!row) { toast(`Order ${rid} is not in the current list`, "bad"); return false; }
+
+  row.scrollIntoView({ behavior:"smooth", block:"center" });
+  if (flash) {
+    row.classList.remove("findFlash");
+    void row.offsetWidth;              // restart the animation
+    row.classList.add("findFlash");
+    setTimeout(() => row.classList.remove("findFlash"), 2200);
+  }
+  queueRowHydration(rid);
+  return true;
+}
+
+/* ── 11f · load / refresh ────────────────────────────────────────────────── */
+
+/**
+ * Pull the open-order list and merge it with what we already know.
+ * Only receipts that are NEW, or that Etsy reports as CHANGED, cost a detail
+ * call — and those happen lazily as the operator scrolls.
+ */
+async function buildNewOrderList() {
   if (allOpenReceipts.length === 0) {
     Activity.show("Loading open Etsy orders…");
     try {
-      allOpenReceipts = await fetchOpenOrdersSequential(n => Activity.msg(`Loading open Etsy orders… ${n}`));
-      allOpenReceipts.forEach(decorateReceipt);
+      const raw = await fetchOpenOrdersSequential(n => Activity.msg(`Loading open Etsy orders… ${n}`));
+      let fromCache = 0, needFetch = 0;
+      raw.forEach(r => {
+        const rid = String(r.receipt_id);
+        const stamp = receiptStamp(r);
+        if (cacheIsFresh(rid, stamp)) {
+          const disk = detailCache.get(rid);
+          orderCache[rid] = disk.txs.map(t => ({ ...t }));
+          if (!Array.isArray(r.transactions) || !r.transactions.length) r.transactions = orderCache[rid];
+          fromCache++;
+        } else {
+          delete orderCache[rid];
+          needFetch++;
+        }
+        decorateReceipt(r);
+      });
+      allOpenReceipts = raw;
+      console.log(`Open orders: ${raw.length} · ${fromCache} from cache · ${needFetch} need a detail call`);
+      window.__lastLoadStats = { total: raw.length, fromCache, needFetch };
     } finally { Activity.hide(); }
   }
 
-  const filtered = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
-  sortReceipts(filtered);
-
-  totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  orderListOffset = Math.min(offset, Math.max(0, (totalPages - 1) * PAGE_SIZE));
-
-  currentReceipts = filtered.slice(orderListOffset, orderListOffset + PAGE_SIZE);
-  renderOrderRows(currentReceipts);
-  updatePager();
-
-  if (SETTINGS.autoHydrate) await hydrateCurrentPage();
-
-  await refreshStaffNoteIDs();
+  applyFilters({ rerender:true });
+  await refreshStaffNoteIDs({ mode:"all" });
   markStaffNoteOrders();
   return currentReceipts.length;
 }
 
-/**
- * Pull transactions for every receipt on the current page so the metal columns
- * are real rather than guessed.
- *
- * The old build triggered this through a MutationObserver watching a global
- * (`window._lastDisplayReceipts`) that it also warned might not exist. It is
- * now a plain awaited call with a run-id guard and a progress bar.
- */
-async function hydrateCurrentPage() {
-  const myRun = updateRunId;
-  const need = currentReceipts.filter(r => !orderCache[String(r.receipt_id)]);
-  if (!need.length) return;
-
-  Activity.show(`Loading order details… 0/${need.length}`);
-  let done = 0;
-  try {
-    const run = makeQueue(4);
-    await Promise.all(need.map(r => run(async () => {
-      const id = String(r.receipt_id);
-      try {
-        const ord = await pullEtsyOrderDetails(id);
-        if (myRun !== updateRunId) return;
-        orderCache[id] = ord?.transactions || [];
-      } catch (err) {
-        console.warn("Detail pull failed for", id, err);
-        orderCache[id] = orderCache[id] || [];
-      } finally {
-        done++;
-        Activity.msg(`Loading order details… ${done}/${need.length}`);
-        Activity.progress(done, need.length);
-      }
-    })));
-  } finally { Activity.hide(); }
-
-  if (myRun !== updateRunId) return;
-
-  currentReceipts.forEach(r => {
-    const id = String(r.receipt_id);
-    r.transactions = orderCache[id] || r.transactions || [];
-    r._metalCounts = metalCountsFor(r.transactions);
-    r._rowMetal    = rowMetalFor(r._metalCounts);
-    if (!r._shipTS && r.transactions[0]?.expected_ship_date) {
-      r._shipTS  = r.transactions[0].expected_ship_date;
-      r._shipStr = new Date(r._shipTS * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" });
-    }
-  });
-
-  currentReceipts = sortReceipts(currentReceipts.slice());
-  renderOrderRows(currentReceipts);
-}
-
-/** Re-fetch rows whose transactions never arrived. */
+/** Re-fetch items for rows that are rendered but still blank. */
 async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}) {
   const myRun = updateRunId;
   for (let pass = 1; pass <= passes; pass++) {
-    const need = currentReceipts
-      .map(r => String(r.receipt_id))
+    // Scoped to rows on screen. Sweeping every rendered row would undo the
+    // whole point of loading details lazily.
+    const need = visibleReceiptIds()
+      .map(String)
       .filter(rid => !Array.isArray(orderCache[rid]) || orderCache[rid].length === 0);
     if (!need.length) return;
 
@@ -1835,6 +2283,7 @@ async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}) {
         const txs = data.transactions || [];
         txs.forEach(tx => resolveTxMetal(tx, { wide:true }));
         orderCache[rid] = txs;
+        cachePut(rid, txs, 0);
         refreshRowMetalCounts(rid);
       } catch (e) { if (e?.name !== "AbortError") console.warn("repairOne", rid, e); }
     })));
@@ -1842,13 +2291,16 @@ async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}) {
   }
 }
 
-/** Re-derive metals for rows still showing nothing, using the wide matcher. */
+/** Re-derive metals for rendered rows still showing nothing. */
 async function healZeroMetalRows({ passes = 2, concurrency = 4 } = {}) {
   const myRun = updateRunId;
   for (let pass = 1; pass <= passes; pass++) {
-    const zero = currentReceipts
-      .filter(r => countsAreEmpty(r._metalCounts))
-      .map(r => String(r.receipt_id));
+    const zero = visibleReceiptIds()
+      .map(String)
+      .filter(rid => {
+        const rec = currentReceipts.find(r => String(r.receipt_id) === rid);
+        return rec && rec._hydrated && countsAreEmpty(rec._metalCounts);
+      });
     if (!zero.length) break;
 
     const run = makeQueue(concurrency);
@@ -1856,19 +2308,18 @@ async function healZeroMetalRows({ passes = 2, concurrency = 4 } = {}) {
       try {
         let txs = orderCache[rid];
         if (!Array.isArray(txs) || !txs.length) {
-          const data = await pullEtsyOrderDetails(rid);
+          txs = await hydrateOrder(rid, { force:true });
           if (myRun !== updateRunId) return;
-          txs = data?.transactions || [];
-          orderCache[rid] = txs;
         }
         txs.forEach(tx => resolveTxMetal(tx, { wide:true }));
+        cachePut(rid, txs, 0);
         refreshRowMetalCounts(rid);
       } catch (e) { console.warn("healOne failed", rid, e); }
     })));
     await sleep(50);
   }
   updateCounters();
-  applyMetalFilter();
+  applyFilters();
 }
 
 /* ═══ 12 · PREVIEW TILES ═════════════════════════════════════════════════ */
@@ -1884,7 +2335,7 @@ const lazyImgObserver = ("IntersectionObserver" in window)
         obs.unobserve(e.target);
         loadTileImage(e.target);
       });
-    }, { root: null, rootMargin: "400px 0px", threshold: 0.01 })
+    }, { root: document.getElementById("view"), rootMargin: "500px 0px", threshold: 0.01 })
   : null;
 
 async function loadTileImage(tile) {
@@ -2034,6 +2485,7 @@ function makeTile(tx) {
   tile.dataset.receipt = rid;
   tile.dataset.metal   = mKey;
   tile.dataset.qty     = tx.quantity ?? 1;
+  tile.dataset.sku     = String(tx.sku || "").trim();
   if (txNeedsAttention(tx)) tile.classList.add("attn");
   if (completedOrders.has(rid)) tile.classList.add("isDone");
   if (selectedOrders.has(rid))  tile.classList.add("selected");
@@ -2046,22 +2498,29 @@ function makeTile(tx) {
   const body = document.createElement("div");
   body.className = "tileBody";
   body.innerHTML = `
-    <div class="tOrder"></div>
+    <div class="tOrderRow">
+      <span class="tOrder"></span>
+      <button type="button" class="tFind">Find</button>
+    </div>
     <div class="tMetal" data-m="${mKey}"><span class="sw"></span><span class="lbl"></span></div>
     <div class="tRow"><span class="k">SKU</span><span class="v"></span></div>`;
-  body.querySelector(".tOrder").textContent = tx.receipt_id || "—";
+  const numEl = body.querySelector(".tOrder");
+  numEl.textContent = tx.receipt_id || "—";
+  numEl.title = `Order ${tx.receipt_id || "—"}`;
   body.querySelector(".tMetal .lbl").textContent = mLbl;
   body.querySelector(".tRow .v").textContent = tx.sku || "N/A";
   body.title = "Open details";
   body.addEventListener("click", ev => { ev.stopPropagation(); openListingModal(txid); });
+
+  const findBtn = body.querySelector(".tFind");
+  findBtn.title = `Scroll the order list to ${rid} and highlight it`;
+  findBtn.setAttribute("aria-label", `Find order ${rid} in the list`);
+  findBtn.addEventListener("click", ev => { ev.stopPropagation(); ev.preventDefault(); revealOrder(rid); });
+
   tile.appendChild(body);
 
-  tile.addEventListener("mouseenter", () => {
-    $$(`#newOrderContainer .orderRow[data-receipt='${cssEsc(rid)}']`).forEach(r => r.classList.add("hoverPeer"));
-  });
-  tile.addEventListener("mouseleave", () => {
-    $$(`#newOrderContainer .orderRow[data-receipt='${cssEsc(rid)}']`).forEach(r => r.classList.remove("hoverPeer"));
-  });
+  tile.addEventListener("mouseenter", () => linkHover(rid, true));
+  tile.addEventListener("mouseleave", () => linkHover(rid, false));
 
   return tile;
 }
@@ -2214,16 +2673,28 @@ function wireQueueInteractions() {
 
   host.addEventListener("mouseover", ev => {
     const row = ev.target.closest(".orderRow");
-    if (!row) return;
-    const rid = String(row.dataset.receipt);
-    $$(`#photoGridContainer .tile[data-receipt='${cssEsc(rid)}']`).forEach(t => t.classList.add("hoverPeer"));
+    if (row) linkHover(String(row.dataset.receipt), true);
   });
   host.addEventListener("mouseout", ev => {
     const row = ev.target.closest(".orderRow");
-    if (!row) return;
-    const rid = String(row.dataset.receipt);
-    $$(`#photoGridContainer .tile[data-receipt='${cssEsc(rid)}']`).forEach(t => t.classList.remove("hoverPeer"));
+    if (row) linkHover(String(row.dataset.receipt), false);
   });
+}
+
+/**
+ * Bidirectional hover. Hovering anywhere — a row in the rail or a tile in the
+ * grid — lights up BOTH sides for that receipt, so the operator never has to
+ * work out which tiles belong to which order.
+ */
+function linkHover(rid, on) {
+  // Clear everything first. A tile or row can be removed or re-rendered while
+  // the pointer is over it, in which case its mouseleave never arrives and the
+  // highlight would stick.
+  $$(".orderRow.hoverPeer, .tile.hoverPeer").forEach(el => el.classList.remove("hoverPeer"));
+  if (!on) return;
+  const sel = `[data-receipt='${cssEsc(String(rid))}']`;
+  $$(`#newOrderContainer .orderRow${sel}`).forEach(el => el.classList.add("hoverPeer"));
+  $$(`#photoGridContainer .tile${sel}`).forEach(el => el.classList.add("hoverPeer"));
 }
 
 function clearSelection() {
@@ -2243,18 +2714,267 @@ function clearSelection() {
   toast(`Cleared ${ids.length} order${ids.length !== 1 ? "s" : ""}`);
 }
 
-/* ═══ 14 · METAL FILTER + LIVE COUNTERS ══════════════════════════════════ */
+/* ═══ 14 · FILTERS, STATS, LIVE COUNTERS ═════════════════════════════════ */
+
+/* One filter model drives both lists. Metal is shared — an order row survives
+   if it contains any active metal, a tile survives if its own metal is active
+   — so the operator sets it once. Everything else is scoped to the list it is
+   relevant to, and every chip hides itself when its count is zero, so the
+   strip only ever shows filters that would actually do something. */
+
+const F = {
+  metals   : new Set(METAL_ORDER),
+  completed: false,
+  // rail (orders)
+  sel      : false,   // only orders selected here
+  note     : false,   // only orders with a staff note
+  attn     : false,   // only orders with personalisation / a buyer message
+  due      : false,   // only overdue or due today
+  free     : false,   // hide orders locked at another station
+  // grid (items)
+  iAttn    : false,
+  iMulti   : false,
+  iNoSku   : false,
+};
+
+const startOfToday = () => { const d = new Date(); d.setHours(0,0,0,0); return Math.floor(d.getTime()/1000); };
+const endOfToday   = () => startOfToday() + 86400;
+
+function isLockedElsewhere(rid) {
+  const o = rtSelected.get(String(rid));
+  return !!o && o !== RT.clientId;
+}
+
+function orderMatches(r) {
+  // An explicit order-number search IS the filter — never hide a result the
+  // operator asked for by id.
+  if (searchActive) return true;
+
+  const rid = String(r.receipt_id);
+  const green = completedOrders.has(rid);
+  if (F.completed) { if (!green) return false; }
+  else if (green) return false;
+
+  // Metal: unhydrated orders are never hidden — we don't know their metals yet.
+  if (r._hydrated && !countsAreEmpty(r._metalCounts)) {
+    const hit = METAL_ORDER.some(k => r._metalCounts[k] && F.metals.has(k));
+    if (!hit) return false;
+  }
+
+  if (F.sel  && !selectedOrders.has(rid)) return false;
+  if (F.note && !staffNoteIDs.has(rid))   return false;
+  if (F.attn && !r._attn)                 return false;
+  if (F.free && isLockedElsewhere(rid))   return false;
+  if (F.due) {
+    const ts = r._shipTS || 0;
+    if (!ts || ts >= endOfToday()) return false;
+  }
+  return true;
+}
+
+function tileMatches(tile) {
+  const rid = tile.dataset.receipt;
+  const green = completedOrders.has(rid);
+  if (F.completed) return green;
+  if (green && !searchActive) return false;
+
+  if (tile.dataset.metal && !F.metals.has(tile.dataset.metal)) return false;
+  if (F.iAttn  && !tile.classList.contains("attn")) return false;
+  if (F.iMulti && (Number(tile.dataset.qty) || 1) < 2) return false;
+  if (F.iNoSku && tile.dataset.sku !== "")            return false;
+  return true;
+}
+
+function filtersAreDefault() {
+  return F.metals.size === METAL_ORDER.length && !F.completed &&
+         !F.sel && !F.note && !F.attn && !F.due && !F.free &&
+         !F.iAttn && !F.iMulti && !F.iNoSku;
+}
+
+function resetFilters({ silent = false } = {}) {
+  F.metals = new Set(METAL_ORDER);
+  F.completed = F.sel = F.note = F.attn = F.due = F.free = false;
+  F.iAttn = F.iMulti = F.iNoSku = false;
+  if (!silent) toast("Filters cleared");
+}
+
+/* ── chip construction ───────────────────────────────────────────────────── */
+
+const RAIL_CHIPS = [
+  { id:"sel",  label:"Selected",  title:"Only orders selected at this station" },
+  { id:"note", label:"Note",      title:"Only orders with a staff note" },
+  { id:"attn", label:"Attention", title:"Only orders with personalisation or a buyer message" },
+  { id:"due",  label:"Due",       title:"Only orders overdue or shipping today" },
+  { id:"free", label:"Unlocked",  title:"Hide orders being worked on at another station" },
+];
+const ITEM_CHIPS = [
+  { id:"iAttn",  label:"Attention", title:"Items with personalisation or a buyer message" },
+  { id:"iMulti", label:"Qty 2+",    title:"Items with a quantity above one" },
+  { id:"iNoSku", label:"No SKU",    title:"Items with no SKU on the transaction" },
+];
+
+function buildChipStrips() {
+  const rail = $("#railFilters");
+  if (rail && !rail.dataset.built) {
+    rail.dataset.built = "1";
+    RAIL_CHIPS.forEach(c => rail.appendChild(makeChip(c)));
+    rail.appendChild(makeClearChip());
+    rail.addEventListener("click", onChipClick);
+  }
+  const item = $("#itemFilters");
+  if (item && !item.dataset.built) {
+    item.dataset.built = "1";
+    ITEM_CHIPS.forEach(c => item.appendChild(makeChip(c)));
+    item.addEventListener("click", onChipClick);
+  }
+}
+
+function makeChip({ id, label, title }) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "fchip";
+  b.dataset.f = id;
+  b.title = title;
+  b.innerHTML = `<span class="l"></span><span class="c"></span>`;
+  b.querySelector(".l").textContent = label;
+  return b;
+}
+function makeClearChip() {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "fchip clear hidden";
+  b.dataset.f = "__clear";
+  b.title = "Clear every filter";
+  b.textContent = "✕ Clear";
+  return b;
+}
+
+function onChipClick(ev) {
+  const chip = ev.target.closest(".fchip");
+  if (!chip) return;
+  const id = chip.dataset.f;
+  if (id === "__clear") resetFilters();
+  else F[id] = !F[id];
+  applyFilters({ rerender:true });
+}
+
+/* ── counts that drive the chips and the stats block ─────────────────────── */
+
+function computeStats() {
+  const base = (searchActive ? currentReceipts : allOpenReceipts)
+    .filter(r => F.completed ? completedOrders.has(String(r.receipt_id))
+                             : !completedOrders.has(String(r.receipt_id)));
+
+  const s = {
+    total: base.length,
+    metalOrders: Object.fromEntries(METAL_KEYS.map(k => [k, 0])),
+    sel:0, note:0, attn:0, due:0, free:0, locked:0,
+    overdue:0, today:0, oldestTS:0, unhydrated:0,
+  };
+  const t0 = startOfToday(), t1 = endOfToday();
+
+  base.forEach(r => {
+    const rid = String(r.receipt_id);
+    METAL_ORDER.forEach(k => { if (r._metalCounts?.[k]) s.metalOrders[k]++; });
+    if (selectedOrders.has(rid)) s.sel++;
+    if (staffNoteIDs.has(rid))   s.note++;
+    if (r._attn)                 s.attn++;
+    if (!r._hydrated)            s.unhydrated++;
+    if (isLockedElsewhere(rid))  s.locked++; else s.free++;
+    const ts = r._shipTS || 0;
+    if (ts) {
+      if (!s.oldestTS || ts < s.oldestTS) s.oldestTS = ts;
+      if (ts < t0)      { s.overdue++; s.due++; }
+      else if (ts < t1) { s.today++;   s.due++; }
+    }
+  });
+  return s;
+}
+
+function paintStats(s) {
+  const host = $("#statMetals");
+  if (host) {
+    if (!host.dataset.built) {
+      host.dataset.built = "1";
+      METAL_ORDER.forEach(k => {
+        const d = document.createElement("div");
+        d.className = "statMetal";
+        d.dataset.m = k;
+        d.title = `${METAL_BY_KEY[k].label} — number of open orders containing this metal`;
+        d.innerHTML = `<div class="n">0</div><div class="l"><i class="sw"></i>${METAL_BY_KEY[k].short}</div>`;
+        host.appendChild(d);
+      });
+    }
+    METAL_ORDER.forEach(k => {
+      const d = host.querySelector(`.statMetal[data-m='${k}']`);
+      if (d) {
+        d.querySelector(".n").textContent = s.metalOrders[k] || 0;
+        d.classList.toggle("off", !F.metals.has(k));
+      }
+    });
+  }
+
+  /* The one number that decides what to work on next. */
+  const due = $("#statDue");
+  if (due) {
+    const oldest = s.oldestTS
+      ? new Date(s.oldestTS * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" })
+      : "—";
+    due.classList.toggle("hot", s.overdue > 0);
+    due.querySelector(".big").textContent = String(s.overdue);
+    due.querySelector(".lbl").innerHTML =
+      `overdue<span class="sep">·</span>${s.today} due today<span class="sep">·</span>oldest ${oldest}`;
+    due.title = s.overdue
+      ? `${s.overdue} order${s.overdue !== 1 ? "s" : ""} past their Etsy ship-by date. Oldest is ${oldest}.`
+      : `Nothing overdue. ${s.today} order${s.today !== 1 ? "s" : ""} due today; oldest ship-by is ${oldest}.`;
+  }
+}
+
+function paintChips(s) {
+  const counts = {
+    sel:s.sel, note:s.note, attn:s.attn, due:s.due, free:s.locked,
+    iAttn:0, iMulti:0, iNoSku:0,
+  };
+  gridElements.forEach(t => {
+    if (t.classList.contains("attn")) counts.iAttn++;
+    if ((Number(t.dataset.qty) || 1) >= 2) counts.iMulti++;
+    if (t.dataset.sku === "") counts.iNoSku++;
+  });
+
+  $$(".fchip[data-f]").forEach(chip => {
+    const id = chip.dataset.f;
+    if (id === "__clear") { chip.classList.toggle("hidden", filtersAreDefault()); return; }
+    const n = counts[id] ?? 0;
+    chip.classList.toggle("on", !!F[id]);
+    const c = chip.querySelector(".c");
+    if (c) c.textContent = n ? String(n) : "";
+    // Hide a filter that could never match — unless it is currently on, in
+    // which case hiding it would strand the operator with no way to undo it.
+    chip.classList.toggle("hidden", n === 0 && !F[id]);
+  });
+
+  $$('#metalBar .mchip').forEach(chip => {
+    const m = chip.dataset.metal;
+    chip.classList.toggle("active", m === "completed" ? F.completed : F.metals.has(m));
+  });
+
+  const anyItemChip = $$('#itemFilters .fchip').some(c => !c.classList.contains("hidden"));
+  $(".fbDiv")?.classList.toggle("hidden", !anyItemChip);
+}
+
+/* ── the metal chip bar (shared by both lists) ───────────────────────────── */
 
 function buildMetalBar() {
   const bar = $("#metalBar");
-  if (!bar) return;
-  bar.innerHTML = "";
+  if (!bar || bar.dataset.built) return;
+  bar.dataset.built = "1";
+
   METAL_ORDER.forEach(k => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "mchip active";
     b.dataset.metal = k;
-    b.title = `${METAL_BY_KEY[k].label} — click to show/hide`;
+    b.title = `${METAL_BY_KEY[k].label} — filters both the order list and the items. Alt-click to show only this metal.`;
     b.innerHTML = `<span class="sw"></span><span class="ml">${METAL_BY_KEY[k].label}</span><span class="mv" data-count="${k}">0</span>`;
     bar.appendChild(b);
   });
@@ -2269,29 +2989,28 @@ function buildMetalBar() {
   bar.addEventListener("click", async ev => {
     const chip = ev.target.closest(".mchip");
     if (!chip) return;
-    const completedChip = $('#metalBar .mchip[data-metal="completed"]');
+    const m = chip.dataset.metal;
 
-    if (chip.dataset.metal === "completed") {
-      const on = chip.classList.toggle("active");
-      $$('#metalBar .mchip:not([data-metal="completed"])').forEach(b => b.classList.toggle("active", !on));
-      if (on) await ensureCompletedPreviews();
-      else    await ensureSelectedPreviews();
+    if (m === "completed") {
+      F.completed = !F.completed;
+      if (F.completed) { F.metals = new Set(METAL_ORDER); await ensureCompletedPreviews(); }
+      else await ensureSelectedPreviews();
+    } else if (ev.altKey) {
+      F.metals = new Set([m]);                 // solo
+      F.completed = false;
     } else {
-      chip.classList.toggle("active");
-      completedChip?.classList.remove("active");
+      if (F.metals.has(m)) F.metals.delete(m); else F.metals.add(m);
+      if (!F.metals.size) F.metals = new Set(METAL_ORDER);   // never filter to nothing
+      F.completed = false;
     }
-    applyMetalFilter();
+    applyFilters({ rerender:true });
   });
 }
 
-function activeMetalKeys() {
-  return $$('#metalBar .mchip.active:not([data-metal="completed"])').map(b => b.dataset.metal);
-}
-function completedFilterOn() {
-  return !!$('#metalBar .mchip[data-metal="completed"]')?.classList.contains("active");
-}
+function activeMetalKeys() { return [...F.metals]; }
+function completedFilterOn() { return F.completed; }
 
-/** Live totals — counts every tile including hidden ones, skipping completed. */
+/** Live item totals per metal — counts every tile, including hidden ones. */
 function updateCounters() {
   const totals = {};
   METAL_KEYS.forEach(k => totals[k] = 0);
@@ -2307,30 +3026,53 @@ function updateCounters() {
   return totals;
 }
 
-function applyMetalFilter() {
-  const completedOn = completedFilterOn();
-  const active = new Set(activeMetalKeys());
-  const hideGreens = !searchActive && !completedOn;
+/* ── the one entry point ─────────────────────────────────────────────────── */
 
-  $$("#newOrderContainer .orderRow").forEach(row => {
-    const green = completedOrders.has(String(row.dataset.receipt));
-    row.style.display = (hideGreens && green) ? "none" : "";
-  });
+let __filterTimer = null;
+function scheduleFilterRefresh() {
+  clearTimeout(__filterTimer);
+  __filterTimer = setTimeout(() => applyFilters(), 140);
+}
+
+/**
+ * @param {{rerender?:boolean}} opts  rerender rebuilds the rail list from
+ *        `allOpenReceipts` (used when a filter or sort changes). Without it
+ *        the existing rows are kept and merely shown/hidden, so scroll
+ *        position survives background hydration.
+ */
+function applyFilters({ rerender = false } = {}) {
+  buildChipStrips();
+
+  if (rerender && !searchActive) {
+    const next = sortReceipts(allOpenReceipts.filter(orderMatches));
+    currentReceipts = next;
+    renderOrderRows(next);
+  } else {
+    $$("#newOrderContainer .orderRow").forEach(row => {
+      const rid = String(row.dataset.receipt);
+      const r = currentReceipts.find(x => String(x.receipt_id) === rid);
+      row.style.display = (r && orderMatches(r)) ? "" : "none";
+    });
+  }
 
   gridElements.forEach(tile => {
-    const rid = tile.dataset.receipt;
-    const green = completedOrders.has(rid);
-    let show;
-    if (completedOn) show = green;
-    else show = (!tile.dataset.metal || active.has(tile.dataset.metal)) && !(hideGreens && green);
+    const show = tileMatches(tile);
     tile.style.display = show ? "" : "none";
-    tile.classList.toggle("selected", selectedOrders.has(rid));
-    tile.classList.toggle("isDone", green);
+    tile.classList.toggle("selected", selectedOrders.has(tile.dataset.receipt));
+    tile.classList.toggle("isDone",   completedOrders.has(tile.dataset.receipt));
   });
 
+  const s = computeStats();
   updateCounters();
+  paintStats(s);
+  paintChips(s);
+  paintTopUp();
   refreshChrome();
+  return s;
 }
+
+/* Kept as the name the rest of the app calls. */
+function applyMetalFilter() { return applyFilters(); }
 
 async function ensureSelectedPreviews() {
   const need = [...selectedOrders].filter(rid =>
@@ -2353,9 +3095,7 @@ async function ensureCompletedPreviews() {
     !$(`#photoGridContainer .tile[data-receipt='${cssEsc(rid)}']`));
   if (!need.length) return;
   const capped = need.slice(0, 40);
-  if (need.length > capped.length) {
-    toast(`Showing the first ${capped.length} of ${need.length} completed orders`);
-  }
+  if (need.length > capped.length) toast(`Showing the first ${capped.length} of ${need.length} completed orders`);
   Activity.show(`Loading completed orders… 0/${capped.length}`);
   try {
     const run = makeQueue(4);
@@ -2753,8 +3493,7 @@ async function handleUndoComplete() {
     await unsetDesignCompletedBulk(ids);
     removeFromLocalCompleted(ids);
 
-    orderListOffset = 0;
-    await buildNewOrderList(0);
+    await buildNewOrderList();
     await ensureSelectedPreviews();
 
     persistSelection();
@@ -2932,16 +3671,9 @@ async function runSearch(raw) {
   const uniq = [...new Set(list)].slice(0, 500);
   if (!uniq.length) return;
 
-  if (!searchSnapshot) {
-    searchSnapshot = {
-      receipts : currentReceipts.slice(),
-      offset   : orderListOffset,
-      pages    : totalPages,
-    };
-  }
+  if (!searchSnapshot) searchSnapshot = { receipts: currentReceipts.slice() };
   searchActive = true;
   $("#clearSearchBtn")?.classList.remove("hidden");
-  $("#pageButtonsContainer").innerHTML = "";
 
   Activity.show(`Searching ${uniq.length} order${uniq.length !== 1 ? "s" : ""}…`);
   const found = [];
@@ -2965,15 +3697,11 @@ async function runSearch(raw) {
   if (!found.length) { toast("No matching orders", "bad"); return; }
 
   currentReceipts = sortReceipts(found);
-  totalPages = 1;
   renderOrderRows(currentReceipts);
-  updatePager();
 
   clearGrid();
   currentReceipts.forEach(r => (r.transactions || []).forEach(tx => addPreviewBox(tx)));
-  updateCounters();
-  applyMetalFilter();
-  refreshChrome();
+  applyFilters();
   toast(`Found ${found.length} order${found.length !== 1 ? "s" : ""}`, "ok");
 }
 
@@ -2987,41 +3715,41 @@ async function exitSearch() {
   searchSnapshot = null;
 
   clearGrid();
-  if (snap) {
-    currentReceipts = snap.receipts;
-    orderListOffset = snap.offset;
-    totalPages      = snap.pages;
-    renderOrderRows(currentReceipts);
-    updatePager();
-  } else {
-    renderOrderRows([]);
-  }
+  applyFilters({ rerender:true });
   await ensureSelectedPreviews();
-  updateCounters();
-  applyMetalFilter();
-  refreshChrome();
+  applyFilters();
 }
 
 /* ═══ 18 · CHROME SYNC, SETTINGS UI, WIRING, BOOT ════════════════════════ */
 
-function refreshChrome() {
-  const sel = selectedOrders.size;
-  const rows = $$("#newOrderContainer .orderRow").length;
-  const page = Math.floor(orderListOffset / PAGE_SIZE) + 1;
+function scrollQueue(dir) {
+  const w = $("#queueWrap");
+  if (w) w.scrollBy({ top: dir * Math.max(200, w.clientHeight * 0.85), behavior:"smooth" });
+}
 
-  const c = $("#queueCount"); if (c) c.textContent = String(rows);
-  const s = $("#selCount");   if (s) s.textContent = String(sel);
+function refreshChrome() {
+  const sel  = selectedOrders.size;
+  const rowEls  = $$("#newOrderContainer .orderRow");
+  const shown   = rowEls.filter(r => r.style.display !== "none").length;
+  const matched = currentReceipts.length;
+
+  const c = $("#queueCount");
+  if (c) {
+    c.textContent = renderCursor < matched ? `${shown} / ${matched}` : String(shown);
+    c.title = `${shown} shown${renderCursor < matched ? `, ${matched} match the filters` : ""}`;
+  }
+  const sc = $("#selCount"); if (sc) sc.textContent = String(sel);
 
   const title = $("#topTitle");
   const sub   = $("#topSub");
   if (title) title.textContent = searchActive ? "Search results" : "Design Station";
   if (sub) {
     const bits = [];
-    if (searchActive) bits.push(`${rows} order${rows !== 1 ? "s" : ""} found`);
+    if (searchActive) bits.push(`${matched} order${matched !== 1 ? "s" : ""} found`);
     else if (allOpenReceipts.length) {
       const open = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id))).length;
       bits.push(`${open} open order${open !== 1 ? "s" : ""}`);
-      if (totalPages > 1) bits.push(`page ${page} of ${totalPages}`);
+      if (matched !== open) bits.push(`${matched} after filters`);
     } else bits.push("Connect Etsy, then refresh to load open orders.");
     if (sel) bits.push(`${sel} selected`);
     sub.textContent = bits.join(" · ");
@@ -3035,10 +3763,6 @@ function refreshChrome() {
     else if (visible === tiles) fb.textContent = `${tiles} item${tiles !== 1 ? "s" : ""} shown`;
     else fb.textContent = `${visible} of ${tiles} items shown`;
   }
-
-  const prev = $("#prevPageBtn"), next = $("#nextPageBtn");
-  if (prev) prev.disabled = searchActive || page <= 1;
-  if (next) next.disabled = searchActive || page >= totalPages;
 
   const undo = $("#undoCompleteBtn");
   if (undo) undo.disabled = !lastClearedReceipts.length;
@@ -3057,7 +3781,7 @@ function refreshChrome() {
         p.textContent = "These were selected in your last session. Load their items to review and print labels.";
         b.textContent = "Load their items";
         b.dataset.act = "restore";
-      } else if (rows > 0) {
+      } else if (shown > 0) {
         h.textContent = "Nothing selected yet";
         p.textContent = "Pick orders from the list on the left. Their items appear here so you can check metals, personalisation and buyer notes before printing labels.";
         b.textContent = "Refresh order list";
@@ -3070,7 +3794,7 @@ function refreshChrome() {
       }
     }
   }
-  $("#queueEmpty")?.classList.toggle("hidden", rows > 0);
+  $("#queueEmpty")?.classList.toggle("hidden", shown > 0);
 }
 
 function buildSettingsUI() {
@@ -3081,8 +3805,11 @@ function buildSettingsUI() {
       seg:[["s","Small"],["m","Medium"],["l","Large"]] },
     { id:"density", nm:"Density", ds:"Compact tightens the order list and the gaps between tiles.",
       seg:[["comfortable","Comfortable"],["compact","Compact"]] },
+    { id:"railWidth", nm:"Order list width", ds:"How much room the left list gets. Wider fits longer order numbers without truncating.",
+      seg:[["narrow","Narrow"],["normal","Normal"],["wide","Wide"]] },
     { id:"lazyImages", nm:"Load images on scroll", ds:"Only fetch a listing photo once its tile is near the screen. Strongly recommended — it is the single biggest saving on Etsy API calls.", sw:true },
-    { id:"autoHydrate", nm:"Read full order details on load", ds:"Pulls every order's items after listing a page so the metal columns are exact. Turn off for a faster, rougher list.", sw:true },
+    { id:"autoHydrate", nm:"Read order details while scrolling", ds:"Pulls each order's items as its row nears the screen, so metal columns fill in as you go. Cached results are reused and never re-fetched.", sw:true },
+    { id:"bgTopUp", nm:"Finish reading in the background", ds:"After the visible rows are done, quietly read the rest one at a time so the per-metal order totals and the overdue count are exact. Cached, so it only ever happens once per order.", sw:true },
     { id:"autoHeal", nm:"Repair blank metal counts", ds:"After a refresh, re-read any order whose metal columns came back empty.", sw:true },
   ];
 
@@ -3157,7 +3884,19 @@ window.addEventListener("resize", () => {
   __resizeTimer = setTimeout(syncRailOverlay, 120);
 });
 
+let __scrollIdle = null;
+function wireQueueScroll() {
+  const wrap = $("#queueWrap");
+  if (!wrap || wrap.dataset.scrollWired) return;
+  wrap.dataset.scrollWired = "1";
+  wrap.addEventListener("scroll", () => {
+    clearTimeout(__scrollIdle);
+    __scrollIdle = setTimeout(hydrateVisibleRows, 180);
+  }, { passive:true });
+}
+
 function wireUI() {
+  wireQueueScroll();
   $("#railToggle")?.addEventListener("click", () => setRailOpen(!SETTINGS.railOpen));
 
   $("#connectEtsyBtn")?.addEventListener("click", () => startOAuth("manual"));
@@ -3170,19 +3909,19 @@ function wireUI() {
     try {
       abortAllUpdateWork();
       updateRunId++;
-      orderListOffset = 0;
       allOpenReceipts = [];
       await restoreCompleted();
-      await buildNewOrderList(0);
-      await refreshStaffNoteIDs({ mode:"all" });
-      markStaffNoteOrders();
+      await buildNewOrderList();
       await fetchAllLocksOnce();
       if (SETTINGS.autoHeal) {
-        await repairMissingReceiptData({ passes:2, concurrency:4 });
-        await healZeroMetalRows({ passes:2, concurrency:4 });
+        await repairMissingReceiptData({ passes:1, concurrency:4 });
+        await healZeroMetalRows({ passes:1, concurrency:4 });
       }
       await ensureSelectedPreviews();
-      toast(`${currentReceipts.length} order${currentReceipts.length !== 1 ? "s" : ""} on this page`, "ok");
+      const st = window.__lastLoadStats;
+      toast(st
+        ? `${st.total} open orders · ${st.fromCache} served from cache, ${st.needFetch} to read`
+        : `${currentReceipts.length} orders`, "ok", 5000);
     } catch (err) {
       console.error("Order-list fetch error:", err);
       toast("Order list failed: " + err.message, "bad", 6000);
@@ -3200,8 +3939,6 @@ function wireUI() {
 
   $("#clearBtn")?.addEventListener("click", clearSelection);
 
-  $("#prevPageBtn")?.addEventListener("click", () => goToPage(Math.floor(orderListOffset / PAGE_SIZE)));
-  $("#nextPageBtn")?.addEventListener("click", () => goToPage(Math.floor(orderListOffset / PAGE_SIZE) + 2));
 
   const qrBtn = $("#completeBtn");
   qrBtn?.addEventListener("click", withLock(qrBtn, async function () {
@@ -3249,8 +3986,9 @@ function wireUI() {
     if (ev.key === "\\" && !typing) { ev.preventDefault(); setRailOpen(!SETTINGS.railOpen); return; }
     if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     if (ev.key === "/") { ev.preventDefault(); $("#etsyOrderNumber")?.focus(); return; }
-    if (ev.key === "[") { ev.preventDefault(); $("#prevPageBtn")?.click(); return; }
-    if (ev.key === "]") { ev.preventDefault(); $("#nextPageBtn")?.click(); return; }
+    if (ev.key === "[") { ev.preventDefault(); scrollQueue(-1); return; }
+    if (ev.key === "]") { ev.preventDefault(); scrollQueue(1);  return; }
+    if (ev.key.toLowerCase() === "c") { ev.preventDefault(); resetFilters(); applyFilters({ rerender:true }); return; }
     if (ev.key.toLowerCase() === "g") { ev.preventDefault(); $("#completeBtn")?.click(); return; }
   });
 
@@ -3273,8 +4011,10 @@ async function boot() {
   if (window.matchMedia("(max-width:1040px)").matches) SETTINGS.railOpen = false;
   applySettings();
   syncRailOverlay();
+  loadDetailCache();
   buildSortHeader();
   buildMetalBar();
+  buildChipStrips();
   wireQueueInteractions();
   wireUI();
   buildSettingsUI();
@@ -3292,9 +4032,7 @@ async function boot() {
   } catch (e) { console.warn("Boot index seed failed", e); }
 
   scheduleHealMissingLocks();
-  updateCounters();
-  applyMetalFilter();
-  refreshChrome();
+  applyFilters({ rerender:true });
   setInterval(refreshConnBadge, 60000);
 }
 
@@ -3307,6 +4045,8 @@ window.DesignStation = {
                   allOpenReceipts, currentReceipts, staffNoteIDs, rtSelected, SETTINGS }),
   metalKeyFromText, metalCountsFor, buildPrintJobs,
   repairMissingReceiptData, healZeroMetalRows, refreshStaffNoteIDs,
+  filters: F, applyFilters, resetFilters, computeStats, revealOrder,
+  cache: { detailCache, flushDetailCache, clear(){ detailCache.clear(); localStorage.removeItem(CACHE_KEY); } },
 };
 
 </script>
