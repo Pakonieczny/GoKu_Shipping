@@ -649,10 +649,26 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 <div class="apv-lb" id="apvLb" onclick="this.classList.remove('on')"><div id="apvLbInner"></div></div>
 <script>
 
-const ENDPOINT = (typeof window!=="undefined" && window.__GADS_ENDPOINT)
-  || ((location.origin && location.origin.indexOf("http")===0)
-        ? location.origin + "/.netlify/functions/googleAdsAutopilotKick"   // same-origin when hosted (no CORS)
-        : "https://goldenspike.app/.netlify/functions/googleAdsAutopilotKick"); // fallback if opened as a local file
+/*  ENDPOINT — now googleAdsAutopilotApi, NOT googleAdsAutopilotKick.
+ *
+ *  Kick is a SCHEDULED Netlify function, and Netlify refuses HTTP requests to
+ *  scheduled functions with a bare 403 ("You can't invoke scheduled functions
+ *  directly with a URL"). That is the 403 the passcode screen was showing: the
+ *  request never reached the function, so the passcode was never wrong — a
+ *  wrong passcode returns 401.
+ *
+ *  The HTTP surface now lives in the unscheduled googleAdsAutopilotApi. The old
+ *  path is kept as a FALLBACK only so this page still works if it is deployed
+ *  before the new function is: a 404 on the new path (and only a 404) switches
+ *  over once, for the session.                                                */
+const GADS_FN_PRIMARY  = "googleAdsAutopilotApi";
+const GADS_FN_FALLBACK = "googleAdsAutopilotKick";
+const GADS_BASE = (location.origin && location.origin.indexOf("http")===0)
+  ? location.origin : "https://goldenspike.app";
+var _gadsFn = GADS_FN_PRIMARY;
+function gadsUrl(){ return (typeof window!=="undefined" && window.__GADS_ENDPOINT)
+  || (GADS_BASE + "/.netlify/functions/" + _gadsFn); }
+
 let PASS=""; let DASH=null; let lastSync=0; let timer=null; let lastLivePull=0; let livePulling=false;
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -784,9 +800,19 @@ function runSteps(el,steps,opts){opts=opts||{};
   return {stop:function(ok){clearInterval(iv);if(ok!==false){rows.forEach(function(r){r.className="steprow done";var d=r.querySelector(".sdot");d.textContent="\u2713";});}}};}
 
 async function api(action, extra){
-  const res = await fetch(ENDPOINT, { method:"POST",
+  const send = (url) => fetch(url, { method:"POST",
     headers:{ "Content-Type":"application/json", "X-Edit-Passcode": PASS },
     body: JSON.stringify(Object.assign({action, passcode:PASS}, extra||{})) });
+  let res = await send(gadsUrl());
+  /*  One-time, 404-ONLY switch to the old function name, so this page works
+      whichever order the two files get deployed. Never on a 403 — a 403 from
+      the scheduled function is exactly the condition we are moving away from,
+      and retrying it there would just reproduce the failure. */
+  if(res.status===404 && _gadsFn===GADS_FN_PRIMARY && !(typeof window!=="undefined" && window.__GADS_ENDPOINT)){
+    _gadsFn = GADS_FN_FALLBACK;
+    try{ var lbl=document.getElementById("epLabel"); if(lbl)lbl.textContent=gadsUrl().replace("https://",""); }catch(e){}
+    res = await send(gadsUrl());
+  }
   if(res.status===401){ const e=new Error("401 — wrong passcode"); e.status=401; throw e; }
   if(!res.ok){ const t=await res.text().catch(()=> "");
     const e=new Error("HTTP "+res.status+(t?" "+t.slice(0,140):"")); e.status=res.status; e.bodyText=t; throw e; }
@@ -871,9 +897,10 @@ function syncFailed(x){
 function syncMessage(b){
   if(!b)return "";
   if(b.code===401)return "Signed out \u2014 the saved passcode was rejected. Enter it again to reconnect.";
-  if(b.code===403)return "The server refused this request (403). Auto-refresh is paused so it stops retrying. "+
-    "This function returns 401 for a wrong passcode, never 403 \u2014 so the block is in front of it: "+
-    "check this site\u2019s Netlify access rules (visitor access / role-based access / traffic rules).";
+  if(b.code===403)return "Netlify refused the request (403) \u2014 the passcode is not the problem (a wrong one returns 401). "+
+    "The usual cause is that the target function is SCHEDULED: Netlify does not allow scheduled functions to be called over "+
+    "HTTP. Deploy googleAdsAutopilotApi.js (unscheduled) and make sure netlify.toml schedules ONLY googleAdsAutopilotKick. "+
+    "Currently talking to: "+gadsUrl().replace(/^https?:\/\//,"");
   if(b.code===404)return "The API endpoint was not found (404). Auto-refresh is paused. Is googleAdsAutopilotKick deployed on this site?";
   return b.message||"Auto-refresh paused.";
 }
@@ -2822,13 +2849,19 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
       else if(Date.now()>=syncDueAt()){ reload(); }
     },1000);
   }catch(x){ if(x.message.indexOf("401")>=0){sessClear();$("#gateErr").textContent=(e&&e.__cachedPass)?"Saved sign-in expired \u2014 enter the passcode once to refresh it.":"Wrong passcode.";}
+    /*  A bare "HTTP 403" on the passcode screen reads as "wrong passcode",
+        which it never is. Say what it actually means. */
+    else if(x.status===403){ $("#gateErr").innerHTML="<b>Not a passcode problem.</b> Netlify refused the request (403). "+
+      "A scheduled function cannot be called over HTTP \u2014 deploy <code>googleAdsAutopilotApi.js</code> and schedule only "+
+      "<code>googleAdsAutopilotKick</code>."; }
+    else if(x.status===404){ $("#gateErr").textContent="Endpoint not found (404) \u2014 is googleAdsAutopilotApi.js deployed on this site?"; }
     else $("#gateErr").textContent=x.message; }
   actEnd(aid);gdone();
   return false;
 }
 // auto sign-in when a saved session exists (works on mobile + desktop)
 (function(){var p=sessRead();if(p)unlock({preventDefault:function(){},__cachedPass:p});})();
-document.getElementById("epLabel").textContent=ENDPOINT.replace("https://","");
+document.getElementById("epLabel").textContent=gadsUrl().replace("https://","");
 var _rsT=null;addEventListener("resize",function(){clearTimeout(_rsT);_rsT=setTimeout(function(){try{if(typeof DAILY!=="undefined"&&DAILY)renderDailyCharts();}catch(e){}},300);});
 
 
