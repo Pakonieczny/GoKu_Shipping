@@ -3,8 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Brites · Ad Autopilot — Live Console</title>
-<link rel="icon" href="data:,">
+<title>Sign in · Brites Ad Autopilot</title>
+<meta name="description" content="Brites Jewelry — Ad Autopilot control room. Authorised operators only.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#221f1b">
+<meta name="apple-mobile-web-app-title" content="Brites Autopilot">
+<meta name="color-scheme" content="light">
+<!-- Inline mark: no network request, no 404 in the console. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23221f1b'/%3E%3Ccircle cx='32' cy='32' r='9' fill='none' stroke='%23caa861' stroke-width='3'/%3E%3Ccircle cx='32' cy='16' r='3.4' fill='%23caa861'/%3E%3C/svg%3E">
 <style>
 
 /* ============================================================================
@@ -296,7 +302,7 @@ svg{display:block}
   /* full-screen sheet modals */
   .ovsheet{align-items:flex-end!important}
   .ovsheet>div{width:100%!important;max-width:100%!important;max-height:92dvh!important;border-radius:18px 18px 0 0!important;padding-bottom:calc(14px + env(safe-area-inset-bottom))!important}
-  .gatecard{width:min(92vw,420px)}
+  /* superseded by the .signin responsive rules further down */
 }
 
 @media (min-width:761px) and (max-width:1020px){
@@ -314,10 +320,90 @@ table.ptable td.r{text-align:right}table.ptable td.c{text-align:center}
 table.ptable tr.prow:hover>td{background:var(--paper)}
 table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 
-.gatewrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--paper);padding:20px}
-.gatecard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px;width:340px;box-shadow:var(--sh)}
-.gatecard .logo{font-family:var(--serif);font-size:20px}.gatecard .logo b{color:var(--gold)}
-.gatecard .tag{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-45)}
+.gatewrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--paper);padding:24px}
+/* Visually hidden but present for assistive tech and password managers. */
+.vh{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+.signin{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);width:min(100%,980px);
+  background:var(--card);border:1px solid var(--line);border-radius:22px;overflow:hidden;
+  box-shadow:0 1px 2px rgba(30,26,20,.05),0 26px 70px -24px rgba(30,26,20,.30)}
+
+/* ---- velvet brand side ---- */
+.signin__brand{position:relative;background:
+  radial-gradient(120% 90% at 12% 0%,rgba(202,168,97,.20),transparent 58%),
+  linear-gradient(160deg,var(--velvet-2),var(--velvet) 62%);
+  color:#efe9dd;padding:40px 38px;display:flex;flex-direction:column;gap:14px}
+.signin__brand::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(60% 40% at 85% 100%,rgba(202,168,97,.10),transparent 70%)}
+.signin__mark{color:var(--gold-2);opacity:.95}
+.signin__brandname{font-family:var(--serif);font-size:24px;letter-spacing:.01em;line-height:1.1}
+.signin__brandname b{color:var(--gold-2);font-weight:400}
+.signin__brandtag{font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:#a29889}
+.signin__lede{margin:12px 0 0;font-size:13.5px;line-height:1.65;color:#cfc7b9;max-width:38ch}
+.signin__points{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+.signin__points li{position:relative;padding-left:20px;font-size:12.5px;color:#b8b0a2;line-height:1.5}
+.signin__points li::before{content:"";position:absolute;left:0;top:.5em;width:7px;height:7px;border-radius:50%;
+  border:1.5px solid var(--gold-2)}
+.signin__brandfoot{margin-top:auto;padding-top:26px;font-size:10.5px;letter-spacing:.06em;
+  color:#8c8476;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.signin__dotsep{opacity:.55}
+
+/* ---- form side ---- */
+.signin__panel{padding:40px 38px 30px;display:flex;flex-direction:column;background:var(--card)}
+.gatecard{background:none;border:0;border-radius:0;padding:0;width:auto;box-shadow:none;flex:1}
+.signin__mobilebrand{display:none}
+.signin__h1{font-family:var(--serif);font-weight:500;font-size:27px;margin:0 0 6px;letter-spacing:.01em}
+.signin__sub{margin:0 0 26px;font-size:13px;color:var(--ink-45);line-height:1.6;max-width:36ch}
+.signin__label{display:block;font-size:10.5px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-45);margin-bottom:7px}
+.signin__field{position:relative}
+.signin__field input{width:100%;height:48px;padding:0 46px 0 14px;font-size:15px;
+  border:1.5px solid var(--line);border-radius:var(--r-sm);background:var(--card-2);color:var(--ink);
+  transition:border-color .15s,background .15s,box-shadow .15s}
+.signin__field input::placeholder{color:var(--ink-25)}
+.signin__field input:hover{border-color:var(--ink-25)}
+.signin__field input:focus{outline:none;background:var(--card);border-color:var(--gold);
+  box-shadow:0 0 0 3.5px rgba(169,130,63,.16)}
+.signin__reveal{position:absolute;right:6px;top:6px;width:36px;height:36px;border-radius:8px;
+  display:grid;place-items:center;color:var(--ink-45)}
+.signin__reveal:hover{color:var(--ink);background:var(--paper-2)}
+.signin__hint{margin-top:8px;font-size:11.5px;color:#7a5a1d}
+.signin__err{min-height:18px;margin-top:8px;font-size:12.5px;line-height:1.5;color:var(--clay)}
+.signin__err:not(:empty){padding:9px 11px;border-radius:9px;background:var(--clay-soft);
+  border:1px solid #e5c6bb;margin-top:10px}
+.signin__err code{font-family:var(--mono);font-size:11.5px}
+.signin__remember{display:flex;gap:9px;align-items:flex-start;margin:16px 0 18px;
+  font-size:12.5px;color:var(--ink-70);cursor:pointer;line-height:1.45}
+.signin__remember input{margin:1px 0 0;width:15px;height:15px;accent-color:var(--gold);flex:0 0 auto;cursor:pointer}
+.signin__submit{width:100%;height:48px;font-size:14.5px;letter-spacing:.01em;border-radius:var(--r-sm)}
+.signin__submit:disabled{opacity:1;cursor:not-allowed;background:var(--paper-2);
+  border-color:var(--line);color:var(--ink-25);box-shadow:none}
+.signin__details{margin-top:22px;border-top:1px solid var(--line-2);padding-top:14px}
+.signin__details summary{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-45);cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}
+.signin__details summary::-webkit-details-marker{display:none}
+.signin__details summary::before{content:"+";font-family:var(--mono);color:var(--ink-25)}
+.signin__details[open] summary::before{content:"\2212"}
+.signin__details summary:hover{color:var(--ink-70)}
+.signin__detailbody{margin-top:11px;display:flex;flex-direction:column;gap:7px;
+  font-size:11.5px;color:var(--ink-70);word-break:break-all}
+.signin__dl{display:inline-block;min-width:74px;color:var(--ink-45);text-transform:uppercase;
+  letter-spacing:.1em;font-size:10px;font-weight:700}
+.signin__foot{margin-top:26px;padding-top:16px;border-top:1px solid var(--line-2);
+  font-size:11px;color:var(--ink-45);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.signin__foot a{color:var(--ink-45);text-decoration:none;border-bottom:1px solid var(--line)}
+.signin__foot a:hover{color:var(--ink-70)}
+
+@media (max-width:860px){
+  /* The velvet panel is gone at this width, so a gold hairline keeps the brand
+     present instead of leaving a plain white card. */
+  .signin{grid-template-columns:1fr;width:min(100%,460px);border-top:3px solid var(--gold)}
+  .signin__brand{display:none}
+  .signin__panel{padding:32px 26px 24px}
+  .signin__mobilebrand{display:flex;flex-direction:column;gap:3px;margin-bottom:24px}
+  .signin__h1{font-size:24px}
+}
+@media (prefers-reduced-motion:reduce){.signin__field input{transition:none}}
 
 /* ---- richer campaign serving-status badges (primary_status) ---- */
 .b-warn{background:var(--gold-soft);color:#8a4a1d}
@@ -478,16 +564,94 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 </head>
 <body>
 
+<!--  SIGN-IN.  Split layout: the velvet side carries the brand and says what
+      this thing is; the paper side is nothing but the task. The endpoint URL
+      that used to sit under the button is now inside "Connection details" —
+      still there when something breaks, invisible when it doesn't.        -->
 <div id="gate" class="gatewrap">
-  <form class="gatecard" onsubmit="return unlock(event)">
-    <div class="logo">Brites <b>·</b> Autopilot</div>
-    <div class="tag" style="margin-bottom:16px">Ad Control Room</div>
-    <label style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)">Passcode</label>
-    <input id="pc" type="password" autocomplete="current-password" placeholder="edit passcode" style="width:100%;margin:8px 0 6px">
-    <div id="gateErr" class="muted" style="font-size:12px;min-height:16px;color:var(--clay)"></div>
-    <button class="btn gold" type="submit" style="width:100%;margin-top:6px">Unlock console</button>
-    <div class="muted" style="font-size:11px;margin-top:12px">Talking to <span id="epLabel" class="mono"></span></div>
-  </form>
+  <div class="signin">
+
+    <aside class="signin__brand">
+      <div class="signin__mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="40" height="40" role="presentation">
+          <circle cx="32" cy="34" r="13" fill="none" stroke="currentColor" stroke-width="2.4"/>
+          <circle cx="32" cy="14" r="4.6" fill="currentColor"/>
+        </svg>
+      </div>
+      <div class="signin__brandname">Brites <b>·</b> Autopilot</div>
+      <div class="signin__brandtag">Ad Control Room</div>
+      <p class="signin__lede">Campaign generation, budget guardrails and offline-conversion
+        upload for Brites Jewelry — reviewed and approved by a human before anything spends.</p>
+      <ul class="signin__points">
+        <li>Approval queue with dry-run and a hard kill switch</li>
+        <li>Daily and monthly spend ceilings enforced server-side</li>
+        <li>Every applied change written to an audit ledger</li>
+      </ul>
+      <div class="signin__brandfoot">
+        <span>Google Ads API v24</span><span class="signin__dotsep">·</span><span>Opportunity engine v12.2</span>
+      </div>
+    </aside>
+
+    <main class="signin__panel">
+      <form class="gatecard" onsubmit="return unlock(event)" autocomplete="on" novalidate>
+        <div class="signin__mobilebrand" aria-hidden="true">
+          <span class="signin__brandname">Brites <b>·</b> Autopilot</span>
+          <span class="signin__brandtag">Ad Control Room</span>
+        </div>
+
+        <h1 class="signin__h1">Sign in</h1>
+        <p class="signin__sub">This console can change live advertising spend. Authorised operators only.</p>
+
+        <!--  Password managers refuse to save a lone password field, and Chrome
+              logs a DOM warning about it. A hidden-but-real username field is
+              the accessible, standards-compliant fix. -->
+        <input class="vh" id="who" name="username" type="text" value="Brites operator"
+               autocomplete="username" readonly tabindex="-1" aria-hidden="true">
+
+        <label class="signin__label" for="pc">Passcode</label>
+        <div class="signin__field">
+          <input id="pc" type="password" name="password" autocomplete="current-password"
+                 placeholder="Enter your passcode" enterkeyhint="go" autocapitalize="off"
+                 spellcheck="false" aria-describedby="gateErr capsHint" required>
+          <button class="signin__reveal" id="pcToggle" type="button"
+                  aria-label="Show passcode" aria-pressed="false" title="Show passcode">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+              <path id="eyeOpen" d="M1.8 12S5.4 5.4 12 5.4 22.2 12 22.2 12 18.6 18.6 12 18.6 1.8 12 1.8 12Z"/>
+              <circle id="eyePupil" cx="12" cy="12" r="3.1"/>
+              <line id="eyeSlash" x1="4" y1="20" x2="20" y2="4" style="display:none"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="signin__hint" id="capsHint" hidden>Caps Lock is on.</div>
+        <div id="gateErr" class="signin__err" role="alert" aria-live="polite"></div>
+
+        <label class="signin__remember">
+          <input type="checkbox" id="pcRemember" checked>
+          <span>Keep me signed in on this device for 30 days</span>
+        </label>
+
+        <button class="btn gold signin__submit" type="submit">Unlock console</button>
+
+        <details class="signin__details">
+          <summary>Connection details</summary>
+          <div class="signin__detailbody">
+            <div><span class="signin__dl">Endpoint</span><span id="epLabel" class="mono"></span></div>
+            <div><span class="signin__dl">Auth</span><span>Shared operator passcode, sent per request</span></div>
+          </div>
+        </details>
+      </form>
+
+      <footer class="signin__foot">
+        <span>&copy; <span id="yr"></span> Brites Jewelry</span>
+        <span class="signin__dotsep">·</span>
+        <span>Internal tool</span>
+        <span class="signin__dotsep">·</span>
+        <a href="https://britesjewelry.com" rel="noopener">britesjewelry.com</a>
+      </footer>
+    </main>
+
+  </div>
 </div>
 
 <div class="app" id="app" style="display:none">
@@ -2826,7 +2990,12 @@ function sessRead(){try{var r=localStorage.getItem(SESS_KEY);if(!r)return null;v
 function sessClear(){try{localStorage.removeItem(SESS_KEY);}catch(e){}}
 async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#pc").value;$("#gateErr").textContent="";
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,(e&&e.__cachedPass)?"Signing you back in\u2026":"Connecting\u2026");var aid=actStart("dashboard");
-  try{ DASH=await api("dashboard"); sessSave(PASS); $("#gate").style.display="none";$("#app").style.display="grid";
+  try{ DASH=await api("dashboard");
+    // Respect the checkbox: on a shared machine the operator can decline the
+    // 30-day session and be asked again next visit.
+    var _rem=document.getElementById("pcRemember");
+    if(!_rem || _rem.checked) sessSave(PASS); else sessClear();
+    $("#gate").style.display="none";$("#app").style.display="grid";
     buildNav();bindControlsOnce();renderAll();go("command");loadDiagnostics();lastSync=Date.now();lastLivePull=Date.now();
     try{var _r7=rpRangeFor("7d");cmdApplyRange(_r7,{preset:"7d"});}catch(e){}
     if(timer)clearInterval(timer);timer=setInterval(async ()=>{
@@ -2848,7 +3017,12 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
       if((Date.now()-lastLivePull)>=600000){ await livePull(); }
       else if(Date.now()>=syncDueAt()){ reload(); }
     },1000);
-  }catch(x){ if(x.message.indexOf("401")>=0){sessClear();$("#gateErr").textContent=(e&&e.__cachedPass)?"Saved sign-in expired \u2014 enter the passcode once to refresh it.":"Wrong passcode.";}
+  }catch(x){ try{var _p=document.getElementById("pc");
+      if(_p){_p.value="";_p.focus();
+        // Fire input so the submit button re-disables — a programmatic value
+        // change does not raise the event on its own.
+        _p.dispatchEvent(new Event("input",{bubbles:true}));}}catch(_e){}
+    if(x.message.indexOf("401")>=0){sessClear();$("#gateErr").textContent=(e&&e.__cachedPass)?"Saved sign-in expired \u2014 enter the passcode once to refresh it.":"That passcode was not accepted.";}
     /*  A bare "HTTP 403" on the passcode screen reads as "wrong passcode",
         which it never is. Say what it actually means. */
     else if(x.status===403){ $("#gateErr").innerHTML="<b>Not a passcode problem.</b> Netlify refused the request (403). "+
@@ -2859,8 +3033,57 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
   actEnd(aid);gdone();
   return false;
 }
-// auto sign-in when a saved session exists (works on mobile + desktop)
-(function(){var p=sessRead();if(p)unlock({preventDefault:function(){},__cachedPass:p});})();
+/* ───────────────────────── sign-in page behaviour ─────────────────────────
+   Small things, but they are the difference between a form and a product:
+   a reveal toggle for a passcode typed by hand, a Caps Lock warning (the
+   single most common cause of a "wrong passcode" that isn't), a submit that
+   cannot be pressed empty, and a real copyright year.                     */
+(function(){
+  var pc=document.getElementById("pc"),
+      tog=document.getElementById("pcToggle"),
+      caps=document.getElementById("capsHint"),
+      sub=document.querySelector(".signin__submit"),
+      yr=document.getElementById("yr");
+  if(yr)yr.textContent=new Date().getFullYear();
+
+  if(tog&&pc){
+    tog.addEventListener("click",function(){
+      var show=pc.type==="password";
+      pc.type=show?"text":"password";
+      tog.setAttribute("aria-pressed",show?"true":"false");
+      tog.setAttribute("aria-label",show?"Hide passcode":"Show passcode");
+      tog.title=show?"Hide passcode":"Show passcode";
+      var slash=document.getElementById("eyeSlash");
+      if(slash)slash.style.display=show?"":"none";
+      pc.focus();
+      // Keep the caret at the end rather than selecting everything.
+      try{ var n=pc.value.length; pc.setSelectionRange(n,n); }catch(e){}
+    });
+  }
+
+  function syncSubmit(){ if(sub&&pc)sub.disabled=!pc.value.trim(); }
+  function capsCheck(e){
+    if(!caps)return;
+    var on=e.getModifierState&&e.getModifierState("CapsLock");
+    caps.hidden=!on;
+  }
+  if(pc){
+    pc.addEventListener("input",function(){ syncSubmit();
+      var err=document.getElementById("gateErr");
+      if(err&&err.textContent)err.textContent="";   // clear a stale error as soon as they retype
+    });
+    pc.addEventListener("keydown",capsCheck);
+    pc.addEventListener("keyup",capsCheck);
+    pc.addEventListener("blur",function(){ if(caps)caps.hidden=true; });
+    syncSubmit();
+  }
+
+  // Auto sign-in when a saved session exists (works on mobile + desktop).
+  // Only focus the field when there is nothing saved to sign in with.
+  var p=sessRead();
+  if(p){ unlock({preventDefault:function(){},__cachedPass:p}); }
+  else if(pc){ try{ pc.focus({preventScroll:true}); }catch(e){ pc.focus(); } }
+})();
 document.getElementById("epLabel").textContent=gadsUrl().replace("https://","");
 var _rsT=null;addEventListener("resize",function(){clearTimeout(_rsT);_rsT=setTimeout(function(){try{if(typeof DAILY!=="undefined"&&DAILY)renderDailyCharts();}catch(e){}},300);});
 
