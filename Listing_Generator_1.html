@@ -10999,30 +10999,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • The outer edge and every cutout edge is a clean square cut through the sheet — no rolled edge, no bevel, no rounded lip, no thick rim.
         • HARD FAIL: the charm face rendered domed, swollen, pillowed or three-dimensionally sculpted.`;
 
-    // ==== ON-MODEL CHARM SIZE — ONE NUMBER TO TUNE ==========================
+    // ==== ON-MODEL CHARM SIZE — ONE NUMBER PER SLOT =========================
     // WHY THIS WORKS OFF THE PLACEHOLDER RATHER THAN OFF ANATOMY:
-    // The first version of this block asked for a ratio against the ear
-    // (1/8 of ear height). The model ignored it and rendered at ~22-24% of
-    // ear height instead — it does not actually measure anatomy, it copies
-    // the size of the placeholder charm already sitting in IMAGE 1. So this
-    // version stops fighting that instinct and uses it: the placeholder is
-    // declared the size BASELINE, and the model is asked to scale it by a
-    // fixed factor — a relative operation it can genuinely perform. The
-    // anatomical ratios are retained below as CEILINGS that catch failures.
+    // An earlier version asked for a ratio against the ear (1/8 of ear height).
+    // The model ignored it and rendered at ~22-24% instead — it does not
+    // measure anatomy, it copies the size of the placeholder charm already in
+    // IMAGE 1. So this version uses that instinct: the placeholder is the size
+    // BASELINE and the model scales it by a fixed factor, which is a relative
+    // operation it can genuinely perform. Anatomical ratios are retained below
+    // as CEILINGS that catch failures.
     //
-    // TUNING — the only number you ever need to change:
-    //   If the next batch still comes back N times too large, multiply this
-    //   value by 1/N. e.g. still 1.5x too big at 57 -> set it to 38.
-    //   Lower = smaller charm. Applies to both on-model slots (1 and 5).
+    // WHY THERE ARE TWO NUMBERS:
+    // The Primary_Models and Secondary_Models reference folders hold different
+    // photographs, and their placeholder charms are not the same size. A single
+    // shared multiplier therefore lands differently per slot — measured, Slot 1
+    // came out 30-50% larger than Slot 5 for the same charm. Each slot now has
+    // its own multiplier so they converge on the same real-world size.
+    //
+    // TUNING — the only numbers you ever need to change:
+    //   If a slot still comes back N times too large, multiply ITS value by 1/N.
+    //   Lower = smaller charm. The two slots are independent.
+    //   If you re-shoot or swap the reference photos in either folder, expect to
+    //   re-tune that slot's number; the whole point is that it absorbs the
+    //   template's placeholder size.
     // ========================================================================
-    const STUD_MODEL_PLACEHOLDER_SCALE = 39;
-
-    // Anatomical CEILING only — not the primary instruction. The charm's
-    // longest dimension may never exceed 1/STUD_EAR_DIVISOR of visible ear
-    // height. Raise to tighten the ceiling.
+    // Anatomical CEILING, shared by both on-model slots — not the primary
+    // instruction. The charm's longest dimension may never exceed
+    // 1/STUD_EAR_DIVISOR of visible ear height. Raise to tighten the ceiling.
     const STUD_EAR_DIVISOR = 8;
 
-    const STUD_MODEL_SIZE_RULES =
+    const STUD_SCALE_SLOT1_PRIMARY   = 28;   // Slot 1 — Primary_Models
+    const STUD_SCALE_SLOT5_SECONDARY = 39;   // Slot 5 — Secondary_Models  (the preferred result)
+
+    const studModelSizeRules = (scale) =>
     `ON-EAR CHARM SIZE LOCK — HIGHEST-PRIORITY SIZING RULE (OVERRIDES EVERY OTHER SIZE CUE IN THIS PROMPT):
 
       DOCUMENTED FAILURE MODE — READ THIS FIRST:
@@ -11033,14 +11042,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       PRIMARY RULE — SCALE FROM IMAGE 1'S PLACEHOLDER (THIS IS THE INSTRUCTION THAT GOVERNS; DO THIS ONE):
         • IMAGE 1 already contains a charm on the ear. Note its size — specifically its LONGEST dimension. That is your BASELINE.
-        • Render the new charm at exactly ${STUD_MODEL_PLACEHOLDER_SCALE}% of that baseline's LINEAR size. Not ${STUD_MODEL_PLACEHOLDER_SCALE}% of its area — ${STUD_MODEL_PLACEHOLDER_SCALE}% of its width and ${STUD_MODEL_PLACEHOLDER_SCALE}% of its height, scaled uniformly together.
+        • Render the new charm at exactly ${scale}% of that baseline's LINEAR size. Not ${scale}% of its area — ${scale}% of its width and ${scale}% of its height, scaled uniformly together.
         • Put plainly: the new charm is a little over HALF as wide and HALF as tall as the charm currently shown in IMAGE 1. It occupies roughly ONE THIRD of the placeholder's footprint on the ear.
         • CONCRETE PIXEL MAPPING — apply linearly at whatever zoom the image is at:
-            - placeholder charm reads ~400 px across -> render the new charm at ~${Math.round(4 * STUD_MODEL_PLACEHOLDER_SCALE)} px across
-            - placeholder charm reads ~300 px across -> render at ~${Math.round(3 * STUD_MODEL_PLACEHOLDER_SCALE)} px across
-            - placeholder charm reads ~200 px across -> render at ~${Math.round(2 * STUD_MODEL_PLACEHOLDER_SCALE)} px across
-            - placeholder charm reads ~150 px across -> render at ~${Math.round(1.5 * STUD_MODEL_PLACEHOLDER_SCALE)} px across
-          Whatever the placeholder measures, multiply by ${(STUD_MODEL_PLACEHOLDER_SCALE / 100).toFixed(2)}.
+            - placeholder charm reads ~400 px across -> render the new charm at ~${Math.round(4 * scale)} px across
+            - placeholder charm reads ~300 px across -> render at ~${Math.round(3 * scale)} px across
+            - placeholder charm reads ~200 px across -> render at ~${Math.round(2 * scale)} px across
+            - placeholder charm reads ~150 px across -> render at ~${Math.round(1.5 * scale)} px across
+          Whatever the placeholder measures, multiply by ${(scale / 100).toFixed(2)}.
         • This is a SIZE change only. The charm's position stays centred on the placeholder's centre point, and the empty skin revealed around the smaller charm is intentional and correct — do not fill it, do not recentre the composition, do not enlarge the charm to cover it.
         • The placeholder's DESIGN still carries no authority whatsoever (see the placeholder-discard block). Its SIZE is used as a measuring baseline and for nothing else.
 
@@ -11078,6 +11087,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • HARD FAIL: the camera, crop, framing, ear scale or model scale was altered to accommodate the charm's size.
         • HARD FAIL: other jewellery already present on the ear was resized or moved.`;
 
+    const STUD_MODEL_SIZE_RULES_SLOT1 = studModelSizeRules(STUD_SCALE_SLOT1_PRIMARY);
+    const STUD_MODEL_SIZE_RULES_SLOT5 = studModelSizeRules(STUD_SCALE_SLOT5_SECONDARY);
+
     // This is the block that stops "make it tiny" from being satisfied by
     // dropping engravings. Every previous Stud prompt led with EXTREMELY SMALL
     // and gave the model no fidelity floor to protect.
@@ -11110,7 +11122,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         ☐ Every outlined shape is a LINE only — the metal inside it is identical to the metal outside it. No hatching, shading, texture or fill anywhere inside a contour.
         ☐ Stroke count and cutout count in the output match the counts transcribed from IMAGE 2.
         ☐ Composition, crop, zoom, lighting, background and model are unchanged from IMAGE 1.
-        ☐ ON-MODEL SHOTS ONLY: the charm is ~57% the linear size of IMAGE 1's placeholder, 8 charm lengths fit up the visible ear height, and two charms fit side by side across the earlobe.`;
+        ☐ ON-MODEL SHOTS ONLY: the charm was scaled down from IMAGE 1's placeholder by the exact percentage stated above, 8 charm lengths fit up the visible ear height, and two charms fit side by side across the earlobe.`;
 
     // --- Slot 1 — Primary_Models (on-ear model shot) ---------------------------
     const STUD_MODEL_PROMPT =
@@ -11124,7 +11136,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Your primary objective in this image is ENGRAVING AND SILHOUETTE FIDELITY to IMAGE 2. Everything else is already correct in IMAGE 1 and must simply be preserved.
         • The skin immediately around and under the earring must read as completely uniform with the rest of the ear — no grey, ashen or desaturated fringe tracing the metal, and equally no brighter, warmer or pinker ring. Do not retouch, blur or feather that area at all.
 
-      ${STUD_MODEL_SIZE_RULES}
+      ${STUD_MODEL_SIZE_RULES_SLOT1}
 
       ${STUD_LEGIBILITY_FLOOR}
 
@@ -11279,7 +11291,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • The charm rendered here must be the SAME physical product as in every other image of this listing: identical silhouette, identical engraving, identical metal colour.
         • The skin immediately around and under the earring must read as completely uniform with the rest of the ear — no grey, ashen or desaturated fringe tracing the metal, and equally no brighter, warmer or pinker ring. Do not retouch, blur or feather that area at all.
 
-      ${STUD_MODEL_SIZE_RULES}
+      ${STUD_MODEL_SIZE_RULES_SLOT5}
 
       ${STUD_LEGIBILITY_FLOOR}
 
