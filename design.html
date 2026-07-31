@@ -34,16 +34,20 @@
      The old ramp bottomed out near 3:1, which is why it read as murky. */
   --rTxt:#f6f1e6;--rTxt2:#cdc4b2;--rTxt3:#ada393;--rDim:#7d7466;
   --rLine:rgba(246,241,230,.085);
+  --rGrid:rgba(246,241,230,.10);     /* vertical column rules: present enough to guide the eye
+                                        down a column, faint enough to stay out of the way */
+  --sbW:0px;                          /* live scrollbar width of the order list, measured at runtime */
 
   /* Size-dependent — overridden by html[data-rail] below. */
   --railPad:13px;
   --rowNum:12px;--rowShip:11px;--rowMinH:34px;--rowPadY:7px;--rowPadX:9px;
-  --mcellW:21px;--mcellFont:11px;
+  --mcellW:21px;--mcellFont:11px;--rowGap:5px;
   --chipFont:10.5px;--chipPadY:4px;--chipPadX:10px;
   --statN:14px;--statL:8.5px;--statPad:6px;
   --hdrFont:9.5px;
   --rowPadY:7px;
   --tileGap:12px;
+  --mcount:5;                         /* metal columns — regenerated from METALS at boot */
   /* order-row / sort-header column track — regenerated from METALS at boot */
   --rowCols:minmax(0,1.6fr) minmax(0,0.92fr) repeat(5,21px);
 }
@@ -56,7 +60,7 @@
 html[data-rail=sm]{
   --railW:272px;--railPad:9px;
   --rowNum:11.5px;--rowShip:10px;--rowMinH:27px;--rowPadY:4px;--rowPadX:7px;
-  --mcellW:18px;--mcellFont:10px;
+  --mcellW:18px;--mcellFont:10px;--rowGap:4px;
   --chipFont:9.5px;--chipPadY:3px;--chipPadX:8px;
   --statN:12.5px;--statL:7.5px;--statPad:4px;
   --hdrFont:8.5px;
@@ -64,7 +68,7 @@ html[data-rail=sm]{
 html[data-rail=md]{
   --railW:344px;--railPad:13px;
   --rowNum:12px;--rowShip:11px;--rowMinH:34px;--rowPadY:7px;--rowPadX:9px;
-  --mcellW:21px;--mcellFont:11px;
+  --mcellW:21px;--mcellFont:11px;--rowGap:5px;
   --chipFont:10.5px;--chipPadY:4px;--chipPadX:10px;
   --statN:14px;--statL:8.5px;--statPad:6px;
   --hdrFont:9.5px;
@@ -72,7 +76,7 @@ html[data-rail=md]{
 html[data-rail=lg]{
   --railW:428px;--railPad:17px;
   --rowNum:15px;--rowShip:12.5px;--rowMinH:46px;--rowPadY:11px;--rowPadX:12px;
-  --mcellW:28px;--mcellFont:13px;
+  --mcellW:28px;--mcellFont:13px;--rowGap:7px;
   --chipFont:12.5px;--chipPadY:7px;--chipPadX:14px;
   --statN:19px;--statL:10px;--statPad:10px;
   --hdrFont:11px;
@@ -157,8 +161,23 @@ html[data-rail=sm] .searchBox input{height:36px}
 /* ── rail queue ───────────────────────────────────────────────────────── */
 .queueHead{padding:9px var(--railPad) 7px;border-top:1px solid var(--velvetLine);display:flex;align-items:center;gap:8px;color:var(--rTxt3);font-size:var(--hdrFont);letter-spacing:.12em;text-transform:uppercase;font-weight:750;flex:0 0 auto}
 .queueHead .qhCount{margin-left:auto;font-family:var(--mono);letter-spacing:0;font-size:calc(var(--hdrFont) + 2px);color:var(--rTxt);font-weight:700}
-.sortBar{display:grid;gap:2px;padding:0 calc(var(--railPad) - 3px) 6px;flex:0 0 auto;color:var(--rTxt3)}
-.sortBar .hdr{display:grid;grid-template-columns:var(--rowCols);align-items:center;gap:4px;padding:5px 6px;border-radius:7px;background:var(--velvet2);border:1px solid var(--velvetLine)}
+/* ── HEADER / ROW ALIGNMENT ─────────────────────────────────────────────
+   The metal columns are fixed-width, so ANY difference in horizontal
+   geometry between the header and the rows accumulates across all five and
+   lands entirely on the count pills. Previously the header used gap:4px and
+   6px of inner padding while the rows used gap:5px and --rowPadX (9px), so
+   the pills sat ~7px right of their headings. These three rules now derive
+   from the same tokens and must stay that way:
+
+     outer padding   .sortBar  ==  .queueWrap
+     inner padding   .hdr      ==  .orderRow  (--rowPadX)
+     column gap      .hdr      ==  .orderRow  (--rowGap)
+
+   --sbW is the order list's live scrollbar width, measured at runtime and
+   added to the header's right padding so the columns stay locked when the
+   list becomes scrollable. Both boxes carry a 1px border, so those cancel. */
+.sortBar{display:grid;gap:2px;padding:0 calc(var(--railPad) - 5px + var(--sbW)) 6px calc(var(--railPad) - 5px);flex:0 0 auto;color:var(--rTxt3)}
+.sortBar .hdr{display:grid;grid-template-columns:var(--rowCols);align-items:center;gap:var(--rowGap);padding:5px var(--rowPadX);border-radius:7px;background-color:var(--velvet2);border:1px solid var(--velvetLine)}
 .sortBar .hdr>button{border:0;background:transparent;color:var(--rTxt2);padding:3px 0;font-size:var(--hdrFont);letter-spacing:.06em;text-transform:uppercase;font-weight:750;border-radius:5px;display:flex;align-items:center;justify-content:center;gap:3px;white-space:nowrap;min-width:0}
 .sortBar .hdr>button:hover{color:#fff;background:#3f382f}
 .sortBar .hdr>button.on{color:var(--gold2)}
@@ -219,15 +238,37 @@ html[data-rail=sm] .statDue{padding:6px 9px}
 .sortBar .hdr>button.on .cv{opacity:1}
 
 .queueWrap{flex:1 1 auto;overflow:auto;padding:0 calc(var(--railPad) - 5px) 8px;min-height:0;overscroll-behavior:contain}
-.orderRow{display:grid;grid-template-columns:var(--rowCols);align-items:center;gap:5px;width:100%;min-height:var(--rowMinH);padding:var(--rowPadY) var(--rowPadX);border-radius:9px;color:var(--rTxt2);cursor:pointer;border:1px solid transparent;position:relative;user-select:none;transition:background .1s}
+.orderRow{display:grid;grid-template-columns:var(--rowCols);align-items:center;gap:var(--rowGap);width:100%;min-height:var(--rowMinH);padding:var(--rowPadY) var(--rowPadX);border-radius:9px;color:var(--rTxt2);cursor:pointer;border:1px solid transparent;position:relative;user-select:none;transition:background .1s}
 /* hairline separator — keeps a long list scannable without adding padding */
 .orderRow + .orderRow::before{content:"";position:absolute;left:var(--rowPadX);right:var(--rowPadX);top:-1px;height:1px;background:var(--rLine)}
 .orderRow:hover::before,.orderRow:hover + .orderRow::before,
 .orderRow.selected::before,.orderRow.selected + .orderRow::before,
 .orderRow.rtLocked::before,.orderRow.rtLocked + .orderRow::before{opacity:0}
-.orderRow:hover{background:#332e28}
+.orderRow:hover{background-color:#332e28}
 .orderRow .oNum{font:var(--rowNum) var(--mono);font-weight:600;color:var(--rTxt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.01em}
 .orderRow .oShip{font:var(--rowShip) var(--mono);color:var(--rTxt2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Faint vertical rules separating the metal columns, drawn as a background
+   layer anchored to the RIGHT of the content box so they land dead centre in
+   each grid gap — behind the count pills, never touching them. One repeat per
+   metal column, so the leftmost rule also separates the block from Date.
+   Because it is anchored to the content box and sized from the same tokens as
+   the grid, it tracks every rail tier automatically. */
+.orderRow, .sortBar .hdr{
+  background-image:repeating-linear-gradient(to left,
+    transparent 0,
+    transparent calc(var(--mcellW) + (var(--rowGap) - 1px) / 2),
+    var(--rGrid)  calc(var(--mcellW) + (var(--rowGap) - 1px) / 2),
+    var(--rGrid)  calc(var(--mcellW) + (var(--rowGap) + 1px) / 2),
+    transparent   calc(var(--mcellW) + (var(--rowGap) + 1px) / 2),
+    transparent   calc(var(--mcellW) + var(--rowGap)));
+  background-origin:content-box;
+  background-repeat:no-repeat;
+  background-position:right center;
+  background-size:calc(var(--mcount) * (var(--mcellW) + var(--rowGap))) 58%;
+}
+/* In the header they run the full height, so the block reads as one unit and
+   the eye picks up the column before it starts scanning rows. */
+.sortBar .hdr{background-size:calc(var(--mcount) * (var(--mcellW) + var(--rowGap))) 100%}
 .orderRow .mcell{font:var(--mcellFont) var(--mono);text-align:center;color:var(--rDim);border-radius:5px;padding:2px 0;font-weight:700}
 .orderRow .mcell.has{color:#100e0a;font-weight:800}
 .orderRow .mcell[data-m=gold].has{background:var(--m-gold)}
@@ -235,17 +276,17 @@ html[data-rail=sm] .statDue{padding:6px 9px}
 .orderRow .mcell[data-m=rose].has{background:var(--m-rose)}
 .orderRow .mcell[data-m="10k"].has{background:var(--m-10k);color:#fff}
 .orderRow .mcell[data-m="14k"].has{background:var(--m-14k);color:#fff}
-.orderRow.selected{background:#493d27;box-shadow:inset 3px 0 0 var(--gold2)}
+.orderRow.selected{background-color:#493d27;box-shadow:inset 3px 0 0 var(--gold2)}
 .orderRow.selected .oNum{color:#fff5df}
 .orderRow.selected .oShip{color:#d9cba7}
 .orderRow.completed{opacity:.55}
 .orderRow.completed .oNum{text-decoration:line-through}
-.orderRow.rtLocked{background:#54332a;box-shadow:inset 3px 0 0 var(--clay);cursor:not-allowed}
+.orderRow.rtLocked{background-color:#54332a;box-shadow:inset 3px 0 0 var(--clay);cursor:not-allowed}
 .orderRow.rtLocked .oNum{color:#ffd6c8}
 .orderRow.rtLocked .oShip{color:#e0ab9b}
 .orderRow.rtLocked:after{content:"⊘";position:absolute;right:3px;top:50%;transform:translateY(-50%);font-size:11px;color:#ffb9a4}
 .orderRow.hasNote .oNum:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#7ec4dd;box-shadow:0 0 0 2px rgba(126,196,221,.28);margin-right:6px;vertical-align:middle}
-.orderRow.hoverPeer{background:#3c4952;box-shadow:inset 3px 0 0 #7ea8ba,0 0 0 1px rgba(126,168,186,.4)}
+.orderRow.hoverPeer{background-color:#3c4952;box-shadow:inset 3px 0 0 #7ea8ba,0 0 0 1px rgba(126,168,186,.4)}
 .orderRow.hoverPeer .oNum{color:#e8f2f6}
 .queueEmpty{padding:26px 14px;text-align:center;color:var(--rTxt2);font-size:12.5px;line-height:1.6}
 
@@ -1050,6 +1091,21 @@ function loadSettings() {
 function saveSettings() {
   try { localStorage.setItem(LS.settings, JSON.stringify(SETTINGS)); } catch (_) {}
 }
+/**
+ * The order list scrolls; the sort header does not. When a classic scrollbar
+ * appears it eats width from the list's content box only, so without this the
+ * header's fixed metal columns drift right of the pills by exactly the
+ * scrollbar's width. Measured rather than assumed, because it is 0 on overlay
+ * scrollbars (most trackpad setups) and ~10px on classic ones.
+ */
+function syncScrollbarWidth() {
+  const w = document.getElementById("queueWrap");
+  if (!w) return;
+  const px = Math.max(0, Math.round(w.offsetWidth - w.clientWidth));
+  const cur = document.documentElement.style.getPropertyValue("--sbW");
+  if (cur !== `${px}px`) document.documentElement.style.setProperty("--sbW", `${px}px`);
+}
+
 function applySettings() {
   const root = document.documentElement.style;
   root.setProperty("--tile", ({ s:"118px", m:"152px", l:"192px" })[SETTINGS.tileSize] || "152px");
@@ -1059,6 +1115,8 @@ function applySettings() {
   document.documentElement.dataset.rail = SETTINGS.railSize;
   root.setProperty("--rowCols",
     `minmax(0,1.6fr) minmax(0,0.92fr) repeat(${METAL_ORDER.length},var(--mcellW))`);
+  root.setProperty("--mcount", String(METAL_ORDER.length));
+  syncScrollbarWidth();
   $("#rail")?.classList.toggle("hdrOff", !SETTINGS.railHeader);
   paintRailControls();
   $("#app")?.classList.toggle("railOff", !SETTINGS.railOpen);
@@ -2574,6 +2632,7 @@ function renderOrderRows(list) {
   markStaffNoteOrders();
   applyAllLocksToDOM();
   refreshChrome();
+  syncScrollbarWidth();
   hydrateVisibleRows();
   startBackgroundTopUp();
 }
@@ -3493,6 +3552,7 @@ function applyFilters({ rerender = false } = {}) {
   paintTopUp();
   paintBrandStrip();
   refreshChrome();
+  syncScrollbarWidth();      // rows added or removed can flip the list's scrollbar
   return s;
 }
 
@@ -5484,7 +5544,7 @@ function setRailOpen(open) {
 let __resizeTimer = null;
 window.addEventListener("resize", () => {
   clearTimeout(__resizeTimer);
-  __resizeTimer = setTimeout(syncRailOverlay, 120);
+  __resizeTimer = setTimeout(() => { syncRailOverlay(); syncScrollbarWidth(); }, 120);
 });
 
 let __scrollIdle = null;
