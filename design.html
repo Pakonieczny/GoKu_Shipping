@@ -525,8 +525,12 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
 .qrCard .box img,.qrCard .box canvas{display:block;border-radius:4px}
 .qrCard .cap{margin-top:9px;font:11px var(--mono);font-weight:700}
 .qrCard .cnt{margin-top:2px;font-size:10.5px;color:var(--ink45)}
-.qrSkip{border:1px solid #e5c0b4;background:var(--claySoft);color:#8a3a26;border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:14px;line-height:1.5}
-.qrSkip b{display:block;margin-bottom:3px}
+.qrNotes{display:grid;gap:8px;margin-bottom:14px}
+.qrNote{border-radius:10px;padding:9px 12px;font-size:12px;line-height:1.5;border:1px solid}
+.qrNote b{display:block;margin-bottom:2px}
+.qrNote span{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere}
+.qrNote.bad{border-color:#e5c0b4;background:var(--claySoft);color:#8a3a26}
+.qrNote.info{border-color:var(--slateSoft);background:var(--slateSoft);color:#33525d}
 
 /* settings */
 .setRow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line2)}
@@ -567,7 +571,7 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
 </head>
 <body>
 
-<div class="app" id="app">
+<div class="app" id="app" data-mode="live">
 
   <!-- ══════════════ RAIL ══════════════ -->
   <aside class="rail" id="rail">
@@ -815,7 +819,7 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       <div class="right"><span class="pill neutral" id="qrSummary">—</span></div>
     </div>
     <div class="dlgBody">
-      <div class="qrSkip hidden" id="qrSkippedContainer"></div>
+      <div class="qrNotes hidden" id="qrNotes"></div>
       <div class="qrGrid" id="qrPreviewGrid"></div>
     </div>
     <div class="dlgFoot">
@@ -2599,6 +2603,7 @@ async function buildNewOrderList() {
     } finally { Activity.hide(); }
   }
 
+  pruneStaleSelection();
   applyFilters({ rerender:true });
   await refreshStaffNoteIDs({ mode:"all" });
   markStaffNoteOrders();
@@ -3319,6 +3324,9 @@ function buildMetalBar() {
     b.type = "button";
     b.className = "mchip active";
     b.dataset.metal = k;
+    // The number on the chip is PIECES (quantity across visible item tiles); the
+    // rail's stat block counts ORDERS. Two different, both useful, so each one
+    // says which it is rather than leaving the operator to guess.
     b.title = `${METAL_BY_KEY[k].label} — filters both the order list and the items. Alt-click to show only this metal.`;
     b.innerHTML = `<span class="sw"></span><span class="ml">${METAL_BY_KEY[k].label}</span><span class="mv" data-count="${k}">0</span>`;
     bar.appendChild(b);
@@ -3357,16 +3365,26 @@ function completedFilterOn() { return F.completed; }
 
 /** Live item totals per metal — counts every tile, including hidden ones. */
 function updateCounters() {
-  const totals = {};
-  METAL_KEYS.forEach(k => totals[k] = 0);
+  const totals = {};            // pieces, i.e. summed quantities
+  const orders = {};            // distinct receipts that have work in this metal
+  METAL_KEYS.forEach(k => { totals[k] = 0; orders[k] = new Set(); });
   gridElements.forEach(tile => {
     if (completedOrders.has(tile.dataset.receipt)) return;
     const k = tile.dataset.metal;
-    if (k && totals[k] != null) totals[k] += Number(tile.dataset.qty) || 1;
+    if (k && totals[k] != null) {
+      totals[k] += Number(tile.dataset.qty) || 1;
+      orders[k].add(String(tile.dataset.receipt));
+    }
   });
   METAL_ORDER.forEach(k => {
     const el = $(`#metalBar .mv[data-count='${k}']`);
     if (el) el.textContent = String(totals[k] || 0);
+    const chip = $(`#metalBar .mchip[data-metal='${k}']`);
+    if (chip) {
+      const p = totals[k] || 0, o = orders[k].size;
+      chip.title = `${METAL_BY_KEY[k].label} — ${p} piece${p === 1 ? "" : "s"} across ${o} order${o === 1 ? "" : "s"}. `
+                 + `Click to filter, Alt-click to show only this metal.`;
+    }
   });
   return totals;
 }
@@ -3526,18 +3544,55 @@ let pendingLists = null;
  * Selection-driven: an order is bucketed by the metals of its own items, not
  * by which tiles happen to be in the DOM.
  */
+/** Every receipt the app currently knows about — the open list plus whatever
+    a search put on screen. Anything selected but NOT in here is stale. */
+function knownReceiptIds() {
+  const set = new Set();
+  allOpenReceipts.forEach(r => set.add(String(r.receipt_id)));
+  currentReceipts.forEach(r => set.add(String(r.receipt_id)));
+  return set;
+}
+
+/**
+ * Drop selections that are no longer real orders.
+ *
+ * `selectedOrders` is restored from localStorage at boot and was never checked
+ * against the live list, so an order that shipped weeks ago could sit in the
+ * selection invisibly — no row in the rail, not counted by the Selected chip —
+ * and still be bucketed onto a printed label and marked design-complete.
+ * Called after every full refresh, once the open list is authoritative.
+ */
+function pruneStaleSelection() {
+  if (!allOpenReceipts.length) return 0;
+  const known = knownReceiptIds();
+  const gone = [...selectedOrders].filter(rid => !known.has(String(rid)));
+  if (!gone.length) return 0;
+  gone.forEach(rid => {
+    selectedOrders.delete(rid);
+    removePreviewBoxesForOrder(rid, { force:true });
+    rtQueueUnlock(rid);
+  });
+  persistSelection();
+  console.warn("Dropped stale selections not in the open list:", gone);
+  toast(`${gone.length} selected order${gone.length !== 1 ? "s are" : " is"} no longer open — removed from the selection`, "bad", 6000);
+  return gone.length;
+}
+
 async function handleCompleteClick() {
-  const active = activeMetalKeys();
-  if (!active.length) {
-    toast("Turn on at least one metal before printing labels", "bad");
-    return;
-  }
   if (!selectedOrders.size) {
     toast("Select some orders first", "bad");
     return;
   }
 
-  const ids = [...selectedOrders].map(String);
+  const known = knownReceiptIds();
+  const all   = [...selectedOrders].map(String);
+  const stale = all.filter(rid => !known.has(rid));
+  const ids   = all.filter(rid => known.has(rid));
+
+  if (!ids.length) {
+    toast("None of the selected orders are in the current list", "bad", 6000);
+    return;
+  }
 
   // Make sure every selected order has its transactions.
   const missing = ids.filter(rid => !Array.isArray(orderCache[rid]) || !orderCache[rid].length);
@@ -3556,7 +3611,8 @@ async function handleCompleteClick() {
 
   const lists = {};
   METAL_KEYS.forEach(k => lists[k] = []);
-  const skipped = [];
+  const skipped = [];      // no recognised metal at all
+  const multi   = [];      // legitimately appears on more than one label
 
   ids.forEach(rid => {
     const txs = orderCache[rid] || [];
@@ -3567,27 +3623,34 @@ async function handleCompleteClick() {
     });
 
     if (!present.size) { skipped.push(rid); return; }
-    if (present.size === 1) { lists[[...present][0]].push(rid); return; }
 
-    // Mixed-metal order: one label only, on whichever of its metals currently
-    // has the shortest list (load-balances the printed sheets).
-    const candidates = [...present].filter(k => lists[k]);
-    const target = candidates.reduce((a, b) => (lists[a].length <= lists[b].length ? a : b));
-    lists[target].push(rid);
+    /* An order goes on EVERY metal label it has work for.
+       The previous rule put a mixed order on exactly one label — whichever
+       bucket was shortest — which meant a gold+silver+rose order printed onto
+       the gold sheet only, and the rose bench never learned it had rose work
+       waiting. Labels are per-metal work lists, so an order with rose items
+       belongs on the rose list whatever else it also contains.
+       Iterated in METAL_ORDER so bucket order is deterministic. */
+    METAL_ORDER.forEach(k => { if (present.has(k)) lists[k].push(rid); });
+    if (present.size > 1) multi.push(rid);
   });
 
-  const total = Object.values(lists).reduce((n, a) => n + a.length, 0);
-  if (!total) {
-    toast("None of the selected orders have a recognised metal", "bad");
+  // Distinct orders, not label entries — an order on three labels is still one
+  // order, and reporting entries is what produced "3 labels · 4 orders".
+  const distinct = new Set(Object.values(lists).flat());
+  if (!distinct.size) {
+    toast("None of the selected orders have a recognised metal", "bad", 6000);
+    showQrPreviewModal([], { skipped, stale, multi, orders:0 });
     return;
   }
 
   pendingLists = lists;
   pendingJobs  = buildPrintJobs(lists);
-  showQrPreviewModal(pendingJobs, skipped, total);
+  showQrPreviewModal(pendingJobs, { skipped, stale, multi, orders: distinct.size });
 }
 
-function showQrPreviewModal(jobs, skipped, orderTotal) {
+function showQrPreviewModal(jobs, notes = {}) {
+  const { skipped = [], stale = [], multi = [], orders = 0 } = notes;
   const grid = $("#qrPreviewGrid");
   grid.innerHTML = "";
 
@@ -3614,17 +3677,41 @@ function showQrPreviewModal(jobs, skipped, orderTotal) {
     }
   });
 
-  const skipBox = $("#qrSkippedContainer");
-  if (skipped.length) {
-    skipBox.innerHTML = `<b>Skipped — no metal detected on these orders:</b>${skipped.join(", ")}`;
-    skipBox.classList.remove("hidden");
-  } else {
-    skipBox.classList.add("hidden");
+  const box = $("#qrNotes");
+  box.innerHTML = "";
+  const note = (tone, title, body) => {
+    const el = document.createElement("div");
+    el.className = "qrNote " + tone;
+    el.innerHTML = `<b></b><span></span>`;
+    el.querySelector("b").textContent = title;
+    el.querySelector("span").textContent = body;
+    box.appendChild(el);
+  };
+
+  if (stale.length) {
+    note("bad", `${stale.length} selected order${stale.length !== 1 ? "s are" : " is"} no longer in the open list — not printed:`,
+      stale.join(", "));
   }
+  if (skipped.length) {
+    note("bad", `${skipped.length} order${skipped.length !== 1 ? "s have" : " has"} no metal we recognise — not printed:`,
+      skipped.join(", "));
+  }
+  if (multi.length) {
+    note("info", `${multi.length} order${multi.length !== 1 ? "s appear" : " appears"} on more than one label because ${multi.length !== 1 ? "they contain" : "it contains"} more than one metal:`,
+      multi.join(", "));
+  }
+  box.classList.toggle("hidden", !box.children.length);
 
-  $("#qrSummary").textContent =
-    `${jobs.length} label${jobs.length !== 1 ? "s" : ""} · ${orderTotal} order${orderTotal !== 1 ? "s" : ""}`;
+  const entries = jobs.reduce((n, j) => n + j.ids.length, 0);
+  const parts = [`${jobs.length} label${jobs.length !== 1 ? "s" : ""}`,
+                 `${orders} order${orders !== 1 ? "s" : ""}`];
+  if (entries !== orders) parts.push(`${entries} entries`);
+  $("#qrSummary").textContent = parts.join(" · ");
+  $("#qrSummary").title = entries !== orders
+    ? `${orders} distinct orders across ${jobs.length} labels; ${entries} total lines because a mixed-metal order is listed on each of its metals.`
+    : `${orders} orders across ${jobs.length} labels.`;
 
+  $("#qrPreviewPrintBtn").disabled = !jobs.length;
   openDlg($("#qrPreviewModal"));
 }
 
@@ -3777,7 +3864,9 @@ async function proceedToPrint() {
   try { localStorage.removeItem(LS.printJobs); localStorage.removeItem(LS.printLists); } catch (_) {}
 
   // ── commit ──
-  const printedIDs = Object.values(lists).flat().map(String);
+  // De-duped: a mixed-metal order appears on several labels but is one order,
+  // so it is completed, unlocked, messaged and archived exactly once.
+  const printedIDs = [...new Set(Object.values(lists).flat().map(String))];
   lastClearedReceipts = [...printedIDs];
 
   printedIDs.forEach(rid => {
@@ -3804,7 +3893,9 @@ async function proceedToPrint() {
   updateCounters();
   applyMetalFilter();
   refreshChrome();
-  toast(`${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed`, "ok");
+  const labelEntries = Object.values(lists).flat().length;
+  toast(`${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed`
+        + (labelEntries !== printedIDs.length ? ` · ${labelEntries} label entries` : ""), "ok");
 
   try { await markBritesDesigned(printedIDs); }
   catch (e) { console.warn("markBritesDesigned failed:", e); }
@@ -4945,15 +5036,30 @@ function confirmish(title, body) {
 
 let APP_MODE = "live";
 
-async function setMode(mode) {
+/* Push APP_MODE onto the DOM. This is deliberately separate from setMode() and
+   idempotent: every "show only this mode's panes" rule keys off
+   .app[data-mode=…], so if the attribute is ever missing BOTH modes' panes
+   render at once, stacked. setMode() early-returns when the mode already
+   matches, which means a fresh load (APP_MODE already "live") would never have
+   written it. boot() now calls this unconditionally, and setMode() calls it on
+   the early-return path too, so the attribute can never drift from the state. */
+function applyMode() {
+  const app = document.getElementById("app");
+  if (app) app.dataset.mode = APP_MODE;
+  $$("#modeToggle button").forEach(b => b.classList.toggle("on", b.dataset.mode === APP_MODE));
+}
+
+async function setMode(mode, opts = {}) {
   mode = mode === "history" ? "history" : "live";
-  if (APP_MODE === mode) return;
+  // `force` exists for boot: APP_MODE is seeded from the saved setting before
+  // anything paints, so the plain "already there" check would skip the work
+  // that actually opens the history pane.
+  if (APP_MODE === mode && !opts.force) { applyMode(); return; }
   APP_MODE = mode;
   SETTINGS.mode = mode;
   saveSettings();
 
-  document.getElementById("app").dataset.mode = mode;
-  $$("#modeToggle button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  applyMode();
 
   if (mode === "history") {
     if (!archiveReady) {
@@ -5418,6 +5524,8 @@ function wireUI() {
 
 async function boot() {
   loadSettings();
+  APP_MODE = SETTINGS.mode === "history" ? "history" : "live";
+  applyMode();                       // before anything paints, so only one mode's panes exist
   if (window.matchMedia("(max-width:1040px)").matches) SETTINGS.railOpen = false;
   applySettings();
   syncRailOverlay();
@@ -5450,7 +5558,7 @@ async function boot() {
   // on the first click of the session.
   loadArchiveFromDisk().then(n => {
     setHistSync(n ? "ok" : "", n ? `${n.toLocaleString()} archived` : "No local copy yet");
-    if (SETTINGS.mode === "history") setMode("history");
+    if (SETTINGS.mode === "history") setMode("history", { force:true });
     else syncArchive();
   });
 }

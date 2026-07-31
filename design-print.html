@@ -144,7 +144,7 @@ window.addEventListener("load", async () => {
     report({ phase:"started", total: jobs.length });
     const summary = await printJobs(jobs);
     clearHandoff();
-    report({ phase:"done", ok:true, labels: summary.labels, orders: summary.orders });
+    report({ phase:"done", ok:true, labels: summary.labels, orders: summary.orders, entries: summary.entries });
 
   } catch (err) {
     console.error(err);
@@ -198,12 +198,20 @@ function safeChunks(arr, metal, maxChars = 1000, startSize = 50, minSize = 8) {
   return out;
 }
 
-/** Fill in anything an older Design Station build might not have sent. */
+/**
+ * Fill in anything an older Design Station build might not have sent.
+ *
+ * DE-DUPLICATION IS PER LABEL, NOT ACROSS LABELS. An order containing more
+ * than one metal is deliberately listed on each of its metal labels — the rose
+ * bench needs to know a gold-and-rose order has rose work. A shared `seen` set
+ * across jobs (which is what this used to do) silently deleted that order from
+ * every label after the first, so the rose sheet came out one order short.
+ */
 function normaliseJobs(jobs) {
-  const seen = new Set();
   return jobs
     .filter(j => j && Array.isArray(j.ids) && j.ids.length)
     .map(j => {
+      const seen = new Set();               // scoped to THIS label
       const ids = j.ids.map(String).filter(id => (seen.has(id) ? false : (seen.add(id), true)));
       return { ...j, ids };
     })
@@ -211,7 +219,9 @@ function normaliseJobs(jobs) {
     .map(j => ({
       metal   : j.metal || "",
       ids     : j.ids,
-      payload : (j.payload && j.ids.length === (j.ids || []).length) ? j.payload : encodeOrderList(j.ids, j.metal || ""),
+      payload : (j.payload && j.payload === encodeOrderList(j.ids, j.metal || ""))
+                  ? j.payload
+                  : encodeOrderList(j.ids, j.metal || ""),
       label   : j.label || defaultLabel(j),
     }));
 }
@@ -223,11 +233,12 @@ function defaultLabel(j) {
   return `${metal} (${j.ids.length}${of})${part}`;
 }
 
-/** Back-compat: {metal:[ids]} → jobs, de-duped across buckets. */
+/** Back-compat: {metal:[ids]} → jobs. De-duped within each bucket only, for
+    the same reason as normaliseJobs above. */
 function jobsFromLists(lists) {
-  const seen = new Set();
   const jobs = [];
   for (const [metal, raw] of Object.entries(lists || {})) {
+    const seen = new Set();                 // scoped to THIS bucket
     const ids = (raw || []).map(String).filter(id => (seen.has(id) ? false : (seen.add(id), true)));
     if (!ids.length) continue;
     const parts = safeChunks(ids, metal, 1000, 50, 8);
@@ -273,9 +284,13 @@ async function printJobs(jobs) {
     content    : pages,
   });
 
-  const orders = jobs.reduce((n, j) => n + j.ids.length, 0);
-  setState(`Sent ${jobs.length} label${jobs.length !== 1 ? "s" : ""} (${orders} orders) to the printer.`, "ok");
-  return { labels: jobs.length, orders };
+  // Distinct orders — a mixed-metal order is on several labels but is one order.
+  const distinct = new Set();
+  jobs.forEach(j => j.ids.forEach(id => distinct.add(String(id))));
+  const entries = jobs.reduce((n, j) => n + j.ids.length, 0);
+  setState(`Sent ${jobs.length} label${jobs.length !== 1 ? "s" : ""} for ${distinct.size} order${distinct.size !== 1 ? "s" : ""}`
+    + (entries !== distinct.size ? ` (${entries} entries — some orders span metals)` : "") + " to the printer.", "ok");
+  return { labels: jobs.length, orders: distinct.size, entries };
 }
 
 async function printLegacy(dataObj) {
