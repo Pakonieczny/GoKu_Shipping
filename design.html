@@ -901,13 +901,25 @@ const METAL_ORDER = ["gold","silver","rose","10k","14k"];
 const METAL_BY_KEY = Object.fromEntries(METALS.map(m => [m.key, m]));
 const METAL_KEYS   = METALS.map(m => m.key);
 
-/* NOTE ON "solid": the old build's canonicalMetal() mapped a bare /solid/ to
-   14k, but that branch was unreachable — canonicalMetal only ever received
-   an already-normalised key ("gold"/"silver"/…), never raw variation text.
-   Raw text has always been classified by the karat regexes above, so
-   "14K Solid Gold" → 14k, "10k Solid Gold" → 10k and a bare "Solid Gold"
-   → gold, exactly as before. No separate solid rule is needed or wanted:
-   adding one would silently re-bucket every plain "Solid Gold" listing. */
+/* "SOLID" IS A GATE, NOT A METAL.
+   The old build's canonicalMetal() treated a bare /solid/ as an alias for 14K,
+   so "10k Solid Gold" hit the 14K branch first and printed on the wrong bench.
+   The word is still read — it is the strongest signal that a piece is solid
+   rather than filled — but it never decides the karat by itself:
+
+     "solid" + 14k  → 14k        the karat decides, always
+     "solid" + 10k  → 10k
+     "solid", no karat → SOLID_UNKNOWN, deliberately unclassified
+
+   The last case is the one that used to bite. A solid piece whose karat we
+   cannot read must not be guessed onto a bench, so it resolves to nothing:
+   it is excluded from every label and named in the QR modal's "no metal we
+   recognise — not printed" note, which tells you exactly which listing needs
+   its variation fixed. Filled metals are unaffected — plain "Gold Filled",
+   "Rose Gold Filled" and "Sterling Silver" never contain the word.          */
+const SOLID_RE       = /\bsolid\b/;
+const KARAT_RE       = /\b(?:10|14)\s*k(?:t|arat)?\b/;
+const SOLID_UNKNOWN  = "__solid_unknown__";
 
 const PAGE_SIZE = 100;
 
@@ -1093,10 +1105,24 @@ function normMetalText(s) {
     .trim();
 }
 
-/** Classify a blob of text into a metal key, or "" if nothing matches. */
-function metalKeyFromText(raw) {
+/**
+ * Classify a blob of text into a metal key, or "" if nothing matches.
+ *
+ * @param {string} raw
+ * @param {{solidStrict?:boolean}} opts  solidStrict returns SOLID_UNKNOWN for
+ *        text that says "solid" but names no karat, instead of letting it fall
+ *        through to plain Gold. Callers that classify a real item pass it;
+ *        the loose form is kept for cheap "does this look like a metal at all"
+ *        probes such as picking a display value for a variation.
+ */
+function metalKeyFromText(raw, { solidStrict = false } = {}) {
   const t = normMetalText(raw);
   if (!t) return "";
+
+  // "Solid" gates on the karat: read it, then let 10K/14K make the call. A
+  // solid piece with no karat is never guessed onto a bench.
+  if (solidStrict && SOLID_RE.test(t) && !KARAT_RE.test(t)) return SOLID_UNKNOWN;
+
   for (const m of METALS) {                 // METALS order == precedence order
     for (const re of m.match) if (re.test(t)) return m.key;
   }
@@ -1119,20 +1145,23 @@ function metalKeyFromText(raw) {
 function metalKeyForTx(tx, { wide = false } = {}) {
   if (!tx) return "";
   const vars = Array.isArray(tx.variations) ? tx.variations : [];
+  const S = { solidStrict: true };
+  let sawSolidUnknown = false;
+  const note = k => { if (k === SOLID_UNKNOWN) sawSolidUnknown = true; return k; };
 
   // 1 · the dedicated metal/colour variation
   for (const v of vars) {
     if (!v || !/metal|colou?r/i.test(String(v.formatted_name || ""))) continue;
-    const k = metalKeyFromText(v.formatted_value);
-    if (k) return k;
+    const k = note(metalKeyFromText(v.formatted_value, S));
+    if (k && k !== SOLID_UNKNOWN) return k;
   }
 
   // 2 · any other variation value, solid gold taking precedence
   const seen = [];
   for (const v of vars) {
     if (!v || /personalization/i.test(String(v.formatted_name || ""))) continue;
-    const k = metalKeyFromText(v.formatted_value);
-    if (k) seen.push(k);
+    const k = note(metalKeyFromText(v.formatted_value, S));
+    if (k && k !== SOLID_UNKNOWN) seen.push(k);
   }
   if (seen.includes("14k")) return "14k";
   if (seen.includes("10k")) return "10k";
@@ -1145,12 +1174,22 @@ function metalKeyForTx(tx, { wide = false } = {}) {
       tx.title || "",
       Array.isArray(tx.personalization) ? tx.personalization.join(" ") : (tx.personalization || ""),
     ].join(" ");
-    const k = metalKeyFromText(blob);
-    if (k) return k;
+    // The karat may live in the title even when the variation only said
+    // "Solid Gold", so the wide pass gets a real chance to resolve it.
+    const k = note(metalKeyFromText(blob, S));
+    if (k && k !== SOLID_UNKNOWN) return k;
   }
 
-  return metalKeyFromText(tx._metalKey || "");
+  // A solid piece whose karat we could not read anywhere. Report it as such so
+  // the caller can surface it rather than bucket it.
+  if (sawSolidUnknown) return SOLID_UNKNOWN;
+
+  const cached = metalKeyFromText(tx._metalKey || "");
+  return cached;
 }
+
+/** True only for a key that names a real bench. SOLID_UNKNOWN and "" are not. */
+const isRealMetal = k => !!k && k !== SOLID_UNKNOWN && METAL_BY_KEY[k] != null;
 
 /** Resolve and cache the metal on a transaction. */
 function resolveTxMetal(tx, { wide = false } = {}) {
@@ -1160,15 +1199,34 @@ function resolveTxMetal(tx, { wide = false } = {}) {
   return k;
 }
 
+/**
+ * Best key for a transaction, widening once if the narrow pass came back
+ * unresolved. SOLID_UNKNOWN is treated as "keep looking" — the karat is often
+ * in the title even when the variation only said "Solid Gold" — and is only
+ * returned if the wide pass cannot resolve it either.
+ */
+function txMetalResolved(tx) {
+  const narrow = resolveTxMetal(tx);
+  if (isRealMetal(narrow)) return narrow;
+  const wide = resolveTxMetal(tx, { wide:true });
+  if (isRealMetal(wide)) return wide;
+  return (narrow === SOLID_UNKNOWN || wide === SOLID_UNKNOWN) ? SOLID_UNKNOWN : "";
+}
+
 /** Per-metal quantity totals for a set of transactions → {gold:n, …}. */
 function metalCountsFor(txs) {
   const out = {};
   for (const k of METAL_KEYS) out[k] = 0;
   (txs || []).forEach(tx => {
-    const k = resolveTxMetal(tx) || resolveTxMetal(tx, { wide:true });
-    if (k && out[k] != null) out[k] += (Number(tx.quantity) || 1);
+    const k = txMetalResolved(tx);
+    if (isRealMetal(k)) out[k] += (Number(tx.quantity) || 1);
   });
   return out;
+}
+
+/** Transactions that say "solid" but name no karat — reported, never bucketed. */
+function unresolvedSolidTxs(txs) {
+  return (txs || []).filter(tx => txMetalResolved(tx) === SOLID_UNKNOWN);
 }
 
 /** The single metal tag for a whole order, using METALS precedence. */
@@ -2797,6 +2855,7 @@ function metalLabelFor(tx) {
     }
   }
   const k = tx._metalKey || "";
+  if (k === SOLID_UNKNOWN) return "Solid — karat unknown";
   return k ? (METAL_BY_KEY[k]?.label || k) : "";
 }
 
@@ -2824,8 +2883,9 @@ function txNeedsAttention(tx) {
 function makeTile(tx) {
   const txid = String(tx.transaction_id);
   const rid  = String(tx.receipt_id);
-  const mKey = resolveTxMetal(tx) || resolveTxMetal(tx, { wide:true });
-  const mLbl = metalLabelFor(tx) || "No metal";
+  const raw  = txMetalResolved(tx);
+  const mKey = isRealMetal(raw) ? raw : "";          // SOLID_UNKNOWN never reaches the DOM
+  const mLbl = (raw === SOLID_UNKNOWN ? "Solid — karat unknown" : metalLabelFor(tx)) || "No metal";
 
   const tile = document.createElement("div");
   tile.className = "tile";
@@ -3612,45 +3672,81 @@ async function handleCompleteClick() {
   const lists = {};
   METAL_KEYS.forEach(k => lists[k] = []);
   const skipped = [];      // no recognised metal at all
-  const multi   = [];      // legitimately appears on more than one label
+  const multi   = [];      // spans metals — goes on ONE label, see below
+  const solid   = [];      // says "solid" but names no karat — needs a human
+  const mixedRows = [];    // {rid, metals:[…]} deferred to the balancing pass
+
+  /* ══ ONE ORDER → ONE LABEL ═════════════════════════════════════════════
+     Restored to the legacy allocation at your request. An order that spans
+     metals produces exactly one QR on one bench's sheet; its id does NOT
+     appear in a second metal's code. Two passes, mirroring design_Old.html:
+
+       pass 1 — single-metal orders go straight to their bucket
+       pass 2 — mixed orders are dealt to whichever of THEIR OWN metals has
+                the shortest list at that moment (legacy load-balancing)
+
+     Pass 2 runs after pass 1 for the same reason the old build did it that
+     way: the balancer needs the single-metal orders already counted, or
+     every mixed order would see empty buckets and pile onto the same one.
+
+     Note this is order-dependent by design — the destination reflects how
+     the rest of the batch fell, so the same order can land on Gold in one
+     run and Rose in the next. That is the legacy behaviour, chosen
+     deliberately; the preview names every mixed order and the bench it was
+     dealt to so it is never a surprise.                                   */
 
   ids.forEach(rid => {
     const txs = orderCache[rid] || [];
     const present = new Set();
+    let unresolvedSolid = false;
     txs.forEach(tx => {
-      const k = resolveTxMetal(tx) || resolveTxMetal(tx, { wide:true });
-      if (k) present.add(k);
+      const k = txMetalResolved(tx);
+      if (isRealMetal(k)) present.add(k);
+      else if (k === SOLID_UNKNOWN) unresolvedSolid = true;
     });
 
-    if (!present.size) { skipped.push(rid); return; }
+    // A solid piece we could not read the karat on is never guessed onto a
+    // bench. If the order has other, readable metals it still prints those —
+    // the unreadable item is called out so nothing goes missing silently.
+    if (unresolvedSolid) solid.push(rid);
 
-    /* An order goes on EVERY metal label it has work for.
-       The previous rule put a mixed order on exactly one label — whichever
-       bucket was shortest — which meant a gold+silver+rose order printed onto
-       the gold sheet only, and the rose bench never learned it had rose work
-       waiting. Labels are per-metal work lists, so an order with rose items
-       belongs on the rose list whatever else it also contains.
-       Iterated in METAL_ORDER so bucket order is deterministic. */
-    METAL_ORDER.forEach(k => { if (present.has(k)) lists[k].push(rid); });
-    if (present.size > 1) multi.push(rid);
+    if (!present.size) { if (!unresolvedSolid) skipped.push(rid); return; }
+
+    if (present.size === 1) {
+      lists[[...present][0]].push(rid);
+      return;
+    }
+    // Deferred to pass 2. METAL_ORDER keeps the candidate list stable so the
+    // reduce below breaks ties the same way every time.
+    mixedRows.push({ rid, metals: METAL_ORDER.filter(k => present.has(k)) });
   });
 
-  // Distinct orders, not label entries — an order on three labels is still one
-  // order, and reporting entries is what produced "3 labels · 4 orders".
+  // Pass 2 — deal each mixed order to its own shortest bucket.
+  const mixedTarget = {};                      // rid → metal it was dealt to
+  mixedRows.forEach(({ rid, metals }) => {
+    const target = metals.reduce((a, b) => lists[a].length <= lists[b].length ? a : b);
+    lists[target].push(rid);
+    mixedTarget[rid] = target;
+    multi.push(rid);
+  });
+
+  // Distinct orders, not label entries. With one-label allocation these are
+  // now equal, but the summary keeps reporting both so any future divergence
+  // is visible rather than silently averaged away.
   const distinct = new Set(Object.values(lists).flat());
   if (!distinct.size) {
     toast("None of the selected orders have a recognised metal", "bad", 6000);
-    showQrPreviewModal([], { skipped, stale, multi, orders:0 });
+    showQrPreviewModal([], { skipped, stale, multi, solid, mixedTarget, orders:0 });
     return;
   }
 
   pendingLists = lists;
   pendingJobs  = buildPrintJobs(lists);
-  showQrPreviewModal(pendingJobs, { skipped, stale, multi, orders: distinct.size });
+  showQrPreviewModal(pendingJobs, { skipped, stale, multi, solid, mixedTarget, orders: distinct.size });
 }
 
 function showQrPreviewModal(jobs, notes = {}) {
-  const { skipped = [], stale = [], multi = [], orders = 0 } = notes;
+  const { skipped = [], stale = [], multi = [], solid = [], mixedTarget = {}, orders = 0 } = notes;
   const grid = $("#qrPreviewGrid");
   grid.innerHTML = "";
 
@@ -3696,10 +3792,15 @@ function showQrPreviewModal(jobs, notes = {}) {
     note("bad", `${skipped.length} order${skipped.length !== 1 ? "s have" : " has"} no metal we recognise — not printed:`,
       skipped.join(", "));
   }
-  if (multi.length) {
-    note("info", `${multi.length} order${multi.length !== 1 ? "s appear" : " appears"} on more than one label because ${multi.length !== 1 ? "they contain" : "it contains"} more than one metal:`,
-      multi.join(", "));
+  if (solid.length) {
+    // "Solid" tells us the piece is not filled, but not which bench. Rather
+    // than guess a karat we name the order so the listing can be corrected.
+    note("bad", `${solid.length} order${solid.length !== 1 ? "s say" : " says"} "solid" without a karat — that item is not on any label:`,
+      solid.join(", "));
   }
+  // Mixed-metal orders are expected, not exceptional — no banner. Each one goes
+  // on exactly one bench's sheet, and which bench it was dealt to is on the
+  // summary tooltip so the allocation is auditable without a wall of text.
   box.classList.toggle("hidden", !box.children.length);
 
   const entries = jobs.reduce((n, j) => n + j.ids.length, 0);
@@ -3707,9 +3808,14 @@ function showQrPreviewModal(jobs, notes = {}) {
                  `${orders} order${orders !== 1 ? "s" : ""}`];
   if (entries !== orders) parts.push(`${entries} entries`);
   $("#qrSummary").textContent = parts.join(" · ");
-  $("#qrSummary").title = entries !== orders
-    ? `${orders} distinct orders across ${jobs.length} labels; ${entries} total lines because a mixed-metal order is listed on each of its metals.`
-    : `${orders} orders across ${jobs.length} labels.`;
+
+  let title = `${orders} order${orders !== 1 ? "s" : ""} across ${jobs.length} label${jobs.length !== 1 ? "s" : ""}.`;
+  if (multi.length) {
+    const where = multi.map(rid => `${rid} → ${METAL_BY_KEY[mixedTarget[rid]]?.label || mixedTarget[rid] || "?"}`);
+    title += ` ${multi.length} order${multi.length !== 1 ? "s span" : " spans"} more than one metal and `
+           + `${multi.length !== 1 ? "were" : "was"} each dealt to a single bench: ${where.join(", ")}.`;
+  }
+  $("#qrSummary").title = title;
 
   $("#qrPreviewPrintBtn").disabled = !jobs.length;
   openDlg($("#qrPreviewModal"));
@@ -4362,7 +4468,7 @@ function buildArchiveRecord(rid, data, { completedBy } = {}) {
       quantity      : numOr0(t.quantity) || 1,
       price         : money(t.price),
       shippingCost  : money(t.shipping_cost),
-      metal         : resolveTxMetal(t) || resolveTxMetal(t, { wide:true }) || "",
+      metal         : (k => isRealMetal(k) ? k : "")(txMetalResolved(t)),
       personalization: pers,
       variations,
       expectedShipDate: numOr0(t.expected_ship_date),
@@ -5571,6 +5677,8 @@ window.DesignStation = {
   state: () => ({ selectedOrders, completedOrders, orderCache, gridElements, itemsByTx,
                   allOpenReceipts, currentReceipts, staffNoteIDs, rtSelected, SETTINGS }),
   metalKeyFromText, metalCountsFor, buildPrintJobs,
+  metalKeyForTx, txMetalResolved, isRealMetal, SOLID_UNKNOWN,
+  pending: () => ({ lists: pendingLists, jobs: pendingJobs }),
   repairMissingReceiptData, healZeroMetalRows, refreshStaffNoteIDs,
   filters: F, applyFilters, resetFilters, computeStats, revealOrder,
   setRailSize, cycleRailSize, setRailHeader,
