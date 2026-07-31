@@ -76,6 +76,10 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 #batchPanel{margin:0 0 14px;padding:12px 14px;border:1.5px solid var(--velvetLine,var(--line));border-left:4px solid var(--velvet);border-radius:var(--rsm);background:var(--card);box-shadow:var(--sh)}
 #batchPanel .bhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
 #batchPanel .bhead h4{margin:0;font:15px var(--serif)}
+#batchPanel .bclose{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--card);
+  color:var(--ink45);font-size:12px;line-height:1;display:grid;place-items:center;flex:0 0 auto}
+#batchPanel .bclose:hover{background:var(--paper2);color:var(--ink);border-color:var(--ink25)}
+#batchPanel .bautoclose{font-size:11px;color:var(--ink45);white-space:nowrap}
 #batchPanel .bstats{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink70);margin-bottom:8px}
 #batchPanel .bstats b{font-size:14px;color:var(--ink)}
 #batchPanel .bbar{height:8px;border-radius:999px;background:var(--paper2);overflow:hidden;margin-bottom:8px}
@@ -237,7 +241,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
     <div class="view">
       <div class="notice">Choose any Etsy shop category from the dropdown. Only that live category is shown in the queue and Previous/Next navigation. Title searches are sent to Etsy in real time and then verified against listing titles only.</div>
         <div id="batchPanel" class="hidden">
-          <div class="bhead"><h4>Batch run</h4><span class="pill info" id="batchState">Idle</span><span style="flex:1"></span></div>
+          <div class="bhead"><h4>Batch run</h4><span class="pill info" id="batchState">Idle</span><span style="flex:1"></span><span class="bautoclose" id="bAutoClose" hidden></span><button class="bclose" id="bCloseBtn" type="button" title="Close this panel (Esc)" aria-label="Close batch panel">&#10005;</button></div>
           <div class="bstats"><span>To batch <b id="bTotal">0</b></span><span>Succeeded <b id="bOk" style="color:var(--sage)">0</b></span><span>Failed <b id="bFail" style="color:var(--clay)">0</b></span><span>Remaining <b id="bLeft">0</b></span></div>
           <div class="bbar"><i id="bBar"></i></div>
           <div class="bcur" id="bCur"></div>
@@ -789,7 +793,9 @@ async function approveIds(targets){
   toast(S.stopScan?'Approval run stopped.':('Approved '+(done-failed)+' listing'+(done-failed===1?'':'s')+(failed?' · '+failed+' failed':'')+'.'),failed?'bad':'ok');
 }
 $('#tabResults').addEventListener('click',()=>{if(S.rFilter==='prepared')S.rFilter='all';setView('results');renderResults()});
-$('#tabBatch').addEventListener('click',()=>{S.rFilter='prepared';setView('results');renderResults();loadSchedule()});
+$('#tabBatch').addEventListener('click',()=>{S.rFilter='prepared';setView('results');renderResults();loadSchedule();
+  // Reopen the report after a close — the run is still there to look at.
+  if(S.currentRunId||S.batch.status!=='idle')showBatchPanel();});
 $('#tabEditor').addEventListener('click',()=>setView('editor'));
 $('#rDensity').addEventListener('change',e=>{S.rDensity=e.target.value;renderResults()});
 $('#rChips').addEventListener('click',e=>{const b=e.target.closest('button[data-rfilter]');if(!b)return;S.rFilter=b.dataset.rfilter;renderResults()});
@@ -1612,7 +1618,40 @@ function renderBatchUi(){
   $('#bBar').style.width=(b.total?Math.round((b.done/b.total)*100):0)+'%';
 }
 let pollTimer=null;
-function showBatchPanel(){$('#batchPanel').classList.remove('hidden')}
+/*  The panel is a report, not a modal: it stays until it is either dismissed
+    or has nothing left to say. closeBatchPanel() also cancels any pending
+    auto-close so a manual close is final.                                  */
+let autoCloseTimer=null, autoCloseGen=0;
+function showBatchPanel(){clearAutoClose();$('#batchPanel').classList.remove('hidden')}
+function closeBatchPanel(){clearAutoClose();$('#batchPanel').classList.add('hidden')}
+function clearAutoClose(){
+  autoCloseGen++;                      // invalidates any tick already in flight
+  if(autoCloseTimer){clearInterval(autoCloseTimer);autoCloseTimer=null}
+  const n=$('#bAutoClose'); if(n){n.hidden=true;n.textContent=''}
+}
+/*  Auto-close ONLY when the run finished with nothing to read. If a listing
+    failed, was blocked, the run was halted, or it died outright, the panel is
+    the only place that says so — closing it would throw the answer away. The
+    countdown is visible and cancels the moment the panel is touched.      */
+function maybeAutoClose(run){
+  clearAutoClose();
+  if(!run)return;
+  const finished=['done','stopped'].includes(run.status);
+  const clean = finished && run.status==='done' && !run.fatal_error && !run.stop_reason
+             && !(Number(run.fail)||0) && !(Number(run.blocked)||0)
+             && !(run.errors&&run.errors.length) && !blockedEntries().length;
+  if(!clean)return;
+  let left=5;
+  const gen=autoCloseGen;              // cancellation is authoritative, not timer-dependent
+  const node=$('#bAutoClose');
+  const tick=()=>{
+    if(gen!==autoCloseGen)return;      // cancelled while this tick was pending
+    if(node){node.hidden=false;node.textContent='closing in '+left+'s'}
+    if(left--<=0){clearAutoClose();closeBatchPanel()}
+  };
+  tick();
+  autoCloseTimer=setInterval(tick,1000);
+}
 function applyRunToUi(run){
   const counts=normalizedRunCounts(run);
   S.batch={status:run.status||'idle',running:['queued','running','paused'].includes(run.status),stop:!!run.stop,...counts,remainingIds:Array.isArray(run.remaining_ids)?new Set(run.remaining_ids.map(String)):null};
@@ -1706,6 +1745,9 @@ async function pollRun(runId){
       await hydrateFromStore(true);applyFilter();
       renderPrepUi();
       toast(run.status==='stopped'?('Batch stopped on server \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.'):(run.fatal_error?('Batch could not run: '+run.fatal_error):('Server batch complete \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.')),(run.fail||run.fatal_error)?'bad':'ok');
+      // renderPrepUi()/hydrateFromStore have already run, so blockedEntries()
+      // is accurate by the time this decides whether there is anything to read.
+      maybeAutoClose(run);
     }
   }catch(e){pollTimer=setTimeout(()=>pollRun(runId),6000)}
 }
@@ -2258,6 +2300,18 @@ $('#priceBody').addEventListener('input',e=>{const t=e.target;if(!t.dataset.fiel
 $('#priceHead').addEventListener('change',e=>{if(e.target.id==='masterCheck'){S.selected=new Set(e.target.checked?S.draft.products.map((_,i)=>i):[]);renderTable()}});$('#selectAllBtn').addEventListener('click',()=>{S.selected=new Set(S.draft.products.map((_,i)=>i));renderTable()});$('#clearSelectionBtn').addEventListener('click',()=>{S.selected.clear();renderTable()});$('#applyBulkBtn').addEventListener('click',applyBulk);
 $('#variationGrid').addEventListener('click',e=>{const b=e.target.closest('[data-vact]');if(!b){if(e.target.id==='inlineAddMenu')addMenu();return}const pid=Number(b.dataset.pid),act=b.dataset.vact;if(act==='add-tier')addTier(pid);if(act==='remove-tier')removeTier(pid,decodeURIComponent(b.dataset.value));if(act==='rename')renameMenu(pid);if(act==='remove-menu')removeMenu(pid)});$('#addMenuBtn').addEventListener('click',addMenu);
 $('#dependencyCard').addEventListener('click',e=>{if(e.target.closest('#autoMapSwitch'))setAutoMap(!autoMapOn())});$('#dependencyCard').addEventListener('change',e=>{if(e.target.dataset.mapfield)toggleMap(e.target.dataset.mapfield,Number(e.target.dataset.pid),e.target.checked)});
+$('#bCloseBtn')?.addEventListener('click',closeBatchPanel);
+// Touching the panel means you are reading it — stop the clock.
+$('#batchPanel')?.addEventListener('mouseenter',clearAutoClose);
+$('#batchPanel')?.addEventListener('click',e=>{if(!e.target.closest('#bCloseBtn'))clearAutoClose()});
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  const t=e.target;
+  if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||'')))return;
+  if(document.querySelector('dialog[open]'))return;
+  const p=$('#batchPanel');
+  if(p&&!p.classList.contains('hidden')){e.preventDefault();closeBatchPanel()}
+});
 $('#bLogCopy')?.addEventListener('click',async()=>{const t=runLogText();if(!t){toast('Nothing in the log yet.','bad');return}
   try{await navigator.clipboard.writeText(t);toast('Run log copied.','ok')}catch(_){toast('Could not copy \u2014 select the text instead.','bad')}});
 $('#saveBtn').addEventListener('click',saveListing);$('#approveBtn').addEventListener('click',approveListing);$('#resetBtn').addEventListener('click',resetDraft);$('#openEtsyBtn').addEventListener('click',()=>window.open(currentListing().url||('https://www.etsy.com/listing/'+S.currentId),'_blank','noopener'));$('#copyIdBtn').addEventListener('click',async()=>{await navigator.clipboard.writeText(S.currentId);toast('Listing ID copied.','ok')});
