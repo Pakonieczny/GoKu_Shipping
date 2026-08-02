@@ -2334,6 +2334,40 @@ async function _fxRateToUsd(dateYmd) {
   return rate;
 }
 
+/* =================== Click-date vs conversion-date attribution ===================
+ * THE THING THAT MAKES A SALE LOOK "MISSING".
+ * Google Ads reports metrics.conversions / metrics.conversions_value against the date of
+ * the AD CLICK, not the date the purchase happened. A shopper who clicks a PMax ad on
+ * Jul 29, comes back on Aug 2 through a free listing and buys, produces a conversion that
+ * Google files under JUL 29. Meanwhile Brites_GAds_OrderLog (and Shopify, and the bank)
+ * file it under AUG 2. Both are right; they answer different questions.
+ *   • click date       — "what did the money I spent that day earn?"  → honest daily ROAS,
+ *                        matches the Google Ads UI, is what Smart Bidding optimises on.
+ *   • conversion date  — "what did I actually sell that day?"          → matches Shopify.
+ * metrics.*_by_conversion_date gives us the second view. We select BOTH on every query so
+ * the console can switch basis instantly with no extra round trip. Some report types
+ * refuse the by_conversion_date columns; _gaqlBothBases falls back to the click-date-only
+ * query in that case and leaves the CD fields null rather than blanking the dashboard.
+ */
+const CD_METRICS = "metrics.conversions_by_conversion_date, metrics.conversions_value_by_conversion_date";
+async function _gaqlBothBases(makeQuery) {
+  try { return { rows: await gaql(makeQuery(", " + CD_METRICS)), cd: true }; }
+  catch (e) { return { rows: await gaql(makeQuery("")), cd: false }; }
+}
+// Pull both bases off one response row.
+function _rowConv(m) {
+  return {
+    conv: Number((m || {}).conversions || 0),
+    value: Number((m || {}).conversionsValue || 0),
+    convCd: Number((m || {}).conversionsByConversionDate || 0),
+    valueCd: Number((m || {}).conversionsValueByConversionDate || 0)
+  };
+}
+// NOTE: the basis is applied in the CONSOLE, not here. Every row ships with both sets —
+// conv/value (click date) and convCd/valueCd (conversion date) — so flipping the toggle is
+// instant and needs no refetch. The autopilot's own decision baselines deliberately keep
+// using the click-date numbers, because that is what Smart Bidding is optimising against.
+
 async function measure() {
   const f = fb();
   // 1) ALL campaigns (config only, no date segment) — guarantees brand-new / paused /
@@ -2350,6 +2384,7 @@ async function measure() {
       budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
       budgetRes: (r.campaignBudget && r.campaignBudget.resourceName) || null,
       cost: 0, conv: 0, value: 0, clicks: 0, impr: 0,
+      convCd: 0, valueCd: 0, valueCdNative: 0, // conversion-date basis (see _gaqlBothBases)
       costNative: 0, valueNative: 0, fxIncomplete: false // native = account currency (CAD) before USD conversion; fxIncomplete = one or more days couldn't be converted (rate lookup failed) so cost/value fell back to native for those days rather than being silently misstated
     };
   });
@@ -2360,23 +2395,30 @@ async function measure() {
   //    USD at THAT day's real FX rate rather than one blended rate across the whole 14-day window.
   const _mtz = await _accountTz();
   const _mEnd = _acctDateYmd(_mtz, 0), _mStart = _acctDateYmd(_mtz, -13 * 86400000);
+  let _measureCd = false;
   try {
-    const met = await gaql(
+    const { rows: met, cd } = await _gaqlBothBases(extra =>
       `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.conversions, metrics.conversions_value,
-              metrics.clicks, metrics.impressions
+              metrics.clicks, metrics.impressions${extra}
        FROM campaign WHERE segments.date BETWEEN '${_mStart}' AND '${_mEnd}' AND campaign.status != 'REMOVED'`);
+    _measureCd = cd;
     for (const r of met) {
       const c = byId[r.campaign.id]; if (!c) continue;
       const d = _dateOnly((r.segments || {}).date);
-      const costNative = fromMicros(r.metrics.costMicros), valueNative = Number(r.metrics.conversionsValue || 0);
-      c.costNative += costNative; c.valueNative += valueNative;
+      const cv = _rowConv(r.metrics);
+      const costNative = fromMicros(r.metrics.costMicros), valueNative = cv.value;
+      c.costNative += costNative; c.valueNative += valueNative; c.valueCdNative += cv.valueCd;
       const rate = await _fxRateToUsd(d);
-      if (rate != null) { c.cost += costNative * rate; c.value += valueNative * rate; }
-      else { c.cost += costNative; c.value += valueNative; c.fxIncomplete = true; }
-      c.conv += Number(r.metrics.conversions || 0); c.clicks += Number(r.metrics.clicks || 0);
+      if (rate != null) { c.cost += costNative * rate; c.value += valueNative * rate; c.valueCd += cv.valueCd * rate; }
+      else { c.cost += costNative; c.value += valueNative; c.valueCd += cv.valueCd; c.fxIncomplete = true; }
+      c.conv += cv.conv; c.convCd += cv.convCd;
+      c.clicks += Number(r.metrics.clicks || 0);
       c.impr += Number(r.metrics.impressions || 0);
     }
   } catch (e) {}
+  // If Google refused the by_conversion_date columns, fall back to the click-date numbers
+  // rather than reporting 0 sales on the conversion-date basis.
+  if (!_measureCd) Object.values(byId).forEach(c => { c.convCd = c.conv; c.valueCd = c.value; c.cdUnavailable = true; });
   // 3) Schedule window (start/end) — queried separately, with a field-name fallback, so a
   //    naming difference can never blank the whole dashboard. Overlays startDate/endDate.
   for (const [sf, ef, sk, ek] of [
@@ -2426,23 +2468,28 @@ async function metricsRange({ start, end } = {}) {
     primaryStatus: r.campaign.primaryStatus || null, primaryStatusReasons: r.campaign.primaryStatusReasons || [],
     channel: r.campaign.advertisingChannelType || null,
     budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
-    cost: 0, conv: 0, value: 0, clicks: 0, impr: 0, costNative: 0, valueNative: 0, fxIncomplete: false }; });
+    cost: 0, conv: 0, value: 0, clicks: 0, impr: 0, convCd: 0, valueCd: 0, costNative: 0, valueNative: 0, fxIncomplete: false }; });
+  let _rangeCd = false;
   try {
-    const met = await gaql(
-      `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks, metrics.impressions
+    const { rows: met, cd } = await _gaqlBothBases(extra =>
+      `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks, metrics.impressions${extra}
        FROM campaign WHERE segments.date BETWEEN '${s}' AND '${e}' AND campaign.status != 'REMOVED'`);
+    _rangeCd = cd;
     for (const r of met) {
       const c = byId[r.campaign.id]; if (!c) continue;
       const d = _dateOnly((r.segments || {}).date);
-      const costNative = fromMicros(r.metrics.costMicros), valueNative = Number(r.metrics.conversionsValue || 0);
+      const cv = _rowConv(r.metrics);
+      const costNative = fromMicros(r.metrics.costMicros), valueNative = cv.value;
       c.costNative += costNative; c.valueNative += valueNative;
       const rate = await _fxRateToUsd(d);
-      if (rate != null) { c.cost += costNative * rate; c.value += valueNative * rate; }
-      else { c.cost += costNative; c.value += valueNative; c.fxIncomplete = true; }
-      c.conv += Number(r.metrics.conversions || 0); c.clicks += Number(r.metrics.clicks || 0);
+      if (rate != null) { c.cost += costNative * rate; c.value += valueNative * rate; c.valueCd += cv.valueCd * rate; }
+      else { c.cost += costNative; c.value += valueNative; c.valueCd += cv.valueCd; c.fxIncomplete = true; }
+      c.conv += cv.conv; c.convCd += cv.convCd;
+      c.clicks += Number(r.metrics.clicks || 0);
       c.impr += Number(r.metrics.impressions || 0);
     }
   } catch (er) {}
+  if (!_rangeCd) Object.values(byId).forEach(c => { c.convCd = c.conv; c.valueCd = c.value; c.cdUnavailable = true; });
   for (const [sf, ef, sk, ek] of [
     ["campaign.start_date_time", "campaign.end_date_time", "startDateTime", "endDateTime"],
     ["campaign.start_date", "campaign.end_date", "startDate", "endDate"]
@@ -5359,9 +5406,12 @@ async function dailyStats({ start, end } = {}) {
   const RANGE = `segments.date BETWEEN '${s}' AND '${e}'`;
 
   const [daily, ads, kws, ags, prods, channels] = await Promise.all([
-    gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, segments.date,
+    // Both attribution bases per day — click date (metrics.conversions) and conversion/order
+    // date (metrics.*_by_conversion_date). The chart picks one; the data carries both.
+    _gaqlBothBases(extra =>
+      `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, segments.date,
                  metrics.impressions, metrics.clicks, metrics.cost_micros,
-                 metrics.conversions, metrics.conversions_value
+                 metrics.conversions, metrics.conversions_value${extra}
           FROM campaign WHERE ${RANGE} AND campaign.status != 'REMOVED' ORDER BY segments.date`),
     gaql(`SELECT campaign.id, ad_group.name, ad_group_ad.ad.id,
                  ad_group_ad.ad.responsive_search_ad.headlines,
@@ -5398,25 +5448,31 @@ async function dailyStats({ start, end } = {}) {
     days.push(ymd);
     if (ymd >= e || days.length > 370) break;
   }
-  const zero = () => ({ impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 });
+  const zero = () => ({ impr: 0, clicks: 0, cost: 0, conv: 0, value: 0, convCd: 0, valueCd: 0 });
 
   const byCamp = {};
   const totalsByDay = {}; days.forEach(d => totalsByDay[d] = zero());
   let fxIncomplete = false;
-  for (const r of daily) {
+  const dailyRows = daily.rows || [];
+  const cdAvailable = !!daily.cd;
+  for (const r of dailyRows) {
     const c = r.campaign || {}, m = r.metrics || {}, d = _dateOnly((r.segments || {}).date);
     if (!byCamp[c.id]) byCamp[c.id] = { id: String(c.id), name: c.name, status: c.status, channel: c.advertisingChannelType || null, series: {}, totals: zero() };
     const cell = byCamp[c.id].series[d] || (byCamp[c.id].series[d] = zero());
     // Google reports cost/conversions_value in the account's billing currency (CAD here) — convert
     // to USD at THIS specific day's real rate before accumulating, so the spend/revenue charts show
     // real USD, not CAD. Impressions/clicks/conversions are unit counts, not money — untouched.
-    const costNative = fromMicros(m.costMicros), valueNative = +m.conversionsValue || 0;
+    const cv = _rowConv(m);
+    const costNative = fromMicros(m.costMicros), valueNative = cv.value;
     const rate = await _fxRateToUsd(d);
     const costUsd = rate != null ? costNative * rate : costNative;
     const valueUsd = rate != null ? valueNative * rate : valueNative;
+    const valueCdUsd = rate != null ? cv.valueCd * rate : cv.valueCd;
     if (rate == null) fxIncomplete = true;
     const add = (t) => { t.impr += +m.impressions || 0; t.clicks += +m.clicks || 0; t.cost += costUsd;
-                         t.conv += +m.conversions || 0; t.value += valueUsd; };
+                         t.conv += cv.conv; t.value += valueUsd;
+                         t.convCd += cdAvailable ? cv.convCd : cv.conv;
+                         t.valueCd += cdAvailable ? valueCdUsd : valueUsd; };
     add(cell); add(byCamp[c.id].totals); if (totalsByDay[d]) add(totalsByDay[d]);
   }
 
@@ -5484,6 +5540,7 @@ async function dailyStats({ start, end } = {}) {
 
   return {
     range: { start: s, end: e }, days, fxIncomplete, // true if any day's currency conversion couldn't be looked up — cost/value for that day fell back to native currency (CAD) rather than being silently misstated as USD
+    cdAvailable, // false => Google refused the by_conversion_date columns; convCd/valueCd mirror the click-date numbers
     totalsByDay: days.map(d => ({ date: d, ...totalsByDay[d] })),
     campaigns: Object.values(byCamp).map(c => ({ ...c, series: days.map(d => ({ date: d, ...(c.series[d] || zero()) })) })),
     ads: adRows.slice(0, 200), keywords: kwRows.slice(0, 300),
@@ -6391,13 +6448,16 @@ async function dashboard() {
 async function campaignTimeline({ id } = {}) {
   if (!id) return { error: "id required" };
   const cid = String(id).replace(/\D/g, "");
-  const [cRows, dayRows] = await Promise.all([
+  const [cRows, dayRes] = await Promise.all([
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons,
                  campaign.start_date_time, campaign.end_date_time, campaign.advertising_channel_type, campaign.bidding_strategy_type
           FROM campaign WHERE campaign.id = ${cid}`),
-    gaql(`SELECT segments.date, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros
+    _gaqlBothBases(extra =>
+      `SELECT segments.date, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros${extra}
           FROM campaign WHERE campaign.id = ${cid} AND segments.date DURING LAST_14_DAYS ORDER BY segments.date`)
   ]);
+  const dayRows = dayRes.rows || [];
+  const dayCd = !!dayRes.cd;
   const c = (cRows[0] || {}).campaign;
   if (!c) return { error: "campaign not found" };
   const isPmax = String(c.advertisingChannelType) === "PERFORMANCE_MAX";
@@ -6424,11 +6484,14 @@ async function campaignTimeline({ id } = {}) {
   }
   const days = [];
   for (const r of dayRows) {
-    const costNative = fromMicros(r.metrics.costMicros || 0), valueNative = Number(r.metrics.conversionsValue || 0);
+    const cv = _rowConv(r.metrics);
+    const costNative = fromMicros(r.metrics.costMicros || 0), valueNative = cv.value;
     const rate = await _fxRateToUsd(r.segments.date);
     days.push({ date: r.segments.date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
-      conversions: Number(r.metrics.conversions || 0),
+      conversions: cv.conv,
+      conversionsCd: dayCd ? cv.convCd : cv.conv,
       value: rate != null ? valueNative * rate : valueNative,
+      valueCd: dayCd ? (rate != null ? cv.valueCd * rate : cv.valueCd) : (rate != null ? valueNative * rate : valueNative),
       cost: rate != null ? costNative * rate : costNative,
       fxIncomplete: rate == null });
   }
