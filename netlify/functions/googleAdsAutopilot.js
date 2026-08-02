@@ -305,21 +305,72 @@ async function enqueueConversion({ gclid, gbraid, wbraid, value, currency, order
   return { enqueued: true, orderId: orderId || null };
 }
 
+/* ---- partialFailure decoding (the thing that makes a sale silently disappear) ----
+ * We send partialFailure:true. Google Ads then answers HTTP 200 EVEN WHEN it rejected
+ * individual rows in the batch — the rejections come back in `partialFailureError`, a
+ * google.rpc.Status whose details[] carry a GoogleAdsFailure with one error per bad
+ * operation, located by location.fieldPathElements = [{fieldName:"conversions", index:N}].
+ * Treating that 200 as "all uploaded" marks a real, unuploaded sale as done forever: the
+ * order still shows in the Shopify-fed Sales view, but Google Ads never learns about it,
+ * so the campaign row, ROAS and the daily charts stay short by exactly that sale.
+ * (setStatus() already handles this correctly — see the partialFailureError check there.)
+ */
+function _pfIndexErrors(pfErr, fieldName) {
+  const out = {};
+  if (!pfErr) return out;
+  const details = Array.isArray(pfErr.details) ? pfErr.details : [];
+  for (const d of details) {
+    const errs = Array.isArray(d.errors) ? d.errors : [];
+    for (const er of errs) {
+      const els = ((er.location || {}).fieldPathElements) || [];
+      const hit = els.find(e => e && e.fieldName === fieldName && e.index != null);
+      if (!hit) continue;
+      const code = er.errorCode ? Object.keys(er.errorCode).map(k => k + ":" + er.errorCode[k]).join(",") : "";
+      const msg = String(er.message || code || "rejected").slice(0, 300);
+      const i = Number(hit.index);
+      out[i] = out[i] ? (out[i] + " | " + msg) : msg;
+    }
+  }
+  return out;
+}
+
+// Which click id to send for a queue row. A row can legitimately carry more than one
+// (a stale gclid cookie alongside a fresh gbraid on an iOS/PMax click) — send the first
+// one we have NOT already had rejected, so a bad gclid no longer blocks the good gbraid.
+const _CLICK_ID_ORDER = ["gclid", "gbraid", "wbraid"];
+function _pickClickId(x) {
+  const tried = Array.isArray(x.triedClickIds) ? x.triedClickIds : [];
+  for (const k of _CLICK_ID_ORDER) if (x[k] && !tried.includes(k)) return { kind: k, value: x[k] };
+  for (const k of _CLICK_ID_ORDER) if (x[k]) return { kind: k, value: x[k] };
+  return null;
+}
+
+const CONV_MAX_ATTEMPTS = 5;
+
 async function uploadConversions({ ctrl, limit = 500 } = {}) {
   ctrl = ctrl || (await control());
   const f = fb(); if (!f) return { uploaded: 0 };
   const action = ENV.GADS_CONVERSION_ACTION; // customers/CID/conversionActions/NNN
-  if (!action) return { uploaded: 0, skipped: "GADS_CONVERSION_ACTION not set" };
+  if (!action) {
+    // Surface this in the ledger too — a silent early return means the queue grows for
+    // months with nothing in the activity feed to explain why nothing reaches Google.
+    await ledger({ kind: "uploadConversions", count: 0, ok: false, error: "GADS_CONVERSION_ACTION not set" });
+    return { uploaded: 0, skipped: "GADS_CONVERSION_ACTION not set" };
+  }
   const snap = await f.db.collection(COL.convQueue).where("uploaded", "==", false).limit(limit).get();
-  if (snap.empty) return { uploaded: 0 };
-  const docs = []; const conversions = [];
+  if (snap.empty) return { uploaded: 0, rejected: 0 };
+  const docs = []; const rows = []; const sent = []; const conversions = [];
   snap.forEach(d => {
-    const x = d.data(); docs.push(d.ref);
+    const x = d.data();
+    const click = _pickClickId(x);
+    if (!click) return; // unattributable — cannot be a click conversion
+    docs.push(d.ref); rows.push(x); sent.push(click.kind);
     const c = { conversionAction: action, conversionDateTime: x.conversionDateTime,
                 conversionValue: x.value, currencyCode: x.currency, orderId: x.orderId || undefined };
-    if (x.gclid) c.gclid = x.gclid; else if (x.gbraid) c.gbraid = x.gbraid; else if (x.wbraid) c.wbraid = x.wbraid;
+    c[click.kind] = click.value;
     conversions.push(c);
   });
+  if (!conversions.length) return { uploaded: 0, rejected: 0 };
   const token = await mintToken();
   const body = { conversions, partialFailure: true };
   if (ctrl.dryRun) body.validateOnly = true;
@@ -327,15 +378,47 @@ async function uploadConversions({ ctrl, limit = 500 } = {}) {
     method: "POST", headers: adsHeaders(token), body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
-  await ledger({ kind: "uploadConversions", count: conversions.length, validateOnly: !!ctrl.dryRun,
-                 ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 600),
-                 partialFailure: data.partialFailureError || null });
+  const pf = data.partialFailureError || null;
+  const pfMap = _pfIndexErrors(pf, "conversions");
+  const rejectedIdx = Object.keys(pfMap).map(Number);
+  const accepted = conversions.length - rejectedIdx.length;
+  await ledger({ kind: "uploadConversions", count: conversions.length, accepted,
+                 rejected: rejectedIdx.length, validateOnly: !!ctrl.dryRun,
+                 ok: res.ok && rejectedIdx.length === 0,
+                 error: res.ok ? null : JSON.stringify(data).slice(0, 600),
+                 partialFailure: pf });
   if (res.ok && !ctrl.dryRun) {
     const batch = f.db.batch();
-    docs.forEach(ref => batch.update(ref, { uploaded: true, uploadedAt: f.FV.serverTimestamp() }));
+    docs.forEach((ref, i) => {
+      const err = pfMap[i];
+      if (err == null) {
+        batch.update(ref, { uploaded: true, uploadedAt: f.FV.serverTimestamp(), uploadError: null, sentClickId: sent[i] });
+        return;
+      }
+      // Rejected. Keep it in the queue so it retries — and remember which click id was
+      // refused so the next attempt rotates to the other one. Give up only after
+      // CONV_MAX_ATTEMPTS, and then park it as failed rather than as "uploaded", so the
+      // queue can't quietly swallow a real sale.
+      const x = rows[i] || {};
+      const tried = (Array.isArray(x.triedClickIds) ? x.triedClickIds : []).concat([sent[i]]);
+      const attempts = (Number(x.uploadAttempts) || 0) + 1;
+      const exhausted = attempts >= CONV_MAX_ATTEMPTS ||
+        !_CLICK_ID_ORDER.some(k => x[k] && !tried.includes(k));
+      batch.update(ref, {
+        uploadAttempts: attempts,
+        triedClickIds: tried.slice(-3),
+        uploadError: String(err).slice(0, 300),
+        lastAttemptAt: f.FV.serverTimestamp(),
+        uploaded: exhausted,          // stop retrying, but…
+        failed: exhausted || false,   // …flag it so conversionHealth/UI can show it
+        failedAt: exhausted ? f.FV.serverTimestamp() : null
+      });
+    });
     await batch.commit();
   }
-  return { uploaded: res.ok && !ctrl.dryRun ? conversions.length : 0, validateOnly: !!ctrl.dryRun };
+  return { uploaded: res.ok && !ctrl.dryRun ? accepted : 0, rejected: rejectedIdx.length,
+           errors: rejectedIdx.slice(0, 10).map(i => ({ orderId: (rows[i] || {}).orderId || null, error: pfMap[i] })),
+           validateOnly: !!ctrl.dryRun };
 }
 
 /* ---- Conversion adjustments (refunds → retraction / restatement) ---- */
@@ -424,9 +507,9 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
   if (!action) return { uploaded: 0, skipped: "GADS_CONVERSION_ACTION not set" };
   const snap = await f.db.collection(COL.convAdj).where("uploaded", "==", false).limit(limit).get();
   if (snap.empty) return { uploaded: 0 };
-  const docs = []; const adjustments = [];
+  const docs = []; const adjRows = []; const adjustments = [];
   snap.forEach(d => {
-    const x = d.data(); docs.push(d.ref);
+    const x = d.data(); docs.push(d.ref); adjRows.push(x);
     const a = { conversionAction: action, adjustmentType: x.adjustmentType, adjustmentDateTime: x.adjustmentDateTime, orderId: x.orderId || undefined };
     if (!x.orderId && x.gclid) a.gclidDateTimePair = { gclid: x.gclid, conversionDateTime: x.adjustmentDateTime };
     if (x.adjustmentType === "RESTATEMENT" && x.restatementValue != null) a.restatementValue = { adjustedValue: x.restatementValue, currencyCode: x.currency };
@@ -437,9 +520,26 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
   if (ctrl.dryRun) body.validateOnly = true;
   const res = await fetch(`${BASE}/customers/${CID}:uploadConversionAdjustments`, { method: "POST", headers: adsHeaders(token), body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
-  await ledger({ kind: "uploadConversionAdjustments", count: adjustments.length, validateOnly: !!ctrl.dryRun, ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 600), partialFailure: data.partialFailureError || null });
-  if (res.ok && !ctrl.dryRun) { const batch = f.db.batch(); docs.forEach(ref => batch.update(ref, { uploaded: true, uploadedAt: f.FV.serverTimestamp() })); await batch.commit(); }
-  return { uploaded: res.ok && !ctrl.dryRun ? adjustments.length : 0, validateOnly: !!ctrl.dryRun };
+  // Same partialFailure trap as uploadConversions: a 200 here can still mean "we rejected
+  // this retraction". Marking it uploaded leaves Google Ads reporting refunded revenue.
+  const pf = data.partialFailureError || null;
+  const pfMap = _pfIndexErrors(pf, "conversionAdjustments");
+  const rejectedIdx = Object.keys(pfMap).map(Number);
+  const accepted = adjustments.length - rejectedIdx.length;
+  await ledger({ kind: "uploadConversionAdjustments", count: adjustments.length, accepted, rejected: rejectedIdx.length, validateOnly: !!ctrl.dryRun, ok: res.ok && rejectedIdx.length === 0, error: res.ok ? null : JSON.stringify(data).slice(0, 600), partialFailure: pf });
+  if (res.ok && !ctrl.dryRun) {
+    const batch = f.db.batch();
+    docs.forEach((ref, i) => {
+      const err = pfMap[i];
+      if (err == null) { batch.update(ref, { uploaded: true, uploadedAt: f.FV.serverTimestamp(), uploadError: null }); return; }
+      const x = adjRows[i] || {};
+      const attempts = (Number(x.uploadAttempts) || 0) + 1;
+      const exhausted = attempts >= CONV_MAX_ATTEMPTS;
+      batch.update(ref, { uploadAttempts: attempts, uploadError: String(err).slice(0, 300), lastAttemptAt: f.FV.serverTimestamp(), uploaded: exhausted, failed: exhausted || false });
+    });
+    await batch.commit();
+  }
+  return { uploaded: res.ok && !ctrl.dryRun ? accepted : 0, rejected: rejectedIdx.length, validateOnly: !!ctrl.dryRun };
 }
 
 /* ---- Conversion-tracking health (the 3-way connection's vital sign) ---- */
@@ -471,6 +571,16 @@ async function conversionHealth({ force } = {}) {
   } catch (e) {}
   if (f) {
     try { const q = await f.db.collection(COL.convQueue).where("uploaded", "==", false).limit(500).get(); out.queueDepth = q.size; } catch (e) {}
+    // Sales Google Ads REFUSED. These are the ones that show in the store's own sales log
+    // but will never appear in campaign metrics, ROAS or the daily charts. Surfacing the
+    // count (and a few examples) is the difference between a visible failure and a sale
+    // that just quietly isn't there.
+    try {
+      const q = await f.db.collection(COL.convQueue).where("failed", "==", true).limit(50).get();
+      out.failedCount = q.size; out.failedSamples = [];
+      q.forEach(d => { const x = d.data(); if (out.failedSamples.length < 5) out.failedSamples.push({ orderId: x.orderId || null, value: x.value, at: x.conversionDateTime || null, error: String(x.uploadError || "").slice(0, 200) }); });
+      if (out.failedCount > 0) out.reasons.push(out.failedCount + " sale(s) rejected by Google Ads on upload — see Sales → conversion status");
+    } catch (e) {}
     try { const q = await f.db.collection(COL.convAdj).where("uploaded", "==", false).limit(500).get(); out.adjQueueDepth = q.size; } catch (e) {}
     try { const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(50).get(); let found = null; lg.forEach(d => { const x = d.data(); if (!found && x.kind === "uploadConversions") found = { at: x.at && x.at.toMillis ? x.at.toMillis() : null, count: x.count, ok: x.ok }; }); out.lastUpload = found; } catch (e) {}
   }
