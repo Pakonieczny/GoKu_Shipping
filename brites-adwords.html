@@ -1286,8 +1286,36 @@ function navDrawer(open){document.body.classList[open?"add":"remove"]("navOpen")
   if(sc)sc.onclick=function(){navDrawer(false);};})();
 function go(k){navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench"){ensureOpportunities();loadPlaybook();}}
 
+/* ---- attribution basis ----
+   Google Ads files a conversion under the day the AD WAS CLICKED. Shopify (and the Sales
+   tab, and your bank) file it under the day the ORDER WAS PLACED. Click an ad Jul 29, buy
+   on Aug 2, and the same sale sits on two different dates depending on who you ask.
+   Every metrics row from the server now carries BOTH: conv/value = click date,
+   convCd/valueCd = conversion (order) date. This switch decides which one the console
+   shows, and flipping it is instant — no refetch.
+   Default is ORDER DATE so the dashboard agrees with Shopify out of the box. Note that on
+   the order-date basis a day's ROAS is revenue-sold ÷ spend-that-day, which are no longer
+   causally linked — switch to click date when judging whether a day's spend paid off. */
+var convBasis="conversion"; // "conversion" (order date) | "click" (ad-click date)
+function CV(o){ if(!o)return {conv:0,value:0};
+  return convBasis==="click"
+    ? {conv:+o.conv||0, value:+o.value||0}
+    : {conv:(o.convCd!=null?+o.convCd:+o.conv)||0, value:(o.valueCd!=null?+o.valueCd:+o.value)||0};}
+function basisLabel(){return convBasis==="click"?"by ad-click date":"by order date";}
+function basisTitle(){return convBasis==="click"
+  ? "Sales counted on the day the ad was CLICKED. Matches the Google Ads UI and what Smart Bidding optimises on — daily ROAS is honest, but a sale can appear days before it was placed."
+  : "Sales counted on the day the ORDER was placed. Matches Shopify and your Sales tab — but a day's ROAS no longer lines up with the spend that earned it.";}
+function basisToggleHtml(){
+  var mk=function(v,lab){var on=convBasis===v;return '<button class="btn '+(on?"gold":"ghost")+' sm cbasis" data-b="'+v+'" style="padding:3px 9px;font-size:10.5px">'+lab+'</button>';};
+  return '<span title="'+esc(basisTitle())+'" style="display:inline-flex;gap:4px;align-items:center">'
+    +'<span class="muted" style="font-size:10px;letter-spacing:.13em;text-transform:uppercase">Count sales</span>'
+    +mk("conversion","order date")+mk("click","click date")+'</span>';}
+function wireBasisToggle(scope){if(!scope)return;
+  Array.prototype.forEach.call(scope.querySelectorAll(".cbasis"),function(b){
+    b.onclick=function(){var v=this.getAttribute("data-b");if(v===convBasis)return;convBasis=v;renderCommand();};});}
+
 /* ---- totals ---- */
-function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(camps||[]).forEach(function(c){t.cost+=+c.cost||0;t.conv+=+c.conv||0;t.value+=+c.value||0;t.clicks+=+c.clicks||0;t.impr+=+c.impr||0;t.budget+=+c.budget||0;});return t;}
+function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(camps||[]).forEach(function(c){var cv=CV(c);t.cost+=+c.cost||0;t.conv+=cv.conv;t.value+=cv.value;t.clicks+=+c.clicks||0;t.impr+=+c.impr||0;t.budget+=+c.budget||0;});return t;}
 
 /* ---- render: command ---- */
 function renderControlBar(){var c=DASH.control||{};
@@ -1340,6 +1368,10 @@ function convHealthHtml(h){if(!h)return '<div class="muted" style="font-size:12.
   var head=state==="ok"?"Conversion tracking is live":state==="warn"?"Configured \u2014 no ad-driven sales recorded yet":"Conversion tracking is not active";
   var sub=state==="ok"?"Ad-click purchases upload to Google Ads automatically.":state==="warn"?"Your ads haven\u2019t produced a tracked sale yet. The organic sales above don\u2019t count here \u2014 and shouldn\u2019t.":"Recommendations run blind until this is connected.";
   var enabledAction=(h.actions||[]).some(function(a){return a.status==="ENABLED";});var bits=[];
+  // The single most confusing thing about this dashboard, stated plainly where it bites.
+  sub+=" <span style=\"display:block;margin-top:6px;color:var(--ink-45);font-size:11.5px\">Orders on this page are dated when the ORDER was placed. Google Ads dates the same sale to when the AD WAS CLICKED — so a click on the 29th that becomes a purchase on the 2nd shows on the 29th in Google Ads. The Command Center now defaults to order date; flip <b>Count sales</b> there to compare.</span>";
+  // Sales Google Ads refused outright — these will never appear in any campaign metric.
+  if(h.failedCount)bits.push(h.failedCount+" rejected by Google");
   bits.push("action "+(h.actionConfigured?(enabledAction?"enabled":"set, not enabled"):"not set"));
   if(h.recentConversions!=null)bits.push(h.recentConversions+" tracked / 30d");
   if(h.queueDepth!=null)bits.push(h.queueDepth+" queued"+(h.adjQueueDepth?(" +"+h.adjQueueDepth+" adj"):""));
@@ -1433,9 +1465,9 @@ function renderCommand(){
   var roas=t.cost>0?(t.value/t.cost):null, ctr=t.impr>0?(t.clicks/t.impr*100):null, cpa=t.conv>0?(t.cost/t.conv):null;
   var none = t.cost===0 && t.impr===0;
   var rb=$("#cmdRangeBar");
-  if(rb){rb.innerHTML='<span class="muted" style="font-size:10px;letter-spacing:.13em;text-transform:uppercase">Date range</span>'+rangePicker("cmd",cmdRange,cmdApplyRange)+'<span class="muted" style="font-size:11.5px">Metrics, chart &amp; campaigns below reflect this window.</span>';wireRangePickers(rb);}
+  if(rb){rb.innerHTML='<span class="muted" style="font-size:10px;letter-spacing:.13em;text-transform:uppercase">Date range</span>'+rangePicker("cmd",cmdRange,cmdApplyRange)+'<span class="muted" style="font-size:11.5px">Metrics, chart &amp; campaigns below reflect this window.</span>'+'<span style="margin-left:auto">'+basisToggleHtml()+'</span>';wireRangePickers(rb);wireBasisToggle(rb);}
   var kpiScope=none?"no spend yet":(cmdRangeLabel+(kpiScopeName?" \u00b7 "+kpiScopeName:""));
-  var kpis=[["Spend",money(t.cost),kpiScope],["Revenue",money(t.value),kpiScopeName?"this campaign":""],["ROAS",roas==null?"—":roas.toFixed(2)+"x",""],["Conversions",String(Math.round((t.conv||0)*10)/10),""],["CTR",ctr==null?"—":ctr.toFixed(1)+"%",""],["Cost / conv",cpa==null?"—":money(cpa),""]];
+  var kpis=[["Spend",money(t.cost),kpiScope],["Revenue",money(t.value),basisLabel()],["ROAS",roas==null?"—":roas.toFixed(2)+"x",basisLabel()],["Conversions",String(Math.round((t.conv||0)*10)/10),basisLabel()],["CTR",ctr==null?"—":ctr.toFixed(1)+"%",""],["Cost / conv",cpa==null?"—":money(cpa),""]];
   $("#kpis").innerHTML=kpis.map((k,i)=>'<div class="kpi '+(i===2?"accent":"")+'"><div class="lab">'+k[0]+'</div><div class="val">'+k[1]+'</div><div class="delta muted" style="font-size:11px">'+(k[2]||"&nbsp;")+'</div></div>').join("");
   // channel split: shown only once a feed (PMax) campaign exists — and only in the all-campaigns
   // view, since a Search-vs-PMax split of a single campaign is definitionally meaningless.
@@ -1443,7 +1475,7 @@ function renderCommand(){
     if(srFilter&&srFilter!=="all")return;
     var rowsC=(cmdMetrics||DASH.lastMetrics||[]);var pm=rowsC.filter(function(c){return c.channel==="PERFORMANCE_MAX";});
     if(!pm.length)return;
-    var sSearch=0,sPm=0,cvS=0,cvP=0;rowsC.forEach(function(c){var isP=c.channel==="PERFORMANCE_MAX";if(isP){sPm+=(+c.cost||0);cvP+=(+c.conv||0);}else{sSearch+=(+c.cost||0);cvS+=(+c.conv||0);}});
+    var sSearch=0,sPm=0,cvS=0,cvP=0;rowsC.forEach(function(c){var isP=c.channel==="PERFORMANCE_MAX";var b=CV(c);if(isP){sPm+=(+c.cost||0);cvP+=b.conv;}else{sSearch+=(+c.cost||0);cvS+=b.conv;}});
     var el=document.createElement("div");el.id="kpiSplit";
     el.style.cssText="margin:-8px 0 16px;font-size:12px;color:var(--ink-70);display:flex;gap:16px;flex-wrap:wrap";
     el.innerHTML='<span><span style="font-weight:700;letter-spacing:.05em;font-size:10px;color:var(--ink-45)">SEARCH</span> '+money(sSearch)+' \u00b7 '+((+cvS||0)%1?cvS.toFixed(1):cvS)+' conv</span>'
@@ -1482,9 +1514,9 @@ function campDates(c){var s=c.startDate?fmtMon(c.startDate):null,e=c.endDate?fmt
   return {s:s,e:e,info:info};}
 function campaignTable(camps){
   return '<table class="ptable"><thead><tr><th>Campaign</th><th>Status</th><th>Schedule</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">Conv.</th><th class="r">ROAS</th><th class="r"></th></tr></thead><tbody>'+
-    camps.map(function(c,i){var r=(+c.cost>0)?(c.value/c.cost):null;var dt=campDates(c);
-      var ctr=c.impr>0?(c.clicks/c.impr*100):null,cpc=c.clicks>0?(c.cost/c.clicks):null,cpa=c.conv>0?(c.cost/c.conv):null;
-      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px;white-space:nowrap">PMAX</span>':'')+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r"><span class="bge" data-id="'+esc(String(c.id))+'" data-b="'+(+c.budget||0)+'" data-res="'+esc(String(c.budgetRes||""))+'" title="Click to edit daily budget" style="cursor:pointer;border-bottom:1px dashed var(--ink-45);padding-bottom:1px">'+(c.budget?money(c.budget):"\u2014")+' <span style="font-size:10px;opacity:.55">\u270e</span></span></td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td>'
+    camps.map(function(c,i){var cv=CV(c);var r=(+c.cost>0)?(cv.value/c.cost):null;var dt=campDates(c);
+      var ctr=c.impr>0?(c.clicks/c.impr*100):null,cpc=c.clicks>0?(c.cost/c.clicks):null,cpa=cv.conv>0?(c.cost/cv.conv):null;
+      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px;white-space:nowrap">PMAX</span>':'')+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r"><span class="bge" data-id="'+esc(String(c.id))+'" data-b="'+(+c.budget||0)+'" data-res="'+esc(String(c.budgetRes||""))+'" title="Click to edit daily budget" style="cursor:pointer;border-bottom:1px dashed var(--ink-45);padding-bottom:1px">'+(c.budget?money(c.budget):"\u2014")+' <span style="font-size:10px;opacity:.55">\u270e</span></span></td><td class="r mono">'+money(c.cost)+'</td><td class="r mono" title="'+esc(basisTitle())+'">'+((cv.conv||0)%1?cv.conv.toFixed(1):(cv.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td>'
       +'<td class="r" style="white-space:nowrap">'
       +(c.status==="ENABLED"?'<button class="btn ghost sm cst" data-id="'+esc(String(c.id))+'" data-to="PAUSED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Pause</button>'
         :c.status==="PAUSED"?'<button class="btn gold sm cst" data-id="'+esc(String(c.id))+'" data-to="ENABLED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Enable</button>'
@@ -1493,7 +1525,7 @@ function campaignTable(camps){
       +' <button class="btn ghost sm ctl" data-id="'+esc(String(c.id))+'" style="padding:3px 10px;font-size:11px;margin-left:5px">Timeline</button>'
       +'</td></tr>'
       +'<tr class="ctlrow" data-tl="'+esc(String(c.id))+'" style="display:none"><td colspan="9" style="padding:0 12px 12px"><div class="tlbox"></div></td></tr>';
-      var det='<tr class="cdet" data-d="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
+      var det='<tr class="cdet" data-d="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions <span style="font-weight:400;color:var(--ink-45)">('+basisLabel()+')</span></b><br><span class="mono">'+(cv.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(cv.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
 function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});
   Array.prototype.forEach.call(scope.querySelectorAll(".bge"),function(b){b.onclick=async function(ev){ev.stopPropagation();
@@ -1651,11 +1683,12 @@ function fmtDayFull(ymd){var d=rpParse(ymd);return _DOW[d.getDay()]+" "+_MON[d.g
 // one rich tooltip per day shared by both Command daily charts
 function dailyTips(ser,ctrl,showCeiling){
   function dot(c){return '<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:6px"></i>';}
-  return ser.map(function(r){
+  return ser.map(function(r){var cv=CV(r);
     var t='<b style="font-size:13.5px">'+esc(fmtDayFull(r.date))+"</b><br>"+
-      dot("var(--gold)")+"Revenue <b>"+money(r.value)+"</b><br>"+
+      dot("var(--gold)")+"Revenue <b>"+money(cv.value)+"</b><br>"+
       dot("var(--ink-45)")+"Spend <b>"+money(r.cost)+"</b><br>"+
-      dot("#33525d")+"Clicks <b>"+(r.clicks||0)+"</b> \u00b7 Impr <b>"+(r.impr||0).toLocaleString()+"</b> \u00b7 Conv <b>"+(Math.round((r.conv||0)*10)/10)+"</b>";
+      dot("#33525d")+"Clicks <b>"+(r.clicks||0)+"</b> \u00b7 Impr <b>"+(r.impr||0).toLocaleString()+"</b> \u00b7 Conv <b>"+(Math.round((cv.conv||0)*10)/10)+"</b>"+
+      "<br><span style='opacity:.6;font-size:11px'>revenue &amp; conv "+basisLabel()+"</span>";
     if(showCeiling&&ctrl.maxDailyBudgetTotal)t+="<br><span style='opacity:.7;font-size:11.5px'>Ceiling "+money(ctrl.maxDailyBudgetTotal)+"/day</span>";
     return t;});}
 function renderDailyCharts(){if(!DAILY)return;var chips=$("#srChips");var ctrl=DASH.control||{};
@@ -1664,10 +1697,12 @@ function renderDailyCharts(){if(!DAILY)return;var chips=$("#srChips");var ctrl=D
     chips.innerHTML=mk("all","All campaigns","")+withData.map(function(c){return mk(c.id,c.name.length>26?c.name.slice(0,24)+"\u2026":c.name,c.totals.clicks+" cl",c.channel);}).join("");
     Array.prototype.forEach.call(chips.querySelectorAll(".srchip"),function(b){b.onclick=function(){srFilter=this.getAttribute("data-f");renderCommand();};});}
   var ser=dailySeriesFor(srFilter)||[];var days=ser.map(function(r){return r.date;});
-  var spend=ser.map(function(r){return Math.round(r.cost*100)/100;}),rev=ser.map(function(r){return Math.round(r.value*100)/100;});
-  var clicks=ser.map(function(r){return r.clicks;}),conv=ser.map(function(r){return r.conv;}),impr=ser.map(function(r){return r.impr;});
+  var spend=ser.map(function(r){return Math.round(r.cost*100)/100;}),rev=ser.map(function(r){return Math.round(CV(r).value*100)/100;});
+  var clicks=ser.map(function(r){return r.clicks;}),conv=ser.map(function(r){return CV(r).conv;}),impr=ser.map(function(r){return r.impr;});
   var tImpr=impr.reduce(function(a,b){return a+b;},0),tClicks=clicks.reduce(function(a,b){return a+b;},0),tSpend=spend.reduce(function(a,b){return a+b;},0),tRev=rev.reduce(function(a,b){return a+b;},0),tConv=conv.reduce(function(a,b){return a+b;},0);
-  $("#srSub").textContent=days.length+" days \u00b7 "+(srFilter==="all"?"all campaigns":"1 campaign")+" \u00b7 "+money(tSpend)+" spend / "+money(tRev)+" rev";
+  $("#srSub").textContent=days.length+" days \u00b7 "+(srFilter==="all"?"all campaigns":"1 campaign")+" \u00b7 "+money(tSpend)+" spend / "+money(tRev)+" rev \u00b7 "+basisLabel();
+  $("#srSub").title=basisTitle();
+  if(DAILY.cdAvailable===false&&convBasis==="conversion")$("#srSub").textContent+=" (unavailable \u2014 showing click date)";
   var axis='<div class="legend" style="justify-content:space-between;font-size:10px;color:var(--ink-45)"><span>'+(days.length?fmtDayShort(days[0]):"")+'</span><span>'+(days.length?fmtDayShort(days[Math.floor(days.length/2)]):"")+'</span><span>'+(days.length?fmtDayShort(days[days.length-1]):"")+'</span></div>';
   var series=[{data:rev,color:"var(--gold)",fill:true},{data:spend,color:"var(--ink)"}];
   if(srFilter==="all"&&ctrl.maxDailyBudgetTotal)series.push({data:spend.map(function(){return ctrl.maxDailyBudgetTotal;}),color:"var(--clay)",dash:"4 4",dots:false,width:1});
@@ -1687,7 +1722,7 @@ function fillAdLevel(){if(!DAILY)return;
     var prodsAll=(DAILY.products||[]).filter(function(p){return p.campaignId===cid;}).slice(0,10);
     var html="";
     if(c){var sp=c.series.map(function(r){return Math.round(r.cost*100)/100;});var cl=c.series.map(function(r){return r.clicks;});
-      if(sp.some(function(v){return v>0;})||cl.some(function(v){return v>0;}))html+='<div style="margin:8px 0 4px"><b style="font-size:11.5px">Daily spend & clicks \u00b7 this campaign</b>'+lineChart([{data:sp,color:"var(--ink)",name:"Spend"},{data:cl,color:"#33525d",dash:"3 3",name:"Clicks"}],{h:110,fmt:function(v){return v;},tips:c.series.map(function(r){return "<b>"+esc(fmtDayFull(r.date))+"</b><br>Spend "+money(r.cost)+" \u00b7 Clicks "+(r.clicks||0)+"<br>Impr "+(r.impr||0).toLocaleString()+" \u00b7 Conv "+(Math.round((r.conv||0)*10)/10);})})+'</div>';}
+      if(sp.some(function(v){return v>0;})||cl.some(function(v){return v>0;}))html+='<div style="margin:8px 0 4px"><b style="font-size:11.5px">Daily spend & clicks \u00b7 this campaign</b>'+lineChart([{data:sp,color:"var(--ink)",name:"Spend"},{data:cl,color:"#33525d",dash:"3 3",name:"Clicks"}],{h:110,fmt:function(v){return v;},tips:c.series.map(function(r){return "<b>"+esc(fmtDayFull(r.date))+"</b><br>Spend "+money(r.cost)+" \u00b7 Clicks "+(r.clicks||0)+"<br>Impr "+(r.impr||0).toLocaleString()+" \u00b7 Conv "+(Math.round((CV(r).conv||0)*10)/10);})})+'</div>';}
     if(isPmax){
       // PMax has no RSAs/keywords — its per-ad equivalent is the asset group (own creative set +
       // ad strength), and its top-keywords equivalent is per-product performance from the feed.
@@ -2139,8 +2174,8 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
 
 /* ---- render: performance (sortable, expandable, AI-analyzed) ---- */
 var P={sortKey:"cost",dir:-1,expanded:{},analysis:{},loading:{}};
-function fieldVal(c,k){var roas=c.cost>0?c.value/c.cost:-1,ctr=c.impr>0?c.clicks/c.impr*100:-1,cpa=c.conv>0?c.cost/c.conv:1e15;var an=P.analysis[c.id];
-  return {name:(c.name||"").toLowerCase(),status:c.status||"",budget:+c.budget||0,cost:+c.cost||0,impr:+c.impr||0,ctr:ctr,conv:+c.conv||0,cpa:cpa,roas:roas,opt:an?an.score:-1}[k];}
+function fieldVal(c,k){var cv=CV(c);var roas=c.cost>0?cv.value/c.cost:-1,ctr=c.impr>0?c.clicks/c.impr*100:-1,cpa=cv.conv>0?c.cost/cv.conv:1e15;var an=P.analysis[c.id];
+  return {name:(c.name||"").toLowerCase(),status:c.status||"",budget:+c.budget||0,cost:+c.cost||0,impr:+c.impr||0,ctr:ctr,conv:cv.conv||0,cpa:cpa,roas:roas,opt:an?an.score:-1}[k];}
 function optDot(score){if(score==null)return '<span style="color:var(--ink-25)">—</span>';var col=score>=70?"var(--sage)":score>=40?"var(--gold)":"var(--clay)";return '<span title="optimization score" style="display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:12px;justify-content:center"><span style="width:9px;height:9px;border-radius:50%;background:'+col+'"></span>'+score+'</span>';}
 function renderPerf(){if(!document.getElementById("ptable"))return; // view removed — Ad Doctor supersedes it
 
@@ -2155,7 +2190,8 @@ function renderPerf(){if(!document.getElementById("ptable"))return; // view remo
   wirePerf();
 }
 function rowHtml(c){
-  var roas=c.cost>0?c.value/c.cost:null,ctr=c.impr>0?c.clicks/c.impr*100:null,cpa=c.conv>0?c.cost/c.conv:null;
+  var cv=CV(c);
+  var roas=c.cost>0?cv.value/c.cost:null,ctr=c.impr>0?c.clicks/c.impr*100:null,cpa=cv.conv>0?c.cost/cv.conv:null;
   var an=P.analysis[c.id],open=!!P.expanded[c.id];
   var r='<tr class="prow"><td class="pexp" data-id="'+c.id+'" style="text-align:center;color:var(--ink-45);cursor:pointer">'+(open?"\u25be":"\u25b8")+'</td>'+
     '<td class="pexp" data-id="'+c.id+'" style="font-weight:600;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">'+esc(c.name)+'</td>'+
@@ -2164,7 +2200,7 @@ function rowHtml(c){
     '<td class="r mono">'+money(c.cost)+'</td>'+
     '<td class="r mono">'+(c.impr||0).toLocaleString()+'</td>'+
     '<td class="r mono">'+(ctr==null?"\u2014":ctr.toFixed(1)+"%")+'</td>'+
-    '<td class="r mono">'+(c.conv||0)+'</td>'+
+    '<td class="r mono" title="'+esc(basisTitle())+'">'+(cv.conv||0)+'</td>'+
     '<td class="r mono">'+(cpa==null?"\u2014":money(cpa))+'</td>'+
     '<td class="r mono">'+(roas==null?"\u2014":'<span class="'+(roas>=3?"roas-good":roas>=2?"roas-mid":"roas-bad")+'">'+roas.toFixed(2)+'x</span>')+'</td>'+
     '<td class="c">'+optDot(an?an.score:null)+'</td></tr>';
