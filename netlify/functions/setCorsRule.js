@@ -1,36 +1,42 @@
 /**
  * Netlify Function  →  GET /.netlify/functions/setCorsRule
- * One-shot: writes the CORS JSON to gs://gokudatabase.appspot.com
+ *
+ * Re-applies the bucket's CORS configuration on demand.
+ *
+ * WHY THIS FILE CHANGED
+ * ---------------------
+ * The previous version kept its own hard-coded origin list containing exactly
+ * one entry — shipping-1 — and setCorsConfiguration REPLACES the config rather
+ * than merging into it. Because this is an unauthenticated GET, a single hit
+ * from anyone (a link preview, a crawler, a bookmarked "one-shot" URL that was
+ * never deleted) silently revoked Storage access for every other station until
+ * the next firebaseAdmin cold start happened to put it back. That is a very
+ * quiet way to break image uploads across the shop.
+ *
+ * It now applies the same configuration firebaseAdmin.js owns, so the worst
+ * this endpoint can do is re-assert the correct rule. Idempotent, and useful
+ * when you want the rule refreshed without waiting for a cold start.
  */
-const { Storage } = require("@google-cloud/storage");
-
-/* reuse the same service-account details you already load in firebaseAdmin.js */
-const creds = {
-  client_email: process.env.FIREBASE_CLIENT_EMAIL,
-  private_key : process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-  project_id  : process.env.FIREBASE_PROJECT_ID
-};
+const admin = require("./firebaseAdmin");
 
 exports.handler = async () => {
   try {
-    const storage = new Storage({ credentials: creds });
-    await storage.bucket("gokudatabase.firebasestorage.app")
-      .setCorsConfiguration([{
-        origin        : ["https://shipping-1.goldenspike.app"],
-        method        : ["GET","POST","PUT","DELETE","HEAD","OPTIONS"],
-        responseHeader: ["Content-Type","Authorization"],
-        maxAgeSeconds : 3600
-      }]);
-
+    await admin.applyBucketCors();
     return {
       statusCode: 200,
-      body: "✅ CORS rule applied – you can delete this function now."
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        success: true,
+        bucket : admin.DEFAULT_BUCKET,
+        origins: admin.CORS_ORIGINS
+      })
     };
   } catch (err) {
     console.error("CORS update failed:", err);
     return {
       statusCode: 500,
-      body: "❌ CORS update failed – check function logs."
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ success: false, error: String((err && err.message) || err) })
     };
   }
 };
