@@ -2781,11 +2781,24 @@ async function merchantFreeProductPerformance({days=90}={}){
     const query=`SELECT offer_id, title, customer_country_code, product_type_l1, custom_label0, custom_label1, custom_label2, custom_label3, custom_label4, clicks, impressions, conversions, conversion_value, marketing_method FROM product_performance_view WHERE date BETWEEN '${start}' AND '${end}' AND marketing_method = "ORGANIC"`;
     let pageToken=null;const byId={},httpStatuses=[];let pages=0;
     do{
-      const body={query,pageSize:100000};if(pageToken)body.pageToken=pageToken;
-      const res=await fetch(`https://merchantapi.googleapis.com/reports/v1/accounts/${merchantId}/reports:search`,{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(body)});
-      pages++; httpStatuses.push(res.status);
-      const data=await res.json().catch(()=>({}));
-      if(!res.ok)throw new Error("[gmc] reports search failed: "+JSON.stringify(data).slice(0,500));
+      // pageSize was 100000. The Merchant API caps reports:search at 1000 rows per page, and
+      // asking for a page two orders of magnitude over the cap is a known way to get a
+      // server-side 500 INTERNAL instead of a clean INVALID_ARGUMENT. Page properly instead.
+      const body={query,pageSize:1000};if(pageToken)body.pageToken=pageToken;
+      // 500 INTERNAL / 503 / 429 from Google are transient by definition. Previously a single
+      // blip threw, killing the whole merchant report for the run and silently degrading every
+      // opportunity card to the inferred-Shopify fallback. Retry a few times with backoff.
+      let res=null,data={},attempt=0;
+      for(;;){
+        res=await fetch(`https://merchantapi.googleapis.com/reports/v1/accounts/${merchantId}/reports:search`,{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+        httpStatuses.push(res.status);
+        data=await res.json().catch(()=>({}));
+        const retryable=res.status===429||res.status===500||res.status===503||res.status===504;
+        if(res.ok||!retryable||attempt>=3)break;
+        await _sleep(600*Math.pow(2,attempt)); attempt++;
+      }
+      pages++;
+      if(!res.ok)throw new Error("[gmc] reports search failed after "+(attempt+1)+" attempt(s): "+JSON.stringify(data).slice(0,500));
       (data.results||[]).forEach(row=>{
         const v=row.productPerformanceView||{},id=String(v.offerId||"").trim();if(!id)return;
         const k=id.toLowerCase(),cv=v.conversionValue||{};
@@ -2794,6 +2807,10 @@ async function merchantFreeProductPerformance({days=90}={}){
         x.value+=(Number(cv.amountMicros)||0)/1e6;if(v.customerCountryCode)x.countries.add(v.customerCountryCode);
       });
       pageToken=data.nextPageToken||null;
+      // Hard page cap. At 1000 rows/page this is 500k offer-rows — far beyond any real catalogue,
+      // so hitting it means a pagination bug, not a big account. Bail rather than loop forever
+      // inside a function with a 13-minute budget.
+      if(pages>=500){pageToken=null;}
     }while(pageToken);
     Object.values(byId).forEach(x=>{x.conversions=_r2(x.conversions);x.value=_r2(x.value);x.conversionRate=x.clicks>0?_r2(x.conversions/x.clicks):null;x.countries=[...x.countries];});
     return {configured:true,byId,rows:Object.values(byId),days:d,at:Date.now(),error:null,pages,httpStatuses};
@@ -3415,8 +3432,16 @@ function _buildPmaxTextAssetOps(adCopy, startId) {
 }
 
 
+// Memo for the auto-discovered PMax audience. This MUST exist before
+// discoverPmaxAudienceResource() reads it: reading `.at` off an undeclared identifier throws
+// "ReferenceError: _pmaxAudienceDiscovery is not defined" on the very first call, and that throw
+// happens ABOVE the try/catch below, so it escapes the function entirely and takes the whole
+// Generate action down with it. `ttl` keeps a real discovery cached for 6h while letting a
+// transient API failure retry in 5 minutes instead of being frozen in for the rest of the day.
+let _pmaxAudienceDiscovery = { at: 0, value: null, ttl: 0 };
+
 async function discoverPmaxAudienceResource(){
-  if(_pmaxAudienceDiscovery.at&&Date.now()-_pmaxAudienceDiscovery.at<6*60*60*1000)return _pmaxAudienceDiscovery.value;
+  if(_pmaxAudienceDiscovery.at&&Date.now()-_pmaxAudienceDiscovery.at<(_pmaxAudienceDiscovery.ttl||6*60*60*1000))return _pmaxAudienceDiscovery.value;
   let value=null;
   try{
     const rows=await gaql(`SELECT audience.resource_name, audience.name, audience.status FROM audience LIMIT 500`);
@@ -3431,7 +3456,8 @@ async function discoverPmaxAudienceResource(){
     }).sort((a,b)=>b.score-a.score);
     if(ranked[0]&&ranked[0].score>=35)value={resource:ranked[0].resource,name:ranked[0].name,source:"auto-discovered first-party audience",warning:null};
   }catch(e){value={resource:null,name:null,source:null,warning:"No safe first-party PMax audience could be auto-discovered: "+String(e.message||e).slice(0,120)};}
-  _pmaxAudienceDiscovery={at:Date.now(),value};return value;
+  _pmaxAudienceDiscovery={at:Date.now(),value,ttl:(value&&value.resource)?6*60*60*1000:5*60*1000};
+  return value;
 }
 
 async function validatePmaxAudienceResource(resourceName) {
@@ -3721,9 +3747,16 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   const themes=(Array.isArray(searchThemes)&&searchThemes.length?searchThemes:_derivePmaxSearchThemes({collectionTitle:coll.title,productTitles:chosenTitles,types})).slice(0,25);
   let audienceResource=String(ENV.GADS_PMAX_AUDIENCE_RESOURCE||"").trim()||null;
   if(!audienceResource&&ENV.GADS_PMAX_AUDIENCE_ID)audienceResource=`customers/${CID}/audiences/${String(ENV.GADS_PMAX_AUDIENCE_ID).replace(/\D/g,"")}`;
-  let audienceCheck=audienceResource?await validatePmaxAudienceResource(audienceResource):{resource:null,name:null,warning:null};
+  // An audience signal is an OPTIMISATION for PMax, never a prerequisite — a campaign builds
+  // fine without one. Neither lookup may be allowed to abort campaign generation, so both are
+  // contained here and downgraded to a warning on the card.
+  let audienceCheck={resource:null,name:null,warning:null};
+  try { if(audienceResource) audienceCheck=await validatePmaxAudienceResource(audienceResource); }
+  catch(e){ audienceCheck={resource:null,name:null,warning:"Configured PMax audience could not be validated: "+String(e.message||e).slice(0,120)}; }
   if(!audienceCheck.resource){
-    const auto=await discoverPmaxAudienceResource();
+    let auto=null;
+    try { auto=await discoverPmaxAudienceResource(); }
+    catch(e){ auto={resource:null,name:null,source:null,warning:"PMax audience auto-discovery failed: "+String(e.message||e).slice(0,120)}; }
     if(auto&&auto.resource)audienceCheck={resource:auto.resource,name:auto.name,source:auto.source,warning:audienceCheck.warning||null};
     else if(auto&&auto.warning&&!audienceCheck.warning)audienceCheck.warning=auto.warning;
   }else audienceCheck.source="configured audience";
