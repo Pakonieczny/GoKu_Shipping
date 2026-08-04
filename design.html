@@ -38,6 +38,11 @@
 
   /* metal accents — one per bucket, used by chips, row cells and tile rings */
   --m-gold:#c8a24e;--m-silver:#8d95a0;--m-rose:#c08578;--m-10k:#b8862c;--m-14k:#8a6a1f;
+  /* internal-message indicator — deliberately not the clay of the "!"
+     attention flag, so the two read apart at a glance on a dense row */
+  --msg:#7fb08a;--msgRail:#9ed4ac;
+  --msgIcon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2018%22%3E%3Cpath%20d%3D%22M3%201h14a2%202%200%200%201%202%202v9a2%202%200%200%201-2%202H8l-5%204v-4H3a2%202%200%200%201-2-2V3a2%202%200%200%201%202-2Z%22%20fill%3D%22%23000%22%2F%3E%3C%2Fsvg%3E");
+  --msgIconWhite:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2018%22%3E%3Cpath%20d%3D%22M3%201h14a2%202%200%200%201%202%202v9a2%202%200%200%201-2%202H8l-5%204v-4H3a2%202%200%200%201-2-2V3a2%202%200%200%201%202-2Z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E");
 
   /* layout knobs driven by Settings */
   --railW:344px;
@@ -71,8 +76,12 @@
             the status flags. Chrome shrinks hard, the list does not.
    NORMAL   the default balance.
    LARGE    everything scales up for a shop-floor screen or tired eyes.     */
+/* 284, not 272: a 10-digit order number plus BOTH row flags (staff note
+   and internal message) needs ~10px more than the old compact width could
+   give, and silently clipping a digit off an order number is the one kind
+   of truncation this list must never do. */
 html[data-rail=sm]{
-  --railW:272px;--railPad:9px;
+  --railW:284px;--railPad:9px;
   --rowNum:11.5px;--rowShip:10px;--rowMinH:27px;--rowPadY:4px;--rowPadX:7px;
   --mcellW:18px;--mcellFont:10px;--rowGap:4px;
   --chipFont:9.5px;--chipPadY:3px;--chipPadX:8px;
@@ -250,6 +259,13 @@ html[data-rail=sm] .statDue{padding:6px 9px}
 .orderRow.pending .mcell{opacity:.35}
 .orderRow.pending .oNum{color:var(--rTxt2)}
 .orderRow.attn .oShip:after{content:"!";margin-left:5px;color:#ffb08f;font-weight:800}
+/* Internal Brites message on this order. It lives in the ORDER cell, not
+   next to the date: the date cell already carries the "!" attention flag,
+   and an order with both was pushing the ship date into an ellipsis. */
+.orderRow.hasMsg .oNum:after{content:"";display:inline-block;width:10px;height:9px;margin-left:6px;vertical-align:-1px;background-color:var(--msgRail);-webkit-mask:var(--msgIcon) center/contain no-repeat;mask:var(--msgIcon) center/contain no-repeat}
+/* Compact tier runs a 10-digit order number right up to the cell edge, so
+   the flag has to give back the few pixels it borrows. */
+html[data-rail=sm] .orderRow.hasMsg .oNum:after{width:7px;height:6px;margin-left:3px}
 @keyframes findFlash{0%,100%{box-shadow:inset 0 0 0 0 rgba(202,168,97,0)}
   15%,60%{box-shadow:inset 0 0 0 2px var(--gold2),0 0 0 1px var(--gold2)}}
 .orderRow.findFlash{animation:findFlash 1.1s ease 2}
@@ -391,6 +407,11 @@ html[data-rail=lg] .railFoot{font-size:13px}
 .tile.selected{border-color:var(--gold);box-shadow:0 0 0 2px var(--goldSoft),var(--sh)}
 .tile.attn{border-color:var(--clay)}
 .tile.attn:before{content:"!";position:absolute;top:6px;left:6px;z-index:3;width:17px;height:17px;border-radius:50%;background:var(--clay);color:#fff;font:700 11px var(--sans);display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+/* Stacked under the "!" on the LEFT edge, not opposite it: the top-right
+   corner already belongs to the ×qty badge. When an order carries only
+   this flag it takes the top slot, so a lone badge never floats. */
+.tile.hasMsg:after{content:"";position:absolute;top:6px;left:6px;z-index:3;width:17px;height:17px;border-radius:50%;background:var(--msg) var(--msgIconWhite) center/10px 9px no-repeat;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.tile.hasMsg.attn:after{top:28px}
 .tile.hoverPeer{border-color:var(--slate);box-shadow:0 0 0 3px var(--slateSoft),0 6px 18px rgba(30,26,20,.10);transform:translateY(-1px)}
 .tile.isDone{opacity:.62}
 .tileImg{position:relative;width:100%;aspect-ratio:1/1;background:var(--paper2);overflow:hidden;cursor:zoom-in;flex:0 0 auto}
@@ -633,8 +654,6 @@ dialog.lmChat #modalListingDetails{flex:0 0 auto}
 .bcRow.me .bcB{background:var(--velvet);color:#f6f1e6;border-bottom-right-radius:5px}
 .bcRow.me .bcB .m{justify-content:flex-end}
 .bcRow.them .bcB{background:var(--card);color:var(--ink);border:1px solid var(--line);border-bottom-left-radius:5px}
-.bcB.buyer{background:var(--goldSoft);border:1px solid var(--goldLine);color:#5c4718}
-.bcTag{font-size:9px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;opacity:.7;margin-bottom:3px}
 
 .bcB.img{padding:4px;overflow:hidden}
 .bcB.img img{display:block;max-width:270px;max-height:250px;width:auto;height:auto;
@@ -1327,6 +1346,8 @@ const orderCache      = {};          // receipt_id → transactions[]
 const gridElements    = new Map();   // transaction_id → tile element   ← keyed by TX, not by size
 const itemsByTx       = new Map();   // transaction_id → transaction object
 let   staffNoteIDs    = new Set();   // ONE binding. Nothing else may declare this name.
+const msgOrderIDs     = new Set();   // receipts with >=1 internal Brites message
+const msgProbed       = new Set();   // receipts already asked about this refresh
 
 let allOpenReceipts  = [];
 let currentReceipts  = [];
@@ -2296,6 +2317,78 @@ async function refreshStaffNoteIDs(opts = {}) {
   }
 }
 
+/* === 10b · INTERNAL MESSAGE FLAGS ======================================
+   Which orders carry at least one message in Brites_Orders/{rid}/messages.
+
+   There is no server mode for this - firebaseOrders can answer "which of
+   these have a staff note" but not "which of these have a message" - so we
+   ask Firestore directly with a limit(1) probe per order. That is one read
+   each, only for rows actually on screen, and the answer is cached for the
+   session, so a full 100-order rail costs ~100 reads once rather than on
+   every repaint. Refresh clears the cache.
+
+   The open order stays live regardless: BritesChat's snapshot listener calls
+   setMessageFlag() whenever its thread changes, so sending a message lights
+   the badge immediately and everywhere it appears.                        */
+
+let __msgProbeRunning = false;
+let __msgProbeWarned  = false;
+
+function setMessageFlag(rid, has) {
+  rid = String(rid);
+  const had = msgOrderIDs.has(rid);
+  if (has) msgOrderIDs.add(rid); else msgOrderIDs.delete(rid);
+  msgProbed.add(rid);
+  if (had !== has) { markMessageOrders(); scheduleFilterRefresh(); }
+}
+
+function resetMessageFlags() { msgOrderIDs.clear(); msgProbed.clear(); }
+
+function renderedReceiptIds() {
+  return $$("#newOrderContainer .orderRow").map(r => String(r.dataset.receipt || "")).filter(Boolean);
+}
+
+/** Probe the given receipts (default: whatever is rendered) for messages. */
+async function refreshMessageFlags(ids) {
+  if (!db) return;                                   // no Firestore, no badge
+  const list = (Array.isArray(ids) ? ids.map(String) : renderedReceiptIds())
+    .filter(rid => rid && !msgProbed.has(rid));
+  if (!list.length || __msgProbeRunning) return;
+
+  __msgProbeRunning = true;
+  try {
+    let i = 0, changed = false;
+    const worker = async () => {
+      while (i < list.length) {
+        const rid = list[i++];
+        msgProbed.add(rid);
+        try {
+          const snap = await db.collection("Brites_Orders").doc(rid)
+                               .collection("messages").limit(1).get();
+          if (!snap.empty && !msgOrderIDs.has(rid)) { msgOrderIDs.add(rid); changed = true; }
+        } catch (e) {
+          msgProbed.delete(rid);                     // transient - allow a retry
+          if (!__msgProbeWarned) { __msgProbeWarned = true; console.warn("message probe failed", e); }
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, list.length) }, worker));
+    if (changed) { markMessageOrders(); scheduleFilterRefresh(); }
+  } finally {
+    __msgProbeRunning = false;
+  }
+}
+
+/** Paint the flag onto every rendered row and every tile of that order. */
+function markMessageOrders() {
+  $$("#newOrderContainer .orderRow").forEach(row => {
+    row.classList.toggle("hasMsg", msgOrderIDs.has(String(row.dataset.receipt || "")));
+  });
+  gridElements.forEach(tile => {
+    tile.classList.toggle("hasMsg", msgOrderIDs.has(String(tile.dataset.receipt || "")));
+  });
+}
+
 function markStaffNoteOrders() {
   $$("#newOrderContainer .orderRow").forEach(row => {
     const id = String(row.dataset.receipt || "");
@@ -2704,6 +2797,7 @@ function paintRow(rid, rowEl, recEl) {
     row.classList.toggle("completed", completedOrders.has(rid));
     row.classList.toggle("selected",  selectedOrders.has(rid));
     row.classList.toggle("hasNote",   staffNoteIDs.has(rid));
+    row.classList.toggle("hasMsg",    msgOrderIDs.has(rid));
     row.classList.toggle("attn",      !!r._attn);
     const owner = rtSelected.get(rid);
     row.classList.toggle("rtLocked", !!owner && owner !== RT.clientId);
@@ -2839,6 +2933,8 @@ function appendChunk() {
 
   renderCursor += slice.length;
   placeSentinel();
+  markMessageOrders();
+  refreshMessageFlags();          // probes only the rows not yet asked about
   refreshChrome();
   return slice.length;
 }
@@ -2884,6 +2980,8 @@ function renderOrderRows(list) {
   }
   $("#queueEmpty")?.classList.toggle("hidden", currentReceipts.length > 0);
   markStaffNoteOrders();
+  markMessageOrders();
+  refreshMessageFlags();
   applyAllLocksToDOM();
   refreshChrome();
   syncScrollbarWidth();
@@ -2978,6 +3076,7 @@ async function buildNewOrderList() {
   applyFilters({ rerender:true });
   await refreshStaffNoteIDs({ mode:"all" });
   markStaffNoteOrders();
+  refreshMessageFlags();
   return currentReceipts.length;
 }
 
@@ -3208,6 +3307,7 @@ function makeTile(tx) {
   tile.dataset.qty     = tx.quantity ?? 1;
   tile.dataset.sku     = String(tx.sku || "").trim();
   if (txNeedsAttention(tx)) tile.classList.add("attn");
+  if (msgOrderIDs.has(String(tx.receipt_id || ""))) tile.classList.add("hasMsg");
   if (completedOrders.has(rid)) tile.classList.add("isDone");
   if (selectedOrders.has(rid))  tile.classList.add("selected");
 
@@ -3450,10 +3550,12 @@ const F = {
   sel      : false,   // only orders selected here
   note     : false,   // only orders with a staff note
   attn     : false,   // only orders with personalisation / a buyer message
+  msg      : false,   // only orders with an internal Brites message
   due      : false,   // only overdue or due today
   free     : false,   // hide orders locked at another station
   // grid (items)
   iAttn    : false,
+  iMsg     : false,
   iMulti   : false,
   iNoSku   : false,
 };
@@ -3485,6 +3587,7 @@ function orderMatches(r) {
   if (F.sel  && !selectedOrders.has(rid)) return false;
   if (F.note && !staffNoteIDs.has(rid))   return false;
   if (F.attn && !r._attn)                 return false;
+  if (F.msg  && !msgOrderIDs.has(rid))    return false;
   if (F.free && isLockedElsewhere(rid))   return false;
   if (F.due) {
     const ts = r._shipTS || 0;
@@ -3501,6 +3604,7 @@ function tileMatches(tile) {
 
   if (tile.dataset.metal && !F.metals.has(tile.dataset.metal)) return false;
   if (F.iAttn  && !tile.classList.contains("attn")) return false;
+  if (F.iMsg   && !msgOrderIDs.has(String(tile.dataset.receipt || ""))) return false;
   if (F.iMulti && (Number(tile.dataset.qty) || 1) < 2) return false;
   if (F.iNoSku && tile.dataset.sku !== "")            return false;
   return true;
@@ -3508,14 +3612,14 @@ function tileMatches(tile) {
 
 function filtersAreDefault() {
   return F.metals.size === METAL_ORDER.length && !F.completed &&
-         !F.sel && !F.note && !F.attn && !F.due && !F.free &&
-         !F.iAttn && !F.iMulti && !F.iNoSku;
+         !F.sel && !F.note && !F.attn && !F.msg && !F.due && !F.free &&
+         !F.iAttn && !F.iMsg && !F.iMulti && !F.iNoSku;
 }
 
 function resetFilters({ silent = false } = {}) {
   F.metals = new Set(METAL_ORDER);
-  F.completed = F.sel = F.note = F.attn = F.due = F.free = false;
-  F.iAttn = F.iMulti = F.iNoSku = false;
+  F.completed = F.sel = F.note = F.attn = F.msg = F.due = F.free = false;
+  F.iAttn = F.iMsg = F.iMulti = F.iNoSku = false;
   if (!silent) toast("Filters cleared");
 }
 
@@ -3525,11 +3629,13 @@ const RAIL_CHIPS = [
   { id:"sel",  label:"Selected",  title:"Only orders selected at this station" },
   { id:"note", label:"Note",      title:"Only orders with a staff note" },
   { id:"attn", label:"Attention", title:"Only orders with personalisation or a buyer message" },
+  { id:"msg",  label:"Messages",  title:"Only orders with an internal Brites message" },
   { id:"due",  label:"Due",       title:"Only orders overdue or shipping today" },
   { id:"free", label:"Unlocked",  title:"Hide orders being worked on at another station" },
 ];
 const ITEM_CHIPS = [
   { id:"iAttn",  label:"Attention", title:"Items with personalisation or a buyer message" },
+  { id:"iMsg",   label:"Messages",  title:"Items whose order has an internal Brites message" },
   { id:"iMulti", label:"Qty 2+",    title:"Items with a quantity above one" },
   { id:"iNoSku", label:"No SKU",    title:"Items with no SKU on the transaction" },
 ];
@@ -3591,7 +3697,7 @@ function computeStats() {
   const s = {
     total: base.length,
     metalOrders: Object.fromEntries(METAL_KEYS.map(k => [k, 0])),
-    sel:0, note:0, attn:0, due:0, free:0, locked:0,
+    sel:0, note:0, attn:0, msg:0, due:0, free:0, locked:0,
     overdue:0, today:0, oldestTS:0, unhydrated:0,
   };
   const t0 = startOfToday(), t1 = endOfToday();
@@ -3602,6 +3708,7 @@ function computeStats() {
     if (selectedOrders.has(rid)) s.sel++;
     if (staffNoteIDs.has(rid))   s.note++;
     if (r._attn)                 s.attn++;
+    if (msgOrderIDs.has(rid))    s.msg++;
     if (!r._hydrated)            s.unhydrated++;
     if (isLockedElsewhere(rid))  s.locked++; else s.free++;
     const ts = r._shipTS || 0;
@@ -3655,11 +3762,12 @@ function paintStats(s) {
 
 function paintChips(s) {
   const counts = {
-    sel:s.sel, note:s.note, attn:s.attn, due:s.due, free:s.locked,
-    iAttn:0, iMulti:0, iNoSku:0,
+    sel:s.sel, note:s.note, attn:s.attn, msg:s.msg, due:s.due, free:s.locked,
+    iAttn:0, iMsg:0, iMulti:0, iNoSku:0,
   };
   gridElements.forEach(t => {
     if (t.classList.contains("attn")) counts.iAttn++;
+    if (msgOrderIDs.has(String(t.dataset.receipt || ""))) counts.iMsg++;
     if ((Number(t.dataset.qty) || 1) >= 2) counts.iMulti++;
     if (t.dataset.sku === "") counts.iNoSku++;
   });
@@ -4488,15 +4596,11 @@ async function openListingModal(txid) {
   sw.setAttribute("aria-checked", String(on));
   sw.dataset.rid = rid;
 
-  /* Realtime Brites thread for this receipt. The buyer note and the
-     personalisation ride along as context bubbles — they come off the Etsy
-     receipt, not the messages collection. */
-  try {
-    BritesChat.open(rid, {
-      buyerMessage   : tx.message_from_buyer || "",
-      personalization: persText,
-    });
-  } catch (e) { console.warn("BritesChat.open failed", e); }
+  /* Realtime INTERNAL thread for this receipt — Firebase only. Nothing from
+     the Etsy receipt is passed in: the buyer's note and the personalisation
+     belong to the left-hand pane. */
+  try { BritesChat.open(rid); }
+  catch (e) { console.warn("BritesChat.open failed", e); }
 
   openDlg($("#listingModal"));
 }
@@ -4554,7 +4658,7 @@ const BritesChat = (() => {
 
   let el = {};
   const S = {
-    rid:null, ctx:{ buyerMessage:"", personalization:"" },
+    rid:null,
     unsub:null, seq:0,
     docs:[], pending:[], queue:[],
     firstSnap:true, atBottom:true, unread:0, settle:null,
@@ -4679,25 +4783,21 @@ const BritesChat = (() => {
     if (!el.thread) return;
     const me = meName().toLowerCase();
 
-    const ctxRows = [];
-    if (S.ctx.personalization?.trim()) ctxRows.push({ tag:"Personalisation",       text:S.ctx.personalization.trim() });
-    if (S.ctx.buyerMessage?.trim())    ctxRows.push({ tag:"Buyer note on the order", text:S.ctx.buyerMessage.trim() });
-
+    /* This thread is the INTERNAL staff channel and nothing else.
+       The personalisation and the buyer's note come off the Etsy receipt, not
+       from Firebase, and they are already shown in the left-hand pane —
+       rendering them here made it look as though the customer was in the
+       conversation. Only Brites_Orders/{receiptId}/messages appears below. */
     const items = S.docs.concat(S.pending);
-    if (!ctxRows.length && !items.length) {
+    if (!items.length) {
       el.thread.innerHTML =
-        `<div class="bcEmpty"><b>No messages yet</b>Send an update, or drop a design proof<br>straight into this panel.</div>`;
+        `<div class="bcEmpty"><b>No internal messages yet</b>` +
+        `Anything sent here reaches every station working<br>this order. The customer never sees it.</div>`;
       el.count.textContent = "";
       return;
     }
 
     let html = "";
-    ctxRows.forEach(c => {
-      html += `<div class="bcRow them"><span class="bcAv" style="background:var(--gold)">🛍</span>` +
-              `<div class="bcB buyer"><div class="bcTag">${esc(c.tag)}</div>` +
-              `<div class="t">${linkify(c.text)}</div></div></div>`;
-    });
-
     let lastDay = null, lastWho = null;
     items.forEach(m => {
       const d  = m.__pending ? null : dateOf(m);
@@ -4799,6 +4899,12 @@ const BritesChat = (() => {
           el.live?.classList.add("on");
           S.docs = snap.docs.map(d => Object.assign({ __docId:d.id }, d.data()));
 
+          /* The order being read is the one case where we have live truth,
+             so keep the rail/tile badge in step with it for free — this is
+             what makes a message you just sent light the indicator without
+             waiting for the next probe. */
+          try { setMessageFlag(rid, S.docs.length > 0); } catch (_) {}
+
           /* retire optimistic rows the server has now confirmed */
           const me = meName().toLowerCase();
           S.pending = S.pending.filter(p => p.__failed || !S.docs.some(d =>
@@ -4856,6 +4962,8 @@ const BritesChat = (() => {
 
     el.input.value = ""; autoGrow(); S.queue = []; paintTray(); refreshSend();
     clearDraft(rid);
+
+    try { setMessageFlag(rid, true); } catch (_) {}   // optimistic: badge on now
 
     if (text) {
       const p = { __pending:true, __id:newId(), __kind:"text", text, senderName:staff, senderRole:"staff" };
@@ -5023,7 +5131,7 @@ const BritesChat = (() => {
   }
 
   return {
-    open(rid, ctx) {
+    open(rid) {
       wire();
       if (!el.thread) return;
       rid = String(rid || "").trim();
@@ -5031,7 +5139,6 @@ const BritesChat = (() => {
 
       S.queue.forEach(q => { try { URL.revokeObjectURL(q.url); } catch (_) {} });
       S.rid = rid;
-      S.ctx = ctx || { buyerMessage:"", personalization:"" };
       S.docs = []; S.pending = []; S.queue = [];
       S.firstSnap = true; S.atBottom = true; S.unread = 0;
 
@@ -6370,6 +6477,7 @@ function wireUI() {
       abortAllUpdateWork();
       updateRunId++;
       allOpenReceipts = [];
+      resetMessageFlags();          // a manual Refresh re-reads message flags
       await restoreCompleted();
       await buildNewOrderList();
       await fetchAllLocksOnce();
@@ -6528,7 +6636,7 @@ else boot();
 /* Console helpers, unchanged in spirit from the old build. */
 window.DesignStation = {
   state: () => ({ selectedOrders, completedOrders, orderCache, gridElements, itemsByTx,
-                  allOpenReceipts, currentReceipts, staffNoteIDs, rtSelected, SETTINGS }),
+                  allOpenReceipts, currentReceipts, staffNoteIDs, msgOrderIDs, rtSelected, SETTINGS }),
   metalKeyFromText, metalCountsFor, buildPrintJobs,
   metalKeyForTx, txMetalResolved, isRealMetal, SOLID_UNKNOWN,
   pending: () => ({ lists: pendingLists, jobs: pendingJobs }),
@@ -6540,6 +6648,7 @@ window.DesignStation = {
   archive: () => ({ index: archiveIndex, query: histQuery, day: histDay, results: histResults, mode: APP_MODE }),
   cache: { detailCache, flushDetailCache, clear(){ detailCache.clear(); localStorage.removeItem(CACHE_KEY); } },
   chat: BritesChat,
+  messages: { flags: msgOrderIDs, probed: msgProbed, refresh: refreshMessageFlags, reset: resetMessageFlags },
   sort: () => ({ activeMetal, dateDir, orderDir }),
 };
 
