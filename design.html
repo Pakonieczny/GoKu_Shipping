@@ -4,7 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Brites · Design Station</title>
-<link rel="icon" href="data:,">
+
+<!-- ══ Tab icon ═══════════════════════════════════════════════════════════
+     A printed order tag in brand gold on the rail's velvet tile. The station
+     calls itself a "sorting & label station" and its one output is a printed
+     QR label, so the mark is the thing it makes.
+     Drawn for 16px specifically: one solid diagonal mass and one punched
+     hole, no strokes to close up and no facets to blur. The asymmetric
+     diagonal is what separates it at a glance from a symmetric round mark.
+     Inlined as data URIs so the station stays a single self-contained file.
+     SVG is primary; the PNGs cover older Safari, bookmark managers and an
+     iPad home screen.                                                      -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23221f1b%22%2F%3E%3Cpath%20d%3D%22M56%2013H79a9%209%200%200%201%209%209v23L45.5%2088%2012%2054.5Z%22%20fill%3D%22%23caa861%22%2F%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ccircle%20cx%3D%2270%22%20cy%3D%2231%22%20r%3D%228.5%22%20fill%3D%22%23221f1b%22%2F%3E%3C%2Fsvg%3E">
+<link rel="alternate icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAGFBMVEXKqGHCoV2dg05FPCkiHxsiHxohHxoUExBHHjwGAAAAzElEQVR42lWS0VWEMBBFb97he0+EAmSpwLU5u/TYgCQWAIsNJH5kJsL8AHduMi9A+CgpZlqpjvNQf4/DnincDrFyqoR2LpUGv6sJ0EwH29qAbEL9arsWmfAN03vkwMAtEx7jDA4+IcBLByX3uQ2sQD14OigZqGnP0HK09NvmS7Z8yi4L3WqKCPZ+/HAHwb8wRhDczwJqvAvIGi4gutIu6i0T1XvmyZu+k3y5z9Jsigv2xsbJhKJ2kPCwcIuW65f7EfEC3oawPGv/HV7FHzfUOQBdyEU5AAAAAElFTkSuQmCC">
+<link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0BAMAAADP4xsBAAAAGFBMVEXKqGHBoV2ylFeMdUdkVDZGPCovKSAiHxusrxqcAAADwUlEQVR42u2aS1LbQBCGW2PvoyRU1q6g7A3FARBKLpDKXXKYXIHKBbAx+6go7XnEBzApHcCSsuClx0y/ZrSgSt5g2ZpPnwbc80/j6CeM9TAwoSf0hJ7QE3pCT+i3j57Lh9yVtlejY390dW5//f5k4TshuetmzktPdHXlvp3SD52733oovND7K+TNP6UPeo29WRce6H3Bny0TUBqg2qrRu4I4QY1u1tQZ11r0bkteXIluLslTaiWaltai69+Mk0oV+rYcC11vQIbm1+vcIn0YQ3PtvcpUQ2nz9QgAjldbz7VxWEyjb0cAAB9/xH5oywrwZfn4c/bdD70avDJLn58dLH3QlmJ68jIP0ZkPeliXTEt1vtCjLdKz1i8vWqrRtmLaSTSHarRlBeiKzmIl2lZMTQcWLZRoWzGNuodKa+sK8KF7qLS+sdWI9+iVmGheMVWh7StAjE49D11tqJLfX8nZ6LyEkSbEFacDWLvi9L/u4V852hmnG/QmOOg1J8v0YiQP7Y7T9dZ9xEIjybRz0Ur8F4LF6dv2waUUjcbpqrA/56HxZNpKTXfSjwwRp19ny1ELjDpON6uy94SNJuP008a5uSikcZKO0w+/ss/v7vOtNKlyVoD6QlX59MWUQlcbGAudw1jo6mo09ArGQu+L0dBrGAsdRNqKboJIW9E7vbRZoGhGb8L5SGIUzehNOKVTdEJCSVvQN4Gkh+h6E0h6iGY1VDjSA3QVTHqAzoNJ99E+xbQn3Ud7rABRin7Q9x7SBzGK9qhLw6aICVVMDxYoOqh0B70LKt1GN2GlQ/0PzCLdRjsaX1rpjrXt0nrpDlqtbR9oIIC2fZwBf21Wd1Kn7RhlwFvbNciAt7ZrjAFfbecQA77azhEGPLXdAwx4as8XbLRU+0wQgmXa86UALdPORNFdoo1I29AS7Uy44eBrY9JWNF87E2/uuNqotB3N1c4Uu12eNi7tQPO0M1VngaNNSLvQHO1M2cWhtSlpJ5rWpqTdmY/SJqXdaEqblEaSKq5NSyNoXJuWxvI1pj1beqEx7RPwQiPas1NPtFubI43vZVzaLGkc7dJmSRM7sMG+WyBNoAfdAoE0tW9MYrU0hTapWprc7Q61udIkeqjNlab36H1ttjSN7muzpRmdha42X5qB7mrzpTn9kLa2QJqDbmsLpFldnFdtiTQL/aqdQGD0i7Y5DY5+1k7i4OgnpkkhPPoRKpPm9vmSWCzNRZtULM3uTiaxVJqNNqlUmv+1zOQTjGTd+75aULT8MaEn9ISe0BN6Qr9J9H9o8t2enCPdrQAAAABJRU5ErkJggg==">
+<meta name="theme-color" content="#221f1b">
 <style>
 /* ═══════════════════════════════════════════════════════════════════════
    BRITES DESIGN SYSTEM  — tokens shared with the Etsy Pricing Console
