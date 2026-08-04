@@ -1662,6 +1662,117 @@ async function _handlerImpl(event) {
       });
     }
 
+    // ------------------------------------------------------------
+    // charm_restore — put a charm back into the active pool.
+    //
+    // The regenerate flow relocates its charm into the Used pool
+    // (New_Charms_Earrings → Used_Earring_Charm_Pool) as soon as the
+    // charm is claimed, which is correct when the generation lands but
+    // burns the charm when the generation fails: it can never be picked
+    // again by charm_pool_pick, even though nothing was produced from
+    // it. This is the rollback for that case — call it from the
+    // failure branch of a regenerate/generate attempt.
+    //
+    // Mirror image of the move in batch_collect: copy + delete (Firebase
+    // Storage has no native rename), a fresh download token on the
+    // destination so any UI expecting one can render it, and per-charm
+    // error isolation so one bad path doesn't sink the rest.
+    //
+    // Idempotent by design. Restoring a charm that is already back in
+    // the pool, or whose source object no longer exists, is reported
+    // under `skipped` rather than as an error, so a retried failure
+    // handler never double-moves or throws.
+    //
+    // Body: { kind: "charm_restore",
+    //         charm_storage_path: "…/Used_Earring_Charm_Pool/x.png" }
+    //   or   { kind: "charm_restore", charm_storage_paths: [ … ] }
+    // ------------------------------------------------------------
+    if (kind === "charm_restore") {
+      const requested = Array.isArray(body?.charm_storage_paths)
+        ? body.charm_storage_paths
+        : (body?.charm_storage_path ? [body.charm_storage_path] : []);
+
+      const paths = requested.map((p) => String(p || "").trim()).filter(Boolean);
+      if (!paths.length) {
+        return json(400, {
+          error: { message: "charm_storage_path (or charm_storage_paths[]) is required" },
+        });
+      }
+      if (paths.length > 500) {
+        return json(400, { error: { message: "charm_storage_paths max length is 500" } });
+      }
+
+      const CHARM_RESTORE_MAP = [
+        ["/Charm_Maker/Used_Earring_Charm_Pool/", "listing-generator-1/Charm_Maker/New_Charms_Earrings/"],
+        ["/Charm_Maker/Used_Necklace_Charm_Pool/", "listing-generator-1/Charm_Maker/New_Charms/"],
+      ];
+
+      const bucket = getBucket();
+      const restored = [];
+      const skipped = [];
+      const errors = [];
+
+      // De-dupe so a caller passing the same charm twice does one move.
+      for (const srcPath of Array.from(new Set(paths))) {
+        try {
+          const rule = CHARM_RESTORE_MAP.find(([usedPrefix]) => srcPath.includes(usedPrefix));
+
+          if (!rule) {
+            const alreadyActive =
+              srcPath.includes("/Charm_Maker/New_Charms_Earrings/") ||
+              srcPath.includes("/Charm_Maker/New_Charms/");
+            skipped.push({
+              charm: srcPath,
+              reason: alreadyActive
+                ? "already in the active pool"
+                : "not a Charm_Maker used-pool path",
+            });
+            continue;
+          }
+
+          const filename = srcPath.split("/").pop();
+          if (!filename) {
+            skipped.push({ charm: srcPath, reason: "path has no filename" });
+            continue;
+          }
+          const destPath = rule[1] + filename;
+
+          const srcFile = bucket.file(srcPath);
+          const [exists] = await srcFile.exists();
+          if (!exists) {
+            // Either an earlier restore already ran (dest exists) or the
+            // path was wrong to begin with. Neither is worth failing on.
+            const [destExists] = await bucket.file(destPath).exists();
+            skipped.push({
+              charm: srcPath,
+              reason: destExists ? "already restored" : "source object not found",
+            });
+            continue;
+          }
+
+          await srcFile.copy(bucket.file(destPath));
+          try {
+            await bucket.file(destPath).setMetadata({
+              metadata: { firebaseStorageDownloadTokens: newDownloadToken() },
+            });
+          } catch (_) {}
+          await srcFile.delete();
+
+          restored.push({ from: srcPath, to: destPath });
+        } catch (e) {
+          errors.push({ charm: srcPath, error: String(e?.message || e) });
+        }
+      }
+
+      return json(200, {
+        ok: errors.length === 0,
+        restoredCount: restored.length,
+        restored,
+        skipped,
+        errors: errors.slice(0, 50),
+      });
+    }
+
     // ============================================================
     // BATCH MODE — Listing Generator only (Charm Maker out of scope)
     //
