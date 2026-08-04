@@ -1,237 +1,457 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>QR Print Station</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brites · QR Print 1</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23caa861%22%2F%3E%3Cpath%20d%3D%22M56%2013H79a9%209%200%200%201%209%209v23L45.5%2088%2012%2054.5Z%22%20fill%3D%22%23221f1b%22%2F%3E%3Ccircle%20cx%3D%2270%22%20cy%3D%2231%22%20r%3D%228.5%22%20fill%3D%22%23caa861%22%2F%3E%3C%2Fsvg%3E">
+<meta name="theme-color" content="#caa861">
 
-  <!-- pdfmake (and its fonts) -->
-  <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js"></script>
+<!-- pdfmake (and its fonts) -->
+<script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js"></script>
+<!-- qrcode.js -->
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
-  <!-- qrcode.js (for generating QR) -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-
-  <style>
-    html, body { margin:0; padding:0; }
-      #printGrid{ display:flex; flex-wrap:wrap; gap:20px; }
-      .qr-tile{ width:120px; text-align:center; }
-      .qr-caption{ font-size:.8em; margin-top:4px; }
-  </style>
+<style>
+/* Brites design system — same tokens as the Design Station */
+:root{
+  --paper:#f3f0ea;--card:#fffefb;--card2:#faf7f1;
+  --ink:#1c1a17;--ink70:#5b554c;--ink45:#938c80;
+  --line:#e4ddd0;--velvet:#221f1b;
+  --gold:#a9823f;--gold2:#caa861;--goldSoft:#f0e6cd;
+  --sage:#5f7a5b;--sageSoft:#e7eddf;--clay:#b0563f;--claySoft:#f4e3dc;
+  --serif:'Hoefler Text','Iowan Old Style',Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font:14px/1.5 var(--sans);
+     min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{width:min(560px,100%);background:var(--card);border:1px solid var(--line);
+      border-radius:15px;box-shadow:0 1px 2px rgba(30,26,20,.04),0 9px 28px rgba(30,26,20,.06);overflow:hidden}
+.hd{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.hd h1{margin:0;font:21px var(--serif);font-weight:500}
+.hd .sub{font-size:11.5px;color:var(--ink45);margin-top:2px}
+.pill{margin-left:auto;font-size:11px;font-weight:700;padding:5px 11px;border-radius:30px;white-space:nowrap}
+.pill.work{background:var(--goldSoft);color:#7a5a1d}
+.pill.ok{background:var(--sageSoft);color:#3c5a39}
+.pill.bad{background:var(--claySoft);color:#8a3a26}
+.bd{padding:18px 20px}
+.bar{height:6px;border-radius:6px;background:var(--paper);overflow:hidden;margin:14px 0 6px}
+.bar i{display:block;height:100%;width:0;background:var(--gold2);transition:width .2s}
+.step{font-size:12.5px;color:var(--ink70)}
+.err{margin-top:14px;border:1px solid #e5c0b4;background:var(--claySoft);color:#8a3a26;
+     border-radius:10px;padding:11px 13px;font-size:12.5px;line-height:1.55}
+.err b{display:block;margin-bottom:3px}
+.err code{font:11.5px var(--mono);overflow-wrap:anywhere}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:12px;margin-top:16px}
+.tile{border:1px solid var(--line);border-radius:11px;padding:11px;text-align:center;background:var(--card2)}
+.tile img{width:100%;max-width:104px;display:block;margin:0 auto;border-radius:3px}
+.tile .cap{margin-top:8px;font:11px var(--mono);font-weight:700}
+.tile .cnt{margin-top:2px;font-size:10.5px;color:var(--ink45)}
+.ft{padding:12px 20px;border-top:1px solid var(--line);background:var(--card2);
+    display:flex;gap:9px;align-items:center;font-size:11.5px;color:var(--ink45)}
+.btn{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:9px;
+     padding:8px 15px;font:inherit;font-size:13px;font-weight:650;cursor:pointer}
+.btn:hover{background:var(--paper)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.spacer{margin-left:auto}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
 </head>
-<body>  
+<body>
+
+<div class="card">
+  <div class="hd">
+    <div>
+      <h1>QR label print · bench 1</h1>
+      <div class="sub" id="sub">Waiting for a print job…</div>
+    </div>
+    <span class="pill work" id="state">Idle</span>
+  </div>
+  <div class="bd">
+    <div class="step" id="step">Looking for labels handed over by Design Station 1.</div>
+    <div class="bar"><i id="bar"></i></div>
+    <div id="err"></div>
+    <div class="tiles" id="tiles"></div>
+  </div>
+  <div class="ft">
+    <span id="foot">Labels are 145 × 145 pt, one batch per page.</span>
+    <span class="spacer"></span>
+    <button class="btn" id="againBtn" disabled>Print again</button>
+  </div>
+</div>
+
 <script>
-  
-/********************************************************
- *  COMPAT MODE SWITCH
- *  ─────────────────────────────────────────────────────
- *  • PREFERRED : design-1.html stashes `metalOrderJobs`
- *                [{ metal, ids, partIndex, partTotal, total }]
- *  • NEW FLOW  : design-1.html stashes `metalOrderLists`
- *                { gold:[], silver:[], rose:[], "14k":[] }
- *  • LEGACY    : Sorting page stashes `qrPrintAll`
- *                { dispatchDate, items[], userTypedOrderNum }
- ********************************************************/
-window.addEventListener("load", async () => { 
-  // Preferred: jobs (support both sessionStorage and localStorage)
-  const jobJSON =
-    sessionStorage.getItem("metalOrderJobs") ||
-    localStorage.getItem("metalOrderJobs");
-  if (jobJSON) {
-    await handleMetalJobs(JSON.parse(jobJSON));     // one page per split slice
-    sessionStorage.removeItem("metalOrderJobs");
-    localStorage.removeItem("metalOrderJobs");
-    return;
-  }
+/* ═══════════════════════════════════════════════════════════════════════════
+   BRITES · QR PRINT STATION
+   Consumes the label batches the Design Station hands over and produces one
+   PDF, one page per QR.
 
-  // Fallback: metal bundles (auto-split into pages of 50)
-  const metalJSON = localStorage.getItem("metalOrderLists");
-  if (metalJSON) {
-    await handleMetalBundles(JSON.parse(metalJSON));
-    localStorage.removeItem("metalOrderLists");   // one-shot transfer
-    return;
-  }
+   HANDSHAKE — this is the part that changed
+   -----------------------------------------
+   The station now waits for this page to confirm before marking anything
+   design-complete. We report over postMessage:
 
-  // Legacy single-order QR
-  const legacyJSON = localStorage.getItem("qrPrintAll");
-  if (legacyJSON) {
-    await handleLegacy(JSON.parse(legacyJSON));
-    return;
-  }
+     { source:"brites-print", nonce, phase:"started",  total }
+     { source:"brites-print", nonce, phase:"progress", done, total, label }
+     { source:"brites-print", nonce, phase:"done", ok, labels, orders, error }
 
-  console.error("Nothing to print: no metalOrderJobs, metalOrderLists or qrPrintAll found.");
+   The previous version fired and forgot, and the station committed the
+   completion before the frame even existed — so a print page that 404'd, or
+   whose pdfmake failed to load, silently swallowed the orders with no label
+   ever produced. Now a failure leaves the queue untouched and says why.
+
+   PAYLOAD SHAPES accepted, newest first:
+     1 · { nonce, jobs:[{ metal, ids, payload, partIndex, partTotal, total, label }] }
+     2 · [ { metal, ids, … } ]                       older array-only jobs
+     3 · metalOrderLists  { gold:[], silver:[], … }  auto-split at 50
+     4 · qrPrintAll       { dispatchDate, items[] }  legacy single order
+
+   On shape 1 this page does NOT clear localStorage: the station owns that key
+   and deliberately leaves it in place when a print fails so the operator can
+   retry. The standalone shapes are cleared here, as before.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const KEY_JOBS   = "metalOrderJobs";
+const KEY_LISTS  = "metalOrderLists";
+const KEY_LEGACY = "qrPrintAll";
+
+/* Label geometry — deliberately unchanged. The label stock and the printer
+   offsets are calibrated to these exact numbers. */
+const PAGE    = { width:145, height:145 };
+const QR_W    = 85;
+const QR_POS  = { x:3,  y:3   };
+const LBL_POS = { x:1,  y:93  };
+const NTS_POS = { x:92, y:0.5 };
+
+let NONCE = null;
+
+/* ── reporting ─────────────────────────────────────────────────────────── */
+function report(phase, extra) {
+  if (!NONCE) return;                        // standalone: nobody is listening
+  try { parent.postMessage(Object.assign({ source:"brites-print", nonce:NONCE, phase }, extra || {}), "*"); }
+  catch (_) {}
+}
+const $ = id => document.getElementById(id);
+function ui(state, kind, sub, step) {
+  if (state) { $("state").textContent = state; $("state").className = "pill " + (kind || "work"); }
+  if (sub  != null) $("sub").textContent  = sub;
+  if (step != null) $("step").textContent = step;
+}
+function progress(done, total) { $("bar").style.width = total ? Math.round(done / total * 100) + "%" : "0%"; }
+function fail(message, detail) {
+  ui("Failed", "bad", "Nothing was printed",
+     "The Design Station has been told, so no orders were marked complete.");
+  $("err").innerHTML = "";
+  const box = document.createElement("div"); box.className = "err";
+  const b = document.createElement("b"); b.textContent = message; box.appendChild(b);
+  if (detail) { const c = document.createElement("code"); c.textContent = String(detail); box.appendChild(c); }
+  $("err").appendChild(box);
+  console.error("[print]", message, detail || "");
+  report("done", { ok:false, error:message });
+}
+
+/* ── boot ──────────────────────────────────────────────────────────────── */
+window.addEventListener("load", async () => {
+  try {
+    // 1/2 · jobs from the Design Station
+    const rawJobs = sessionStorage.getItem(KEY_JOBS) || localStorage.getItem(KEY_JOBS);
+    if (rawJobs) {
+      let parsed;
+      try { parsed = JSON.parse(rawJobs); }
+      catch (e) { return fail("The label hand-off could not be read", e.message); }
+
+      const jobs = Array.isArray(parsed) ? parsed : (parsed && parsed.jobs);
+      NONCE = (parsed && !Array.isArray(parsed) && parsed.nonce) || null;
+
+      if (!Array.isArray(jobs) || !jobs.length) {
+        return fail("The hand-off contained no labels",
+                    "Expected { nonce, jobs:[…] } or a jobs array; got " + describe(parsed));
+      }
+      if (!NONCE) clear(KEY_JOBS);           // standalone use is one-shot
+      await runJobs(jobs);
+      return;
+    }
+
+    // 3 · metal bundles
+    const rawLists = localStorage.getItem(KEY_LISTS);
+    if (rawLists) {
+      let lists;
+      try { lists = JSON.parse(rawLists); }
+      catch (e) { return fail("The label hand-off could not be read", e.message); }
+      clear(KEY_LISTS);
+      await runJobs(jobsFromLists(lists));
+      return;
+    }
+
+    // 4 · legacy single order
+    const rawLegacy = localStorage.getItem(KEY_LEGACY);
+    if (rawLegacy) {
+      let obj;
+      try { obj = JSON.parse(rawLegacy); }
+      catch (e) { return fail("The label hand-off could not be read", e.message); }
+      clear(KEY_LEGACY);
+      await runLegacy(obj);
+      return;
+    }
+
+    ui("Idle", "work", "Nothing to print",
+       "Open this page from Design Station 1's “Print labels” button — it hands the batch over automatically.");
+    progress(0, 1);
+  } catch (err) {
+    fail("The print page hit an unexpected error", (err && err.message) || err);
+  }
 });
 
-/* ──────────────────────────────────────────────────────────
- *  JOB FLOW – one PDF page per split slice (preferred)
- *  Expects: [{ metal, ids, partIndex, partTotal, total }]
- * ────────────────────────────────────────────────────────── */
-async function handleMetalJobs(jobs){
-  if (!Array.isArray(jobs) || !jobs.length) return;
+function describe(v) { return v === null ? "null" : Array.isArray(v) ? "an array" : typeof v; }
+function clear(k) { try { sessionStorage.removeItem(k); localStorage.removeItem(k); } catch (_) {} }
+
+/* ── job flow ──────────────────────────────────────────────────────────── */
+async function runJobs(jobs) {
+  const live = jobs.filter(j => j && Array.isArray(j.ids) && j.ids.length);
+  if (!live.length) return fail("Every label in the batch was empty");
+  if (!libsReady()) return;                  // libsReady reports its own failure
+
+  const total  = live.length;
+  const orders = new Set();
+  report("started", { total });
+  ui("Working", "work", total + " label" + (total !== 1 ? "s" : "") + " to build", "Rendering QR codes…");
+
   const pages = [];
-  for (const job of jobs){
-    if (!Array.isArray(job.ids) || !job.ids.length) continue;
-    const payload = encodeOrderList(job.ids, job.metal);
-    const imgData = await makeQRDataURL(payload, "M"); // ECC=M (fallback→L inside)
-    const label = `${String(job.metal||"").toUpperCase()} (${job.ids.length} of ${job.total})` +
-                  (job.partTotal > 1 ? ` [${job.partIndex}/${job.partTotal}]` : "");
-    pages.push({
-      stack: [
-        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-        { text : label, fontSize:9, bold:true, absolutePosition:{ x:1, y:93 } },
-        { text : "Notes:", fontSize:9, bold:true, absolutePosition:{ x:92, y:0.5 } }
-      ],
-      pageBreak: 'after'
-    });
+  for (let i = 0; i < live.length; i++) {
+    const job   = live[i];
+    const label = job.label || defaultLabel(job);
+    ui(null, null, null, "Rendering " + label);
+    report("progress", { done:i, total, label });
+    progress(i, total);
+
+    // The station already encoded the payload; reuse it byte-for-byte so the
+    // printed code can never drift from what the scanner expects.
+    const payload = job.payload || encodeOrderList(job.ids, job.metal);
+
+    let img;
+    try { img = await makeQRDataURL(payload); }
+    catch (e) { return fail("Could not render the QR for " + label, (e && e.message) || e); }
+
+    job.ids.forEach(id => orders.add(String(id)));
+    pages.push(pageFor(img, label));
+    addTile(img, label, job.ids.length);
   }
-  if (!pages.length) return;
-  pages[pages.length - 1].pageBreak = undefined;
-  const docDef = { pageSize:{ width:145, height:145 }, pageMargins:[0,0,0,0], content: pages };
-  await autoPrint(docDef);
+
+  report("progress", { done:total, total });
+  progress(total, total);
+  ui(null, null, null, "Handing the PDF to the printer…");
+
+  try { await autoPrint({ pageSize:PAGE, pageMargins:[0,0,0,0], content:withoutTrailingBreak(pages) }); }
+  catch (e) { return fail("The PDF could not be produced", (e && e.message) || e); }
+
+  ui("Printed", "ok", total + " label" + (total !== 1 ? "s" : "") + " sent to the printer",
+     "If the print dialog did not appear, use “Print again”.");
+  $("againBtn").disabled = false;
+  $("foot").textContent = orders.size + " order" + (orders.size !== 1 ? "s" : "") +
+                          " across " + total + " label" + (total !== 1 ? "s" : "") + ".";
+  report("done", { ok:true, labels:total, orders:orders.size });
 }
 
-/* ──────────────────────────────────────────────────────────
- *  NEW FLOW – metal bundles (auto-split into pages of 50)
- * ────────────────────────────────────────────────────────── */
-async function handleMetalBundles(lists) {
-  // 1) De-dupe across bundles
-  const seen = new Set();
-  for (const m of Object.keys(lists)) {
-    lists[m] = (lists[m] || []).filter(id => {
-      const k = String(id);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  }
+function defaultLabel(job) {
+  const metal = String(job.metal || "").toUpperCase();
+  const part  = job.partTotal > 1 ? " [" + job.partIndex + "/" + job.partTotal + "]" : "";
+  const of    = job.total && job.total > job.ids.length ? " of " + job.total : "";
+  return metal + " (" + job.ids.length + of + ")" + part;
+}
 
-  // 2) Build pages (SPLIT into chunks of 50 per metal)
-  const pages = [];
-  for (const [metal, arr] of Object.entries(lists)) {
-    if (!arr || !arr.length) continue;
+function pageFor(imgData, label) {
+  return {
+    stack: [
+      { image:imgData, width:QR_W, absolutePosition:QR_POS },
+      { text:label,    fontSize:9, bold:true, absolutePosition:LBL_POS },
+      { text:"Notes:", fontSize:9, bold:true, absolutePosition:NTS_POS }
+    ],
+    pageBreak: "after"
+  };
+}
+function withoutTrailingBreak(pages) {
+  if (pages.length) pages[pages.length - 1] = Object.assign({}, pages[pages.length - 1], { pageBreak:undefined });
+  return pages;
+}
+
+/* Bundles → the same job shape, split at 50 ids per label. */
+function jobsFromLists(lists) {
+  const seen = new Set(), jobs = [];
+  Object.keys(lists || {}).forEach(metal => {
+    const ids = (lists[metal] || []).map(String).filter(id => {
+      if (seen.has(id)) return false;
+      seen.add(id); return true;
+    });
+    if (!ids.length) return;
     const parts = [];
-    for (let i = 0; i < arr.length; i += 50) parts.push(arr.slice(i, i + 50));
-    const total = arr.length;
-
-    for (let idx = 0; idx < parts.length; idx++){
-      const slice   = parts[idx];
-      const payload = encodeOrderList(slice, metal);
-      const imgData = await makeQRDataURL(payload, "M"); // ECC=M (fallback→L inside)
-      const label   = `${metal.toUpperCase()} (${slice.length} of ${total})`
-                    + (parts.length > 1 ? ` [${idx+1}/${parts.length}]` : "");
-      pages.push({
-        stack: [
-          { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-          { text : label, fontSize:9, bold:true, absolutePosition:{ x:1, y:93 } },
-          { text : "Notes:", fontSize:9, bold:true, absolutePosition:{ x:92, y:0.5 } }
-        ],
-        pageBreak: 'after'
-      });
-    }
-  }
-  if (!pages.length) return;
-
-  // 3) Single print with all pages
-  pages[pages.length - 1].pageBreak = undefined;  // Drop the last pageBreak
-  const docDef = {
-    pageSize   : { width:145, height:145 },  // 1″ × 1″ for every page
-    pageMargins: [0,0,0,0],
-    content    : pages
-  };
-  await autoPrint(docDef);
+    for (let i = 0; i < ids.length; i += 50) parts.push(ids.slice(i, i + 50));
+    parts.forEach((slice, idx) => jobs.push({
+      metal, ids:slice, partIndex:idx + 1, partTotal:parts.length, total:ids.length
+    }));
+  });
+  return jobs;
 }
 
-/* ──────────────────────────────────────────────────────────
- *  LEGACY FLOW  – single order QR (unchanged)
- * ────────────────────────────────────────────────────────── */
-async function handleLegacy(dataObj){
-  if (!dataObj || !Array.isArray(dataObj.items) || !dataObj.items.length) {
-    console.error("'qrPrintAll' payload malformed."); return;
-  }
-  const dispatchDate = dataObj.dispatchDate || "N/A";
-  const orderNum     = dataObj.userTypedOrderNum
-                    || dataObj.items[0].receipt_id
-                    || "UnknownOrder";
+/* ── legacy single-order flow ──────────────────────────────────────────── */
+async function runLegacy(data) {
+  if (!data || !Array.isArray(data.items) || !data.items.length) return fail("The legacy payload was malformed");
+  if (!libsReady()) return;
 
-  const imgData = await makeQRDataURL(orderNum, "M");
-  const docDef  = {
-    pageSize   : { width:72, height:72 },          // 1″ × 1″
-    pageMargins: [0,0,0,0],
-    content : [
-      { image: imgData, width:12, absolutePosition:{ x:27.5, y:2 } },
-      { text : dispatchDate,
-        fontSize:2, bold:true,
-        absolutePosition:{ x:27.5, y:13.75 } }
-    ]
-  };
-  await autoPrint(docDef);
+  const dispatchDate = data.dispatchDate || "N/A";
+  const orderNum     = data.userTypedOrderNum || data.items[0].receipt_id || "UnknownOrder";
+  report("started", { total:1 });
+  ui("Working", "work", "1 label to build", "Rendering order " + orderNum);
+
+  let img;
+  try { img = await makeQRDataURL(String(orderNum)); }
+  catch (e) { return fail("Could not render the QR", (e && e.message) || e); }
+
+  addTile(img, String(orderNum), 1);
+  try {
+    await autoPrint({
+      pageSize:{ width:72, height:72 }, pageMargins:[0,0,0,0],
+      content:[
+        { image:img, width:12, absolutePosition:{ x:27.5, y:2 } },
+        { text:dispatchDate, fontSize:2, bold:true, absolutePosition:{ x:27.5, y:13.75 } }
+      ]
+    });
+  } catch (e) { return fail("The PDF could not be produced", (e && e.message) || e); }
+
+  progress(1, 1);
+  ui("Printed", "ok", "1 label sent to the printer", "");
+  $("againBtn").disabled = false;
+  report("done", { ok:true, labels:1, orders:1 });
 }
 
-/* ──────────────────────────────────────────────────────────
- *  BASE-36 COMPACT ENCODING
- * ────────────────────────────────────────────────────────── */
+/* ── base-36 payload ───────────────────────────────────────────────────────
+   Must stay byte-identical to the Design Station's encoder and the scanner's
+   decoder. Only reached when a job arrives without a precomputed payload.   */
 function toB36(numStr) {
   const clean = String(numStr).trim();
-  if (!/^\d+$/.test(clean)) return clean;   // fall back if non-numeric
+  if (!/^\d+$/.test(clean)) return clean;
   let n = BigInt(clean);
   if (n === 0n) return "0";
   const digits = "0123456789abcdefghijklmnopqrstuvwxyz";
   let out = "";
-  while (n > 0n) {
-    const r = Number(n % 36n);
-    out = digits[r] + out;
-    n = n / 36n;
-  }
+  while (n > 0n) { out = digits[Number(n % 36n)] + out; n = n / 36n; }
   return out;
 }
-
-/**
- * Encode a list of decimal order IDs (strings or numbers) as:
- *   "B36|<metal>|id.id.id"
- * where ids are base-36 and joined by '.'
- */
 function encodeOrderList(ids, metal) {
-  const b36 = (ids || []).map(x => {
+  const b36 = (ids || []).map(function (x) {
     const digits = String(x).replace(/\D/g, "");
     return digits ? toB36(digits) : String(x);
   });
-  return `B36|${metal}|` + b36.join(".");
+  return "B36|" + metal + "|" + b36.join(".");
 }
 
-/* ──────────────────────────────────────────────────────────
- *  HELPERS
- * ────────────────────────────────────────────────────────── */
-async function makeQRDataURL(text, ecc = "M"){
-  const holder = document.createElement("div");
-  holder.style.display = "none";
-  document.body.appendChild(holder);
-
-  const lvl = (QRCode && QRCode.CorrectLevel) || {};
-  const pick = lvl[ecc] ?? lvl.M ?? 1;
-  try{
-    new QRCode(holder, { text, width:1024, height:1024, correctLevel: pick });
-  }catch(e){
-    // last-resort if library throws for very long text
-    new QRCode(holder, { text, width:1024, height:1024, correctLevel: lvl.L ?? 0 });
+/* ── helpers ───────────────────────────────────────────────────────────── */
+function libsReady() {
+  if (typeof window.QRCode !== "function") {
+    fail("The QR library did not load", "qrcodejs is blocked or offline — check the network, then reload.");
+    return false;
   }
-  await new Promise(r => setTimeout(r, 300));      // allow render
-
-  const img = holder.querySelector("img")
-         || holder.querySelector("canvas")?.toDataURL("image/png");
-  return img && img.tagName ? img.src : img;       // normalize
+  if (!window.pdfMake || typeof pdfMake.createPdf !== "function") {
+    fail("The PDF library did not load", "pdfmake is blocked or offline — check the network, then reload.");
+    return false;
+  }
+  return true;
 }
 
-async function autoPrint(docDefinition){
-  return new Promise(res => {
-    pdfMake.createPdf(docDefinition).getBlob(blob => {
-      const url = URL.createObjectURL(blob);
-      const frame = document.createElement("iframe");
-      frame.style.visibility = "hidden";
-      frame.src = url;
-      frame.onload = () => { frame.contentWindow.print(); res(); };
-      document.body.appendChild(frame);
-    });
+/**
+ * Render `text` to a PNG data URL.
+ *
+ * The previous version slept a flat 300 ms and then took whatever happened to
+ * be in the DOM — slower than it needs to be on a warm cache and occasionally
+ * too early on a cold one. This polls for the real bitmap, tolerates both the
+ * canvas and img variants qrcodejs picks between, and always removes its
+ * scratch node instead of leaving it in the document.
+ */
+function makeQRDataURL(text, ecc) {
+  ecc = ecc || "M";
+  return new Promise(function (resolve, reject) {
+    const holder = document.createElement("div");
+    holder.style.cssText = "position:absolute;left:-9999px;top:0;width:1024px;height:1024px";
+    document.body.appendChild(holder);
+    const done = (fn, v) => { try { holder.remove(); } catch (_) {} fn(v); };
+
+    const lvl = (window.QRCode && QRCode.CorrectLevel) || {};
+    const build = level => new QRCode(holder, { text, width:1024, height:1024, correctLevel:level });
+    try {
+      build(lvl[ecc] != null ? lvl[ecc] : (lvl.M != null ? lvl.M : 1));
+    } catch (e) {
+      // Very long payloads overflow the chosen ECC — drop to L. The station
+      // already sizes its chunks, so this is only a last line of defence.
+      holder.innerHTML = "";
+      try { build(lvl.L != null ? lvl.L : 0); }
+      catch (e2) { return done(reject, new Error("payload too long for a single QR")); }
+    }
+
+    const t0 = Date.now();
+    (function poll() {
+      const canvas = holder.querySelector("canvas");
+      const img    = holder.querySelector("img");
+      let url = null;
+      if (canvas) { try { url = canvas.toDataURL("image/png"); } catch (_) {} }
+      if (!url && img && img.src && img.complete && img.naturalWidth > 0) url = img.src;
+      if (url && url.length > 512) return done(resolve, url);
+      if (Date.now() - t0 > 10000) return done(reject, new Error("QR render timed out"));
+      requestAnimationFrame(poll);
+    })();
   });
 }
+
+let lastBlobUrl = null;
+function autoPrint(docDefinition) {
+  return new Promise(function (resolve, reject) {
+    let settled = false;
+    const timer = setTimeout(function () {
+      if (!settled) { settled = true; reject(new Error("pdfmake did not return a document")); }
+    }, 45000);
+    try {
+      pdfMake.createPdf(docDefinition).getBlob(function (blob) {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        try {
+          if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+          lastBlobUrl = URL.createObjectURL(blob);
+          const frame = document.createElement("iframe");
+          frame.style.cssText = "position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;border:0";
+          frame.onload = function () {
+            try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+            catch (e) { console.warn("print() refused:", e); }
+            resolve();
+          };
+          frame.onerror = function () { reject(new Error("the PDF could not be opened for printing")); };
+          frame.src = lastBlobUrl;
+          document.body.appendChild(frame);
+        } catch (e) { reject(e); }
+      });
+    } catch (e) { clearTimeout(timer); settled = true; reject(e); }
+  });
+}
+
+function addTile(img, cap, count) {
+  const t = document.createElement("div"); t.className = "tile";
+  const i = document.createElement("img"); i.src = img; i.alt = "";
+  const c = document.createElement("div"); c.className = "cap"; c.textContent = cap;
+  const n = document.createElement("div"); n.className = "cnt";
+  n.textContent = count + " order" + (count !== 1 ? "s" : "");
+  t.appendChild(i); t.appendChild(c); t.appendChild(n);
+  $("tiles").appendChild(t);
+}
+
+$("againBtn").addEventListener("click", function () {
+  if (!lastBlobUrl) return;
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;border:0";
+  frame.onload = function () { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (_) {} };
+  frame.src = lastBlobUrl;
+  document.body.appendChild(frame);
+});
 </script>
 </body>
 </html>
