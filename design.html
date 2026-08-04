@@ -182,6 +182,10 @@ html[data-rail=sm] .searchBox input{height:36px}
 .sortBar .hdr>button:hover{color:#fff;background:#3f382f}
 .sortBar .hdr>button.on{color:var(--gold2)}
 .sortBar .hdr>button .cv{font-size:calc(var(--hdrFont) - 1px);opacity:.6}
+/* A grouped metal column is a different kind of state from a sort direction,
+   so it reads differently: filled chip rather than a chevron. */
+.sortBar .hdr>button.grouped{color:var(--velvet);background:var(--gold2);box-shadow:0 0 0 1px var(--gold)}
+.sortBar .hdr>button.grouped:hover{color:var(--velvet);background:var(--gold2)}
 
 /* rail statistics */
 .railStats{padding:11px var(--railPad) 2px;display:grid;gap:8px;flex:0 0 auto}
@@ -559,6 +563,125 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
 .skuRow{display:flex;align-items:center;gap:9px;margin-top:2px}
 .skuRow .sku{font:13px var(--mono);font-weight:700}
 
+/* ══ BRITES MESSAGES ══════════════════════════════════════════════════════
+   Lives inside the listing dialog as a second pane. The dialog becomes a
+   fixed-height two-column shell so the order detail and the thread scroll
+   independently — a chat that moves the whole dialog is unusable.          */
+dialog.lmChat{width:min(1380px,96vw);max-height:min(90vh,960px)}
+dialog.lmChat .dlg{height:min(90vh,960px);max-height:min(90vh,960px)}
+dialog.lmChat .dlgBody{padding:0;overflow:hidden;min-height:0;flex:1 1 auto}
+.lmSplit{display:grid;grid-template-columns:minmax(0,1fr) minmax(342px,.86fr);height:100%;min-height:0}
+.lmMain{padding:16px 18px;overflow:auto;min-height:0;display:flex}
+/* Fill the taller dialog instead of leaving a well of dead space under the
+   meta boxes: the staff note takes the slack, which is the field an operator
+   is most likely to want room in. */
+dialog.lmChat .lmMain>.lmGrid{flex:1 1 auto;min-height:0}
+dialog.lmChat .lmGrid>div:last-child{display:flex;flex-direction:column;min-height:0}
+dialog.lmChat #modalListingNotes{min-height:104px;flex:0 0 auto}
+dialog.lmChat #modalStaffNote{flex:1 1 auto;min-height:104px}
+dialog.lmChat #modalListingDetails{flex:0 0 auto}
+
+.bc{display:flex;flex-direction:column;min-height:0;position:relative;
+    border-left:1px solid var(--line);background:var(--card2)}
+.bcHead{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:11px 14px;
+        border-bottom:1px solid var(--line);background:var(--card)}
+.bcLab{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink45);font-weight:750}
+.bcCount{font-size:11px;color:var(--ink45)}
+.bc .dot{width:7px;height:7px;border-radius:50%;background:var(--ink25);flex:0 0 auto}
+.bc .dot.on{background:var(--sage)}
+.bcWho{margin-left:auto;display:inline-flex;align-items:center;gap:7px;max-width:190px;
+       background:var(--paper2);border:1px solid var(--line);border-radius:999px;
+       padding:3px 11px 3px 3px;cursor:pointer;min-width:0}
+.bcWho:hover{background:var(--goldSoft);border-color:var(--goldLine)}
+.bcAv{width:21px;height:21px;border-radius:50%;background:var(--velvet);color:#fff;font-size:9.5px;
+      font-weight:750;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.bcWhoName{font-size:11.5px;font-weight:650;color:var(--ink70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bcWho input{border:0;outline:none;background:transparent;font-size:11.5px;font-weight:650;width:124px;color:var(--ink);padding:0}
+
+.bcThread{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+          padding:14px 14px 16px;display:flex;flex-direction:column;gap:2px;background:var(--card2)}
+.bcThread::-webkit-scrollbar{width:9px}
+.bcThread::-webkit-scrollbar-thumb{background:var(--line);border-radius:9px;border:2px solid var(--card2)}
+
+.bcDay{align-self:center;margin:12px 0 7px}
+.bcDay span{background:var(--paper2);border:1px solid var(--line);color:var(--ink45);font-size:9.5px;
+            font-weight:750;letter-spacing:.07em;text-transform:uppercase;padding:3px 11px;border-radius:999px}
+
+.bcRow{display:flex;gap:8px;align-items:flex-end;margin-top:8px;max-width:100%}
+.bcRow.me{flex-direction:row-reverse}
+.bcRow.grouped{margin-top:2px}
+.bcRow.grouped .bcAv{visibility:hidden}
+
+.bcB{max-width:min(80%,470px);border-radius:14px;padding:8px 12px 7px;font-size:13.5px;line-height:1.45;
+     box-shadow:0 1px 1px rgba(30,26,20,.04)}
+.bcB .t{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}
+.bcB .m{font-size:10px;margin-top:5px;opacity:.62;display:flex;gap:6px;align-items:center}
+.bcRow.me .bcB{background:var(--velvet);color:#f6f1e6;border-bottom-right-radius:5px}
+.bcRow.me .bcB .m{justify-content:flex-end}
+.bcRow.them .bcB{background:var(--card);color:var(--ink);border:1px solid var(--line);border-bottom-left-radius:5px}
+.bcB.buyer{background:var(--goldSoft);border:1px solid var(--goldLine);color:#5c4718}
+.bcTag{font-size:9px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;opacity:.7;margin-bottom:3px}
+
+.bcB.img{padding:4px;overflow:hidden}
+.bcB.img img{display:block;max-width:270px;max-height:250px;width:auto;height:auto;
+             border-radius:11px;cursor:zoom-in;background:var(--paper2)}
+.bcB.img .m{padding:0 7px 3px;margin-top:4px}
+.bcB.pending{opacity:.6}
+.bcB.failed{outline:2px solid var(--clay)}
+.bcRetry{background:none;border:0;color:inherit;text-decoration:underline;cursor:pointer;font-size:10px;padding:0}
+.bcProg{height:3px;border-radius:3px;background:rgba(255,255,255,.3);overflow:hidden;margin-top:5px}
+.bcProg i{display:block;height:100%;background:currentColor;width:0;transition:width .18s}
+
+.bcEmpty{margin:auto;text-align:center;color:var(--ink45);font-size:13px;padding:26px 18px;line-height:1.7}
+.bcEmpty b{display:block;color:var(--ink70);font-size:14px;margin-bottom:3px}
+
+.bcJump{position:absolute;left:50%;bottom:128px;transform:translateX(-50%) translateY(7px);z-index:6;
+        opacity:0;pointer-events:none;transition:.18s;background:var(--velvet);color:#f6f1e6;border:0;
+        border-radius:999px;padding:7px 15px;font-size:11.5px;font-weight:650;cursor:pointer;
+        box-shadow:0 6px 18px rgba(30,26,20,.28)}
+.bcJump.show{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+
+.bcComp{flex:0 0 auto;border-top:1px solid var(--line);background:var(--card);padding:9px 12px 11px}
+.bcTray{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:8px}
+.bcTray:empty{display:none}
+.bcChip{position:relative;width:56px;height:56px;border-radius:9px;overflow:hidden;
+        border:1px solid var(--line);background:var(--paper2)}
+.bcChip img{width:100%;height:100%;object-fit:cover;display:block}
+.bcChip button{position:absolute;top:2px;right:2px;width:17px;height:17px;border-radius:50%;
+               background:rgba(20,18,15,.7);color:#fff;border:0;cursor:pointer;font-size:10px;line-height:17px;padding:0}
+.bcLine{display:flex;align-items:flex-end;gap:8px}
+#bcInput{flex:1 1 auto;min-height:40px;max-height:140px;overflow-y:auto;resize:none;
+         background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+         font:13.5px/1.45 var(--sans);color:var(--ink);outline:none}
+#bcInput:focus{border-color:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.14)}
+.bcIco{flex:0 0 auto;width:40px;height:40px;border-radius:11px;cursor:pointer;border:1px solid var(--line);
+       background:#fff;color:var(--ink70);display:flex;align-items:center;justify-content:center;transition:.12s}
+.bcIco:hover{background:var(--paper2)}
+.bcIco svg{width:19px;height:19px}
+.bcIco.send{background:var(--velvet);border-color:var(--velvet);color:#f6f1e6}
+.bcIco.send:hover{background:#000}
+.bcIco.send:disabled{opacity:.34;cursor:not-allowed;background:var(--velvet)}
+.bcHint{font-size:10px;color:var(--ink45);padding-top:6px}
+.bcHint kbd{background:var(--paper2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;
+            padding:0 4px;font:9.5px var(--mono)}
+
+.bcDrop{position:absolute;inset:0;z-index:12;display:none;align-items:center;justify-content:center;
+        flex-direction:column;gap:9px;background:rgba(250,247,241,.95);border:3px dashed var(--gold2);
+        font-size:14.5px;font-weight:650;color:var(--ink70);pointer-events:none}
+.bcDrop.on{display:flex}
+
+dialog.bcLb{width:auto;max-width:96vw;max-height:96vh;background:transparent;box-shadow:none;overflow:visible}
+dialog.bcLb::backdrop{background:rgba(20,18,15,.88)}
+dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;box-shadow:0 22px 70px rgba(0,0,0,.6)}
+.bcLbBar{display:flex;gap:8px;justify-content:flex-end;margin-bottom:10px}
+.bcLbBar .btn{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.24);color:#f6f1e6}
+.bcLbBar .btn:hover{background:rgba(255,255,255,.22)}
+
+@media(max-width:1100px){
+  .lmSplit{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1.1fr)}
+  .bc{border-left:0;border-top:1px solid var(--line)}
+}
+
 /* QR preview */
 .qrGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
 .qrCard{border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center;background:var(--card2)}
@@ -813,7 +936,7 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
 <div class="toasts" id="toasts"></div>
 
 <!-- ══════════════ LISTING DETAIL ══════════════ -->
-<dialog id="listingModal" class="wide" aria-labelledby="lmTitle">
+<dialog id="listingModal" class="wide lmChat" aria-labelledby="lmTitle">
   <div class="dlg">
     <div class="dlgHead">
       <h3 id="lmTitle">Order</h3>
@@ -823,23 +946,72 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       </div>
     </div>
     <div class="dlgBody">
-      <div class="lmGrid">
-        <div>
-          <img class="lmImg" id="modalListingImg" alt="">
-          <div class="skuRow" style="margin-top:11px">
-            <span class="sku" id="modalSkuText">SKU: —</span>
-            <button class="btn ghost xs" id="modalSkuCopyBtn">Copy</button>
+      <div class="lmSplit">
+
+        <div class="lmMain">
+          <div class="lmGrid">
+            <div>
+              <img class="lmImg" id="modalListingImg" alt="">
+              <div class="skuRow" style="margin-top:11px">
+                <span class="sku" id="modalSkuText">SKU: —</span>
+                <button class="btn ghost xs" id="modalSkuCopyBtn">Copy</button>
+              </div>
+            </div>
+            <div>
+              <label class="fLabel">Personalisation &amp; buyer message</label>
+              <textarea class="inp" id="modalListingNotes" readonly></textarea>
+
+              <label class="fLabel">Staff note <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink45)">— saved automatically, visible to every station</span></label>
+              <textarea class="inp" id="modalStaffNote" placeholder="Add a note for this order…"></textarea>
+
+              <div class="metaGrid" id="modalListingDetails"></div>
+            </div>
           </div>
         </div>
-        <div>
-          <label class="fLabel">Personalisation &amp; buyer message</label>
-          <textarea class="inp" id="modalListingNotes" readonly></textarea>
 
-          <label class="fLabel">Staff note <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink45)">— saved automatically, visible to every station</span></label>
-          <textarea class="inp" id="modalStaffNote" placeholder="Add a note for this order…"></textarea>
+        <!-- ══════════ BRITES MESSAGES ══════════ -->
+        <aside class="bc" id="bcPane">
+          <div class="bcHead">
+            <span class="dot" id="bcLive"></span>
+            <span class="bcLab">Messages</span>
+            <span class="bcCount" id="bcCount"></span>
+            <button type="button" class="bcWho" id="bcWho" title="Messages are sent under this name — click to change it">
+              <span class="bcAv" id="bcWhoAv">?</span>
+              <span class="bcWhoName" id="bcWhoName">Set your name</span>
+            </button>
+          </div>
 
-          <div class="metaGrid" id="modalListingDetails"></div>
-        </div>
+          <div class="bcThread" id="bcThread"></div>
+          <button type="button" class="bcJump" id="bcJump">↓ New messages</button>
+
+          <div class="bcComp">
+            <div class="bcTray" id="bcTray"></div>
+            <div class="bcLine">
+              <button type="button" class="bcIco" id="bcAttach" title="Attach images">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                </svg>
+              </button>
+              <textarea id="bcInput" rows="1" placeholder="Message the customer…"></textarea>
+              <button type="button" class="bcIco send" id="bcSend" title="Send (Enter)" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                </svg>
+              </button>
+            </div>
+            <div class="bcHint"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</div>
+          </div>
+
+          <div class="bcDrop" id="bcDrop">
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v13"/>
+            </svg>
+            Drop images to attach
+          </div>
+
+          <input type="file" id="bcFile" accept="image/*" multiple hidden>
+        </aside>
+
       </div>
     </div>
     <div class="dlgFoot">
@@ -890,6 +1062,17 @@ textarea.inp[readonly]{background:var(--card2);color:var(--ink70)}
       <button class="btn ghost" id="amClose2">Close</button>
     </div>
   </div>
+</dialog>
+
+<!-- ══════════════ CHAT IMAGE VIEWER ══════════════
+     Its own <dialog> on purpose: #listingModal is opened with showModal(),
+     so anything outside the top layer would render *behind* it. -->
+<dialog id="bcLightbox" class="bcLb" aria-label="Attached image">
+  <div class="bcLbBar">
+    <a class="btn ghost sm" id="bcLbOpen" target="_blank" rel="noopener">Open original</a>
+    <button class="btn ghost sm" id="bcLbClose">✕ Close</button>
+  </div>
+  <img id="bcLightboxImg" alt="">
 </dialog>
 
 <!-- ══════════════ SETTINGS ══════════════ -->
@@ -1133,7 +1316,17 @@ let   staffNoteIDs    = new Set();   // ONE binding. Nothing else may declare th
 
 let allOpenReceipts  = [];
 let currentReceipts  = [];
-let sortKey = "ship", sortDir = 1;
+
+/* SORT MODEL — the rail is always chronological.
+   A metal column is a GROUPING, not a quantity sort. Picking one lifts every
+   order containing that metal to the top of the list, still in date order,
+   across the whole list rather than the rendered chunk. The Date header then
+   flips the direction of that date order, in both the plain and the grouped
+   views, so "14K, most overdue first" is two clicks and never loses the
+   grouping. Order # stays available as an explicit override.               */
+let dateDir     = 1;      // 1 = oldest first (default), -1 = newest first
+let orderDir    = 0;      // 0 = off; 1 / -1 while the Order column drives
+let activeMetal = null;   // null | metal key currently grouped to the top
 
 let lastClearedReceipts = [];
 let searchActive  = false;
@@ -2332,21 +2525,29 @@ function applyHydration(rid, txs) {
 /* ── 11c · sorting ───────────────────────────────────────────────────────── */
 
 function sortReceipts(list) {
-  const key = sortKey || "ship";
   return list.sort((a, b) => {
-    switch (key) {
-      case "order": return sortDir * (Number(a.order_number || a.receipt_id) - Number(b.order_number || b.receipt_id));
-      case "ship": {
-        const av = a._shipTS || 0, bv = b._shipTS || 0;
-        if (!av && !bv) return 0;
-        if (!av) return 1;          // undated always sinks
-        if (!bv) return -1;
-        return sortDir * (av - bv);
-      }
-      default:
-        if (METAL_BY_KEY[key]) return sortDir * ((a._metalCounts?.[key] || 0) - (b._metalCounts?.[key] || 0));
-        return 0;
+    /* 1 ▸ metal grouping — orders carrying the chosen metal float to the top.
+           Presence, not quantity: a 1-piece 14K order is as urgent as a 6-piece
+           one, and ordering the group by count would scramble the dates.      */
+    if (activeMetal) {
+      const A = (a._metalCounts?.[activeMetal] || 0) > 0 ? 0 : 1;
+      const B = (b._metalCounts?.[activeMetal] || 0) > 0 ? 0 : 1;
+      if (A !== B) return A - B;
     }
+
+    /* 2 ▸ explicit Order # override, only while that header is active */
+    if (orderDir) {
+      const na = Number(a.order_number || a.receipt_id) || 0;
+      const nb = Number(b.order_number || b.receipt_id) || 0;
+      if (na !== nb) return orderDir * (na - nb);
+    }
+
+    /* 3 ▸ date — the default ordering, and the tie-break inside a group */
+    const av = a._shipTS || 0, bv = b._shipTS || 0;
+    if (!av && !bv) return 0;
+    if (!av) return  1;             // undated always sinks
+    if (!bv) return -1;
+    return dateDir * (av - bv);
   });
 }
 
@@ -2364,7 +2565,11 @@ function buildSortHeader() {
     const b = document.createElement("button");
     b.type = "button";
     b.dataset.key = c.key;
-    b.title = `Sort by ${c.title || c.label}`;
+    b.title = c.key === "ship"
+      ? "Order the list by date — also flips the direction of a metal grouping"
+      : c.key === "order"
+        ? "Sort by order number"
+        : `Bring ${c.title || c.label} orders to the top, still in date order`;
     b.innerHTML = `<span>${c.label}</span><span class="cv"></span>`;
     hdr.appendChild(b);
   });
@@ -2374,19 +2579,54 @@ function buildSortHeader() {
     const btn = ev.target.closest("button[data-key]");
     if (!btn) return;
     const key = btn.dataset.key;
-    sortDir = (sortKey === key) ? -sortDir : (key === "ship" ? 1 : -1);
-    sortKey = key;
+
+    if (key === "order") {
+      /* Order # is an override, so it clears any grouping */
+      orderDir = orderDir === 1 ? -1 : 1;
+      activeMetal = null;
+    } else if (key === "ship") {
+      /* Date flips direction and keeps whatever metal is grouped */
+      dateDir  = -dateDir;
+      orderDir = 0;
+    } else if (METAL_BY_KEY[key]) {
+      /* Metal toggles the grouping; the date direction is left alone so the
+         Date button keeps working on top of the selection */
+      activeMetal = (activeMetal === key) ? null : key;
+      orderDir = 0;
+    } else return;
+
     paintSortHeader();
     applyFilters({ rerender:true });
+    $("#queueWrap")?.scrollTo({ top:0 });
+
+    const dir = dateDir === 1 ? "oldest first" : "newest first";
+    toast(activeMetal
+      ? `${METAL_BY_KEY[activeMetal].label} first · ${dir}`
+      : orderDir ? `Order number · ${orderDir === 1 ? "ascending" : "descending"}`
+                 : `Date · ${dir}`);
   });
   paintSortHeader();
 }
 
 function paintSortHeader() {
   $$("#orderHeaderBar button[data-key]").forEach(b => {
-    const on = b.dataset.key === sortKey;
+    const key = b.dataset.key;
+    const cv  = b.querySelector(".cv");
+    let on = false, chev = "";
+
+    if (key === "ship") {
+      /* Date is always the ordering, so its arrow is always lit — that arrow
+         is the answer to "which end of the list am I looking at?" */
+      on = true; chev = dateDir === 1 ? "▲" : "▼";
+    } else if (key === "order") {
+      on = !!orderDir; chev = on ? (orderDir === 1 ? "▲" : "▼") : "";
+    } else {
+      on = key === activeMetal;     // grouped: styled, not chevroned
+    }
+
     b.classList.toggle("on", on);
-    b.querySelector(".cv").textContent = on ? (sortDir === 1 ? "▲" : "▼") : "";
+    b.classList.toggle("grouped", key === activeMetal);
+    cv.textContent = chev;
   });
 }
 
@@ -4234,6 +4474,16 @@ async function openListingModal(txid) {
   sw.setAttribute("aria-checked", String(on));
   sw.dataset.rid = rid;
 
+  /* Realtime Brites thread for this receipt. The buyer note and the
+     personalisation ride along as context bubbles — they come off the Etsy
+     receipt, not the messages collection. */
+  try {
+    BritesChat.open(rid, {
+      buyerMessage   : tx.message_from_buyer || "",
+      personalization: persText,
+    });
+  } catch (e) { console.warn("BritesChat.open failed", e); }
+
   openDlg($("#listingModal"));
 }
 
@@ -4269,6 +4519,531 @@ async function toggleSkipOrder() {
   applyMetalFilter();
   refreshChrome();
 }
+
+/* ═══ 16b · BRITES MESSAGES ══════════════════════════════════════════════
+   Realtime per-order chat, ported from the design-message station so both
+   read and write the SAME collection:  Brites_Orders/{receiptId}/messages
+
+   Text goes through the Netlify function (which stamps the server
+   timestamp and materialises the parent doc), with a direct Firestore
+   write as the fallback — the same belt-and-braces pattern
+   markBritesDesigned() already uses. Images go to Firebase Storage and
+   then straight into the subcollection, matching what design-message
+   writes, so an image posted at either station renders at both.
+
+   The buyer's own note and the personalisation are shown as context
+   bubbles at the top. They are NOT part of the collection — they come off
+   the Etsy receipt — so they are styled differently and never sent.       */
+
+const BritesChat = (() => {
+  const COLL = "Brites_Orders";
+
+  let el = {};
+  const S = {
+    rid:null, ctx:{ buyerMessage:"", personalization:"" },
+    unsub:null, seq:0,
+    docs:[], pending:[], queue:[],
+    firstSnap:true, atBottom:true, unread:0, settle:null,
+  };
+
+  /* ── identity ─────────────────────────────────────────────────────── */
+  const meName = () => { try { return (localStorage.getItem(LS.employee) || "").trim(); } catch (_) { return ""; } };
+  function initials(n) {
+    const p = String(n || "").trim().split(/\s+/).filter(Boolean);
+    if (!p.length) return "?";
+    return (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : "")).toUpperCase();
+  }
+  function hueFor(s) {
+    let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+    return `hsl(${h} 32% 33%)`;
+  }
+  function paintWho() {
+    const n = meName();
+    el.whoName.textContent = n || "Set your name";
+    el.whoAv.textContent   = n ? initials(n) : "?";
+    el.whoAv.style.background = n ? hueFor(n) : "var(--ink25)";
+  }
+  function editWho() {
+    if (el.who.dataset.editing === "1") return;
+    el.who.dataset.editing = "1";
+    const cur = meName();
+    el.who.innerHTML = `<span class="bcAv">${esc(cur ? initials(cur) : "?")}</span>`;
+    const inp = document.createElement("input");
+    inp.type = "text"; inp.value = cur; inp.placeholder = "Your name";
+    el.who.appendChild(inp);
+    inp.focus(); inp.select();
+    const commit = () => {
+      const v = (inp.value || "").trim();
+      if (v) { try { localStorage.setItem(LS.employee, v); } catch (_) {} }
+      el.who.dataset.editing = "0";
+      el.who.replaceChildren();
+      const av = document.createElement("span"); av.className = "bcAv"; av.id = "bcWhoAv";
+      const nm = document.createElement("span"); nm.className = "bcWhoName"; nm.id = "bcWhoName";
+      el.who.append(av, nm);
+      el.whoAv = av; el.whoName = nm;
+      paintWho(); render();
+    };
+    inp.addEventListener("blur", commit);
+    inp.addEventListener("keydown", ev => {
+      ev.stopPropagation();                             // don't trip global shortcuts
+      if (ev.key === "Enter")  { ev.preventDefault(); inp.blur(); }
+      if (ev.key === "Escape") { ev.preventDefault(); inp.value = cur; inp.blur(); }
+    });
+  }
+
+  /* ── helpers ──────────────────────────────────────────────────────── */
+  function esc(s = "") {
+    return String(s).replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
+  }
+  function linkify(s = "") {
+    return esc(s).replace(/\b(https?:\/\/[^\s<]+)/g,
+      u => `<a href="${u}" target="_blank" rel="noopener" style="color:inherit">${u}</a>`);
+  }
+  function dateOf(d) {
+    const t = d && d.timestamp;
+    if (!t) return null;
+    if (typeof t.toDate === "function") return t.toDate();
+    if (t.seconds != null) return new Date(t.seconds * 1000);
+    const p = new Date(t);
+    return isNaN(p) ? null : p;
+  }
+  const clock = d => (d || new Date())
+    .toLocaleString("en-US", { hour:"numeric", minute:"2-digit", hour12:true })
+    .replace(/\s([AP])M/i, (_, p) => ` ${p.toLowerCase()}m`);
+  const dayKey = d => (d ? d.toISOString().slice(0, 10) : "pending");
+  function dayLabel(d) {
+    if (!d) return "Sending";
+    const now = new Date(), yst = new Date(Date.now() - 864e5);
+    if (dayKey(d) === dayKey(now)) return "Today";
+    if (dayKey(d) === dayKey(yst)) return "Yesterday";
+    return d.toLocaleDateString("en-US", {
+      weekday:"short", month:"short", day:"2-digit",
+      year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+  }
+  function chime() {
+    try {
+      const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+      const ctx = new C();
+      const note = (f, at, dur = 0.15) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = "sine"; o.frequency.value = f;
+        o.connect(g); g.connect(ctx.destination);
+        g.gain.setValueAtTime(0.3, ctx.currentTime + at);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + at + dur);
+        o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + dur);
+      };
+      note(1319, 0); note(1760, 0.17);
+      setTimeout(() => { try { ctx.close(); } catch (_) {} }, 900);
+    } catch (_) {}
+  }
+  const newId = () => "p_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+  /* ── drafts ───────────────────────────────────────────────────────────
+     An unsent message survives closing the dialog and reloading the tab.
+     Interruptions are the norm at a bench, and re-typing a message because
+     you glanced at another order is the kind of small loss that stops
+     people using a tool.                                                  */
+  const DRAFTS = "designStation.chatDrafts.v1";
+  function readDrafts() {
+    try { return JSON.parse(localStorage.getItem(DRAFTS) || "{}"); } catch (_) { return {}; }
+  }
+  function saveDraft() {
+    if (!S.rid) return;
+    try {
+      const all = readDrafts();
+      const v = el.input.value;
+      if (v.trim()) all[S.rid] = v; else delete all[S.rid];
+      localStorage.setItem(DRAFTS, JSON.stringify(all));
+    } catch (_) {}
+  }
+  function clearDraft(rid) {
+    try { const all = readDrafts(); delete all[rid]; localStorage.setItem(DRAFTS, JSON.stringify(all)); } catch (_) {}
+  }
+
+  /* ── render ───────────────────────────────────────────────────────── */
+  function render() {
+    if (!el.thread) return;
+    const me = meName().toLowerCase();
+
+    const ctxRows = [];
+    if (S.ctx.personalization?.trim()) ctxRows.push({ tag:"Personalisation",       text:S.ctx.personalization.trim() });
+    if (S.ctx.buyerMessage?.trim())    ctxRows.push({ tag:"Buyer note on the order", text:S.ctx.buyerMessage.trim() });
+
+    const items = S.docs.concat(S.pending);
+    if (!ctxRows.length && !items.length) {
+      el.thread.innerHTML =
+        `<div class="bcEmpty"><b>No messages yet</b>Send an update, or drop a design proof<br>straight into this panel.</div>`;
+      el.count.textContent = "";
+      return;
+    }
+
+    let html = "";
+    ctxRows.forEach(c => {
+      html += `<div class="bcRow them"><span class="bcAv" style="background:var(--gold)">🛍</span>` +
+              `<div class="bcB buyer"><div class="bcTag">${esc(c.tag)}</div>` +
+              `<div class="t">${linkify(c.text)}</div></div></div>`;
+    });
+
+    let lastDay = null, lastWho = null;
+    items.forEach(m => {
+      const d  = m.__pending ? null : dateOf(m);
+      const dk = dayKey(d);
+      if (dk !== lastDay) {
+        html += `<div class="bcDay"><span>${esc(dayLabel(d))}</span></div>`;
+        lastDay = dk; lastWho = null;
+      }
+      const name  = (m.senderName || "Staff").trim();
+      const mine  = !!me && name.toLowerCase() === me;
+      const side  = mine ? "me" : "them";
+      const group = lastWho === side + "|" + name;
+      lastWho = side + "|" + name;
+
+      const cls = ["bcB"];
+      if (m.imageUrl) cls.push("img");
+      if (m.__pending && !m.__sent) cls.push("pending");
+      if (m.__failed) cls.push("failed");
+
+      /* An optimistic row narrates itself: Sending… → Sent ✓ → replaced by
+         the server doc. "Sent ✓" matters when the listener is slow — a
+         message must never look stuck. */
+      const meta = `<div class="m">${mine ? "" : esc(name) + " · "}` +
+        (m.__pending
+          ? (m.__failed
+              ? `Failed · <button type="button" class="bcRetry" data-retry="${esc(m.__id)}">Retry</button>`
+              : (m.__sent ? "Sent ✓" : "Sending…"))
+          : esc(clock(d))) + `</div>`;
+
+      const body = m.imageUrl
+        ? `<img src="${esc(m.imageUrl)}" alt="attachment" data-zoom="${esc(m.imageUrl)}" loading="lazy">` +
+          (m.text && m.text !== "Image attachment" ? `<div class="t" style="padding:5px 7px 0">${linkify(m.text)}</div>` : "")
+        : `<div class="t">${linkify(m.text || "")}</div>`;
+
+      const prog = (m.__pending && m.__progress != null && !m.__sent)
+        ? `<div class="bcProg"><i style="width:${Math.round(m.__progress)}%"></i></div>` : "";
+
+      html += `<div class="bcRow ${side}${group ? " grouped" : ""}">` +
+              `<span class="bcAv" style="background:${mine ? "var(--velvet)" : hueFor(name)}">${esc(initials(name))}</span>` +
+              `<div class="${cls.join(" ")}"${m.__pending ? ` data-pid="${esc(m.__id)}"` : ""}>${body}${prog}${meta}</div>` +
+              `</div>`;
+    });
+
+    const wasBottom = S.atBottom;
+    el.thread.innerHTML = html;
+    el.count.textContent = S.docs.length ? `${S.docs.length} message${S.docs.length === 1 ? "" : "s"}` : "";
+
+    if (wasBottom) {
+      scrollBottom();
+      /* Images resize the thread after paint — re-pin as each lands, or the
+         newest message ends up hidden behind the composer. */
+      el.thread.querySelectorAll("img").forEach(img => {
+        if (img.complete) return;
+        const fix = () => { if (S.atBottom) scrollBottom(); };
+        img.addEventListener("load", fix, { once:true });
+        img.addEventListener("error", fix, { once:true });
+      });
+    }
+  }
+
+  function scrollBottom(smooth) {
+    if (!el.thread) return;
+    el.thread.scrollTo({ top: el.thread.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    S.atBottom = true; S.unread = 0; paintJump();
+    /* A smooth scroll emits intermediate events that would flip atBottom
+       back to false mid-flight, silently killing auto-scroll afterwards. */
+    if (smooth) {
+      clearTimeout(S.settle);
+      S.settle = setTimeout(() => {
+        if (!el.thread) return;
+        el.thread.scrollTop = el.thread.scrollHeight;
+        S.atBottom = true; S.unread = 0; paintJump();
+      }, 420);
+    }
+  }
+  function paintJump() {
+    if (!el.jump) return;
+    el.jump.classList.toggle("show", !S.atBottom && S.unread > 0);
+    el.jump.textContent = `↓ ${S.unread} new message${S.unread === 1 ? "" : "s"}`;
+  }
+
+  /* ── realtime ─────────────────────────────────────────────────────── */
+  function detach() {
+    try { S.unsub && S.unsub(); } catch (_) {}
+    S.unsub = null;
+    el.live?.classList.remove("on");
+  }
+  function subscribe() {
+    detach();
+    const rid = S.rid, mySeq = ++S.seq;
+    if (!rid) return;
+    if (!db) { el.thread.innerHTML = `<div class="bcEmpty"><b>Chat unavailable</b>Firebase did not initialise in this tab.</div>`; return; }
+
+    try {
+      S.unsub = db.collection(COLL).doc(rid).collection("messages")
+        .orderBy("timestamp", "asc")
+        .onSnapshot(snap => {
+          if (mySeq !== S.seq) return;                     // stale listener
+          el.live?.classList.add("on");
+          S.docs = snap.docs.map(d => Object.assign({ __docId:d.id }, d.data()));
+
+          /* retire optimistic rows the server has now confirmed */
+          const me = meName().toLowerCase();
+          S.pending = S.pending.filter(p => p.__failed || !S.docs.some(d =>
+            (p.imageUrl ? d.imageUrl === p.imageUrl : (d.text || "") === (p.text || "")) &&
+            String(d.senderName || "").toLowerCase() === me));
+
+          const added = snap.docChanges().filter(c => c.type === "added");
+          if (!S.firstSnap && added.length) {
+            const inbound = added.filter(c =>
+              String((c.doc.data() || {}).senderName || "").toLowerCase() !== me);
+            if (inbound.length) {
+              chime();
+              if (!S.atBottom) S.unread += inbound.length;
+            }
+          }
+          S.firstSnap = false;
+          render(); paintJump();
+        }, err => {
+          if (mySeq !== S.seq) return;
+          el.live?.classList.remove("on");
+          console.warn("Brites chat listener error:", err);
+          toast("Chat offline — retrying", "bad");
+          setTimeout(() => { if (mySeq === S.seq) subscribe(); }, 4000);
+        });
+    } catch (e) { console.error("chat subscribe failed", e); }
+  }
+
+  /* ── sending ──────────────────────────────────────────────────────── */
+  async function postText(rid, text, staff) {
+    const r = await fetch(`${FN}/firebaseOrders`, {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body:JSON.stringify({ orderNumber:rid, newMessage:text, employeeName:staff })
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json().catch(() => ({}));
+    if (j && j.success === false) throw new Error(j.error || "rejected");
+    return true;
+  }
+  async function directWrite(rid, payload) {
+    if (!db) throw new Error("no-firestore");
+    await db.collection(COLL).doc(rid).set({}, { merge:true });
+    await db.collection(COLL).doc(rid).collection("messages")
+      .add(Object.assign({ timestamp: firebase.firestore.FieldValue.serverTimestamp() }, payload));
+  }
+
+  async function sendAll() {
+    const staff = meName();
+    if (!staff) { toast("Set your name before sending", "bad"); editWho(); return; }
+    const rid = S.rid;
+    if (!rid) return;
+
+    const text  = (el.input.value || "").trim();
+    const files = S.queue.slice();
+    if (!text && !files.length) return;
+
+    el.input.value = ""; autoGrow(); S.queue = []; paintTray(); refreshSend();
+    clearDraft(rid);
+
+    if (text) {
+      const p = { __pending:true, __id:newId(), __kind:"text", text, senderName:staff, senderRole:"staff" };
+      S.pending.push(p); render(); scrollBottom(true);
+      try {
+        try { await postText(rid, text, staff); }
+        catch (_) { await directWrite(rid, { text, senderName:staff, senderRole:"staff" }); }
+        p.__sent = true; render();
+      } catch (err) {
+        console.error("chat send failed", err);
+        p.__failed = true; render();
+        toast("Message failed to send", "bad");
+      }
+    }
+
+    for (const f of files) await sendImage(rid, staff, f);
+  }
+
+  async function sendImage(rid, staff, entry) {
+    const p = { __pending:true, __id:newId(), __kind:"image", __progress:0,
+                imageUrl:entry.url, text:"Image attachment", senderName:staff, senderRole:"staff" };
+    S.pending.push(p); render(); scrollBottom(true);
+    try {
+      if (typeof window.uploadViaResumable !== "function") throw new Error("uploader-unavailable");
+      const safe = entry.file.name.replace(/[^\w.\-]+/g, "_");
+      const path = `chatImages/${rid}/${Date.now()}_${safe}`;
+      const url  = await window.uploadViaResumable(path, entry.file, pct => {
+        /* patch the bar only — a full render on every tick fights the scroll */
+        p.__progress = pct;
+        const bar = el.thread.querySelector(`[data-pid="${p.__id}"] .bcProg i`);
+        if (bar) bar.style.width = Math.round(pct) + "%"; else render();
+      });
+      p.imageUrl = url; p.__progress = 100; render();
+      await directWrite(rid, { imageUrl:url, text:"Image attachment", senderName:staff, senderRole:"staff" });
+      p.__sent = true; render();
+    } catch (err) {
+      console.error("chat image failed", err);
+      p.__failed = true; render();
+      toast(/uploader-unavailable|CORS|Failed to fetch|network/i.test(String(err?.message))
+        ? "Image upload blocked — add design.goldenspike.app to the Storage CORS list"
+        : "Image upload failed", "bad", 6000);
+    } finally {
+      try { URL.revokeObjectURL(entry.url); } catch (_) {}
+    }
+  }
+
+  function retry(pid) {
+    const i = S.pending.findIndex(p => p.__id === pid);
+    if (i < 0) return;
+    const p = S.pending[i];
+    S.pending.splice(i, 1);
+    if (p.__kind === "text") { el.input.value = p.text; autoGrow(); refreshSend(); render(); el.input.focus(); }
+    else { render(); toast("Re-attach the image to try again"); }
+  }
+
+  /* ── attachments ──────────────────────────────────────────────────── */
+  function stage(list) {
+    const imgs = Array.from(list || []).filter(f => f.type.startsWith("image/"));
+    if (!imgs.length) return;
+    imgs.forEach(f => {
+      if (f.size > 15 * 1024 * 1024) { toast(`${f.name} is over 15 MB`, "bad"); return; }
+      S.queue.push({ id:newId(), file:f, url:URL.createObjectURL(f) });
+    });
+    paintTray(); refreshSend();
+  }
+  function paintTray() {
+    el.tray.innerHTML = S.queue.map(q =>
+      `<div class="bcChip" title="${esc(q.file.name)}"><img src="${q.url}" alt="">` +
+      `<button type="button" data-drop="${q.id}">✕</button></div>`).join("");
+  }
+  function unstage(id) {
+    const i = S.queue.findIndex(q => q.id === id);
+    if (i < 0) return;
+    try { URL.revokeObjectURL(S.queue[i].url); } catch (_) {}
+    S.queue.splice(i, 1); paintTray(); refreshSend();
+  }
+
+  function autoGrow() {
+    el.input.style.height = "auto";
+    el.input.style.height = Math.min(140, Math.max(40, el.input.scrollHeight)) + "px";
+  }
+  function refreshSend() {
+    el.send.disabled = !((el.input.value || "").trim() || S.queue.length);
+  }
+
+  function zoom(src) {
+    el.lbImg.src = src; el.lbOpen.href = src;
+    openDlg(el.lb);
+  }
+
+  /* ── wiring ───────────────────────────────────────────────────────── */
+  let wired = false;
+  function wire() {
+    if (wired) return;
+    el = {
+      pane:$("#bcPane"), thread:$("#bcThread"), tray:$("#bcTray"), input:$("#bcInput"),
+      send:$("#bcSend"), att:$("#bcAttach"), file:$("#bcFile"), drop:$("#bcDrop"),
+      jump:$("#bcJump"), live:$("#bcLive"), count:$("#bcCount"),
+      who:$("#bcWho"), whoAv:$("#bcWhoAv"), whoName:$("#bcWhoName"),
+      lb:$("#bcLightbox"), lbImg:$("#bcLightboxImg"), lbOpen:$("#bcLbOpen"), lbClose:$("#bcLbClose"),
+    };
+    if (!el.thread) return;
+    wired = true;
+    paintWho();
+
+    el.who.addEventListener("click", editWho);
+
+    el.input.addEventListener("input", () => { autoGrow(); refreshSend(); saveDraft(); });
+    el.input.addEventListener("keydown", ev => {
+      ev.stopPropagation();                              // never trip the global hotkeys
+      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendAll(); return; }
+      /* Esc inside a <dialog> closes it. With a half-written message in the
+         box that silently destroys the draft, so the first Esc only steps
+         out of the composer; a second one closes the dialog as usual. */
+      if (ev.key === "Escape" && (el.input.value || "").trim()) {
+        ev.preventDefault();
+        el.input.blur();
+      }
+    });
+    el.input.addEventListener("paste", ev => {
+      const f = Array.from(ev.clipboardData?.files || []);
+      if (f.length) { ev.preventDefault(); stage(f); }
+    });
+
+    el.send.addEventListener("click", sendAll);
+    el.att.addEventListener("click", () => el.file.click());
+    el.file.addEventListener("change", ev => { stage(ev.target.files); ev.target.value = ""; });
+
+    el.tray.addEventListener("click", ev => {
+      const b = ev.target.closest("[data-drop]");
+      if (b) unstage(b.dataset.drop);
+    });
+
+    el.thread.addEventListener("click", ev => {
+      const z = ev.target.closest("[data-zoom]");
+      if (z) return zoom(z.dataset.zoom);
+      const r = ev.target.closest("[data-retry]");
+      if (r) retry(r.dataset.retry);
+    });
+    el.thread.addEventListener("scroll", () => {
+      const gap = el.thread.scrollHeight - el.thread.scrollTop - el.thread.clientHeight;
+      S.atBottom = gap < 60;
+      if (S.atBottom) S.unread = 0;
+      paintJump();
+    });
+    el.jump.addEventListener("click", () => scrollBottom(true));
+
+    /* drag & drop across the whole pane */
+    let depth = 0;
+    const hasFiles = ev => Array.from(ev.dataTransfer?.types || []).includes("Files");
+    el.pane.addEventListener("dragenter", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); depth++; el.drop.classList.add("on"); });
+    el.pane.addEventListener("dragover",  ev => { if (hasFiles(ev)) ev.preventDefault(); });
+    el.pane.addEventListener("dragleave", ev => { if (!hasFiles(ev)) return; depth = Math.max(0, depth - 1); if (!depth) el.drop.classList.remove("on"); });
+    el.pane.addEventListener("drop", ev => {
+      if (!hasFiles(ev)) return;
+      ev.preventDefault(); depth = 0; el.drop.classList.remove("on");
+      stage(ev.dataTransfer.files); el.input.focus();
+    });
+
+    el.lbClose.addEventListener("click", () => closeDlg(el.lb));
+    el.lb.addEventListener("click", ev => { if (ev.target === el.lb) closeDlg(el.lb); });
+    el.lb.addEventListener("close", () => el.lbImg.removeAttribute("src"));
+
+    autoGrow(); refreshSend();
+  }
+
+  return {
+    open(rid, ctx) {
+      wire();
+      if (!el.thread) return;
+      rid = String(rid || "").trim();
+      if (!rid) return;
+
+      S.queue.forEach(q => { try { URL.revokeObjectURL(q.url); } catch (_) {} });
+      S.rid = rid;
+      S.ctx = ctx || { buyerMessage:"", personalization:"" };
+      S.docs = []; S.pending = []; S.queue = [];
+      S.firstSnap = true; S.atBottom = true; S.unread = 0;
+
+      el.input.value = readDrafts()[rid] || "";
+      autoGrow();
+      paintWho(); paintTray(); refreshSend(); paintJump();
+      el.thread.innerHTML = `<div class="bcEmpty">Loading conversation…</div>`;
+      subscribe();
+      requestAnimationFrame(() => { scrollBottom(); if (meName()) el.input.focus(); });
+    },
+    close() {
+      saveDraft();                    // keep an unsent message for next time
+      S.seq++;                        // invalidate any in-flight listener
+      detach();
+      S.rid = null; S.docs = []; S.pending = []; S.firstSnap = true;
+      S.queue.forEach(q => { try { URL.revokeObjectURL(q.url); } catch (_) {} });
+      S.queue = [];
+      if (el.tray)   el.tray.innerHTML = "";
+      if (el.thread) el.thread.innerHTML = "";
+      if (el.input)  { el.input.value = ""; autoGrow(); }
+      if (el.send)   el.send.disabled = true;
+      if (el.lb)     closeDlg(el.lb);
+    },
+    _state: S,
+  };
+})();
 
 /* ═══ 17 · SEARCH ════════════════════════════════════════════════════════ */
 
@@ -5628,6 +6403,10 @@ function wireUI() {
   $("#lmClose2")?.addEventListener("click", () => closeDlg($("#listingModal")));
   $("#modalCompleteChk")?.addEventListener("click", toggleSkipOrder);
 
+  /* One teardown point for every way the dialog can close — button,
+     backdrop, or Esc — so the Firestore listener never leaks. */
+  $("#listingModal")?.addEventListener("close", () => BritesChat.close());
+
   $("#settingsBtn")?.addEventListener("click", () => { buildSettingsUI(); openDlg($("#settingsModal")); });
   $("#stClose")?.addEventListener("click", () => closeDlg($("#settingsModal")));
   $("#stDone")?.addEventListener("click", () => closeDlg($("#settingsModal")));
@@ -5746,8 +6525,41 @@ window.DesignStation = {
   buildArchiveRecord, openArchiveOrder, setHistDay,
   archive: () => ({ index: archiveIndex, query: histQuery, day: histDay, results: histResults, mode: APP_MODE }),
   cache: { detailCache, flushDetailCache, clear(){ detailCache.clear(); localStorage.removeItem(CACHE_KEY); } },
+  chat: BritesChat,
+  sort: () => ({ activeMetal, dateDir, orderDir }),
 };
 
+</script>
+
+<!-- Firebase Storage: a modular twin of the compat app, purely so chat
+     attachments can use a resumable upload with progress. Nothing else in
+     the station needs Storage, so it stays out of the main bundle. -->
+<script type="module">
+  import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+  import { getStorage, ref, uploadBytesResumable, getDownloadURL }
+    from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
+  try {
+    let app;
+    try { app = getApp(); }
+    catch { app = initializeApp(window.firebase.app().options); }
+
+    const storage = getStorage(app);
+    signInAnonymously(getAuth(app)).catch(err => console.warn("Storage anon auth failed", err));
+
+    /* onProgress(pct) is optional — the chat uses it to drive the bar. */
+    window.uploadViaResumable = async (path, file, onProgress) => {
+      const r = ref(storage, path);
+      const task = uploadBytesResumable(r, file, { contentType: file.type });
+      await new Promise((res, rej) => task.on("state_changed",
+        s => { if (onProgress && s.totalBytes) onProgress((s.bytesTransferred / s.totalBytes) * 100); },
+        rej, res));
+      return await getDownloadURL(r);
+    };
+  } catch (e) {
+    console.warn("Storage uploader unavailable — image attachments disabled.", e);
+  }
 </script>
 </body>
 </html>
