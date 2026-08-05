@@ -8014,9 +8014,22 @@ function updateApproveButtonState() {
               }
               return null;
             };
-            const msg = findMessage(j)
-              || (raw ? raw.slice(0, 300) : "")
-              || `HTTP ${res.status}`;
+            // A gateway timeout returns an HTML error page, not JSON, so the
+            // fallback used to dump "<HTML><HEAD><TITLE>Inactivity Timeout..."
+            // into the UI. Netlify caps synchronous functions at 10s by default
+            // and 26s at most, so this means the work was too big for one
+            // request — which is actionable, unlike the HTML.
+            const looksHtml = /^\s*<(?:!doctype|html)/i.test(raw || "");
+            const gatewayTimeout = res.status === 504 || res.status === 502 || res.status === 524;
+            let msg;
+            if (gatewayTimeout || (looksHtml && res.status >= 500)) {
+              msg = `the request exceeded the serverless function time limit (Netlify allows 10s by default, 26s maximum). `
+                  + `The work needs splitting into smaller requests, or moving to a background function.`;
+            } else {
+              msg = findMessage(j)
+                || (looksHtml ? `server returned an HTML error page` : (raw ? raw.slice(0, 300) : ""))
+                || `HTTP ${res.status}`;
+            }
             const err = new Error(`${msg} (HTTP ${res.status} from ${path})`);
             err.status = res.status;
             err.responseBody = j || raw || null;
@@ -19008,11 +19021,27 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
             used[sid] = [...new Set([...(used[sid] || []), ...(list || [])])];
           }
         }
+        // Pick the newer analysis whole — but classification writes `facets`
+        // into an EXISTING analysis without touching its timestamp, so a
+        // straight newer-wins choice silently threw the facets away. That was
+        // the third field lost this way (ideas and gaps were the first two), so
+        // the rule is now explicit: any sub-field written after the analysis
+        // itself is carried across rather than assumed to travel with it.
+        const newer = newerAnalysis ? (v.analysis || cur.analysis) : (cur.analysis || v.analysis);
+        const other = newerAnalysis ? (cur.analysis || {}) : (v.analysis || {});
+        const analysis = newer ? { ...newer } : null;
+        if (analysis && !(analysis.facets && Object.keys(analysis.facets).length)
+            && other.facets && Object.keys(other.facets).length) {
+          analysis.facets = other.facets;
+        }
         out.analyses[k] = {
           at: Math.max(Number(cur.at) || 0, Number(v.at) || 0),
           model: newerAnalysis ? (v.model || cur.model) : (cur.model || v.model),
-          analysis: newerAnalysis ? (v.analysis || cur.analysis) : (cur.analysis || v.analysis),
+          analysis,
           ideas: vIdeasAt > curIdeasAt ? v.ideas : (cur.ideas || v.ideas || null),
+          classifiedAt: Math.max(Number(cur.classifiedAt) || 0, Number(v.classifiedAt) || 0) || undefined,
+          facetsRejected: v.facetsRejected ?? cur.facetsRejected,
+          rungsFailed: (vIdeasAt > curIdeasAt ? v.rungsFailed : cur.rungsFailed),
           used,
         };
       }
@@ -19288,6 +19317,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
           res = await postJson('openaiProxy', body);
         } catch (e) {
           _cmLlmLastError = { model, message: e?.message || String(e), status: e?.status, shape, body: e?.responseBody };
+          // Only a 400 can be a parameter problem. A 504 means the request was
+          // too big for the function's time budget, and retrying it unchanged
+          // would simply time out again.
           const adapted = (e?.status === 400) ? _cmLlmAdapt(e.message, shape) : null;
           if (!adapted) {
             throw new Error(
@@ -19390,23 +19422,9 @@ Return JSON with EXACTLY this shape:
     "culturalAnchors": ["myths, idioms, media, fandoms or subcultures that make this legible at a glance"],
     "adjacentMeanings": ["meanings a shopper would accept as belonging to the same world, which a different object could also carry"],
     "misfireRisks": ["readings that would put a buyer off, or contexts where this meaning lands badly"]
-  },
-
-  "facets": { /* see the FACETS section below — exact tokens only */ }
+  }
 }
-
-FACETS — this is the most important part of your reply, and the rules are strict.
-
-These classify the charm into a fixed vocabulary so it can be counted against
-every other charm in the catalogue. Free text here is useless; only the exact
-tokens below can be used. Pick the closest value even when the fit is imperfect,
-and omit a facet entirely rather than inventing a token for it.
-
-${_cmFacetSpecText()}
-
 Rules:
-- Every value in "facets" MUST be one of the exact tokens listed. Any other string is discarded.
-- Single-value facets take a string. Multi-value facets take an array of 1 to 3 tokens, most important first.
 - "meaning" is where the real work is. "a sitting cat" is the literal; the symbolic layer is what a derivative
   can actually inherit, because the next design will not be a cat. Reason about what the piece DOES for the
   person wearing it, not what it looks like.
@@ -19442,7 +19460,7 @@ Rules:
           { type: 'text', text: _cmAnalysePrompt(salesLine) },
           { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
         ] },
-      ], { maxTokens: 2500 });
+      ], { maxTokens: 2000 });
 
       const entry = {
         at: Date.now(),
@@ -19459,6 +19477,102 @@ Rules:
     }
 
     // ---------------------------------------------------------------------
+    // STAGE 1b — CLASSIFY  (text only, tiny)
+    // ---------------------------------------------------------------------
+    // Facets used to be requested as one more block on the end of the analysis
+    // reply. Two things went wrong with that. The block sits last, so any
+    // truncation loses it silently; and a model juggling prose, meaning and a
+    // nine-facet controlled vocabulary in one pass tends to leak the vocabulary
+    // into the wrong field — the first live run put facet tokens in `taxonomy`
+    // and left `facets` empty, which is why the matrix reported "0 of 103
+    // classified" even though every analysis looked fine.
+    //
+    // Classification is now its own request: no image, no prose, a few hundred
+    // tokens, one job. That also makes it cheap to repair an analysis that
+    // predates it without re-running the vision call.
+    const CM_CLASSIFY_SYSTEM =
+      'You are a cataloguer. You assign items to a fixed taxonomy. You never invent categories and never ' +
+      'explain yourself. If no listed value fits a facet, you omit that facet entirely. Reply with JSON only.';
+
+    function _cmClassifyPrompt(analysis) {
+      return `Classify this charm into the taxonomy below.
+
+WHAT IS KNOWN ABOUT IT
+
+Subject: ${analysis?.identification?.primarySubject || '—'}
+Type: ${(analysis?.identification?.taxonomy || []).join(' → ') || '—'}
+Silhouette: ${analysis?.identification?.silhouetteClass || '—'}
+Negative space: ${analysis?.identification?.negativeSpace || '—'}
+Detail density: ${analysis?.identification?.detailDensity ?? '—'} of 5
+Thumbnail legibility: ${analysis?.thumbnailReadability || '—'}
+Literal meaning: ${analysis?.meaning?.literal || '—'}
+Symbolic meaning: ${(analysis?.meaning?.symbolic || []).join('; ') || '—'}
+Identity claim: ${analysis?.meaning?.identityClaim || '—'}
+Emotional job: ${analysis?.meaning?.emotionalJob || '—'}
+Stands in for: ${analysis?.meaning?.carries || 'none'}
+Buyers: ${(analysis?.buyer?.personas || []).map(p => `${p.name} (${p.buyingFor}${p.occasions?.length ? `, ${p.occasions.join('/')}` : ''})`).join('; ') || '—'}
+Sentiment: ${(analysis?.buyer?.sentimentDrivers || []).join('; ') || '—'}
+Gift or self: ${analysis?.buyer?.giftVsSelf || '—'}
+
+THE TAXONOMY
+
+${_cmFacetSpecText()}
+
+Return ONLY this, with no other keys:
+
+{ "facets": { ... } }
+
+Rules, and they are absolute:
+- Every value MUST be one of the exact tokens listed above. Anything else is discarded silently, so a near-miss costs you the facet.
+- Single-token facets take a string. Multi-token facets take an array of 1 to 3 tokens, most important first.
+- detailDensity is the digit as a string: "1" to "5".
+- Omit a facet rather than guessing wildly. A missing facet is better than a wrong one.
+- No prose, no comments, no explanation.`;
+    }
+
+    async function cmClassifyCharm(rec, { force = false } = {}) {
+      await _cmResearchLoad();
+      const entry = _cmResearch.analyses?.[rec.path];
+      if (!entry?.analysis) throw new Error(`${rec.name} has no analysis to classify`);
+      if (entry.analysis.facets && Object.keys(entry.analysis.facets).length && !force) return entry;
+
+      const res = await _cmLlmJson([
+        { role: 'system', content: CM_CLASSIFY_SYSTEM },
+        { role: 'user', content: _cmClassifyPrompt(entry.analysis) },
+      ], { maxTokens: 700 });
+
+      // Validate against the vocabulary here, not on trust, and say what was
+      // thrown away so a systematically bad reply is visible rather than silent.
+      const raw = res?.facets || res || {};
+      const clean = {};
+      const rejected = [];
+      for (const k of CM_FACET_KEYS) {
+        const spec = CM_FACETS[k];
+        const allowed = new Set(spec.values);
+        const list = (Array.isArray(raw[k]) ? raw[k] : (raw[k] != null ? [raw[k]] : []))
+          .map(v => String(v).trim());
+        const ok = list.filter(v => allowed.has(v));
+        list.filter(v => !allowed.has(v)).forEach(v => rejected.push(`${k}="${v}"`));
+        if (!ok.length) continue;
+        clean[k] = spec.kind === 'multi' ? ok.slice(0, 3) : ok[0];
+      }
+      if (rejected.length) {
+        console.info(`[charm-research] ${rec.name}: discarded off-vocabulary facet values → ${rejected.join(', ')}`);
+      }
+      if (!Object.keys(clean).length) {
+        throw new Error(`classification returned no valid facets for ${rec.name}` +
+          (rejected.length ? ` (all ${rejected.length} values were off-vocabulary)` : ''));
+      }
+      entry.analysis.facets = clean;
+      entry.classifiedAt = Date.now();
+      entry.facetsRejected = rejected.length || undefined;
+      _cmResearch.analyses[rec.path] = entry;
+      _cmResearchDirty = true;
+      await _cmResearchSave();
+      return entry;
+    }
+
+    // ---------------------------------------------------------------------
     // STAGE 2 — IDEATE  (text only, deliberately no image)
     // ---------------------------------------------------------------------
     const CM_IDEATE_SYSTEM =
@@ -19468,80 +19582,141 @@ Rules:
       'also buy, at several defined distances from it. Be concrete: name the actual object and describe the ' +
       'actual shape. Never propose "a similar X" or "a stylised version of Y". Reply with JSON only.';
 
-    function _cmIdeatePrompt(analysis, conceptsPer) {
-      const ladder = CM_STRATEGIES.map(s =>
-        `  "${s.id}" (distance ${s.distance} — ${s.label}): ${s.directive}`
-      ).join('\n');
-      return `Here is the analysis of a proven best-selling charm:
+    // ONE RUNG PER REQUEST.
+    //
+    // This used to ask for all seven rungs and twenty-one concepts in a single
+    // 8000-token generation. On a reasoning model that runs well past Netlify's
+    // synchronous function ceiling (10s by default, 26s at most), and the whole
+    // thing died with an HTML "Inactivity Timeout" page — losing all twenty-one
+    // concepts because one request was too big.
+    //
+    // Seven small requests instead. Each returns three concepts in ~1200
+    // tokens, finishes in a few seconds, is retried independently, and is kept
+    // even if a sibling fails. Partial progress is now durable: six rungs is a
+    // usable concept bank, whereas the old design gave you nothing.
+    function _cmRungPrompt(analysis, strategy, conceptsPer, avoidTitles) {
+      const id = analysis?.identification || {};
+      const meaning = analysis?.meaning || {};
+      return `A proven best-selling charm has been analysed. Design new pieces at one specific distance from it.
 
-${JSON.stringify(analysis, null, 1)}
+THE REFERENCE, IN WORDS ONLY (you are not shown it, on purpose — looking at a product makes designers copy it)
 
-The manufacturing envelope is fixed and identical for every design: one flat piece of laser-cut sheet metal, ` +
-`front-facing, no 3D thickness, a single integrated hanging loop, no text, roughly square framing. Anything ` +
-`that cannot be made that way is not a valid concept.
+Subject: ${id.primarySubject || '—'}
+Type: ${(id.taxonomy || []).join(' → ') || '—'}
+Silhouette: ${id.silhouetteClass || '—'} · detail density ${id.detailDensity ?? 3} of 5
+Engraving language: ${id.engravingLanguage || '—'}
+Negative space: ${id.negativeSpace || '—'}
 
-Design along this ladder. Each rung is a defined distance from the reference:
+WHAT IT MEANS
+Literal: ${meaning.literal || '—'}
+Symbolic: ${(meaning.symbolic || []).join('; ') || '—'}
+The wearer is saying: ${meaning.identityClaim || '—'}
+Job it is hired to do: ${meaning.emotionalJob || '—'}
+Stands in for: ${meaning.carries || 'nothing in particular'}
+Adjacent meanings a different object could carry: ${(meaning.adjacentMeanings || []).join('; ') || '—'}
 
-${ladder}
+WHO BUYS IT
+${(analysis?.buyer?.personas || []).map(p => `• ${p.name}: ${p.whoTheyAre}; buying for ${p.buyingFor}${p.occasions?.length ? `; occasions ${p.occasions.join(', ')}` : ''}`).join('\n') || '• —'}
 
-For EVERY rung, propose exactly ${conceptsPer} concepts. They must be different ideas, not rewordings.
+WHY IT SELLS
+${(analysis?.whyItSells || []).map(w => `• ${w.driver}${w.mechanism ? ` — ${w.mechanism}` : ''}`).join('\n') || '• —'}
 
-Return JSON:
+MUST BE PRESERVED (lose these and you lose the buyer)
+${(analysis?.loadBearing || []).map(x => `• ${x}`).join('\n') || '• —'}
+
+FREE TO CHANGE
+${(analysis?.free || []).map(x => `• ${x}`).join('\n') || '• —'}
+
+YOUR ASSIGNMENT — ${strategy.label} (distance ${strategy.distance} of 5)
+
+${strategy.directive}
+
+MANUFACTURING ENVELOPE, fixed: one flat piece of laser-cut sheet metal, front-facing, no 3D thickness, a
+single integrated hanging loop, no text, roughly square framing.
+${avoidTitles?.length ? `\nALREADY PROPOSED for this charm — do not repeat these ideas:\n${avoidTitles.map(t => `• ${t}`).join('\n')}\n` : ''}
+Return exactly ${conceptsPer} concepts as JSON:
 
 {
-  "strategies": [
+  "rationale": "why this distance is worth trying for THIS charm and THIS buyer, one sentence",
+  "concepts": [
     {
-      "id": "variant",
-      "rationale": "why this rung is worth trying for THIS reference and THIS buyer",
-      "concepts": [
-        {
-          "title": "3 to 6 words a shopper would understand",
-          "subject": "exactly what the object is. Name it plainly. 1 to 2 sentences.",
-          "silhouette": "the outline, described so an illustrator could draw it without seeing anything: overall shape, proportions, what protrudes, where it is widest, how it reads at thumbnail size. 2 to 3 sentences. This must NOT describe the reference's outline.",
-          "engravingPlan": "which surface marks go where, respecting the reference's engraving language and detail density",
-          "negativeSpacePlan": "which areas are cut fully through, and why",
-          "bailPlan": "where the integrated loop sits so the piece hangs level",
-          "whyItShouldSell": "the commercial argument, tied to a named persona or occasion from the analysis",
-          "keepsLoadBearing": ["which of the analysis's loadBearing attributes this preserves, and how"],
-          "distinctness": "one sentence stating how a shopper would tell this apart from the reference at a glance"
-        }
-      ]
+      "title": "3 to 6 words a shopper would understand",
+      "subject": "exactly what the object is. Name it plainly. 1 to 2 sentences.",
+      "silhouette": "the outline, described so an illustrator could draw it without seeing anything: overall shape, proportions, what protrudes, where it is widest, how it reads at thumbnail size. 2 to 3 sentences. This must NOT describe the reference's outline.",
+      "engravingPlan": "which surface marks go where, respecting the engraving language and detail density above",
+      "negativeSpacePlan": "which areas are cut fully through, and why",
+      "bailPlan": "where the integrated loop sits so the piece hangs level",
+      "whyItShouldSell": "the commercial argument, tied to a named persona or occasion above",
+      "keepsLoadBearing": ["which preserved attributes this keeps, and how"],
+      "distinctness": "one sentence on how a shopper would tell this apart from the reference at a glance"
     }
   ]
 }
 
 Hard rules:
-- Include all ${CM_STRATEGIES.length} rungs, with these exact ids: ${CM_STRATEGIES.map(s => s.id).join(', ')}.
-- Every concept must preserve every attribute in the analysis's "loadBearing" list. Say how, in keepsLoadBearing.
-- Every concept must change at least one attribute from "free" enough to be visibly a different product.
-- "silhouette" is the most important field. A vague silhouette produces a copy of the reference, because the renderer will fall back on the only shape it can see. Be geometric and specific.
-- No concept may be a mirrored, rotated, rescaled or lightly restyled version of the reference.
-- Do not propose text, initials, birthstones, moving parts, enamel or multi-part assemblies.`;
+- Every concept preserves every "must be preserved" attribute. Say how, in keepsLoadBearing.
+- Every concept changes at least one "free to change" attribute enough to be visibly a different product.
+- "silhouette" matters most. A vague silhouette produces a copy of the reference, because the renderer falls
+  back on the only shape it can infer. Be geometric and specific.
+- No mirrored, rotated, rescaled or lightly restyled version of the reference.
+- No text, initials, birthstones, moving parts, enamel or multi-part assemblies.
+- No prose outside the JSON.`;
     }
 
     const CM_CONCEPTS_PER_STRATEGY = 3;
+    const CM_RUNG_CONCURRENCY = 3;   // small enough to stay inside rate limits
 
     async function cmIdeateCharm(rec, { force = false } = {}) {
       await _cmResearchLoad();
-      let entry = _cmResearch.analyses[rec.path];
+      let entry = _cmResearch.analyses?.[rec.path];
       if (!entry?.analysis) entry = await cmAnalyseCharm(rec);
-      if (entry.ideas?.strategies?.length && !force) return entry;
 
-      const ideas = await _cmLlmJson([
-        { role: 'system', content: CM_IDEATE_SYSTEM },
-        { role: 'user', content: _cmIdeatePrompt(entry.analysis, CM_CONCEPTS_PER_STRATEGY) },
-      ], { maxTokens: 8000 });
+      const existing = (force ? [] : (entry.ideas?.strategies || []));
+      const have = new Set(existing.map(x => x.id));
+      const todo = CM_STRATEGIES.filter(st => !have.has(st.id));
+      if (!todo.length) return entry;
 
-      // Keep only rungs we know, and drop empty ones, so a partial model reply
-      // degrades to fewer strategies rather than throwing.
-      const clean = (ideas?.strategies || [])
-        .filter(s => CM_STRATEGY_BY_ID[s?.id] && Array.isArray(s.concepts) && s.concepts.length)
-        .map(s => ({ id: s.id, rationale: String(s.rationale || ''), concepts: s.concepts.filter(c => c?.subject && c?.silhouette) }))
-        .filter(s => s.concepts.length);
-      if (!clean.length) throw new Error('Ideation returned no usable concepts');
+      const avoid = existing.flatMap(x => x.concepts.map(c => c.title).filter(Boolean));
 
-      entry.ideas = { at: Date.now(), model: _cmResearchModel(), strategies: clean };
+      const results = await _asyncPool(CM_RUNG_CONCURRENCY, todo, async (st) => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const res = await _cmLlmJson([
+              { role: 'system', content: CM_IDEATE_SYSTEM },
+              { role: 'user', content: _cmRungPrompt(entry.analysis, st, CM_CONCEPTS_PER_STRATEGY, avoid) },
+            ], { maxTokens: 2200 });
+            const concepts = (res?.concepts || []).filter(c => c?.subject && c?.silhouette);
+            if (!concepts.length) throw new Error('no usable concepts');
+            return { id: st.id, rationale: String(res.rationale || ''), concepts };
+          } catch (e) {
+            // A timeout on one rung is worth exactly one retry; a parameter or
+            // access error will fail identically the second time, so bail.
+            const retryable = /time limit|timeout|504|502|no usable concepts/i.test(String(e?.message || e));
+            if (attempt === 0 && retryable) continue;
+            console.warn(`[charm-research] rung "${st.id}" failed for ${rec.name}:`, e?.message || e);
+            return null;
+          }
+        }
+        return null;
+      });
+
+      const fresh = results.filter(r => r && r.id);
+      if (!fresh.length && !existing.length) {
+        throw new Error(`every strategy rung failed for ${rec.name} — see console for the per-rung reasons`);
+      }
+
+      const merged = [...existing];
+      for (const r of fresh) {
+        const at = merged.findIndex(x => x.id === r.id);
+        if (at >= 0) merged[at] = r; else merged.push(r);
+      }
+      // Keep ladder order rather than completion order, so the panel reads as a
+      // ladder and not as a race result.
+      merged.sort((a, b) => CM_STRATEGIES.findIndex(s => s.id === a.id) - CM_STRATEGIES.findIndex(s => s.id === b.id));
+
+      entry.ideas = { at: Date.now(), model: _cmResearchModel(), strategies: merged };
       entry.used = entry.used || {};
+      entry.rungsFailed = CM_STRATEGIES.length - merged.length || undefined;
       _cmResearch.analyses[rec.path] = entry;
       _cmResearchDirty = true;
       await _cmResearchSave();
@@ -19553,13 +19728,13 @@ Hard rules:
     // ---------------------------------------------------------------------
     // The ladder answers "what is adjacent to THIS charm". The matrix answers
     // "what is missing from the CATALOGUE". This turns the second into briefs:
-    // the target is a meaning × form combination the catalogue under-occupies,
+    // the target is a meaning x form combination the catalogue under-occupies,
     // and the evidence for it is drawn from the charms that do carry each half.
     const CM_GAP_SYSTEM =
       'You are a jewellery range planner working from a catalogue analysis. You are given a gap: a combination ' +
       'of meaning and form that the existing range barely occupies, together with the evidence that each half ' +
       'of it performs. Your job is to design pieces that occupy that gap concretely. You do not see any ' +
-      'product images — the brief must stand on its own. Reply with JSON only.';
+      'product images - the brief must stand on its own. Reply with JSON only.';
 
     function _cmGapPrompt(gap, exemplars, houseStyle, conceptsPer) {
       const ex = exemplars.map(e =>
@@ -19571,12 +19746,12 @@ Meaning to carry:  ${_cmFacetLabel(gap.mk, gap.mv)}
 Form to use:       ${_cmFacetLabel(gap.fk, gap.fv)}
 
 Evidence from the existing catalogue:
-• ${gap.meaningCount} best-selling charms carry that meaning${gap.meaningLift != null ? `, performing at ${gap.meaningLift.toFixed(2)}× the catalogue average` : ''}.
-• ${gap.formCount} use that form${gap.formLift != null ? `, performing at ${gap.formLift.toFixed(2)}× average` : ''}.
+• ${gap.meaningCount} best-selling charms carry that meaning${gap.meaningLift != null ? `, performing at ${gap.meaningLift.toFixed(2)}x the catalogue average` : ''}.
+• ${gap.formCount} use that form${gap.formLift != null ? `, performing at ${gap.formLift.toFixed(2)}x average` : ''}.
 • The COMBINATION is used by ${gap.occupancy} charm${gap.occupancy === 1 ? '' : 's'}. That is the gap.
-• Confidence in this reading: ${gap.confidence}${gap.liftBasis === 'estimated' ? ' (the combination is unbuilt, so its performance is inferred from each half independently — treat it as a hypothesis)' : ''}.
+• Confidence in this reading: ${gap.confidence}${gap.liftBasis === 'estimated' ? ' (the combination is unbuilt, so its performance is inferred from each half independently - treat it as a hypothesis)' : ''}.
 
-Charms that already carry this meaning, for calibration — do NOT copy them:
+Charms that already carry this meaning, for calibration - do NOT copy them:
 ${ex}
 
 MANUFACTURING ENVELOPE, fixed: one flat piece of laser-cut sheet metal, front-facing, no 3D thickness, a single
@@ -19596,7 +19771,7 @@ Propose exactly ${conceptsPer} concepts that occupy this gap. Return JSON:
       "negativeSpacePlan": "which areas are cut fully through, and why",
       "bailPlan": "where the integrated loop sits so the piece hangs level",
       "whyItShouldSell": "the commercial argument, referring to the evidence above",
-      "carriesMeaning": "how this object carries \"${_cmFacetLabel(gap.mk, gap.mv)}\" without depicting anything the listed charms depict",
+      "carriesMeaning": "how this object carries this meaning without depicting anything the listed charms depict",
       "distinctness": "one sentence on how a shopper would tell this apart from the charms listed above"
     }
   ]
@@ -19609,7 +19784,7 @@ Hard rules:
 - No enamel, no moving parts, no multi-part assemblies, no stones.`;
     }
 
-    // Charms that already carry the gap's meaning — used to calibrate the brief
+    // Charms that already carry the gap's meaning - used to calibrate the brief
     // and, more importantly, as an explicit do-not-copy list.
     function _cmGapExemplars(gap, limit = 5) {
       const out = [];
@@ -19621,17 +19796,16 @@ Hard rules:
         out.push({
           name: rec.name,
           rank: eff.rank,
-          subject: entry.analysis.identification?.primarySubject || '—',
-          why: entry.analysis.meaning?.emotionalJob || entry.analysis.meaning?.identityClaim || '—',
+          subject: entry.analysis.identification?.primarySubject || '-',
+          why: entry.analysis.meaning?.emotionalJob || entry.analysis.meaning?.identityClaim || '-',
         });
       }
       out.sort((a, b) => (a.rank || 1e9) - (b.rank || 1e9));
       return out.slice(0, limit);
     }
 
-    // A house style shared across the catalogue: the most common description
-    // among the best-performing analysed charms, since every piece must come
-    // out of the same workshop.
+    // A house style shared across the catalogue: taken from the best-performing
+    // analysed charm, since every piece must come out of the same workshop.
     function _cmAggregateHouseStyle() {
       const scored = [];
       for (const rec of _cmLib.items) {
@@ -19649,7 +19823,7 @@ Hard rules:
       const res = await _cmLlmJson([
         { role: 'system', content: CM_GAP_SYSTEM },
         { role: 'user', content: _cmGapPrompt(gap, _cmGapExemplars(gap), _cmAggregateHouseStyle(), conceptsPer) },
-      ], { maxTokens: 3000 });
+      ], { maxTokens: 1800 });
       const concepts = (res?.concepts || []).filter(c => c?.subject && c?.silhouette);
       if (!concepts.length) throw new Error('gap ideation returned no usable concepts');
       if (!_cmResearch.gaps || typeof _cmResearch.gaps !== 'object') _cmResearch.gaps = {};
@@ -19680,9 +19854,17 @@ Hard rules:
       };
     }
 
+    // Analyse → classify → ideate. Classification is not allowed to block
+    // ideation: a charm with concepts but no facets is still fully usable for
+    // generation, it just does not contribute a row to the matrix.
     async function cmEnsureResearch(rec, opts = {}) {
-      const entry = await cmIdeateCharm(rec, opts);
-      return entry;
+      await cmAnalyseCharm(rec, opts);
+      try {
+        await cmClassifyCharm(rec, opts);
+      } catch (e) {
+        console.warn(`[charm-research] classification failed for ${rec.name}:`, e?.message || e);
+      }
+      return await cmIdeateCharm(rec, opts);
     }
 
     // ---------------------------------------------------------------------
@@ -20760,10 +20942,15 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
         if (r.source === 'data') fromData++;
         else if (r.source === 'filename') fromName++;
       }
+      let classified = 0;
+      for (const rec of _cmLib.items) {
+        const f = _cmResearch.analyses?.[rec.path]?.analysis?.facets;
+        if (f && Object.keys(f).length) classified++;
+      }
       const el = document.getElementById('cmResearchCoverage');
       if (el) {
         el.textContent = total
-          ? `${ideated}/${total} briefed · ${fromName + fromData} ranked`
+          ? `${researched} analysed · ${classified} classified · ${ideated} briefed · ${fromName + fromData} ranked`
           : 'library empty';
       }
       const info = document.getElementById('cmRankInfo');
@@ -20835,7 +21022,15 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
               `<div><strong>${_esc(p.name || '')}</strong> <span class="muted">${_esc(p.whoTheyAre || '')}${p.occasions?.length ? ` · ${_esc(p.occasions.join(', '))}` : ''}</span></div>`).join('')
           : '') +
 
-        `<h5>Concept bank — ladder ${win.min}–${win.max} (${win.band}) · ${usedCount}/${conceptTotal} used</h5>` +
+        `<h5>Classification</h5>` +
+        (entry.analysis.facets && Object.keys(entry.analysis.facets).length
+          ? `<div class="rb-tags">` + Object.entries(entry.analysis.facets).map(([k, v]) =>
+              `<span class="rb-tag" title="${_esc(CM_FACETS[k]?.label || k)}">${_esc(Array.isArray(v) ? v.join(', ').replace(/_/g, ' ') : String(v).replace(/_/g, ' '))}</span>`
+            ).join('') + `</div>`
+            + (entry.facetsRejected ? `<div class="muted" style="font-size:10px;">${entry.facetsRejected} off-vocabulary value${entry.facetsRejected === 1 ? '' : 's'} discarded</div>` : '')
+          : `<div class="muted">Not classified — this charm contributes no row to the opportunity matrix. Use <strong>Backfill classifications</strong>.</div>`) +
+
+        `<h5>Concept bank — ladder ${win.min}–${win.max} (${win.band}) · ${usedCount}/${conceptTotal} used${entry.rungsFailed ? ` · ${entry.rungsFailed} rung${entry.rungsFailed === 1 ? '' : 's'} failed` : ''}</h5>` +
         (rungs.length
           ? rungs.map(r => {
               const st = CM_STRATEGY_BY_ID[r.id];
@@ -21188,27 +21383,42 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
     document.getElementById('cmGapCount')?.addEventListener('change', () => _cmRenderMatrix());
 
     // Re-analyse charms whose analysis predates facet extraction.
+    // Classify anything that has an analysis but no facets. This is now a CHEAP
+    // text-only call per charm rather than a repeat of the vision analysis, so
+    // an analysis that predates classification costs a few hundred tokens to
+    // repair instead of a full re-read of the image.
     document.getElementById('cmFacetBackfillBtn')?.addEventListener('click', async () => {
       await _cmResearchLoad();
       const stale = _cmLib.items.filter(r => {
         const e = _cmResearch.analyses?.[r.path];
-        return e?.analysis && !e.analysis.facets;
+        return e?.analysis && !(e.analysis.facets && Object.keys(e.analysis.facets).length);
       });
       if (!stale.length) {
-        _cmResearchSetStatus('ok', 'Every analysed charm is already classified.', 1);
+        const analysed = _cmLib.items.filter(r => _cmResearch.analyses?.[r.path]?.analysis).length;
+        _cmResearchSetStatus('ok', analysed
+          ? 'Every analysed charm is already classified.'
+          : 'Nothing analysed yet — run research first.', 1);
         return;
       }
-      if (!confirm(`Re-analyse ${stale.length} charm${stale.length === 1 ? '' : 's'} that were analysed before meaning and facet extraction existed?\n\nOne vision call each. Existing concepts are kept.`)) return;
+      if (!confirm(`Classify ${stale.length} charm${stale.length === 1 ? '' : 's'} that have an analysis but no facets?\n\nOne small text-only call each — no image is re-read, and existing concepts are untouched.`)) return;
       let done = 0, failed = 0;
       for (const rec of stale) {
         try {
           _cmResearchSetStatus('working', `Classifying ${rec.name} (${done + 1}/${stale.length})…`, done / stale.length);
-          await cmAnalyseCharm(rec, { force: true });
-        } catch (e) { failed++; console.warn('[charm-research] backfill failed for', rec.name, e); }
+          await cmClassifyCharm(rec, { force: true });
+        } catch (e) {
+          failed++;
+          console.warn('[charm-research] classification failed for', rec.name, e?.message || e);
+          if (failed === 1) _cmShowDiag(`✗ Classification failed on "${rec.name}".\n\n${e?.message || e}`);
+          if (failed >= 3) { _cmResearchSetStatus('warn', `Stopped after 3 failures.`, done / stale.length); break; }
+        }
         done++;
       }
       _cmResearchSetStatus(failed ? 'warn' : 'ok', `Classified ${done - failed} of ${stale.length}.`, 1);
+      if (!failed) _cmShowDiag(null);
       _cmRenderMatrix();
+      _cmResearchCoverage();
+      _cmRenderResearchDetail();
     });
 
     // Write a brief for one gap, on demand.
@@ -21304,6 +21514,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       probe: (o) => cmProbeProxy(o),
       effectiveMode: () => cmEffectiveRenderMode(),
       lastIou: null,
+      save: () => _cmResearchSave(),
       llmShape: (m) => _cmLlmShape(m || _cmResearchModel()),
       lastLlmError: () => _cmLlmLastError,
       matrix: () => cmBuildMatrix(),
@@ -21313,6 +21524,8 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       renderMatrix: () => _cmRenderMatrix(),
       analysePromptPreview: () => _cmAnalysePrompt(''),
       analyseOne: (rec) => cmAnalyseCharm(rec, { force: true }),
+      classifyOne: (rec) => cmClassifyCharm(rec, { force: true }),
+      classifyPromptPreview: () => _cmClassifyPrompt({ identification: {}, meaning: {}, buyer: {} }),
       ideateGap: (g) => cmIdeateFromGap(g),
       takeGap: (id) => cmTakeGapConcept(id),
     };
