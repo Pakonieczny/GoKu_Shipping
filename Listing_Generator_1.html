@@ -1158,6 +1158,14 @@
     font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
     color: var(--ok); font-weight: 500; margin-left: 4px;
   }
+  .cm-worldlock {
+    margin-top: 8px; padding: 8px 10px; border-radius: var(--r-md);
+    background: var(--inset); border: 1px solid var(--line);
+    border-left: 3px solid var(--ok-line);
+    font-size: 10.5px; line-height: 1.6; color: var(--muted);
+  }
+  .cm-worldlock strong { color: var(--text-2); font-weight: 600; }
+  .cm-worldlock #cmWorldLockWorld { color: var(--ok); }
 
   .cm-count-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .cm-count-chips { display: flex; gap: 5px; }
@@ -3739,20 +3747,26 @@ html.gs-locked body > *:not(#gate){display:none!important}
           <div class="cm-spread" id="cmSpreadChoices">
             <button class="cm-spread-opt" data-spread="close" type="button">
               <span class="cm-spread-name">Close</span>
-              <span class="cm-spread-desc">Same subject, new pose or sub-type. Safest — closest to what already sells.</span>
+              <span class="cm-spread-desc">The same object built differently, and its immediate family. A camera → other cameras.</span>
             </button>
             <button class="cm-spread-opt" data-spread="nearby" type="button">
               <span class="cm-spread-name">Nearby</span>
-              <span class="cm-spread-desc">Sibling subjects and companion pieces — things a buyer would wear <em>with</em> it.</span>
+              <span class="cm-spread-desc">Its family, plus what it is used with. A camera → film, a lens, a tripod.</span>
             </button>
             <button class="cm-spread-opt" data-spread="far" type="button">
               <span class="cm-spread-name">Far</span>
-              <span class="cm-spread-desc">Same feeling and same buyer, different subject. Highest risk, highest upside.</span>
+              <span class="cm-spread-desc">The far edge of the same world. A camera → a darkroom timer, a strip of negatives, an aperture iris.</span>
             </button>
             <button class="cm-spread-opt active" data-spread="auto" type="button">
               <span class="cm-spread-name">Let the data decide <span class="cm-rec">recommended</span></span>
-              <span class="cm-spread-desc">Spreads across the range, weighted by how well this charm sells and which kinds you have been approving.</span>
+              <span class="cm-spread-desc">Spreads across the world, weighted by how well this charm sells and which kinds you have been approving.</span>
             </button>
+          </div>
+          <div class="cm-worldlock" id="cmWorldLock">
+            <strong>Designs never leave the reference's world.</strong>
+            <span id="cmWorldLockWorld">Study a charm and its world is named here.</span>
+            A generic motif — a heart, a star, a feather — is rejected even at <em>Far</em>, because a
+            photography buyer is shopping for photography.
           </div>
 
           <!-- ── How many ─────────────────────────────────────────────── -->
@@ -3815,6 +3829,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
                 <button class="btn btnSmall" id="cmResearchAllBtn" type="button" title="Study every charm not yet studied, best sellers first">Study all missing</button>
                 <button class="btn btnSmall" id="cmResearchRedoBtn" type="button" title="Throw away the design ideas for the selected charms and think again, keeping the study">↻ Fresh ideas</button>
                 <button class="btn btnSmall" id="cmResearchTestBtn" type="button" title="Send one tiny request to the research model and report exactly what comes back">Test model</button>
+                <button class="btn btnSmall btn-ok" id="cmRestudyBtn" type="button" style="display:none;">Re-study for the world lock</button>
               </div>
               <div class="window-info" id="cmResearchCoverageInfo"><span id="cmResearchCoverage">—</span></div>
               <div id="cmResearchDiag" class="window-info rm-warn" style="display:none; white-space: pre-wrap;"></div>
@@ -9937,7 +9952,12 @@ window.approveCharmQuad = async function(folderId) {
         if (typeof cmEnsureResearch !== 'function') return [];
         setStatus(`Researching ${rec.name}…`);
         const entry = await cmEnsureResearch(rec);
-        const available = (entry.ideas?.strategies || []).map(x => x.id);
+        // Only rungs that still exist. A bank cached before the ladder was
+        // rebuilt may still list the three retired cross-world rungs; picking
+        // one would reintroduce exactly the "camera → heart" result the world
+        // lock exists to prevent.
+        const known = new Set(CM_STRATEGIES.map(s => s.id));
+        const available = (entry.ideas?.strategies || []).map(x => x.id).filter(id => known.has(id));
         if (!available.length) return [];
         const ids = cmAssignStrategies(n, rec.path, available, rec.name);
         const briefs = [];
@@ -19479,69 +19499,105 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
     const CM_RESEARCH_SCHEMA   = 1;
     const CM_RESEARCH_PATH     = `${CM_INDEX_DIR}/charm_research_v1.json`;
     const CM_RESEARCH_LOCAL_KEY = 'cm_research_v1';
-    const CM_PROMPT_VERSION    = 'design-v2';
+    // v3 = the ladder measures distance INSIDE the reference's world, and no rung
+    // can leave it. Recorded on every manifest so a set generated before the
+    // change is distinguishable from one generated after it.
+    const CM_PROMPT_VERSION    = 'design-v3-worldlocked';
     const CM_RESEARCH_MODEL_LS = 'lg1_research_model_v1';
     const CM_DEFAULT_RESEARCH_MODEL = 'gpt-5.4-mini';
 
     // ---------------------------------------------------------------------
     // The strategy ladder
     // ---------------------------------------------------------------------
+    // =====================================================================
+    // THE LADDER — distance WITHIN the reference's world
+    // ---------------------------------------------------------------------
+    // The previous ladder measured distance in MEANING, and four of its seven
+    // rungs explicitly licensed leaving the subject behind. "Companion piece"
+    // asked only for something "visually complementary"; "Occasion pivot" said
+    // "the imagery does not stay"; "Persona expansion" said, literally,
+    // "Ignore the reference's subject entirely."
+    //
+    // So a camera charm produced a plain heart — the model reasoned camera →
+    // memories → heart, which those directives permit. That is not what a
+    // shop wants from a proven seller: someone browsing a camera charm is a
+    // photography buyer, and the next thing they will buy is a film canister
+    // or a tripod, not a heart.
+    //
+    // Every rung below therefore stays inside the reference's world. Distance
+    // now means how far you travel WITHIN that world:
+    //
+    //   1  the same object, made differently
+    //   2  a different member of its immediate family
+    //   3  the things it is used with
+    //   4  where it happens, and what it leaves behind
+    //   5  the emblem the whole world is recognised by
+    //
+    // There is no rung that leaves the world. That was a deliberate decision:
+    // reach is bought by going deeper into a proven niche, not by abandoning
+    // it. CM_WORLD_RULE below is appended to every rung so the constraint
+    // cannot be argued away by a directive's own wording.
+    // =====================================================================
+    const CM_WORLD_RULE =
+      'ABSOLUTE CONSTRAINT — STAY IN THE WORLD. Every concept\'s subject must be an object, creature or ' +
+      'emblem that any shopper would immediately place in the SAME WORLD as the reference. A photography ' +
+      'reference yields photography things: film, lenses, tripods, darkrooms, shutters, viewfinders, ' +
+      'contact sheets. A marine-animal reference yields marine things. You may NOT substitute a generic ' +
+      'sentiment motif — a heart, star, moon, infinity loop, feather, angel wing, tree of life, cross, ' +
+      'paw print or flower — for the reference\'s subject, no matter how well it matches the FEELING the ' +
+      'reference is bought for. Sentiment is carried BY the world\'s own objects, not instead of them. ' +
+      'If the only idea you can reach requires leaving the world, return fewer concepts instead.';
+
     const CM_STRATEGIES = [
       {
-        id: 'variant', distance: 1, label: 'Pose variant',
-        blurb: 'Same subject, new pose or sub-type',
+        id: 'variant', distance: 1, label: 'Same object, new form',
+        blurb: 'The reference\'s own subject, built differently',
         directive:
-          'Keep the SAME primary subject, but in a materially different pose, attitude, age or sub-type. ' +
-          'A shopper must read it as the same thing, presented freshly — not as the same drawing nudged. ' +
-          'The outline must change enough to be obviously a different piece on a shelf next to the original.',
+          'Keep the SAME primary subject, but as a materially different type, era, pose or configuration of ' +
+          'it. A camera stays a camera — a box camera, a twin-lens reflex, a folding bellows camera. A seal ' +
+          'stays a seal — curled, diving, a pup. A shopper must read it as the same thing presented freshly, ' +
+          'not as the same drawing nudged. The outline must change enough to be obviously a different piece ' +
+          'sitting next to the original.',
       },
       {
-        id: 'sibling', distance: 2, label: 'Family sibling',
-        blurb: 'Another member of the same family',
+        id: 'sibling', distance: 2, label: 'Family member',
+        blurb: 'A different member of its immediate family',
         directive:
-          'Change the subject to a DIFFERENT member of the same family, genus or category as the reference, ' +
-          'chosen because the reference\'s buyers plausibly love it too. Same world, different creature or object.',
+          'Change the subject to a DIFFERENT member of the reference\'s immediate family or product class — ' +
+          'the next thing along the same shelf. For a camera: a cine camera, a projector, an instant camera, ' +
+          'a viewfinder. For a seal: a sea lion, a walrus, an otter. Close enough that the reference\'s ' +
+          'buyer recognises the family instantly, different enough to be a separate purchase.',
       },
       {
-        id: 'companion', distance: 2, label: 'Companion piece',
-        blurb: 'Designed to be worn WITH the reference',
+        id: 'companion', distance: 3, label: 'What it is used with',
+        blurb: 'Its tools, parts and consumables',
         directive:
-          'Design a piece intended to be worn ALONGSIDE the reference on the same chain or as its pair — ' +
-          'a deliberate second purchase for someone who already owns the reference. It must be visually ' +
-          'complementary but clearly a separate object, and smaller or simpler is often right. ' +
-          'State in the concept what it adds when worn together.',
+          'Design the thing that goes WITH the reference in actual use — its tool, part, consumable or ' +
+          'constant companion — intended to be worn on the same chain as a deliberate second purchase. ' +
+          'For a camera: a 35mm film canister, a lens, a tripod, a flashbulb, a shutter release cable. For ' +
+          'a seal: a fish, a kelp frond, a beach ball. Smaller and simpler is often right. State what it ' +
+          'adds when worn together with the reference.',
       },
       {
-        id: 'adjacent', distance: 3, label: 'Adjacent object',
-        blurb: 'An object from the same world',
+        id: 'adjacent', distance: 4, label: 'Where it happens',
+        blurb: 'Its setting, process or by-product',
         directive:
-          'Change the subject to an OBJECT strongly associated with the reference\'s subject in the buyer\'s ' +
-          'mind — an accessory, habitat, tool, food or symbol from the same world. Not a creature this time ' +
-          'unless the reference was an object.',
+          'Change the subject to the PLACE the reference lives or works, the process it is part of, or what ' +
+          'that process leaves behind. For a camera: a darkroom timer, a strip of negatives, a contact ' +
+          'sheet, a photo album, a developing tray. For a seal: an iceberg, a breaking wave, a harbour ' +
+          'buoy. Still unmistakably the same world — a photography buyer must see it and think "that is my ' +
+          'world" — but no longer the device itself.',
       },
       {
-        id: 'occasion', distance: 3, label: 'Occasion pivot',
-        blurb: 'Same sentiment, different vehicle',
+        id: 'emblem', distance: 5, label: 'The world\'s emblem',
+        blurb: 'The abstract shape that stands for the whole world',
         directive:
-          'Hold the OCCASION and the SENTIMENT the reference is bought for, and change the vehicle entirely. ' +
-          'If the reference is bought as a memorial, design a different memorial motif. If as a milestone gift, ' +
-          'a different milestone symbol. The emotional job stays identical; the imagery does not.',
-      },
-      {
-        id: 'motif', distance: 4, label: 'Motif transplant',
-        blurb: 'The reference\'s decorative language on a new subject',
-        directive:
-          'Take the reference\'s DECORATIVE LANGUAGE — its engraving vocabulary, cutout rhythm, symmetry and ' +
-          'edge treatment — and apply it to a subject from a different category that suits the same buyer. ' +
-          'The family resemblance should be in the craft, not the subject.',
-      },
-      {
-        id: 'persona', distance: 5, label: 'Persona expansion',
-        blurb: 'A new genre for the same buyer',
-        directive:
-          'Ignore the reference\'s subject entirely. Design for the same BUYER PERSONA in a different genre ' +
-          'they are highly likely to also shop — reasoning from who they are, what else they own and what else ' +
-          'they gift. Justify the leap explicitly in the concept.',
+          'Design the single most iconic ABSTRACT shape that stands for the reference\'s entire world — the ' +
+          'graphic an enthusiast would recognise with no context at all. For photography: an aperture iris ' +
+          'of overlapping blades, a shutter rosette, a film-perforation strip. For marine life: a wave ' +
+          'curl, a flipper silhouette, a bubble trail. This is the furthest rung, and it is still inside ' +
+          'the world: it is that world reduced to a symbol, NOT a generic jewellery motif borrowed from ' +
+          'outside it. If the shape you reach for would suit any shop, it is wrong.',
       },
     ];
     // An eighth pseudo-rung. It is not on the distance ladder because it is not
@@ -19639,6 +19695,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
           classifiedAt: Math.max(Number(cur.classifiedAt) || 0, Number(v.classifiedAt) || 0) || undefined,
           facetsRejected: v.facetsRejected ?? cur.facetsRejected,
           rungsFailed: (vIdeasAt > curIdeasAt ? v.rungsFailed : cur.rungsFailed),
+          // How many concepts were thrown out for leaving the reference's
+          // world. Written alongside `ideas`, so it travels with whichever
+          // ideas won — and it is the fourth field to need naming explicitly
+          // here, after ideas, gaps and facets. Anything written into an entry
+          // outside the analysis timestamp has to be listed, or it is dropped
+          // on the next save and the operator sees "0 discarded" for a run
+          // that actually rejected five.
+          offWorldDiscarded: (vIdeasAt > curIdeasAt ? v.offWorldDiscarded : cur.offWorldDiscarded)
+            ?? v.offWorldDiscarded ?? cur.offWorldDiscarded,
           used,
         };
       }
@@ -20009,6 +20074,8 @@ Return JSON with EXACTLY this shape:
   "identification": {
     "primarySubject": "what the object is, in the words a shopper would use",
     "taxonomy": ["broad genre", "family", "specific type"],
+    "world": "the SUBJECT WORLD this belongs to, named as an enthusiast would name it — \"film photography\", \"marine wildlife\", \"baseball\", \"vintage sewing\". Two to four words. This is the boundary every derivative must stay inside, so name the world the BUYER is in, not an abstract category.",
+    "worldObjects": ["8 to 14 other concrete things that unmistakably belong to this same world and could each be a charm on their own. Objects, creatures, tools, places, by-products, emblems. Be specific and physical — \"35mm film canister\", not \"photography equipment\". Do NOT include generic jewellery motifs such as hearts, stars or feathers."],
     "pose": "how it is presented",
     "viewAngle": "front-facing / profile / three-quarter",
     "silhouetteClass": "one of: compact-solid, open-linear, radial, elongated-vertical, wide-horizontal, irregular-organic",
@@ -20043,11 +20110,14 @@ Return JSON with EXACTLY this shape:
   }
 }
 Rules:
-- "meaning" is where the real work is. "a sitting cat" is the literal; the symbolic layer is what a derivative
-  can actually inherit, because the next design will not be a cat. Reason about what the piece DOES for the
-  person wearing it, not what it looks like.
-- adjacentMeanings is the bridge to new products: meanings that live in the same emotional world and could be
-  carried by a completely different object.
+- "world" and "worldObjects" are load-bearing for everything downstream. Every derivative this shop generates
+  from this charm MUST come from that world, so a world named too broadly ("gifts", "animals", "memories")
+  makes the derivatives generic, and a world named too narrowly ("Rolleiflex twin-lens cameras") leaves
+  nothing to design. Name it the way a shopper would describe their own interest.
+- "meaning" explains WHY the world's objects sell, so a derivative can carry the same feeling. It is not a
+  licence to leave the world: the symbolic layer tells you which of the world's own objects to reach for, not
+  to substitute a heart or a star for them.
+- adjacentMeanings: meanings a DIFFERENT OBJECT FROM THE SAME WORLD could also carry.
 - detailDensity is an integer 1 to 5 where 1 is a bare silhouette and 5 is densely engraved.
 - confidence is 0 to 1.
 - Put the SUBJECT in identification, never in houseStyle. houseStyle must be reusable for a completely different subject.
@@ -20212,6 +20282,67 @@ Rules, and they are absolute:
     // tokens, finishes in a few seconds, is retried independently, and is kept
     // even if a sibling fails. Partial progress is now durable: six rungs is a
     // usable concept bank, whereas the old design gave you nothing.
+    // ── The reference's world ──────────────────────────────────────────────
+    // identification.world is written by the analysis. Analyses made before
+    // the world existed have to keep working, so it falls back to the taxonomy
+    // the old prompt already produced — ['animal charm','marine mammal','seal']
+    // yields "animal charm · marine mammal", which is a usable boundary even
+    // though it is coarser than a purpose-written one.
+    function _cmWorldOf(analysis) {
+      const id = analysis?.identification || {};
+      const explicit = String(id.world || '').trim();
+      if (explicit) return explicit;
+      const tax = (id.taxonomy || []).filter(Boolean);
+      if (tax.length >= 2) return tax.slice(0, 2).join(' · ');
+      return String(id.primarySubject || '').trim() || 'the reference\'s own category';
+    }
+
+    function _cmWorldObjects(analysis) {
+      const id = analysis?.identification || {};
+      const list = Array.isArray(id.worldObjects) ? id.worldObjects : [];
+      return list.map(x => String(x || '').trim()).filter(Boolean).slice(0, 14);
+    }
+
+    // Generic jewellery motifs. These are what the old ladder produced when it
+    // was allowed to swap the subject for the sentiment: a camera charm came
+    // back as a heart. They are only wrong as SUBSTITUTES — if the reference
+    // itself is a heart, or the world genuinely contains one, the check below
+    // lets it through.
+    const CM_OFFWORLD_MOTIFS = [
+      'heart', 'hearts', 'star', 'stars', 'moon', 'crescent', 'sun', 'infinity', 'feather',
+      'angel wing', 'angel wings', 'tree of life', 'cross', 'paw print', 'pawprint', 'butterfly',
+      'dragonfly', 'clover', 'horseshoe', 'evil eye', 'lotus', 'rose', 'flower', 'daisy',
+      'arrow', 'anchor', 'key', 'lock', 'teardrop', 'halo', 'dove',
+    ];
+
+    // Would a shopper place this concept in the reference's world? Deliberately
+    // narrow: it rejects only a subject whose PRIMARY noun is a generic motif
+    // that the reference's own world does not contain. Anything it is unsure
+    // about is allowed through, because a false rejection silently costs a
+    // usable design while a false acceptance is visible on the card.
+    function cmConceptLeavesWorld(concept, analysis) {
+      const subject = `${concept?.title || ''} ${concept?.subject || ''}`.toLowerCase();
+      if (!subject.trim()) return null;
+
+      // Everything the reference's own world legitimately includes.
+      const inWorld = [
+        String(analysis?.identification?.primarySubject || ''),
+        _cmWorldOf(analysis),
+        ...(analysis?.identification?.taxonomy || []),
+        ..._cmWorldObjects(analysis),
+      ].join(' ').toLowerCase();
+
+      for (const motif of CM_OFFWORLD_MOTIFS) {
+        // Word-boundary match so "starfish" is not caught by "star" and
+        // "keyboard" is not caught by "key".
+        const re = new RegExp(`\\b${motif.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(s|es)?\\b`, 'i');
+        if (!re.test(subject)) continue;
+        if (re.test(inWorld)) continue;   // the world really does contain it
+        return motif;
+      }
+      return null;
+    }
+
     function _cmRungPrompt(analysis, strategy, conceptsPer, avoidTitles) {
       const id = analysis?.identification || {};
       const meaning = analysis?.meaning || {};
@@ -20224,6 +20355,10 @@ Type: ${(id.taxonomy || []).join(' → ') || '—'}
 Silhouette: ${id.silhouetteClass || '—'} · detail density ${id.detailDensity ?? 3} of 5
 Engraving language: ${id.engravingLanguage || '—'}
 Negative space: ${id.negativeSpace || '—'}
+
+THE WORLD YOU MUST STAY INSIDE: ${_cmWorldOf(analysis)}
+Things already known to belong to it: ${(_cmWorldObjects(analysis).join(', ')) || '—'}
+You may use others from this same world; you may not leave it.
 
 WHAT IT MEANS
 Literal: ${meaning.literal || '—'}
@@ -20249,6 +20384,8 @@ YOUR ASSIGNMENT — ${strategy.label} (distance ${strategy.distance} of 5)
 
 ${strategy.directive}
 
+${CM_WORLD_RULE}
+
 MANUFACTURING ENVELOPE, fixed: one flat piece of laser-cut sheet metal, front-facing, no 3D thickness, a
 single integrated hanging loop, no text, roughly square framing.
 ${avoidTitles?.length ? `\nALREADY PROPOSED for this charm — do not repeat these ideas:\n${avoidTitles.map(t => `• ${t}`).join('\n')}\n` : ''}
@@ -20260,6 +20397,8 @@ Return exactly ${conceptsPer} concepts as JSON:
     {
       "title": "3 to 6 words a shopper would understand",
       "subject": "exactly what the object is. Name it plainly. 1 to 2 sentences.",
+      "sameWorldBecause": "one sentence naming the world from the boundary above and stating what makes THIS object part of it. If you cannot write this sentence without reaching for a feeling instead of the world, the concept is wrong — drop it.",
+      "recognisableAs": "the 3 to 5 concrete visual features that make this object unmistakably itself at 20 pixels, listed plainly. For a 35mm film canister: a cylindrical body with a ribbed edge, a flat spool flange on top, a short rectangular film leader protruding from one side. These are what the renderer will be held to, so name only features that survive being cut from flat sheet metal — no colour, no transparency, no text.",
       "silhouette": "the outline, described so an illustrator could draw it without seeing anything: overall shape, proportions, what protrudes, where it is widest, how it reads at thumbnail size. 2 to 3 sentences. This must NOT describe the reference's outline.",
       "engravingPlan": "which surface marks go where, respecting the engraving language and detail density above",
       "negativeSpacePlan": "which areas are cut fully through, and why",
@@ -20272,6 +20411,10 @@ Return exactly ${conceptsPer} concepts as JSON:
 }
 
 Hard rules:
+- The world boundary above outranks every other instruction here, including this rung's own directive.
+- "recognisableAs" is not decoration. A concept called "Tiny Film Roll" whose features are not named comes
+  back from the renderer as a plain round medallion, because a circle is all it can infer. Name the features
+  that make the object that object and nothing else.
 - Every concept preserves every "must be preserved" attribute. Say how, in keepsLoadBearing.
 - Every concept changes at least one "free to change" attribute enough to be visibly a different product.
 - "silhouette" matters most. A vague silhouette produces a copy of the reference, because the renderer falls
@@ -20308,6 +20451,10 @@ Hard rules:
         { concepts: 2, tokens: 2600 },
         { concepts: 1, tokens: 1800 },
       ];
+      // Counted for this run, not accumulated across runs: "5 discarded" has to
+      // describe the concepts currently in the bank, or re-studying a charm
+      // would inflate the number forever.
+      let offWorld = 0;
       const results = await _asyncPool(CM_RUNG_CONCURRENCY, todo, async (st) => {
         let lastErr = null;
         for (let attempt = 0; attempt < LADDER.length; attempt++) {
@@ -20317,7 +20464,25 @@ Hard rules:
               { role: 'system', content: CM_IDEATE_SYSTEM },
               { role: 'user', content: _cmRungPrompt(entry.analysis, st, step.concepts, avoid) },
             ], { maxTokens: step.tokens });
-            const concepts = (res?.concepts || []).filter(c => c?.subject && c?.silhouette);
+            const usable = (res?.concepts || []).filter(c => c?.subject && c?.silhouette);
+            // Enforce the world boundary here rather than trusting the prompt.
+            // A model that reaches for a heart when asked for "the same feeling"
+            // is doing something reasonable in the abstract; it is simply not
+            // what this shop sells, and the failure was previously invisible
+            // until four generations had already been paid for.
+            const concepts = [];
+            for (const c of usable) {
+              const motif = cmConceptLeavesWorld(c, entry.analysis);
+              if (motif) {
+                console.warn(
+                  `[charm-research] discarded off-world concept "${c.title || c.subject}" on rung "${st.id}" ` +
+                  `for ${rec.name}: "${motif}" is a generic motif, not part of "${_cmWorldOf(entry.analysis)}".`
+                );
+                offWorld++;
+                continue;
+              }
+              concepts.push(c);
+            }
             if (!concepts.length) throw new Error('no usable concepts');
             if (attempt > 0) {
               console.info(`[charm-research] rung "${st.id}" succeeded with ${step.concepts} concept${step.concepts === 1 ? '' : 's'} after a larger ask failed`);
@@ -20343,7 +20508,17 @@ Hard rules:
         throw new Error(`every strategy rung failed for ${rec.name} — see console for the per-rung reasons`);
       }
 
-      const merged = [...existing];
+      // Drop rungs that no longer exist. Concept banks cached before the ladder
+      // was rebuilt still hold "occasion pivot", "motif transplant" and
+      // "persona expansion" entries — the three rungs whose whole purpose was
+      // to leave the subject's world. Keeping them would mean the world lock
+      // could be bypassed by any charm researched before this change.
+      const known = new Set(CM_STRATEGIES.map(s => s.id));
+      const retired = existing.filter(x => !known.has(x.id));
+      if (retired.length) {
+        console.info(`[charm-research] dropped ${retired.length} retired rung${retired.length === 1 ? '' : 's'} from ${rec.name}: ${retired.map(x => x.id).join(', ')} — these left the subject's world.`);
+      }
+      const merged = existing.filter(x => known.has(x.id));
       for (const r of fresh) {
         const at = merged.findIndex(x => x.id === r.id);
         if (at >= 0) merged[at] = r; else merged.push(r);
@@ -20355,6 +20530,7 @@ Hard rules:
       entry.ideas = { at: Date.now(), model: _cmResearchModel(), strategies: merged };
       entry.used = entry.used || {};
       entry.rungsFailed = CM_STRATEGIES.length - merged.length || undefined;
+      entry.offWorldDiscarded = offWorld || undefined;
       _cmResearch.analyses[rec.path] = entry;
       _cmResearchDirty = true;
       await _cmResearchSave();
@@ -20617,11 +20793,14 @@ Hard rules:
     // do. These four settings are the visible version of the same ladder, and
     // 'auto' is the old data-weighted behaviour unchanged.
     const CM_SPREAD_LS_KEY = 'lg1_charm_spread_v1';
+    // Distance is measured INSIDE the reference's world at every setting —
+    // there is no option that leaves it. "Far" means the far edge of the same
+    // world, not a different one.
     const CM_SPREADS = Object.freeze({
-      close:  { id: 'close',  min: 1, max: 2, label: 'Close',  blurb: 'Same subject, new pose or sub-type — and its closest siblings.' },
-      nearby: { id: 'nearby', min: 2, max: 3, label: 'Nearby', blurb: 'Sibling subjects, companion pieces and objects from the same world.' },
-      far:    { id: 'far',    min: 4, max: 5, label: 'Far',    blurb: 'The same feeling and the same buyer, but a different subject.' },
-      auto:   { id: 'auto',   label: 'Let the data decide',    blurb: 'Spread across the ladder, weighted by how well this charm sells and by which rungs you have been approving.' },
+      close:  { id: 'close',  min: 1, max: 2, label: 'Close',  blurb: 'The reference\'s own subject in new forms, and its immediate family.' },
+      nearby: { id: 'nearby', min: 2, max: 3, label: 'Nearby', blurb: 'Its family, and the tools and parts it is used with.' },
+      far:    { id: 'far',    min: 4, max: 5, label: 'Far',    blurb: 'The far edge of the same world: where it happens, and the emblem that stands for it.' },
+      auto:   { id: 'auto',   label: 'Let the data decide',    blurb: 'Spread across the world, weighted by how well this charm sells and by which kinds you have been approving.' },
     });
 
     function cmSpread() {
@@ -20756,6 +20935,28 @@ scratch.`;
       } catch (_) { return false; }
     }
 
+    // ── "It must actually look like the thing" ─────────────────────────────
+    // A concept titled "Tiny Film Roll" came back as a plain concentric-circle
+    // medallion. Nothing in the prompt said what a film roll looks like, so the
+    // model drew the only shape the silhouette description implied — a circle.
+    // The concept now carries recognisableAs, and it is promoted to a hard
+    // requirement here rather than buried in prose, because this is the single
+    // clause that decides whether the output is the named object or a generic
+    // disc that happens to fit the outline.
+    function _cmRecognisableClause(c) {
+      const raw = c?.recognisableAs;
+      const feats = Array.isArray(raw)
+        ? raw.map(x => String(x || '').trim()).filter(Boolean)
+        : String(raw || '').split(/\s*[;\n]\s*|\s*,\s(?=[a-z])/).map(x => x.trim()).filter(Boolean);
+      if (!feats.length) return '';
+      return `
+MUST BE RECOGNISABLE AS THAT OBJECT — these features are not optional. A viewer who sees the finished charm
+must be able to name the object without being told. Include every one of them, legibly, at charm scale:
+${feats.map(f => `• ${f.replace(/^[•\-•]\s*/, '')}`).join('\n')}
+If the result could be mistaken for a plain disc, plaque or generic pendant, these features are missing.
+`;
+    }
+
     function cmBuildDesignPrompt(brief, analysis, opts = {}) {
       const c = brief.concept;
       const id = analysis?.identification || {};
@@ -20800,7 +21001,7 @@ this brief tells you WHAT to make.`;
 ═══ WHAT TO MAKE ═══
 
 OBJECT: ${c.subject}
-
+${_cmRecognisableClause(c)}
 OUTLINE / SILHOUETTE (follow this, not the reference):
 ${c.silhouette}
 
@@ -21691,6 +21892,21 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       }
     }
 
+    // A studied charm counts as stale if it has no purpose-written world, or if
+    // its concept bank still carries rungs that no longer exist.
+    function _cmResearchStaleCount() {
+      const known = new Set(CM_STRATEGIES.map(s => s.id));
+      let n = 0;
+      for (const rec of _cmLib.items) {
+        const e = _cmResearch.analyses?.[rec.path];
+        if (!e?.analysis) continue;
+        const noWorld = !String(e.analysis.identification?.world || '').trim();
+        const hasRetired = (e.ideas?.strategies || []).some(x => !known.has(x.id));
+        if (noWorld || hasRetired) n++;
+      }
+      return n;
+    }
+
     function _cmResearchCoverage() {
       const total = _cmLib.items.length;
       let researched = 0, ideated = 0, ranked = 0;
@@ -21713,11 +21929,29 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
         const f = _cmResearch.analyses?.[rec.path]?.analysis?.facets;
         if (f && Object.keys(f).length) classified++;
       }
+      // How many studied charms predate the world lock. Their briefs still work
+      // — the world falls back to the taxonomy — but they have no purpose-written
+      // world or world-object list, and any cross-world concepts already in
+      // their banks are being ignored. Saying how many is the difference between
+      // "some of my designs are worse and I don't know why" and a clear action.
+      const stale = _cmResearchStaleCount();
       const el = document.getElementById('cmResearchCoverage');
       if (el) {
         el.textContent = total
-          ? `${researched} analysed · ${classified} classified · ${ideated} briefed · ${fromName + fromData} ranked`
+          ? `${researched} studied · ${classified} classified · ${ideated} briefed · ${fromName + fromData} ranked`
+            + (stale ? ` · ${stale} predate the world lock` : '')
           : 'library empty';
+      }
+      const covInfo = document.getElementById('cmResearchCoverageInfo');
+      if (covInfo) covInfo.className = stale ? 'window-info rm-warn' : 'window-info';
+      const restudy = document.getElementById('cmRestudyBtn');
+      if (restudy) {
+        restudy.style.display = stale ? '' : 'none';
+        restudy.textContent = `Re-study ${stale} charm${stale === 1 ? '' : 's'} for the world lock`;
+        restudy.title =
+          `${stale} charm${stale === 1 ? ' was' : 's were'} studied before designs were locked to the reference's world. ` +
+          `Their world is being inferred from their type, and any cross-world ideas already in their concept banks are ignored. ` +
+          `Re-studying writes a purpose-written world and a fresh set of in-world ideas.`;
       }
       const info = document.getElementById('cmRankInfo');
       if (info) {
@@ -21896,6 +22130,23 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
           : (focus.live ? 'Not studied yet — designs will use a weaker brief.' : 'Last charm used.');
       }
 
+      // Name the world the designs are locked to. This is the single most
+      // important thing to have on screen given the reported problem: it is the
+      // promise that a camera cannot produce a heart, stated in the charm's own
+      // terms rather than as a general claim.
+      const wlEl = document.getElementById('cmWorldLockWorld');
+      if (wlEl) {
+        if (a) {
+          const world = _cmWorldOf(a);
+          const objs = _cmWorldObjects(a);
+          wlEl.textContent = objs.length
+            ? `This one is locked to “${world}” — e.g. ${objs.slice(0, 4).join(', ')}.`
+            : `This one is locked to “${world}”.`;
+        } else {
+          wlEl.textContent = 'Study this charm and its world is named here.';
+        }
+      }
+
       // "Sells on" — the two strongest drivers, compressed to their headline.
       if (sellsEl) {
         const why = (a?.whyItSells || []).slice(0, 2)
@@ -22048,7 +22299,11 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       const sales = _cmResearch.sales?.[sel.fullPath];
       const win = cmWidthWindow(sel.fullPath, sel.name);
       const why = (a.whyItSells || []).slice(0, 4);
-      const rungs = (entry.ideas?.strategies || []);
+      // Retired cross-world rungs are not shown, because they can no longer be
+      // picked — listing them would suggest designs that will never be made.
+      const _known = new Set(CM_STRATEGIES.map(s => s.id));
+      const rungs = (entry.ideas?.strategies || []).filter(x => _known.has(x.id));
+      const _retired = (entry.ideas?.strategies || []).length - rungs.length;
       const usedCount = Object.values(entry.used || {}).reduce((n, l) => n + (l?.length || 0), 0);
       const conceptTotal = rungs.reduce((n, r) => n + r.concepts.length, 0);
 
@@ -22058,6 +22313,14 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
         `<div><strong>${_esc(id.primarySubject || '—')}</strong>` +
         `${id.taxonomy?.length ? ` <span class="muted">(${_esc(id.taxonomy.join(' → '))})</span>` : ''}</div>` +
         `<div class="muted">${_esc(id.silhouetteClass || '')}${id.detailDensity ? ` · detail ${id.detailDensity}/5` : ''}${id.engravingLanguage ? ` · ${_esc(id.engravingLanguage)}` : ''}</div>` +
+
+        `<h5>Its world — every derivative stays inside this</h5>` +
+        `<div><strong>${_esc(_cmWorldOf(a))}</strong>${id.world ? '' : ` <span class="muted">(inferred from its type — re-study this charm for a purpose-written world)</span>`}</div>` +
+        (_cmWorldObjects(a).length
+          ? `<div class="rb-tags">${_cmWorldObjects(a).map(o => `<span class="rb-tag">${_esc(o)}</span>`).join('')}</div>`
+          : `<div class="muted">No world objects recorded — re-study this charm to get them.</div>`) +
+        (entry.offWorldDiscarded ? `<div class="muted" style="font-size:10px;">${entry.offWorldDiscarded} off-world concept${entry.offWorldDiscarded === 1 ? '' : 's'} discarded (generic motifs)</div>` : '') +
+        (_retired ? `<div class="muted" style="font-size:10px;">${_retired} retired cross-world rung${_retired === 1 ? '' : 's'} ignored — re-study to replace them</div>` : '') +
 
         `<h5>Why it sells</h5>` +
         (why.length
@@ -22245,6 +22508,22 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       if (!recs.length) { _cmResearchSetStatus('warn', 'Select charms in the library first.', 0); return; }
       await _cmResearchLoad();
       await _cmRunResearch(recs);
+    });
+
+    // Re-study only what predates the world lock, best sellers first, so an
+    // interrupted run has repaired the charms that matter most.
+    document.getElementById('cmRestudyBtn')?.addEventListener('click', async () => {
+      await _cmResearchLoad();
+      const known = new Set(CM_STRATEGIES.map(s => s.id));
+      const stale = _cmLib.items.filter(r => {
+        const e = _cmResearch.analyses?.[r.path];
+        if (!e?.analysis) return false;
+        return !String(e.analysis.identification?.world || '').trim()
+            || (e.ideas?.strategies || []).some(x => !known.has(x.id));
+      }).sort((a, b) => (cmEffectiveRank(a.path, a.name).rank || 1e9) - (cmEffectiveRank(b.path, b.name).rank || 1e9));
+      if (!stale.length) { _cmResearchSetStatus('ok', 'Every studied charm already has its world.', 100); return; }
+      if (!confirm(`Re-study ${stale.length} charm${stale.length === 1 ? '' : 's'}?\n\nThese were studied before designs were locked to the reference's world. Re-studying names each one's world properly and replaces its ideas with in-world ones. Marks for concepts you have already generated are kept.`)) return;
+      await _cmRunResearch(stale, { force: true });
     });
 
     document.getElementById('cmResearchRedoBtn')?.addEventListener('click', async () => {
@@ -22671,6 +22950,15 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       // The visible "how far" choice, and what it resolves to.
       spread: () => cmSpread(),
       setSpread: (v) => { cmSetSpread(v); _cmRenderFlow(); return cmSpread(); },
+      // The world lock: which world a charm is confined to, and whether a
+      // given concept would breach it.
+      worldOf: (analysis) => _cmWorldOf(analysis),
+      worldObjects: (analysis) => _cmWorldObjects(analysis),
+      leavesWorld: (concept, analysis) => cmConceptLeavesWorld(concept, analysis),
+      staleCount: () => _cmResearchStaleCount(),
+      coverage: () => _cmResearchCoverage(),
+      rungIds: () => CM_STRATEGIES.map(s => s.id),
+      prepareBriefs: (rec, n) => cmPrepareBriefs(rec, n),
       facets: () => CM_FACETS,
       perf: () => cmPerformanceScores(),
       renderMatrix: () => _cmRenderMatrix(),
