@@ -1508,62 +1508,6 @@
      NEW MOCKUP-FEATURE STYLES
      ============================================================ */
 
-  /* ---------- Persistent pipeline status bar ---------- */
-  .pipeline-bar {
-    display: flex;
-    align-items: center;
-    gap: 32px;
-    padding: 12px 22px;
-    background: var(--card);
-    border-bottom: 1px solid var(--line);
-    overflow-x: auto;
-    flex-wrap: wrap;
-  }
-  .pipeline-lane {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-  }
-  .pipeline-lane .lane-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-right: 4px;
-    flex-shrink: 0;
-  }
-  .lane-stage {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 4px 12px;
-    background: var(--inset);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-  }
-  .lane-stage .num {
-    font-family: var(--font-mono);
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text);
-    min-width: 16px;
-    text-align: center;
-  }
-  .lane-stage .lbl {
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .lane-arrow {
-    color: var(--dim);
-    font-size: 12px;
-    flex-shrink: 0;
-  }
-  .lane-stage.warn .num { color: var(--warn); }
-  .lane-stage.buffer .num { color: #c5a8ff; }
-  .lane-stage.ok .num { color: var(--ok); }
-
   /* ---------- Slot legend (Charm Maker / Approved) ---------- */
   .slot-legend {
     display: flex;
@@ -2405,16 +2349,11 @@
   body.review-mode .tabnav-wrap { padding: 6px 22px 0; }
   body.review-mode .tabnav { padding: 3px; }
   body.review-mode .tabnav .btn { padding: 5px 18px !important; }
-  body.review-mode .pipeline-bar { padding: 5px 22px; gap: 6px 18px; }
-  body.review-mode .pipeline-bar .lane-stage { padding: 2px 10px; }
-  body.review-mode .pipeline-bar .num { font-size: 13px; }
 
-  /* Short windows (the 634px-tall case) give up the pipeline bar and the
-     grid's own title: the tab strip already says Review, and the same
-     buffer / archive numbers are in the left panel and on the collapsed
-     rail. Everything else stays exactly where it was. */
+  /* Short windows (the 634px-tall case) give up the grid's own title: the tab
+     strip already says Review, and the buffer / archive numbers are in the left
+     panel and on the collapsed rail. Everything else stays where it was. */
   @media (max-height: 820px) {
-    body.review-mode .pipeline-bar { display: none; }
     body.review-mode .app-header { padding: 5px 22px; }
     body.review-mode .tabnav-wrap { padding: 5px 22px 0; }
     body.review-mode .tabnav .btn { padding: 4px 18px !important; }
@@ -3098,6 +3037,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
     <div class="header-meta">
       <span><span class="dot">●</span> gokudatabase.firebasestorage.app</span>
       <span>auth: anonymous</span>
+      <span id="rtSyncPill" title="Counter sync status">sync: connecting…</span>
       <span><a href="#" id="signOut" onclick="return gsSignOut()" style="color:inherit;text-decoration:underline;text-underline-offset:2px">sign out</a></span>
       <label class="image-model-switcher" for="imageModelSelect" title="Controls all new Standard generations, redos, and Charm Maker images.">
         <span>model:</span>
@@ -3117,27 +3057,6 @@ html.gs-locked body > *:not(#gate){display:none!important}
       <button class="btn" id="toggleReview" style="flex:1; background: transparent; border:none; color: var(--muted);">Review</button>
       <button class="btn" id="toggleCharmMaker" style="flex:1; background: transparent; border:none; color: var(--muted);">Charm Maker</button>
       <button class="btn" id="toggleApprovedCharms" style="flex:1; background: transparent; border:none; color: var(--muted);">Approved Sets</button>
-    </div>
-  </div>
-
-  <!-- ====================== PERSISTENT PIPELINE STATUS BAR ====================== -->
-  <div class="pipeline-bar">
-    <div class="pipeline-lane">
-      <span class="lane-label">Listings</span>
-      <div class="lane-stage warn"><span class="num" id="pipelinePending">—</span><span class="lbl">pending</span></div>
-      <span class="lane-arrow">→</span>
-      <div class="lane-stage buffer"><span class="num" id="pipelineBuffer">—</span><span class="lbl">buffer</span></div>
-      <span class="lane-arrow">→</span>
-      <div class="lane-stage ok"><span class="num" id="pipelineArchive">—</span><span class="lbl">archive</span></div>
-    </div>
-    <div class="pipeline-lane">
-      <span class="lane-label">Charms</span>
-      <div class="lane-stage warn"><span class="num" id="pipelineCharmPending">—</span><span class="lbl">awaiting</span></div>
-      <span class="lane-arrow">→</span>
-      <div class="lane-stage ok"><span class="num" id="pipelineCharmArchive">—</span><span class="lbl">archived</span></div>
-    </div>
-    <div class="pipeline-lane" style="margin-left: auto;">
-      <span class="lane-label" id="pipelineLastUpdate" style="color: var(--dim);">refreshing…</span>
     </div>
   </div>
 
@@ -15076,31 +14995,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     // ---------------------------------------------------------------------
-    // 1) PERSISTENT PIPELINE STATUS BAR
+    // 1) (removed) PERSISTENT PIPELINE STATUS BAR
     // ---------------------------------------------------------------------
-    let _pipelineRunning = false;
-    // The pipeline bar's five numbers all come from folders RT already
-    // watches, so it no longer runs six listAll calls of its own on a 60s
-    // timer — it just asks for a reconcile and RT repaints it. Kept as a
-    // function because several call sites (tab clicks, job completion) invoke
-    // it directly.
-    async function updatePipelineBar() {
-      if (typeof rtInvalidate !== "function") return;
-      rtInvalidate([
-        `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`,
-        `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`,
-        `${ROOT}/Charm_Maker/Generated_Charm_Sets`,
-        `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`,
-        ..._LISTING_CATEGORIES.map(c => `${ROOT}/${c}/Ready_To_List`),
-      ]);
-    }
-
-    [toggleGenerateBtn, toggleReviewBtn, toggleCharmMakerBtn, toggleApprovedCharmsBtn].forEach(btn => {
-      btn.addEventListener('click', () => setTimeout(updatePipelineBar, 250));
-    });
-    // No periodic timer here any more: RT pushes changes as they happen and
-    // reconciles every 45s as a safety net. The initial paint still runs.
-    setTimeout(updatePipelineBar, 1500);
+    // The bar and its five numbers are gone at the operator's request. Its
+    // markup, styles, updater and RT view are all removed rather than hidden,
+    // and the `<category>/Ready_To_List` folders it was the only consumer of are
+    // no longer watched, which drops five folder listings from every reconcile
+    // (five, not six: Beady_Necklace/Ready_To_List still has an upload panel
+    // pointed at it, and that panel shows its own file count).
 
     // ---------------------------------------------------------------------
     // LIVE DOWNLOADS COUNTERS
@@ -18422,7 +18324,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     //
     //   updateCompletedSetsCounter / updateTotalAllTimeCounter  every 8s, and
     //                                only when the Downloads panel was visible
-    //   updatePipelineBar                                       every 60s
     //   _updateCharmDbCount                                     every 3s, and
     //                                only while the Charm Maker tab was open
     //   _loadCharmMosaic tab-change detection                   every 1s
@@ -18463,7 +18364,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // Traffic, as folder listings per minute with the app sitting open:
     //   before — 8s Downloads poll (2 folders) + 60s pipeline poll (6 folders)
     //            ≈ 21/min, plus a full re-list on every tab switch
-    //   after  — 22 watched folders every 180s ≈ 7/min, and no per-tab re-list
+    //   after  — 17 watched folders every 180s ≈ 6/min, no per-tab re-list
+    //            (6 feed counters; the other 11 are upload panels, which each
+    //             show a "N file(s)" line and were previously only refreshed
+    //             after your own upload)
     // About a third of the previous traffic, with every counter live. The cost
     // was never the reconcile; it was five widgets each listing the same folder
     // on their own timer.
@@ -18885,7 +18789,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const P_CH_APP   = `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`;
       const P_CH_TPL   = `${ROOT}/Charm_Maker/Charm_Templates (Existing Etsy Charms)`;
       const P_CH_BIN   = `${ROOT}/Charm_Maker/Charm_Templates_Deleted`;
-      const P_READY    = _LISTING_CATEGORIES.map(c => `${ROOT}/${c}/Ready_To_List`);
+      // NOTE: `<category>/Ready_To_List` was watched here purely to feed the
+      // pipeline bar's "pending" number. That bar is gone, so nothing reads
+      // them and they are no longer listed on every reconcile. (The one under
+      // Beady_Necklace is still watched — an upload panel points at it.)
 
       // The buffer counter wants a per-category breakdown; flag it so the
       // fetcher computes one only for this folder.
@@ -18919,20 +18826,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         if (!span) return;
         const rec = rtGet(P_ARCHIVE);
         span.textContent = rec.error && rec.n == null ? 'Error' : rtNum(rec.n);
-      });
-
-      /* ---- Pipeline status bar ---- */
-      rtView('pipeline', [P_BUFFER, P_ARCHIVE, P_CH_GEN, P_CH_APP, ...P_READY], () => {
-        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-        set('pipelineBuffer',       rtNum(rtN(P_BUFFER)));
-        set('pipelineArchive',      rtNum(rtN(P_ARCHIVE)));
-        set('pipelineCharmPending', rtNum(rtN(P_CH_GEN), '0'));
-        set('pipelineCharmArchive', rtNum(rtN(P_CH_APP), '0'));
-        const pending = P_READY.reduce((a, p) => {
-          const n = rtN(p);
-          return n == null ? a : a + n;
-        }, 0);
-        set('pipelinePending', P_READY.every(p => rtN(p) == null) ? '—' : String(pending));
       });
 
       /* ---- Charm Maker: sets in database ---- */
@@ -19046,24 +18939,27 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       return `${Math.floor(h / 24)}d ago`;
     }
 
-    rtView('time.pipelineStamp', [], () => {
-        const lu = document.getElementById('pipelineLastUpdate');
-        if (!lu) return;
+    rtView('time.sync', [], () => {
+        const el = document.getElementById('rtSyncPill');
+        if (!el) return;
         const label = RT.transport === 'live' ? 'live'
-                    : RT.transport === 'tabs' ? 'live (this browser)'
+                    : RT.transport === 'tabs' ? 'this browser'
                     : RT.transport === 'starting' ? 'connecting'
                     : 'polling';
-        lu.textContent = RT.lastSync
-          ? `${label} · synced ${_formatRelTime(RT.lastSync)}`
-          : `${label} · connecting…`;
-        lu.title = RT.transport === 'live'
-          ? 'Counts are pushed from Firestore the moment any terminal changes something.'
+        el.textContent = RT.lastSync ? `sync: ${label} · ${_rtAgo(RT.lastSync)}` : `sync: ${label}…`;
+        el.style.color = RT.transport === 'live' ? 'var(--ok)'
+                       : RT.transport === 'starting' ? 'var(--dim)'
+                       : 'var(--warn)';
+        el.title = RT.transport === 'live'
+          ? 'Counters are pushed from Firestore the moment any terminal changes something.'
           : RT.transport === 'tabs'
-            ? 'Counts sync instantly between tabs in this browser. Other machines update on the 45s reconcile — deploy the ListingGen_Realtime rule for cross-machine push.'
-            : 'Counts reconcile every 45 seconds.';
+            ? 'Counters sync instantly between tabs in this browser. Other machines update on the 45s reconcile — deploy the ListingGen_Realtime Firestore rule for cross-machine push.'
+            : RT.transport === 'polling'
+              ? 'No push channel available; counters reconcile every 45 seconds.'
+              : 'Connecting…';
       }, { timeOnly: true });
 
-      rtView('time.cache', [], () => {
+    rtView('time.cache', [], () => {
         if (typeof _updateCacheStatusUI === 'function') _updateCacheStatusUI();
       }, { timeOnly: true });
 
