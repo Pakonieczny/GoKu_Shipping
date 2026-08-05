@@ -4033,12 +4033,114 @@ html.gs-locked body > *:not(#gate){display:none!important}
       return IMAGE_MODEL_CATALOG[normalizeImageModelId(modelId)];
     }
 
+    // ==================================================================
+    // IMAGE JOB IDENTITY + STATUS WATCH
+    // ------------------------------------------------------------------
+    // A Netlify BACKGROUND function answers the browser with 202 and an
+    // empty body the instant the request is accepted. Whatever the
+    // function itself returns afterwards — including a 400 rejection — is
+    // discarded and never reaches the caller. So a request the function
+    // refused outright is, client-side, indistinguishable from one that is
+    // still working.
+    //
+    // That is the whole reason charm generation "timed out after 240s":
+    // geminiImageProxy-background.js handles kind:"edits" in its non-job
+    // section, but kind:"generations" sits BELOW this gate —
+    //
+    //     if (!jobId) return json(400, { error: { message: "jobId is required" } });
+    //
+    // — and nothing in this file has ever sent a jobId. So every
+    // text-to-image request was rejected in milliseconds, the browser saw
+    // 202, and then waited four minutes for a Slot_1.png that was never
+    // going to be written. The same gate exists in the unpatched function,
+    // so this is not a deployment problem; it is fixed entirely here.
+    //
+    // Two rules follow, both enforced below:
+    //   1. every image request carries a client-generated jobId. Harmless
+    //      for "edits" (that branch returns before the gate and ignores
+    //      it) and required for "generations" / "charm_postscale".
+    //   2. every wait on a job's output also watches the job's Firestore
+    //      document, which is the ONLY channel carrying the real outcome:
+    //        ListingGenerator1Jobs/{jobId} → { status, stage, error }
+    //      A failure now surfaces in about a second with the upstream
+    //      message instead of four minutes of silence.
+    //
+    // Reads of that collection are already permitted by the deployed
+    // Firestore rules (allow read: if request.auth != null), and the app
+    // signs in anonymously at boot, so nothing needs deploying.
+    // ==================================================================
+    const IMAGE_JOBS_COLL = "ListingGenerator1Jobs";
+
+    function newImageJobId() {
+      try {
+        if (window.crypto?.randomUUID) return `lg1_${window.crypto.randomUUID()}`;
+      } catch (_) {}
+      return `lg1_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    // Live watch on one job document. Never throws and never rejects: it
+    // reports through the callback and reports its own unavailability, so
+    // a Firestore problem degrades to plain Storage polling rather than
+    // failing a generation that is actually fine.
+    function watchImageJob(jobId, onUpdate) {
+      const state = { available: false, seen: false, status: null, stage: null, error: null, stop: () => {} };
+      if (!jobId || !window.db) return state;
+      try {
+        const unsub = window.db.collection(IMAGE_JOBS_COLL).doc(String(jobId)).onSnapshot(
+          (snap) => {
+            state.available = true;
+            if (!snap || !snap.exists) return;
+            const d = snap.data() || {};
+            state.seen = true;
+            state.status = d.status || null;
+            state.stage = d.stage || null;
+            state.error = d.error || null;
+            if (typeof onUpdate === "function") { try { onUpdate(state); } catch (_) {} }
+          },
+          (err) => {
+            // Rules denial, offline, long-poll failure — all land here.
+            // Mark the watch unusable so callers do not treat "no error
+            // seen" as "no error exists".
+            state.available = false;
+            console.warn(`[image-job] cannot watch ${jobId}:`, err?.message || err);
+          }
+        );
+        state.stop = () => { try { unsub(); } catch (_) {} };
+        state.available = true;
+      } catch (e) {
+        console.warn(`[image-job] watch setup failed for ${jobId}:`, e?.message || e);
+      }
+      return state;
+    }
+
+    // Turns the job document's error field — whatever shape safeErr() gave
+    // it — into one readable line.
+    function describeJobError(error) {
+      const walk = (node, depth = 0) => {
+        if (node == null || depth > 6) return null;
+        if (typeof node === "string") return node;
+        if (typeof node !== "object") return String(node);
+        if (typeof node.message === "string" && node.message) return node.message;
+        for (const k of ["error", "detail", "details", "reason", "body", "responseBody"]) {
+          const found = walk(node[k], depth + 1);
+          if (found) return found;
+        }
+        try { return JSON.stringify(node).slice(0, 400); } catch (_) { return null; }
+      };
+      return walk(error) || "the function reported an error with no message";
+    }
+
     async function postImageGeneration(body, signal, modelId = getSelectedImageModel()) {
       const config = getImageModelConfig(modelId);
-      return postJson(
+      // Reuse a caller-supplied id when there is one so a caller can wire
+      // up its watch before the request goes out.
+      const jobId = body?.jobId || newImageJobId();
+      const res = await postJson(
         config.endpoint,
         {
           ...body,
+          jobId,
+          runId: body?.runId || jobId,
           model: config.id,
           quality: body?.quality || config.quality,
           size: body?.size || "2048x2048",
@@ -4046,6 +4148,9 @@ html.gs-locked body > *:not(#gate){display:none!important}
         },
         signal
       );
+      // A background function's 202 body is empty, so stamp the id we used
+      // onto the result — it is the only handle on the job that exists.
+      return Object.assign({}, res, { jobId });
     }
 
     function renderImageModelSelection() {
@@ -4855,15 +4960,63 @@ html.gs-locked body > *:not(#gate){display:none!important}
       const signal = opts.signal; // Capture the abort signal
       const onWait = typeof opts.onWait === "function" ? opts.onWait : null;
 
+      // Optional job watch. Pass the jobId returned by
+      // postImageGeneration and this poll stops guessing: a failed job
+      // reports its real error within about a second instead of running
+      // the full timeout and blaming a missing file. See the IMAGE JOB
+      // IDENTITY block for why the HTTP response cannot tell us this.
+      const jobId = opts.jobId || null;
+      const job = jobId ? watchImageJob(jobId) : null;
+      // How long to allow for the job document to appear at all. The
+      // function writes it as its first act on the job path, so a
+      // persistent absence means the request was rejected BEFORE any work
+      // started — a missing/invalid field, an unresolvable model, or the
+      // jobId gate itself. The rejections this catches happen in
+      // milliseconds, so the only thing this window has to be is safely
+      // longer than a cold start; 90s is far beyond one, which keeps the
+      // false-positive risk (abandoning a generation that would have
+      // landed) close to nil while still failing 2.5x sooner than the
+      // 240s output timeout.
+      const docGraceMs = Number(opts.jobDocGraceMs ?? 90000);
+
       // Check if already aborted before starting
       if (signal && signal.aborted) throw new Error("AbortError");
 
-      await sleep(Math.random() * 3000, signal); 
+      try {
+      await sleep(Math.random() * 3000, signal);
 
       const t0 = Date.now();
       while (true) {
         // Exit loop if cancellation is requested
         if (signal && signal.aborted) throw new Error("AbortError");
+
+        // ── Job status first ──────────────────────────────────────────
+        // Checked before the Storage list so a known failure never costs
+        // another poll interval.
+        if (job && job.available) {
+          if (job.status === "error") {
+            const e = new Error(
+              `Image job failed: ${describeJobError(job.error)} ` +
+              `(job ${jobId}, ${fileName} in ${outputBasePath})`
+            );
+            e.jobId = jobId;
+            e.jobError = job.error;
+            throw e;
+          }
+          if (!job.seen && (Date.now() - t0) > docGraceMs) {
+            const e = new Error(
+              `The image request was rejected before it started work — no job record ` +
+              `appeared for ${jobId} within ${Math.round(docGraceMs / 1000)}s. ` +
+              `A background function replies 202 before validating, so the rejection ` +
+              `reason is only in the Netlify function log for this request. ` +
+              `Most likely a required field is missing or the model is not available ` +
+              `for this request kind.`
+            );
+            e.jobId = jobId;
+            e.jobNeverStarted = true;
+            throw e;
+          }
+        }
 
         await ensureStorageSignedIn();
 
@@ -4926,17 +5079,76 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
         const elapsed = Date.now() - t0;
         if (elapsed > timeoutMs) {
+          // Say what the job itself reported, so a genuine timeout is not
+          // confused with a job that never ran or died silently.
+          const jobNote = !job ? ``
+            : !job.available ? ` The job record could not be read, so its status is unknown.`
+            : job.seen ? ` Last job status: ${job.status || "unknown"}${job.stage ? ` (stage: ${job.stage})` : ""}.`
+            : ` No job record was ever written for ${jobId}.`;
           throw new Error(
-            `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${fileName} in ${outputBasePath}. ` +
-            `The image job never wrote its output — check the function logs for the generation request.`
+            `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${fileName} in ${outputBasePath}.` +
+            jobNote +
+            ` Check the function logs for the generation request.`
           );
         }
         // Let the caller show progress. Without this a long poll is
         // indistinguishable from a hung one.
-        if (onWait) { try { onWait(elapsed, timeoutMs); } catch (_) {} }
+        if (onWait) { try { onWait(elapsed, timeoutMs, job); } catch (_) {} }
         await sleep(intervalMs, signal);
       }
+      } finally {
+        if (job) job.stop();
+      }
     }
+
+    // ==================================================================
+    // CONSOLE DIAGNOSTICS
+    // ------------------------------------------------------------------
+    // A background function cannot report anything to the browser, so
+    // when image generation misbehaves the only way to find out why is to
+    // send one request and read the job document it writes. This exposes
+    // exactly that, and nothing that mutates app state.
+    //
+    //   await LG1_DEBUG.probeGenerations()
+    //     → sends one text-to-image request into a scratch Deriv folder
+    //       and reports the job's real outcome, e.g.
+    //       { ok:false, status:'error', error:'…model does not support…' }
+    //
+    //   LG1_DEBUG.watchImageJob('<jobId>')  → live status of one job
+    // ==================================================================
+    window.LG1_DEBUG = Object.assign(window.LG1_DEBUG || {}, {
+      newImageJobId,
+      watchImageJob,
+      describeJobError,
+      waitForSlotPngUrl,
+      postImageGeneration,
+      async probeGenerations(opts = {}) {
+        const base = opts.outputBasePath
+          || `listing-generator-1/Charm_Maker/Generated_Charm_Sets/Deriv_${Date.now()}`;
+        const jobId = newImageJobId();
+        const t0 = Date.now();
+        console.log(`[probe] jobId=${jobId} → ${base}`);
+        try {
+          await postImageGeneration({
+            kind: "generations",
+            jobId,
+            activeCategory: "Charms",
+            output_base_path: base,
+            slotIndex: 0,
+            prompt: opts.prompt || "A single small silver charm pendant on a pure black background, studio product photograph.",
+          }, undefined, opts.modelId);
+          const res = await waitForSlotPngUrl(base, 0, {
+            jobId,
+            timeoutMs: opts.timeoutMs || 180000,
+            intervalMs: 3000,
+            onWait: (ms, _t, job) => console.log(`[probe] ${Math.round(ms / 1000)}s · ${job?.seen ? (job.stage || job.status) : "no job record yet"}`),
+          });
+          return { ok: true, jobId, elapsedMs: Date.now() - t0, ...res };
+        } catch (e) {
+          return { ok: false, jobId, elapsedMs: Date.now() - t0, error: String(e?.message || e), jobError: e?.jobError || null };
+        }
+      },
+    });
 
 // --- UI State ---
     const activeCategoryEl = document.getElementById("activeCategory");
@@ -8906,8 +9118,12 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
             }
 
             // PASS SIGNAL TO REQUEST
-            await postImageGeneration({
+            // redoKind becomes "generations" for a research-designed slot 0,
+            // and that kind is gated behind "jobId is required" in the
+            // background function — so the id is mandatory, not optional.
+            const redoJob = await postImageGeneration({
                 kind: redoKind,
+                jobId: newImageJobId(),
                 activeCategory: category,
                 input_storage_path: inputPath,
                 input_charm_storage_path: inputCharmPath,
@@ -8922,7 +9138,10 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 afterUpdatedMs: beforeUpdatedMs,
                 afterGeneration: beforeGeneration,
                 timeoutMs: 600000, intervalMs: 5000,
-                signal: signal 
+                // Only the job path writes a status document; see the note
+                // at the slot-0 generate call.
+                jobId: redoKind === "generations" ? (redoJob?.jobId || null) : null,
+                signal: signal
             });
 
             const newBlob = await fetchAndCacheBlob(waitedRes.url, waitedRes.storagePath, Date.now());
@@ -9620,7 +9839,16 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
                   output_base_path: outputBasePath, slotIndex: 0,
                   prompt: designPrompt,
                 };
-            await postImageGeneration(slot0Body, undefined, generationModel);
+            // kind:"generations" is a JOB-based operation in
+            // geminiImageProxy-background.js: it sits below the
+            // "jobId is required" gate, so without an id the function 400s
+            // instantly and — because a background function has already
+            // answered 202 — the browser learns nothing. The id below is
+            // what makes text-to-image reach the model at all, and it is
+            // also the handle the wait below uses to read the real outcome.
+            const slot0Job = await postImageGeneration(
+                { ...slot0Body, jobId: newImageJobId() }, undefined, generationModel
+            );
             // 4 minutes, not 10. A generation that has not landed by then has
             // almost certainly failed upstream, and ten minutes of spinner tells
             // the operator nothing. onWait paints the elapsed seconds so it is
@@ -9628,11 +9856,21 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, {
                 timeoutMs: window.__CM_SLOT0_TIMEOUT_MS || 240000,
                 intervalMs: window.__CM_SLOT0_INTERVAL_MS || 5000,
-                onWait: (elapsedMs) => {
+                // Only "generations" runs on the job path and therefore
+                // writes a job document. kind:"edits" is served by the
+                // function's non-job section and never creates one, so
+                // watching for it there would read "never started" on a
+                // request that is working perfectly.
+                jobId: slot0Body.kind === "generations" ? (slot0Job?.jobId || null) : null,
+                onWait: (elapsedMs, _total, job) => {
                     const box = document.getElementById(`prevBox_${folderId}_0`);
                     if (box && box.querySelector('.spinner-label')) {
+                        // Show the server's own stage when we have it, so the
+                        // operator can tell "still calling the model" from
+                        // "uploading" from "nothing has started".
+                        const stage = job && job.seen && job.stage && job.stage !== 'done' ? ` · ${job.stage}` : '';
                         box.querySelector('.spinner-label').textContent =
-                            `${designBrief ? stratLabel : 'Generating'}… ${Math.round(elapsedMs / 1000)}s`;
+                            `${designBrief ? stratLabel : 'Generating'}… ${Math.round(elapsedMs / 1000)}s${stage}`;
                     }
                 },
             });
@@ -9689,10 +9927,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
             // gave no clue whether the model refused, the function timed out, or
             // the poll simply gave up, and any slot the catch did not recognise
             // was left spinning indefinitely.
-            const short = /time limit|timed out|Timed out waiting/i.test(why)
-                ? 'Timed out'
+            // Order matters: the job-status cases are more specific than the
+            // timeout case and must be tested first, or "Image job failed:
+            // …timed out…" would be mislabelled as a client-side timeout.
+            const short = /rejected before it started/i.test(why)
+                ? 'Rejected'
+                : /quota|rate limit/i.test(why) ? 'Rate limited'
+                : /Image job failed/i.test(why) ? 'Model error'
+                : /time limit|timed out|Timed out waiting/i.test(why) ? 'Timed out'
                 : /abort/i.test(why) ? 'Cancelled'
-                : /quota|rate/i.test(why) ? 'Rate limited'
                 : 'Failed';
             [0, 1, 2, 3].forEach(i => {
                 window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
