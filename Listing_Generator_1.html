@@ -3590,6 +3590,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
           </p>
 
           <div class="row" style="gap: 8px; flex-wrap: wrap;">
+            <button class="btn btnSmall" id="cmResearchTestBtn" type="button" title="Send one tiny request to the research model and report exactly what comes back">Test model</button>
             <button class="btn btnSmall" id="cmResearchSelectedBtn" type="button" title="Analyse and ideate for the charms selected in the library above">Research selected</button>
             <button class="btn btnSmall" id="cmResearchAllBtn" type="button" title="Analyse every un-researched charm in the library, in order of sales rank">Research all missing</button>
             <button class="btn btnSmall" id="cmResearchRedoBtn" type="button" title="Discard and regenerate the concepts for the selected charms, keeping the analysis">↻ Fresh concepts</button>
@@ -3599,6 +3600,8 @@ html.gs-locked body > *:not(#gate){display:none!important}
             <span id="cmResearchStatusText">No research run yet</span>
             <div class="lib-progress"><div class="lib-progress-fill" id="cmResearchFill"></div></div>
           </div>
+
+          <div id="cmResearchDiag" class="window-info rm-warn" style="display:none; white-space: pre-wrap;"></div>
 
           <div id="cmResearchDetail" class="research-box" style="display:none;"></div>
 
@@ -7995,8 +7998,29 @@ function updateApproveButtonState() {
           try { j = raw ? JSON.parse(raw) : null; } catch { j = null; }
 
           if (!res.ok) {
-            const msg = (j?.error?.message || j?.error) || (raw ? raw.slice(0, 300) : "") || `HTTP ${res.status}`;
-            throw new Error(msg);
+            // Proxies wrap upstream errors to different depths — openaiProxy
+            // returns { error: <the whole OpenAI body> }, which is itself
+            // { error: { message } }, so a one-level lookup finds an object and
+            // stringifies it to the useless "[object Object]". Walk down until a
+            // real message string turns up, and keep the upstream status.
+            const findMessage = (node, depth = 0) => {
+              if (node == null || depth > 6) return null;
+              if (typeof node === "string") return node;
+              if (typeof node !== "object") return null;
+              if (typeof node.message === "string" && node.message) return node.message;
+              for (const key of ["error", "detail", "details", "reason", "body"]) {
+                const found = findMessage(node[key], depth + 1);
+                if (found) return found;
+              }
+              return null;
+            };
+            const msg = findMessage(j)
+              || (raw ? raw.slice(0, 300) : "")
+              || `HTTP ${res.status}`;
+            const err = new Error(`${msg} (HTTP ${res.status} from ${path})`);
+            err.status = res.status;
+            err.responseBody = j || raw || null;
+            throw err;
           }
 
           if (!j) {
@@ -19161,17 +19185,150 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
       catch (_) { return CM_DEFAULT_RESEARCH_MODEL; }
     }
 
+    // ---------------------------------------------------------------------
+    // Model call with parameter negotiation
+    // ---------------------------------------------------------------------
+    // Chat Completions is not one API, it is a family of them, and which
+    // parameters a model accepts varies by generation. The reasoning-era models
+    // reject `max_tokens` outright and demand `max_completion_tokens`; some
+    // reject `response_format`; some reject `temperature`. A 400 from any of
+    // those is indistinguishable from a real failure unless the message is read.
+    //
+    // Rather than hard-code a compatibility table that goes stale, this reads
+    // the rejection, adapts, and retries — then remembers the shape that worked
+    // for that model id so later calls go straight there.
+    const CM_LLM_SHAPE_LS = 'lg1_research_llm_shape_v1';
+
+    function _cmLlmShape(model) {
+      try {
+        const all = JSON.parse(localStorage.getItem(CM_LLM_SHAPE_LS) || '{}');
+        return all[model] || null;
+      } catch (_) { return null; }
+    }
+    function _cmLlmShapeSave(model, shape) {
+      try {
+        const all = JSON.parse(localStorage.getItem(CM_LLM_SHAPE_LS) || '{}');
+        all[model] = shape;
+        localStorage.setItem(CM_LLM_SHAPE_LS, JSON.stringify(all));
+      } catch (_) {}
+    }
+
+    function _cmLlmBuildBody(model, messages, maxTokens, shape) {
+      const body = { model_override: model, messages };
+      if (!shape.dropJsonMode) body.response_format = { type: 'json_object' };
+      body[shape.tokenParam || 'max_tokens'] = maxTokens;
+      if (shape.dropImageDetail) {
+        // Strip `detail` from every image part.
+        body.messages = messages.map(m => Array.isArray(m.content)
+          ? { ...m, content: m.content.map(c => c.type === 'image_url'
+              ? { ...c, image_url: { url: c.image_url.url } } : c) }
+          : m);
+      }
+      for (const p of (shape.drop || [])) delete body[p];
+      return body;
+    }
+
+    // Read a 400 and decide what to change. Returns a new shape, or null when
+    // the error is not a parameter problem and retrying is pointless.
+    function _cmLlmAdapt(message, shape) {
+      const m = String(message || '');
+      const next = { ...shape, drop: [...(shape.drop || [])] };
+
+      if (/max_tokens.*not supported|Use 'max_completion_tokens'|max_completion_tokens/i.test(m)
+          && next.tokenParam !== 'max_completion_tokens') {
+        next.tokenParam = 'max_completion_tokens';
+        return next;
+      }
+      if (/max_completion_tokens.*(unsupported|unrecognized|not supported)/i.test(m)
+          && next.tokenParam !== 'max_tokens') {
+        next.tokenParam = 'max_tokens';
+        return next;
+      }
+      if (/response_format/i.test(m) && !next.dropJsonMode) {
+        next.dropJsonMode = true;
+        return next;
+      }
+      if (/image_url|'detail'/i.test(m) && /unsupported|unrecognized|invalid/i.test(m) && !next.dropImageDetail) {
+        next.dropImageDetail = true;
+        return next;
+      }
+      // Generic: pull the offending parameter name out of the message and drop it.
+      const named = m.match(/[Uu]nsupported parameter: '([^']+)'/)
+                 || m.match(/[Uu]nrecognized request argument supplied: ([A-Za-z_]+)/)
+                 || m.match(/[Uu]nknown parameter: '([^']+)'/)
+                 || m.match(/Invalid( value for)? parameter: '([^']+)'/);
+      if (named) {
+        const param = (named[2] || named[1] || '').split('.')[0];
+        if (param && param !== 'messages' && param !== 'model' && !next.drop.includes(param)) {
+          if (param === 'max_tokens' || param === 'max_completion_tokens') {
+            next.tokenParam = param === 'max_tokens' ? 'max_completion_tokens' : 'max_tokens';
+          } else if (param === 'response_format') {
+            next.dropJsonMode = true;
+          } else {
+            next.drop.push(param);
+          }
+          return next;
+        }
+      }
+      return null;
+    }
+
+    let _cmLlmLastError = null;
+
     async function _cmLlmJson(messages, { maxTokens = 4000 } = {}) {
-      const res = await postJson('openaiProxy', {
-        model_override: _cmResearchModel(),
-        response_format: { type: 'json_object' },
-        max_tokens: maxTokens,
-        messages,
-      });
-      const text = res?.choices?.[0]?.message?.content;
-      if (!text) throw new Error('Research model returned no content');
-      try { return JSON.parse(text); }
-      catch (e) { throw new Error(`Research model returned unparseable JSON: ${String(text).slice(0, 200)}`); }
+      const model = _cmResearchModel();
+      let shape = _cmLlmShape(model) || { tokenParam: 'max_tokens', dropJsonMode: false, dropImageDetail: false, drop: [] };
+      const tried = [];
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const body = _cmLlmBuildBody(model, messages, maxTokens, shape);
+        tried.push(JSON.stringify({ tokenParam: shape.tokenParam, jsonMode: !shape.dropJsonMode, drop: shape.drop }));
+        let res;
+        try {
+          res = await postJson('openaiProxy', body);
+        } catch (e) {
+          _cmLlmLastError = { model, message: e?.message || String(e), status: e?.status, shape, body: e?.responseBody };
+          const adapted = (e?.status === 400) ? _cmLlmAdapt(e.message, shape) : null;
+          if (!adapted) {
+            throw new Error(
+              `Research model "${model}" rejected the request: ${e?.message || e}` +
+              (attempt ? `\n(tried ${tried.length} parameter shapes: ${tried.join(' → ')})` : '')
+            );
+          }
+          console.info(`[charm-research] adapting request for "${model}":`, e.message, '→', JSON.stringify(adapted));
+          shape = adapted;
+          continue;
+        }
+
+        // Success: remember the shape so this negotiation happens once, not once
+        // per charm.
+        _cmLlmShapeSave(model, shape);
+        const text = res?.choices?.[0]?.message?.content;
+        if (!text) {
+          const finish = res?.choices?.[0]?.finish_reason;
+          throw new Error(
+            `Research model "${model}" returned no content` +
+            (finish ? ` (finish_reason: ${finish}${finish === 'length' ? ' — the reply was cut off; try a smaller batch or a model with more output room' : ''})` : '')
+          );
+        }
+        // Some models wrap JSON in prose, a code fence, or both, even when asked
+        // not to — and JSON mode may have been dropped during negotiation, which
+        // makes that much more likely. Try progressively more aggressive
+        // recoveries rather than losing the charm to a stray "Sure!".
+        const candidates = [text];
+        const fenced = text.match(/```(?:json)?([\s\S]*?)```/);
+        if (fenced) candidates.push(fenced[1]);
+        for (const src of [fenced ? fenced[1] : null, text]) {
+          if (!src) continue;
+          const a = src.indexOf('{'), b = src.lastIndexOf('}');
+          if (a >= 0 && b > a) candidates.push(src.slice(a, b + 1));
+        }
+        for (const c of candidates) {
+          try { return JSON.parse(String(c).trim()); } catch (_) {}
+        }
+        throw new Error(`Research model "${model}" returned unparseable JSON: ${String(text).slice(0, 220)}`);
+      }
+      throw new Error(`Research model "${model}" could not be called after 5 parameter shapes: ${tried.join(' → ')}`);
     }
 
     // ---------------------------------------------------------------------
@@ -20752,15 +20909,26 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
           ok++;
         } catch (e) {
           failed++;
-          console.warn('[charm-research] failed for', rec.name, e);
+          console.warn('[charm-research] failed for', rec.name, e?.message || e);
           _cmResearchSetStatus('warn', `${rec.name}: ${e?.message || e}`, done / records.length);
+          // Show the first real failure in the panel and stop hammering the API
+          // 200 more times with a request it has already rejected.
+          if (failed === 1) {
+            _cmShowDiag(
+              `✗ Research failed on "${rec.name}".\n\n${e?.message || e}\n\n` +
+              `Stopped after the first failure rather than repeating it for every charm. ` +
+              `Click "Test model" for a one-request diagnosis.`
+            );
+            break;
+          }
         }
         done++;
         _cmResearchCoverage();
       }
       _cmResearchSetStatus(failed ? 'warn' : 'ok',
-        failed ? `Researched ${ok}, ${failed} failed — see console for details.` : `Researched ${ok} charm${ok === 1 ? '' : 's'}.`,
+        failed ? `Researched ${ok}, then stopped on a failure — see the panel above.` : `Researched ${ok} charm${ok === 1 ? '' : 's'}.`,
         1);
+      if (!failed) _cmShowDiag(null);
       _cmRenderResearchDetail();
       _cmRenderStrategyStats();
       _cmRender();
@@ -20771,6 +20939,57 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       const paths = new Set(_charmRefSelection.keys());
       return _cmLib.items.filter(r => paths.has(r.path));
     }
+
+    function _cmShowDiag(text, isError = true) {
+      const el = document.getElementById('cmResearchDiag');
+      if (!el) return;
+      if (!text) { el.style.display = 'none'; return; }
+      el.style.display = 'block';
+      el.className = `window-info ${isError ? 'rm-warn' : ''}`;
+      el.textContent = text;
+    }
+
+    // One tiny round-trip that reports exactly what the model said. The whole
+    // point is that a 400 tells you WHICH parameter it objected to, which the
+    // batch runner used to bury in the console as "[object Object]".
+    document.getElementById('cmResearchTestBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('cmResearchTestBtn');
+      const model = _cmResearchModel();
+      if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+      _cmShowDiag(`Testing "${model}"…`, false);
+      try {
+        const out = await _cmLlmJson([
+          { role: 'system', content: 'Reply with JSON only.' },
+          { role: 'user', content: 'Return exactly {"ok":true}.' },
+        ], { maxTokens: 64 });
+        const shape = _cmLlmShape(model) || {};
+        _cmShowDiag(
+          `✓ "${model}" is working.\n` +
+          `Reply: ${JSON.stringify(out).slice(0, 120)}\n` +
+          `Negotiated request shape: token parameter "${shape.tokenParam || 'max_tokens'}"` +
+          `, JSON mode ${shape.dropJsonMode ? 'OFF (model rejected it)' : 'on'}` +
+          (shape.drop?.length ? `, dropped: ${shape.drop.join(', ')}` : '') +
+          (shape.dropImageDetail ? ', image detail dropped' : '') +
+          `\nThis shape is remembered, so research runs will not renegotiate.`,
+          false
+        );
+        setStatus(`Research model "${model}" OK.`);
+      } catch (e) {
+        const d = _cmLlmLastError;
+        _cmShowDiag(
+          `✗ "${model}" failed.\n\n${e?.message || e}\n\n` +
+          (d?.status ? `HTTP ${d.status}\n` : '') +
+          (d?.body ? `Raw response: ${JSON.stringify(d.body).slice(0, 400)}\n\n` : '\n') +
+          `Most likely causes, in order:\n` +
+          `• The model id is wrong or your key has no access to it. Try gpt-4o-mini in the header to confirm the proxy works at all.\n` +
+          `• The model rejects a parameter. The message above names it; the app already retries with that parameter changed, so if you are still seeing this it is not a parameter problem.\n` +
+          `• OPENAI_API_KEY is missing or unfunded on the Netlify side.`
+        );
+        setStatus(`Research model test failed: ${e?.message || e}`);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Test model'; }
+      }
+    });
 
     document.getElementById('cmResearchSelectedBtn')?.addEventListener('click', async () => {
       const recs = _cmSelectedRecords();
@@ -21085,6 +21304,8 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       probe: (o) => cmProbeProxy(o),
       effectiveMode: () => cmEffectiveRenderMode(),
       lastIou: null,
+      llmShape: (m) => _cmLlmShape(m || _cmResearchModel()),
+      lastLlmError: () => _cmLlmLastError,
       matrix: () => cmBuildMatrix(),
       gaps: (n) => cmFindGaps(n),
       facets: () => CM_FACETS,
