@@ -5772,13 +5772,14 @@ The output must look like the input image with ONLY the user's requested change 
       const countEl = el.querySelector("#count");
       const downloadBtn = el.querySelector('[data-role="download-all"]');
 
+      // The folder's "N file(s)" line is owned by the real-time fabric: the
+      // panel registers its element once, and RT repaints it whenever that
+      // folder changes — including when the change came from another tab, from
+      // another terminal, or from a soft delete moving a charm out of it.
+      // refreshCount() stays as a shim because several call sites use it.
       async function refreshCount() {
-        try {
-          await ensureStorageSignedIn();
-          const res = await listAll(ref(storage, targetFullPath));
-          countEl.textContent = `${res.items.length} file(s)`;
-        } catch (e) {
-          console.warn("[Storage:listAll] failed", { targetFullPath, e });
+        if (typeof rtInvalidate === "function") {
+          rtInvalidate(targetFullPath, { immediate: true });
         }
       }
 
@@ -5964,7 +5965,9 @@ The output must look like the input image with ONLY the user's requested change 
         input.value = "";
       });
 
-      refreshCount();
+      if (typeof rtRegisterUploadPanel === "function") {
+        rtRegisterUploadPanel(targetFullPath, countEl);
+      }
       refreshCount().catch((e) => console.warn("refreshCount failed", e));
       return el;
     }
@@ -6717,83 +6720,22 @@ The output must look like the input image with ONLY the user's requested change 
       }
     }
 
+    // Both of these are now thin shims. The real-time fabric (RT, near the
+    // bottom of this module) owns the folder counts and the rendering; every
+    // historical call site still works, it just asks for a reconcile instead
+    // of running its own listAll and writing the DOM itself.
     async function updateCompletedSetsCounter() {
-        // Use direct-child selector so we don't accidentally pick up text from
-        // inside the breakdown div (the breakdown contains no <span>, but be explicit).
-        const counterSpan = document.querySelector("#completedSetsCounter > span");
-        const breakdownEl = document.getElementById("completedSetsBreakdown");
-        if (!counterSpan) return;
-        try {
-            await ensureStorageSignedIn();
-            const folderPath = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
-            const baseRef = ref(storage, folderPath);
-            const res = await listAll(baseRef);
-
-            // Parse each subfolder name (format: "Category_Set_N") to count per category.
-            // Folder names look like "Regular_Necklace_Set_17", "Beady_Necklace_Set_3", etc.
-            // The category prefix is everything before the final "_Set_<digits>".
-            const counts = {};
-            for (const prefix of res.prefixes) {
-                const m = prefix.name.match(/^(.+)_Set_\d+$/);
-                const category = m ? m[1] : "Other";
-                counts[category] = (counts[category] || 0) + 1;
-            }
-
-            counterSpan.textContent = res.prefixes.length; // Total across all categories
-
-            if (breakdownEl) {
-                // Short display names — keep the line compact while staying readable.
-                const SHORT = {
-                    "Beady_Necklace":   "Beady",
-                    "Regular_Necklace": "Regular",
-                    "Stud_Earrings":    "Stud",
-                    "Hoop_Earrings":    "Hoop",
-                    "Charms":           "Charms",
-                    "Bracelets":        "Bracelets",
-                };
-                // Stable category order from GENERATABLE_CATEGORIES — always show
-                // every generatable category (even at 0) so the layout doesn't
-                // jitter as categories fill up.
-                const ordered = Array.from(GENERATABLE_CATEGORIES).filter(c => SHORT[c]);
-                const parts = ordered.map(c => `${SHORT[c]}: ${counts[c] || 0}`);
-                // Surface any unrecognized prefix found in storage so nothing is
-                // silently hidden from the total.
-                const accountedFor = new Set(ordered);
-                for (const c of Object.keys(counts)) {
-                    if (!accountedFor.has(c)) parts.push(`${c}: ${counts[c]}`);
-                }
-                breakdownEl.textContent = parts.join("  ·  ");
-            }
-        } catch (e) {
-            console.warn("Failed to get completed sets count:", e);
-            counterSpan.textContent = "Error";
-            if (breakdownEl) breakdownEl.textContent = "";
+        if (typeof rtInvalidate === "function") {
+            rtInvalidate(`${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`, { immediate: true });
         }
     }
 
 async function updateTotalAllTimeCounter() {
-        const totalCounterSpan = document.querySelector("#totalAllTimeCounter span");
-        if (!totalCounterSpan) return;
-        try {
-            await ensureStorageSignedIn();
-            
-            // Get permanently stored approved sets ONLY
-            const approvedFolder = `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`;
-            let approvedCount = 0;
-            try {
-                const approvedRes = await listAll(ref(storage, approvedFolder));
-                approvedCount = approvedRes.prefixes.length;
-            } catch(e) {
-                console.warn("Could not read Approved folder:", e);
-            }
-
-            totalCounterSpan.textContent = approvedCount;
-        } catch (e) {
-            console.warn("Failed to get total all time sets count:", e);
-            totalCounterSpan.textContent = "Error";
+        if (typeof rtInvalidate === "function") {
+            rtInvalidate(`${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`, { immediate: true });
         }
     }
-    
+
     // ============================================================
     // Auto-advance helper: after approve/delete, the user expects to
     // land on the NEXT listing in numerical order — i.e., approving
@@ -8388,10 +8330,19 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
             // FIX: Ensure correct state assignment so arrays don't get mixed up between tabs
             if (isApproved) {
                 approvedSetsHistory = prefixes;
-                const countSpan = document.querySelector("#approvedSetsCounter span");
-                if (countSpan) countSpan.textContent = approvedSetsHistory.length;
+                // RT owns #approvedSetsCounter. Hand it the count from the
+                // listAll we just did instead of writing the element here —
+                // renderCharmPage later overwrites approvedSetsHistory with the
+                // FILTERED list, which is why reading .length for a "total"
+                // used to under-report after any filter was applied.
+                if (typeof rtSet === 'function') {
+                    rtSet(`${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`, { n: prefixes.length });
+                }
             } else {
                 charmSetsHistory = prefixes;
+                if (typeof rtSet === 'function') {
+                    rtSet(`${ROOT}/Charm_Maker/Generated_Charm_Sets`, { n: prefixes.length });
+                }
             }
             
             renderCharmPage();
@@ -9150,7 +9101,15 @@ window.approveCharmQuad = async function(folderId) {
             
             charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
             if (cardObj) cardObj.remove();
-            
+
+            // One set left Generated and arrived in Completed_Approved. Tell RT
+            // the delta so every counter here moves in this frame, then every
+            // other tab and terminal is pushed the same change.
+            if (typeof rtMutated === "function") rtMutated({
+              [`${ROOT}/Charm_Maker/Generated_Charm_Sets`]:       { n: -1 },
+              [`${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`]: { n: +1 },
+            });
+
             setStatus(`Approved and moved ${folderId}.`);
         } catch (err) {
             console.error("Approve Quad failed:", err);
@@ -9193,14 +9152,17 @@ window.approveCharmQuad = async function(folderId) {
             // 3. Update the correct state array and UI counters
             if (isApproved) {
                 approvedSetsHistory = approvedSetsHistory.filter(id => id !== folderId);
-                const countSpan = document.querySelector("#approvedSetsCounter span");
-                if (countSpan) countSpan.textContent = approvedSetsHistory.length;
+                // Counter write removed: RT applies the -1 below and repaints.
             } else {
                 charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
             }
             
             if (cardObj) cardObj.remove();
-            
+
+            if (typeof rtMutated === "function") rtMutated({
+              [`${ROOT}/${parentFolder}`]: { n: -1 },
+            });
+
             setStatus(`Deleted ${folderId}.`);
         } catch (err) {
             console.error("Delete Quad failed:", err);
@@ -9235,6 +9197,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         if (charmSetsHistory.indexOf(folderId) === -1) {
             charmSetsHistory.unshift(folderId);
         }
+
+        // A new pending set exists the moment its folder is allocated, so the
+        // "sets in database" and pipeline numbers move now, not after a poll.
+        if (typeof rtMutated === "function") rtMutated({
+          [`${ROOT}/Charm_Maker/Generated_Charm_Sets`]: { n: +1 },
+        });
 
         cardNode.classList.add("working-card");
         
@@ -15111,55 +15079,27 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // 1) PERSISTENT PIPELINE STATUS BAR
     // ---------------------------------------------------------------------
     let _pipelineRunning = false;
+    // The pipeline bar's five numbers all come from folders RT already
+    // watches, so it no longer runs six listAll calls of its own on a 60s
+    // timer — it just asks for a reconcile and RT repaints it. Kept as a
+    // function because several call sites (tab clicks, job completion) invoke
+    // it directly.
     async function updatePipelineBar() {
-      if (_pipelineRunning) return;
-      _pipelineRunning = true;
-      try {
-        // Buffer count and archive count: read from existing counters
-        const bufferText = document.querySelector('#completedSetsCounter > span')?.textContent?.trim() || '—';
-        const archiveText = document.querySelector('#totalAllTimeCounter span')?.textContent?.trim() || '—';
-        document.getElementById('pipelineBuffer').textContent = bufferText;
-        document.getElementById('pipelineArchive').textContent = archiveText;
-
-        // Pending listings: sum Ready_To_List set folders across all categories
-        try {
-          await ensureStorageSignedIn();
-          let pending = 0;
-          await Promise.all(_LISTING_CATEGORIES.map(async cat => {
-            try {
-              const r = ref(storage, `${ROOT}/${cat}/Ready_To_List`);
-              const res = await listAll(r);
-              pending += (res.prefixes || []).length;
-            } catch (_) {}
-          }));
-          document.getElementById('pipelinePending').textContent = pending;
-        } catch (_) {}
-
-        // Charm awaiting + archived
-        try {
-          const r1 = ref(storage, `${ROOT}/Charm_Maker/Generated_Charm_Sets`);
-          const res1 = await listAll(r1);
-          document.getElementById('pipelineCharmPending').textContent = (res1.prefixes || []).length;
-        } catch (_) { document.getElementById('pipelineCharmPending').textContent = '0'; }
-        try {
-          const r2 = ref(storage, `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`);
-          const res2 = await listAll(r2);
-          document.getElementById('pipelineCharmArchive').textContent = (res2.prefixes || []).length;
-        } catch (_) { document.getElementById('pipelineCharmArchive').textContent = '0'; }
-
-        const now = new Date();
-        const t = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-        const lu = document.getElementById('pipelineLastUpdate');
-        if (lu) lu.textContent = `updated ${t}`;
-      } finally {
-        _pipelineRunning = false;
-      }
+      if (typeof rtInvalidate !== "function") return;
+      rtInvalidate([
+        `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`,
+        `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`,
+        `${ROOT}/Charm_Maker/Generated_Charm_Sets`,
+        `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`,
+        ..._LISTING_CATEGORIES.map(c => `${ROOT}/${c}/Ready_To_List`),
+      ]);
     }
 
     [toggleGenerateBtn, toggleReviewBtn, toggleCharmMakerBtn, toggleApprovedCharmsBtn].forEach(btn => {
       btn.addEventListener('click', () => setTimeout(updatePipelineBar, 250));
     });
-    setInterval(updatePipelineBar, 60000);
+    // No periodic timer here any more: RT pushes changes as they happen and
+    // reconciles every 45s as a safety net. The initial paint still runs.
     setTimeout(updatePipelineBar, 1500);
 
     // ---------------------------------------------------------------------
@@ -15169,23 +15109,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // Poll every 8 seconds (only while the listings/generate section is
     // visible) so the user sees changes from background jobs in real time.
     // ---------------------------------------------------------------------
-    let _downloadsPollTimer = null;
-    function _startDownloadsLivePoll() {
-      if (_downloadsPollTimer) return;
-      const tick = () => {
-        // Skip if the Downloads section isn't actually visible
-        const counterEl = document.getElementById('completedSetsCounter');
-        if (!counterEl) return;
-        const visible = counterEl.offsetParent !== null;
-        if (!visible) return;
-        if (typeof updateCompletedSetsCounter === 'function') updateCompletedSetsCounter();
-        if (typeof updateTotalAllTimeCounter === 'function') updateTotalAllTimeCounter();
-      };
-      _downloadsPollTimer = setInterval(tick, 8000);
-      // Run an immediate tick so the counter doesn't wait 8s after page load
-      setTimeout(tick, 1500);
-    }
-    _startDownloadsLivePoll();
+    // The former 8-second poll of the two Downloads counters is gone. RT keeps
+    // them live: an approval on this terminal updates them in the same frame,
+    // another terminal's approval arrives over the Firestore listener, and the
+    // 45s reconcile catches anything changed outside the app. The visibility
+    // check that used to gate this poll is unnecessary now — RT renders every
+    // registered view regardless of which tab is on screen, which is exactly
+    // why switching tabs no longer shows a stale number.
+    function _startDownloadsLivePoll() { /* superseded by RT */ }
 
     // ---------------------------------------------------------------------
     // 2) ASSET GALLERY MODAL
@@ -15750,7 +15681,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     function _formatRelTime(ms) {
       if (!ms) return 'never';
       const diff = Date.now() - ms;
-      if (diff < 30000) return 'just now';
+      // Was a 30-second "just now" plateau, which made every relative time in
+      // the app look frozen for half a minute. 3s is long enough to avoid
+      // flicker on a fresh load and short enough that these read as live.
+      if (diff < 3000) return 'just now';
       if (diff < 60000) return `${Math.round(diff/1000)}s ago`;
       if (diff < 3600000) return `${Math.round(diff/60000)}m ago`;
       const hrs = Math.round(diff/3600000);
@@ -15803,8 +15737,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       }
     }
 
-    // Keep freshness display ticking forward (so "2m ago" becomes "3m ago")
-    setInterval(_updateFreshnessIndicators, 30000);
+    // Freshness ("2m ago") is repainted by RT's single 1-second ticker, so it
+    // advances smoothly instead of jumping in 30-second steps. No timer here.
 
     // === Helpers ===
     // ---------------------------------------------------------------------
@@ -17286,12 +17220,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (tplItems) _cmLib.items = tplItems.map(it => mk(it, false));
       if (binItems) _cmLib.bin = binItems.map(it => mk(it, true));
 
-      const countEl = document.getElementById('newCharmsTotalCount');
-      if (countEl) countEl.textContent = `Count: ${_cmLib.items.length}`;
-      const aEl = document.getElementById('charmLibActiveCount');
-      if (aEl) aEl.textContent = String(_cmLib.items.length);
-      const dEl = document.getElementById('charmLibDeletedCount');
-      if (dEl) dEl.textContent = String(_cmLib.bin.length);
+      // Hand the numbers to RT rather than writing the three elements here.
+      // RT owns them, so the same values also reach the other tabs and the
+      // other terminals — and it will not re-list folders we just listed.
+      if (typeof rtSet === 'function') {
+        if (tplItems) rtSet(`${ROOT}/Charm_Maker/Charm_Templates (Existing Etsy Charms)`, { files: _cmLib.items.length });
+        if (binItems) rtSet(`${ROOT}/Charm_Maker/Charm_Templates_Deleted`, { files: _cmLib.bin.length });
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -17921,6 +17856,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           if (u) { _cmLib.thumbUrls.delete(p); _activeBlobUrls.delete(u); try { URL.revokeObjectURL(u); } catch (_) {} }
           cacheUnpin(p);
           await removeCachedPath(p);
+          // Move the needle per file rather than once at the end, so a bulk
+          // delete visibly counts down instead of jumping when it finishes.
+          if (typeof rtMutated === 'function') rtMutated({
+            [`${ROOT}/Charm_Maker/Charm_Templates (Existing Etsy Charms)`]: { files: -1 },
+            [`${ROOT}/Charm_Maker/Charm_Templates_Deleted`]: { files: +1 },
+          });
           done++;
         } catch (e) {
           failed++;
@@ -17965,6 +17906,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           const u = _cmLib.thumbUrls.get(p);
           if (u) { _cmLib.thumbUrls.delete(p); _activeBlobUrls.delete(u); try { URL.revokeObjectURL(u); } catch (_) {} }
           await removeCachedPath(p);
+          if (typeof rtMutated === 'function') rtMutated({
+            [`${ROOT}/Charm_Maker/Charm_Templates_Deleted`]: { files: -1 },
+            [`${ROOT}/Charm_Maker/Charm_Templates (Existing Etsy Charms)`]: { files: +1 },
+          });
           done++;
         } catch (e) {
           failed++;
@@ -18009,6 +17954,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           if (u) { _cmLib.thumbUrls.delete(p); _activeBlobUrls.delete(u); try { URL.revokeObjectURL(u); } catch (_) {} }
           cacheUnpin(p);
           await removeCachedPath(p);
+          if (typeof rtMutated === 'function') rtMutated({ [`${ROOT}/Charm_Maker/Charm_Templates_Deleted`]: { files: -1 } });
           done++;
         } catch (e) {
           failed++;
@@ -18305,17 +18251,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       setStatus('Local image cache cleared.');
     });
 
-    // Keep the cache readout ticking while the operator is on this tab.
-    setInterval(() => {
-      if (typeof appMode !== 'undefined' && appMode === 'charmMaker') _updateCacheStatusUI();
-    }, 15000);
+    // The cache readout is repainted by RT's 1-second ticker (view
+    // "time.cache"), so it no longer needs a timer of its own.
 
     // Show/hide Charm Maker right-card header on tab switches; load mosaic on enter
+    // Was: charmSetsHistory.length — which is only populated once the Charm
+    // Maker tab has loaded its history, and is overwritten with the FILTERED
+    // list by renderCharmPage, so it under-reported. Now it asks RT for the
+    // live folder count, which is correct before the grid loads and stays
+    // correct when another terminal generates or approves a set.
     function _updateCharmDbCount() {
-      const el = document.getElementById('charmDbTotalCount');
-      if (!el) return;
-      const n = (typeof charmSetsHistory !== 'undefined' && charmSetsHistory) ? charmSetsHistory.length : 0;
-      el.textContent = String(n);
+      if (typeof rtInvalidate === 'function') {
+        rtInvalidate(`${ROOT}/Charm_Maker/Generated_Charm_Sets`);
+      }
     }
     function _showCharmMakerHeader(show) {
       const h = document.getElementById('charmMakerHeader');
@@ -18368,32 +18316,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       btn?.addEventListener('click', () => _showCharmMakerHeader(false));
     });
 
-    // Also reactively respond to appMode changes from anywhere — poll
-    // every 1s and sync header visibility. Cheap, robust, and catches
-    // the case where the user lands on Charm Maker via initial page load.
-    setInterval(() => {
-      if (typeof appMode === 'undefined') return;
-      const h = document.getElementById('charmMakerHeader');
-      if (!h) return;
-      const shouldShow = (appMode === 'charmMaker');
-      const isShown = h.style.display !== 'none';
-      if (shouldShow !== isShown) {
-        h.style.display = shouldShow ? 'flex' : 'none';
-        if (shouldShow) {
-          _ensureCharmUploadAreaPopulated();
-          _loadCharmMosaic();
-          _updateCharmRefStatus();
-          _updateCharmDbCount();
+    // Respond to appMode changes from anywhere. This used to be a 1-second
+    // poll comparing the header's inline display style; setAppMode is wrapped
+    // instead, so the reaction is immediate and there is no timer. The 3-second
+    // "live count update" poll that sat next to it is gone too — RT keeps the
+    // count live whether or not this tab is on screen.
+    if (typeof setAppMode === 'function' && !setAppMode.__rtWrapped) {
+      const _origSetAppMode = setAppMode;
+      setAppMode = function (mode) {
+        const prev = (typeof appMode !== 'undefined') ? appMode : null;
+        const out = _origSetAppMode.apply(this, arguments);
+        try {
+          const entering = (mode === 'charmMaker');
+          _showCharmMakerHeader(entering);
+          if (entering && prev !== 'charmMaker') {
+            _ensureCharmUploadAreaPopulated();
+            _loadCharmMosaic();
+            _updateCharmRefStatus();
+          }
+          // Repaint every counter on any tab change so the incoming tab is
+          // never showing a number left over from the outgoing one.
+          if (typeof rtRender === 'function') rtRender();
+        } catch (e) {
+          console.warn('[RT] setAppMode hook failed', e);
         }
-      }
-    }, 1000);
-
-    // Live count update for Charm Maker DB while on that tab
-    setInterval(() => {
-      if (typeof appMode !== 'undefined' && appMode === 'charmMaker') {
-        _updateCharmDbCount();
-      }
-    }, 3000);
+        return out;
+      };
+      setAppMode.__rtWrapped = true;
+    }
 
     // Per-page dropdown — changes CHARM_ITEMS_PER_PAGE (which is now `let`)
     document.getElementById('charmDbPerPage')?.addEventListener('change', (e) => {
@@ -18462,6 +18412,720 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         execBtn.disabled = false;
       }
     }, { capture: true });
+
+    // =====================================================================
+    // REAL-TIME COUNTER FABRIC  (RT)
+    // ---------------------------------------------------------------------
+    // Every number and every relative time in this app used to be refreshed
+    // by its own timer, on its own schedule, only while its own tab happened
+    // to be on screen:
+    //
+    //   updateCompletedSetsCounter / updateTotalAllTimeCounter  every 8s, and
+    //                                only when the Downloads panel was visible
+    //   updatePipelineBar                                       every 60s
+    //   _updateCharmDbCount                                     every 3s, and
+    //                                only while the Charm Maker tab was open
+    //   _loadCharmMosaic tab-change detection                   every 1s
+    //   _updateFreshnessIndicators ("2m ago")                   every 30s
+    //   makeUploadPanel "N file(s)"                             on upload only
+    //   approved / bin / usage badges                           on tab entry
+    //
+    // So a set approved on one terminal could sit unreflected on another for a
+    // minute, a folder count could be an hour stale if you hadn't visited its
+    // tab, and switching tabs showed you yesterday's number until a poll
+    // happened to land.
+    //
+    // RT replaces all of that with one fabric:
+    //
+    //   • ONE registry of watched Storage folders. Counts are computed once
+    //     per refresh and shared by every view that needs them, instead of
+    //     five call sites each running their own listAll of the same folder.
+    //   • ONE render pass. Views declare which folders they depend on and are
+    //     re-rendered whenever those change — whether or not their tab is on
+    //     screen, so a tab switch is always instant and always current.
+    //   • ONE 1-second ticker for every relative time ("2m ago", "updated
+    //     14s ago"), replacing the per-widget 30s and 60s timers.
+    //   • THREE transports, cheapest first:
+    //       1. in-page      — a mutation applies an optimistic delta and
+    //                         renders in the same frame, then confirms
+    //       2. BroadcastChannel — other tabs in THIS browser get the patch
+    //                         instantly, at zero network cost
+    //       3. Firestore onSnapshot — other machines get pushed the patch,
+    //                         one document read per change, no polling
+    //
+    //   • A safety poll catches changes made outside the app entirely — a
+    //     Firebase console edit, or a Netlify background job finishing. It is
+    //     the ONLY periodic network traffic left, and its cadence adapts: every
+    //     3 minutes while the Firestore listener is attached (in-app changes
+    //     arrive by push, so this is only a backstop), every 45 seconds if push
+    //     is unavailable. Paused entirely while the page is hidden.
+    //
+    // Traffic, as folder listings per minute with the app sitting open:
+    //   before — 8s Downloads poll (2 folders) + 60s pipeline poll (6 folders)
+    //            ≈ 21/min, plus a full re-list on every tab switch
+    //   after  — 22 watched folders every 180s ≈ 7/min, and no per-tab re-list
+    // About a third of the previous traffic, with every counter live. The cost
+    // was never the reconcile; it was five widgets each listing the same folder
+    // on their own timer.
+    // =====================================================================
+
+    // `var`, deliberately: a var declaration hoists to the top of the module,
+    // so this is readable (as undefined → falsy) from code that runs BEFORE
+    // this block evaluates. The RT object and its consts are not — touching
+    // them early throws a TDZ ReferenceError. Several widgets are built during
+    // module evaluation (the upload panels, for one) and legitimately call into
+    // RT at that point, so every public RT entry point checks this flag first
+    // and no-ops or queues until rtStart() flips it.
+    var _rtReady = false;
+    // Declared WITHOUT an initialiser on purpose. `var x = []` still runs its
+    // assignment when this block evaluates, which would discard anything an
+    // early caller had already queued. Lazily created by whoever gets there
+    // first instead.
+    var _rtPanelQueue;
+
+    const RT_BC_NAME      = 'lg1-realtime-v1';
+    const RT_FS_COLLECTION = 'ListingGen_Realtime';
+    const RT_FS_DOC        = 'counters_v1';
+    // Adaptive. The safety poll exists only to catch changes made OUTSIDE this
+    // app — a Firebase console edit, or a Netlify background job writing sets.
+    // When the Firestore listener is attached, every in-app change is pushed,
+    // so the poll can be rare. Without it, it is the only reconcile there is.
+    const RT_SAFETY_POLL_LIVE_MS     = 180000; // listener attached
+    const RT_SAFETY_POLL_DEGRADED_MS = 45000;  // cross-tab only, or polling
+    const RT_REFRESH_COALESCE_MS = 120;
+    const RT_FS_WRITE_DEBOUNCE_MS = 500;
+    const RT_LIST_CONCURRENCY = 6;
+
+    const RT = {
+      // A per-session id so a terminal can recognise its own echo and skip it.
+      origin: `t_${Math.random().toString(36).slice(2, 10)}`,
+
+      // path -> { kind, n, files, byCat, at }
+      //   kind: 'prefixes' (count subfolders) | 'items' (count files) | 'both'
+      counts: new Map(),
+      watched: new Map(),   // path -> kind
+
+      views: [],            // { id, paths, render, timeOnly }
+      at: 0,                // logical timestamp of the newest state we hold
+      transport: 'starting',// 'live' | 'tabs' | 'poll' | 'starting'
+      lastSync: 0,
+      _pendingPaths: new Set(),
+      _refreshTimer: null,
+      _inFlight: false,
+      _fsTimer: null,
+      _fsDirty: false,
+      _bc: null,
+      _fsUnsub: null,
+      _renderQueued: false,
+      _started: false,
+    };
+
+    // ---------------------------------------------------------------------
+    // Registration
+    // ---------------------------------------------------------------------
+    // Declare a folder whose contents should be counted. Idempotent, so a
+    // widget created several times (upload panels) can register freely.
+    function rtWatch(path, kind = 'prefixes') {
+      if (!_rtReady || !path) return;
+      const prev = RT.watched.get(path);
+      // 'both' wins: two widgets may want files and subfolders of one folder.
+      const merged = prev && prev !== kind ? 'both' : kind;
+      RT.watched.set(path, merged);
+      if (!RT.counts.has(path)) {
+        RT.counts.set(path, { kind: merged, n: null, files: null, byCat: null, at: 0 });
+      } else {
+        RT.counts.get(path).kind = merged;
+      }
+    }
+
+    // Register a renderer. `paths` may be empty for views that only display a
+    // relative time (those are driven by the ticker instead).
+    function rtView(id, paths, render, opts = {}) {
+      if (!_rtReady) return;
+      RT.views = RT.views.filter(v => v.id !== id); // re-registration replaces
+      RT.views.push({ id, paths: paths || [], render, timeOnly: !!opts.timeOnly });
+      (paths || []).forEach(p => rtWatch(p, opts.kind || 'prefixes'));
+    }
+
+    function rtGet(path) {
+      if (!_rtReady) return { n: null, files: null, byCat: null, at: 0 };
+      return RT.counts.get(path) || { n: null, files: null, byCat: null, at: 0 };
+    }
+    // Convenience: subfolder count, files count, with a dash while unknown.
+    const rtN     = (path) => { const c = rtGet(path); return c.n == null ? null : c.n; };
+    const rtFiles = (path) => { const c = rtGet(path); return c.files == null ? null : c.files; };
+    const rtNum   = (v, dash = '—') => (v == null ? dash : String(v));
+
+    // ---------------------------------------------------------------------
+    // Rendering — one coalesced pass per frame, never per counter
+    // ---------------------------------------------------------------------
+    function rtRender(onlyPaths) {
+      if (!_rtReady || RT._renderQueued) return;
+      RT._renderQueued = true;
+      requestAnimationFrame(() => {
+        RT._renderQueued = false;
+        const touched = onlyPaths ? new Set(onlyPaths) : null;
+        for (const v of RT.views) {
+          if (v.timeOnly) continue; // ticker handles these
+          if (touched && v.paths.length && !v.paths.some(p => touched.has(p))) continue;
+          try { v.render(); } catch (e) { console.warn(`[RT] view "${v.id}" failed`, e); }
+        }
+      });
+    }
+
+    // Relative-time views tick once a second. Text-only, no network, no layout
+    // thrash beyond the few nodes that actually change.
+    function rtTick() {
+      for (const v of RT.views) {
+        if (!v.timeOnly) continue;
+        try { v.render(); } catch (e) { /* a clock must never break the app */ }
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Fetching
+    // ---------------------------------------------------------------------
+    // Coalesce every request that lands inside RT_REFRESH_COALESCE_MS into one
+    // batch, so "approve a set" (which invalidates four folders) costs one
+    // round of listAll rather than four.
+    function rtInvalidate(paths, { immediate = false } = {}) {
+      // Pre-init callers are simply dropped: rtStart() reconciles every watched
+      // folder as its first act, so nothing is lost by ignoring them.
+      if (!_rtReady) return;
+      const list = Array.isArray(paths) ? paths : [paths];
+      list.filter(Boolean).forEach(p => RT._pendingPaths.add(p));
+      if (RT._refreshTimer) clearTimeout(RT._refreshTimer);
+      RT._refreshTimer = setTimeout(() => rtFlush(), immediate ? 0 : RT_REFRESH_COALESCE_MS);
+    }
+
+    async function rtFlush() {
+      if (RT._inFlight) {
+        // Another flush is running; its completion re-checks the pending set.
+        return;
+      }
+      const paths = [...RT._pendingPaths];
+      RT._pendingPaths.clear();
+      if (paths.length === 0) return;
+      RT._inFlight = true;
+      try {
+        await ensureStorageSignedIn();
+        const changed = [];
+        await _asyncPool(RT_LIST_CONCURRENCY, paths, async (path) => {
+          const rec = RT.counts.get(path);
+          if (!rec) return;
+          try {
+            const res = await listAll(ref(storage, path));
+            const prefixes = res.prefixes || [];
+            const items = res.items || [];
+            const n = prefixes.length;
+            const files = items.filter(it => !/^manifest\.json$/i.test(it.name)).length;
+
+            // Category breakdown, only where a view actually asks for it.
+            let byCat = null;
+            if (rec.wantByCat) {
+              byCat = {};
+              for (const p of prefixes) {
+                const m = p.name.match(/^(.+)_Set_\d+$/);
+                const cat = m ? m[1] : 'Other';
+                byCat[cat] = (byCat[cat] || 0) + 1;
+              }
+            }
+            const isChange = rec.n !== n || rec.files !== files
+              || JSON.stringify(rec.byCat) !== JSON.stringify(byCat);
+            rec.n = n;
+            rec.files = files;
+            rec.byCat = byCat;
+            rec.at = Date.now();
+            rec.error = null;
+            if (isChange) changed.push(path);
+          } catch (e) {
+            // A denied or missing folder must not blank a working counter, so
+            // the last known value is kept and the error recorded alongside.
+            rec.error = String(e?.code || e?.message || e);
+          }
+        });
+        RT.lastSync = Date.now();
+        if (changed.length) {
+          RT.at = Date.now();
+          rtRender(changed);
+          rtBroadcast(changed);
+          rtQueueFirestoreWrite();
+        } else {
+          rtRender(paths); // values equal, but "as of" times moved
+        }
+      } catch (e) {
+        console.warn('[RT] flush failed', e);
+      } finally {
+        RT._inFlight = false;
+        if (RT._pendingPaths.size) rtInvalidate([], { immediate: true });
+      }
+    }
+
+    // Feed RT a value the caller already knows authoritatively, so work is not
+    // duplicated. The library engine, for instance, lists the template folder
+    // and the recycle bin during its own reconcile — there is no reason for RT
+    // to list them a second time, so it hands the numbers over instead.
+    function rtSet(path, { n, files, byCat } = {}) {
+      if (!_rtReady) return;
+      rtWatch(path, files != null ? 'items' : 'prefixes');
+      const rec = RT.counts.get(path);
+      const isChange = (n != null && rec.n !== n)
+                    || (files != null && rec.files !== files)
+                    || (byCat != null && JSON.stringify(rec.byCat) !== JSON.stringify(byCat));
+      if (n != null) rec.n = n;
+      if (files != null) rec.files = files;
+      if (byCat != null) rec.byCat = byCat;
+      rec.at = Date.now();
+      rec.error = null;
+      RT.lastSync = Date.now();
+      if (isChange) {
+        RT.at = Date.now();
+        rtRender([path]);
+        rtBroadcast([path]);
+        rtQueueFirestoreWrite();
+      } else {
+        rtRender([path]);
+      }
+    }
+
+    // Optimistic delta: apply what we already know before the network confirms,
+    // so the operator's own click never feels laggy.
+    function rtBump(path, dn = 0, dFiles = 0) {
+      if (!_rtReady) return;
+      const rec = RT.counts.get(path);
+      if (!rec) return;
+      if (dn && rec.n != null) rec.n = Math.max(0, rec.n + dn);
+      if (dFiles && rec.files != null) rec.files = Math.max(0, rec.files + dFiles);
+      rec.at = Date.now();
+      RT.at = Date.now();
+      rtRender([path]);
+    }
+
+    // The one call a mutation site makes: show the delta now, confirm shortly,
+    // and tell every other tab and terminal.
+    function rtMutated(deltas, alsoInvalidate) {
+      if (!_rtReady) return;
+      const paths = [];
+      for (const [path, d] of Object.entries(deltas || {})) {
+        rtBump(path, d.n || 0, d.files || 0);
+        paths.push(path);
+      }
+      (alsoInvalidate || []).forEach(p => paths.push(p));
+      rtBroadcast(paths);
+      rtInvalidate(paths);
+      rtQueueFirestoreWrite();
+    }
+
+    // ---------------------------------------------------------------------
+    // Transport 2 — BroadcastChannel (other tabs, same browser, no network)
+    // ---------------------------------------------------------------------
+    function rtSnapshot(paths) {
+      const counts = {};
+      const keys = paths && paths.length ? paths : [...RT.counts.keys()];
+      for (const p of keys) {
+        const c = RT.counts.get(p);
+        if (!c) continue;
+        counts[p] = { n: c.n, files: c.files, byCat: c.byCat };
+      }
+      return { origin: RT.origin, at: RT.at || Date.now(), counts };
+    }
+
+    function rtApplySnapshot(snap, { force = false } = {}) {
+      if (!snap || snap.origin === RT.origin) return false; // our own echo
+      // Ordering guard for BroadcastChannel only. Tabs in one browser share a
+      // clock, so "is it newer than what I have" is meaningful there. Across
+      // machines it is not — two terminals can disagree by minutes, and a
+      // skewed clock would make one of them ignore every update forever. The
+      // Firestore document is the shared truth, so it is applied regardless;
+      // any local mutation re-confirms itself with a listAll immediately
+      // afterwards, so a briefly stale remote value cannot stick.
+      if (!force && Number(snap.at) <= RT.at) return false;
+      const changed = [];
+      for (const [p, v] of Object.entries(snap.counts || {})) {
+        if (!RT.counts.has(p)) {
+          // A folder this terminal doesn't watch yet — keep it, a view may
+          // register for it later (e.g. a panel that hasn't been built).
+          RT.counts.set(p, { kind: 'prefixes', n: null, files: null, byCat: null, at: 0 });
+        }
+        const rec = RT.counts.get(p);
+        const isChange = rec.n !== v.n || rec.files !== v.files
+          || JSON.stringify(rec.byCat) !== JSON.stringify(v.byCat);
+        if (v.n != null) rec.n = v.n;
+        if (v.files != null) rec.files = v.files;
+        if (v.byCat != null) rec.byCat = v.byCat;
+        rec.at = Number(snap.at) || Date.now();
+        if (isChange) changed.push(p);
+      }
+      RT.at = Math.max(RT.at, Number(snap.at) || 0) || Date.now();
+      RT.lastSync = Date.now();
+      if (changed.length) rtRender(changed);
+      return changed.length > 0;
+    }
+
+    function rtBroadcast(paths) {
+      if (!RT._bc) return;
+      try { RT._bc.postMessage(rtSnapshot(paths)); } catch (_) {}
+    }
+
+    function rtStartBroadcast() {
+      if (typeof BroadcastChannel === 'undefined') return;
+      try {
+        RT._bc = new BroadcastChannel(RT_BC_NAME);
+        RT._bc.onmessage = (ev) => {
+          const msg = ev?.data;
+          if (msg?.hello) { rtBroadcast(); return; } // a new tab asked for state
+          rtApplySnapshot(msg);
+        };
+        // Ask whoever is already open to hand over current state, so a newly
+        // opened tab is correct before its first listAll returns.
+        RT._bc.postMessage({ hello: true, origin: RT.origin });
+      } catch (e) {
+        console.warn('[RT] BroadcastChannel unavailable', e);
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Transport 3 — Firestore onSnapshot (other machines, pushed)
+    // ---------------------------------------------------------------------
+    // One document. Writers publish the whole count map; readers apply it
+    // directly, so a receiving terminal updates with ZERO Storage reads.
+    function rtQueueFirestoreWrite() {
+      RT._fsDirty = true;
+      if (RT._fsTimer) return;
+      RT._fsTimer = setTimeout(async () => {
+        RT._fsTimer = null;
+        if (!RT._fsDirty) return;
+        RT._fsDirty = false;
+        if (!window.db) return;
+        try {
+          await window.db.collection(RT_FS_COLLECTION).doc(RT_FS_DOC)
+            .set(rtSnapshot(), { merge: true });
+        } catch (e) {
+          // Almost always "Missing or insufficient permissions" until the
+          // rule is deployed. Cross-tab and polling keep working, so this is
+          // a downgrade, not a failure — say so once and move on.
+          if (RT.transport === 'live') {
+            console.warn('[RT] Firestore write denied — falling back to cross-tab + polling', e);
+            RT.transport = RT._bc ? 'tabs' : 'poll';
+            rtRender();
+          }
+        }
+      }, RT_FS_WRITE_DEBOUNCE_MS);
+    }
+
+    function rtStartFirestore() {
+      if (!window.db) { RT.transport = RT._bc ? 'tabs' : 'poll'; return; }
+      try {
+        RT._fsUnsub = window.db.collection(RT_FS_COLLECTION).doc(RT_FS_DOC)
+          .onSnapshot(
+            (snap) => {
+              RT.transport = 'live';
+              const data = snap && snap.exists ? snap.data() : null;
+              if (data) rtApplySnapshot(data, { force: true });
+              else RT.lastSync = Date.now();
+              rtRender();
+            },
+            (err) => {
+              if (RT.transport !== 'tabs' && RT.transport !== 'poll') {
+                console.warn('[RT] Firestore listener denied — falling back to cross-tab + polling', err);
+              }
+              RT.transport = RT._bc ? 'tabs' : 'poll';
+              rtRender();
+            }
+          );
+      } catch (e) {
+        RT.transport = RT._bc ? 'tabs' : 'poll';
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Safety poll + visibility
+    // ---------------------------------------------------------------------
+    // Catches changes made outside this app (Firebase console, a Netlify
+    // background job finishing). Paused while hidden — a background tab has
+    // nothing to show and the listener will have told us anyway.
+    let _rtPollTimer = null;
+    let _rtPollEvery = 0;
+    function rtStartSafetyPoll() {
+      const want = RT.transport === 'live' ? RT_SAFETY_POLL_LIVE_MS : RT_SAFETY_POLL_DEGRADED_MS;
+      if (_rtPollTimer && _rtPollEvery === want) return;
+      if (_rtPollTimer) clearInterval(_rtPollTimer);
+      _rtPollEvery = want;
+      _rtPollTimer = setInterval(() => {
+        if (document.hidden) return;          // nothing to show; listener still live
+        rtInvalidate([...RT.watched.keys()]);
+      }, want);
+    }
+    // Re-evaluate the cadence whenever the transport changes (the listener
+    // attaching or being denied), so losing push automatically tightens the
+    // poll and regaining it relaxes again.
+    setInterval(rtStartSafetyPoll, 10000);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+      // Returning to the tab: reconcile immediately rather than waiting out
+      // the poll, so what you see on focus is never stale.
+      rtInvalidate([...RT.watched.keys()], { immediate: true });
+      rtTick();
+    });
+
+    window.addEventListener('online', () => rtInvalidate([...RT.watched.keys()], { immediate: true }));
+
+    // =====================================================================
+    // VIEW REGISTRATIONS — every counter in the app, in one place
+    // =====================================================================
+    // Wrapped in a function rather than run inline: rtView/rtWatch no-op until
+    // rtStart() flips _rtReady, so registering at block-evaluation time would
+    // silently drop every view. rtStart() calls this immediately before it
+    // attaches the transports and fires the first reconcile.
+    function rtRegisterViews() {
+      const P_BUFFER   = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
+      const P_ARCHIVE  = `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`;
+      const P_CH_GEN   = `${ROOT}/Charm_Maker/Generated_Charm_Sets`;
+      const P_CH_APP   = `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`;
+      const P_CH_TPL   = `${ROOT}/Charm_Maker/Charm_Templates (Existing Etsy Charms)`;
+      const P_CH_BIN   = `${ROOT}/Charm_Maker/Charm_Templates_Deleted`;
+      const P_READY    = _LISTING_CATEGORIES.map(c => `${ROOT}/${c}/Ready_To_List`);
+
+      // The buffer counter wants a per-category breakdown; flag it so the
+      // fetcher computes one only for this folder.
+      rtWatch(P_BUFFER, 'prefixes');
+      RT.counts.get(P_BUFFER).wantByCat = true;
+
+      /* ---- Downloads panel: approved buffer + permanent archive ---- */
+      rtView('downloads.buffer', [P_BUFFER], () => {
+        const span = document.querySelector('#completedSetsCounter > span');
+        const breakdown = document.getElementById('completedSetsBreakdown');
+        const rec = rtGet(P_BUFFER);
+        if (span) span.textContent = rec.error && rec.n == null ? 'Error' : rtNum(rec.n);
+        if (breakdown) {
+          const SHORT = {
+            Beady_Necklace: 'Beady', Regular_Necklace: 'Regular', Stud_Earrings: 'Stud',
+            Hoop_Earrings: 'Hoop', Charms: 'Charms', Bracelets: 'Bracelets',
+          };
+          const counts = rec.byCat || {};
+          const ordered = Array.from(
+            typeof GENERATABLE_CATEGORIES !== 'undefined' ? GENERATABLE_CATEGORIES : _LISTING_CATEGORIES
+          ).filter(c => SHORT[c]);
+          const parts = ordered.map(c => `${SHORT[c]}: ${counts[c] || 0}`);
+          const known = new Set(ordered);
+          for (const c of Object.keys(counts)) if (!known.has(c)) parts.push(`${c}: ${counts[c]}`);
+          breakdown.textContent = rec.n == null ? '' : parts.join('  ·  ');
+        }
+      });
+
+      rtView('downloads.archive', [P_ARCHIVE], () => {
+        const span = document.querySelector('#totalAllTimeCounter span');
+        if (!span) return;
+        const rec = rtGet(P_ARCHIVE);
+        span.textContent = rec.error && rec.n == null ? 'Error' : rtNum(rec.n);
+      });
+
+      /* ---- Pipeline status bar ---- */
+      rtView('pipeline', [P_BUFFER, P_ARCHIVE, P_CH_GEN, P_CH_APP, ...P_READY], () => {
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        set('pipelineBuffer',       rtNum(rtN(P_BUFFER)));
+        set('pipelineArchive',      rtNum(rtN(P_ARCHIVE)));
+        set('pipelineCharmPending', rtNum(rtN(P_CH_GEN), '0'));
+        set('pipelineCharmArchive', rtNum(rtN(P_CH_APP), '0'));
+        const pending = P_READY.reduce((a, p) => {
+          const n = rtN(p);
+          return n == null ? a : a + n;
+        }, 0);
+        set('pipelinePending', P_READY.every(p => rtN(p) == null) ? '—' : String(pending));
+      });
+
+      /* ---- Charm Maker: sets in database ---- */
+      rtView('charm.db', [P_CH_GEN], () => {
+        const el = document.getElementById('charmDbTotalCount');
+        if (el) el.textContent = rtNum(rtN(P_CH_GEN), '0');
+      });
+
+      /* ---- Approved tab: total approved charm sets + sub-tab badges ---- */
+      rtView('approved.charmTotal', [P_CH_APP], () => {
+        const span = document.querySelector('#approvedSetsCounter span');
+        if (span) span.textContent = rtNum(rtN(P_CH_APP), '0');
+        const badge = document.getElementById('approvedSubChCount');
+        // Prefer the loaded cache (it is what the grid is showing) but fall back
+        // to the live folder count so the badge is never blank or stale.
+        const cacheLen = _approvedSubState?.charms?.cache?.length;
+        if (badge) badge.textContent = rtNum(cacheLen != null ? cacheLen : rtN(P_CH_APP), '—');
+      });
+
+      rtView('approved.listingBadge', [P_BUFFER], () => {
+        const badge = document.getElementById('approvedSubLstCount');
+        const cacheLen = _approvedSubState?.listings?.cache?.length;
+        if (badge) badge.textContent = rtNum(cacheLen != null ? cacheLen : rtN(P_BUFFER), '—');
+      });
+
+      /* ---- Approved → Listings: category chip counts ----
+         Driven by the loaded cache when present (it carries per-set category
+         detail), otherwise by the live folder breakdown, so the chips show real
+         numbers before the grid has finished loading. */
+      rtView('approved.catCounts', [P_BUFFER], () => {
+        const cache = _approvedSubState?.listings?.cache;
+        let total, counts = {};
+        if (cache) {
+          total = cache.length;
+          _LISTING_CATEGORIES.forEach(c => counts[c] = 0);
+          cache.forEach(it => { if (counts[it.category] != null) counts[it.category]++; });
+        } else {
+          const rec = rtGet(P_BUFFER);
+          if (rec.n == null) return;
+          total = rec.n;
+          counts = rec.byCat || {};
+        }
+        const all = document.getElementById('catCount-all');
+        if (all) all.textContent = String(total);
+        _LISTING_CATEGORIES.forEach(c => {
+          const el = document.getElementById(`catCount-${c}`);
+          if (el) el.textContent = String(counts[c] || 0);
+        });
+      });
+
+      /* ---- Charm reference library: count, bin badge, usage chips ---- */
+      rtView('library.counts', [P_CH_TPL, P_CH_BIN], () => {
+        // The library engine owns the authoritative lists once loaded; before
+        // that, the live folder counts fill the gap.
+        const tplLoaded = _cmLib?.items?.length || _cmLib?.indexLoaded;
+        const tpl = tplLoaded ? _cmLib.items.length : rtFiles(P_CH_TPL);
+        const bin = tplLoaded ? _cmLib.bin.length   : rtFiles(P_CH_BIN);
+        const c1 = document.getElementById('newCharmsTotalCount');
+        if (c1) c1.textContent = tpl == null ? 'Count: …' : `Count: ${tpl}`;
+        const c2 = document.getElementById('charmLibActiveCount');
+        if (c2) c2.textContent = rtNum(tpl, '—');
+        const c3 = document.getElementById('charmLibDeletedCount');
+        if (c3) c3.textContent = rtNum(bin, '—');
+      }, { kind: 'items' });
+
+      /* ---- Local, always-instant counters (selection, visible, pages) ----
+         These never needed the network; registering them means they are also
+         repainted on any state change and on tab switch, so they can't be left
+         showing a number from a previous view. */
+      rtView('local.selections', [], () => {
+        if (typeof _cmUpdateSelectionBar === 'function') _cmUpdateSelectionBar();
+        if (typeof _cmUpdateUsageChipCounts === 'function') _cmUpdateUsageChipCounts();
+        if (typeof _updateCharmRefStatus === 'function') _updateCharmRefStatus();
+        const ms = document.getElementById('multisetCount');
+        if (ms && typeof MULTISET_SELECTED !== 'undefined') {
+          ms.textContent = `${MULTISET_SELECTED.size} selected`;
+        }
+        if (typeof updateSidebarRail === 'function') updateSidebarRail();
+      });
+
+      /* ---- Relative times: freshness pills, index age, cache age ----
+         One ticker, one second, text only. */
+      rtView('time.freshness', [], () => {
+        if (typeof _updateFreshnessIndicators === 'function') _updateFreshnessIndicators();
+      }, { timeOnly: true });
+
+      rtView('time.index', [], () => {
+        // Only repaint the index line when it is idle AND actually loaded:
+        // while a build is running it is showing progress and must not be
+        // overwritten, and before the first load "in sync · 0 charms" would be
+        // a lie.
+        const wrap = document.getElementById('charmLibIndexStatus');
+        if (!wrap || wrap.classList.contains('working')) return;
+        if (!_cmLib?.indexLoaded) return;
+        if (typeof _cmSetIndexStatus === 'function') _cmSetIndexStatus('ok', null, null);
+      }, { timeOnly: true });
+
+      // _formatRelTime says "just now" for a full 30 seconds, which is right for
+    // cache staleness but wrong for a liveness indicator — an operator watching
+    // it needs to see it move. This one has second resolution.
+    function _rtAgo(ms) {
+      if (!ms) return 'never';
+      const d = Math.max(0, Date.now() - ms);
+      if (d < 1000) return 'just now';
+      const s = Math.round(d / 1000);
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}m ${s % 60}s ago`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ${m % 60}m ago`;
+      return `${Math.floor(h / 24)}d ago`;
+    }
+
+    rtView('time.pipelineStamp', [], () => {
+        const lu = document.getElementById('pipelineLastUpdate');
+        if (!lu) return;
+        const label = RT.transport === 'live' ? 'live'
+                    : RT.transport === 'tabs' ? 'live (this browser)'
+                    : RT.transport === 'starting' ? 'connecting'
+                    : 'polling';
+        lu.textContent = RT.lastSync
+          ? `${label} · synced ${_formatRelTime(RT.lastSync)}`
+          : `${label} · connecting…`;
+        lu.title = RT.transport === 'live'
+          ? 'Counts are pushed from Firestore the moment any terminal changes something.'
+          : RT.transport === 'tabs'
+            ? 'Counts sync instantly between tabs in this browser. Other machines update on the 45s reconcile — deploy the ListingGen_Realtime rule for cross-machine push.'
+            : 'Counts reconcile every 45 seconds.';
+      }, { timeOnly: true });
+
+      rtView('time.cache', [], () => {
+        if (typeof _updateCacheStatusUI === 'function') _updateCacheStatusUI();
+      }, { timeOnly: true });
+
+    }
+
+    // ---------------------------------------------------------------------
+    // Upload-panel folder counts ("N file(s)")
+    // ---------------------------------------------------------------------
+    // makeUploadPanel used to list its folder once at build time and again
+    // after an upload. Registering each panel means its count also moves when
+    // another terminal uploads, or when a charm is soft-deleted out of the
+    // folder it is pointed at.
+    const _rtPanels = new Map(); // path -> Set<HTMLElement>
+    function rtRegisterUploadPanel(path, countEl) {
+      if (!path || !countEl) return;
+      // Panels are built during module evaluation, before this block runs, so
+      // early registrations are held and replayed by rtStart().
+      if (!_rtReady) { (_rtPanelQueue = _rtPanelQueue || []).push([path, countEl]); return; }
+      if (!_rtPanels.has(path)) _rtPanels.set(path, new Set());
+      _rtPanels.get(path).add(countEl);
+      rtWatch(path, 'items');
+      rtView(`panel:${path}`, [path], () => {
+        const els = _rtPanels.get(path);
+        if (!els) return;
+        const f = rtFiles(path);
+        for (const el of els) {
+          if (!el.isConnected) { els.delete(el); continue; }
+          el.textContent = f == null ? 'Loading…' : `${f} file(s)`;
+        }
+      }, { kind: 'items' });
+      rtInvalidate([path]);
+    }
+
+    // ---------------------------------------------------------------------
+    // Boot
+    // ---------------------------------------------------------------------
+    function rtStart() {
+      if (RT._started) return;
+      RT._started = true;
+      _rtReady = true;
+      // Replay anything that tried to register before this block evaluated.
+      const queued = (_rtPanelQueue || []).splice(0);
+      for (const [path, el] of queued) rtRegisterUploadPanel(path, el);
+      rtRegisterViews();
+      rtStartBroadcast();
+      rtStartFirestore();
+      rtStartSafetyPoll();
+      setInterval(rtTick, 1000);
+      rtTick();
+      // First reconcile of everything registered so far.
+      rtInvalidate([...RT.watched.keys()], { immediate: true });
+    }
+
+    // Storage sign-in must have happened before the first listAll; the module
+    // already awaited the gate, so a short delay is enough to let the rest of
+    // the module finish registering its views.
+    setTimeout(rtStart, 600);
+
+    // Expose a tiny surface for the console and for tests.
+    window.__RT = RT;
+    window.__rtInvalidate = (p) => rtInvalidate(p || [...RT.watched.keys()], { immediate: true });
+
 
     // =====================================================================
     // ============= END MOCKUP-FEATURE ENHANCEMENTS =======================
