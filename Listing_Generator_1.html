@@ -1104,6 +1104,34 @@
   .prov-iou.replica  { color: #fca5a5; border-color: #7a3838; background: #3d1c1c; font-weight: 600; }
   .window-info.rm-warn { border-left-color: var(--warn-line); color: var(--warn); }
 
+  table.gap-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  table.gap-table th {
+    text-align: left; font-family: var(--font-mono); font-size: 9px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    padding: 4px 5px; border-bottom: 1px solid var(--line);
+  }
+  table.gap-table td { padding: 5px; border-bottom: 1px solid var(--line); color: var(--text-2); vertical-align: top; }
+  table.gap-table tr:hover td { background: var(--inset); }
+  .gap-combo { display: flex; flex-direction: column; gap: 1px; }
+  .gap-meaning { color: var(--text); }
+  .gap-form { color: var(--muted); font-size: 10px; }
+  .gap-lift { font-family: var(--font-mono); font-size: 11px; }
+  .gap-lift.hot { color: var(--ok); font-weight: 600; }
+  .gap-lift.mid { color: var(--text-2); }
+  .gap-conf {
+    font-family: var(--font-mono); font-size: 9px; padding: 1px 5px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .gap-conf.good { color: var(--ok); border-color: var(--ok-line); background: var(--ok-bg); }
+  .gap-conf.weak { color: var(--warn); border-color: var(--warn-line); background: var(--warn-bg); }
+  .facet-cov { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+  .facet-cov .fc {
+    font-family: var(--font-mono); font-size: 9px; padding: 1px 6px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--line); color: var(--muted);
+  }
+  .facet-cov .fc.hot { color: var(--ok); border-color: var(--ok-line); }
+  .facet-cov .fc.empty { opacity: 0.4; }
+
   .research-box {
     background: var(--inset); border: 1px solid var(--line);
     border-left: 3px solid var(--accent-line);
@@ -3574,7 +3602,26 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
           <div id="cmResearchDetail" class="research-box" style="display:none;"></div>
 
-          <label class="field-label" style="margin-top: 14px;">Strategy ladder performance</label>
+          <label class="field-label" style="margin-top: 16px;">Opportunity matrix</label>
+          <div class="window-info" id="cmMatrixInfo">Not built yet — classify some charms first.</div>
+          <div class="row" style="gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+            <button class="btn btnSmall" id="cmMatrixBuildBtn" type="button" title="Cross-reference every classified charm's meaning and form facets against its sales performance">Build matrix</button>
+            <button class="btn btnSmall" id="cmFacetBackfillBtn" type="button" title="Re-analyse charms that were analysed before meaning and facet extraction existed">Backfill classifications</button>
+            <button class="btn btnSmall btn-ok" id="cmGapGenerateBtn" type="button" title="Write design briefs for the top gaps, then generate one charm per brief">Design from top gaps</button>
+            <select id="cmGapCount" style="width: auto; font-size: 11px;">
+              <option value="3">top 3 gaps</option>
+              <option value="5" selected>top 5 gaps</option>
+              <option value="8">top 8 gaps</option>
+              <option value="12">top 12 gaps</option>
+            </select>
+          </div>
+          <table class="gap-table" id="cmGapTable" style="margin-top: 8px;"><tbody></tbody></table>
+          <details style="margin-top: 8px;">
+            <summary class="muted" style="font-size: 10px; cursor: pointer;">Facet coverage and lift across the catalogue</summary>
+            <div id="cmFacetCoverage" style="margin-top: 6px;"></div>
+          </details>
+
+          <label class="field-label" style="margin-top: 16px;">Strategy ladder performance</label>
           <table class="strat-table" id="cmStrategyTable"><tbody></tbody></table>
           <div class="muted" style="font-size: 10px; margin-top: 6px; line-height: 1.5;" id="cmStrategyNote">
             Approval rate per rung, rebuilt from every set's manifest. Rungs you approve get picked more often;
@@ -18863,7 +18910,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
           'they gift. Justify the leap explicitly in the concept.',
       },
     ];
-    const CM_STRATEGY_BY_ID = Object.fromEntries(CM_STRATEGIES.map(s => [s.id, s]));
+    // An eighth pseudo-rung. It is not on the distance ladder because it is not
+    // measured from any single reference — it comes from the catalogue matrix.
+    // It carries a strategy entry so labels, manifests and the scoreboard treat
+    // it like any other rung.
+    const CM_GAP_STRATEGY = Object.freeze({
+      id: 'gap', distance: 0, label: 'Catalogue gap',
+      blurb: 'A meaning × form combination the catalogue under-occupies',
+      directive: 'Occupy a specific gap in the catalogue: carry a meaning that already sells in a form the range has barely used.',
+    });
+    const CM_STRATEGY_BY_ID = Object.fromEntries(
+      [...CM_STRATEGIES, CM_GAP_STRATEGY].map(s => [s.id, s])
+    );
 
     // ---------------------------------------------------------------------
     // Research index — same three-stage load as the library index
@@ -18880,7 +18938,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
     let _cmResearchLoaded = false;
 
     function _cmResearchEmpty() {
-      return { schema: CM_RESEARCH_SCHEMA, updatedAt: 0, analyses: {}, sales: {}, strategyStats: {}, outcomes: {} };
+      return { schema: CM_RESEARCH_SCHEMA, updatedAt: 0, analyses: {}, sales: {}, strategyStats: {}, outcomes: {}, gaps: {} };
     }
     function _cmResearchNormalise(raw) {
       const out = _cmResearchEmpty();
@@ -18890,6 +18948,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
       if (raw.sales && typeof raw.sales === 'object') out.sales = raw.sales;
       if (raw.strategyStats && typeof raw.strategyStats === 'object') out.strategyStats = raw.strategyStats;
       if (raw.outcomes && typeof raw.outcomes === 'object') out.outcomes = raw.outcomes;
+      if (raw.gaps && typeof raw.gaps === 'object') out.gaps = raw.gaps;
       return out;
     }
     function _cmResearchMerge(base, incoming) {
@@ -18901,6 +18960,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
         strategyStats: { ...base.strategyStats },
         // Measurements are immutable per set; a union is always correct.
         outcomes: { ...base.outcomes, ...(incoming.outcomes || {}) },
+        gaps: { ...base.gaps },
       };
       // Merge FIELD BY FIELD, not whole-object-by-timestamp.
       //
@@ -18938,6 +18998,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
       }
       // Stats are counters: take the higher of each, since both terminals are
       // reporting a monotonic tally derived from the same manifests.
+      // Gap briefs merge like analyses: keep the newer concept set, union the
+      // "used" list so two terminals cannot issue the same brief twice.
+      for (const [k, v] of Object.entries(incoming.gaps || {})) {
+        const cur = out.gaps[k];
+        if (!cur) { out.gaps[k] = v; continue; }
+        const keep = (Number(v.at) || 0) > (Number(cur.at) || 0) ? v : cur;
+        out.gaps[k] = { ...keep, used: [...new Set([...(cur.used || []), ...(v.used || [])])] };
+      }
       for (const [k, v] of Object.entries(incoming.strategyStats || {})) {
         const cur = out.strategyStats[k] || { generated: 0, approved: 0 };
         out.strategyStats[k] = {
@@ -19116,6 +19184,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
       'sold over twelve months, so do not question whether it sells; explain WHY, and be specific and ' +
       'falsifiable rather than flattering. Reply with JSON only.';
 
+    function _cmFacetSpecText() {
+      return CM_FACET_KEYS.map(k => {
+        const f = CM_FACETS[k];
+        const kind = f.kind === 'multi' ? 'array of 1-3 tokens'
+                   : f.kind === 'ordinal' ? 'single token, ordinal' : 'single token';
+        return `  "${k}"  (${kind})\n    ${f.values.join(' | ')}`;
+      }).join('\n');
+    }
+
     function _cmAnalysePrompt(salesLine) {
       return `Analyse the charm in the image. It is one of this shop's best sellers.${salesLine}
 
@@ -19145,10 +19222,39 @@ Return JSON with EXACTLY this shape:
   "whyItSells": [ { "driver": "the mechanism, e.g. huge addressable niche / strong gifting occasion / low-competition search term / instantly readable silhouette at thumbnail size", "mechanism": "how that converts to a sale", "confidence": 0.0 } ],
   "loadBearing": ["attributes that MUST be preserved in any derivative or the buyer is lost — be strict, list 3 to 6"],
   "free": ["attributes that are incidental to the purchase and can change freely — list 4 to 8"],
-  "thumbnailReadability": "what makes it legible at Etsy thumbnail size, or what limits that"
+  "thumbnailReadability": "what makes it legible at Etsy thumbnail size, or what limits that",
+
+  "meaning": {
+    "literal": "what the object depicts, plainly",
+    "symbolic": ["what it signifies beyond the depiction — what it has meant culturally, and what it is understood to stand for"],
+    "identityClaim": "what wearing this says about the wearer, phrased as \"I am someone who…\"",
+    "emotionalJob": "the job the buyer is hiring this piece to do, in one sentence",
+    "carries": "if the piece stands in for an absent person, animal, place or version of the self, say what. If it does not, say none",
+    "culturalAnchors": ["myths, idioms, media, fandoms or subcultures that make this legible at a glance"],
+    "adjacentMeanings": ["meanings a shopper would accept as belonging to the same world, which a different object could also carry"],
+    "misfireRisks": ["readings that would put a buyer off, or contexts where this meaning lands badly"]
+  },
+
+  "facets": { /* see the FACETS section below — exact tokens only */ }
 }
 
+FACETS — this is the most important part of your reply, and the rules are strict.
+
+These classify the charm into a fixed vocabulary so it can be counted against
+every other charm in the catalogue. Free text here is useless; only the exact
+tokens below can be used. Pick the closest value even when the fit is imperfect,
+and omit a facet entirely rather than inventing a token for it.
+
+${_cmFacetSpecText()}
+
 Rules:
+- Every value in "facets" MUST be one of the exact tokens listed. Any other string is discarded.
+- Single-value facets take a string. Multi-value facets take an array of 1 to 3 tokens, most important first.
+- "meaning" is where the real work is. "a sitting cat" is the literal; the symbolic layer is what a derivative
+  can actually inherit, because the next design will not be a cat. Reason about what the piece DOES for the
+  person wearing it, not what it looks like.
+- adjacentMeanings is the bridge to new products: meanings that live in the same emotional world and could be
+  carried by a completely different object.
 - detailDensity is an integer 1 to 5 where 1 is a bare silhouette and 5 is densely engraved.
 - confidence is 0 to 1.
 - Put the SUBJECT in identification, never in houseStyle. houseStyle must be reusable for a completely different subject.
@@ -19184,6 +19290,7 @@ Rules:
       const entry = {
         at: Date.now(),
         model: _cmResearchModel(),
+        analysisVersion: CM_FACET_SCHEMA,
         analysis,
         ideas: existing?.ideas || null,
         used: existing?.used || {},
@@ -19282,6 +19389,138 @@ Hard rules:
       _cmResearchDirty = true;
       await _cmResearchSave();
       return entry;
+    }
+
+    // ---------------------------------------------------------------------
+    // Ideation from an opportunity, rather than from one reference charm
+    // ---------------------------------------------------------------------
+    // The ladder answers "what is adjacent to THIS charm". The matrix answers
+    // "what is missing from the CATALOGUE". This turns the second into briefs:
+    // the target is a meaning × form combination the catalogue under-occupies,
+    // and the evidence for it is drawn from the charms that do carry each half.
+    const CM_GAP_SYSTEM =
+      'You are a jewellery range planner working from a catalogue analysis. You are given a gap: a combination ' +
+      'of meaning and form that the existing range barely occupies, together with the evidence that each half ' +
+      'of it performs. Your job is to design pieces that occupy that gap concretely. You do not see any ' +
+      'product images — the brief must stand on its own. Reply with JSON only.';
+
+    function _cmGapPrompt(gap, exemplars, houseStyle, conceptsPer) {
+      const ex = exemplars.map(e =>
+        `  • ${e.name}${e.rank ? ` (rank #${e.rank})` : ''} — ${e.subject}; carries ${e.why}`
+      ).join('\n') || '  (none recorded)';
+      return `THE GAP
+
+Meaning to carry:  ${_cmFacetLabel(gap.mk, gap.mv)}
+Form to use:       ${_cmFacetLabel(gap.fk, gap.fv)}
+
+Evidence from the existing catalogue:
+• ${gap.meaningCount} best-selling charms carry that meaning${gap.meaningLift != null ? `, performing at ${gap.meaningLift.toFixed(2)}× the catalogue average` : ''}.
+• ${gap.formCount} use that form${gap.formLift != null ? `, performing at ${gap.formLift.toFixed(2)}× average` : ''}.
+• The COMBINATION is used by ${gap.occupancy} charm${gap.occupancy === 1 ? '' : 's'}. That is the gap.
+• Confidence in this reading: ${gap.confidence}${gap.liftBasis === 'estimated' ? ' (the combination is unbuilt, so its performance is inferred from each half independently — treat it as a hypothesis)' : ''}.
+
+Charms that already carry this meaning, for calibration — do NOT copy them:
+${ex}
+
+MANUFACTURING ENVELOPE, fixed: one flat piece of laser-cut sheet metal, front-facing, no 3D thickness, a single
+integrated hanging loop, no text, roughly square framing.
+
+HOUSE STYLE, fixed: ${houseStyle}
+
+Propose exactly ${conceptsPer} concepts that occupy this gap. Return JSON:
+
+{
+  "concepts": [
+    {
+      "title": "3 to 6 words a shopper would understand",
+      "subject": "exactly what the object is. Name it plainly. 1 to 2 sentences.",
+      "silhouette": "the outline, described so an illustrator could draw it without seeing anything: overall shape, proportions, what protrudes, where it is widest, how it reads at thumbnail size. 2 to 3 sentences.",
+      "engravingPlan": "which surface marks go where",
+      "negativeSpacePlan": "which areas are cut fully through, and why",
+      "bailPlan": "where the integrated loop sits so the piece hangs level",
+      "whyItShouldSell": "the commercial argument, referring to the evidence above",
+      "carriesMeaning": "how this object carries \"${_cmFacetLabel(gap.mk, gap.mv)}\" without depicting anything the listed charms depict",
+      "distinctness": "one sentence on how a shopper would tell this apart from the charms listed above"
+    }
+  ]
+}
+
+Hard rules:
+- The form is a requirement, not a suggestion: the silhouette must genuinely be ${_cmFacetLabel(gap.fk, gap.fv)}.
+- Do not propose any object that appears in the calibration list.
+- The meaning must be carried by the object itself, not by text, initials or a caption.
+- No enamel, no moving parts, no multi-part assemblies, no stones.`;
+    }
+
+    // Charms that already carry the gap's meaning — used to calibrate the brief
+    // and, more importantly, as an explicit do-not-copy list.
+    function _cmGapExemplars(gap, limit = 5) {
+      const out = [];
+      for (const rec of _cmLib.items) {
+        const entry = _cmResearch.analyses?.[rec.path];
+        if (!entry?.analysis?.facets) continue;
+        if (!_cmFacetValues(entry, gap.mk).includes(gap.mv)) continue;
+        const eff = cmEffectiveRank(rec.path, rec.name);
+        out.push({
+          name: rec.name,
+          rank: eff.rank,
+          subject: entry.analysis.identification?.primarySubject || '—',
+          why: entry.analysis.meaning?.emotionalJob || entry.analysis.meaning?.identityClaim || '—',
+        });
+      }
+      out.sort((a, b) => (a.rank || 1e9) - (b.rank || 1e9));
+      return out.slice(0, limit);
+    }
+
+    // A house style shared across the catalogue: the most common description
+    // among the best-performing analysed charms, since every piece must come
+    // out of the same workshop.
+    function _cmAggregateHouseStyle() {
+      const scored = [];
+      for (const rec of _cmLib.items) {
+        const entry = _cmResearch.analyses?.[rec.path];
+        if (!entry?.analysis?.houseStyle) continue;
+        scored.push({ rank: cmEffectiveRank(rec.path, rec.name).rank || 1e9, style: entry.analysis.houseStyle });
+      }
+      scored.sort((a, b) => a.rank - b.rank);
+      return scored[0]?.style
+        || 'One flat sheet of high-polish gold, crisp laser-cut edges, sparse incised engraving, on pure black.';
+    }
+
+    async function cmIdeateFromGap(gap, { conceptsPer = 2 } = {}) {
+      await _cmResearchLoad();
+      const res = await _cmLlmJson([
+        { role: 'system', content: CM_GAP_SYSTEM },
+        { role: 'user', content: _cmGapPrompt(gap, _cmGapExemplars(gap), _cmAggregateHouseStyle(), conceptsPer) },
+      ], { maxTokens: 3000 });
+      const concepts = (res?.concepts || []).filter(c => c?.subject && c?.silhouette);
+      if (!concepts.length) throw new Error('gap ideation returned no usable concepts');
+      if (!_cmResearch.gaps || typeof _cmResearch.gaps !== 'object') _cmResearch.gaps = {};
+      const prevUsed = _cmResearch.gaps[gap.id]?.used || [];
+      _cmResearch.gaps[gap.id] = { at: Date.now(), gap, concepts, used: prevUsed };
+      _cmResearchDirty = true;
+      await _cmResearchSave();
+      return _cmResearch.gaps[gap.id];
+    }
+
+    // Hand out an unused gap concept as a design brief, in the same shape the
+    // renderer already consumes.
+    function cmTakeGapConcept(gapId) {
+      const g = _cmResearch.gaps?.[gapId];
+      if (!g?.concepts?.length) return null;
+      const used = new Set(g.used || []);
+      let idx = g.concepts.findIndex((_, i) => !used.has(i));
+      if (idx === -1) { idx = 0; g.used = []; }
+      g.used = [...new Set([...(g.used || []), idx])];
+      _cmResearchDirty = true;
+      _cmResearchSave();
+      return {
+        strategyId: 'gap',
+        gapId,
+        conceptIndex: idx,
+        concept: g.concepts[idx],
+        analysis: { houseStyle: _cmAggregateHouseStyle(), identification: {} },
+      };
     }
 
     async function cmEnsureResearch(rec, opts = {}) {
@@ -19556,7 +19795,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
     // living in one browser.
     function cmRebuildStrategyStats(setRecords) {
       const stats = {};
-      for (const s of CM_STRATEGIES) stats[s.id] = { generated: 0, approved: 0 };
+      for (const s of [...CM_STRATEGIES, CM_GAP_STRATEGY]) stats[s.id] = { generated: 0, approved: 0 };
       for (const rec of setRecords) {
         const sid = rec?.strategy;
         if (!sid || !stats[sid]) continue;
@@ -19672,6 +19911,394 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       await _cmResearchSave();
       return matched.length;
     }
+
+
+    // =====================================================================
+    // MEANING EXTRACTION AND THE OPPORTUNITY MATRIX
+    // ---------------------------------------------------------------------
+    // Two things the first version did not do.
+    //
+    // 1. MEANING BEYOND THE LITERAL. The analysis knew a charm was "a sitting
+    //    cat". It did not know the piece is bought to carry someone who is
+    //    gone, that it makes a claim about the wearer's identity, or that the
+    //    purchase is triggered by a bereavement rather than a birthday. Those
+    //    are the things that transfer to a new design; the cat does not.
+    //
+    // 2. A MATRIX. The strategy ladder is a single axis — distance from one
+    //    reference — and the approval weight is one number per rung. Neither
+    //    can answer "which design that does not exist yet would sell", because
+    //    neither cross-references attributes against outcomes.
+    //
+    // THE CONTROLLED-VOCABULARY CONSTRAINT
+    //
+    // A matrix needs countable columns. Free text cannot be counted, compared
+    // or regressed — "bought by people who miss their pet" and "memorial
+    // purchase" are the same fact in two unusable strings. So every charm is
+    // classified into a FIXED taxonomy, with prose kept alongside as
+    // annotation. That constraint is what makes the arithmetic below possible.
+    //
+    // WHAT THE MATRIX COMPUTES
+    //
+    //   rows    = analysed charms
+    //   columns = facet values from the taxonomy below
+    //   target  = sales performance (units where known, else rank percentile)
+    //
+    //   occupancy  how much of the catalogue already sits on each facet value
+    //   lift       mean performance of charms carrying a value ÷ population mean
+    //   pair lift  the same for co-occurring pairs, which is where the
+    //              interesting structure lives — "protection" may be flat and
+    //              "companion animal" flat, while their intersection is 1.8×
+    //   gaps       combinations whose components over-perform but which the
+    //              catalogue barely occupies. These are the design
+    //              opportunities, and they are what gets turned into briefs.
+    //
+    // Honest limits, stated because they bound how far the output should be
+    // trusted:
+    //   • Lift is correlation on a top-200 set. Every row is already a winner,
+    //     so this ranks winners against each other; it says nothing about what
+    //     fails, because failures are not in the data.
+    //   • Support is small. A facet value carried by two charms gets a
+    //     confidence penalty and is labelled accordingly, never presented as a
+    //     finding.
+    //   • With no units data, lift is not computed at all and gaps fall back to
+    //     pure white-space — "the catalogue does not cover this" — which is
+    //     still useful and needs no sales figures.
+    // =====================================================================
+
+    const CM_FACET_SCHEMA = 2;
+
+    // The controlled vocabulary. Values are deliberately few and mutually
+    // distinguishable — a taxonomy with sixty values and two hundred rows
+    // produces one charm per cell and no computable structure.
+    const CM_FACETS = Object.freeze({
+      subjectKingdom: {
+        label: 'Subject kingdom', kind: 'single',
+        values: ['animal_companion','animal_wild','animal_mythic','bird','insect','marine','plant_flower','plant_tree','celestial','weather_element','human_figure','body_part','object_everyday','object_tool','food_drink','symbol_abstract','geometric','architecture','vehicle','textile_craft'],
+      },
+      symbolRegister: {
+        label: 'Symbolic register', kind: 'multi',
+        values: ['protection','remembrance','luck','love_romantic','love_familial','friendship','faith','strength','freedom','growth','transformation','guardianship','abundance','healing','playfulness','nostalgia','identity_pride','mystery','home','wanderlust'],
+      },
+      emotionalJob: {
+        label: 'Emotional job', kind: 'single',
+        values: ['remember_someone','protect_someone','celebrate_milestone','signal_belonging','mark_transition','self_soothe','express_identity','attract_luck','honour_someone','carry_someone_absent','everyday_delight'],
+      },
+      relationalVector: {
+        label: 'Who buys for whom', kind: 'single',
+        values: ['self_purchase','gift_peer','gift_partner','gift_parent_to_child','gift_child_to_parent','memorial_gift','group_matching'],
+      },
+      lifeMoment: {
+        label: 'Trigger moment', kind: 'multi',
+        values: ['everyday','birthday','holiday_seasonal','wedding_engagement','new_baby','graduation','bereavement_pet','bereavement_person','illness_recovery','travel_move','anniversary','achievement','new_home','breakup_recovery'],
+      },
+      silhouetteClass: {
+        label: 'Silhouette', kind: 'single',
+        values: ['compact_solid','open_linear','radial','elongated_vertical','wide_horizontal','irregular_organic'],
+      },
+      negativeSpaceStrategy: {
+        label: 'Negative space', kind: 'single',
+        values: ['none','single_window','multi_window','lattice','outline_only'],
+      },
+      detailDensity: {
+        label: 'Detail density', kind: 'ordinal',
+        values: ['1','2','3','4','5'],
+      },
+      thumbnailReadability: {
+        label: 'Thumbnail legibility', kind: 'single',
+        values: ['high','medium','low'],
+      },
+    });
+    const CM_FACET_KEYS = Object.keys(CM_FACETS);
+
+    // Facets that describe MEANING rather than form. Gap-finding combines
+    // across these two groups on purpose: a meaning the catalogue sells well
+    // paired with a form the catalogue has not tried is the most actionable
+    // kind of white space.
+    const CM_MEANING_FACETS = ['symbolRegister','emotionalJob','relationalVector','lifeMoment'];
+    const CM_FORM_FACETS = ['subjectKingdom','silhouetteClass','negativeSpaceStrategy','detailDensity','thumbnailReadability'];
+
+    function _cmFacetValues(entry, key) {
+      const f = entry?.analysis?.facets;
+      if (!f) return [];
+      const v = f[key];
+      if (v == null) return [];
+      const allowed = new Set(CM_FACETS[key].values);
+      const list = Array.isArray(v) ? v : [v];
+      return list.map(x => String(x).trim()).filter(x => allowed.has(x));
+    }
+
+    // ---------------------------------------------------------------------
+    // Performance score per charm, 0..1
+    // ---------------------------------------------------------------------
+    // Units are preferred and log-scaled, because unit counts are heavily
+    // skewed and a linear scale would let the single best seller dominate every
+    // average. Rank alone degrades to a percentile. Neither available → null,
+    // and the caller drops to white-space-only analysis.
+    function cmPerformanceScores() {
+      const rows = [];
+      for (const rec of _cmLib.items) {
+        const sales = _cmResearch.sales?.[rec.path];
+        const eff = cmEffectiveRank(rec.path, rec.name);
+        rows.push({ path: rec.path, name: rec.name, units: Number(sales?.units) || null, rank: eff.rank });
+      }
+      const withUnits = rows.filter(r => r.units > 0);
+      const out = new Map();
+      if (withUnits.length >= 5) {
+        const logs = withUnits.map(r => Math.log(r.units));
+        const lo = Math.min(...logs), hi = Math.max(...logs);
+        const span = hi - lo || 1;
+        for (const r of rows) {
+          out.set(r.path, r.units > 0 ? (Math.log(r.units) - lo) / span : null);
+        }
+        return { scores: out, basis: 'units', n: withUnits.length };
+      }
+      const ranks = rows.map(r => r.rank).filter(Number.isFinite).sort((a, b) => a - b);
+      if (ranks.length >= 5) {
+        for (const r of rows) {
+          if (!Number.isFinite(r.rank)) { out.set(r.path, null); continue; }
+          const pos = ranks.indexOf(r.rank);
+          out.set(r.path, 1 - (pos / Math.max(1, ranks.length - 1))); // best rank → 1
+        }
+        return { scores: out, basis: 'rank', n: ranks.length };
+      }
+      for (const r of rows) out.set(r.path, null);
+      return { scores: out, basis: 'none', n: 0 };
+    }
+
+    // ---------------------------------------------------------------------
+    // Build the matrix
+    // ---------------------------------------------------------------------
+    function cmBuildMatrix() {
+      const { scores, basis, n: perfN } = cmPerformanceScores();
+      const rows = [];
+      for (const rec of _cmLib.items) {
+        const entry = _cmResearch.analyses?.[rec.path];
+        if (!entry?.analysis?.facets) continue;
+        const cells = {};
+        let classified = 0;
+        for (const k of CM_FACET_KEYS) {
+          cells[k] = _cmFacetValues(entry, k);
+          if (cells[k].length) classified++;
+        }
+        if (!classified) continue;
+        rows.push({ path: rec.path, name: rec.name, cells, perf: scores.get(rec.path) ?? null });
+      }
+
+      const scored = rows.filter(r => r.perf != null);
+      const popMean = scored.length ? scored.reduce((a, r) => a + r.perf, 0) / scored.length : null;
+
+      // Single-value statistics.
+      const facets = {};
+      for (const k of CM_FACET_KEYS) {
+        const byValue = {};
+        for (const v of CM_FACETS[k].values) byValue[v] = { value: v, count: 0, perfSum: 0, perfN: 0 };
+        for (const r of rows) {
+          for (const v of r.cells[k]) {
+            const b = byValue[v];
+            if (!b) continue;
+            b.count++;
+            if (r.perf != null) { b.perfSum += r.perf; b.perfN++; }
+          }
+        }
+        facets[k] = Object.values(byValue).map(b => {
+          const mean = b.perfN ? b.perfSum / b.perfN : null;
+          return {
+            value: b.value,
+            count: b.count,
+            occupancy: rows.length ? b.count / rows.length : 0,
+            meanPerf: mean,
+            lift: (mean != null && popMean) ? mean / popMean : null,
+            support: b.perfN,
+            // Small-sample honesty: a value carried by one or two charms is a
+            // hint, not a finding, and is labelled so wherever it is shown.
+            confidence: b.perfN >= 8 ? 'good' : b.perfN >= 4 ? 'weak' : b.perfN >= 1 ? 'anecdotal' : 'none',
+          };
+        });
+      }
+
+      // Pair statistics across the meaning × form boundary.
+      const pairs = [];
+      for (const mk of CM_MEANING_FACETS) {
+        for (const fk of CM_FORM_FACETS) {
+          const seen = {};
+          for (const r of rows) {
+            for (const mv of r.cells[mk]) {
+              for (const fv of r.cells[fk]) {
+                const id = `${mk}:${mv}|${fk}:${fv}`;
+                const s = seen[id] || (seen[id] = { mk, mv, fk, fv, count: 0, perfSum: 0, perfN: 0 });
+                s.count++;
+                if (r.perf != null) { s.perfSum += r.perf; s.perfN++; }
+              }
+            }
+          }
+          for (const s of Object.values(seen)) {
+            const mean = s.perfN ? s.perfSum / s.perfN : null;
+            pairs.push({
+              ...s,
+              meanPerf: mean,
+              lift: (mean != null && popMean) ? mean / popMean : null,
+              occupancy: rows.length ? s.count / rows.length : 0,
+            });
+          }
+        }
+      }
+
+      return { rows, facets, pairs, popMean, basis, perfN, builtAt: Date.now() };
+    }
+
+    // ---------------------------------------------------------------------
+    // Gap finding — the part that outputs candidate designs
+    // ---------------------------------------------------------------------
+    // For every meaning × form combination, ask two questions:
+    //   does the catalogue evidence suggest each half works?   → expected lift
+    //   has the catalogue actually built this combination?     → occupancy
+    // High expected lift with low occupancy is white space worth a design.
+    //
+    // Multiplying the two component lifts is a deliberately naive independence
+    // assumption. It is stated rather than hidden: where the pair HAS been
+    // built, the observed pair lift is used instead, and the output says which
+    // of the two it is.
+    function cmFindGaps(limit = 12) {
+      const m = cmBuildMatrix();
+      if (!m.rows.length) return { gaps: [], matrix: m, reason: 'no charms have been classified yet' };
+
+      const lookup = {};
+      for (const k of CM_FACET_KEYS) {
+        lookup[k] = Object.fromEntries(m.facets[k].map(f => [f.value, f]));
+      }
+      const observedPair = Object.fromEntries(m.pairs.map(p => [`${p.mk}:${p.mv}|${p.fk}:${p.fv}`, p]));
+      const haveLift = m.basis !== 'none';
+
+      const candidates = [];
+      for (const mk of CM_MEANING_FACETS) {
+        for (const mv of CM_FACETS[mk].values) {
+          const mStat = lookup[mk][mv];
+          // A meaning the catalogue has never touched has no evidence behind
+          // it, so it is not proposed — this finds adjacent white space, not
+          // blue sky.
+          if (!mStat || mStat.count === 0) continue;
+          for (const fk of CM_FORM_FACETS) {
+            for (const fv of CM_FACETS[fk].values) {
+              const fStat = lookup[fk][fv];
+              if (!fStat || fStat.count === 0) continue;
+              const id = `${mk}:${mv}|${fk}:${fv}`;
+              const obs = observedPair[id];
+              const occ = obs ? obs.count : 0;
+
+              let expected, liftBasis;
+              if (haveLift && obs && obs.support >= 3 && obs.lift != null) {
+                expected = obs.lift; liftBasis = 'observed';
+              } else if (haveLift && mStat.lift != null && fStat.lift != null) {
+                expected = mStat.lift * fStat.lift; liftBasis = 'estimated';
+              } else {
+                expected = 1; liftBasis = 'none';
+              }
+
+              // Novelty: unoccupied is best, and it decays fast — a combination
+              // built four times is not an opportunity.
+              const novelty = 1 / (1 + occ * 1.6);
+              // Evidence: penalise conclusions drawn from one or two charms.
+              const evidence = Math.min(1, (Math.min(mStat.support, fStat.support) + 1) / 6);
+              const score = expected * novelty * (haveLift ? evidence : 1);
+
+              candidates.push({
+                id, mk, mv, fk, fv,
+                occupancy: occ,
+                expectedLift: expected,
+                liftBasis,
+                novelty,
+                evidence,
+                score,
+                meaningCount: mStat.count,
+                formCount: fStat.count,
+                meaningLift: mStat.lift,
+                formLift: fStat.lift,
+                confidence: haveLift
+                  ? (liftBasis === 'observed' ? obs.support >= 8 ? 'good' : 'weak'
+                     : Math.min(mStat.support, fStat.support) >= 6 ? 'weak' : 'anecdotal')
+                  : 'white-space only',
+              });
+            }
+          }
+        }
+      }
+
+      candidates.sort((a, b) => b.score - a.score);
+
+      // Collapse near-duplicates.
+      //
+      // Facets are not independent in real data: if every remembrance charm is
+      // also tagged love_familial and bereavement_pet, then
+      // "remembrance × open_linear", "love_familial × open_linear" and
+      // "bereavement_pet × open_linear" are ONE opportunity described three
+      // ways, and presenting all three wastes two slots and overstates how much
+      // white space exists. Two gaps are treated as the same when they share a
+      // form value and the charm sets behind their meanings substantially
+      // overlap.
+      const charmsCarrying = (k, v) => {
+        const set = new Set();
+        for (const r of m.rows) if (r.cells[k].includes(v)) set.add(r.path);
+        return set;
+      };
+      const carrierCache = new Map();
+      const carriersOf = (k, v) => {
+        const key = `${k}:${v}`;
+        if (!carrierCache.has(key)) carrierCache.set(key, charmsCarrying(k, v));
+        return carrierCache.get(key);
+      };
+      const jaccard = (a, b) => {
+        if (!a.size || !b.size) return 0;
+        let inter = 0;
+        for (const x of a) if (b.has(x)) inter++;
+        return inter / (a.size + b.size - inter);
+      };
+      const deduped = [];
+      for (const c of candidates) {
+        const mine = carriersOf(c.mk, c.mv);
+        const dup = deduped.find(k =>
+          k.fk === c.fk && k.fv === c.fv && jaccard(carriersOf(k.mk, k.mv), mine) >= 0.8
+        );
+        if (dup) {
+          // Record the alias so the surviving row can say what it subsumes.
+          (dup.aliases = dup.aliases || []).push(_cmFacetLabel(c.mk, c.mv));
+          continue;
+        }
+        deduped.push(c);
+      }
+
+      // Spread the output: without this the top of the list is one dominant
+      // meaning paired with every form, which is one idea wearing twelve hats.
+      // Floor. A combination whose expected lift is below the catalogue average
+      // is not an opportunity, and padding the shortlist with them to reach a
+      // requested count would be worse than returning fewer rows. Without this,
+      // a weak meaning paired with a strong form fills the tail of the list —
+      // "playfulness", which underperforms by 7×, was appearing simply because
+      // it co-occurs with a high-lift detail density. Rejected candidates stay
+      // in `ranked` so nothing is hidden, just not recommended.
+      const eligible = haveLift ? deduped.filter(c => c.expectedLift >= 1) : deduped;
+
+      const picked = [], usedMeaning = {}, usedForm = {};
+      for (const c of eligible) {
+        const mKey = `${c.mk}:${c.mv}`, fKey = `${c.fk}:${c.fv}`;
+        if ((usedMeaning[mKey] || 0) >= 2) continue;
+        if ((usedForm[fKey] || 0) >= 2) continue;
+        usedMeaning[mKey] = (usedMeaning[mKey] || 0) + 1;
+        usedForm[fKey] = (usedForm[fKey] || 0) + 1;
+        picked.push(c);
+        if (picked.length >= limit) break;
+      }
+      // `ranked` is the full de-duplicated ordering; `gaps` is the spread
+      // shortlist actually shown. Both are returned so the shortlist can be
+      // audited against the raw ranking.
+      return {
+        gaps: picked, ranked: deduped, matrix: m,
+        all: candidates.length,
+        deduped: candidates.length - deduped.length,
+        belowAverage: deduped.length - eligible.length,
+      };
+    }
+
+    const _cmFacetLabel = (k, v) => `${CM_FACETS[k]?.label || k}: ${String(v).replace(/_/g, ' ')}`;
 
 
     // =====================================================================
@@ -20086,7 +20713,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       }
       tbody.innerHTML =
         `<tr><th>Rung</th><th>Approved</th><th>Rate</th><th title="Mean silhouette overlap with the reference. Lower is more distinct.">Overlap</th><th>Pick weight</th></tr>` +
-        CM_STRATEGIES.map(s => {
+        [...CM_STRATEGIES, CM_GAP_STRATEGY].map(s => {
           const st = stats[s.id] || { generated: 0, approved: 0 };
           const rate = st.generated ? st.approved / st.generated : null;
           const w = cmStrategyWeight(s.id);
@@ -20094,7 +20721,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
           const meanIou = ious.length ? ious.reduce((a, b) => a + b, 0) / ious.length : null;
           const iouCls = meanIou == null ? '' : meanIou >= CM_IOU_FAIL ? 'replica' : meanIou >= CM_IOU_WARN ? 'close' : 'distinct';
           return `<tr class="${st.generated || ious.length ? '' : 'dim'}" title="${_esc(s.blurb)}">` +
-            `<td><span class="strat-dist">${s.distance}</span>${_esc(s.label)}</td>` +
+            `<td><span class="strat-dist">${s.distance || '◆'}</span>${_esc(s.label)}</td>` +
             `<td class="mono">${st.approved}/${st.generated}</td>` +
             `<td><div class="strat-bar"><i style="width:${rate == null ? 0 : Math.round(rate * 100)}%"></i></div></td>` +
             `<td class="mono">${meanIou == null ? '—' : `<span class="prov-iou ${iouCls}">${Math.round(meanIou * 100)}%</span>`}</td>` +
@@ -20264,6 +20891,185 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       paint();
     })();
 
+    // ---------------------------------------------------------------------
+    // Opportunity matrix — UI
+    // ---------------------------------------------------------------------
+    let _cmLastGaps = null;
+
+    function _cmRenderMatrix() {
+      const info = document.getElementById('cmMatrixInfo');
+      const tbody = document.querySelector('#cmGapTable tbody');
+      const cov = document.getElementById('cmFacetCoverage');
+      if (!info || !tbody) return;
+
+      const res = cmFindGaps(parseInt(document.getElementById('cmGapCount')?.value, 10) || 5);
+      _cmLastGaps = res;
+      const m = res.matrix;
+
+      const classified = m.rows.length;
+      const total = _cmLib.items.length;
+      if (!classified) {
+        info.textContent = total
+          ? `0 of ${total} charms classified. Run research (or Backfill classifications if they were analysed before facets existed) to build the matrix.`
+          : 'Library empty.';
+        info.className = 'window-info rm-warn';
+        tbody.innerHTML = '';
+        if (cov) cov.innerHTML = '';
+        return;
+      }
+
+      // State the basis plainly, including when there is no performance signal.
+      const basisText = m.basis === 'units'
+        ? `lift computed from units sold across ${m.perfN} charms`
+        : m.basis === 'rank'
+          ? `lift computed from rank position across ${m.perfN} charms — coarser than units`
+          : 'no units or rank available, so this is white-space analysis only: it shows what the catalogue does not cover, not what performs';
+      info.textContent = `${classified} of ${total} charms classified · ${res.all} combinations evaluated`
+        + (res.deduped ? `, ${res.deduped} collapsed as equivalent` : '')
+        + (res.belowAverage ? `, ${res.belowAverage} rejected as below-average` : '')
+        + ` · ${basisText}`;
+      info.className = m.basis === 'none' ? 'window-info rm-warn' : 'window-info';
+
+      tbody.innerHTML =
+        `<tr><th>Gap — meaning × form</th><th title="Expected performance relative to the catalogue average">Lift</th><th title="How many existing charms already occupy this exact combination">Built</th><th>Evidence</th><th></th></tr>` +
+        res.gaps.map((g, i) => {
+          const liftCls = g.expectedLift >= 1.25 ? 'hot' : 'mid';
+          const liftTxt = g.liftBasis === 'none' ? '—' : `${g.expectedLift.toFixed(2)}×`;
+          const confCls = g.confidence === 'good' ? 'good' : g.confidence === 'weak' ? 'weak' : '';
+          return `<tr data-gap="${_esc(g.id)}">` +
+            `<td><div class="gap-combo">` +
+              `<span class="gap-meaning">${_esc(_cmFacetLabel(g.mk, g.mv))}</span>` +
+              `<span class="gap-form">× ${_esc(_cmFacetLabel(g.fk, g.fv))}</span>` +
+              (g.aliases?.length ? `<span class="gap-form" style="opacity:.6" title="${_esc(g.aliases.join(' · '))}">also reads as ${g.aliases.length} equivalent framing${g.aliases.length === 1 ? '' : 's'}</span>` : '') +
+            `</div></td>` +
+            `<td class="gap-lift ${liftCls}" title="${g.liftBasis === 'observed' ? 'Measured on charms that carry this exact combination.' : g.liftBasis === 'estimated' ? 'The combination is unbuilt, so this multiplies each half\\u2019s lift — an independence assumption, i.e. a hypothesis.' : 'No performance data.'}">${liftTxt}</td>` +
+            `<td class="mono">${g.occupancy}</td>` +
+            `<td><span class="gap-conf ${confCls}">${_esc(g.confidence)}</span></td>` +
+            `<td><button class="btn btnSmall cm-gap-brief" data-gap-idx="${i}" style="font-size:10px; padding:2px 8px; width:auto;" type="button">Brief</button></td>` +
+          `</tr>`;
+        }).join('');
+
+      if (cov) {
+        cov.innerHTML = CM_FACET_KEYS.map(k => {
+          const vals = m.facets[k].slice().sort((a, b) => b.count - a.count);
+          return `<div style="margin-bottom:6px;"><div class="muted" style="font-family:var(--font-mono); font-size:9px; text-transform:uppercase; letter-spacing:.06em;">${_esc(CM_FACETS[k].label)}</div>` +
+            `<div class="facet-cov">` + vals.map(v =>
+              `<span class="fc ${v.count === 0 ? 'empty' : (v.lift != null && v.lift >= 1.25 ? 'hot' : '')}" title="${v.count} charm${v.count === 1 ? '' : 's'}${v.lift != null ? ` · ${v.lift.toFixed(2)}× average · ${v.confidence} evidence` : ''}">${_esc(String(v.value).replace(/_/g, ' '))} ${v.count}${v.lift != null ? ` ${v.lift.toFixed(2)}×` : ''}</span>`
+            ).join('') + `</div></div>`;
+        }).join('');
+      }
+    }
+
+    document.getElementById('cmMatrixBuildBtn')?.addEventListener('click', async () => {
+      await _cmResearchLoad();
+      _cmRenderMatrix();
+      const n = _cmLastGaps?.matrix?.rows?.length || 0;
+      setStatus(n ? `Matrix built from ${n} classified charms.` : 'No classified charms yet — run research or backfill first.');
+    });
+    document.getElementById('cmGapCount')?.addEventListener('change', () => _cmRenderMatrix());
+
+    // Re-analyse charms whose analysis predates facet extraction.
+    document.getElementById('cmFacetBackfillBtn')?.addEventListener('click', async () => {
+      await _cmResearchLoad();
+      const stale = _cmLib.items.filter(r => {
+        const e = _cmResearch.analyses?.[r.path];
+        return e?.analysis && !e.analysis.facets;
+      });
+      if (!stale.length) {
+        _cmResearchSetStatus('ok', 'Every analysed charm is already classified.', 1);
+        return;
+      }
+      if (!confirm(`Re-analyse ${stale.length} charm${stale.length === 1 ? '' : 's'} that were analysed before meaning and facet extraction existed?\n\nOne vision call each. Existing concepts are kept.`)) return;
+      let done = 0, failed = 0;
+      for (const rec of stale) {
+        try {
+          _cmResearchSetStatus('working', `Classifying ${rec.name} (${done + 1}/${stale.length})…`, done / stale.length);
+          await cmAnalyseCharm(rec, { force: true });
+        } catch (e) { failed++; console.warn('[charm-research] backfill failed for', rec.name, e); }
+        done++;
+      }
+      _cmResearchSetStatus(failed ? 'warn' : 'ok', `Classified ${done - failed} of ${stale.length}.`, 1);
+      _cmRenderMatrix();
+    });
+
+    // Write a brief for one gap, on demand.
+    document.querySelector('#cmGapTable')?.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.cm-gap-brief');
+      if (!btn || !_cmLastGaps) return;
+      const gap = _cmLastGaps.gaps[parseInt(btn.dataset.gapIdx, 10)];
+      if (!gap) return;
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const g = await cmIdeateFromGap(gap);
+        const c = g.concepts[0];
+        alert(`GAP BRIEF\n\n${_cmFacetLabel(gap.mk, gap.mv)}\n× ${_cmFacetLabel(gap.fk, gap.fv)}\n\n`
+          + g.concepts.map((x, i) => `${i + 1}. ${x.title}\n   ${x.subject}\n   Carries it by: ${x.carriesMeaning || '—'}\n   Why: ${x.whyItShouldSell || '—'}`).join('\n\n'));
+        btn.textContent = `${g.concepts.length} ✓`;
+      } catch (err) {
+        btn.textContent = 'failed';
+        setStatus(`Gap brief failed: ${err?.message || err}`);
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = 'Brief'; }, 4000);
+      }
+    });
+
+    // Generate one charm per top gap. Uses the same render path as the ladder,
+    // so the render mode, similarity guard and manifest provenance all apply.
+    document.getElementById('cmGapGenerateBtn')?.addEventListener('click', async () => {
+      await _cmResearchLoad();
+      _cmRenderMatrix();
+      const gaps = _cmLastGaps?.gaps || [];
+      if (!gaps.length) { setStatus('No gaps to design from — build the matrix first.'); return; }
+      if (!confirm(`Design ${gaps.length} charm${gaps.length === 1 ? '' : 's'}, one per gap?\n\nEach needs one text call to write the brief, then one image generation. These are NOT derived from a single reference — they target combinations the catalogue under-occupies.`)) return;
+
+      const btn = document.getElementById('cmGapGenerateBtn');
+      if (btn) btn.disabled = true;
+      setBusy(true);
+      try {
+        // Every gap design still needs a reference charm for the material
+        // sample in style-locked mode, and for the similarity check. The
+        // best-selling charm that carries the gap's meaning is the right one.
+        for (let i = 0; i < gaps.length; i++) {
+          const gap = gaps[i];
+          setStatus(`Gap ${i + 1}/${gaps.length}: ${_cmFacetLabel(gap.mk, gap.mv)} × ${_cmFacetLabel(gap.fk, gap.fv)} — writing brief…`);
+          let brief;
+          try {
+            await cmIdeateFromGap(gap);
+            brief = cmTakeGapConcept(gap.id);
+          } catch (err) {
+            console.warn('[charm-research] gap brief failed', gap.id, err);
+            continue;
+          }
+          if (!brief) continue;
+          const exemplar = _cmGapExemplars(gap, 1)[0];
+          const anchorRec = _cmLib.items.find(r => r.name === exemplar?.name) || _cmLib.items[0];
+          if (!anchorRec) break;
+          brief.analysis = {
+            houseStyle: _cmAggregateHouseStyle(),
+            identification: _cmResearch.analyses?.[anchorRec.path]?.analysis?.identification || {},
+          };
+          if (typeof currentEarringRef !== 'undefined' && !currentEarringRef && typeof listLatestFile === 'function') {
+            currentEarringRef = await listLatestFile(newCharmsEarringsPath());
+          }
+          await generateCharmQuad(
+            { fullPath: anchorRec.path, name: anchorRec.name, itemRef: anchorRec.itemRef },
+            currentEarringRef,
+            brief
+          );
+          await sleep(400);
+        }
+        setStatus(`Gap designs complete (${gaps.length} attempted).`);
+      } catch (e) {
+        setStatus(`Gap generation error: ${e?.message || e}`);
+      } finally {
+        setBusy(false);
+        if (btn) btn.disabled = false;
+      }
+    });
+
+    setTimeout(() => { try { _cmRenderMatrix(); } catch (_) {} }, 2200);
+
+
     // Console diagnostics. Handy in production for answering "why did it pick
     // that rung?" without adding UI, and it is the surface the test suite uses.
     window.__charmResearch = {
@@ -20279,6 +21085,15 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       probe: (o) => cmProbeProxy(o),
       effectiveMode: () => cmEffectiveRenderMode(),
       lastIou: null,
+      matrix: () => cmBuildMatrix(),
+      gaps: (n) => cmFindGaps(n),
+      facets: () => CM_FACETS,
+      perf: () => cmPerformanceScores(),
+      renderMatrix: () => _cmRenderMatrix(),
+      analysePromptPreview: () => _cmAnalysePrompt(''),
+      analyseOne: (rec) => cmAnalyseCharm(rec, { force: true }),
+      ideateGap: (g) => cmIdeateFromGap(g),
+      takeGap: (id) => cmTakeGapConcept(id),
     };
 
     // Keep the panel in step with library selection and with tab entry.
