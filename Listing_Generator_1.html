@@ -1072,6 +1072,78 @@
     color: var(--muted);
   }
 
+  /* ---------- Design research panel ---------- */
+  .design-provenance {
+    grid-column: span 2;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin: -2px 0 6px;
+    font-size: 10px; font-family: var(--font-mono);
+  }
+  .prov-rung {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px 2px 4px; border-radius: 999px;
+    background: var(--accent-bg); border: 1px solid var(--accent-line); color: var(--accent);
+  }
+  .prov-dist {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); color: #06080d; font-weight: bold; font-size: 9px;
+  }
+  .prov-title { color: var(--text-2); font-family: var(--font-ui); font-size: 11px; }
+  .prov-why, .prov-diff {
+    color: var(--muted); cursor: help; border-bottom: 1px dotted var(--line-2);
+  }
+  .prov-why:hover, .prov-diff:hover { color: var(--text-2); }
+
+  .research-box {
+    background: var(--inset); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent-line);
+    border-radius: var(--r-sm); padding: 10px 12px; margin-top: 8px;
+    font-size: 11px; color: var(--text-2); line-height: 1.55;
+    max-height: 320px; overflow-y: auto;
+  }
+  .research-box h5 {
+    margin: 10px 0 3px; font-family: var(--font-mono); font-size: 9px;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 500;
+  }
+  .research-box h5:first-child { margin-top: 0; }
+  .research-box .rb-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .research-box .rb-tag {
+    padding: 1px 7px; border-radius: 999px; background: var(--card);
+    border: 1px solid var(--line); font-size: 10px; font-family: var(--font-mono);
+  }
+  .research-box .rb-tag.hold { color: var(--ok); border-color: var(--ok-line); background: var(--ok-bg); }
+  .research-box .rb-tag.free { color: var(--muted); }
+  .research-box .rb-why { margin: 2px 0; }
+  .research-box .rb-conf {
+    font-family: var(--font-mono); font-size: 9px; color: var(--accent); margin-right: 5px;
+  }
+  .research-box .rb-rung {
+    display: flex; align-items: baseline; gap: 7px; padding: 3px 0;
+    border-top: 1px solid var(--line);
+  }
+  .research-box .rb-rung:first-of-type { border-top: none; }
+  .research-box .rb-rung-name { font-family: var(--font-mono); font-size: 10px; color: var(--text); min-width: 118px; }
+  .research-box .rb-rung-c { color: var(--muted); font-size: 10px; }
+
+  /* Strategy scoreboard */
+  table.strat-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  table.strat-table th {
+    text-align: left; font-family: var(--font-mono); font-size: 9px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    padding: 4px 6px; border-bottom: 1px solid var(--line);
+  }
+  table.strat-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); color: var(--text-2); }
+  table.strat-table td.mono { font-family: var(--font-mono); font-size: 10px; }
+  table.strat-table tr.dim td { opacity: 0.45; }
+  .strat-bar { position: relative; height: 5px; background: var(--card); border-radius: 999px; overflow: hidden; min-width: 46px; }
+  .strat-bar > i { position: absolute; inset: 0 auto 0 0; background: var(--ok); border-radius: 999px; }
+  .strat-dist {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; border-radius: 50%; background: var(--line-2);
+    color: var(--text); font-family: var(--font-mono); font-size: 9px; margin-right: 5px;
+  }
+
   /* ---------- Reference library: filter / sort / usage / recycle bin ---------- */
 
   /* Auditable "what is actually being filtered" readout. Used by both the
@@ -3039,13 +3111,25 @@ html.gs-locked body > *:not(#gate){display:none!important}
       <span>auth: anonymous</span>
       <span id="rtSyncPill" title="Counter sync status">sync: connecting…</span>
       <span><a href="#" id="signOut" onclick="return gsSignOut()" style="color:inherit;text-decoration:underline;text-underline-offset:2px">sign out</a></span>
-      <label class="image-model-switcher" for="imageModelSelect" title="Controls all new Standard generations, redos, and Charm Maker images.">
-        <span>model:</span>
+      <label class="image-model-switcher" for="imageModelSelect" title="Applies app-wide to every image request: Standard generations, Batch submissions, Review redos, hoop repair, and every Charm Maker slot.">
+        <span>image:</span>
         <select id="imageModelSelect" aria-label="Image generation model">
           <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image · fast / value</option>
           <option value="gemini-3-pro-image">Gemini 3 Pro Image · maximum Gemini quality</option>
           <option value="gpt-image-2">OpenAI GPT Image 2 · best realism / balanced cost</option>
         </select>
+      </label>
+      <!-- The text/vision model. Separate from the image model because it does a
+           different job: reading a charm and reasoning about why it sells. Kept
+           beside it so both model choices live in one place. -->
+      <label class="image-model-switcher" for="researchModelSelect" title="Text and vision model for Charm Maker design research — the analysis and ideation steps. Not used for image generation.">
+        <span>research:</span>
+        <select id="researchModelSelect" aria-label="Research model">
+          <option value="gpt-5.4-mini">GPT-5.4 mini · proven in this app</option>
+          <option value="gpt-4o-mini">GPT-4o mini · cheapest</option>
+          <option value="__custom">Custom…</option>
+        </select>
+        <input type="text" id="researchModelCustom" style="display:none; width: 128px; font-family: var(--font-mono); font-size: 11px; padding: 2px 6px;" placeholder="model id" aria-label="Custom research model id">
       </label>
     </div>
   </header>
@@ -3436,6 +3520,79 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
           <div class="row" style="margin-top: 14px;">
             <button class="btn btn-primary" id="executeCharmGenBtn" style="width:100%;">Generate charms</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-head">
+            <h3>Design research</h3>
+            <span class="count" id="cmResearchCoverage">—</span>
+          </div>
+
+          <p class="muted" style="font-size: 11px; margin: 0 0 10px 0; line-height: 1.55;">
+            Each reference is analysed once — what it is, who buys it, why it sells, and which of its
+            attributes are load-bearing versus free to change. That yields 21 concrete design briefs per
+            charm across a seven-rung ladder, and every derivative in a batch takes a different rung.
+          </p>
+
+          <div class="row" style="gap: 8px; flex-wrap: wrap;">
+            <button class="btn btnSmall" id="cmResearchSelectedBtn" type="button" title="Analyse and ideate for the charms selected in the library above">Research selected</button>
+            <button class="btn btnSmall" id="cmResearchAllBtn" type="button" title="Analyse every un-researched charm in the library, in order of sales rank">Research all missing</button>
+            <button class="btn btnSmall" id="cmResearchRedoBtn" type="button" title="Discard and regenerate the concepts for the selected charms, keeping the analysis">↻ Fresh concepts</button>
+          </div>
+          <div class="lib-status" id="cmResearchStatus">
+            <span class="dot"></span>
+            <span id="cmResearchStatusText">No research run yet</span>
+            <div class="lib-progress"><div class="lib-progress-fill" id="cmResearchFill"></div></div>
+          </div>
+
+          <div id="cmResearchDetail" class="research-box" style="display:none;"></div>
+
+          <label class="field-label" style="margin-top: 14px;">Strategy ladder performance</label>
+          <table class="strat-table" id="cmStrategyTable"><tbody></tbody></table>
+          <div class="muted" style="font-size: 10px; margin-top: 6px; line-height: 1.5;" id="cmStrategyNote">
+            Approval rate per rung, rebuilt from every set's manifest. Rungs you approve get picked more often;
+            none ever drops to zero, so the ladder keeps exploring.
+          </div>
+
+          <label class="field-label" style="margin-top: 14px;">
+            Sales rank <span style="text-transform:none; letter-spacing:0; color: var(--dim);">— optional</span>
+          </label>
+          <div class="window-info" id="cmRankInfo">Checking filenames…</div>
+          <p class="muted" style="font-size: 10px; margin: 6px 0 6px 0; line-height: 1.5;">
+            Nothing is required here. Without rank every charm is treated as mid-pack and gets the balanced
+            ladder (rungs 1–4), which is the recommended default anyway. Rank only <em>tunes</em> the range:
+            stronger sellers are allowed further up, because a partial hit on a big audience is still worth
+            more than a safe hit on a small one.
+            <br><br>
+            <strong>If your files are already numbered</strong> — <code style="font-family:var(--font-mono)">001_cat.png</code>,
+            <code style="font-family:var(--font-mono)">12 - paw print.png</code>,
+            <code style="font-family:var(--font-mono)">#3_dog_bone.png</code> — the rank is read straight off the
+            filename when you upload them and there is nothing else to do.
+          </p>
+          <details style="margin-top: 4px;">
+            <summary class="muted" style="font-size: 10px; cursor: pointer;">Import units sold, titles or tags as well (optional)</summary>
+            <p class="muted" style="font-size: 10px; margin: 6px 0; line-height: 1.5;">
+              Units and listing text sharpen the "why it sells" reasoning, but only rank affects the ladder.
+              Drop a CSV/TSV export or paste rows of
+              <code style="font-family:var(--font-mono)">filename · rank · units · title · tags</code>.
+            </p>
+            <div class="row" style="gap: 8px; margin-bottom: 6px;">
+              <input type="file" id="cmSalesFile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" style="flex:1; font-size: 10px;">
+            </div>
+            <textarea id="cmSalesPaste" rows="3" placeholder="cat_sitting.png&#9;1&#9;4820&#10;paw_print.png&#9;2&#9;3915" style="width:100%; font-family: var(--font-mono); font-size: 10px;"></textarea>
+            <div class="row" style="gap: 8px; margin-top: 6px;">
+              <button class="btn btnSmall" id="cmSalesApplyBtn" type="button">Match &amp; save</button>
+              <button class="btn btnSmall" id="cmSalesClearBtn" type="button">Clear box</button>
+              <span class="muted" style="font-size: 10px; margin-left: auto;" id="cmSalesStatus"></span>
+            </div>
+          </details>
+
+          <div class="muted" style="font-size: 10px; margin-top: 14px; line-height: 1.5;">
+            Research runs on the <strong>research</strong> model in the header (currently
+            <code style="font-family:var(--font-mono)" id="cmResearchModelEcho">—</code>, via
+            <code style="font-family:var(--font-mono)">openaiProxy</code>); images use the
+            <strong>image</strong> model beside it. Both selectors apply app-wide.
           </div>
         </div>
 
@@ -8295,6 +8452,7 @@ function createCharmCardHTML(folderId, isApprovedView) {
         return `
             <div class="charm-card" id="card_${folderId}">
                 <div class="charm-card-title">Generated Derivatives Previews <span class="muted" style="font-size:11px;">${folderId}</span></div>
+                <div class="design-provenance" id="prov_${folderId}" style="display:none;"></div>
                 
                 <div style="grid-column: span 2; display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line);">
                     <div class="muted" style="font-size: 11px;">Source Ref:</div>
@@ -8386,6 +8544,25 @@ async function loadSetImagesForCharm(folderId, folderName) {
         try {
             const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
             const manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
+            // Design provenance strip: which rung of the strategy ladder this
+            // set came from, and the concept it was asked to draw. Without this
+            // the grid gives no way to tell a persona expansion from a pose
+            // variant, which makes the approval data hard to reason about.
+            try {
+                const provEl = document.getElementById(`prov_${folderId}`);
+                if (provEl && manifest.strategy) {
+                    const st = (typeof CM_STRATEGY_BY_ID !== 'undefined') ? CM_STRATEGY_BY_ID[manifest.strategy] : null;
+                    const c = manifest.concept || {};
+                    provEl.style.display = 'block';
+                    provEl.innerHTML =
+                        `<span class="prov-rung" title="${st ? st.blurb.replace(/"/g, '&quot;') : ''}">`
+                        + `<span class="prov-dist">${st ? st.distance : '?'}</span>${st ? st.label : manifest.strategy}</span>`
+                        + (c.title ? `<span class="prov-title">${String(c.title).replace(/</g, '&lt;')}</span>` : '')
+                        + (c.whyItShouldSell ? `<span class="prov-why" title="${String(c.whyItShouldSell).replace(/"/g, '&quot;')}">why ⓘ</span>` : '')
+                        + (c.distinctness ? `<span class="prov-diff" title="${String(c.distinctness).replace(/"/g, '&quot;')}">differs ⓘ</span>` : '');
+                }
+            } catch (_) {}
+
             if (manifest.sourceCharm) {
                 const refBox = document.getElementById(`prevBox_${folderId}_ref`);
                 if (refBox) {
@@ -8552,11 +8729,36 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
             let promptStr = "";
             let category = "Charms"; 
 
+            // Set when redoing slot 0 on a research-designed set, so the redo
+            // re-rolls the SAME concept rather than silently reverting to the
+            // legacy near-copy prompt.
+            let imageRoles;
+
             if (slotIndex === 0) {
                 inputPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath; 
                 if (!inputPath) throw new Error("Missing source reference for base charm.");
-                inputCharmPath = inputPath;
-                promptStr = promptStrCharm;
+                if (manifest.concept && manifest.strategy) {
+                    // Rebuild the brief from what the manifest recorded. The
+                    // analysis comes from the shared research index; if this
+                    // terminal has not loaded it, the concept alone is enough
+                    // for the prompt and only the house-style paragraph degrades
+                    // to its default.
+                    let analysis = null;
+                    try {
+                        await _cmResearchLoad();
+                        analysis = _cmResearch.analyses?.[manifest.sourceCharm]?.analysis || null;
+                    } catch (_) {}
+                    promptStr = cmBuildDesignPrompt(
+                        { strategyId: manifest.strategy, conceptIndex: manifest.conceptIndex, concept: manifest.concept },
+                        analysis,
+                        { modelId: redoModel }
+                    );
+                    inputCharmPath = undefined;
+                    imageRoles = "style_reference";
+                } else {
+                    inputCharmPath = inputPath;
+                    promptStr = promptStrCharm;
+                }
             } else if (slotIndex === 1) {
                 inputPath = `${folderPath}/Slot_1.png`;
                 inputCharmPath = inputPath;
@@ -8577,6 +8779,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 activeCategory: category,
                 input_storage_path: inputPath,
                 input_charm_storage_path: inputCharmPath,
+                image_roles: imageRoles,
                 output_base_path: folderPath,
                 slotIndex: slotIndex,
                 prompt: promptStr
@@ -9091,8 +9294,52 @@ window.approveCharmQuad = async function(folderId) {
         }
       };
 
+    // ---------------------------------------------------------------------
+    // Prepare N design briefs for one reference charm.
+    //
+    // This is where "how wide is the net" stops being a guess. Research runs
+    // once per reference and is cached; then each of the N derivatives is
+    // assigned a DIFFERENT rung of the strategy ladder and an unused concept
+    // from it. Previously the same prompt ran N times, so N derivatives were N
+    // samples of one idea.
+    //
+    // Returns [] on any failure, and the caller falls back to the legacy
+    // single-prompt path — a research outage must never block generation.
+    // ---------------------------------------------------------------------
+    async function cmPrepareBriefs(rec, n) {
+      try {
+        if (typeof cmEnsureResearch !== 'function') return [];
+        setStatus(`Researching ${rec.name}…`);
+        const entry = await cmEnsureResearch(rec);
+        const available = (entry.ideas?.strategies || []).map(x => x.id);
+        if (!available.length) return [];
+        const ids = cmAssignStrategies(n, rec.path, available, rec.name);
+        const briefs = [];
+        for (const id of ids) {
+          const b = cmTakeConcept(rec.path, id);
+          if (b) briefs.push({ ...b, analysis: entry.analysis });
+        }
+        const win = cmWidthWindow(rec.path, rec.name);
+        try {
+          _cmResearchFocus = { fullPath: rec.path, name: rec.name };
+          window.__charmResearch.lastBriefs = briefs.map(b => ({
+            charm: rec.name, strategy: b.strategyId, conceptIndex: b.conceptIndex,
+            title: b.concept?.title, window: win,
+          }));
+        } catch (_) {}
+        setStatus(`${rec.name}: ${briefs.length} brief${briefs.length === 1 ? '' : 's'} · ladder ${win.min}–${win.max} (${win.band}) · ${briefs.map(b => CM_STRATEGY_BY_ID[b.strategyId]?.label || b.strategyId).join(', ')}`);
+        // Repaint so the concept bank immediately shows what was just consumed.
+        try { _cmRenderResearchDetail(); } catch (_) {}
+        return briefs;
+      } catch (e) {
+        console.warn('[charm-research] brief preparation failed, falling back to legacy prompt', e);
+        setStatus(`Research unavailable (${e?.message || e}) — using legacy prompt.`);
+        return [];
+      }
+    }
+
     // Internal helper function for single iteration runs
-async function generateCharmQuad(targetCharmRef, targetEarringRef) {
+async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) {
         const timestamp = Date.now() + Math.floor(Math.random() * 10000);
         const folderId = `Deriv_${timestamp}`;
         const outputBasePath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`;
@@ -9150,7 +9397,16 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 sourceEarring: targetEarringRef?.fullPath || null,
                 lineArtRef: lineArtRef?.fullPath || null,
                 model: generationModel,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                // Design provenance. `strategy` is what closes the feedback
+                // loop: the library reconcile reads it back out of every set's
+                // manifest, so approval rates per strategy are rebuildable
+                // from Storage and shared across terminals.
+                promptVersion: designBrief ? CM_PROMPT_VERSION : 'legacy-v1',
+                strategy: designBrief?.strategyId || null,
+                conceptIndex: designBrief ? designBrief.conceptIndex : null,
+                concept: designBrief?.concept || null,
+                researchModel: designBrief ? _cmResearchModel() : null,
             };
 
             await postJson("geminiImageProxy", {
@@ -9160,14 +9416,38 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 manifest: manifest,
             });
 
-            // STEP 1 - ONLY GENERATE THE BASE CHARM
+            // STEP 1 — DESIGN THE NEW CHARM
+            //
+            // Two changes from the original call, and between them they are the
+            // whole fix for "derivatives are just small alterations":
+            //
+            //  1. image_roles: "style_reference". Without it the proxy appends
+            //     "IMAGE 1 — LOCKED SOURCE TEMPLATE… preserve its composition",
+            //     "IMAGE 2 — …use its exact silhouette" and "FINAL IMAGE-ROLE
+            //     LOCK: edit IMAGE 1 in place" AFTER the prompt. No wording in
+            //     the prompt can outrank that, which is why every previous
+            //     attempt to loosen the prompt failed.
+            //  2. The reference is passed ONCE, as material truth only. Sending
+            //     it twice made the model treat it as both canvas and design
+            //     truth, doubling the anchoring.
+            //
+            // The subject now arrives as text from the research brief.
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
-            if(prev0) prev0.innerHTML = window.getSpinnerHTML("Generating Base...");
+            const stratLabel = designBrief ? (CM_STRATEGY_BY_ID[designBrief.strategyId]?.label || designBrief.strategyId) : null;
+            if(prev0) prev0.innerHTML = window.getSpinnerHTML(designBrief ? `Designing: ${stratLabel}…` : "Generating Base...");
+            const designPrompt = designBrief
+              ? cmBuildDesignPrompt(designBrief, designBrief.analysis, { modelId: generationModel })
+              : promptStrCharm;
             await postImageGeneration({
-                kind: "edits", activeCategory: "Charms", 
-                input_storage_path: targetCharmRef.fullPath, input_charm_storage_path: targetCharmRef.fullPath,
+                kind: "edits", activeCategory: "Charms",
+                input_storage_path: targetCharmRef.fullPath,
+                // Deliberately NOT also passing input_charm_storage_path when a
+                // brief exists — one material reference is enough and two
+                // anchors the model harder.
+                input_charm_storage_path: designBrief ? undefined : targetCharmRef.fullPath,
+                image_roles: designBrief ? "style_reference" : undefined,
                 output_base_path: outputBasePath, slotIndex: 0,
-                prompt: promptStrCharm
+                prompt: designPrompt
             }, undefined, generationModel);
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
@@ -9246,8 +9526,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
             const promises = [];
             for (const charmData of charmsToProcess) {
+                // One research pass per reference charm, then one DIFFERENT
+                // strategy rung per derivative. Falls back to the legacy
+                // single-prompt path if research is unavailable.
+                const briefs = await cmPrepareBriefs(
+                    { path: charmData.fullPath, name: charmData.name, itemRef: charmData.itemRef || ref(storage, charmData.fullPath) },
+                    derivCount
+                );
                 for (let d = 0; d < derivCount; d++) {
-                    promises.push(generateCharmQuad(charmData, currentEarringRef));
+                    promises.push(generateCharmQuad(charmData, currentEarringRef, briefs[d] || null));
                     await sleep(300); // Small stagger to mitigate rate limiting on bulk request startup
                 }
             }
@@ -16766,6 +17053,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       unattributed: 0,       // Deriv sets whose manifest had no sourceCharm
       tiles: new Map(),      // storagePath -> tile element (reused between renders)
       thumbUrls: new Map(),  // storagePath -> object URL
+      thumbLoading: new Map(),// storagePath -> in-flight load promise
       lastFiltered: [],
       busy: false,
       reconciling: false,
@@ -17067,6 +17355,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
               rec.name = m?.sourceCharmName || _cmBaseName(src) || null;
               const t = Date.parse(m?.timestamp || '');
               if (Number.isFinite(t) && t > 0) rec.ts = t;
+              // Design provenance for the feedback loop. Only sets generated by
+              // the research engine carry these; legacy sets leave them null and
+              // are simply excluded from the per-strategy statistics.
+              if (m?.strategy) rec.strategy = m.strategy;
+              if (m?.conceptIndex != null) rec.conceptIndex = m.conceptIndex;
+              if (m?.concept?.title) rec.conceptTitle = m.concept.title;
             } catch (_) {
               // No manifest (or unreadable): the set still exists and still
               // counts toward totals, it just can't be attributed to a design.
@@ -17086,7 +17380,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         // ---- 6. finalise ----
         _cmRebuildLists(tplItems, binItems);
         _cmDeriveUsage();
+        // Close the feedback loop: recompute approval rate per strategy from
+        // the manifests we just reconciled. Rebuilt from Storage every time
+        // rather than incremented, so it self-heals if a set is deleted.
+        try {
+          if (typeof cmRebuildStrategyStats === 'function') {
+            await _cmResearchLoad();
+            cmRebuildStrategyStats(Object.values(_cmIndex.sets || {}));
+            _cmRenderStrategyStats();
+          }
+        } catch (e) { console.warn('[charm-research] strategy stats rebuild failed', e); }
         _cmRender();
+        _cmResearchCoverage();
         _cmLib.indexLoaded = true;
 
         if (_cmIndexDirty) {
@@ -17429,6 +17734,16 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (!rec) return;
       const path = rec.path;
 
+      // De-dupe concurrent loads for the same object. Without this, two renders
+      // landing in the same tick both see an img-less tile, both pass the check
+      // above, and the image is downloaded twice.
+      const inFlight = _cmLib.thumbLoading.get(path);
+      if (inFlight) return inFlight;
+      let _resolveLoad;
+      const gate = new Promise(res => { _resolveLoad = res; });
+      _cmLib.thumbLoading.set(path, gate);
+      const done = () => { _cmLib.thumbLoading.delete(path); _resolveLoad(); };
+
       const paint = (url) => {
         if (!tile.isConnected && !_cmLib.tiles.has(path)) return;
         const ph = tile.querySelector('.placeholder');
@@ -17451,6 +17766,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         cachePin(path);
         cacheTouchIfStale(path);
         paint(memUrl);
+        done();
         return;
       }
 
@@ -17462,6 +17778,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           _cmRegisterThumbUrl(path, u);
           cachePin(path);
           paint(u);
+          done();
           return;
         }
       } catch (_) {}
@@ -17476,6 +17793,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           _cmRegisterThumbUrl(path, u);
           cachePin(path);
           paint(u);
+          done();
           return;
         }
       } catch (_) {}
@@ -17492,17 +17810,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         _cmRegisterThumbUrl(path, u);
         cachePin(path);
         paint(u);
+        done();
         return;
       } catch (_) {}
 
       // 4. Last resort: show the remote URL directly. Nothing is cached, so
       // this path is slow on every visit — it exists only so a rules or CORS
       // misconfiguration degrades to "visible" rather than "broken".
-      if (downloadUrl) { paint(cacheBust(downloadUrl)); return; }
+      if (downloadUrl) { paint(cacheBust(downloadUrl)); done(); return; }
       if (tile.isConnected) {
         const ph = tile.querySelector('.placeholder');
         if (ph) { ph.textContent = '!'; ph.style.color = '#fca5a5'; }
       }
+      done();
     }
 
     // ---------------------------------------------------------------------
@@ -18146,6 +18466,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       cacheClearPins();
       _cmLib.thumbUrls.forEach((u) => { _activeBlobUrls.delete(u); try { URL.revokeObjectURL(u); } catch (_) {} });
       _cmLib.thumbUrls.clear();
+      _cmLib.thumbLoading.clear();
       _cmLib.tiles.clear();
       await cachePurgeAll();
       if (btn) { btn.disabled = false; btn.textContent = 'Clear cache'; }
@@ -18294,8 +18615,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const derivCount = parseInt(document.getElementById('derivativesPerCharmInput')?.value, 10) || 1;
         const promises = [];
         for (const charmData of charmsToProcess) {
+          const briefs = await cmPrepareBriefs(
+            { path: charmData.fullPath, name: charmData.name, itemRef: ref(storage, charmData.fullPath) },
+            derivCount
+          );
           for (let d = 0; d < derivCount; d++) {
-            promises.push(generateCharmQuad(charmData, currentEarringRef));
+            promises.push(generateCharmQuad(charmData, currentEarringRef, briefs[d] || null));
             await sleep(300);
           }
         }
@@ -18314,6 +18639,1262 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         execBtn.disabled = false;
       }
     }, { capture: true });
+
+    // =====================================================================
+    // CHARM DESIGN RESEARCH ENGINE
+    // ---------------------------------------------------------------------
+    // WHY THIS EXISTS
+    //
+    // The old Charm Maker asked one image model, in one call, to
+    // simultaneously (a) work out why a charm sells, (b) invent a
+    // complementary design, and (c) render it — while the request harness was
+    // telling it "edit IMAGE 1 in place" and "use its exact silhouette".
+    // Image models are interpolators: shown a picture and asked for something
+    // similar, they return a near-copy. That is what was happening, and no
+    // amount of prompt rewording could beat a role label appended after the
+    // prompt.
+    //
+    // Two changes fix it. The harness now supports image_roles:
+    // "style_reference" (see geminiImageProxy-background.js), which scopes the
+    // reference to material and finish and makes reusing its silhouette an
+    // explicit failure. And the thinking moves OUT of the image model into
+    // this engine, which separates three jobs that were previously mashed
+    // together:
+    //
+    //   1. ANALYSE   (vision → text)  What is this object, who buys it, and
+    //                                 which of its attributes are load-bearing
+    //                                 for the purchase versus incidental?
+    //   2. IDEATE    (text → text)    Given that, invent concrete new designs
+    //                                 along a ladder of seven strategies at
+    //                                 increasing distance from the reference.
+    //                                 No image is supplied here on purpose —
+    //                                 visual anchoring is what produced
+    //                                 timid ideas.
+    //   3. RENDER    (text+image →    Draw ONE named concept, taking material
+    //                 image)          and finish from the reference and the
+    //                                 subject from the brief.
+    //
+    // Steps 1 and 2 run ONCE per reference charm and are cached in a shared
+    // Firebase document, so the 200-charm library is analysed once and every
+    // terminal reuses it. Each run yields 21 concrete design briefs per
+    // reference (7 strategies × 3 concepts), so generating derivatives costs
+    // no LLM calls at all — it just consumes unused briefs, which also means
+    // no two derivatives from one charm are ever the same idea.
+    //
+    // THE WIDTH PROBLEM
+    //
+    // "How far from the proven design should we go" was previously one vague
+    // instruction the model averaged into mush. It is now a discrete ladder:
+    //
+    //   1 variant    same subject, new pose or sub-type
+    //   2 sibling    another member of the same family
+    //   2 companion  a different object designed to be worn WITH the reference
+    //   3 adjacent   an object from the same world as the subject
+    //   3 occasion   same sentiment and occasion, different vehicle
+    //   4 motif      the reference's decorative language on a new subject
+    //   5 persona    a new genre aimed at the same buyer
+    //
+    // Each derivative in a batch gets a DIFFERENT rung, so the width is
+    // sampled rather than guessed — and because approvals are recorded per
+    // strategy, the sampler shifts toward the rungs that actually earn
+    // approval. Sales rank widens or narrows the range considered: a charm
+    // with a big proven audience can afford exploration, because even a
+    // moderate hit addresses a large pool; a thinner seller stays close to
+    // what already worked.
+    // =====================================================================
+
+    const CM_RESEARCH_SCHEMA   = 1;
+    const CM_RESEARCH_PATH     = `${CM_INDEX_DIR}/charm_research_v1.json`;
+    const CM_RESEARCH_LOCAL_KEY = 'cm_research_v1';
+    const CM_PROMPT_VERSION    = 'design-v2';
+    const CM_RESEARCH_MODEL_LS = 'lg1_research_model_v1';
+    const CM_DEFAULT_RESEARCH_MODEL = 'gpt-5.4-mini';
+
+    // ---------------------------------------------------------------------
+    // The strategy ladder
+    // ---------------------------------------------------------------------
+    const CM_STRATEGIES = [
+      {
+        id: 'variant', distance: 1, label: 'Pose variant',
+        blurb: 'Same subject, new pose or sub-type',
+        directive:
+          'Keep the SAME primary subject, but in a materially different pose, attitude, age or sub-type. ' +
+          'A shopper must read it as the same thing, presented freshly — not as the same drawing nudged. ' +
+          'The outline must change enough to be obviously a different piece on a shelf next to the original.',
+      },
+      {
+        id: 'sibling', distance: 2, label: 'Family sibling',
+        blurb: 'Another member of the same family',
+        directive:
+          'Change the subject to a DIFFERENT member of the same family, genus or category as the reference, ' +
+          'chosen because the reference\'s buyers plausibly love it too. Same world, different creature or object.',
+      },
+      {
+        id: 'companion', distance: 2, label: 'Companion piece',
+        blurb: 'Designed to be worn WITH the reference',
+        directive:
+          'Design a piece intended to be worn ALONGSIDE the reference on the same chain or as its pair — ' +
+          'a deliberate second purchase for someone who already owns the reference. It must be visually ' +
+          'complementary but clearly a separate object, and smaller or simpler is often right. ' +
+          'State in the concept what it adds when worn together.',
+      },
+      {
+        id: 'adjacent', distance: 3, label: 'Adjacent object',
+        blurb: 'An object from the same world',
+        directive:
+          'Change the subject to an OBJECT strongly associated with the reference\'s subject in the buyer\'s ' +
+          'mind — an accessory, habitat, tool, food or symbol from the same world. Not a creature this time ' +
+          'unless the reference was an object.',
+      },
+      {
+        id: 'occasion', distance: 3, label: 'Occasion pivot',
+        blurb: 'Same sentiment, different vehicle',
+        directive:
+          'Hold the OCCASION and the SENTIMENT the reference is bought for, and change the vehicle entirely. ' +
+          'If the reference is bought as a memorial, design a different memorial motif. If as a milestone gift, ' +
+          'a different milestone symbol. The emotional job stays identical; the imagery does not.',
+      },
+      {
+        id: 'motif', distance: 4, label: 'Motif transplant',
+        blurb: 'The reference\'s decorative language on a new subject',
+        directive:
+          'Take the reference\'s DECORATIVE LANGUAGE — its engraving vocabulary, cutout rhythm, symmetry and ' +
+          'edge treatment — and apply it to a subject from a different category that suits the same buyer. ' +
+          'The family resemblance should be in the craft, not the subject.',
+      },
+      {
+        id: 'persona', distance: 5, label: 'Persona expansion',
+        blurb: 'A new genre for the same buyer',
+        directive:
+          'Ignore the reference\'s subject entirely. Design for the same BUYER PERSONA in a different genre ' +
+          'they are highly likely to also shop — reasoning from who they are, what else they own and what else ' +
+          'they gift. Justify the leap explicitly in the concept.',
+      },
+    ];
+    const CM_STRATEGY_BY_ID = Object.fromEntries(CM_STRATEGIES.map(s => [s.id, s]));
+
+    // ---------------------------------------------------------------------
+    // Research index — same three-stage load as the library index
+    // ---------------------------------------------------------------------
+    let _cmResearch = {
+      schema: CM_RESEARCH_SCHEMA,
+      updatedAt: 0,
+      analyses: {},      // charmPath -> { at, model, analysis, ideas, used:{strategyId:[conceptIdx]} }
+      sales: {},         // charmPath -> { rank, units, title, tags, at }
+      strategyStats: {}, // strategyId -> { generated, approved }
+    };
+    let _cmResearchDirty = false;
+    let _cmResearchLoaded = false;
+
+    function _cmResearchEmpty() {
+      return { schema: CM_RESEARCH_SCHEMA, updatedAt: 0, analyses: {}, sales: {}, strategyStats: {} };
+    }
+    function _cmResearchNormalise(raw) {
+      const out = _cmResearchEmpty();
+      if (!raw || typeof raw !== 'object' || Number(raw.schema) !== CM_RESEARCH_SCHEMA) return out;
+      out.updatedAt = Number(raw.updatedAt) || 0;
+      if (raw.analyses && typeof raw.analyses === 'object') out.analyses = raw.analyses;
+      if (raw.sales && typeof raw.sales === 'object') out.sales = raw.sales;
+      if (raw.strategyStats && typeof raw.strategyStats === 'object') out.strategyStats = raw.strategyStats;
+      return out;
+    }
+    function _cmResearchMerge(base, incoming) {
+      const out = {
+        schema: CM_RESEARCH_SCHEMA,
+        updatedAt: Math.max(Number(base.updatedAt) || 0, Number(incoming.updatedAt) || 0),
+        analyses: { ...base.analyses },
+        sales: { ...base.sales },
+        strategyStats: { ...base.strategyStats },
+      };
+      // Merge FIELD BY FIELD, not whole-object-by-timestamp.
+      //
+      // Analysis and ideation are two separate writes moments apart, and the
+      // entry-level `at` only moves on the analysis write. Picking one whole
+      // entry by that timestamp therefore threw the ideas away: the remote copy
+      // (analysis only) and the local copy (analysis + ideas) had an identical
+      // `at`, the tie resolved to the remote, and the 21 freshly generated
+      // concepts vanished on save. Each field now survives on its own merit.
+      for (const [k, v] of Object.entries(incoming.analyses || {})) {
+        const cur = out.analyses[k];
+        if (!cur) { out.analyses[k] = v; continue; }
+        const newerAnalysis = (Number(v.at) || 0) > (Number(cur.at) || 0);
+        const curIdeasAt = Number(cur.ideas?.at) || 0;
+        const vIdeasAt = Number(v.ideas?.at) || 0;
+        // "Used" is a union: two terminals generating at once must not be handed
+        // the same brief, so a concept marked used anywhere stays used.
+        const used = {};
+        for (const src of [cur.used || {}, v.used || {}]) {
+          for (const [sid, list] of Object.entries(src)) {
+            used[sid] = [...new Set([...(used[sid] || []), ...(list || [])])];
+          }
+        }
+        out.analyses[k] = {
+          at: Math.max(Number(cur.at) || 0, Number(v.at) || 0),
+          model: newerAnalysis ? (v.model || cur.model) : (cur.model || v.model),
+          analysis: newerAnalysis ? (v.analysis || cur.analysis) : (cur.analysis || v.analysis),
+          ideas: vIdeasAt > curIdeasAt ? v.ideas : (cur.ideas || v.ideas || null),
+          used,
+        };
+      }
+      for (const [k, v] of Object.entries(incoming.sales || {})) {
+        const cur = out.sales[k];
+        if (!cur || (Number(v.at) || 0) >= (Number(cur.at) || 0)) out.sales[k] = v;
+      }
+      // Stats are counters: take the higher of each, since both terminals are
+      // reporting a monotonic tally derived from the same manifests.
+      for (const [k, v] of Object.entries(incoming.strategyStats || {})) {
+        const cur = out.strategyStats[k] || { generated: 0, approved: 0 };
+        out.strategyStats[k] = {
+          generated: Math.max(cur.generated || 0, v.generated || 0),
+          approved: Math.max(cur.approved || 0, v.approved || 0),
+        };
+      }
+      return out;
+    }
+
+    async function _cmResearchLoad({ force = false } = {}) {
+      if (_cmResearchLoaded && !force) return _cmResearch;
+      try {
+        const local = await cacheMetaGet(CM_RESEARCH_LOCAL_KEY);
+        if (local) _cmResearch = _cmResearchNormalise(local);
+      } catch (_) {}
+      try {
+        await ensureStorageSignedIn();
+        const buf = await getBytes(ref(storage, CM_RESEARCH_PATH));
+        const remote = _cmResearchNormalise(JSON.parse(new TextDecoder().decode(buf)));
+        _cmResearch = _cmResearchMerge(_cmResearch, remote);
+      } catch (e) {
+        const msg = String(e?.message || e || '');
+        if (!/object-not-found|404|does not exist/i.test(msg)) {
+          console.warn('[charm-research] remote read failed', e);
+        }
+      }
+      _cmResearchLoaded = true;
+      return _cmResearch;
+    }
+
+    let _cmResearchPush = null;
+    async function _cmResearchSave() {
+      try { await cacheMetaSet(CM_RESEARCH_LOCAL_KEY, _cmResearch); } catch (_) {}
+      if (!_cmResearchDirty) return false;
+      if (_cmResearchPush) return _cmResearchPush;
+      _cmResearchPush = (async () => {
+        try {
+          await ensureStorageSignedIn();
+          try {
+            const buf = await getBytes(ref(storage, CM_RESEARCH_PATH));
+            const remote = _cmResearchNormalise(JSON.parse(new TextDecoder().decode(buf)));
+            _cmResearch = _cmResearchMerge(remote, _cmResearch);
+          } catch (_) {}
+          _cmResearch.updatedAt = Date.now();
+          await uploadBytesResumable(
+            ref(storage, CM_RESEARCH_PATH),
+            new Blob([JSON.stringify(_cmResearch)], { type: 'application/json' }),
+            { contentType: 'application/json', cacheControl: 'no-cache, max-age=0' }
+          );
+          _cmResearchDirty = false;
+          await cacheMetaSet(CM_RESEARCH_LOCAL_KEY, _cmResearch);
+          return true;
+        } catch (e) {
+          console.warn('[charm-research] remote write failed — research stays local only', e);
+          return false;
+        } finally { _cmResearchPush = null; }
+      })();
+      return _cmResearchPush;
+    }
+
+    // ---------------------------------------------------------------------
+    // Vision input: downscale before sending
+    // ---------------------------------------------------------------------
+    // A 2K charm PNG is several MB; base64'd it approaches the Netlify body
+    // limit and openaiProxy logs the whole payload. 768px is more than a
+    // vision model needs to read silhouette, engraving and finish.
+    const CM_VISION_EDGE = 768;
+    const CM_VISION_MAX_RAW_BYTES = 3 * 1024 * 1024;
+
+    async function _cmLoadCharmBlob(rec) {
+      try {
+        const cached = await getCachedBlob(rec.path);
+        if (cached?.blob) return cached.blob;
+      } catch (_) {}
+      const bytes = await getBytes(rec.itemRef || ref(storage, rec.path));
+      return new Blob([bytes], { type: rec.contentType || _cmGuessMime(rec.name) });
+    }
+
+    // Draw whatever we managed to decode onto a downscaled canvas. The charms
+    // sit on pure black, so the canvas is pre-filled black rather than left
+    // transparent — otherwise a PNG with alpha composites onto white and the
+    // model reads the metal tone against the wrong ground.
+    function _cmCanvasFrom(src, w0, h0) {
+      const scale = Math.min(1, CM_VISION_EDGE / Math.max(w0, h0));
+      const w = Math.max(1, Math.round(w0 * scale));
+      const h = Math.max(1, Math.round(h0 * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(src, 0, 0, w, h);
+      return canvas.toDataURL('image/jpeg', 0.9);
+    }
+
+    // A 2K charm PNG is several MB; base64'd it approaches the Netlify body
+    // limit and openaiProxy logs the whole payload. 768px is more than a vision
+    // model needs to read silhouette, engraving and finish.
+    //
+    // Three decoders, because createImageBitmap is the fastest path but also
+    // the fussiest — it rejects blobs that an <img> element decodes without
+    // complaint. Losing a charm's research to a decoder quirk is not
+    // acceptable, so it degrades rather than throws.
+    async function _cmImageToDataUrl(rec) {
+      const blob = await _cmLoadCharmBlob(rec);
+
+      // 1. createImageBitmap — no DOM, no layout, fastest.
+      try {
+        const bmp = await createImageBitmap(blob);
+        const url = _cmCanvasFrom(bmp, bmp.width, bmp.height);
+        try { bmp.close(); } catch (_) {}
+        return url;
+      } catch (e) {
+        console.info('[charm-research] createImageBitmap declined this blob, falling back to <img>:', e?.message || e);
+      }
+
+      // 2. <img> + object URL. Decodes several things createImageBitmap won't.
+      let objUrl = null;
+      try {
+        objUrl = URL.createObjectURL(blob);
+        const img = await new Promise((resolve, reject) => {
+          const el = new Image();
+          el.onload = () => resolve(el);
+          el.onerror = () => reject(new Error('img decode failed'));
+          el.src = objUrl;
+        });
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        if (!w || !h) throw new Error('img decoded to zero dimensions');
+        return _cmCanvasFrom(img, w, h);
+      } catch (e) {
+        console.info('[charm-research] <img> decode also failed, sending the original bytes:', e?.message || e);
+      } finally {
+        if (objUrl) { try { URL.revokeObjectURL(objUrl); } catch (_) {} }
+      }
+
+      // 3. Send the original bytes unscaled. Guarded on size, because the point
+      //    of downscaling was to stay well inside the request body limit.
+      if (blob.size > CM_VISION_MAX_RAW_BYTES) {
+        throw new Error(`Could not downscale ${rec.name} and it is too large to send raw (${Math.round(blob.size / 1048576)} MB)`);
+      }
+      return await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result));
+        fr.onerror = () => reject(new Error('FileReader failed on charm blob'));
+        fr.readAsDataURL(blob);
+      });
+    }
+
+    function _cmResearchModel() {
+      try { return localStorage.getItem(CM_RESEARCH_MODEL_LS) || CM_DEFAULT_RESEARCH_MODEL; }
+      catch (_) { return CM_DEFAULT_RESEARCH_MODEL; }
+    }
+
+    async function _cmLlmJson(messages, { maxTokens = 4000 } = {}) {
+      const res = await postJson('openaiProxy', {
+        model_override: _cmResearchModel(),
+        response_format: { type: 'json_object' },
+        max_tokens: maxTokens,
+        messages,
+      });
+      const text = res?.choices?.[0]?.message?.content;
+      if (!text) throw new Error('Research model returned no content');
+      try { return JSON.parse(text); }
+      catch (e) { throw new Error(`Research model returned unparseable JSON: ${String(text).slice(0, 200)}`); }
+    }
+
+    // ---------------------------------------------------------------------
+    // STAGE 1 — ANALYSE  (vision)
+    // ---------------------------------------------------------------------
+    const CM_ANALYSE_SYSTEM =
+      'You are a senior jewellery product analyst for a high-volume Etsy shop selling flat, laser-cut, ' +
+      'high-polish gold charms. You reason about commercial merchandising, not art criticism. ' +
+      'You are shown a charm that is a PROVEN TOP SELLER — it is in the shop\'s top 200 designs by units ' +
+      'sold over twelve months, so do not question whether it sells; explain WHY, and be specific and ' +
+      'falsifiable rather than flattering. Reply with JSON only.';
+
+    function _cmAnalysePrompt(salesLine) {
+      return `Analyse the charm in the image. It is one of this shop's best sellers.${salesLine}
+
+Return JSON with EXACTLY this shape:
+
+{
+  "identification": {
+    "primarySubject": "what the object is, in the words a shopper would use",
+    "taxonomy": ["broad genre", "family", "specific type"],
+    "pose": "how it is presented",
+    "viewAngle": "front-facing / profile / three-quarter",
+    "silhouetteClass": "one of: compact-solid, open-linear, radial, elongated-vertical, wide-horizontal, irregular-organic",
+    "aspect": "portrait / square / landscape",
+    "detailDensity": 1,
+    "engravingLanguage": "the vocabulary of the surface marks: line weight, whether lines are incised or filled, how sparse",
+    "negativeSpace": "how cutouts and holes are used, and how much open area there is",
+    "bail": "how the hanging loop is integrated into the body",
+    "metal": "alloy and colour as it reads",
+    "finish": "polish / texture"
+  },
+  "houseStyle": "One paragraph another designer could work from, describing ONLY material, finish, lighting, edge quality, engraving depth, detail density and background — no mention of this charm's subject.",
+  "buyer": {
+    "personas": [ { "name": "short label", "whoTheyAre": "", "buyingFor": "self or a specific recipient", "occasions": ["..."] } ],
+    "sentimentDrivers": ["the feelings this piece is bought to express"],
+    "giftVsSelf": "which dominates and why"
+  },
+  "whyItSells": [ { "driver": "the mechanism, e.g. huge addressable niche / strong gifting occasion / low-competition search term / instantly readable silhouette at thumbnail size", "mechanism": "how that converts to a sale", "confidence": 0.0 } ],
+  "loadBearing": ["attributes that MUST be preserved in any derivative or the buyer is lost — be strict, list 3 to 6"],
+  "free": ["attributes that are incidental to the purchase and can change freely — list 4 to 8"],
+  "thumbnailReadability": "what makes it legible at Etsy thumbnail size, or what limits that"
+}
+
+Rules:
+- detailDensity is an integer 1 to 5 where 1 is a bare silhouette and 5 is densely engraved.
+- confidence is 0 to 1.
+- Put the SUBJECT in identification, never in houseStyle. houseStyle must be reusable for a completely different subject.
+- loadBearing is the crux: distinguish what the buyer is actually buying (the niche, the sentiment, the readability) from how this particular piece happens to execute it. Being wrong here produces either timid clones or off-target designs.`;
+    }
+
+    async function cmAnalyseCharm(rec, { force = false } = {}) {
+      await _cmResearchLoad();
+      const existing = _cmResearch.analyses[rec.path];
+      if (existing?.analysis && !force) return existing;
+
+      const dataUrl = await _cmImageToDataUrl(rec);
+      const sales = _cmResearch.sales[rec.path];
+      const eff = cmEffectiveRank(rec.path, rec.name);
+      let salesLine = '';
+      if (sales || eff.rank) {
+        const bits = [];
+        if (eff.rank) bits.push(`ranked #${eff.rank} of ${_cmRankUniverse().length || 200} by units sold`);
+        if (sales?.units) bits.push(`${sales.units} units in twelve months`);
+        if (sales?.title) bits.push(`listing title: "${sales.title}"`);
+        if (sales?.tags) bits.push(`listing tags: ${sales.tags}`);
+        if (bits.length) salesLine = ` Known sales data: ${bits.join('; ')}.`;
+      }
+
+      const analysis = await _cmLlmJson([
+        { role: 'system', content: CM_ANALYSE_SYSTEM },
+        { role: 'user', content: [
+          { type: 'text', text: _cmAnalysePrompt(salesLine) },
+          { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
+        ] },
+      ], { maxTokens: 2500 });
+
+      const entry = {
+        at: Date.now(),
+        model: _cmResearchModel(),
+        analysis,
+        ideas: existing?.ideas || null,
+        used: existing?.used || {},
+      };
+      _cmResearch.analyses[rec.path] = entry;
+      _cmResearchDirty = true;
+      await _cmResearchSave();
+      return entry;
+    }
+
+    // ---------------------------------------------------------------------
+    // STAGE 2 — IDEATE  (text only, deliberately no image)
+    // ---------------------------------------------------------------------
+    const CM_IDEATE_SYSTEM =
+      'You are a jewellery range planner. You design new products for an existing customer base, working from ' +
+      'a written analysis of a proven seller — you deliberately do NOT see the product, because looking at it ' +
+      'makes designers copy it. Your job is to invent pieces that a shopper who bought the reference would ' +
+      'also buy, at several defined distances from it. Be concrete: name the actual object and describe the ' +
+      'actual shape. Never propose "a similar X" or "a stylised version of Y". Reply with JSON only.';
+
+    function _cmIdeatePrompt(analysis, conceptsPer) {
+      const ladder = CM_STRATEGIES.map(s =>
+        `  "${s.id}" (distance ${s.distance} — ${s.label}): ${s.directive}`
+      ).join('\n');
+      return `Here is the analysis of a proven best-selling charm:
+
+${JSON.stringify(analysis, null, 1)}
+
+The manufacturing envelope is fixed and identical for every design: one flat piece of laser-cut sheet metal, ` +
+`front-facing, no 3D thickness, a single integrated hanging loop, no text, roughly square framing. Anything ` +
+`that cannot be made that way is not a valid concept.
+
+Design along this ladder. Each rung is a defined distance from the reference:
+
+${ladder}
+
+For EVERY rung, propose exactly ${conceptsPer} concepts. They must be different ideas, not rewordings.
+
+Return JSON:
+
+{
+  "strategies": [
+    {
+      "id": "variant",
+      "rationale": "why this rung is worth trying for THIS reference and THIS buyer",
+      "concepts": [
+        {
+          "title": "3 to 6 words a shopper would understand",
+          "subject": "exactly what the object is. Name it plainly. 1 to 2 sentences.",
+          "silhouette": "the outline, described so an illustrator could draw it without seeing anything: overall shape, proportions, what protrudes, where it is widest, how it reads at thumbnail size. 2 to 3 sentences. This must NOT describe the reference's outline.",
+          "engravingPlan": "which surface marks go where, respecting the reference's engraving language and detail density",
+          "negativeSpacePlan": "which areas are cut fully through, and why",
+          "bailPlan": "where the integrated loop sits so the piece hangs level",
+          "whyItShouldSell": "the commercial argument, tied to a named persona or occasion from the analysis",
+          "keepsLoadBearing": ["which of the analysis's loadBearing attributes this preserves, and how"],
+          "distinctness": "one sentence stating how a shopper would tell this apart from the reference at a glance"
+        }
+      ]
+    }
+  ]
+}
+
+Hard rules:
+- Include all ${CM_STRATEGIES.length} rungs, with these exact ids: ${CM_STRATEGIES.map(s => s.id).join(', ')}.
+- Every concept must preserve every attribute in the analysis's "loadBearing" list. Say how, in keepsLoadBearing.
+- Every concept must change at least one attribute from "free" enough to be visibly a different product.
+- "silhouette" is the most important field. A vague silhouette produces a copy of the reference, because the renderer will fall back on the only shape it can see. Be geometric and specific.
+- No concept may be a mirrored, rotated, rescaled or lightly restyled version of the reference.
+- Do not propose text, initials, birthstones, moving parts, enamel or multi-part assemblies.`;
+    }
+
+    const CM_CONCEPTS_PER_STRATEGY = 3;
+
+    async function cmIdeateCharm(rec, { force = false } = {}) {
+      await _cmResearchLoad();
+      let entry = _cmResearch.analyses[rec.path];
+      if (!entry?.analysis) entry = await cmAnalyseCharm(rec);
+      if (entry.ideas?.strategies?.length && !force) return entry;
+
+      const ideas = await _cmLlmJson([
+        { role: 'system', content: CM_IDEATE_SYSTEM },
+        { role: 'user', content: _cmIdeatePrompt(entry.analysis, CM_CONCEPTS_PER_STRATEGY) },
+      ], { maxTokens: 8000 });
+
+      // Keep only rungs we know, and drop empty ones, so a partial model reply
+      // degrades to fewer strategies rather than throwing.
+      const clean = (ideas?.strategies || [])
+        .filter(s => CM_STRATEGY_BY_ID[s?.id] && Array.isArray(s.concepts) && s.concepts.length)
+        .map(s => ({ id: s.id, rationale: String(s.rationale || ''), concepts: s.concepts.filter(c => c?.subject && c?.silhouette) }))
+        .filter(s => s.concepts.length);
+      if (!clean.length) throw new Error('Ideation returned no usable concepts');
+
+      entry.ideas = { at: Date.now(), model: _cmResearchModel(), strategies: clean };
+      entry.used = entry.used || {};
+      _cmResearch.analyses[rec.path] = entry;
+      _cmResearchDirty = true;
+      await _cmResearchSave();
+      return entry;
+    }
+
+    async function cmEnsureResearch(rec, opts = {}) {
+      const entry = await cmIdeateCharm(rec, opts);
+      return entry;
+    }
+
+    // ---------------------------------------------------------------------
+    // STAGE 2b — pick which rung, and which unused concept on it
+    // ---------------------------------------------------------------------
+    // Laplace-smoothed approval rate per rung. A rung with no history sits at
+    // 0.5, so it is neither favoured nor buried; a rung that keeps getting
+    // rejected decays but never reaches zero, which preserves exploration.
+    function cmStrategyWeight(id) {
+      const st = _cmResearch.strategyStats?.[id] || { generated: 0, approved: 0 };
+      return (Number(st.approved || 0) + 1) / (Number(st.generated || 0) + 2);
+    }
+
+    // Rank without data entry.
+    //
+    // A top-200 export is almost always already numbered — "001_cat_sitting.png",
+    // "12 - paw print.png", "#3_dog_bone.png". If a filename starts with a number
+    // then the rank is sitting right there in the upload, so it is read straight
+    // off and nothing needs pasting. An explicitly supplied rank always wins.
+    function cmRankFromFilename(name) {
+      const m = /^\s*#?\s*(\d{1,4})\s*(?:[-_.)\]]|\s)/.exec(String(name || ''));
+      if (!m) return null;
+      const n = parseInt(m[1], 10);
+      // 0 is not a rank, and four digits past 500 is more likely a year or an
+      // SKU than a position in a 200-row list.
+      if (!Number.isFinite(n) || n < 1 || n > 500) return null;
+      return n;
+    }
+
+    function cmEffectiveRank(path, name) {
+      const explicit = Number(_cmResearch.sales?.[path]?.rank);
+      if (Number.isFinite(explicit) && explicit > 0) return { rank: explicit, source: 'data' };
+      const fromName = cmRankFromFilename(name || _cmBaseName(path));
+      if (fromName) return { rank: fromName, source: 'filename' };
+      return { rank: null, source: 'none' };
+    }
+
+    // Every rank we know about, from either source, so percentiles are computed
+    // against the whole library rather than only the rows that were pasted.
+    function _cmRankUniverse() {
+      const ranks = [];
+      for (const rec of _cmLib.items) {
+        const r = cmEffectiveRank(rec.path, rec.name);
+        if (r.rank) ranks.push(r.rank);
+      }
+      // Include ranked charms that are no longer in the library (soft-deleted)
+      // only if the library itself is empty, so the universe is never zero-size
+      // purely because the mosaic has not loaded yet.
+      if (!ranks.length) {
+        for (const v of Object.values(_cmResearch.sales || {})) {
+          if (Number(v.rank) > 0) ranks.push(Number(v.rank));
+        }
+      }
+      return ranks.sort((a, b) => a - b);
+    }
+
+    // Sales rank decides how far up the ladder we are willing to climb. A
+    // reference with a large proven audience can afford distance, because even
+    // a partial hit addresses a big pool. A thinner seller stays near what
+    // worked. With no sales data everything is treated as mid-pack.
+    function cmWidthWindow(charmPath, charmName) {
+      const eff = cmEffectiveRank(charmPath, charmName);
+      const ranks = _cmRankUniverse();
+      // Below three ranked charms a percentile is meaningless, so everything is
+      // treated as mid-pack rather than inventing a band from one data point.
+      // This is also the no-rank-at-all default: ladder 1-4, which is the
+      // balanced spread. Rank tunes the range; it is never required.
+      if (!eff.rank || ranks.length < 3) return { min: 1, max: 4, band: 'unranked', rankSource: eff.source };
+      const pos = ranks.indexOf(eff.rank);
+      const pct = pos < 0 ? 0.5 : pos / Math.max(1, ranks.length - 1); // 0 = best seller
+      if (pct <= 0.33) return { min: 1, max: 5, band: 'top third', rank: eff.rank, rankSource: eff.source };
+      if (pct <= 0.66) return { min: 1, max: 4, band: 'middle third', rank: eff.rank, rankSource: eff.source };
+      return { min: 1, max: 3, band: 'lower third', rank: eff.rank, rankSource: eff.source };
+    }
+
+    // Choose n distinct rungs, weighted, inside the width window. Distinct is
+    // the point: running one prompt n times was what produced n near-identical
+    // derivatives.
+    function cmAssignStrategies(n, charmPath, availableIds, charmName) {
+      const win = cmWidthWindow(charmPath, charmName);
+      let pool = CM_STRATEGIES
+        .filter(s => s.distance >= win.min && s.distance <= win.max)
+        .filter(s => !availableIds || availableIds.includes(s.id));
+      if (!pool.length) pool = CM_STRATEGIES.filter(s => !availableIds || availableIds.includes(s.id));
+      if (!pool.length) return [];
+
+      const picked = [];
+      const remaining = [...pool];
+      for (let k = 0; k < n; k++) {
+        if (!remaining.length) {
+          // More derivatives than rungs: start the ladder again so the second
+          // pass reuses rungs in weight order rather than clustering.
+          remaining.push(...pool);
+        }
+        const weights = remaining.map(s => cmStrategyWeight(s.id));
+        const total = weights.reduce((a, b) => a + b, 0);
+        let r = Math.random() * total;
+        let idx = 0;
+        for (; idx < remaining.length; idx++) { r -= weights[idx]; if (r <= 0) break; }
+        if (idx >= remaining.length) idx = remaining.length - 1;
+        picked.push(remaining[idx].id);
+        remaining.splice(idx, 1);
+      }
+      return picked;
+    }
+
+    // Hand out a concrete brief, marking it used so it is never issued twice.
+    function cmTakeConcept(charmPath, strategyId) {
+      const entry = _cmResearch.analyses?.[charmPath];
+      const strat = entry?.ideas?.strategies?.find(s => s.id === strategyId);
+      if (!strat?.concepts?.length) return null;
+      entry.used = entry.used || {};
+      const used = new Set(entry.used[strategyId] || []);
+      let idx = strat.concepts.findIndex((_, i) => !used.has(i));
+      if (idx === -1) {
+        // Every concept on this rung has been generated at least once. Recycle
+        // the least recently used rather than refusing, and note it.
+        idx = 0;
+        entry.used[strategyId] = [];
+      }
+      entry.used[strategyId] = [...new Set([...(entry.used[strategyId] || []), idx])];
+      _cmResearchDirty = true;
+      _cmResearchSave();
+      return { strategyId, conceptIndex: idx, concept: strat.concepts[idx], rationale: strat.rationale };
+    }
+
+    // ---------------------------------------------------------------------
+    // STAGE 3 — the render prompt
+    // ---------------------------------------------------------------------
+    // Only manufacturing and brand invariants are locked. The subject and the
+    // outline come from the brief. Note what is NOT here: any instruction to
+    // preserve the reference's footprint, contour or detail level. Those lines
+    // in the old promptStrCharm were the reason derivatives were near-copies.
+    const CM_MANUFACTURING_RULES = `MANUFACTURING ENVELOPE — NON-NEGOTIABLE, IDENTICAL FOR EVERY DESIGN:
+    • FLAT SHEET METAL: the piece is one perfectly flat, thin sheet of high-polish metal. No 3D volume, no thickness, no bevels, no rounded edges, no side profile.
+    • SHARP 2D CUTOUTS: laser-cut precision. Every edge is clean and deliberate.
+    • VIEWPOINT: perfectly front-facing, orthographic, 0% perspective tilt.
+    • BACKGROUND (ABSOLUTE): 100% PURE SOLID BLACK (#000000). No white, no grey, no gradient, no transparency. If the background is not pure black the image is a failure.
+    • ONE INTEGRATED BAIL: exactly one closed hanging loop, fused into the body as a single continuous piece of the same metal — never a separate jump ring clipped on, never two rings, never a chain or clasp. It must have a clear open hole big enough to read as threadable at a glance.
+    • BAIL BALANCE: place it so the piece hangs level — directly above the centre of mass, not above a protruding nose or tail.
+    • NO TEXT: never render letters, numbers or words.
+    • ENGRAVING IS SURFACE-LEVEL: all internal detail is laser etching. No embossing, no extrusion, no relief.
+    • ENGRAVE SPARINGLY AND DELIBERATELY: leave generous clear metal between marks. Do not crowd engravings and cutouts together.
+    • ONE OBJECT ONLY: a single charm, centred, filling the frame comfortably.`;
+
+    // Mirrors IMAGE_ROLE_LABELS.style_reference.lock in
+    // geminiImageProxy-background.js. Only appended when the selected provider
+    // is one the proxy does NOT add role labels for — currently OpenAI, whose
+    // images/edits call receives no framing whatsoever.
+    const CM_PROVIDER_ROLE_LOCK = `
+FINAL IMAGE-ROLE LOCK: you are designing a NEW product, not editing a supplied one. The reference image
+defines material, finish, lighting, background and engraving language ONLY. The SUBJECT, the SILHOUETTE and
+the OUTLINE come from the brief above and from nowhere else. Do not trace, mirror, re-pose, re-scale or
+lightly restyle the object shown in the reference. HARD FAIL: an output a shopper would identify as the same
+object as the reference. HARD FAIL: an output whose outline could be laid over the reference's outline and
+broadly match. If your draft resembles the reference's shape, discard it and design the brief's subject from
+scratch.`;
+
+    function _cmProviderInjectsRoleLabels(modelId) {
+      try {
+        const cfg = getImageModelConfig(modelId || getSelectedImageModel());
+        // Gemini requests go through callGeminiGenerateContentImage, which
+        // appends the role labels. Everything else does not.
+        return cfg?.provider === 'gemini';
+      } catch (_) { return false; }
+    }
+
+    function cmBuildDesignPrompt(brief, analysis, opts = {}) {
+      const c = brief.concept;
+      const id = analysis?.identification || {};
+      const strat = CM_STRATEGY_BY_ID[brief.strategyId];
+      const density = Number(id.detailDensity) || 3;
+      const needsLock = opts.forceRoleLock === true
+        || (opts.forceRoleLock !== false && !_cmProviderInjectsRoleLabels(opts.modelId));
+
+      return `DESIGN BRIEF — design ONE new flat metal jewellery charm from the specification below.
+
+You are NOT editing, restyling, re-posing or varying the object in the reference image. You are drawing a
+different object that this workshop would make. The reference image tells you HOW this workshop makes metal;
+this brief tells you WHAT to make.
+
+═══ WHAT TO MAKE ═══
+
+OBJECT: ${c.subject}
+
+OUTLINE / SILHOUETTE (follow this, not the reference):
+${c.silhouette}
+
+SURFACE ENGRAVING:
+${c.engravingPlan || 'Sparse incised detail consistent with the house engraving language below.'}
+
+CUT-THROUGH / NEGATIVE SPACE:
+${c.negativeSpacePlan || 'Use cutouts only where they clarify the silhouette.'}
+
+BAIL PLACEMENT:
+${c.bailPlan || 'A single integrated loop at the top, above the centre of mass so the piece hangs level.'}
+
+═══ HOUSE STYLE — take ALL of this from the reference image, and ONLY this ═══
+
+${analysis?.houseStyle || 'Flat high-polish gold sheet metal, crisp laser-cut edges, sparse incised engraving, pure black background.'}
+
+• Metal and colour: ${id.metal || 'polished gold tone'} — match the reference exactly.
+• Finish: ${id.finish || 'high polish'} — match the reference exactly.
+• Engraving language: ${id.engravingLanguage || 'sparse single-weight incised lines'} — same vocabulary, applied to the new subject.
+• Detail density: aim for ${density} out of 5, the same visual busyness as the reference. Do not exceed it; a denser piece reads as clutter at thumbnail size.
+• Bail construction: ${id.bail || 'a loop fused into the body as one continuous piece'} — same construction method, positioned for THIS silhouette.
+
+═══ WHAT MUST NOT COME FROM THE REFERENCE ═══
+
+Its subject. Its species or object type. Its pose. Its outline. Its proportions. Its composition.
+${c.distinctness ? `\nA shopper must tell them apart instantly: ${c.distinctness}` : ''}
+Design intent for this piece (${strat ? strat.label : brief.strategyId}): ${strat ? strat.directive : ''}
+
+${CM_MANUFACTURING_RULES}
+
+═══ SELF-CHECK BEFORE YOU OUTPUT ═══
+1. Is the object I have drawn plainly "${c.title || c.subject}"? If it is anything else, start again.
+2. Could my outline be laid over the reference's outline and broadly match? If yes, start again — I have copied instead of designed.
+3. Is the background pure #000000?
+4. Is there exactly ONE integrated bail, with a visible hole, positioned so the piece hangs level?
+5. Is the metal tone and polish identical to the reference?
+6. Is it flat, front-facing, with no 3D thickness anywhere?
+7. Is there any text? There must be none.
+
+HARD FAIL: an output a shopper would identify as the same object as the reference.
+HARD FAIL: an output whose silhouette is the reference's silhouette with minor edits.
+HARD FAIL: a background that is not pure black.
+HARD FAIL: more than one hanging loop, or a loop that reads as a separate attached ring.
+HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock ? '\n' + CM_PROVIDER_ROLE_LOCK : ''}`;
+    }
+
+    // ---------------------------------------------------------------------
+    // Feedback loop — approvals per rung
+    // ---------------------------------------------------------------------
+    // Harvested from set manifests during the library reconcile, so the stats
+    // are rebuildable from Storage and shared between terminals rather than
+    // living in one browser.
+    function cmRebuildStrategyStats(setRecords) {
+      const stats = {};
+      for (const s of CM_STRATEGIES) stats[s.id] = { generated: 0, approved: 0 };
+      for (const rec of setRecords) {
+        const sid = rec?.strategy;
+        if (!sid || !stats[sid]) continue;
+        stats[sid].generated += 1;
+        if (rec.state === 'app') stats[sid].approved += 1;
+      }
+      const before = JSON.stringify(_cmResearch.strategyStats || {});
+      _cmResearch.strategyStats = stats;
+      if (JSON.stringify(stats) !== before) {
+        _cmResearchDirty = true;
+        _cmResearchSave();
+      }
+      return stats;
+    }
+
+    // ---------------------------------------------------------------------
+    // Sales data ingest
+    // ---------------------------------------------------------------------
+    // Accepts pasted TSV/CSV with a filename column plus any of rank, units,
+    // title, tags — in any column order, with or without a header row.
+    function cmParseSalesTable(text) {
+      const rows = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (!rows.length) return { entries: [], errors: ['nothing pasted'] };
+      const split = (line) => line.includes('\t') ? line.split('\t') : _cmSplitCsv(line);
+
+      let header = null;
+      const first = split(rows[0]).map(c => c.trim().toLowerCase());
+      const looksHeader = first.some(c => /file|name|image|charm/.test(c))
+                       && first.some(c => /rank|unit|sold|qty|quantity|title|tag/.test(c));
+      let start = 0;
+      if (looksHeader) { header = first; start = 1; }
+
+      const colOf = (...names) => {
+        if (!header) return -1;
+        for (const n of names) {
+          const i = header.findIndex(h => h === n || h.includes(n));
+          if (i >= 0) return i;
+        }
+        return -1;
+      };
+      let cFile = colOf('filename', 'file', 'image', 'name', 'charm');
+      let cRank = colOf('rank', 'position', '#');
+      let cUnits = colOf('units', 'sold', 'qty', 'quantity', 'sales');
+      let cTitle = colOf('title');
+      let cTags = colOf('tags', 'tag');
+
+      const entries = [], errors = [];
+      for (let i = start; i < rows.length; i++) {
+        const cells = split(rows[i]).map(c => c.trim().replace(/^"|"$/g, ''));
+        if (!cells.length) continue;
+        // Without a header, guess: the cell that looks like a filename is the
+        // key, the first bare integer is the rank, the second is units.
+        let file = cFile >= 0 ? cells[cFile] : cells.find(c => /\.(png|jpe?g|webp|gif|avif)$/i.test(c));
+        if (!file) file = cells.find(c => /[a-z]/i.test(c) && !/^\d+$/.test(c));
+        if (!file) { errors.push(`row ${i + 1}: no filename column found`); continue; }
+        const ints = cells.filter(c => /^\d+$/.test(c)).map(Number);
+        const rank = cRank >= 0 ? Number(cells[cRank]) : (ints.length ? ints[0] : null);
+        const units = cUnits >= 0 ? Number(cells[cUnits]) : (ints.length > 1 ? ints[1] : null);
+        entries.push({
+          file,
+          rank: Number.isFinite(rank) ? rank : null,
+          units: Number.isFinite(units) ? units : null,
+          title: cTitle >= 0 ? cells[cTitle] || '' : '',
+          tags: cTags >= 0 ? cells[cTags] || '' : '',
+        });
+      }
+      return { entries, errors, hadHeader: !!header };
+    }
+
+    function _cmSplitCsv(line) {
+      const out = []; let cur = '', q = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+        else if (ch === ',' && !q) { out.push(cur); cur = ''; }
+        else cur += ch;
+      }
+      out.push(cur);
+      return out;
+    }
+
+    // Match a pasted filename to a library charm. Exact basename first, then
+    // case/extension-insensitive, then a normalised stem, so a spreadsheet
+    // export with different casing or a stripped extension still lands.
+    function cmMatchSalesToLibrary(entries) {
+      const norm = (s) => String(s || '').toLowerCase().replace(/\.[a-z0-9]+$/, '').replace(/[^a-z0-9]+/g, '');
+      const byExact = new Map(), byNorm = new Map();
+      for (const rec of _cmLib.items) {
+        byExact.set(rec.name, rec.path);
+        const n = norm(rec.name);
+        if (!byNorm.has(n)) byNorm.set(n, rec.path);
+      }
+      const matched = [], unmatched = [];
+      for (const e of entries) {
+        const path = byExact.get(e.file) || byNorm.get(norm(e.file));
+        if (path) matched.push({ ...e, path });
+        else unmatched.push(e);
+      }
+      return { matched, unmatched };
+    }
+
+    async function cmApplySalesData(matched) {
+      await _cmResearchLoad();
+      const now = Date.now();
+      for (const m of matched) {
+        _cmResearch.sales[m.path] = {
+          rank: m.rank, units: m.units,
+          title: m.title || undefined, tags: m.tags || undefined,
+          at: now,
+        };
+      }
+      _cmResearchDirty = true;
+      await _cmResearchSave();
+      return matched.length;
+    }
+
+
+    // ---------------------------------------------------------------------
+    // Design research — UI wiring
+    // ---------------------------------------------------------------------
+    function _cmResearchSetStatus(state, text, pct) {
+      const wrap = document.getElementById('cmResearchStatus');
+      const txt = document.getElementById('cmResearchStatusText');
+      const fill = document.getElementById('cmResearchFill');
+      if (!wrap || !txt) return;
+      wrap.classList.remove('working', 'ok', 'warn');
+      if (state) wrap.classList.add(state);
+      if (text) txt.textContent = text;
+      if (fill && typeof pct === 'number') {
+        fill.style.width = `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%`;
+      }
+    }
+
+    function _cmResearchCoverage() {
+      const total = _cmLib.items.length;
+      let researched = 0, ideated = 0, ranked = 0;
+      for (const rec of _cmLib.items) {
+        const e = _cmResearch.analyses?.[rec.path];
+        if (e?.analysis) researched++;
+        if (e?.ideas?.strategies?.length) ideated++;
+        if (_cmResearch.sales?.[rec.path]) ranked++;
+      }
+      // Where did rank come from? Filename-derived rank is the zero-effort path,
+      // so say plainly how much of the library already has it.
+      let fromName = 0, fromData = 0;
+      for (const rec of _cmLib.items) {
+        const r = cmEffectiveRank(rec.path, rec.name);
+        if (r.source === 'data') fromData++;
+        else if (r.source === 'filename') fromName++;
+      }
+      const el = document.getElementById('cmResearchCoverage');
+      if (el) {
+        el.textContent = total
+          ? `${ideated}/${total} briefed · ${fromName + fromData} ranked`
+          : 'library empty';
+      }
+      const info = document.getElementById('cmRankInfo');
+      if (info) {
+        if (!total) info.textContent = 'Library empty.';
+        else if (!fromName && !fromData) {
+          info.textContent = `No ranks found · all ${total} charms use the balanced ladder (rungs 1–4). Number your filenames to change that, or leave it as is.`;
+        } else {
+          const parts = [];
+          if (fromName) parts.push(`${fromName} from filenames`);
+          if (fromData) parts.push(`${fromData} imported`);
+          const none = total - fromName - fromData;
+          if (none > 0) parts.push(`${none} unranked → balanced ladder`);
+          info.textContent = parts.join(' · ');
+        }
+      }
+      return { total, researched, ideated, ranked: fromName + fromData, fromName, fromData };
+    }
+
+    // Render the analysis for whichever charm is currently in focus: the last
+    // one selected, or the only one selected.
+    // The charm the panel should describe when nothing is selected. Generating a
+    // batch clears the selection (so the next click starts fresh), which used to
+    // leave this panel showing pre-generation numbers with no way to refresh it.
+    let _cmResearchFocus = null;
+
+    function _cmRenderResearchDetail() {
+      const box = document.getElementById('cmResearchDetail');
+      if (!box) return;
+      let sel = [..._charmRefSelection.values()].sort((a, b) => b.order - a.order)[0];
+      if (sel) _cmResearchFocus = { fullPath: sel.fullPath, name: sel.name };
+      else sel = _cmResearchFocus;
+      if (!sel) { box.style.display = 'none'; return; }
+      const entry = _cmResearch.analyses?.[sel.fullPath];
+      if (!entry?.analysis) {
+        box.style.display = 'block';
+        box.innerHTML = `<h5>${_esc(sel.name)}</h5><div class="muted">Not researched yet — click <strong>Research selected</strong>.</div>`;
+        return;
+      }
+      const a = entry.analysis;
+      const id = a.identification || {};
+      const sales = _cmResearch.sales?.[sel.fullPath];
+      const win = cmWidthWindow(sel.fullPath, sel.name);
+      const why = (a.whyItSells || []).slice(0, 4);
+      const rungs = (entry.ideas?.strategies || []);
+      const usedCount = Object.values(entry.used || {}).reduce((n, l) => n + (l?.length || 0), 0);
+      const conceptTotal = rungs.reduce((n, r) => n + r.concepts.length, 0);
+
+      box.style.display = 'block';
+      box.innerHTML =
+        `<h5>${_esc(sel.name)}${sales?.rank ? ` · rank #${sales.rank}${sales.units ? ` · ${sales.units} units` : ''}` : ''}</h5>` +
+        `<div><strong>${_esc(id.primarySubject || '—')}</strong>` +
+        `${id.taxonomy?.length ? ` <span class="muted">(${_esc(id.taxonomy.join(' → '))})</span>` : ''}</div>` +
+        `<div class="muted">${_esc(id.silhouetteClass || '')}${id.detailDensity ? ` · detail ${id.detailDensity}/5` : ''}${id.engravingLanguage ? ` · ${_esc(id.engravingLanguage)}` : ''}</div>` +
+
+        `<h5>Why it sells</h5>` +
+        (why.length
+          ? why.map(w => `<div class="rb-why"><span class="rb-conf">${w.confidence != null ? Math.round(w.confidence * 100) + '%' : '—'}</span>${_esc(w.driver || '')}${w.mechanism ? ` — <span class="muted">${_esc(w.mechanism)}</span>` : ''}</div>`).join('')
+          : '<div class="muted">—</div>') +
+
+        `<h5>Hold these (load-bearing)</h5>` +
+        `<div class="rb-tags">${(a.loadBearing || []).map(t => `<span class="rb-tag hold">${_esc(t)}</span>`).join('') || '<span class="muted">—</span>'}</div>` +
+
+        `<h5>Free to change</h5>` +
+        `<div class="rb-tags">${(a.free || []).map(t => `<span class="rb-tag free">${_esc(t)}</span>`).join('') || '<span class="muted">—</span>'}</div>` +
+
+        (a.buyer?.personas?.length
+          ? `<h5>Buyer</h5>` + a.buyer.personas.slice(0, 3).map(p =>
+              `<div><strong>${_esc(p.name || '')}</strong> <span class="muted">${_esc(p.whoTheyAre || '')}${p.occasions?.length ? ` · ${_esc(p.occasions.join(', '))}` : ''}</span></div>`).join('')
+          : '') +
+
+        `<h5>Concept bank — ladder ${win.min}–${win.max} (${win.band}) · ${usedCount}/${conceptTotal} used</h5>` +
+        (rungs.length
+          ? rungs.map(r => {
+              const st = CM_STRATEGY_BY_ID[r.id];
+              const inRange = st && st.distance >= win.min && st.distance <= win.max;
+              const used = new Set(entry.used?.[r.id] || []);
+              return `<div class="rb-rung"${inRange ? '' : ' style="opacity:.4"'}>` +
+                `<span class="rb-rung-name"><span class="strat-dist">${st ? st.distance : '?'}</span>${st ? _esc(st.label) : _esc(r.id)}</span>` +
+                `<span class="rb-rung-c">${r.concepts.map((c, i) =>
+                  `<span title="${_esc(c.subject || '')}"${used.has(i) ? ' style="text-decoration:line-through;opacity:.55"' : ''}>${_esc(c.title || ('concept ' + (i + 1)))}</span>`
+                ).join(' · ')}</span></div>`;
+            }).join('')
+          : '<div class="muted">No concepts yet.</div>');
+    }
+
+    function _esc(v) {
+      return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _cmRenderStrategyStats() {
+      const tbody = document.querySelector('#cmStrategyTable tbody');
+      if (!tbody) return;
+      const stats = _cmResearch.strategyStats || {};
+      const anyData = Object.values(stats).some(v => (v?.generated || 0) > 0);
+      tbody.innerHTML =
+        `<tr><th>Rung</th><th>Approved</th><th>Rate</th><th>Pick weight</th></tr>` +
+        CM_STRATEGIES.map(s => {
+          const st = stats[s.id] || { generated: 0, approved: 0 };
+          const rate = st.generated ? st.approved / st.generated : null;
+          const w = cmStrategyWeight(s.id);
+          return `<tr class="${st.generated ? '' : 'dim'}" title="${_esc(s.blurb)}">` +
+            `<td><span class="strat-dist">${s.distance}</span>${_esc(s.label)}</td>` +
+            `<td class="mono">${st.approved}/${st.generated}</td>` +
+            `<td><div class="strat-bar"><i style="width:${rate == null ? 0 : Math.round(rate * 100)}%"></i></div></td>` +
+            `<td class="mono">${w.toFixed(2)}</td></tr>`;
+        }).join('');
+      const note = document.getElementById('cmStrategyNote');
+      if (note && !anyData) {
+        note.textContent = 'No research-designed sets approved yet — every rung sits at an even 0.50 weight until you start approving. Rungs you approve get picked more often; none ever drops to zero, so the ladder keeps exploring.';
+      }
+    }
+
+    // Batch research runner with a progress bar and per-charm error tolerance:
+    // one bad reply must not abandon the remaining 199 charms.
+    async function _cmRunResearch(records, { force = false } = {}) {
+      if (!records.length) { _cmResearchSetStatus('warn', 'Nothing selected.', 0); return; }
+      let done = 0, ok = 0, failed = 0;
+      const first = records[0];
+      _cmResearchSetStatus('working', `Researching 0/${records.length}…`, 0);
+      for (const rec of records) {
+        try {
+          _cmResearchSetStatus('working', `Researching ${rec.name} (${done + 1}/${records.length})…`, done / records.length);
+          if (force) {
+            await cmAnalyseCharm(rec, { force: true });
+            await cmIdeateCharm(rec, { force: true });
+          } else {
+            await cmEnsureResearch(rec);
+          }
+          ok++;
+        } catch (e) {
+          failed++;
+          console.warn('[charm-research] failed for', rec.name, e);
+          _cmResearchSetStatus('warn', `${rec.name}: ${e?.message || e}`, done / records.length);
+        }
+        done++;
+        _cmResearchCoverage();
+      }
+      _cmResearchSetStatus(failed ? 'warn' : 'ok',
+        failed ? `Researched ${ok}, ${failed} failed — see console for details.` : `Researched ${ok} charm${ok === 1 ? '' : 's'}.`,
+        1);
+      _cmRenderResearchDetail();
+      _cmRenderStrategyStats();
+      _cmRender();
+      if (first) _cmResearchCoverage();
+    }
+
+    function _cmSelectedRecords() {
+      const paths = new Set(_charmRefSelection.keys());
+      return _cmLib.items.filter(r => paths.has(r.path));
+    }
+
+    document.getElementById('cmResearchSelectedBtn')?.addEventListener('click', async () => {
+      const recs = _cmSelectedRecords();
+      if (!recs.length) { _cmResearchSetStatus('warn', 'Select charms in the library first.', 0); return; }
+      await _cmResearchLoad();
+      await _cmRunResearch(recs);
+    });
+
+    document.getElementById('cmResearchRedoBtn')?.addEventListener('click', async () => {
+      const recs = _cmSelectedRecords();
+      if (!recs.length) { _cmResearchSetStatus('warn', 'Select charms in the library first.', 0); return; }
+      if (!confirm(`Regenerate concepts for ${recs.length} charm${recs.length === 1 ? '' : 's'}?\n\nThe analysis is re-run too, and the "already used" marks are kept so you won't be handed a brief you have already generated.`)) return;
+      await _cmResearchLoad();
+      await _cmRunResearch(recs, { force: true });
+    });
+
+    document.getElementById('cmResearchAllBtn')?.addEventListener('click', async () => {
+      await _cmResearchLoad();
+      // Best sellers first, so if the run is interrupted the most valuable
+      // references are the ones already covered.
+      const missing = _cmLib.items
+        .filter(r => !_cmResearch.analyses?.[r.path]?.ideas?.strategies?.length)
+        .sort((a, b) => {
+          const ra = _cmResearch.sales?.[a.path]?.rank ?? 1e9;
+          const rb = _cmResearch.sales?.[b.path]?.rank ?? 1e9;
+          return ra - rb || a.name.localeCompare(b.name);
+        });
+      if (!missing.length) { _cmResearchSetStatus('ok', 'Every charm in the library already has concepts.', 1); return; }
+      if (!confirm(`Research ${missing.length} charm${missing.length === 1 ? '' : 's'}?\n\nTwo model calls each (one vision, one text), highest-ranked first. Results are cached in Firebase and shared with every terminal, so this is a one-time cost per charm.`)) return;
+      await _cmRunResearch(missing);
+    });
+
+    // Sales table ingest
+    document.getElementById('cmSalesApplyBtn')?.addEventListener('click', async () => {
+      const box = document.getElementById('cmSalesPaste');
+      const out = document.getElementById('cmSalesStatus');
+      if (!box) return;
+      const { entries, errors, hadHeader } = cmParseSalesTable(box.value);
+      if (!entries.length) {
+        if (out) out.textContent = errors[0] || 'nothing parsed';
+        return;
+      }
+      const { matched, unmatched } = cmMatchSalesToLibrary(entries);
+      await cmApplySalesData(matched);
+      if (out) {
+        out.textContent = `${matched.length} matched${unmatched.length ? ` · ${unmatched.length} unmatched` : ''}${hadHeader ? ' · header detected' : ''}`;
+        out.style.color = unmatched.length ? 'var(--warn)' : 'var(--ok)';
+      }
+      if (unmatched.length) {
+        console.warn('[charm-research] sales rows with no matching charm in the library:',
+          unmatched.map(u => u.file));
+      }
+      _cmResearchCoverage();
+      _cmRenderResearchDetail();
+      _cmRender();
+    });
+
+    document.getElementById('cmSalesFile')?.addEventListener('change', async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      const out = document.getElementById('cmSalesStatus');
+      try {
+        const text = await f.text();
+        const box = document.getElementById('cmSalesPaste');
+        if (box) box.value = text.split(/\r?\n/).slice(0, 400).join('\n');
+        if (out) { out.textContent = `loaded ${f.name} — press Match & save`; out.style.color = ''; }
+      } catch (err) {
+        if (out) { out.textContent = `could not read ${f.name}`; out.style.color = 'var(--warn)'; }
+      }
+    });
+
+    document.getElementById('cmSalesClearBtn')?.addEventListener('click', () => {
+      const box = document.getElementById('cmSalesPaste');
+      if (box) box.value = '';
+      const out = document.getElementById('cmSalesStatus');
+      if (out) out.textContent = '';
+    });
+
+    // Research model selector — lives in the header alongside the image model.
+    // One localStorage key is the single source of truth; the dropdown offers
+    // the two known-good ids and falls back to a free-text field for anything
+    // else, so a new model can be pointed at without a code change.
+    (() => {
+      const sel = document.getElementById('researchModelSelect');
+      const custom = document.getElementById('researchModelCustom');
+      const echo = document.getElementById('cmResearchModelEcho');
+      if (!sel || !custom) return;
+
+      const paint = () => {
+        const v = _cmResearchModel();
+        const known = [...sel.options].some(o => o.value === v);
+        sel.value = known ? v : '__custom';
+        custom.style.display = known ? 'none' : '';
+        custom.value = known ? '' : v;
+        sel.title = `Research model: ${v}. Text and vision only — the analysis and ideation steps. Image generation uses the image model.`;
+        if (echo) echo.textContent = v;
+      };
+
+      const commit = (v) => {
+        const clean = String(v || '').trim() || CM_DEFAULT_RESEARCH_MODEL;
+        try { localStorage.setItem(CM_RESEARCH_MODEL_LS, clean); } catch (_) {}
+        paint();
+        setStatus(`Research model set to ${clean}.`);
+      };
+
+      sel.addEventListener('change', () => {
+        if (sel.value === '__custom') {
+          custom.style.display = '';
+          custom.value = _cmResearchModel();
+          custom.focus();
+          custom.select();
+          return;
+        }
+        commit(sel.value);
+      });
+      custom.addEventListener('change', () => commit(custom.value));
+      custom.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(custom.value); } });
+      paint();
+    })();
+
+    // Console diagnostics. Handy in production for answering "why did it pick
+    // that rung?" without adding UI, and it is the surface the test suite uses.
+    window.__charmResearch = {
+      peek: () => _cmResearch,
+      library: () => _cmLib,
+      strategies: () => CM_STRATEGIES,
+      widthWindow: (path, name) => cmWidthWindow(path, name),
+      rankOf: (path, name) => cmEffectiveRank(path, name),
+      strategyWeight: (id) => cmStrategyWeight(id),
+      renderStats: () => _cmRenderStrategyStats(),
+      lastBriefs: [],
+      buildPrompt: (brief, analysis) => cmBuildDesignPrompt(brief, analysis),
+    };
+
+    // Keep the panel in step with library selection and with tab entry.
+    (() => {
+      const mosaic = document.getElementById('charmMosaic');
+      if (mosaic) {
+        mosaic.addEventListener('click', () => setTimeout(() => {
+          _cmRenderResearchDetail();
+          _cmResearchCoverage();
+        }, 0));
+      }
+      document.getElementById('charmMosaicClearBtn')?.addEventListener('click', () => {
+        setTimeout(_cmRenderResearchDetail, 0);
+      });
+    })();
+
+    // First paint once the library and the research index are both available.
+    setTimeout(async () => {
+      try {
+        await _cmResearchLoad();
+        _cmResearchCoverage();
+        _cmRenderStrategyStats();
+        _cmRenderResearchDetail();
+      } catch (_) {}
+    }, 1600);
+
 
     // =====================================================================
     // REAL-TIME COUNTER FABRIC  (RT)
