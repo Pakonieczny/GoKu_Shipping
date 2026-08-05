@@ -4853,6 +4853,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
       const afterUpdatedMs  = opts.afterUpdatedMs == null ? null : Number(opts.afterUpdatedMs);
       const afterGeneration = opts.afterGeneration == null ? null : Number(opts.afterGeneration);
       const signal = opts.signal; // Capture the abort signal
+      const onWait = typeof opts.onWait === "function" ? opts.onWait : null;
 
       // Check if already aborted before starting
       if (signal && signal.aborted) throw new Error("AbortError");
@@ -4923,9 +4924,16 @@ html.gs-locked body > *:not(#gate){display:none!important}
           }
         }
 
-        if ((Date.now() - t0) > timeoutMs) {
-          throw new Error(`Timed out waiting for ${fileName} in ${outputBasePath}`);
+        const elapsed = Date.now() - t0;
+        if (elapsed > timeoutMs) {
+          throw new Error(
+            `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${fileName} in ${outputBasePath}. ` +
+            `The image job never wrote its output — check the function logs for the generation request.`
+          );
         }
+        // Let the caller show progress. Without this a long poll is
+        // indistinguishable from a hung one.
+        if (onWait) { try { onWait(elapsed, timeoutMs); } catch (_) {} }
         await sleep(intervalMs, signal);
       }
     }
@@ -4948,7 +4956,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
     // --- UI Helper Functions for Spinners and Button Locks ---
     window.getSpinnerHTML = function(msg) {
-        return `<div class="spinner-container"><div class="spinner"></div><div style="margin-top: 8px;">${msg}</div></div>`;
+        return `<div class="spinner-container"><div class="spinner"></div><div class="spinner-label" style="margin-top: 8px;">${msg}</div></div>`;
     };
 
     window.setQuadButtonsState = function(folderId, disabled) {
@@ -6667,7 +6675,12 @@ The output must look like the input image with ONLY the user's requested change 
         if (oldImg && oldImg.src.startsWith("blob:")) {
             URL.revokeObjectURL(oldImg.src);
         }
-        box.innerHTML = `<img src="${srcUrl}" />`;
+        // crossorigin="anonymous" turns this into a CORS request, which is what
+        // makes it survive Cross-Origin-Embedder-Policy. Without it, a raw
+        // Firebase Storage URL is blocked outright and the box renders empty
+        // (net::ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOrigin-
+        // ByCoep). Harmless for blob: URLs, which ignore the attribute.
+        box.innerHTML = `<img src="${srcUrl}" ${/^blob:|^data:/.test(String(srcUrl)) ? '' : 'crossorigin="anonymous"'} />`;
         attachPreviewBoxListeners(box);
     }
 
@@ -9608,7 +9621,21 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
                   prompt: designPrompt,
                 };
             await postImageGeneration(slot0Body, undefined, generationModel);
-            const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
+            // 4 minutes, not 10. A generation that has not landed by then has
+            // almost certainly failed upstream, and ten minutes of spinner tells
+            // the operator nothing. onWait paints the elapsed seconds so it is
+            // visibly alive rather than possibly hung.
+            const charmRes = await waitForSlotPngUrl(outputBasePath, 0, {
+                timeoutMs: window.__CM_SLOT0_TIMEOUT_MS || 240000,
+                intervalMs: window.__CM_SLOT0_INTERVAL_MS || 5000,
+                onWait: (elapsedMs) => {
+                    const box = document.getElementById(`prevBox_${folderId}_0`);
+                    if (box && box.querySelector('.spinner-label')) {
+                        box.querySelector('.spinner-label').textContent =
+                            `${designBrief ? stratLabel : 'Generating'}… ${Math.round(elapsedMs / 1000)}s`;
+                    }
+                },
+            });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
             
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_0`);
@@ -9655,15 +9682,27 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
 
         } catch (err) {
             console.error("Master Generation Catch:", err);
-            setStatus(`Error: ${err.message}`);
-            
+            const why = String(err?.message || err);
+            setStatus(`Charm generation failed: ${why}`);
+
+            // Say WHAT went wrong in the slot itself. The previous "Aborted"
+            // gave no clue whether the model refused, the function timed out, or
+            // the poll simply gave up, and any slot the catch did not recognise
+            // was left spinning indefinitely.
+            const short = /time limit|timed out|Timed out waiting/i.test(why)
+                ? 'Timed out'
+                : /abort/i.test(why) ? 'Cancelled'
+                : /quota|rate/i.test(why) ? 'Rate limited'
+                : 'Failed';
             [0, 1, 2, 3].forEach(i => {
                 window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
                 const p = document.getElementById(`prevBox_${folderId}_${i}`);
-                if(p) {
+                if (p) {
                     p.classList.remove("working-box");
-                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
-                        p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                    // Clear ANY in-progress state, not just the four phrases the
+                    // old check happened to list.
+                    if (!p.querySelector('img')) {
+                        p.innerHTML = `<div class="slotRefEmpty" style="color:#fca5a5;" title="${why.replace(/"/g, '&quot;')}">${short} · Redo</div>`;
                     }
                 }
                 const btn = document.getElementById(`redo_${folderId}_${i}`);
@@ -17929,6 +17968,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
         img.alt = rec.name;
         img.loading = 'lazy';
         img.decoding = 'async';
+        // Same COEP reason as setBoxImage: a remote URL needs to be a CORS
+        // request or the embedder policy blocks it.
+        if (!/^blob:|^data:/.test(String(url))) img.crossOrigin = 'anonymous';
         img.src = url;
         tile.insertBefore(img, tile.firstChild);
       };
@@ -19184,7 +19226,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
           const el = new Image();
           el.onload = () => resolve(el);
           el.onerror = () => reject(new Error('img decode failed'));
-          el.src = objUrl;
+          el.src = objUrl; // blob: URL — same-origin, unaffected by COEP
         });
         const w = img.naturalWidth || img.width;
         const h = img.naturalHeight || img.height;
@@ -19335,12 +19377,26 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
         // Success: remember the shape so this negotiation happens once, not once
         // per charm.
         _cmLlmShapeSave(model, shape);
-        const text = res?.choices?.[0]?.message?.content;
+        const choice = res?.choices?.[0];
+        const text = choice?.message?.content;
+        const finish = choice?.finish_reason;
         if (!text) {
-          const finish = res?.choices?.[0]?.finish_reason;
-          throw new Error(
-            `Research model "${model}" returned no content` +
-            (finish ? ` (finish_reason: ${finish}${finish === 'length' ? ' — the reply was cut off; try a smaller batch or a model with more output room' : ''})` : '')
+          throw Object.assign(
+            new Error(
+              `Research model "${model}" returned no content` +
+              (finish ? ` (finish_reason: ${finish}${finish === 'length' ? ' — the reply was cut off before any content' : ''})` : '')
+            ),
+            { truncated: finish === 'length' }
+          );
+        }
+        // finish_reason "length" with content present is the dangerous case: the
+        // JSON is syntactically broken halfway through a string, which read as
+        // "unparseable JSON" and gave no hint that the fix is to ask for less.
+        if (finish === 'length') {
+          _cmLlmShapeSave(model, shape);
+          throw Object.assign(
+            new Error(`Research model "${model}" ran out of output room — the reply was cut off mid-JSON (asked for ${maxTokens} tokens)`),
+            { truncated: true }
           );
         }
         // Some models wrap JSON in prose, a code fence, or both, even when asked
@@ -19358,7 +19414,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
         for (const c of candidates) {
           try { return JSON.parse(String(c).trim()); } catch (_) {}
         }
-        throw new Error(`Research model "${model}" returned unparseable JSON: ${String(text).slice(0, 220)}`);
+        // An unterminated string or a missing brace almost always means the
+        // reply was cut short, so flag it the same way as an explicit
+        // finish_reason of "length".
+        const looksTruncated = !/}\s*$/.test(text.trim());
+        throw Object.assign(
+          new Error(`Research model "${model}" returned ${looksTruncated ? 'a truncated reply' : 'unparseable JSON'}: ${String(text).slice(0, 220)}`),
+          { truncated: looksTruncated }
+        );
       }
       throw new Error(`Research model "${model}" could not be called after 5 parameter shapes: ${tried.join(' → ')}`);
     }
@@ -19663,7 +19726,10 @@ Hard rules:
 - No prose outside the JSON.`;
     }
 
-    const CM_CONCEPTS_PER_STRATEGY = 3;
+    // Two, not three. Three concepts x nine fields overflowed the output budget
+    // on a reasoning model and came back as JSON cut off mid-string. Fourteen
+    // concepts across seven rungs is still far more than a batch consumes.
+    const CM_CONCEPTS_PER_STRATEGY = 2;
     const CM_RUNG_CONCURRENCY = 3;   // small enough to stay inside rate limits
 
     async function cmIdeateCharm(rec, { force = false } = {}) {
@@ -19678,25 +19744,42 @@ Hard rules:
 
       const avoid = existing.flatMap(x => x.concepts.map(c => c.title).filter(Boolean));
 
+      // Ask for fewer concepts on each retry. Three concepts of nine fields each
+      // overflowed the output budget and came back as broken JSON; two fits
+      // comfortably, and one always fits. A rung that yields one good concept is
+      // worth far more than a rung that yields an exception.
+      const LADDER = [
+        { concepts: CM_CONCEPTS_PER_STRATEGY, tokens: 2600 },
+        { concepts: 2, tokens: 2600 },
+        { concepts: 1, tokens: 1800 },
+      ];
       const results = await _asyncPool(CM_RUNG_CONCURRENCY, todo, async (st) => {
-        for (let attempt = 0; attempt < 2; attempt++) {
+        let lastErr = null;
+        for (let attempt = 0; attempt < LADDER.length; attempt++) {
+          const step = LADDER[attempt];
           try {
             const res = await _cmLlmJson([
               { role: 'system', content: CM_IDEATE_SYSTEM },
-              { role: 'user', content: _cmRungPrompt(entry.analysis, st, CM_CONCEPTS_PER_STRATEGY, avoid) },
-            ], { maxTokens: 2200 });
+              { role: 'user', content: _cmRungPrompt(entry.analysis, st, step.concepts, avoid) },
+            ], { maxTokens: step.tokens });
             const concepts = (res?.concepts || []).filter(c => c?.subject && c?.silhouette);
             if (!concepts.length) throw new Error('no usable concepts');
+            if (attempt > 0) {
+              console.info(`[charm-research] rung "${st.id}" succeeded with ${step.concepts} concept${step.concepts === 1 ? '' : 's'} after a larger ask failed`);
+            }
             return { id: st.id, rationale: String(res.rationale || ''), concepts };
           } catch (e) {
-            // A timeout on one rung is worth exactly one retry; a parameter or
-            // access error will fail identically the second time, so bail.
-            const retryable = /time limit|timeout|504|502|no usable concepts/i.test(String(e?.message || e));
-            if (attempt === 0 && retryable) continue;
-            console.warn(`[charm-research] rung "${st.id}" failed for ${rec.name}:`, e?.message || e);
-            return null;
+            lastErr = e;
+            const msg = String(e?.message || e);
+            // Truncation and gateway timeouts are both "you asked for too much",
+            // so step down the ladder. A parameter or access error will fail
+            // identically however small the ask, so stop immediately.
+            const shrinkable = e?.truncated
+              || /truncated|unparseable|time limit|timeout|504|502|no usable concepts/i.test(msg);
+            if (!shrinkable) break;
           }
         }
+        console.warn(`[charm-research] rung "${st.id}" failed for ${rec.name}:`, lastErr?.message || lastErr);
         return null;
       });
 
