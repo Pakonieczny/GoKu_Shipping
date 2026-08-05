@@ -183,9 +183,604 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .rlist.compact .rstatus{margin-top:3px}
 .rempty{padding:40px 20px;text-align:center;color:var(--ink45);font-size:13px;background:var(--card);border:1px dashed var(--line);border-radius:var(--r)}
 @media (max-width:760px){.rrow{grid-template-columns:48px minmax(0,1fr)}.rrow .ract{grid-column:1/-1;flex-direction:row;justify-content:space-between;align-items:center}}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BRITES STATION — SHARED SIGN-IN GATE
+   Ported verbatim from britesadwords.html so all three consoles present the
+   same door. Two differences from the original, both deliberate:
+
+     1. Every rule is scoped under #gate and every colour/geometry token is
+        re-declared locally as --gs-*. The host app cannot leak into the gate,
+        and the gate cannot leak into the host app. That matters here because
+        the two consoles this is dropped into use different token names
+        (--ink-70 vs --ink70) and, in Listing-Generator-1's case, an entirely
+        dark palette.
+     2. The submit button carries its own .btn/.btn.gold declarations rather
+        than borrowing the host app's, for the same reason.
+
+   Result: pixel-identical to the Ad Autopilot sign-in in every app.
+   ══════════════════════════════════════════════════════════════════════════ */
+#gate{
+  --gs-paper:#f3f0ea; --gs-paper-2:#ece6da; --gs-card:#fffefb; --gs-card-2:#faf7f1;
+  --gs-ink:#1c1a17; --gs-ink-70:#5b554c; --gs-ink-45:#938c80; --gs-ink-25:#c4bdb0;
+  --gs-line:#e4ddd0; --gs-line-2:#efe9dd;
+  --gs-velvet:#221f1b; --gs-velvet-2:#2d2924;
+  --gs-gold:#a9823f; --gs-gold-2:#caa861; --gs-gold-soft:#f0e6cd;
+  --gs-clay:#b0563f; --gs-clay-soft:#f4e3dc;
+  --gs-serif:'Hoefler Text','Iowan Old Style',Georgia,'Times New Roman',serif;
+  --gs-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
+  --gs-mono:ui-monospace,'SF Mono','Cascadia Code','Roboto Mono',Menlo,Consolas,monospace;
+  --gs-r-sm:10px;
+
+  /* The original is a page; here it is an overlay, so it works whatever the
+     host app puts in <body> without restructuring that markup. Visually the
+     two are the same thing. */
+  position:fixed; inset:0; z-index:2147483000; overflow:auto;
+  min-height:100vh; display:flex; align-items:center; justify-content:center;
+  background:var(--gs-paper); color:var(--gs-ink);
+  font-family:var(--gs-sans); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  padding:24px; box-sizing:border-box;
+}
+#gate[hidden]{display:none}
+#gate *{box-sizing:border-box}
+#gate button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+#gate :focus-visible{outline:2px solid var(--gs-gold);outline-offset:2px;border-radius:6px}
+#gate .mono{font-family:var(--gs-mono);font-variant-numeric:tabular-nums}
+/* Visually hidden but present for assistive tech and password managers. */
+#gate .vh{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+#gate .signin{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);width:min(100%,980px);
+  background:var(--gs-card);border:1px solid var(--gs-line);border-radius:22px;overflow:hidden;
+  box-shadow:0 1px 2px rgba(30,26,20,.05),0 26px 70px -24px rgba(30,26,20,.30)}
+
+/* ---- velvet brand side ---- */
+#gate .signin__brand{position:relative;background:
+  radial-gradient(120% 90% at 12% 0%,rgba(202,168,97,.20),transparent 58%),
+  linear-gradient(160deg,var(--gs-velvet-2),var(--gs-velvet) 62%);
+  color:#efe9dd;padding:40px 38px;display:flex;flex-direction:column;gap:14px}
+#gate .signin__brand::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(60% 40% at 85% 100%,rgba(202,168,97,.10),transparent 70%)}
+#gate .signin__mark{color:var(--gs-gold-2);opacity:.95}
+#gate .signin__brandname{font-family:var(--gs-serif);font-size:24px;letter-spacing:.01em;line-height:1.1;color:#efe9dd}
+#gate .signin__brandname b{color:var(--gs-gold-2);font-weight:400}
+#gate .signin__brandtag{font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:#a29889}
+#gate .signin__lede{margin:12px 0 0;font-size:13.5px;line-height:1.65;color:#cfc7b9;max-width:38ch}
+#gate .signin__points{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+#gate .signin__points li{position:relative;padding-left:20px;font-size:12.5px;color:#b8b0a2;line-height:1.5}
+#gate .signin__points li::before{content:"";position:absolute;left:0;top:.5em;width:7px;height:7px;border-radius:50%;
+  border:1.5px solid var(--gs-gold-2)}
+#gate .signin__brandfoot{margin-top:auto;padding-top:26px;font-size:10.5px;letter-spacing:.06em;
+  color:#8c8476;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#gate .signin__dotsep{opacity:.55}
+
+/* ---- form side ---- */
+#gate .signin__panel{padding:40px 38px 30px;display:flex;flex-direction:column;background:var(--gs-card)}
+#gate .gatecard{background:none;border:0;border-radius:0;padding:0;width:auto;box-shadow:none;flex:1;margin:0}
+#gate .signin__mobilebrand{display:none}
+/*  font-style and line-height are declared here only because
+    Listing-Generator-1 styles bare <h1> globally; without them the heading
+    would pick up that console's tighter 1.2 leading. */
+#gate .signin__h1{font-family:var(--gs-serif);font-style:normal;font-weight:500;font-size:27px;
+  line-height:1.5;margin:0 0 6px;letter-spacing:.01em;color:var(--gs-ink)}
+#gate .signin__sub{margin:0 0 26px;font-size:13px;color:var(--gs-ink-45);line-height:1.6;max-width:36ch}
+/*  Same reason: Listing-Generator-1 gives every bare <label> a 10px uppercase
+    monospace treatment with a 14px top margin. Declaring font-family and the
+    full margin shorthand here claims both back. */
+#gate .signin__label{display:block;font-family:var(--gs-sans);font-size:10.5px;font-weight:700;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--gs-ink-45);margin:0 0 7px}
+#gate .signin__field{position:relative}
+#gate .signin__field input{width:100%;height:48px;padding:0 46px 0 14px;font-size:15px;
+  font-family:var(--gs-sans);font-weight:400;line-height:normal;letter-spacing:normal;
+  appearance:none;-webkit-appearance:none;background-image:none;margin:0;
+  border:1.5px solid var(--gs-line);border-radius:var(--gs-r-sm);background-color:var(--gs-card-2);color:var(--gs-ink);
+  transition:border-color .15s,background-color .15s,box-shadow .15s}
+#gate .signin__field input::placeholder{color:var(--gs-ink-25);opacity:1}
+#gate .signin__field input:hover{border-color:var(--gs-ink-25)}
+#gate .signin__field input:focus{outline:none;background-color:var(--gs-card);border-color:var(--gs-gold);
+  box-shadow:0 0 0 3.5px rgba(169,130,63,.16)}
+#gate .signin__reveal{position:absolute;right:6px;top:6px;width:36px;height:36px;border-radius:8px;
+  display:grid;place-items:center;color:var(--gs-ink-45);padding:0}
+#gate .signin__reveal:hover{color:var(--gs-ink);background:var(--gs-paper-2)}
+#gate .signin__hint{margin-top:8px;font-size:11.5px;color:#7a5a1d}
+#gate .signin__err{min-height:18px;margin-top:8px;font-size:12.5px;line-height:1.5;color:var(--gs-clay)}
+#gate .signin__err:not(:empty){padding:9px 11px;border-radius:9px;background:var(--gs-clay-soft);
+  border:1px solid #e5c6bb;margin-top:10px}
+#gate .signin__err code{font-family:var(--gs-mono);font-size:11.5px}
+#gate .signin__remember{display:flex;gap:9px;align-items:flex-start;margin:16px 0 18px;
+  font-family:var(--gs-sans);font-size:12.5px;font-weight:400;letter-spacing:normal;text-transform:none;
+  color:var(--gs-ink-70);cursor:pointer;line-height:1.45}
+#gate .signin__remember input{margin:1px 0 0;padding:0;width:15px;height:15px;accent-color:var(--gs-gold);
+  flex:0 0 auto;cursor:pointer;border:0;border-radius:0;background:none;box-shadow:none;
+  appearance:auto;-webkit-appearance:checkbox}
+/* The submit carries its own .btn / .btn.gold so it does not inherit whatever
+   the host console calls a button (Listing-Generator-1's is dark). */
+#gate .btn{border:1px solid var(--gs-ink);background:var(--gs-ink);color:#fff;border-radius:9px;
+  padding:8px 14px;font-size:13px;font-weight:600;font-family:var(--gs-sans);
+  transition:transform .08s,opacity .15s,background .15s}
+#gate .btn:hover{opacity:.9}
+#gate .btn:active{transform:translateY(1px)}
+#gate .btn.gold{background:var(--gs-gold);border-color:var(--gs-gold);color:#2a2013}
+#gate .signin__submit{width:100%;height:48px;font-size:14.5px;letter-spacing:.01em;border-radius:var(--gs-r-sm);
+  display:inline-flex;align-items:center;justify-content:center;gap:9px}
+#gate .signin__submit:disabled{opacity:1;cursor:not-allowed;background:var(--gs-paper-2);
+  border-color:var(--gs-line);color:var(--gs-ink-25);box-shadow:none;transform:none}
+#gate .signin__details{margin-top:22px;border-top:1px solid var(--gs-line-2);padding-top:14px}
+#gate .signin__details summary{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--gs-ink-45);cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}
+#gate .signin__details summary::-webkit-details-marker{display:none}
+#gate .signin__details summary::before{content:"+";font-family:var(--gs-mono);color:var(--gs-ink-25)}
+#gate .signin__details[open] summary::before{content:"\2212"}
+#gate .signin__details summary:hover{color:var(--gs-ink-70)}
+#gate .signin__detailbody{margin-top:11px;display:flex;flex-direction:column;gap:7px;
+  font-size:11.5px;color:var(--gs-ink-70);word-break:break-all}
+#gate .signin__dl{display:inline-block;min-width:74px;color:var(--gs-ink-45);text-transform:uppercase;
+  letter-spacing:.1em;font-size:10px;font-weight:700}
+#gate .signin__foot{margin-top:26px;padding-top:16px;border-top:1px solid var(--gs-line-2);
+  font-size:11px;color:var(--gs-ink-45);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+#gate .signin__foot a{color:var(--gs-ink-45);text-decoration:none;border-bottom:1px solid var(--gs-line)}
+#gate .signin__foot a:hover{color:var(--gs-ink-70)}
+
+/* the button's working spinner — self-contained, matches the Autopilot one */
+#gate .spin{width:15px;height:15px;border:2px solid rgba(42,32,19,.28);border-top-color:#2a2013;
+  border-radius:50%;animation:gsspin .7s linear infinite;display:inline-block;flex:0 0 auto}
+@keyframes gsspin{to{transform:rotate(360deg)}}
+
+@media (max-width:860px){
+  /* The velvet panel is gone at this width, so a gold hairline keeps the brand
+     present instead of leaving a plain white card. */
+  #gate .signin{grid-template-columns:1fr;width:min(100%,460px);border-top:3px solid var(--gs-gold)}
+  #gate .signin__brand{display:none}
+  #gate .signin__panel{padding:32px 26px 24px}
+  #gate .signin__mobilebrand{display:flex;flex-direction:column;gap:3px;margin-bottom:24px}
+  #gate .signin__h1{font-size:24px}
+}
+@media (prefers-reduced-motion:reduce){
+  #gate .signin__field input{transition:none}
+  #gate .spin{animation:none}
+}
+/* ---- while the gate is up, the console behind it is not there ----
+   Hiding the siblings rather than one wrapper means this drops into any of the
+   consoles unchanged, whatever their shell happens to be, and it restores the
+   original display value on unlock because it never overwrote one. The class
+   is set synchronously by the gate script at the top of <body>, so the app is
+   never painted even for a frame. */
+html.gs-locked,body.gs-locked{overflow:hidden!important}
+html.gs-locked body > *:not(#gate){display:none!important}
 </style>
 </head>
 <body>
+
+<!-- ════ SIGN-IN GATE ════ Same passcode, same session, same screen as the
+     Ad Autopilot. Loaded at the top of <body> so the console behind it is
+     never painted, and so the fetch wrapper below is installed before the
+     app makes its first request.                                        -->
+<!--  SIGN-IN.  Split layout: the velvet side carries the brand and says what
+      this thing is; the paper side is nothing but the task. The endpoint URL
+      that used to sit under the button is now inside "Connection details" —
+      still there when something breaks, invisible when it doesn't.
+      Identical, down to the pixel, to the Ad Autopilot sign-in.           -->
+<div id="gate">
+  <div class="signin">
+
+    <aside class="signin__brand">
+      <div class="signin__mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="40" height="40" role="presentation">
+          <text x="32" y="34" text-anchor="middle" dominant-baseline="central"
+                font-family="'Hoefler Text','Iowan Old Style',Georgia,serif"
+                font-size="46" font-weight="600" fill="currentColor">$</text>
+        </svg>
+      </div>
+      <div class="signin__brandname">Brites <b>&middot;</b> Pricing</div>
+      <div class="signin__brandtag">Etsy Pricing Console</div>
+      <p class="signin__lede">Variation pricing, quantity and SKU control for the live Brites Jewelry Etsy store &mdash; every change is reviewed by a human before it is pushed.</p>
+      <ul class="signin__points">
+        <li>Bulk variation pricing with per-listing approval</li>
+        <li>Writes straight to the live Etsy catalogue</li>
+        <li>Etsy API usage metered against the daily budget</li>
+      </ul>
+      <div class="signin__brandfoot">
+        <span>Etsy Open API v3</span>
+        <span class="signin__dotsep">&middot;</span>
+        <span>Pricing scheme v2</span>
+      </div>
+    </aside>
+
+    <main class="signin__panel">
+      <form class="gatecard" autocomplete="on" novalidate>
+        <div class="signin__mobilebrand" aria-hidden="true">
+          <span class="signin__brandname">Brites <b>&middot;</b> Pricing</span>
+          <span class="signin__brandtag">Etsy Pricing Console</span>
+        </div>
+
+        <h1 class="signin__h1">Sign in</h1>
+        <p class="signin__sub">This console edits live Etsy prices, quantities and SKUs. Authorised operators only.</p>
+
+        <!--  Password managers refuse to save a lone password field, and Chrome
+              logs a DOM warning about it. A hidden-but-real username field is
+              the accessible, standards-compliant fix. -->
+        <input class="vh" id="who" name="username" type="text" value="Brites operator"
+               autocomplete="username" readonly tabindex="-1" aria-hidden="true">
+
+        <label class="signin__label" for="pc">Passcode</label>
+        <div class="signin__field">
+          <input id="pc" type="password" name="password" autocomplete="current-password"
+                 placeholder="Enter your passcode" enterkeyhint="go" autocapitalize="off"
+                 spellcheck="false" aria-describedby="gateErr capsHint" required>
+          <button class="signin__reveal" id="pcToggle" type="button"
+                  aria-label="Show passcode" aria-pressed="false" title="Show passcode">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+              <path id="eyeOpen" d="M1.8 12S5.4 5.4 12 5.4 22.2 12 22.2 12 18.6 18.6 12 18.6 1.8 12 1.8 12Z"/>
+              <circle id="eyePupil" cx="12" cy="12" r="3.1"/>
+              <line id="eyeSlash" x1="4" y1="20" x2="20" y2="4" style="display:none"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="signin__hint" id="capsHint" hidden>Caps Lock is on.</div>
+        <div id="gateErr" class="signin__err" role="alert" aria-live="polite"></div>
+
+        <label class="signin__remember">
+          <input type="checkbox" id="pcRemember" checked>
+          <span>Keep me signed in on this device for 30 days</span>
+        </label>
+
+        <button class="btn gold signin__submit" type="submit">Unlock console</button>
+
+        <details class="signin__details">
+          <summary>Connection details</summary>
+          <div class="signin__detailbody">
+            <div><span class="signin__dl">Endpoint</span><span id="epLabel" class="mono"></span></div>
+            <div><span class="signin__dl">Auth</span><span>Shared operator passcode, sent per request</span></div>
+          </div>
+        </details>
+      </form>
+
+      <footer class="signin__foot">
+        <span>&copy; <span id="yr"></span> Brites Jewelry</span>
+        <span class="signin__dotsep">&middot;</span>
+        <span>Internal tool</span>
+        <span class="signin__dotsep">&middot;</span>
+        <a href="https://britesjewelry.com" rel="noopener">britesjewelry.com</a>
+      </footer>
+    </main>
+
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   BRITES STATION — SHARED SIGN-IN GATE  (behaviour)
+   ──────────────────────────────────────────────────────────────────────────
+   The same system britesadwords.html uses, lifted whole:
+
+     · one shared operator passcode, the EDIT_PASSCODE Netlify env var;
+     · sent as the X-Edit-Passcode header AND in the JSON body, so it works
+       against every function in this repo whichever one it checks;
+     · verified server-side before the console is shown — a wrong passcode is
+       a 401, and nothing else is;
+     · optionally remembered for 30 days in localStorage under "baSess", the
+       same key the Ad Autopilot uses, so on a shared origin one sign-in
+       covers all three consoles;
+     · auto sign-in on return visits, with the saved passcode re-verified
+       against the server rather than trusted.
+
+   VERIFICATION ENDPOINT
+     Primary  : /.netlify/functions/authGate   (tiny, dependency-free)
+     Fallback : /.netlify/functions/googleAdsAutopilotApi, used only if
+                authGate answers 404 — i.e. this page is deployed before the
+                new function is. That function checks the same EDIT_PASSCODE
+                with the same authed() helper before it does any work, so a
+                401 there still means exactly "wrong passcode".
+
+   Everything below is scoped inside one IIFE; the only globals it creates are
+   __gsGateReady, GS_PASS, gsSignOut and gsAuthHeaders.
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  "use strict";
+
+  var APP_ID = "etsy-pricing";
+
+  /*  Lock immediately, not at DOMContentLoaded. This script sits at the top of
+      <body>, so adding the class here means the console behind the gate is
+      never painted even for one frame. The rule it switches on lives in the
+      stylesheet:  html.gs-locked body > *:not(#gate){display:none!important}  */
+  document.documentElement.classList.add("gs-locked");
+  if (document.body) document.body.classList.add("gs-locked");
+
+  /* ---- where the functions live (matches this console's own convention) ---- */
+  var FN_BASE = location.protocol === 'file:'
+    ? 'https://goldenspike.app/.netlify/functions'
+    : location.origin + '/.netlify/functions';
+
+  var GATE_FN_PRIMARY  = "authGate";
+  var GATE_FN_FALLBACK = "googleAdsAutopilotApi";
+  var _gateFn = GATE_FN_PRIMARY;
+  function gateUrl() {
+    return (window.__GS_AUTH_ENDPOINT) || (FN_BASE + "/" + _gateFn);
+  }
+
+  /* ---- the promise the app boots off ---- */
+  var _resolveReady;
+  window.__gsGateReady = new Promise(function (res) { _resolveReady = res; });
+
+  /* ---- the passcode, once verified ---- */
+  window.GS_PASS = "";
+
+  /* ══ same-origin passcode forwarding ═══════════════════════════════════════
+     Every call this console makes to its own /.netlify/functions/… now carries
+     X-Edit-Passcode, so any function that adopts the EDIT_PASSCODE check gets
+     it for free with no further edits to this page.
+
+     Deliberately same-origin ONLY. A custom header on a cross-origin request
+     forces a CORS preflight, and not every function in this repo answers
+     OPTIONS — adding the header there would break calls that work today
+     (notably when the file is opened from disk and points at goldenspike.app).
+     Same-origin requests never preflight, so this is free.                    */
+  function sameOriginFn(url) {
+    try {
+      var u = new URL(url, location.href);
+      return u.origin === location.origin && u.pathname.indexOf("/.netlify/functions/") === 0;
+    } catch (e) { return false; }
+  }
+  window.gsAuthHeaders = function (url) {
+    return (window.GS_PASS && (url == null || sameOriginFn(url)))
+      ? { "X-Edit-Passcode": window.GS_PASS } : {};
+  };
+  (function wrapFetch() {
+    if (typeof window.fetch !== "function") return;
+    var raw = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      try {
+        // Request objects are passed through untouched: their headers are
+        // already immutable-ish and neither console uses that form.
+        if (window.GS_PASS && (typeof input === "string" || (typeof URL !== "undefined" && input instanceof URL)) && sameOriginFn(String(input))) {
+          init = init ? Object.assign({}, init) : {};
+          var h = init.headers;
+          if (typeof Headers !== "undefined" && h instanceof Headers) {
+            var c = new Headers(h); c.set("X-Edit-Passcode", window.GS_PASS); init.headers = c;
+          } else if (Array.isArray(h)) {
+            init.headers = h.concat([["X-Edit-Passcode", window.GS_PASS]]);
+          } else {
+            init.headers = Object.assign({}, h || {}, { "X-Edit-Passcode": window.GS_PASS });
+          }
+        }
+      } catch (e) { /* never let the wrapper break a request */ }
+      return raw(input, init);
+    };
+  })();
+
+  /* ---- stay signed in on this device (localStorage, 30 days) ---- */
+  var SESS_KEY = "baSess";
+  function sessSave(p) {
+    try { localStorage.setItem(SESS_KEY, btoa(unescape(encodeURIComponent(JSON.stringify({ p: p, exp: Date.now() + 30 * 86400000 }))))); } catch (e) {}
+  }
+  function sessRead() {
+    try {
+      var r = localStorage.getItem(SESS_KEY); if (!r) return null;
+      var o = JSON.parse(decodeURIComponent(escape(atob(r))));
+      if (!o || !o.p || !o.exp || Date.now() > o.exp) return null;
+      return o.p;
+    } catch (e) { return null; }
+  }
+  function sessClear() { try { localStorage.removeItem(SESS_KEY); } catch (e) {} }
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]; }); }
+  function $(s) { return document.querySelector(s); }
+
+  /* button → spinner, and back again (the Autopilot's btnBusy) */
+  function btnBusy(btn, label) {
+    if (!btn) return function () {};
+    var html = btn.innerHTML, dis = btn.disabled;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>' + (label != null ? esc(label) : "");
+    return function () { btn.innerHTML = html; btn.disabled = dis; };
+  }
+
+  /* ══ the one network call the gate makes ═══════════════════════════════════
+     Resolves to true, or throws an Error carrying .status.                    */
+  async function verify(pass) {
+    var send = function (url) {
+      return fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Edit-Passcode": pass },
+        // "__verifyPasscode" is an action no handler implements. On the
+        // fallback endpoint that is the point: auth is checked before the
+        // action is dispatched, so an unknown action is the cheapest possible
+        // authenticated round-trip.
+        body: JSON.stringify({ action: "__verifyPasscode", app: APP_ID, passcode: pass })
+      });
+    };
+
+    var res = await send(gateUrl());
+
+    /*  One-time, 404-ONLY switch to the Ad Autopilot endpoint, so this page
+        works whether or not authGate.js has been deployed yet. Never on a
+        403: that is Netlify refusing the request outright, and retrying
+        elsewhere would only hide it. */
+    if (res.status === 404 && _gateFn === GATE_FN_PRIMARY && !window.__GS_AUTH_ENDPOINT) {
+      _gateFn = GATE_FN_FALLBACK;
+      try { var lbl = document.getElementById("epLabel"); if (lbl) lbl.textContent = gateUrl().replace("https://", ""); } catch (e) {}
+      res = await send(gateUrl());
+    }
+
+    if (res.status === 401) { var e401 = new Error("401 — wrong passcode"); e401.status = 401; throw e401; }
+
+    /*  On the fallback endpoint anything that is not 401/403/404 means the
+        passcode was ACCEPTED — auth runs before the action does, so even a
+        500 from the action layer is an authenticated 500. */
+    if (_gateFn === GATE_FN_FALLBACK) {
+      if (res.status === 403 || res.status === 404) {
+        var eF = new Error("HTTP " + res.status); eF.status = res.status; throw eF;
+      }
+      return true;
+    }
+
+    if (!res.ok) {
+      var t = await res.text().catch(function () { return ""; });
+      var e = new Error("HTTP " + res.status + (t ? " " + t.slice(0, 140) : ""));
+      e.status = res.status; e.bodyText = t; throw e;
+    }
+    return true;
+  }
+
+  /* ══ unlock ════════════════════════════════════════════════════════════════ */
+  var unlocked = false;
+  async function unlock(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    var cached = e && e.__cachedPass;
+    var pass = cached || (($("#pc") && $("#pc").value) || "");
+    var err = $("#gateErr"); if (err) err.textContent = "";
+
+    var gb = document.querySelector("#gate .signin__submit");
+    var gdone = btnBusy(gb, cached ? "Signing you back in…" : "Connecting…");
+
+    try {
+      await verify(pass);
+
+      window.GS_PASS = pass;
+
+      // Respect the checkbox: on a shared machine the operator can decline the
+      // 30-day session and be asked again next visit.
+      var rem = document.getElementById("pcRemember");
+      if (!rem || rem.checked) sessSave(pass); else sessClear();
+
+      unlocked = true;
+      var g = document.getElementById("gate");
+      if (g) { g.hidden = true; g.style.display = "none"; }
+      document.documentElement.classList.remove("gs-locked");
+      document.body.classList.remove("gs-locked");
+      showApp();
+      _resolveReady(pass);
+    } catch (x) {
+      try {
+        var p = document.getElementById("pc");
+        if (p) {
+          p.value = ""; p.focus();
+          // Fire input so the submit button re-disables — a programmatic value
+          // change does not raise the event on its own.
+          p.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      } catch (_e) {}
+      if (!err) { gdone(); return false; }
+      if (x.status === 401) {
+        sessClear();
+        err.textContent = cached
+          ? "Saved sign-in expired — enter the passcode once to refresh it."
+          : "That passcode was not accepted.";
+      } else if (x.status === 403) {
+        /*  A bare "HTTP 403" on a passcode screen reads as "wrong passcode",
+            which it never is. Say what it actually means. */
+        err.innerHTML = "<b>Not a passcode problem.</b> Netlify refused the request (403) — a wrong passcode returns 401. " +
+          "Check that <code>authGate.js</code> is deployed and is <b>not</b> listed under [[scheduled]] in <code>netlify.toml</code>: " +
+          "a scheduled function cannot be reached over HTTP.";
+      } else if (x.status === 404) {
+        err.innerHTML = "Sign-in endpoint not found (404) — deploy <code>netlify/functions/authGate.js</code> to this site.";
+      } else if (/failed to fetch|networkerror|load failed/i.test(x.message || "")) {
+        err.textContent = "Could not reach the server. Check your connection and try again.";
+      } else {
+        err.textContent = x.message;
+      }
+    }
+    gdone();
+    /*  btnBusy restores whatever the button's disabled state was when it went
+        busy — which was "enabled", because something had been typed. The field
+        has since been cleared, so re-apply the empty-means-disabled rule here
+        rather than leaving a live-looking button over an empty box. */
+    try {
+      var _s = document.querySelector("#gate .signin__submit"), _p = document.getElementById("pc");
+      if (_s && _p) _s.disabled = !_p.value.trim();
+    } catch (_x) {}
+    return false;
+  }
+  window.gsUnlock = unlock;
+
+  /* ---- sign out: forget the device session and start over ---- */
+  window.gsSignOut = function () { sessClear(); window.GS_PASS = ""; location.reload(); return false; };
+
+  /* ══ sign-in page behaviour ════════════════════════════════════════════════
+     Small things, but they are the difference between a form and a product:
+     a reveal toggle for a passcode typed by hand, a Caps Lock warning (the
+     single most common cause of a "wrong passcode" that isn't), a submit that
+     cannot be pressed empty, and a real copyright year.                       */
+  function boot() {
+    var gate = document.getElementById("gate");
+    if (!gate) { _resolveReady(""); return; }
+
+    document.documentElement.classList.add("gs-locked");
+    document.body.classList.add("gs-locked");
+    hideApp();
+
+    var form = gate.querySelector(".gatecard");
+    if (form) form.addEventListener("submit", unlock);
+
+    var pc   = document.getElementById("pc"),
+        tog  = document.getElementById("pcToggle"),
+        caps = document.getElementById("capsHint"),
+        sub  = gate.querySelector(".signin__submit"),
+        yr   = document.getElementById("yr"),
+        ep   = document.getElementById("epLabel");
+    if (yr) yr.textContent = new Date().getFullYear();
+    if (ep) ep.textContent = gateUrl().replace("https://", "");
+
+    if (tog && pc) {
+      tog.addEventListener("click", function () {
+        var show = pc.type === "password";
+        pc.type = show ? "text" : "password";
+        tog.setAttribute("aria-pressed", show ? "true" : "false");
+        tog.setAttribute("aria-label", show ? "Hide passcode" : "Show passcode");
+        tog.title = show ? "Hide passcode" : "Show passcode";
+        var slash = document.getElementById("eyeSlash");
+        if (slash) slash.style.display = show ? "" : "none";
+        pc.focus();
+        // Keep the caret at the end rather than selecting everything.
+        try { var n = pc.value.length; pc.setSelectionRange(n, n); } catch (e) {}
+      });
+    }
+
+    function syncSubmit() { if (sub && pc) sub.disabled = !pc.value.trim(); }
+    function capsCheck(e) {
+      if (!caps) return;
+      var on = e.getModifierState && e.getModifierState("CapsLock");
+      caps.hidden = !on;
+    }
+    if (pc) {
+      pc.addEventListener("input", function () {
+        syncSubmit();
+        var err = document.getElementById("gateErr");
+        if (err && err.textContent) err.textContent = "";   // clear a stale error as soon as they retype
+      });
+      pc.addEventListener("keydown", capsCheck);
+      pc.addEventListener("keyup", capsCheck);
+      pc.addEventListener("blur", function () { if (caps) caps.hidden = true; });
+      syncSubmit();
+    }
+
+    // Auto sign-in when a saved session exists (works on mobile + desktop).
+    // Only focus the field when there is nothing saved to sign in with.
+    var p = sessRead();
+    if (p) { unlock({ preventDefault: function () {}, __cachedPass: p }); }
+    else if (pc) { try { pc.focus({ preventScroll: true }); } catch (e) { pc.focus(); } }
+  }
+
+  /* ---- reveal the console behind the gate ----
+     One class, so this works in any of the consoles without knowing whether
+     their shell is a grid, a flex column or a pile of siblings. */
+  function hideApp() {
+    document.documentElement.classList.add("gs-locked");
+    if (document.body) document.body.classList.add("gs-locked");
+  }
+  function showApp() {
+    document.documentElement.classList.remove("gs-locked");
+    if (document.body) document.body.classList.remove("gs-locked");
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
+</script>
+
 <div class="app">
   <aside class="rail" id="rail">
     <div class="brand"><div class="logo">Brites <b>Etsy Pricing</b></div><div class="tag">Live store pricing control</div></div>
@@ -211,7 +806,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
     </div>
     <div class="queueHead"><span>Listings</span><span id="queueCount">0</span></div>
     <div class="queue" id="queue"></div>
-    <div class="railFoot">Live title search is verified against Etsy; local results appear instantly while Etsy responds.</div>
+    <div class="railFoot">Live title search is verified against Etsy; local results appear instantly while Etsy responds.<a href="#" id="signOut" style="float:right;color:#8c8476;font-size:10.5px;text-decoration:underline" onclick="return gsSignOut()">sign out</a></div>
   </aside>
 
   <main class="main">
@@ -2384,7 +2979,10 @@ $('#copyInvBtn').addEventListener('click',async()=>{if(!S.original){toast('Open 
   await navigator.clipboard.writeText(JSON.stringify(dump,null,2));toast('Live inventory JSON copied to clipboard.','ok')});
 addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);if(!typing&&e.key==='/'){e.preventDefault();$('#searchInput').focus();return}if(typing)return;if(e.key==='ArrowLeft')navigate(-1);if(e.key==='ArrowRight')navigate(1);if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(S.dirty)saveListing()}if(e.key.toLowerCase()==='a'&&!e.metaKey&&!e.ctrlKey&&S.view==='editor')approveListing()});
 
-(async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();primeEtsyApiUsage();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
+/*  Nothing boots until the operator is signed in: no Etsy call, no OAuth
+    callback handling, no catalogue load. __gsGateReady resolves the moment
+    the passcode is accepted (immediately, on a remembered device).       */
+(async function init(){await window.__gsGateReady;await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();primeEtsyApiUsage();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
 </script>
 </body>
 </html>
