@@ -413,7 +413,8 @@ async function callGeminiImagesEdits({
   size,
   quality,
   output_format,
-  images, 
+  images,
+  imageRoles,
 }) {
   return callGeminiGenerateContentImage({
     apiKey,
@@ -421,6 +422,7 @@ async function callGeminiImagesEdits({
     prompt,
     size,
     images,
+    imageRoles,
   });
 }
 
@@ -544,6 +546,9 @@ async function callOpenAIImagesGenerations({
 async function callImageModelEdits(options) {
   const config = resolveImageModel(options?.model);
   const apiKey = options?.apiKey || apiKeyForImageModel(config);
+  // NOTE: only the Gemini path injects role labels — the OpenAI images/edits
+  // endpoint receives the prompt and the images with no added framing — so
+  // imageRoles is meaningful for Gemini only and harmless to pass either way.
   return config.provider === "openai"
     ? callOpenAIImagesEdits({ ...options, apiKey, model: config.id })
     : callGeminiImagesEdits({ ...options, apiKey, model: config.id });
@@ -578,12 +583,42 @@ function stripUndefined(obj) {
   return out;
 }
 
+// Role-label vocabularies. IMAGE_ROLE_LABELS.edit is the original wording,
+// preserved verbatim so default behaviour cannot drift.
+const IMAGE_ROLE_LABELS = {
+  edit: {
+    first:
+      "IMAGE 1 — LOCKED SOURCE TEMPLATE / DESTINATION CANVAS. Preserve its composition and all non-charm content.",
+    second:
+      "IMAGE 2 — MASTER CHARM / DESIGN TRUTH. Use its exact silhouette, integrated eyelet, cutouts, and engraving topology for the replacement charm only.",
+    extra: (n) => `IMAGE ${n} — ADDITIONAL REFERENCE.`,
+    single:
+      "IMAGE 1 — EDIT TARGET. Apply only the requested edit and preserve all unrelated pixels and composition.",
+    lock:
+      "FINAL IMAGE-ROLE LOCK: edit IMAGE 1 in place. IMAGE 2 supplies only the replacement charm design. Do not blend the images, redraw the whole template, or copy IMAGE 1's old charm details into the new charm.",
+  },
+  // Used by the Charm Maker's design step. The reference is a material and
+  // craft sample, NOT a canvas and NOT a subject to reproduce.
+  style_reference: {
+    first:
+      "IMAGE 1 — MATERIAL AND CRAFT REFERENCE ONLY. Read from it ONLY: the metal alloy and its exact colour and tone, the surface finish and polish, the way light falls on that metal, the thickness and cleanliness of the laser-cut edges, the depth and weight of the surface engraving, the density of detail per unit area, the way the integrated bail is fused into the body, and the background treatment. It is a physical sample of how this workshop makes jewellery. It is NOT a canvas to edit, NOT a composition to preserve, and NOT the object you are being asked to draw.",
+    second:
+      "IMAGE 2 — ADDITIONAL MATERIAL AND CRAFT REFERENCE. Same role and same limits as IMAGE 1: material, finish, edge quality, engraving depth, detail density, bail construction and background only. Its subject and silhouette are equally off limits.",
+    extra: (n) => `IMAGE ${n} — ADDITIONAL MATERIAL AND CRAFT REFERENCE. Material and finish only.`,
+    single:
+      "IMAGE 1 — MATERIAL AND CRAFT REFERENCE ONLY. Read from it ONLY: the metal alloy and its exact colour and tone, the surface finish and polish, the way light falls on that metal, the thickness and cleanliness of the laser-cut edges, the depth and weight of the surface engraving, the density of detail per unit area, the way the integrated bail is fused into the body, and the background treatment. It is a physical sample of how this workshop makes jewellery. It is NOT a canvas to edit, NOT a composition to preserve, and NOT the object you are being asked to draw.",
+    lock:
+      "FINAL IMAGE-ROLE LOCK: you are designing a NEW product, not editing a supplied one. The reference image(s) define material, finish, lighting, background and engraving language ONLY. The SUBJECT, the SILHOUETTE and the OUTLINE come from the written brief above and from nowhere else. Do not trace, mirror, re-pose, re-scale or lightly restyle the object shown in the reference. HARD FAIL: an output a shopper would identify as the same object as the reference. HARD FAIL: an output whose outline could be laid over the reference's outline and broadly match. If your draft resembles the reference's shape, discard it and design the brief's subject from scratch.",
+  },
+};
+
 async function callGeminiGenerateContentImage({
   apiKey,
   model,
   prompt,
   size,
   images,
+  imageRoles,
 }) {
   const geminiModel =
     String(model || DEFAULT_IMAGE_MODEL).trim() ||
@@ -617,6 +652,10 @@ async function callGeminiGenerateContentImage({
     `Return an image suitable for a product photo.`;
 
   const imageInputs = Array.isArray(images) ? images : [];
+  // Unknown values fall back to "edit" so a typo can never silently unlock the
+  // compositor's guarantees.
+  const roleSet = IMAGE_ROLE_LABELS[imageRoles] || IMAGE_ROLE_LABELS.edit;
+
   const parts = [{ text: promptText }];
   for (const [index, img] of imageInputs.entries()) {
     // Explicit role labels prevent multi-image edit models from blending
@@ -627,15 +666,13 @@ async function callGeminiGenerateContentImage({
       parts.push({
         text:
           index === 0
-            ? "IMAGE 1 — LOCKED SOURCE TEMPLATE / DESTINATION CANVAS. Preserve its composition and all non-charm content."
+            ? roleSet.first
             : index === 1
-              ? "IMAGE 2 — MASTER CHARM / DESIGN TRUTH. Use its exact silhouette, integrated eyelet, cutouts, and engraving topology for the replacement charm only."
-              : `IMAGE ${index + 1} — ADDITIONAL REFERENCE.`,
+              ? roleSet.second
+              : roleSet.extra(index + 1),
       });
     } else {
-      parts.push({
-        text: "IMAGE 1 — EDIT TARGET. Apply only the requested edit and preserve all unrelated pixels and composition.",
-      });
+      parts.push({ text: roleSet.single });
     }
 
     // Gemini will hard-crash if passed application/octet-stream.
@@ -652,11 +689,13 @@ async function callGeminiGenerateContentImage({
       },
     });
   }
-  if (imageInputs.length >= 2) {
-    parts.push({
-      text:
-        "FINAL IMAGE-ROLE LOCK: edit IMAGE 1 in place. IMAGE 2 supplies only the replacement charm design. Do not blend the images, redraw the whole template, or copy IMAGE 1's old charm details into the new charm.",
-    });
+  // The edit vocabulary only emits its lock for multi-image requests (a
+  // single-image edit needs no disambiguation). The style_reference vocabulary
+  // emits it always: with one reference image the "do not reproduce this
+  // object" instruction is the entire point, and it must be last so it carries
+  // the most weight.
+  if (imageInputs.length >= 2 || roleSet === IMAGE_ROLE_LABELS.style_reference) {
+    parts.push({ text: roleSet.lock });
   }
 
   const body = stripUndefined({
@@ -1452,7 +1491,51 @@ async function _handlerImpl(event) {
     output_base_path,
     source_storage_path,
     manifest,
+    // "edit" (default) | "style_reference"
+    //
+    // The role labels this function injects around the inline image parts are
+    // written for the listing compositor: IMAGE 1 is a locked template canvas,
+    // IMAGE 2 is design truth whose exact silhouette must be reused, and the
+    // final lock says "edit IMAGE 1 in place". They are appended AFTER the
+    // caller's prompt, so they win any disagreement with it.
+    //
+    // That is correct for compositing a known charm onto a known template. It
+    // is exactly wrong for the Charm Maker, which passes a reference charm and
+    // asks for a NEW design: the labels instruct the model to reproduce the
+    // silhouette it was supposed to depart from, which is why derivatives came
+    // back as near-copies no matter how the prompt was worded.
+    //
+    // "style_reference" swaps in labels that scope the reference to material,
+    // finish, lighting, background and engraving language, and make reusing its
+    // subject or silhouette an explicit failure. Default is unchanged, so every
+    // existing caller behaves byte-for-byte as before.
+    image_roles,
   } = body || {};
+
+  // ---------------------------------------------------------------------
+  // kind: "capabilities" — a cheap, side-effect-free probe.
+  //
+  // The Charm Maker's design mode depends on this file supporting
+  // image_roles: "style_reference". An older deployment simply IGNORES an
+  // unknown image_roles and appends "IMAGE 1 — EDIT TARGET. Apply only the
+  // requested edit and preserve all unrelated pixels", which silently turns
+  // every derivative back into a near-copy of its reference with no error
+  // anywhere. That silent failure is unacceptable, so the client probes for
+  // this endpoint and refuses to use the image-conditioned path unless it
+  // answers. An old deployment falls through to the edits branch and 400s,
+  // which is itself a clear answer.
+  // ---------------------------------------------------------------------
+  if (kind === "capabilities") {
+    return json(200, {
+      ok: true,
+      proxy: "geminiImageProxy-background",
+      capabilitiesVersion: 2,
+      roleModes: Object.keys(IMAGE_ROLE_LABELS),
+      supportsStyleReference: Object.prototype.hasOwnProperty.call(IMAGE_ROLE_LABELS, "style_reference"),
+      supportsGenerations: true,
+      imageModels: Object.keys(IMAGE_MODEL_CONFIG),
+    });
+  }
 
   let modelConfig;
   try {
@@ -3216,6 +3299,7 @@ async function _handlerImpl(event) {
         quality,
         output_format,
         images,
+        imageRoles: image_roles,
       });
     }
 
