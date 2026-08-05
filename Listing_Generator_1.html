@@ -1095,6 +1095,15 @@
   }
   .prov-why:hover, .prov-diff:hover { color: var(--text-2); }
 
+  .prov-iou {
+    padding: 1px 7px; border-radius: 999px; font-size: 9px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  }
+  .prov-iou.distinct { color: var(--ok); border-color: var(--ok-line); background: var(--ok-bg); }
+  .prov-iou.close    { color: var(--warn); border-color: var(--warn-line); background: var(--warn-bg); }
+  .prov-iou.replica  { color: #fca5a5; border-color: #7a3838; background: #3d1c1c; font-weight: 600; }
+  .window-info.rm-warn { border-left-color: var(--warn-line); color: var(--warn); }
+
   .research-box {
     background: var(--inset); border: 1px solid var(--line);
     border-left: 3px solid var(--accent-line);
@@ -3533,6 +3542,23 @@ html.gs-locked body > *:not(#gate){display:none!important}
             Each reference is analysed once — what it is, who buys it, why it sells, and which of its
             attributes are load-bearing versus free to change. That yields 21 concrete design briefs per
             charm across a seven-rung ladder, and every derivative in a batch takes a different rung.
+          </p>
+
+          <label class="field-label">How the new charm is drawn</label>
+          <div class="row" style="gap: 8px;">
+            <select id="cmRenderMode" style="flex:1;">
+              <option value="text">No reference image · cannot copy (recommended)</option>
+              <option value="styled">Style-locked · sends the reference as a material sample</option>
+              <option value="auto">Auto · style-locked when the proxy supports it</option>
+            </select>
+            <button class="btn btnSmall" id="cmProbeBtn" type="button" style="width:auto;" title="Ask the deployed image proxy what it supports">Check proxy</button>
+          </div>
+          <div class="window-info" id="cmRenderModeInfo">Checking what your deployed image proxy supports…</div>
+          <p class="muted" style="font-size: 10px; margin: 6px 0 0 0; line-height: 1.5;">
+            Every result is measured against its reference and the silhouette overlap is shown on the card —
+            <span style="color: var(--ok)">distinct</span>, <span style="color: var(--warn)">close</span> or
+            <span style="color: #fca5a5">replica</span>. If a run produces copies you see it on the card rather
+            than having to spot it.
           </p>
 
           <div class="row" style="gap: 8px; flex-wrap: wrap;">
@@ -8733,10 +8759,10 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
             // re-rolls the SAME concept rather than silently reverting to the
             // legacy near-copy prompt.
             let imageRoles;
+            let redoKind = "edits";
 
             if (slotIndex === 0) {
-                inputPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath; 
-                if (!inputPath) throw new Error("Missing source reference for base charm.");
+                inputPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
                 if (manifest.concept && manifest.strategy) {
                     // Rebuild the brief from what the manifest recorded. The
                     // analysis comes from the shared research index; if this
@@ -8748,14 +8774,23 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                         await _cmResearchLoad();
                         analysis = _cmResearch.analyses?.[manifest.sourceCharm]?.analysis || null;
                     } catch (_) {}
+                    const rmRedo = await cmEffectiveRenderMode();
                     promptStr = cmBuildDesignPrompt(
                         { strategyId: manifest.strategy, conceptIndex: manifest.conceptIndex, concept: manifest.concept },
                         analysis,
-                        { modelId: redoModel }
+                        { modelId: redoModel, mode: rmRedo.mode }
                     );
-                    inputCharmPath = undefined;
-                    imageRoles = "style_reference";
+                    if (rmRedo.mode === 'text') {
+                        // No reference image on a redo either, for the same reason.
+                        redoKind = "generations";
+                        inputPath = undefined;
+                        inputCharmPath = undefined;
+                    } else {
+                        inputCharmPath = undefined;
+                        imageRoles = "style_reference";
+                    }
                 } else {
+                    if (!inputPath) throw new Error("Missing source reference for base charm.");
                     inputCharmPath = inputPath;
                     promptStr = promptStrCharm;
                 }
@@ -8775,7 +8810,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
 
             // PASS SIGNAL TO REQUEST
             await postImageGeneration({
-                kind: "edits",
+                kind: redoKind,
                 activeCategory: category,
                 input_storage_path: inputPath,
                 input_charm_storage_path: inputCharmPath,
@@ -8923,6 +8958,23 @@ window.regenCharmQuad = async function(folderId) {
                 prev0.classList.remove("working-box");
                 setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
                 prev0.classList.add("success-border");
+            }
+
+            // Measure it. Silhouette overlap with the reference, scale- and
+            // position-invariant, painted onto the card. If a change to this
+            // pipeline ever regresses into producing copies again, this number
+            // says so immediately instead of it having to be noticed by eye.
+            if (newBlob0) {
+                try {
+                    const score = await cmScoreAgainstReference(targetCharmRef.fullPath, newBlob0);
+                    if (score) {
+                        cmRecordSimilarity(folderId, targetCharmRef.fullPath, designBrief?.strategyId, score);
+                        if (score.verdict !== 'distinct') {
+                            console.warn(`[charm-research] ${folderId}: silhouette overlap with reference is ${Math.round(score.iou*100)}% (${score.verdict}). Render mode was "${manifest.renderMode}".`);
+                            setStatus(`⚠ ${folderId}: ${Math.round(score.iou*100)}% silhouette overlap with the reference — too close. Check the render mode.`);
+                        }
+                    }
+                } catch (_) {}
             }
             const btn0 = document.getElementById(`redo_${folderId}_0`);
             if(btn0) btn0.disabled = false;
@@ -9392,7 +9444,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
                 console.warn("No line art reference found. Will fallback to charm itself.", e);
             }
 
+            // Decide HOW to render before writing the manifest, so the manifest
+            // records it. Computing this later meant renderMode was set on a
+            // local object that had already been uploaded — the stored manifest
+            // never carried it, and there was no way to tell after the fact
+            // whether a set had been drawn with or without a reference image.
+            const rm = designBrief ? await cmEffectiveRenderMode() : { mode: 'legacy', reason: 'no research brief' };
+            if (rm.mode === 'text' && cmRenderMode() === 'styled') {
+              console.warn('[charm-research] ' + rm.reason);
+              setStatus('Style-locked unavailable on this deployment — designing without a reference image instead.');
+            }
+
             const manifest = {
+                renderMode: rm.mode,
                 sourceCharm: targetCharmRef.fullPath,
                 sourceEarring: targetEarringRef?.fullPath || null,
                 lineArtRef: lineArtRef?.fullPath || null,
@@ -9434,21 +9498,32 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
             // The subject now arrives as text from the research brief.
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
             const stratLabel = designBrief ? (CM_STRATEGY_BY_ID[designBrief.strategyId]?.label || designBrief.strategyId) : null;
+
             if(prev0) prev0.innerHTML = window.getSpinnerHTML(designBrief ? `Designing: ${stratLabel}…` : "Generating Base...");
+
             const designPrompt = designBrief
-              ? cmBuildDesignPrompt(designBrief, designBrief.analysis, { modelId: generationModel })
+              ? cmBuildDesignPrompt(designBrief, designBrief.analysis, { modelId: generationModel, mode: rm.mode })
               : promptStrCharm;
-            await postImageGeneration({
-                kind: "edits", activeCategory: "Charms",
-                input_storage_path: targetCharmRef.fullPath,
-                // Deliberately NOT also passing input_charm_storage_path when a
-                // brief exists — one material reference is enough and two
-                // anchors the model harder.
-                input_charm_storage_path: designBrief ? undefined : targetCharmRef.fullPath,
-                image_roles: designBrief ? "style_reference" : undefined,
-                output_base_path: outputBasePath, slotIndex: 0,
-                prompt: designPrompt
-            }, undefined, generationModel);
+
+            const slot0Body = (designBrief && rm.mode === 'text')
+              ? {
+                  // Text to image. No input image, so nothing to copy.
+                  kind: "generations", activeCategory: "Charms",
+                  output_base_path: outputBasePath, slotIndex: 0,
+                  prompt: designPrompt,
+                }
+              : {
+                  kind: "edits", activeCategory: "Charms",
+                  input_storage_path: targetCharmRef.fullPath,
+                  // Deliberately NOT also passing input_charm_storage_path when a
+                  // brief exists — one material reference is enough and two
+                  // anchors the model harder.
+                  input_charm_storage_path: designBrief ? undefined : targetCharmRef.fullPath,
+                  image_roles: designBrief ? "style_reference" : undefined,
+                  output_base_path: outputBasePath, slotIndex: 0,
+                  prompt: designPrompt,
+                };
+            await postImageGeneration(slot0Body, undefined, generationModel);
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
             
@@ -9458,6 +9533,23 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
                 prev0.classList.remove("working-box");
                 setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
                 prev0.classList.add("success-border");
+            }
+
+            // Measure it. Silhouette overlap with the reference, scale- and
+            // position-invariant, painted onto the card. If a change to this
+            // pipeline ever regresses into producing copies again, this number
+            // says so immediately instead of it having to be noticed by eye.
+            if (newBlob0) {
+                try {
+                    const score = await cmScoreAgainstReference(targetCharmRef.fullPath, newBlob0);
+                    if (score) {
+                        cmRecordSimilarity(folderId, targetCharmRef.fullPath, designBrief?.strategyId, score);
+                        if (score.verdict !== 'distinct') {
+                            console.warn(`[charm-research] ${folderId}: silhouette overlap with reference is ${Math.round(score.iou*100)}% (${score.verdict}). Render mode was "${manifest.renderMode}".`);
+                            setStatus(`⚠ ${folderId}: ${Math.round(score.iou*100)}% silhouette overlap with the reference — too close. Check the render mode.`);
+                        }
+                    }
+                } catch (_) {}
             }
             const btn0 = document.getElementById(`redo_${folderId}_0`);
             if(btn0) btn0.disabled = false;
@@ -18782,12 +18874,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
       analyses: {},      // charmPath -> { at, model, analysis, ideas, used:{strategyId:[conceptIdx]} }
       sales: {},         // charmPath -> { rank, units, title, tags, at }
       strategyStats: {}, // strategyId -> { generated, approved }
+      outcomes: {},      // Deriv folderId -> { iou, verdict, strategy, source, at }
     };
     let _cmResearchDirty = false;
     let _cmResearchLoaded = false;
 
     function _cmResearchEmpty() {
-      return { schema: CM_RESEARCH_SCHEMA, updatedAt: 0, analyses: {}, sales: {}, strategyStats: {} };
+      return { schema: CM_RESEARCH_SCHEMA, updatedAt: 0, analyses: {}, sales: {}, strategyStats: {}, outcomes: {} };
     }
     function _cmResearchNormalise(raw) {
       const out = _cmResearchEmpty();
@@ -18796,6 +18889,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
       if (raw.analyses && typeof raw.analyses === 'object') out.analyses = raw.analyses;
       if (raw.sales && typeof raw.sales === 'object') out.sales = raw.sales;
       if (raw.strategyStats && typeof raw.strategyStats === 'object') out.strategyStats = raw.strategyStats;
+      if (raw.outcomes && typeof raw.outcomes === 'object') out.outcomes = raw.outcomes;
       return out;
     }
     function _cmResearchMerge(base, incoming) {
@@ -18805,6 +18899,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
         analyses: { ...base.analyses },
         sales: { ...base.sales },
         strategyStats: { ...base.strategyStats },
+        // Measurements are immutable per set; a union is always correct.
+        outcomes: { ...base.outcomes, ...(incoming.outcomes || {}) },
       };
       // Merge FIELD BY FIELD, not whole-object-by-timestamp.
       //
@@ -19363,14 +19459,41 @@ scratch.`;
       const id = analysis?.identification || {};
       const strat = CM_STRATEGY_BY_ID[brief.strategyId];
       const density = Number(id.detailDensity) || 3;
-      const needsLock = opts.forceRoleLock === true
-        || (opts.forceRoleLock !== false && !_cmProviderInjectsRoleLabels(opts.modelId));
+      // In text mode there is no reference image, so there is nothing to lock
+      // the model away from — and no role labels are injected either.
+      const textOnly = opts.mode === 'text';
+      const needsLock = !textOnly && (opts.forceRoleLock === true
+        || (opts.forceRoleLock !== false && !_cmProviderInjectsRoleLabels(opts.modelId)));
 
-      return `DESIGN BRIEF — design ONE new flat metal jewellery charm from the specification below.
+      const opening = textOnly
+        ? `DESIGN BRIEF — design ONE new flat metal jewellery charm from the specification below.
+
+You are drawing this object from scratch. Everything you need is in this brief: what the object is, what its
+outline looks like, and exactly what the metal and finish must look like. There is no reference image to work
+from and none is needed.`
+        : `DESIGN BRIEF — design ONE new flat metal jewellery charm from the specification below.
 
 You are NOT editing, restyling, re-posing or varying the object in the reference image. You are drawing a
 different object that this workshop would make. The reference image tells you HOW this workshop makes metal;
-this brief tells you WHAT to make.
+this brief tells you WHAT to make.`;
+
+      const styleHeader = textOnly
+        ? `═══ MATERIAL AND FINISH — render exactly this ═══`
+        : `═══ HOUSE STYLE — take ALL of this from the reference image, and ONLY this ═══`;
+
+      // With no reference image the material has to be fully specified in words,
+      // so the house-style paragraph is backed up with explicit render language.
+      const styleExtra = textOnly
+        ? `
+• Render as a clean product photograph of a real metal object, not an illustration, not a 3D render, not a mockup.
+• The metal is a single flat sheet with a mirror-bright polish: bright specular highlights, deep reflective
+  darks within the metal, and crisp reflection edges. It must read as real polished metal, not flat gold colour.
+• Light comes from the upper left, slightly in front, giving a soft gradient across each flat face.
+• Cut edges catch a thin bright rim of light, which is what makes the piece read as laser-cut sheet.
+• The metal sits on pure #000000 with no cast shadow, no vignette and no reflected floor.`
+        : '';
+
+      return `${opening}
 
 ═══ WHAT TO MAKE ═══
 
@@ -19388,35 +19511,38 @@ ${c.negativeSpacePlan || 'Use cutouts only where they clarify the silhouette.'}
 BAIL PLACEMENT:
 ${c.bailPlan || 'A single integrated loop at the top, above the centre of mass so the piece hangs level.'}
 
-═══ HOUSE STYLE — take ALL of this from the reference image, and ONLY this ═══
+${styleHeader}
 
 ${analysis?.houseStyle || 'Flat high-polish gold sheet metal, crisp laser-cut edges, sparse incised engraving, pure black background.'}
 
-• Metal and colour: ${id.metal || 'polished gold tone'} — match the reference exactly.
-• Finish: ${id.finish || 'high polish'} — match the reference exactly.
-• Engraving language: ${id.engravingLanguage || 'sparse single-weight incised lines'} — same vocabulary, applied to the new subject.
-• Detail density: aim for ${density} out of 5, the same visual busyness as the reference. Do not exceed it; a denser piece reads as clutter at thumbnail size.
-• Bail construction: ${id.bail || 'a loop fused into the body as one continuous piece'} — same construction method, positioned for THIS silhouette.
+• Metal and colour: ${id.metal || 'polished gold tone'}${textOnly ? '.' : ' — match the reference exactly.'}
+• Finish: ${id.finish || 'high polish'}${textOnly ? '.' : ' — match the reference exactly.'}
+• Engraving language: ${id.engravingLanguage || 'sparse single-weight incised lines'} — this vocabulary, applied to the new subject.
+• Detail density: aim for ${density} out of 5. Do not exceed it; a denser piece reads as clutter at thumbnail size.
+• Bail construction: ${id.bail || 'a loop fused into the body as one continuous piece'} — this construction method, positioned for THIS silhouette.${styleExtra}
 
-═══ WHAT MUST NOT COME FROM THE REFERENCE ═══
+${textOnly ? `═══ WHAT THIS MUST NOT BE ═══
+
+It must not be ${id.primarySubject || 'the reference subject'}, nor a variation, restyling or re-posing of it.
+${c.distinctness ? `A shopper must tell them apart instantly: ${c.distinctness}` : ''}` : `═══ WHAT MUST NOT COME FROM THE REFERENCE ═══
 
 Its subject. Its species or object type. Its pose. Its outline. Its proportions. Its composition.
-${c.distinctness ? `\nA shopper must tell them apart instantly: ${c.distinctness}` : ''}
+${c.distinctness ? `A shopper must tell them apart instantly: ${c.distinctness}` : ''}`}
 Design intent for this piece (${strat ? strat.label : brief.strategyId}): ${strat ? strat.directive : ''}
 
 ${CM_MANUFACTURING_RULES}
 
 ═══ SELF-CHECK BEFORE YOU OUTPUT ═══
 1. Is the object I have drawn plainly "${c.title || c.subject}"? If it is anything else, start again.
-2. Could my outline be laid over the reference's outline and broadly match? If yes, start again — I have copied instead of designed.
+2. ${textOnly ? `Have I drawn ${id.primarySubject || 'the reference subject'} instead of the brief's subject? If so, start again.` : `Could my outline be laid over the reference's outline and broadly match? If yes, start again — I have copied instead of designed.`}
 3. Is the background pure #000000?
 4. Is there exactly ONE integrated bail, with a visible hole, positioned so the piece hangs level?
 5. Is the metal tone and polish identical to the reference?
 6. Is it flat, front-facing, with no 3D thickness anywhere?
 7. Is there any text? There must be none.
 
-HARD FAIL: an output a shopper would identify as the same object as the reference.
-HARD FAIL: an output whose silhouette is the reference's silhouette with minor edits.
+HARD FAIL: an output a shopper would identify as ${textOnly ? (id.primarySubject || 'the reference subject') : 'the same object as the reference'}.
+HARD FAIL: an output whose silhouette is ${textOnly ? "the reference subject's silhouette" : "the reference's silhouette"} with minor edits.
 HARD FAIL: a background that is not pure black.
 HARD FAIL: more than one hanging loop, or a loop that reads as a separate attached ring.
 HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock ? '\n' + CM_PROVIDER_ROLE_LOCK : ''}`;
@@ -19546,6 +19672,275 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       await _cmResearchSave();
       return matched.length;
     }
+
+
+    // =====================================================================
+    // RENDER MODE, CAPABILITY PROBE, AND A SILHOUETTE GUARD
+    // ---------------------------------------------------------------------
+    // The first version of this feature depended on a patched
+    // geminiImageProxy-background.js honouring image_roles:"style_reference".
+    // If that file was not redeployed, the old code ignored the flag, appended
+    // "IMAGE 1 — EDIT TARGET. Apply only the requested edit and preserve all
+    // unrelated pixels", and every derivative came back a near-copy — with no
+    // error, no warning and nothing in the UI to say so. That silent failure is
+    // the thing being fixed here, three ways:
+    //
+    //   1. PROBE. The proxy is asked what it supports before anything is
+    //      generated. An old deployment cannot answer, so the app knows.
+    //   2. DEFAULT TO NO REFERENCE IMAGE. Design mode now uses
+    //      kind:"generations" — text to image, no reference passed at all. A
+    //      model that never sees the reference cannot copy its silhouette; the
+    //      house style is carried by the material paragraph the research step
+    //      writes. This works on ANY deployment, patched or not.
+    //   3. MEASURE. After each base charm renders, its silhouette is compared
+    //      with the reference's and the result is shown on the card. "Is it
+    //      actually different?" stops being a matter of opinion.
+    // =====================================================================
+
+    const CM_RENDER_MODE_LS = 'lg1_charm_render_mode_v1';
+    const CM_DEFAULT_RENDER_MODE = 'text';   // no reference image — cannot copy
+    const CM_IOU_WARN = 0.78;                // flag at or above this
+    const CM_IOU_FAIL = 0.88;                // near-certain replica
+
+    let _cmProxyCaps = null;   // null = not probed yet
+    let _cmCapsProbePromise = null;
+
+    function cmRenderMode() {
+      try {
+        const v = localStorage.getItem(CM_RENDER_MODE_LS);
+        return (v === 'text' || v === 'styled' || v === 'auto') ? v : CM_DEFAULT_RENDER_MODE;
+      } catch (_) { return CM_DEFAULT_RENDER_MODE; }
+    }
+
+    async function cmProbeProxy({ force = false } = {}) {
+      if (_cmProxyCaps && !force) return _cmProxyCaps;
+      if (_cmCapsProbePromise) return _cmCapsProbePromise;
+      _cmCapsProbePromise = (async () => {
+        try {
+          const r = await postJson('geminiImageProxy', { kind: 'capabilities' });
+          _cmProxyCaps = {
+            ok: true,
+            styleReference: !!r?.supportsStyleReference,
+            version: r?.capabilitiesVersion || 0,
+            roleModes: r?.roleModes || [],
+          };
+        } catch (e) {
+          // An old deployment falls through to the edits branch and 400s on the
+          // missing input path. That error IS the answer.
+          _cmProxyCaps = { ok: false, styleReference: false, version: 0, error: String(e?.message || e) };
+        }
+        _cmCapsProbePromise = null;
+        _cmRenderRenderModeUI();
+        return _cmProxyCaps;
+      })();
+      return _cmCapsProbePromise;
+    }
+
+    // Which mode will actually be used for this request, and why.
+    async function cmEffectiveRenderMode() {
+      const want = cmRenderMode();
+      if (want === 'text') return { mode: 'text', reason: 'selected' };
+      const caps = await cmProbeProxy();
+      if (want === 'styled') {
+        if (caps.styleReference) return { mode: 'styled', reason: 'selected, proxy supports it' };
+        // Refuse rather than silently produce replicas.
+        return { mode: 'text', reason: 'style-locked requested but this deployment of geminiImageProxy-background.js does not support image_roles — falling back to text-to-image so the output is not a copy' };
+      }
+      // auto
+      return caps.styleReference
+        ? { mode: 'styled', reason: 'auto · proxy supports image_roles' }
+        : { mode: 'text', reason: 'auto · proxy has no image_roles support' };
+    }
+
+    // ---------------------------------------------------------------------
+    // Silhouette signature and IoU
+    // ---------------------------------------------------------------------
+    // Charms are gold on pure black, so a luma threshold separates the object
+    // from the ground cleanly. The mask is cropped to its bounding box and
+    // resampled before comparison, which makes the score invariant to scale and
+    // position — a "different" charm that is just the reference at 90% size
+    // still scores as a copy, which is exactly what we want to catch.
+    const CM_SIG_EDGE = 64;
+    const CM_SIG_LUMA = 42;
+
+    async function _cmSilhouetteSignature(blob) {
+      let bmp = null, src = null, w = 0, h = 0, objUrl = null;
+      try {
+        bmp = await createImageBitmap(blob);
+        src = bmp; w = bmp.width; h = bmp.height;
+      } catch (_) {
+        objUrl = URL.createObjectURL(blob);
+        src = await new Promise((res, rej) => {
+          const el = new Image();
+          el.onload = () => res(el);
+          el.onerror = () => rej(new Error('signature decode failed'));
+          el.src = objUrl;
+        });
+        w = src.naturalWidth || src.width; h = src.naturalHeight || src.height;
+      }
+      try {
+        if (!w || !h) throw new Error('zero-dimension image');
+        // Pass 1: read at a workable size and find the object's bounding box.
+        const work = Math.min(256, Math.max(w, h));
+        const scale = work / Math.max(w, h);
+        const cw = Math.max(1, Math.round(w * scale));
+        const ch = Math.max(1, Math.round(h * scale));
+        const c1 = document.createElement('canvas');
+        c1.width = cw; c1.height = ch;
+        const x1 = c1.getContext('2d', { willReadFrequently: true });
+        x1.fillStyle = '#000'; x1.fillRect(0, 0, cw, ch);
+        x1.drawImage(src, 0, 0, cw, ch);
+        const data = x1.getImageData(0, 0, cw, ch).data;
+        let minX = cw, minY = ch, maxX = -1, maxY = -1;
+        const lum = new Uint8Array(cw * ch);
+        for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+          const l = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
+          const on = l >= CM_SIG_LUMA ? 1 : 0;
+          lum[p] = on;
+          if (on) {
+            const x = p % cw, y = (p - x) / cw;
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+          }
+        }
+        if (maxX < 0) return null; // nothing above threshold — all black
+        const bw = maxX - minX + 1, bh = maxY - minY + 1;
+
+        // Pass 2: resample the cropped mask to a fixed square.
+        const mask = new Uint8Array(CM_SIG_EDGE * CM_SIG_EDGE);
+        for (let y = 0; y < CM_SIG_EDGE; y++) {
+          const sy = minY + Math.min(bh - 1, Math.floor((y + 0.5) * bh / CM_SIG_EDGE));
+          for (let x = 0; x < CM_SIG_EDGE; x++) {
+            const sx = minX + Math.min(bw - 1, Math.floor((x + 0.5) * bw / CM_SIG_EDGE));
+            mask[y * CM_SIG_EDGE + x] = lum[sy * cw + sx];
+          }
+        }
+        return { mask, aspect: bw / bh };
+      } finally {
+        if (bmp) { try { bmp.close(); } catch (_) {} }
+        if (objUrl) { try { URL.revokeObjectURL(objUrl); } catch (_) {} }
+      }
+    }
+
+    function _cmMaskIoU(a, b) {
+      if (!a?.mask || !b?.mask) return null;
+      let inter = 0, union = 0;
+      for (let i = 0; i < a.mask.length; i++) {
+        const x = a.mask[i], y = b.mask[i];
+        if (x || y) { union++; if (x && y) inter++; }
+      }
+      return union ? inter / union : null;
+    }
+
+    // Compare a freshly rendered base charm with its reference. Returns null
+    // when either image can't be read — a diagnostic must never break a render.
+    async function cmScoreAgainstReference(referencePath, outputBlob) {
+      try {
+        const refBlob = await _cmLoadCharmBlob({ path: referencePath, name: _cmBaseName(referencePath) });
+        const [sigRef, sigOut] = await Promise.all([
+          _cmSilhouetteSignature(refBlob),
+          _cmSilhouetteSignature(outputBlob),
+        ]);
+        const iou = _cmMaskIoU(sigRef, sigOut);
+        if (iou == null) return null;
+        return {
+          iou,
+          aspectRef: sigRef.aspect,
+          aspectOut: sigOut.aspect,
+          verdict: iou >= CM_IOU_FAIL ? 'replica' : iou >= CM_IOU_WARN ? 'close' : 'distinct',
+        };
+      } catch (e) {
+        console.info('[charm-research] similarity check skipped:', e?.message || e);
+        return null;
+      }
+    }
+
+    // Paint the score onto the card's provenance strip and remember it, so the
+    // scoreboard can report which rungs actually produce distinct designs.
+    function cmRecordSimilarity(folderId, sourceCharm, strategyId, score) {
+      if (!score) return;
+      try {
+        _cmResearch.outcomes = _cmResearch.outcomes || {};
+        _cmResearch.outcomes[folderId] = {
+          iou: Number(score.iou.toFixed(4)),
+          verdict: score.verdict,
+          strategy: strategyId || null,
+          source: sourceCharm || null,
+          at: Date.now(),
+        };
+        _cmResearchDirty = true;
+        _cmResearchSave();
+      } catch (_) {}
+      try { window.__charmResearch.lastIou = score.iou; } catch (_) {}
+      _cmPaintSimilarity(folderId, score);
+      _cmRenderStrategyStats();
+    }
+
+    function _cmPaintSimilarity(folderId, score) {
+      const el = document.getElementById(`prov_${folderId}`);
+      if (!el || !score) return;
+      let chip = el.querySelector('.prov-iou');
+      if (!chip) {
+        chip = document.createElement('span');
+        chip.className = 'prov-iou';
+        el.appendChild(chip);
+      }
+      const pct = Math.round(score.iou * 100);
+      chip.className = `prov-iou ${score.verdict}`;
+      chip.textContent = score.verdict === 'replica' ? `⚠ replica ${pct}%`
+                       : score.verdict === 'close' ? `⚠ close ${pct}%`
+                       : `distinct ${pct}%`;
+      chip.title =
+        `Silhouette overlap with the reference: ${pct}%.\n` +
+        `Masks are cropped to their bounding box and resampled, so this is independent of scale and position.\n` +
+        `Under ${Math.round(CM_IOU_WARN * 100)}% reads as a genuinely different object; ` +
+        `${Math.round(CM_IOU_FAIL * 100)}%+ is almost certainly a copy.`;
+      el.style.display = 'block';
+    }
+
+    // ---------------------------------------------------------------------
+    // Render-mode UI
+    // ---------------------------------------------------------------------
+    function _cmRenderRenderModeUI() {
+      const sel = document.getElementById('cmRenderMode');
+      if (sel && sel.value !== cmRenderMode()) sel.value = cmRenderMode();
+      const info = document.getElementById('cmRenderModeInfo');
+      if (!info) return;
+      const caps = _cmProxyCaps;
+      const want = cmRenderMode();
+      let txt, cls = 'ok';
+      if (!caps) {
+        txt = 'Checking what your deployed image proxy supports…';
+        cls = 'working';
+      } else if (!caps.styleReference) {
+        txt = want === 'text'
+          ? 'Text-to-image · no reference image is sent, so a copy is structurally impossible. Your deployed proxy has no image_roles support, so style-locked is unavailable anyway.'
+          : 'Your deployed geminiImageProxy-background.js does NOT support image_roles. Style-locked would silently produce copies, so text-to-image is being used instead. Re-upload the patched function to enable it.';
+        cls = want === 'text' ? 'ok' : 'warn';
+      } else {
+        txt = want === 'text'
+          ? 'Text-to-image · no reference image sent. Your proxy does support style-locked if you want exact metal tone.'
+          : 'Style-locked · the reference is sent as a material sample only, and your proxy confirms it honours that.';
+      }
+      info.textContent = txt;
+      info.className = `window-info ${cls === 'warn' ? 'rm-warn' : ''}`;
+    }
+
+    document.getElementById('cmRenderMode')?.addEventListener('change', (e) => {
+      try { localStorage.setItem(CM_RENDER_MODE_LS, e.target.value); } catch (_) {}
+      _cmRenderRenderModeUI();
+      cmProbeProxy();
+    });
+
+    document.getElementById('cmProbeBtn')?.addEventListener('click', async () => {
+      _cmRenderRenderModeUI();
+      const caps = await cmProbeProxy({ force: true });
+      setStatus(caps.styleReference
+        ? `Image proxy supports image_roles (v${caps.version}) — style-locked available.`
+        : `Image proxy has no image_roles support${caps.error ? ` (${caps.error})` : ''} — using text-to-image.`);
+    });
+
+    setTimeout(() => { _cmRenderRenderModeUI(); cmProbeProxy(); }, 2000);
 
 
     // ---------------------------------------------------------------------
@@ -19681,16 +20076,28 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       if (!tbody) return;
       const stats = _cmResearch.strategyStats || {};
       const anyData = Object.values(stats).some(v => (v?.generated || 0) > 0);
+      // Mean silhouette overlap per rung, from the measurements taken at render
+      // time. This is the column that answers "is this rung actually producing
+      // different designs, or just talking about it?"
+      const byRung = {};
+      for (const o of Object.values(_cmResearch.outcomes || {})) {
+        if (!o?.strategy || typeof o.iou !== 'number') continue;
+        (byRung[o.strategy] = byRung[o.strategy] || []).push(o.iou);
+      }
       tbody.innerHTML =
-        `<tr><th>Rung</th><th>Approved</th><th>Rate</th><th>Pick weight</th></tr>` +
+        `<tr><th>Rung</th><th>Approved</th><th>Rate</th><th title="Mean silhouette overlap with the reference. Lower is more distinct.">Overlap</th><th>Pick weight</th></tr>` +
         CM_STRATEGIES.map(s => {
           const st = stats[s.id] || { generated: 0, approved: 0 };
           const rate = st.generated ? st.approved / st.generated : null;
           const w = cmStrategyWeight(s.id);
-          return `<tr class="${st.generated ? '' : 'dim'}" title="${_esc(s.blurb)}">` +
+          const ious = byRung[s.id] || [];
+          const meanIou = ious.length ? ious.reduce((a, b) => a + b, 0) / ious.length : null;
+          const iouCls = meanIou == null ? '' : meanIou >= CM_IOU_FAIL ? 'replica' : meanIou >= CM_IOU_WARN ? 'close' : 'distinct';
+          return `<tr class="${st.generated || ious.length ? '' : 'dim'}" title="${_esc(s.blurb)}">` +
             `<td><span class="strat-dist">${s.distance}</span>${_esc(s.label)}</td>` +
             `<td class="mono">${st.approved}/${st.generated}</td>` +
             `<td><div class="strat-bar"><i style="width:${rate == null ? 0 : Math.round(rate * 100)}%"></i></div></td>` +
+            `<td class="mono">${meanIou == null ? '—' : `<span class="prov-iou ${iouCls}">${Math.round(meanIou * 100)}%</span>`}</td>` +
             `<td class="mono">${w.toFixed(2)}</td></tr>`;
         }).join('');
       const note = document.getElementById('cmStrategyNote');
@@ -19868,7 +20275,10 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       strategyWeight: (id) => cmStrategyWeight(id),
       renderStats: () => _cmRenderStrategyStats(),
       lastBriefs: [],
-      buildPrompt: (brief, analysis) => cmBuildDesignPrompt(brief, analysis),
+      buildPrompt: (brief, analysis, opts) => cmBuildDesignPrompt(brief, analysis, opts),
+      probe: (o) => cmProbeProxy(o),
+      effectiveMode: () => cmEffectiveRenderMode(),
+      lastIou: null,
     };
 
     // Keep the panel in step with library selection and with tab entry.
