@@ -1072,6 +1072,195 @@
     color: var(--muted);
   }
 
+  /* ---------- Reference library: filter / sort / usage / recycle bin ---------- */
+
+  /* Auditable "what is actually being filtered" readout. Used by both the
+     Charm Maker library and the Approved → Charms date filters. */
+  .window-info {
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent-line);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .lib-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .lib-view-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    width: max-content;
+  }
+  .lib-view-tab {
+    background: transparent;
+    border: none;
+    padding: 6px 12px;
+    border-radius: var(--r-sm);
+    color: var(--muted);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 120ms ease;
+  }
+  .lib-view-tab:hover { color: var(--text-2); }
+  .lib-view-tab.active {
+    background: var(--inset);
+    color: var(--text);
+  }
+
+  .lib-search-wrap { position: relative; flex: 1; min-width: 160px; }
+  .lib-search-wrap .lib-search-icon {
+    position: absolute;
+    left: 9px; top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: var(--dim);
+    pointer-events: none;
+  }
+  input.lib-search {
+    width: 100%;
+    padding-left: 26px !important;
+    font-size: 12px;
+  }
+  .lib-search-clear {
+    position: absolute;
+    right: 6px; top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    display: none;
+  }
+  .lib-search-wrap.has-value .lib-search-clear { display: block; }
+  .lib-search-clear:hover { color: var(--text); }
+
+  /* Usage badge on each tile: approved / generated derivative counts */
+  .charm-mosaic-tile .tile-usage {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    z-index: 2;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 1.5;
+    text-align: center;
+    padding: 1px 2px;
+    background: rgba(6, 8, 13, 0.82);
+    color: var(--muted);
+    backdrop-filter: blur(2px);
+    letter-spacing: 0.02em;
+  }
+  .charm-mosaic-tile .tile-usage.has-approved { color: var(--ok); }
+  .charm-mosaic-tile .tile-usage.pending-only { color: var(--warn); }
+  .charm-mosaic-tile .tile-usage.unused { color: var(--dim); }
+  .charm-mosaic-tile .tile-usage.unknown { color: var(--dim); opacity: 0.6; }
+
+  /* Per-tile destructive action, revealed on hover so a mis-click is unlikely */
+  .charm-mosaic-tile .tile-act {
+    position: absolute;
+    top: 3px; right: 3px;
+    z-index: 3;
+    width: 18px; height: 18px;
+    border-radius: 4px;
+    border: 1px solid #7a3838;
+    background: rgba(61, 28, 28, 0.92);
+    color: #fca5a5;
+    font-size: 11px;
+    line-height: 1;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+  }
+  .charm-mosaic-tile .tile-act.restore {
+    border-color: #2f5e3a;
+    background: rgba(31, 64, 38, 0.92);
+    color: #7fdb96;
+    right: 25px;
+  }
+  .charm-mosaic-tile:hover .tile-act { display: flex; }
+  .charm-mosaic-tile .tile-act:hover { filter: brightness(1.35); }
+
+  .charm-mosaic-tile.pending-delete {
+    opacity: 0.35;
+    filter: grayscale(1);
+    pointer-events: none;
+  }
+  .charm-mosaic-tile.in-bin { border-style: dashed; opacity: 0.85; }
+
+  /* Index build / cache health status strip */
+  .lib-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .lib-status .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--dim);
+    flex-shrink: 0;
+  }
+  .lib-status.working .dot { background: var(--accent); animation: libPulse 1s ease-in-out infinite; }
+  .lib-status.ok .dot { background: var(--ok); }
+  .lib-status.warn .dot { background: var(--warn); }
+  @keyframes libPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  .lib-progress {
+    flex: 1;
+    min-width: 80px;
+    height: 3px;
+    background: var(--inset);
+    border-radius: 999px;
+    overflow: hidden;
+    display: none;
+  }
+  .lib-status.working .lib-progress { display: block; }
+  .lib-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width 200ms ease;
+  }
+
+  .btn-danger {
+    background: #3d1c1c !important;
+    border-color: #7a3838 !important;
+    color: #fca5a5 !important;
+  }
+  .btn-danger:disabled { opacity: 0.4; }
+  .btn-ok {
+    background: #1f4026 !important;
+    border-color: #2f5e3a !important;
+    color: #7fdb96 !important;
+  }
+  .btn-ok:disabled { opacity: 0.4; }
+
   /* ---------- Spinner ---------- */
   .spinner {
     width: 22px;
@@ -3206,9 +3395,81 @@ html.gs-locked body > *:not(#gate){display:none!important}
           </div>
 
           <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
-            <code style="font-family: var(--font-mono); font-size: 10px; color: var(--muted);">Charm_Templates (Existing Etsy Charms)/</code>
+            <code id="charmLibSourcePath" style="font-family: var(--font-mono); font-size: 10px; color: var(--muted);">Charm_Templates (Existing Etsy Charms)/</code>
             <span id="newCharmsTotalCount" style="font-size: 11px;">Count: Loading...</span>
           </div>
+
+          <!-- ============ Library / recycle-bin switch + search ============ -->
+          <div class="lib-toolbar">
+            <div class="lib-view-tabs" id="charmLibViewTabs">
+              <button class="lib-view-tab active" data-view="active" type="button">
+                Library <span class="subtab-count" id="charmLibActiveCount">—</span>
+              </button>
+              <button class="lib-view-tab" data-view="deleted" type="button">
+                Recycle bin <span class="subtab-count" id="charmLibDeletedCount">—</span>
+              </button>
+            </div>
+            <div class="lib-search-wrap" id="charmLibSearchWrap">
+              <span class="lib-search-icon">⌕</span>
+              <input type="text" class="lib-search" id="charmLibSearch" placeholder="Search charm filenames…" autocomplete="off" spellcheck="false">
+              <button class="lib-search-clear" id="charmLibSearchClear" type="button" title="Clear search">×</button>
+            </div>
+          </div>
+
+          <!-- ============ Date added ============ -->
+          <label class="field-label">Date added to library</label>
+          <div class="chip-row" id="charmLibPresets">
+            <button class="chip active" data-preset="all" type="button">All time</button>
+            <button class="chip" data-preset="today" type="button">Today</button>
+            <button class="chip" data-preset="yesterday" type="button">Yesterday</button>
+            <button class="chip" data-preset="week" type="button">This week</button>
+            <button class="chip" data-preset="month" type="button">This month</button>
+            <button class="chip" data-preset="7d" type="button">Last 7 days</button>
+            <button class="chip" data-preset="30d" type="button">Last 30 days</button>
+          </div>
+          <div class="row date-row" style="gap: 8px; align-items: center; margin-top: 8px;">
+            <input type="date" id="charmLibDateFrom" style="flex: 1;" title="Added on or after">
+            <span class="muted" style="font-size: 11px;">→</span>
+            <input type="date" id="charmLibDateTo" style="flex: 1;" title="Added on or before">
+            <button class="btn btnSmall" id="charmLibDateClear" style="width: auto;" type="button">Clear</button>
+          </div>
+
+          <!-- ============ Derivative usage ============ -->
+          <label class="field-label" style="margin-top: 14px;">
+            Derivative usage &nbsp;<span style="text-transform: none; letter-spacing: 0; color: var(--dim);">approved sets produced from each design</span>
+          </label>
+          <div class="chip-row" id="charmLibUsage">
+            <button class="chip active" data-usage="any" type="button">Any <span class="cat-count" id="uCount-any">—</span></button>
+            <button class="chip" data-usage="unused" type="button">Never used <span class="cat-count" id="uCount-unused">—</span></button>
+            <button class="chip" data-usage="pending" type="button">Tried, none approved <span class="cat-count" id="uCount-pending">—</span></button>
+            <button class="chip" data-usage="a1" type="button">1–2 approved <span class="cat-count" id="uCount-a1">—</span></button>
+            <button class="chip" data-usage="a3" type="button">3–5 approved <span class="cat-count" id="uCount-a3">—</span></button>
+            <button class="chip" data-usage="a6" type="button">6+ approved <span class="cat-count" id="uCount-a6">—</span></button>
+          </div>
+          <div class="row" style="gap: 8px; margin-top: 8px; align-items: center;">
+            <input type="number" id="charmLibMinApproved" min="0" step="1" placeholder="min approved" style="flex: 1;">
+            <span class="muted" style="font-size: 11px;">→</span>
+            <input type="number" id="charmLibMaxApproved" min="0" step="1" placeholder="max approved" style="flex: 1;">
+            <button class="btn btnSmall" id="charmLibUsageClear" style="width: auto;" type="button">Clear</button>
+          </div>
+
+          <!-- ============ Sort ============ -->
+          <label class="field-label" style="margin-top: 14px;">Sort</label>
+          <select id="charmLibSort" style="width: 100%;">
+            <option value="date_desc">Newest added first</option>
+            <option value="date_asc">Oldest added first</option>
+            <option value="name_asc" selected>Filename A → Z</option>
+            <option value="name_desc">Filename Z → A</option>
+            <option value="approved_desc">Most approved derivatives</option>
+            <option value="approved_asc">Fewest approved derivatives</option>
+            <option value="generated_desc">Most generation attempts</option>
+            <option value="rate_desc">Best approval rate (attempts ≥ 1)</option>
+            <option value="lastused_desc">Most recently used</option>
+            <option value="lastused_asc">Least recently used</option>
+            <option value="size_desc">Largest file first</option>
+          </select>
+
+          <div class="window-info" id="charmLibWindowInfo">Loading library…</div>
 
           <div id="charmMosaic" class="charm-mosaic"><div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading…</div></div>
 
@@ -3217,10 +3478,41 @@ html.gs-locked body > *:not(#gate){display:none!important}
                doesn't throw. The visible UI is the mosaic above. -->
           <div class="slotPrev" id="previewNewCharms" style="display: none;"><div class="slotRefEmpty">Loading...</div></div>
 
+          <!-- ============ Selection + destructive actions ============ -->
+          <div class="selection-bar">
+            <div class="sel-counts">
+              <span class="sel-num" id="charmLibSelectedCount">0</span> selected
+              <span class="sel-divider">·</span>
+              <span class="mono" id="charmLibVisibleCount">0</span> shown
+              <span class="sel-divider">·</span>
+              click tiles to toggle
+            </div>
+            <div class="row" style="gap: 6px;">
+              <button class="btn btnSmall" id="charmLibSelectFiltered" type="button">Select shown</button>
+              <button class="btn btnSmall" id="charmLibDeleteBtn" type="button">Delete</button>
+              <button class="btn btnSmall btn-ok" id="charmLibRestoreBtn" type="button" style="display: none;">Restore</button>
+              <button class="btn btnSmall btn-danger" id="charmLibPurgeBtn" type="button" style="display: none;">Purge permanently</button>
+            </div>
+          </div>
+
           <div class="row" style="margin-top: 10px; gap: 8px;">
             <button class="btn btnSmall" id="charmMosaicClearBtn" style="font-size: 11px;">Clear selection</button>
             <button class="btn btnSmall" id="charmMosaicRefreshBtn" style="font-size: 11px;">↻ Refresh library</button>
+            <button class="btn btnSmall" id="charmLibReindexBtn" style="font-size: 11px;" type="button" title="Discard the shared index and rebuild it from Firebase from scratch">↻ Rebuild usage index</button>
             <span class="muted" style="font-size: 11px; margin-left: auto;" id="charmMosaicHint">Selection determines order</span>
+          </div>
+
+          <!-- Index build progress + local cache health -->
+          <div class="lib-status" id="charmLibIndexStatus">
+            <span class="dot"></span>
+            <span id="charmLibIndexText">Usage index idle</span>
+            <div class="lib-progress"><div class="lib-progress-fill" id="charmLibIndexFill"></div></div>
+          </div>
+          <div class="lib-status" id="charmLibCacheStatus">
+            <span class="dot"></span>
+            <span id="charmLibCacheText">Local cache —</span>
+            <button class="btn btnSmall" id="charmLibCacheTrim" style="font-size: 10px; padding: 2px 8px; width: auto;" type="button" title="Evict least-recently-used cached images down to the target budget">Trim now</button>
+            <button class="btn btnSmall btn-danger" id="charmLibCachePurge" style="font-size: 10px; padding: 2px 8px; width: auto;" type="button" title="Clear every cached image on this device (images re-download on next view)">Clear cache</button>
           </div>
 
           <div class="row" style="margin-top: 14px;">
@@ -3393,8 +3685,11 @@ html.gs-locked body > *:not(#gate){display:none!important}
           <div class="chip-row" id="approvedCharmPresets">
             <button class="chip active" data-preset="all">All time</button>
             <button class="chip" data-preset="today">Today</button>
+            <button class="chip" data-preset="yesterday">Yesterday</button>
             <button class="chip" data-preset="week">This week</button>
             <button class="chip" data-preset="month">This month</button>
+            <button class="chip" data-preset="7d">Last 7 days</button>
+            <button class="chip" data-preset="30d">Last 30 days</button>
             <button class="chip" data-preset="latest10">Latest 10</button>
             <button class="chip" data-preset="latest25">Latest 25</button>
           </div>
@@ -3406,6 +3701,9 @@ html.gs-locked body > *:not(#gate){display:none!important}
             <input type="date" id="approvedCharmDateTo" style="flex: 1;">
             <button class="btn btnSmall" id="approvedCharmDateClear" style="width: auto;">Clear</button>
           </div>
+
+          <!-- Auditable readout of the window actually in force. -->
+          <div class="window-info" id="approvedCharmWindowInfo">no date limit</div>
 
           <label class="field-label" style="margin-top: 14px;">Sort &amp; pagination</label>
           <div class="row" style="gap: 8px;">
@@ -5254,6 +5552,10 @@ The output must look like the input image with ONLY the user's requested change 
         `${ROOT}/Charm_Maker/Used_Necklace_Charm_Pool`,
         `${ROOT}/Charm_Maker/Used_Earring_Charm_Pool`,
         (typeof charmMakerSourcePath === "function" ? charmMakerSourcePath() : null),
+        // The reference-library recycle bin. A listing generated from a charm
+        // that was later binned must still be able to redo a slot, so the
+        // soft-delete destination is part of the search path.
+        `${ROOT}/Charm_Maker/Charm_Templates_Deleted`,
         `${ROOT}/Charm_Maker/Generated_Charm_Sets`,
         `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`,
       ].filter(Boolean);
@@ -5714,46 +6016,236 @@ The output must look like the input image with ONLY the user's requested change 
     // -------------------------------------------------------------------------
     // LOCAL BROWSER CACHING SYSTEM (IndexedDB)
     // -------------------------------------------------------------------------
+    // =====================================================================
+    // LOCAL IMAGE CACHE  +  GARBAGE COLLECTION
+    // ---------------------------------------------------------------------
+    // Firebase Storage remains the single source of truth for every byte
+    // here. This layer exists purely so the operator never waits twice for
+    // the same pixels: an image that has been seen once repaints from
+    // IndexedDB instantly, and only *new or changed* objects touch the
+    // network.
+    //
+    // Because an unbounded cache eventually gets wiped by the browser at the
+    // worst possible moment (taking the warm working set with it), eviction
+    // is managed explicitly rather than left to chance. The policy is the
+    // conventional CDN/browser-cache stack:
+    //
+    //   1. QUOTA PRESSURE  — navigator.storage.estimate() tells us how much
+    //      of the origin's quota we occupy. Above QUOTA_SOFT (60%) we evict
+    //      down to QUOTA_TARGET (45%). Staying well under quota is what
+    //      keeps the browser from evicting the whole origin unilaterally.
+    //   2. ABSOLUTE BUDGET — a hard byte ceiling and entry-count ceiling, so
+    //      behaviour is predictable on machines reporting a huge quota.
+    //   3. TTL            — anything untouched for TTL_DAYS is dead weight.
+    //   4. LRU            — when still over budget, evict least-recently-
+    //      *accessed* first (not least-recently-written: a template viewed
+    //      daily for a year must outlive a set imported yesterday).
+    //   5. PROTECTION     — entries touched within PROTECT_MS, and any path
+    //      currently pinned on screen, are never evicted. This is the rule
+    //      that guarantees the visible grid never re-downloads mid-session.
+    //
+    // Sweeps are amortised: triggered on write count, on QuotaExceededError
+    // (evict-then-retry), and on an idle timer — never on the read path.
+    // =====================================================================
     const CACHE_DB_NAME = "CharmMakerCache";
     const CACHE_STORE_NAME = "images";
+    const CACHE_META_STORE = "meta";      // small kv store: index snapshots, tallies
+    const CACHE_DB_VERSION = 2;
+    const CACHE_LRU_INDEX = "lastAccessMs";
+
+    const CACHE_POLICY = {
+      MAX_BYTES:       1200 * 1024 * 1024,  // hard ceiling ~1.17 GiB
+      TARGET_BYTES:     850 * 1024 * 1024,  // evict down to this
+      MAX_ENTRIES:     14000,
+      TARGET_ENTRIES:  11000,
+      TTL_MS:          45 * 24 * 60 * 60 * 1000, // untouched for 45 days
+      QUOTA_SOFT:      0.60,                // % of origin quota
+      QUOTA_TARGET:    0.45,
+      PROTECT_MS:      20 * 60 * 1000,      // recently touched = untouchable
+      TOUCH_THROTTLE_MS: 30 * 60 * 1000,    // don't rewrite lastAccess more often
+      WRITES_PER_SWEEP: 40,
+      IDLE_SWEEP_MS:   6 * 60 * 1000,
+    };
+
+    // Paths currently rendered on screen — exempt from eviction so a filter
+    // re-render or a page flip can never cost a re-download.
+    const _cachePinned = new Set();
+    function cachePin(path)   { if (path) _cachePinned.add(path); }
+    function cacheUnpin(path) { if (path) _cachePinned.delete(path); }
+    function cacheClearPins() { _cachePinned.clear(); }
+
+    let _cacheWritesSinceSweep = 0;
+    let _cacheSweepRunning = false;
+    let _cacheStats = { bytes: 0, entries: 0, quota: 0, usage: 0, scannedAt: 0, lastEvicted: 0 };
+    let _cachePersistRequested = false;
 
     function openCacheDB() {
         return new Promise((resolve, reject) => {
-            const req = indexedDB.open(CACHE_DB_NAME, 1);
+            const req = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION);
             req.onupgradeneeded = (e) => {
-                e.target.result.createObjectStore(CACHE_STORE_NAME, { keyPath: "path" });
+                const db = e.target.result;
+                const tx = e.target.transaction;
+                let store;
+                if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
+                    store = db.createObjectStore(CACHE_STORE_NAME, { keyPath: "path" });
+                } else {
+                    store = tx.objectStore(CACHE_STORE_NAME);
+                }
+                // LRU index. Records written by v1 have no lastAccessMs; IndexedDB
+                // simply omits them from the index, and the sweep's cursor pass
+                // backfills them the first time it walks the store.
+                if (!store.indexNames.contains(CACHE_LRU_INDEX)) {
+                    store.createIndex(CACHE_LRU_INDEX, CACHE_LRU_INDEX);
+                }
+                if (!db.objectStoreNames.contains(CACHE_META_STORE)) {
+                    db.createObjectStore(CACHE_META_STORE, { keyPath: "k" });
+                }
             };
             req.onsuccess = () => resolve(req.result);
             req.onerror = () => reject(req.error);
+            req.onblocked = () => reject(new Error("IndexedDB upgrade blocked by another tab"));
         });
+    }
+
+    // Ask the browser to treat this origin's storage as persistent. Granted
+    // origins are exempt from the automatic under-pressure eviction that
+    // would otherwise throw away the whole warm cache without warning.
+    async function _cacheRequestPersistence() {
+      if (_cachePersistRequested) return;
+      _cachePersistRequested = true;
+      try {
+        if (navigator.storage?.persisted && navigator.storage?.persist) {
+          const already = await navigator.storage.persisted();
+          if (!already) await navigator.storage.persist();
+        }
+      } catch (_) {}
+    }
+
+    // --- small kv helpers on the meta store (used by the library index too) ---
+    async function cacheMetaGet(key) {
+      try {
+        const db = await openCacheDB();
+        return await new Promise((resolve) => {
+          const tx = db.transaction(CACHE_META_STORE, "readonly");
+          const req = tx.objectStore(CACHE_META_STORE).get(key);
+          req.onsuccess = () => resolve(req.result ? req.result.v : null);
+          req.onerror = () => resolve(null);
+        });
+      } catch (_) { return null; }
+    }
+    async function cacheMetaSet(key, value) {
+      try {
+        const db = await openCacheDB();
+        return await new Promise((resolve) => {
+          const tx = db.transaction(CACHE_META_STORE, "readwrite");
+          tx.objectStore(CACHE_META_STORE).put({ k: key, v: value });
+          tx.oncomplete = () => resolve(true);
+          tx.onerror = () => resolve(false);
+          tx.onabort = () => resolve(false);
+        });
+      } catch (_) { return false; }
     }
 
     async function getCachedBlob(path) {
         try {
             const db = await openCacheDB();
-            return new Promise((resolve) => {
+            const rec = await new Promise((resolve) => {
                 const tx = db.transaction(CACHE_STORE_NAME, "readonly");
                 const req = tx.objectStore(CACHE_STORE_NAME).get(path);
-                req.onsuccess = () => resolve(req.result);
+                req.onsuccess = () => resolve(req.result || null);
                 req.onerror = () => resolve(null);
             });
+            if (!rec) return null;
+            // Touch for LRU, throttled so reads don't turn into a write storm.
+            const now = Date.now();
+            const last = rec.lastAccessMs || 0;
+            if (now - last > CACHE_POLICY.TOUCH_THROTTLE_MS) {
+                _cacheTouch(path, now); // fire and forget
+            }
+            return rec;
         } catch(e) {
             console.warn("IndexedDB read error", e);
             return null;
         }
     }
 
+    // Refresh an entry's LRU stamp without reading its blob back. Used by
+    // callers that repaint from an in-memory object URL and therefore never
+    // go through getCachedBlob.
+    function cacheTouchIfStale(path) {
+      if (!path) return;
+      openCacheDB().then(db => {
+        const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
+        const store = tx.objectStore(CACHE_STORE_NAME);
+        const g = store.get(path);
+        g.onsuccess = () => {
+          const r = g.result;
+          if (!r) return;
+          const now = Date.now();
+          if (now - (r.lastAccessMs || 0) <= CACHE_POLICY.TOUCH_THROTTLE_MS) return;
+          r.lastAccessMs = now;
+          r.hits = (r.hits || 0) + 1;
+          if (typeof r.size !== "number") r.size = r.blob?.size || 0;
+          try { store.put(r); } catch (_) {}
+        };
+      }).catch(() => {});
+    }
+
+    function _cacheTouch(path, now) {
+        openCacheDB().then(db => {
+            const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
+            const store = tx.objectStore(CACHE_STORE_NAME);
+            const g = store.get(path);
+            g.onsuccess = () => {
+                const r = g.result;
+                if (!r) return;
+                r.lastAccessMs = now;
+                r.hits = (r.hits || 0) + 1;
+                if (typeof r.size !== "number") r.size = r.blob?.size || 0;
+                try { store.put(r); } catch (_) {}
+            };
+        }).catch(() => {});
+    }
+
     async function setCachedBlob(path, blob, updatedMs) {
-        try {
+        const write = async () => {
             const db = await openCacheDB();
-            return new Promise((resolve) => {
+            return await new Promise((resolve, reject) => {
                 const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
-                tx.objectStore(CACHE_STORE_NAME).put({ path, blob, updatedMs });
-                tx.oncomplete = () => resolve();
-                tx.onerror = () => resolve();
+                tx.objectStore(CACHE_STORE_NAME).put({
+                    path,
+                    blob,
+                    updatedMs,
+                    size: blob?.size || 0,
+                    lastAccessMs: Date.now(),
+                    hits: 0,
+                });
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => reject(tx.error || new Error("cache write failed"));
+                tx.onabort = () => reject(tx.error || new Error("cache write aborted"));
             });
-        } catch(e) {
-            console.warn("IndexedDB write error", e);
+        };
+        try {
+            await write();
+        } catch (e) {
+            // Out of room: evict hard, then give the write exactly one more
+            // chance. Failing twice is a real error, not back-pressure.
+            const quotaish = /quota|QuotaExceeded/i.test(String(e?.name || e?.message || e));
+            if (!quotaish) { console.warn("IndexedDB write error", e); return; }
+            console.warn("[cache] quota exceeded — emergency eviction");
+            try {
+                await cacheGarbageCollect({ reason: "quota-exceeded", aggressive: true });
+                await write();
+            } catch (e2) {
+                console.warn("[cache] write failed after eviction", e2);
+                return;
+            }
+        }
+        _cacheStats.bytes += blob?.size || 0;
+        _cacheStats.entries += 1;
+        if (++_cacheWritesSinceSweep >= CACHE_POLICY.WRITES_PER_SWEEP) {
+            _cacheWritesSinceSweep = 0;
+            _cacheScheduleSweep("write-threshold");
         }
     }
 
@@ -5773,8 +6265,23 @@ The output must look like the input image with ONLY the user's requested change 
                         resolve();
                     }
                 };
+                req.onerror = () => resolve();
             });
         } catch(e) {}
+    }
+
+    // Drop a single object from the cache (used after delete / purge so a
+    // removed charm can't linger on screen from a stale local copy).
+    async function removeCachedPath(path) {
+        try {
+            const db = await openCacheDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
+                tx.objectStore(CACHE_STORE_NAME).delete(path);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            });
+        } catch (_) {}
     }
 
     async function fetchAndCacheBlob(url, storagePath, updatedMs) {
@@ -5789,6 +6296,214 @@ The output must look like the input image with ONLY the user's requested change 
             return null;
         }
     }
+
+    // ---------------------------------------------------------------------
+    // Measure: one full cursor pass. Also backfills size / lastAccessMs on
+    // legacy v1 records so subsequent LRU passes can see them.
+    // ---------------------------------------------------------------------
+    async function cacheMeasure({ backfill = true } = {}) {
+      try {
+        const db = await openCacheDB();
+        const res = await new Promise((resolve) => {
+          let bytes = 0, entries = 0, backfilled = 0, oldest = Infinity, newest = 0;
+          const tx = db.transaction(CACHE_STORE_NAME, backfill ? "readwrite" : "readonly");
+          const store = tx.objectStore(CACHE_STORE_NAME);
+          const req = store.openCursor();
+          req.onsuccess = (e) => {
+            const cur = e.target.result;
+            if (!cur) return; // completion handled by tx.oncomplete
+            const r = cur.value;
+            let dirty = false;
+            if (typeof r.size !== "number") { r.size = r.blob?.size || 0; dirty = true; }
+            if (typeof r.lastAccessMs !== "number") {
+              // Legacy record: seed LRU from its write time so it isn't
+              // treated as infinitely stale and evicted on the first sweep.
+              r.lastAccessMs = r.updatedMs || Date.now();
+              dirty = true;
+            }
+            bytes += r.size; entries += 1;
+            if (r.lastAccessMs < oldest) oldest = r.lastAccessMs;
+            if (r.lastAccessMs > newest) newest = r.lastAccessMs;
+            if (dirty && backfill) { try { cur.update(r); backfilled++; } catch (_) {} }
+            cur.continue();
+          };
+          req.onerror = () => resolve({ bytes, entries, backfilled, oldest, newest });
+          tx.oncomplete = () => resolve({ bytes, entries, backfilled, oldest, newest });
+          tx.onabort = () => resolve({ bytes, entries, backfilled, oldest, newest });
+        });
+
+        let quota = 0, usage = 0;
+        try {
+          const est = await navigator.storage?.estimate?.();
+          if (est) { quota = est.quota || 0; usage = est.usage || 0; }
+        } catch (_) {}
+
+        _cacheStats = {
+          bytes: res.bytes, entries: res.entries,
+          quota, usage,
+          oldest: Number.isFinite(res.oldest) ? res.oldest : 0,
+          newest: res.newest,
+          scannedAt: Date.now(),
+          lastEvicted: _cacheStats.lastEvicted || 0,
+        };
+        return _cacheStats;
+      } catch (e) {
+        return _cacheStats;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Evict. Two ordered passes so cheap wins happen before expensive ones:
+    //   pass 1 — TTL expiry (dead regardless of pressure)
+    //   pass 2 — LRU ascending until every budget is satisfied
+    // Protected (recently touched) and pinned (on screen) paths are skipped.
+    // ---------------------------------------------------------------------
+    async function cacheGarbageCollect({ reason = "manual", aggressive = false } = {}) {
+      if (_cacheSweepRunning) return null;
+      _cacheSweepRunning = true;
+      const t0 = Date.now();
+      try {
+        await _cacheRequestPersistence();
+        const stats = await cacheMeasure({ backfill: true });
+
+        // Decide the targets for this sweep.
+        let targetBytes = CACHE_POLICY.TARGET_BYTES;
+        let targetEntries = CACHE_POLICY.TARGET_ENTRIES;
+        let overBudget = stats.bytes > CACHE_POLICY.MAX_BYTES || stats.entries > CACHE_POLICY.MAX_ENTRIES;
+
+        // Quota pressure can demand a tighter target than the static budget.
+        if (stats.quota > 0) {
+          const share = stats.usage / stats.quota;
+          if (share > CACHE_POLICY.QUOTA_SOFT || aggressive) {
+            // How many bytes we must give back to land at QUOTA_TARGET.
+            const mustFree = stats.usage - stats.quota * CACHE_POLICY.QUOTA_TARGET;
+            if (mustFree > 0) {
+              targetBytes = Math.max(0, Math.min(targetBytes, stats.bytes - mustFree));
+              overBudget = true;
+            }
+          }
+        }
+        if (aggressive) {
+          targetBytes = Math.min(targetBytes, Math.floor(stats.bytes * 0.6));
+          targetEntries = Math.min(targetEntries, Math.floor(stats.entries * 0.6));
+          overBudget = true;
+        }
+
+        const now = Date.now();
+        const ttlCutoff = now - CACHE_POLICY.TTL_MS;
+        const protectAfter = now - CACHE_POLICY.PROTECT_MS;
+
+        let bytes = stats.bytes, entries = stats.entries;
+        let evicted = 0, freed = 0, expired = 0;
+
+        const db = await openCacheDB();
+
+        // ---- pass 1: TTL ----
+        await new Promise((resolve) => {
+          const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
+          const req = tx.objectStore(CACHE_STORE_NAME).openCursor();
+          req.onsuccess = (e) => {
+            const cur = e.target.result;
+            if (!cur) return;
+            const r = cur.value;
+            const la = r.lastAccessMs || 0;
+            if (la < ttlCutoff && !_cachePinned.has(r.path)) {
+              try { cur.delete(); expired++; evicted++; freed += r.size || 0; bytes -= r.size || 0; entries--; } catch (_) {}
+            }
+            cur.continue();
+          };
+          req.onerror = () => resolve();
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => resolve();
+        });
+
+        // ---- pass 2: LRU ascending, only if still over any budget ----
+        const stillOver = () => bytes > targetBytes || entries > targetEntries;
+        if (overBudget && stillOver()) {
+          await new Promise((resolve) => {
+            const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
+            const store = tx.objectStore(CACHE_STORE_NAME);
+            let req;
+            try {
+              req = store.index(CACHE_LRU_INDEX).openCursor(null, "next"); // oldest first
+            } catch (_) {
+              req = store.openCursor(); // index missing (shouldn't happen) — arbitrary order
+            }
+            req.onsuccess = (e) => {
+              const cur = e.target.result;
+              if (!cur) return;
+              if (!stillOver()) { resolve(); return; }
+              const r = cur.value;
+              const la = r.lastAccessMs || 0;
+              const protectedNow = la >= protectAfter || _cachePinned.has(r.path);
+              if (!protectedNow) {
+                try { cur.delete(); evicted++; freed += r.size || 0; bytes -= r.size || 0; entries--; } catch (_) {}
+              }
+              cur.continue();
+            };
+            req.onerror = () => resolve();
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => resolve();
+          });
+        }
+
+        _cacheStats.bytes = Math.max(0, bytes);
+        _cacheStats.entries = Math.max(0, entries);
+        _cacheStats.lastEvicted = evicted ? Date.now() : _cacheStats.lastEvicted;
+        if (evicted) {
+          try {
+            const est = await navigator.storage?.estimate?.();
+            if (est) { _cacheStats.quota = est.quota || 0; _cacheStats.usage = est.usage || 0; }
+          } catch (_) {}
+          console.info(`[cache] GC (${reason}): evicted ${evicted} (${expired} expired), freed ${(freed / 1048576).toFixed(1)} MB in ${Date.now() - t0}ms`);
+        }
+        if (typeof _updateCacheStatusUI === "function") _updateCacheStatusUI();
+        return { evicted, freed, expired, bytes: _cacheStats.bytes, entries: _cacheStats.entries };
+      } catch (e) {
+        console.warn("[cache] GC failed", e);
+        return null;
+      } finally {
+        _cacheSweepRunning = false;
+      }
+    }
+
+    // Wipe every cached image (index snapshots in the meta store survive —
+    // they're tiny and re-fetching them is pointless churn).
+    async function cachePurgeAll() {
+      try {
+        const db = await openCacheDB();
+        await new Promise((resolve) => {
+          const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
+          tx.objectStore(CACHE_STORE_NAME).clear();
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+          tx.onabort = () => resolve();
+        });
+        _cacheStats.bytes = 0;
+        _cacheStats.entries = 0;
+        await cacheMeasure({ backfill: false });
+        if (typeof _updateCacheStatusUI === "function") _updateCacheStatusUI();
+        return true;
+      } catch (e) { return false; }
+    }
+
+    // Run sweeps when the main thread is idle so they never compete with a
+    // render or an in-flight generation.
+    function _cacheScheduleSweep(reason) {
+      const run = () => cacheGarbageCollect({ reason });
+      if (typeof requestIdleCallback === "function") requestIdleCallback(() => run(), { timeout: 4000 });
+      else setTimeout(run, 1200);
+    }
+
+    // Startup measurement + persistence request, then a slow background beat.
+    setTimeout(() => {
+      _cacheRequestPersistence();
+      cacheMeasure({ backfill: true }).then(() => {
+        if (typeof _updateCacheStatusUI === "function") _updateCacheStatusUI();
+        _cacheScheduleSweep("startup");
+      });
+    }, 2500);
+    setInterval(() => _cacheScheduleSweep("idle-beat"), CACHE_POLICY.IDLE_SWEEP_MS);
 
 // Helper to prevent memory leaks by revoking old blob URLs
     function setBoxImage(box, srcUrl) {
@@ -7619,20 +8334,20 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
 
     async function loadCharmMakerPreviews() {
       previewNewCharms.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
-      document.getElementById("newCharmsTotalCount").textContent = "Count: Loading...";
+      // NOTE: #newCharmsTotalCount is owned by the reference-library engine
+      // (_cmRebuildLists), which counts image files only and stays in step
+      // with the recycle bin. Writing it here too produced a flickering,
+      // sometimes-wrong number, so this function no longer touches it.
       try {
         await ensureStorageSignedIn();
-        
-        // Charm Maker uses its OWN source folder (separate from the
-        // Listing Generator's New_Charms pool).
-        const newCharmsRef = ref(storage, charmMakerSourcePath());
-        const newCharmsRes = await listAll(newCharmsRef);
-        document.getElementById("newCharmsTotalCount").textContent = `Count: ${newCharmsRes.items.length}`;
-        
+
+        // #previewNewCharms is the hidden legacy element — the visible UI is
+        // the mosaic. Eagerly assigning an <img> here downloaded a full-size
+        // charm on every Charm Maker entry for something display:none, so the
+        // fetch is skipped; setPreviewNewCharmsFromRef() still fills it on
+        // demand when the operator clicks a card's Source Ref.
         const charmsLatest = await listLatestFile(charmMakerSourcePath());
-        if (charmsLatest) {
-          setBoxImage(previewNewCharms, cacheBust(charmsLatest.url));
-        } else {
+        if (!charmsLatest) {
           previewNewCharms.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
         }
 
@@ -15092,11 +15807,101 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     setInterval(_updateFreshnessIndicators, 30000);
 
     // === Helpers ===
-    function _derivDate(folderId) {
+    // ---------------------------------------------------------------------
+    // EPOCH NORMALISATION  (root cause of the "quick date filters filter
+    // the wrong items" bug)
+    //
+    // Deriv folder ids are minted as `Deriv_${Date.now() + rand}` — that is
+    // a 13-digit MILLISECOND epoch. The previous _derivDate() did
+    // `new Date(n * 1000)`, i.e. it treated the value as SECONDS, pushing
+    // every set roughly 50,000 years into the future. The old preset test
+    // was `(now - dateMs) <= cutoff`, and with a future dateMs that
+    // difference is negative, so it passed for EVERY row — which is exactly
+    // why "Today" reported all 342 sets. Meanwhile any custom "to" date
+    // excluded everything.
+    //
+    // This normaliser accepts seconds, milliseconds or microseconds and
+    // always returns milliseconds, so historical folder ids in any of those
+    // shapes sort and filter correctly.
+    // ---------------------------------------------------------------------
+    function _normEpochMs(n) {
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      if (n >= 1e14) return Math.floor(n / 1000); // microseconds → ms
+      if (n >= 1e11) return n;                    // already milliseconds
+      if (n >= 1e8)  return n * 1000;             // seconds → ms
+      return 0;                                   // implausibly small: unknown
+    }
+
+    function _derivEpochMs(folderId) {
       const m = (folderId || '').match(/Deriv_(\d+)/);
-      if (!m) return null;
-      const n = parseInt(m[1], 10);
-      return Number.isFinite(n) ? new Date(n * 1000) : null;
+      if (!m) return 0;
+      return _normEpochMs(parseInt(m[1], 10));
+    }
+
+    function _derivDate(folderId) {
+      const ms = _derivEpochMs(folderId);
+      return ms ? new Date(ms) : null;
+    }
+
+    // ---------------------------------------------------------------------
+    // CALENDAR-CORRECT DATE PRESETS
+    //
+    // The old presets were rolling durations (24h / 7d / 30d back from
+    // "now"), which is not what "Today", "This week" or "This month" mean.
+    // A set approved at 9am today was excluded at 9:01am the next day but a
+    // set from 11pm *yesterday* was still counted as "Today". These resolve
+    // to real local-time calendar boundaries instead.
+    //
+    // Returns { from, to } in ms inclusive, or null for presets that are not
+    // date windows at all ('all', 'latest10', 'latest25', 'custom').
+    // ---------------------------------------------------------------------
+    const _startOfDayMs = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime(); };
+    const _endOfDayMs   = (d) => { const x = new Date(d); x.setHours(23, 59, 59, 999); return x.getTime(); };
+
+    function _presetRange(preset, nowMs) {
+      const ref0 = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const now = new Date(ref0);
+      switch (preset) {
+        case 'today':
+          return { from: _startOfDayMs(now), to: _endOfDayMs(now) };
+        case 'yesterday': {
+          const y = new Date(now); y.setDate(y.getDate() - 1);
+          return { from: _startOfDayMs(y), to: _endOfDayMs(y) };
+        }
+        case 'week': {
+          // ISO week: Monday as the first day.
+          const d = new Date(now);
+          const dow = (d.getDay() + 6) % 7; // Mon=0 … Sun=6
+          d.setDate(d.getDate() - dow);
+          return { from: _startOfDayMs(d), to: _endOfDayMs(now) };
+        }
+        case 'month': {
+          const d = new Date(now.getFullYear(), now.getMonth(), 1);
+          return { from: _startOfDayMs(d), to: _endOfDayMs(now) };
+        }
+        case '7d':
+          return { from: _startOfDayMs(new Date(ref0 - 6 * 86400000)), to: _endOfDayMs(now) };
+        case '30d':
+          return { from: _startOfDayMs(new Date(ref0 - 29 * 86400000)), to: _endOfDayMs(now) };
+        default:
+          return null; // 'all' | 'latest10' | 'latest25' | 'custom' | unknown
+      }
+    }
+
+    // Human-readable description of whatever window is actually in force —
+    // shown in the UI so a filter result can always be audited at a glance.
+    function _describeWindow(from, to, extra) {
+      const fmt = (ms) => new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+      let base;
+      if (from == null && to == null) base = 'no date limit';
+      else if (from != null && to != null) {
+        base = (_startOfDayMs(new Date(from)) === _startOfDayMs(new Date(to)))
+          ? fmt(from)
+          : `${fmt(from)} → ${fmt(to)}`;
+      }
+      else if (from != null) base = `from ${fmt(from)}`;
+      else base = `up to ${fmt(to)}`;
+      return extra ? `${base} · ${extra}` : base;
     }
     function _parseListingId(folderId) {
       const m = folderId.match(/^(.+)_Set_(\d+)$/);
@@ -15302,30 +16107,84 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       }
     }
 
+    // ---------------------------------------------------------------------
+    // Resolve the single window actually being applied.
+    //
+    // Precedence: an explicit custom range always wins over a calendar
+    // preset. Previously the two were silently AND-ed together, so a stale
+    // date in the range inputs could quietly empty out a preset's result
+    // with nothing in the UI to explain why. Now selecting a preset clears
+    // the range inputs, typing a range switches the chips to "Custom", and
+    // this function reports which one is live.
+    // ---------------------------------------------------------------------
+    function _resolveCharmWindow() {
+      const cs = _approvedSubState.charms;
+      const isLatest = cs.preset === 'latest10' || cs.preset === 'latest25';
+      if (cs.dateFrom != null || cs.dateTo != null) {
+        return { from: cs.dateFrom, to: cs.dateTo, source: 'custom', latestN: 0 };
+      }
+      if (isLatest) {
+        return { from: null, to: null, source: 'latest', latestN: cs.preset === 'latest10' ? 10 : 25 };
+      }
+      const r = _presetRange(cs.preset);
+      return { from: r ? r.from : null, to: r ? r.to : null, source: r ? 'preset' : 'all', latestN: 0 };
+    }
+
     function _filterAndSortCharms() {
       const cs = _approvedSubState.charms;
       const all = cs.cache || [];
-      const now = Date.now();
-      const presetCutoff = {
-        today: 24 * 3600 * 1000,
-        week:  7 * 24 * 3600 * 1000,
-        month: 30 * 24 * 3600 * 1000,
-      };
-      let out = all;
-      // Quick preset (excluding latestN which slices below)
-      const cutoff = presetCutoff[cs.preset];
-      if (cutoff) {
-        out = out.filter(rec => rec.dateMs && (now - rec.dateMs) <= cutoff);
+      const win = _resolveCharmWindow();
+      let out = all.slice();
+
+      // Date window (inclusive on both ends). Rows whose folder id carries no
+      // usable timestamp cannot satisfy a date question, so they drop out of
+      // any windowed view — the UI reports how many were set aside.
+      if (win.from != null || win.to != null) {
+        out = out.filter(rec => {
+          if (!rec.dateMs) return false;
+          if (win.from != null && rec.dateMs < win.from) return false;
+          if (win.to   != null && rec.dateMs > win.to)   return false;
+          return true;
+        });
       }
-      // Custom date range
-      if (cs.dateFrom) out = out.filter(rec => rec.dateMs >= cs.dateFrom);
-      if (cs.dateTo)   out = out.filter(rec => rec.dateMs <= cs.dateTo);
-      // Sort
-      out = [...out].sort((a, b) => cs.sort === 'oldest' ? (a.dateMs - b.dateMs) : (b.dateMs - a.dateMs));
-      // Latest-N preset slices
-      if (cs.preset === 'latest10') out = out.slice(0, 10);
-      if (cs.preset === 'latest25') out = out.slice(0, 25);
+
+      // "Latest N" means the N most recent BY DATE — independent of the
+      // display sort. The old code sliced after sorting, so choosing
+      // "Oldest first" + "Latest 10" returned the ten OLDEST sets.
+      if (win.latestN) {
+        out.sort((a, b) => b.dateMs - a.dateMs);
+        out = out.slice(0, win.latestN);
+      }
+
+      // Display sort last. Undated rows sort to the end in either direction
+      // rather than pretending to be from 1970.
+      const dir = cs.sort === 'oldest' ? 1 : -1;
+      out.sort((a, b) => {
+        if (!a.dateMs && !b.dateMs) return String(a.id).localeCompare(String(b.id));
+        if (!a.dateMs) return 1;
+        if (!b.dateMs) return -1;
+        return dir * (a.dateMs - b.dateMs);
+      });
       return out;
+    }
+
+    // Paints the "window in force" readout under the charm date controls.
+    function _updateCharmWindowReadout(filteredCount) {
+      const el = document.getElementById('approvedCharmWindowInfo');
+      if (!el) return;
+      const cs = _approvedSubState.charms;
+      const all = cs.cache || [];
+      const win = _resolveCharmWindow();
+      const undated = all.filter(r => !r.dateMs).length;
+      let text;
+      if (win.source === 'latest') text = `newest ${win.latestN} by date`;
+      else if (win.source === 'all') text = 'no date limit · showing everything';
+      else text = _describeWindow(win.from, win.to, win.source === 'custom' ? 'custom range' : null);
+      const parts = [text, `${filteredCount} of ${all.length} sets`];
+      if (undated > 0 && (win.from != null || win.to != null)) {
+        parts.push(`${undated} undated set${undated === 1 ? '' : 's'} excluded`);
+      }
+      el.textContent = parts.join(' · ');
     }
 
     function _renderCharmsPage() {
@@ -15345,6 +16204,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const selEl = document.getElementById('approvedSelectedCount');
         if (visEl) visEl.textContent = filtered.length;
         if (selEl) selEl.textContent = cs.selected.size;
+        _updateCharmWindowReadout(filtered.length);
 
         // Smart download label
         const dl = document.getElementById('downloadApprovedSetsBtn');
@@ -15593,33 +16453,59 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     });
 
     // === Wire CHARMS controls ===
+    // Selecting a preset clears any custom range, and typing a custom range
+    // deselects the preset chips. Only ever one date rule in force, and the
+    // UI always shows which — no more invisible AND of two conflicting rules.
+    function _setCharmPresetChip(preset) {
+      document.querySelectorAll('#approvedCharmPresets .chip').forEach(c => {
+        c.classList.toggle('active', c.dataset.preset === preset);
+      });
+    }
     document.querySelectorAll('#approvedCharmPresets .chip').forEach(chip => {
       chip.addEventListener('click', () => {
-        document.querySelectorAll('#approvedCharmPresets .chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        _approvedSubState.charms.preset = chip.dataset.preset;
-        _approvedSubState.charms.page = 1;
+        const cs = _approvedSubState.charms;
+        _setCharmPresetChip(chip.dataset.preset);
+        cs.preset = chip.dataset.preset;
+        // A preset supersedes any custom range.
+        cs.dateFrom = null;
+        cs.dateTo = null;
+        const f = document.getElementById('approvedCharmDateFrom');
+        const t = document.getElementById('approvedCharmDateTo');
+        if (f) f.value = '';
+        if (t) t.value = '';
+        cs.page = 1;
         _renderCharmsPage();
       });
     });
     document.getElementById('approvedCharmDateFrom').addEventListener('change', e => {
-      const v = e.target.value; // YYYY-MM-DD
-      _approvedSubState.charms.dateFrom = v ? new Date(v + 'T00:00:00').getTime() : null;
-      _approvedSubState.charms.page = 1;
+      const v = e.target.value; // YYYY-MM-DD, interpreted in local time
+      const cs = _approvedSubState.charms;
+      cs.dateFrom = v ? _startOfDayMs(new Date(v + 'T12:00:00')) : null;
+      if (cs.dateFrom != null || cs.dateTo != null) { cs.preset = 'custom'; _setCharmPresetChip('custom'); }
+      else { cs.preset = 'all'; _setCharmPresetChip('all'); }
+      cs.page = 1;
       _renderCharmsPage();
     });
     document.getElementById('approvedCharmDateTo').addEventListener('change', e => {
       const v = e.target.value;
-      _approvedSubState.charms.dateTo = v ? new Date(v + 'T23:59:59').getTime() : null;
-      _approvedSubState.charms.page = 1;
+      const cs = _approvedSubState.charms;
+      // End of day must include the final 999ms or sets approved in the last
+      // second of the chosen day fall outside the window.
+      cs.dateTo = v ? _endOfDayMs(new Date(v + 'T12:00:00')) : null;
+      if (cs.dateFrom != null || cs.dateTo != null) { cs.preset = 'custom'; _setCharmPresetChip('custom'); }
+      else { cs.preset = 'all'; _setCharmPresetChip('all'); }
+      cs.page = 1;
       _renderCharmsPage();
     });
     document.getElementById('approvedCharmDateClear').addEventListener('click', () => {
-      _approvedSubState.charms.dateFrom = null;
-      _approvedSubState.charms.dateTo = null;
+      const cs = _approvedSubState.charms;
+      cs.dateFrom = null;
+      cs.dateTo = null;
       document.getElementById('approvedCharmDateFrom').value = '';
       document.getElementById('approvedCharmDateTo').value = '';
-      _approvedSubState.charms.page = 1;
+      cs.preset = 'all';
+      _setCharmPresetChip('all');
+      cs.page = 1;
       _renderCharmsPage();
     });
     document.getElementById('approvedCharmSort').addEventListener('change', e => {
@@ -15980,9 +16866,811 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     //     click order when generating; empty selection = legacy behavior)
     //   - Charm Maker right-card header: count + per-page dropdown
     // ---------------------------------------------------------------------
-    const _charmRefSelection = new Map(); // fullPath -> { order, name, itemRef }
+    // =====================================================================
+    // CHARM REFERENCE LIBRARY — INDEX, FILTERING, SORTING, RECYCLE BIN
+    // ---------------------------------------------------------------------
+    // Firebase Storage is the system of record for everything below. Two
+    // facts the Storage listing alone cannot answer are resolved once and
+    // then SHARED through a single small JSON document in the bucket:
+    //
+    //   • when each reference charm was added   → getMetadata().timeCreated
+    //   • how many derivative sets each charm   → manifest.json/sourceCharm
+    //     produced, and how many of those the      inside every Deriv_* set
+    //     operator actually approved
+    //
+    // That document (_Index/charm_library_index_v1.json) means a second
+    // browser, or the same browser after a cache wipe, gets the full picture
+    // in ONE request instead of re-reading ~350 manifests. IndexedDB then
+    // mirrors it purely for instant first paint. Load order is therefore:
+    //
+    //   local mirror (instant)  →  Firebase index (authoritative)
+    //                           →  live reconcile of only what changed
+    //
+    // Each stage repaints as it lands, so the grid is never blank and never
+    // shows a spinner for data that was already on screen a moment ago.
+    // =====================================================================
+
+    const CM_INDEX_SCHEMA   = 1;
+    const CM_INDEX_DIR      = `${ROOT}/Charm_Maker/_Index`;
+    const CM_INDEX_PATH     = `${CM_INDEX_DIR}/charm_library_index_v1.json`;
+    const CM_BIN_FOLDER     = `${ROOT}/Charm_Maker/Charm_Templates_Deleted`;
+    const CM_INDEX_LOCAL_KEY = 'cm_library_index_v1';
+    const CM_GEN_FOLDER     = 'Charm_Maker/Generated_Charm_Sets';
+    const CM_APP_FOLDER     = 'Charm_Maker/Completed_Approved_Charm_Sets';
+    const _CM_IMG_RE        = /\.(png|jpe?g|webp|gif|avif)$/i;
+
+    const _charmRefSelection = new Map(); // fullPath -> { order, name, itemRef, fullPath }
     let _charmMosaicLoading = false;
 
+    // The shared index, exactly as persisted.
+    let _cmIndex = {
+      schema: CM_INDEX_SCHEMA,
+      updatedAt: 0,
+      templates: {}, // storagePath -> { name, createdMs, updatedMs, size, bin?:true, originalPath?, deletedAtMs? }
+      sets: {},      // Deriv folderId -> { src, name, state:'gen'|'app', ts }
+    };
+    let _cmIndexDirty = false;
+    let _cmIndexRemoteMissing = false;
+
+    // View / filter state for the library.
+    const _cmLib = {
+      view: 'active',        // 'active' | 'deleted'
+      search: '',
+      preset: 'all',
+      dateFrom: null,
+      dateTo: null,
+      usage: 'any',
+      minApproved: null,
+      maxApproved: null,
+      sort: 'name_asc',
+      items: [],             // live templates
+      bin: [],               // recycle-bin entries
+      binSelected: new Set(),
+      usageMap: new Map(),   // storagePath -> { generated, approved, lastMs }
+      unattributed: 0,       // Deriv sets whose manifest had no sourceCharm
+      tiles: new Map(),      // storagePath -> tile element (reused between renders)
+      thumbUrls: new Map(),  // storagePath -> object URL
+      lastFiltered: [],
+      busy: false,
+      reconciling: false,
+      indexLoaded: false,
+    };
+
+    // ---------------------------------------------------------------------
+    // Index persistence
+    // ---------------------------------------------------------------------
+    function _cmEmptyIndex() {
+      return { schema: CM_INDEX_SCHEMA, updatedAt: 0, templates: {}, sets: {} };
+    }
+
+    function _cmNormaliseIndex(raw) {
+      const out = _cmEmptyIndex();
+      if (!raw || typeof raw !== 'object') return out;
+      if (Number(raw.schema) !== CM_INDEX_SCHEMA) return out; // future/legacy shape: rebuild
+      out.updatedAt = Number(raw.updatedAt) || 0;
+      if (raw.templates && typeof raw.templates === 'object') out.templates = raw.templates;
+      if (raw.sets && typeof raw.sets === 'object') out.sets = raw.sets;
+      return out;
+    }
+
+    // Union merge. Facts here are append-mostly: a file's creation date never
+    // changes, and a set's source charm never changes. The one field that
+    // does move is a set's state, and it only ever moves generated→approved,
+    // so 'app' wins any disagreement between two writers.
+    function _cmMergeIndex(base, incoming) {
+      const merged = {
+        schema: CM_INDEX_SCHEMA,
+        updatedAt: Math.max(Number(base.updatedAt) || 0, Number(incoming.updatedAt) || 0),
+        templates: { ...base.templates },
+        sets: { ...base.sets },
+      };
+      for (const [k, v] of Object.entries(incoming.templates || {})) {
+        const cur = merged.templates[k];
+        if (!cur) { merged.templates[k] = v; continue; }
+        merged.templates[k] = {
+          ...cur, ...v,
+          createdMs: cur.createdMs || v.createdMs || 0,
+          size: cur.size || v.size || 0,
+        };
+      }
+      for (const [k, v] of Object.entries(incoming.sets || {})) {
+        const cur = merged.sets[k];
+        if (!cur) { merged.sets[k] = v; continue; }
+        merged.sets[k] = {
+          ...cur, ...v,
+          src: cur.src || v.src || null,
+          state: (cur.state === 'app' || v.state === 'app') ? 'app' : (v.state || cur.state),
+        };
+      }
+      return merged;
+    }
+
+    async function _cmLoadLocalIndex() {
+      try {
+        const raw = await cacheMetaGet(CM_INDEX_LOCAL_KEY);
+        if (!raw) return null;
+        return _cmNormaliseIndex(raw);
+      } catch (_) { return null; }
+    }
+
+    async function _cmSaveLocalIndex() {
+      try { await cacheMetaSet(CM_INDEX_LOCAL_KEY, _cmIndex); } catch (_) {}
+    }
+
+    async function _cmFetchRemoteIndex() {
+      try {
+        const buf = await getBytes(ref(storage, CM_INDEX_PATH));
+        const json = JSON.parse(new TextDecoder().decode(buf));
+        _cmIndexRemoteMissing = false;
+        return _cmNormaliseIndex(json);
+      } catch (e) {
+        const msg = String(e?.message || e || '');
+        // A missing index on first run is expected, not an error.
+        if (/object-not-found|404|does not exist/i.test(msg)) _cmIndexRemoteMissing = true;
+        else console.warn('[charm-index] remote read failed', e);
+        return null;
+      }
+    }
+
+    // Read-merge-write. Re-reading immediately before upload keeps a second
+    // tab's contributions from being clobbered by this one's snapshot.
+    let _cmPushInFlight = null;
+    async function _cmPushRemoteIndex() {
+      if (!_cmIndexDirty) return false;
+      if (_cmPushInFlight) return _cmPushInFlight;
+      _cmPushInFlight = (async () => {
+        try {
+          await ensureStorageSignedIn();
+          const remote = await _cmFetchRemoteIndex();
+          if (remote) _cmIndex = _cmMergeIndex(remote, _cmIndex);
+          _cmIndex.schema = CM_INDEX_SCHEMA;
+          _cmIndex.updatedAt = Date.now();
+          const body = new Blob([JSON.stringify(_cmIndex)], { type: 'application/json' });
+          await uploadBytesResumable(ref(storage, CM_INDEX_PATH), body, {
+            contentType: 'application/json',
+            cacheControl: 'no-cache, max-age=0',
+          });
+          _cmIndexDirty = false;
+          _cmIndexRemoteMissing = false;
+          await _cmSaveLocalIndex();
+          return true;
+        } catch (e) {
+          console.warn('[charm-index] remote write failed — index stays local only', e);
+          return false;
+        } finally {
+          _cmPushInFlight = null;
+        }
+      })();
+      return _cmPushInFlight;
+    }
+
+    // ---------------------------------------------------------------------
+    // Derived usage counts
+    // ---------------------------------------------------------------------
+    // A set records its source as a full storage path. Older manifests wrote
+    // only a filename, and a template that was renamed or re-uploaded will
+    // have a stale path recorded, so matching falls back to basename. That
+    // fallback is why the counts stay correct across the pool moves the
+    // generator performs.
+    function _cmBaseName(p) {
+      if (!p) return '';
+      const s = String(p);
+      const i = s.lastIndexOf('/');
+      return i >= 0 ? s.slice(i + 1) : s;
+    }
+
+    function _cmDeriveUsage() {
+      const usage = new Map();
+      const byName = new Map(); // basename -> storagePath (live templates win)
+      for (const [path, meta] of Object.entries(_cmIndex.templates)) {
+        if (meta?.bin) continue;
+        const n = (meta?.name || _cmBaseName(path)).toLowerCase();
+        if (!byName.has(n)) byName.set(n, path);
+        usage.set(path, { generated: 0, approved: 0, lastMs: 0 });
+      }
+      let unattributed = 0;
+      for (const [folderId, rec] of Object.entries(_cmIndex.sets)) {
+        if (!rec) continue;
+        let key = rec.src && usage.has(rec.src) ? rec.src : null;
+        if (!key) {
+          const n = (rec.name || _cmBaseName(rec.src)).toLowerCase();
+          if (n && byName.has(n)) key = byName.get(n);
+        }
+        if (!key) { unattributed++; continue; }
+        const u = usage.get(key);
+        const ts = Number(rec.ts) || _derivEpochMs(folderId);
+        u.generated += 1;
+        if (rec.state === 'app') u.approved += 1;
+        if (ts > u.lastMs) u.lastMs = ts;
+      }
+      _cmLib.usageMap = usage;
+      _cmLib.unattributed = unattributed;
+      // Deriving usage IS the moment counts become displayable. Setting the
+      // flag here (rather than after the reconcile finishes) is what stops
+      // tiles painting a "· · ·" placeholder that never gets replaced,
+      // because every render path goes through this function first.
+      _cmLib.indexLoaded = true;
+      return usage;
+    }
+
+    function _cmUsageOf(path) {
+      return _cmLib.usageMap.get(path) || { generated: 0, approved: 0, lastMs: 0 };
+    }
+
+    // ---------------------------------------------------------------------
+    // Live reconcile — the "real time" half. Enumerating folders is cheap;
+    // reading a manifest is not, so a manifest is read exactly once per set
+    // in the lifetime of the index and never again.
+    // ---------------------------------------------------------------------
+    async function _cmReconcile({ force = false } = {}) {
+      if (_cmLib.reconciling) return;
+      _cmLib.reconciling = true;
+      _cmSetIndexStatus('working', 'Checking Firebase for changes…', null);
+      try {
+        await ensureStorageSignedIn();
+
+        // ---- 1. enumerate the template folder and the recycle bin ----
+        const [tplRes, binRes] = await Promise.all([
+          listAll(ref(storage, charmMakerSourcePath())).catch(() => ({ items: [] })),
+          listAll(ref(storage, CM_BIN_FOLDER)).catch(() => ({ items: [] })),
+        ]);
+        const tplItems = (tplRes.items || []).filter(it => _CM_IMG_RE.test(it.name || ''));
+        const binItems = (binRes.items || []).filter(it => _CM_IMG_RE.test(it.name || ''));
+
+        const liveTplPaths = new Set(tplItems.map(it => it.fullPath));
+        const liveBinPaths = new Set(binItems.map(it => it.fullPath));
+
+        // Drop index entries for files that no longer exist anywhere. (A file
+        // deleted from another tab or straight from the Firebase console must
+        // not linger in the grid.)
+        for (const p of Object.keys(_cmIndex.templates)) {
+          if (!liveTplPaths.has(p) && !liveBinPaths.has(p)) {
+            delete _cmIndex.templates[p];
+            _cmIndexDirty = true;
+          }
+        }
+        // Reclassify anything whose folder changed since we last looked.
+        for (const p of liveBinPaths) {
+          const e = _cmIndex.templates[p];
+          if (e && !e.bin) { e.bin = true; e.deletedAtMs = e.deletedAtMs || Date.now(); _cmIndexDirty = true; }
+        }
+        for (const p of liveTplPaths) {
+          const e = _cmIndex.templates[p];
+          if (e && e.bin) { delete e.bin; delete e.deletedAtMs; _cmIndexDirty = true; }
+        }
+
+        // ---- 2. metadata (upload date) for anything we don't know yet ----
+        const allFileItems = [...tplItems, ...binItems];
+        const needMeta = allFileItems.filter(it => {
+          const e = _cmIndex.templates[it.fullPath];
+          return force || !e || !e.createdMs;
+        });
+
+        // ---- 3. derivative sets: enumerate both pools ----
+        const [genRes, appRes] = await Promise.all([
+          listAll(ref(storage, `${ROOT}/${CM_GEN_FOLDER}`)).catch(() => ({ prefixes: [] })),
+          listAll(ref(storage, `${ROOT}/${CM_APP_FOLDER}`)).catch(() => ({ prefixes: [] })),
+        ]);
+        const liveSets = new Map(); // folderId -> 'gen' | 'app'
+        (genRes.prefixes || []).forEach(p => { if (p.name.startsWith('Deriv_')) liveSets.set(p.name, 'gen'); });
+        (appRes.prefixes || []).forEach(p => { if (p.name.startsWith('Deriv_')) liveSets.set(p.name, 'app'); });
+
+        // Sets that vanished (deleted by the operator) must stop counting.
+        for (const id of Object.keys(_cmIndex.sets)) {
+          if (!liveSets.has(id)) { delete _cmIndex.sets[id]; _cmIndexDirty = true; }
+        }
+        // State transitions (generated → approved) need no manifest re-read.
+        const needManifest = [];
+        for (const [id, state] of liveSets) {
+          const known = _cmIndex.sets[id];
+          if (!known || force || (!known.src && known.srcChecked !== true)) {
+            needManifest.push({ id, state });
+            continue;
+          }
+          if (known.state !== state) { known.state = state; _cmIndexDirty = true; }
+        }
+
+        const total = needMeta.length + needManifest.length;
+        console.info(`[charm-index] reconcile: ${tplItems.length} templates · ${binItems.length} in bin · ${liveSets.size} sets`
+          + ` → fetching ${needMeta.length} upload dates, ${needManifest.length} manifests`);
+        let done = 0;
+        const bump = (label) => {
+          done++;
+          if (done % 5 === 0 || done === total) {
+            _cmSetIndexStatus('working', label, total ? done / total : 1);
+          }
+        };
+
+        if (total === 0) {
+          _cmSetIndexStatus('ok', null, null);
+        }
+
+        // ---- 4. fetch metadata (bounded concurrency) ----
+        if (needMeta.length) {
+          _cmSetIndexStatus('working', `Reading upload dates (${needMeta.length})…`, 0);
+          await _asyncPool(8, needMeta, async (it) => {
+            try {
+              const m = await getMetadata(it);
+              const prev = _cmIndex.templates[it.fullPath] || {};
+              _cmIndex.templates[it.fullPath] = {
+                ...prev,
+                name: it.name,
+                createdMs: Date.parse(m?.timeCreated || '') || 0,
+                updatedMs: Date.parse(m?.updated || m?.timeCreated || '') || 0,
+                size: Number(m?.size) || 0,
+                contentType: m?.contentType || prev.contentType || null,
+                bin: liveBinPaths.has(it.fullPath) ? true : undefined,
+              };
+              if (!liveBinPaths.has(it.fullPath)) delete _cmIndex.templates[it.fullPath].bin;
+              _cmIndexDirty = true;
+            } catch (e) {
+              // Keep a stub so the file still appears, just without a date.
+              if (!_cmIndex.templates[it.fullPath]) {
+                _cmIndex.templates[it.fullPath] = { name: it.name, createdMs: 0, updatedMs: 0, size: 0 };
+                _cmIndexDirty = true;
+              }
+            }
+            bump(`Reading upload dates (${done}/${total})…`);
+          });
+          _cmRebuildLists(tplItems, binItems);
+          _cmRender();
+        }
+
+        // ---- 5. fetch manifests for sets we've never attributed ----
+        if (needManifest.length) {
+          _cmSetIndexStatus('working', `Attributing derivative sets (${needManifest.length})…`, total ? done / total : 0);
+          let sinceRepaint = 0;
+          await _asyncPool(10, needManifest, async ({ id, state }) => {
+            const folder = state === 'app' ? CM_APP_FOLDER : CM_GEN_FOLDER;
+            let rec = { src: null, name: null, state, ts: _derivEpochMs(id), srcChecked: true };
+            try {
+              const buf = await getBytes(ref(storage, `${ROOT}/${folder}/${id}/manifest.json`));
+              const m = JSON.parse(new TextDecoder().decode(buf));
+              const src = m?.sourceCharm || null;
+              rec.src = src;
+              rec.name = m?.sourceCharmName || _cmBaseName(src) || null;
+              const t = Date.parse(m?.timestamp || '');
+              if (Number.isFinite(t) && t > 0) rec.ts = t;
+            } catch (_) {
+              // No manifest (or unreadable): the set still exists and still
+              // counts toward totals, it just can't be attributed to a design.
+            }
+            _cmIndex.sets[id] = rec;
+            _cmIndexDirty = true;
+            bump(`Attributing derivative sets (${done}/${total})…`);
+            // Repaint badges periodically so counts visibly fill in.
+            if (++sinceRepaint >= 25) {
+              sinceRepaint = 0;
+              _cmDeriveUsage();
+              _cmRender();
+            }
+          });
+        }
+
+        // ---- 6. finalise ----
+        _cmRebuildLists(tplItems, binItems);
+        _cmDeriveUsage();
+        _cmRender();
+        _cmLib.indexLoaded = true;
+
+        if (_cmIndexDirty) {
+          _cmSetIndexStatus('working', 'Publishing index to Firebase…', 1);
+          await _cmPushRemoteIndex();
+          await _cmSaveLocalIndex();
+        }
+        _cmSetIndexStatus('ok', null, null);
+      } catch (e) {
+        console.warn('[charm-index] reconcile failed', e);
+        _cmSetIndexStatus('warn', `Index error: ${e?.message || e}`, null);
+      } finally {
+        _cmLib.reconciling = false;
+      }
+    }
+
+    // Turn the storage listing + index into the two render lists.
+    function _cmRebuildLists(tplItems, binItems) {
+      const mk = (it, isBin) => {
+        const meta = _cmIndex.templates[it.fullPath] || {};
+        return {
+          path: it.fullPath,
+          name: it.name,
+          itemRef: it,
+          createdMs: Number(meta.createdMs) || 0,
+          updatedMs: Number(meta.updatedMs) || 0,
+          size: Number(meta.size) || 0,
+          contentType: meta.contentType || null,
+          deletedAtMs: isBin ? (Number(meta.deletedAtMs) || Number(meta.createdMs) || 0) : 0,
+          originalPath: isBin ? (meta.originalPath || null) : null,
+        };
+      };
+      if (tplItems) _cmLib.items = tplItems.map(it => mk(it, false));
+      if (binItems) _cmLib.bin = binItems.map(it => mk(it, true));
+
+      const countEl = document.getElementById('newCharmsTotalCount');
+      if (countEl) countEl.textContent = `Count: ${_cmLib.items.length}`;
+      const aEl = document.getElementById('charmLibActiveCount');
+      if (aEl) aEl.textContent = String(_cmLib.items.length);
+      const dEl = document.getElementById('charmLibDeletedCount');
+      if (dEl) dEl.textContent = String(_cmLib.bin.length);
+    }
+
+    // ---------------------------------------------------------------------
+    // Filtering + sorting
+    // ---------------------------------------------------------------------
+    function _cmResolveWindow() {
+      if (_cmLib.dateFrom != null || _cmLib.dateTo != null) {
+        return { from: _cmLib.dateFrom, to: _cmLib.dateTo, source: 'custom' };
+      }
+      const r = _presetRange(_cmLib.preset);
+      return r ? { from: r.from, to: r.to, source: 'preset' } : { from: null, to: null, source: 'all' };
+    }
+
+    function _cmUsageMatches(u) {
+      const L = _cmLib;
+      switch (L.usage) {
+        case 'unused':  if (u.generated !== 0 || u.approved !== 0) return false; break;
+        case 'pending': if (!(u.generated > 0 && u.approved === 0)) return false; break;
+        case 'a1':      if (u.approved < 1 || u.approved > 2) return false; break;
+        case 'a3':      if (u.approved < 3 || u.approved > 5) return false; break;
+        case 'a6':      if (u.approved < 6) return false; break;
+        default: break; // 'any'
+      }
+      if (L.minApproved != null && u.approved < L.minApproved) return false;
+      if (L.maxApproved != null && u.approved > L.maxApproved) return false;
+      return true;
+    }
+
+    function _cmFilterSort() {
+      const L = _cmLib;
+      const inBin = L.view === 'deleted';
+      const src = inBin ? L.bin : L.items;
+      const q = L.search.trim().toLowerCase();
+      const win = _cmResolveWindow();
+
+      let out = src.filter(rec => {
+        if (q && !rec.name.toLowerCase().includes(q)) return false;
+        const d = inBin ? (rec.deletedAtMs || rec.createdMs) : rec.createdMs;
+        if (win.from != null || win.to != null) {
+          if (!d) return false;                       // undated can't answer a date question
+          if (win.from != null && d < win.from) return false;
+          if (win.to   != null && d > win.to)   return false;
+        }
+        if (!inBin && !_cmUsageMatches(_cmUsageOf(rec.path))) return false;
+        return true;
+      });
+
+      const dateOf = (r) => inBin ? (r.deletedAtMs || r.createdMs) : r.createdMs;
+      // Undated entries always sort last rather than masquerading as 1970.
+      const byDate = (dir) => (a, b) => {
+        const da = dateOf(a), db = dateOf(b);
+        if (!da && !db) return a.name.localeCompare(b.name);
+        if (!da) return 1;
+        if (!db) return -1;
+        return dir * (da - db);
+      };
+      const byNum = (pick, dir) => (a, b) => {
+        const d = dir * (pick(a) - pick(b));
+        return d !== 0 ? d : a.name.localeCompare(b.name);
+      };
+      const appr = (r) => _cmUsageOf(r.path).approved;
+      const genr = (r) => _cmUsageOf(r.path).generated;
+      const last = (r) => _cmUsageOf(r.path).lastMs;
+      const rate = (r) => { const u = _cmUsageOf(r.path); return u.generated > 0 ? u.approved / u.generated : -1; };
+
+      switch (L.sort) {
+        case 'date_desc':      out.sort(byDate(-1)); break;
+        case 'date_asc':       out.sort(byDate(1)); break;
+        case 'name_desc':      out.sort((a, b) => b.name.localeCompare(a.name)); break;
+        case 'approved_desc':  out.sort(byNum(appr, -1)); break;
+        case 'approved_asc':   out.sort(byNum(appr, 1)); break;
+        case 'generated_desc': out.sort(byNum(genr, -1)); break;
+        case 'rate_desc':      out.sort(byNum(rate, -1)); break;
+        case 'lastused_desc':  out.sort(byNum(last, -1)); break;
+        case 'lastused_asc':   out.sort((a, b) => {
+                                 const la = last(a), lb = last(b);
+                                 if (!la && !lb) return a.name.localeCompare(b.name);
+                                 if (!la) return -1;   // never used = least recently used
+                                 if (!lb) return 1;
+                                 return la - lb;
+                               }); break;
+        case 'size_desc':      out.sort(byNum(r => r.size, -1)); break;
+        case 'name_asc':
+        default:               out.sort((a, b) => a.name.localeCompare(b.name)); break;
+      }
+      L.lastFiltered = out;
+      return out;
+    }
+
+    // ---------------------------------------------------------------------
+    // Rendering — keyed reuse, not innerHTML
+    //
+    // Every filter keystroke re-renders. Rebuilding the markup would throw
+    // away each <img> and re-read (or worse, re-download) it, so tiles are
+    // created once, kept in a Map, and simply re-ordered into the mosaic with
+    // replaceChildren(). Moving a live node preserves its decoded image, so
+    // filtering is instant and silent on the network.
+    // ---------------------------------------------------------------------
+    function _cmFormatUsageBadge(u, hasIndex) {
+      if (!hasIndex) return { text: '· · ·', cls: 'unknown', title: 'Usage index still loading' };
+      if (u.generated === 0) return { text: 'unused', cls: 'unused', title: 'No derivative sets generated from this design yet' };
+      const cls = u.approved > 0 ? 'has-approved' : 'pending-only';
+      const pct = Math.round((u.approved / u.generated) * 100);
+      return {
+        text: `${u.approved}✓ / ${u.generated}`,
+        cls,
+        title: `${u.approved} approved set${u.approved === 1 ? '' : 's'} from ${u.generated} generation${u.generated === 1 ? '' : 's'} (${pct}% approved)`
+              + (u.lastMs ? `\nLast used ${new Date(u.lastMs).toLocaleString()}` : ''),
+      };
+    }
+
+    function _cmEnsureTile(rec) {
+      const inBin = _cmLib.view === 'deleted';
+      let tile = _cmLib.tiles.get(rec.path);
+      if (!tile) {
+        tile = document.createElement('div');
+        tile.className = 'charm-mosaic-tile';
+        tile.dataset.fp = rec.path;
+        tile.dataset.name = rec.name;
+        tile.innerHTML = '<div class="placeholder">…</div>';
+
+        const badge = document.createElement('div');
+        badge.className = 'tile-usage';
+        tile.appendChild(badge);
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'tile-act delete';
+        del.textContent = '✕';
+        del.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          if (_cmLib.view === 'deleted') _cmPurge([rec.path]);
+          else _cmSoftDelete([rec.path]);
+        });
+        tile.appendChild(del);
+
+        const restore = document.createElement('button');
+        restore.type = 'button';
+        restore.className = 'tile-act restore';
+        restore.textContent = '↩';
+        restore.title = 'Restore to library';
+        restore.style.display = 'none';
+        restore.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          _cmRestore([rec.path]);
+        });
+        tile.appendChild(restore);
+
+        tile.addEventListener('click', () => {
+          if (_cmLib.view === 'deleted') {
+            if (_cmLib.binSelected.has(rec.path)) _cmLib.binSelected.delete(rec.path);
+            else _cmLib.binSelected.add(rec.path);
+            tile.classList.toggle('selected', _cmLib.binSelected.has(rec.path));
+            _cmUpdateSelectionBar();
+          } else {
+            _toggleCharmRefSelect(tile, rec.itemRef);
+          }
+        });
+
+        _cmLib.tiles.set(rec.path, tile);
+      }
+
+      // Keep the ref fresh — listAll hands back new StorageReference objects.
+      const prevRec = tile._rec;
+      tile._rec = rec;
+      // If a previous attempt failed (e.g. it ran against a mirrored ref
+      // before the reconcile supplied a real one), reset the placeholder so
+      // the observer picks the tile up and retries with the new reference.
+      if (!tile.querySelector('img') && prevRec && prevRec.itemRef !== rec.itemRef) {
+        const ph = tile.querySelector('.placeholder');
+        if (ph && ph.textContent === '!') { ph.textContent = '…'; ph.style.color = ''; }
+      }
+
+      const badge = tile.querySelector('.tile-usage');
+      const del = tile.querySelector('.tile-act.delete');
+      const restore = tile.querySelector('.tile-act.restore');
+
+      tile.classList.toggle('in-bin', inBin);
+      if (inBin) {
+        const when = rec.deletedAtMs ? new Date(rec.deletedAtMs).toLocaleString() : 'unknown date';
+        badge.className = 'tile-usage unknown';
+        badge.textContent = 'in bin';
+        badge.title = `Deleted ${when}` + (rec.originalPath ? `\nfrom ${rec.originalPath}` : '');
+        del.title = 'Delete permanently';
+        restore.style.display = '';
+        tile.classList.toggle('selected', _cmLib.binSelected.has(rec.path));
+        tile.title = `${rec.name}\nDeleted ${when}`;
+      } else {
+        const u = _cmUsageOf(rec.path);
+        const b = _cmFormatUsageBadge(u, _cmLib.indexLoaded);
+        badge.className = `tile-usage ${b.cls}`;
+        badge.textContent = b.text;
+        badge.title = b.title;
+        del.title = 'Move to recycle bin';
+        restore.style.display = 'none';
+        const added = rec.createdMs ? new Date(rec.createdMs).toLocaleString() : 'date unknown';
+        tile.title = `${rec.name}\nAdded ${added}\n${b.title}`;
+      }
+      return tile;
+    }
+
+    function _cmRender() {
+      const mosaic = document.getElementById('charmMosaic');
+      if (!mosaic) return;
+      const list = _cmFilterSort();
+
+      if (list.length === 0) {
+        const src = _cmLib.view === 'deleted' ? _cmLib.bin : _cmLib.items;
+        const msg = src.length === 0
+          ? (_cmLib.view === 'deleted'
+              ? 'Recycle bin is empty.'
+              : 'No charms in Charm_Templates (Existing Etsy Charms) folder')
+          : 'No charms match these filters.';
+        mosaic.replaceChildren(Object.assign(document.createElement('div'), {
+          className: 'slotRefEmpty',
+          textContent: msg,
+        }));
+        mosaic.firstChild.style.gridColumn = '1/-1';
+        mosaic.firstChild.style.padding = '36px';
+      } else {
+        const frag = document.createDocumentFragment();
+        // Appending an already-live node MOVES it, keeping its loaded <img>.
+        for (const rec of list) frag.appendChild(_cmEnsureTile(rec));
+        mosaic.replaceChildren(frag);
+      }
+
+      _refreshCharmOrderBadges();
+      _cmUpdateSelectionBar();
+      _cmUpdateUsageChipCounts();
+      _cmUpdateWindowReadout(list.length);
+      _cmObserveVisibleTiles();
+    }
+
+    // ---------------------------------------------------------------------
+    // Thumbnails — viewport-driven, cache-first, network last
+    // ---------------------------------------------------------------------
+    let _cmThumbObserver = null;
+    function _cmObserveVisibleTiles() {
+      const mosaic = document.getElementById('charmMosaic');
+      if (!mosaic) return;
+      if (typeof IntersectionObserver === 'undefined') {
+        // No observer available: load everything with a bounded pool.
+        const pending = [...mosaic.querySelectorAll('.charm-mosaic-tile')]
+          .filter(t => !t.querySelector('img'));
+        _asyncPool(8, pending, (t) => _cmLoadThumb(t));
+        return;
+      }
+      if (!_cmThumbObserver) {
+        _cmThumbObserver = new IntersectionObserver((entries) => {
+          for (const en of entries) {
+            if (!en.isIntersecting) continue;
+            _cmThumbObserver.unobserve(en.target);
+            _cmLoadThumb(en.target);
+          }
+        }, { root: mosaic, rootMargin: '200px 0px', threshold: 0.01 });
+      }
+      mosaic.querySelectorAll('.charm-mosaic-tile').forEach(tile => {
+        if (tile.querySelector('img')) return;
+        _cmThumbObserver.observe(tile);
+      });
+    }
+
+    // Cap how many decoded object URLs we hold. Beyond the cap the coldest
+    // are revoked and their tiles fall back to a placeholder — they reload
+    // from IndexedDB (not the network) if scrolled back into view.
+    const _CM_THUMB_URL_CAP = 900;
+    function _cmRegisterThumbUrl(path, url) {
+      _cmLib.thumbUrls.set(path, url);
+      _activeBlobUrls.add(url);
+      if (_cmLib.thumbUrls.size <= _CM_THUMB_URL_CAP) return;
+      const overflow = _cmLib.thumbUrls.size - _CM_THUMB_URL_CAP;
+      let n = 0;
+      for (const [p, u] of _cmLib.thumbUrls) {
+        if (n++ >= overflow) break;
+        if (p === path) continue;
+        const t = _cmLib.tiles.get(p);
+        if (t && t.isConnected) continue; // still on screen: leave it alone
+        _cmLib.thumbUrls.delete(p);
+        _activeBlobUrls.delete(u);
+        try { URL.revokeObjectURL(u); } catch (_) {}
+        if (t) {
+          const img = t.querySelector('img');
+          if (img) img.remove();
+          if (!t.querySelector('.placeholder')) {
+            const ph = document.createElement('div');
+            ph.className = 'placeholder';
+            ph.textContent = '…';
+            t.insertBefore(ph, t.firstChild);
+          }
+        }
+      }
+    }
+
+    async function _cmLoadThumb(tile) {
+      if (!tile || !tile.isConnected) return;
+      if (tile.querySelector('img')) return;
+      const rec = tile._rec;
+      if (!rec) return;
+      const path = rec.path;
+
+      const paint = (url) => {
+        if (!tile.isConnected && !_cmLib.tiles.has(path)) return;
+        const ph = tile.querySelector('.placeholder');
+        if (ph) ph.remove();
+        if (tile.querySelector('img')) return;
+        const img = document.createElement('img');
+        img.alt = rec.name;
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.src = url;
+        tile.insertBefore(img, tile.firstChild);
+      };
+
+      // 0. Already decoded this session — the cheapest possible repaint.
+      //    Still pin it and refresh its LRU stamp: an image the operator keeps
+      //    coming back to must not look "cold" to the sweeper just because it
+      //    stopped touching IndexedDB.
+      const memUrl = _cmLib.thumbUrls.get(path);
+      if (memUrl) {
+        cachePin(path);
+        cacheTouchIfStale(path);
+        paint(memUrl);
+        return;
+      }
+
+      // 1. IndexedDB (the "never wait twice" path)
+      try {
+        const cached = await getCachedBlob(path);
+        if (cached?.blob) {
+          const u = URL.createObjectURL(cached.blob);
+          _cmRegisterThumbUrl(path, u);
+          cachePin(path);
+          paint(u);
+          return;
+        }
+      } catch (_) {}
+
+      // 2. Download URL → fetch → cache for next time
+      let downloadUrl = null;
+      try {
+        downloadUrl = await getDownloadURL(rec.itemRef);
+        const blob = await fetchAndCacheBlob(downloadUrl, path, rec.updatedMs || Date.now());
+        if (blob) {
+          const u = URL.createObjectURL(blob);
+          _cmRegisterThumbUrl(path, u);
+          cachePin(path);
+          paint(u);
+          return;
+        }
+      } catch (_) {}
+
+      // 3. SDK byte fetch. Reached when a CORS rule blocks the plain fetch —
+      // the original code painted the raw URL at this point, which works but
+      // caches nothing, so the same image was re-downloaded on every visit.
+      // Going through getBytes lets it land in IndexedDB like any other.
+      try {
+        const bytes = await getBytes(rec.itemRef);
+        const blob = new Blob([bytes], { type: rec.contentType || _cmGuessMime(rec.name) });
+        await setCachedBlob(path, blob, rec.updatedMs || Date.now());
+        const u = URL.createObjectURL(blob);
+        _cmRegisterThumbUrl(path, u);
+        cachePin(path);
+        paint(u);
+        return;
+      } catch (_) {}
+
+      // 4. Last resort: show the remote URL directly. Nothing is cached, so
+      // this path is slow on every visit — it exists only so a rules or CORS
+      // misconfiguration degrades to "visible" rather than "broken".
+      if (downloadUrl) { paint(cacheBust(downloadUrl)); return; }
+      if (tile.isConnected) {
+        const ph = tile.querySelector('.placeholder');
+        if (ph) { ph.textContent = '!'; ph.style.color = '#fca5a5'; }
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Selection (shared with the generator: click order still drives it)
+    // ---------------------------------------------------------------------
     function _updateCharmRefStatus() {
       const status = document.getElementById('charmRefSelectionStatus');
       if (!status) return;
@@ -15993,9 +17681,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     function _refreshCharmOrderBadges() {
       const mosaic = document.getElementById('charmMosaic');
       if (!mosaic) return;
+      const inBin = _cmLib.view === 'deleted';
       mosaic.querySelectorAll('.charm-mosaic-tile').forEach(tile => {
         const fp = tile.dataset.fp;
-        const sel = _charmRefSelection.get(fp);
+        const sel = inBin ? null : _charmRefSelection.get(fp);
         const existing = tile.querySelector('.order-badge');
         if (sel) {
           if (existing) existing.textContent = String(sel.order);
@@ -16008,151 +17697,400 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           tile.classList.add('selected');
         } else {
           if (existing) existing.remove();
-          tile.classList.remove('selected');
+          tile.classList.toggle('selected', inBin && _cmLib.binSelected.has(fp));
         }
       });
     }
 
     function _toggleCharmRefSelect(tile, item) {
-      const fp = item.fullPath;
+      const fp = item?.fullPath || tile?.dataset?.fp;
+      if (!fp) return;
       if (_charmRefSelection.has(fp)) {
         _charmRefSelection.delete(fp);
-        // Renumber remaining in current order
         let i = 1;
         for (const v of _charmRefSelection.values()) v.order = i++;
       } else {
         _charmRefSelection.set(fp, {
           order: _charmRefSelection.size + 1,
-          name: item.name,
+          name: item?.name || tile?.dataset?.name || _cmBaseName(fp),
           itemRef: item,
           fullPath: fp,
         });
       }
       _refreshCharmOrderBadges();
       _updateCharmRefStatus();
+      _cmUpdateSelectionBar();
     }
 
-    async function _loadCharmMosaic() {
+    function _cmUpdateSelectionBar() {
+      const inBin = _cmLib.view === 'deleted';
+      const selCount = inBin ? _cmLib.binSelected.size : _charmRefSelection.size;
+      const sc = document.getElementById('charmLibSelectedCount');
+      if (sc) sc.textContent = String(selCount);
+      const vc = document.getElementById('charmLibVisibleCount');
+      if (vc) vc.textContent = String(_cmLib.lastFiltered.length);
+
+      const del = document.getElementById('charmLibDeleteBtn');
+      const res = document.getElementById('charmLibRestoreBtn');
+      const pur = document.getElementById('charmLibPurgeBtn');
+      if (del) {
+        del.style.display = inBin ? 'none' : '';
+        del.classList.toggle('btn-danger', selCount > 0);
+        del.disabled = _cmLib.busy || selCount === 0;
+        del.textContent = selCount > 0 ? `Delete ${selCount}` : 'Delete';
+      }
+      if (res) {
+        res.style.display = inBin ? '' : 'none';
+        res.disabled = _cmLib.busy || selCount === 0;
+        res.textContent = selCount > 0 ? `Restore ${selCount}` : 'Restore';
+      }
+      if (pur) {
+        pur.style.display = inBin ? '' : 'none';
+        pur.disabled = _cmLib.busy || selCount === 0;
+        pur.textContent = selCount > 0 ? `Purge ${selCount} permanently` : 'Purge permanently';
+      }
+    }
+
+    function _cmUpdateUsageChipCounts() {
+      if (_cmLib.view === 'deleted') return;
+      const buckets = { any: 0, unused: 0, pending: 0, a1: 0, a3: 0, a6: 0 };
+      for (const rec of _cmLib.items) {
+        const u = _cmUsageOf(rec.path);
+        buckets.any++;
+        if (u.generated === 0) buckets.unused++;
+        else if (u.approved === 0) buckets.pending++;
+        if (u.approved >= 1 && u.approved <= 2) buckets.a1++;
+        else if (u.approved >= 3 && u.approved <= 5) buckets.a3++;
+        else if (u.approved >= 6) buckets.a6++;
+      }
+      Object.entries(buckets).forEach(([k, v]) => {
+        const el = document.getElementById(`uCount-${k}`);
+        if (el) el.textContent = String(v);
+      });
+    }
+
+    function _cmUpdateWindowReadout(shown) {
+      const el = document.getElementById('charmLibWindowInfo');
+      if (!el) return;
+      const L = _cmLib;
+      const inBin = L.view === 'deleted';
+      const src = inBin ? L.bin : L.items;
+      const win = _cmResolveWindow();
+      const parts = [];
+
+      parts.push(`${shown} of ${src.length} ${inBin ? 'deleted' : 'charm'}${src.length === 1 ? '' : 's'} shown`);
+      parts.push(win.source === 'all'
+        ? 'any date'
+        : _describeWindow(win.from, win.to, win.source === 'custom' ? 'custom' : null)
+          + (inBin ? ' (deleted)' : ' (added)'));
+      if (L.search.trim()) parts.push(`name ~ "${L.search.trim()}"`);
+
+      if (!inBin) {
+        const labels = { any: null, unused: 'never used', pending: 'tried but never approved', a1: '1–2 approved', a3: '3–5 approved', a6: '6+ approved' };
+        if (labels[L.usage]) parts.push(labels[L.usage]);
+        if (L.minApproved != null || L.maxApproved != null) {
+          parts.push(`approved ${L.minApproved ?? 0}–${L.maxApproved ?? '∞'}`);
+        }
+        const totals = [...L.usageMap.values()].reduce((a, u) => {
+          a.g += u.generated; a.a += u.approved; return a;
+        }, { g: 0, a: 0 });
+        const rate = totals.g ? Math.round((totals.a / totals.g) * 100) : 0;
+        parts.push(`${totals.a} approved / ${totals.g} generated overall (${rate}%)`);
+        if (L.unattributed > 0) parts.push(`${L.unattributed} set${L.unattributed === 1 ? '' : 's'} not attributable to a design`);
+      }
+      el.textContent = parts.join(' · ');
+    }
+
+    function _cmSetIndexStatus(state, text, pct) {
+      const wrap = document.getElementById('charmLibIndexStatus');
+      const txt = document.getElementById('charmLibIndexText');
+      const fill = document.getElementById('charmLibIndexFill');
+      if (!wrap || !txt) return;
+      wrap.classList.remove('working', 'ok', 'warn');
+      if (state) wrap.classList.add(state);
+      if (text) {
+        txt.textContent = text;
+      } else if (state === 'ok') {
+        const sets = Object.keys(_cmIndex.sets).length;
+        const tpl = Object.keys(_cmIndex.templates).length;
+        const when = _cmIndex.updatedAt ? _formatRelTime(_cmIndex.updatedAt) : 'just now';
+        txt.textContent = `Usage index in sync · ${tpl} charms · ${sets} derivative sets · updated ${when}`
+          + (_cmIndexRemoteMissing ? ' · local only (Firebase index not writable)' : '');
+      }
+      if (fill && typeof pct === 'number') fill.style.width = `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%`;
+    }
+
+    // Cache health readout — referenced by the GC layer above.
+    function _updateCacheStatusUI() {
+      const wrap = document.getElementById('charmLibCacheStatus');
+      const txt = document.getElementById('charmLibCacheText');
+      if (!wrap || !txt) return;
+      const mb = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(2)} GB` : `${Math.round(b / 1048576)} MB`;
+      const s = _cacheStats;
+      const parts = [`Local cache ${mb(s.bytes || 0)} · ${(s.entries || 0).toLocaleString()} images`];
+      if (s.quota > 0) {
+        const share = Math.round((s.usage / s.quota) * 100);
+        parts.push(`${share}% of ${mb(s.quota)} browser quota`);
+        wrap.classList.remove('ok', 'warn', 'working');
+        wrap.classList.add(share >= CACHE_POLICY.QUOTA_SOFT * 100 ? 'warn' : 'ok');
+      } else {
+        wrap.classList.remove('warn', 'working');
+        wrap.classList.add('ok');
+      }
+      parts.push(`budget ${mb(CACHE_POLICY.MAX_BYTES)} · LRU eviction, ${Math.round(CACHE_POLICY.TTL_MS / 86400000)}d TTL`);
+      if (s.lastEvicted) parts.push(`last trim ${_formatRelTime(s.lastEvicted)}`);
+      txt.textContent = parts.join(' · ');
+    }
+
+    // ---------------------------------------------------------------------
+    // Destructive operations
+    //
+    // Default is a MOVE, not a delete: the object is copied into
+    // Charm_Templates_Deleted/ and then removed from the live folder, so it
+    // leaves the library, stops appearing in the generator's pool, and is
+    // still recoverable. Permanent removal is a separate, explicitly
+    // confirmed action from inside the recycle bin.
+    // ---------------------------------------------------------------------
+    function _cmGuessMime(name) {
+      const ext = String(name || '').toLowerCase().split('.').pop();
+      if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+      if (ext === 'webp') return 'image/webp';
+      if (ext === 'gif') return 'image/gif';
+      if (ext === 'avif') return 'image/avif';
+      return 'image/png';
+    }
+
+    function _cmSetBusy(on, label) {
+      _cmLib.busy = on;
+      _cmUpdateSelectionBar();
+      if (label) _cmSetIndexStatus(on ? 'working' : 'ok', on ? label : null, on ? 0 : null);
+    }
+
+    async function _cmMoveObject(fromPath, toPath, contentType) {
+      const srcRef = ref(storage, fromPath);
+      const bytes = await getBytes(srcRef);
+      await uploadBytesResumable(ref(storage, toPath), new Blob([bytes], { type: contentType }), { contentType });
+      await deleteObject(srcRef);
+    }
+
+    async function _cmSoftDelete(paths) {
+      const list = [...new Set(paths.filter(Boolean))];
+      if (list.length === 0) return;
+      const names = list.map(p => _cmBaseName(p));
+      const preview = names.slice(0, 6).join('\n  • ');
+      const ok = confirm(
+        `Move ${list.length} reference charm${list.length === 1 ? '' : 's'} to the recycle bin?\n\n  • ${preview}`
+        + (names.length > 6 ? `\n  … and ${names.length - 6} more` : '')
+        + `\n\nThey leave the library and the generator's pool immediately, but stay recoverable in`
+        + `\nCharm_Maker/Charm_Templates_Deleted until you purge them.`
+      );
+      if (!ok) return;
+
+      _cmSetBusy(true, `Moving ${list.length} to recycle bin…`);
+      const existingBinNames = new Set(_cmLib.bin.map(r => r.name));
+      let done = 0, failed = 0;
+      for (const p of list) {
+        const tile = _cmLib.tiles.get(p);
+        if (tile) tile.classList.add('pending-delete');
+        try {
+          const rec = _cmLib.items.find(r => r.path === p);
+          const name = _cmBaseName(p);
+          // Collision-safe destination name; the original path is recorded in
+          // the index so Restore can always put it back exactly.
+          let destName = name;
+          if (existingBinNames.has(destName)) destName = `${Date.now()}__${name}`;
+          existingBinNames.add(destName);
+          const destPath = `${CM_BIN_FOLDER}/${destName}`;
+          const ct = rec?.contentType || _cmGuessMime(name);
+          await _cmMoveObject(p, destPath, ct);
+
+          const prev = _cmIndex.templates[p] || {};
+          delete _cmIndex.templates[p];
+          _cmIndex.templates[destPath] = {
+            ...prev,
+            name: destName,
+            bin: true,
+            originalPath: p,
+            deletedAtMs: Date.now(),
+            contentType: ct,
+          };
+          _cmIndexDirty = true;
+          _charmRefSelection.delete(p);
+          _cmLib.tiles.delete(p);
+          const u = _cmLib.thumbUrls.get(p);
+          if (u) { _cmLib.thumbUrls.delete(p); _activeBlobUrls.delete(u); try { URL.revokeObjectURL(u); } catch (_) {} }
+          cacheUnpin(p);
+          await removeCachedPath(p);
+          done++;
+        } catch (e) {
+          failed++;
+          console.warn('[charm-library] soft delete failed', p, e);
+          if (tile) tile.classList.remove('pending-delete');
+        }
+        _cmSetIndexStatus('working', `Moving to recycle bin (${done + failed}/${list.length})…`, (done + failed) / list.length);
+      }
+      _updateCharmRefStatus();
+      await _cmPushRemoteIndex();
+      await _cmSaveLocalIndex();
+      _cmSetBusy(false);
+      setStatus(failed
+        ? `Recycle bin: moved ${done}, ${failed} failed.`
+        : `Moved ${done} charm${done === 1 ? '' : 's'} to the recycle bin.`);
+      await _cmReconcile();
+    }
+
+    async function _cmRestore(paths) {
+      const list = [...new Set(paths.filter(Boolean))];
+      if (list.length === 0) return;
+      _cmSetBusy(true, `Restoring ${list.length}…`);
+      let done = 0, failed = 0;
+      for (const p of list) {
+        try {
+          const meta = _cmIndex.templates[p] || {};
+          const name = _cmBaseName(meta.originalPath || p);
+          const dest = meta.originalPath || `${charmMakerSourcePath()}/${name}`;
+          const ct = meta.contentType || _cmGuessMime(name);
+          await _cmMoveObject(p, dest, ct);
+          delete _cmIndex.templates[p];
+          _cmIndex.templates[dest] = {
+            name,
+            createdMs: Number(meta.createdMs) || 0,
+            updatedMs: Date.now(),
+            size: Number(meta.size) || 0,
+            contentType: ct,
+          };
+          _cmIndexDirty = true;
+          _cmLib.binSelected.delete(p);
+          _cmLib.tiles.delete(p);
+          const u = _cmLib.thumbUrls.get(p);
+          if (u) { _cmLib.thumbUrls.delete(p); _activeBlobUrls.delete(u); try { URL.revokeObjectURL(u); } catch (_) {} }
+          await removeCachedPath(p);
+          done++;
+        } catch (e) {
+          failed++;
+          console.warn('[charm-library] restore failed', p, e);
+        }
+        _cmSetIndexStatus('working', `Restoring (${done + failed}/${list.length})…`, (done + failed) / list.length);
+      }
+      await _cmPushRemoteIndex();
+      await _cmSaveLocalIndex();
+      _cmSetBusy(false);
+      setStatus(failed ? `Restored ${done}, ${failed} failed.` : `Restored ${done} charm${done === 1 ? '' : 's'}.`);
+      await _cmReconcile();
+    }
+
+    async function _cmPurge(paths) {
+      const list = [...new Set(paths.filter(Boolean))];
+      if (list.length === 0) return;
+      const names = list.map(p => _cmBaseName(p));
+      const ok = confirm(
+        `PERMANENTLY delete ${list.length} file${list.length === 1 ? '' : 's'} from Firebase Storage?\n\n  • `
+        + names.slice(0, 6).join('\n  • ')
+        + (names.length > 6 ? `\n  … and ${names.length - 6} more` : '')
+        + `\n\nThis cannot be undone. Derivative sets already generated from these designs are NOT affected.`
+      );
+      if (!ok) return;
+      // Second gate for a bulk purge — this is the one action with no recovery.
+      if (list.length >= 5) {
+        const typed = prompt(`Type DELETE to confirm permanent removal of ${list.length} files.`);
+        if (String(typed || '').trim().toUpperCase() !== 'DELETE') { setStatus('Purge cancelled.'); return; }
+      }
+
+      _cmSetBusy(true, `Purging ${list.length}…`);
+      let done = 0, failed = 0;
+      for (const p of list) {
+        try {
+          await deleteObject(ref(storage, p));
+          delete _cmIndex.templates[p];
+          _cmIndexDirty = true;
+          _cmLib.binSelected.delete(p);
+          _cmLib.tiles.delete(p);
+          const u = _cmLib.thumbUrls.get(p);
+          if (u) { _cmLib.thumbUrls.delete(p); _activeBlobUrls.delete(u); try { URL.revokeObjectURL(u); } catch (_) {} }
+          cacheUnpin(p);
+          await removeCachedPath(p);
+          done++;
+        } catch (e) {
+          failed++;
+          console.warn('[charm-library] purge failed', p, e);
+        }
+        _cmSetIndexStatus('working', `Purging (${done + failed}/${list.length})…`, (done + failed) / list.length);
+      }
+      await _cmPushRemoteIndex();
+      await _cmSaveLocalIndex();
+      _cmSetBusy(false);
+      setStatus(failed ? `Purged ${done}, ${failed} failed.` : `Purged ${done} file${done === 1 ? '' : 's'} permanently.`);
+      await _cmReconcile();
+    }
+
+    // ---------------------------------------------------------------------
+    // Entry point: instant local paint, then Firebase, then reconcile
+    // ---------------------------------------------------------------------
+    async function _loadCharmMosaic({ force = false } = {}) {
       const mosaic = document.getElementById('charmMosaic');
       if (!mosaic) return;
       if (_charmMosaicLoading) return;
       _charmMosaicLoading = true;
-      mosaic.innerHTML = '<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading library…</div>';
 
       try {
-        await ensureStorageSignedIn();
-        const folderRef = ref(storage, charmMakerSourcePath());
-        const res = await listAll(folderRef);
-        const items = res.items
-          .filter(it => /\.(png|jpe?g|webp|gif|avif)$/i.test(it.name || ''))
-          .slice()
-          .sort((a, b) => a.name.localeCompare(b.name));
-
-        // Update count
-        const countEl = document.getElementById('newCharmsTotalCount');
-        if (countEl) countEl.textContent = `Count: ${items.length}`;
-
-        if (items.length === 0) {
-          mosaic.innerHTML = '<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">No charms in Charm_Templates (Existing Etsy Charms) folder</div>';
-          return;
+        // Stage 0 — local mirror. Repaints from the previous session with no
+        // network at all, so returning to the tab is instantaneous.
+        if (!_cmLib.indexLoaded) {
+          const local = await _cmLoadLocalIndex();
+          if (local && Object.keys(local.templates).length) {
+            _cmIndex = local;
+            // ref() is a pure path operation — no network — so the mirrored
+            // paint gets real StorageReferences and any cache-miss thumbnail
+            // can still fetch normally before the reconcile lands.
+            const mirrorRefs = (wantBin) => Object.entries(local.templates)
+              .filter(([, m]) => !!m.bin === wantBin)
+              .map(([p, m]) => {
+                try { return Object.assign(ref(storage, p), {}); }
+                catch (_) { return { fullPath: p, name: m.name || _cmBaseName(p) }; }
+              });
+            _cmRebuildLists(mirrorRefs(false), mirrorRefs(true));
+            _cmDeriveUsage();
+            _cmLib.indexLoaded = true;
+            _cmRender();
+            _cmSetIndexStatus('working', 'Restored from local mirror · verifying with Firebase…', 0.15);
+          } else if (!mosaic.querySelector('.charm-mosaic-tile')) {
+            mosaic.innerHTML = '<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading library…</div>';
+          }
         }
 
-        mosaic.innerHTML = items.map((item, idx) => `
-          <div class="charm-mosaic-tile" data-idx="${idx}" data-fp="${item.fullPath.replace(/"/g, '&quot;')}" data-name="${item.name.replace(/"/g, '&quot;')}" title="${item.name.replace(/"/g, '&quot;')}">
-            <div class="placeholder">…</div>
-          </div>
-        `).join('');
+        // Stage 1 — Firebase index. One small request gives a fresh browser
+        // the complete picture without re-reading a single manifest.
+        await ensureStorageSignedIn();
+        const remote = await _cmFetchRemoteIndex();
+        if (remote) {
+          _cmIndex = _cmMergeIndex(_cmIndex, remote);
+          _cmDeriveUsage();
+          _cmRender();
+        }
+        if (force) { _cmIndex = _cmEmptyIndex(); _cmIndexDirty = true; }
 
-        // Wire click handlers
-        mosaic.querySelectorAll('.charm-mosaic-tile').forEach((tile, i) => {
-          tile.addEventListener('click', () => _toggleCharmRefSelect(tile, items[i]));
-        });
-
-        // Re-apply any existing selection ordering
-        _refreshCharmOrderBadges();
-
-        // Load thumbs with concurrency cap, using IndexedDB cache (same
-        // pattern that makes charm cards / gallery modal fast on revisit)
-        const tasks = items.map((item, i) => ({ item, tile: mosaic.children[i] }));
-        await _asyncPool(8, tasks, async ({ item, tile }) => {
-          if (!tile || !tile.isConnected) return;
-          const path = item.fullPath;
-
-          const renderImg = (srcUrl) => {
-            if (!tile.isConnected) return;
-            // Preserve order badge if it's there
-            const badge = tile.querySelector('.order-badge');
-            tile.innerHTML = `<img src="${srcUrl}" alt="${item.name.replace(/"/g, '&quot;')}" />`;
-            if (badge) tile.insertBefore(badge, tile.firstChild);
-          };
-
-          // 1. Cache hit
-          try {
-            const cached = await getCachedBlob(path);
-            if (cached && cached.blob) {
-              const u = URL.createObjectURL(cached.blob);
-              _activeBlobUrls.add(u);
-              renderImg(u);
-              return;
-            }
-          } catch (_) {}
-
-          // 2. URL → fetchAndCacheBlob
-          try {
-            const url = await getDownloadURL(item);
-            const blob = await fetchAndCacheBlob(url, path, Date.now());
-            if (blob) {
-              const u = URL.createObjectURL(blob);
-              _activeBlobUrls.add(u);
-              renderImg(u);
-              return;
-            }
-          } catch (_) {}
-
-          // 3. SDK getBytes
-          try {
-            const bytes = await getBytes(item);
-            const ext = (item.name || '').toLowerCase().split('.').pop();
-            let mime = 'image/png';
-            if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
-            else if (ext === 'webp') mime = 'image/webp';
-            else if (ext === 'gif')  mime = 'image/gif';
-            else if (ext === 'avif') mime = 'image/avif';
-            const blob = new Blob([bytes], { type: mime });
-            await setCachedBlob(path, blob, Date.now());
-            const u = URL.createObjectURL(blob);
-            _activeBlobUrls.add(u);
-            renderImg(u);
-          } catch (e) {
-            if (tile.isConnected) tile.innerHTML = '<div class="placeholder" style="color:#fca5a5">!</div>';
-          }
-        });
+        // Stage 2 — reconcile against what is actually in the bucket now.
+        await _cmReconcile({ force });
       } catch (e) {
         const msg = String(e?.message || e || '');
         const isPermDenied = msg.includes('storage/unauthorized') || msg.includes('permission');
-        // Reset count badge so it doesn't stay stuck on "Loading…"
         const countElErr = document.getElementById('newCharmsTotalCount');
         if (countElErr) countElErr.textContent = isPermDenied ? 'Count: ⚠ no access' : 'Count: error';
+        _cmSetIndexStatus('warn', isPermDenied ? 'Firebase Storage rules deny access' : `Error: ${msg}`, null);
 
         if (isPermDenied) {
-          // Build a path-aware Storage Rule snippet the user can paste
-          // into Firebase Console → Storage → Rules. Folder names with
-          // spaces/parens are valid in paths but a {wildcard} segment
-          // matches them — so a generic /Charm_Maker/{folder}/{file=**}
-          // rule covers the new folder without naming it explicitly.
-          const targetPath = charmMakerSourcePath();
           mosaic.innerHTML = `
             <div class="slotRefEmpty" style="grid-column: 1/-1; padding: 24px; text-align: left; color: var(--text-2);">
               <div style="color:#fca5a5; font-weight:600; margin-bottom:8px; font-size:13px;">⚠ Firebase Storage rules deny access to this folder.</div>
-              <div style="font-size:11px; margin-bottom:6px;">Path: <code style="font-family:var(--font-mono); font-size:10px;">${targetPath}</code></div>
-              <div style="font-size:11px; margin-bottom:10px;">The folder exists in your bucket, but your Storage Rules don't grant read/list access to it. Open <strong>Firebase Console → Storage → Rules</strong> and ensure a rule covers this path. A simple match-all for the Charm_Maker subtree:</div>
+              <div style="font-size:11px; margin-bottom:6px;">Path: <code style="font-family:var(--font-mono); font-size:10px;">${charmMakerSourcePath()}</code></div>
+              <div style="font-size:11px; margin-bottom:10px;">The folder exists in your bucket, but your Storage Rules don't grant read/list access to it. Open <strong>Firebase Console → Storage → Rules</strong> and ensure a rule covers this path — the wildcard below also covers the new <code style="font-family:var(--font-mono);">_Index</code> and <code style="font-family:var(--font-mono);">Charm_Templates_Deleted</code> folders this feature writes to:</div>
               <pre style="background: var(--inset); padding: 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 10px; overflow-x: auto; border: 1px solid var(--line); margin: 0 0 8px 0; color: var(--text);">match /listing-generator-1/Charm_Maker/{folder}/{allPaths=**} {
   allow read, write: if request.auth != null;
 }</pre>
               <div style="font-size:10px; color: var(--muted);">After publishing the rule, click <strong>↻ Refresh library</strong>.</div>
             </div>
           `;
-        } else {
+        } else if (!mosaic.querySelector('.charm-mosaic-tile')) {
           mosaic.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${msg}</div>`;
         }
       } finally {
@@ -16160,17 +18098,217 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       }
     }
 
-    // Refresh / Clear selection buttons
+    // ---------------------------------------------------------------------
+    // Wiring
+    // ---------------------------------------------------------------------
+    const _cmDebounce = (fn, ms) => {
+      let t = null;
+      return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+    };
+
+    function _cmSetLibPresetChip(preset) {
+      document.querySelectorAll('#charmLibPresets .chip').forEach(c => {
+        c.classList.toggle('active', c.dataset.preset === preset);
+      });
+    }
+
+    // View switch: Library ⟷ Recycle bin
+    document.querySelectorAll('#charmLibViewTabs .lib-view-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const v = tab.dataset.view;
+        if (v === _cmLib.view) return;
+        _cmLib.view = v;
+        document.querySelectorAll('#charmLibViewTabs .lib-view-tab').forEach(t => {
+          t.classList.toggle('active', t.dataset.view === v);
+        });
+        // Usage filters are meaningless for deleted files.
+        const usageRow = document.getElementById('charmLibUsage');
+        if (usageRow) usageRow.style.opacity = v === 'deleted' ? '0.35' : '';
+        if (usageRow) usageRow.style.pointerEvents = v === 'deleted' ? 'none' : '';
+        const src = document.getElementById('charmLibSourcePath');
+        if (src) src.textContent = v === 'deleted'
+          ? 'Charm_Maker/Charm_Templates_Deleted/'
+          : 'Charm_Templates (Existing Etsy Charms)/';
+        _cmLib.binSelected.clear();
+        _cmRender();
+      });
+    });
+
+    // Search
+    const _cmSearchEl = document.getElementById('charmLibSearch');
+    const _cmSearchWrap = document.getElementById('charmLibSearchWrap');
+    const _cmApplySearch = _cmDebounce(() => _cmRender(), 140);
+    _cmSearchEl?.addEventListener('input', (e) => {
+      _cmLib.search = e.target.value || '';
+      _cmSearchWrap?.classList.toggle('has-value', !!_cmLib.search);
+      _cmApplySearch();
+    });
+    document.getElementById('charmLibSearchClear')?.addEventListener('click', () => {
+      _cmLib.search = '';
+      if (_cmSearchEl) _cmSearchEl.value = '';
+      _cmSearchWrap?.classList.remove('has-value');
+      _cmRender();
+    });
+
+    // Date presets / custom range — one rule in force at a time, same as the
+    // Approved tab, so a stale range can never silently gut a preset.
+    document.querySelectorAll('#charmLibPresets .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        _cmLib.preset = chip.dataset.preset;
+        _cmSetLibPresetChip(_cmLib.preset);
+        _cmLib.dateFrom = null;
+        _cmLib.dateTo = null;
+        const f = document.getElementById('charmLibDateFrom');
+        const t = document.getElementById('charmLibDateTo');
+        if (f) f.value = '';
+        if (t) t.value = '';
+        _cmRender();
+      });
+    });
+    document.getElementById('charmLibDateFrom')?.addEventListener('change', (e) => {
+      const v = e.target.value;
+      _cmLib.dateFrom = v ? _startOfDayMs(new Date(v + 'T12:00:00')) : null;
+      _cmLib.preset = (_cmLib.dateFrom != null || _cmLib.dateTo != null) ? 'custom' : 'all';
+      _cmSetLibPresetChip(_cmLib.preset);
+      _cmRender();
+    });
+    document.getElementById('charmLibDateTo')?.addEventListener('change', (e) => {
+      const v = e.target.value;
+      _cmLib.dateTo = v ? _endOfDayMs(new Date(v + 'T12:00:00')) : null;
+      _cmLib.preset = (_cmLib.dateFrom != null || _cmLib.dateTo != null) ? 'custom' : 'all';
+      _cmSetLibPresetChip(_cmLib.preset);
+      _cmRender();
+    });
+    document.getElementById('charmLibDateClear')?.addEventListener('click', () => {
+      _cmLib.dateFrom = null;
+      _cmLib.dateTo = null;
+      const f = document.getElementById('charmLibDateFrom');
+      const t = document.getElementById('charmLibDateTo');
+      if (f) f.value = '';
+      if (t) t.value = '';
+      _cmLib.preset = 'all';
+      _cmSetLibPresetChip('all');
+      _cmRender();
+    });
+
+    // Usage filters
+    document.querySelectorAll('#charmLibUsage .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        _cmLib.usage = chip.dataset.usage;
+        document.querySelectorAll('#charmLibUsage .chip').forEach(c => {
+          c.classList.toggle('active', c.dataset.usage === _cmLib.usage);
+        });
+        _cmRender();
+      });
+    });
+    const _cmApplyUsageRange = _cmDebounce(() => _cmRender(), 200);
+    document.getElementById('charmLibMinApproved')?.addEventListener('input', (e) => {
+      const n = parseInt(e.target.value, 10);
+      _cmLib.minApproved = Number.isFinite(n) && n >= 0 ? n : null;
+      _cmApplyUsageRange();
+    });
+    document.getElementById('charmLibMaxApproved')?.addEventListener('input', (e) => {
+      const n = parseInt(e.target.value, 10);
+      _cmLib.maxApproved = Number.isFinite(n) && n >= 0 ? n : null;
+      _cmApplyUsageRange();
+    });
+    document.getElementById('charmLibUsageClear')?.addEventListener('click', () => {
+      _cmLib.usage = 'any';
+      _cmLib.minApproved = null;
+      _cmLib.maxApproved = null;
+      const mn = document.getElementById('charmLibMinApproved');
+      const mx = document.getElementById('charmLibMaxApproved');
+      if (mn) mn.value = '';
+      if (mx) mx.value = '';
+      document.querySelectorAll('#charmLibUsage .chip').forEach(c => {
+        c.classList.toggle('active', c.dataset.usage === 'any');
+      });
+      _cmRender();
+    });
+
+    // Sort
+    document.getElementById('charmLibSort')?.addEventListener('change', (e) => {
+      _cmLib.sort = e.target.value;
+      _cmRender();
+    });
+
+    // Bulk selection + destructive actions
+    document.getElementById('charmLibSelectFiltered')?.addEventListener('click', () => {
+      const list = _cmLib.lastFiltered;
+      if (_cmLib.view === 'deleted') {
+        list.forEach(r => _cmLib.binSelected.add(r.path));
+      } else {
+        list.forEach(r => {
+          if (_charmRefSelection.has(r.path)) return;
+          _charmRefSelection.set(r.path, {
+            order: _charmRefSelection.size + 1,
+            name: r.name,
+            itemRef: r.itemRef,
+            fullPath: r.path,
+          });
+        });
+        _updateCharmRefStatus();
+      }
+      _refreshCharmOrderBadges();
+      _cmUpdateSelectionBar();
+    });
+    document.getElementById('charmLibDeleteBtn')?.addEventListener('click', () => {
+      _cmSoftDelete([..._charmRefSelection.keys()]);
+    });
+    document.getElementById('charmLibRestoreBtn')?.addEventListener('click', () => {
+      _cmRestore([..._cmLib.binSelected]);
+    });
+    document.getElementById('charmLibPurgeBtn')?.addEventListener('click', () => {
+      _cmPurge([..._cmLib.binSelected]);
+    });
+
+    // Refresh / Clear selection / Rebuild index
     document.getElementById('charmMosaicClearBtn')?.addEventListener('click', () => {
       _charmRefSelection.clear();
+      _cmLib.binSelected.clear();
       _refreshCharmOrderBadges();
       _updateCharmRefStatus();
+      _cmUpdateSelectionBar();
     });
     document.getElementById('charmMosaicRefreshBtn')?.addEventListener('click', () => {
       _charmRefSelection.clear();
       _updateCharmRefStatus();
       _loadCharmMosaic();
     });
+    document.getElementById('charmLibReindexBtn')?.addEventListener('click', async () => {
+      if (!confirm('Rebuild the usage index from scratch?\n\nEvery derivative set manifest is re-read from Firebase. Accurate, but slower than the normal incremental check.')) return;
+      _cmLib.indexLoaded = false;
+      await _loadCharmMosaic({ force: true });
+    });
+
+    // Cache controls
+    document.getElementById('charmLibCacheTrim')?.addEventListener('click', async () => {
+      const btn = document.getElementById('charmLibCacheTrim');
+      if (btn) { btn.disabled = true; btn.textContent = 'Trimming…'; }
+      const r = await cacheGarbageCollect({ reason: 'manual', aggressive: true });
+      await cacheMeasure({ backfill: false });
+      _updateCacheStatusUI();
+      if (btn) { btn.disabled = false; btn.textContent = 'Trim now'; }
+      setStatus(r ? `Cache trim: evicted ${r.evicted} images, freed ${(r.freed / 1048576).toFixed(1)} MB.` : 'Cache trim skipped.');
+    });
+    document.getElementById('charmLibCachePurge')?.addEventListener('click', async () => {
+      if (!confirm('Clear every cached image on this device?\n\nNothing in Firebase is touched — images simply re-download the next time you view them.')) return;
+      const btn = document.getElementById('charmLibCachePurge');
+      if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
+      cacheClearPins();
+      _cmLib.thumbUrls.forEach((u) => { _activeBlobUrls.delete(u); try { URL.revokeObjectURL(u); } catch (_) {} });
+      _cmLib.thumbUrls.clear();
+      _cmLib.tiles.clear();
+      await cachePurgeAll();
+      if (btn) { btn.disabled = false; btn.textContent = 'Clear cache'; }
+      _cmRender();
+      setStatus('Local image cache cleared.');
+    });
+
+    // Keep the cache readout ticking while the operator is on this tab.
+    setInterval(() => {
+      if (typeof appMode !== 'undefined' && appMode === 'charmMaker') _updateCacheStatusUI();
+    }, 15000);
 
     // Show/hide Charm Maker right-card header on tab switches; load mosaic on enter
     function _updateCharmDbCount() {
