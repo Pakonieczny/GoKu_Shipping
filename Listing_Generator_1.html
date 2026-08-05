@@ -1095,6 +1095,133 @@
   }
   .prov-why:hover, .prov-diff:hover { color: var(--text-2); }
 
+  /* ---------- Charm Maker: the three-step flow ---------- */
+  .cm-step-lede {
+    font-size: 11px; color: var(--muted); line-height: 1.55;
+    margin: -4px 0 12px; max-width: 62ch;
+  }
+
+  /* The charm this run is built on. */
+  .cm-pick {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 12px; border-radius: var(--r-md);
+    background: var(--inset); border: 1px solid var(--line);
+  }
+  .cm-pick.armed { border-color: var(--accent-line); background: var(--accent-bg); }
+  .cm-pick-thumb {
+    width: 76px; height: 76px; flex: 0 0 76px;
+    border-radius: 8px; overflow: hidden;
+    background: #06080d; border: 1px solid var(--line-2);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cm-pick-thumb img { width: 100%; height: 100%; object-fit: contain; }
+  .cm-pick-thumb-empty { color: var(--dim); font-size: 18px; }
+  .cm-pick-body { flex: 1; min-width: 0; }
+  .cm-pick-name {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    overflow-wrap: anywhere; line-height: 1.3;
+  }
+  .cm-pick-sub { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+  .cm-pick-sells { font-size: 11px; color: var(--text-2); margin-top: 6px; line-height: 1.5; }
+  .cm-pick-sells b { color: var(--text); font-weight: 600; }
+  .cm-keep { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .cm-keep-lbl {
+    font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--dim); font-family: var(--font-mono); align-self: center; margin-right: 2px;
+  }
+  .cm-keep span.k {
+    font-size: 10px; padding: 1px 7px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--line-2); color: var(--text-2);
+  }
+  .cm-pick-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+  /* How far to go. */
+  .cm-spread { display: grid; gap: 6px; }
+  .cm-spread-opt {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    padding: 9px 12px; border-radius: var(--r-md);
+    background: var(--inset); border: 1px solid var(--line); color: var(--text-2);
+    font: inherit; transition: border-color .12s, background .12s;
+  }
+  .cm-spread-opt:hover { border-color: var(--line-2); }
+  .cm-spread-opt.active {
+    border-color: var(--accent-line); background: var(--accent-bg);
+  }
+  .cm-spread-name {
+    display: block; font-size: 12px; font-weight: 600; color: var(--text);
+  }
+  .cm-spread-opt.active .cm-spread-name { color: var(--accent); }
+  .cm-spread-desc {
+    display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; line-height: 1.5;
+  }
+  .cm-rec {
+    font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--ok); font-weight: 500; margin-left: 4px;
+  }
+
+  .cm-count-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .cm-count-chips { display: flex; gap: 5px; }
+  .cm-count-chips .chip { min-width: 34px; text-align: center; }
+
+  /* The sentence that says what the button will do. */
+  .cm-plan {
+    margin-top: 16px; padding: 10px 12px; border-radius: var(--r-md);
+    background: var(--card); border: 1px solid var(--line);
+    border-left: 3px solid var(--line-2);
+    font-size: 11.5px; line-height: 1.6; color: var(--text-2);
+  }
+  .cm-plan.ready { border-left-color: var(--accent); color: var(--text); }
+  .cm-plan b { color: var(--text); font-weight: 600; }
+  .cm-promise {
+    font-size: 10px; color: var(--dim); line-height: 1.55; margin-top: 8px; max-width: 64ch;
+  }
+
+  /* Advanced disclosure. */
+  details.cm-adv {
+    margin-top: 14px; border: 1px solid var(--line); border-radius: var(--r-md);
+    background: var(--panel, var(--card));
+  }
+  details.cm-adv.sub { margin-top: 10px; background: transparent; }
+  details.cm-adv > summary {
+    cursor: pointer; padding: 10px 12px; list-style: none;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  details.cm-adv > summary::-webkit-details-marker { display: none; }
+  details.cm-adv > summary::before {
+    content: '▸'; position: absolute; margin-left: -12px; color: var(--dim); font-size: 9px;
+  }
+  details.cm-adv[open] > summary::before { content: '▾'; }
+  details.cm-adv > summary { position: relative; padding-left: 24px; }
+  .cm-adv-title { font-size: 12px; font-weight: 600; color: var(--text-2); }
+  .cm-adv-sub { font-size: 10px; color: var(--dim); line-height: 1.5; }
+  .cm-adv-body { padding: 0 12px 12px 12px; }
+  .cm-adv-block {
+    padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--line);
+  }
+  .cm-adv-block:first-child { border-top: none; margin-top: 0; padding-top: 4px; }
+  .cm-adv-block h4 {
+    margin: 0 0 4px 0; font-size: 11px; font-weight: 600; color: var(--text-2);
+    text-transform: uppercase; letter-spacing: .05em; font-family: var(--font-mono);
+  }
+  .cm-adv-note {
+    font-size: 10.5px; color: var(--muted); line-height: 1.6; margin: 0 0 10px 0; max-width: 66ch;
+  }
+  .cm-adv-warn, .cm-adv-opt {
+    font-size: 9px; text-transform: none; letter-spacing: 0; font-family: var(--font-ui);
+    padding: 1px 6px; border-radius: 999px; margin-left: 6px; font-weight: 400;
+  }
+  .cm-adv-warn { color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line); }
+  .cm-adv-opt { color: var(--dim); background: var(--inset); border: 1px solid var(--line); }
+
+  .prov-origin {
+    padding: 1px 8px; border-radius: 999px; font-size: 9px;
+    border: 1px solid var(--line-2); background: var(--inset); color: var(--text-2);
+    font-family: var(--font-mono);
+  }
+  .prov-origin.gap {
+    border-color: var(--accent-line); background: var(--accent-bg); color: var(--accent);
+  }
+
   .prov-iou {
     padding: 1px 7px; border-radius: 999px; font-size: 9px;
     border: 1px solid var(--line); background: var(--card); color: var(--muted);
@@ -3430,9 +3557,13 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
         <div class="group">
           <div class="group-head">
-            <h3>Reference library</h3>
+            <h3>Step 1 · Pick a proven charm</h3>
             <span class="count" id="charmRefSelectionStatus">no selection · uses newest</span>
           </div>
+          <p class="cm-step-lede">
+            Your existing Etsy top sellers. Click one to build new designs on it — everything below the
+            mosaic is for finding the right one, not for changing what gets made.
+          </p>
 
           <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
             <code id="charmLibSourcePath" style="font-family: var(--font-mono); font-size: 10px; color: var(--muted);">Charm_Templates (Existing Etsy Charms)/</code>
@@ -3542,146 +3673,250 @@ html.gs-locked body > *:not(#gate){display:none!important}
             <span class="muted" style="font-size: 11px; margin-left: auto;" id="charmMosaicHint">Selection determines order</span>
           </div>
 
-          <!-- Index build progress + local cache health -->
-          <div class="lib-status" id="charmLibIndexStatus">
-            <span class="dot"></span>
-            <span id="charmLibIndexText">Usage index idle</span>
-            <div class="lib-progress"><div class="lib-progress-fill" id="charmLibIndexFill"></div></div>
-          </div>
-          <div class="lib-status" id="charmLibCacheStatus">
-            <span class="dot"></span>
-            <span id="charmLibCacheText">Local cache —</span>
-            <button class="btn btnSmall" id="charmLibCacheTrim" style="font-size: 10px; padding: 2px 8px; width: auto;" type="button" title="Evict least-recently-used cached images down to the target budget">Trim now</button>
-            <button class="btn btnSmall btn-danger" id="charmLibCachePurge" style="font-size: 10px; padding: 2px 8px; width: auto;" type="button" title="Clear every cached image on this device (images re-download on next view)">Clear cache</button>
-          </div>
-
-          <div class="row" style="margin-top: 14px;">
-            <button class="btn btn-primary" id="executeCharmGenBtn" style="width:100%;">Generate charms</button>
-          </div>
+          <!-- Index build progress + local cache health. Real information,
+               but it is plumbing: it tells you the library is healthy, not
+               what a run will produce. Folded away so Step 1 ends on the
+               mosaic and the selection, which is what the step is about. -->
+          <details class="cm-adv sub">
+            <summary>
+              <span class="cm-adv-title">Library health</span>
+              <span class="cm-adv-sub">index and local image cache</span>
+            </summary>
+            <div class="cm-adv-body">
+              <div class="lib-status" id="charmLibIndexStatus">
+                <span class="dot"></span>
+                <span id="charmLibIndexText">Usage index idle</span>
+                <div class="lib-progress"><div class="lib-progress-fill" id="charmLibIndexFill"></div></div>
+              </div>
+              <div class="lib-status" id="charmLibCacheStatus">
+                <span class="dot"></span>
+                <span id="charmLibCacheText">Local cache —</span>
+                <button class="btn btnSmall" id="charmLibCacheTrim" style="font-size: 10px; padding: 2px 8px; width: auto;" type="button" title="Evict least-recently-used cached images down to the target budget">Trim now</button>
+                <button class="btn btnSmall btn-danger" id="charmLibCachePurge" style="font-size: 10px; padding: 2px 8px; width: auto;" type="button" title="Clear every cached image on this device (images re-download on next view)">Clear cache</button>
+              </div>
+            </div>
+          </details>
         </div>
 
+        <!-- ═══════════════════════════════════════════════════════════════
+             STEP 2 — WHAT TO MAKE
+             ---------------------------------------------------------------
+             This group replaced four stacked groups (design research, the
+             opportunity matrix, the strategy-ladder scoreboard and generation
+             settings) that between them put roughly forty controls on screen
+             with no statement of what any of them did to the output. The rule
+             here is that everything visible answers one of three questions —
+             what am I building on, how far should it go, how many do I want —
+             and every answer is echoed back in the sentence above the button,
+             so the run is never a surprise. Anything that does not answer one
+             of those three questions is in the collapsed block at the bottom.
+             ═══════════════════════════════════════════════════════════════ -->
         <div class="group">
           <div class="group-head">
-            <h3>Design research</h3>
-            <span class="count" id="cmResearchCoverage">—</span>
+            <h3>Step 2 · What to make</h3>
+            <span class="count" id="cmFlowCount">nothing selected</span>
           </div>
 
-          <p class="muted" style="font-size: 11px; margin: 0 0 10px 0; line-height: 1.55;">
-            Each reference is analysed once — what it is, who buys it, why it sells, and which of its
-            attributes are load-bearing versus free to change. That yields 21 concrete design briefs per
-            charm across a seven-rung ladder, and every derivative in a batch takes a different rung.
-          </p>
-
-          <label class="field-label">How the new charm is drawn</label>
-          <div class="row" style="gap: 8px;">
-            <select id="cmRenderMode" style="flex:1;">
-              <option value="text">No reference image · cannot copy (recommended)</option>
-              <option value="styled">Style-locked · sends the reference as a material sample</option>
-              <option value="auto">Auto · style-locked when the proxy supports it</option>
-            </select>
-            <button class="btn btnSmall" id="cmProbeBtn" type="button" style="width:auto;" title="Ask the deployed image proxy what it supports">Check proxy</button>
+          <!-- ── The charm this run is built on ───────────────────────── -->
+          <div class="cm-pick" id="cmPickCard">
+            <div class="cm-pick-thumb" id="cmPickThumb"><span class="cm-pick-thumb-empty">—</span></div>
+            <div class="cm-pick-body">
+              <div class="cm-pick-name" id="cmPickName">No charm selected</div>
+              <div class="cm-pick-sub" id="cmPickSub">Click a charm in <strong>Step 1</strong> above. That charm is what the new designs will be built on.</div>
+              <div class="cm-pick-sells" id="cmPickSells" style="display:none;"></div>
+              <div class="cm-keep" id="cmPickKeep" style="display:none;"></div>
+              <div class="cm-pick-actions" id="cmPickActions" style="display:none;">
+                <button class="btn btnSmall" id="cmPickResearchBtn" type="button">Study this charm</button>
+                <button class="btn btnSmall" id="cmPickDetailBtn" type="button">Full research ▸</button>
+              </div>
+            </div>
           </div>
-          <div class="window-info" id="cmRenderModeInfo">Checking what your deployed image proxy supports…</div>
-          <p class="muted" style="font-size: 10px; margin: 6px 0 0 0; line-height: 1.5;">
-            Every result is measured against its reference and the silhouette overlap is shown on the card —
-            <span style="color: var(--ok)">distinct</span>, <span style="color: var(--warn)">close</span> or
-            <span style="color: #fca5a5">replica</span>. If a run produces copies you see it on the card rather
-            than having to spot it.
-          </p>
-
-          <div class="row" style="gap: 8px; flex-wrap: wrap;">
-            <button class="btn btnSmall" id="cmResearchTestBtn" type="button" title="Send one tiny request to the research model and report exactly what comes back">Test model</button>
-            <button class="btn btnSmall" id="cmResearchSelectedBtn" type="button" title="Analyse and ideate for the charms selected in the library above">Research selected</button>
-            <button class="btn btnSmall" id="cmResearchAllBtn" type="button" title="Analyse every un-researched charm in the library, in order of sales rank">Research all missing</button>
-            <button class="btn btnSmall" id="cmResearchRedoBtn" type="button" title="Discard and regenerate the concepts for the selected charms, keeping the analysis">↻ Fresh concepts</button>
-          </div>
-          <div class="lib-status" id="cmResearchStatus">
-            <span class="dot"></span>
-            <span id="cmResearchStatusText">No research run yet</span>
-            <div class="lib-progress"><div class="lib-progress-fill" id="cmResearchFill"></div></div>
-          </div>
-
-          <div id="cmResearchDiag" class="window-info rm-warn" style="display:none; white-space: pre-wrap;"></div>
 
           <div id="cmResearchDetail" class="research-box" style="display:none;"></div>
 
-          <label class="field-label" style="margin-top: 16px;">Opportunity matrix</label>
-          <div class="window-info" id="cmMatrixInfo">Not built yet — classify some charms first.</div>
-          <div class="row" style="gap: 8px; margin-top: 8px; flex-wrap: wrap;">
-            <button class="btn btnSmall" id="cmMatrixBuildBtn" type="button" title="Cross-reference every classified charm's meaning and form facets against its sales performance">Build matrix</button>
-            <button class="btn btnSmall" id="cmFacetBackfillBtn" type="button" title="Re-analyse charms that were analysed before meaning and facet extraction existed">Backfill classifications</button>
-            <button class="btn btnSmall btn-ok" id="cmGapGenerateBtn" type="button" title="Write design briefs for the top gaps, then generate one charm per brief">Design from top gaps</button>
-            <select id="cmGapCount" style="width: auto; font-size: 11px;">
-              <option value="3">top 3 gaps</option>
-              <option value="5" selected>top 5 gaps</option>
-              <option value="8">top 8 gaps</option>
-              <option value="12">top 12 gaps</option>
-            </select>
-          </div>
-          <table class="gap-table" id="cmGapTable" style="margin-top: 8px;"><tbody></tbody></table>
-          <details style="margin-top: 8px;">
-            <summary class="muted" style="font-size: 10px; cursor: pointer;">Facet coverage and lift across the catalogue</summary>
-            <div id="cmFacetCoverage" style="margin-top: 6px;"></div>
-          </details>
-
-          <label class="field-label" style="margin-top: 16px;">Strategy ladder performance</label>
-          <table class="strat-table" id="cmStrategyTable"><tbody></tbody></table>
-          <div class="muted" style="font-size: 10px; margin-top: 6px; line-height: 1.5;" id="cmStrategyNote">
-            Approval rate per rung, rebuilt from every set's manifest. Rungs you approve get picked more often;
-            none ever drops to zero, so the ladder keeps exploring.
+          <!-- ── How far to go ────────────────────────────────────────── -->
+          <label class="field-label" style="margin-top: 16px;">How far from it should the new designs go?</label>
+          <div class="cm-spread" id="cmSpreadChoices">
+            <button class="cm-spread-opt" data-spread="close" type="button">
+              <span class="cm-spread-name">Close</span>
+              <span class="cm-spread-desc">Same subject, new pose or sub-type. Safest — closest to what already sells.</span>
+            </button>
+            <button class="cm-spread-opt" data-spread="nearby" type="button">
+              <span class="cm-spread-name">Nearby</span>
+              <span class="cm-spread-desc">Sibling subjects and companion pieces — things a buyer would wear <em>with</em> it.</span>
+            </button>
+            <button class="cm-spread-opt" data-spread="far" type="button">
+              <span class="cm-spread-name">Far</span>
+              <span class="cm-spread-desc">Same feeling and same buyer, different subject. Highest risk, highest upside.</span>
+            </button>
+            <button class="cm-spread-opt active" data-spread="auto" type="button">
+              <span class="cm-spread-name">Let the data decide <span class="cm-rec">recommended</span></span>
+              <span class="cm-spread-desc">Spreads across the range, weighted by how well this charm sells and which kinds you have been approving.</span>
+            </button>
           </div>
 
-          <label class="field-label" style="margin-top: 14px;">
-            Sales rank <span style="text-transform:none; letter-spacing:0; color: var(--dim);">— optional</span>
-          </label>
-          <div class="window-info" id="cmRankInfo">Checking filenames…</div>
-          <p class="muted" style="font-size: 10px; margin: 6px 0 6px 0; line-height: 1.5;">
-            Nothing is required here. Without rank every charm is treated as mid-pack and gets the balanced
-            ladder (rungs 1–4), which is the recommended default anyway. Rank only <em>tunes</em> the range:
-            stronger sellers are allowed further up, because a partial hit on a big audience is still worth
-            more than a safe hit on a small one.
-            <br><br>
-            <strong>If your files are already numbered</strong> — <code style="font-family:var(--font-mono)">001_cat.png</code>,
-            <code style="font-family:var(--font-mono)">12 - paw print.png</code>,
-            <code style="font-family:var(--font-mono)">#3_dog_bone.png</code> — the rank is read straight off the
-            filename when you upload them and there is nothing else to do.
-          </p>
-          <details style="margin-top: 4px;">
-            <summary class="muted" style="font-size: 10px; cursor: pointer;">Import units sold, titles or tags as well (optional)</summary>
-            <p class="muted" style="font-size: 10px; margin: 6px 0; line-height: 1.5;">
-              Units and listing text sharpen the "why it sells" reasoning, but only rank affects the ladder.
-              Drop a CSV/TSV export or paste rows of
-              <code style="font-family:var(--font-mono)">filename · rank · units · title · tags</code>.
-            </p>
-            <div class="row" style="gap: 8px; margin-bottom: 6px;">
-              <input type="file" id="cmSalesFile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" style="flex:1; font-size: 10px;">
+          <!-- ── How many ─────────────────────────────────────────────── -->
+          <label class="field-label" style="margin-top: 16px;">How many designs?</label>
+          <div class="cm-count-row">
+            <div class="cm-count-chips" id="cmCountChips">
+              <button class="chip" data-count="1" type="button">1</button>
+              <button class="chip active" data-count="2" type="button">2</button>
+              <button class="chip" data-count="4" type="button">4</button>
+              <button class="chip" data-count="6" type="button">6</button>
+              <button class="chip" data-count="8" type="button">8</button>
             </div>
-            <textarea id="cmSalesPaste" rows="3" placeholder="cat_sitting.png&#9;1&#9;4820&#10;paw_print.png&#9;2&#9;3915" style="width:100%; font-family: var(--font-mono); font-size: 10px;"></textarea>
-            <div class="row" style="gap: 8px; margin-top: 6px;">
-              <button class="btn btnSmall" id="cmSalesApplyBtn" type="button">Match &amp; save</button>
-              <button class="btn btnSmall" id="cmSalesClearBtn" type="button">Clear box</button>
-              <span class="muted" style="font-size: 10px; margin-left: auto;" id="cmSalesStatus"></span>
-            </div>
-          </details>
+            <span class="muted" style="font-size: 11px;">each one a different idea</span>
+          </div>
 
-          <div class="muted" style="font-size: 10px; margin-top: 14px; line-height: 1.5;">
-            Research runs on the <strong>research</strong> model in the header (currently
-            <code style="font-family:var(--font-mono)" id="cmResearchModelEcho">—</code>, via
-            <code style="font-family:var(--font-mono)">openaiProxy</code>); images use the
-            <strong>image</strong> model beside it. Both selectors apply app-wide.
+          <!-- ── What is about to happen, in one sentence ─────────────── -->
+          <div class="cm-plan" id="cmPlan">Select a charm in Step 1 to begin.</div>
+
+          <button class="btn btn-primary" id="executeCharmGenBtn" style="width:100%; margin-top: 10px;" disabled>Generate</button>
+
+          <div class="cm-promise" id="cmPromise">
+            Every design is drawn from a written brief, not by editing your reference — so it comes out as a
+            new charm, not a copy. Each one arrives as a set of four images: the charm, its earring twin,
+            and black-and-white line art of both.
           </div>
         </div>
 
-        <div class="group">
-          <div class="group-head">
-            <h3>Generation settings</h3>
-            <span class="count">applies to both pools</span>
-          </div>
+        <!-- ═══════════════════════════════════════════════════════════════
+             ADVANCED — everything that does not change what this run makes
+             ---------------------------------------------------------------
+             Collapsed by default and deliberately labelled as not part of the
+             flow above. These are real tools, but they are maintenance and
+             analysis rather than "make me some designs", and mixing them into
+             the same column is what made the panel unreadable.
+             ═══════════════════════════════════════════════════════════════ -->
+        <details class="cm-adv" id="cmAdvanced">
+          <summary>
+            <span class="cm-adv-title">Advanced</span>
+            <span class="cm-adv-sub">study the library, catalogue gaps, sales rank, model checks — none of it changes the three choices above</span>
+          </summary>
 
-          <div class="row" style="gap: 12px; align-items: flex-start;">
-            <div style="flex:1; background: var(--inset); padding: 12px; border-radius: var(--r-md); border: 1px solid var(--line);">
-              <label style="margin-top: 0;">Charms to process simultaneously</label>
-              <div class="row" style="margin-top: 8px;">
+          <div class="cm-adv-body">
+
+            <!-- ── Studying the library ──────────────────────────────── -->
+            <div class="cm-adv-block">
+              <h4>Studying the library</h4>
+              <p class="cm-adv-note">
+                Each charm is read once — what it is, who buys it, why it sells, and which of its features
+                are load-bearing versus free to change. That study is what the design briefs are written
+                from, it is cached in Firebase and shared across your terminals, and it costs nothing to
+                reuse. A charm that has not been studied still generates, just from a weaker brief.
+              </p>
+              <div class="lib-status" id="cmResearchStatus">
+                <span class="dot"></span>
+                <span id="cmResearchStatusText">No research run yet</span>
+                <div class="lib-progress"><div class="lib-progress-fill" id="cmResearchFill"></div></div>
+              </div>
+              <div class="row" style="gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+                <button class="btn btnSmall" id="cmResearchSelectedBtn" type="button" title="Study the charms currently selected in Step 1">Study selected</button>
+                <button class="btn btnSmall" id="cmResearchAllBtn" type="button" title="Study every charm not yet studied, best sellers first">Study all missing</button>
+                <button class="btn btnSmall" id="cmResearchRedoBtn" type="button" title="Throw away the design ideas for the selected charms and think again, keeping the study">↻ Fresh ideas</button>
+                <button class="btn btnSmall" id="cmResearchTestBtn" type="button" title="Send one tiny request to the research model and report exactly what comes back">Test model</button>
+              </div>
+              <div class="window-info" id="cmResearchCoverageInfo"><span id="cmResearchCoverage">—</span></div>
+              <div id="cmResearchDiag" class="window-info rm-warn" style="display:none; white-space: pre-wrap;"></div>
+            </div>
+
+            <!-- ── How the image is drawn ────────────────────────────── -->
+            <div class="cm-adv-block">
+              <h4>How the image is drawn</h4>
+              <p class="cm-adv-note">
+                Leave this alone unless designs come back looking like copies. The default sends no reference
+                image at all, which is why it cannot copy one.
+              </p>
+              <div class="row" style="gap: 8px;">
+                <select id="cmRenderMode" style="flex:1;">
+                  <option value="text">No reference image · cannot copy (recommended)</option>
+                  <option value="styled">Style-locked · sends the reference as a material sample</option>
+                  <option value="auto">Auto · style-locked when the proxy supports it</option>
+                </select>
+                <button class="btn btnSmall" id="cmProbeBtn" type="button" style="width:auto;" title="Ask the deployed image proxy what it supports">Check proxy</button>
+              </div>
+              <div class="window-info" id="cmRenderModeInfo">Checking what your deployed image proxy supports…</div>
+            </div>
+
+            <!-- ── Catalogue gaps ────────────────────────────────────── -->
+            <div class="cm-adv-block">
+              <h4>Catalogue gaps <span class="cm-adv-warn">not derived from your charms</span></h4>
+              <p class="cm-adv-note">
+                A different question from the one above: instead of "what goes with this charm", it asks
+                "what meaning does my whole catalogue not sell yet". Designs from here have
+                <strong>no source charm</strong>, so they are labelled as such and never count towards any
+                charm's approval record. It only means anything once most of the library has been studied,
+                because an empty cell has to mean "we don't sell this", not "we haven't looked".
+              </p>
+              <div class="window-info" id="cmMatrixInfo">Not built yet.</div>
+              <div class="row" style="gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+                <button class="btn btnSmall" id="cmMatrixBuildBtn" type="button" title="Cross-reference every studied charm's meaning and form against its sales performance">Build matrix</button>
+                <button class="btn btnSmall" id="cmFacetBackfillBtn" type="button" title="Classify charms that were studied before classification existed">Backfill classifications</button>
+                <select id="cmGapCount" style="width: auto; font-size: 11px;">
+                  <option value="3">top 3 gaps</option>
+                  <option value="5" selected>top 5 gaps</option>
+                  <option value="8">top 8 gaps</option>
+                  <option value="12">top 12 gaps</option>
+                </select>
+                <button class="btn btnSmall btn-ok" id="cmGapGenerateBtn" type="button">Design from top gaps</button>
+              </div>
+              <table class="gap-table" id="cmGapTable" style="margin-top: 8px;"><tbody></tbody></table>
+              <details style="margin-top: 8px;">
+                <summary class="muted" style="font-size: 10px; cursor: pointer;">Facet coverage across the catalogue</summary>
+                <div id="cmFacetCoverage" style="margin-top: 6px;"></div>
+              </details>
+            </div>
+
+            <!-- ── What has been working ─────────────────────────────── -->
+            <div class="cm-adv-block">
+              <h4>What has been working</h4>
+              <p class="cm-adv-note">
+                Your approval rate for each kind of design, rebuilt from every set's manifest. "Let the data
+                decide" reads this table: kinds you approve get chosen more often. No kind ever drops to
+                zero, so it keeps trying everything occasionally.
+              </p>
+              <table class="strat-table" id="cmStrategyTable"><tbody></tbody></table>
+              <div class="muted" style="font-size: 10px; margin-top: 6px; line-height: 1.5;" id="cmStrategyNote"></div>
+            </div>
+
+            <!-- ── Sales rank ────────────────────────────────────────── -->
+            <div class="cm-adv-block">
+              <h4>Sales rank <span class="cm-adv-opt">optional</span></h4>
+              <p class="cm-adv-note">
+                Only used by "Let the data decide", and only to widen the range for your strongest sellers.
+                If your filenames already start with a number — <code>001_cat.png</code>,
+                <code>#3_dog_bone.png</code> — it is read off the filename at upload and there is nothing to do.
+              </p>
+              <div class="window-info" id="cmRankInfo">Checking filenames…</div>
+              <details style="margin-top: 8px;">
+                <summary class="muted" style="font-size: 10px; cursor: pointer;">Import units sold, titles or tags as well</summary>
+                <p class="muted" style="font-size: 10px; margin: 6px 0; line-height: 1.5;">
+                  Units and listing text sharpen the "why it sells" reasoning; only rank affects the range.
+                  Drop a CSV/TSV or paste rows of
+                  <code style="font-family:var(--font-mono)">filename · rank · units · title · tags</code>.
+                </p>
+                <div class="row" style="gap: 8px; margin-bottom: 6px;">
+                  <input type="file" id="cmSalesFile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" style="flex:1; font-size: 10px;">
+                </div>
+                <textarea id="cmSalesPaste" rows="3" placeholder="cat_sitting.png&#9;1&#9;4820&#10;paw_print.png&#9;2&#9;3915" style="width:100%; font-family: var(--font-mono); font-size: 10px;"></textarea>
+                <div class="row" style="gap: 8px; margin-top: 6px;">
+                  <button class="btn btnSmall" id="cmSalesApplyBtn" type="button">Match &amp; save</button>
+                  <button class="btn btnSmall" id="cmSalesClearBtn" type="button">Clear box</button>
+                  <span class="muted" style="font-size: 10px; margin-left: auto;" id="cmSalesStatus"></span>
+                </div>
+              </details>
+            </div>
+
+            <!-- ── Many charms at once ───────────────────────────────── -->
+            <div class="cm-adv-block">
+              <h4>Many charms at once</h4>
+              <p class="cm-adv-note">
+                Step 1 accepts more than one selection. When it does, "How many designs" applies to
+                <em>each</em> selected charm, and this sets how many charms are worked on at the same time.
+                Higher is faster but more likely to hit a rate limit.
+              </p>
+              <div class="row" style="gap: 8px; align-items: center;">
+                <label style="margin: 0; font-size: 11px;">Charms in parallel</label>
                 <select id="batchProcessCount" style="width: 80px;">
                   <option value="1">1</option>
                   <option value="2">2</option>
@@ -3689,25 +3924,26 @@ html.gs-locked body > *:not(#gate){display:none!important}
                   <option value="4">4</option>
                   <option value="5">5</option>
                 </select>
-                <input type="number" id="batchProcessCountInput" value="1" min="1" style="flex:1;" placeholder="Count...">
+                <input type="number" id="batchProcessCountInput" value="1" min="1" style="width: 90px;" placeholder="Count...">
               </div>
+              <!-- Kept so the legacy generate path and the count sync keep
+                   working; the visible control for this is the chip row in
+                   Step 2. -->
+              <select id="derivativesPerCharm" style="display:none;">
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                <option value="4">4</option><option value="5">5</option>
+              </select>
+              <input type="number" id="derivativesPerCharmInput" value="2" min="1" style="display:none;">
             </div>
 
-            <div style="flex:1; background: var(--inset); padding: 12px; border-radius: var(--r-md); border: 1px solid var(--line);">
-              <label style="margin-top: 0;">Derivatives per charm</label>
-              <div class="row" style="margin-top: 8px;">
-                <select id="derivativesPerCharm" style="width: 80px;">
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                </select>
-                <input type="number" id="derivativesPerCharmInput" value="1" min="1" style="flex:1;" placeholder="Count...">
-              </div>
+            <div class="muted" style="font-size: 10px; line-height: 1.5;">
+              Research runs on the <strong>research</strong> model in the header (currently
+              <code style="font-family:var(--font-mono)" id="cmResearchModelEcho">—</code>); images use the
+              <strong>image</strong> model beside it. Both apply app-wide.
             </div>
+
           </div>
-        </div>
+        </details>
 
       </div>
 
@@ -8884,23 +9120,31 @@ async function loadSetImagesForCharm(folderId, folderName) {
             // the grid gives no way to tell a persona expansion from a pose
             // variant, which makes the approval data hard to reason about.
             try {
-                const provEl = document.getElementById(`prov_${folderId}`);
-                if (provEl && manifest.strategy) {
+                if (typeof cmProvSet === 'function' && manifest.strategy) {
                     const st = (typeof CM_STRATEGY_BY_ID !== 'undefined') ? CM_STRATEGY_BY_ID[manifest.strategy] : null;
                     const c = manifest.concept || {};
-                    provEl.style.display = 'block';
-                    provEl.innerHTML =
-                        `<span class="prov-rung" title="${st ? st.blurb.replace(/"/g, '&quot;') : ''}">`
-                        + `<span class="prov-dist">${st ? st.distance : '?'}</span>${st ? st.label : manifest.strategy}</span>`
-                        + (c.title ? `<span class="prov-title">${String(c.title).replace(/</g, '&lt;')}</span>` : '')
-                        + (c.whyItShouldSell ? `<span class="prov-why" title="${String(c.whyItShouldSell).replace(/"/g, '&quot;')}">why ⓘ</span>` : '')
-                        + (c.distinctness ? `<span class="prov-diff" title="${String(c.distinctness).replace(/"/g, '&quot;')}">differs ⓘ</span>` : '');
+                    // Merge into the shared record instead of overwriting the
+                    // strip, so an already-painted similarity result survives.
+                    cmProvSet(folderId, {
+                        conceptTitle: c.title || null,
+                        derivedFrom: manifest.derivedFrom
+                            || (manifest.strategy === 'gap' ? 'catalogue-gap' : 'charm'),
+                        sourceName: manifest.sourceCharm ? _cmBaseName(manifest.sourceCharm) : null,
+                        strategyLabel: st ? st.label : manifest.strategy,
+                        strategyBlurb: st ? st.blurb : '',
+                        why: c.whyItShouldSell || null,
+                        differs: c.distinctness || null,
+                    });
                 }
             } catch (_) {}
 
-            if (manifest.sourceCharm) {
+            {
+                // A set with no sourceCharm is not a broken set — a catalogue-gap
+                // design correctly has none. Say which it is rather than
+                // leaving an empty dashed box that reads as a failure.
                 const refBox = document.getElementById(`prevBox_${folderId}_ref`);
-                if (refBox) {
+                const isGap = (manifest.derivedFrom === 'catalogue-gap') || (!manifest.sourceCharm && manifest.strategy === 'gap');
+                if (refBox && manifest.sourceCharm) {
                     const srcRef = ref(storage, manifest.sourceCharm);
                     try {
                         const url = await getDownloadURL(srcRef);
@@ -8908,6 +9152,9 @@ async function loadSetImagesForCharm(folderId, folderName) {
                     } catch (urlErr) {
                         refBox.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">Ref Missing</div>`;
                     }
+                } else if (refBox && isGap) {
+                    refBox.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; line-height:1.3;">not from a charm</div>`;
+                    refBox.title = 'This design targets a gap in the catalogue, so it has no source charm.';
                 }
             }
         } catch(e) {
@@ -9071,7 +9318,13 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
             let redoKind = "edits";
 
             if (slotIndex === 0) {
-                inputPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
+                // materialRef first: for a catalogue-gap set sourceCharm is
+                // deliberately null (nothing inspired it), but materialRef
+                // still records the exact image that was used as the material
+                // sample — so a redo reproduces the original conditions instead
+                // of grabbing whatever file happens to be newest.
+                inputPath = manifest.materialRef || manifest.sourceCharm
+                          || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
                 if (manifest.concept && manifest.strategy) {
                     // Rebuild the brief from what the manifest recorded. The
                     // analysis comes from the shared research index; if this
@@ -9224,7 +9477,8 @@ window.regenCharmQuad = async function(folderId) {
                 console.warn("No manifest found for", folderId, "falling back to runtime refs if possible");
             }
             
-            const sourceCharmPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
+            const sourceCharmPath = manifest.materialRef || manifest.sourceCharm
+                                  || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
             if (!sourceCharmPath) throw new Error("No source charm reference found.");
             
             let lineArtRefPath = manifest.lineArtRef;
@@ -9280,11 +9534,15 @@ window.regenCharmQuad = async function(folderId) {
             // position-invariant, painted onto the card. If a change to this
             // pipeline ever regresses into producing copies again, this number
             // says so immediately instead of it having to be noticed by eye.
-            if (newBlob0) {
+            //
+            // Skipped for a catalogue-gap set: manifest.sourceCharm is null
+            // there because no charm inspired it, so there is nothing this
+            // design was meant to differ FROM.
+            if (newBlob0 && manifest.sourceCharm) {
                 try {
-                    const score = await cmScoreAgainstReference(targetCharmRef.fullPath, newBlob0);
+                    const score = await cmScoreAgainstReference(manifest.sourceCharm, newBlob0);
                     if (score) {
-                        cmRecordSimilarity(folderId, targetCharmRef.fullPath, designBrief?.strategyId, score);
+                        cmRecordSimilarity(folderId, manifest.sourceCharm, manifest.strategy, score);
                         if (score.verdict !== 'distinct') {
                             console.warn(`[charm-research] ${folderId}: silhouette overlap with reference is ${Math.round(score.iou*100)}% (${score.verdict}). Render mode was "${manifest.renderMode}".`);
                             setStatus(`⚠ ${folderId}: ${Math.round(score.iou*100)}% silhouette overlap with the reference — too close. Check the render mode.`);
@@ -9697,7 +9955,7 @@ window.approveCharmQuad = async function(folderId) {
         } catch (_) {}
         setStatus(`${rec.name}: ${briefs.length} brief${briefs.length === 1 ? '' : 's'} · ladder ${win.min}–${win.max} (${win.band}) · ${briefs.map(b => CM_STRATEGY_BY_ID[b.strategyId]?.label || b.strategyId).join(', ')}`);
         // Repaint so the concept bank immediately shows what was just consumed.
-        try { _cmRenderResearchDetail(); } catch (_) {}
+        try { _cmRenderResearchDetail(); _cmRenderFlow(); } catch (_) {}
         return briefs;
       } catch (e) {
         console.warn('[charm-research] brief preparation failed, falling back to legacy prompt', e);
@@ -9720,14 +9978,45 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
         
         window.setQuadButtonsState(folderId, true);
         
+        // Is this design genuinely attributable to targetCharmRef? Ladder
+        // designs are; catalogue-gap designs are not — they only borrow that
+        // image as a material sample. Showing it as "Source Ref" either way is
+        // what made the grid display charms that had nothing to do with the
+        // output.
+        const attributed = !designBrief || designBrief.derivedFrom !== 'catalogue-gap';
+
         const refBoxNode = document.getElementById(`prevBox_${folderId}_ref`);
         if (refBoxNode) {
-            try {
-                const url = await getDownloadURL(targetCharmRef.itemRef || ref(storage, targetCharmRef.fullPath));
-                setBoxImage(refBoxNode, cacheBust(url));
-            } catch(e) { console.warn("Could not preload target ref"); }
+            if (!attributed) {
+                refBoxNode.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; line-height:1.3;">not from a charm</div>`;
+                refBoxNode.title = 'This design targets a gap in the catalogue, so it has no source charm.';
+            } else {
+                try {
+                    const url = await getDownloadURL(targetCharmRef.itemRef || ref(storage, targetCharmRef.fullPath));
+                    setBoxImage(refBoxNode, cacheBust(url));
+                } catch(e) { console.warn("Could not preload target ref"); }
+            }
         }
         
+        // Paint provenance immediately, before any image exists. A card that
+        // says what it is trying to make is far more useful during the two
+        // minutes it spends generating than one that says nothing until the
+        // manifest is re-read on the next refresh.
+        try {
+            if (typeof cmProvSet === 'function' && designBrief) {
+                const st = CM_STRATEGY_BY_ID[designBrief.strategyId] || null;
+                cmProvSet(folderId, {
+                    conceptTitle: designBrief.concept?.title || null,
+                    derivedFrom: designBrief.derivedFrom || 'charm',
+                    sourceName: attributed ? targetCharmRef.name : null,
+                    strategyLabel: st ? st.label : designBrief.strategyId,
+                    strategyBlurb: st ? st.blurb : '',
+                    why: designBrief.concept?.whyItShouldSell || null,
+                    differs: designBrief.concept?.distinctness || null,
+                });
+            }
+        } catch (_) {}
+
         if (charmSetsHistory.indexOf(folderId) === -1) {
             charmSetsHistory.unshift(folderId);
         }
@@ -9773,7 +10062,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
 
             const manifest = {
                 renderMode: rm.mode,
-                sourceCharm: targetCharmRef.fullPath,
+                // sourceCharm is an ATTRIBUTION claim, not a record of which
+                // bytes were sent. The library reconcile counts a set against
+                // whatever is here, so a gap design must leave it null or it
+                // silently inflates an unrelated charm's approval record.
+                sourceCharm: attributed ? targetCharmRef.fullPath : null,
+                // ...and this is the record of which bytes were sent, kept
+                // separately so the two can never be confused again.
+                materialRef: targetCharmRef.fullPath || null,
+                derivedFrom: designBrief?.derivedFrom || (designBrief ? 'charm' : 'legacy'),
                 sourceEarring: targetEarringRef?.fullPath || null,
                 lineArtRef: lineArtRef?.fullPath || null,
                 model: generationModel,
@@ -9888,7 +10185,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
             // position-invariant, painted onto the card. If a change to this
             // pipeline ever regresses into producing copies again, this number
             // says so immediately instead of it having to be noticed by eye.
-            if (newBlob0) {
+            // Only meaningful when there IS a reference this design was supposed
+            // to depart from. For a catalogue-gap design the anchor image is an
+            // arbitrary house-style sample, so "68% overlap with it" measures
+            // nothing — and reporting it invited exactly the wrong conclusion.
+            if (newBlob0 && attributed) {
                 try {
                     const score = await cmScoreAgainstReference(targetCharmRef.fullPath, newBlob0);
                     if (score) {
@@ -18291,9 +18592,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
     // ---------------------------------------------------------------------
     function _updateCharmRefStatus() {
       const status = document.getElementById('charmRefSelectionStatus');
-      if (!status) return;
-      const n = _charmRefSelection.size;
-      status.textContent = n === 0 ? 'no selection · uses newest' : `${n} selected · in click order`;
+      if (status) {
+        const n = _charmRefSelection.size;
+        status.textContent = n === 0 ? 'no selection · uses newest' : `${n} selected · in click order`;
+      }
+      // Step 2 exists to describe the current selection, so it repaints
+      // whenever the selection changes. Guarded because selection can change
+      // during module evaluation, before this is defined.
+      try { if (typeof _cmRenderFlow === 'function') _cmRenderFlow(); } catch (_) {}
+      try { if (typeof _cmRenderResearchDetail === 'function') _cmRenderResearchDetail(); } catch (_) {}
     }
 
     function _refreshCharmOrderBadges() {
@@ -19050,6 +19357,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
 
       const execBtn = e.currentTarget;
       const ordered = [..._charmRefSelection.values()].sort((a, b) => a.order - b.order);
+      _cmSetGenBusy(true);
 
       try {
         if (typeof setBusy === 'function') setBusy(true);
@@ -19097,7 +19405,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
         if (typeof setStatus === 'function') setStatus(`Error: ${err?.message || err}`);
       } finally {
         if (typeof setBusy === 'function') setBusy(false);
+        _cmSetGenBusy(false);
         execBtn.disabled = false;
+        // Repaint last, so the button's label and enabled state reflect the
+        // now-cleared selection rather than the pre-run one.
+        try { _cmRenderFlow(); } catch (_) {}
       }
     }, { capture: true });
 
@@ -20112,6 +20424,45 @@ Hard rules:
 
     // Charms that already carry the gap's meaning - used to calibrate the brief
     // and, more importantly, as an explicit do-not-copy list.
+    // ── Gap analysis needs coverage to mean anything ──────────────────────
+    // Below these thresholds the matrix's empty cells are mostly "not looked
+    // at yet" rather than "the catalogue does not do this", and designing from
+    // them produces confident nonsense. 25 charms AND a third of the library
+    // is the point where a missing combination starts to be evidence.
+    const CM_GAP_MIN_CLASSIFIED = 25;
+    const CM_GAP_MIN_RATIO = 0.33;
+
+    // How many library charms have at least one facet classified.
+    function cmClassifiedCount() {
+      let n = 0;
+      for (const rec of _cmLib.items) {
+        const f = _cmResearch.analyses?.[rec.path]?.analysis?.facets;
+        if (f && Object.keys(f).length) n++;
+      }
+      return n;
+    }
+
+    // The image a gap design borrows its metal, finish and lighting from.
+    // This is a MATERIAL sample only — it is never recorded as the design's
+    // source, because nothing about the design came from it.
+    function _cmGapMaterialAnchor(gap) {
+      const byName = (n) => _cmLib.items.find(r => r.name === n) || null;
+      // 1. Best-selling classified charm that carries the gap's meaning.
+      const exemplar = _cmGapExemplars(gap, 1)[0];
+      const first = exemplar ? byName(exemplar.name) : null;
+      if (first) return first;
+      // 2. Best-selling CLASSIFIED charm overall. Classified matters: an
+      //    unanalysed charm has no house-style data to contribute either.
+      const classified = _cmLib.items.filter(r => {
+        const f = _cmResearch.analyses?.[r.path]?.analysis?.facets;
+        return f && Object.keys(f).length;
+      });
+      if (!classified.length) return null;
+      classified.sort((a, b) =>
+        (cmEffectiveRank(a.path, a.name).rank || 1e9) - (cmEffectiveRank(b.path, b.name).rank || 1e9));
+      return classified[0];
+    }
+
     function _cmGapExemplars(gap, limit = 5) {
       const out = [];
       for (const rec of _cmLib.items) {
@@ -20177,6 +20528,14 @@ Hard rules:
         conceptIndex: idx,
         concept: g.concepts[idx],
         analysis: { houseStyle: _cmAggregateHouseStyle(), identification: {} },
+        // A gap design is NOT derived from any one charm — it targets a
+        // meaning × form combination the catalogue under-occupies. It still
+        // needs some image for a material sample in style-locked mode, but
+        // that image did not inspire it and must never be recorded as its
+        // source: doing so put an unrelated charm in the card's "Source Ref"
+        // slot and credited that charm with the approval, corrupting the
+        // per-charm approved/generated counts the library sorts and filters on.
+        derivedFrom: 'catalogue-gap',
       };
     }
 
@@ -20251,7 +20610,42 @@ Hard rules:
     // reference with a large proven audience can afford distance, because even
     // a partial hit addresses a big pool. A thinner seller stays near what
     // worked. With no sales data everything is treated as mid-pack.
+    // ── The operator's "how far should these go" choice ───────────────────
+    // Previously the only control over distance was sales rank, computed
+    // invisibly. There was no way to say "give me safe variations of this one"
+    // or "go wide", and no way to know from the screen what a run was about to
+    // do. These four settings are the visible version of the same ladder, and
+    // 'auto' is the old data-weighted behaviour unchanged.
+    const CM_SPREAD_LS_KEY = 'lg1_charm_spread_v1';
+    const CM_SPREADS = Object.freeze({
+      close:  { id: 'close',  min: 1, max: 2, label: 'Close',  blurb: 'Same subject, new pose or sub-type — and its closest siblings.' },
+      nearby: { id: 'nearby', min: 2, max: 3, label: 'Nearby', blurb: 'Sibling subjects, companion pieces and objects from the same world.' },
+      far:    { id: 'far',    min: 4, max: 5, label: 'Far',    blurb: 'The same feeling and the same buyer, but a different subject.' },
+      auto:   { id: 'auto',   label: 'Let the data decide',    blurb: 'Spread across the ladder, weighted by how well this charm sells and by which rungs you have been approving.' },
+    });
+
+    function cmSpread() {
+      try {
+        const v = localStorage.getItem(CM_SPREAD_LS_KEY);
+        if (v && CM_SPREADS[v]) return v;
+      } catch (_) {}
+      return 'auto';
+    }
+    function cmSetSpread(v) {
+      const id = CM_SPREADS[v] ? v : 'auto';
+      try { localStorage.setItem(CM_SPREAD_LS_KEY, id); } catch (_) {}
+      return id;
+    }
+
     function cmWidthWindow(charmPath, charmName) {
+      // An explicit choice overrides the rank-derived window entirely. This is
+      // the point of the control: the operator's instruction wins over the
+      // inference, and the panel says which one is in effect.
+      const chosen = CM_SPREADS[cmSpread()];
+      if (chosen && chosen.min) {
+        const eff0 = cmEffectiveRank(charmPath, charmName);
+        return { min: chosen.min, max: chosen.max, band: chosen.label.toLowerCase(), chosen: chosen.id, rank: eff0.rank || undefined, rankSource: eff0.source };
+      }
       const eff = cmEffectiveRank(charmPath, charmName);
       const ranks = _cmRankUniverse();
       // Below three ranked charms a percentile is meaningless, so everything is
@@ -20314,7 +20708,11 @@ Hard rules:
       entry.used[strategyId] = [...new Set([...(entry.used[strategyId] || []), idx])];
       _cmResearchDirty = true;
       _cmResearchSave();
-      return { strategyId, conceptIndex: idx, concept: strat.concepts[idx], rationale: strat.rationale };
+      // derivedFrom: 'charm' means this design really was reasoned out of that
+      // one reference, so the reference legitimately owns the result — the
+      // library's per-charm approved/generated counts are built on exactly this
+      // claim. Compare cmTakeGapConcept, which cannot make it.
+      return { strategyId, conceptIndex: idx, concept: strat.concepts[idx], rationale: strat.rationale, derivedFrom: 'charm' };
     }
 
     // ---------------------------------------------------------------------
@@ -21168,26 +21566,68 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       _cmRenderStrategyStats();
     }
 
-    function _cmPaintSimilarity(folderId, score) {
+    // ── One provenance record per set, one renderer ───────────────────────
+    // Two writers used to fight over the same strip: the manifest reader set
+    // innerHTML (wiping anything already painted) and the similarity check
+    // appended a chip without un-hiding the strip (so it could be invisible).
+    // Whichever ran last won, which is why cards showed a bare "distinct 68%"
+    // with no concept, or a concept with no score. Both writers now merge into
+    // this record and re-render the whole strip from it, so the result is the
+    // same regardless of order or how many times either runs.
+    const _cmProv = new Map();  // folderId → { concept, strategy, source, score }
+
+    function cmProvSet(folderId, patch) {
+      if (!folderId) return;
+      const cur = _cmProv.get(folderId) || {};
+      _cmProv.set(folderId, Object.assign(cur, patch));
+      _cmRenderProv(folderId);
+    }
+
+    function _cmRenderProv(folderId) {
       const el = document.getElementById(`prov_${folderId}`);
-      if (!el || !score) return;
-      let chip = el.querySelector('.prov-iou');
-      if (!chip) {
-        chip = document.createElement('span');
-        chip.className = 'prov-iou';
-        el.appendChild(chip);
+      if (!el) return;
+      const p = _cmProv.get(folderId);
+      if (!p) return;
+      const bits = [];
+
+      // What it was asked to be.
+      if (p.conceptTitle) {
+        bits.push(`<span class="prov-title">${_esc(p.conceptTitle)}</span>`);
       }
-      const pct = Math.round(score.iou * 100);
-      chip.className = `prov-iou ${score.verdict}`;
-      chip.textContent = score.verdict === 'replica' ? `⚠ replica ${pct}%`
-                       : score.verdict === 'close' ? `⚠ close ${pct}%`
-                       : `distinct ${pct}%`;
-      chip.title =
-        `Silhouette overlap with the reference: ${pct}%.\n` +
-        `Masks are cropped to their bounding box and resampled, so this is independent of scale and position.\n` +
-        `Under ${Math.round(CM_IOU_WARN * 100)}% reads as a genuinely different object; ` +
-        `${Math.round(CM_IOU_FAIL * 100)}%+ is almost certainly a copy.`;
-      el.style.display = 'block';
+
+      // Where it came from, in words rather than jargon.
+      if (p.derivedFrom === 'catalogue-gap') {
+        bits.push(`<span class="prov-origin gap" title="Targets a meaning × form combination the catalogue under-occupies. It is not a derivative of any single charm, so it does not count towards any charm's approval record.">catalogue gap · not from a charm</span>`);
+      } else if (p.sourceName) {
+        const how = p.strategyLabel ? ` · ${p.strategyLabel}` : '';
+        bits.push(`<span class="prov-origin" title="${_esc(p.strategyBlurb || '')}">from ${_esc(p.sourceName)}${_esc(how)}</span>`);
+      }
+
+      // How it turned out, if measured.
+      if (p.score) {
+        const pct = Math.round(p.score.iou * 100);
+        const cls = p.score.verdict;
+        const label = cls === 'replica' ? `too similar to the reference (${pct}%)`
+                    : cls === 'close' ? `close to the reference (${pct}%)`
+                    : `genuinely different`;
+        bits.push(
+          `<span class="prov-iou ${cls}" title="Silhouette overlap with the reference: ${pct}%. ` +
+          `Masks are cropped to their bounding box and resampled, so this is independent of scale and position.">` +
+          `${cls === 'distinct' ? '✓ ' : '⚠ '}${label}</span>`
+        );
+      }
+
+      if (p.why) bits.push(`<span class="prov-why" title="${_esc(p.why)}">why ⓘ</span>`);
+      if (p.differs) bits.push(`<span class="prov-diff" title="${_esc(p.differs)}">differs ⓘ</span>`);
+
+      if (!bits.length) { el.style.display = 'none'; return; }
+      el.style.display = 'flex';
+      el.innerHTML = bits.join('');
+    }
+
+    function _cmPaintSimilarity(folderId, score) {
+      if (!score) return;
+      cmProvSet(folderId, { score });
     }
 
     // ---------------------------------------------------------------------
@@ -21303,9 +21743,296 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
     // leave this panel showing pre-generation numbers with no way to refresh it.
     let _cmResearchFocus = null;
 
+    // =====================================================================
+    // STEP 2 — THE FLOW PANEL
+    // ---------------------------------------------------------------------
+    // One renderer for the whole "what to make" group. Its job is that the
+    // operator can answer, without clicking anything, three questions:
+    //
+    //   Which charm is this about?   → the picked card, with its thumbnail
+    //   How far will it go?          → the highlighted option, in words
+    //   What will the button do?     → the plan sentence, naming the charm,
+    //                                  the number, and the kinds of design
+    //
+    // The previous panel could not answer any of the three: the selection
+    // lived in a mosaic 400px above, the distance was derived invisibly from
+    // sales rank, and the button just said "Generate charms".
+    // =====================================================================
+
+    // Which charm the flow is about. The mosaic allows multi-select for batch
+    // runs; the card describes the most recent pick and the plan sentence says
+    // when there are more.
+    // True while a generate run owns the button. Declared with `var` because
+    // the flow renderer can be reached during module evaluation and a TDZ
+    // throw there would take the whole panel down.
+    var _cmGenBusy = false;
+
+    // Mirror the busy flag onto the button as data-busy. The button's own
+    // `disabled` cannot express "a run is in progress", because it is also
+    // disabled whenever nothing is selected — including immediately after a
+    // run, since finishing clears the selection. Anything that needs to know
+    // whether a run is live (the tests, and anyone watching in devtools)
+    // reads this.
+    function _cmSetGenBusy(v) {
+      _cmGenBusy = !!v;
+      const b = document.getElementById('executeCharmGenBtn');
+      if (b) b.dataset.busy = _cmGenBusy ? '1' : '0';
+    }
+
+    function _cmFlowFocus() {
+      const sel = [..._charmRefSelection.values()].sort((a, b) => b.order - a.order)[0];
+      if (sel) return { fullPath: sel.fullPath, name: sel.name, live: true };
+      return _cmResearchFocus ? { ...(_cmResearchFocus), live: false } : null;
+    }
+
+    function _cmFlowCount() {
+      const el = document.getElementById('derivativesPerCharmInput');
+      const n = parseInt(el?.value, 10);
+      return Number.isFinite(n) && n > 0 ? n : 2;
+    }
+
+    function _cmSetFlowCount(n) {
+      const v = Math.max(1, Math.min(24, parseInt(n, 10) || 1));
+      const input = document.getElementById('derivativesPerCharmInput');
+      const sel = document.getElementById('derivativesPerCharm');
+      if (input) input.value = String(v);
+      // The hidden legacy <select> only goes to 5; keep it consistent where it
+      // can be, and leave it alone above that rather than writing an invalid
+      // value it would silently coerce.
+      if (sel && v <= 5) sel.value = String(v);
+      document.querySelectorAll('#cmCountChips .chip').forEach(c => {
+        c.classList.toggle('active', Number(c.dataset.count) === v);
+      });
+      _cmRenderFlow();
+      return v;
+    }
+
+    // The kinds of design a run will actually draw from, given the current
+    // spread choice. Named in plain words — this is what "how far" means
+    // concretely, and it is the thing the operator is really choosing.
+    function _cmFlowKinds(focus) {
+      const win = focus ? cmWidthWindow(focus.fullPath, focus.name) : { min: 1, max: 4 };
+      const inRange = CM_STRATEGIES.filter(s => s.distance >= win.min && s.distance <= win.max);
+      return { win, labels: inRange.map(s => s.label.toLowerCase()) };
+    }
+
+    function _cmRenderFlow() {
+      const focus = _cmFlowFocus();
+      const nSel = _charmRefSelection.size;
+      const count = _cmFlowCount();
+
+      const countEl = document.getElementById('cmFlowCount');
+      if (countEl) {
+        countEl.textContent = nSel === 0
+          ? (focus ? 'last used charm' : 'nothing selected')
+          : nSel === 1 ? '1 charm selected' : `${nSel} charms selected`;
+      }
+
+      // ── Spread options ──────────────────────────────────────────────
+      const spread = cmSpread();
+      document.querySelectorAll('#cmSpreadChoices .cm-spread-opt').forEach(b => {
+        b.classList.toggle('active', b.dataset.spread === spread);
+      });
+
+      // ── The picked charm ────────────────────────────────────────────
+      const card = document.getElementById('cmPickCard');
+      const nameEl = document.getElementById('cmPickName');
+      const subEl = document.getElementById('cmPickSub');
+      const sellsEl = document.getElementById('cmPickSells');
+      const keepEl = document.getElementById('cmPickKeep');
+      const actionsEl = document.getElementById('cmPickActions');
+      const thumbEl = document.getElementById('cmPickThumb');
+      const studyBtn = document.getElementById('cmPickResearchBtn');
+      const genBtn = document.getElementById('executeCharmGenBtn');
+      const plan = document.getElementById('cmPlan');
+
+      if (!focus) {
+        if (card) card.classList.remove('armed');
+        if (nameEl) nameEl.textContent = 'No charm selected';
+        if (subEl) subEl.innerHTML = 'Click a charm in <strong>Step 1</strong> above. That charm is what the new designs will be built on.';
+        if (sellsEl) sellsEl.style.display = 'none';
+        if (keepEl) keepEl.style.display = 'none';
+        if (actionsEl) actionsEl.style.display = 'none';
+        if (thumbEl) thumbEl.innerHTML = '<span class="cm-pick-thumb-empty">—</span>';
+        // Same wording as the selected-but-empty case below: the button always
+        // says what it needs, never a bare "Generate" that does nothing.
+        if (genBtn) {
+          genBtn.dataset.busy = _cmGenBusy ? '1' : '0';
+          genBtn.disabled = true;
+          genBtn.textContent = 'Select a charm in Step 1';
+        }
+        if (plan) { plan.className = 'cm-plan'; plan.textContent = 'Select a charm in Step 1 to begin.'; }
+        return;
+      }
+
+      if (card) card.classList.add('armed');
+
+      // Reuse the thumbnail the mosaic already downloaded rather than fetching
+      // it again — the library cache exists precisely so this is free.
+      if (thumbEl) {
+        const url = _cmLib.thumbUrls?.get?.(focus.fullPath);
+        if (url) {
+          thumbEl.innerHTML = `<img src="${_esc(url)}"${/^blob:|^data:/.test(String(url)) ? '' : ' crossorigin="anonymous"'} alt="">`;
+        } else if (!thumbEl.querySelector('img')) {
+          thumbEl.innerHTML = '<span class="cm-pick-thumb-empty">◻</span>';
+        }
+      }
+
+      const entry = _cmResearch.analyses?.[focus.fullPath];
+      const a = entry?.analysis;
+      const id = a?.identification || {};
+      const eff = cmEffectiveRank(focus.fullPath, focus.name);
+      const studied = !!a;
+
+      if (nameEl) nameEl.textContent = focus.name;
+
+      if (subEl) {
+        const bits = [];
+        if (id.primarySubject) bits.push(`<b>${_esc(id.primarySubject)}</b>`);
+        if (id.taxonomy?.length) bits.push(_esc(id.taxonomy.slice(-2).join(' → ')));
+        if (eff.rank) bits.push(`#${eff.rank} seller`);
+        subEl.innerHTML = bits.length
+          ? bits.join(' · ')
+          : (focus.live ? 'Not studied yet — designs will use a weaker brief.' : 'Last charm used.');
+      }
+
+      // "Sells on" — the two strongest drivers, compressed to their headline.
+      if (sellsEl) {
+        const why = (a?.whyItSells || []).slice(0, 2)
+          .map(w => String(w.driver || '').replace(/\s*—.*$/, '').trim())
+          .filter(Boolean);
+        if (why.length) {
+          sellsEl.style.display = '';
+          sellsEl.innerHTML = `Sells on: ${why.map(_esc).join(', ')}`;
+        } else {
+          sellsEl.style.display = 'none';
+        }
+      }
+
+      // The guardrails. These are the attributes a derivative must not lose,
+      // so they are the single most useful thing to have in front of you when
+      // judging what comes back.
+      if (keepEl) {
+        const keep = (a?.loadBearing || []).slice(0, 4)
+          .map(t => String(t).replace(/\s*[—-]\s.*$/, '').trim())
+          .filter(Boolean);
+        if (keep.length) {
+          keepEl.style.display = '';
+          keepEl.innerHTML = `<span class="cm-keep-lbl">must keep</span>`
+            + keep.map(k => `<span class="k">${_esc(k)}</span>`).join('');
+        } else {
+          keepEl.style.display = 'none';
+        }
+      }
+
+      if (actionsEl) actionsEl.style.display = '';
+      if (studyBtn) {
+        studyBtn.textContent = studied ? '↻ Study again' : 'Study this charm';
+        studyBtn.disabled = !focus.live;
+        studyBtn.title = focus.live
+          ? (studied ? 'Re-read this charm and write fresh design ideas.' : 'Read this charm and write design ideas from it. Runs once, then it is cached.')
+          : 'Select the charm in Step 1 first.';
+      }
+
+      // ── The plan sentence ───────────────────────────────────────────
+      const { win, labels } = _cmFlowKinds(focus);
+      const kindText = labels.length
+        ? (labels.length <= 3 ? labels.join(', ') : `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} more`)
+        : 'the full ladder';
+      const total = Math.max(1, nSel || 1) * count;
+
+      if (genBtn) {
+        // A repaint must never re-arm the button mid-run. Generation triggers
+        // repaints (the concept bank changes as briefs are consumed), so
+        // without this guard a batch could be fired twice from one intent.
+        genBtn.dataset.busy = _cmGenBusy ? '1' : '0';
+        if (_cmGenBusy) {
+          genBtn.disabled = true;
+        } else {
+          genBtn.disabled = nSel === 0;
+          genBtn.textContent = nSel === 0
+            ? 'Select a charm in Step 1'
+            : nSel === 1
+              ? `Generate ${count} design${count === 1 ? '' : 's'} from ${focus.name.length > 26 ? focus.name.slice(0, 24) + '…' : focus.name}`
+              : `Generate ${total} designs across ${nSel} charms`;
+        }
+      }
+
+      if (plan) {
+        if (nSel === 0) {
+          plan.className = 'cm-plan';
+          plan.innerHTML = `Nothing is selected. <b>${_esc(focus.name)}</b> was the last charm used — click it again in Step 1 to generate from it.`;
+        } else {
+          plan.className = 'cm-plan ready';
+          const subject = nSel === 1
+            ? `<b>${_esc(focus.name)}</b>`
+            : `<b>each of the ${nSel} selected charms</b>`;
+          plan.innerHTML =
+            `Will draw <b>${count} new charm design${count === 1 ? '' : 's'}</b> from ${subject}`
+            + (nSel === 1 ? '' : ` — <b>${total}</b> in total`)
+            + `, choosing from: ${_esc(kindText)}.`
+            + (spread === 'auto' && win.rank ? ` Range set from its #${win.rank} rank.` : '')
+            + (studied ? '' : ` <span style="color:var(--warn)">This charm has not been studied yet, so the brief will be thin — press “Study this charm” first for a better result.</span>`);
+        }
+      }
+    }
+
+    // Selection, spread and count all feed the same renderer.
+    document.getElementById('cmSpreadChoices')?.addEventListener('click', (e) => {
+      const b = e.target.closest('.cm-spread-opt');
+      if (!b) return;
+      cmSetSpread(b.dataset.spread);
+      _cmRenderFlow();
+      try { _cmRenderResearchDetail(); _cmRenderFlow(); } catch (_) {}
+    });
+
+    document.getElementById('cmCountChips')?.addEventListener('click', (e) => {
+      const c = e.target.closest('.chip');
+      if (!c) return;
+      _cmSetFlowCount(c.dataset.count);
+    });
+
+    document.getElementById('cmPickResearchBtn')?.addEventListener('click', async () => {
+      const recs = _cmSelectedRecords();
+      if (!recs.length) { setStatus('Select a charm in Step 1 first.'); return; }
+      const btn = document.getElementById('cmPickResearchBtn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Studying…'; }
+      try {
+        await _cmResearchLoad();
+        // Only the focused charm, not the whole selection — this button sits on
+        // the card describing one charm, so it must do what the card implies.
+        const focus = _cmFlowFocus();
+        const one = recs.filter(r => r.path === focus?.fullPath);
+        await _cmRunResearch(one.length ? one : recs.slice(0, 1), { force: !!_cmResearch.analyses?.[focus?.fullPath] });
+      } finally {
+        _cmRenderFlow();
+      }
+    });
+
+    document.getElementById('cmPickDetailBtn')?.addEventListener('click', () => {
+      const box = document.getElementById('cmResearchDetail');
+      const btn = document.getElementById('cmPickDetailBtn');
+      if (!box) return;
+      const showing = box.style.display !== 'none' && box.dataset.open === '1';
+      if (showing) {
+        box.dataset.open = '0';
+        box.style.display = 'none';
+        if (btn) btn.textContent = 'Full research ▸';
+      } else {
+        box.dataset.open = '1';
+        _cmRenderResearchDetail();
+        try { _cmRenderFlow(); } catch (_) {}
+        box.style.display = 'block';
+        if (btn) btn.textContent = 'Hide research ▾';
+      }
+    });
+
     function _cmRenderResearchDetail() {
       const box = document.getElementById('cmResearchDetail');
       if (!box) return;
+      // Opened explicitly from the card; otherwise it stays folded so the
+      // group keeps to the three questions.
+      if (box.dataset.open !== '1') { box.style.display = 'none'; return; }
       let sel = [..._charmRefSelection.values()].sort((a, b) => b.order - a.order)[0];
       if (sel) _cmResearchFocus = { fullPath: sel.fullPath, name: sel.name };
       else sel = _cmResearchFocus;
@@ -21451,6 +22178,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
         1);
       if (!failed) _cmShowDiag(null);
       _cmRenderResearchDetail();
+      try { _cmRenderFlow(); } catch (_) {}
       _cmRenderStrategyStats();
       _cmRender();
       if (first) _cmResearchCoverage();
@@ -21565,6 +22293,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       }
       _cmResearchCoverage();
       _cmRenderResearchDetail();
+      try { _cmRenderFlow(); } catch (_) {}
       _cmRender();
     });
 
@@ -21636,6 +22365,36 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
     // ---------------------------------------------------------------------
     let _cmLastGaps = null;
 
+    // Explain a refused gap run in the matrix's own status line, so the
+    // reason sits next to the button that was pressed.
+    function _cmSetGapGateNote(covered, total, need) {
+      const info = document.getElementById('cmMatrixInfo');
+      if (!info) return;
+      info.className = 'window-info rm-warn';
+      info.textContent =
+        `Gap designing is off until more of the library is classified — ${covered} of ${total}. ` +
+        `An empty cell in the matrix currently means "not looked at yet", not "the catalogue does not do this", ` +
+        `so designs from it would be guesses. Classify about ${need} charms first (Research all missing).`;
+    }
+
+    // Is gap designing allowed to run at all? Used by the button's enabled
+    // state as well as the run itself, so the UI never offers an action it
+    // will then refuse.
+    function cmGapGateState() {
+      const covered = cmClassifiedCount();
+      const total = _cmLib.items.length || 0;
+      const need = Math.max(CM_GAP_MIN_CLASSIFIED, Math.ceil(total * CM_GAP_MIN_RATIO));
+      // A library smaller than the statistical floor is a different problem
+      // from an unclassified one, and saying "needs 25 of 5" reads as a bug.
+      // Name it for what it is: gap analysis compares a combination against
+      // the rest of the catalogue, and a handful of charms has no rest.
+      if (total > 0 && total < CM_GAP_MIN_CLASSIFIED) {
+        return { ok: false, covered, total, need, reason: 'library-too-small' };
+      }
+      const ok = total > 0 && covered >= CM_GAP_MIN_CLASSIFIED && (covered / total) >= CM_GAP_MIN_RATIO;
+      return { ok, covered, total, need, reason: ok ? null : 'not-enough-classified' };
+    }
+
     function _cmRenderMatrix() {
       const info = document.getElementById('cmMatrixInfo');
       const tbody = document.querySelector('#cmGapTable tbody');
@@ -21698,6 +22457,23 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
             ).join('') + `</div></div>`;
         }).join('');
       }
+
+      _cmSyncGapButton();
+    }
+
+    // Never offer an action that will be refused. The button reflects the
+    // coverage gate, and its tooltip says what is missing.
+    function _cmSyncGapButton() {
+      const btn = document.getElementById('cmGapGenerateBtn');
+      if (!btn) return;
+      const g = cmGapGateState();
+      btn.disabled = !g.ok;
+      btn.style.opacity = g.ok ? '' : '0.45';
+      btn.title = g.ok
+        ? 'Write a design brief for each top gap, then generate one charm per brief. These are not derived from any of your charms.'
+        : g.reason === 'library-too-small'
+          ? `Your library has ${g.total} charm${g.total === 1 ? '' : 's'}. Gap analysis asks what the rest of the catalogue does not cover, so it needs at least ${CM_GAP_MIN_CLASSIFIED} to compare against. Use Step 2 instead.`
+          : `Needs about ${g.need} charms classified before gaps mean anything — you have ${g.covered} of ${g.total}. Run "Study all missing".`;
     }
 
     document.getElementById('cmMatrixBuildBtn')?.addEventListener('click', async () => {
@@ -21745,6 +22521,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       _cmRenderMatrix();
       _cmResearchCoverage();
       _cmRenderResearchDetail();
+      try { _cmRenderFlow(); } catch (_) {}
     });
 
     // Write a brief for one gap, on demand.
@@ -21775,15 +22552,42 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       _cmRenderMatrix();
       const gaps = _cmLastGaps?.gaps || [];
       if (!gaps.length) { setStatus('No gaps to design from — build the matrix first.'); return; }
-      if (!confirm(`Design ${gaps.length} charm${gaps.length === 1 ? '' : 's'}, one per gap?\n\nEach needs one text call to write the brief, then one image generation. These are NOT derived from a single reference — they target combinations the catalogue under-occupies.`)) return;
+
+      // ── Coverage gate ────────────────────────────────────────────────
+      // A "gap" is a claim about what the catalogue does NOT cover. That
+      // claim is only as good as the proportion of the catalogue actually
+      // classified. With 4 of 103 classified, essentially every
+      // combination reads as an unoccupied gap, and the generator happily
+      // produced designs for meanings the catalogue may well already
+      // cover. Refusing is the honest answer; the previous behaviour was
+      // to emit confident noise.
+      const gate = cmGapGateState();
+      if (!gate.ok) {
+        setStatus(
+          gate.reason === 'library-too-small'
+            ? `Your library has ${gate.total} charms. Gap analysis compares a combination against the rest of the catalogue, so it needs at least ${CM_GAP_MIN_CLASSIFIED} charms to be meaningful. Use Step 2 to design from a charm instead.`
+            : `Not enough of the library is classified for gap analysis: ${gate.covered} of ${gate.total}. ` +
+              `Gaps describe what the catalogue does NOT cover, so below about ${gate.need} charms almost ` +
+              `everything looks like a gap. Run "Study all missing", then try again.`
+        );
+        _cmSetGapGateNote(gate.covered, gate.total, gate.need);
+        return;
+      }
+
+      if (!confirm(`Design ${gaps.length} charm${gaps.length === 1 ? '' : 's'}, one per gap?\n\nEach needs one text call to write the brief, then one image generation.\n\nThese are NOT derived from any one of your charms — they target combinations the catalogue under-occupies. Their cards will say "not from a charm", and they will not count towards any charm's approval record.`)) return;
 
       const btn = document.getElementById('cmGapGenerateBtn');
       if (btn) btn.disabled = true;
       setBusy(true);
       try {
-        // Every gap design still needs a reference charm for the material
-        // sample in style-locked mode, and for the similarity check. The
-        // best-selling charm that carries the gap's meaning is the right one.
+        // A gap design still needs SOME image as a material sample when the
+        // render mode is style-locked. That image is a house-style sample and
+        // nothing more: it is recorded as manifest.materialRef, never as
+        // sourceCharm, so it cannot appear as a "Source Ref" or collect the
+        // approval. Preference order is (1) the best-selling classified charm
+        // that actually carries the gap's meaning, (2) the best-selling
+        // classified charm overall — never an arbitrary first-in-list, which
+        // is what previously put unrelated charms on the cards.
         for (let i = 0; i < gaps.length; i++) {
           const gap = gaps[i];
           setStatus(`Gap ${i + 1}/${gaps.length}: ${_cmFacetLabel(gap.mk, gap.mv)} × ${_cmFacetLabel(gap.fk, gap.fv)} — writing brief…`);
@@ -21796,9 +22600,11 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
             continue;
           }
           if (!brief) continue;
-          const exemplar = _cmGapExemplars(gap, 1)[0];
-          const anchorRec = _cmLib.items.find(r => r.name === exemplar?.name) || _cmLib.items[0];
-          if (!anchorRec) break;
+          const anchorRec = _cmGapMaterialAnchor(gap);
+          if (!anchorRec) {
+            setStatus('No classified charm available to take the metal finish from — cannot design from gaps yet.');
+            break;
+          }
           brief.analysis = {
             houseStyle: _cmAggregateHouseStyle(),
             identification: _cmResearch.analyses?.[anchorRec.path]?.analysis?.identification || {},
@@ -21824,6 +22630,20 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
 
     setTimeout(() => { try { _cmRenderMatrix(); } catch (_) {} }, 2200);
 
+    // Bring Step 2 up in a coherent state on load: chips reflecting the stored
+    // count and spread, and the plan sentence saying what it will do. Without
+    // this the panel would sit with hard-coded HTML defaults until the first
+    // interaction, which is exactly the kind of "is this on?" ambiguity the
+    // rebuild is meant to remove.
+    try {
+      _cmSetFlowCount(_cmFlowCount());
+      _cmRenderFlow();
+      _cmSyncGapButton();
+    } catch (e) { console.warn('[charm-flow] initial paint failed', e); }
+    document.getElementById('toggleCharmMaker')?.addEventListener('click', () => {
+      setTimeout(() => { try { _cmRenderFlow(); _cmSyncGapButton(); } catch (_) {} }, 80);
+    });
+
 
     // Console diagnostics. Handy in production for answering "why did it pick
     // that rung?" without adding UI, and it is the surface the test suite uses.
@@ -21845,6 +22665,12 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       lastLlmError: () => _cmLlmLastError,
       matrix: () => cmBuildMatrix(),
       gaps: (n) => cmFindGaps(n),
+      // Why gap designing is on or off, and what it wants.
+      gapGate: () => cmGapGateState(),
+      classifiedCount: () => cmClassifiedCount(),
+      // The visible "how far" choice, and what it resolves to.
+      spread: () => cmSpread(),
+      setSpread: (v) => { cmSetSpread(v); _cmRenderFlow(); return cmSpread(); },
       facets: () => CM_FACETS,
       perf: () => cmPerformanceScores(),
       renderMatrix: () => _cmRenderMatrix(),
@@ -21862,6 +22688,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       if (mosaic) {
         mosaic.addEventListener('click', () => setTimeout(() => {
           _cmRenderResearchDetail();
+          try { _cmRenderFlow(); } catch (_) {}
           _cmResearchCoverage();
         }, 0));
       }
@@ -21877,6 +22704,7 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
         _cmResearchCoverage();
         _cmRenderStrategyStats();
         _cmRenderResearchDetail();
+        try { _cmRenderFlow(); } catch (_) {}
       } catch (_) {}
     }, 1600);
 
