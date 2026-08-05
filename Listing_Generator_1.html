@@ -1229,6 +1229,10 @@
   .prov-origin.gap {
     border-color: var(--accent-line); background: var(--accent-bg); color: var(--accent);
   }
+  .prov-fix {
+    padding: 1px 7px; border-radius: 999px; font-size: 9px; cursor: help;
+    border: 1px solid var(--line-2); background: var(--inset); color: var(--muted);
+  }
 
   .prov-iou {
     padding: 1px 7px; border-radius: 999px; font-size: 9px;
@@ -3833,6 +3837,24 @@ html.gs-locked body > *:not(#gate){display:none!important}
               </div>
               <div class="window-info" id="cmResearchCoverageInfo"><span id="cmResearchCoverage">—</span></div>
               <div id="cmResearchDiag" class="window-info rm-warn" style="display:none; white-space: pre-wrap;"></div>
+            </div>
+
+            <!-- ── Image quality ─────────────────────────────────────── -->
+            <div class="cm-adv-block">
+              <h4>Backgrounds and shadows</h4>
+              <p class="cm-adv-note">
+                Every charm generated from now on is measured the moment it lands: a background that is not
+                pure black is replaced and written back to Firebase automatically, and shadowing on the
+                charm's face is flagged on the card for a redo. Sets you generated <em>before</em> this
+                existed are untouched — this repairs them in place.
+              </p>
+              <div class="row" style="gap: 8px; flex-wrap: wrap;">
+                <button class="btn btnSmall" id="cmFixBackgroundsBtn" type="button" title="Scan every stored charm set, replace any non-black background with pure black, and report shadowing that needs a redo">Fix backgrounds on existing sets</button>
+                <label style="margin: 0; font-size: 11px; display: flex; align-items: center; gap: 6px;">
+                  <input type="checkbox" id="cmFixIncludeApproved" style="width: auto; margin: 0;"> include approved sets
+                </label>
+              </div>
+              <div class="window-info" id="cmFixBackgroundsInfo">Not run yet.</div>
             </div>
 
             <!-- ── How the image is drawn ────────────────────────────── -->
@@ -6910,6 +6932,23 @@ The output must look like the input image with ONLY the user's requested change 
         } catch (_) {}
     }
 
+    // Every Charm Maker slot goes through here rather than calling
+    // fetchAndCacheBlob directly, so there is exactly one place where a
+    // generated image is checked and corrected. Adding a slot later and
+    // forgetting the check is then impossible by construction.
+    async function fetchCacheAndEnforce(waited, folderId, slotIndex) {
+      const blob = await fetchAndCacheBlob(waited.url, waited.storagePath, Date.now());
+      if (!blob) return null;
+      try {
+        const { blob: fixed } = await cmEnforceCharmImage(waited.storagePath, blob, { folderId, slotIndex });
+        return fixed || blob;
+      } catch (e) {
+        // A correction failing must never lose the image.
+        console.warn('[charm-image] enforcement failed, using the image as generated:', e?.message || e);
+        return blob;
+      }
+    }
+
     async function fetchAndCacheBlob(url, storagePath, updatedMs) {
         try {
             const res = await fetch(cacheBust(url), { mode: 'cors' });
@@ -9278,7 +9317,20 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const redoBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
         let prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
-        
+
+        // Resolved ONCE per redo, and used for two different things: building the
+        // design prompt (which is worded differently for Gemini and OpenAI) and
+        // routing the request. Reading it twice could pick two different models
+        // if the header selector changed mid-request, which would silently pair
+        // one model's prompt with another model's endpoint.
+        //
+        // This was previously referenced but never declared — a ReferenceError
+        // that only fired on the one path that reaches it: redoing slot 0 of a
+        // research-designed set, where the prompt is rebuilt from the manifest's
+        // concept. Every other slot and every legacy set took a branch that did
+        // not touch it, which is why it survived to production.
+        const redoModel = getSelectedImageModel();
+
         const jobKey = `${folderId}_${slotIndex}`;
         window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
         window.CHARM_ABORT_CONTROLLERS = window.CHARM_ABORT_CONTROLLERS || new Map();
@@ -9399,7 +9451,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 output_base_path: folderPath,
                 slotIndex: slotIndex,
                 prompt: promptStr
-            }, signal);
+            }, signal, redoModel);
 
             // PASS SIGNAL TO POLLER
             const waitedRes = await waitForSlotPngUrl(folderPath, slotIndex, {
@@ -9412,7 +9464,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 signal: signal
             });
 
-            const newBlob = await fetchAndCacheBlob(waitedRes.url, waitedRes.storagePath, Date.now());
+            const newBlob = await fetchCacheAndEnforce(waitedRes, folderId, slotIndex);
             
             prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
             if (prevBox) {
@@ -9535,7 +9587,7 @@ window.regenCharmQuad = async function(folderId) {
                 afterUpdatedMs: beforeMeta[0].updatedMs, afterGeneration: beforeMeta[0].generation,
                 signal: sig0
             });
-            const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
+            const newBlob0 = await fetchCacheAndEnforce(charmRes, folderId, 0);
             
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_0`);
             prev0 = document.getElementById(`prevBox_${folderId}_0`);
@@ -9586,7 +9638,7 @@ window.regenCharmQuad = async function(folderId) {
                 afterUpdatedMs: beforeMeta[1].updatedMs, afterGeneration: beforeMeta[1].generation,
                 signal: sig1
             });
-            const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
+            const newBlob1 = await fetchCacheAndEnforce(earringRes, folderId, 1);
             
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_1`);
             prev1 = document.getElementById(`prevBox_${folderId}_1`);
@@ -9617,7 +9669,7 @@ window.regenCharmQuad = async function(folderId) {
                 afterUpdatedMs: beforeMeta[2].updatedMs, afterGeneration: beforeMeta[2].generation,
                 signal: sig2
             });
-            const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
+            const newBlob2 = await fetchCacheAndEnforce(charmBWRes, folderId, 2);
             
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_2`);
             prev2 = document.getElementById(`prevBox_${folderId}_2`);
@@ -9647,7 +9699,7 @@ window.regenCharmQuad = async function(folderId) {
                 afterUpdatedMs: beforeMeta[3].updatedMs, afterGeneration: beforeMeta[3].generation,
                 signal: sig3 
             });
-            const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
+            const newBlob3 = await fetchCacheAndEnforce(earringBWRes, folderId, 3);
             
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_3`);
             prev3 = document.getElementById(`prevBox_${folderId}_3`);
@@ -9749,7 +9801,7 @@ window.regenCharmQuad = async function(folderId) {
                 prompt: promptStrEarring
             }, undefined, derivativeModel);
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
+            const newBlob1 = await fetchCacheAndEnforce(earringRes, folderId, 1);
 
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_1`);
             prev1 = document.getElementById(`prevBox_${folderId}_1`);
@@ -9774,7 +9826,7 @@ window.regenCharmQuad = async function(folderId) {
                 prompt: promptStrBW
             }, undefined, derivativeModel);
             const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
+            const newBlob2 = await fetchCacheAndEnforce(charmBWRes, folderId, 2);
 
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_2`);
             prev2 = document.getElementById(`prevBox_${folderId}_2`);
@@ -9798,7 +9850,7 @@ window.regenCharmQuad = async function(folderId) {
                 prompt: promptStrBWEarring
             }, undefined, derivativeModel);
             const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
+            const newBlob3 = await fetchCacheAndEnforce(earringBWRes, folderId, 3);
 
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_3`);
             prev3 = document.getElementById(`prevBox_${folderId}_3`);
@@ -10191,7 +10243,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
                     }
                 },
             });
-            const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
+            const newBlob0 = await fetchCacheAndEnforce(charmRes, folderId, 0);
             
             window.ACTIVE_CHARM_JOBS.delete(`${folderId}_0`);
             prev0 = document.getElementById(`prevBox_${folderId}_0`);
@@ -19560,44 +19612,47 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
           'sitting next to the original.',
       },
       {
-        id: 'sibling', distance: 2, label: 'Family member',
-        blurb: 'A different member of its immediate family',
+        id: 'sibling', distance: 2, label: 'The world\'s other staple',
+        blurb: 'Another thing people from this world already wear',
         directive:
-          'Change the subject to a DIFFERENT member of the reference\'s immediate family or product class — ' +
-          'the next thing along the same shelf. For a camera: a cine camera, a projector, an instant camera, ' +
-          'a viewfinder. For a seal: a sea lion, a walrus, an otter. Close enough that the reference\'s ' +
-          'buyer recognises the family instantly, different enough to be a separate purchase.',
+          'Change the subject to a DIFFERENT staple of this world that people already wear — the next thing ' +
+          'along the same shelf in a shop that serves these buyers. For a cowboy hat: a cowboy boot. For a ' +
+          'camera: a cine camera or a vintage viewfinder. For a seal: a sea lion or an otter. Close enough ' +
+          'that the reference\'s buyer recognises the family instantly, different enough to be a separate ' +
+          'purchase — and it must be something worn, not equipment.',
       },
       {
-        id: 'companion', distance: 3, label: 'What it is used with',
-        blurb: 'Its tools, parts and consumables',
+        id: 'companion', distance: 3, label: 'Worn alongside it',
+        blurb: 'The world\'s small wearable pieces, made to stack',
         directive:
-          'Design the thing that goes WITH the reference in actual use — its tool, part, consumable or ' +
-          'constant companion — intended to be worn on the same chain as a deliberate second purchase. ' +
-          'For a camera: a 35mm film canister, a lens, a tripod, a flashbulb, a shutter release cable. For ' +
-          'a seal: a fish, a kelp frond, a beach ball. Smaller and simpler is often right. State what it ' +
-          'adds when worn together with the reference.',
+          'Design a SECOND SMALL PIECE from this world, meant to hang on the same chain as the reference — ' +
+          'a deliberate second purchase for someone who already owns it. It must be something people wear, ' +
+          'not something they use: for western life a bandana knot or a rope circle, not a saddle or a ' +
+          'branding iron. Smaller and simpler than the reference is usually right. State what it adds when ' +
+          'the two are worn together.',
       },
       {
-        id: 'adjacent', distance: 4, label: 'Where it happens',
-        blurb: 'Its setting, process or by-product',
+        id: 'icon', distance: 4, label: 'The world\'s own big seller',
+        blurb: 'A proven jewellery category inside the same world',
         directive:
-          'Change the subject to the PLACE the reference lives or works, the process it is part of, or what ' +
-          'that process leaves behind. For a camera: a darkroom timer, a strip of negatives, a contact ' +
-          'sheet, a photo album, a developing tray. For a seal: an iceberg, a breaking wave, a harbour ' +
-          'buoy. Still unmistakably the same world — a photography buyer must see it and think "that is my ' +
-          'world" — but no longer the device itself.',
+          'Design the strongest INDEPENDENT jewellery category this world contains — a subject that already ' +
+          'sells in volume on its own, to a wider audience than the reference itself reaches. For western ' +
+          'life: the horseshoe (which also means luck), the longhorn skull (which also means Texas), the ' +
+          'horse (an enormous market in its own right). For film photography: the aperture iris. Pick from ' +
+          'the WORN ICONS list you were given and choose one with a real second meaning, because an object ' +
+          'that means something outside the niche reaches two audiences instead of one. This is the most ' +
+          'commercially valuable rung on the ladder, not the riskiest.',
       },
       {
         id: 'emblem', distance: 5, label: 'The world\'s emblem',
         blurb: 'The abstract shape that stands for the whole world',
         directive:
           'Design the single most iconic ABSTRACT shape that stands for the reference\'s entire world — the ' +
-          'graphic an enthusiast would recognise with no context at all. For photography: an aperture iris ' +
-          'of overlapping blades, a shutter rosette, a film-perforation strip. For marine life: a wave ' +
-          'curl, a flipper silhouette, a bubble trail. This is the furthest rung, and it is still inside ' +
-          'the world: it is that world reduced to a symbol, NOT a generic jewellery motif borrowed from ' +
-          'outside it. If the shape you reach for would suit any shop, it is wrong.',
+          'graphic an enthusiast would recognise with no context at all. For western life: a five-point ' +
+          'western star, a concho disc, an arrowhead. For photography: an aperture iris of overlapping ' +
+          'blades, a film-perforation strip. It must still be OF this world: a shape that would suit any ' +
+          'shop is wrong. A conventional motif is allowed here ONLY if it was listed as one this world ' +
+          'genuinely owns.',
       },
     ];
     // An eighth pseudo-rung. It is not on the distance ladder because it is not
@@ -19704,6 +19759,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, designBrief) 
           // that actually rejected five.
           offWorldDiscarded: (vIdeasAt > curIdeasAt ? v.offWorldDiscarded : cur.offWorldDiscarded)
             ?? v.offWorldDiscarded ?? cur.offWorldDiscarded,
+          unwearableDiscarded: (vIdeasAt > curIdeasAt ? v.unwearableDiscarded : cur.unwearableDiscarded)
+            ?? v.unwearableDiscarded ?? cur.unwearableDiscarded,
           used,
         };
       }
@@ -20074,8 +20131,9 @@ Return JSON with EXACTLY this shape:
   "identification": {
     "primarySubject": "what the object is, in the words a shopper would use",
     "taxonomy": ["broad genre", "family", "specific type"],
-    "world": "the SUBJECT WORLD this belongs to, named as an enthusiast would name it — \"film photography\", \"marine wildlife\", \"baseball\", \"vintage sewing\". Two to four words. This is the boundary every derivative must stay inside, so name the world the BUYER is in, not an abstract category.",
-    "worldObjects": ["8 to 14 other concrete things that unmistakably belong to this same world and could each be a charm on their own. Objects, creatures, tools, places, by-products, emblems. Be specific and physical — \"35mm film canister\", not \"photography equipment\". Do NOT include generic jewellery motifs such as hearts, stars or feathers."],
+    "world": "the SUBJECT WORLD this belongs to, named as an enthusiast would name it — \"film photography\", \"marine wildlife\", \"western and ranch life\", \"vintage sewing\". Two to four words. This is the boundary every derivative must stay inside, so name the world the BUYER is in, not an abstract category.",
+    "worldObjects": ["8 to 14 other concrete things that unmistakably belong to this same world. Objects, creatures, emblems. Be specific and physical — \"35mm film canister\", not \"photography equipment\". This is the boundary list, NOT a shopping list: include things even if they would make poor jewellery."],
+    "nativeMotifs": ["Conventional jewellery motifs — the kind of shape that appears in every jewellery shop — that THIS world genuinely owns rather than borrows. Southwest/western owns the feather and the star. Weddings own the heart. Nautical owns the anchor. Nature owns the leaf. Leave EMPTY if this world owns none, which is the common case. Only list a motif a specialist in this world would name unprompted as part of it."],
     "pose": "how it is presented",
     "viewAngle": "front-facing / profile / three-quarter",
     "silhouetteClass": "one of: compact-solid, open-linear, radial, elongated-vertical, wide-horizontal, irregular-organic",
@@ -20088,6 +20146,16 @@ Return JSON with EXACTLY this shape:
     "finish": "polish / texture"
   },
   "houseStyle": "One paragraph another designer could work from, describing ONLY material, finish, lighting, edge quality, engraving depth, detail density and background — no mention of this charm's subject.",
+
+  "wornIcons": [
+    {
+      "subject": "a specific object from this world that ALREADY SELLS as jewellery — a shape people wear today, not merely a thing that exists in the world. 8 to 12 of these, strongest first.",
+      "secondMeaning": "the meaning it carries OUTSIDE this world, which is what lets it reach buyers who are not in the niche. A horseshoe means luck. A star means achievement. If it carries none, say \"none\" — and expect it to sell less.",
+      "shapeArgument": "why the shape works as one small flat piece of metal: is it compact, symmetrical, does it have natural negative space, does it survive being shrunk to a 20-pixel thumbnail.",
+      "provenDemand": "the evidence this already sells: an established jewellery category, a known search term, or a motif seen across the market. Be honest — say \"unproven\" rather than inventing."
+    }
+  ],
+
   "buyer": {
     "personas": [ { "name": "short label", "whoTheyAre": "", "buyingFor": "self or a specific recipient", "occasions": ["..."] } ],
     "sentimentDrivers": ["the feelings this piece is bought to express"],
@@ -20114,6 +20182,15 @@ Rules:
   from this charm MUST come from that world, so a world named too broadly ("gifts", "animals", "memories")
   makes the derivatives generic, and a world named too narrowly ("Rolleiflex twin-lens cameras") leaves
   nothing to design. Name it the way a shopper would describe their own interest.
+- "wornIcons" is the most commercially important field in this reply, and it is NOT the same as worldObjects.
+  A charm is an identity badge: the buyer is claiming something about themselves or giving that claim to
+  someone else. So the question is not "what else exists in this world" — that yields props. It is "what does
+  a person from this world WEAR". For western and ranch life the answer includes the horseshoe, the boot, the
+  longhorn skull, the western star, the saguaro, the horse and the bandana knot; it does NOT include the
+  corral gate, the saddle, the water trough or the branding iron, which are equipment nobody's identity rests
+  on. Rank by commercial strength, strongest first, and prefer subjects with a real secondMeaning: an object
+  that carries a meaning outside the niche reaches two audiences instead of one, which is why the horseshoe
+  outsells every other western charm.
 - "meaning" explains WHY the world's objects sell, so a derivative can carry the same feeling. It is not a
   licence to leave the world: the symbolic layer tells you which of the world's own objects to reach for, not
   to substitute a heart or a star for them.
@@ -20303,14 +20380,57 @@ Rules, and they are absolute:
       return list.map(x => String(x || '').trim()).filter(Boolean).slice(0, 14);
     }
 
+    // Conventional jewellery motifs this world genuinely OWNS rather than
+    // borrows. The southwest owns the feather and the star; weddings own the
+    // heart; nautical owns the anchor. Blanket-banning those would be wrong in
+    // exactly the worlds where they are most authentic — the same logic that
+    // already lets a starfish through for a marine world.
+    function _cmNativeMotifs(analysis) {
+      const id = analysis?.identification || {};
+      const list = Array.isArray(id.nativeMotifs) ? id.nativeMotifs : [];
+      return list.map(x => String(x || '').trim().toLowerCase()).filter(Boolean).slice(0, 8);
+    }
+
+    // The world's established jewellery subjects, with the two things that
+    // decide whether a subject sells: what it also means outside the niche, and
+    // whether the shape survives being a small flat charm.
+    function _cmWornIcons(analysis) {
+      const list = Array.isArray(analysis?.wornIcons) ? analysis.wornIcons : [];
+      return list.map(x => ({
+        subject: String(x?.subject || '').trim(),
+        secondMeaning: String(x?.secondMeaning || '').trim(),
+        shapeArgument: String(x?.shapeArgument || '').trim(),
+        provenDemand: String(x?.provenDemand || '').trim(),
+      })).filter(x => x.subject).slice(0, 12);
+    }
+
+    function _cmWornIconLines(analysis) {
+      const icons = _cmWornIcons(analysis);
+      if (!icons.length) {
+        return '• (not recorded for this charm — re-study it to get the list. Until then you must justify '
+             + 'desirability from first principles for every concept.)';
+      }
+      return icons.map(i =>
+        `• ${i.subject}`
+        + (i.secondMeaning && !/^none$/i.test(i.secondMeaning) ? ` — also means ${i.secondMeaning}` : ' — no second meaning')
+        + (i.shapeArgument ? `; shape: ${i.shapeArgument}` : '')
+        + (i.provenDemand ? `; demand: ${i.provenDemand}` : '')
+      ).join('\n');
+    }
+
     // Generic jewellery motifs. These are what the old ladder produced when it
     // was allowed to swap the subject for the sentiment: a camera charm came
     // back as a heart. They are only wrong as SUBSTITUTES — if the reference
     // itself is a heart, or the world genuinely contains one, the check below
     // lets it through.
+    // SINGULAR FORMS ONLY. The match regex already accepts a trailing s/es, and
+    // the same regex is used to test whether the reference's world contains the
+    // motif — so listing "hearts" as well as "heart" created a form whose
+    // world-check could not match the singular "heart" the analysis had written,
+    // and a heart was rejected for a wedding world that explicitly owns it.
     const CM_OFFWORLD_MOTIFS = [
-      'heart', 'hearts', 'star', 'stars', 'moon', 'crescent', 'sun', 'infinity', 'feather',
-      'angel wing', 'angel wings', 'tree of life', 'cross', 'paw print', 'pawprint', 'butterfly',
+      'heart', 'star', 'moon', 'crescent', 'sun', 'infinity', 'feather',
+      'angel wing', 'tree of life', 'cross', 'paw print', 'pawprint', 'butterfly',
       'dragonfly', 'clover', 'horseshoe', 'evil eye', 'lotus', 'rose', 'flower', 'daisy',
       'arrow', 'anchor', 'key', 'lock', 'teardrop', 'halo', 'dove',
     ];
@@ -20324,12 +20444,19 @@ Rules, and they are absolute:
       const subject = `${concept?.title || ''} ${concept?.subject || ''}`.toLowerCase();
       if (!subject.trim()) return null;
 
-      // Everything the reference's own world legitimately includes.
+      // Everything the reference's own world legitimately includes — including
+      // the conventional motifs it OWNS. A feather is a generic sentiment motif
+      // for a camera and a native one for the southwest; a heart is generic for
+      // a seal and native for weddings. The rule is that a motif stops being
+      // generic when the world genuinely owns it, which is the same rule that
+      // already lets a starfish through for a marine world.
       const inWorld = [
         String(analysis?.identification?.primarySubject || ''),
         _cmWorldOf(analysis),
         ...(analysis?.identification?.taxonomy || []),
         ..._cmWorldObjects(analysis),
+        ..._cmNativeMotifs(analysis),
+        ..._cmWornIcons(analysis).map(i => i.subject),
       ].join(' ').toLowerCase();
 
       for (const motif of CM_OFFWORLD_MOTIFS) {
@@ -20339,6 +20466,78 @@ Rules, and they are absolute:
         if (!re.test(subject)) continue;
         if (re.test(inWorld)) continue;   // the world really does contain it
         return motif;
+      }
+      return null;
+    }
+
+    // ── Is anyone going to wear it? ────────────────────────────────────────
+    // The world lock fixed relevance and exposed the next problem: a corral
+    // gate, a saddle and a spur are all unimpeachably western and none of them
+    // is jewellery. A charm is an identity badge — the buyer is claiming
+    // something about themselves — so a subject nobody's identity rests on
+    // cannot sell however authentic it is.
+    //
+    // Three tests, applied in the order that kills the most for the least
+    // effort. Each returns a plain reason so a rejection is explainable rather
+    // than mysterious.
+
+    // Object classes that are never jewellery. Not a matter of taste: no one's
+    // identity is "gate". Kept narrow and physical — this is a backstop for the
+    // obvious, not a substitute for the identity test below.
+    const CM_UNWEARABLE_CLASSES = [
+      { re: /\b(gate|gates|fence|fencing|fenceposts?|corral|paddock|stall|pen|enclosure|cage|coop)\b/i, why: 'fencing or an enclosure' },
+      { re: /\b(barn|shed|stable|building|house|cabin|silo|windmill|warehouse|store ?front|outhouse)\b/i, why: 'a building' },
+      { re: /\b(trough|bucket|pail|barrel|crate|bin|tank|jug|canteen|feed ?bag|sack)\b/i, why: 'a container' },
+      { re: /\b(saddle|harness|bridle|yoke|halter|stirrup|cinch|girth|packsaddle)\b/i, why: 'tack or harness equipment' },
+      { re: /\b(tractor|truck|wagon(?! wheel)|trailer|cart|buggy|pickup|vehicle|car|van)\b/i, why: 'a vehicle' },
+      { re: /\b(chair|stool|bench|table|desk|bed|cabinet|shelf|ladder)\b/i, why: 'furniture' },
+      { re: /\b(pipe ?work|plumbing|faucet|tap|hose|valve|pump|drain|gutter)\b/i, why: 'plumbing' },
+      { re: /\b(branding iron|pitchfork|shovel|rake|hoe|axle|gear ?box|engine|motor|generator)\b/i, why: 'a tool or machine part' },
+    ];
+
+    // Readings that make a silhouette unusable no matter how authentic it is.
+    // A grid of vertical bars is a cage; that is worse than dull.
+    const CM_BAD_MISREADS = /\b(cage|jail|prison|bars|trap|snare|coffin|casket|tombstone|grave|weapon|gun|knife|blade|noose|shackle|handcuff|machine part|cog|random shape|blob|smudge|unidentifiable|unrecognis|illegible)\w*/i;
+
+    // Forms that do not survive being cut from thin flat sheet at charm scale.
+    const CM_FRAGILE_FORM = /\b(spindly|wispy|hair-?thin|thread-?like|tangled|tangle|cluttered|busy|fragile|filigree|lace-?like|very thin|too thin|barely visible|indistinct)\b/i;
+
+    function cmConceptIsUndesirable(concept, analysis) {
+      const title = String(concept?.title || '');
+      const subject = String(concept?.subject || '');
+      const both = `${title} ${subject}`;
+      const claim = String(concept?.identityClaim || '').trim();
+      const misread = String(concept?.couldBeMistakenFor || '').trim();
+      const reads = String(concept?.thumbnailReads || '').trim();
+
+      // A subject the world's own worn-icon list names is pre-approved: the
+      // analysis has already judged it wearable and given the evidence, and
+      // that judgement is better informed than these regexes.
+      const icons = _cmWornIcons(analysis).map(i => i.subject.toLowerCase());
+      const isNamedIcon = icons.some(ic => ic && (both.toLowerCase().includes(ic) || ic.includes(subject.toLowerCase().slice(0, 24))));
+
+      // TEST 1 — object class. Skipped for a named worn icon (a "wagon wheel"
+      // is a real western charm even though "wagon" is a vehicle).
+      if (!isNamedIcon) {
+        for (const c of CM_UNWEARABLE_CLASSES) {
+          if (c.re.test(both)) return `it is ${c.why} — nobody's identity rests on it, so it does not sell as a charm`;
+        }
+      }
+
+      // TEST 2 — is there a claim? An absent or limp claim is the clearest
+      // signal that a subject is a prop rather than a badge.
+      if (!claim) return 'no identity claim — nothing a wearer would be saying by wearing it';
+      if (/^\s*(someone who (likes|enjoys|loves)|a fan of|people who like)/i.test(claim) && claim.length < 60) {
+        return `the identity claim is too weak to pay for ("${claim}")`;
+      }
+
+      // TEST 3 — how it reads. A bad misread is disqualifying; so is a form
+      // that cannot survive the material.
+      if (misread && !/^\s*(nothing|none|n\/?a)\b/i.test(misread) && CM_BAD_MISREADS.test(misread)) {
+        return `it misreads at thumbnail size as ${misread.replace(/\s+/g, ' ').slice(0, 60)}`;
+      }
+      if (CM_FRAGILE_FORM.test(`${reads} ${concept?.silhouette || ''}`)) {
+        return 'the form is too thin or tangled to survive being cut from flat sheet at charm scale';
       }
       return null;
     }
@@ -20357,8 +20556,14 @@ Engraving language: ${id.engravingLanguage || '—'}
 Negative space: ${id.negativeSpace || '—'}
 
 THE WORLD YOU MUST STAY INSIDE: ${_cmWorldOf(analysis)}
-Things already known to belong to it: ${(_cmWorldObjects(analysis).join(', ')) || '—'}
+Things known to belong to it: ${(_cmWorldObjects(analysis).join(', ')) || '—'}
 You may use others from this same world; you may not leave it.
+${_cmNativeMotifs(analysis).length ? `Conventional motifs THIS world genuinely owns, and may therefore use: ${_cmNativeMotifs(analysis).join(', ')}\n` : ''}
+WHAT PEOPLE FROM THIS WORLD ACTUALLY WEAR — draw from here first
+${_cmWornIconLines(analysis)}
+
+WHAT THIS SUBJECT'S MEANING CAN MISFIRE AS — avoid designing into these
+${(analysis?.meaning?.misfireRisks || []).map(x => `• ${x}`).join('\n') || '• —'}
 
 WHAT IT MEANS
 Literal: ${meaning.literal || '—'}
@@ -20398,6 +20603,11 @@ Return exactly ${conceptsPer} concepts as JSON:
       "title": "3 to 6 words a shopper would understand",
       "subject": "exactly what the object is. Name it plainly. 1 to 2 sentences.",
       "sameWorldBecause": "one sentence naming the world from the boundary above and stating what makes THIS object part of it. If you cannot write this sentence without reaching for a feeling instead of the world, the concept is wrong — drop it.",
+      "identityClaim": "what the WEARER claims by wearing this, phrased \"I am someone who…\". This is the whole reason a charm sells. \"Someone who likes ranches\" is too weak and the concept must be dropped; \"I make my own luck\" or \"I grew up on horses\" is a claim a person pays to make.",
+      "secondMeaning": "the meaning this carries OUTSIDE the reference's world, which is what lets it reach buyers who are not in the niche — a horseshoe also means luck, a star also means achievement. Write \"none\" if it has none; that is allowed but it makes the concept weaker.",
+      "provenAsJewellery": "the evidence this subject ALREADY sells as jewellery: an established category, a known search term, or a motif seen across the market. If you have to write \"unproven\", the concept had better be exceptional in every other way.",
+      "thumbnailReads": "what a shopper sees at 20 pixels wide. One short phrase.",
+      "couldBeMistakenFor": "the honest misread — what else this silhouette could be taken for at a glance. Write \"nothing\" only if you are certain. A grid of vertical bars reads as a CAGE and is therefore unusable however authentic it is.",
       "recognisableAs": "the 3 to 5 concrete visual features that make this object unmistakably itself at 20 pixels, listed plainly. For a 35mm film canister: a cylindrical body with a ribbed edge, a flat spool flange on top, a short rectangular film leader protruding from one side. These are what the renderer will be held to, so name only features that survive being cut from flat sheet metal — no colour, no transparency, no text.",
       "silhouette": "the outline, described so an illustrator could draw it without seeing anything: overall shape, proportions, what protrudes, where it is widest, how it reads at thumbnail size. 2 to 3 sentences. This must NOT describe the reference's outline.",
       "engravingPlan": "which surface marks go where, respecting the engraving language and detail density above",
@@ -20412,6 +20622,19 @@ Return exactly ${conceptsPer} concepts as JSON:
 
 Hard rules:
 - The world boundary above outranks every other instruction here, including this rung's own directive.
+- IT MUST BE SOMETHING A PERSON WOULD WEAR. Being authentically part of the world is not enough. Equipment,
+  infrastructure, fencing, gates, buildings, vehicles, furniture, containers and plumbing are all genuinely
+  part of some world and none of them are jewellery, because nobody's identity rests on them. A corral gate
+  is unimpeachably western and completely unsellable — it also reads as a cage at thumbnail size, which is
+  worse than merely dull. Apply all three tests to every concept and drop any that fails one:
+    1. Can you write a real identityClaim for it? Not "likes X" — an actual claim someone pays to make.
+    2. Does this subject already sell as jewellery somewhere? If the category does not exist, you are
+       inventing demand rather than borrowing it.
+    3. At 20 pixels, is it legible, and is couldBeMistakenFor harmless? Thin, spindly, tangled or fragile
+       forms fail, as does anything that misreads as a cage, trap, weapon, coffin or machine part.
+- Prefer subjects with a real secondMeaning. An object that means something outside the niche reaches two
+  audiences instead of one, and that difference is larger than any other factor here.
+- Returning ONE concept that passes all three tests is a success. Returning three that do not is a failure.
 - "recognisableAs" is not decoration. A concept called "Tiny Film Roll" whose features are not named comes
   back from the renderer as a plain round medallion, because a circle is all it can infer. Name the features
   that make the object that object and nothing else.
@@ -20455,6 +20678,7 @@ Hard rules:
       // describe the concepts currently in the bank, or re-studying a charm
       // would inflate the number forever.
       let offWorld = 0;
+      let unwearable = 0;
       const results = await _asyncPool(CM_RUNG_CONCURRENCY, todo, async (st) => {
         let lastErr = null;
         for (let attempt = 0; attempt < LADDER.length; attempt++) {
@@ -20479,6 +20703,17 @@ Hard rules:
                   `for ${rec.name}: "${motif}" is a generic motif, not part of "${_cmWorldOf(entry.analysis)}".`
                 );
                 offWorld++;
+                continue;
+              }
+              // In the world, but would anyone wear it? This is where the
+              // corral gate, the saddle and the branding iron stop.
+              const undesirable = cmConceptIsUndesirable(c, entry.analysis);
+              if (undesirable) {
+                console.warn(
+                  `[charm-research] discarded unwearable concept "${c.title || c.subject}" on rung "${st.id}" ` +
+                  `for ${rec.name}: ${undesirable}.`
+                );
+                unwearable++;
                 continue;
               }
               concepts.push(c);
@@ -20531,6 +20766,7 @@ Hard rules:
       entry.used = entry.used || {};
       entry.rungsFailed = CM_STRATEGIES.length - merged.length || undefined;
       entry.offWorldDiscarded = offWorld || undefined;
+      entry.unwearableDiscarded = unwearable || undefined;
       _cmResearch.analyses[rec.path] = entry;
       _cmResearchDirty = true;
       await _cmResearchSave();
@@ -20905,7 +21141,9 @@ Hard rules:
     • FLAT SHEET METAL: the piece is one perfectly flat, thin sheet of high-polish metal. No 3D volume, no thickness, no bevels, no rounded edges, no side profile.
     • SHARP 2D CUTOUTS: laser-cut precision. Every edge is clean and deliberate.
     • VIEWPOINT: perfectly front-facing, orthographic, 0% perspective tilt.
-    • BACKGROUND (ABSOLUTE): 100% PURE SOLID BLACK (#000000). No white, no grey, no gradient, no transparency. If the background is not pure black the image is a failure.
+    • BACKGROUND (ABSOLUTE): 100% PURE SOLID BLACK (#000000) edge to edge. No white, no off-white, no grey, no cream, no gradient, no vignette, no transparency, no paper texture, no studio sweep, no surface for the charm to rest on. The charm floats on void black.
+    • NO SHADOW ANYWHERE: no cast shadow, no contact shadow, no drop shadow, no ambient occlusion, no reflection on the ground. The charm does not sit on anything, so it cannot cast anything.
+    • NO SHADOW ON THE CHARM EITHER: the metal is lit evenly across its whole face. Specular highlights are correct and wanted; a large dark band, dark half, dark corner or dark gradient across the piece is not — it makes the charm read as dirty or damaged. Every part of the face must be clearly visible as bright polished metal.
     • ONE INTEGRATED BAIL: exactly one closed hanging loop, fused into the body as a single continuous piece of the same metal — never a separate jump ring clipped on, never two rings, never a chain or clasp. It must have a clear open hole big enough to read as threadable at a glance.
     • BAIL BALANCE: place it so the piece hangs level — directly above the centre of mass, not above a protruding nose or tail.
     • NO TEXT: never render letters, numbers or words.
@@ -21048,7 +21286,14 @@ HARD FAIL: an output a shopper would identify as ${textOnly ? (id.primarySubject
 HARD FAIL: an output whose silhouette is ${textOnly ? "the reference subject's silhouette" : "the reference's silhouette"} with minor edits.
 HARD FAIL: a background that is not pure black.
 HARD FAIL: more than one hanging loop, or a loop that reads as a separate attached ring.
-HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock ? '\n' + CM_PROVIDER_ROLE_LOCK : ''}`;
+HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock ? '\n' + CM_PROVIDER_ROLE_LOCK : ''}
+
+═══ THE LAST TWO THINGS, AND THE MOST OFTEN GOT WRONG ═══
+Both of these are checked automatically after you reply, so they are not stylistic preferences.
+1. BACKGROUND: every pixel that is not the charm is #000000. Not near-black. Not dark grey. Not white.
+   Not a soft studio backdrop. Pure black, to all four edges.
+2. NO SHADOWS: nothing is cast onto the background, and no part of the charm's face is darkened into
+   shadow. Bright polished metal across the entire piece.`;
     }
 
     // ---------------------------------------------------------------------
@@ -21654,6 +21899,241 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
     const CM_SIG_EDGE = 64;
     const CM_SIG_LUMA = 42;
 
+    // =====================================================================
+    // IMAGE NORMALISATION — the background is not negotiable
+    // ---------------------------------------------------------------------
+    // Some generations came back on a WHITE background, and some with a heavy
+    // dark shadow laid across the charm. The prompt has always said "pure
+    // #000000, no cast shadow" — image models simply disregard it a fraction of
+    // the time, and no amount of rewording changes that. A prompt is a request;
+    // this is a guarantee.
+    //
+    // The discriminator is SATURATION, not brightness. These charms are warm
+    // polished gold: strongly saturated. A white background is unsaturated, and
+    // so is a grey cast shadow on it. So a flood fill inward from the border
+    // that accepts only low-saturation pixels removes the background AND any
+    // shadow lying on it, and stops dead at the gold.
+    //
+    // What it deliberately does NOT do is repaint the object. A dark gradient
+    // ON the charm is shading, not background, and cannot be separated from
+    // legitimate modelling without inventing pixels — so that case is measured
+    // and reported instead, and the operator redoes it.
+    const CM_BG_LUMA_OK = 26;      // border mean luma at or below this = already black
+    const CM_BG_SAT_MAX = 0.22;    // above this saturation a pixel is object, not ground
+    const CM_BG_MAX_EATEN = 0.93;  // if the fill would consume this much, something is wrong
+    const CM_SHADOW_LUMA = 30;     // object pixels darker than this read as shadowed
+    const CM_SHADOW_MAX_FRAC = 0.14;
+
+    async function _cmDecodeToCanvas(blob) {
+      let src = null, w = 0, h = 0, objUrl = null;
+      try {
+        const bmp = await createImageBitmap(blob);
+        src = bmp; w = bmp.width; h = bmp.height;
+      } catch (_) {
+        objUrl = URL.createObjectURL(blob);
+        try {
+          src = await new Promise((res, rej) => {
+            const el = new Image();
+            el.onload = () => res(el);
+            el.onerror = () => rej(new Error('decode failed'));
+            el.src = objUrl;
+          });
+          w = src.naturalWidth || src.width; h = src.naturalHeight || src.height;
+        } finally { /* url revoked by caller via the returned cleanup */ }
+      }
+      if (!w || !h) { if (objUrl) URL.revokeObjectURL(objUrl); throw new Error('zero-dimension image'); }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      // Black first: a PNG with transparency must land on black, not white,
+      // which is itself one route to a white background in the stored file.
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(src, 0, 0, w, h);
+      if (objUrl) URL.revokeObjectURL(objUrl);
+      try { src.close?.(); } catch (_) {}
+      return { canvas: c, ctx, w, h };
+    }
+
+    // Measure, then fix only what can be fixed honestly. Returns a report and,
+    // when a change was needed and safe, a new PNG blob.
+    async function cmNormaliseCharmImage(blob) {
+      const { canvas, ctx, w, h } = await _cmDecodeToCanvas(blob);
+      const img = ctx.getImageData(0, 0, w, h);
+      const d = img.data;
+      const N = w * h;
+
+      const lumaAt = (i) => (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+      const satAt = (i) => {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        return mx === 0 ? 0 : (mx - mn) / mx;
+      };
+
+      // ── 1. What is the background? Read a 2px border ring. ──────────────
+      let ringSum = 0, ringN = 0;
+      const ringPush = (x, y) => { const i = (y * w + x) * 4; ringSum += lumaAt(i); ringN++; };
+      for (let x = 0; x < w; x++) { ringPush(x, 0); ringPush(x, h - 1); if (h > 3) { ringPush(x, 1); ringPush(x, h - 2); } }
+      for (let y = 0; y < h; y++) { ringPush(0, y); ringPush(w - 1, y); if (w > 3) { ringPush(1, y); ringPush(w - 2, y); } }
+      const borderLuma = ringN ? ringSum / ringN : 0;
+
+      const report = {
+        width: w, height: h,
+        borderLuma: Math.round(borderLuma * 10) / 10,
+        backgroundWasBlack: borderLuma <= CM_BG_LUMA_OK,
+        backgroundFixed: false,
+        pixelsCleared: 0,
+        shadowFraction: 0,
+        heavilyShadowed: false,
+        aborted: null,
+        blob: null,
+      };
+
+      // ── 2. Replace a non-black background. ──────────────────────────────
+      if (!report.backgroundWasBlack) {
+        // Flood fill inward from every border pixel, accepting only
+        // low-saturation pixels — background and any grey shadow on it — so the
+        // fill cannot bleed into the saturated gold of the charm.
+        const bg = new Uint8Array(N);
+        const stack = [];
+        const consider = (x, y) => {
+          if (x < 0 || y < 0 || x >= w || y >= h) return;
+          const p = y * w + x;
+          if (bg[p]) return;
+          const i = p * 4;
+          if (satAt(i) > CM_BG_SAT_MAX) return;   // saturated → part of the charm
+          bg[p] = 1; stack.push(p);
+        };
+        for (let x = 0; x < w; x++) { consider(x, 0); consider(x, h - 1); }
+        for (let y = 0; y < h; y++) { consider(0, y); consider(w - 1, y); }
+        while (stack.length) {
+          const p = stack.pop();
+          const x = p % w, y = (p - x) / w;
+          consider(x + 1, y); consider(x - 1, y); consider(x, y + 1); consider(x, y - 1);
+        }
+
+        let eaten = 0;
+        for (let p = 0; p < N; p++) if (bg[p]) eaten++;
+
+        if (eaten / N > CM_BG_MAX_EATEN) {
+          // Almost the whole frame is unsaturated. Either the charm is not gold
+          // or the image is broken; repainting it would destroy the design, so
+          // report and change nothing.
+          report.aborted = `the background fill would have consumed ${Math.round(eaten / N * 100)}% of the image, so it was left untouched`;
+        } else {
+          for (let p = 0; p < N; p++) {
+            if (!bg[p]) continue;
+            const i = p * 4;
+            d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 255;
+          }
+          // Feather: a pixel NOT in the background but touching it is an
+          // anti-aliased boundary pixel carrying background colour. Scaling it
+          // toward black by how unsaturated it is removes the pale halo that a
+          // hard cut leaves behind.
+          for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+              const p = y * w + x;
+              if (bg[p]) continue;
+              if (!(bg[p - 1] || bg[p + 1] || bg[p - w] || bg[p + w])) continue;
+              const i = p * 4;
+              const s = satAt(i);
+              if (s >= CM_BG_SAT_MAX) continue;
+              const keep = s / CM_BG_SAT_MAX;      // 0 = fully background-like
+              d[i] = Math.round(d[i] * keep);
+              d[i + 1] = Math.round(d[i + 1] * keep);
+              d[i + 2] = Math.round(d[i + 2] * keep);
+            }
+          }
+          report.backgroundFixed = true;
+          report.pixelsCleared = eaten;
+        }
+      } else {
+        // Already black, but "nearly black" is not black: a faint vignette or
+        // JPEG-ish noise leaves values of 1–10 that print as grey. Clamp them.
+        let cleared = 0;
+        for (let p = 0; p < N; p++) {
+          const i = p * 4;
+          if (lumaAt(i) < 12 && satAt(i) < CM_BG_SAT_MAX) {
+            if (d[i] || d[i + 1] || d[i + 2]) cleared++;
+            d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 255;
+          }
+        }
+        report.pixelsCleared = cleared;
+        report.backgroundFixed = cleared > 0;
+      }
+
+      // ── 3. Measure shadowing ON the charm. ──────────────────────────────
+      // Anything saturated is charm. Of that, how much is so dark it reads as
+      // shadow rather than metal? This is reported, never "fixed" — the pixels
+      // under a shadow are not recoverable.
+      let objN = 0, darkN = 0;
+      for (let p = 0; p < N; p++) {
+        const i = p * 4;
+        if (satAt(i) <= CM_BG_SAT_MAX) continue;
+        objN++;
+        if (lumaAt(i) < CM_SHADOW_LUMA) darkN++;
+      }
+      report.shadowFraction = objN ? Math.round(darkN / objN * 1000) / 1000 : 0;
+      report.heavilyShadowed = objN > 0 && report.shadowFraction > CM_SHADOW_MAX_FRAC;
+
+      if (report.backgroundFixed) {
+        ctx.putImageData(img, 0, 0);
+        report.blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      }
+      return report;
+    }
+
+    // Normalise the slot that was just generated and, if anything changed, put
+    // the corrected image back in Storage. The stored file is what gets listed
+    // on Etsy, so fixing only the on-screen copy would be worse than useless.
+    async function cmEnforceCharmImage(storagePath, blob, { folderId = null, slotIndex = 0 } = {}) {
+      let report = null;
+      try {
+        report = await cmNormaliseCharmImage(blob);
+      } catch (e) {
+        console.warn(`[charm-image] could not inspect ${storagePath}:`, e?.message || e);
+        return { blob, report: null };
+      }
+
+      if (report.aborted) {
+        console.warn(`[charm-image] ${storagePath}: ${report.aborted}`);
+      }
+      if (report.heavilyShadowed) {
+        console.warn(`[charm-image] ${storagePath}: ${Math.round(report.shadowFraction * 100)}% of the charm is in shadow — redo recommended.`);
+      }
+
+      let out = blob;
+      if (report.blob && report.blob.size > 0) {
+        out = report.blob;
+        try {
+          await ensureStorageSignedIn();
+          await uploadBytesResumable(ref(storage, storagePath), out, { contentType: 'image/png' });
+          console.info(
+            `[charm-image] ${storagePath}: background was ${report.backgroundWasBlack ? 'nearly black' : `light (border luma ${report.borderLuma})`} — ` +
+            `cleared ${report.pixelsCleared} pixels to pure black and re-uploaded.`
+          );
+          // Keep the local cache consistent with what is now in Storage.
+          try { await setCachedBlob(storagePath, out, Date.now()); } catch (_) {}
+        } catch (e) {
+          console.warn(`[charm-image] could not re-upload the corrected ${storagePath}:`, e?.message || e);
+          // The corrected blob is still returned, so at least the operator sees
+          // the right thing even when the write fails.
+        }
+      }
+
+      if (folderId && typeof cmProvSet === 'function') {
+        cmProvSet(folderId, {
+          image: {
+            slotIndex,
+            backgroundFixed: report.backgroundFixed && !report.backgroundWasBlack,
+            heavilyShadowed: report.heavilyShadowed,
+            shadowPct: Math.round(report.shadowFraction * 100),
+          },
+        });
+      }
+      return { blob: out, report };
+    }
+
     async function _cmSilhouetteSignature(blob) {
       let bmp = null, src = null, w = 0, h = 0, objUrl = null;
       try {
@@ -21816,6 +22296,18 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
           `Masks are cropped to their bounding box and resampled, so this is independent of scale and position.">` +
           `${cls === 'distinct' ? '✓ ' : '⚠ '}${label}</span>`
         );
+      }
+
+      // Image corrections and warnings. A silently fixed background is still
+      // worth showing: it says the model is disregarding the brief, which is
+      // information about the model, not about this one charm.
+      if (p.image) {
+        if (p.image.backgroundFixed) {
+          bits.push(`<span class="prov-fix" title="This came back on a non-black background. It was corrected to pure black and the corrected file was written back to Firebase, so the stored asset is right.">background corrected</span>`);
+        }
+        if (p.image.heavilyShadowed) {
+          bits.push(`<span class="prov-iou close" title="${p.image.shadowPct}% of the charm's face is dark enough to read as shadow rather than polished metal. Shadow on the object cannot be corrected after the fact — redo this slot.">⚠ shadowed ${p.image.shadowPct}% · redo</span>`);
+        }
       }
 
       if (p.why) bits.push(`<span class="prov-why" title="${_esc(p.why)}">why ⓘ</span>`);
@@ -22320,6 +22812,11 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
           ? `<div class="rb-tags">${_cmWorldObjects(a).map(o => `<span class="rb-tag">${_esc(o)}</span>`).join('')}</div>`
           : `<div class="muted">No world objects recorded — re-study this charm to get them.</div>`) +
         (entry.offWorldDiscarded ? `<div class="muted" style="font-size:10px;">${entry.offWorldDiscarded} off-world concept${entry.offWorldDiscarded === 1 ? '' : 's'} discarded (generic motifs)</div>` : '') +
+        (entry.unwearableDiscarded ? `<div class="muted" style="font-size:10px;">${entry.unwearableDiscarded} unwearable concept${entry.unwearableDiscarded === 1 ? '' : 's'} discarded (equipment, buildings, bad thumbnail reads)</div>` : '') +
+        (_cmWornIcons(a).length
+          ? `<h5>What this world's buyers actually wear</h5>`
+            + `<div class="rb-tags">${_cmWornIcons(a).map(i => `<span class="rb-tag hold" title="${_esc((i.secondMeaning && !/^none$/i.test(i.secondMeaning) ? 'also means ' + i.secondMeaning + '. ' : '') + i.shapeArgument + (i.provenDemand ? ' · ' + i.provenDemand : ''))}">${_esc(i.subject)}</span>`).join('')}</div>`
+          : '') +
         (_retired ? `<div class="muted" style="font-size:10px;">${_retired} retired cross-world rung${_retired === 1 ? '' : 's'} ignored — re-study to replace them</div>` : '') +
 
         `<h5>Why it sells</h5>` +
@@ -22508,6 +23005,79 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       if (!recs.length) { _cmResearchSetStatus('warn', 'Select charms in the library first.', 0); return; }
       await _cmResearchLoad();
       await _cmRunResearch(recs);
+    });
+
+    // ── Repair the backgrounds of sets generated before enforcement ────────
+    // The corrected file is written back to Storage, because the stored file is
+    // what ends up on a listing. Read-only reporting would leave the actual
+    // problem in place.
+    document.getElementById('cmFixBackgroundsBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('cmFixBackgroundsBtn');
+      const info = document.getElementById('cmFixBackgroundsInfo');
+      const includeApproved = !!document.getElementById('cmFixIncludeApproved')?.checked;
+      const say = (txt, warn = false) => { if (info) { info.textContent = txt; info.className = warn ? 'window-info rm-warn' : 'window-info'; } };
+
+      const folders = [`${ROOT}/Charm_Maker/Generated_Charm_Sets`];
+      if (includeApproved) folders.push(`${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`);
+
+      if (!confirm(`Scan every charm image in:\n\n${folders.map(f => '  ' + f.split('/').slice(-1)[0]).join('\n')}\n\nAny image whose background is not pure black is corrected and REWRITTEN in Firebase. Images that are already correct are left alone and cost only a read.\n\nProceed?`)) return;
+
+      if (btn) btn.disabled = true;
+      setBusy(true);
+      let scanned = 0, fixed = 0, shadowed = 0, failed = 0, sets = 0;
+      try {
+        await ensureStorageSignedIn();
+        for (const base of folders) {
+          let listing;
+          try { listing = await listAll(ref(storage, base)); }
+          catch (e) { console.warn(`[charm-image] cannot list ${base}:`, e?.message || e); continue; }
+
+          for (const dir of listing.prefixes) {
+            sets++;
+            let slots;
+            try { slots = await listAll(dir); } catch (_) { continue; }
+            for (const item of slots.items) {
+              if (!/^Slot_\d+\.png$/i.test(item.name)) continue;
+              scanned++;
+              say(`Scanning… ${scanned} images in ${sets} sets · ${fixed} corrected · ${shadowed} shadowed`);
+              try {
+                const url = await getDownloadURL(item);
+                const res = await fetch(cacheBust(url), { mode: 'cors' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const blob = await res.blob();
+                const report = await cmNormaliseCharmImage(blob);
+                if (report.heavilyShadowed) {
+                  shadowed++;
+                  console.warn(`[charm-image] ${item.fullPath}: ${Math.round(report.shadowFraction * 100)}% shadowed — needs a redo, cannot be corrected.`);
+                }
+                if (report.blob && report.blob.size > 0 && !report.backgroundWasBlack) {
+                  await uploadBytesResumable(ref(storage, item.fullPath), report.blob, { contentType: 'image/png' });
+                  try { await setCachedBlob(item.fullPath, report.blob, Date.now()); } catch (_) {}
+                  fixed++;
+                  console.info(`[charm-image] corrected ${item.fullPath} (border luma was ${report.borderLuma}).`);
+                }
+              } catch (e) {
+                failed++;
+                console.warn(`[charm-image] skipped ${item.fullPath}:`, e?.message || e);
+              }
+            }
+          }
+        }
+        say(
+          `Done · ${scanned} images across ${sets} sets · ${fixed} background${fixed === 1 ? '' : 's'} corrected and rewritten`
+          + ` · ${shadowed} still shadowed on the charm itself (redo those slots)`
+          + (failed ? ` · ${failed} could not be read` : ''),
+          shadowed > 0 || failed > 0
+        );
+        setStatus(`Background repair complete: ${fixed} corrected, ${shadowed} need a redo.`);
+        // Repaint so corrected images replace the cached originals on screen.
+        try { renderCharmPage(); } catch (_) {}
+      } catch (e) {
+        say(`Repair failed: ${e?.message || e}`, true);
+      } finally {
+        setBusy(false);
+        if (btn) btn.disabled = false;
+      }
     });
 
     // Re-study only what predates the world lock, best sellers first, so an
@@ -22955,6 +23525,12 @@ HARD FAIL: any 3D thickness, perspective tilt, or side-profile view.${needsLock 
       worldOf: (analysis) => _cmWorldOf(analysis),
       worldObjects: (analysis) => _cmWorldObjects(analysis),
       leavesWorld: (concept, analysis) => cmConceptLeavesWorld(concept, analysis),
+      // Would anyone wear it? Returns the reason it was rejected, or null.
+      undesirable: (concept, analysis) => cmConceptIsUndesirable(concept, analysis),
+      wornIcons: (analysis) => _cmWornIcons(analysis),
+      nativeMotifs: (analysis) => _cmNativeMotifs(analysis),
+      // Background / shadow measurement and correction.
+      normaliseImage: (blob) => cmNormaliseCharmImage(blob),
       staleCount: () => _cmResearchStaleCount(),
       coverage: () => _cmResearchCoverage(),
       rungIds: () => CM_STRATEGIES.map(s => s.id),
