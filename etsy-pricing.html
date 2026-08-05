@@ -4,7 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Brites · Etsy Pricing Console</title>
-<link rel="icon" href="data:,">
+<!-- ══ Tab icon ═══════════════════════════════════════════════════════════
+     Part of the Brites station suite: one velvet tile, one solid gold mark,
+     drawn so the silhouette still reads at 16px where fine detail cannot.
+     A serif $: the pricing console.
+     Inlined as data URIs so the app stays a single self-contained file. SVG is
+     primary; the PNGs cover older Safari, bookmark managers and iPad. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23221f1b%22%2F%3E%3Ctext%20x%3D%2250%22%20y%3D%2253%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%20font-family%3D%22Hoefler%20Text%2C%20Iowan%20Old%20Style%2C%20Georgia%2C%20serif%22%20font-size%3D%2276%22%20font-weight%3D%22600%22%20fill%3D%22%23caa861%22%3E%24%3C%2Ftext%3E%3C%2Fsvg%3E">
+<link rel="alternate icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAGFBMVEXKqGGwk1ZiUzUjHxsiHxsiHxohHxoUExBDqrwiAAAAuklEQVR42m2SzQ7CIBCEh23PhhLv0sYHqE/naxoP3iz1AaTbq4msh/7IVudC9gvMTABzTsH2mETifCkj8zwjYceEDpkCKEIpEDb6BXNCWtZ1xxJVNACAeBuGl/16SGcqyU1lrMkrAItqG1v4HMhFFzOIkTVA6hQ4AbHPPfY1EJRp7SA6Vhd7MmBVU/5zQTx1L6fp/k79MQNkg3E+A86la6vT1hDa1EjE+hUaajR40HJ4VluaZpD1OxwIH63pPJJJPTvbAAAAAElFTkSuQmCC">
+<link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0BAMAAADP4xsBAAAAGFBMVEXKqGGqjVOCbUNJPystKB8jHxsiHxsiHxrF7ZWaAAADNklEQVR42u3ZvW7TUBQH8P91MiAG5CRiAITkfkqoS5qGhaklwMRWXoG+DK/AI5QnIKHZk5LMJUm9sRDHEkO7xJfBbuPE1/jaPldC6Hhx7Sa/WNfn3HuOLc5garPANNNMM80000wzzTTTTDPNNNPpWzXHZ6/6EB95rJn+r+I6GM0B9GzRIqaD3jUAyCkwrNXqLTp6OPNXB4vFbFbbcbK+UznSkQej2/UTN4tZw6a4jYNR8pwkiZAfI1PBt7wwFte9aF93ANHaIqSXbrjf+eAAaL9t0dGX4a7RiY7br6no5RgAIFZBuntCRE/D3V4sQ/aaNHQ00mu51yahg5C21mjLJqGVHyOhZ+Fu20DK+MqzNiG9YTXNXbUgpJv0dLAe3ZS0VI+LFl1Fkc06o0j0v93Nf52em6MDn5y+CwV5QU7f//uXSz4gd5OHvDRXBM+/URfB9v39m8jnxHRsAZ7TDohTPG+y6Lq5XmZjjpNffDK6srF0zc9dsuDb7CuCrktFJwrToDsmopOVUjAYE9HJTksOXJpEV5TqsuuT0FVH1aDSTE+HqslqTEI/VlV4Q5pJVXXZQZ+E3lO145PMr2n16FteMiLkb4fgqmF17NT+qewCVjm107qc0mujwpZENCqnTkqbU35Fr7xxUmrv0jSsd06+wc7zMM5RN8IUdM7KOCct4knv0V71y8Nko0M1IDGbmo7Z5DSObM1oLVBwnRi7ajT0ArsIbTmmBmT1MMCnp/Uq44yuYOijelxwHsigPVdFC6KxllqNDhUtUmZZuknV4ICI0rSf9mul6fR0FgayUeZ7KpFnCYzomgF6oRPWxWhXJ6x16CDlxywDdPQ6xUJ5uq/+re3ydKK3CJ+eCYquIDj3FeNRIWk4vG786DK1Cy6Sjd7nVQs6Cf+0mkTLbjDoRQkyiR7K7ZZdwFa5Pf1UewTg63XUJByT0YD0PEBGstBoNzMGJC12d5rZdEa3W3d+3ipO7+q8c8xqpB++wM0mXj94BQIa4umBfBBPmdqz908oShwAQBvB94WPBQCx3Wjq3ne9CLHaAHDVBzqUxYLBOoRppg1ted437u/zWDPNNNNMM80000wzvbb9AUS6ws8hF5iBAAAAAElFTkSuQmCC">
+<meta name="theme-color" content="#221f1b">
 <style>
 :root{
   --paper:#f3f0ea;--paper2:#ebe5d9;--card:#fffefb;--card2:#faf7f1;

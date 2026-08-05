@@ -16,6 +16,16 @@
        phones and (min-width: 600px) fires on fold-open / tablet. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>EtsyMail — Operator Inbox</title>
+<!-- ══ Tab icon ═══════════════════════════════════════════════════════════
+     Part of the Brites station suite: one velvet tile, one solid gold mark,
+     drawn so the silhouette still reads at 16px where fine detail cannot.
+     An envelope: the operator inbox.
+     Inlined as data URIs so the app stays a single self-contained file. SVG is
+     primary; the PNGs cover older Safari, bookmark managers and iPad. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23221f1b%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2226%22%20width%3D%2276%22%20height%3D%2252%22%20rx%3D%229%22%20fill%3D%22%23caa861%22%2F%3E%3Cpath%20d%3D%22M16%2033l34%2024%2034-24%22%20fill%3D%22none%22%20stroke%3D%22%23221f1b%22%20stroke-width%3D%228%22%20stroke-linejoin%3D%22round%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E">
+<link rel="alternate icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAGFBMVEXKqGGukVWJc0U+NiYiHxsiHxohHxoUExBsoGmNAAAAyklEQVR42nWQQZaCMBBEf3pYz8uD/UyECwhnmDvNLfUEQDyA2l6g4wIBg1q7+q87XRX3b6OPTJJUhiLdVB8e41uFgSeNyIVMo7DRC/gqc59eJgqwcb7rykABp+sCAgjsunm8KUFIUfaPA8EUgYHKA7iWAQTs6DqAxp/jFOwcpYUq2HFO2msVpE2HJXo60HT0unax6PwlPpfrNQ1L9GnpR/P6Fj/9xxvg/OqcR2C3ghrc33YlbPz2URPNQS11Dk6Cz8C+cPU1LbF/hTsn1T8FcPdQdQAAAABJRU5ErkJggg==">
+<link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0BAMAAADP4xsBAAAAGFBMVEXKqGGrj1RwXjtHPSojHxsiHxsiHxohHhr6l/pEAAADXUlEQVR42u2azW7TQBDHZ50euFRyHHp32nICqWnCCzRvABKv2TegvEDThBtSm2JxpS4rcYBLvBwi6tl4Zz8dCarxqbKsX3Zn/vOpig+wrycDRjOa0YxmNKMZzWhGM5rRjGY0oxn9zNEHnTfqaxSoyF1otV5GHnI03YEPXuvk6y+x9/8lixc2W6+reNs+3tjcuFmm+K1e0Wh1laaJtSTRzWA2jgcXs7OKVMi3ORzn0QqZAzxSp1ZDADgpI2NvCgBDSaDHOQCIWRx6lgOAKAj01sHZRQz55fayGwKda1+FmePCmp4y7W5Bz5MVRWlEbzSPBD2t71dGtGp1dB6ou/Z7abZ1+/okyCRiajiefuo2lsQ8BH3aHqQhTn2Pcm2ASUYTI0JD45/0D0rsdFVRgX6D5ZT76i4nUp+W+erP5sP46Q7gcEmXgltpNiH9YKeoS0uV0WrBqYdJNCndSVttxBVMvHejX+Vk/eq0OLju/nQqcHSG9HXj6J7UIkCBmu4W0tWYNf4K1HVXuXs+bLLMapJRaW0zDO0kdrStLOD0b2ozDGgclJayoBXRtfRrguulT1BiH9dL3/4au4QqC/h9R3c0Wi3ApUB8G7GQ/lNB84mwqdEH36uQgeOhsjcCWDn4HD6zDL7jUcck2TvCej5o7Bm1q0Axkx7dPjmB2RTo1J1juFuTZWHg1J0DrT4SZUFL/2bduUZSTYFz8888VHHTbl2ZjICN0ywjB2ljWbCnf+8Z3VAWHOnff/zvloWT0nvKdGwWtLIw2Wk7rpKWFjuNia3tCN6HbFZYgVh3m1XqquUOKxDrzjl0O9GEwOy681wQmcOidm83PHZPpmCm0n/oWqt7dy11paC7iXMte0J30n3ttdjw2/PpycKS/sPRemldyB7RmiIeKugTjXg+ugtCP1mBbDvi0X99579k9N8Eb+fVQ/+FWsCS+bYCaC79vz/w/1Rdq+Ze7gUN6jps1QV7exjNaEYz+t9Hiz54+TM6tcjTyYIwSB9oQiFlv4LDfxfp6DGB7sGPJXWDZItkORWN56noERnog0SNiAmJFonHHuV0ejpKsjbe/nXQapZgEm37B51/LBDj3zKSXLwp7Z1q9rb4EUUeHrub4GMuYIxmNKMZzWhGM5rRjGY0oxn9v6H/ADN+9TB2t6MaAAAAAElFTkSuQmCC">
+<meta name="theme-color" content="#221f1b">
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
