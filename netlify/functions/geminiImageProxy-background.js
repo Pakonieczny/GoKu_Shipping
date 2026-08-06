@@ -397,129 +397,170 @@ async function applyFinalFrameZoomIfNeeded(buf, postprocess = {}) {
     .toBuffer();
 }
 
-// Charm Maker Slots 1 and 2 must always sit on solid black. Prompting alone is
-// not a guarantee: image models occasionally fall back to a white ecommerce
-// background, especially when the reference itself is bright. This final pass
-// removes only the frame-connected background region, so white cut-outs or
-// highlights enclosed inside the charm are preserved.
+// ============================================================
+// BACKGROUND & GEOMETRY POLICY — prompt-level, never pixel-level.
+// ------------------------------------------------------------
+// This function used to run a flood-fill that rewrote every
+// frame-connected "background-looking" pixel to #000000. That
+// pass could eat bright engravings, halos and thin outlines near
+// the frame, so it has been RETIRED per the Charm Maker contract
+// (capabilities: destructiveBackgroundFloodFill:false,
+// usesBackgroundMasking:false, backgroundEnforcement:
+// "native_generation_prompt_preflight_only"). The image buffer is
+// now returned untouched; background policy is enforced natively:
+//   1. charmPolicyFinalText() appends the policy as the FINAL
+//      instruction of the model request (after all role labels);
+//   2. auditCharmPromptPreflight() runs a text-only audit of the
+//      prompt BEFORE the single image generation.
+// ============================================================
 async function enforceCharmBackgroundPolicy(buf, policy) {
-  if (String(policy || "").trim() !== "solid_black") return buf;
+  return buf;
+}
 
-  let sharp;
-  try { sharp = require("sharp"); }
-  catch (_) {
-    throw new Error(
-      "background_policy=solid_black requires the 'sharp' dependency in your top-level package.json."
+// The backend's final word on charm physique. Appended AFTER the caller's
+// prompt AND after the image-role labels, so no earlier instruction (and no
+// reference image trait) can override it.
+const CHARM_GEOMETRY_OVERRIDES = Object.freeze({
+  flat_integrated_eyelet:
+    "FINAL GEOMETRY OVERRIDE (BACKEND-ENFORCED, OVERRIDES EVERYTHING ABOVE): " +
+    "The charm is ONE perfectly flat, thin sheet of laser-cut polished metal — a single physically " +
+    "connected silhouette, rendered perfectly front-facing (orthographic, 0% perspective tilt), with " +
+    "no 3D volume, no bevels and no side view. It has EXACTLY ONE hanging eyelet, fused seamlessly into " +
+    "the silhouette at the top of the charm as part of the same flat sheet — never a separate ring. " +
+    "NO jump rings, NO split rings, NO bails, NO chains, NO second attachment point of any kind.",
+  flat_no_attachment:
+    "FINAL GEOMETRY OVERRIDE (BACKEND-ENFORCED, OVERRIDES EVERYTHING ABOVE): " +
+    "The charm is ONE perfectly flat, thin sheet of laser-cut polished metal — a single physically " +
+    "connected silhouette, rendered perfectly front-facing (orthographic, 0% perspective tilt), with " +
+    "no 3D volume, no bevels and no side view. It has NO attachment hardware whatsoever: no eyelet, " +
+    "no hoop, no hole for hanging, no jump ring, no split ring, no bail, no chain. The top edge of the " +
+    "silhouette is clean and closed where the attachment used to be.",
+});
+
+// Combined final policy text for a request. Returns "" when the request
+// declares no charm policies (i.e. every non-Charm-Maker call), so default
+// listing-compositor behaviour is byte-for-byte unchanged.
+function charmPolicyFinalText({ geometryPolicy, backgroundPolicy } = {}) {
+  const parts = [];
+  const geo = CHARM_GEOMETRY_OVERRIDES[String(geometryPolicy || "").trim()];
+  if (geo) parts.push(geo);
+  if (String(backgroundPolicy || "").trim() === "solid_black") {
+    parts.push(
+      "FINAL BACKGROUND OVERRIDE (BACKEND-ENFORCED, OVERRIDES EVERYTHING ABOVE): " +
+      "The ENTIRE background must be pure solid black (#000000), edge to edge — no white, no grey, " +
+      "no gradients, no vignette, no reflections on a surface, no transparency. Physical holes cut " +
+      "through the charm show pure black through them. Any background shown in any reference image " +
+      "carries NO authority. If the background is not pure solid black, the image is a failure."
     );
   }
+  return parts.join("\n\n");
+}
 
-  const { data, info } = await sharp(buf)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const width = Number(info?.width) || 0;
-  const height = Number(info?.height) || 0;
-  const channels = Number(info?.channels) || 4;
-  if (!width || !height || channels < 4) return buf;
+// ============================================================
+// TEXT-ONLY PROMPT PREFLIGHT — the independent audit agent.
+// ------------------------------------------------------------
+// Runs BEFORE the single image generation on Charm Maker requests
+// (any request declaring background_policy, charm_geometry_policy
+// or charm_edit_intent). It reviews the operator/UI-built prompt
+// against the declared policies and returns a corrected final
+// prompt. It produces TEXT ONLY — it can never generate an image —
+// and it is strictly best-effort: any failure (missing key, model
+// error, malformed reply) falls back to the original prompt so a
+// generation is never blocked by its own audit.
+// ============================================================
+async function auditCharmPromptPreflight({
+  prompt,
+  backgroundPolicy,
+  geometryPolicy,
+  editIntent,
+  imageCount,
+  imageRoles,
+}) {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return null;
+    const basePrompt = String(prompt || "").trim();
+    if (!basePrompt) return null;
 
-  const sample = [];
-  const pushPixel = (x, y) => {
-    const o = (y * width + x) * channels;
-    sample.push([data[o], data[o + 1], data[o + 2], data[o + 3]]);
-  };
-  const strideX = Math.max(1, Math.floor(width / 128));
-  const strideY = Math.max(1, Math.floor(height / 128));
-  for (let x = 0; x < width; x += strideX) {
-    pushPixel(x, 0);
-    pushPixel(x, height - 1);
-  }
-  for (let y = 1; y < height - 1; y += strideY) {
-    pushPixel(0, y);
-    pushPixel(width - 1, y);
-  }
+    const model = String(
+      process.env.GEMINI_CHARM_PREFLIGHT_MODEL ||
+      process.env.GEMINI_CHARM_CONCEPT_MODEL ||
+      DEFAULT_IMAGE_MODEL
+    ).trim();
 
-  const median = (values) => {
-    const sorted = values.slice().sort((a, b) => a - b);
-    return sorted[Math.floor(sorted.length / 2)] || 0;
-  };
-  const edge = {
-    r: median(sample.map((p) => p[0])),
-    g: median(sample.map((p) => p[1])),
-    b: median(sample.map((p) => p[2])),
-    a: median(sample.map((p) => p[3])),
-  };
-  const edgeLum = 0.2126 * edge.r + 0.7152 * edge.g + 0.0722 * edge.b;
-  const edgeSpread = Math.max(edge.r, edge.g, edge.b) - Math.min(edge.r, edge.g, edge.b);
-  const brightNeutralEdge = edgeLum >= 95 && edgeSpread <= 70;
-
-  const isBackgroundPixel = (pixelIndex) => {
-    const o = pixelIndex * channels;
-    const r = data[o], g = data[o + 1], b = data[o + 2], a = data[o + 3];
-    if (a < 245) return true;
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const spread = max - min;
-    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    const dr = r - edge.r, dg = g - edge.g, db = b - edge.b;
-    const edgeDistance = Math.sqrt(dr * dr + dg * dg + db * db);
-
-    if (brightNeutralEdge) {
-      // White, off-white and neutral shadow pixels connected to the frame.
-      return (spread <= 58 && lum >= 42) || edgeDistance <= 88;
+    const contractLines = [];
+    if (String(backgroundPolicy || "").trim() === "solid_black") {
+      contractLines.push("- The output background must be 100% pure solid black (#000000), edge to edge. The prompt must demand this unambiguously and must not contain anything that invites a white, grey, gradient or transparent background.");
     }
-    // The model already produced a dark background. Normalize its connected
-    // near-black edge pixels to exact #000000 without touching the charm.
-    return lum <= 65 && (spread <= 58 || edgeDistance <= 76);
-  };
-
-  const pixelCount = width * height;
-  const visited = new Uint8Array(pixelCount);
-  const queue = new Uint32Array(pixelCount);
-  let head = 0, tail = 0;
-  const enqueue = (idx) => {
-    if (visited[idx] || !isBackgroundPixel(idx)) return;
-    visited[idx] = 1;
-    queue[tail++] = idx;
-  };
-  for (let x = 0; x < width; x++) {
-    enqueue(x);
-    enqueue((height - 1) * width + x);
-  }
-  for (let y = 1; y < height - 1; y++) {
-    enqueue(y * width);
-    enqueue(y * width + width - 1);
-  }
-
-  while (head < tail) {
-    const idx = queue[head++];
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    if (x > 0) enqueue(idx - 1);
-    if (x + 1 < width) enqueue(idx + 1);
-    if (y > 0) enqueue(idx - width);
-    if (y + 1 < height) enqueue(idx + width);
-  }
-
-  for (let idx = 0; idx < pixelCount; idx++) {
-    const o = idx * channels;
-    if (visited[idx]) {
-      data[o] = 0;
-      data[o + 1] = 0;
-      data[o + 2] = 0;
-      data[o + 3] = 255;
-      continue;
+    if (String(geometryPolicy || "").trim() === "flat_integrated_eyelet") {
+      contractLines.push("- The charm must be one flat laser-cut sheet with EXACTLY ONE integrated eyelet fused into the silhouette, and NO jump rings, split rings, bails or chains.");
     }
-    // Flatten any remaining partial transparency over black.
-    const alpha = data[o + 3] / 255;
-    if (alpha < 1) {
-      data[o] = Math.round(data[o] * alpha);
-      data[o + 1] = Math.round(data[o + 1] * alpha);
-      data[o + 2] = Math.round(data[o + 2] * alpha);
-      data[o + 3] = 255;
+    if (String(geometryPolicy || "").trim() === "flat_no_attachment") {
+      contractLines.push("- The charm must be one flat laser-cut sheet with NO attachment hardware at all: no eyelet, no hoop, no hanging hole, no jump ring, no bail, no chain.");
     }
-  }
+    if (String(editIntent || "").trim() === "remove_jump_ring_only") {
+      contractLines.push("- This is a surgical repair: ONLY the external jump ring / split ring / extra attachment hardware may be removed. Every other aspect of the charm — subject, silhouette, engravings, cutouts, proportions, gold tone, position, scale — must be preserved 100% identical. The prompt must forbid any other change.");
+    }
+    if (String(imageRoles || "") === "style_reference") {
+      contractLines.push("- The supplied reference image is a material/craft style sample ONLY. The prompt must not instruct the model to copy the reference's subject, silhouette or background.");
+    }
 
-  return sharp(data, { raw: { width, height, channels } }).png().toBuffer();
+    const auditInstruction =
+      `You are an independent prompt-audit agent for a jewelry image-generation pipeline. ` +
+      `You work in TEXT ONLY and you never produce images.\n\n` +
+      `Below is the final prompt about to be sent, once, to an image model along with ` +
+      `${Math.max(0, Number(imageCount) || 0)} input image(s).\n\n` +
+      `NON-NEGOTIABLE CONTRACT THE PROMPT MUST ENFORCE:\n` +
+      (contractLines.length ? contractLines.join("\n") : "- (no additional policies declared)") +
+      `\n\nYOUR TASK: return a corrected final version of the prompt that preserves the original ` +
+      `design intent and wording wherever possible, strengthens or inserts whatever is needed so the ` +
+      `contract above cannot be missed, and removes any internal contradiction that works against the ` +
+      `contract. Do not shorten aggressively; do not add commentary; do not change the creative brief.\n\n` +
+      `Return ONLY valid JSON in exactly this shape: {"approvedPrompt": "the full corrected prompt"}\n\n` +
+      `PROMPT TO AUDIT:\n${basePrompt}`;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: auditInstruction }] }],
+        generationConfig: {
+          responseModalities: ["TEXT"],
+          temperature: 0.2,
+        },
+      }),
+    });
+
+    const raw = await resp.text().catch(() => "");
+    if (!resp.ok) {
+      console.warn("[preflight] audit call failed:", raw.slice(0, 200));
+      return null;
+    }
+    let data = null;
+    try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+    const text = (data?.candidates?.[0]?.content?.parts || [])
+      .map((p) => p?.text)
+      .filter(Boolean)
+      .join("");
+    if (!text) return null;
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const m = /\{[\s\S]*\}/.exec(text);
+      if (m) { try { parsed = JSON.parse(m[0]); } catch { parsed = null; } }
+    }
+    const approved = String(parsed?.approvedPrompt || "").trim();
+    // Sanity floor: an audit that returns a stub must never replace the
+    // operator's full brief.
+    if (approved.length < Math.min(120, Math.floor(basePrompt.length / 3))) return null;
+    return approved;
+  } catch (err) {
+    console.warn("[preflight] audit skipped:", err?.message || err);
+    return null;
+  }
 }
 
 function filenameForMime(base, mime) {
@@ -540,6 +581,8 @@ async function callGeminiImagesEdits({
   output_format,
   images,
   imageRoles,
+  charmGeometryPolicy,
+  backgroundPolicy,
 }) {
   return callGeminiGenerateContentImage({
     apiKey,
@@ -548,6 +591,8 @@ async function callGeminiImagesEdits({
     size,
     images,
     imageRoles,
+    charmGeometryPolicy,
+    backgroundPolicy,
   });
 }
 
@@ -612,15 +657,21 @@ async function callOpenAIImagesEdits({
   output_format,
   images,
   imageRoles,
+  charmGeometryPolicy,
+  backgroundPolicy,
 }) {
   const form = new FormData();
   form.append("model", model);
   // Gemini receives explicit role labels as separate multimodal parts. OpenAI
   // receives a multipart edit request, so mirror the Charm Maker's special
   // role lock inside the prompt. Default listing-edit behaviour is unchanged.
-  const promptText = imageRoles === "style_reference"
+  let promptText = imageRoles === "style_reference"
     ? `${String(prompt || "").trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`
     : String(prompt || "");
+  // Backend-enforced final word: geometry + background policy text goes last
+  // so it outranks everything, mirroring the Gemini part ordering.
+  const policyText = charmPolicyFinalText({ geometryPolicy: charmGeometryPolicy, backgroundPolicy });
+  if (policyText) promptText = `${promptText}\n\n${policyText}`;
   form.append("prompt", promptText);
   form.append("size", String(size || "2048x2048"));
   form.append("quality", normalizeOpenAIQuality(quality));
@@ -751,6 +802,8 @@ async function callGeminiGenerateContentImage({
   size,
   images,
   imageRoles,
+  charmGeometryPolicy,
+  backgroundPolicy,
 }) {
   const geminiModel =
     String(model || DEFAULT_IMAGE_MODEL).trim() ||
@@ -777,11 +830,20 @@ async function callGeminiGenerateContentImage({
   const wantH = m ? Number(m[2]) : 2048;
   const wantAR = sizeToAspectRatio(size) || "1:1";
 
+  // The generic closing line used to always end with "suitable for a product
+  // photo" — a nudge toward studio-white ecommerce backgrounds that directly
+  // fought the Charm Maker's solid-black policy. When a background policy is
+  // declared, the closing line enforces it instead of contradicting it.
+  const closingLine =
+    String(backgroundPolicy || "").trim() === "solid_black"
+      ? `The ENTIRE background must be pure solid black (#000000), edge to edge.`
+      : `Return an image suitable for a product photo.`;
+
   const promptText =
     `${String(prompt || "").trim()}\n\n` +
     `OUTPUT (NON-NEGOTIABLE): Return a photorealistic ${wantAR} image. ` +
     `Exact size ${wantW}x${wantH}. ` +
-    `Return an image suitable for a product photo.`;
+    closingLine;
 
   const imageInputs = Array.isArray(images) ? images : [];
   // Unknown values fall back to "edit" so a typo can never silently unlock the
@@ -829,6 +891,13 @@ async function callGeminiGenerateContentImage({
   if (imageInputs.length >= 2 || roleSet === IMAGE_ROLE_LABELS.style_reference) {
     parts.push({ text: roleSet.lock });
   }
+
+  // Backend-enforced FINAL word: charm geometry + background policy. Pushed
+  // after every role label and lock so nothing above it — including reference
+  // image traits — can override it. Empty (and absent) for all non-Charm-Maker
+  // requests.
+  const policyText = charmPolicyFinalText({ geometryPolicy: charmGeometryPolicy, backgroundPolicy });
+  if (policyText) parts.push({ text: policyText });
 
   const body = stripUndefined({
     contents: [{ role: "user", parts }],
@@ -1788,6 +1857,15 @@ async function _handlerImpl(event) {
     manifest,
     concept_count,
     background_policy,
+    // Charm geometry contract, enforced as the backend's FINAL word after all
+    // role labels: "flat_integrated_eyelet" (base charm — flat sheet with one
+    // fused eyelet, no jump rings) or "flat_no_attachment" (earring twin —
+    // flat sheet with no attachment hardware at all).
+    charm_geometry_policy,
+    // Optional edit-intent declaration (e.g. "remove_jump_ring_only") used by
+    // the text-only prompt preflight to scope a repair to the attachment
+    // hardware while preserving the charm design 100%.
+    charm_edit_intent,
     // "edit" (default) | "style_reference"
     //
     // The role labels this function injects around the inline image parts are
@@ -1823,13 +1901,44 @@ async function _handlerImpl(event) {
   // which is itself a clear answer.
   // ---------------------------------------------------------------------
   if (kind === "capabilities") {
+    // Every flag below is a live description of this file's behaviour — the
+    // Listing Generator refuses to run the Charm Maker against a backend
+    // whose answers don't match the contract it was built for.
     return json(200, {
       ok: true,
       proxy: "geminiImageProxy-background",
-      capabilitiesVersion: 3,
+      capabilitiesVersion: 12,
       roleModes: Object.keys(IMAGE_ROLE_LABELS),
       supportsStyleReference: Object.prototype.hasOwnProperty.call(IMAGE_ROLE_LABELS, "style_reference"),
       supportsCharmConceptPlanning: true,
+      // charm_geometry_policy is appended by the backend AFTER all role
+      // labels, as the request's final word (charmPolicyFinalText).
+      supportsBackendFinalGeometryOverride: true,
+      charmGeometryPolicies: Object.keys(CHARM_GEOMETRY_OVERRIDES),
+      // Text-only prompt audit by an independent agent, run once BEFORE the
+      // single image generation. It can never produce an image.
+      supportsCharmPromptPreflight: true,
+      promptPreflightMode: "text_only_before_image_generation",
+      usesIndependentPromptAuditAgent: true,
+      promptAuditProducesImages: false,
+      // The manual jump-ring repair is an ordinary single edits request: it
+      // runs on the client-selected image model, generates exactly one image,
+      // and its preflight contract preserves the charm design 100%.
+      supportsManualJumpRingRepair: true,
+      manualRepairUsesSelectedModel: true,
+      manualRepairMaxImageGenerations: 1,
+      manualRepairPreservesCharmDesign: true,
+      // One generation per request. What the model returns is what the
+      // operator reviews — no automatic retake, no post-generation image QA.
+      maxImageGenerationsPerRequest: 1,
+      automaticImageRegeneration: false,
+      postGenerationImageQA: false,
+      // Background policy is enforced natively (generation prompt + text
+      // preflight). The old frame-connected flood fill is retired: it could
+      // eat bright engraving detail near the frame.
+      backgroundEnforcement: "native_generation_prompt_preflight_only",
+      destructiveBackgroundFloodFill: false,
+      usesBackgroundMasking: false,
       backgroundPolicies: ["solid_black"],
       supportsGenerations: true,
       imageModels: Object.keys(IMAGE_MODEL_CONFIG),
@@ -3259,19 +3368,44 @@ async function _handlerImpl(event) {
         images.push({ buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) });
       }
 
+      // ------------------------------------------------------------
+      // Charm Maker pipeline (any request declaring a charm policy):
+      //   1. TEXT-ONLY prompt preflight by an independent audit agent
+      //      (best-effort — a failed audit never blocks generation);
+      //   2. exactly ONE image generation, with the geometry/background
+      //      policies appended by the backend as the request's final word;
+      //   3. no post-generation image QA, no masking, no flood fill, no
+      //      automatic second image — what the model returns is what the
+      //      operator reviews.
+      // ------------------------------------------------------------
+      const isCharmPipeline = !!(background_policy || charm_geometry_policy || charm_edit_intent);
+      let effectivePrompt = prompt;
+      if (isCharmPipeline) {
+        const audited = await auditCharmPromptPreflight({
+          prompt,
+          backgroundPolicy: background_policy,
+          geometryPolicy: charm_geometry_policy,
+          editIntent: charm_edit_intent,
+          imageCount: images.length,
+          imageRoles: image_roles,
+        });
+        if (audited) effectivePrompt = audited;
+      }
+
       let outBuf = await callImageModelEdits({
         apiKey,
         model,
-        prompt,
+        prompt: effectivePrompt,
         size,
         quality,
         output_format,
         images,
         imageRoles: image_roles,
+        charmGeometryPolicy: charm_geometry_policy,
+        backgroundPolicy: background_policy,
       });
 
       outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
-      outBuf = await enforceCharmBackgroundPolicy(outBuf, background_policy);
 
       const saved = await uploadPngBufferToSetPath(outBuf, outputBasePath, effectiveSlot, null, null);
       return json(200, { ok: true, storagePath: saved.storagePath, downloadURL: saved.downloadURL });
@@ -3651,20 +3785,37 @@ async function _handlerImpl(event) {
         images.push({ buffer: charm.buffer, mime: charm.mime, filename: filenameForMime("charm_macro", charm.mime) });
       }
 
+      // Same Charm Maker pipeline as the set-based edits branch: text-only
+      // preflight audit, then exactly one generation with the policies as
+      // the backend's final word. No pixel post-processing.
+      let effectivePrompt = prompt;
+      if (background_policy || charm_geometry_policy || charm_edit_intent) {
+        const audited = await auditCharmPromptPreflight({
+          prompt,
+          backgroundPolicy: background_policy,
+          geometryPolicy: charm_geometry_policy,
+          editIntent: charm_edit_intent,
+          imageCount: images.length,
+          imageRoles: image_roles,
+        });
+        if (audited) effectivePrompt = audited;
+      }
+
       outBuf = await callImageModelEdits({
         apiKey,
         model,
-        prompt,
+        prompt: effectivePrompt,
         size,
         quality,
         output_format,
         images,
         imageRoles: image_roles,
+        charmGeometryPolicy: charm_geometry_policy,
+        backgroundPolicy: background_policy,
       });
     }
 
     outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
-    outBuf = await enforceCharmBackgroundPolicy(outBuf, background_policy);
 
     await firestoreRetry(
       () =>
