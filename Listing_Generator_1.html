@@ -3286,7 +3286,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
       <!-- ===== CHARM MAKER SECTION ===== -->
       <div id="charmMakerSection" style="display: none;">
         <h1 style="margin: 0 0 4px 0;">Charm Maker</h1>
-        <p class="muted" style="font-size: 12px; margin: 0 0 14px 0;">Reference image → 4-image derivative quad</p>
+        <p class="muted" style="font-size: 12px; margin: 0 0 14px 0;">Bestseller reference → buyer-aligned complementary design → 4-image derivative quad</p>
 
         <!-- Compact horizontal workflow indicator (replaces the old paragraph + numbered list) -->
         <div class="cm-flow">
@@ -3470,7 +3470,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
                   <option value="4">4</option>
                   <option value="5">5</option>
                 </select>
-                <input type="number" id="derivativesPerCharmInput" value="1" min="1" style="flex:1;" placeholder="Count...">
+                <input type="number" id="derivativesPerCharmInput" value="1" min="1" max="8" style="flex:1;" placeholder="Count...">
               </div>
             </div>
           </div>
@@ -8076,34 +8076,170 @@ function updateApproveButtonState() {
     let charmCurrentPage = 1;
     let CHARM_ITEMS_PER_PAGE = 50;
 
-    // Base prompts hoisted for global access
-    const promptStrCharm = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm. DO NOT add additional jump rings, bails, or chains under ANY circumstances.
+    // -------------------------------------------------------------------
+    // Buyer-aligned Charm Maker planning
+    // -------------------------------------------------------------------
+    // The old prompt asked for a "loosely similar" subject, then explicitly
+    // required the exact recognizable footprint. The edit request also sent
+    // the same reference twice. Those instructions made a replica the safest
+    // possible model response. New generations now have two distinct stages:
+    //   1) a multimodal planner identifies the bestseller's buyer intent and
+    //      ranks genuinely different, complementary concepts;
+    //   2) the image model receives the chosen concept while the supplied
+    //      bestseller is labelled as material/craft reference only.
+    let _charmMakerCapabilitiesPromise = null;
 
-    TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference based on your analysis. Your goal is to keep the SAME genre and loosely similar subject matter and overall concept but adapt it to attract similar audiences.
+    async function ensureCharmMakerCapabilities() {
+        if (_charmMakerCapabilitiesPromise) return _charmMakerCapabilitiesPromise;
+        _charmMakerCapabilitiesPromise = (async () => {
+            const caps = await postJson("geminiImageProxy", { kind: "capabilities" });
+            const hasBlackPolicy = Array.isArray(caps?.backgroundPolicies) && caps.backgroundPolicies.includes("solid_black");
+            if (
+                Number(caps?.capabilitiesVersion || 0) < 3 ||
+                caps?.supportsStyleReference !== true ||
+                caps?.supportsCharmConceptPlanning !== true ||
+                !hasBlackPolicy
+            ) {
+                throw new Error(
+                    "Charm Maker backend is out of date. Deploy the supplied geminiImageProxy-background.js before generating charms."
+                );
+            }
+            return caps;
+        })().catch((err) => {
+            _charmMakerCapabilitiesPromise = null;
+            throw err;
+        });
+        return _charmMakerCapabilitiesPromise;
+    }
 
-    HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
-    • Use engravings very sparingly and very strategically. Do not cram too many pointless engravings onto the charm.
-    • Leave a lot of white space between the engravings; do not bunch up engravings and cutouts closely together.
-    • FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high polish metal.
-    • SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
-    • VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
-    • BACKGROUND COLOR (CRITICAL & ABSOLUTE): You MUST generate the charm on a 100% PURE SOLID BLACK (#000000) background. Absolutely NO white backgrounds, NO grey backgrounds, NO gradients, and NO transparency. If the background is not pure black, it is a failure.
-    • NO TEXT: Never render letters, numbers, or words.
+    function cleanCharmPlanText(value, fallback = "") {
+        return String(value == null ? fallback : value)
+            .replace(/[\u0000-\u001f\u007f]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
 
-    THEMATIC & AESTHETIC EVOLUTION:
-    • You may only introduce minor stylistic alterations to the outer contour (e.g., slightly sharper points, smoother curves, or stylistic edges) while preserving the exact overall recognizable footprint.
-    • AESTHETIC ANCHORING: Maintain the exact gold tone, luminosity, and "luxe-minimalist" feel of the reference image. The "vibe" must remain cohesive.
-    • ENGRAVING DEPTH: All internal details must be surface-level laser etchings. No embossing or 3D extrusion.
+    async function planCharmConcepts(targetCharmRef, count) {
+        await ensureCharmMakerCapabilities();
+        const sourcePath = cleanCharmPlanText(targetCharmRef?.fullPath);
+        if (!sourcePath) throw new Error("The selected bestseller reference has no storage path.");
+        const requestedCount = Math.max(1, Math.min(8, parseInt(count, 10) || 1));
+        const result = await postJson("geminiImageProxy", {
+            kind: "charm_concept_plan",
+            activeCategory: "Charms",
+            input_storage_path: sourcePath,
+            concept_count: requestedCount,
+        });
+        const plan = result?.plan;
+        if (!plan || !Array.isArray(plan.concepts) || plan.concepts.length < requestedCount) {
+            throw new Error("The concept planner did not return enough distinct buyer-aligned designs.");
+        }
+        return {
+            version: Number(plan.version) || 1,
+            referenceSubject: cleanCharmPlanText(plan.referenceSubject, "Reference bestseller"),
+            buyerProfile: cleanCharmPlanText(plan.buyerProfile),
+            purchaseSignals: Array.isArray(plan.purchaseSignals)
+                ? plan.purchaseSignals.map((v) => cleanCharmPlanText(v)).filter(Boolean).slice(0, 6)
+                : [],
+            concepts: plan.concepts.slice(0, requestedCount).map((concept, index) => ({
+                rank: index + 1,
+                title: cleanCharmPlanText(concept?.title, `Complementary design ${index + 1}`),
+                subject: cleanCharmPlanText(concept?.subject),
+                buyerConnection: cleanCharmPlanText(concept?.buyerConnection),
+                conversionRationale: cleanCharmPlanText(concept?.conversionRationale),
+                silhouetteBrief: cleanCharmPlanText(concept?.silhouetteBrief),
+                engravingBrief: cleanCharmPlanText(concept?.engravingBrief),
+                confidence: Math.max(0, Math.min(100, Math.round(Number(concept?.confidence) || 0))),
+            })),
+        };
+    }
 
-    NEGATIVE CONSTRAINTS (NEVER DO THESE - EXTREME PENALTY):
-    • NEVER generate a white or light background. It MUST be pure solid black (#000000).
-    • NEVER add additional jump rings, O-rings, bails, or chains of any kind.
-    • NEVER introduce 3D volume, thickness, or side-profile views.
-    • NEVER use matte or brushed textures if the reference is high-polish.
-    • NEVER deviate from the established level of intricate detail seen in the reference.
-    
-    HOOP/BAIL REQUIREMENT (CRITICAL):
-    • We must ensure that the integrated hoop already present in the reference image MUST ALWAYS be correctly and strategically positioned on the newly generated Charm. THIS IS A MUST AND ABSOLUTELY CRUCIAL!!!! DO NOT ADD EXTRA JUMP RINGS TO IT.`;
+    async function ensureManifestCharmConcept(manifest, sourcePath, outputBasePath) {
+        if (manifest?.charmConcept?.subject) {
+            return {
+                concept: manifest.charmConcept,
+                plan: manifest.charmConceptPlan || {},
+                manifest,
+            };
+        }
+        setStatus("Planning a buyer-aligned concept for this legacy set…");
+        const plan = await planCharmConcepts({ fullPath: sourcePath }, 1);
+        const concept = plan.concepts[0];
+        const updatedManifest = {
+            ...(manifest || {}),
+            sourceCharm: manifest?.sourceCharm || sourcePath,
+            charmConceptPlan: {
+                version: Number(plan.version) || 1,
+                referenceSubject: cleanCharmPlanText(plan.referenceSubject),
+                buyerProfile: cleanCharmPlanText(plan.buyerProfile),
+                purchaseSignals: Array.isArray(plan.purchaseSignals) ? plan.purchaseSignals.slice(0, 6) : [],
+            },
+            charmConcept: concept,
+        };
+        await postJson("geminiImageProxy", {
+            kind: "write_manifest",
+            activeCategory: "Charms",
+            output_base_path: outputBasePath,
+            manifest: updatedManifest,
+        });
+        return { concept, plan: updatedManifest.charmConceptPlan, manifest: updatedManifest };
+    }
+
+    function buildCharmDesignPrompt(concept, plan) {
+        const chosen = concept || {};
+        const context = plan || {};
+        const signals = Array.isArray(context.purchaseSignals) && context.purchaseSignals.length
+            ? context.purchaseSignals.join("; ")
+            : "same-buyer affinity, collection appeal and giftability";
+        return `MARKET-LED NEW CHARM DESIGN — NOT AN EDIT AND NOT A REPLICA
+
+The supplied image is a proven bestselling charm. It is provided ONLY to communicate this workshop's metal colour, polish, engraving weight, flat laser-cut construction, integrated-bail craftsmanship, lighting and black-background treatment. Do not reproduce its object.
+
+REFERENCE BESTSELLER SUBJECT: ${cleanCharmPlanText(context.referenceSubject, "shown in the supplied reference")}
+INFERRED BUYER: ${cleanCharmPlanText(context.buyerProfile, "the same buyer who values the reference bestseller")}
+PURCHASE SIGNALS: ${signals}
+
+CHOSEN COMPLEMENTARY PRODUCT:
+• CONCEPT: ${cleanCharmPlanText(chosen.title, "Buyer-aligned complementary charm")}
+• NEW SUBJECT: ${cleanCharmPlanText(chosen.subject, "Choose a distinct adjacent subject with the strongest same-buyer appeal")}
+• BUYER CONNECTION: ${cleanCharmPlanText(chosen.buyerConnection, "It belongs naturally in the same buyer's collection")}
+• COMMERCIAL RATIONALE: ${cleanCharmPlanText(chosen.conversionRationale, "Evergreen, recognizable and giftable")}
+• OUTER CONTOUR BRIEF: ${cleanCharmPlanText(chosen.silhouetteBrief, "Use a bold, recognizable one-piece silhouette unlike the reference")}
+• ENGRAVING BRIEF: ${cleanCharmPlanText(chosen.engravingBrief, "Use only sparse recognition-critical surface engraving")}
+
+NOVELTY LOCK — HIGHEST PRIORITY:
+• Draw the NEW SUBJECT above. The reference subject itself is forbidden.
+• The new design must have a materially different silhouette, pose and internal feature map from the reference.
+• NEVER trace, mirror, re-pose, re-scale, simplify, embellish or lightly restyle the reference charm.
+• NEVER create a baby, pair, family, alternate pose or cosmetic variation of the exact reference subject.
+• HARD FAIL: a shopper would identify the result as the same SKU or same object as the reference.
+• HARD FAIL: the new outline could be overlaid on the reference and broadly match.
+
+HARD PHYSICAL CONSTRAINTS:
+• ONE-PIECE FLAT SHEET METAL: perfectly flat, thin, high-polish metal with clean laser-cut edges.
+• SHARP 2D CUTOUT: no rounded edges, bevels, embossing, extrusion or visible side-wall thickness.
+• FRONT VIEW: perfectly front-facing orthographic view with 0% perspective tilt.
+• ENGRAVING: sparse, strategic, shallow surface laser etching only. Preserve generous untouched metal areas.
+• NO TEXT: no letters, words, dates, numbers, logos or branded shapes.
+• NO HARDWARE: no chains, clasps, separate jump rings, O-rings or secondary bails.
+
+INTEGRATED BAIL:
+• Add exactly one closed, clearly open, integrated bail/eyelet fused into the charm's top contour as part of the same sheet of metal.
+• Place it above the new design's center of mass so the charm would hang naturally upright.
+• Never copy the reference bail's coordinates if they are wrong for the new subject.
+
+BACKGROUND — ABSOLUTE:
+• 100% PURE SOLID BLACK (#000000), edge to edge.
+• No white, off-white, grey, studio sweep, gradient, texture or transparency anywhere in the background.
+• The isolated charm is centered with comfortable empty black margin and no cast shadow outside its silhouette.
+
+AESTHETIC CONTINUITY:
+Match only the reference's metal alloy/tone, polish, restrained engraving language, lighting quality and production realism. The product concept, subject, silhouette and feature placement come exclusively from the chosen complementary brief above.`;
+    }
+
+    // Defensive fallback used only by legacy sets that pre-date saved concept
+    // manifests. New generations always use buildCharmDesignPrompt(concept, plan).
+    const promptStrCharm = buildCharmDesignPrompt(null, null);
 
     const promptStrEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm. 
     Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
@@ -8178,6 +8314,90 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
         3. CUTOUTS/HOLES: Keep physical holes completely white inside.
     • Do not introduce any new elements, 3D thickness, shading, colors, or styling changes. Flat 2D B&W vector style only.
     • The final output MUST be the exact same B&W line art charm, just missing the top hoop, on a PURE WHITE background.`;
+
+    function setCharmConceptSummary(folderId, concept, plan) {
+        const el = document.getElementById(`concept_${folderId}`);
+        if (!el) return;
+        if (!concept) {
+            el.textContent = "Legacy concept";
+            el.title = "This set predates saved Charm Maker concept planning.";
+            return;
+        }
+        const title = cleanCharmPlanText(concept.title, concept.subject || "Complementary design");
+        const confidence = Number(concept.confidence);
+        el.textContent = Number.isFinite(confidence) && confidence > 0
+            ? `${title} · ${Math.round(confidence)}% fit`
+            : title;
+        el.title = [
+            cleanCharmPlanText(concept.buyerConnection),
+            cleanCharmPlanText(concept.conversionRationale),
+            plan?.referenceSubject ? `Reference: ${cleanCharmPlanText(plan.referenceSubject)}` : "",
+        ].filter(Boolean).join("\n");
+    }
+
+    async function loadCharmReferencePreview(folderId, storagePath) {
+        const box = document.getElementById(`prevBox_${folderId}_ref`);
+        const path = cleanCharmPlanText(storagePath);
+        if (!box || !path) return false;
+        box.innerHTML = `<div class="slotRefEmpty" style="font-size:9px;">Loading…</div>`;
+
+        try {
+            const cached = await getCachedBlob(path);
+            if (cached?.blob) {
+                setBoxImage(box, URL.createObjectURL(cached.blob));
+                box.title = "Source bestseller reference";
+                return true;
+            }
+        } catch (_) {}
+
+        try {
+            const fileRef = ref(storage, path);
+            const url = await getDownloadURL(fileRef);
+            const blob = await fetchAndCacheBlob(url, path, Date.now());
+            if (blob) {
+                setBoxImage(box, URL.createObjectURL(blob));
+                box.title = "Source bestseller reference";
+                return true;
+            }
+
+            // Some Firebase/CORS configurations allow SDK reads but reject a
+            // direct token URL fetch. Use the authenticated SDK as a reliable
+            // fallback instead of leaving a broken <img> icon in the card.
+            const [bytes, metadata] = await Promise.all([
+                getBytes(fileRef),
+                getMetadata(fileRef).catch(() => null),
+            ]);
+            const storedType = cleanCharmPlanText(metadata?.contentType).toLowerCase();
+            const inferredType = /\.jpe?g$/i.test(path)
+                ? "image/jpeg"
+                : /\.webp$/i.test(path)
+                    ? "image/webp"
+                    : "image/png";
+            const sdkBlob = new Blob([bytes], {
+                type: storedType.startsWith("image/") ? storedType : inferredType,
+            });
+            try { await setCachedBlob(path, sdkBlob, Date.now()); } catch (_) {}
+            setBoxImage(box, URL.createObjectURL(sdkBlob));
+            box.title = "Source bestseller reference";
+            return true;
+        } catch (err) {
+            console.warn("Could not load Charm Maker source preview", path, err);
+            box.innerHTML = `<div class="slotRefEmpty" style="font-size:9px; color:#fca5a5;">Ref unavailable</div>`;
+            box.title = cleanCharmPlanText(err?.message, "Reference preview unavailable");
+            return false;
+        }
+    }
+
+    async function snapshotCharmReference(targetCharmRef, outputBasePath) {
+        const sourcePath = cleanCharmPlanText(targetCharmRef?.fullPath);
+        if (!sourcePath) throw new Error("Missing source charm path for reference snapshot.");
+        return postJson("geminiImageProxy", {
+            kind: "snapshot_charm_reference",
+            activeCategory: "Charms",
+            source_storage_path: sourcePath,
+            output_base_path: outputBasePath,
+        });
+    }
 
     window.setPreviewNewCharmsFromRef = function(folderId) {
         const refBox = document.getElementById(`prevBox_${folderId}_ref`);
@@ -8294,7 +8514,10 @@ function createCharmCardHTML(folderId, isApprovedView) {
 
         return `
             <div class="charm-card" id="card_${folderId}">
-                <div class="charm-card-title">Generated Derivatives Previews <span class="muted" style="font-size:11px;">${folderId}</span></div>
+                <div class="charm-card-title">
+                    <span>Generated Derivatives Previews <span class="muted" style="font-size:11px;">${folderId}</span></span>
+                    <span class="muted" id="concept_${folderId}" style="font-size:10px; text-align:right;">Concept loading…</span>
+                </div>
                 
                 <div style="grid-column: span 2; display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line);">
                     <div class="muted" style="font-size: 11px;">Source Ref:</div>
@@ -8386,20 +8609,18 @@ async function loadSetImagesForCharm(folderId, folderName) {
         try {
             const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
             const manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
-            if (manifest.sourceCharm) {
-                const refBox = document.getElementById(`prevBox_${folderId}_ref`);
-                if (refBox) {
-                    const srcRef = ref(storage, manifest.sourceCharm);
-                    try {
-                        const url = await getDownloadURL(srcRef);
-                        setBoxImage(refBox, cacheBust(url));
-                    } catch (urlErr) {
-                        refBox.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">Ref Missing</div>`;
+            setCharmConceptSummary(folderId, manifest.charmConcept, manifest.charmConceptPlan);
+            const preferredRef = manifest.sourceSnapshot || manifest.sourceCharm;
+            if (preferredRef) {
+                loadCharmReferencePreview(folderId, preferredRef).then((loaded) => {
+                    if (!loaded && manifest.sourceCharm && manifest.sourceCharm !== preferredRef) {
+                        return loadCharmReferencePreview(folderId, manifest.sourceCharm);
                     }
-                }
+                });
             }
         } catch(e) {
             console.warn("Could not load manifest/ref for", folderId);
+            setCharmConceptSummary(folderId, null, null);
         }
 
         // PREVENT 404 CONSOLE ERRORS BY LISTING AVAILABLE FILES FIRST
@@ -8553,10 +8774,13 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
             let category = "Charms"; 
 
             if (slotIndex === 0) {
-                inputPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath; 
+                inputPath = manifest.sourceSnapshot || manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath; 
                 if (!inputPath) throw new Error("Missing source reference for base charm.");
-                inputCharmPath = inputPath;
-                promptStr = promptStrCharm;
+                const planned = await ensureManifestCharmConcept(manifest, inputPath, folderPath);
+                manifest = planned.manifest;
+                inputCharmPath = null;
+                promptStr = buildCharmDesignPrompt(planned.concept, planned.plan);
+                setCharmConceptSummary(folderId, planned.concept, planned.plan);
             } else if (slotIndex === 1) {
                 inputPath = `${folderPath}/Slot_1.png`;
                 inputCharmPath = inputPath;
@@ -8579,7 +8803,9 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 input_charm_storage_path: inputCharmPath,
                 output_base_path: folderPath,
                 slotIndex: slotIndex,
-                prompt: promptStr
+                prompt: promptStr,
+                image_roles: slotIndex === 0 ? "style_reference" : undefined,
+                background_policy: slotIndex <= 1 ? "solid_black" : undefined
             }, signal);
 
             // PASS SIGNAL TO POLLER
@@ -8670,8 +8896,12 @@ window.regenCharmQuad = async function(folderId) {
                 console.warn("No manifest found for", folderId, "falling back to runtime refs if possible");
             }
             
-            const sourceCharmPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
+            const sourceCharmPath = manifest.sourceSnapshot || manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
             if (!sourceCharmPath) throw new Error("No source charm reference found.");
+            const planned = await ensureManifestCharmConcept(manifest, sourceCharmPath, folderPath);
+            manifest = planned.manifest;
+            const baseCharmPrompt = buildCharmDesignPrompt(planned.concept, planned.plan);
+            setCharmConceptSummary(folderId, planned.concept, planned.plan);
             
             let lineArtRefPath = manifest.lineArtRef;
             if (!lineArtRefPath) {
@@ -8702,9 +8932,11 @@ window.regenCharmQuad = async function(folderId) {
             if(prev0) prev0.innerHTML = window.getSpinnerHTML("Generating Base...");
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
-                input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
+                input_storage_path: sourceCharmPath,
                 output_base_path: folderPath, slotIndex: 0,
-                prompt: promptStrCharm
+                prompt: baseCharmPrompt,
+                image_roles: "style_reference",
+                background_policy: "solid_black"
             }, sig0, regenerationModel);
             
             const charmRes = await waitForSlotPngUrl(folderPath, 0, { 
@@ -8734,7 +8966,8 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
                 output_base_path: folderPath, slotIndex: 1,
-                prompt: promptStrEarring
+                prompt: promptStrEarring,
+                background_policy: "solid_black"
             }, sig1, regenerationModel);
             
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { 
@@ -8902,7 +9135,8 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: baseCharmStoragePath, input_charm_storage_path: baseCharmStoragePath,
                 output_base_path: folderPath, slotIndex: 1,
-                prompt: promptStrEarring
+                prompt: promptStrEarring,
+                background_policy: "solid_black"
             }, undefined, derivativeModel);
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
@@ -9092,7 +9326,14 @@ window.approveCharmQuad = async function(folderId) {
       };
 
     // Internal helper function for single iteration runs
-async function generateCharmQuad(targetCharmRef, targetEarringRef) {
+async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept, charmConceptPlan) {
+        let effectivePlan = charmConceptPlan || null;
+        let effectiveConcept = charmConcept || null;
+        if (!effectiveConcept) {
+            effectivePlan = await planCharmConcepts(targetCharmRef, 1);
+            effectiveConcept = effectivePlan.concepts[0];
+        }
+        const baseCharmPrompt = buildCharmDesignPrompt(effectiveConcept, effectivePlan);
         const timestamp = Date.now() + Math.floor(Math.random() * 10000);
         const folderId = `Deriv_${timestamp}`;
         const outputBasePath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`;
@@ -9102,16 +9343,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         tempDiv.innerHTML = createCharmCardHTML(folderId, false);
         const cardNode = tempDiv.firstElementChild;
         charmGrid.insertBefore(cardNode, charmGrid.firstChild);
+        setCharmConceptSummary(folderId, effectiveConcept, effectivePlan);
         
         window.setQuadButtonsState(folderId, true);
         
-        const refBoxNode = document.getElementById(`prevBox_${folderId}_ref`);
-        if (refBoxNode) {
-            try {
-                const url = await getDownloadURL(targetCharmRef.itemRef || ref(storage, targetCharmRef.fullPath));
-                setBoxImage(refBoxNode, cacheBust(url));
-            } catch(e) { console.warn("Could not preload target ref"); }
-        }
+        // Load through the authenticated/cache-aware path. This avoids the
+        // broken direct-token <img> preview shown in the Source Ref box.
+        loadCharmReferencePreview(folderId, targetCharmRef.fullPath);
         
         if (charmSetsHistory.indexOf(folderId) === -1) {
             charmSetsHistory.unshift(folderId);
@@ -9145,10 +9383,31 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 console.warn("No line art reference found. Will fallback to charm itself.", e);
             }
 
+            let sourceSnapshot = null;
+            try {
+                const snapshot = await snapshotCharmReference(targetCharmRef, outputBasePath);
+                sourceSnapshot = snapshot?.storagePath || null;
+                if (sourceSnapshot) await loadCharmReferencePreview(folderId, sourceSnapshot);
+            } catch (snapshotErr) {
+                // Generation can safely continue from the original source; the
+                // current preview helper has already loaded that path.
+                console.warn("Could not snapshot Charm Maker source reference", snapshotErr);
+            }
+
             const manifest = {
                 sourceCharm: targetCharmRef.fullPath,
+                sourceSnapshot,
                 sourceEarring: targetEarringRef?.fullPath || null,
                 lineArtRef: lineArtRef?.fullPath || null,
+                charmConceptPlan: {
+                    version: Number(effectivePlan?.version) || 1,
+                    referenceSubject: cleanCharmPlanText(effectivePlan?.referenceSubject),
+                    buyerProfile: cleanCharmPlanText(effectivePlan?.buyerProfile),
+                    purchaseSignals: Array.isArray(effectivePlan?.purchaseSignals)
+                        ? effectivePlan.purchaseSignals.slice(0, 6)
+                        : [],
+                },
+                charmConcept: effectiveConcept,
                 model: generationModel,
                 timestamp: new Date().toISOString()
             };
@@ -9165,9 +9424,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             if(prev0) prev0.innerHTML = window.getSpinnerHTML("Generating Base...");
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms", 
-                input_storage_path: targetCharmRef.fullPath, input_charm_storage_path: targetCharmRef.fullPath,
+                input_storage_path: targetCharmRef.fullPath,
                 output_base_path: outputBasePath, slotIndex: 0,
-                prompt: promptStrCharm
+                prompt: baseCharmPrompt,
+                image_roles: "style_reference",
+                background_policy: "solid_black"
             }, undefined, generationModel);
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
@@ -9221,7 +9482,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     executeCharmGenBtn.addEventListener("click", async () => {
         const batchCount = parseInt(document.getElementById("batchProcessCountInput").value) || 1;
-        const derivCount = parseInt(document.getElementById("derivativesPerCharmInput").value) || 1;
+        const derivCount = Math.max(1, Math.min(8, parseInt(document.getElementById("derivativesPerCharmInput").value, 10) || 1));
 
         setBusy(true);
         setStatus("Starting Batch Generation...");
@@ -9246,8 +9507,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
             const promises = [];
             for (const charmData of charmsToProcess) {
+                setStatus(`Planning ${derivCount} buyer-aligned concept${derivCount === 1 ? "" : "s"} from ${charmData.name || "bestseller reference"}…`);
+                const conceptPlan = await planCharmConcepts(charmData, derivCount);
                 for (let d = 0; d < derivCount; d++) {
-                    promises.push(generateCharmQuad(charmData, currentEarringRef));
+                    promises.push(generateCharmQuad(
+                        charmData,
+                        currentEarringRef,
+                        conceptPlan.concepts[d],
+                        conceptPlan
+                    ));
                     await sleep(300); // Small stagger to mitigate rate limiting on bulk request startup
                 }
             }
@@ -18291,11 +18559,20 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           currentEarringRef = await listLatestFile(newCharmsEarringsPath());
         }
 
-        const derivCount = parseInt(document.getElementById('derivativesPerCharmInput')?.value, 10) || 1;
+        const derivCount = Math.max(1, Math.min(8, parseInt(document.getElementById('derivativesPerCharmInput')?.value, 10) || 1));
         const promises = [];
         for (const charmData of charmsToProcess) {
+          if (typeof setStatus === 'function') {
+            setStatus(`Planning ${derivCount} buyer-aligned concept${derivCount === 1 ? '' : 's'} from ${charmData.name || 'selected bestseller'}…`);
+          }
+          const conceptPlan = await planCharmConcepts(charmData, derivCount);
           for (let d = 0; d < derivCount; d++) {
-            promises.push(generateCharmQuad(charmData, currentEarringRef));
+            promises.push(generateCharmQuad(
+              charmData,
+              currentEarringRef,
+              conceptPlan.concepts[d],
+              conceptPlan
+            ));
             await sleep(300);
           }
         }
