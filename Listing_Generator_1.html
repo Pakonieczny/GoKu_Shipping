@@ -957,6 +957,34 @@
     font-size: 10px;
   }
 
+  /* Jump-ring repair — compact per-slot action, same scale as the other
+     .btnSmall slot buttons and the same muted color-coded language as the
+     card's amber "Approve Base & Continue" action. It sits directly under
+     the Slot 1 (base charm) Redo button so it reads as an action on that
+     specific charm, not on the whole card. */
+  .jump-ring-repair-btn {
+    width: 100%;
+    padding: 6px 10px !important;
+    border-radius: 6px !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border: 1px solid rgba(251, 191, 36, 0.45) !important;
+    background: rgba(251, 191, 36, 0.08) !important;
+    color: #fbbf24 !important;
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease, filter 140ms ease;
+  }
+  .jump-ring-repair-btn:not(:disabled):hover {
+    background: rgba(251, 191, 36, 0.16) !important;
+    border-color: rgba(251, 191, 36, 0.7) !important;
+  }
+  .jump-ring-repair-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   /* ---------- Charm reference mosaic (Charm Maker left side) ---------- */
   /* ---------- Charm Maker compact workflow flow ---------- */
   .cm-flow {
@@ -4305,6 +4333,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
         output_base_path: folder,
         slotIndex: 0,
         prompt: promptStrAddHoop,
+        charm_geometry_policy: "flat_integrated_eyelet",
       });
       const res = await waitForSlotPngUrl(folder, 0, { timeoutMs: 420000, intervalMs: 5000 });
       return res.storagePath;
@@ -4735,6 +4764,17 @@ html.gs-locked body > *:not(#gate){display:none!important}
                 }
             });
         }
+
+        // The manual jump-ring repair is a paid one-image edit of Slot 1.
+        // Lock it whenever another operation owns this card.
+        cardObj.querySelectorAll('.jumpRingRepairBtn').forEach(btn => {
+            btn.disabled = disabled;
+            if (disabled) {
+                btn.classList.add('disabled-action');
+            } else {
+                btn.classList.remove('disabled-action');
+            }
+        });
     };
 
     window.updateQuadActionButtons = function(folderId) {
@@ -8094,11 +8134,29 @@ function updateApproveButtonState() {
         _charmMakerCapabilitiesPromise = (async () => {
             const caps = await postJson("geminiImageProxy", { kind: "capabilities" });
             const hasBlackPolicy = Array.isArray(caps?.backgroundPolicies) && caps.backgroundPolicies.includes("solid_black");
+            const geometryPolicies = Array.isArray(caps?.charmGeometryPolicies) ? caps.charmGeometryPolicies : [];
+            const hasGeometryQA = geometryPolicies.includes("flat_integrated_eyelet") && geometryPolicies.includes("flat_no_attachment");
             if (
-                Number(caps?.capabilitiesVersion || 0) < 3 ||
+                Number(caps?.capabilitiesVersion || 0) < 12 ||
                 caps?.supportsStyleReference !== true ||
                 caps?.supportsCharmConceptPlanning !== true ||
-                !hasBlackPolicy
+                caps?.supportsBackendFinalGeometryOverride !== true ||
+                caps?.supportsCharmPromptPreflight !== true ||
+                caps?.supportsManualJumpRingRepair !== true ||
+                caps?.manualRepairUsesSelectedModel !== true ||
+                Number(caps?.manualRepairMaxImageGenerations) !== 1 ||
+                caps?.manualRepairPreservesCharmDesign !== true ||
+                caps?.usesIndependentPromptAuditAgent !== true ||
+                caps?.promptAuditProducesImages !== false ||
+                caps?.automaticImageRegeneration !== false ||
+                caps?.postGenerationImageQA !== false ||
+                Number(caps?.maxImageGenerationsPerRequest) !== 1 ||
+                caps?.promptPreflightMode !== "text_only_before_image_generation" ||
+                caps?.destructiveBackgroundFloodFill !== false ||
+                caps?.backgroundEnforcement !== "native_generation_prompt_preflight_only" ||
+                caps?.usesBackgroundMasking !== false ||
+                !hasBlackPolicy ||
+                !hasGeometryQA
             ) {
                 throw new Error(
                     "Charm Maker backend is out of date. Deploy the supplied geminiImageProxy-background.js before generating charms."
@@ -8149,6 +8207,7 @@ function updateApproveButtonState() {
                 conversionRationale: cleanCharmPlanText(concept?.conversionRationale),
                 silhouetteBrief: cleanCharmPlanText(concept?.silhouetteBrief),
                 engravingBrief: cleanCharmPlanText(concept?.engravingBrief),
+                cutoutBrief: cleanCharmPlanText(concept?.cutoutBrief, "Use intentional cutouts only when they strengthen the design"),
                 confidence: Math.max(0, Math.min(100, Math.round(Number(concept?.confidence) || 0))),
             })),
         };
@@ -8206,6 +8265,7 @@ CHOSEN COMPLEMENTARY PRODUCT:
 • COMMERCIAL RATIONALE: ${cleanCharmPlanText(chosen.conversionRationale, "Evergreen, recognizable and giftable")}
 • OUTER CONTOUR BRIEF: ${cleanCharmPlanText(chosen.silhouetteBrief, "Use a bold, recognizable one-piece silhouette unlike the reference")}
 • ENGRAVING BRIEF: ${cleanCharmPlanText(chosen.engravingBrief, "Use only sparse recognition-critical surface engraving")}
+• INTENTIONAL CUTOUT BRIEF: ${cleanCharmPlanText(chosen.cutoutBrief, "Use negative-space cutouts when they improve recognition and visual appeal; otherwise use none")}
 
 NOVELTY LOCK — HIGHEST PRIORITY:
 • Draw the NEW SUBJECT above. The reference subject itself is forbidden.
@@ -8216,25 +8276,53 @@ NOVELTY LOCK — HIGHEST PRIORITY:
 • HARD FAIL: the new outline could be overlaid on the reference and broadly match.
 
 HARD PHYSICAL CONSTRAINTS:
-• ONE-PIECE FLAT SHEET METAL: perfectly flat, thin, high-polish metal with clean laser-cut edges.
-• SHARP 2D CUTOUT: no rounded edges, bevels, embossing, extrusion or visible side-wall thickness.
+• ONE CONTINUOUS PIECE: the charm body and eyelet are cut together from one uninterrupted flat sheet. There are no separately attached metal components anywhere.
+• INTENTIONAL CUTOUT FREEDOM: negative-space cutouts are an important design tool and are fully allowed. Use the INTENTIONAL CUTOUT BRIEF above. Cutouts may be small or large, numerous, openwork, filigree, outline-style, fully enclosed, or intentionally open to the outer contour.
+• CUTOUT QUALITY: every intended cutout must have a deliberate recognizable shape and a clean, crisp laser-cut boundary. The remaining metal must form one structurally connected, manufacturable piece with no unsupported floating islands.
+• ARTIFACT DISTINCTION: never create irregular black blotches, eroded/faded gaps, shadow-like voids, ragged missing patches or ambiguous areas without a crisp designed cut edge. These are rendering defects—not cutouts.
+• UNIFORMLY FLAT SHEET METAL: every millimetre of the charm, including the complete eyelet area, lies in exactly one plane and has the same thin approximately 22-gauge sheet thickness.
+• SHARP SQUARE-CUT 2D EDGES: crisp laser-cut perimeter and hole edges. No rounded, rolled, beveled, bulbous, tubular, domed, cast or inflated edges anywhere.
+• FLAT SURFACE LIGHTING: high polish may create reflections across the flat face, but the reflections must never make the face or edges look curved, raised or sculpted.
 • FRONT VIEW: perfectly front-facing orthographic view with 0% perspective tilt.
 • ENGRAVING: sparse, strategic, shallow surface laser etching only. Preserve generous untouched metal areas.
+• ENGRAVING TONE — STRONGER WARM CONTRAST: render every engraved line in the same muted copper/brass-mix patina, now approximately 30–35% darker than the nearby polished metal face. The lines must be clearly and immediately visible at preview size while remaining refined.
+• ENGRAVING COLOR LIMITS: never use white, cream or face-matching highlight colour for an engraving, but also never use black, charcoal, very dark brown, heavy oxidation or deep shadow. Aim for a medium warm copper-brass line that remains plainly visible at preview size—not a dark outline.
+• ENGRAVING/CUTOUT DISTINCTION: engravings are shallow surface marks; cutouts are true negative space with crisp laser-cut boundaries. Both are allowed and must remain visually unambiguous.
 • NO TEXT: no letters, words, dates, numbers, logos or branded shapes.
-• NO HARDWARE: no chains, clasps, separate jump rings, O-rings or secondary bails.
+• NO ATTACHED HARDWARE: no chains, clasps, jump rings, O-rings, split rings, wire loops, folded bails, soldered bails, hinges or connectors of any kind.
 
-INTEGRATED BAIL:
-• Add exactly one closed, clearly open, integrated bail/eyelet fused into the charm's top contour as part of the same sheet of metal.
-• Place it above the new design's center of mass so the charm would hang naturally upright.
-• Never copy the reference bail's coordinates if they are wrong for the new subject.
+ONE INTEGRATED PUNCHED TOP HOLE — NO PROTRUDING TAB, ZERO RINGS OR BAILS:
+• ABSOLUTE REQUIREMENT: laser-cut exactly ONE clean, approximately circular hole directly INSIDE the uppermost broad solid area of the recognizable main subject body. Plan the subject and pose around this requirement before rendering.
+• The outer silhouette must NOT sprout a stem, tongue, capsule, teardrop, strap, hanger, loop or long vertical tab for the hole. A hole inside the existing body is correct; a pendant bail above the body is forbidden.
+• NO FALLBACK ATTACHMENT SHAPE: never add even a small contour bump solely to hold the hole. If the chosen subject or pose lacks a safe upper solid area, redesign the subject's overall pose or choose a better view so the hole fits inside the main body. Do not solve the problem by adding hardware.
+• The hole must appear round and front-facing, never as a narrow upright oval, slot, capsule or side view of a ring.
+• The hole surround and body share one continuous 2D perimeter and one uninterrupted front face. There is no overlap, front/back offset, joint, fold, sidewall, doubled edge, seam, solder point or separate part.
+• The metal surrounding the hole must remain visibly flat and sheet-thin. It must NOT resemble a doughnut, torus, tube, wire ring, raised rim or rounded eyelet.
+• ABOVE THE SINGLE PUNCHED HOLE: only the recognizable main subject itself may continue upward. No attachment-shaped metal strip, ring, loop, tab or second part may rise above the subject.
+• ZERO STACKED HARDWARE: never add a second hole, long vertical loop, connector loop, jump ring or bail above, below or through the punched hole.
+• NEVER place any ring through the punched hole. The output is the charm alone.
+• Position the integrated hole near the new design's center of mass so the charm would hang naturally upright.
+• HARD FAIL: a separate folded/teardrop bail sits in front of the charm or passes through its hole.
+• HARD FAIL: a tall metal strip, capsule, teardrop or folded hanger extends above the main subject, even if it contains only one visible hole.
+• HARD FAIL: the permitted hole is a vertical oval/slot or appears edge-on instead of as a circular hole punched through the front face.
+• HARD FAIL: any jump ring, O-ring, circular connector or secondary loop is attached anywhere.
+• HARD FAIL: the eyelet or any body edge appears rounded, beveled, thick, domed or three-dimensional.
 
 BACKGROUND — ABSOLUTE:
 • 100% PURE SOLID BLACK (#000000), edge to edge.
 • No white, off-white, grey, studio sweep, gradient, texture or transparency anywhere in the background.
+• Generate the image NATIVELY against pure black from the first render. Do not begin with white and remove it. Do not use masking, background removal, chroma keying, cutout compositing or transparent pixels.
+• Before returning the image, inspect all four corners and every pixel outside the charm: they must already be uniform #000000.
 • The isolated charm is centered with comfortable empty black margin and no cast shadow outside its silhouette.
 
 AESTHETIC CONTINUITY:
-Match only the reference's metal alloy/tone, polish, restrained engraving language, lighting quality and production realism. The product concept, subject, silhouette and feature placement come exclusively from the chosen complementary brief above.`;
+Match only the reference's metal alloy/tone, polish, restrained engraving language, lighting quality and production realism. The product concept, subject, silhouette and feature placement come exclusively from the chosen complementary brief above.
+
+FINAL PRE-RENDER ATTACHMENT CHECK — PERFORM THIS AFTER THE IMAGE IS COMPOSED:
+1. Before rendering, inspect the planned top geometry. Is there ANY jump ring, O-ring, split ring, wire loop, bail, hoop, connector, oval, capsule, tab or attachment-shaped protrusion? If YES, correct the interpretation before creating the single final image.
+2. Confirm that the one permitted circular hole is cut directly through the recognizable main subject body and that no separate metal object touches, overlaps or passes through it.
+3. Confirm there is ZERO metal attachment hardware above, behind, in front of or around the charm. Touching the body does not make a ring acceptable.
+4. Repeat the rule before returning the image: DO NOT GENERATE A JUMP RING. DO NOT GENERATE A BAIL. DO NOT GENERATE AN EXTERNAL LOOP. The charm alone must be shown.`;
     }
 
     // Defensive fallback used only by legacy sets that pre-date saved concept
@@ -8244,43 +8332,86 @@ Match only the reference's metal alloy/tone, polish, restrained engraving langua
     const promptStrEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm. 
     Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
     
-    Exception 1: Completely remove the hoop/bail from the top of the charm.
+    Exception 1: Close ONLY the single circular attachment hole by filling it with matching flat sheet metal. Preserve the existing outer silhouette exactly.
 
     HARD CONSTRAINTS (NON-NEGOTIABLE):
-    • BACKGROUND COLOR (CRITICAL): Keep the exact same solid pure black (#000000) background. ABSOLUTELY NO white, grey, or transparent backgrounds.
-    • JUMP RINGS: NEVER add jump rings, O-rings, bails, or chains.
+    • BACKGROUND COLOR (CRITICAL): Natively generate the complete image on 100% pure solid black (#000000), edge to edge. ABSOLUTELY NO white, off-white, grey, transparent, gradient or studio-sweep background pixels. Do not use masking, background removal or cutout compositing.
+    • NO ATTACHMENT HARDWARE: NEVER add an eyelet, jump ring, O-ring, split ring, wire loop, folded bail, soldered bail, connector or chain.
+    • UNIFORMLY FLAT: the remaining charm is one planar, uniformly thin approximately 22-gauge sheet. No portion may be rounded, rolled, beveled, tubular, domed, cast, inflated or thicker than another.
+    • PRESERVE EVERY DESIGN CUTOUT: except for the one attachment hole being closed, all intentional holes, negative-space regions, openwork, filigree and outline-style sections in the reference are integral design features. Keep their exact shapes, sizes and positions. Do not fill, shrink, remove or reinterpret them.
+    • NO NEW DAMAGE: do not introduce irregular black blotches, eroded gaps or ambiguous missing patches that are absent from the reference.
+    • EDGES: every outside edge and cutout edge is crisp, sharp and square-cut like a laser-cut sheet—not softened or rounded.
+    • ENGRAVING TONE: preserve the base charm's clearly visible warm copper/brass-mix engraving, approximately 30–35% darker than the polished face. Do not lighten it toward white/cream and do not darken it toward black/charcoal/deep brown.
     • Keep all engravings, cutouts, overall shape, proportions, and gold tone 100% identical to the reference.
     • Do not introduce any new elements, 3D thickness, or styling changes.
-    • The final output MUST be the exact same charm, just missing the top hoop, on a PURE BLACK background.`;
+    • The final output MUST be the exact same flat charm and identical outer silhouette, with only the one circular attachment hole filled seamlessly and with no attachment hardware, on a PURE BLACK background.`;
 
     // Used only when a charm in the pool turns out to have no bail at all.
-    // The point is a faithful copy plus one ring — anything else redrawn would
+    // The point is a faithful copy plus one flat integrated eyelet — anything else redrawn would
     // break the promise that every image in a listing shows the same charm.
     const promptStrAddHoop = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm.
     Your task is to reproduce that EXACT charm, 100% identical in every respect, with ONE addition:
 
-    Addition 1: Integrate a hoop/bail into the charm so it can be threaded onto a chain.
+    Addition 1: Add exactly one circular punched top hole directly inside the charm's existing upper body. Do not add a pendant bail, jump ring or protruding attachment tab.
 
     THE CHARM ITSELF MUST NOT CHANGE:
     • Silhouette, outline, proportions, pose, engravings, cutouts, gold tone, polish and level of detail must all be IDENTICAL to the reference. This is a copy, not a reinterpretation.
-    • Do NOT restyle, redraw, re-pose, resize, mirror, crop or re-centre the charm. Do NOT add or remove any feature other than the hoop.
+    • Do NOT restyle, redraw, re-pose, resize, mirror, crop or re-centre the charm. Do NOT add or remove any feature other than the single punched hole inside the body.
     • Keep the charm at the same position and the same scale within the frame as in the reference.
 
-    THE HOOP (CRITICAL):
-    • Add exactly ONE closed hoop, fused into the charm as a single continuous piece of the same metal — as if the whole thing were cut from one sheet. It must NOT look like a separate jump ring clipped on.
-    • The hoop must have a clear open hole through it, big enough to read as threadable at a glance.
+    THE INTEGRATED PUNCHED TOP HOLE (CRITICAL):
+    • ABSOLUTE REQUIREMENT: cut exactly ONE clean hole directly inside an existing broad solid upper area of the charm body. Do not change the outer silhouette.
+    • Do NOT add a stem, tongue, capsule, teardrop, strap, hanger, contour bump, long vertical tab or pendant bail above the charm. There is no fallback attachment shape.
+    • If there is no safe solid area for the internal hole, resolve the geometry before rendering the single final image. Never invent a ring, bail or attachment shape to force a result.
+    • The hole must appear approximately circular and front-facing—not as a narrow upright oval, slot, capsule or edge-on ring.
+    • The hole must be clear and open, but the metal surrounding it remains flat and exactly the same sheet thickness as the body.
     • Place it at the TOP of the charm, at the point where the charm would balance when hanging: directly above the charm's centre of mass, so the charm hangs upright and level rather than tipping nose-up or nose-down. For a side-profile animal that usually means above the middle of the back or the shoulders, NOT above the nose and NOT above the tail.
-    • The hoop must merge into the charm's outline cleanly, following the existing contour where they meet.
-    • Exactly one hoop. NEVER a second ring, NEVER a chain, NEVER a clasp.
+    • The hole surround must flow continuously from the charm body with no overlap, front/back offset, joint, hinge, fold, sidewall, doubled edge, seam or solder point.
+    • NEVER render the eyelet as a rounded doughnut, torus, tube, wire ring or raised rim.
+    • NEVER place a separate jump ring, O-ring, split ring, folded/teardrop bail, connector, chain or clasp through the eyelet.
+    • ABOVE THE SINGLE PUNCHED HOLE: only the charm's recognizable main body may appear. No attachment-shaped strip, ring, loop, bump or second metal element may continue upward.
+    • ZERO STACKED HARDWARE: exactly one top hole, zero additional loops and zero rings passing through rings or holes.
 
     HARD CONSTRAINTS (NON-NEGOTIABLE):
-    • BACKGROUND COLOR (CRITICAL): The background MUST be 100% PURE SOLID BLACK (#000000). ABSOLUTELY NO white, grey, gradient or transparent backgrounds.
-    • FLAT SHEET METAL: the charm and its hoop are one perfectly flat, thin sheet of high-polish metal.
+    • BACKGROUND COLOR (CRITICAL): Natively generate the complete image on 100% PURE SOLID BLACK (#000000), edge to edge. ABSOLUTELY NO white, off-white, grey, gradient, transparent or studio-sweep background pixels. Do not use masking, background removal or cutout compositing.
+    • FLAT SHEET METAL: the charm and complete punched-hole surround are one perfectly planar, uniformly thin approximately 22-gauge sheet of high-polish metal.
+    • PRESERVE EVERY CUTOUT: all intentional holes, negative-space regions, openwork, filigree and outline-style construction in the original charm must remain exactly unchanged. Do not fill, remove, resize or relocate any cutout while adding the eyelet.
+    • PRESERVE ENGRAVING TONE: keep every engraved line as a clearly visible warm copper/brass mix, about 30–35% darker than the polished face. Never make engraving pale/white, and never make it black, charcoal or heavily oxidized.
+    • NO RENDERING DAMAGE: do not add irregular black blotches, eroded gaps, faded missing patches or ambiguous voids that are not part of the original cutout design.
+    • SQUARE-CUT EDGES: no rounded, rolled, beveled, bulbous, tubular, domed, cast or inflated edge geometry anywhere.
     • VIEWPOINT: perfectly front-facing (orthographic), 0% perspective tilt.
     • NO TEXT: never render letters, numbers or words.
-    • HARD FAIL: the charm redrawn differently from the reference in any way other than the added hoop.
-    • HARD FAIL: more than one ring, or a ring that reads as a separate attached jump ring rather than part of the charm.
-    • HARD FAIL: a hoop placed so far off-centre that the charm would hang badly tilted.`;
+    • HARD FAIL: the charm redrawn differently from the reference in any way other than the added punched hole inside the body.
+    • HARD FAIL: any separate attached ring or bail of any kind.
+    • HARD FAIL: an integrated hole rendered with rounded 3D ring geometry rather than as a circular opening through the flat body.
+    • HARD FAIL: an eyelet placed so far off-centre that the charm would hang badly tilted.
+
+    FINAL CHECK BEFORE RENDERING THE ONE IMAGE: inspect the planned top geometry again. If any jump ring, bail, hoop, external loop, oval connector or attachment-shaped metal would exist, correct the interpretation before rendering. DO NOT GENERATE A JUMP RING. The output must contain only the charm body and its single circular internal hole.`;
+
+    const promptStrRemoveJumpRing = `SURGICAL SINGLE-IMAGE CHARM REPAIR — REMOVE ONLY THE SEPARATE JUMP RING
+
+Analyze the supplied charm image before editing it. Produce exactly ONE corrected image. Do not create alternatives, variations, retries or a second output.
+
+THE ONLY PERMITTED CHANGE:
+• Remove every separate jump ring, O-ring, split ring, wire loop, bail, hoop, oval connector or other attached hardware from the charm.
+• If that hardware overlaps, crosses, shadows or partly hides the charm, reconstruct ONLY the few occluded pixels needed to restore the original flat charm surface and any original empty internal punched hole.
+
+ABSOLUTE PRESERVATION LOCK:
+• Preserve the recognizable charm body exactly: identical subject, silhouette, outline, pose, scale, position, proportions and orientation.
+• Preserve the metal alloy, gold colour, copper/brass colour balance, polish, reflections, lighting and surface finish exactly.
+• Preserve every engraving, decorative line, feature, texture, intentional cutout and fine detail exactly. Do not redraw, simplify, sharpen, recolour, darken or lighten the charm.
+• If the charm already has a flat circular hole punched directly inside its body, preserve that hole exactly: same size, shape and position. Do not fill it, move it, enlarge it, add a rim around it or turn it into an external tab. If no internal punched hole exists, do not invent one during this repair.
+• Preserve the pure solid black background, framing, centering and empty margin exactly. Generate the result natively on black; do not use masking, background removal, transparency or compositing.
+• The charm remains one uniformly thin, front-facing, planar laser-cut sheet with crisp square-cut edges. Never round, bevel, dome, inflate, cast or thicken any part.
+
+HARD PROHIBITION — RECHECK YOUR INTERPRETATION BEFORE THE ONE IMAGE GENERATION:
+• NEVER GENERATE OR PRESERVE A JUMP RING.
+• ZERO JUMP RINGS. ZERO BAILS. ZERO HOOPS. ZERO EXTERNAL LOOPS. ZERO ATTACHED HARDWARE.
+• Jewelry conventions do not apply. The finished output shows the charm ALONE with only its original internal punched hole if one was already present.
+• A ring that touches, overlaps, passes through or appears fused to the charm is still forbidden and must be removed.
+• Do not solve the removal by adding a stem, tongue, capsule, teardrop, strap, hanger, protruding eyelet, attachment tab, contour bump or any replacement hardware.
+
+FINAL INTERNAL CHECK: compare the planned result against the supplied image. Every charm pixel and design characteristic must remain unchanged except for the separate hardware and the minimal background/surface pixels it covered. Then confirm again: no jump ring or external attachment exists anywhere. Return exactly one corrected image.`;
 
 const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a specific Black & White line art style. 
 
@@ -8492,7 +8623,11 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
     }
 
 function createCharmCardHTML(folderId, isApprovedView) {
-        const redoHTML0 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>`;
+        // The repair button deliberately lives in the SAME markup block as
+        // the visible Slot 1 Redo button. If Redo renders, this renders too.
+        const redoHTML0 = isApprovedView ? '' : `
+            <button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>
+            <button class="btn btnSmall jumpRingRepairBtn jump-ring-repair-btn" id="removeRing_${folderId}" onclick="removeCharmJumpRing('${folderId}')" aria-label="Remove the jump ring from this base charm" title="Uses the image model currently selected in the header">✂ Remove Jump Ring</button>`;
         const redoHTML1 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_1" onclick="redoCharmSlot('${folderId}', 1)">Redo</button>`;
         const redoHTML2 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_2" onclick="redoCharmSlot('${folderId}', 2)">Redo</button>`;
         const redoHTML3 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>`;
@@ -8501,11 +8636,11 @@ function createCharmCardHTML(folderId, isApprovedView) {
         
         // --- UPDATED ACTION BUTTONS ---
         const actionButtons = isApprovedView ? 
-            `<div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
+            `<div class="row charm-card-actions" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
                 <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}', ${folderArg})">Delete</button>
             </div>` 
             : 
-            `<div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
+            `<div class="row charm-card-actions" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
                 <button class="btn btnSmall redoBtn" style="flex:1;" onclick="regenCharmQuad('${folderId}')">Regen Quad</button>
                 <button class="btn btnSmall redoBtn" style="flex:1; background: #b45309; border-color: #d97706; color: #fde68a; display: none;" id="continue_${folderId}" onclick="continueCharmQuad('${folderId}')">Approve Base & Continue</button>
                 <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}', ${folderArg})">Delete</button>
@@ -8537,7 +8672,7 @@ function createCharmCardHTML(folderId, isApprovedView) {
                     <div class="slotPrev" id="prevBox_${folderId}_1"><div class="slotRefEmpty">Loading...</div></div>
                     ${redoHTML1}
                 </div>
-                
+
                 <div class="charm-col">
                     <div class="muted">B&W Line Art (Standard)</div>
                     <div class="slotPrev" id="prevBox_${folderId}_2"><div class="slotRefEmpty">Loading...</div></div>
@@ -8805,7 +8940,12 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 slotIndex: slotIndex,
                 prompt: promptStr,
                 image_roles: slotIndex === 0 ? "style_reference" : undefined,
-                background_policy: slotIndex <= 1 ? "solid_black" : undefined
+                background_policy: slotIndex <= 1 ? "solid_black" : undefined,
+                charm_geometry_policy: slotIndex === 0
+                    ? "flat_integrated_eyelet"
+                    : slotIndex === 1
+                        ? "flat_no_attachment"
+                        : undefined
             }, signal);
 
             // PASS SIGNAL TO POLLER
@@ -8844,6 +8984,125 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 if (updatedBtn) updatedBtn.disabled = false;
             }
             window.updateQuadActionButtons(folderId);
+        }
+    };
+
+window.removeCharmJumpRing = async function(folderId) {
+        const slotIndex = 0;
+        const jobKey = `${folderId}_${slotIndex}`;
+        const folderPath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`;
+        const slotStoragePath = `${folderPath}/Slot_1.png`;
+        const repairModel = getSelectedImageModel();
+        const repairModelLabel = getImageModelConfig(repairModel).label;
+        const repairBtn = document.getElementById(`removeRing_${folderId}`);
+        const redoBtn = document.getElementById(`redo_${folderId}_0`);
+        const cardObj = document.getElementById(`card_${folderId}`);
+        let prevBox = document.getElementById(`prevBox_${folderId}_0`);
+        const previousPreviewHTML = prevBox?.innerHTML || '';
+        const previouslySuccessful = !!prevBox?.classList.contains('success-border');
+        let completedSuccessfully = false;
+
+        window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
+        window.CHARM_ABORT_CONTROLLERS = window.CHARM_ABORT_CONTROLLERS || new Map();
+
+        // This repair owns Slot 1. Cancel any older Slot 1 request before
+        // starting so the interface can never intentionally launch two edits.
+        if (window.CHARM_ABORT_CONTROLLERS.has(jobKey)) {
+            window.CHARM_ABORT_CONTROLLERS.get(jobKey).abort();
+        }
+        const abortController = new AbortController();
+        window.CHARM_ABORT_CONTROLLERS.set(jobKey, abortController);
+        const signal = abortController.signal;
+        window.ACTIVE_CHARM_JOBS.add(jobKey);
+        window.updateQuadActionButtons(folderId);
+
+        if (repairBtn) repairBtn.textContent = 'Analyzing & removing…';
+        if (redoBtn) redoBtn.disabled = true;
+        if (cardObj) cardObj.classList.add('working-card');
+        if (prevBox) {
+            prevBox.innerHTML = window.getSpinnerHTML('Analyzing ring geometry…');
+            prevBox.classList.remove('success-border');
+            prevBox.classList.add('working-box');
+        }
+        setStatus(`Removing jump ring with ${repairModelLabel} — one image edit only…`);
+
+        try {
+            await ensureCharmMakerCapabilities();
+            await ensureStorageSignedIn();
+
+            let beforeUpdatedMs = 0;
+            let beforeGeneration = 0;
+            try {
+                const beforeMeta = await getMetadata(ref(storage, slotStoragePath));
+                beforeUpdatedMs = Date.parse(beforeMeta?.updated || beforeMeta?.timeCreated || '') || 0;
+                beforeGeneration = Number(beforeMeta?.generation || 0) || 0;
+            } catch (_) {
+                throw new Error('The base charm image is not available yet. Wait for it to finish loading, then try again.');
+            }
+
+            // The backend performs a text-only independent prompt audit first,
+            // then invokes the selected image provider exactly once. There is
+            // no post-generation check, retry or automatic second image.
+            await postImageGeneration({
+                kind: 'edits',
+                activeCategory: 'Charms',
+                input_storage_path: slotStoragePath,
+                output_base_path: folderPath,
+                slotIndex,
+                prompt: promptStrRemoveJumpRing,
+                background_policy: 'solid_black',
+                charm_geometry_policy: 'flat_integrated_eyelet',
+                charm_edit_intent: 'remove_jump_ring_only'
+            }, signal, repairModel);
+
+            const waitedRes = await waitForSlotPngUrl(folderPath, slotIndex, {
+                afterUpdatedMs: beforeUpdatedMs,
+                afterGeneration: beforeGeneration,
+                timeoutMs: 600000,
+                intervalMs: 5000,
+                signal
+            });
+            const newBlob = await fetchAndCacheBlob(waitedRes.url, waitedRes.storagePath, Date.now());
+
+            prevBox = document.getElementById(`prevBox_${folderId}_0`);
+            if (prevBox) {
+                prevBox.classList.remove('working-box');
+                setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(waitedRes.url));
+                prevBox.classList.add('success-border');
+            }
+            completedSuccessfully = true;
+            if (repairBtn) repairBtn.textContent = '✓ Ring removed';
+            setStatus(`Jump ring removed with ${repairModelLabel}. One corrected image was generated.`);
+        } catch (err) {
+            if (err?.name === 'AbortError' || err?.message === 'AbortError') {
+                console.log(`Jump-ring repair for ${jobKey} was superseded.`);
+                return;
+            }
+            console.error('Jump-ring repair failed', err);
+            prevBox = document.getElementById(`prevBox_${folderId}_0`);
+            if (prevBox) {
+                prevBox.classList.remove('working-box');
+                prevBox.innerHTML = previousPreviewHTML || '<div class="slotRefEmpty">Base image unavailable</div>';
+                if (previouslySuccessful) prevBox.classList.add('success-border');
+            }
+            if (repairBtn) repairBtn.textContent = '✂ Remove Jump Ring';
+            setStatus(`Jump-ring removal stopped before completion: ${err?.message || err}`);
+        } finally {
+            if (window.CHARM_ABORT_CONTROLLERS.get(jobKey) === abortController) {
+                window.ACTIVE_CHARM_JOBS.delete(jobKey);
+                window.CHARM_ABORT_CONTROLLERS.delete(jobKey);
+                if (cardObj) cardObj.classList.remove('working-card');
+                if (redoBtn) redoBtn.disabled = false;
+                window.updateQuadActionButtons(folderId);
+                if (completedSuccessfully) {
+                    setTimeout(() => {
+                        const currentBtn = document.getElementById(`removeRing_${folderId}`);
+                        if (currentBtn && !window.ACTIVE_CHARM_JOBS.has(jobKey)) {
+                            currentBtn.textContent = '✂ Remove Jump Ring';
+                        }
+                    }, 1800);
+                }
+            }
         }
     };
 
@@ -8936,7 +9195,8 @@ window.regenCharmQuad = async function(folderId) {
                 output_base_path: folderPath, slotIndex: 0,
                 prompt: baseCharmPrompt,
                 image_roles: "style_reference",
-                background_policy: "solid_black"
+                background_policy: "solid_black",
+                charm_geometry_policy: "flat_integrated_eyelet"
             }, sig0, regenerationModel);
             
             const charmRes = await waitForSlotPngUrl(folderPath, 0, { 
@@ -8967,7 +9227,8 @@ window.regenCharmQuad = async function(folderId) {
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
                 output_base_path: folderPath, slotIndex: 1,
                 prompt: promptStrEarring,
-                background_policy: "solid_black"
+                background_policy: "solid_black",
+                charm_geometry_policy: "flat_no_attachment"
             }, sig1, regenerationModel);
             
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { 
@@ -9136,7 +9397,8 @@ window.regenCharmQuad = async function(folderId) {
                 input_storage_path: baseCharmStoragePath, input_charm_storage_path: baseCharmStoragePath,
                 output_base_path: folderPath, slotIndex: 1,
                 prompt: promptStrEarring,
-                background_policy: "solid_black"
+                background_policy: "solid_black",
+                charm_geometry_policy: "flat_no_attachment"
             }, undefined, derivativeModel);
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
@@ -9428,7 +9690,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
                 output_base_path: outputBasePath, slotIndex: 0,
                 prompt: baseCharmPrompt,
                 image_roles: "style_reference",
-                background_policy: "solid_black"
+                background_policy: "solid_black",
+                charm_geometry_policy: "flat_integrated_eyelet"
             }, undefined, generationModel);
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
