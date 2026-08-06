@@ -1073,6 +1073,54 @@
     height: 100%;
     object-fit: contain;
   }
+
+  /* ---------- Charm hover zoom (reference library) ----------
+     One fixed, pointer-events:none singleton. It never intercepts the
+     mouse, follows the cursor via transform (GPU compositor only — no
+     layout/paint on move), flips sides to stay on-screen, and reuses the
+     tile's already-decoded full-resolution blob, so showing it costs zero
+     network and zero decode. */
+  .charm-hover-zoom {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+    width: min(380px, 44vw);
+    height: min(380px, 62vh);
+    padding: 10px 10px 8px;
+    box-sizing: content-box;
+    background: var(--card);
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4);
+    pointer-events: none;          /* NEVER blocks clicks or hover targets */
+    opacity: 0;
+    transform: translate3d(-9999px, -9999px, 0) scale(0.97);
+    transition: opacity 90ms ease, scale 90ms ease;
+    will-change: transform, opacity;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .charm-hover-zoom.visible { opacity: 1; scale: 1; }
+  .charm-hover-zoom img {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #000;              /* charms live on black — match it */
+  }
+  .charm-hover-zoom .chz-name {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .charm-mosaic-tile .order-badge {
     position: absolute;
     top: 4px;
@@ -18035,6 +18083,122 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         if (ph) { ph.textContent = '!'; ph.style.color = '#fca5a5'; }
       }
     }
+
+    // ---------------------------------------------------------------------
+    // Hover zoom — real-time enlarged preview of the hovered charm
+    // ---------------------------------------------------------------------
+    // Fast because it does almost nothing: the popup is ONE element created
+    // once; events are delegated (three listeners total, tiles carry none);
+    // the enlarged image is the tile's own already-decoded full-resolution
+    // blob URL (the cache stores the original file, thumbnails are just the
+    // same blob painted small); movement is rAF-throttled and applied as a
+    // compositor-only transform. Intent delay stops it flashing while the
+    // cursor sweeps the grid; once open, switching tiles is instant.
+    (function _cmInitHoverZoom() {
+      const mosaic = document.getElementById('charmMosaic');
+      if (!mosaic || mosaic._chzWired) return;
+      mosaic._chzWired = true;
+
+      const pop = document.createElement('div');
+      pop.className = 'charm-hover-zoom';
+      pop.setAttribute('aria-hidden', 'true');
+      const img = document.createElement('img');
+      img.alt = '';
+      img.decoding = 'async';
+      const cap = document.createElement('div');
+      cap.className = 'chz-name';
+      pop.appendChild(img);
+      pop.appendChild(cap);
+      document.body.appendChild(pop);
+
+      const OFFSET = 22;      // gap between cursor and popup
+      const MARGIN = 10;      // minimum distance from viewport edges
+      const INTENT_MS = 80;   // hover-intent delay before first open
+
+      let visible = false;
+      let currentPath = null;
+      let intentTimer = 0;
+      let rafId = 0;
+      let px = 0, py = 0;     // latest pointer position
+
+      function place() {
+        rafId = 0;
+        const w = pop.offsetWidth;
+        const h = pop.offsetHeight;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        // Prefer the side of the cursor with room; flip when it would clip.
+        let x = px + OFFSET;
+        if (x + w + MARGIN > vw) x = px - OFFSET - w;
+        x = Math.max(MARGIN, Math.min(vw - w - MARGIN, x));
+        // Vertically centered on the cursor, clamped on-screen.
+        let y = py - h / 2;
+        y = Math.max(MARGIN, Math.min(vh - h - MARGIN, y));
+        pop.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+      }
+
+      function schedulePlace() {
+        if (!rafId) rafId = requestAnimationFrame(place);
+      }
+
+      function showFor(tile) {
+        const tileImg = tile.querySelector('img');
+        if (!tileImg || !tileImg.src) return;   // thumbnail not loaded yet — nothing to zoom
+        const path = tile.dataset.fp || tileImg.src;
+        if (path !== currentPath) {
+          currentPath = path;
+          img.src = tileImg.src;                // same blob: instant, full-res
+          cap.textContent = tile.dataset.name || '';
+        }
+        if (!visible) {
+          visible = true;
+          place();                              // position BEFORE first paint
+          pop.classList.add('visible');
+        } else {
+          schedulePlace();
+        }
+      }
+
+      function hide() {
+        if (intentTimer) { clearTimeout(intentTimer); intentTimer = 0; }
+        if (!visible && !currentPath) return;
+        visible = false;
+        currentPath = null;
+        pop.classList.remove('visible');
+      }
+
+      mosaic.addEventListener('pointerover', (e) => {
+        const tile = e.target.closest?.('.charm-mosaic-tile');
+        if (!tile || !mosaic.contains(tile)) return;
+        if (intentTimer) { clearTimeout(intentTimer); intentTimer = 0; }
+        if (visible) {
+          showFor(tile);                        // already open: switch instantly
+        } else {
+          intentTimer = setTimeout(() => { intentTimer = 0; showFor(tile); }, INTENT_MS);
+        }
+      });
+
+      mosaic.addEventListener('pointerout', (e) => {
+        const to = e.relatedTarget;
+        if (to && to.closest?.('.charm-mosaic-tile')) return;  // still on a tile
+        hide();
+      });
+
+      mosaic.addEventListener('pointermove', (e) => {
+        px = e.clientX;
+        py = e.clientY;
+        if (visible) schedulePlace();
+      }, { passive: true });
+
+      // A press means the operator is selecting/deleting — get out of the way
+      // immediately (the popup itself can never be clicked: pointer-events none).
+      mosaic.addEventListener('pointerdown', hide, { passive: true });
+      // Scrolling the library shifts which tile sits under the cursor; hide and
+      // let the next pointerover re-open on the right one.
+      mosaic.addEventListener('scroll', hide, { passive: true });
+      window.addEventListener('blur', hide);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+    })();
 
     // ---------------------------------------------------------------------
     // Selection (shared with the generator: click order still drives it)
