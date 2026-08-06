@@ -1575,6 +1575,18 @@
     color: #0a1426 !important;
     font-weight: 600 !important;
   }
+  /* Charm Maker generate button while Gemini Batch mode is armed — green,
+     mirroring the Generate tab's "Submit batch" recolor. Must out-specify
+     .btn-primary's !important rules, hence the class + !important here. */
+  .btn-primary.charm-batch-armed {
+    background: #1f4026 !important;
+    border-color: #2f5e3a !important;
+    color: #7fdb96 !important;
+  }
+  .btn-primary.charm-batch-armed:hover {
+    background: #275231 !important;
+    border-color: #3a7549 !important;
+  }
   .btn-primary:hover {
     background: #8bbaff !important;
     border-color: #8bbaff !important;
@@ -3510,8 +3522,32 @@ html.gs-locked body > *:not(#gate){display:none!important}
             <button class="btn btnSmall btn-danger" id="charmLibCachePurge" style="font-size: 10px; padding: 2px 8px; width: auto;" type="button" title="Clear every cached image on this device (images re-download on next view)">Clear cache</button>
           </div>
 
+          <!-- ============ Generation mode (mirrors the Generate tab's toggle) ============ -->
+          <div id="charmGenModeToggle" style="margin-top: 14px; padding: 10px 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <label style="margin: 0;">Generation mode</label>
+              <span class="muted" style="font-size: 10px;" id="charmGenModeHint">Affects the Generate charms button</span>
+            </div>
+            <div class="row" style="gap: 8px; margin-top: 8px;">
+              <button type="button" class="btn btnSmall" id="charmGenModeStandardBtn" style="flex: 1;">Standard</button>
+              <button type="button" class="btn btnSmall" id="charmGenModeBatchBtn" style="flex: 1;">Gemini Batch (50% off)</button>
+            </div>
+            <div id="charmGenModeBatchInfo" class="muted" style="display: none; margin-top: 8px; font-size: 10px; line-height: 1.5;"></div>
+          </div>
+
           <div class="row" style="margin-top: 14px;">
             <button class="btn btn-primary" id="executeCharmGenBtn" style="width:100%;">Generate charms</button>
+          </div>
+
+          <!-- In-flight Charm Maker batch jobs (visible in batch mode only).
+               Uses the same batch_list / batch_status / batch_collect backend
+               machinery and the same auto-poll loop as the Generate tab. -->
+          <div id="charmBatchJobsPanel" style="display: none; margin-top: 12px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+              <label style="margin: 0;">Charm batch jobs</label>
+              <button type="button" class="btn btnSmall" id="charmBatchJobsRefreshBtn" style="width: auto; font-size: 10px;">↻ Refresh</button>
+            </div>
+            <div id="charmBatchJobsList" style="margin-top: 8px;"></div>
           </div>
         </div>
 
@@ -3915,6 +3951,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
           _setGenMode("standard");
         } else if (typeof _renderGenModeButtons === "function") {
           _renderGenModeButtons();
+        }
+        // Mirror for the Charm Maker's own mode toggle.
+        if (!config.supportsBatch && typeof _isCharmBatchModeActive === "function" && _isCharmBatchModeActive()) {
+          _setCharmGenMode("standard");
+        } else if (typeof _renderCharmGenModeButtons === "function") {
+          _renderCharmGenModeButtons();
         }
         if (typeof setStatus === "function") {
           setStatus(`${config.label} selected for future image generation.`);
@@ -9827,6 +9869,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         const batchCount = parseInt(document.getElementById("batchProcessCountInput").value) || 1;
         const derivCount = Math.max(1, Math.min(8, parseInt(document.getElementById("derivativesPerCharmInput").value, 10) || 1));
 
+        // Gemini Batch mode (50% off): queue the base charms asynchronously
+        // instead of running the interactive Standard loop.
+        if (typeof _isCharmBatchModeActive === "function" && _isCharmBatchModeActive()) {
+            await runCharmBatchSubmission(null, batchCount, derivCount);
+            return;
+        }
+
         setBusy(true);
         setStatus("Starting Batch Generation...");
         executeCharmGenBtn.disabled = true;
@@ -15270,9 +15319,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           _batchPollTimer = null;
           return;
         }
-        // Only poll while the panel is visible to save bandwidth.
+        // Only poll while a batch panel is visible to save bandwidth —
+        // either the Generate tab's panel or the Charm Maker's panel keeps
+        // the loop (and its auto-collect) alive.
         const panel = document.getElementById("batchJobsPanel");
-        if (!panel || panel.style.display === "none") return;
+        const charmPanel = document.getElementById("charmBatchJobsPanel");
+        const genVisible = !!(panel && panel.style.display !== "none");
+        const charmVisible = !!(charmPanel && charmPanel.style.display !== "none");
+        if (!genVisible && !charmVisible) return;
 
         // Step 1: refresh state from Google for any non-final batch.
         for (const b of _lastBatchList) {
@@ -15309,7 +15363,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           })();
         }
 
-        await refreshBatchJobsPanel();
+        if (genVisible) await refreshBatchJobsPanel();
+        if (charmVisible && typeof refreshCharmBatchPanel === "function") await refreshCharmBatchPanel();
       }, BATCH_POLL_MS);
     }
 
@@ -15318,6 +15373,415 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     // Auto-load batches list when entering batch mode for the first time.
     if (_isBatchModeActive()) {
       refreshBatchJobsPanel();
+    }
+
+    // ============================================================
+    // GEMINI BATCH API — Charm Maker integration
+    // ------------------------------------------------------------
+    // The exact same half-price batch pipeline the Generate tab uses,
+    // applied to Charm Maker base-charm generation:
+    //   - Same backend kinds (batch_submit / batch_status /
+    //     batch_collect), same CHUNK_SIZE, same rate-limit retry and
+    //     adaptive stagger helpers, same auto-poll + auto-collect loop.
+    //   - Each derivative becomes one single-image "edits" task
+    //     (style_reference + solid_black + flat_integrated_eyelet —
+    //     identical to Standard mode's base-charm request), targeting
+    //     its own pre-created Deriv_N folder.
+    //   - Concepts are planned and the full charm-maker manifest is
+    //     written BEFORE submission; batch_collect preserves it (via
+    //     setKind: "charm_maker") so cards, ref previews, concept
+    //     summaries and Redo behave identically to Standard mode.
+    //   - Collected sets have Slot_1 only, so the existing
+    //     "Waiting for Base Approval…" restore in loadSetImagesForCharm
+    //     picks them up and the operator continues slots 2–4 as usual.
+    // ============================================================
+    const CHARM_GEN_MODE_KEY = "lg1_charm_gen_mode";
+    let _charmBatchInFlight = false;
+
+    function _readCharmGenMode() {
+      try { return localStorage.getItem(CHARM_GEN_MODE_KEY) || "standard"; }
+      catch { return "standard"; }
+    }
+    function _writeCharmGenMode(m) {
+      try { localStorage.setItem(CHARM_GEN_MODE_KEY, m); } catch {}
+    }
+    function _isCharmBatchModeActive() {
+      return _readCharmGenMode() === "batch";
+    }
+
+    function _renderCharmGenModeButtons() {
+      const standardBtn = document.getElementById("charmGenModeStandardBtn");
+      const batchBtn = document.getElementById("charmGenModeBatchBtn");
+      const info = document.getElementById("charmGenModeBatchInfo");
+      const hint = document.getElementById("charmGenModeHint");
+      const panel = document.getElementById("charmBatchJobsPanel");
+      const execBtn = document.getElementById("executeCharmGenBtn");
+      if (!standardBtn || !batchBtn) return;
+
+      const modelConfig = getImageModelConfig();
+      const canBatch = !!modelConfig.supportsBatch;
+      let mode = _readCharmGenMode();
+      if (mode === "batch" && !canBatch) {
+        mode = "standard";
+        _writeCharmGenMode(mode);
+      }
+      const isBatch = mode === "batch";
+
+      const activeStyle = {
+        background: "var(--accent-bg)",
+        borderColor: "var(--accent-line)",
+        color: "var(--accent)",
+        fontWeight: "600",
+      };
+      const inactiveStyle = {
+        background: "var(--inset)",
+        borderColor: "var(--line)",
+        color: "var(--text-2)",
+        fontWeight: "500",
+      };
+      const apply = (el, st) => { for (const [k, v] of Object.entries(st)) el.style[k] = v; };
+      apply(standardBtn, isBatch ? inactiveStyle : activeStyle);
+      apply(batchBtn,    isBatch ? activeStyle    : inactiveStyle);
+      batchBtn.disabled = !canBatch;
+      batchBtn.style.opacity = canBatch ? "1" : "0.45";
+      batchBtn.style.cursor = canBatch ? "pointer" : "not-allowed";
+      batchBtn.title = canBatch
+        ? `Run ${modelConfig.label} base-charm generation through the Gemini Batch API at reduced cost.`
+        : `${modelConfig.label} currently uses Standard mode in this app.`;
+
+      if (info) {
+        info.style.display = isBatch ? "block" : "none";
+        info.textContent =
+          `${modelConfig.label} batch jobs generate the BASE charms on Google's asynchronous endpoint at ~50% cost ` +
+          `(2K output, usually 2–6h, up to 24h). You can close this tab — results land in Firebase automatically. ` +
+          `When a base arrives, its card shows "Waiting for Base Approval" and you continue slots 2–4 as usual.`;
+      }
+      if (hint) {
+        hint.textContent = !canBatch
+          ? `${modelConfig.label} uses Standard mode`
+          : isBatch
+          ? "queues base charms at 50% cost"
+          : "Affects the Generate charms button";
+      }
+      if (panel) panel.style.display = isBatch ? "block" : "none";
+
+      if (execBtn && !_charmBatchInFlight) {
+        // .btn-primary uses !important colors, so recolor via a class that
+        // also carries !important rather than inline styles.
+        execBtn.classList.toggle("charm-batch-armed", isBatch);
+        execBtn.textContent = isBatch ? "Submit charm batch (50% off, 2K)" : "Generate charms";
+      }
+    }
+
+    function _setCharmGenMode(m) {
+      if (m === "batch" && !getImageModelConfig().supportsBatch) {
+        _writeCharmGenMode("standard");
+        _renderCharmGenModeButtons();
+        setStatus(`${getImageModelConfig().label} uses Standard mode. Select a Gemini model to enable Gemini Batch.`);
+        return;
+      }
+      _writeCharmGenMode(m);
+      _renderCharmGenModeButtons();
+      if (m === "batch") refreshCharmBatchPanel();
+    }
+
+    document.getElementById("charmGenModeStandardBtn")?.addEventListener("click", () => _setCharmGenMode("standard"));
+    document.getElementById("charmGenModeBatchBtn")?.addEventListener("click", () => _setCharmGenMode("batch"));
+    _renderCharmGenModeButtons();
+
+    // A batch belongs to the Charm Maker when its session/displayName carries
+    // the cm prefix stamped by runCharmBatchSubmission.
+    function _isCharmMakerBatch(b) {
+      return String(b?.sessionId || "").startsWith("cmsess_") ||
+             String(b?.displayName || "").startsWith("cm-");
+    }
+
+    let _cmCollectedSeen = -1;
+
+    async function refreshCharmBatchPanel() {
+      const listEl = document.getElementById("charmBatchJobsList");
+      if (!listEl) return;
+      try {
+        const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
+        const batches = Array.isArray(resp?.batches) ? resp.batches : [];
+        // Feed the shared auto-poll loop (same list the Generate tab uses —
+        // it polls status and auto-collects EVERY open batch, charm or not).
+        _lastBatchList = batches;
+
+        const mine = batches.filter(_isCharmMakerBatch);
+        if (mine.length === 0) {
+          listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 4px 0; line-height: 1.5;">No charm batch jobs yet. Click <b>Submit charm batch</b> above to create one.</div>`;
+        } else {
+          // Group by session (one row per submission).
+          const sessions = new Map();
+          for (const b of mine) {
+            const key = b.sessionId || "(unsessioned)";
+            let s = sessions.get(key);
+            if (!s) { s = { batches: [], earliest: Infinity }; sessions.set(key, s); }
+            s.batches.push(b);
+            if (b.createdAt) s.earliest = Math.min(s.earliest, b.createdAt);
+          }
+          const rows = [...sessions.values()].sort((a, b) => b.earliest - a.earliest).slice(0, 12).map((s) => {
+            const total = s.batches.length;
+            const norm = (x) => String(x || "").startsWith("BATCH_STATE_") ? "JOB_STATE_" + String(x).slice(12) : String(x || "");
+            const collected = s.batches.filter((b) => b.collected).length;
+            const running = s.batches.filter((b) => !b.collected && ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(norm(b.state))).length;
+            const succeeded = s.batches.filter((b) => !b.collected && norm(b.state) === "JOB_STATE_SUCCEEDED").length;
+            const failed = s.batches.filter((b) => ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_CANCELLED"].includes(norm(b.state))).length;
+            const when = isFinite(s.earliest) ? new Date(s.earliest).toLocaleString() : "—";
+            const bits = [];
+            if (running) bits.push(`<span style="color: var(--warn);">${running} running</span>`);
+            if (succeeded) bits.push(`<span style="color: var(--accent);">${succeeded} collecting…</span>`);
+            if (collected) bits.push(`<span style="color: var(--ok);">${collected} done</span>`);
+            if (failed) bits.push(`<span style="color: #fca5a5;">${failed} failed</span>`);
+            return `<div style="padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 11px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;">` +
+                   `<span class="muted">${when} · ${total} base charm${total === 1 ? "" : "s"}</span>` +
+                   `<span>${bits.join(" · ") || '<span class="muted">queued</span>'}</span></div>`;
+          });
+          listEl.innerHTML = rows.join("");
+        }
+
+        // When newly collected charm batches appear while the Charm Maker tab
+        // is open, reload the set list so the finished bases show up as cards
+        // in "Waiting for Base Approval" state without a manual refresh.
+        const collectedNow = mine.filter((b) => b.collected).length;
+        if (_cmCollectedSeen >= 0 && collectedNow > _cmCollectedSeen &&
+            typeof appMode !== "undefined" && appMode === "charmMaker" &&
+            typeof loadCharmHistoryList === "function") {
+          loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets");
+        }
+        _cmCollectedSeen = collectedNow;
+
+        _startBatchAutoPoll();
+      } catch (err) {
+        listEl.innerHTML = `<div class="muted" style="font-size: 11px; color: #fca5a5;">Failed to load charm batches: ${err?.message || err}</div>`;
+      }
+    }
+
+    document.getElementById("charmBatchJobsRefreshBtn")?.addEventListener("click", refreshCharmBatchPanel);
+    if (_isCharmBatchModeActive()) refreshCharmBatchPanel();
+
+    // ------------------------------------------------------------
+    // Charm Maker batch submission
+    // ------------------------------------------------------------
+    // charmList: ordered {fullPath, name} array (mosaic selection) or null
+    // to use the newest `batchCount` templates — the same source rules as
+    // Standard mode's two click paths.
+    async function runCharmBatchSubmission(charmList, batchCount, derivCount) {
+      if (_charmBatchInFlight) return;
+      const execBtn = document.getElementById("executeCharmGenBtn");
+
+      const modelId = getSelectedImageModel();
+      const modelConfig = getImageModelConfig(modelId);
+      if (!modelConfig.supportsBatch) {
+        _setCharmGenMode("standard");
+        alert(`${modelConfig.label} uses Standard mode. Select a Gemini model before submitting a Gemini batch.`);
+        return;
+      }
+
+      _charmBatchInFlight = true;
+      if (execBtn) { execBtn.disabled = true; execBtn.textContent = "Preparing…"; }
+
+      try {
+        await ensureCharmMakerCapabilities();
+
+        const charms = Array.isArray(charmList) && charmList.length
+          ? charmList
+          : await listTopNFiles(charmMakerSourcePath(), batchCount);
+        if (!charms.length) {
+          alert("No reference charms loaded in the queue. Please upload to Charm_Templates (Existing Etsy Charms).");
+          return;
+        }
+
+        const perCharm = Math.max(1, Math.min(8, derivCount || 1));
+        const totalSets = charms.length * perCharm;
+        const ok = confirm(
+          `Submit ONE Gemini batch submission for ${totalSets} base charm(s)?\n` +
+          `(${charms.length} reference charm(s) × ${perCharm} derivative(s) each)\n\n` +
+          `· Cost: ~50% of Standard mode\n` +
+          `· Output: 2K (2048×2048) base charms only\n` +
+          `· Turnaround: usually 2–6h, up to 24h\n\n` +
+          `Concepts are planned now; you can close this tab afterwards — finished bases land in Firebase ` +
+          `automatically and appear as "Waiting for Base Approval" cards. Approve each base to generate ` +
+          `its earring + line-art slots as usual.`
+        );
+        if (!ok) return;
+
+        // Ensure the shared refs the Standard flow records in manifests.
+        if (!currentEarringRef) {
+          try { currentEarringRef = await listLatestFile(newCharmsEarringsPath()); } catch (_) {}
+        }
+        let lineArtRef = null;
+        try { lineArtRef = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`); } catch (_) {}
+
+        // Build one set per derivative: plan concepts (one call per charm,
+        // N distinct concepts), snapshot the reference, write the full
+        // charm-maker manifest, and prepare the single slot-0 task with the
+        // exact request Standard mode sends.
+        const sets = [];
+        let prepared = 0;
+        let lastStamp = 0;
+        for (const charmData of charms) {
+          setStatus(`Planning ${perCharm} buyer-aligned concept${perCharm === 1 ? "" : "s"} from ${charmData.name || "bestseller reference"}…`);
+          const conceptPlan = await planCharmConcepts(charmData, perCharm);
+
+          for (let d = 0; d < perCharm; d++) {
+            const concept = conceptPlan.concepts[d] || conceptPlan.concepts[conceptPlan.concepts.length - 1];
+            // Unique, monotonic Deriv id (same scheme as Standard mode).
+            let stamp = Date.now() + Math.floor(Math.random() * 10000);
+            if (stamp <= lastStamp) stamp = lastStamp + 1;
+            lastStamp = stamp;
+            const folderId = `Deriv_${stamp}`;
+            const outputBasePath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`;
+
+            prepared++;
+            setStatus(`Preparing set ${prepared}/${totalSets} (${folderId})…`);
+
+            let sourceSnapshot = null;
+            try {
+              const snapshot = await snapshotCharmReference(charmData, outputBasePath);
+              sourceSnapshot = snapshot?.storagePath || null;
+            } catch (snapErr) {
+              console.warn("Could not snapshot Charm Maker source reference for batch set", snapErr);
+            }
+
+            const manifest = {
+              sourceCharm: charmData.fullPath,
+              sourceSnapshot,
+              sourceEarring: currentEarringRef?.fullPath || null,
+              lineArtRef: lineArtRef?.fullPath || null,
+              charmConceptPlan: {
+                version: Number(conceptPlan?.version) || 1,
+                referenceSubject: cleanCharmPlanText(conceptPlan?.referenceSubject),
+                buyerProfile: cleanCharmPlanText(conceptPlan?.buyerProfile),
+                purchaseSignals: Array.isArray(conceptPlan?.purchaseSignals)
+                  ? conceptPlan.purchaseSignals.slice(0, 6)
+                  : [],
+              },
+              charmConcept: concept,
+              model: modelId,
+              batchQueued: true,
+              timestamp: new Date().toISOString(),
+            };
+
+            await postJson("geminiImageProxy", {
+              kind: "write_manifest",
+              activeCategory: "Charms",
+              output_base_path: outputBasePath,
+              manifest,
+            });
+
+            sets.push({
+              category: "Charms",
+              outputBasePath,
+              setN: stamp,
+              setKind: "charm_maker",
+              manifest,
+              tasks: [{
+                type: "edits",
+                slotIndex: 0,
+                input_storage_path: charmData.fullPath,
+                prompt: buildCharmDesignPrompt(concept, conceptPlan),
+                image_roles: "style_reference",
+                background_policy: "solid_black",
+                charm_geometry_policy: "flat_integrated_eyelet",
+              }],
+            });
+          }
+        }
+
+        // Submit in CHUNK_SIZE-sized chunks — one Gemini batch job per
+        // chunk — with the same rate-limit retry + adaptive stagger the
+        // Generate tab uses.
+        const stampStr = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "");
+        const sessionId = `cmsess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const chunkCount = Math.ceil(sets.length / CHUNK_SIZE);
+        const submitted = [];
+        const submitErrors = [];
+        _resetChunkStagger();
+
+        for (let c = 0; c < chunkCount; c++) {
+          const slice = sets.slice(c * CHUNK_SIZE, (c + 1) * CHUNK_SIZE);
+          setStatus(`Submitting charm batch chunk ${c + 1}/${chunkCount}…`);
+          if (execBtn) execBtn.textContent = `Submitting ${c + 1}/${chunkCount}…`;
+
+          const dn = chunkCount === 1
+            ? `cm-charms-${sets.length}sets-${stampStr}`
+            : `cm-charms-${sets.length}sets-${stampStr}-part${c + 1}of${chunkCount}`;
+
+          let chunkHitRateLimit = false;
+          try {
+            const resp = await _submitChunkWithRetry(
+              "geminiImageProxy",
+              {
+                kind: "batch_submit",
+                model: modelId,
+                sets: slice,
+                imageSize: BATCH_DEFAULT_IMAGE_SIZE,
+                displayName: dn,
+                sessionId,
+              },
+              (secs, attempt, maxAttempts) => {
+                chunkHitRateLimit = true;
+                setStatus(`Rate-limited on chunk ${c + 1}; waiting ${secs}s before retry ${attempt}/${maxAttempts}…`);
+              }
+            );
+            submitted.push(resp);
+            if (chunkHitRateLimit) _onChunkRateLimited(); else _onChunkSuccess();
+          } catch (chunkErr) {
+            console.error(`[charm batch_submit chunk ${c + 1}] failed`, chunkErr);
+            submitErrors.push({ chunk: c + 1, error: chunkErr?.message || String(chunkErr) });
+            if (_isRateLimitError(chunkErr)) _onChunkRateLimited();
+            if (_isStorageQuotaError(chunkErr)) {
+              setStatus(`⚠ Aborted at chunk ${c + 1}: Gemini Files API storage quota exceeded`);
+              break;
+            }
+          }
+          if (c < chunkCount - 1) await sleep(_currentChunkStaggerMs);
+        }
+
+        // Record the session alongside the Generate tab's sessions.
+        try {
+          const sessionRecord = {
+            sessionId,
+            category: "Charms (Charm Maker)",
+            model: modelId,
+            requestedCount: totalSets,
+            effectiveCount: sets.length,
+            chunksSubmitted: submitted.length,
+            chunksFailed: submitErrors.length,
+            startedAt: Date.now(),
+            batchNames: submitted.map((r) => r?.batchName).filter(Boolean),
+          };
+          const all = JSON.parse(localStorage.getItem("lg1_batch_sessions") || "[]");
+          all.push(sessionRecord);
+          while (all.length > 50) all.shift();
+          localStorage.setItem("lg1_batch_sessions", JSON.stringify(all));
+        } catch (_) {}
+
+        if (submitErrors.length === 0) {
+          setStatus(`Charm batch submitted: ${sets.length} base charm(s) queued at 50% cost. Results land automatically.`);
+        } else {
+          setStatus(`Charm batch: ${submitted.length}/${chunkCount} chunk(s) submitted, ${submitErrors.length} failed — see console.`);
+          alert(`${submitErrors.length} of ${chunkCount} chunk(s) failed to submit:\n\n` +
+                submitErrors.slice(0, 5).map((e) => `Chunk ${e.chunk}: ${e.error}`).join("\n"));
+        }
+
+        // The Deriv folders exist now (manifest + snapshot) — refresh the
+        // set list so pending cards are visible, then light up the panel.
+        if (typeof appMode !== "undefined" && appMode === "charmMaker" && typeof loadCharmHistoryList === "function") {
+          loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets");
+        }
+        await refreshCharmBatchPanel();
+      } catch (err) {
+        console.error("[CharmMaker] batch submission failed", err);
+        setStatus(`Charm batch error: ${err?.message || err}`);
+        alert(`Charm batch submission failed: ${err?.message || err}`);
+      } finally {
+        _charmBatchInFlight = false;
+        if (execBtn) execBtn.disabled = false;
+        _renderCharmGenModeButtons();
+      }
     }
 
     // --- 1. Download Completed Listing Sets Logic (Downloads & Moves to Permanent) ---
@@ -18995,6 +19459,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
       const execBtn = e.currentTarget;
       const ordered = [..._charmRefSelection.values()].sort((a, b) => a.order - b.order);
+
+      // Gemini Batch mode (50% off) with a mosaic selection: queue the
+      // selected charms' bases asynchronously in click order.
+      if (typeof _isCharmBatchModeActive === 'function' && _isCharmBatchModeActive()) {
+        const derivCountB = Math.max(1, Math.min(8, parseInt(document.getElementById('derivativesPerCharmInput')?.value, 10) || 1));
+        const charmsB = ordered.map((sel) => ({ fullPath: sel.fullPath, name: sel.name }));
+        await runCharmBatchSubmission(charmsB, charmsB.length, derivCountB);
+        // Clear selection like the Standard path does after a run.
+        _charmRefSelection.clear();
+        _refreshCharmOrderBadges();
+        _updateCharmRefStatus();
+        return;
+      }
 
       try {
         if (typeof setBusy === 'function') setBusy(true);
