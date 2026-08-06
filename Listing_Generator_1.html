@@ -8625,11 +8625,9 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
 function createCharmCardHTML(folderId, isApprovedView) {
         // The repair button deliberately lives in the SAME markup block as
         // the visible Slot 1 Redo button. If Redo renders, this renders too.
-        // Redo first (primary action), repair beneath it — both at .btnSmall
-        // scale so the pair reads as actions on this one charm.
         const redoHTML0 = isApprovedView ? '' : `
             <button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>
-            <button class="btn btnSmall jumpRingRepairBtn jump-ring-repair-btn" id="removeRing_${folderId}" onclick="removeCharmJumpRing('${folderId}')" aria-label="Remove the jump ring from this base charm" title="Removes the jump ring from this charm only — one image edit, using the image model selected in the header">✂ Remove Jump Ring</button>`;
+            <button class="btn btnSmall jumpRingRepairBtn jump-ring-repair-btn" id="removeRing_${folderId}" onclick="removeCharmJumpRing('${folderId}')" aria-label="Remove the jump ring from this base charm" title="Uses the image model currently selected in the header">✂ Remove Jump Ring</button>`;
         const redoHTML1 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_1" onclick="redoCharmSlot('${folderId}', 1)">Redo</button>`;
         const redoHTML2 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_2" onclick="redoCharmSlot('${folderId}', 2)">Redo</button>`;
         const redoHTML3 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>`;
