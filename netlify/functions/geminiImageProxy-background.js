@@ -420,21 +420,31 @@ async function enforceCharmBackgroundPolicy(buf, policy) {
 // The backend's final word on charm physique. Appended AFTER the caller's
 // prompt AND after the image-role labels, so no earlier instruction (and no
 // reference image trait) can override it.
+// IMPORTANT — THIS TEXT IS A DELIBERATE ECHO, NOT A NEW DOCTRINE.
+// The attachment rules below are restated from the Listing Generator's own
+// Charm Maker prompt (the "ONE INTEGRATED PUNCHED TOP HOLE — NO PROTRUDING
+// TAB, ZERO RINGS OR BAILS" section) so that the backend's final word can
+// never contradict the operator-authored prompt. If you change the
+// attachment doctrine in the HTML, change it here to match — otherwise the
+// two will fight and the model will pick one at random.
 const CHARM_GEOMETRY_OVERRIDES = Object.freeze({
   flat_integrated_eyelet:
     "FINAL GEOMETRY OVERRIDE (BACKEND-ENFORCED, OVERRIDES EVERYTHING ABOVE): " +
     "The charm is ONE perfectly flat, thin sheet of laser-cut polished metal — a single physically " +
     "connected silhouette, rendered perfectly front-facing (orthographic, 0% perspective tilt), with " +
-    "no 3D volume, no bevels and no side view. It has EXACTLY ONE hanging eyelet, fused seamlessly into " +
-    "the silhouette at the top of the charm as part of the same flat sheet — never a separate ring. " +
-    "NO jump rings, NO split rings, NO bails, NO chains, NO second attachment point of any kind.",
+    "no 3D volume, no bevels and no side view. Its hanging point is EXACTLY ONE clean, approximately " +
+    "circular hole cut directly inside the uppermost broad solid area of the main subject body. The " +
+    "outer silhouette must NOT sprout a stem, tongue, capsule, teardrop, strap, hanger, loop or long " +
+    "vertical tab to carry the hole. The metal around the hole stays flat and sheet-thin — never a " +
+    "doughnut, torus, tube, wire ring or raised rim. NO jump rings, NO split rings, NO bails, NO " +
+    "chains, NO second attachment point of any kind, and nothing threaded through the hole.",
   flat_no_attachment:
     "FINAL GEOMETRY OVERRIDE (BACKEND-ENFORCED, OVERRIDES EVERYTHING ABOVE): " +
     "The charm is ONE perfectly flat, thin sheet of laser-cut polished metal — a single physically " +
     "connected silhouette, rendered perfectly front-facing (orthographic, 0% perspective tilt), with " +
     "no 3D volume, no bevels and no side view. It has NO attachment hardware whatsoever: no eyelet, " +
-    "no hoop, no hole for hanging, no jump ring, no split ring, no bail, no chain. The top edge of the " +
-    "silhouette is clean and closed where the attachment used to be.",
+    "no hoop, no hole for hanging, no jump ring, no split ring, no bail, no chain. The outer " +
+    "silhouette is preserved exactly and the single attachment hole is filled with matching flat sheet metal.",
 });
 
 // Combined final policy text for a request. Returns "" when the request
@@ -492,14 +502,16 @@ async function auditCharmPromptPreflight({
     if (String(backgroundPolicy || "").trim() === "solid_black") {
       contractLines.push("- The output background must be 100% pure solid black (#000000), edge to edge. The prompt must demand this unambiguously and must not contain anything that invites a white, grey, gradient or transparent background.");
     }
+    // Echoes the operator prompt's own attachment doctrine — see the note on
+    // CHARM_GEOMETRY_OVERRIDES. Keep these two in step with the HTML.
     if (String(geometryPolicy || "").trim() === "flat_integrated_eyelet") {
-      contractLines.push("- The charm must be one flat laser-cut sheet with EXACTLY ONE integrated eyelet fused into the silhouette, and NO jump rings, split rings, bails or chains.");
+      contractLines.push("- The charm must be one flat laser-cut sheet whose hanging point is EXACTLY ONE approximately circular hole cut directly inside the uppermost broad solid area of the main subject body, with no protruding stem, tab, loop or bail carrying it, and NO separate jump rings, split rings, bails or chains.");
     }
     if (String(geometryPolicy || "").trim() === "flat_no_attachment") {
       contractLines.push("- The charm must be one flat laser-cut sheet with NO attachment hardware at all: no eyelet, no hoop, no hanging hole, no jump ring, no bail, no chain.");
     }
     if (String(editIntent || "").trim() === "remove_jump_ring_only") {
-      contractLines.push("- This is a surgical repair: ONLY the external jump ring / split ring / extra attachment hardware may be removed. Every other aspect of the charm — subject, silhouette, engravings, cutouts, proportions, gold tone, position, scale — must be preserved 100% identical. The prompt must forbid any other change.");
+      contractLines.push("- This is a surgical repair: ONLY the external jump ring / split ring / extra attachment hardware may be removed. Every other aspect of the charm — subject, silhouette, engravings, cutouts, proportions, gold tone, position, scale, and any original internal punched hole — must be preserved 100% identical. The prompt must forbid any other change.");
     }
     if (String(imageRoles || "") === "style_reference") {
       contractLines.push("- The supplied reference image is a material/craft style sample ONLY. The prompt must not instruct the model to copy the reference's subject, silhouette or background.");
