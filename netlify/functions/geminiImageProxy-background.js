@@ -397,6 +397,131 @@ async function applyFinalFrameZoomIfNeeded(buf, postprocess = {}) {
     .toBuffer();
 }
 
+// Charm Maker Slots 1 and 2 must always sit on solid black. Prompting alone is
+// not a guarantee: image models occasionally fall back to a white ecommerce
+// background, especially when the reference itself is bright. This final pass
+// removes only the frame-connected background region, so white cut-outs or
+// highlights enclosed inside the charm are preserved.
+async function enforceCharmBackgroundPolicy(buf, policy) {
+  if (String(policy || "").trim() !== "solid_black") return buf;
+
+  let sharp;
+  try { sharp = require("sharp"); }
+  catch (_) {
+    throw new Error(
+      "background_policy=solid_black requires the 'sharp' dependency in your top-level package.json."
+    );
+  }
+
+  const { data, info } = await sharp(buf)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const width = Number(info?.width) || 0;
+  const height = Number(info?.height) || 0;
+  const channels = Number(info?.channels) || 4;
+  if (!width || !height || channels < 4) return buf;
+
+  const sample = [];
+  const pushPixel = (x, y) => {
+    const o = (y * width + x) * channels;
+    sample.push([data[o], data[o + 1], data[o + 2], data[o + 3]]);
+  };
+  const strideX = Math.max(1, Math.floor(width / 128));
+  const strideY = Math.max(1, Math.floor(height / 128));
+  for (let x = 0; x < width; x += strideX) {
+    pushPixel(x, 0);
+    pushPixel(x, height - 1);
+  }
+  for (let y = 1; y < height - 1; y += strideY) {
+    pushPixel(0, y);
+    pushPixel(width - 1, y);
+  }
+
+  const median = (values) => {
+    const sorted = values.slice().sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)] || 0;
+  };
+  const edge = {
+    r: median(sample.map((p) => p[0])),
+    g: median(sample.map((p) => p[1])),
+    b: median(sample.map((p) => p[2])),
+    a: median(sample.map((p) => p[3])),
+  };
+  const edgeLum = 0.2126 * edge.r + 0.7152 * edge.g + 0.0722 * edge.b;
+  const edgeSpread = Math.max(edge.r, edge.g, edge.b) - Math.min(edge.r, edge.g, edge.b);
+  const brightNeutralEdge = edgeLum >= 95 && edgeSpread <= 70;
+
+  const isBackgroundPixel = (pixelIndex) => {
+    const o = pixelIndex * channels;
+    const r = data[o], g = data[o + 1], b = data[o + 2], a = data[o + 3];
+    if (a < 245) return true;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const spread = max - min;
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const dr = r - edge.r, dg = g - edge.g, db = b - edge.b;
+    const edgeDistance = Math.sqrt(dr * dr + dg * dg + db * db);
+
+    if (brightNeutralEdge) {
+      // White, off-white and neutral shadow pixels connected to the frame.
+      return (spread <= 58 && lum >= 42) || edgeDistance <= 88;
+    }
+    // The model already produced a dark background. Normalize its connected
+    // near-black edge pixels to exact #000000 without touching the charm.
+    return lum <= 65 && (spread <= 58 || edgeDistance <= 76);
+  };
+
+  const pixelCount = width * height;
+  const visited = new Uint8Array(pixelCount);
+  const queue = new Uint32Array(pixelCount);
+  let head = 0, tail = 0;
+  const enqueue = (idx) => {
+    if (visited[idx] || !isBackgroundPixel(idx)) return;
+    visited[idx] = 1;
+    queue[tail++] = idx;
+  };
+  for (let x = 0; x < width; x++) {
+    enqueue(x);
+    enqueue((height - 1) * width + x);
+  }
+  for (let y = 1; y < height - 1; y++) {
+    enqueue(y * width);
+    enqueue(y * width + width - 1);
+  }
+
+  while (head < tail) {
+    const idx = queue[head++];
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+    if (x > 0) enqueue(idx - 1);
+    if (x + 1 < width) enqueue(idx + 1);
+    if (y > 0) enqueue(idx - width);
+    if (y + 1 < height) enqueue(idx + width);
+  }
+
+  for (let idx = 0; idx < pixelCount; idx++) {
+    const o = idx * channels;
+    if (visited[idx]) {
+      data[o] = 0;
+      data[o + 1] = 0;
+      data[o + 2] = 0;
+      data[o + 3] = 255;
+      continue;
+    }
+    // Flatten any remaining partial transparency over black.
+    const alpha = data[o + 3] / 255;
+    if (alpha < 1) {
+      data[o] = Math.round(data[o] * alpha);
+      data[o + 1] = Math.round(data[o + 1] * alpha);
+      data[o + 2] = Math.round(data[o + 2] * alpha);
+      data[o + 3] = 255;
+    }
+  }
+
+  return sharp(data, { raw: { width, height, channels } }).png().toBuffer();
+}
+
 function filenameForMime(base, mime) {
   const m = String(mime || "").toLowerCase();
   const ext =
@@ -415,7 +540,6 @@ async function callGeminiImagesEdits({
   output_format,
   images,
   imageRoles,
-  background,
 }) {
   return callGeminiGenerateContentImage({
     apiKey,
@@ -424,7 +548,6 @@ async function callGeminiImagesEdits({
     size,
     images,
     imageRoles,
-    background,
   });
 }
 
@@ -488,10 +611,17 @@ async function callOpenAIImagesEdits({
   quality,
   output_format,
   images,
+  imageRoles,
 }) {
   const form = new FormData();
   form.append("model", model);
-  form.append("prompt", String(prompt || ""));
+  // Gemini receives explicit role labels as separate multimodal parts. OpenAI
+  // receives a multipart edit request, so mirror the Charm Maker's special
+  // role lock inside the prompt. Default listing-edit behaviour is unchanged.
+  const promptText = imageRoles === "style_reference"
+    ? `${String(prompt || "").trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`
+    : String(prompt || "");
+  form.append("prompt", promptText);
   form.append("size", String(size || "2048x2048"));
   form.append("quality", normalizeOpenAIQuality(quality));
   form.append("output_format", normalizeOpenAIOutputFormat(output_format));
@@ -585,44 +715,6 @@ function stripUndefined(obj) {
   return out;
 }
 
-// ------------------------------------------------------------
-// Background audit: does the border of this image read as light
-// (white / near-white / light grey)? Used by the Charm Maker's
-// black-background enforcement. Downscales to 64x64 and samples
-// the 2px border ring; a pixel is "light" when every channel is
-// above 185. Returns false (i.e. "fine") when sharp is missing
-// or decoding fails, so enforcement can never break a job.
-// ------------------------------------------------------------
-async function imageBorderIsLight(buf) {
-  let sharp;
-  try { sharp = require("sharp"); } catch (_) { return false; }
-  try {
-    const SIZE = 64;
-    const { data, info } = await sharp(buf)
-      .resize(SIZE, SIZE, { fit: "fill" })
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-    const ch = info.channels || 3;
-    let light = 0;
-    let total = 0;
-    const RING = 2;
-    for (let y = 0; y < SIZE; y++) {
-      for (let x = 0; x < SIZE; x++) {
-        const onRing = x < RING || y < RING || x >= SIZE - RING || y >= SIZE - RING;
-        if (!onRing) continue;
-        const i = (y * SIZE + x) * ch;
-        const r = data[i], g = data[i + 1], b = data[i + 2];
-        total++;
-        if (r > 185 && g > 185 && b > 185) light++;
-      }
-    }
-    return total > 0 && light / total > 0.35;
-  } catch (_) {
-    return false;
-  }
-}
-
 // Role-label vocabularies. IMAGE_ROLE_LABELS.edit is the original wording,
 // preserved verbatim so default behaviour cannot drift.
 const IMAGE_ROLE_LABELS = {
@@ -641,14 +733,14 @@ const IMAGE_ROLE_LABELS = {
   // craft sample, NOT a canvas and NOT a subject to reproduce.
   style_reference: {
     first:
-      "IMAGE 1 — MATERIAL AND CRAFT REFERENCE ONLY. Read from it ONLY: the metal alloy and its exact colour and tone, the surface finish and polish, the way light falls on that metal, the thickness and cleanliness of the laser-cut edges, the depth and weight of the surface engraving, the density of detail per unit area, and the way the integrated bail is fused into the body. Do NOT read the background from it: the reference's background (white, grey, or anything else) carries NO authority — your output's background is dictated exclusively by the written brief. It is a physical sample of how this workshop makes jewellery. It is NOT a canvas to edit, NOT a composition to preserve, and NOT the object you are being asked to draw.",
+      "IMAGE 1 — MATERIAL AND CRAFT REFERENCE ONLY. Read from it ONLY: the metal alloy and its exact colour and tone, the surface finish and polish, the way light falls on that metal, the thickness and cleanliness of the laser-cut edges, the depth and weight of the surface engraving, the density of detail per unit area, the way the integrated bail is fused into the body, and the background treatment. It is a physical sample of how this workshop makes jewellery. It is NOT a canvas to edit, NOT a composition to preserve, and NOT the object you are being asked to draw.",
     second:
-      "IMAGE 2 — ADDITIONAL MATERIAL AND CRAFT REFERENCE. Same role and same limits as IMAGE 1: material, finish, edge quality, engraving depth, detail density and bail construction only — never its background, subject or silhouette.",
+      "IMAGE 2 — ADDITIONAL MATERIAL AND CRAFT REFERENCE. Same role and same limits as IMAGE 1: material, finish, edge quality, engraving depth, detail density, bail construction and background only. Its subject and silhouette are equally off limits.",
     extra: (n) => `IMAGE ${n} — ADDITIONAL MATERIAL AND CRAFT REFERENCE. Material and finish only.`,
     single:
-      "IMAGE 1 — MATERIAL AND CRAFT REFERENCE ONLY. Read from it ONLY: the metal alloy and its exact colour and tone, the surface finish and polish, the way light falls on that metal, the thickness and cleanliness of the laser-cut edges, the depth and weight of the surface engraving, the density of detail per unit area, and the way the integrated bail is fused into the body. Do NOT read the background from it: the reference's background (white, grey, or anything else) carries NO authority — your output's background is dictated exclusively by the written brief. It is a physical sample of how this workshop makes jewellery. It is NOT a canvas to edit, NOT a composition to preserve, and NOT the object you are being asked to draw.",
+      "IMAGE 1 — MATERIAL AND CRAFT REFERENCE ONLY. Read from it ONLY: the metal alloy and its exact colour and tone, the surface finish and polish, the way light falls on that metal, the thickness and cleanliness of the laser-cut edges, the depth and weight of the surface engraving, the density of detail per unit area, the way the integrated bail is fused into the body, and the background treatment. It is a physical sample of how this workshop makes jewellery. It is NOT a canvas to edit, NOT a composition to preserve, and NOT the object you are being asked to draw.",
     lock:
-      "FINAL IMAGE-ROLE LOCK: you are designing a NEW product, not editing a supplied one. The reference image(s) define material, finish, lighting and engraving language ONLY. The SUBJECT, the SILHOUETTE, the OUTLINE and the BACKGROUND come from the written brief above and from nowhere else. Do not trace, mirror, re-pose, re-scale or lightly restyle the object shown in the reference. HARD FAIL: an output a shopper would identify as the same object as the reference. HARD FAIL: an output whose outline could be laid over the reference's outline and broadly match. If your draft resembles the reference's shape, discard it and design the brief's subject from scratch.",
+      "FINAL IMAGE-ROLE LOCK: you are designing a NEW product, not editing a supplied one. The reference image(s) define material, finish, lighting, background and engraving language ONLY. The SUBJECT, the SILHOUETTE and the OUTLINE come from the written brief above and from nowhere else. Do not trace, mirror, re-pose, re-scale or lightly restyle the object shown in the reference. HARD FAIL: an output a shopper would identify as the same object as the reference. HARD FAIL: an output whose outline could be laid over the reference's outline and broadly match. If your draft resembles the reference's shape, discard it and design the brief's subject from scratch.",
   },
 };
 
@@ -659,7 +751,6 @@ async function callGeminiGenerateContentImage({
   size,
   images,
   imageRoles,
-  background,
 }) {
   const geminiModel =
     String(model || DEFAULT_IMAGE_MODEL).trim() ||
@@ -686,22 +777,11 @@ async function callGeminiGenerateContentImage({
   const wantH = m ? Number(m[2]) : 2048;
   const wantAR = sizeToAspectRatio(size) || "1:1";
 
-  // The generic closing line used to end with "suitable for a product photo",
-  // which nudged the model toward studio-white product backgrounds — directly
-  // fighting any prompt that demands a black background (the Charm Maker).
-  // When the caller declares a background, the closing line now enforces it
-  // instead of contradicting it.
-  const backgroundLine =
-    String(background || "").toLowerCase() === "black"
-      ? `The ENTIRE background must be pure solid black (#000000), edge to edge — ` +
-        `absolutely no white, no grey, no gradients, no vignette, no transparency.`
-      : `Return an image suitable for a product photo.`;
-
   const promptText =
     `${String(prompt || "").trim()}\n\n` +
     `OUTPUT (NON-NEGOTIABLE): Return a photorealistic ${wantAR} image. ` +
     `Exact size ${wantW}x${wantH}. ` +
-    backgroundLine;
+    `Return an image suitable for a product photo.`;
 
   const imageInputs = Array.isArray(images) ? images : [];
   // Unknown values fall back to "edit" so a typo can never silently unlock the
@@ -826,6 +906,169 @@ async function callGeminiGenerateContentImage({
   }
 
   return outBuf;
+}
+
+function extractJsonObject(text) {
+  const raw = String(text || "").trim();
+  if (!raw) throw new Error("Charm concept planner returned no text");
+  try { return JSON.parse(raw); } catch (_) {}
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    try { return JSON.parse(fenced[1]); } catch (_) {}
+  }
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(raw.slice(start, end + 1)); } catch (_) {}
+  }
+  throw new Error("Charm concept planner returned invalid JSON");
+}
+
+function shortPlannerText(value, max = 500) {
+  return String(value == null ? "" : value)
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+function normalizeCharmConceptPlan(raw, requestedCount) {
+  const referenceSubject = shortPlannerText(raw?.referenceSubject, 180);
+  const buyerProfile = shortPlannerText(raw?.buyerProfile, 500);
+  const purchaseSignals = Array.isArray(raw?.purchaseSignals)
+    ? raw.purchaseSignals.map((v) => shortPlannerText(v, 180)).filter(Boolean).slice(0, 6)
+    : [];
+  const sourceConcepts = Array.isArray(raw?.concepts) ? raw.concepts : [];
+  const concepts = [];
+  const seen = new Set();
+
+  for (const source of sourceConcepts) {
+    const title = shortPlannerText(source?.title, 100);
+    const subject = shortPlannerText(source?.subject, 240);
+    const key = `${title}|${subject}`.toLowerCase();
+    if (!title || !subject || seen.has(key)) continue;
+    seen.add(key);
+    concepts.push({
+      rank: concepts.length + 1,
+      title,
+      subject,
+      buyerConnection: shortPlannerText(source?.buyerConnection, 420),
+      conversionRationale: shortPlannerText(source?.conversionRationale, 420),
+      silhouetteBrief: shortPlannerText(source?.silhouetteBrief, 500),
+      engravingBrief: shortPlannerText(source?.engravingBrief, 500),
+      confidence: Math.round(clampNumber(source?.confidence, 0, 100, 70)),
+    });
+    if (concepts.length >= requestedCount) break;
+  }
+
+  if (!referenceSubject || concepts.length < requestedCount) {
+    throw new Error(
+      `Charm concept planner returned ${concepts.length}/${requestedCount} usable concepts`
+    );
+  }
+  return {
+    version: 1,
+    referenceSubject,
+    buyerProfile,
+    purchaseSignals,
+    concepts,
+  };
+}
+
+async function planComplementaryCharmConcepts({ sourceStoragePath, count }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Missing GEMINI_API_KEY env var");
+
+  const requestedCount = Math.round(clampNumber(count, 1, 8, 1));
+  const model = String(
+    process.env.GEMINI_CHARM_CONCEPT_MODEL || DEFAULT_IMAGE_MODEL
+  ).trim();
+  const source = await storagePathToBuffer(sourceStoragePath);
+  let safeMime = source.mime || "image/png";
+  if (!safeMime.startsWith("image/") || safeMime.includes("octet-stream")) {
+    safeMime = "image/png";
+  }
+
+  const planningPrompt = `CHARM PRODUCT CONCEPT PLANNER
+
+The supplied image is a proven bestselling jewelry charm. Analyze it as market evidence, then choose ${requestedCount} NEW complementary charm concept${requestedCount === 1 ? "" : "s"} most likely to appeal to substantially the same buyer.
+
+This is concept selection, not image editing. The new products must extend the bestseller's audience without replicating the existing SKU.
+
+SELECTION LOGIC — rank concepts using all five factors:
+1. Same-buyer affinity (40%): shared identity, hobby, emotion, gifting occasion, collecting behavior, or symbolic meaning.
+2. Commercial/gift appeal (20%): evergreen, emotionally legible, easy to search for and easy to give.
+3. Tiny-charm recognition (15%): instantly recognizable as an approximately 8–15 mm flat charm.
+4. Manufacturability (15%): one-piece laser-cut sheet metal, robust outline, limited strategic engraving, no fragile floating parts.
+5. Novelty versus the reference (10%): a genuinely different named subject and materially different silhouette.
+
+ADJACENCY RULE:
+- Stay one strong step from the reference, not merely in the same broad category.
+- Example: for a cardinal bird, consider another highly collectible garden bird or a closely linked bird-lover symbol; do not make another cardinal, a re-posed cardinal, or a generic copy of the same bird.
+- Prefer concrete, visually distinctive subjects over vague decorative variations.
+- Each returned concept must be different from the reference and from every other returned concept.
+
+ABSOLUTE EXCLUSIONS:
+- Never select the exact subject/species/object shown in the reference.
+- Never propose a mirrored, re-posed, re-scaled, simplified, embellished, baby, pair, family, or near-duplicate version of the same subject.
+- No words, initials, dates, numbers, logos, copyrighted characters, or trademarked brand shapes.
+- Do not claim access to outside sales data. Your confidence is an informed product-fit estimate based on the proven reference and the rubric above.
+
+Return ONLY valid JSON in exactly this shape:
+{
+  "referenceSubject": "specific identification of the source charm",
+  "buyerProfile": "concise description of who buys it and why",
+  "purchaseSignals": ["signal 1", "signal 2", "signal 3"],
+  "concepts": [
+    {
+      "title": "short operator-facing concept name",
+      "subject": "precise new subject and pose for the image model",
+      "buyerConnection": "why the same buyer would want this alongside the bestseller",
+      "conversionRationale": "why this should work commercially",
+      "silhouetteBrief": "distinctive one-piece outer contour, materially unlike the reference",
+      "engravingBrief": "only the minimum internal engraving needed for recognition",
+      "confidence": 0
+    }
+  ]
+}
+
+The concepts array must contain exactly ${requestedCount} items in descending commercial-confidence order.`;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [
+          { text: planningPrompt },
+          { inline_data: { mime_type: safeMime, data: source.buffer.toString("base64") } },
+        ],
+      }],
+      generationConfig: {
+        responseModalities: ["TEXT"],
+        temperature: 0.35,
+      },
+    }),
+  });
+
+  const raw = await resp.text().catch(() => "");
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch (_) {}
+  if (!resp.ok) {
+    throw new Error(
+      data?.error?.message || raw || `Gemini charm concept planning failed with HTTP ${resp.status}`
+    );
+  }
+  const text = (data?.candidates?.[0]?.content?.parts || [])
+    .map((part) => part?.text)
+    .filter(Boolean)
+    .join("\n");
+  return normalizeCharmConceptPlan(extractJsonObject(text), requestedCount);
 }
 
  function newDownloadToken() {
@@ -1543,6 +1786,8 @@ async function _handlerImpl(event) {
     output_base_path,
     source_storage_path,
     manifest,
+    concept_count,
+    background_policy,
     // "edit" (default) | "style_reference"
     //
     // The role labels this function injects around the inline image parts are
@@ -1584,15 +1829,28 @@ async function _handlerImpl(event) {
       capabilitiesVersion: 3,
       roleModes: Object.keys(IMAGE_ROLE_LABELS),
       supportsStyleReference: Object.prototype.hasOwnProperty.call(IMAGE_ROLE_LABELS, "style_reference"),
-      // v3: set-based edits actually FORWARD image_roles to the model call
-      // (older deployments accepted the field but silently dropped it),
-      // support enforce_background: "black", and expose charm_concepts.
-      forwardsImageRoles: true,
-      supportsBackgroundEnforcement: true,
-      supportsCharmConcepts: true,
+      supportsCharmConceptPlanning: true,
+      backgroundPolicies: ["solid_black"],
       supportsGenerations: true,
       imageModels: Object.keys(IMAGE_MODEL_CONFIG),
     });
+  }
+
+  if (kind === "charm_concept_plan") {
+    try {
+      const sourcePath = String(input_storage_path || source_storage_path || "").trim();
+      if (!sourcePath) {
+        return json(400, { ok: false, error: { message: "input_storage_path is required" } });
+      }
+      const plan = await planComplementaryCharmConcepts({
+        sourceStoragePath: sourcePath,
+        count: concept_count,
+      });
+      return json(200, { ok: true, plan });
+    } catch (err) {
+      console.error("[charm_concept_plan] failed", safeErr(err));
+      return json(502, { ok: false, error: safeErr(err) });
+    }
   }
 
   let modelConfig;
@@ -1608,143 +1866,6 @@ async function _handlerImpl(event) {
     if (kind === "alloc_set") {
       const { setN, outputBasePath } = await allocNextSet(activeCategory);
       return json(200, { ok: true, setN, outputBasePath });
-    }
-
-    // ============================================================
-    // CHARM CONCEPTS — merchandising ideation for the Charm Maker.
-    // ------------------------------------------------------------
-    // The reference charm is a PROVEN BEST SELLER. Instead of asking the
-    // image model to both invent and render a derivative in one shot (it
-    // reliably collapses into replicating the reference), this kind runs a
-    // dedicated vision+text call that:
-    //   1. analyzes the reference (subject, genre, buyer persona, purchase
-    //      drivers), and
-    //   2. proposes `count` DISTINCT complementary charm concepts ranked by
-    //      expected conversion for that same buyer.
-    // The client then renders each concept as its own derivative with
-    // image_roles: "style_reference", so the reference contributes material/
-    // craft language only and the concept contributes the subject.
-    //
-    // Body : { kind:"charm_concepts", input_storage_path, count?, exclude?[] }
-    // Reply: { ok:true, analysis:{...}, concepts:[{subject, rationale,
-    //          engraving_motifs[], silhouette}] }
-    //
-    // Runs inline through the geminiImageProxy sync wrapper (fast text call).
-    // ============================================================
-    if (kind === "charm_concepts") {
-      const textKey = process.env.GEMINI_API_KEY;
-      if (!textKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
-
-      const refPath = String(input_storage_path || "").trim();
-      if (!refPath) return json(400, { error: { message: "input_storage_path is required" } });
-
-      const want = Math.min(12, Math.max(1, Number(body.count) || 1));
-      const exclude = Array.isArray(body.exclude)
-        ? body.exclude.map((s) => String(s || "").trim()).filter(Boolean).slice(0, 40)
-        : [];
-
-      const refImg = await storagePathToBuffer(refPath);
-
-      const conceptsModel =
-        String(process.env.CHARM_CONCEPTS_MODEL || "").trim() || "gemini-3.1-pro-preview";
-
-      const sys =
-        `You are a senior Etsy jewelry merchandising strategist for a shop that sells ` +
-        `luxe-minimalist, flat, laser-cut gold charms (necklaces, earrings, bracelets).\n\n` +
-        `The attached image is one of the shop's PROVEN BEST-SELLING charms.\n\n` +
-        `STEP 1 — ANALYZE the best seller:\n` +
-        `• subject: what exactly the charm depicts\n` +
-        `• genre: its thematic category (animal, botanical, celestial, memorial, hobby, etc.)\n` +
-        `• buyer_persona: who buys this and why (gift vs self-purchase, occasions, emotional driver, symbolism)\n` +
-        `• purchase_drivers: the specific reasons this converts\n\n` +
-        `STEP 2 — PROPOSE exactly ${want} NEW charm concept(s) that:\n` +
-        `• appeal to the SAME buyer persona and satisfy the SAME purchase drivers, so they are the ` +
-        `highest-probability designs to convert alongside the best seller\n` +
-        `• are thematically related / complementary — adjacent subjects, companion pieces, same symbolic ` +
-        `territory (e.g. best-selling cardinal → chickadee, hummingbird, oak leaf with acorn, feather, ` +
-        `birdhouse, dogwood blossom — NOT another cardinal)\n` +
-        `• are each CLEARLY DIFFERENT subjects from the reference AND from each other\n` +
-        `• are physically manufacturable as ONE flat laser-cut sheet-metal charm: a single connected ` +
-        `silhouette, one integrated hanging hoop, sparse surface engravings, optional full cutouts, no text\n` +
-        (exclude.length
-          ? `• AVOID these subjects entirely (already used): ${exclude.join("; ")}\n`
-          : ``) +
-        `\nRank concepts by expected conversion, best first.\n\n` +
-        `Respond ONLY with a valid JSON object, no markdown fences, in EXACTLY this shape:\n` +
-        `{\n` +
-        `  "analysis": { "subject": "...", "genre": "...", "buyer_persona": "...", "purchase_drivers": ["..."] },\n` +
-        `  "concepts": [\n` +
-        `    { "subject": "...", "rationale": "why this converts for the same buyer, 1-2 sentences",\n` +
-        `      "engraving_motifs": ["2-4 sparse surface-engraving ideas"],\n` +
-        `      "silhouette": "one sentence describing the overall outline/shape" }\n` +
-        `  ]\n` +
-        `}`;
-
-      let safeMime = refImg.mime || "image/png";
-      if (!safeMime.startsWith("image/")) safeMime = "image/png";
-
-      const ideationBody = {
-        contents: [{
-          role: "user",
-          parts: [
-            { text: sys },
-            { inline_data: { mime_type: safeMime, data: Buffer.from(refImg.buffer).toString("base64") } },
-          ],
-        }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.9,
-        },
-      };
-
-      const ideationUrl = `https://generativelanguage.googleapis.com/v1beta/models/${conceptsModel}:generateContent`;
-      const ideationResp = await fetch(ideationUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": textKey },
-        body: JSON.stringify(ideationBody),
-      });
-
-      const ideationRaw = await ideationResp.text().catch(() => "");
-      let ideationData = null;
-      try { ideationData = ideationRaw ? JSON.parse(ideationRaw) : null; } catch { ideationData = null; }
-      if (!ideationResp.ok) {
-        const msg = ideationData?.error?.message || ideationRaw || `charm_concepts failed with HTTP ${ideationResp.status}`;
-        return json(502, { ok: false, error: { message: msg } });
-      }
-
-      const ideationText = ideationData?.candidates?.[0]?.content?.parts
-        ?.map((p) => p?.text)
-        .filter(Boolean)
-        .join("") || "";
-
-      let parsed = null;
-      try { parsed = JSON.parse(ideationText); } catch { parsed = null; }
-      if (!parsed || !Array.isArray(parsed.concepts) || parsed.concepts.length === 0) {
-        return json(502, {
-          ok: false,
-          error: { message: "charm_concepts returned no parseable concepts", raw: ideationText.slice(0, 400) },
-        });
-      }
-
-      const concepts = parsed.concepts.slice(0, want).map((c) => ({
-        subject: String(c?.subject || "").trim(),
-        rationale: String(c?.rationale || "").trim(),
-        engraving_motifs: Array.isArray(c?.engraving_motifs)
-          ? c.engraving_motifs.map((m) => String(m || "").trim()).filter(Boolean).slice(0, 6)
-          : [],
-        silhouette: String(c?.silhouette || "").trim(),
-      })).filter((c) => c.subject);
-
-      if (!concepts.length) {
-        return json(502, { ok: false, error: { message: "charm_concepts produced concepts without subjects" } });
-      }
-
-      return json(200, {
-        ok: true,
-        model: conceptsModel,
-        analysis: parsed.analysis || null,
-        concepts,
-      });
     }
 
     // ============================================================
@@ -3040,6 +3161,48 @@ async function _handlerImpl(event) {
       return json(200, { ok: true, finished: true, runId: runToken });
     }
 
+    if (kind === "snapshot_charm_reference") {
+      const cat = normalizeCategory(activeCategory);
+      if (cat !== "Charms") {
+        return json(400, { error: { message: "snapshot_charm_reference is restricted to Charms" } });
+      }
+      const src = String(source_storage_path || "").trim();
+      if (!src) return json(400, { error: { message: "source_storage_path is required" } });
+
+      const allowedSource = [
+        "listing-generator-1/Charm_Maker/",
+        "listing-generator-1/Charms/",
+      ].some((prefix) => src.startsWith(prefix));
+      if (!allowedSource) {
+        return json(400, { error: { message: "source_storage_path not allowed" } });
+      }
+      const base = assertAllowedOutputBase(output_base_path);
+      const bucket = admin.storage().bucket();
+      const sourceFile = bucket.file(src);
+      const [exists] = await sourceFile.exists();
+      if (!exists) return json(404, { error: { message: "source_storage_path not found" } });
+      let mime = "image/png";
+      try {
+        const [meta] = await sourceFile.getMetadata();
+        mime = String(meta?.contentType || mime).toLowerCase();
+      } catch (_) {}
+      const ext = mime.includes("jpeg") || mime.includes("jpg")
+        ? "jpg"
+        : mime.includes("webp")
+          ? "webp"
+          : "png";
+      const dst = `${base}/Source_Ref.${ext}`;
+      const dstFile = bucket.file(dst);
+      await sourceFile.copy(dstFile);
+      const token = newDownloadToken();
+      await dstFile.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+      return json(200, {
+        ok: true,
+        storagePath: dst,
+        downloadURL: tokenDownloadURLFor(bucket.name, dst, token),
+      });
+    }
+
     if (kind === "copy_to_slot") {
       const cat = normalizeCategory(activeCategory);
       if (!GENERATABLE_CATEGORIES.has(cat)) return json(400, { error: { message: "activeCategory not generatable" } });
@@ -3096,12 +3259,6 @@ async function _handlerImpl(event) {
         images.push({ buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) });
       }
 
-      // Caller-declared background contract. "black" activates both the
-      // prompt-level enforcement (backgroundLine in the Gemini call) and the
-      // post-generation pixel audit + corrective pass below.
-      const wantsBlackBg =
-        String(body.enforce_background || "").toLowerCase() === "black";
-
       let outBuf = await callImageModelEdits({
         apiKey,
         model,
@@ -3110,61 +3267,11 @@ async function _handlerImpl(event) {
         quality,
         output_format,
         images,
-        // Forward the caller's image-role vocabulary. This line is what makes
-        // image_roles: "style_reference" actually reach the Gemini call for
-        // set-based edits — without it the default "edit" labels are injected,
-        // which instruct the model to preserve the reference's composition and
-        // silhouette (the near-copy bug the Charm Maker suffered from).
         imageRoles: image_roles,
-        background: wantsBlackBg ? "black" : undefined,
       });
 
       outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
-
-      // ------------------------------------------------------------
-      // Black-background enforcement (Charm Maker slots 0/1).
-      // The image models intermittently ignore the black-background
-      // instruction and return the charm on white/light grey — usually
-      // because the style reference itself is an Etsy photo on white.
-      // Audit the border pixels; if the background reads light, run ONE
-      // corrective in-place edit that recolors the background only.
-      // Best-effort: any failure in the audit or the fix keeps the
-      // original output rather than failing the job.
-      // ------------------------------------------------------------
-      if (wantsBlackBg) {
-        try {
-          const light = await imageBorderIsLight(outBuf);
-          if (light) {
-            const fixPrompt =
-              `Replace the ENTIRE background of this image with pure solid black (#000000), edge to edge. ` +
-              `Keep the jewelry charm itself 100% IDENTICAL — same silhouette, same engravings, same cutouts, ` +
-              `same gold tone, same position, same scale. If the charm has a hoop keep it exactly as-is; ` +
-              `if it has none, do NOT add one. Change NOTHING except the background. ` +
-              `Any physical holes cut through the charm now show pure black through them. ` +
-              `No white, no grey, no gradients, no vignette, no transparency anywhere in the background.`;
-            const fixedBuf = await callImageModelEdits({
-              apiKey,
-              model,
-              prompt: fixPrompt,
-              size,
-              quality,
-              output_format,
-              images: [{ buffer: outBuf, mime: "image/png", filename: "image0.png" }],
-              background: "black",
-            });
-            const stillLight = await imageBorderIsLight(fixedBuf);
-            if (!stillLight) {
-              outBuf = fixedBuf;
-            } else {
-              // Second opinion failed too — keep whichever attempt is darker.
-              outBuf = fixedBuf;
-              console.warn("[edits] black-background corrective pass still reads light; saving corrected attempt");
-            }
-          }
-        } catch (bgErr) {
-          console.warn("[edits] black-background enforcement skipped:", bgErr?.message || bgErr);
-        }
-      }
+      outBuf = await enforceCharmBackgroundPolicy(outBuf, background_policy);
 
       const saved = await uploadPngBufferToSetPath(outBuf, outputBasePath, effectiveSlot, null, null);
       return json(200, { ok: true, storagePath: saved.storagePath, downloadURL: saved.downloadURL });
@@ -3557,6 +3664,7 @@ async function _handlerImpl(event) {
     }
 
     outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
+    outBuf = await enforceCharmBackgroundPolicy(outBuf, background_policy);
 
     await firestoreRetry(
       () =>
