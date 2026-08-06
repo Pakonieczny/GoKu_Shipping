@@ -398,6 +398,78 @@ async function applyFinalFrameZoomIfNeeded(buf, postprocess = {}) {
 }
 
 // ============================================================
+// PNG TEXT METADATA — embed per-image design descriptions.
+// ------------------------------------------------------------
+// The Charm Maker's concept planner produces a tailored merchandising
+// description for every generated charm (and a second one for its earring
+// twin). The client sends it as body.embed_metadata and this helper writes
+// it INTO the PNG itself as standard iTXt chunks (UTF-8, keyword/value),
+// inserted right after IHDR. The chunks survive server-side copies
+// (approve/move flows), downloads and re-uploads, so any later tool —
+// including the Index listing generator — can read the design intent
+// straight out of the image file. Pure JS, no dependencies; any failure
+// returns the original buffer untouched.
+// ============================================================
+const _PNG_CRC_TABLE = (() => {
+  const t = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c;
+  }
+  return t;
+})();
+function _pngCrc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = _PNG_CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function sanitizeEmbedMetadata(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(raw)) {
+    if (n >= 8) break;
+    const key = String(k || "").replace(/[^\x20-\x7e]/g, "").slice(0, 79).trim();
+    const val = String(v == null ? "" : v).slice(0, 8000).trim();
+    if (!key || !val) continue;
+    out[key] = val;
+    n++;
+  }
+  return n ? out : null;
+}
+function embedPngTextMetadata(buf, entries) {
+  try {
+    const meta = sanitizeEmbedMetadata(entries);
+    if (!meta || !Buffer.isBuffer(buf) || buf.length < 33) return buf;
+    // PNG signature check
+    if (buf.readUInt32BE(0) !== 0x89504e47 || buf.readUInt32BE(4) !== 0x0d0a1a0a) return buf;
+    // Insertion point: immediately after the IHDR chunk
+    const ihdrLen = buf.readUInt32BE(8);
+    const insertAt = 8 + 4 + 4 + ihdrLen + 4;
+    if (insertAt >= buf.length) return buf;
+    const chunks = [];
+    for (const [keyword, value] of Object.entries(meta)) {
+      const kw = Buffer.from(keyword, "latin1");
+      const txt = Buffer.from(value, "utf8");
+      // iTXt: keyword \0 compressionFlag(0) compressionMethod(0)
+      //       languageTag \0 translatedKeyword \0 text
+      const data = Buffer.concat([kw, Buffer.from([0, 0, 0, 0, 0]), txt]);
+      const type = Buffer.from("iTXt", "latin1");
+      const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(_pngCrc32(Buffer.concat([type, data])), 0);
+      chunks.push(Buffer.concat([len, type, data, crc]));
+    }
+    if (!chunks.length) return buf;
+    return Buffer.concat([buf.slice(0, insertAt), ...chunks, buf.slice(insertAt)]);
+  } catch (e) {
+    console.warn("[embedPngTextMetadata] skipped:", e?.message || e);
+    return buf;
+  }
+}
+
+// ============================================================
 // BACKGROUND & GEOMETRY POLICY — prompt-level, never pixel-level.
 // ------------------------------------------------------------
 // This function used to run a flood-fill that rewrote every
@@ -1941,6 +2013,9 @@ async function _handlerImpl(event) {
     // the text-only prompt preflight to scope a repair to the attachment
     // hardware while preserving the charm design 100%.
     charm_edit_intent,
+    // Optional {keyword: text} map written into the output PNG as iTXt
+    // chunks (e.g. the Charm Maker's tailored per-image design description).
+    embed_metadata,
     // "edit" (default) | "style_reference"
     //
     // The role labels this function injects around the inline image parts are
@@ -2818,6 +2893,20 @@ async function _handlerImpl(event) {
         routeByKey.set(`s${r.setIndex}_slot${r.slotIndex}`, r);
       }
 
+      // Per-task PNG metadata (tailored design descriptions) recorded at
+      // submit time — embedded into each result image before upload, exactly
+      // like the synchronous edits path does.
+      const embedByKey = new Map();
+      for (let setIdx = 0; setIdx < setsMeta.length; setIdx++) {
+        for (const t of (setsMeta[setIdx]?.tasks || [])) {
+          const slot = Number(t?.slotIndex);
+          if (!Number.isFinite(slot)) continue;
+          if (t?.embed_metadata && typeof t.embed_metadata === "object") {
+            embedByKey.set(`s${setIdx}_slot${slot}`, t.embed_metadata);
+          }
+        }
+      }
+
       let succeededCount = 0;
       let failedCount = 0;
       const perSetSlotResults = new Map();
@@ -2843,6 +2932,8 @@ async function _handlerImpl(event) {
 
       const uploadOne = async (route, buffer, key) => {
         try {
+          const embed = embedByKey.get(key);
+          if (embed) buffer = embedPngTextMetadata(buffer, embed);
           const storagePath = `${route.outputBasePath}/Slot_${route.slotIndex + 1}.png`;
           const file = bucket.file(storagePath);
           const token = newDownloadToken();
@@ -3527,6 +3618,11 @@ async function _handlerImpl(event) {
       });
 
       outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
+
+      // Write the caller-supplied design description into the PNG itself so
+      // the description travels with the image through approvals, pool moves
+      // and downloads.
+      outBuf = embedPngTextMetadata(outBuf, embed_metadata);
 
       const saved = await uploadPngBufferToSetPath(outBuf, outputBasePath, effectiveSlot, null, null);
       return json(200, { ok: true, storagePath: saved.storagePath, downloadURL: saved.downloadURL });
