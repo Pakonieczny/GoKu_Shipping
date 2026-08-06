@@ -4377,7 +4377,6 @@ html.gs-locked body > *:not(#gate){display:none!important}
         kind: "edits",
         activeCategory: "Charms",
         input_storage_path: charmPath,
-        input_charm_storage_path: charmPath,
         output_base_path: folder,
         slotIndex: 0,
         prompt: promptStrAddHoop,
@@ -8980,16 +8979,21 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 setCharmConceptSummary(folderId, planned.concept, planned.plan);
             } else if (slotIndex === 1) {
                 inputPath = `${folderPath}/Slot_1.png`;
-                inputCharmPath = inputPath;
+                // In-place edit: send the image ONCE. Duplicating it into
+                // input_charm_storage_path triggered the two-image "edit"
+                // role labels on two identical inputs.
+                inputCharmPath = null;
                 promptStr = promptStrEarring;
             } else if (slotIndex === 2) {
                 inputPath = `${folderPath}/Slot_1.png`;
-                inputCharmPath = manifest.lineArtRef || inputPath;
+                // Style sample only — when there is no line-art reference,
+                // send ONE image rather than duplicating the charm.
+                inputCharmPath = manifest.lineArtRef || null;
                 promptStr = promptStrBW;
             } else if (slotIndex === 3) {
-                inputPath = `${folderPath}/Slot_3.png`; 
-                inputCharmPath = inputPath; 
-                promptStr = promptStrBWEarring; 
+                inputPath = `${folderPath}/Slot_3.png`;
+                inputCharmPath = null;
+                promptStr = promptStrBWEarring;
             }
 
             // PASS SIGNAL TO REQUEST
@@ -9001,7 +9005,14 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 output_base_path: folderPath,
                 slotIndex: slotIndex,
                 prompt: promptStr,
-                image_roles: slotIndex === 0 ? "style_reference" : undefined,
+                // Slot 0: reference is a material/style sample for a NEW design.
+                // Slot 2: image 1 is the SUBJECT to convert, image 2 (the line-art
+                // sample) is drawing style ONLY — the default "edit" labels called
+                // the style sample "DESIGN TRUTH", which is how its subject (the
+                // turtle) leaked into outputs.
+                image_roles: slotIndex === 0 ? "style_reference"
+                    : slotIndex === 2 ? "line_art_style"
+                    : undefined,
                 background_policy: slotIndex <= 1 ? "solid_black" : undefined,
                 charm_geometry_policy: slotIndex === 0
                     ? "flat_integrated_eyelet"
@@ -9286,7 +9297,7 @@ window.regenCharmQuad = async function(folderId) {
             await sleep(2000, sig1); 
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
-                input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
+                input_storage_path: charmRes.storagePath,
                 output_base_path: folderPath, slotIndex: 1,
                 prompt: promptStrEarring,
                 background_policy: "solid_black",
@@ -9316,12 +9327,15 @@ window.regenCharmQuad = async function(folderId) {
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
             if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
             await sleep(2000, sig2);
-            const refPathForBaseBW = lineArtRefPath || charmRes.storagePath;
+            // Style sample only when one exists; labeled so image 1 stays the
+            // subject truth and the sample contributes drawing style only.
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
-                input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
+                input_storage_path: charmRes.storagePath,
+                input_charm_storage_path: lineArtRefPath || null,
                 output_base_path: folderPath, slotIndex: 2,
-                prompt: promptStrBW
+                prompt: promptStrBW,
+                image_roles: "line_art_style"
             }, sig2, regenerationModel);
             
             const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { 
@@ -9349,7 +9363,7 @@ window.regenCharmQuad = async function(folderId) {
             await sleep(2000, sig3);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
-                input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
+                input_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
                 prompt: promptStrBWEarring
             }, sig3, regenerationModel);
@@ -9456,7 +9470,7 @@ window.regenCharmQuad = async function(folderId) {
             await sleep(2000);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Stud_Earrings",
-                input_storage_path: baseCharmStoragePath, input_charm_storage_path: baseCharmStoragePath,
+                input_storage_path: baseCharmStoragePath,
                 output_base_path: folderPath, slotIndex: 1,
                 prompt: promptStrEarring,
                 background_policy: "solid_black",
@@ -9480,12 +9494,16 @@ window.regenCharmQuad = async function(folderId) {
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
             if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
             await sleep(2000);
-            const refPathForBaseBW = lineArtRefPath || baseCharmStoragePath;
+            // Style sample goes in ONLY when one exists (never a duplicate of
+            // the charm), and it is labeled "line_art_style": image 1 is the
+            // subject truth, image 2 contributes drawing style only.
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
-                input_storage_path: baseCharmStoragePath, input_charm_storage_path: refPathForBaseBW,
+                input_storage_path: baseCharmStoragePath,
+                input_charm_storage_path: lineArtRefPath || null,
                 output_base_path: folderPath, slotIndex: 2,
-                prompt: promptStrBW
+                prompt: promptStrBW,
+                image_roles: "line_art_style"
             }, undefined, derivativeModel);
             const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
@@ -9507,7 +9525,7 @@ window.regenCharmQuad = async function(folderId) {
             await sleep(2000);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Stud_Earrings",
-                input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
+                input_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
                 prompt: promptStrBWEarring
             }, undefined, derivativeModel);
