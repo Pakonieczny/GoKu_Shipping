@@ -681,10 +681,17 @@ async function callOpenAIImagesEdits({
   form.append("model", model);
   // Gemini receives explicit role labels as separate multimodal parts. OpenAI
   // receives a multipart edit request, so mirror the Charm Maker's special
-  // role lock inside the prompt. Default listing-edit behaviour is unchanged.
-  let promptText = imageRoles === "style_reference"
-    ? `${String(prompt || "").trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`
-    : String(prompt || "");
+  // role vocabularies inside the prompt. Default listing-edit behaviour is
+  // unchanged.
+  let promptText = String(prompt || "");
+  if (imageRoles === "style_reference") {
+    promptText = `${promptText.trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`;
+  } else if (imageRoles === "line_art_style") {
+    const roles = IMAGE_ROLE_LABELS.line_art_style;
+    promptText = (images || []).length >= 2
+      ? `${promptText.trim()}\n\n${roles.first}\n\n${roles.second}\n\n${roles.lock}`
+      : `${promptText.trim()}\n\n${roles.single}`;
+  }
   // Backend-enforced final word: geometry + background policy text goes last
   // so it outranks everything, mirroring the Gemini part ordering.
   const policyText = charmPolicyFinalText({ geometryPolicy: charmGeometryPolicy, backgroundPolicy });
@@ -809,6 +816,24 @@ const IMAGE_ROLE_LABELS = {
       "IMAGE 1 — MATERIAL AND CRAFT REFERENCE ONLY. Read from it ONLY: the metal alloy and its exact colour and tone, the surface finish and polish, the way light falls on that metal, the thickness and cleanliness of the laser-cut edges, the depth and weight of the surface engraving, the density of detail per unit area, the way the integrated bail is fused into the body, and the background treatment. It is a physical sample of how this workshop makes jewellery. It is NOT a canvas to edit, NOT a composition to preserve, and NOT the object you are being asked to draw.",
     lock:
       "FINAL IMAGE-ROLE LOCK: you are designing a NEW product, not editing a supplied one. The reference image(s) define material, finish, lighting, background and engraving language ONLY. The SUBJECT, the SILHOUETTE and the OUTLINE come from the written brief above and from nowhere else. Do not trace, mirror, re-pose, re-scale or lightly restyle the object shown in the reference. HARD FAIL: an output a shopper would identify as the same object as the reference. HARD FAIL: an output whose outline could be laid over the reference's outline and broadly match. If your draft resembles the reference's shape, discard it and design the brief's subject from scratch.",
+  },
+  // Used by the Charm Maker's B&W line-art conversion (Slot 3). IMAGE 1 is
+  // the charm whose subject must be redrawn — its silhouette IS the truth.
+  // IMAGE 2 is a rendering-style sample only (line weight, fill rules,
+  // white background). The default "edit" labels were exactly wrong here:
+  // they crowned IMAGE 2 "MASTER CHARM / DESIGN TRUTH — use its exact
+  // silhouette", which is how the static style sample's subject (e.g. a
+  // turtle) periodically REPLACED the charm being converted.
+  line_art_style: {
+    first:
+      "IMAGE 1 — SUBJECT SOURCE (THE TRUTH). This is the exact object you must redraw. Its silhouette, outline, proportions, pose, features, engravings, cutouts and hanging hoop are authoritative and must all appear in your output, converted to the requested style.",
+    second:
+      "IMAGE 2 — RENDERING-STYLE SAMPLE ONLY. Read from it ONLY how to draw: the line weight, outline treatment, black-fill rules for thick engravings, cutout handling and the pure white background. Its SUBJECT is strictly OFF LIMITS: whatever object it depicts must NOT appear in your output, in whole, in part, or blended.",
+    extra: (n) => `IMAGE ${n} — ADDITIONAL RENDERING-STYLE SAMPLE. Drawing style only; its subject is off limits.`,
+    single:
+      "IMAGE 1 — SUBJECT SOURCE (THE TRUTH). This is the exact object you must redraw in the style described by the written instructions. Its silhouette, outline, proportions, features, engravings and cutouts are authoritative.",
+    lock:
+      "FINAL IMAGE-ROLE LOCK: redraw the object from IMAGE 1 in the rendering style demonstrated by IMAGE 2. The output's subject and silhouette come from IMAGE 1 and from nowhere else. HARD FAIL: the output shows IMAGE 2's subject instead of, mixed with, or in addition to IMAGE 1's object. If your draft resembles IMAGE 2's subject in any way, discard it and draw IMAGE 1's object.",
   },
 };
 
