@@ -8596,10 +8596,15 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
     HARD CONSTRAINTS (NON-NEGOTIABLE):
     • 100% STRUCTURAL MATCH: Keep all outer perimeters, overall shape, and proportions 100% identical to the FIRST image.
     • IGNORE SECOND IMAGE SUBJECT: Do NOT add or draw the object from the SECOND image. Use the second image ONLY to understand the B&W aesthetic.
-    • ENGRAVING FILL RULE (CRITICAL): You must NEVER draw "double lines" or outlines around thick engravings. 
-        1. DARKENED/THICK ENGRAVINGS: If an engraving has noticeable thickness, width, or a dark patina in the FIRST image, you MUST fill that entire shape or line with SOLID BLACK. (e.g., if it is a dark etched snake or thick wing vein, color it completely solid black). Do NOT just outline it.
-        2. THIN LINES: Only if an engraving is a razor-thin, lightly scratched line should it be a single thin black line.
-        3. CUTOUTS/HOLES: Physical holes cut entirely through the metal must remain pure white inside.
+    • ENGRAVING FILL RULE (CRITICAL — BLACK MAPS 1:1 TO ENGRAVED METAL, WHITE TO POLISHED METAL):
+        Black ink in your output represents ONLY metal that is actually engraved (recessed/etched) in the FIRST image. Polished, un-engraved metal is ALWAYS white. Before inking any engraving, classify it:
+        1. STROKE ENGRAVING (the most common case): the engraving is a LINE — straight, curved, or forming the OUTLINE of a shape such as a cloud, heart, wing, leaf or star. Render it as ONE solid black stroke of matching weight following the exact same path: razor-thin scratch → thin line; wide groove → proportionally thicker line. NEVER draw "double lines" (two thin parallel outlines) around a wide stroke — one solid stroke of equivalent width.
+        2. INTERIOR STAYS WHITE: when a stroke engraving forms a CLOSED OUTLINE, the area it encloses is still polished metal in the FIRST image — so it stays pure WHITE inside your outline. Draw the outlined cloud as an outlined cloud, never as a solid black cloud. The engraving's darkness or the stroke's width NEVER justifies filling the enclosed shape.
+        3. SOLID-REGION ENGRAVING (rare): fill an area with solid black ONLY when the ENTIRE area is engraved in the FIRST image — every part of its interior surface is visibly etched/recessed/darkened, not just its border (e.g. a fully etched snake body or a solid darkened wing vein). If the interior surface matches the surrounding polished face, it is NOT a solid-region engraving — see rule 2.
+        4. THE FINGERTIP TEST: for every candidate area ask — would a fingertip feel the interior as recessed engraving, or as the same smooth polished surface as the rest of the charm? Smooth interior → white with a black outline stroke. Recessed everywhere → solid black.
+        5. CUTOUTS/HOLES: physical holes cut entirely through the metal must remain pure white inside.
+        HARD FAIL: an engraving that is only an outline in the FIRST image (e.g. an outlined cloud, heart or star) rendered as a filled solid black shape.
+        HARD FAIL: any enclosed area inked black when the FIRST image shows polished, un-engraved metal inside it.
     • OUTLINE: Ensure the Charm's outer perimeter black outline is only 2px thick.
     • BACKGROUND: Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
     • NO 3D/SHADING: Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
