@@ -8422,6 +8422,77 @@ FINAL PRE-RENDER CHECK — PERFORM THIS AFTER THE IMAGE IS COMPOSED:
     // manifests. New generations always use buildCharmDesignPrompt(concept, plan).
     const promptStrCharm = buildCharmDesignPrompt(null, null);
 
+    // ------------------------------------------------------------
+    // Per-image design descriptions — embedded INTO the PNGs.
+    // ------------------------------------------------------------
+    // Every generated charm gets a tailored merchandising description
+    // composed from its AI-planned concept (the same text the concept
+    // tooltip shows: buyer connection, conversion rationale, reference).
+    // The necklace charm (Slot 1) and its earring twin (Slot 2) each get
+    // their own variant. The backend writes these as standard PNG iTXt
+    // chunks (keywords: Description / CharmTitle / CharmConcept), so the
+    // description travels inside the image file itself — through approval
+    // moves, pool moves, downloads and into the Index listing generator,
+    // which reads it back to enrich titles, keywords and descriptions.
+    // ------------------------------------------------------------
+    function buildCharmImageDescription(concept, plan, variant) {
+      const c = concept || {};
+      const p = plan || {};
+      const bits = [];
+      const title = cleanCharmPlanText(c.title);
+      const subject = cleanCharmPlanText(c.subject);
+      if (variant === "earring") {
+        bits.push(`Earring version${title ? ` of "${title}"` : ""}: ${subject || "flat laser-cut gold charm"} — hanging hoop removed for stud/earring assembly, design otherwise identical to the necklace charm.`);
+      } else {
+        bits.push(`${title ? `"${title}" — ` : ""}${subject || "flat laser-cut gold charm"} with integrated hanging hoop, for necklaces and charm jewelry.`);
+      }
+      const bc = cleanCharmPlanText(c.buyerConnection);
+      if (bc) bits.push(bc);
+      const cr = cleanCharmPlanText(c.conversionRationale);
+      if (cr) bits.push(cr);
+      const sil = cleanCharmPlanText(c.silhouetteBrief);
+      if (sil) bits.push(`Silhouette: ${sil}`);
+      const eng = cleanCharmPlanText(c.engravingBrief);
+      if (eng) bits.push(`Engraving: ${eng}`);
+      const refS = cleanCharmPlanText(p.referenceSubject);
+      if (refS) bits.push(`Reference: ${refS}.`);
+      const buyer = cleanCharmPlanText(p.buyerProfile);
+      if (buyer) bits.push(`Target buyer: ${buyer}`);
+      if (Array.isArray(p.purchaseSignals) && p.purchaseSignals.length) {
+        bits.push(`Purchase drivers: ${p.purchaseSignals.map(cleanCharmPlanText).filter(Boolean).join("; ")}.`);
+      }
+      return bits.join("\n");
+    }
+
+    function buildCharmEmbedMetadata(concept, plan, variant) {
+      const c = concept || {};
+      const p = plan || {};
+      const description = buildCharmImageDescription(c, p, variant);
+      if (!description) return null;
+      let conceptJson = null;
+      try {
+        conceptJson = JSON.stringify({
+          variant: variant || "necklace",
+          title: cleanCharmPlanText(c.title) || null,
+          subject: cleanCharmPlanText(c.subject) || null,
+          buyerConnection: cleanCharmPlanText(c.buyerConnection) || null,
+          conversionRationale: cleanCharmPlanText(c.conversionRationale) || null,
+          silhouetteBrief: cleanCharmPlanText(c.silhouetteBrief) || null,
+          engravingBrief: cleanCharmPlanText(c.engravingBrief) || null,
+          referenceSubject: cleanCharmPlanText(p.referenceSubject) || null,
+          buyerProfile: cleanCharmPlanText(p.buyerProfile) || null,
+          purchaseSignals: Array.isArray(p.purchaseSignals)
+            ? p.purchaseSignals.map(cleanCharmPlanText).filter(Boolean).slice(0, 6)
+            : [],
+        });
+      } catch (_) {}
+      const meta = { Description: description };
+      const t = cleanCharmPlanText(c.title);
+      if (t) meta.CharmTitle = t;
+      if (conceptJson) meta.CharmConcept = conceptJson;
+      return meta;
+    }
+
     const promptStrEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm.
     Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
 
@@ -9011,13 +9082,15 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
             let promptStr = "";
             let category = "Charms"; 
 
+            let embedMeta = null;
             if (slotIndex === 0) {
-                inputPath = manifest.sourceSnapshot || manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath; 
+                inputPath = manifest.sourceSnapshot || manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
                 if (!inputPath) throw new Error("Missing source reference for base charm.");
                 const planned = await ensureManifestCharmConcept(manifest, inputPath, folderPath);
                 manifest = planned.manifest;
                 inputCharmPath = null;
                 promptStr = buildCharmDesignPrompt(planned.concept, planned.plan);
+                embedMeta = buildCharmEmbedMetadata(planned.concept, planned.plan, "necklace");
                 setCharmConceptSummary(folderId, planned.concept, planned.plan);
             } else if (slotIndex === 1) {
                 inputPath = `${folderPath}/Slot_1.png`;
@@ -9026,6 +9099,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 // role labels on two identical inputs.
                 inputCharmPath = null;
                 promptStr = promptStrEarring;
+                embedMeta = buildCharmEmbedMetadata(manifest.charmConcept, manifest.charmConceptPlan, "earring");
             } else if (slotIndex === 2) {
                 inputPath = `${folderPath}/Slot_1.png`;
                 // Style sample only — when there is no line-art reference,
@@ -9055,6 +9129,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 image_roles: slotIndex === 0 ? "style_reference"
                     : slotIndex === 2 ? "line_art_style"
                     : undefined,
+                embed_metadata: embedMeta || undefined,
                 background_policy: slotIndex <= 1 ? "solid_black" : undefined,
                 charm_geometry_policy: slotIndex === 0
                     ? "flat_integrated_eyelet"
@@ -9310,6 +9385,7 @@ window.regenCharmQuad = async function(folderId) {
                 output_base_path: folderPath, slotIndex: 0,
                 prompt: baseCharmPrompt,
                 image_roles: "style_reference",
+                embed_metadata: buildCharmEmbedMetadata(planned.concept, planned.plan, "necklace"),
                 background_policy: "solid_black",
                 charm_geometry_policy: "flat_integrated_eyelet"
             }, sig0, regenerationModel);
@@ -9343,7 +9419,8 @@ window.regenCharmQuad = async function(folderId) {
                 output_base_path: folderPath, slotIndex: 1,
                 prompt: promptStrEarring,
                 background_policy: "solid_black",
-                charm_geometry_policy: "flat_no_attachment"
+                charm_geometry_policy: "flat_no_attachment",
+                embed_metadata: buildCharmEmbedMetadata(planned.concept, planned.plan, "earring")
             }, sig1, regenerationModel);
             
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { 
@@ -9492,10 +9569,11 @@ window.regenCharmQuad = async function(folderId) {
             const baseCharmStoragePath = `${folderPath}/Slot_1.png`;
 
             let lineArtRefPath = null;
+            let setManifest = null;
             try {
                 const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
-                const manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
-                lineArtRefPath = manifest.lineArtRef;
+                setManifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
+                lineArtRefPath = setManifest.lineArtRef;
             } catch(e) {}
 
             if (!lineArtRefPath) {
@@ -9516,7 +9594,8 @@ window.regenCharmQuad = async function(folderId) {
                 output_base_path: folderPath, slotIndex: 1,
                 prompt: promptStrEarring,
                 background_policy: "solid_black",
-                charm_geometry_policy: "flat_no_attachment"
+                charm_geometry_policy: "flat_no_attachment",
+                embed_metadata: buildCharmEmbedMetadata(setManifest?.charmConcept, setManifest?.charmConceptPlan, "earring")
             }, undefined, derivativeModel);
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
@@ -9792,6 +9871,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
                         : [],
                 },
                 charmConcept: effectiveConcept,
+                // Human-readable per-image descriptions — the same text that is
+                // embedded INTO each PNG as metadata (kept here too as a
+                // manifest-level fallback for tools that read manifests).
+                imageDescriptions: {
+                    necklace: buildCharmImageDescription(effectiveConcept, effectivePlan, "necklace"),
+                    earring: buildCharmImageDescription(effectiveConcept, effectivePlan, "earring"),
+                },
                 model: generationModel,
                 timestamp: new Date().toISOString()
             };
@@ -9807,13 +9893,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
             if(prev0) prev0.innerHTML = window.getSpinnerHTML("Generating Base...");
             await postImageGeneration({
-                kind: "edits", activeCategory: "Charms", 
+                kind: "edits", activeCategory: "Charms",
                 input_storage_path: targetCharmRef.fullPath,
                 output_base_path: outputBasePath, slotIndex: 0,
                 prompt: baseCharmPrompt,
                 image_roles: "style_reference",
                 background_policy: "solid_black",
-                charm_geometry_policy: "flat_integrated_eyelet"
+                charm_geometry_policy: "flat_integrated_eyelet",
+                embed_metadata: buildCharmEmbedMetadata(effectiveConcept, effectivePlan, "necklace")
             }, undefined, generationModel);
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
@@ -15659,6 +15746,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
                   : [],
               },
               charmConcept: concept,
+              imageDescriptions: {
+                necklace: buildCharmImageDescription(concept, conceptPlan, "necklace"),
+                earring: buildCharmImageDescription(concept, conceptPlan, "earring"),
+              },
               model: modelId,
               batchQueued: true,
               timestamp: new Date().toISOString(),
@@ -15685,6 +15776,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
                 image_roles: "style_reference",
                 background_policy: "solid_black",
                 charm_geometry_policy: "flat_integrated_eyelet",
+                embed_metadata: buildCharmEmbedMetadata(concept, conceptPlan, "necklace"),
               }],
             });
           }
