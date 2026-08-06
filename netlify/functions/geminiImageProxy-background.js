@@ -1586,10 +1586,14 @@ const GEMINI_UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1b
 // few output tokens by skipping the model's default text preamble.
 // imageConfig.imageSize: "2K" is the supported way to lock 2048x2048
 // output per Google's image-generation docs.
-function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize) {
+function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize, opts) {
   const sizeKey = String(imageSize || "2K").toUpperCase();
   const safeRefMime = (refMime && refMime.startsWith("image/")) ? refMime : "image/png";
   const safeCharmMime = (charmMime && charmMime.startsWith("image/")) ? charmMime : "image/png";
+  const o = opts || {};
+  const imageRoles = String(o.imageRoles || "").trim();
+  const backgroundPolicy = String(o.backgroundPolicy || "").trim();
+  const geometryPolicy = String(o.geometryPolicy || "").trim();
 
   // Mirror the prompt augmentation Standard mode uses in
   // callGeminiGenerateContentImage(). Without this suffix, Gemini
@@ -1602,34 +1606,63 @@ function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBa
                  : sizeKey === "2K" ? "2048x2048"
                  : sizeKey === "4K" ? "4096x4096"
                  : "2048x2048";
+  // Same closing-line swap Standard mode performs: when the caller declares
+  // a solid-black background, the generic "product photo" line (a white-
+  // studio nudge) is replaced by the black-background mandate.
+  const closingLine = backgroundPolicy === "solid_black"
+    ? `The ENTIRE background must be pure solid black (#000000), edge to edge.`
+    : `Return an image suitable for a product photo.`;
   const augmentedPrompt =
     `${String(prompt || "").trim()}\n\n` +
     `OUTPUT (NON-NEGOTIABLE): Return a photorealistic 1:1 image. ` +
     `Exact size ${sizeHint}. ` +
-    `Return an image suitable for a product photo.`;
+    closingLine;
+
+  // Part assembly mirrors callGeminiGenerateContentImage's ordering for the
+  // requested role vocabulary, so Standard and Batch produce the same output
+  // for the same inputs.
+  //   • default (listing compositor, two images): byte-identical to the
+  //     original hardcoded "edit" labels.
+  //   • "style_reference" (Charm Maker base charm, one image): reference is
+  //     a material/craft sample, subject comes from the brief; the backend
+  //     geometry/background override text goes last as the final word.
+  let parts;
+  if (imageRoles === "style_reference") {
+    parts = [
+      { text: augmentedPrompt },
+      { text: IMAGE_ROLE_LABELS.style_reference.single },
+      { inline_data: { mime_type: safeRefMime, data: refBase64 } },
+      { text: IMAGE_ROLE_LABELS.style_reference.lock },
+    ];
+  } else {
+    parts = [
+      { text: augmentedPrompt },
+      {
+        text:
+          "IMAGE 1 — LOCKED SOURCE TEMPLATE / DESTINATION CANVAS. Preserve its composition and all non-charm content.",
+      },
+      { inline_data: { mime_type: safeRefMime, data: refBase64 } },
+      {
+        text:
+          "IMAGE 2 — MASTER CHARM / DESIGN TRUTH. Use its exact silhouette, integrated eyelet, cutouts, and engraving topology for the replacement charm only.",
+      },
+      { inline_data: { mime_type: safeCharmMime, data: charmBase64 } },
+      {
+        text:
+          "FINAL IMAGE-ROLE LOCK: edit IMAGE 1 in place. IMAGE 2 supplies only the replacement charm design. Do not blend the images, redraw the whole template, or copy IMAGE 1's old charm details into the new charm.",
+      },
+    ];
+  }
+
+  const policyText = charmPolicyFinalText({ geometryPolicy, backgroundPolicy });
+  if (policyText) parts.push({ text: policyText });
 
   return {
     key,
     request: {
       contents: [{
         role: "user",
-        parts: [
-          { text: augmentedPrompt },
-          {
-            text:
-              "IMAGE 1 — LOCKED SOURCE TEMPLATE / DESTINATION CANVAS. Preserve its composition and all non-charm content.",
-          },
-          { inline_data: { mime_type: safeRefMime, data: refBase64 } },
-          {
-            text:
-              "IMAGE 2 — MASTER CHARM / DESIGN TRUTH. Use its exact silhouette, integrated eyelet, cutouts, and engraving topology for the replacement charm only.",
-          },
-          { inline_data: { mime_type: safeCharmMime, data: charmBase64 } },
-          {
-            text:
-              "FINAL IMAGE-ROLE LOCK: edit IMAGE 1 in place. IMAGE 2 supplies only the replacement charm design. Do not blend the images, redraw the whole template, or copy IMAGE 1's old charm details into the new charm.",
-          },
-        ],
+        parts,
       }],
       generation_config: {
         // Match Standard mode's modalities exactly. The model may
@@ -2472,8 +2505,17 @@ async function _handlerImpl(event) {
           const refPath = String(t?.input_storage_path || "").trim();
           const charmPath = String(t?.input_charm_storage_path || "").trim();
           const promptT = String(t?.prompt || "").trim();
-          if (!refPath || !charmPath || !promptT) continue;
-          fetchJobs.push({ setIdx, slot, promptT, refPath, charmPath, outputBasePath: s.outputBasePath });
+          // charmPath is OPTIONAL for single-image tasks (Charm Maker base
+          // charms use one style-reference image); the listing compositor
+          // still sends both.
+          if (!refPath || !promptT) continue;
+          fetchJobs.push({
+            setIdx, slot, promptT, refPath, charmPath,
+            outputBasePath: s.outputBasePath,
+            imageRoles: String(t?.image_roles || "").trim() || null,
+            backgroundPolicy: String(t?.background_policy || "").trim() || null,
+            geometryPolicy: String(t?.charm_geometry_policy || "").trim() || null,
+          });
         }
       }
 
@@ -2495,7 +2537,7 @@ async function _handlerImpl(event) {
       await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
         const [ref, charm] = await Promise.all([
           storagePathToBuffer(j.refPath),
-          storagePathToBuffer(j.charmPath),
+          j.charmPath ? storagePathToBuffer(j.charmPath) : Promise.resolve(null),
         ]);
         const key = `s${j.setIdx}_slot${j.slot}`;
 
@@ -2505,8 +2547,9 @@ async function _handlerImpl(event) {
         let line = buildBatchJsonlLine(
           key, j.promptT,
           ref.mime, ref.buffer.toString("base64"),
-          charm.mime, charm.buffer.toString("base64"),
-          imageSize
+          charm ? charm.mime : null, charm ? charm.buffer.toString("base64") : null,
+          imageSize,
+          { imageRoles: j.imageRoles, backgroundPolicy: j.backgroundPolicy, geometryPolicy: j.geometryPolicy }
         );
         let jsonStr = JSON.stringify(line) + "\n";
         line = null;
@@ -2642,6 +2685,12 @@ async function _handlerImpl(event) {
           category: s.category,
           outputBasePath: s.outputBasePath,
           setN: s.setN,
+          // "charm_maker" sets carry their own manifest (concept, plan,
+          // sourceCharm, snapshot) written by the client at submit time;
+          // batch_collect preserves it instead of composing the listing-
+          // shaped manifest.
+          setKind: String(s.setKind || "") || null,
+          manifest: (s.manifest && typeof s.manifest === "object") ? s.manifest : null,
           tasks: s.tasks, // store the raw task list so we can write a faithful manifest later
         })),
         routes,
@@ -2909,6 +2958,36 @@ async function _handlerImpl(event) {
             error: r?.error || null,
           };
         });
+
+        // Charm Maker sets: the client wrote a full charm-maker manifest
+        // (sourceCharm, sourceSnapshot, charmConcept, charmConceptPlan, …)
+        // at submit time and batch_submit persisted a copy. Preserve that
+        // shape — the Charm Maker card UI, ref preview, concept summary and
+        // Redo flow all read those fields — and just stamp the batch
+        // metadata + slot results onto it.
+        if (String(s.setKind || "") === "charm_maker") {
+          const cmManifest = {
+            ...((s.manifest && typeof s.manifest === "object") ? s.manifest : {}),
+            batchMode: true,
+            batchName,
+            batchState: state,
+            partial: forceMode && state !== "JOB_STATE_SUCCEEDED",
+            imageSize: docData.imageSize || "2K",
+            model: (s.manifest && s.manifest.model) || docData.model || DEFAULT_IMAGE_MODEL,
+            batchSlots: slotsOut,
+            collectedAt: new Date().toISOString(),
+          };
+          const cmManifestPath = `${s.outputBasePath}/manifest.json`;
+          try {
+            await bucket.file(cmManifestPath).save(
+              Buffer.from(JSON.stringify(cmManifest, null, 2), "utf8"),
+              { contentType: "application/json", resumable: false }
+            );
+          } catch (e) {
+            failures.push({ key: `manifest:${s.outputBasePath}`, error: String(e?.message || e) });
+          }
+          continue;
+        }
 
         const m = {
           category: s.category,
