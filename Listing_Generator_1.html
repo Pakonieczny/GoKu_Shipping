@@ -957,35 +957,32 @@
     font-size: 10px;
   }
 
+  /* Jump-ring repair — compact per-slot action, same scale as the other
+     .btnSmall slot buttons and the same muted color-coded language as the
+     card's amber "Approve Base & Continue" action. It sits directly under
+     the Slot 1 (base charm) Redo button so it reads as an action on that
+     specific charm, not on the whole card. */
   .jump-ring-repair-btn {
     width: 100%;
-    min-height: 64px;
-    display: flex !important;
-    align-items: center;
-    justify-content: center;
-    gap: 9px;
-    border: 1px solid #fbbf24 !important;
-    border-radius: 10px !important;
-    background: linear-gradient(135deg, #fbbf24, #f59e0b) !important;
-    color: #211600 !important;
-    font-family: var(--font-mono);
-    font-size: 16px !important;
-    font-weight: 800 !important;
-    letter-spacing: 0.035em;
-    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.22), 0 7px 18px rgba(245, 158, 11, 0.2);
+    padding: 6px 10px !important;
+    border-radius: 6px !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border: 1px solid rgba(251, 191, 36, 0.45) !important;
+    background: rgba(251, 191, 36, 0.08) !important;
+    color: #fbbf24 !important;
     cursor: pointer;
-    transition: transform 140ms ease, filter 140ms ease, box-shadow 140ms ease;
+    transition: background 140ms ease, border-color 140ms ease, filter 140ms ease;
   }
   .jump-ring-repair-btn:not(:disabled):hover {
-    filter: brightness(1.08);
-    transform: translateY(-1px);
-    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.28), 0 10px 22px rgba(245, 158, 11, 0.25);
+    background: rgba(251, 191, 36, 0.16) !important;
+    border-color: rgba(251, 191, 36, 0.7) !important;
   }
   .jump-ring-repair-btn:disabled {
-    opacity: 0.58;
+    opacity: 0.55;
     cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
   }
 
   /* ---------- Charm reference mosaic (Charm Maker left side) ---------- */
@@ -8628,9 +8625,11 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
 function createCharmCardHTML(folderId, isApprovedView) {
         // The repair button deliberately lives in the SAME markup block as
         // the visible Slot 1 Redo button. If Redo renders, this renders too.
+        // Redo first (primary action), repair beneath it — both at .btnSmall
+        // scale so the pair reads as actions on this one charm.
         const redoHTML0 = isApprovedView ? '' : `
-            <button class="btn jumpRingRepairBtn jump-ring-repair-btn" id="removeRing_${folderId}" onclick="removeCharmJumpRing('${folderId}')" aria-label="Remove the jump ring from this base charm" title="Uses the image model currently selected in the header">✂ REMOVE JUMP RING FROM THIS CHARM</button>
-            <button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>`;
+            <button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>
+            <button class="btn btnSmall jumpRingRepairBtn jump-ring-repair-btn" id="removeRing_${folderId}" onclick="removeCharmJumpRing('${folderId}')" aria-label="Remove the jump ring from this base charm" title="Removes the jump ring from this charm only — one image edit, using the image model selected in the header">✂ Remove Jump Ring</button>`;
         const redoHTML1 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_1" onclick="redoCharmSlot('${folderId}', 1)">Redo</button>`;
         const redoHTML2 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_2" onclick="redoCharmSlot('${folderId}', 2)">Redo</button>`;
         const redoHTML3 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>`;
@@ -9019,7 +9018,7 @@ window.removeCharmJumpRing = async function(folderId) {
         window.ACTIVE_CHARM_JOBS.add(jobKey);
         window.updateQuadActionButtons(folderId);
 
-        if (repairBtn) repairBtn.textContent = 'ANALYZING & REMOVING…';
+        if (repairBtn) repairBtn.textContent = 'Analyzing & removing…';
         if (redoBtn) redoBtn.disabled = true;
         if (cardObj) cardObj.classList.add('working-card');
         if (prevBox) {
@@ -9074,7 +9073,7 @@ window.removeCharmJumpRing = async function(folderId) {
                 prevBox.classList.add('success-border');
             }
             completedSuccessfully = true;
-            if (repairBtn) repairBtn.textContent = '✓ JUMP RING REMOVED';
+            if (repairBtn) repairBtn.textContent = '✓ Ring removed';
             setStatus(`Jump ring removed with ${repairModelLabel}. One corrected image was generated.`);
         } catch (err) {
             if (err?.name === 'AbortError' || err?.message === 'AbortError') {
@@ -9088,7 +9087,7 @@ window.removeCharmJumpRing = async function(folderId) {
                 prevBox.innerHTML = previousPreviewHTML || '<div class="slotRefEmpty">Base image unavailable</div>';
                 if (previouslySuccessful) prevBox.classList.add('success-border');
             }
-            if (repairBtn) repairBtn.textContent = '✂ REMOVE JUMP RING FROM THIS CHARM';
+            if (repairBtn) repairBtn.textContent = '✂ Remove Jump Ring';
             setStatus(`Jump-ring removal stopped before completion: ${err?.message || err}`);
         } finally {
             if (window.CHARM_ABORT_CONTROLLERS.get(jobKey) === abortController) {
@@ -9101,7 +9100,7 @@ window.removeCharmJumpRing = async function(folderId) {
                     setTimeout(() => {
                         const currentBtn = document.getElementById(`removeRing_${folderId}`);
                         if (currentBtn && !window.ACTIVE_CHARM_JOBS.has(jobKey)) {
-                            currentBtn.textContent = '✂ REMOVE JUMP RING FROM THIS CHARM';
+                            currentBtn.textContent = '✂ Remove Jump Ring';
                         }
                     }, 1800);
                 }
