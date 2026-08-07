@@ -142,6 +142,22 @@
 [functions."etsyPricingScheduleCron"]
   schedule = "0-59/5 * * * *"
 
+
+# ─── Listing Generator: charm batch sweep — August 2026 ─────────────────────
+# Fires the batch_sweep kind on geminiImageProxy-background every 10 minutes.
+# The sweep (15-min background budget) refreshes the Gemini state of every
+# un-collected batch record in ListingGenerator1Batches, AUTO-COLLECTS
+# succeeded batches into Firebase Storage (images + embedded metadata +
+# manifests), and resumes any charm_batch_orchestrate / charm_batch_recover
+# run whose self-chain was dropped. This is what makes the Charm Maker's
+# half-price batch pipeline fully independent of any open browser tab.
+# Overlap-guarded via LG1_Config/batchSweep.runningSince, so a tick that
+# fires mid-sweep is a cheap no-op. Minute offset 4-59/10 (:04,:14,:24,…)
+# deliberately avoids the hourly :00/:15/:30/:45 slots used by
+# applySiteFixes, googleAttributes, syncCharmSets and googleAdsAutopilotKick.
+[functions."charmBatchSweepCron"]
+  schedule = "4-59/10 * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]
