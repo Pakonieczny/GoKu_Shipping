@@ -3543,9 +3543,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
                Uses the same batch_list / batch_status / batch_collect backend
                machinery and the same auto-poll loop as the Generate tab. -->
           <div id="charmBatchJobsPanel" style="display: none; margin-top: 12px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
-            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
               <label style="margin: 0;">Charm batch jobs</label>
-              <button type="button" class="btn btnSmall" id="charmBatchJobsRefreshBtn" style="width: auto; font-size: 10px;">↻ Refresh</button>
+              <div class="row" style="gap: 6px; width: auto;">
+                <button type="button" class="btn btnSmall" id="charmBatchRecoverBtn" style="width: auto; font-size: 10px;" title="Scan Generated_Charm_Sets for sets that have a manifest but no base image (a submission that died mid-run) and resubmit them from their saved concepts — no re-planning, runs entirely on the server.">⟲ Recover unfinished sets</button>
+                <button type="button" class="btn btnSmall" id="charmBatchJobsRefreshBtn" style="width: auto; font-size: 10px;">↻ Refresh</button>
+              </div>
             </div>
             <div id="charmBatchJobsList" style="margin-top: 8px;"></div>
           </div>
@@ -15594,6 +15597,38 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const listEl = document.getElementById("charmBatchJobsList");
       if (!listEl) return;
       try {
+        // Server-side orchestrations (prep/submission progress) — rendered
+        // above the per-batch rows so an in-flight hand-off is visible even
+        // before its first Gemini batch exists. Purely informational: the
+        // server runs with or without this panel open.
+        let orchRows = "";
+        try {
+          const orch = await postJson("geminiImageProxy", { kind: "charm_batch_status" });
+          const active = (orch?.orchestrations || []).slice(0, 6);
+          orchRows = active.map((o) => {
+            const when = o.createdAt ? new Date(o.createdAt).toLocaleString() : "—";
+            const isRecovery = o.type === "recovery";
+            let state;
+            if (isRecovery) {
+              state = o.status === "running"
+                ? `<span style="color: var(--warn);">scanning… ${o.scanned} checked · ${o.resubmitted} resubmitted · ${o.alreadyDone} already done</span>`
+                : o.status === "submitted"
+                  ? `<span style="color: var(--ok);">${o.resubmitted} set(s) resubmitted · ${o.alreadyDone} already done · ${o.inFlightSkipped} in flight · ${o.missingManifest} unrecoverable</span>`
+                  : `<span class="muted">${o.status}</span>`;
+            } else {
+              state = o.status === "running"
+                ? `<span style="color: var(--warn);">preparing ${o.setsPrepared}/${o.setsPlanned} · ${o.chunksSubmitted} job(s) submitted</span>`
+                : o.status === "submitted"
+                  ? `<span style="color: var(--ok);">all ${o.setsPrepared} set(s) submitted · ${o.chunksSubmitted} job(s)</span>`
+                  : `<span class="muted">${o.status}</span>`;
+            }
+            const problems = (o.prepSkipped || 0) + (o.chunkErrors || 0);
+            return `<div style="padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 11px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;">` +
+                   `<span class="muted">${isRecovery ? "⟲" : "⚙"} ${when} · ${isRecovery ? "recovery run" : "server orchestration"}</span>` +
+                   `<span>${state}${problems ? ` · <span style="color:#fca5a5;">${problems} issue(s)</span>` : ""}</span></div>`;
+          }).join("");
+        } catch (_) { /* orchestration listing is optional */ }
+
         const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         // Feed the shared auto-poll loop (same list the Generate tab uses —
@@ -15602,7 +15637,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
         const mine = batches.filter(_isCharmMakerBatch);
         if (mine.length === 0) {
-          listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 4px 0; line-height: 1.5;">No charm batch jobs yet. Click <b>Submit charm batch</b> above to create one.</div>`;
+          listEl.innerHTML = orchRows || `<div class="muted" style="font-size: 11px; padding: 4px 0; line-height: 1.5;">No charm batch jobs yet. Click <b>Submit charm batch</b> above to create one.</div>`;
         } else {
           // Group by session (one row per submission).
           const sessions = new Map();
@@ -15630,7 +15665,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
                    `<span class="muted">${when} · ${total} base charm${total === 1 ? "" : "s"}</span>` +
                    `<span>${bits.join(" · ") || '<span class="muted">queued</span>'}</span></div>`;
           });
-          listEl.innerHTML = rows.join("");
+          listEl.innerHTML = orchRows + rows.join("");
         }
 
         // When newly collected charm batches appear while the Charm Maker tab
@@ -15654,8 +15689,82 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     if (_isCharmBatchModeActive()) refreshCharmBatchPanel();
 
     // ------------------------------------------------------------
-    // Charm Maker batch submission
+    // Recovery: resubmit sets whose base image never arrived.
+    // One request — the server scans Generated_Charm_Sets, rebuilds each
+    // unfinished set's task from its saved manifest (concepts intact, no
+    // re-planning cost), skips anything already finished or already in an
+    // in-flight batch, and submits fresh half-price batch jobs. Fully
+    // tab-independent, same as the orchestrator.
     // ------------------------------------------------------------
+    document.getElementById("charmBatchRecoverBtn")?.addEventListener("click", async () => {
+      const btn = document.getElementById("charmBatchRecoverBtn");
+      const modelId = getSelectedImageModel();
+      if (!getImageModelConfig(modelId).supportsBatch) {
+        alert(`${getImageModelConfig(modelId).label} uses Standard mode. Select a Gemini model before recovering via batch.`);
+        return;
+      }
+      const ok = confirm(
+        `Recover unfinished charm sets?\n\n` +
+        `The server will scan every set folder, find those with a saved concept/manifest but NO base image ` +
+        `(from a submission that died mid-run), and resubmit them as half-price Gemini batch jobs.\n\n` +
+        `· Uses the ALREADY-PLANNED concepts — no re-planning cost\n` +
+        `· Skips finished sets and sets already waiting at Gemini — no double spend\n` +
+        `· Runs entirely on the server — you can close this tab right after it's accepted\n\n` +
+        `Progress appears in this panel as a "recovery run" row.`
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      btn.textContent = "Starting recovery…";
+      try {
+        await ensureCharmMakerCapabilities();
+        const sessionId = `cmrec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        await _cmPostBackground({ kind: "charm_batch_recover", model: modelId, sessionId });
+        setStatus("Recovery started on the server — scanning for unfinished sets. Safe to close this tab.");
+        await sleep(5000);
+        await refreshCharmBatchPanel();
+      } catch (err) {
+        console.error("[CharmMaker] recovery start failed", err);
+        alert(`Could not start recovery: ${err?.message || err}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "⟲ Recover unfinished sets";
+      }
+    });
+
+    // POST to the BACKGROUND image function with transient-network retry.
+    // Background functions answer 202 on acceptance; actual outcomes are
+    // verified via Firestore, never via this HTTP response.
+    async function _cmPostBackground(body) {
+      const delays = [0, 8000, 20000];
+      let lastErr = null;
+      for (let a = 0; a < delays.length; a++) {
+        if (delays[a]) await sleep(delays[a]);
+        try {
+          return await postJson("geminiImageProxy-background", body);
+        } catch (err) {
+          lastErr = err;
+          const msg = String(err?.message || err).toLowerCase();
+          const transient = msg.includes("failed to fetch") || msg.includes("network") ||
+                            msg.includes("load failed") || msg.includes("timeout") ||
+                            msg.includes("connection") || msg.includes("suspended");
+          if (!transient) throw err;
+          console.warn(`[charm batch] POST transient failure (attempt ${a + 1}/${delays.length}):`, err?.message || err);
+        }
+      }
+      throw lastErr;
+    }
+
+    // ------------------------------------------------------------
+    // Charm Maker batch submission — SERVER-SIDE ORCHESTRATION.
+    // ------------------------------------------------------------
+    // The browser's only job is the hand-off: it sends ONE request naming
+    // the reference charms, derivatives count and model. Everything else —
+    // concept planning, snapshots, manifests, prompt building, chunked
+    // batch_submit calls, Gemini status polling and result collection —
+    // runs server-side (charm_batch_orchestrate + the charmBatchSweepCron
+    // sweep). The tab can be closed the moment the hand-off is confirmed
+    // in Firestore; no wake lock, no long-lived page.
+    //
     // charmList: ordered {fullPath, name} array (mosaic selection) or null
     // to use the newest `batchCount` templates — the same source rules as
     // Standard mode's two click paths.
@@ -15672,14 +15781,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       }
 
       _charmBatchInFlight = true;
-      if (execBtn) { execBtn.disabled = true; execBtn.textContent = "Preparing…"; }
+      if (execBtn) { execBtn.disabled = true; execBtn.textContent = "Handing off\u2026"; }
 
       try {
         await ensureCharmMakerCapabilities();
 
-        const charms = Array.isArray(charmList) && charmList.length
+        const charms = (Array.isArray(charmList) && charmList.length
           ? charmList
-          : await listTopNFiles(charmMakerSourcePath(), batchCount);
+          : await listTopNFiles(charmMakerSourcePath(), batchCount)
+        ).map((c) => ({ fullPath: c.fullPath, name: c.name || "" }));
         if (!charms.length) {
           alert("No reference charms loaded in the queue. Please upload to Charm_Templates (Existing Etsy Charms).");
           return;
@@ -15687,193 +15797,73 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
         const perCharm = Math.max(1, Math.min(8, derivCount || 1));
         const totalSets = charms.length * perCharm;
+        if (totalSets > 1000) {
+          alert(`This submission would create ${totalSets} sets. The per-submission limit is 1000 \u2014 reduce the selection or the derivatives count and submit in parts.`);
+          return;
+        }
         const ok = confirm(
-          `Submit ONE Gemini batch submission for ${totalSets} base charm(s)?\n` +
-          `(${charms.length} reference charm(s) × ${perCharm} derivative(s) each)\n\n` +
-          `· Cost: ~50% of Standard mode\n` +
-          `· Output: 2K (2048×2048) base charms only\n` +
-          `· Turnaround: usually 2–6h, up to 24h\n\n` +
-          `Concepts are planned now; you can close this tab afterwards — finished bases land in Firebase ` +
-          `automatically and appear as "Waiting for Base Approval" cards. Approve each base to generate ` +
-          `its earring + line-art slots as usual.`
+          `Hand off ${totalSets} base charm(s) to the server?\n` +
+          `(${charms.length} reference charm(s) \u00d7 ${perCharm} derivative(s) each)\n\n` +
+          `\u00b7 Cost: ~50% of Standard mode \u00b7 Output: 2K base charms only\n` +
+          `\u00b7 Concept planning, submission AND collection all run on the server\n` +
+          `\u00b7 Turnaround: usually 2\u20136h, up to 24h\n\n` +
+          `You can CLOSE THIS TAB as soon as the hand-off is confirmed (a few seconds). ` +
+          `Finished bases land in Firebase automatically and appear as "Waiting for Base Approval" cards ` +
+          `next time you open the Charm Maker.`
         );
         if (!ok) return;
 
-        // Ensure the shared refs the Standard flow records in manifests.
-        if (!currentEarringRef) {
-          try { currentEarringRef = await listLatestFile(newCharmsEarringsPath()); } catch (_) {}
-        }
-        let lineArtRef = null;
-        try { lineArtRef = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`); } catch (_) {}
-
-        // Build one set per derivative: plan concepts (one call per charm,
-        // N distinct concepts), snapshot the reference, write the full
-        // charm-maker manifest, and prepare the single slot-0 task with the
-        // exact request Standard mode sends.
-        const sets = [];
-        let prepared = 0;
-        let lastStamp = 0;
-        for (const charmData of charms) {
-          setStatus(`Planning ${perCharm} buyer-aligned concept${perCharm === 1 ? "" : "s"} from ${charmData.name || "bestseller reference"}…`);
-          const conceptPlan = await planCharmConcepts(charmData, perCharm);
-
-          for (let d = 0; d < perCharm; d++) {
-            const concept = conceptPlan.concepts[d] || conceptPlan.concepts[conceptPlan.concepts.length - 1];
-            // Unique, monotonic Deriv id (same scheme as Standard mode).
-            let stamp = Date.now() + Math.floor(Math.random() * 10000);
-            if (stamp <= lastStamp) stamp = lastStamp + 1;
-            lastStamp = stamp;
-            const folderId = `Deriv_${stamp}`;
-            const outputBasePath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`;
-
-            prepared++;
-            setStatus(`Preparing set ${prepared}/${totalSets} (${folderId})…`);
-
-            let sourceSnapshot = null;
-            try {
-              const snapshot = await snapshotCharmReference(charmData, outputBasePath);
-              sourceSnapshot = snapshot?.storagePath || null;
-            } catch (snapErr) {
-              console.warn("Could not snapshot Charm Maker source reference for batch set", snapErr);
-            }
-
-            const manifest = {
-              sourceCharm: charmData.fullPath,
-              sourceSnapshot,
-              sourceEarring: currentEarringRef?.fullPath || null,
-              lineArtRef: lineArtRef?.fullPath || null,
-              charmConceptPlan: {
-                version: Number(conceptPlan?.version) || 1,
-                referenceSubject: cleanCharmPlanText(conceptPlan?.referenceSubject),
-                buyerProfile: cleanCharmPlanText(conceptPlan?.buyerProfile),
-                purchaseSignals: Array.isArray(conceptPlan?.purchaseSignals)
-                  ? conceptPlan.purchaseSignals.slice(0, 6)
-                  : [],
-              },
-              charmConcept: concept,
-              imageDescriptions: {
-                necklace: buildCharmImageDescription(concept, conceptPlan, "necklace"),
-                earring: buildCharmImageDescription(concept, conceptPlan, "earring"),
-              },
-              model: modelId,
-              batchQueued: true,
-              timestamp: new Date().toISOString(),
-            };
-
-            await postJson("geminiImageProxy", {
-              kind: "write_manifest",
-              activeCategory: "Charms",
-              output_base_path: outputBasePath,
-              manifest,
-            });
-
-            sets.push({
-              category: "Charms",
-              outputBasePath,
-              setN: stamp,
-              setKind: "charm_maker",
-              manifest,
-              tasks: [{
-                type: "edits",
-                slotIndex: 0,
-                input_storage_path: charmData.fullPath,
-                prompt: buildCharmDesignPrompt(concept, conceptPlan),
-                image_roles: "style_reference",
-                background_policy: "solid_black",
-                charm_geometry_policy: "flat_integrated_eyelet",
-                embed_metadata: buildCharmEmbedMetadata(concept, conceptPlan, "necklace"),
-              }],
-            });
-          }
-        }
-
-        // Submit in CHUNK_SIZE-sized chunks — one Gemini batch job per
-        // chunk — with the same rate-limit retry + adaptive stagger the
-        // Generate tab uses.
-        const stampStr = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "");
         const sessionId = `cmsess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const chunkCount = Math.ceil(sets.length / CHUNK_SIZE);
-        const submitted = [];
-        const submitErrors = [];
-        _resetChunkStagger();
+        setStatus("Handing the batch off to the server\u2026");
+        await _cmPostBackground({
+          kind: "charm_batch_orchestrate",
+          model: modelId,
+          sessionId,
+          derivCount: perCharm,
+          charms,
+        });
 
-        for (let c = 0; c < chunkCount; c++) {
-          const slice = sets.slice(c * CHUNK_SIZE, (c + 1) * CHUNK_SIZE);
-          setStatus(`Submitting charm batch chunk ${c + 1}/${chunkCount}…`);
-          if (execBtn) execBtn.textContent = `Submitting ${c + 1}/${chunkCount}…`;
-
-          const dn = chunkCount === 1
-            ? `cm-charms-${sets.length}sets-${stampStr}`
-            : `cm-charms-${sets.length}sets-${stampStr}-part${c + 1}of${chunkCount}`;
-
-          let chunkHitRateLimit = false;
+        // Confirm the orchestration record exists in Firestore. The
+        // background function creates it within seconds of accepting.
+        setStatus("Confirming the server accepted the batch\u2026");
+        let confirmed = null;
+        for (let attempt = 0; attempt < 8 && !confirmed; attempt++) {
+          await sleep(attempt === 0 ? 4000 : 6000);
           try {
-            const resp = await _submitChunkWithRetry(
-              "geminiImageProxy",
-              {
-                kind: "batch_submit",
-                model: modelId,
-                sets: slice,
-                imageSize: BATCH_DEFAULT_IMAGE_SIZE,
-                displayName: dn,
-                sessionId,
-              },
-              (secs, attempt, maxAttempts) => {
-                chunkHitRateLimit = true;
-                setStatus(`Rate-limited on chunk ${c + 1}; waiting ${secs}s before retry ${attempt}/${maxAttempts}…`);
-              }
-            );
-            submitted.push(resp);
-            if (chunkHitRateLimit) _onChunkRateLimited(); else _onChunkSuccess();
-          } catch (chunkErr) {
-            console.error(`[charm batch_submit chunk ${c + 1}] failed`, chunkErr);
-            submitErrors.push({ chunk: c + 1, error: chunkErr?.message || String(chunkErr) });
-            if (_isRateLimitError(chunkErr)) _onChunkRateLimited();
-            if (_isStorageQuotaError(chunkErr)) {
-              setStatus(`⚠ Aborted at chunk ${c + 1}: Gemini Files API storage quota exceeded`);
-              break;
-            }
-          }
-          if (c < chunkCount - 1) await sleep(_currentChunkStaggerMs);
+            const resp = await postJson("geminiImageProxy", { kind: "charm_batch_status", sessionId });
+            confirmed = (resp?.orchestrations || []).find((o) => o.sessionId === sessionId) || null;
+          } catch (_) {}
         }
 
-        // Record the session alongside the Generate tab's sessions.
         try {
-          const sessionRecord = {
-            sessionId,
-            category: "Charms (Charm Maker)",
-            model: modelId,
-            requestedCount: totalSets,
-            effectiveCount: sets.length,
-            chunksSubmitted: submitted.length,
-            chunksFailed: submitErrors.length,
-            startedAt: Date.now(),
-            batchNames: submitted.map((r) => r?.batchName).filter(Boolean),
-          };
           const all = JSON.parse(localStorage.getItem("lg1_batch_sessions") || "[]");
-          all.push(sessionRecord);
+          all.push({ sessionId, category: "Charms (Charm Maker)", model: modelId, requestedCount: totalSets, startedAt: Date.now(), serverOrchestrated: true });
           while (all.length > 50) all.shift();
           localStorage.setItem("lg1_batch_sessions", JSON.stringify(all));
         } catch (_) {}
 
-        if (submitErrors.length === 0) {
-          setStatus(`Charm batch submitted: ${sets.length} base charm(s) queued at 50% cost. Results land automatically.`);
+        if (confirmed) {
+          setStatus(`Server accepted the batch (${totalSets} sets). Safe to close this tab \u2014 everything else happens server-side.`);
+          alert(
+            `Hand-off confirmed \u2713\n\n` +
+            `${totalSets} base charm(s) are now being planned and submitted entirely on the server, ` +
+            `and results are collected automatically by the scheduled sweep.\n\n` +
+            `You can close this tab. Progress is visible any time in the Charm batch jobs panel.`
+          );
         } else {
-          setStatus(`Charm batch: ${submitted.length}/${chunkCount} chunk(s) submitted, ${submitErrors.length} failed — see console.`);
-          alert(`${submitErrors.length} of ${chunkCount} chunk(s) failed to submit:\n\n` +
-                submitErrors.slice(0, 5).map((e) => `Chunk ${e.chunk}: ${e.error}`).join("\n"));
+          setStatus("Hand-off sent, but not yet confirmed \u2014 check the Charm batch jobs panel in a minute.");
+          alert(
+            `The hand-off request was sent, but the server hasn't confirmed it yet.\n\n` +
+            `Check the Charm batch jobs panel in a minute \u2014 if no orchestration appears, submit again ` +
+            `with the same selection.`
+          );
         }
 
-        // The Deriv folders exist now (manifest + snapshot) — refresh the
-        // set list so pending cards are visible, then light up the panel.
-        if (typeof appMode !== "undefined" && appMode === "charmMaker" && typeof loadCharmHistoryList === "function") {
-          loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets");
-        }
         await refreshCharmBatchPanel();
       } catch (err) {
-        console.error("[CharmMaker] batch submission failed", err);
+        console.error("[CharmMaker] batch hand-off failed", err);
         setStatus(`Charm batch error: ${err?.message || err}`);
-        alert(`Charm batch submission failed: ${err?.message || err}`);
+        alert(`Charm batch hand-off failed: ${err?.message || err}`);
       } finally {
         _charmBatchInFlight = false;
         if (execBtn) execBtn.disabled = false;
