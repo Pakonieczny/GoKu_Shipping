@@ -4549,6 +4549,105 @@ async function startCampaignNow(campaignId, { ctrl } = {}) {
   return { ok: true, id, startDate: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`, startDateTime: dt, dryRun: !!ctrl.dryRun };
 }
 
+// "Run longer": push a campaign's END date out without rebuilding anything. A campaign that
+// hits its end date is ENDED, not deleted — Google keeps the whole thing (learning, history,
+// assets, keywords, asset groups) and simply stops serving. Moving the end date forward brings
+// the SAME campaign back, which is strictly better than launching a replacement: a new campaign
+// restarts Smart Bidding's 1-2 week learning phase from zero and throws away every conversion
+// signal this one has accumulated.
+//
+// Accepts either an absolute date (endDate: "YYYY-MM-DD") or a relative bump
+// (addDays: 30 — measured from the current end, or from today if it already ended).
+// endDate: null | "open" | "none" removes the end date entirely (Google's sentinel for
+// "runs until I say otherwise" is 2037-12-30).
+const GADS_NO_END_DATE = "2037-12-30";
+async function setCampaignEndDate(campaignId, { endDate, addDays, ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  const id = String(campaignId).replace(/\D/g, "");
+  if (!id) throw new Error("missing campaign id");
+  const tz = await _accountTz();
+  const today = _acctDateYmd(tz, 0);
+
+  // Read the campaign's current window first — needed to resolve addDays, to refuse an end
+  // before the start, and to report a truthful before/after in the ledger.
+  let cur = { startDate: null, endDate: null, status: null, name: null };
+  for (const [sf, ef, sk, ek] of [
+    ["campaign.start_date_time", "campaign.end_date_time", "startDateTime", "endDateTime"],
+    ["campaign.start_date", "campaign.end_date", "startDate", "endDate"]
+  ]) {
+    try {
+      const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, ${sf}, ${ef} FROM campaign WHERE campaign.id = ${id}`);
+      const c = rows[0] && rows[0].campaign;
+      if (c) cur = { startDate: _dateOnly(c[sk]), endDate: _dateOnly(c[ek]), status: c.status || null, name: c.name || null };
+      break;
+    } catch (e) { /* try the other field naming */ }
+  }
+  if (!cur.status) throw new Error(`Campaign ${id} was not found in this Google Ads account`);
+
+  // Resolve the target date.
+  const clearing = endDate === null || /^(open|none|never|indefinite)$/i.test(String(endDate || ""));
+  let target;
+  if (clearing) target = GADS_NO_END_DATE;
+  else if (addDays != null && endDate == null) {
+    const n = Number(addDays);
+    if (!isFinite(n) || n === 0) throw new Error("addDays must be a non-zero number of days");
+    // Extend from whichever is later: the existing end, or today. Extending from a date that
+    // has already passed would otherwise produce a new end date still in the past.
+    const base = (cur.endDate && cur.endDate > today && cur.endDate !== GADS_NO_END_DATE) ? cur.endDate : today;
+    target = _ymd(new Date(Date.parse(base + "T12:00:00Z") + n * 86400000));
+  } else {
+    target = _dateOnly(endDate);
+    if (!target) throw new Error("endDate must be YYYY-MM-DD, or null to remove the end date");
+  }
+
+  // Guardrails. Google Ads rejects these too, but with opaque messages — fail clearly here.
+  if (!clearing) {
+    if (target < today) throw new Error(`That end date (${target}) is in the past. Pick ${today} or later.`);
+    if (cur.startDate && target < cur.startDate) throw new Error(`End date ${target} is before this campaign's start date (${cur.startDate}).`);
+    if (cur.endDate === target) return { ok: true, id, unchanged: true, endDate: target, previousEndDate: cur.endDate, name: cur.name };
+  }
+
+  // Write it. Same field-name fallback as the reads above.
+  let applied = null, lastErr = null;
+  for (const [field, mask, withTime] of [["endDateTime", "end_date_time", true], ["endDate", "end_date", false]]) {
+    const update = { resourceName: `customers/${CID}/campaigns/${id}` };
+    update[field] = withTime ? _toGAdsDateTime(target, "23:59:59") : target.replace(/-/g, "");
+    try {
+      const res = await mutate("campaigns", [{ update, updateMask: mask }], { ctrl, label: "setEndDate:" + id });
+      if (res && res.partialFailureError) {
+        lastErr = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
+        continue; // the other field naming may be the one this API version wants
+      }
+      applied = field; break;
+    } catch (e) { lastErr = String(e.message || e).slice(0, 400); }
+  }
+  if (!applied) throw new Error(`Google Ads rejected the new end date for campaign ${id}: ${lastErr || "unknown error"}`);
+
+  // Read back and confirm, so the UI can say "verified" rather than "the request succeeded".
+  const out = { ok: true, id, name: cur.name, previousEndDate: cur.endDate, endDate: clearing ? null : target,
+                cleared: clearing, dryRun: !!ctrl.dryRun, verified: null, verification: null, status: cur.status };
+  if (!ctrl.dryRun) {
+    try {
+      let live = null;
+      for (const [ef, ek] of [["campaign.end_date_time", "endDateTime"], ["campaign.end_date", "endDate"]]) {
+        try { const rows = await gaql(`SELECT campaign.id, ${ef} FROM campaign WHERE campaign.id = ${id}`);
+              const c = rows[0] && rows[0].campaign; if (c) { live = _dateOnly(c[ek]); break; } } catch (e) {}
+      }
+      out.liveEndDate = live === GADS_NO_END_DATE ? null : live;
+      out.verified = live === target;
+      out.verification = out.verified
+        ? { confirmed: clearing ? "end date removed in Google Ads" : `end date is ${target} in Google Ads` }
+        : { expected: target, found: live };
+    } catch (e) { out.verified = null; out.verification = { error: String(e.message || e).slice(0, 200) }; }
+  }
+  // An ENDED campaign needs its status flipped back too — extending the date alone won't serve.
+  if (String(cur.status).toUpperCase() === "PAUSED") out.note = "Date extended. This campaign is PAUSED — hit Enable for it to start serving again.";
+  await ledger({ kind: "setEndDate", campaignId: id, previousEndDate: cur.endDate, endDate: out.endDate,
+                 cleared: clearing, ok: true, verified: out.verified, verification: out.verification,
+                 validateOnly: !!ctrl.dryRun });
+  return out;
+}
+
 /* ===================== Location / country targeting ===================== */
 
 // Full list of targetable COUNTRIES (geo target constants), cached in Firestore since it's static.
@@ -6559,7 +6658,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
+  scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
   generatePmaxApproval, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, campaignTimeline, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,

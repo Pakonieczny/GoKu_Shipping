@@ -258,6 +258,13 @@ async function handleAction(body) {
     try { return await E.startCampaignNow(body.id, { ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }
   }
+  // Extend (or clear) a campaign's end date so a run continues in the SAME campaign instead of
+  // being replaced by a new one — a replacement restarts Smart Bidding's learning from zero.
+  // body: { id, endDate: "YYYY-MM-DD" | null }  or  { id, addDays: 30 }
+  if (a === "setEndDate") {
+    try { return await E.setCampaignEndDate(body.id, { endDate: body.endDate, addDays: body.addDays, ctrl }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
   if (a === "enforceCeiling") {
     try { return await E.enforceBudgetCeiling({ ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }
