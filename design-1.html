@@ -1139,11 +1139,17 @@ const FN = window.location.origin + "/.netlify/functions";
    `short`  – order-row column header
    `match`  – ordered list of regexes; FIRST metal in this array whose regex
               hits wins, so the array order IS the precedence order.
-   Precedence: 14k → 10k → rose → silver → gold (solid golds must beat the
-   generic /gold/ test, and rose must beat silver/gold).                     */
+
+   IMPORTANT SOLID-GOLD INVARIANT:
+   10K and 14K are SOLID-GOLD benches, not generic karat words. They may only
+   match when the SAME source string contains BOTH the karat and the word
+   "solid". Therefore "14k Gold", "10k Gold" and "14k Gold Filled" are not
+   solid-gold pieces; they continue through the normal rose/silver/gold rules.
+
+   Precedence: 14k solid → 10k solid → rose → silver → gold.                 */
 const METALS = [
-  { key:"14k",    label:"14K",    short:"14", match:[/\b14\s*k(?:t|arat)?\b/] },
-  { key:"10k",    label:"10K",    short:"10", match:[/\b10\s*k(?:t|arat)?\b/] },
+  { key:"14k",    label:"14K",    short:"14", match:[/(?=.*\b14\s*k(?:t|arat)?\b)(?=.*\bsolid\b)/] },
+  { key:"10k",    label:"10K",    short:"10", match:[/(?=.*\b10\s*k(?:t|arat)?\b)(?=.*\bsolid\b)/] },
   { key:"rose",   label:"Rose",   short:"R",  match:[/rose/] },
   { key:"silver", label:"Silver", short:"S",  match:[/silv(?:er|r)/, /sterling/] },
   { key:"gold",   label:"Gold",   short:"G",  match:[/gold/, /yellow/] },
@@ -1154,22 +1160,19 @@ const METAL_ORDER = ["gold","silver","rose","10k","14k"];
 const METAL_BY_KEY = Object.fromEntries(METALS.map(m => [m.key, m]));
 const METAL_KEYS   = METALS.map(m => m.key);
 
-/* "SOLID" IS A GATE, NOT A METAL.
-   The old build's canonicalMetal() treated a bare /solid/ as an alias for 14K,
-   so "10k Solid Gold" hit the 14K branch first and printed on the wrong bench.
-   The word is still read — it is the strongest signal that a piece is solid
-   rather than filled — but it never decides the karat by itself:
+/* "SOLID" IS A REQUIRED GATE FOR BOTH KARAT BENCHES.
+   10K and 14K are only valid when "solid" and the matching karat occur in the
+   SAME source string. A bare karat must never imply solid gold:
 
-     "solid" + 14k  → 14k        the karat decides, always
-     "solid" + 10k  → 10k
+     "14k Solid Gold"  → 14k
+     "Solid Gold 10k"  → 10k
+     "14k Gold"        → gold
+     "10k Gold Filled" → gold
      "solid", no karat → SOLID_UNKNOWN, deliberately unclassified
 
-   The last case is the one that used to bite. A solid piece whose karat we
-   cannot read must not be guessed onto a bench, so it resolves to nothing:
-   it is excluded from every label and named in the QR modal's "no metal we
-   recognise — not printed" note, which tells you exactly which listing needs
-   its variation fixed. Filled metals are unaffected — plain "Gold Filled",
-   "Rose Gold Filled" and "Sterling Silver" never contain the word.          */
+   Requiring co-occurrence in one source value also prevents a title containing
+   "solid" from combining with an unrelated variation containing "14k" and
+   fabricating a solid-gold classification.                                  */
 const SOLID_RE       = /\bsolid\b/;
 const KARAT_RE       = /\b(?:10|14)\s*k(?:t|arat)?\b/;
 const SOLID_UNKNOWN  = "__solid_unknown__";
@@ -1418,11 +1421,10 @@ function metalKeyFromText(raw, { solidStrict = false } = {}) {
  *     and it stops a stray "gold" in a *different* variation (e.g. a chain or
  *     extender option) from re-bucketing the item;
  *  2. any other variation value that reads like a metal, evaluated per value.
- *     Solid gold wins over a filled metal found earlier, which generalises the
- *     old build's "14K always wins even if gold was set first" rule to 10k;
- *  3. `wide` only — the whole blob including title and personalisation. This is
- *     what the old healZeroMetalRows pass did and it rescues listings whose
- *     variations never mention metal at all.
+ *     A 10K/14K result is possible only when THAT value also says "solid";
+ *  3. `wide` only — inspect title/personalisation as individual source values.
+ *     Sources are NEVER concatenated for karat detection, because "solid" in
+ *     one field plus "14k" in another must not fabricate solid gold.
  */
 function metalKeyForTx(tx, { wide = false } = {}) {
   if (!tx) return "";
@@ -1438,7 +1440,8 @@ function metalKeyForTx(tx, { wide = false } = {}) {
     if (k && k !== SOLID_UNKNOWN) return k;
   }
 
-  // 2 · any other variation value, solid gold taking precedence
+  // 2 · any other variation value. Each value is classified in isolation so
+  // "solid" in one field can never combine with "14k"/"10k" in another.
   const seen = [];
   for (const v of vars) {
     if (!v || /personalization/i.test(String(v.formatted_name || ""))) continue;
@@ -1449,17 +1452,22 @@ function metalKeyForTx(tx, { wide = false } = {}) {
   if (seen.includes("10k")) return "10k";
   if (seen.length) return seen[0];
 
-  // 3 · everything we have
+  // 3 · widen to the remaining sources, but KEEP THEM ATOMIC. This is the
+  // regression barrier for listings where "14k Gold" is an option while some
+  // unrelated title/personalisation text happens to contain the word "solid".
   if (wide) {
-    const blob = [
-      ...vars.map(v => `${v?.formatted_name || ""} ${v?.formatted_value || ""}`),
+    const sources = [
       tx.title || "",
-      Array.isArray(tx.personalization) ? tx.personalization.join(" ") : (tx.personalization || ""),
-    ].join(" ");
-    // The karat may live in the title even when the variation only said
-    // "Solid Gold", so the wide pass gets a real chance to resolve it.
-    const k = note(metalKeyFromText(blob, S));
-    if (k && k !== SOLID_UNKNOWN) return k;
+      ...(Array.isArray(tx.personalization) ? tx.personalization : [tx.personalization || ""]),
+    ];
+    const wideSeen = [];
+    for (const source of sources) {
+      const k = note(metalKeyFromText(source, S));
+      if (k && k !== SOLID_UNKNOWN) wideSeen.push(k);
+    }
+    if (wideSeen.includes("14k")) return "14k";
+    if (wideSeen.includes("10k")) return "10k";
+    if (wideSeen.length) return wideSeen[0];
   }
 
   // A solid piece whose karat we could not read anywhere. Report it as such so
@@ -1473,10 +1481,13 @@ function metalKeyForTx(tx, { wide = false } = {}) {
 /** True only for a key that names a real bench. SOLID_UNKNOWN and "" are not. */
 const isRealMetal = k => !!k && k !== SOLID_UNKNOWN && METAL_BY_KEY[k] != null;
 
-/** Resolve and cache the metal on a transaction. */
+/** Resolve and cache the metal on a transaction.
+ *  Never trust `_metalKey` directly: older local caches may contain a 10k/14k
+ *  value produced by the pre-fix classifier. metalKeyForTx() re-validates the
+ *  source text first and only then writes a fresh cache value. */
 function resolveTxMetal(tx, { wide = false } = {}) {
   if (!tx) return "";
-  const k = metalKeyForTx(tx, { wide }) || tx._metalKey || "";
+  const k = metalKeyForTx(tx, { wide });
   tx._metalKey = k;
   return k;
 }
