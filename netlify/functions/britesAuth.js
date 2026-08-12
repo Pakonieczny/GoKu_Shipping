@@ -291,7 +291,7 @@ function corsHeaders(origin) {
 let _origin = "";
 /* Stamped on every response. "Which build is actually deployed?" is otherwise
    unanswerable from the outside, and guessing at it has cost real time. */
-const FN_BUILD = "britesAuth-1.2.1";
+const FN_BUILD = "britesAuth-1.2.2";
 const json = (statusCode, body) => ({
   statusCode, headers: corsHeaders(_origin),
   body: JSON.stringify(Object.assign({ fn: FN_BUILD }, body)),
@@ -861,7 +861,7 @@ async function sendCode(body, event) {
       createdAt: d.createdAt || now,
       updatedAt: now,
     }, { merge: true });
-    return { allow: true, code };
+    return { allow: true, code, sendCount: sends + 1 };
   });
 
   if (!decision.allow) {
@@ -874,11 +874,24 @@ async function sendCode(body, event) {
     requestedFrom: body.requestedFrom || null,
   });
 
-  await deliverEmail({
-    to: email,
-    subject: `${decision.code} is your Brites verification code`,
-    html, text,
-  });
+  try {
+    await deliverEmail({
+      to: email,
+      subject: `${decision.code} is your Brites verification code`,
+      html, text,
+    });
+  } catch (e) {
+    /* The cooldown and the send counter are claimed in the transaction ABOVE,
+       before the email is attempted — they have to be, or two fast clicks
+       would send two codes. But when the send then fails, that reservation
+       punishes the shopper for our failure: they are locked out for a full
+       minute and the retry they were just told to make is refused. So give it
+       back. The code itself stays valid, so an email that turns out to have
+       been delivered after all still works. */
+    await ref.set({ lastSentAt: 0, sendCount: Math.max(0, (decision.sendCount || 1) - 1) },
+                  { merge: true }).catch(() => {});
+    throw e;
+  }
 
   return json(200, ok);
 }
