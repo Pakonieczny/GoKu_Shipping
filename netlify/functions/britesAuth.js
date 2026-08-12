@@ -205,7 +205,7 @@ async function deliverEmail({ to, subject, html, text }) {
     try { return await resendSend({ to, subject, html, text }); }
     catch (e) { tried.push(e.detail || e.message); }
   } else {
-    tried.push("Resend: RESEND_API_KEY not set");
+    tried.push("Resend: RESEND_API_KEY not set on this Netlify site");
   }
   try {
     return await gmailSend(buildRawMessage({ to, subject, html, text }));
@@ -289,8 +289,12 @@ function corsHeaders(origin) {
   };
 }
 let _origin = "";
+/* Stamped on every response. "Which build is actually deployed?" is otherwise
+   unanswerable from the outside, and guessing at it has cost real time. */
+const FN_BUILD = "britesAuth-1.2.1";
 const json = (statusCode, body) => ({
-  statusCode, headers: corsHeaders(_origin), body: JSON.stringify(body),
+  statusCode, headers: corsHeaders(_origin),
+  body: JSON.stringify(Object.assign({ fn: FN_BUILD }, body)),
 });
 
 const normalizeEmail = (e) => String(e || "").trim().toLowerCase();
