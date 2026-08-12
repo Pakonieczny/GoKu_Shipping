@@ -101,7 +101,11 @@ async function refreshGmailToken(oldRefreshToken) {
       refresh_token: oldRefreshToken,
     }),
   });
-  if (!res.ok) throw new Error(`Gmail token refresh failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const e = new Error("email_not_configured");        // dead/revoked refresh token
+    e.status = 503; e.detail = `Gmail token refresh failed: ${res.status} ${(await res.text()).slice(0, 300)}`;
+    throw e;
+  }
   const data = await res.json();
   await db.doc(OAUTH_DOC_PATH).set({
     access_token: data.access_token,
@@ -115,10 +119,27 @@ async function refreshGmailToken(oldRefreshToken) {
 
 async function gmailSend(rawBase64Url) {
   if (sharedGmailFetch) {
-    return sharedGmailFetch("/messages/send", { method: "POST", body: JSON.stringify({ raw: rawBase64Url }) });
+    /* Borrowed from _etsyMailGmail when it is deployed alongside — but a
+       helper written for another pipeline must never be the single point of
+       failure for THIS one. If it throws for any reason, fall through to the
+       self-contained path below. */
+    try {
+      return await sharedGmailFetch("/messages/send", { method: "POST", body: JSON.stringify({ raw: rawBase64Url }) });
+    } catch (e) {
+      console.warn("[britesAuth] shared gmailFetch failed, using own path:", e && e.message);
+    }
   }
   const snap = await db.doc(OAUTH_DOC_PATH).get();
-  if (!snap.exists) throw new Error(`Gmail OAuth not seeded at ${OAUTH_DOC_PATH}`);
+  if (!snap.exists) {
+    const e = new Error("email_not_configured");        // config/gmailOauth missing
+    e.status = 503; e.detail = `Gmail OAuth not seeded at ${OAUTH_DOC_PATH}`;
+    throw e;
+  }
+  if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET) {
+    const e = new Error("email_not_configured");        // envs missing on this site
+    e.status = 503; e.detail = "GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET not set";
+    throw e;
+  }
   const tok = snap.data();
   let token = tok.access_token;
   if (!token || (tok.expires_at || 0) - Date.now() < TOKEN_REFRESH_BUFFER_MS) {
@@ -137,7 +158,11 @@ async function gmailSend(rawBase64Url) {
       body: JSON.stringify({ raw: rawBase64Url }),
     });
   }
-  if (!res.ok) throw new Error(`Gmail send ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) {
+    const e = new Error("email_send_failed");
+    e.status = 502; e.detail = `Gmail send ${res.status}: ${(await res.text()).slice(0, 300)}`;
+    throw e;
+  }
   return res.json();
 }
 
@@ -973,7 +998,10 @@ exports.handler = async (event) => {
   } catch (err) {
     /* requireStudioUser throws 401s — surface them rather than masking the
        reason the storefront needs in order to re-authenticate */
-    if (err && err.status) return json(err.status, { ok: false, error: err.message });
+    if (err && err.status) {
+      if (err.detail) console.error("[britesAuth]", body && body.kind, err.message, "—", err.detail);
+      return json(err.status, { ok: false, error: err.message });
+    }
     console.error("[britesAuth]", body && body.kind, err);
     return json(500, { ok: false, error: "server_error" });
   }
