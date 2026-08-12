@@ -166,6 +166,59 @@ async function gmailSend(rawBase64Url) {
   return res.json();
 }
 
+/* ── Resend: the transport this site actually sends customer email with ────
+   emailCapture.js delivers the welcome email through Resend
+   (RESEND_API_KEY + BRITES_EMAIL_FROM), from a sender verified on the
+   britesjewelry.com domain. This function originally borrowed the Gmail
+   pipeline from the etsymail project instead — and Gmail refused the send,
+   because the account that authorised those tokens is not
+   hello@britesjewelry.com and the grant was never scoped for sending as it.
+
+   So: Resend first, on the path already proven on this site, with Gmail kept
+   as the fallback for any deployment that has no Resend key. No new
+   environment variables — both already exist here. */
+async function resendSend({ to, subject, html, text }) {
+  const key = process.env.RESEND_API_KEY;
+  const res = await fetchFn("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: process.env.BRITES_EMAIL_FROM || `${FROM_NAME} <${FROM_EMAIL}>`,
+      to: [to], subject, html, text,
+    }),
+  });
+  if (!res.ok) {
+    const e = new Error("email_send_failed");
+    e.status = 502; e.detail = `Resend ${res.status}: ${(await res.text()).slice(0, 300)}`;
+    throw e;
+  }
+  return res.json();
+}
+
+/* One door for "send this email", so callers never care which transport ran.
+   Every transport that fails contributes its own words to the detail, because
+   "it did not send" without the provider's reason is what cost this feature a
+   day. */
+async function deliverEmail({ to, subject, html, text }) {
+  const tried = [];
+  if (process.env.RESEND_API_KEY) {
+    try { return await resendSend({ to, subject, html, text }); }
+    catch (e) { tried.push(e.detail || e.message); }
+  } else {
+    tried.push("Resend: RESEND_API_KEY not set");
+  }
+  try {
+    return await gmailSend(buildRawMessage({ to, subject, html, text }));
+  } catch (e) {
+    tried.push(e.detail || e.message);
+    const err = new Error(tried.every((t) => /not set|not seeded|not configured/i.test(t))
+      ? "email_not_configured" : "email_send_failed");
+    err.status = err.message === "email_not_configured" ? 503 : 502;
+    err.detail = tried.join(" | ");
+    throw err;
+  }
+}
+
 const VERIFY_COL       = "Brites_Studio_Verifications";   // matches Brites_* convention
 const RATE_COL         = "Brites_Studio_RateLimits";
 const STUDIO_SESSIONS  = "customSessions";
@@ -817,11 +870,11 @@ async function sendCode(body, event) {
     requestedFrom: body.requestedFrom || null,
   });
 
-  await gmailSend(buildRawMessage({
+  await deliverEmail({
     to: email,
     subject: `${decision.code} is your Brites verification code`,
     html, text,
-  }));
+  });
 
   return json(200, ok);
 }
