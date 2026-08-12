@@ -21,10 +21,55 @@
  *
  * Requires GADS_CONVERSION_ACTION to be set for the queued rows to actually upload
  * (the 15-min background worker drains the queue).
+ *
+ * ── Custom Charm Studio ──────────────────────────────────────────────────
+ * orders/paid additionally:
+ *   • grants design credits for any STUDIO-PACK-<n> line, keyed on the
+ *     studio_uid cart attribute and made idempotent on the Shopify order id,
+ *     so a webhook retry can never double-credit
+ *   • flips customSessions/{sid}.status to "ordered" and records the
+ *     full-resolution artwork path for the production queue
+ * Both live in britesAuth.js, which already carries Firebase Admin — this file
+ * gains no new dependency of its own and the deployment gains no new lambda.
  */
 
 const crypto = require("crypto");
 const E = require("./googleAdsAutopilot");
+/* Studio wallet + session helpers. Lazy and defensive, in the house style: if
+   britesAuth isn't deployed beside this file the ad pipeline keeps working and
+   only the studio extras degrade. */
+let _studio = null;
+function studio() {
+  if (_studio !== null) return _studio;
+  try { _studio = require("./britesAuth"); }
+  catch (e) { console.error("[shopifyWebhook] studio helpers unavailable:", e.message); _studio = false; }
+  return _studio;
+}
+
+/* Every studio line item carries the same properties object, so one pass over
+   the raw line items recovers the design id and the artwork path. Reads
+   payload.line_items directly rather than lineItemsFrom(), which caps at 25
+   items and drops the properties. */
+function studioLinesFrom(payload) {
+  const li = Array.isArray(payload.line_items) ? payload.line_items : [];
+  const packs = [];
+  const designs = new Map();
+  for (const x of li) {
+    const sku = String(x.sku || "").trim();
+    const m = /^STUDIO-PACK-(\d+)$/i.exec(sku);
+    if (m) packs.push({ sku, credits: Number(m[1]) * (Number(x.quantity) || 1) });
+    const props = Array.isArray(x.properties) ? x.properties : [];
+    const get = (n) => {
+      const p = props.find((q) => String(q.name || "").toLowerCase() === n);
+      return p && p.value ? String(p.value) : null;
+    };
+    const sid = get("design id");
+    if (sid && !designs.has(sid)) {
+      designs.set(sid, { sessionId: sid, designPath: get("_design_path"), uid: get("_uid") });
+    }
+  }
+  return { packs, designs: [...designs.values()] };
+}
 
 function rawBody(event) {
   return event.isBase64Encoded
@@ -165,6 +210,30 @@ exports.handler = async (event) => {
         try { const bs = await E.bumpBestSellers(items); if (bs && bs.matched) LOG("bestSellers +", bs.matched, "item(s)"); }
         catch (e) { LOG("bestSellers bump ERROR", e.message); }
       }
+      /* ── Custom Charm Studio ──────────────────────────────────────────
+         MUST stay above the `if (!clickId)` early return below: organic
+         orders take that return, and they are most orders. */
+      if (topic === "orders/paid") {
+        const S = studio();
+        if (S) {
+          const { packs, designs } = studioLinesFrom(payload);
+          const studioUid = noteAttr(note, "studio_uid") ||
+                            (designs.find((d) => d.uid) || {}).uid || null;
+          if (packs.length) {
+            try {
+              const cr = await S.grantStudioCredits({ orderId, uid: studioUid, packs });
+              LOG("studioCredits", orderId, "->", JSON.stringify(cr));
+            } catch (e) { LOG("studioCredits ERROR", e.message); }
+          }
+          for (const d of designs) {
+            try {
+              await S.markSessionOrdered({ sessionId: d.sessionId, orderId, designPath: d.designPath });
+              LOG("studioSession", d.sessionId, "-> ordered", d.designPath || "(no path)");
+            } catch (e) { LOG("studioSession ERROR", e.message); }
+          }
+        }
+      }
+
       const clickId = gclid || gbraid || wbraid || null;
 
       if (!clickId) {

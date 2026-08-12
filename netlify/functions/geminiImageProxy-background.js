@@ -144,6 +144,10 @@ async function storagePathToBuffer(storagePath) {
     "listing-generator-1/Bracelets/",
     "listing-generator-1/Charm_Maker/", // ✅ Updated to cover the new structure broadly
     "listing-generator-1/generated/",
+    // Custom Charm Studio: customer reference uploads and prior versions.
+    // Every studio kind additionally checks the path starts with
+    // custom-studio/{their own uid}/, so one customer can never read another's.
+    "custom-studio/",
   ];
 
   if (!ALLOWED_INPUT_PREFIXES.some((prefix) => p.startsWith(prefix))) {
@@ -896,6 +900,22 @@ const IMAGE_ROLE_LABELS = {
   // they crowned IMAGE 2 "MASTER CHARM / DESIGN TRUTH — use its exact
   // silhouette", which is how the static style sample's subject (e.g. a
   // turtle) periodically REPLACED the charm being converted.
+  // Used by the Custom Charm Studio. The customer's reference is the SUBJECT
+  // TRUTH — they chose it and they want it honoured — which is the exact
+  // opposite of style_reference (subject forbidden) and of edit (preserve the
+  // canvas). On a refinement pass IMAGE 2 is the customer's own current
+  // version of the same charm, not a style sample.
+  customer_reference: {
+    first:
+      "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to TRANSLATE it into this workshop's flat laser-cut charm language — one continuous flat sheet, integrated protruding hoop, sparse engraving, pure black background — not to reproduce the photograph and not to invent a different object.",
+    second:
+      "IMAGE 2 — THE CUSTOMER'S CURRENT VERSION OF THIS CHARM. This is your own previous output, which the customer has been refining. Keep its silhouette, proportions, hoop placement, engraving and cutouts EXACTLY as they are and change ONLY what the latest customer instruction asks for. It is not a style sample and it is not a second subject.",
+    extra: (n) => `IMAGE ${n} — ADDITIONAL CUSTOMER REFERENCE. Same subject, additional angle or detail only.`,
+    single:
+      "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to TRANSLATE it into this workshop's flat laser-cut charm language — one continuous flat sheet, integrated protruding hoop, sparse engraving, pure black background — not to reproduce the photograph and not to invent a different object.",
+    lock:
+      "FINAL IMAGE-ROLE LOCK: the SUBJECT comes from IMAGE 1 and the customer's written instructions, and from nowhere else. Translate that subject into a flat laser-cut charm; do not substitute a different object, and do not simply redraw the photograph with its background, setting, hands, props or depth. When a second image is present it is your own previous version of this same charm: preserve it and apply only the newest instruction. HARD FAIL: an output whose subject a customer would not recognise as the thing they uploaded or chose. HARD FAIL: a refinement that redesigns parts of the charm the customer did not ask to change.",
+  },
   line_art_style: {
     first:
       "IMAGE 1 — SUBJECT SOURCE (THE TRUTH). This is the exact object you must redraw. Its silhouette, outline, proportions, pose, features, engravings, cutouts and hanging hoop are authoritative and must all appear in your output, converted to the requested style.",
@@ -1650,6 +1670,8 @@ async function postScaleCharmComposite({
 // ============================================================
 
 const BATCHES_COLL = "ListingGenerator1Batches";
+// Server-side Charm Maker batch orchestrations (tab-independent pipeline).
+const ORCH_COLL = "ListingGenerator1CharmOrchestrations";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1beta";
 
@@ -1943,6 +1965,791 @@ function batchDocIdFromName(batchName) {
   return String(batchName || "").replace(/^batches\//, "").replace(/[^\w-]/g, "_");
 }
 
+
+// ============================================================
+// SERVER-SIDE CHARM MAKER ORCHESTRATION SUPPORT
+// ------------------------------------------------------------
+// The functions below are byte-for-byte MIRRORS of the Listing
+// Generator's client-side builders (buildCharmDesignPrompt /
+// buildCharmImageDescription / cleanCharmPlanText). They exist so
+// the charm_batch_orchestrate flow can prepare sets entirely
+// server-side, with no browser tab involved. IF YOU CHANGE THE
+// PROMPT OR DESCRIPTION DOCTRINE IN THE HTML, CHANGE IT HERE TOO
+// — otherwise Standard mode and server-orchestrated Batch mode
+// will produce different designs.
+// ============================================================
+function cmCleanText(value, fallback = "") {
+  return String(value == null ? fallback : value)
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildCharmDesignPromptServer(concept, plan) {
+        const chosen = concept || {};
+        const context = plan || {};
+        const signals = Array.isArray(context.purchaseSignals) && context.purchaseSignals.length
+            ? context.purchaseSignals.join("; ")
+            : "same-buyer affinity, collection appeal and giftability";
+        return `MARKET-LED NEW CHARM DESIGN — NOT AN EDIT AND NOT A REPLICA
+
+The supplied image is a proven bestselling charm. It is provided ONLY to communicate this workshop's metal colour, polish, engraving weight, flat laser-cut construction, integrated-bail craftsmanship, lighting and black-background treatment. Do not reproduce its object.
+
+REFERENCE BESTSELLER SUBJECT: ${cmCleanText(context.referenceSubject, "shown in the supplied reference")}
+INFERRED BUYER: ${cmCleanText(context.buyerProfile, "the same buyer who values the reference bestseller")}
+PURCHASE SIGNALS: ${signals}
+
+CHOSEN COMPLEMENTARY PRODUCT:
+• CONCEPT: ${cmCleanText(chosen.title, "Buyer-aligned complementary charm")}
+• NEW SUBJECT: ${cmCleanText(chosen.subject, "Choose a distinct adjacent subject with the strongest same-buyer appeal")}
+• BUYER CONNECTION: ${cmCleanText(chosen.buyerConnection, "It belongs naturally in the same buyer's collection")}
+• COMMERCIAL RATIONALE: ${cmCleanText(chosen.conversionRationale, "Evergreen, recognizable and giftable")}
+• OUTER CONTOUR BRIEF: ${cmCleanText(chosen.silhouetteBrief, "Use a bold, recognizable one-piece silhouette unlike the reference")}
+• ENGRAVING BRIEF: ${cmCleanText(chosen.engravingBrief, "Use only sparse recognition-critical surface engraving")}
+• INTENTIONAL CUTOUT BRIEF: ${cmCleanText(chosen.cutoutBrief, "Use negative-space cutouts when they improve recognition and visual appeal; otherwise use none")}
+
+NOVELTY LOCK — HIGHEST PRIORITY:
+• Draw the NEW SUBJECT above. The reference subject itself is forbidden.
+• The new design must have a materially different silhouette, pose and internal feature map from the reference.
+• NEVER trace, mirror, re-pose, re-scale, simplify, embellish or lightly restyle the reference charm.
+• NEVER create a baby, pair, family, alternate pose or cosmetic variation of the exact reference subject.
+• HARD FAIL: a shopper would identify the result as the same SKU or same object as the reference.
+• HARD FAIL: the new outline could be overlaid on the reference and broadly match.
+
+HARD PHYSICAL CONSTRAINTS:
+• ONE CONTINUOUS PIECE: the charm body and eyelet are cut together from one uninterrupted flat sheet. There are no separately attached metal components anywhere.
+• INTENTIONAL CUTOUT FREEDOM: negative-space cutouts are an important design tool and are fully allowed. Use the INTENTIONAL CUTOUT BRIEF above. Cutouts may be small or large, numerous, openwork, filigree, outline-style, fully enclosed, or intentionally open to the outer contour.
+• CUTOUT QUALITY: every intended cutout must have a deliberate recognizable shape and a clean, crisp laser-cut boundary. The remaining metal must form one structurally connected, manufacturable piece with no unsupported floating islands.
+• ARTIFACT DISTINCTION: never create irregular black blotches, eroded/faded gaps, shadow-like voids, ragged missing patches or ambiguous areas without a crisp designed cut edge. These are rendering defects—not cutouts.
+• UNIFORMLY FLAT SHEET METAL: every millimetre of the charm, including the complete eyelet area, lies in exactly one plane and has the same thin approximately 22-gauge sheet thickness.
+• SHARP SQUARE-CUT 2D EDGES: crisp laser-cut perimeter and hole edges. No rounded, rolled, beveled, bulbous, tubular, domed, cast or inflated edges anywhere.
+• FLAT SURFACE LIGHTING: high polish may create reflections across the flat face, but the reflections must never make the face or edges look curved, raised or sculpted.
+• FRONT VIEW: perfectly front-facing orthographic view with 0% perspective tilt.
+• ENGRAVING: sparse, strategic, shallow surface laser etching only. Preserve generous untouched metal areas.
+• ENGRAVING TONE — STRONGER WARM CONTRAST: render every engraved line in the same muted copper/brass-mix patina, now approximately 30–35% darker than the nearby polished metal face. The lines must be clearly and immediately visible at preview size while remaining refined.
+• ENGRAVING COLOR LIMITS: never use white, cream or face-matching highlight colour for an engraving, but also never use black, charcoal, very dark brown, heavy oxidation or deep shadow. Aim for a medium warm copper-brass line that remains plainly visible at preview size—not a dark outline.
+• ENGRAVING/CUTOUT DISTINCTION: engravings are shallow surface marks; cutouts are true negative space with crisp laser-cut boundaries. Both are allowed and must remain visually unambiguous.
+• NO TEXT: no letters, words, dates, numbers, logos or branded shapes.
+• NO ATTACHED HARDWARE: no chains, clasps, jump rings, O-rings, split rings, wire loops, folded bails, soldered bails, hinges or connectors of any kind.
+
+ONE INTEGRATED PROTRUDING CHARM HOOP — MANDATORY ON EVERY CHARM, ZERO SEPARATE RINGS:
+• ABSOLUTE REQUIREMENT — NO EXCEPTIONS: every generated charm has exactly ONE small ring-shaped hanging hoop that PROTRUDES OUTWARD beyond the charm's outer silhouette at the top — the classic charm hoop. A charm rendered without this hoop is a total failure regardless of how good the rest looks.
+• ONE PIECE: the hoop is laser-cut from the SAME flat sheet as the body in one continuous silhouette — the outline flows smoothly from the body, up and around the hoop, and back down. No joint, seam, hinge, fold, overlap, solder point or separate part anywhere.
+• HOOP FORM: a small flat annulus — a rounded tab of sheet metal with one clean, round, front-facing hole through its center. It stays perfectly flat and sheet-thin like the rest of the charm: never a doughnut, torus, tube, wire ring, raised rim or edge-on ring, and never a narrow upright oval or slot.
+• INTELLIGENT PLACEMENT — THINK BEFORE RENDERING: this charm will hang from this hoop under real-world gravity. Before rendering, locate the design's center of mass (where the visual weight of the metal actually is, accounting for asymmetry, cutouts and heavy/light regions). Place the hoop on the outer contour DIRECTLY ABOVE that center of mass so the charm hangs level and balanced — never tipping nose-up, nose-down or lopsided. For a side-profile animal that means above the back/shoulders, not the nose or tail; for an asymmetric object, shift the hoop toward the heavy side until the hang is level. Choose the placement that is BOTH physically balanced and most aesthetically pleasing for the subject.
+• PROPORTION: small and elegant relative to the charm — roughly 10–18% of the charm's height, matching this workshop's reference charms.
+• FORBIDDEN — PUNCHED-BODY ATTACHMENT: never use a hole punched inside the charm's body or artwork as the hanging point. The artwork stays intact; the hoop is additional silhouette rising above it.
+• FORBIDDEN — SEPARATE HARDWARE: never add a second, separate ring threaded through the hoop; no jump rings, O-rings, split rings, folded/teardrop bails, connectors, clasps or chains. The integrated hoop is the only attachment.
+• ZERO STACKED HARDWARE: exactly one hoop — never two hoops, never a hoop plus a punched hole, never a ring passing through the hoop.
+• HARD FAIL: a charm with no visible protruding hoop at its top.
+• HARD FAIL: a charm whose only attachment is a hole cut inside the main subject's body.
+• HARD FAIL: a separate ring, bail or connector distinct from the charm's own sheet, anywhere in the image.
+• HARD FAIL: the hoop rendered thick, tubular, domed, three-dimensional or shown edge-on.
+• HARD FAIL: a hoop placed off the balance point so the charm would visibly hang tilted.
+
+ABSOLUTE FLATNESS & FRONT-FACING LOCK (EQUAL PRIORITY TO THE HOOP RULE):
+• The ENTIRE charm is rendered 100% FRONT-FACING in a perfectly flat orthographic view — as if the flat sheet was scanned face-on. 0% perspective, 0% rotation out of the picture plane.
+• ZERO 3D: no depth, no visible thickness, no side walls, no top face, no vanishing lines, no foreshortening, no three-quarter or angled "product shot" viewpoint — even for subjects that are boxy in real life (a suitcase, a book, a house: draw its flat FRONT ELEVATION only).
+• HARD FAIL: any part of the charm shown at an angle, in perspective, or with visible 3D volume or side surfaces.
+
+BACKGROUND — ABSOLUTE:
+• 100% PURE SOLID BLACK (#000000), edge to edge.
+• No white, off-white, grey, studio sweep, gradient, texture or transparency anywhere in the background.
+• Generate the image NATIVELY against pure black from the first render. Do not begin with white and remove it. Do not use masking, background removal, chroma keying, cutout compositing or transparent pixels.
+• Before returning the image, inspect all four corners and every pixel outside the charm: they must already be uniform #000000.
+• The isolated charm is centered with comfortable empty black margin and no cast shadow outside its silhouette.
+
+AESTHETIC CONTINUITY:
+Match only the reference's metal alloy/tone, polish, restrained engraving language, lighting quality and production realism. The product concept, subject, silhouette and feature placement come exclusively from the chosen complementary brief above.
+
+FINAL PRE-RENDER CHECK — PERFORM THIS AFTER THE IMAGE IS COMPOSED:
+1. Is there exactly ONE small ring-shaped hoop protruding above the charm's body, cut from the same continuous flat silhouette, positioned directly above the design's center of mass? If not, correct the interpretation before creating the single final image.
+2. Confirm the hoop extends beyond the body's outline with one clean round hole through it, and that the artwork body itself has NO punched attachment hole anywhere.
+3. Confirm there is ZERO separate metal hardware above, behind, in front of or threaded through the hoop. Touching or overlapping the body does not make a separate ring acceptable.
+4. Confirm the entire charm is perfectly flat and 100% front-facing: no perspective, no 3D thickness, no angled view anywhere.
+5. Repeat the rules before returning the image: EVERY charm has its one integrated protruding hoop. NO separate jump ring or bail. NO hole punched through the body. NO 3D or perspective. The charm with its single integrated hoop must be shown alone.`;
+    }
+
+function buildCharmImageDescriptionServer(concept, plan, variant) {
+      const c = concept || {};
+      const p = plan || {};
+      const bits = [];
+      const title = cmCleanText(c.title);
+      const subject = cmCleanText(c.subject);
+      if (variant === "earring") {
+        bits.push(`Earring version${title ? ` of "${title}"` : ""}: ${subject || "flat laser-cut gold charm"} — hanging hoop removed for stud/earring assembly, design otherwise identical to the necklace charm.`);
+      } else {
+        bits.push(`${title ? `"${title}" — ` : ""}${subject || "flat laser-cut gold charm"} with integrated hanging hoop, for necklaces and charm jewelry.`);
+      }
+      const bc = cmCleanText(c.buyerConnection);
+      if (bc) bits.push(bc);
+      const cr = cmCleanText(c.conversionRationale);
+      if (cr) bits.push(cr);
+      const sil = cmCleanText(c.silhouetteBrief);
+      if (sil) bits.push(`Silhouette: ${sil}`);
+      const eng = cmCleanText(c.engravingBrief);
+      if (eng) bits.push(`Engraving: ${eng}`);
+      const refS = cmCleanText(p.referenceSubject);
+      if (refS) bits.push(`Reference: ${refS}.`);
+      const buyer = cmCleanText(p.buyerProfile);
+      if (buyer) bits.push(`Target buyer: ${buyer}`);
+      if (Array.isArray(p.purchaseSignals) && p.purchaseSignals.length) {
+        bits.push(`Purchase drivers: ${p.purchaseSignals.map(cmCleanText).filter(Boolean).join("; ")}.`);
+      }
+      return bits.join("\n");
+    }
+
+function buildCharmEmbedMetadataServer(concept, plan, variant) {
+  const c = concept || {};
+  const p = plan || {};
+  const description = buildCharmImageDescriptionServer(c, p, variant);
+  if (!description) return null;
+  let conceptJson = null;
+  try {
+    conceptJson = JSON.stringify({
+      variant: variant || "necklace",
+      title: cmCleanText(c.title) || null,
+      subject: cmCleanText(c.subject) || null,
+      buyerConnection: cmCleanText(c.buyerConnection) || null,
+      conversionRationale: cmCleanText(c.conversionRationale) || null,
+      silhouetteBrief: cmCleanText(c.silhouetteBrief) || null,
+      engravingBrief: cmCleanText(c.engravingBrief) || null,
+      referenceSubject: cmCleanText(p.referenceSubject) || null,
+      buyerProfile: cmCleanText(p.buyerProfile) || null,
+      purchaseSignals: Array.isArray(p.purchaseSignals)
+        ? p.purchaseSignals.map((s) => cmCleanText(s)).filter(Boolean).slice(0, 6)
+        : [],
+    });
+  } catch (_) {}
+  const meta = { Description: description };
+  const t = cmCleanText(c.title);
+  if (t) meta.CharmTitle = t;
+  if (conceptJson) meta.CharmConcept = conceptJson;
+  return meta;
+}
+
+
+/* ============================================================================
+   CUSTOM CHARM STUDIO — the customer-facing kinds (design guide §10.6)
+   ----------------------------------------------------------------------------
+     custom_charm_precheck   text-only vision pass on an uploaded image; costs
+                             no credit, meters the upload allowance only on an
+                             ACCEPTED image so a rejection is free
+     custom_charm_generate   verify ID token -> atomic wallet debit -> compose
+                             the prompt -> ONE image generation -> write the PNG
+                             and the version doc. Credit auto-refunded on failure.
+     custom_charm_refine     same, with the prior version as a second reference
+     custom_session_status   thin read of a version doc, for browsers where
+                             Firestore onSnapshot is blocked
+
+   WHY THIS IS SAFE TO ADD HERE
+     This file has no caller authentication of its own and answers
+     Access-Control-Allow-Origin "*" — correct for an internal tool on a
+     private subdomain, unacceptable for a customer endpoint. So every studio
+     kind verifies a Firebase ID token itself, scopes every storage path to the
+     caller's own uid, answers a storefront-locked origin instead of "*", and
+     applies per-uid and per-IP hourly ceilings on top of the wallet. No
+     existing kind's behaviour changes in any way.
+
+   WHAT IT REUSES, VERBATIM
+     buildCharmDesignPromptServer's HARD PHYSICAL CONSTRAINTS / HOOP /
+     FLATNESS / BACKGROUND / FINAL PRE-RENDER CHECK blocks, the text-only
+     auditCharmPromptPreflight, callImageModelEdits with the backend's final
+     geometry + background override, embedPngTextMetadata, storagePathToBuffer,
+     newDownloadToken and tokenDownloadURLFor. Only the INTENT HEADER differs:
+     the Charm Maker's NOVELTY LOCK ("the reference subject is forbidden") is
+     replaced by a customer FIDELITY block, because here the customer chose the
+     reference and wants it honoured.
+
+   ENV — nothing new. GEMINI_API_KEY, FIREBASE_* and FIREBASE_STORAGE_BUCKET
+   already exist on this deployment.
+   ========================================================================= */
+
+const STUDIO_KINDS = new Set([
+  "custom_charm_precheck",
+  "custom_charm_generate",
+  "custom_charm_refine",
+  "custom_session_status",
+]);
+
+const STUDIO_SESSIONS_COLL = "customSessions";
+const STUDIO_RATE_COLL     = "Brites_Studio_RateLimits";
+const STUDIO_CONFIG_DOC    = "config/customStudio";
+const STUDIO_MAX_GENS_HOUR_UID = 25;
+const STUDIO_MAX_GENS_HOUR_IP  = 60;
+const STUDIO_MAX_INSTRUCTION   = 400;
+
+/* Storefront-locked CORS. Deliberately NOT the "*" that json() returns. */
+const STUDIO_ALLOWED_ORIGINS = [
+  "https://britesjewelry.com",
+  "https://www.britesjewelry.com",
+  "https://brites-jewelry.myshopify.com",
+];
+function studioJson(statusCode, obj, origin) {
+  const allow = STUDIO_ALLOWED_ORIGINS.includes(origin) ? origin : STUDIO_ALLOWED_ORIGINS[0];
+  return {
+    statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": allow,
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Vary": "Origin",
+      "Cache-Control": "no-store",
+    },
+    body: JSON.stringify(obj),
+  };
+}
+
+/** Anonymous uids are first-class here: a guest's free allowance is a real
+ *  wallet, so their token must be accepted exactly like a customer's. */
+async function requireStudioUser(event) {
+  const h = event?.headers || {};
+  const raw = h.authorization || h.Authorization || "";
+  const token = raw.startsWith("Bearer ") ? raw.slice(7).trim() : "";
+  if (!token) { const e = new Error("sign_in_required"); e.status = 401; throw e; }
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    return decoded.uid;
+  } catch (_err) {
+    const e = new Error("invalid_token"); e.status = 401; throw e;
+  }
+}
+
+function studioClientIp(event) {
+  const h = event?.headers || {};
+  return String(
+    h["x-nf-client-connection-ip"] ||
+    String(h["x-forwarded-for"] || "").split(",")[0] ||
+    "unknown"
+  ).trim();
+}
+
+const STUDIO_DEFAULT_CONFIG = {
+  guestFreeCredits: 3,
+  signupBonusCredits: 7,
+  guestFreeUploads: 3,
+  signupBonusUploads: 7,
+  generateCost: 1,
+};
+let _studioCfg = null, _studioCfgAt = 0;
+async function studioConfig() {
+  if (_studioCfg && Date.now() - _studioCfgAt < 60000) return _studioCfg;
+  try {
+    const snap = await getDb().doc(STUDIO_CONFIG_DOC).get();
+    _studioCfg = Object.assign({}, STUDIO_DEFAULT_CONFIG, snap.exists ? snap.data() : {});
+  } catch (_e) {
+    _studioCfg = Object.assign({}, STUDIO_DEFAULT_CONFIG);
+  }
+  _studioCfgAt = Date.now();
+  return _studioCfg;
+}
+
+/** Hourly ceiling on top of the wallet, so a stolen ID token cannot burn the
+ *  Gemini budget in one go. */
+async function studioBudgetOk(key, id, max) {
+  const db = getDb();
+  const hash = require("crypto").createHash("sha256").update(String(id)).digest("hex").slice(0, 32);
+  const ref = db.doc(`${STUDIO_RATE_COLL}/${key}_${hash}`);
+  const now = Date.now();
+  try {
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const d = snap.exists ? snap.data() : {};
+      const windowStart = d.windowStart && now - d.windowStart < 3600e3 ? d.windowStart : now;
+      const count = windowStart === d.windowStart ? (d.count || 0) : 0;
+      if (count >= max) return false;
+      tx.set(ref, { windowStart, count: count + 1, updatedAt: now }, { merge: true });
+      return true;
+    });
+  } catch (_e) {
+    return true;   // never let the limiter itself take the studio down
+  }
+}
+
+/* ── wallet ──────────────────────────────────────────────────────────────
+   The client's credit meter is cosmetic. THIS is the quota: an atomic
+   transaction that runs BEFORE Gemini is called, and a refund if the
+   generation fails. */
+async function studioDebit(uid, cost, sessionId) {
+  const db = getDb();
+  const ref = db.doc(`users/${uid}`);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const w = (snap.exists && snap.data().wallet) || {};
+    const credits = Number(w.credits) || 0;
+    if (credits < cost) { const e = new Error("out_of_credits"); e.status = 402; throw e; }
+    tx.set(ref, {
+      wallet: Object.assign({}, w, {
+        credits: credits - cost,
+        lifetimeSpent: (Number(w.lifetimeSpent) || 0) + cost,
+      }),
+      updatedAt: Date.now(),
+    }, { merge: true });
+    tx.create(ref.collection("walletLedger").doc(), {
+      delta: -cost, reason: "generate", ref: sessionId || null,
+      at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+}
+async function studioRefund(uid, cost, sessionId) {
+  try {
+    const db = getDb();
+    const ref = db.doc(`users/${uid}`);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const w = (snap.exists && snap.data().wallet) || {};
+      tx.set(ref, {
+        wallet: Object.assign({}, w, {
+          credits: (Number(w.credits) || 0) + cost,
+          lifetimeSpent: Math.max(0, (Number(w.lifetimeSpent) || 0) - cost),
+        }),
+        updatedAt: Date.now(),
+      }, { merge: true });
+      tx.create(ref.collection("walletLedger").doc(), {
+        delta: cost, reason: "failure_refund", ref: sessionId || null,
+        at: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+  } catch (e) {
+    console.error("[studio] refund failed:", e?.message || e);
+  }
+}
+/** Uploads are metered separately from generation, and ONLY on an accepted
+ *  image, so a rejected photo costs the customer nothing. */
+async function studioMeterUpload(uid, cfg) {
+  const db = getDb();
+  const ref = db.doc(`users/${uid}`);
+  const user = await admin.auth().getUser(uid).catch(() => null);
+  const signedIn = !!(user && user.email);
+  let allowed = true;
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const w = (snap.exists && snap.data().wallet) || {};
+    const used = Number(w.uploadsUsed) || 0;
+    const cap = cfg.guestFreeUploads
+              + (signedIn ? cfg.signupBonusUploads : 0)
+              + (Number(w.purchasedAllowance) || 0);
+    if (used >= cap) { allowed = false; return; }
+    tx.set(ref, { wallet: Object.assign({}, w, { uploadsUsed: used + 1 }), updatedAt: Date.now() }, { merge: true });
+  });
+  return allowed;
+}
+
+/* ── the prompt ──────────────────────────────────────────────────────────
+   buildCharmDesignPromptServer is the workshop's own doctrine and the single
+   source of truth for what a Brites charm physically is. We slice its
+   constraint blocks out VERBATIM and wrap them in a customer intent header,
+   so the two can never drift: edit the doctrine there and the studio inherits
+   it on the next deploy. */
+function studioCleanText(text) {
+  return String(text == null ? "" : text)
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
+    .replace(/```+/g, " ")
+    .replace(/\b(ignore|disregard|forget)\b[^.]{0,40}\b(previous|above|prior|system)\b[^.]*/gi, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s.,;:!?)\]}>-]+/, "")
+    .trim()
+    .slice(0, STUDIO_MAX_INSTRUCTION);
+}
+
+/** Everything from HARD PHYSICAL CONSTRAINTS onward, with the Charm Maker's
+ *  AESTHETIC CONTINUITY paragraph swapped for the studio's — that one block
+ *  says the subject comes from the complementary brief and NOT from the
+ *  reference, which is precisely backwards here. */
+function studioConstraintBlocks() {
+  let full = "";
+  try {
+    full = String(buildCharmDesignPromptServer({}, {}) || "");
+  } catch (_e) {
+    full = "";
+  }
+  const start = full.indexOf("HARD PHYSICAL CONSTRAINTS:");
+  const aesthetic = full.indexOf("AESTHETIC CONTINUITY:");
+  const finalCheck = full.indexOf("FINAL PRE-RENDER CHECK");
+  if (start < 0 || finalCheck < 0) return "";       // doctrine moved — see below
+
+  const physical = aesthetic > start && aesthetic < finalCheck
+    ? full.slice(start, aesthetic)
+    : full.slice(start, finalCheck);
+
+  const studioAesthetic =
+`AESTHETIC CONTINUITY:
+Match this workshop's metal alloy and tone, polish, restrained engraving language, lighting quality, production realism and black-background treatment. The SUBJECT comes from the customer's reference image and their written instructions — honour it. Everything about HOW it is made comes from the rules above.
+
+`;
+  return physical + studioAesthetic + full.slice(finalCheck);
+}
+
+/* Failsafe: if buildCharmDesignPromptServer is ever restructured so the slice
+   markers move, the studio must not silently generate unconstrained charms.
+   This is the minimum doctrine, used only in that case. */
+const STUDIO_FALLBACK_CONSTRAINTS =
+`HARD PHYSICAL CONSTRAINTS:
+• ONE CONTINUOUS PIECE cut from a single uniformly flat, thin (~22-gauge) sheet. No separate parts, no floating islands.
+• SHARP SQUARE-CUT 2D EDGES. No rounded, domed, tubular, cast or inflated edges.
+• EXACTLY ONE INTEGRATED PROTRUDING HOOP at the top, cut from the same sheet as a flat annulus with one clean round hole, placed directly above the design's center of mass so the charm hangs level. Never a hole punched inside the body. No jump rings, split rings, bails, chains or any separate hardware.
+• ENGRAVING: sparse, shallow surface etching in a medium warm copper-brass tone, clearly visible but never black or white.
+• NO TEXT of any kind. NO ATTACHED HARDWARE. NO 3D, no perspective, no visible thickness — a perfectly front-facing flat orthographic view.
+• BACKGROUND: 100% pure solid black (#000000), edge to edge, generated natively, no gradient, no transparency, no cast shadow.
+
+AESTHETIC CONTINUITY:
+Match this workshop's metal tone, polish, engraving language and lighting. The SUBJECT comes from the customer's reference image and their written instructions — honour it.
+
+FINAL PRE-RENDER CHECK — perform after the image is composed:
+1. Exactly ONE protruding hoop above the body, from the same continuous silhouette, above the center of mass?
+2. No attachment hole punched through the artwork, and no separate ring anywhere?
+3. Entirely flat and 100% front-facing — no perspective, no 3D thickness?
+4. Pure #000000 in every pixel outside the charm?
+If any answer is no, correct the design before rendering.`;
+
+function buildCustomerCharmPrompt({ instructions, thread, metal, refine }) {
+  const clean = studioCleanText(instructions);
+  const log = (Array.isArray(thread) ? thread : [])
+    .filter((m) => m && m.text)
+    .slice(-24)
+    .map((m, i) => `${i + 1}. ${m.role === "studio" ? "STUDIO" : "CUSTOMER"}: ${studioCleanText(m.text)}`)
+    .filter((line) => line.split(": ").slice(1).join(": ").length > 0)
+    .join("\n");
+
+  const header =
+`CUSTOMER-DIRECTED CHARM DESIGN — TRANSLATE, DON'T INVENT
+
+The supplied image is the customer's chosen reference. Translate its subject
+faithfully into this workshop's flat laser-cut charm language, then apply ONLY
+the customer's requested changes:
+
+CUSTOMER INSTRUCTIONS: ${clean || "(no change requested — translate the reference faithfully)"}
+REFERENCE HANDLING: keep the recognizable subject and proportions; changes
+beyond the instructions are forbidden.
+
+• OUTER CONTOUR BRIEF: follow the reference subject's own recognizable silhouette, simplified into one bold, clean, manufacturable outline.
+• ENGRAVING BRIEF: use only sparse, recognition-critical surface engraving — the few lines that make the subject read at charm size.
+• INTENTIONAL CUTOUT BRIEF: use negative-space cutouts where they improve recognition or visual appeal; otherwise use none.`;
+
+  const parts = [header];
+  if (log) {
+    parts.push(
+`CUSTOMER DIRECTION LOG — the full conversation so far, oldest first.
+Honour all of it; the last line is the newest request:
+${log}`);
+  }
+  if (refine) {
+    parts.push(
+`REFINEMENT PASS: the second image is the customer's current version of this
+charm. Keep it and change ONLY what the newest instruction asks for.`);
+  }
+  if (metal) {
+    parts.push(`METAL: render in ${studioCleanText(metal)}. Metal choice affects tone only — never form.`);
+  }
+  parts.push(studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS);
+  return parts.join("\n\n");
+}
+
+/* ── the intake check ────────────────────────────────────────────────────
+   Text only, no image output, no credit. The rejection reason is customer
+   copy, so it is written in the studio's voice — and the word "AI" appears
+   nowhere in it (design guide §9.7). */
+const STUDIO_PRECHECK_PROMPT =
+`You are the intake check for a handmade jewellery workshop that cuts flat metal charms.
+Judge the attached photograph against these questions and answer with JSON only.
+
+1. Is there ONE clear, identifiable main subject?
+2. Can that subject be reduced to a flat silhouette with an integrated hanging hoop and still be recognisable?
+3. Is it free of identifiable people and faces?
+4. Is it free of minors, nudity and sexual content?
+5. Is it free of obvious third-party trademarks, logos and licensed characters?
+6. Is it sharp and well-lit enough to read the subject's outline?
+
+Answer with exactly this shape and nothing else:
+{"usable": true|false, "reason": "<one warm sentence, max 22 words, addressed to the customer, explaining what to try instead>", "subject": "<2-4 words>"}
+
+Rules for "reason": only fill it when usable is false. Never mention models,
+generation, prompts or automated checking. Never use the word "AI". Suggest a
+concrete alternative, e.g. "A single pet in clear daylight works beautifully —
+try a photo where the whole outline is visible."`;
+
+async function studioVisionVerdict(img) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Missing GEMINI_API_KEY env var");
+  const model = String(
+    process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
+    process.env.GEMINI_CHARM_PREFLIGHT_MODEL ||
+    DEFAULT_IMAGE_MODEL
+  ).trim();
+  let mime = img?.mime || "image/jpeg";
+  if (!String(mime).startsWith("image/")) mime = "image/jpeg";
+
+  const resp = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [
+          { text: STUDIO_PRECHECK_PROMPT },
+          { inline_data: { mime_type: mime, data: Buffer.from(img.buffer).toString("base64") } },
+        ],
+      }],
+      generationConfig: { temperature: 0, responseMimeType: "application/json" },
+    }),
+  });
+  const data = await readUpstreamJson(resp, "gemini");
+  const text = (data?.candidates?.[0]?.content?.parts || [])
+    .map((p) => p?.text || "").join("").trim();
+  const parsed = extractJsonObject(text);
+  if (!parsed) return { usable: false, reason: "" };
+  return parsed;
+}
+
+/* ── version doc: what drives the client's staged progress bar ───────────
+   The storefront subscribes to customSessions/{sid}/versions/{n} and narrates
+   `stage` back to the customer as it moves. Every write is best-effort — a
+   Firestore hiccup must never fail a generation the customer already paid for. */
+async function studioStage(vRef, patch) {
+  try { await vRef.set(patch, { merge: true }); } catch (_e) {}
+}
+
+async function handleStudioPrecheck({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const cfg = await studioConfig();
+  const p = String(body?.input_storage_path || "").trim();
+  if (!p.startsWith(`custom-studio/${uid}/`)) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  if (!(await studioBudgetOk("pc", uid, STUDIO_MAX_GENS_HOUR_UID))) {
+    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
+  }
+
+  const img = await storagePathToBuffer(p);
+  let verdict;
+  try {
+    verdict = await studioVisionVerdict(img);
+  } catch (err) {
+    // Never block a customer because the checker was unavailable — the
+    // generation applies the same doctrine again, server-side. The upload is
+    // still metered, so a checker outage can't turn the allowance off.
+    console.error("[studio] precheck unavailable:", err?.message || err);
+    if (!(await studioMeterUpload(uid, cfg))) {
+      return studioJson(402, { ok: false, error: "no_uploads_left" }, origin);
+    }
+    return studioJson(200, { ok: true, usable: true, degraded: true, reason: "" }, origin);
+  }
+
+  if (verdict.usable) {
+    if (!(await studioMeterUpload(uid, cfg))) {
+      return studioJson(402, { ok: false, error: "no_uploads_left" }, origin);
+    }
+  }
+  return studioJson(200, {
+    ok: true,
+    usable: !!verdict.usable,
+    verdict: verdict.usable ? "ok" : "rejected",
+    subject: verdict.subject || null,
+    reason: verdict.usable
+      ? ""
+      : (verdict.reason || "That image won't translate into a charm — try one with a single, clearly outlined subject."),
+  }, origin);
+}
+
+async function handleStudioGenerate({ kind, body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const cfg = await studioConfig();
+  const cost = Number(cfg.generateCost) || 1;
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+
+  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
+      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
+  }
+
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+
+  // 1) atomic debit, BEFORE any upstream call
+  try {
+    await studioDebit(uid, cost, sessionId);
+  } catch (err) {
+    if (err?.status === 402) return studioJson(402, { ok: false, error: "out_of_credits" }, origin);
+    throw err;
+  }
+
+  const n = Number(body?.versionNumber) || (Number(session.currentVersion) || 0) + 1;
+  const vRef = sRef.collection("versions").doc(String(n));
+  const instructions = studioCleanText(body?.instructions);
+  const metal = studioCleanText(body?.metal || session.metal || "gold");
+  const isRefine = kind === "custom_charm_refine" && n > 1;
+
+  await studioStage(vRef, {
+    n, status: "queued", stage: "queued",
+    instructions, refineText: studioCleanText(body?.refineText), metal,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  try {
+    await studioStage(vRef, { status: "generating", stage: "planning" });
+
+    // The reference: an uploaded object, or the chosen product's image fetched
+    // SERVER-side rather than trusting a client-supplied URL.
+    const ref = session.reference || {};
+    let refImg = null;
+    if (ref.type === "upload" && ref.path) {
+      if (!String(ref.path).startsWith(`custom-studio/${uid}/`)) {
+        throw new Error("reference outside your own storage");
+      }
+      refImg = await storagePathToBuffer(ref.path);
+    } else if (ref.type === "catalog" && ref.item && ref.item.image) {
+      const r = await fetch(String(ref.item.image));
+      if (!r.ok) throw new Error(`reference image fetch ${r.status}`);
+      refImg = {
+        mime: r.headers.get("content-type") || "image/jpeg",
+        buffer: Buffer.from(await r.arrayBuffer()),
+      };
+    }
+    if (!refImg) throw new Error("no reference image on this session");
+
+    const images = [
+      { buffer: refImg.buffer, mime: refImg.mime, filename: filenameForMime("reference", refImg.mime) },
+    ];
+    if (isRefine) {
+      try {
+        const prev = await storagePathToBuffer(
+          `custom-studio/${uid}/uploads/designs/${sessionId}/v${n - 1}.png`
+        );
+        images.push({ buffer: prev.buffer, mime: prev.mime, filename: filenameForMime("previous", prev.mime) });
+      } catch (_e) {
+        // first refine after a restore, or the prior version is gone — the
+        // direction log alone carries the context
+      }
+    }
+
+    // Same pipeline the Charm Maker runs: a text-only prompt audit, then
+    // exactly ONE image generation with the backend's final geometry and
+    // background override appended after every role label.
+    const basePrompt = buildCustomerCharmPrompt({
+      instructions, thread: body?.thread, metal, refine: isRefine,
+    });
+    let effectivePrompt = basePrompt;
+    try {
+      const audited = await auditCharmPromptPreflight({
+        prompt: basePrompt,
+        backgroundPolicy: "solid_black",
+        geometryPolicy: "flat_integrated_eyelet",
+        editIntent: null,
+        imageCount: images.length,
+        imageRoles: "customer_reference",
+      });
+      if (audited) effectivePrompt = audited;
+    } catch (_e) { /* best effort — never blocks a paid generation */ }
+
+    await studioStage(vRef, { stage: "generating" });
+
+    const studioModelConfig = resolveImageModel(
+      process.env.GEMINI_STUDIO_IMAGE_MODEL || DEFAULT_IMAGE_MODEL
+    );
+    let outBuf = await callImageModelEdits({
+      apiKey: apiKeyForImageModel(studioModelConfig),
+      model: studioModelConfig.id,
+      prompt: effectivePrompt,
+      size: "2048x2048",
+      quality: "high",
+      output_format: "png",
+      images,
+      imageRoles: "customer_reference",
+      charmGeometryPolicy: "flat_integrated_eyelet",
+      backgroundPolicy: "solid_black",
+    });
+
+    await studioStage(vRef, { stage: "polishing" });
+
+    // The design description travels inside the PNG, so it survives download,
+    // the production queue and the customer's own copy.
+    outBuf = embedPngTextMetadata(outBuf, {
+      Description: `Custom Charm Studio design — ${instructions || "customer reference"} (${metal}). Version ${n}.`,
+      CharmTitle: `Custom charm v${n}`,
+    });
+
+    // NOTE the "uploads" segment: templates/cart.liquid and
+    // snippets/ajax-cart-template.liquid render a clickable thumbnail for any
+    // cart line property whose value contains "uploads" plus an image
+    // extension, so the customer sees their design as a picture in the cart.
+    const storagePath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
+    const bucket = getBucket();
+    const token = newDownloadToken();
+    await bucket.file(storagePath).save(outBuf, {
+      resumable: false,
+      contentType: "image/png",
+      metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId, version: String(n) } },
+    });
+    const downloadURL = tokenDownloadURLFor(bucket.name, storagePath, token);
+
+    await studioStage(vRef, {
+      status: "done", stage: "done", storagePath, downloadURL,
+      prompt: String(effectivePrompt).slice(0, 4000),
+      model: studioModelConfig.id,
+      doneAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    try {
+      await sRef.set({
+        currentVersion: n,
+        updatedAtServer: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } catch (_e) {}
+
+    return studioJson(200, { ok: true, n, storagePath, downloadURL }, origin);
+  } catch (err) {
+    // A failed generation must never cost a credit.
+    await studioRefund(uid, cost, sessionId);
+    await studioStage(vRef, {
+      status: "failed", stage: "failed",
+      error: String(err?.message || err).slice(0, 300),
+    });
+    console.error("[studio] generate failed:", err?.message || err);
+    return studioJson(500, { ok: false, error: "generation_failed" }, origin);
+  }
+}
+
+async function handleStudioSessionStatus({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const db = getDb();
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  const n = String(Number(body?.versionNumber) || 1);
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const v = await sRef.collection("versions").doc(n).get();
+  return studioJson(200, {
+    ok: true,
+    currentVersion: sSnap.data().currentVersion || 0,
+    version: v.exists ? Object.assign({ n: Number(n) }, v.data()) : null,
+  }, origin);
+}
+
+async function handleStudioKind({ kind, body, event }) {
+  const origin = (event?.headers && (event.headers.origin || event.headers.Origin)) || "";
+  try {
+    if (kind === "custom_charm_precheck") return await handleStudioPrecheck({ body, event, origin });
+    if (kind === "custom_charm_generate" || kind === "custom_charm_refine") {
+      return await handleStudioGenerate({ kind, body, event, origin });
+    }
+    if (kind === "custom_session_status") return await handleStudioSessionStatus({ body, event, origin });
+    return studioJson(400, { ok: false, error: "unknown_kind" }, origin);
+  } catch (err) {
+    if (err?.status) return studioJson(err.status, { ok: false, error: err.message }, origin);
+    console.error("[studio]", kind, err);
+    return studioJson(500, { ok: false, error: "server_error" }, origin);
+  }
+}
+
 exports.handler = async (event) => {
   // Top-level safety net. Any error inside the handler that isn't
   // caught by the inner try/catch blocks would otherwise bubble up to
@@ -1979,6 +2786,17 @@ async function _handlerImpl(event) {
 
   const body = parseJsonBody(event);
   if (!body) return json(400, { error: { message: "Invalid JSON body" } });
+
+  // ---------------------------------------------------------------------
+  // Custom Charm Studio (storefront, customer-facing). Dispatched before
+  // every existing kind and before the destructure below, because these
+  // requests are authenticated with a Firebase ID token, answer a
+  // storefront-locked CORS origin rather than "*", and share none of the
+  // Listing Generator's body contract. No existing kind is affected.
+  // ---------------------------------------------------------------------
+  if (STUDIO_KINDS.has(body.kind)) {
+    return await handleStudioKind({ kind: body.kind, body, event });
+  }
 
   const {
     jobId,
@@ -2057,10 +2875,16 @@ async function _handlerImpl(event) {
     return json(200, {
       ok: true,
       proxy: "geminiImageProxy-background",
-      capabilitiesVersion: 12,
+      // 13: adds the Custom Charm Studio kinds and the customer_reference
+      // role vocabulary. Every key below 13 is unchanged — the Listing
+      // Generator hard-gates on them.
+      capabilitiesVersion: 13,
       roleModes: Object.keys(IMAGE_ROLE_LABELS),
       supportsStyleReference: Object.prototype.hasOwnProperty.call(IMAGE_ROLE_LABELS, "style_reference"),
       supportsCharmConceptPlanning: true,
+      supportsCharmBatchOrchestration: true,
+      supportsCharmBatchRecovery: true,
+      supportsBatchSweep: true,
       // charm_geometry_policy is appended by the backend AFTER all role
       // labels, as the request's final word (charmPolicyFinalText).
       supportsBackendFinalGeometryOverride: true,
@@ -2092,6 +2916,13 @@ async function _handlerImpl(event) {
       backgroundPolicies: ["solid_black"],
       supportsGenerations: true,
       imageModels: Object.keys(IMAGE_MODEL_CONFIG),
+      // Custom Charm Studio (storefront). Firebase-ID-token authenticated,
+      // storefront-locked CORS, server-side wallet with refund on failure.
+      supportsCustomCharmStudio: true,
+      customStudioKinds: Array.from(STUDIO_KINDS),
+      customStudioAuth: "firebase_id_token",
+      customStudioReusesCharmDoctrine: true,
+      supportsCustomerReferenceRole: Object.prototype.hasOwnProperty.call(IMAGE_ROLE_LABELS, "customer_reference"),
     });
   }
 
@@ -2119,6 +2950,632 @@ async function _handlerImpl(event) {
     return json(400, { ok: false, error: safeErr(err) });
   }
   const model = modelConfig.id;
+
+  // ============================================================
+  // CHARM BATCH ORCHESTRATION — fully server-side, tab-independent.
+  // ------------------------------------------------------------
+  // One request from the browser hands over the ENTIRE job: the charm
+  // list, derivatives count and model. This background function then does
+  // everything the browser used to do — per-charm concept planning,
+  // per-set folder/snapshot/manifest creation, prompt + embedded-metadata
+  // building (via the *Server mirror builders), and dense batch_submit
+  // chunks — persisting progress to Firestore as it goes. If the work
+  // exceeds one background invocation's budget it SELF-CHAINS: it POSTs
+  // itself a resume request and returns. Collection is handled by
+  // batch_sweep (fired by charmBatchSweepCron), so neither submission nor
+  // collection ever depends on a browser being open.
+  // ============================================================
+  if (kind === "charm_batch_orchestrate") {
+    const db = getDb();
+    const bucket = admin.storage().bucket();
+    const ORCH_BUDGET_MS = 10.5 * 60 * 1000;
+    const ORCH_CHUNK_SETS = 25;
+    const startedAtMs = Date.now();
+
+    const inProcess = async (payload) => {
+      const res = await module.exports.handler({
+        httpMethod: "POST",
+        headers: {},
+        body: JSON.stringify(payload),
+      });
+      let parsed = null;
+      try { parsed = res && res.body ? JSON.parse(res.body) : null; } catch (_) {}
+      return { statusCode: res?.statusCode || 0, body: parsed };
+    };
+
+    const selfChain = async (orchestrationId) => {
+      const origin = (process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || "").replace(/\/+$/, "");
+      if (!origin) { console.warn("[orchestrate] no site origin env — sweep cron will resume instead"); return; }
+      try {
+        await fetch(`${origin}/.netlify/functions/geminiImageProxy-background`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "charm_batch_orchestrate", orchestrationId, resume: true }),
+        });
+      } catch (e) {
+        console.warn("[orchestrate] self-chain failed — sweep cron will resume:", e?.message || e);
+      }
+    };
+
+    const latestUnderPrefix = async (prefix) => {
+      try {
+        const [files] = await bucket.getFiles({ prefix, maxResults: 500 });
+        let best = null, bestMs = -1;
+        for (const f of files) {
+          if (f.name.endsWith("/")) continue;
+          const ms = Date.parse(f.metadata?.updated || f.metadata?.timeCreated || "") || 0;
+          if (ms > bestMs) { bestMs = ms; best = f.name; }
+        }
+        return best;
+      } catch (_) { return null; }
+    };
+
+    try {
+      let orchRef, orch;
+      if (body?.resume && body?.orchestrationId) {
+        orchRef = db.collection(ORCH_COLL).doc(String(body.orchestrationId));
+        const snap = await orchRef.get();
+        if (!snap.exists) return json(404, { ok: false, error: { message: "orchestration not found" } });
+        orch = snap.data();
+        if (orch.status !== "running") return json(200, { ok: true, orchestrationId: orchRef.id, status: orch.status, note: "already final" });
+      } else {
+        const charms = Array.isArray(body?.charms)
+          ? body.charms
+              .map((c) => ({ fullPath: String(c?.fullPath || "").trim(), name: String(c?.name || "").trim() }))
+              .filter((c) => c.fullPath)
+          : [];
+        if (!charms.length) return json(400, { ok: false, error: { message: "charms must be a non-empty array" } });
+        const derivCount = Math.max(1, Math.min(8, Number(body?.derivCount) || 1));
+        if (charms.length * derivCount > 1000) {
+          return json(400, { ok: false, error: { message: "Per-orchestration limit is 1000 sets." } });
+        }
+        // Resolve the shared refs the manifests record, once per orchestration.
+        const earringRef = await latestUnderPrefix("listing-generator-1/Charm_Maker/New_Charms_Earrings/");
+        const lineArtRef = await latestUnderPrefix("listing-generator-1/Charm_Maker/Reference_Line_Art_Image/");
+        orchRef = db.collection(ORCH_COLL).doc(`orch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+        orch = {
+          orchestrationId: orchRef.id,
+          sessionId: String(body?.sessionId || orchRef.id),
+          model,
+          derivCount,
+          charms,
+          earringRef: earringRef || null,
+          lineArtRef: lineArtRef || null,
+          cursor: 0,
+          setsPlanned: charms.length * derivCount,
+          setsPrepared: 0,
+          chunksSubmitted: 0,
+          batchNames: [],
+          prepSkipped: [],
+          chunkErrors: [],
+          status: "running",
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        await firestoreRetry(() => orchRef.set(orch), "orch.create");
+      }
+
+      const persist = async (patch) => {
+        Object.assign(orch, patch);
+        await firestoreRetry(
+          () => orchRef.set({ ...patch, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true }),
+          "orch.update"
+        );
+      };
+
+      let pendingSets = [];
+      let lastStamp = 0;
+
+      const submitPending = async () => {
+        if (!pendingSets.length) return;
+        const chunk = pendingSets;
+        pendingSets = [];
+        const partN = (orch.chunksSubmitted || 0) + 1;
+        const dn = `cm-charms-${String(orch.sessionId).slice(-8)}-part${partN}`;
+        let resp = await inProcess({
+          kind: "batch_submit", model: orch.model, sets: chunk,
+          imageSize: "2K", displayName: dn, sessionId: orch.sessionId,
+        });
+        if (!(resp.body && resp.body.ok)) {
+          console.warn(`[orchestrate] chunk ${dn} submit failed — retrying once`, resp.body?.error);
+          await sleep(8000);
+          resp = await inProcess({
+            kind: "batch_submit", model: orch.model, sets: chunk,
+            imageSize: "2K", displayName: dn, sessionId: orch.sessionId,
+          });
+        }
+        if (resp.body && resp.body.ok) {
+          await persist({
+            chunksSubmitted: partN,
+            batchNames: [...(orch.batchNames || []), resp.body.batchName].filter(Boolean),
+          });
+        } else {
+          await persist({
+            chunksSubmitted: partN,
+            chunkErrors: [...(orch.chunkErrors || []), { part: partN, sets: chunk.length, error: String(resp.body?.error?.message || `HTTP ${resp.statusCode}`).slice(0, 300) }].slice(0, 40),
+          });
+        }
+        await sleep(2000); // Files API stagger
+      };
+
+      while (orch.cursor < orch.charms.length && (Date.now() - startedAtMs) < ORCH_BUDGET_MS) {
+        const charm = orch.charms[orch.cursor];
+        let plan = null;
+        try {
+          plan = await planComplementaryCharmConcepts({ sourceStoragePath: charm.fullPath, count: orch.derivCount });
+        } catch (planErr) {
+          console.warn(`[orchestrate] planning failed for ${charm.name} — skipping`, planErr?.message || planErr);
+          await persist({
+            cursor: orch.cursor + 1,
+            prepSkipped: [...(orch.prepSkipped || []), { charm: charm.name, error: String(planErr?.message || planErr).slice(0, 200) }].slice(0, 60),
+          });
+          continue;
+        }
+        const planMeta = {
+          version: Number(plan?.version) || 1,
+          referenceSubject: cmCleanText(plan?.referenceSubject),
+          buyerProfile: cmCleanText(plan?.buyerProfile),
+          purchaseSignals: Array.isArray(plan?.purchaseSignals) ? plan.purchaseSignals.slice(0, 6) : [],
+        };
+
+        for (let d = 0; d < orch.derivCount; d++) {
+          const concept = plan.concepts[d] || plan.concepts[plan.concepts.length - 1];
+          let stamp = Date.now() + Math.floor(Math.random() * 10000);
+          if (stamp <= lastStamp) stamp = lastStamp + 1;
+          lastStamp = stamp;
+          const folderId = `Deriv_${stamp}`;
+          const outputBase = `listing-generator-1/Charm_Maker/Generated_Charm_Sets/${folderId}`;
+
+          // Reference snapshot (mirror of snapshot_charm_reference, inline).
+          let sourceSnapshot = null;
+          try {
+            const srcFile = bucket.file(charm.fullPath);
+            const [exists] = await srcFile.exists();
+            if (exists) {
+              let mime = "image/png";
+              try { const [m] = await srcFile.getMetadata(); mime = String(m?.contentType || mime).toLowerCase(); } catch (_) {}
+              const ext = mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+              const dst = `${outputBase}/Source_Ref.${ext}`;
+              await srcFile.copy(bucket.file(dst));
+              try {
+                await bucket.file(dst).setMetadata({ metadata: { firebaseStorageDownloadTokens: newDownloadToken() } });
+              } catch (_) {}
+              sourceSnapshot = dst;
+            }
+          } catch (snapErr) {
+            console.warn(`[orchestrate] snapshot failed for ${folderId}`, snapErr?.message || snapErr);
+          }
+
+          const manifest = {
+            sourceCharm: charm.fullPath,
+            sourceSnapshot,
+            sourceEarring: orch.earringRef || null,
+            lineArtRef: orch.lineArtRef || null,
+            charmConceptPlan: planMeta,
+            charmConcept: concept,
+            imageDescriptions: {
+              necklace: buildCharmImageDescriptionServer(concept, planMeta, "necklace"),
+              earring: buildCharmImageDescriptionServer(concept, planMeta, "earring"),
+            },
+            model: orch.model,
+            batchQueued: true,
+            orchestrationId: orchRef.id,
+            timestamp: new Date().toISOString(),
+          };
+          try {
+            await bucket.file(`${outputBase}/manifest.json`).save(
+              Buffer.from(JSON.stringify(manifest, null, 2), "utf8"),
+              { contentType: "application/json", resumable: false }
+            );
+          } catch (mErr) {
+            console.warn(`[orchestrate] manifest write failed for ${folderId} — skipping set`, mErr?.message || mErr);
+            continue;
+          }
+
+          pendingSets.push({
+            category: "Charms",
+            outputBasePath: outputBase,
+            setN: stamp,
+            setKind: "charm_maker",
+            manifest,
+            tasks: [{
+              type: "edits",
+              slotIndex: 0,
+              input_storage_path: charm.fullPath,
+              prompt: buildCharmDesignPromptServer(concept, planMeta),
+              image_roles: "style_reference",
+              background_policy: "solid_black",
+              charm_geometry_policy: "flat_integrated_eyelet",
+              embed_metadata: buildCharmEmbedMetadataServer(concept, planMeta, "necklace"),
+            }],
+          });
+          orch.setsPrepared = (orch.setsPrepared || 0) + 1;
+        }
+
+        await persist({ cursor: orch.cursor + 1, setsPrepared: orch.setsPrepared });
+        if (pendingSets.length >= ORCH_CHUNK_SETS) await submitPending();
+      }
+
+      // Never carry unsubmitted sets across invocations — flush now.
+      await submitPending();
+
+      if (orch.cursor < orch.charms.length) {
+        await persist({ status: "running" });
+        await selfChain(orchRef.id);
+        return json(200, {
+          ok: true, orchestrationId: orchRef.id, status: "running",
+          progress: { cursor: orch.cursor, of: orch.charms.length, setsPrepared: orch.setsPrepared, chunksSubmitted: orch.chunksSubmitted },
+          chained: true,
+        });
+      }
+
+      await persist({ status: "submitted", finishedAt: admin.firestore.FieldValue.serverTimestamp() });
+      return json(200, {
+        ok: true, orchestrationId: orchRef.id, status: "submitted",
+        setsPrepared: orch.setsPrepared, chunksSubmitted: orch.chunksSubmitted,
+        prepSkipped: (orch.prepSkipped || []).length, chunkErrors: orch.chunkErrors || [],
+      });
+    } catch (err) {
+      console.error("[charm_batch_orchestrate] failed", safeErr(err));
+      return json(502, { ok: false, error: safeErr(err) });
+    }
+  }
+
+  // ============================================================
+  // CHARM BATCH RECOVERY — resubmit sets that never got images.
+  // ------------------------------------------------------------
+  // When a submission dies mid-run (browser sleep, deploy, crash), the
+  // affected Deriv_ folders are left with a manifest.json + Source_Ref
+  // snapshot but NO Slot_1.png. Every expensive artifact — the planned
+  // concept, buyer analysis, tailored descriptions — is already in that
+  // manifest, so recovery rebuilds each set's slot-0 task FROM the
+  // manifest (zero re-planning cost) and resubmits in dense chunks.
+  //
+  // Safety rails:
+  //   • a set whose Slot_1.png exists is finished — skipped;
+  //   • a set referenced by an UNCOLLECTED, non-failed batch is already
+  //     in flight at Gemini — skipped (no double spend);
+  //   • a set with no manifest.charmConcept (pre-concept legacy) is
+  //     counted and skipped rather than guessed at.
+  // Runs on the background function, self-chains across invocations via
+  // a lexicographic folder-name cursor, and reports progress through the
+  // same orchestration records the panel already displays.
+  // ============================================================
+  if (kind === "charm_batch_recover") {
+    const db = getDb();
+    const bucket = admin.storage().bucket();
+    const REC_BUDGET_MS = 10.5 * 60 * 1000;
+    const REC_CHUNK_SETS = 25;
+    const SETS_PREFIX = "listing-generator-1/Charm_Maker/Generated_Charm_Sets/";
+    const startedAtMs = Date.now();
+
+    const inProcess = async (payload) => {
+      const res = await module.exports.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(payload) });
+      let parsed = null;
+      try { parsed = res && res.body ? JSON.parse(res.body) : null; } catch (_) {}
+      return { statusCode: res?.statusCode || 0, body: parsed };
+    };
+    const selfChain = async (orchestrationId) => {
+      const origin = (process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || "").replace(/\/+$/, "");
+      if (!origin) return;
+      try {
+        await fetch(`${origin}/.netlify/functions/geminiImageProxy-background`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "charm_batch_recover", orchestrationId, resume: true }),
+        });
+      } catch (e) { console.warn("[recover] self-chain failed — sweep will resume:", e?.message || e); }
+    };
+
+    try {
+      let orchRef, orch;
+      if (body?.resume && body?.orchestrationId) {
+        orchRef = db.collection(ORCH_COLL).doc(String(body.orchestrationId));
+        const snap = await orchRef.get();
+        if (!snap.exists) return json(404, { ok: false, error: { message: "recovery run not found" } });
+        orch = snap.data();
+        if (orch.status !== "running") return json(200, { ok: true, orchestrationId: orchRef.id, status: orch.status });
+      } else {
+        orchRef = db.collection(ORCH_COLL).doc(`rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+        orch = {
+          orchestrationId: orchRef.id,
+          sessionId: String(body?.sessionId || orchRef.id),
+          type: "recovery",
+          model,
+          cursorName: "",
+          scanned: 0,
+          resubmitted: 0,
+          alreadyDone: 0,
+          inFlightSkipped: 0,
+          missingManifest: 0,
+          setsPlanned: 0,
+          setsPrepared: 0,
+          chunksSubmitted: 0,
+          batchNames: [],
+          chunkErrors: [],
+          status: "running",
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        await firestoreRetry(() => orchRef.set(orch), "recover.create");
+      }
+
+      const persist = async (patch) => {
+        Object.assign(orch, patch);
+        await firestoreRetry(
+          () => orchRef.set({ ...patch, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true }),
+          "recover.update"
+        );
+      };
+
+      // Exclusion set: outputBasePaths already sitting in an uncollected,
+      // non-failed Gemini batch (submitted, pending, running, or succeeded
+      // and awaiting the sweep's collection).
+      const normSt = (x) => String(x || "").startsWith("BATCH_STATE_") ? "JOB_STATE_" + String(x).slice(12) : String(x || "");
+      const finalFailed = (st) => ["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normSt(st));
+      const inFlight = new Set();
+      const openSnap = await db.collection(BATCHES_COLL).where("collected", "==", false).limit(500).get();
+      openSnap.forEach((d) => {
+        const b = d.data();
+        if (finalFailed(b.state)) return; // that batch is dead — its sets ARE recoverable
+        for (const s of (b.sets || [])) if (s?.outputBasePath) inFlight.add(s.outputBasePath);
+      });
+
+      let pendingSets = [];
+      const submitPending = async () => {
+        if (!pendingSets.length) return;
+        const chunk = pendingSets;
+        pendingSets = [];
+        const partN = (orch.chunksSubmitted || 0) + 1;
+        const dn = `cm-recover-${String(orch.sessionId).slice(-8)}-part${partN}`;
+        let resp = await inProcess({ kind: "batch_submit", model: orch.model, sets: chunk, imageSize: "2K", displayName: dn, sessionId: orch.sessionId });
+        if (!(resp.body && resp.body.ok)) {
+          await sleep(8000);
+          resp = await inProcess({ kind: "batch_submit", model: orch.model, sets: chunk, imageSize: "2K", displayName: dn, sessionId: orch.sessionId });
+        }
+        if (resp.body && resp.body.ok) {
+          await persist({ chunksSubmitted: partN, resubmitted: (orch.resubmitted || 0), batchNames: [...(orch.batchNames || []), resp.body.batchName].filter(Boolean) });
+        } else {
+          await persist({ chunksSubmitted: partN, chunkErrors: [...(orch.chunkErrors || []), { part: partN, sets: chunk.length, error: String(resp.body?.error?.message || `HTTP ${resp.statusCode}`).slice(0, 300) }].slice(0, 40) });
+        }
+        await sleep(2000);
+      };
+
+      // Page through set folders lexicographically, resuming past cursorName.
+      let query = {
+        prefix: SETS_PREFIX,
+        delimiter: "/",
+        autoPaginate: false,
+        maxResults: 500,
+      };
+      if (orch.cursorName) query.startOffset = SETS_PREFIX + orch.cursorName;
+      let exhausted = false;
+
+      while (!exhausted && (Date.now() - startedAtMs) < REC_BUDGET_MS) {
+        const [files, nextQuery, apiResp] = await bucket.getFiles(query);
+        const prefixes = (apiResp && apiResp.prefixes) || [];
+        for (const p of prefixes) {
+          if ((Date.now() - startedAtMs) >= REC_BUDGET_MS) break;
+          const folderName = p.slice(SETS_PREFIX.length).replace(/\/$/, "");
+          if (!folderName.startsWith("Deriv_")) continue;
+          if (orch.cursorName && folderName <= orch.cursorName) continue; // startOffset is inclusive
+          orch.scanned = (orch.scanned || 0) + 1;
+
+          const base = SETS_PREFIX + folderName;
+          try {
+            const [slotExists] = await bucket.file(`${base}/Slot_1.png`).exists();
+            if (slotExists) { orch.alreadyDone = (orch.alreadyDone || 0) + 1; orch.cursorName = folderName; continue; }
+            if (inFlight.has(base)) { orch.inFlightSkipped = (orch.inFlightSkipped || 0) + 1; orch.cursorName = folderName; continue; }
+
+            let manifest = null;
+            try {
+              const [buf] = await bucket.file(`${base}/manifest.json`).download();
+              manifest = JSON.parse(buf.toString("utf8"));
+            } catch (_) {}
+            if (!manifest || !manifest.charmConcept || !manifest.sourceCharm) {
+              orch.missingManifest = (orch.missingManifest || 0) + 1;
+              orch.cursorName = folderName;
+              continue;
+            }
+
+            const concept = manifest.charmConcept;
+            const planMeta = manifest.charmConceptPlan || null;
+            const inputPath = manifest.sourceSnapshot || manifest.sourceCharm;
+            pendingSets.push({
+              category: "Charms",
+              outputBasePath: base,
+              setN: Number((folderName.match(/Deriv_(\d+)/) || [])[1] || 0),
+              setKind: "charm_maker",
+              manifest,
+              tasks: [{
+                type: "edits",
+                slotIndex: 0,
+                input_storage_path: inputPath,
+                prompt: buildCharmDesignPromptServer(concept, planMeta),
+                image_roles: "style_reference",
+                background_policy: "solid_black",
+                charm_geometry_policy: "flat_integrated_eyelet",
+                embed_metadata: buildCharmEmbedMetadataServer(concept, planMeta, "necklace"),
+              }],
+            });
+            orch.resubmitted = (orch.resubmitted || 0) + 1;
+            orch.setsPrepared = orch.resubmitted;
+            orch.setsPlanned = orch.resubmitted;
+            orch.cursorName = folderName;
+            if (pendingSets.length >= REC_CHUNK_SETS) {
+              await persist({
+                cursorName: orch.cursorName, scanned: orch.scanned, resubmitted: orch.resubmitted,
+                alreadyDone: orch.alreadyDone, inFlightSkipped: orch.inFlightSkipped,
+                missingManifest: orch.missingManifest, setsPrepared: orch.setsPrepared, setsPlanned: orch.setsPlanned,
+              });
+              await submitPending();
+            }
+          } catch (folderErr) {
+            console.warn(`[recover] folder ${folderName} failed — skipping`, folderErr?.message || folderErr);
+            orch.cursorName = folderName;
+          }
+        }
+        await persist({
+          cursorName: orch.cursorName, scanned: orch.scanned, resubmitted: orch.resubmitted,
+          alreadyDone: orch.alreadyDone, inFlightSkipped: orch.inFlightSkipped,
+          missingManifest: orch.missingManifest, setsPrepared: orch.setsPrepared, setsPlanned: orch.setsPlanned,
+        });
+        if (nextQuery) { query = nextQuery; } else { exhausted = true; }
+      }
+
+      await submitPending();
+
+      if (!exhausted) {
+        await persist({ status: "running" });
+        await selfChain(orchRef.id);
+        return json(200, {
+          ok: true, orchestrationId: orchRef.id, status: "running", chained: true,
+          progress: { scanned: orch.scanned, resubmitted: orch.resubmitted, alreadyDone: orch.alreadyDone },
+        });
+      }
+
+      await persist({ status: "submitted", finishedAt: admin.firestore.FieldValue.serverTimestamp() });
+      return json(200, {
+        ok: true, orchestrationId: orchRef.id, status: "submitted",
+        scanned: orch.scanned, resubmitted: orch.resubmitted, alreadyDone: orch.alreadyDone,
+        inFlightSkipped: orch.inFlightSkipped, missingManifest: orch.missingManifest,
+        chunksSubmitted: orch.chunksSubmitted, chunkErrors: orch.chunkErrors || [],
+      });
+    } catch (err) {
+      console.error("[charm_batch_recover] failed", safeErr(err));
+      return json(502, { ok: false, error: safeErr(err) });
+    }
+  }
+
+  // Lightweight progress read for the Charm Maker panel. Inline-safe.
+  if (kind === "charm_batch_status") {
+    try {
+      const db = getDb();
+      const snap = await db.collection(ORCH_COLL).orderBy("createdAt", "desc").limit(20).get();
+      const orchestrations = [];
+      snap.forEach((doc) => {
+        const o = doc.data();
+        if (body?.sessionId && o.sessionId !== body.sessionId) return;
+        orchestrations.push({
+          orchestrationId: o.orchestrationId || doc.id,
+          sessionId: o.sessionId || null,
+          type: o.type || "orchestration",
+          status: o.status || "unknown",
+          model: o.model || null,
+          scanned: o.scanned || 0,
+          resubmitted: o.resubmitted || 0,
+          alreadyDone: o.alreadyDone || 0,
+          inFlightSkipped: o.inFlightSkipped || 0,
+          missingManifest: o.missingManifest || 0,
+          charmsTotal: Array.isArray(o.charms) ? o.charms.length : 0,
+          cursor: o.cursor || 0,
+          setsPlanned: o.setsPlanned || 0,
+          setsPrepared: o.setsPrepared || 0,
+          chunksSubmitted: o.chunksSubmitted || 0,
+          batchNames: (o.batchNames || []).length,
+          prepSkipped: (o.prepSkipped || []).length,
+          chunkErrors: (o.chunkErrors || []).length,
+          createdAt: o.createdAt?.toMillis?.() || null,
+          updatedAt: o.updatedAt?.toMillis?.() || null,
+        });
+      });
+      return json(200, { ok: true, orchestrations });
+    } catch (err) {
+      return json(502, { ok: false, error: safeErr(err) });
+    }
+  }
+
+  // ============================================================
+  // BATCH SWEEP — server-side status refresh + auto-collect + stall
+  // recovery. Fired by charmBatchSweepCron every few minutes, so batch
+  // results are downloaded into Firebase even when no browser is open.
+  // Also resumes orchestrations whose self-chain was dropped.
+  // ============================================================
+  if (kind === "batch_sweep") {
+    const db = getDb();
+    const SWEEP_BUDGET_MS = 11 * 60 * 1000;
+    const sweepStart = Date.now();
+    const guardRef = db.collection("LG1_Config").doc("batchSweep");
+
+    const inProcess = async (payload) => {
+      const res = await module.exports.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(payload) });
+      let parsed = null;
+      try { parsed = res && res.body ? JSON.parse(res.body) : null; } catch (_) {}
+      return parsed;
+    };
+
+    try {
+      // Overlap guard: skip if another sweep started < 12 minutes ago.
+      const guard = await guardRef.get();
+      const runningSince = guard.exists ? (guard.data().runningSince?.toMillis?.() || 0) : 0;
+      if (runningSince && Date.now() - runningSince < 12 * 60 * 1000) {
+        return json(200, { ok: true, skipped: "sweep already running" });
+      }
+      await guardRef.set({ runningSince: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+
+      const normState = (st) => {
+        const x = String(st || "");
+        return x.startsWith("BATCH_STATE_") ? "JOB_STATE_" + x.slice(12) : x;
+      };
+      const isFinal = (st) => ["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normState(st));
+      const isSucceeded = (st) => normState(st) === "JOB_STATE_SUCCEEDED";
+
+      let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0;
+
+      const openSnap = await db.collection(BATCHES_COLL).where("collected", "==", false).limit(250).get();
+      const open = [];
+      openSnap.forEach((d) => open.push(d.data()));
+      // Oldest first so long-waiting batches are served before fresh ones.
+      open.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+
+      for (const b of open) {
+        if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        if (!b.batchName || isFinal(b.state)) continue;
+        let state = b.state;
+        if (!isSucceeded(state)) {
+          const st = await inProcess({ kind: "batch_status", batchName: b.batchName });
+          statusChecked++;
+          state = st?.state || state;
+        }
+        if (isSucceeded(state)) {
+          const col = await inProcess({ kind: "batch_collect", batchName: b.batchName });
+          if (col?.ok) collected++; else collectErrors++;
+        }
+      }
+
+      // Resume orchestrations whose self-chain got dropped (no update in 20m).
+      const orchSnap = await db.collection(ORCH_COLL).where("status", "==", "running").limit(20).get();
+      const origin = (process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || "").replace(/\/+$/, "");
+      const stale = [];
+      orchSnap.forEach((d) => {
+        const o = d.data();
+        const upd = o.updatedAt?.toMillis?.() || 0;
+        if (Date.now() - upd > 20 * 60 * 1000) stale.push(o.orchestrationId || d.id);
+      });
+      for (const id of stale) {
+        if (!origin) break;
+        try {
+          await fetch(`${origin}/.netlify/functions/geminiImageProxy-background`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "charm_batch_orchestrate", orchestrationId: id, resume: true }),
+          });
+          resumed++;
+        } catch (e) { console.warn("[batch_sweep] orchestration resume failed:", id, e?.message || e); }
+      }
+
+      await guardRef.set({
+        runningSince: null,
+        lastSweepAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastResult: { statusChecked, collected, collectErrors, resumed },
+      }, { merge: true });
+      return json(200, { ok: true, statusChecked, collected, collectErrors, resumed, openBatches: open.length });
+    } catch (err) {
+      try { await guardRef.set({ runningSince: null }, { merge: true }); } catch (_) {}
+      console.error("[batch_sweep] failed", safeErr(err));
+      return json(502, { ok: false, error: safeErr(err) });
+    }
+  }
 
   // ---------- NEW: non-job operations (no jobId required) ----------
   try {
