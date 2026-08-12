@@ -1000,7 +1000,12 @@ exports.handler = async (event) => {
        reason the storefront needs in order to re-authenticate */
     if (err && err.status) {
       if (err.detail) console.error("[britesAuth]", body && body.kind, err.message, "—", err.detail);
-      return json(err.status, { ok: false, error: err.message });
+      /* The email_* classes carry the provider's own rejection text. Returning
+         it is safe — it is Google's error message, no secrets in it — and it
+         means a failing send can be diagnosed from the storefront's network
+         tab instead of the Netlify log viewer. Other classes stay opaque. */
+      const expose = /^email_/.test(err.message) ? String(err.detail || "").slice(0, 400) : undefined;
+      return json(err.status, { ok: false, error: err.message, detail: expose });
     }
     console.error("[britesAuth]", body && body.kind, err);
     return json(500, { ok: false, error: "server_error" });
