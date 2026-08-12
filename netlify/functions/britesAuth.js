@@ -62,6 +62,12 @@
  *        · FIREBASE_PRIVATE_KEY additionally seeds the code-hashing pepper
  *          through HKDF-SHA256 (server-only secret, never leaves the lambda)
  *    GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET   Gmail send + Google credential aud
+ *        · The config/gmailOauth grant must include https://mail.google.com/
+ *          — the scope _etsyMailGmail.js names as preferred. EtsyMail was
+ *          seeded read-only because reading Etsy notifications was all it
+ *          needed, and Gmail answers messages/send with PERMISSION_DENIED on a
+ *          read-only grant. Re-seed with the wider scope; it is a superset, so
+ *          EtsyMail is unaffected and no new credential is introduced.
  *    SHOPIFY_STORE / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET   customer sync
  *
  *  Anything that would otherwise be a new variable is instead a field on the
@@ -117,7 +123,9 @@ async function refreshGmailToken(oldRefreshToken) {
   return data.access_token;
 }
 
+let sharedFailure = null;
 async function gmailSend(rawBase64Url) {
+  sharedFailure = null;
   if (sharedGmailFetch) {
     /* Borrowed from _etsyMailGmail when it is deployed alongside — but a
        helper written for another pipeline must never be the single point of
@@ -126,7 +134,11 @@ async function gmailSend(rawBase64Url) {
     try {
       return await sharedGmailFetch("/messages/send", { method: "POST", body: JSON.stringify({ raw: rawBase64Url }) });
     } catch (e) {
-      console.warn("[britesAuth] shared gmailFetch failed, using own path:", e && e.message);
+      /* Keep the reason. This helper owns the site's WORKING mail credentials,
+         so when it fails its message is the most informative thing available —
+         swallowing it into a console.warn is what hid the real story here. */
+      sharedFailure = "shared gmailFetch: " + ((e && e.message) || e);
+      console.warn("[britesAuth]", sharedFailure);
     }
   }
   const snap = await db.doc(OAUTH_DOC_PATH).get();
@@ -166,56 +178,44 @@ async function gmailSend(rawBase64Url) {
   return res.json();
 }
 
-/* ── Resend: the transport this site actually sends customer email with ────
-   emailCapture.js delivers the welcome email through Resend
-   (RESEND_API_KEY + BRITES_EMAIL_FROM), from a sender verified on the
-   britesjewelry.com domain. This function originally borrowed the Gmail
-   pipeline from the etsymail project instead — and Gmail refused the send,
-   because the account that authorised those tokens is not
-   hello@britesjewelry.com and the grant was never scoped for sending as it.
+/* ── Sending ───────────────────────────────────────────────────────────────
+   One transport: the Gmail credentials this site already owns. britesAuth
+   calls _etsyMailGmail.gmailFetch — the same helper, the same
+   config/gmailOauth document, the same GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET
+   that EtsyMail runs on. gmailSend() above prefers that helper and falls back
+   to its own copy of the same logic when the module is not deployed.
 
-   So: Resend first, on the path already proven on this site, with Gmail kept
-   as the fallback for any deployment that has no Resend key. No new
-   environment variables — both already exist here. */
-async function resendSend({ to, subject, html, text }) {
-  const key = process.env.RESEND_API_KEY;
-  const res = await fetchFn("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: process.env.BRITES_EMAIL_FROM || `${FROM_NAME} <${FROM_EMAIL}>`,
-      to: [to], subject, html, text,
-    }),
-  });
-  if (!res.ok) {
-    const e = new Error("email_send_failed");
-    e.status = 502; e.detail = `Resend ${res.status}: ${(await res.text()).slice(0, 300)}`;
-    throw e;
-  }
-  return res.json();
-}
+   That grant was originally minted read-only, because reading Etsy
+   notifications was all it ever had to do; Gmail answered messages/send with
+   PERMISSION_DENIED accordingly. Re-seeding it with https://mail.google.com/
+   — the scope _etsyMailGmail.js names as preferred — is the whole fix, and it
+   is a superset of readonly, so EtsyMail is unaffected.
 
-/* One door for "send this email", so callers never care which transport ran.
-   Every transport that fails contributes its own words to the detail, because
-   "it did not send" without the provider's reason is what cost this feature a
-   day. */
+   Gmail sends AS the authorised account. If the branded From is not a verified
+   alias on it, Gmail rejects the header rather than rewriting it — so that one
+   case is retried without a From, which makes Gmail use the account's own
+   address. Delivered mail beats a perfect envelope. */
 async function deliverEmail({ to, subject, html, text }) {
-  const tried = [];
-  if (process.env.RESEND_API_KEY) {
-    try { return await resendSend({ to, subject, html, text }); }
-    catch (e) { tried.push(e.detail || e.message); }
-  } else {
-    tried.push("Resend: RESEND_API_KEY not set on this Netlify site");
-  }
+  const branded = `${FROM_NAME} <${FROM_EMAIL}>`;
+  const attempt = (from) => gmailSend(buildRawMessage({ to, subject, html, text, from }));
   try {
-    return await gmailSend(buildRawMessage({ to, subject, html, text }));
+    return await attempt(branded);
   } catch (e) {
-    tried.push(e.detail || e.message);
-    const err = new Error(tried.every((t) => /not set|not seeded|not configured/i.test(t))
-      ? "email_not_configured" : "email_send_failed");
-    err.status = err.message === "email_not_configured" ? 503 : 502;
-    err.detail = tried.join(" | ");
-    throw err;
+    const detail = String(e.detail || e.message || "");
+    if (/from|alias|sendAs|invalid/i.test(detail)) {
+      try {
+        const sent = await attempt(null);
+        console.warn("[britesAuth] sent as the authorised Gmail account —",
+                     branded, "is not a verified alias on it");
+        return sent;
+      } catch (e2) {
+        e2.detail = `${detail} | retried without From: ${e2.detail || e2.message}`;
+        throw e2;
+      }
+    }
+    if (sharedFailure) e.detail = `${sharedFailure} | ${e.detail || e.message}`;
+    else if (!sharedGmailFetch) e.detail = `_etsyMailGmail not deployed on this site | ${e.detail || e.message}`;
+    throw e;
   }
 }
 
@@ -291,7 +291,7 @@ function corsHeaders(origin) {
 let _origin = "";
 /* Stamped on every response. "Which build is actually deployed?" is otherwise
    unanswerable from the outside, and guessing at it has cost real time. */
-const FN_BUILD = "britesAuth-1.2.2";
+const FN_BUILD = "britesAuth-1.3.0";
 const json = (statusCode, body) => ({
   statusCode, headers: corsHeaders(_origin),
   body: JSON.stringify(Object.assign({ fn: FN_BUILD }, body)),
@@ -488,10 +488,13 @@ Brites Jewelry · Handmade in Toronto`;
 }
 
 /** RFC 2822 multipart/alternative message, base64url encoded for Gmail. */
-function buildRawMessage({ to, subject, html, text }) {
+function buildRawMessage({ to, subject, html, text, from }) {
   const boundary = "brites_" + crypto.randomBytes(12).toString("hex");
   const lines = [
-    `From: ${FROM_NAME} <${FROM_EMAIL}>`,
+    /* Omitting From makes Gmail use the authorised account's own address,
+       which is the correct behaviour when the branded address is not a
+       verified "Send mail as" alias on that account. */
+    ...(from === null ? [] : [`From: ${from || `${FROM_NAME} <${FROM_EMAIL}>`}`]),
     `To: ${to}`,
     `Subject: ${subject}`,
     "MIME-Version: 1.0",
@@ -845,7 +848,10 @@ async function sendCode(body, event) {
     }
     const windowStart = d.sendWindowStart && now - d.sendWindowStart < 3600e3 ? d.sendWindowStart : now;
     const sends = windowStart === d.sendWindowStart ? (d.sendCount || 0) : 0;
-    if (sends >= MAX_SENDS_HOUR) return { allow: false, status: 429, error: "too_many_requests" };
+    if (sends >= MAX_SENDS_HOUR) {
+      return { allow: false, status: 429, error: "too_many_requests",
+               retryInMs: Math.max(0, 3600e3 - (now - windowStart)) };
+    }
 
     const code = generateCode();
     tx.set(ref, {
