@@ -2552,6 +2552,22 @@ async function handleStudioPrecheck({ body, event, origin }) {
   }, origin);
 }
 
+/* A refusal decided before any work starts still has to reach the shopper, and
+   from a background invocation the HTTP response cannot. This puts it on the
+   version doc, which the studio is already watching. Best-effort by design:
+   failing to report a failure must not become a second failure. */
+async function studioFailVersion(vRef, n, error) {
+  try {
+    await vRef.set({
+      n: Number(n) || null,
+      status: "failed", stage: "failed", error: String(error).slice(0, 300),
+      failedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  } catch (e) {
+    console.error("[studio] could not record failure:", e?.message || e);
+  }
+}
+
 async function handleStudioGenerate({ kind, body, event, origin }) {
   const uid = await requireStudioUser(event);
   const cfg = await studioConfig();
@@ -2561,28 +2577,44 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
   const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
   if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
 
-  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
-      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
-    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
-  }
-
+  /* Ownership is checked FIRST, ahead of the rate limits, and the order is
+     deliberate. Everything after this point is allowed to write a failure into
+     the caller's own version doc — and it has to, because this function is
+     invoked in the background: Netlify answers the browser with its own 202
+     and the JSON we return here is read by nobody. A refusal that only exists
+     as an HTTP status is a refusal the shopper never sees; they just watch a
+     progress bar until the client's timeout gives up, with no reason given.
+     Writing it to the version doc puts it on the same channel as every other
+     outcome — the onSnapshot listener the studio is already holding open. */
   const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
   const sSnap = await sRef.get();
   if (!sSnap.exists || sSnap.data().uid !== uid) {
+    /* NOT reported to the version doc: this caller does not own this session,
+       so writing into it would be handing them a channel into someone else's
+       design. The HTTP 403 is the whole answer. */
     return studioJson(403, { ok: false, error: "forbidden" }, origin);
   }
   const session = sSnap.data();
+
+  const n = Number(body?.versionNumber) || (Number(session.currentVersion) || 0) + 1;
+  const vRef = sRef.collection("versions").doc(String(n));
+
+  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
+      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+    await studioFailVersion(vRef, n, "rate_limited");
+    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
+  }
 
   // 1) atomic debit, BEFORE any upstream call
   try {
     await studioDebit(uid, cost, sessionId);
   } catch (err) {
-    if (err?.status === 402) return studioJson(402, { ok: false, error: "out_of_credits" }, origin);
+    if (err?.status === 402) {
+      await studioFailVersion(vRef, n, "out_of_credits");
+      return studioJson(402, { ok: false, error: "out_of_credits" }, origin);
+    }
     throw err;
   }
-
-  const n = Number(body?.versionNumber) || (Number(session.currentVersion) || 0) + 1;
-  const vRef = sRef.collection("versions").doc(String(n));
   const instructions = studioCleanText(body?.instructions);
   const metal = studioCleanText(body?.metal || session.metal || "gold");
   const isRefine = kind === "custom_charm_refine" && n > 1;
