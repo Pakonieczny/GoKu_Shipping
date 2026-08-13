@@ -179,44 +179,77 @@ async function gmailSend(rawBase64Url) {
 }
 
 /* ── Sending ───────────────────────────────────────────────────────────────
-   One transport: the Gmail credentials this site already owns. britesAuth
-   calls _etsyMailGmail.gmailFetch — the same helper, the same
-   config/gmailOauth document, the same GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET
-   that EtsyMail runs on. gmailSend() above prefers that helper and falls back
-   to its own copy of the same logic when the module is not deployed.
+   Resend carries the mail. It is the transport emailCapture.js was written
+   for, from the domain-verified hello@britesjewelry.com sender, and it is the
+   only transactional sender this stack has: Shopify's automations fire on a
+   marketing subscribe and cannot be called with a one-time code, and the
+   EtsyMail Gmail grant is read-only by design (its own header names
+   .readonly as the minimum) so Gmail answers messages/send with
+   PERMISSION_DENIED.
 
-   That grant was originally minted read-only, because reading Etsy
-   notifications was all it ever had to do; Gmail answered messages/send with
-   PERMISSION_DENIED accordingly. Re-seeding it with https://mail.google.com/
-   — the scope _etsyMailGmail.js names as preferred — is the whole fix, and it
-   is a superset of readonly, so EtsyMail is unaffected.
+   Gmail is kept as a second attempt rather than deleted, because it costs
+   nothing when unconfigured and it means a deployment that later widens that
+   scope needs no code change. Every transport that fails contributes its own
+   words to the detail — "it did not send" without the provider's reason is
+   what made this expensive to diagnose. */
+async function resendSend({ to, subject, html, text }) {
+  const res = await fetchFn("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + process.env.RESEND_API_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: process.env.BRITES_EMAIL_FROM || `${FROM_NAME} <${FROM_EMAIL}>`,
+      to: [to], subject, html, text,
+    }),
+  });
+  if (!res.ok) {
+    const e = new Error("email_send_failed");
+    e.status = 502; e.detail = `Resend ${res.status}: ${(await res.text()).slice(0, 300)}`;
+    throw e;
+  }
+  return res.json();
+}
 
-   Gmail sends AS the authorised account. If the branded From is not a verified
-   alias on it, Gmail rejects the header rather than rewriting it — so that one
-   case is retried without a From, which makes Gmail use the account's own
-   address. Delivered mail beats a perfect envelope. */
 async function deliverEmail({ to, subject, html, text }) {
+  const tried = [];
+
+  if (process.env.RESEND_API_KEY) {
+    try { return await resendSend({ to, subject, html, text }); }
+    catch (e) { tried.push(e.detail || e.message); }
+  } else {
+    tried.push("Resend: RESEND_API_KEY not set on this Netlify site");
+  }
+
+  /* Gmail sends AS the authorised account and rejects a From it cannot send
+     as, so that one case is retried without a From header — Gmail then uses
+     the account's own address. Delivered mail beats a perfect envelope. */
   const branded = `${FROM_NAME} <${FROM_EMAIL}>`;
-  const attempt = (from) => gmailSend(buildRawMessage({ to, subject, html, text, from }));
+  const viaGmail = (from) => gmailSend(buildRawMessage({ to, subject, html, text, from }));
   try {
-    return await attempt(branded);
+    return await viaGmail(branded);
   } catch (e) {
     const detail = String(e.detail || e.message || "");
     if (/from|alias|sendAs|invalid/i.test(detail)) {
       try {
-        const sent = await attempt(null);
+        const sent = await viaGmail(null);
         console.warn("[britesAuth] sent as the authorised Gmail account —",
                      branded, "is not a verified alias on it");
         return sent;
-      } catch (e2) {
-        e2.detail = `${detail} | retried without From: ${e2.detail || e2.message}`;
-        throw e2;
-      }
+      } catch (e2) { tried.push(`${detail} | retried without From: ${e2.detail || e2.message}`); }
+    } else {
+      if (sharedFailure) tried.push(sharedFailure);
+      else if (!sharedGmailFetch) tried.push("_etsyMailGmail not deployed on this site");
+      tried.push(detail);
     }
-    if (sharedFailure) e.detail = `${sharedFailure} | ${e.detail || e.message}`;
-    else if (!sharedGmailFetch) e.detail = `_etsyMailGmail not deployed on this site | ${e.detail || e.message}`;
-    throw e;
   }
+
+  const err = new Error(tried.every((t) => /not set|not seeded|not configured|not deployed/i.test(t))
+    ? "email_not_configured" : "email_send_failed");
+  err.status = err.message === "email_not_configured" ? 503 : 502;
+  err.detail = tried.join(" | ");
+  throw err;
 }
 
 const VERIFY_COL       = "Brites_Studio_Verifications";   // matches Brites_* convention
@@ -291,7 +324,7 @@ function corsHeaders(origin) {
 let _origin = "";
 /* Stamped on every response. "Which build is actually deployed?" is otherwise
    unanswerable from the outside, and guessing at it has cost real time. */
-const FN_BUILD = "britesAuth-1.3.0";
+const FN_BUILD = "britesAuth-1.5.0";
 const json = (statusCode, body) => ({
   statusCode, headers: corsHeaders(_origin),
   body: JSON.stringify(Object.assign({ fn: FN_BUILD }, body)),
@@ -1044,6 +1077,74 @@ async function googleVerify(body) {
   return json(200, { ok: true, uid: user.uid, customToken, email, name: p.name || null, picture: p.picture || null });
 }
 
+/* ═════════ CROSS-BROWSER HANDOFF — the in-app browser escape ═════════════
+ * Google refuses OAuth inside an app's embedded browser (403
+ * disallowed_useragent), so the studio sends the shopper out to Safari or
+ * Chrome. That is a DIFFERENT browser with different storage: the anonymous
+ * Firebase session — and therefore every design, every credit, hanging off
+ * that uid — does not travel with them. These two kinds carry it.
+ *
+ *   mint  — authenticated. Stores a high-entropy code against the caller's own
+ *           uid. Five-minute life, single use.
+ *   claim — deliberately UNauthenticated, because the browser doing the
+ *           claiming has no session yet; that is the whole point. Presenting
+ *           the code IS the proof, so the code has to be unguessable and
+ *           short-lived, and it is: 32 random bytes, five minutes, deleted on
+ *           first use.
+ *
+ * The code rides in the URL FRAGMENT, which browsers never transmit to a
+ * server, so it does not reach Shopify's logs or any CDN on the way. Only its
+ * SHA-256 is stored, so a Firestore read cannot replay a live handoff — the
+ * same rule this file already applies to verification codes.
+ * ===================================================================== */
+const HANDOFF_COL    = "Brites_Studio_Handoffs";
+const HANDOFF_TTL_MS = 5 * 60 * 1000;
+const HANDOFF_MAX_PER_HOUR = 20;                 // per uid; a human needs one
+
+const handoffKey = (code) =>
+  crypto.createHash("sha256").update("handoff:" + String(code)).digest("hex");
+
+async function handoffMint(event) {
+  const uid = await requireStudioUser(event);
+  /* A human escapes an in-app browser once, maybe twice. A ceiling here stops
+     a stolen ID token from farming custom tokens for the same uid. */
+  if (!(await checkUidBudget(uid, "handoff", HANDOFF_MAX_PER_HOUR))) {
+    return json(429, { ok: false, error: "too_many_requests" });
+  }
+  const code = crypto.randomBytes(32).toString("base64url");
+  const now = Date.now();
+  await db.doc(`${HANDOFF_COL}/${handoffKey(code)}`).set({
+    uid, createdAt: now, expiresAt: now + HANDOFF_TTL_MS, used: false,
+  });
+  return json(200, { ok: true, code, expiresInMs: HANDOFF_TTL_MS });
+}
+
+async function handoffClaim(body) {
+  const code = String((body && body.code) || "");
+  /* base64url of 32 bytes is 43 characters. Anything else is not ours, and
+     rejecting it here keeps malformed input away from a document path. */
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(code)) return json(400, { ok: false, error: "bad_code" });
+  const ref = db.doc(`${HANDOFF_COL}/${handoffKey(code)}`);
+
+  /* A transaction, not a read-then-write: two tabs opened from the same copied
+     link must not both succeed, or a stale one could reclaim the uid later. */
+  const uid = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
+    const d = snap.data() || {};
+    if (d.used || !d.expiresAt || d.expiresAt < Date.now()) return null;
+    tx.set(ref, { used: true, usedAt: Date.now() }, { merge: true });
+    return d.uid || null;
+  });
+  if (!uid) return json(410, { ok: false, error: "handoff_expired" });
+
+  const customToken = await admin.auth().createCustomToken(uid, { handoff: true });
+  /* Best-effort tidy-up: the doc has served its purpose and holds nothing but
+     a hash, but there is no reason to keep it. */
+  ref.delete().catch(() => {});
+  return json(200, { ok: true, uid, token: customToken });
+}
+
 /* ═══════════════════════════════ router ══════════════════════════════ */
 
 exports.handler = async (event) => {
@@ -1069,6 +1170,8 @@ exports.handler = async (event) => {
       case "upload_ref":          return await uploadRef(body, event);
       case "wallet_get":          return await walletGet(body, event);
       case "wallet_grant_signup": return await walletGrantSignup(body, event);
+      case "handoff_mint":        return await handoffMint(event);
+      case "handoff_claim":       return await handoffClaim(body);
       default:              return json(400, { ok: false, error: "unknown_kind" });
     }
   } catch (err) {
