@@ -2303,12 +2303,41 @@ async function studioBudgetOk(key, id, max) {
    The client's credit meter is cosmetic. THIS is the quota: an atomic
    transaction that runs BEFORE Gemini is called, and a refund if the
    generation fails. */
+/* ── UNLIMITED ACCOUNTS ────────────────────────────────────────────────────
+ * `users/{uid}.wallet.unlimited === true` exempts an account from the credit
+ * meter: generations and renders still run, still log to the ledger, and
+ * still obey the hourly rate ceilings — only the balance is left alone.
+ *
+ * It lives on the USER document rather than in config/customStudio because
+ * that config doc is readable by any signed-in visitor (see firestore.rules),
+ * and a public list of staff uids is a needless thing to publish. The user doc
+ * is readable only by its owner, unwritable from any browser, and is ALREADY
+ * loaded inside this transaction — so the check costs nothing.
+ *
+ * Set it in the Firebase console; no deploy, no code change, and it survives
+ * every future top-up because nothing else writes that field.
+ * ===================================================================== */
+function walletIsUnlimited(w) {
+  return !!(w && w.unlimited === true);
+}
+
 async function studioDebit(uid, cost, sessionId) {
   const db = getDb();
   const ref = db.doc(`users/${uid}`);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const w = (snap.exists && snap.data().wallet) || {};
+
+    /* Unlimited: no balance check, no decrement — but still ledgered, so the
+       real cost of testing stays visible instead of becoming invisible. */
+    if (walletIsUnlimited(w)) {
+      tx.create(ref.collection("walletLedger").doc(), {
+        delta: 0, reason: "generate_unlimited", ref: sessionId || null,
+        at: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return;
+    }
+
     const credits = Number(w.credits) || 0;
     if (credits < cost) { const e = new Error("out_of_credits"); e.status = 402; throw e; }
     tx.set(ref, {
@@ -2331,6 +2360,9 @@ async function studioRefund(uid, cost, sessionId) {
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const w = (snap.exists && snap.data().wallet) || {};
+      /* Nothing was taken, so nothing is given back — refunding an unlimited
+         account would quietly inflate a balance that is never spent. */
+      if (walletIsUnlimited(w)) return;
       tx.set(ref, {
         wallet: Object.assign({}, w, {
           credits: (Number(w.credits) || 0) + cost,
@@ -2459,7 +2491,15 @@ HARD FAIL: any shading, grey tone, colour, or black background.
 HARD FAIL: an outlined shape rendered as a filled solid when its interior is polished metal.
 FINAL CHECK BEFORE RENDERING THE ONE IMAGE: one continuous silhouette; one integrated protruding hoop above the center of mass; 2px outer perimeter; every black mark is genuinely engraved metal; pure white background edge to edge.`;
 
-function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes }) {
+/* Where on the drawing a normalized point sits, in words the model can bind
+   to what it sees — a note's meaning depends on WHERE it is pinned. */
+function markupRegion(x, y) {
+  const col = x < 0.34 ? "left" : x > 0.66 ? "right" : "centre";
+  const row = y < 0.34 ? "top" : y > 0.66 ? "bottom" : "middle";
+  return row === "middle" && col === "centre" ? "the centre" : `the ${row} ${col}`;
+}
+
+function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes, markupMode }) {
   const clean = studioCleanText(instructions);
   const log = (Array.isArray(thread) ? thread : [])
     .filter((m) => m && m.text)
@@ -2495,13 +2535,82 @@ ${log}`);
 `REFINEMENT PASS: the second image is the customer's current drawing of this
 charm. Keep it and change ONLY what the newest instruction asks for.`);
   }
+  /* ── THE MARKUP CONTRACT ─────────────────────────────────────────────────
+     The customer drew on the previous drawing with a mouse or a fingertip.
+     Two modes, chosen by the customer in the markup studio:
+
+       interpret (default) — every mark is a GESTURE to be read for intent.
+         A hand can only approximate; the studio's job is to understand what
+         the shape MEANS and draw the real thing properly.
+       exact — the customer means their geometry literally; reproduce it,
+         cleaned only to production line weight.
+
+     Notes travel with their anchor points so the model can bind each
+     instruction to the region it is pinned on — "make this bigger" says
+     nothing without the where. Note numbers match the numbered labels baked
+     into the composite image. */
   const notes = (Array.isArray(markupNotes) ? markupNotes : [])
-    .map((t) => studioCleanText(t)).filter(Boolean).slice(0, 12);
-  if (notes.length) {
-    parts.push(
-`CUSTOMER MARKUP NOTES — the customer wrote these inside their markup image,
-each one pinned to the area it sits on. Honour every note:
-${notes.map((t, i) => `${i + 1}. "${t}"`).join("\n")}`);
+    .map((n) => {
+      if (n && typeof n === "object") {
+        const t = studioCleanText(n.text);
+        if (!t) return null;
+        const x = Number(n.x), y = Number(n.y);
+        const where = Number.isFinite(x) && Number.isFinite(y) ? markupRegion(x, y) : null;
+        return { text: t, where };
+      }
+      const t = studioCleanText(n);                     // legacy: bare strings
+      return t ? { text: t, where: null } : null;
+    })
+    .filter(Boolean).slice(0, 12);
+  if (markupMode !== undefined && markupMode !== null) {
+    const exact = String(markupMode) === "exact";
+    const noteLines = notes.map((n, i) =>
+      `${i + 1}. ${n.where ? `(pinned at ${n.where} of the drawing) ` : ""}"${n.text}"`).join("\n");
+    parts.push(exact
+? `CUSTOMER MARKUP — EXACT MODE (the customer chose literal):
+The final image is the customer's own hand-drawn markup ON TOP of the current
+drawing. The coloured ink and the note bubbles themselves must never appear in
+your output — but in THIS mode the drawn geometry is meant literally:
+• A drawn SHAPE is reproduced faithfully — same geometry, position and
+  proportions — converted to this drawing's own black production ink at proper
+  line weight.
+• A ring or highlight around existing linework still means "change this area";
+  a scribble or strike THROUGH existing linework still means "remove this".
+${notes.length ? `PINNED NOTES — each anchored to the spot its words are about; honour every one in its own region:
+${noteLines}` : ""}`
+: `CUSTOMER MARKUP — HOW TO READ IT (INTERPRETED, the default):
+The final image is the customer's own hand-drawn markup ON TOP of the current
+drawing. It is DIRECTION, not artwork: the coloured ink and the note bubbles
+themselves must never appear in your output.
+
+READ EVERY MARK FOR INTENT, NEVER FOR ITS LITERAL GEOMETRY — it was drawn by
+hand with a mouse or fingertip, so its shape is an APPROXIMATION:
+1. CLASSIFY each mark first:
+   • a ring or highlight AROUND existing linework = "change this area";
+   • a scribble or strike THROUGH existing linework = "remove this";
+   • a drawn SHAPE in open space, or attached to the silhouette = "ADD
+     something like this, here".
+2. For every added shape, NAME the real object the sketch approximates. Use
+   the pinned notes — especially the note nearest the sketch — and the
+   conversation to decide: a rough two-lobed arc at the shoulder with a note
+   saying "wings" is a WING, not a wobbly arc.
+3. Then draw THAT object properly: clean, manufacturable, symmetric where its
+   real counterpart is symmetric, in this drawing's own line language,
+   integrated into the charm's continuous silhouette — at the sketch's
+   position and roughly its scale.
+4. HARD FAIL: output linework that traces, echoes or resembles the customer's
+   hand-drawn path. Their wobble is input error, not design.
+${notes.length ? `
+PINNED NOTES — each anchored to the spot its words are about, numbered to
+match the labels in the markup image. A note applies to the marks and the
+region it is pinned on:
+${noteLines}
+` : ""}
+BEFORE RENDERING, ANSWER INTERNALLY: (a) which areas did the customer mark?
+(b) what is each mark asking — change, remove, or add? (c) what real object
+does each sketched shape stand for, given the note pinned nearest to it?
+(d) what does this charm look like with those intents executed cleanly, as if
+the workshop's own designer had made the changes? Render THAT.`);
   }
   parts.push(STUDIO_LINEART_CONTRACT);
   return parts.join("\n\n");
@@ -2825,6 +2934,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
        refine, and only when the previous drawing made it into the request —
        markup with no drawing under it would point at nothing. */
     let markupNotes = [];
+    let markupMode = null;                     // set ONLY when a markup image is accepted
     if (isRefine && hasPrev && typeof body?.markupImage === "string") {
       const mm = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(body.markupImage.trim());
       if (mm) {
@@ -2832,6 +2942,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
         if (buf.length > 0 && buf.length <= 1.5 * 1024 * 1024) {
           images.push({ buffer: buf, mime: "image/" + mm[1], filename: "markup." + (mm[1] === "png" ? "png" : "jpg") });
           markupNotes = Array.isArray(body.markupNotes) ? body.markupNotes : [];
+          markupMode = String(body.markupMode) === "exact" ? "exact" : "interpret";
         }
       }
     }
@@ -2845,7 +2956,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
        reason the Charm Maker's own B/W call passes neither. The contract
        carries the geometry rules in drawing terms instead. */
     const basePrompt = buildCustomerLineArtPrompt({
-      instructions, thread: body?.thread, refine: isRefine, markupNotes,
+      instructions, thread: body?.thread, refine: isRefine, markupNotes, markupMode,
     });
     let effectivePrompt = basePrompt;
     try {
