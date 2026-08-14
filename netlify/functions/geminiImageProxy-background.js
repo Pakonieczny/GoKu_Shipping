@@ -762,11 +762,11 @@ async function callOpenAIImagesEdits({
   let promptText = String(prompt || "");
   if (imageRoles === "style_reference") {
     promptText = `${promptText.trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`;
-  } else if (imageRoles === "line_art_style") {
-    const roles = IMAGE_ROLE_LABELS.line_art_style;
+  } else if (imageRoles === "line_art_style" || imageRoles === "customer_lineart" || imageRoles === "lineart_to_charm") {
+    const roles = IMAGE_ROLE_LABELS[imageRoles];
     promptText = (images || []).length >= 2
       ? `${promptText.trim()}\n\n${roles.first}\n\n${roles.second}\n\n${roles.lock}`
-      : `${promptText.trim()}\n\n${roles.single}`;
+      : `${promptText.trim()}\n\n${roles.single}\n\n${roles.lock}`;
   }
   // Backend-enforced final word: geometry + background policy text goes last
   // so it outranks everything, mirroring the Gemini part ordering.
@@ -915,6 +915,37 @@ const IMAGE_ROLE_LABELS = {
       "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to TRANSLATE it into this workshop's flat laser-cut charm language — one continuous flat sheet, integrated protruding hoop, sparse engraving, pure black background — not to reproduce the photograph and not to invent a different object.",
     lock:
       "FINAL IMAGE-ROLE LOCK: the SUBJECT comes from IMAGE 1 and the customer's written instructions, and from nowhere else. Translate that subject into a flat laser-cut charm; do not substitute a different object, and do not simply redraw the photograph with its background, setting, hands, props or depth. When a second image is present it is your own previous version of this same charm: preserve it and apply only the newest instruction. HARD FAIL: an output whose subject a customer would not recognise as the thing they uploaded or chose. HARD FAIL: a refinement that redesigns parts of the charm the customer did not ask to change.",
+  },
+  // Used by the Custom Charm Studio's DESIGN step. The studio designs in
+  // B/W production line art FIRST — the drawing is unambiguous about what is
+  // engraved and what is polished — and only renders the metal charm after
+  // the customer approves the drawing. IMAGE 1 is the customer's reference,
+  // IMAGE 2 (refine) is the previous drawing, IMAGE 3 (when present) is the
+  // customer's own hand-drawn markup of that drawing.
+  customer_lineart: {
+    first:
+      "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm and draw it as flat black-and-white production line art on pure white — not to reproduce the photograph, not to invent a different object, and not to render metal.",
+    second:
+      "IMAGE 2 — THE CUSTOMER'S CURRENT DRAWING OF THIS CHARM. This is your own previous line-art output, which the customer has been refining. Keep its silhouette, proportions, hoop placement, engraving and cutouts EXACTLY as they are and change ONLY what the newest customer instruction — and their markup, if supplied — asks for. It is not a style sample and it is not a second subject.",
+    extra: (n) => `IMAGE ${n} — THE CUSTOMER'S OWN MARKUP OF THE CURRENT DRAWING. The customer drew on top of your previous output to point at what they want changed: circles and highlight strokes mark the areas to change, and any text bubbles are their written instructions for those areas. Read it as DIRECTION ONLY — the coloured strokes, highlights and bubbles themselves must NEVER appear in your output.`,
+    single:
+      "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm and draw it as flat black-and-white production line art on pure white — not to reproduce the photograph and not to invent a different object.",
+    lock:
+      "FINAL IMAGE-ROLE LOCK: the SUBJECT comes from IMAGE 1 and the customer's written instructions, and from nowhere else. The OUTPUT is always flat B/W production line art on pure white. When IMAGE 2 is present it is the customer's current drawing: preserve it and apply only the newest direction. When a markup image is present it steers WHERE to change — its ink never appears in the output. HARD FAIL: photorealism, metal rendering, colour, shading or a black background. HARD FAIL: a refinement that redesigns parts of the drawing the customer did not ask to change. HARD FAIL: markup strokes, highlights or text bubbles reproduced in the output.",
+  },
+  // The studio's RENDER step: the approved drawing becomes the charm. This is
+  // the Charm Maker's gold→line-art conversion run in REVERSE, so the drawing
+  // is the structural truth and the output is the photograph.
+  lineart_to_charm: {
+    first:
+      "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat B/W line art of a charm on white. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
+    second:
+      "IMAGE 2 — UNUSED. Ignore any additional image.",
+    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
+    single:
+      "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat B/W line art of a charm on white. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
+    lock:
+      "FINAL IMAGE-ROLE LOCK: this is a 1:1 structural replication, drawing → finished charm. The output's silhouette laid over the drawing's silhouette must match. Nothing is added, nothing is removed, nothing is redesigned, nothing is 'improved'. HARD FAIL: an output whose outline, engraving layout or cutouts differ from the drawing. HARD FAIL: line art, sketch styling or a white background in the output.",
   },
   line_art_style: {
     first:
@@ -2169,6 +2200,7 @@ const STUDIO_KINDS = new Set([
   "custom_charm_precheck",
   "custom_charm_generate",
   "custom_charm_refine",
+  "custom_charm_render",
   "custom_session_status",
 ]);
 
@@ -2402,6 +2434,111 @@ FINAL PRE-RENDER CHECK — perform after the image is composed:
 3. Entirely flat and 100% front-facing — no perspective, no 3D thickness?
 4. Pure #000000 in every pixel outside the charm?
 If any answer is no, correct the design before rendering.`;
+
+/* ── the studio's OUTPUT CONTRACT for the design step ─────────────────────
+   Adapted from the Charm Maker's promptStrBW, with one inversion: there the
+   drawing DESCRIBES an existing gold charm, here the drawing IS the design.
+   The ink rules are identical either way — black maps 1:1 to engraved metal —
+   because this drawing later becomes the render step's structural truth, and
+   the whole point of designing in B/W is that nothing about the engraving is
+   ambiguous. */
+const STUDIO_LINEART_CONTRACT =
+`B/W PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
+• The output is a flat 2D black-and-white VECTOR-STYLE production drawing on a solid pure WHITE (#FFFFFF) background. Absolutely no transparency, no colours, no greys, no shading, no gradients, no 3D extrusion, no perspective, no photorealism, no metal rendering.
+• It depicts ONE charm: a single continuous silhouette that could be laser-cut from one flat sheet. No separate parts, no floating islands, no props, no scene.
+• EXACTLY ONE small ring-shaped hanging hoop protrudes above the silhouette at the top, drawn as part of the same continuous outline — a flat annulus with one clean round hole — directly above the design's center of mass, so the finished charm hangs level. Never a separate jump ring, bail or chain.
+• The charm's outer perimeter is ONE clean solid black outline approximately 2px thick.
+• ENGRAVING INK RULE (CRITICAL — BLACK MAPS 1:1 TO ENGRAVED METAL, WHITE TO POLISHED METAL):
+    1. STROKE ENGRAVING (the common case): an engraved line — straight, curved, or forming the OUTLINE of a shape such as a cloud, heart, wing, leaf or star — is ONE solid black stroke of appropriate weight. Never two thin parallel outlines standing in for one wide stroke.
+    2. INTERIOR STAYS WHITE: when a stroke forms a CLOSED outline, the area it encloses is polished metal and stays pure WHITE. An outlined cloud is an outlined cloud, never a solid black cloud.
+    3. SOLID-REGION ENGRAVING (rare): fill an area solid black ONLY when that ENTIRE area is meant to be engraved metal.
+    4. THE FINGERTIP TEST: for every inked area — would a fingertip feel it as recessed engraving? If the interior would feel like the same polished surface as the rest of the charm, it stays white with a black outline stroke.
+    5. CUTOUTS/HOLES: physical holes cut through the sheet (including the hoop's hole) are pure white inside their cut outline.
+• RECOGNITION AT CHARM SCALE: sparse, recognition-critical engraving only — the few lines that make the subject read at 12 mm.
+HARD FAIL: any shading, grey tone, colour, or black background.
+HARD FAIL: an outlined shape rendered as a filled solid when its interior is polished metal.
+FINAL CHECK BEFORE RENDERING THE ONE IMAGE: one continuous silhouette; one integrated protruding hoop above the center of mass; 2px outer perimeter; every black mark is genuinely engraved metal; pure white background edge to edge.`;
+
+function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes }) {
+  const clean = studioCleanText(instructions);
+  const log = (Array.isArray(thread) ? thread : [])
+    .filter((m) => m && m.text)
+    .slice(-24)
+    .map((m, i) => `${i + 1}. ${m.role === "studio" ? "STUDIO" : "CUSTOMER"}: ${studioCleanText(m.text)}`)
+    .filter((line) => line.split(": ").slice(1).join(": ").length > 0)
+    .join("\n");
+
+  const header =
+`CUSTOMER-DIRECTED CHARM DESIGN — B/W PRODUCTION DRAWING. TRANSLATE, DON'T INVENT.
+
+The supplied image is the customer's chosen reference. Design their charm from
+it and draw the design as flat B/W production line art, then apply ONLY the
+customer's requested changes:
+
+CUSTOMER INSTRUCTIONS: ${clean || "(no change requested — translate the reference faithfully)"}
+REFERENCE HANDLING: keep the recognizable subject and proportions; changes
+beyond the instructions are forbidden.
+
+• OUTER CONTOUR BRIEF: follow the reference subject's own recognizable silhouette, simplified into one bold, clean, manufacturable outline.
+• ENGRAVING BRIEF: use only sparse, recognition-critical engraving strokes — the few lines that make the subject read at charm size.
+• INTENTIONAL CUTOUT BRIEF: use negative-space cutouts where they improve recognition or visual appeal; otherwise use none.`;
+
+  const parts = [header];
+  if (log) {
+    parts.push(
+`CUSTOMER DIRECTION LOG — the full conversation so far, oldest first.
+Honour all of it; the last line is the newest request:
+${log}`);
+  }
+  if (refine) {
+    parts.push(
+`REFINEMENT PASS: the second image is the customer's current drawing of this
+charm. Keep it and change ONLY what the newest instruction asks for.`);
+  }
+  const notes = (Array.isArray(markupNotes) ? markupNotes : [])
+    .map((t) => studioCleanText(t)).filter(Boolean).slice(0, 12);
+  if (notes.length) {
+    parts.push(
+`CUSTOMER MARKUP NOTES — the customer wrote these inside their markup image,
+each one pinned to the area it sits on. Honour every note:
+${notes.map((t, i) => `${i + 1}. "${t}"`).join("\n")}`);
+  }
+  parts.push(STUDIO_LINEART_CONTRACT);
+  return parts.join("\n\n");
+}
+
+/* ── the render step's prompt: the Charm Maker's conversion, reversed ───── */
+function buildLineArtToCharmPrompt({ metal }) {
+  const m = studioCleanText(metal) || "gold";
+  const label = ({
+    silver: "polished sterling silver",
+    gold: "polished 14k gold",
+    rose: "polished 14k rose gold",
+    solid10: "polished 10k solid gold",
+    solid14: "polished 14k solid gold",
+  })[m] || ("polished " + m);
+  const header =
+`1:1 STRUCTURAL REPLICATION — APPROVED DRAWING TO FINISHED CHARM
+
+The supplied image is the customer's APPROVED PRODUCTION DRAWING: flat B/W
+line art of a charm on a pure white background. Manufacture EXACTLY this charm
+as a photorealistic flat laser-cut ${label} charm on a pure black background.
+
+INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
+• The drawing's 2px outer perimeter = the charm's cut edge. The silhouette matches 1:1 — laid over the drawing it must align exactly.
+• Black strokes INSIDE the outline = ENGRAVED (recessed) lines in the metal, following the exact same paths at the same relative weights.
+• Solid black regions = fully engraved regions.
+• White INSIDE the outline = flat polished metal. Never engrave, texture or darken it.
+• The hoop's white hole and every drawn cutout = REAL holes cut through the sheet, showing pure black through them.
+• The drawing's white background = pure black background in the output.
+
+100% STRUCTURAL MATCH: nothing added, nothing removed, nothing redesigned,
+nothing "improved". Every engraving stroke in the drawing appears as engraving;
+no engraving appears that the drawing does not show.
+
+METAL: ${label}. Metal choice affects tone only — never form.`;
+  return header + "\n\n" + (studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS);
+}
 
 function buildCustomerCharmPrompt({ instructions, thread, metal, refine }) {
   const clean = studioCleanText(instructions);
@@ -2665,33 +2802,60 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     const images = [
       { buffer: refImg.buffer, mime: refImg.mime, filename: filenameForMime("reference", refImg.mime) },
     ];
+    let hasPrev = false;
     if (isRefine) {
       try {
         const prev = await storagePathToBuffer(
           `custom-studio/${uid}/uploads/designs/${sessionId}/v${n - 1}.png`
         );
         images.push({ buffer: prev.buffer, mime: prev.mime, filename: filenameForMime("previous", prev.mime) });
+        hasPrev = true;
       } catch (_e) {
         // first refine after a restore, or the prior version is gone — the
         // direction log alone carries the context
       }
     }
 
+    /* The customer's own markup of the previous drawing — circles, highlights
+       and text bubbles composited client-side onto the drawing they refer to.
+       It rides the request body (a background invocation caps the payload at
+       256 KB, so the client ships a tightly compressed JPEG) and enters the
+       generation as DIRECTION, never as subject: the role label and the lock
+       both forbid its ink from appearing in the output. Only meaningful on a
+       refine, and only when the previous drawing made it into the request —
+       markup with no drawing under it would point at nothing. */
+    let markupNotes = [];
+    if (isRefine && hasPrev && typeof body?.markupImage === "string") {
+      const mm = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(body.markupImage.trim());
+      if (mm) {
+        const buf = Buffer.from(mm[2], "base64");
+        if (buf.length > 0 && buf.length <= 1.5 * 1024 * 1024) {
+          images.push({ buffer: buf, mime: "image/" + mm[1], filename: "markup." + (mm[1] === "png" ? "png" : "jpg") });
+          markupNotes = Array.isArray(body.markupNotes) ? body.markupNotes : [];
+        }
+      }
+    }
+
     // Same pipeline the Charm Maker runs: a text-only prompt audit, then
     // exactly ONE image generation with the backend's final geometry and
     // background override appended after every role label.
-    const basePrompt = buildCustomerCharmPrompt({
-      instructions, thread: body?.thread, metal, refine: isRefine,
+    /* The design step draws in B/W. No geometry or background policy is
+       passed DELIBERATELY: both append photoreal-metal / black-background
+       overrides that would outrank the line-art contract — the exact same
+       reason the Charm Maker's own B/W call passes neither. The contract
+       carries the geometry rules in drawing terms instead. */
+    const basePrompt = buildCustomerLineArtPrompt({
+      instructions, thread: body?.thread, refine: isRefine, markupNotes,
     });
     let effectivePrompt = basePrompt;
     try {
       const audited = await auditCharmPromptPreflight({
         prompt: basePrompt,
-        backgroundPolicy: "solid_black",
-        geometryPolicy: "flat_integrated_eyelet",
+        backgroundPolicy: null,
+        geometryPolicy: null,
         editIntent: null,
         imageCount: images.length,
-        imageRoles: "customer_reference",
+        imageRoles: "customer_lineart",
       });
       if (audited) effectivePrompt = audited;
     } catch (_e) { /* best effort — never blocks a paid generation */ }
@@ -2709,9 +2873,9 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
       quality: "high",
       output_format: "png",
       images,
-      imageRoles: "customer_reference",
-      charmGeometryPolicy: "flat_integrated_eyelet",
-      backgroundPolicy: "solid_black",
+      imageRoles: "customer_lineart",
+      charmGeometryPolicy: null,
+      backgroundPolicy: null,
     });
 
     await studioStage(vRef, { stage: "polishing" });
@@ -2719,8 +2883,8 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     // The design description travels inside the PNG, so it survives download,
     // the production queue and the customer's own copy.
     outBuf = embedPngTextMetadata(outBuf, {
-      Description: `Custom Charm Studio design — ${instructions || "customer reference"} (${metal}). Version ${n}.`,
-      CharmTitle: `Custom charm v${n}`,
+      Description: `Custom Charm Studio production drawing — ${instructions || "customer reference"}. Version ${n}.`,
+      CharmTitle: `Custom charm drawing v${n}`,
     });
 
     // NOTE the "uploads" segment: templates/cart.liquid and
@@ -2763,6 +2927,152 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
   }
 }
 
+/* ── kind: custom_charm_render ────────────────────────────────────────────
+ * The approved drawing becomes the charm: the Charm Maker's gold→line-art
+ * conversion run in reverse, with the drawing as structural truth. Costs one
+ * credit like any generation, debited atomically before the upstream call and
+ * refunded on failure. Progress and outcome are written to the SAME version
+ * doc the drawing lives on — renderStatus/renderStage/renderURL — so the
+ * onSnapshot listener the studio already holds open streams the render too,
+ * and the drawing's own status:"done" is never disturbed. Invoked in the
+ * background, so refusals decided before any work starts are written to the
+ * doc as well: an HTTP status from a background invocation reaches nobody.
+ * ===================================================================== */
+async function studioFailRender(vRef, error) {
+  try {
+    await vRef.set({
+      renderStatus: "failed", renderStage: "failed",
+      renderError: String(error).slice(0, 300),
+    }, { merge: true });
+  } catch (e) {
+    console.error("[studio] could not record render failure:", e?.message || e);
+  }
+}
+
+async function handleStudioRender({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const cfg = await studioConfig();
+  const cost = Number(cfg.generateCost) || 1;
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+
+  /* Ownership first — a stranger gets the 403 and NOTHING written into the
+     doc, exactly as in generate: a failure channel into someone else's
+     design would be a way in. */
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+
+  const n = Number(body?.versionNumber) || Number(session.currentVersion) || 0;
+  if (!n || n < 1) return studioJson(400, { ok: false, error: "missing_version" }, origin);
+  const vRef = sRef.collection("versions").doc(String(n));
+  const vSnap = await vRef.get();
+  if (!vSnap.exists || vSnap.data().status !== "done") {
+    return studioJson(409, { ok: false, error: "version_not_ready" }, origin);
+  }
+
+  /* Renders share the generation budgets — a render IS a generation as far
+     as the upstream model is concerned. */
+  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
+      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+    await studioFailRender(vRef, "rate_limited");
+    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
+  }
+
+  try {
+    await studioDebit(uid, cost, sessionId);
+  } catch (err) {
+    if (err?.status === 402) {
+      await studioFailRender(vRef, "out_of_credits");
+      return studioJson(402, { ok: false, error: "out_of_credits" }, origin);
+    }
+    throw err;
+  }
+
+  const metal = studioCleanText(body?.metal || session.metal || "gold");
+
+  try {
+    await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal, renderError: null }, { merge: true });
+
+    const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
+    const bw = await storagePathToBuffer(bwPath);
+    const images = [
+      { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" },
+    ];
+
+    const basePrompt = buildLineArtToCharmPrompt({ metal });
+    let effectivePrompt = basePrompt;
+    try {
+      const audited = await auditCharmPromptPreflight({
+        prompt: basePrompt,
+        backgroundPolicy: "solid_black",
+        geometryPolicy: "flat_integrated_eyelet",
+        editIntent: null,
+        imageCount: images.length,
+        imageRoles: "lineart_to_charm",
+      });
+      if (audited) effectivePrompt = audited;
+    } catch (_e) { /* best effort */ }
+
+    await vRef.set({ renderStage: "rendering" }, { merge: true });
+
+    const studioModelConfig = resolveImageModel(
+      process.env.GEMINI_STUDIO_IMAGE_MODEL || DEFAULT_IMAGE_MODEL
+    );
+    let outBuf = await callImageModelEdits({
+      apiKey: apiKeyForImageModel(studioModelConfig),
+      model: studioModelConfig.id,
+      prompt: effectivePrompt,
+      size: "2048x2048",
+      quality: "high",
+      output_format: "png",
+      images,
+      imageRoles: "lineart_to_charm",
+      charmGeometryPolicy: "flat_integrated_eyelet",
+      backgroundPolicy: "solid_black",
+    });
+
+    await vRef.set({ renderStage: "polishing" }, { merge: true });
+
+    outBuf = embedPngTextMetadata(outBuf, {
+      Description: `Custom Charm Studio charm — rendered from approved drawing v${n} (${metal}).`,
+      CharmTitle: `Custom charm v${n}`,
+    });
+
+    /* Same "uploads" segment as the drawing, for the same reason: both cart
+       templates render any property URL containing uploads+extension as a
+       clickable thumbnail, and BOTH halves of the pair go into the cart. */
+    const renderPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-charm.png`;
+    const bucket = getBucket();
+    const token = newDownloadToken();
+    await bucket.file(renderPath).save(outBuf, {
+      resumable: false,
+      contentType: "image/png",
+      metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId, version: String(n), render: "1" } },
+    });
+    const renderURL = tokenDownloadURLFor(bucket.name, renderPath, token);
+
+    await vRef.set({
+      renderStatus: "done", renderStage: "done",
+      renderURL, renderPath, renderMetal: metal,
+      renderedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal }, origin);
+  } catch (err) {
+    // A failed render must never cost a credit.
+    await studioRefund(uid, cost, sessionId);
+    await studioFailRender(vRef, String(err?.message || err));
+    console.error("[studio] render failed:", err?.message || err);
+    return studioJson(500, { ok: false, error: "render_failed" }, origin);
+  }
+}
+
 async function handleStudioSessionStatus({ body, event, origin }) {
   const uid = await requireStudioUser(event);
   const db = getDb();
@@ -2788,6 +3098,7 @@ async function handleStudioKind({ kind, body, event }) {
     if (kind === "custom_charm_generate" || kind === "custom_charm_refine") {
       return await handleStudioGenerate({ kind, body, event, origin });
     }
+    if (kind === "custom_charm_render") return await handleStudioRender({ body, event, origin });
     if (kind === "custom_session_status") return await handleStudioSessionStatus({ body, event, origin });
     return studioJson(400, { ok: false, error: "unknown_kind" }, origin);
   } catch (err) {

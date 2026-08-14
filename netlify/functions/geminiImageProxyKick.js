@@ -37,7 +37,7 @@ const KICK_BUILD = "geminiImageProxyKick-1.0.0";
    Generator's internal kinds, which are same-origin, staff-only and have no
    business being reachable from a storefront page. */
 const SYNC_KINDS  = new Set(["custom_charm_precheck", "custom_session_status"]);
-const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine"]);
+const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine", "custom_charm_render"]);
 
 /* Same list, same order as STUDIO_ALLOWED_ORIGINS in the proxy. */
 const ALLOWED_ORIGINS = [
