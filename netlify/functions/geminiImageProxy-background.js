@@ -2556,6 +2556,21 @@ async function handleStudioPrecheck({ body, event, origin }) {
    from a background invocation the HTTP response cannot. This puts it on the
    version doc, which the studio is already watching. Best-effort by design:
    failing to report a failure must not become a second failure. */
+/* Shopify's img_url filter returns a PROTOCOL-RELATIVE url — "//host/path",
+   no scheme. A browser resolves that against the page it is on and it works
+   everywhere on the storefront, which is why it rides all the way through the
+   feed templates and into the saved session without anyone noticing. There is
+   no page here. Node's fetch() has nothing to resolve against and rejects it
+   outright with "Failed to parse URL from //…", killing the generation before
+   a single pixel is drawn. One line, and it also repairs every session already
+   saved with a bare "//" reference. */
+function studioAbsoluteUrl(u) {
+  const s = String(u || "").trim();
+  if (s.startsWith("//")) return "https:" + s;
+  if (s.startsWith("/"))  return "https://britesjewelry.com" + s;
+  return s;
+}
+
 async function studioFailVersion(vRef, n, error) {
   try {
     await vRef.set({
@@ -2638,7 +2653,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
       }
       refImg = await storagePathToBuffer(ref.path);
     } else if (ref.type === "catalog" && ref.item && ref.item.image) {
-      const r = await fetch(String(ref.item.image));
+      const r = await fetch(studioAbsoluteUrl(ref.item.image));
       if (!r.ok) throw new Error(`reference image fetch ${r.status}`);
       refImg = {
         mime: r.headers.get("content-type") || "image/jpeg",
