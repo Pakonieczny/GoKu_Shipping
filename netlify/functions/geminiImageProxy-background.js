@@ -2549,23 +2549,49 @@ charm. Keep it and change ONLY what the newest instruction asks for.`);
      instruction to the region it is pinned on — "make this bigger" says
      nothing without the where. Note numbers match the numbered labels baked
      into the composite image. */
-  const notes = (Array.isArray(markupNotes) ? markupNotes : [])
+  const allNotes = (Array.isArray(markupNotes) ? markupNotes : [])
     .map((n) => {
       if (n && typeof n === "object") {
         const t = studioCleanText(n.text);
         if (!t) return null;
         const x = Number(n.x), y = Number(n.y);
         const where = Number.isFinite(x) && Number.isFinite(y) ? markupRegion(x, y) : null;
-        return { text: t, where };
+        return { text: t, where, kind: n.kind === "lettering" ? "lettering" : "note" };
       }
       const t = studioCleanText(n);                     // legacy: bare strings
-      return t ? { text: t, where: null } : null;
+      return t ? { text: t, where: null, kind: "note" } : null;
     })
-    .filter(Boolean).slice(0, 12);
+    .filter(Boolean).slice(0, 16);
+  /* Two different things arrive as text, and confusing them ruins a charm:
+     a NOTE is an instruction ABOUT the drawing and must never be drawn; a
+     LETTERING item is a word the customer placed ON the charm and must be
+     engraved. The drawing studio tags them apart at source. */
+  const notes    = allNotes.filter((n) => n.kind !== "lettering").slice(0, 12);
+  const lettering = allNotes.filter((n) => n.kind === "lettering").slice(0, 6);
   if (markupMode !== undefined && markupMode !== null) {
     const exact = String(markupMode) === "exact";
     const noteLines = notes.map((n, i) =>
       `${i + 1}. ${n.where ? `(pinned at ${n.where} of the drawing) ` : ""}"${n.text}"`).join("\n");
+    const letterLines = lettering.map((n) =>
+      `• "${n.text}"${n.where ? ` — placed at ${n.where} of the charm` : ""}`).join("\n");
+    /* the vocabulary the drawing studio can now produce, in both modes */
+    const GRAMMAR =
+`WHAT THE CUSTOMER'S TOOLS MEAN:
+• A shape filled SOLID BLACK = "engrave this whole area" — black is engraving
+  in this drawing language, and a filled shape is the customer saying so.
+• An outlined shape with no fill = an outline: a cut edge or an engraved line.
+• A RING (a shape with a hole in it) = a genuine cut-out — metal removed, so
+  the background shows through.
+• An ARROW = "this, here": read what it points AT, and treat the note nearest
+  its tail as the instruction for the thing at its head.
+• A rectangle or circle with a small loop on top = the charm plus its BAIL,
+  the loop it hangs from.
+• A dashed leader line from a label to a spot = the same as a pinned note.
+${lettering.length ? `
+LETTERING THE CUSTOMER PLACED ON THE CHARM — these words are part of the
+charm and MUST be engraved, set in a clean jewellery-appropriate face at the
+position shown, cut deep enough to read at charm scale:
+${letterLines}` : ""}`;
     parts.push(exact
 ? `CUSTOMER MARKUP — EXACT MODE (the customer chose literal):
 The final image is the customer's own hand-drawn markup ON TOP of the current
@@ -2576,6 +2602,8 @@ your output — but in THIS mode the drawn geometry is meant literally:
   line weight.
 • A ring or highlight around existing linework still means "change this area";
   a scribble or strike THROUGH existing linework still means "remove this".
+
+${GRAMMAR}
 ${notes.length ? `PINNED NOTES — each anchored to the spot its words are about; honour every one in its own region:
 ${noteLines}` : ""}`
 : `CUSTOMER MARKUP — HOW TO READ IT (INTERPRETED, the default):
@@ -2600,6 +2628,8 @@ hand with a mouse or fingertip, so its shape is an APPROXIMATION:
    position and roughly its scale.
 4. HARD FAIL: output linework that traces, echoes or resembles the customer's
    hand-drawn path. Their wobble is input error, not design.
+
+${GRAMMAR}
 ${notes.length ? `
 PINNED NOTES — each anchored to the spot its words are about, numbered to
 match the labels in the markup image. A note applies to the marks and the
