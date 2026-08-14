@@ -324,7 +324,7 @@ function corsHeaders(origin) {
 let _origin = "";
 /* Stamped on every response. "Which build is actually deployed?" is otherwise
    unanswerable from the outside, and guessing at it has cost real time. */
-const FN_BUILD = "britesAuth-1.5.0";
+const FN_BUILD = "britesAuth-1.6.0";
 const json = (statusCode, body) => ({
   statusCode, headers: corsHeaders(_origin),
   body: JSON.stringify(Object.assign({ fn: FN_BUILD }, body)),
@@ -1077,6 +1077,66 @@ async function googleVerify(body) {
   return json(200, { ok: true, uid: user.uid, customToken, email, name: p.name || null, picture: p.picture || null });
 }
 
+/* ═════════ GUEST MERGE — when the Google account already exists ══════════
+ * linkWithPopup keeps the uid, so most sign-ups move nothing. But a shopper
+ * whose Google account is ALREADY in Firebase — anyone signing in for the
+ * second time from a new device or a cleared browser — cannot link:
+ * signInWithCredential switches their browser onto the existing uid, and
+ * every session they made as a guest is still filed under the abandoned
+ * anonymous one. From that moment the ownership checks fire against the
+ * shopper themselves: generation 403s, saves are refused, the studio looks
+ * broken precisely because the security is working.
+ *
+ * This kind re-files those sessions. The security question is proof: "merge
+ * uid X into me" must not be takeable at the caller's word, or any guest's
+ * designs could be stolen by guessing uids. The proof demanded here is the
+ * GUEST'S OWN ID TOKEN, minted by the browser before it switched accounts —
+ * only the holder of that guest session could ever have had one. And only
+ * ANONYMOUS sessions can be absorbed: merging a real account into another
+ * would make a stolen token an account-takeover, so it is refused outright.
+ *
+ * The guest's WALLET deliberately does not move. Free guest credits are
+ * per-guest by design; letting them ride a merge would make sign-out → new
+ * guest → merge an infinite free-credit pump. Purchased credits are granted
+ * by the order webhook against the uid that paid, which for a shopper who
+ * links normally is the uid they keep.
+ * ===================================================================== */
+async function mergeGuest(body, event) {
+  const newUid = await requireStudioUser(event);
+  const guestToken = String(body?.guestToken || "");
+  if (!guestToken) return json(400, { ok: false, error: "missing_guest_token" });
+
+  let decoded;
+  try { decoded = await admin.auth().verifyIdToken(guestToken); }
+  catch { return json(401, { ok: false, error: "invalid_guest_token" }); }
+
+  const guestUid = decoded.uid;
+  if (guestUid === newUid) return json(200, { ok: true, moved: 0, note: "same_uid" });
+  const signInProvider = decoded.firebase && decoded.firebase.sign_in_provider;
+  if (signInProvider !== "anonymous") {
+    return json(403, { ok: false, error: "not_a_guest_session" });
+  }
+
+  const snap = await db.collection(STUDIO_SESSIONS).where("uid", "==", guestUid).get();
+  const docs = snap.docs || [];
+  let moved = 0;
+  for (let i = 0; i < docs.length; i += 400) {          // Firestore batch cap is 500
+    const batch = db.batch();
+    docs.slice(i, i + 400).forEach((d) => {
+      batch.update(d.ref, { uid: newUid, mergedFromUid: guestUid });
+    });
+    await batch.commit();
+    moved += Math.min(400, docs.length - i);
+  }
+
+  await db.doc(`users/${newUid}`).set(
+    { mergedFrom: admin.firestore.FieldValue.arrayUnion(guestUid) },
+    { merge: true }
+  ).catch(() => {});
+
+  return json(200, { ok: true, moved, guestUid });
+}
+
 /* ═════════ CROSS-BROWSER HANDOFF — the in-app browser escape ═════════════
  * Google refuses OAuth inside an app's embedded browser (403
  * disallowed_useragent), so the studio sends the shopper out to Safari or
@@ -1170,6 +1230,7 @@ exports.handler = async (event) => {
       case "upload_ref":          return await uploadRef(body, event);
       case "wallet_get":          return await walletGet(body, event);
       case "wallet_grant_signup": return await walletGrantSignup(body, event);
+      case "merge_guest":         return await mergeGuest(body, event);
       case "handoff_mint":        return await handoffMint(event);
       case "handoff_claim":       return await handoffClaim(body);
       default:              return json(400, { ok: false, error: "unknown_kind" });
