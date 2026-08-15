@@ -324,7 +324,7 @@ function corsHeaders(origin) {
 let _origin = "";
 /* Stamped on every response. "Which build is actually deployed?" is otherwise
    unanswerable from the outside, and guessing at it has cost real time. */
-const FN_BUILD = "britesAuth-1.6.0";
+const FN_BUILD = "britesAuth-1.9.0";
 const json = (statusCode, body) => ({
   statusCode, headers: corsHeaders(_origin),
   body: JSON.stringify(Object.assign({ fn: FN_BUILD }, body)),
@@ -623,6 +623,11 @@ async function ensureWallet(uid, cfg) {
 
 /** How many uploads this uid is entitled to in total. */
 function uploadAllowance(wallet, cfg, signedIn) {
+  /* An unlimited account is unlimited in every meter, not just credits —
+     otherwise testing stops at the upload cap instead of the credit one.
+     The flag lives on users/{uid}.wallet, set from the Firebase console;
+     see the note beside studioDebit in geminiImageProxy-background.js. */
+  if (wallet && wallet.unlimited === true) return Infinity;
   return cfg.guestFreeUploads
        + (signedIn ? cfg.signupBonusUploads : 0)
        + (Number(wallet.purchasedAllowance) || 0);
@@ -701,6 +706,150 @@ async function uploadRef(body, event) {
     url: downloadUrl(bucket.name, objectPath, token),
     bytes: buf.length,
   });
+}
+
+/* ─────────────────────── kind: upload_asset ──────────────────────────────
+ * A picture the customer drops INTO a drawing — a photo to trace, a logo, a
+ * texture — rather than the one reference the whole design is based on.
+ *
+ * WHY IT IS NOT upload_ref
+ *   The reference allowance exists because every reference runs a vision
+ *   pre-check and anchors a generation. A picture pasted onto a sketch does
+ *   neither: it is pixels on a canvas. Charging the reference allowance for
+ *   it would mean a customer who drops four photos into one sketch has spent
+ *   their whole design budget before describing anything — so this has its
+ *   own, far larger, per-account ceiling and touches uploadsUsed not at all.
+ *   The hourly per-uid budget still applies, so a stolen token cannot mine
+ *   the bucket, and the same MIME and size caps still hold.
+ *
+ * Written to custom-studio/{uid}/assets/... — the same uid prefix every other
+ * studio object uses, so asset_fetch's ownership check is the same one line.
+ * ===================================================================== */
+const MAX_ASSETS_ACCOUNT = 400;              // a working library, not a host
+
+async function uploadAsset(body, event) {
+  const uid = await requireStudioUser(event);
+  const cfg = await config();
+
+  const m = /^data:([a-z/+.-]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(String(body.dataUrl || ""));
+  if (!m) return json(400, { ok: false, error: "bad_image" });
+  const mime = m[1].toLowerCase();
+  const ext = UPLOAD_MIME[mime];
+  if (!ext) return json(415, { ok: false, error: "unsupported_type" });
+
+  const buf = Buffer.from(m[2].replace(/\s+/g, ""), "base64");
+  if (!buf.length) return json(400, { ok: false, error: "empty_image" });
+  if (buf.length > cfg.maxUploadBytes) return json(413, { ok: false, error: "too_large" });
+
+  if (!(await checkUidBudget(uid, "as", MAX_UPLOADS_HOUR))) {
+    return json(429, { ok: false, error: "rate_limited" });
+  }
+  /* the account ceiling, counted where it is cheap to count: one field on the
+     wallet doc, incremented transactionally, never a bucket listing */
+  const wallet = await ensureWallet(uid, cfg);
+  if (wallet.unlimited !== true && (Number(wallet.assetsUsed) || 0) >= MAX_ASSETS_ACCOUNT) {
+    return json(402, { ok: false, error: "asset_library_full" });
+  }
+
+  const sessionId = String(body.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60) || "loose";
+  const objectPath = `custom-studio/${uid}/assets/${Date.now()}-${slugify(body.filename)}.${ext}`;
+  const token = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+  const bucket = studioBucket();
+  await bucket.file(objectPath).save(buf, {
+    contentType: mime,
+    resumable: false,
+    metadata: { metadata: {
+      firebaseStorageDownloadTokens: token,
+      uid, sessionId, assetKind: "drawing",
+      originalName: String(body.filename || "").slice(0, 120),
+    } },
+  });
+  try {
+    await db.doc(`users/${uid}`).set({
+      wallet: { assetsUsed: admin.firestore.FieldValue.increment(1) },
+    }, { merge: true });
+  } catch (_e) { /* the object is written; the counter is best-effort */ }
+
+  return json(200, {
+    ok: true,
+    path: objectPath,
+    url: downloadUrl(bucket.name, objectPath, token),
+    bytes: buf.length,
+  });
+}
+
+/* ─────────────────────── kind: asset_fetch ───────────────────────────────
+ * Hand a stored object back as a data URL, for the ONE thing a plain <img>
+ * cannot do: be drawn into a canvas that is still exportable.
+ *
+ * Firebase Storage download URLs serve happily to an <img>, so every
+ * thumbnail, preview and lightbox in the studio uses the URL directly and
+ * never comes near this endpoint. But a canvas that has drawn a cross-origin
+ * image without CORS headers is TAINTED — toDataURL throws — and the whole
+ * sketchpad depends on exporting its canvas. Rather than make the bucket's
+ * CORS configuration a prerequisite for the feature working, the bytes come
+ * back through here, same-origin by definition.
+ *
+ * The client tries an anonymous CORS load first and only falls back to this,
+ * so the day the bucket does carry a CORS rule this endpoint goes quiet on
+ * its own. Results are cached in the page, so it is once per image per load.
+ * ===================================================================== */
+async function assetFetch(body, event) {
+  const uid = await requireStudioUser(event);
+  const path = String(body.path || "");
+  /* ownership is the whole check: every studio object lives under the uid
+     that owns it, and nothing else in the bucket is reachable from here */
+  if (!path || path.indexOf(`custom-studio/${uid}/`) !== 0 || path.indexOf("..") >= 0) {
+    return json(403, { ok: false, error: "not_yours" });
+  }
+  if (!(await checkUidBudget(uid, "af", 600))) {
+    return json(429, { ok: false, error: "rate_limited" });
+  }
+  const bucket = studioBucket();
+  const file = bucket.file(path);
+  let meta;
+  try { [meta] = await file.getMetadata(); }
+  catch { return json(404, { ok: false, error: "not_found" }); }
+  const size = Number(meta.size) || 0;
+  if (size > 12 * 1024 * 1024) return json(413, { ok: false, error: "too_large" });
+  const [buf] = await file.download();
+  const mime = meta.contentType || "image/png";
+  return json(200, {
+    ok: true,
+    dataUrl: `data:${mime};base64,${buf.toString("base64")}`,
+    bytes: buf.length,
+  });
+}
+
+/* ───────────────────── kind: asset_delete ────────────────────────────────
+ * "Delete for good" has to mean it. The record goes from the session
+ * document, which the client owns and writes itself; the stored OBJECT can
+ * only go from here, because the storefront has no Storage credentials and
+ * is never going to be given any.
+ *
+ * Same one-line ownership check as asset_fetch: every studio object lives
+ * under the uid that owns it, so a path that does not start with this
+ * caller's own prefix is somebody else's and is refused. An object that has
+ * already gone is a success, not an error — deleting twice should not fail.
+ * ===================================================================== */
+async function assetDelete(body, event) {
+  const uid = await requireStudioUser(event);
+  const path = String(body.path || "");
+  if (!path || path.indexOf(`custom-studio/${uid}/`) !== 0 || path.indexOf("..") >= 0) {
+    return json(403, { ok: false, error: "not_yours" });
+  }
+  if (!(await checkUidBudget(uid, "ad", 400))) {
+    return json(429, { ok: false, error: "rate_limited" });
+  }
+  try {
+    await studioBucket().file(path).delete();
+    return json(200, { ok: true, deleted: true, path });
+  } catch (e) {
+    const code = e && (e.code || e.statusCode);
+    if (code === 404) return json(200, { ok: true, deleted: false, path, note: "already gone" });
+    console.warn("[britesAuth] asset_delete failed:", (e && e.message) || e);
+    return json(500, { ok: false, error: "delete_failed" });
+  }
 }
 
 /* ───────────────────── kind: wallet_get / wallet_grant_signup ────────────
@@ -1228,6 +1377,9 @@ exports.handler = async (event) => {
       case "google_verify": return await googleVerify(body);
       /* ── Custom Charm Studio (v1.1) ── */
       case "upload_ref":          return await uploadRef(body, event);
+      case "upload_asset":        return await uploadAsset(body, event);
+      case "asset_fetch":         return await assetFetch(body, event);
+      case "asset_delete":        return await assetDelete(body, event);
       case "wallet_get":          return await walletGet(body, event);
       case "wallet_grant_signup": return await walletGrantSignup(body, event);
       case "merge_guest":         return await mergeGuest(body, event);
