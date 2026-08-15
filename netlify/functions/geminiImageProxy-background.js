@@ -2549,14 +2549,20 @@ proportions exactly, converted to clean production line weight. Straighten
 only the hand's jitter; change NOTHING else.
 • LINE COUNT IS SACRED: one drawn line becomes one production line — never
   doubled, never given an inner or outer parallel, a rim, a border or a halo.
+• COLOUR CARRIES NO MEANING — the sketchpad offers colours only so the
+  customer can tell their own objects apart. Every line is an engraved line
+  and every FILLED area, in ANY colour, is an engraved/hatched area.
 • An outlined shape with NO fill stays an unfilled outline — its interior is
-  white. Only areas the customer filled solid are solid.
+  white. Only areas the customer filled are engraved areas.
 • TEXT in the sketch is reproduced at exactly the drawn position and size, in
   one clean sans-serif face — never moved, rescaled, reflowed or restyled.
 • Add nothing the sketch does not show; remove nothing it does.
 BEFORE RENDERING, CHECK: laid over the sketch, does every element of your
 output sit on top of its counterpart at the same size? If not, redo it.`
 : `THE REFERENCE IMAGE IS THE CUSTOMER'S OWN HAND-DRAWN DESIGN — INTERPRETED:
+Colour carries no meaning in the sketch — it only tells the customer's own
+objects apart. Every line is an engraved line; every FILLED area, in any
+colour, is an engraved/hatched area; an unfilled outline stays unfilled.
 Read the sketch for what it DEPICTS and draw that subject properly in this
 studio's production line language — clean, manufacturable, symmetric where
 the real subject is symmetric — while keeping the sketch's composition: each
@@ -2608,8 +2614,11 @@ sans-serif face.`);
     /* the vocabulary the drawing studio can now produce, in both modes */
     const GRAMMAR =
 `WHAT THE CUSTOMER'S TOOLS MEAN:
-• A shape filled SOLID BLACK = "engrave this whole area" — black is engraving
-  in this drawing language, and a filled shape is the customer saying so.
+• COLOUR CARRIES NO MEANING. The studio's tools let the customer draw in
+  several colours purely so they can tell their own objects apart. Red, gold,
+  blue and black all mean exactly the same thing to you.
+• A FILLED area — filled in ANY colour — = "engrave or hatch this whole
+  area". A filled shape is the customer saying so; the colour is irrelevant.
 • An outlined shape with NO fill = an OUTLINE ONLY: the line itself is the
   engraving and its interior stays white (polished metal). NEVER promote an
   unfilled outline into a filled/engraved area — if the customer wanted it
@@ -2721,7 +2730,9 @@ as a photorealistic flat laser-cut ${label} charm on a pure black background.
 INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
 • The drawing's 2px outer perimeter = the charm's cut edge. The silhouette matches 1:1 — laid over the drawing it must align exactly.
 • Black strokes INSIDE the outline = ENGRAVED (recessed) lines in the metal, following the exact same paths at the same relative weights.
-• Solid black regions = fully engraved regions.
+• Solid filled regions = fully engraved (or hatched) regions. The drawing may
+  arrive with fills in colours other than black; a fill is a fill whatever its
+  colour, and every one of them is an engraved area.
 • AN OUTLINED SHAPE WITH NO FILL IS AN OUTLINE, NOT AN AREA. Engrave its
   boundary line only; its white interior is flat polished metal exactly like
   the rest of the surface. A circle drawn as a ring of line NEVER becomes a
