@@ -2499,7 +2499,7 @@ function markupRegion(x, y) {
   return row === "middle" && col === "centre" ? "the centre" : `the ${row} ${col}`;
 }
 
-function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes, markupMode }) {
+function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes, markupMode, refMode }) {
   const clean = studioCleanText(instructions);
   const log = (Array.isArray(thread) ? thread : [])
     .filter((m) => m && m.text)
@@ -2535,6 +2535,35 @@ ${log}`);
 `REFINEMENT PASS: the second image is the customer's current drawing of this
 charm. Keep it and change ONLY what the newest instruction asks for.`);
   }
+  /* ── THE SKETCH CONTRACT ─────────────────────────────────────────────────
+     Set only when the reference image is the customer's OWN hand drawing from
+     the studio's sketchpad, with the mode they chose there. Exact means the
+     sketch IS the design, wanted as drawn; interpreted means it is a brief
+     for the real thing. */
+  if (!refine && (refMode === "exact" || refMode === "interpret")) {
+    parts.push(refMode === "exact"
+? `THE REFERENCE IMAGE IS THE CUSTOMER'S OWN HAND-DRAWN DESIGN — EXACT MODE:
+The customer chose "exactly as drawn". Your job is faithful VECTORIZATION,
+not redesign: reproduce the sketch's geometry, composition, positions and
+proportions exactly, converted to clean production line weight. Straighten
+only the hand's jitter; change NOTHING else.
+• LINE COUNT IS SACRED: one drawn line becomes one production line — never
+  doubled, never given an inner or outer parallel, a rim, a border or a halo.
+• An outlined shape with NO fill stays an unfilled outline — its interior is
+  white. Only areas the customer filled solid are solid.
+• TEXT in the sketch is reproduced at exactly the drawn position and size, in
+  one clean sans-serif face — never moved, rescaled, reflowed or restyled.
+• Add nothing the sketch does not show; remove nothing it does.
+BEFORE RENDERING, CHECK: laid over the sketch, does every element of your
+output sit on top of its counterpart at the same size? If not, redo it.`
+: `THE REFERENCE IMAGE IS THE CUSTOMER'S OWN HAND-DRAWN DESIGN — INTERPRETED:
+Read the sketch for what it DEPICTS and draw that subject properly in this
+studio's production line language — clean, manufacturable, symmetric where
+the real subject is symmetric — while keeping the sketch's composition: each
+element at the position and relative scale the customer gave it. Honour any
+text: the same words, at the same place and relative size, in one clean
+sans-serif face.`);
+  }
   /* ── THE MARKUP CONTRACT ─────────────────────────────────────────────────
      The customer drew on the previous drawing with a mouse or a fingertip.
      Two modes, chosen by the customer in the markup studio:
@@ -2556,7 +2585,9 @@ charm. Keep it and change ONLY what the newest instruction asks for.`);
         if (!t) return null;
         const x = Number(n.x), y = Number(n.y);
         const where = Number.isFinite(x) && Number.isFinite(y) ? markupRegion(x, y) : null;
-        return { text: t, where, kind: n.kind === "lettering" ? "lettering" : "note" };
+        const h = Number(n.h);
+        return { text: t, where, kind: n.kind === "lettering" ? "lettering" : "note",
+                 h: Number.isFinite(h) && h > 0 && h < 1 ? h : null };
       }
       const t = studioCleanText(n);                     // legacy: bare strings
       return t ? { text: t, where: null, kind: "note" } : null;
@@ -2573,13 +2604,16 @@ charm. Keep it and change ONLY what the newest instruction asks for.`);
     const noteLines = notes.map((n, i) =>
       `${i + 1}. ${n.where ? `(pinned at ${n.where} of the drawing) ` : ""}"${n.text}"`).join("\n");
     const letterLines = lettering.map((n) =>
-      `• "${n.text}"${n.where ? ` — placed at ${n.where} of the charm` : ""}`).join("\n");
+      `• "${n.text}"${n.where ? ` — placed at ${n.where} of the charm` : ""}${n.h ? `, cap height ≈ ${Math.round(n.h * 100)}% of the drawing's height — reproduce at THIS size, at THIS position, exactly as shown in the markup image` : ""}`).join("\n");
     /* the vocabulary the drawing studio can now produce, in both modes */
     const GRAMMAR =
 `WHAT THE CUSTOMER'S TOOLS MEAN:
 • A shape filled SOLID BLACK = "engrave this whole area" — black is engraving
   in this drawing language, and a filled shape is the customer saying so.
-• An outlined shape with no fill = an outline: a cut edge or an engraved line.
+• An outlined shape with NO fill = an OUTLINE ONLY: the line itself is the
+  engraving and its interior stays white (polished metal). NEVER promote an
+  unfilled outline into a filled/engraved area — if the customer wanted it
+  filled they would have filled it.
 • A RING (a shape with a hole in it) = a genuine cut-out — metal removed, so
   the background shows through.
 • An ARROW = "this, here": read what it points AT, and treat the note nearest
@@ -2589,8 +2623,11 @@ charm. Keep it and change ONLY what the newest instruction asks for.`);
 • A dashed leader line from a label to a spot = the same as a pinned note.
 ${lettering.length ? `
 LETTERING THE CUSTOMER PLACED ON THE CHARM — these words are part of the
-charm and MUST be engraved, set in a clean jewellery-appropriate face at the
-position shown, cut deep enough to read at charm scale:
+charm and MUST be engraved, in the studio's ONE lettering face (a clean
+sans-serif — never a serif, script or decorative face), at exactly the
+position and size shown in the markup image, cut deep enough to read at
+charm scale. The customer placed and sized these words deliberately; moving,
+rescaling or restyling them is a defect:
 ${letterLines}` : ""}`;
     parts.push(exact
 ? `CUSTOMER MARKUP — EXACT MODE (the customer chose literal):
@@ -2602,6 +2639,24 @@ your output — but in THIS mode the drawn geometry is meant literally:
   line weight.
 • A ring or highlight around existing linework still means "change this area";
   a scribble or strike THROUGH existing linework still means "remove this".
+
+THE PRIME RULE OF EXACT MODE — CHANGE ONLY WHAT WAS MARKED:
+Everything the customer did NOT mark is reproduced IDENTICALLY from the
+current drawing — same lines, same weights, same positions, same proportions,
+same fills and non-fills. An unrequested "improvement" is a DEFECT, not a
+courtesy. In particular:
+• NEVER double a line. A single outline stays ONE line — no inner or outer
+  parallel lines, no rims, no borders, no halos added to any shape, marked
+  or unmarked.
+• NEVER restyle, thicken, thin, move or resize anything that was not marked.
+• An outlined shape with NO fill stays an outline with NO fill — do not fill,
+  hatch or blacken it, and do not outline a filled shape.
+• LETTERING added by the customer is engraved at EXACTLY the position and
+  size shown in the markup image — same spot, same cap height, one single
+  clean sans-serif face. Do not move it, rescale it, reflow it or restyle it.
+BEFORE RENDERING, CHECK: does every unmarked region of your output match the
+current drawing stroke for stroke? If anything unmarked changed, that is
+wrong — redo it.
 
 ${GRAMMAR}
 ${notes.length ? `PINNED NOTES — each anchored to the spot its words are about; honour every one in its own region:
@@ -2667,13 +2722,20 @@ INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
 • The drawing's 2px outer perimeter = the charm's cut edge. The silhouette matches 1:1 — laid over the drawing it must align exactly.
 • Black strokes INSIDE the outline = ENGRAVED (recessed) lines in the metal, following the exact same paths at the same relative weights.
 • Solid black regions = fully engraved regions.
+• AN OUTLINED SHAPE WITH NO FILL IS AN OUTLINE, NOT AN AREA. Engrave its
+  boundary line only; its white interior is flat polished metal exactly like
+  the rest of the surface. A circle drawn as a ring of line NEVER becomes a
+  solid engraved dot — read the drawing's ink literally, pixel for pixel.
 • White INSIDE the outline = flat polished metal. Never engrave, texture or darken it.
 • The hoop's white hole and every drawn cutout = REAL holes cut through the sheet, showing pure black through them.
 • The drawing's white background = pure black background in the output.
 
 100% STRUCTURAL MATCH: nothing added, nothing removed, nothing redesigned,
 nothing "improved". Every engraving stroke in the drawing appears as engraving;
-no engraving appears that the drawing does not show.
+no engraving appears that the drawing does not show. LINE COUNT IS SACRED:
+one drawn line becomes one engraved line — never doubled, never given a
+parallel companion, an inner rim or a halo. Text in the drawing is engraved
+at exactly the drawn position and size, in the same clean face.
 
 METAL: ${label}. Metal choice affects tone only — never form.`;
   return header + "\n\n" + (studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS);
@@ -2985,8 +3047,10 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
        overrides that would outrank the line-art contract — the exact same
        reason the Charm Maker's own B/W call passes neither. The contract
        carries the geometry rules in drawing terms instead. */
+    const refMode = body?.refMode === "exact" ? "exact"
+                  : body?.refMode === "interpret" ? "interpret" : null;
     const basePrompt = buildCustomerLineArtPrompt({
-      instructions, thread: body?.thread, refine: isRefine, markupNotes, markupMode,
+      instructions, thread: body?.thread, refine: isRefine, markupNotes, markupMode, refMode,
     });
     let effectivePrompt = basePrompt;
     try {
