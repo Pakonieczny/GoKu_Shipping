@@ -2448,6 +2448,68 @@ Match this workshop's metal alloy and tone, polish, restrained engraving languag
 /* Failsafe: if buildCharmDesignPromptServer is ever restructured so the slice
    markers move, the studio must not silently generate unconstrained charms.
    This is the minimum doctrine, used only in that case. */
+/* ═══════════ THE FILL LAW ════════════════════════════════════════════════
+ * The customer's fill is not decoration and never was — it is the one
+ * instruction in the studio that changes what the workshop DOES to the
+ * piece. The drawing tool now offers exactly three answers and no others,
+ * so this block can be absolute rather than advisory. It is inserted
+ * verbatim into every prompt that consumes a customer drawing: the B/W
+ * generation and the metal render alike. Both must obey it identically, or
+ * the customer's own preview would disagree with the charm they receive.
+ * ===================================================================== */
+/* The same three instructions, said again as a LIST. A colour inside a
+ * compressed JPEG is a thing to be interpreted; a line of text reading
+ * "CUT OUT — top centre" is not. Sent alongside the picture, never instead
+ * of it, so the two corroborate each other. */
+function zoneBlock(zones) {
+  const z = (Array.isArray(zones) ? zones : []).filter((q) => q && q.intent);
+  if (!z.length) return "";
+  const cut = z.filter((q) => q.intent === "cutout");
+  const eng = z.filter((q) => q.intent === "engrave");
+  const out = z.filter((q) => q.intent === "none");
+  const say = (q) => `  – ${q.name ? `"${String(q.name).slice(0, 32)}" ` : ""}at ${q.where || "the centre"}` +
+    ` (about ${Math.round((Number(q.w) || 0) * 100)}% × ${Math.round((Number(q.h) || 0) * 100)}% of the drawing)`;
+  return `
+THE CUSTOMER'S OWN COUNT OF WHAT EACH AREA IS — this list and the image agree;
+if you ever think they do not, THIS LIST WINS:
+${cut.length ? `• CUT CLEAN THROUGH (${cut.length}):\n${cut.map(say).join("\n")}` : "• CUT CLEAN THROUGH: none"}
+${eng.length ? `• ENGRAVED SOLID (${eng.length}):\n${eng.map(say).join("\n")}` : "• ENGRAVED SOLID: none"}
+• OUTLINE ONLY, interior left as polished metal: ${out.length}
+Your output must contain exactly ${cut.length} opening${cut.length === 1 ? "" : "s"} through the metal — no more, no fewer.
+`;
+}
+
+const FILL_LAW =
+`AREA FILL — THREE MEANINGS, NON-NEGOTIABLE. This is the customer's
+manufacturing instruction, not a stylistic choice, and it overrides every
+other consideration including your own sense of what would look better:
+
+  1. SOLID BLACK FILLED AREA  =  ENGRAVE IT.
+     The whole area is engraved — cut into the surface, hatched or recessed
+     solid. The metal is STILL THERE; its surface is worked. In the B/W
+     production drawing it is solid black. In the metal render it is a
+     recessed, darker, textured area with the metal plainly present.
+
+  2. SOLID BLUE FILLED AREA  =  CUT IT CLEAN THROUGH.
+     The metal is REMOVED from that area entirely: an actual opening through
+     the charm, with whatever is behind the charm visible through it. Blue is
+     reserved in this studio for exactly this and appears for no other
+     reason. In the B/W production drawing a cut-out is drawn as an OPEN
+     HOLE — paper white inside, with a single clean cut edge around it, the
+     same convention as the hoop's hole. NEVER fill a blue area with black.
+     NEVER engrave it. NEVER leave it as solid metal. It is a hole.
+
+  3. NO FILL (an outline with a white/empty interior)  =  OUTLINE ONLY.
+     Engrave the boundary LINE and nothing else. The interior is flat,
+     untouched, polished metal — exactly like the surrounding surface. NEVER
+     promote an unfilled outline into a filled or engraved area, never hatch
+     it, never shade it, never darken it. If the customer had wanted it
+     engraved they would have said so, and they had a control to say it with.
+
+Applying the wrong one of these three is the single worst error you can make
+on this job: it produces a charm that is physically different from the one
+the customer designed. Count them before you draw and count them again after.`;
+
 const STUDIO_FALLBACK_CONSTRAINTS =
 `HARD PHYSICAL CONSTRAINTS:
 • ONE CONTINUOUS PIECE cut from a single uniformly flat, thin (~22-gauge) sheet. No separate parts, no floating islands.
@@ -2499,7 +2561,7 @@ function markupRegion(x, y) {
   return row === "middle" && col === "centre" ? "the centre" : `the ${row} ${col}`;
 }
 
-function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes, markupMode, refMode }) {
+function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes, markupZones, markupMode, refMode }) {
   const clean = studioCleanText(instructions);
   const log = (Array.isArray(thread) ? thread : [])
     .filter((m) => m && m.text)
@@ -2549,20 +2611,27 @@ proportions exactly, converted to clean production line weight. Straighten
 only the hand's jitter; change NOTHING else.
 • LINE COUNT IS SACRED: one drawn line becomes one production line — never
   doubled, never given an inner or outer parallel, a rim, a border or a halo.
-• COLOUR CARRIES NO MEANING — the sketchpad offers colours only so the
-  customer can tell their own objects apart. Every line is an engraved line
-  and every FILLED area, in ANY colour, is an engraved/hatched area.
-• An outlined shape with NO fill stays an unfilled outline — its interior is
-  white. Only areas the customer filled are engraved areas.
+• LINE colour carries no meaning — the sketchpad offers coloured lines only so
+  the customer can tell their own objects apart, and every line is an engraved
+  line whatever its colour.
+• AREA FILL CARRIES THE WHOLE MEANING, and there are exactly three:
+  SOLID BLACK area = ENGRAVE that area. SOLID BLUE area = CUT IT CLEAN
+  THROUGH — draw it as an open hole, paper white with one clean cut edge,
+  never black, never engraved, never solid. NO FILL = outline only, interior
+  left white as flat polished metal. Applying the wrong one produces a
+  physically different charm; it is the worst error available on this job.
 • TEXT in the sketch is reproduced at exactly the drawn position and size, in
   one clean sans-serif face — never moved, rescaled, reflowed or restyled.
 • Add nothing the sketch does not show; remove nothing it does.
 BEFORE RENDERING, CHECK: laid over the sketch, does every element of your
 output sit on top of its counterpart at the same size? If not, redo it.`
 : `THE REFERENCE IMAGE IS THE CUSTOMER'S OWN HAND-DRAWN DESIGN — INTERPRETED:
-Colour carries no meaning in the sketch — it only tells the customer's own
-objects apart. Every line is an engraved line; every FILLED area, in any
-colour, is an engraved/hatched area; an unfilled outline stays unfilled.
+LINE colour carries no meaning in the sketch — it only tells the customer's
+own objects apart, and every line is an engraved line. AREA FILL is the
+opposite: it is a manufacturing instruction with exactly three values.
+SOLID BLACK area = engrave it. SOLID BLUE area = CUT IT CLEAN THROUGH,
+drawn as an open hole, never as black and never as engraving. NO FILL =
+outline only, its interior left as flat polished metal.
 Read the sketch for what it DEPICTS and draw that subject properly in this
 studio's production line language — clean, manufacturable, symmetric where
 the real subject is symmetric — while keeping the sketch's composition: each
@@ -2613,16 +2682,13 @@ sans-serif face.`);
       `• "${n.text}"${n.where ? ` — placed at ${n.where} of the charm` : ""}${n.h ? `, cap height ≈ ${Math.round(n.h * 100)}% of the drawing's height — reproduce at THIS size, at THIS position, exactly as shown in the markup image` : ""}`).join("\n");
     /* the vocabulary the drawing studio can now produce, in both modes */
     const GRAMMAR =
-`WHAT THE CUSTOMER'S TOOLS MEAN:
-• COLOUR CARRIES NO MEANING. The studio's tools let the customer draw in
-  several colours purely so they can tell their own objects apart. Red, gold,
-  blue and black all mean exactly the same thing to you.
-• A FILLED area — filled in ANY colour — = "engrave or hatch this whole
-  area". A filled shape is the customer saying so; the colour is irrelevant.
-• An outlined shape with NO fill = an OUTLINE ONLY: the line itself is the
-  engraving and its interior stays white (polished metal). NEVER promote an
-  unfilled outline into a filled/engraved area — if the customer wanted it
-  filled they would have filled it.
+`${FILL_LAW}
+${zoneBlock(markupZones)}
+WHAT THE CUSTOMER'S TOOLS MEAN:
+• LINE colour carries no meaning. The studio lets the customer draw lines in
+  several colours purely so they can tell their own objects apart. A red, gold
+  or grey LINE is exactly the same instruction as a black one: engrave it.
+  This says nothing about FILLED AREAS, which are governed by the law above.
 • A RING (a shape with a hole in it) = a genuine cut-out — metal removed, so
   the background shows through.
 • An ARROW = "this, here": read what it points AT, and treat the note nearest
@@ -2730,9 +2796,12 @@ as a photorealistic flat laser-cut ${label} charm on a pure black background.
 INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
 • The drawing's 2px outer perimeter = the charm's cut edge. The silhouette matches 1:1 — laid over the drawing it must align exactly.
 • Black strokes INSIDE the outline = ENGRAVED (recessed) lines in the metal, following the exact same paths at the same relative weights.
-• Solid filled regions = fully engraved (or hatched) regions. The drawing may
-  arrive with fills in colours other than black; a fill is a fill whatever its
-  colour, and every one of them is an engraved area.
+• SOLID BLACK FILLED REGIONS = fully engraved (recessed, hatched) regions.
+  The metal is still there; its surface is worked.
+• SOLID BLUE FILLED REGIONS = CUT CLEAN THROUGH. The metal is absent: render
+  an actual opening in the charm with pure black showing through it, edged
+  the same way the hoop's hole is edged. Never render blue as blue. Never
+  render it as engraving. Never render it as solid metal. It is a hole.
 • AN OUTLINED SHAPE WITH NO FILL IS AN OUTLINE, NOT AN AREA. Engrave its
   boundary line only; its white interior is flat polished metal exactly like
   the rest of the surface. A circle drawn as a ring of line NEVER becomes a
@@ -2748,7 +2817,9 @@ one drawn line becomes one engraved line — never doubled, never given a
 parallel companion, an inner rim or a halo. Text in the drawing is engraved
 at exactly the drawn position and size, in the same clean face.
 
-METAL: ${label}. Metal choice affects tone only — never form.`;
+METAL: ${label}. Metal choice affects tone only — never form.
+
+${FILL_LAW}`;
   return header + "\n\n" + (studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS);
 }
 
@@ -3037,6 +3108,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
        refine, and only when the previous drawing made it into the request —
        markup with no drawing under it would point at nothing. */
     let markupNotes = [];
+    let markupZones = [];                      // the engraving instruction, as data
     let markupMode = null;                     // set ONLY when a markup image is accepted
     if (isRefine && hasPrev && typeof body?.markupImage === "string") {
       const mm = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(body.markupImage.trim());
@@ -3045,6 +3117,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
         if (buf.length > 0 && buf.length <= 1.5 * 1024 * 1024) {
           images.push({ buffer: buf, mime: "image/" + mm[1], filename: "markup." + (mm[1] === "png" ? "png" : "jpg") });
           markupNotes = Array.isArray(body.markupNotes) ? body.markupNotes : [];
+          markupZones = Array.isArray(body.markupZones) ? body.markupZones : [];
           markupMode = String(body.markupMode) === "exact" ? "exact" : "interpret";
         }
       }
@@ -3061,7 +3134,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     const refMode = body?.refMode === "exact" ? "exact"
                   : body?.refMode === "interpret" ? "interpret" : null;
     const basePrompt = buildCustomerLineArtPrompt({
-      instructions, thread: body?.thread, refine: isRefine, markupNotes, markupMode, refMode,
+      instructions, thread: body?.thread, refine: isRefine, markupNotes, markupZones, markupMode, refMode,
     });
     let effectivePrompt = basePrompt;
     try {
