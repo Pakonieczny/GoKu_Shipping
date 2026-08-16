@@ -2461,21 +2461,42 @@ Match this workshop's metal alloy and tone, polish, restrained engraving languag
  * compressed JPEG is a thing to be interpreted; a line of text reading
  * "CUT OUT — top centre" is not. Sent alongside the picture, never instead
  * of it, so the two corroborate each other. */
-function zoneBlock(zones) {
-  const z = (Array.isArray(zones) ? zones : []).filter((q) => q && q.intent);
+function zoneBlock(zones, which) {
+  /* a zone with no geometry is not a zone: it printed as "at the centre
+     (about 0% × 0%)" and still incremented a count the model was told to
+     obey. Nothing client-side can send one, but nothing server-side checked. */
+  const z = (Array.isArray(zones) ? zones : []).filter((q) =>
+    q && (q.intent === "cutout" || q.intent === "engrave" || q.intent === "none") &&
+    Number(q.w) > 0.004 && Number(q.h) > 0.004);
   if (!z.length) return "";
   const cut = z.filter((q) => q.intent === "cutout");
   const eng = z.filter((q) => q.intent === "engrave");
   const out = z.filter((q) => q.intent === "none");
+  const src = which === "reference" ? "THE REFERENCE IMAGE"
+            : which === "drawing" ? "THE PRODUCTION DRAWING" : "the mark-up";
+  /* the box is the box, and for a RING-shaped area the box is the whole
+     disc — saying "80% x 80%" of a rim invites engraving the face solid.
+     So an annular area is named as one and its box is described as the
+     extent it spans rather than the area it covers. */
   const say = (q) => `  – ${q.name ? `"${String(q.name).slice(0, 32)}" ` : ""}at ${q.where || "the centre"}` +
-    ` (about ${Math.round((Number(q.w) || 0) * 100)}% × ${Math.round((Number(q.h) || 0) * 100)}% of the drawing)`;
+    (q.ring ? `, a RING-SHAPED band (its hole is NOT part of it)` : "") +
+    ` (spanning about ${Math.round((Number(q.w) || 0) * 100)}% × ${Math.round((Number(q.h) || 0) * 100)}% of the drawing)`;
   return `
-THE CUSTOMER'S OWN COUNT OF WHAT EACH AREA IS — this list and the image agree;
-if you ever think they do not, THIS LIST WINS:
+THE CUSTOMER'S OWN COUNT OF WHAT EACH AREA IS, taken from the controls they
+used in the studio rather than read off the pixels. This list and ${src}
+agree; if you ever think they do not, THIS LIST WINS:
 ${cut.length ? `• CUT CLEAN THROUGH (${cut.length}):\n${cut.map(say).join("\n")}` : "• CUT CLEAN THROUGH: none"}
 ${eng.length ? `• ENGRAVED SOLID (${eng.length}):\n${eng.map(say).join("\n")}` : "• ENGRAVED SOLID: none"}
 • OUTLINE ONLY, interior left as polished metal: ${out.length}
-Your output must contain exactly ${cut.length} opening${cut.length === 1 ? "" : "s"} through the metal — no more, no fewer.
+EVERY ONE OF THE ${cut.length} AREA${cut.length === 1 ? "" : "S"} LISTED ABOVE AS CUT CLEAN THROUGH MUST BE AN
+ACTUAL OPENING in your output, and every one of the ${eng.length} listed as ENGRAVED
+must be a solidly engraved area. Count them before you finish.
+This list says what these particular areas ARE; it is not a census of the
+whole charm. The hoop's own hole, and any opening the design itself plainly
+requires — a ring, a bail, the middle of a letter O — are separate from it
+and are still required. What the list forbids is the reverse: turning a
+listed cut-out into engraving or solid metal, or a listed engraved area into
+plain polished metal.
 `;
 }
 
@@ -2561,7 +2582,7 @@ function markupRegion(x, y) {
   return row === "middle" && col === "centre" ? "the centre" : `the ${row} ${col}`;
 }
 
-function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes, markupZones, markupMode, refMode }) {
+function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes, markupZones, markupMode, refMode, refZones }) {
   const clean = studioCleanText(instructions);
   const log = (Array.isArray(thread) ? thread : [])
     .filter((m) => m && m.text)
@@ -2638,6 +2659,30 @@ the real subject is symmetric — while keeping the sketch's composition: each
 element at the position and relative scale the customer gave it. Honour any
 text: the same words, at the same place and relative size, in one clean
 sans-serif face.`);
+    /* ── AND THE LAW ITSELF, IN FULL, WITH THE COUNT ────────────────────
+       The paragraph above states the three meanings, and for a long while
+       that was all the sketch path had — the full law and the customer's
+       own enumeration of every filled area were reachable ONLY through the
+       mark-up branch, which does not run on a first generation. So the very
+       first drawing made from somebody's own sketch was produced by a model
+       that had been told the rule once, in passing, and given no way to
+       check itself against it. A blue cut-out and a black engraved ring
+       both came back as plain polished metal, which is precisely the
+       failure this law exists to prevent. It is here now, on the path that
+       actually runs, with the counts attached. */
+    parts.push(FILL_LAW);
+    const rz = zoneBlock(refZones, "reference");
+    if (rz) parts.push(rz);
+  } else if (refine) {
+    /* ── AND ON A REFINE, WHICH IS THE VERY NEXT THING THAT HAPPENS ──────
+       The law lived only in the first-generation branch and in the mark-up
+       branch, and the mark-up branch needs an accepted mark-up IMAGE. So a
+       customer who looked at their charm, saw the cut-out had been ignored
+       and typed "the cherry should be a hole" sent the one message in the
+       whole flow whose prompt contained no fill law of any kind. */
+    parts.push(FILL_LAW);
+    const rz = zoneBlock(refZones, "reference");
+    if (rz) parts.push(rz);
   }
   /* ── THE MARKUP CONTRACT ─────────────────────────────────────────────────
      The customer drew on the previous drawing with a mouse or a fingertip.
@@ -2777,7 +2822,7 @@ the workshop's own designer had made the changes? Render THAT.`);
 }
 
 /* ── the render step's prompt: the Charm Maker's conversion, reversed ───── */
-function buildLineArtToCharmPrompt({ metal }) {
+function buildLineArtToCharmPrompt({ metal, zones }) {
   const m = studioCleanText(metal) || "gold";
   const label = ({
     silver: "polished sterling silver",
@@ -2819,7 +2864,8 @@ at exactly the drawn position and size, in the same clean face.
 
 METAL: ${label}. Metal choice affects tone only — never form.
 
-${FILL_LAW}`;
+${FILL_LAW}
+${zoneBlock(zones, "drawing")}`;
   return header + "\n\n" + (studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS);
 }
 
@@ -3133,8 +3179,11 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
        carries the geometry rules in drawing terms instead. */
     const refMode = body?.refMode === "exact" ? "exact"
                   : body?.refMode === "interpret" ? "interpret" : null;
+    /* the fill law, as data, for a reference the customer drew themselves */
+    const refZones = Array.isArray(body?.refZones) ? body.refZones.slice(0, 40) : [];
     const basePrompt = buildCustomerLineArtPrompt({
-      instructions, thread: body?.thread, refine: isRefine, markupNotes, markupZones, markupMode, refMode,
+      instructions, thread: body?.thread, refine: isRefine, markupNotes, markupZones, markupMode,
+      refMode, refZones,
     });
     let effectivePrompt = basePrompt;
     try {
@@ -3148,6 +3197,17 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
       });
       if (audited) effectivePrompt = audited;
     } catch (_e) { /* best effort — never blocks a paid generation */ }
+    /* THE LAW IS NOT NEGOTIABLE, INCLUDING BY OUR OWN AUDITOR. The prompt
+       goes through a preflight model asked to smooth out contradictions,
+       which may return as little as a third of what it was handed.
+       Everything else here can survive being rephrased; this cannot, because
+       what it governs is whether there is a hole in somebody's jewellery.
+       So it is re-stated verbatim afterwards if the audit dropped it. */
+    if ((refMode || isRefine || markupMode) &&
+        effectivePrompt.indexOf("AREA FILL — THREE MEANINGS") < 0) {
+      effectivePrompt += "\n\n" + FILL_LAW +
+        (zoneBlock(refZones, "reference") || zoneBlock(markupZones) || "");
+    }
 
     await studioStage(vRef, { stage: "generating" });
 
@@ -3294,7 +3354,8 @@ async function handleStudioRender({ body, event, origin }) {
       { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" },
     ];
 
-    const basePrompt = buildLineArtToCharmPrompt({ metal });
+    const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
+    const basePrompt = buildLineArtToCharmPrompt({ metal, zones: renderZones });
     let effectivePrompt = basePrompt;
     try {
       const audited = await auditCharmPromptPreflight({
@@ -3306,6 +3367,9 @@ async function handleStudioRender({ body, event, origin }) {
         imageRoles: "lineart_to_charm",
       });
       if (audited) effectivePrompt = audited;
+      if (effectivePrompt.indexOf("AREA FILL — THREE MEANINGS") < 0) {
+        effectivePrompt += "\n\n" + FILL_LAW + zoneBlock(renderZones, "drawing");
+      }
     } catch (_e) { /* best effort */ }
 
     await vRef.set({ renderStage: "rendering" }, { merge: true });
