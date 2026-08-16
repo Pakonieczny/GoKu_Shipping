@@ -2866,8 +2866,74 @@ METAL: ${label}. Metal choice affects tone only — never form.
 
 ${FILL_LAW}
 ${zoneBlock(zones, "drawing")}`;
-  return header + "\n\n" + (studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS);
+  /* ── THE PRESENTATION, WHICH IS THIS STUDIO'S AND NOT THE CATALOGUE'S ──
+     Everything above this line is the workshop's own doctrine, shared with
+     the product photography — including a pure black background and no cast
+     shadow, which is right for a catalogue plate and wrong for a customer
+     looking at their own charm for the first time. This block is appended
+     LAST, and says so, because the last word has to be the studio's. */
+  return header + "\n\n" + (studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS) +
+         "\n\n" + STUDIO_RENDER_FINISH;
 }
+
+/* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
+   Two things were wrong with it, and both are the kind of wrong that makes
+   a real object look like a picture of one.
+
+   THE ENGRAVING WAS TOO DARK. Engraving does not change what metal IS; it
+   changes how the surface catches light. A recess in polished gold reads as
+   a slightly deeper, warmer, more coppery gold — not as brown, not as
+   bronze, and never as a separate material inlaid into the piece. It was
+   coming back nearly black in places and heavily grained, which reads as
+   fake at a glance because no jeweller's laser leaves that.
+
+   AND IT SAT ON BLACK. A charm floating on pure black with no shadow is a
+   cut-out; it tells the customer nothing about the object's weight, its
+   thickness, or — crucially — where the holes are. A real shadow does, and
+   the holes in the shadow are the proof that the cut-outs are cut. */
+const STUDIO_RENDER_FINISH =
+`PRESENTATION — THIS SUPERSEDES EVERY EARLIER INSTRUCTION ABOUT THE
+BACKGROUND, THE SHADOW AND THE ENGRAVING TONE. Where anything above
+disagrees with this block, THIS BLOCK WINS.
+
+BACKGROUND AND SHADOW:
+• The charm rests on a clean, seamless, pure WHITE studio ground plane — not
+  black, not grey, not a gradient, not a vignette, not a reflection. Plain
+  white, edge to edge.
+• It casts ONE real, physically plausible contact shadow onto that plane:
+  soft-edged, short, close under the piece, slightly darker and tighter
+  where the metal meets the ground and diffusing outward. A single soft key
+  light from the upper left, so the shadow falls gently to the lower right.
+• THE SHADOW IS A TRUE SILHOUETTE OF THE CHARM AND OF NOTHING ELSE. Every
+  opening cut through the metal — the hoop's hole and every cut-out in the
+  design — appears in the shadow as a corresponding gap of clean white.
+  Light passes through a hole; a shadow with the hole missing is the single
+  clearest sign of a render that has not understood the object. Count the
+  openings in the charm and count them again in the shadow.
+• No drop shadow effect, no glow, no outline, no floor line, no horizon, no
+  props, no hand, no chain, no packaging.
+
+ENGRAVED SURFACES — TONE AND TEXTURE:
+• An engraved area is THE SAME METAL, recessed. Its colour is the charm's
+  own gold shifted only slightly: a little deeper, a little warmer, a touch
+  more copper-brass. Think one or two steps down the same swatch — clearly
+  legible as engraving, never brown, never bronze, never grey, never black,
+  and never a different material.
+• CONSISTENT ACROSS THE WHOLE PIECE. Every engraved area is the same tone
+  and the same depth as every other. Blotches, patches, gradients across a
+  single engraved region, or one area darker than another, are wrong.
+• TEXTURE IS SUBTLE. A faint, fine, even micro-texture inside the recess is
+  correct — the trace of a laser, visible only on inspection. Coarse grain,
+  heavy hatching, visible stippling, brushed streaks, canvas or fabric
+  weave, or anything that reads as a material laid into the recess is wrong
+  and is the main thing making this look artificial. When in doubt, less.
+• The polished, unengraved metal stays bright, smooth and specular, and the
+  contrast between polished and engraved comes from FINISH and DEPTH rather
+  than from a change of colour.
+
+FINAL CHECK ON THIS BLOCK: white ground, one soft contact shadow, every
+opening present as white inside that shadow, engraving one gentle step
+warmer than the polish and even everywhere, texture barely there.`;
 
 function buildCustomerCharmPrompt({ instructions, thread, metal, refine }) {
   const clean = studioCleanText(instructions);
