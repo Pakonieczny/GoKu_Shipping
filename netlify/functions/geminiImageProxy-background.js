@@ -2469,6 +2469,8 @@ function zoneBlock(zones, which) {
     q && (q.intent === "cutout" || q.intent === "engrave" || q.intent === "none") &&
     Number(q.w) > 0.004 && Number(q.h) > 0.004);
   if (!z.length) return "";
+  /* numbered once, across the whole list, so "area 4" means one area */
+  z.forEach((q, i) => { q._i = i; });
   const cut = z.filter((q) => q.intent === "cutout");
   const eng = z.filter((q) => q.intent === "engrave");
   const out = z.filter((q) => q.intent === "none");
@@ -2478,7 +2480,16 @@ function zoneBlock(zones, which) {
      disc — saying "80% x 80%" of a rim invites engraving the face solid.
      So an annular area is named as one and its box is described as the
      extent it spans rather than the area it covers. */
-  const say = (q) => `  – ${q.name ? `"${String(q.name).slice(0, 32)}" ` : ""}at ${q.where || "the centre"}` +
+  /* ── AN AREA IS A PLACE, NOT A WORD ───────────────────────────────────
+     Each area used to be introduced by its layer name, and the layer names
+     in a real design are machine-made: "logo 4", "logo 12", "Engraved ·
+     Cherry3D Logo.png". Handed to an image model inside a list it is told to
+     obey, those stopped being identifiers and became CONTENT — a finished
+     charm came back with "logo 2 area · 9%" and "Engraved · Cherry3D
+     Logo.png · M" set in type around its rim and across its face. An area is
+     named by where it is and how big it is, which is the same thing the
+     picture beside the list says, and there is nothing here to read out. */
+  const say = (q) => `  – area ${(Number(q._i) || 0) + 1}: at ${q.where || "the centre"}` +
     (q.ring ? `, a RING-SHAPED band (its hole is NOT part of it)` : "") +
     ` (spanning about ${Math.round((Number(q.w) || 0) * 100)}% × ${Math.round((Number(q.h) || 0) * 100)}% of the drawing)`;
   return `
@@ -2487,6 +2498,11 @@ used in the studio rather than read off the pixels. This list and ${src}
 agree; if you ever think they do not, THIS LIST WINS:
 ${cut.length ? `• CUT CLEAN THROUGH (${cut.length}):\n${cut.map(say).join("\n")}` : "• CUT CLEAN THROUGH: none"}
 ${eng.length ? `• ENGRAVED SOLID (${eng.length}):\n${eng.map(say).join("\n")}` : "• ENGRAVED SOLID: none"}
+NOTHING IN THIS LIST IS TEXT. These lines describe WHERE areas are; they are
+not lettering, not a caption, not a label and not part of the design. Do not
+draw, engrave, set or letter any word, number, percentage or filename from
+this list anywhere on the charm. The only words that may ever appear on a
+charm are the ones given under LETTERING.
 • OUTLINE ONLY, interior left as polished metal: ${out.length}
 EVERY ONE OF THE ${cut.length} AREA${cut.length === 1 ? "" : "S"} LISTED ABOVE AS CUT CLEAN THROUGH MUST BE AN
 ACTUAL OPENING in your output, and every one of the ${eng.length} listed as ENGRAVED
@@ -2520,12 +2536,21 @@ other consideration including your own sense of what would look better:
      same convention as the hoop's hole. NEVER fill a blue area with black.
      NEVER engrave it. NEVER leave it as solid metal. It is a hole.
 
-  3. NO FILL (an outline with a white/empty interior)  =  OUTLINE ONLY.
+  3. RED OUTLINE, or an outline with a white/empty interior  =  OUTLINE ONLY.
      Engrave the boundary LINE and nothing else. The interior is flat,
      untouched, polished metal — exactly like the surrounding surface. NEVER
      promote an unfilled outline into a filled or engraved area, never hatch
      it, never shade it, never darken it. If the customer had wanted it
      engraved they would have said so, and they had a control to say it with.
+     RED IS RESERVED for this and appears in a Brites drawing for no other
+     reason. A red boundary is engraved as an ordinary black production line;
+     the red itself is never reproduced.
+
+THESE THREE COLOURS ARE INSTRUCTIONS, NOT PIGMENT. Blue and red are reserved
+words in this studio's language: blue says "there is no metal here", red says
+"only this line is worked". Neither is ever a colour of the finished piece,
+and neither ever appears in your output — a cut-out is an opening, a red
+outline is a black engraved line, and nothing in the charm is blue or red.
 
 Applying the wrong one of these three is the single worst error you can make
 on this job: it produces a charm that is physically different from the one
@@ -2558,7 +2583,20 @@ If any answer is no, correct the design before rendering.`;
    the whole point of designing in B/W is that nothing about the engraving is
    ambiguous. */
 const STUDIO_LINEART_CONTRACT =
-`B/W PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
+`HOW TO READ THE COLOURS IN WHAT YOU WERE GIVEN (INPUT, NOT OUTPUT):
+The customer's drawing may contain exactly three meaningful colours, and they
+are manufacturing instructions rather than any part of the appearance:
+• SOLID BLACK area → engraved. Draw it as a solid black area.
+• SOLID BLUE area → cut clean through. Draw it as an OPEN HOLE: pure white
+  inside a single clean cut outline, exactly the way the hanging hoop's own
+  hole is drawn. Never as black, never engraved, never as solid metal.
+• RED boundary line → outline only. Draw that boundary as ONE ordinary black
+  production line and leave the area it encloses pure white.
+Your own output is BLACK AND WHITE ONLY — it never contains blue or red.
+Reproducing an instruction colour as a colour is a hard fail; so is losing
+the instruction it carried.
+
+B/W PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
 • The output is a flat 2D black-and-white VECTOR-STYLE production drawing on a solid pure WHITE (#FFFFFF) background. Absolutely no transparency, no colours, no greys, no shading, no gradients, no 3D extrusion, no perspective, no photorealism, no metal rendering.
 • It depicts ONE charm: a single continuous silhouette that could be laser-cut from one flat sheet. No separate parts, no floating islands, no props, no scene.
 • EXACTLY ONE small ring-shaped hanging hoop protrudes above the silhouette at the top, drawn as part of the same continuous outline — a flat annulus with one clean round hole — directly above the design's center of mass, so the finished charm hangs level. Never a separate jump ring, bail or chain.
@@ -2638,8 +2676,10 @@ only the hand's jitter; change NOTHING else.
 • AREA FILL CARRIES THE WHOLE MEANING, and there are exactly three:
   SOLID BLACK area = ENGRAVE that area. SOLID BLUE area = CUT IT CLEAN
   THROUGH — draw it as an open hole, paper white with one clean cut edge,
-  never black, never engraved, never solid. NO FILL = outline only, interior
-  left white as flat polished metal. Applying the wrong one produces a
+  never black, never engraved, never solid. RED BOUNDARY, or no fill at all,
+  = outline only: engrave that boundary as one ordinary black line and leave
+  its interior white as flat polished metal. Blue and red are instructions
+  and never appear in your output. Applying the wrong one produces a
   physically different charm; it is the worst error available on this job.
 • TEXT in the sketch is reproduced at exactly the drawn position and size, in
   one clean sans-serif face — never moved, rescaled, reflowed or restyled.
@@ -2647,39 +2687,39 @@ only the hand's jitter; change NOTHING else.
 BEFORE RENDERING, CHECK: laid over the sketch, does every element of your
 output sit on top of its counterpart at the same size? If not, redo it.`
 : `THE REFERENCE IMAGE IS THE CUSTOMER'S OWN HAND-DRAWN DESIGN — INTERPRETED:
-LINE colour carries no meaning in the sketch — it only tells the customer's
-own objects apart, and every line is an engraved line. AREA FILL is the
-opposite: it is a manufacturing instruction with exactly three values.
-SOLID BLACK area = engrave it. SOLID BLUE area = CUT IT CLEAN THROUGH,
-drawn as an open hole, never as black and never as engraving. NO FILL =
-outline only, its interior left as flat polished metal.
+A freehand PEN line's colour carries no meaning — it only tells the
+customer's own objects apart, and every such line is an engraved line. An
+AREA is the opposite: its colour is a manufacturing instruction with exactly
+three values. SOLID BLACK area = engrave it. SOLID BLUE area = CUT IT CLEAN
+THROUGH, drawn as an open hole, never as black and never as engraving. A RED
+BOUNDARY, or no fill at all = outline only, its interior left as flat
+polished metal and its boundary drawn as one ordinary black line. Blue and
+red are instructions and never appear in your output.
 Read the sketch for what it DEPICTS and draw that subject properly in this
 studio's production line language — clean, manufacturable, symmetric where
 the real subject is symmetric — while keeping the sketch's composition: each
 element at the position and relative scale the customer gave it. Honour any
 text: the same words, at the same place and relative size, in one clean
 sans-serif face.`);
-    /* ── AND THE LAW ITSELF, IN FULL, WITH THE COUNT ────────────────────
-       The paragraph above states the three meanings, and for a long while
-       that was all the sketch path had — the full law and the customer's
-       own enumeration of every filled area were reachable ONLY through the
-       mark-up branch, which does not run on a first generation. So the very
-       first drawing made from somebody's own sketch was produced by a model
-       that had been told the rule once, in passing, and given no way to
-       check itself against it. A blue cut-out and a black engraved ring
-       both came back as plain polished metal, which is precisely the
-       failure this law exists to prevent. It is here now, on the path that
-       actually runs, with the counts attached. */
-    parts.push(FILL_LAW);
-    const rz = zoneBlock(refZones, "reference");
-    if (rz) parts.push(rz);
-  } else if (refine) {
-    /* ── AND ON A REFINE, WHICH IS THE VERY NEXT THING THAT HAPPENS ──────
-       The law lived only in the first-generation branch and in the mark-up
-       branch, and the mark-up branch needs an accepted mark-up IMAGE. So a
-       customer who looked at their charm, saw the cut-out had been ignored
-       and typed "the cherry should be a hole" sent the one message in the
-       whole flow whose prompt contained no fill law of any kind. */
+  }
+  /* ── AND THE LAW ITSELF, IN FULL, ON EVERY PATH THAT HAS A PLAN ─────────
+     This used to be two mutually exclusive branches — "the reference is a
+     sketch" and "this is a refinement" — which between them missed the two
+     commonest journeys in the studio: a FIRST generation from an uploaded
+     picture, and a first generation from a catalogue charm. Those produced a
+     prompt with no fill law in it at all, so the one instruction that
+     changes the physical object was decided by whatever the model felt like.
+     The plan now arrives for all four kinds of reference (the studio reads
+     it off the picture when nobody has drawn one), so the law travels
+     wherever the plan does.
+
+     Not when a MARK-UP is in the request: the mark-up block below carries
+     the same law with the mark-up's own — more recent, more specific — list
+     beside it, and stating the law twice with two different censuses of the
+     same charm is an invitation to split the difference. */
+  const hasRefPlan = Array.isArray(refZones) && refZones.length > 0;
+  const markupInPlay = markupMode !== undefined && markupMode !== null;
+  if (!markupInPlay && (refMode === "exact" || refMode === "interpret" || refine || hasRefPlan)) {
     parts.push(FILL_LAW);
     const rz = zoneBlock(refZones, "reference");
     if (rz) parts.push(rz);
@@ -2730,10 +2770,12 @@ sans-serif face.`);
 `${FILL_LAW}
 ${zoneBlock(markupZones)}
 WHAT THE CUSTOMER'S TOOLS MEAN:
-• LINE colour carries no meaning. The studio lets the customer draw lines in
-  several colours purely so they can tell their own objects apart. A red, gold
-  or grey LINE is exactly the same instruction as a black one: engrave it.
-  This says nothing about FILLED AREAS, which are governed by the law above.
+• A FREEHAND PEN LINE's colour carries no meaning. The studio lets the
+  customer draw in more than one colour purely so they can tell their own
+  marks apart, and every such line is the same instruction as a black one:
+  engrave it. This says nothing about AREAS — a closed shape's black, blue or
+  red is governed by the law above, and a RED BOUNDARY around an empty area
+  is that law's third value, not a coloured pen stroke.
 • A RING (a shape with a hole in it) = a genuine cut-out — metal removed, so
   the background shows through.
 • An ARROW = "this, here": read what it points AT, and treat the note nearest
@@ -2851,6 +2893,10 @@ INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
   boundary line only; its white interior is flat polished metal exactly like
   the rest of the surface. A circle drawn as a ring of line NEVER becomes a
   solid engraved dot — read the drawing's ink literally, pixel for pixel.
+• A RED BOUNDARY LINE, if the drawing carries one, means exactly that same
+  thing said in colour: engrave that line, leave its interior polished. The
+  red is an instruction and is never rendered — no red metal, no red enamel,
+  no red inlay. Neither is blue: a blue area is an opening, not a colour.
 • White INSIDE the outline = flat polished metal. Never engrave, texture or darken it.
 • The hoop's white hole and every drawn cutout = REAL holes cut through the sheet, showing pure black through them.
 • The drawing's white background = pure black background in the output.
@@ -3269,10 +3315,14 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
        Everything else here can survive being rephrased; this cannot, because
        what it governs is whether there is a hole in somebody's jewellery.
        So it is re-stated verbatim afterwards if the audit dropped it. */
-    if ((refMode || isRefine || markupMode) &&
+    if ((refMode || isRefine || markupMode || refZones.length) &&
         effectivePrompt.indexOf("AREA FILL — THREE MEANINGS") < 0) {
+      /* THE MARK-UP'S LIST WINS. It is the more specific account of the two
+         and it is the one the customer is looking at; preferring the
+         reference's list here re-stated an older census of the same charm
+         underneath the newer one. */
       effectivePrompt += "\n\n" + FILL_LAW +
-        (zoneBlock(refZones, "reference") || zoneBlock(markupZones) || "");
+        (zoneBlock(markupZones) || zoneBlock(refZones, "reference") || "");
     }
 
     await studioStage(vRef, { stage: "generating" });
