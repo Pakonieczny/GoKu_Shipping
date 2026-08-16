@@ -2057,8 +2057,8 @@ HARD PHYSICAL CONSTRAINTS:
 • FLAT SURFACE LIGHTING: high polish may create reflections across the flat face, but the reflections must never make the face or edges look curved, raised or sculpted.
 • FRONT VIEW: perfectly front-facing orthographic view with 0% perspective tilt.
 • ENGRAVING: sparse, strategic, shallow surface laser etching only. Preserve generous untouched metal areas.
-• ENGRAVING TONE — STRONGER WARM CONTRAST: render every engraved line in the same muted copper/brass-mix patina, now approximately 30–35% darker than the nearby polished metal face. The lines must be clearly and immediately visible at preview size while remaining refined.
-• ENGRAVING COLOR LIMITS: never use white, cream or face-matching highlight colour for an engraving, but also never use black, charcoal, very dark brown, heavy oxidation or deep shadow. Aim for a medium warm copper-brass line that remains plainly visible at preview size—not a dark outline.
+• ENGRAVING TONE — GENTLE, CLOSE TO THE GOLD: render every engraved line in the same warm gold family as the polished face, only approximately 12–18% darker/warmer than the metal beside it — legible at preview size but soft, never a stark dark line against the gold.
+• ENGRAVING COLOR LIMITS: never use white, cream or face-matching highlight colour for an engraving, but also never use black, charcoal, dark brown, heavy copper patina, heavy oxidation or deep shadow. Aim for a light warm tone only a few shades deeper than the surrounding gold — subtle, refined, still readable at preview size, never a dark outline.
 • ENGRAVING/CUTOUT DISTINCTION: engravings are shallow surface marks; cutouts are true negative space with crisp laser-cut boundaries. Both are allowed and must remain visually unambiguous.
 • NO TEXT: no letters, words, dates, numbers, logos or branded shapes.
 • NO ATTACHED HARDWARE: no chains, clasps, jump rings, O-rings, split rings, wire loops, folded bails, soldered bails, hinges or connectors of any kind.
@@ -2528,7 +2528,17 @@ plain polished metal.
 }
 
 const FILL_LAW =
-`AREA FILL — THREE MEANINGS, NON-NEGOTIABLE. This is the customer's
+`THE GOLDEN RULE OF THIS WORKSHOP — ABOVE EVERY OTHER INSTRUCTION IN THIS
+PROMPT: the customer's three engraving colours (BLACK, BLUE, RED) are obeyed
+EXACTLY, on every generation, every refinement and every render, with no
+exception, ever. EVERY solid blue area IS an opening. Every black area IS
+engraved. Every red boundary IS an outline with a polished interior. If your
+composed image loses even ONE of them — one blue area that is not an opening,
+one black area that is not engraved — the image is WRONG and must be redone
+before you return it. There is no artistic judgement to apply here; a lost
+instruction is a physically different object than the one that was bought.
+
+AREA FILL — THREE MEANINGS, NON-NEGOTIABLE. This is the customer's
 manufacturing instruction, not a stylistic choice, and it overrides every
 other consideration including your own sense of what would look better:
 
@@ -2574,7 +2584,7 @@ const STUDIO_FALLBACK_CONSTRAINTS =
 • ONE CONTINUOUS PIECE cut from a single uniformly flat, thin (~22-gauge) sheet. No separate parts, no floating islands.
 • SHARP SQUARE-CUT 2D EDGES. No rounded, domed, tubular, cast or inflated edges.
 • EXACTLY ONE INTEGRATED PROTRUDING HOOP at the top, cut from the same sheet as a flat annulus with one clean round hole, placed directly above the design's center of mass so the charm hangs level. Never a hole punched inside the body. No jump rings, split rings, bails, chains or any separate hardware.
-• ENGRAVING: sparse, shallow surface etching in a medium warm copper-brass tone, clearly visible but never black or white.
+• ENGRAVING: sparse, very shallow, superficial surface etching — a delicate skim of the surface, never a deep carve. Its tone sits only a few shades from the surrounding gold: quiet, low-contrast, never black or white.
 • NO TEXT of any kind. NO ATTACHED HARDWARE. NO 3D, no perspective, no visible thickness — a perfectly front-facing flat orthographic view.
 • BACKGROUND: 100% pure solid black (#000000), edge to edge, generated natively, no gradient, no transparency, no cast shadow.
 
@@ -2613,7 +2623,7 @@ COLOUR-CODED PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
 • The output is a flat 2D VECTOR-STYLE production drawing on a solid pure WHITE (#FFFFFF) background, drawn in BLACK ink plus the two instruction colours above and nothing else. Absolutely no transparency, no other colours, no greys, no shading, no gradients, no 3D extrusion, no perspective, no photorealism, no metal rendering.
 • It depicts ONE charm: a single continuous silhouette that could be laser-cut from one flat sheet. No separate parts, no floating islands, no props, no scene.
 • EXACTLY ONE small ring-shaped hanging hoop protrudes above the silhouette at the top, drawn as part of the same continuous outline — a flat annulus with one clean round hole — directly above the design's center of mass, so the finished charm hangs level. Never a separate jump ring, bail or chain.
-• The charm's outer perimeter is ONE clean solid black outline approximately 2px thick.
+• The charm's outer perimeter is ONE clean solid BLUE outline approximately 2px thick — the same instruction blue as the holes, because the silhouette IS a cut: it is where the charm is cut out of the sheet. A blue perimeter LINE is the cut edge; only a blue FILLED AREA is an opening.
 • ENGRAVING INK RULE (CRITICAL — BLACK MAPS 1:1 TO ENGRAVED METAL, WHITE TO POLISHED METAL):
     1. STROKE ENGRAVING (the common case): an engraved line — straight, curved, or forming the OUTLINE of a shape such as a cloud, heart, wing, leaf or star — is ONE solid black stroke of appropriate weight. Never two thin parallel outlines standing in for one wide stroke.
     2. INTERIOR STAYS WHITE: when a stroke forms a CLOSED outline, the area it encloses is polished metal and stays pure WHITE. An outlined cloud is an outlined cloud, never a solid black cloud.
@@ -2626,7 +2636,7 @@ COLOUR-CODED PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
 HARD FAIL: any shading, grey tone, black background, or any colour other than black, the instruction blue and the instruction red.
 HARD FAIL: an outlined shape rendered as a filled solid when its interior is polished metal.
 HARD FAIL: a cut-through opening left white or drawn black instead of filled blue, or a blue/red instruction dropped, recoloured or moved.
-FINAL CHECK BEFORE RENDERING THE ONE IMAGE: one continuous silhouette; one integrated protruding hoop above the center of mass with its hole filled blue; 2px outer perimeter; every black mark is genuinely engraved metal; every opening solid blue; every outline-only boundary red with a white interior; pure white background edge to edge.`;
+FINAL CHECK BEFORE RENDERING THE ONE IMAGE: one continuous silhouette with its perimeter drawn blue; one integrated protruding hoop above the center of mass with its hole filled blue; every black mark is genuinely engraved metal; every opening solid blue — count the blue areas the input declares and count them again in your drawing, they must match; every outline-only boundary red with a white interior; pure white background edge to edge.`;
 
 /* Where on the drawing a normalized point sits, in words the model can bind
    to what it sees — a note's meaning depends on WHERE it is pinned. */
@@ -2916,10 +2926,19 @@ INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
   the rest of the surface. A circle drawn as a ring of line NEVER becomes a
   solid engraved dot — read the drawing's ink literally, pixel for pixel.
 • THE DRAWING IS COLOUR-CODED, and the two colours are instructions, never
-  pigment on the finished piece:
+  pigment on the finished piece. A blue LINE and a blue AREA say different
+  things: the drawing's outer perimeter and cut edges may be drawn as blue
+  LINES — those are the silhouette's own laser-cut edges, rendered as the
+  charm's normal clean cut edge, never as a hole and never as blue metal.
+  A blue FILLED AREA is an opening:
   – a SOLID BLUE area = a REAL opening cut clean through the sheet. Render it
     as an actual hole showing the pure black background through it — never as
-    metal, never engraved, and never as anything blue.
+    metal, never engraved, and never as anything blue. SIZE IS IRRELEVANT: a
+    blue area the size of a pinhead is exactly as much a hole as a blue area
+    the size of the face — small accents INSIDE a logo or glyph are the ones
+    most often lost, and losing one is a hard fail. Before you finish, count
+    the solid blue areas in the drawing and count the openings in your charm:
+    the numbers must match, plus the hoop's own hole.
   – a RED boundary line = outline only: engrave that boundary as an ordinary
     engraved line and leave its interior flat polished metal. No red metal,
     no red enamel, no red inlay anywhere.
@@ -2987,11 +3006,18 @@ BACKGROUND AND SHADOW:
   props, no hand, no chain, no packaging.
 
 ENGRAVED SURFACES — TONE AND TEXTURE:
-• An engraved area is THE SAME METAL, recessed. Its colour is the charm's
-  own gold shifted only slightly: a little deeper, a little warmer, a touch
-  more copper-brass. Think one or two steps down the same swatch — clearly
-  legible as engraving, never brown, never bronze, never grey, never black,
-  and never a different material.
+• An engraved area is THE SAME METAL, barely recessed. Its colour is the
+  charm's own gold shifted only SLIGHTLY: think ONE step down the same
+  swatch — noticeably lighter treatment than a bronze or copper patina.
+  Low contrast is correct here: the engraving should read as worked gold,
+  never brown, never bronze, never copper, never grey, never black, and
+  never a different material. If the engraving is the first thing the eye
+  lands on, it is too dark.
+• DEPTH IS SUPERFICIAL. The etching is a shallow, delicate skim of the
+  surface — a fraction of the sheet's thickness — never a deep carve, a
+  trench, a chisel cut or anything with visible walls or strong internal
+  shadow. Recess is suggested by finish and the gentlest tonal shift, not
+  by depth.
 • CONSISTENT ACROSS THE WHOLE PIECE. Every engraved area is the same tone
   and the same depth as every other. Blotches, patches, gradients across a
   single engraved region, or one area darker than another, are wrong.
@@ -3006,7 +3032,9 @@ ENGRAVED SURFACES — TONE AND TEXTURE:
 
 FINAL CHECK ON THIS BLOCK: white ground, one soft contact shadow, every
 opening present as white inside that shadow, engraving one gentle step
-warmer than the polish and even everywhere, texture barely there.`;
+warmer than the polish — shallow, soft, and even everywhere — texture
+barely there, and not a single blue area from the drawing still present as
+solid metal.`;
 
 function buildCustomerCharmPrompt({ instructions, thread, metal, refine }) {
   const clean = studioCleanText(instructions);
