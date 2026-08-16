@@ -2469,44 +2469,55 @@ function zoneBlock(zones, which) {
     q && (q.intent === "cutout" || q.intent === "engrave" || q.intent === "none") &&
     Number(q.w) > 0.004 && Number(q.h) > 0.004);
   if (!z.length) return "";
-  /* numbered once, across the whole list, so "area 4" means one area */
-  z.forEach((q, i) => { q._i = i; });
   const cut = z.filter((q) => q.intent === "cutout");
   const eng = z.filter((q) => q.intent === "engrave");
   const out = z.filter((q) => q.intent === "none");
   const src = which === "reference" ? "THE REFERENCE IMAGE"
             : which === "drawing" ? "THE PRODUCTION DRAWING" : "the mark-up";
-  /* the box is the box, and for a RING-shaped area the box is the whole
-     disc — saying "80% x 80%" of a rim invites engraving the face solid.
-     So an annular area is named as one and its box is described as the
-     extent it spans rather than the area it covers. */
-  /* ── AN AREA IS A PLACE, NOT A WORD ───────────────────────────────────
-     Each area used to be introduced by its layer name, and the layer names
-     in a real design are machine-made: "logo 4", "logo 12", "Engraved ·
-     Cherry3D Logo.png". Handed to an image model inside a list it is told to
-     obey, those stopped being identifiers and became CONTENT — a finished
-     charm came back with "logo 2 area · 9%" and "Engraved · Cherry3D
-     Logo.png · M" set in type around its rim and across its face. An area is
-     named by where it is and how big it is, which is the same thing the
-     picture beside the list says, and there is nothing here to read out. */
-  const say = (q) => `  – area ${(Number(q._i) || 0) + 1}: at ${q.where || "the centre"}` +
-    (q.ring ? `, a RING-SHAPED band (its hole is NOT part of it)` : "") +
-    ` (spanning about ${Math.round((Number(q.w) || 0) * 100)}% × ${Math.round((Number(q.h) || 0) * 100)}% of the drawing)`;
+  /* ── NOT ONE DIGIT IN THIS LIST. EVER. ────────────────────────────────
+     This block has now injected content onto a finished charm twice, and
+     both times the vector was the same: a token that only exists to
+     structure the list. First it was layer names — "logo 4", "Engraved ·
+     Cherry3D Logo.png" — which came back set in type around the rim. The
+     names were removed and replaced with index numbers, and the model drew
+     the NUMBERS instead, each one placed at the very position its line
+     described: a charm with 3 at the top, 4 on the left, 14 at the bottom.
+     An image model treats every distinctive token in an instruction block
+     as a candidate for the canvas, so the only safe list is one made of
+     nothing but ordinary words. No indices, no percentages, no counts in
+     figures. Sizes are said in words; counts are said in words; areas are
+     told apart by where they are, which is all they ever needed. */
+  const sizeWord = (q) => {
+    if (q.ring) return "a ring-shaped band around the drawing";
+    const span = Math.max(Number(q.w) || 0, Number(q.h) || 0);
+    if (span > 0.75) return "spanning nearly the whole drawing";
+    if (span > 0.45) return "large";
+    if (span > 0.2)  return "medium-sized";
+    if (span > 0.08) return "small";
+    return "tiny";
+  };
+  const W = ["no","one","two","three","four","five","six","seven","eight",
+             "nine","ten","eleven","twelve"];
+  const cw = (n) => n < W.length ? W[n] : "more than twelve";
+  const say = (q) => `  – at ${q.where || "the centre"}: ${sizeWord(q)}` +
+    (q.ring ? " (its central hole is NOT part of it)" : "");
   return `
 THE CUSTOMER'S OWN COUNT OF WHAT EACH AREA IS, taken from the controls they
 used in the studio rather than read off the pixels. This list and ${src}
 agree; if you ever think they do not, THIS LIST WINS:
-${cut.length ? `• CUT CLEAN THROUGH (${cut.length}):\n${cut.map(say).join("\n")}` : "• CUT CLEAN THROUGH: none"}
-${eng.length ? `• ENGRAVED SOLID (${eng.length}):\n${eng.map(say).join("\n")}` : "• ENGRAVED SOLID: none"}
-NOTHING IN THIS LIST IS TEXT. These lines describe WHERE areas are; they are
-not lettering, not a caption, not a label and not part of the design. Do not
-draw, engrave, set or letter any word, number, percentage or filename from
-this list anywhere on the charm. The only words that may ever appear on a
-charm are the ones given under LETTERING.
-• OUTLINE ONLY, interior left as polished metal: ${out.length}
-EVERY ONE OF THE ${cut.length} AREA${cut.length === 1 ? "" : "S"} LISTED ABOVE AS CUT CLEAN THROUGH MUST BE AN
-ACTUAL OPENING in your output, and every one of the ${eng.length} listed as ENGRAVED
-must be a solidly engraved area. Count them before you finish.
+${cut.length ? `• CUT CLEAN THROUGH — ${cw(cut.length)} area${cut.length === 1 ? "" : "s"}:\n${cut.map(say).join("\n")}` : "• CUT CLEAN THROUGH: none"}
+${out.length ? `• OUTLINE ONLY (boundary worked, interior left as polished metal) — ${cw(out.length)} area${out.length === 1 ? "" : "s"}:\n${out.map(say).join("\n")}` : "• OUTLINE ONLY: none"}
+• ENGRAVED SOLID: every remaining dark area of ${src} — ${cw(eng.length)} of
+  them. They are not itemised because the picture already shows each one;
+  engrave every one of them exactly where and as the picture shows it.
+EVERY area listed as CUT CLEAN THROUGH must be an actual opening in your
+output, and every dark area must come through as engraved. Check this before
+you finish.
+NOTHING IN THIS LIST IS ARTWORK. It describes where areas sit; it is not
+lettering, not a caption, not a label, not a legend and not part of the
+design. Never draw, engrave, set or letter ANY word, letter, digit or number
+anywhere on the charm unless it is given under LETTERING — and this list is
+not LETTERING.
 This list says what these particular areas ARE; it is not a census of the
 whole charm. The hoop's own hole, and any opening the design itself plainly
 requires — a ring, a bail, the middle of a letter O — are separate from it
@@ -2548,9 +2559,11 @@ other consideration including your own sense of what would look better:
 
 THESE THREE COLOURS ARE INSTRUCTIONS, NOT PIGMENT. Blue and red are reserved
 words in this studio's language: blue says "there is no metal here", red says
-"only this line is worked". Neither is ever a colour of the finished piece,
-and neither ever appears in your output — a cut-out is an opening, a red
-outline is a black engraved line, and nothing in the charm is blue or red.
+"only this line is worked". Neither is EVER a colour of the finished metal —
+no blue enamel, no red inlay, nothing on the physical charm is blue or red.
+On a production DRAWING they appear as themselves, because a drawing is where
+instructions are written down; on a rendered CHARM they appear only as what
+they mean: an opening, and a worked line in plain metal.
 
 Applying the wrong one of these three is the single worst error you can make
 on this job: it produces a charm that is physically different from the one
@@ -2583,21 +2596,21 @@ If any answer is no, correct the design before rendering.`;
    the whole point of designing in B/W is that nothing about the engraving is
    ambiguous. */
 const STUDIO_LINEART_CONTRACT =
-`HOW TO READ THE COLOURS IN WHAT YOU WERE GIVEN (INPUT, NOT OUTPUT):
-The customer's drawing may contain exactly three meaningful colours, and they
-are manufacturing instructions rather than any part of the appearance:
-• SOLID BLACK area → engraved. Draw it as a solid black area.
-• SOLID BLUE area → cut clean through. Draw it as an OPEN HOLE: pure white
-  inside a single clean cut outline, exactly the way the hanging hoop's own
-  hole is drawn. Never as black, never engraved, never as solid metal.
-• RED boundary line → outline only. Draw that boundary as ONE ordinary black
-  production line and leave the area it encloses pure white.
-Your own output is BLACK AND WHITE ONLY — it never contains blue or red.
-Reproducing an instruction colour as a colour is a hard fail; so is losing
-the instruction it carried.
+`THE THREE INSTRUCTION COLOURS (THEY MEAN THE SAME IN YOUR INPUT AND YOUR OUTPUT):
+This studio's production drawings are colour-coded. Exactly three colours may
+carry meaning, and they are manufacturing instructions, never decoration:
+• SOLID BLACK area → ENGRAVED metal.
+• SOLID BLUE (a saturated royal blue, close to #1f6fe0) area → CUT CLEAN
+  THROUGH: a real opening in the sheet. In your drawing that opening is
+  filled SOLID BLUE so the instruction is visible at a glance.
+• RED (close to #d81f2a) boundary line → OUTLINE ONLY: that boundary is a
+  worked line and the area it encloses is flat polished metal, left WHITE.
+Whatever colour an instruction arrives in — on the reference, the sketch or
+the mark-up — it leaves in the SAME colour on your drawing. Losing an
+instruction colour, moving it, or inventing one nobody gave is a hard fail.
 
-B/W PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
-• The output is a flat 2D black-and-white VECTOR-STYLE production drawing on a solid pure WHITE (#FFFFFF) background. Absolutely no transparency, no colours, no greys, no shading, no gradients, no 3D extrusion, no perspective, no photorealism, no metal rendering.
+COLOUR-CODED PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
+• The output is a flat 2D VECTOR-STYLE production drawing on a solid pure WHITE (#FFFFFF) background, drawn in BLACK ink plus the two instruction colours above and nothing else. Absolutely no transparency, no other colours, no greys, no shading, no gradients, no 3D extrusion, no perspective, no photorealism, no metal rendering.
 • It depicts ONE charm: a single continuous silhouette that could be laser-cut from one flat sheet. No separate parts, no floating islands, no props, no scene.
 • EXACTLY ONE small ring-shaped hanging hoop protrudes above the silhouette at the top, drawn as part of the same continuous outline — a flat annulus with one clean round hole — directly above the design's center of mass, so the finished charm hangs level. Never a separate jump ring, bail or chain.
 • The charm's outer perimeter is ONE clean solid black outline approximately 2px thick.
@@ -2606,11 +2619,14 @@ B/W PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
     2. INTERIOR STAYS WHITE: when a stroke forms a CLOSED outline, the area it encloses is polished metal and stays pure WHITE. An outlined cloud is an outlined cloud, never a solid black cloud.
     3. SOLID-REGION ENGRAVING (rare): fill an area solid black ONLY when that ENTIRE area is meant to be engraved metal.
     4. THE FINGERTIP TEST: for every inked area — would a fingertip feel it as recessed engraving? If the interior would feel like the same polished surface as the rest of the charm, it stays white with a black outline stroke.
-    5. CUTOUTS/HOLES: physical holes cut through the sheet (including the hoop's hole) are pure white inside their cut outline.
+    5. CUTOUTS/HOLES: every physical opening cut through the sheet — the hanging hoop's own hole included — is filled SOLID BLUE inside its cut outline. Blue is this drawing's word for "there is no metal here"; a hole is never left plain white and never drawn black.
+    6. OUTLINE-ONLY AREAS: an area the customer marked outline-only has its boundary drawn as ONE clean RED line of ordinary production weight, interior pure white. Red is this drawing's word for "work the line, leave the inside alone".
 • RECOGNITION AT CHARM SCALE: sparse, recognition-critical engraving only — the few lines that make the subject read at 12 mm.
-HARD FAIL: any shading, grey tone, colour, or black background.
+• WORDS AND DIGITS: the only text of any kind in your drawing is text visibly present in the customer's own reference/mark-up or given as LETTERING. Never invent, copy or letter anything from these instructions — no numbers, no counts, no percentages, no labels, no filenames. Instructions are read, never drawn.
+HARD FAIL: any shading, grey tone, black background, or any colour other than black, the instruction blue and the instruction red.
 HARD FAIL: an outlined shape rendered as a filled solid when its interior is polished metal.
-FINAL CHECK BEFORE RENDERING THE ONE IMAGE: one continuous silhouette; one integrated protruding hoop above the center of mass; 2px outer perimeter; every black mark is genuinely engraved metal; pure white background edge to edge.`;
+HARD FAIL: a cut-through opening left white or drawn black instead of filled blue, or a blue/red instruction dropped, recoloured or moved.
+FINAL CHECK BEFORE RENDERING THE ONE IMAGE: one continuous silhouette; one integrated protruding hoop above the center of mass with its hole filled blue; 2px outer perimeter; every black mark is genuinely engraved metal; every opening solid blue; every outline-only boundary red with a white interior; pure white background edge to edge.`;
 
 /* Where on the drawing a normalized point sits, in words the model can bind
    to what it sees — a note's meaning depends on WHERE it is pinned. */
@@ -2675,12 +2691,13 @@ only the hand's jitter; change NOTHING else.
   line whatever its colour.
 • AREA FILL CARRIES THE WHOLE MEANING, and there are exactly three:
   SOLID BLACK area = ENGRAVE that area. SOLID BLUE area = CUT IT CLEAN
-  THROUGH — draw it as an open hole, paper white with one clean cut edge,
-  never black, never engraved, never solid. RED BOUNDARY, or no fill at all,
-  = outline only: engrave that boundary as one ordinary black line and leave
-  its interior white as flat polished metal. Blue and red are instructions
-  and never appear in your output. Applying the wrong one produces a
-  physically different charm; it is the worst error available on this job.
+  THROUGH — a real opening, drawn in your output as that area filled SOLID
+  BLUE, never black, never engraved, never plain white. RED BOUNDARY, or no
+  fill at all, = outline only: draw that boundary as one clean RED line and
+  leave its interior white as flat polished metal. The instruction colours
+  pass straight through: blue in, blue out; red in, red out. Applying the
+  wrong one produces a physically different charm; it is the worst error
+  available on this job.
 • TEXT in the sketch is reproduced at exactly the drawn position and size, in
   one clean sans-serif face — never moved, rescaled, reflowed or restyled.
 • Add nothing the sketch does not show; remove nothing it does.
@@ -2691,10 +2708,11 @@ A freehand PEN line's colour carries no meaning — it only tells the
 customer's own objects apart, and every such line is an engraved line. An
 AREA is the opposite: its colour is a manufacturing instruction with exactly
 three values. SOLID BLACK area = engrave it. SOLID BLUE area = CUT IT CLEAN
-THROUGH, drawn as an open hole, never as black and never as engraving. A RED
-BOUNDARY, or no fill at all = outline only, its interior left as flat
-polished metal and its boundary drawn as one ordinary black line. Blue and
-red are instructions and never appear in your output.
+THROUGH — a real opening, shown in your output as that area filled SOLID
+BLUE, never as black and never as engraving. A RED BOUNDARY, or no fill at
+all = outline only, its interior left as flat polished metal and its boundary
+drawn as one clean RED line. The instruction colours pass straight through:
+blue in, blue out; red in, red out.
 Read the sketch for what it DEPICTS and draw that subject properly in this
 studio's production line language — clean, manufacturable, symmetric where
 the real subject is symmetric — while keeping the sketch's composition: each
@@ -2825,8 +2843,12 @@ ${notes.length ? `PINNED NOTES — each anchored to the spot its words are about
 ${noteLines}` : ""}`
 : `CUSTOMER MARKUP — HOW TO READ IT (INTERPRETED, the default):
 The final image is the customer's own hand-drawn markup ON TOP of the current
-drawing. It is DIRECTION, not artwork: the coloured ink and the note bubbles
-themselves must never appear in your output.
+drawing. It is DIRECTION, not artwork: the customer's gesture ink — pen
+strokes, highlights, rings, arrows — and the note bubbles themselves must
+never appear in your output. The one exception is the three INSTRUCTION
+colours: a solid blue AREA, a red BOUNDARY and a solid black AREA are the
+fill law speaking, not gestures, and they pass through to your drawing as
+exactly what they are.
 
 READ EVERY MARK FOR INTENT, NEVER FOR ITS LITERAL GEOMETRY — it was drawn by
 hand with a mouse or fingertip, so its shape is an APPROXIMATION:
@@ -2893,12 +2915,17 @@ INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
   boundary line only; its white interior is flat polished metal exactly like
   the rest of the surface. A circle drawn as a ring of line NEVER becomes a
   solid engraved dot — read the drawing's ink literally, pixel for pixel.
-• A RED BOUNDARY LINE, if the drawing carries one, means exactly that same
-  thing said in colour: engrave that line, leave its interior polished. The
-  red is an instruction and is never rendered — no red metal, no red enamel,
-  no red inlay. Neither is blue: a blue area is an opening, not a colour.
+• THE DRAWING IS COLOUR-CODED, and the two colours are instructions, never
+  pigment on the finished piece:
+  – a SOLID BLUE area = a REAL opening cut clean through the sheet. Render it
+    as an actual hole showing the pure black background through it — never as
+    metal, never engraved, and never as anything blue.
+  – a RED boundary line = outline only: engrave that boundary as an ordinary
+    engraved line and leave its interior flat polished metal. No red metal,
+    no red enamel, no red inlay anywhere.
+  A finished charm contains no blue and no red of any kind.
 • White INSIDE the outline = flat polished metal. Never engrave, texture or darken it.
-• The hoop's white hole and every drawn cutout = REAL holes cut through the sheet, showing pure black through them.
+• The hoop's hole (drawn blue or white) and every drawn cutout = REAL holes cut through the sheet, showing pure black through them.
 • The drawing's white background = pure black background in the output.
 
 100% STRUCTURAL MATCH: nothing added, nothing removed, nothing redesigned,
