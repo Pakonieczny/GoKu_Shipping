@@ -3233,8 +3233,6 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
 
   const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
   if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
-  const renderRunId = String(body?.renderRunId || ("rr_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10)))
-    .replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
 
   /* Ownership is checked FIRST, ahead of the rate limits, and the order is
      deliberate. Everything after this point is allowed to write a failure into
@@ -3489,6 +3487,8 @@ async function handleStudioRender({ body, event, origin }) {
 
   const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
   if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+  const renderRunId = String(body?.renderRunId || ("rr_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10)))
+    .replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
 
   /* Ownership first — a stranger gets the 403 and NOTHING written into the
      doc, exactly as in generate: a failure channel into someone else's
