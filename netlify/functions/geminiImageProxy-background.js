@@ -964,12 +964,12 @@ const IMAGE_ROLE_LABELS = {
   // is the structural truth and the output is the photograph.
   lineart_to_charm: {
     first:
-      "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat B/W line art of a charm on white. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
+      "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat COLOUR-CODED line art of a charm on white: its fills are instructions, and black and blue are different instructions. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
     second:
       "IMAGE 2 — UNUSED. Ignore any additional image.",
     extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
     single:
-      "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat B/W line art of a charm on white. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
+      "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat COLOUR-CODED line art of a charm on white: its fills are instructions, and black and blue are different instructions. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
     lock:
       "FINAL IMAGE-ROLE LOCK: this is a 1:1 structural replication, drawing → finished charm. The output's silhouette laid over the drawing's silhouette must match. Nothing is added, nothing is removed, nothing is redesigned, nothing is 'improved'. HARD FAIL: an output whose outline, engraving layout or cutouts differ from the drawing. HARD FAIL: an output that is still line art, a sketch or a flat graphic rather than a photograph of real metal. The GROUND the charm is photographed on is not this block's business — it is set by the presentation instructions, and a plain white ground is correct.",
   },
@@ -2546,16 +2546,17 @@ used in the studio rather than read off the pixels. This list and ${src}
 agree; if you ever think they do not, THIS LIST WINS:
 ${cut.length ? `• CUT CLEAN THROUGH — ${cw(cut.length)} area${cut.length === 1 ? "" : "s"}:\n${cut.map(say).join("\n")}` : "• CUT CLEAN THROUGH: none"}
 ${out.length ? `• OUTLINE ONLY (boundary worked, interior left as polished metal) — ${cw(out.length)} area${out.length === 1 ? "" : "s"}:\n${out.map(say).join("\n")}` : "• OUTLINE ONLY: none"}
-• ENGRAVED SOLID: every remaining dark area of ${src} — ${cw(eng.length)} of
+• ENGRAVED SOLID: every remaining BLACK area of ${src} — ${cw(eng.length)} of
   them. They are not itemised because the picture already shows each one;
   engrave every one of them exactly where and as the picture shows it.
+  BLACK, not merely dark: a blue area is dark too, and it is a hole.
 AN OUTLINE-ONLY INSTRUCTION IS ABOUT ONE SHAPE'S OWN BOUNDARY AND INTERIOR —
 NOTHING ELSE. It never blanks, erases, thins or un-engraves anything outside
-that shape: every other dark area the picture shows stays exactly as dark and
+that shape: every other black area the picture shows stays exactly as dark and
 as engraved as the picture shows it. Turning a solidly engraved band into a
 thin outline because an outline instruction exists nearby is a hard fail.
 EVERY area listed as CUT CLEAN THROUGH must be an actual opening in your
-output, and every dark area must come through as engraved. Check this before
+output, and every black area must come through as engraved. Check this before
 you finish.
 NOTHING IN THIS LIST IS ARTWORK. It describes where areas sit; it is not
 lettering, not a caption, not a label, not a legend and not part of the
@@ -2641,12 +2642,12 @@ const FILL_LAW_RENDER =
 The drawing's three instruction colours are manufacturing orders, not pigment.
 The finished charm obeys all three exactly, and shows none of them.
 
-  BLACK area in the drawing → ENGRAVED metal. The metal is still there and
-  only its surface is worked. Never a hole.
-
   BLUE area in the drawing → A HOLE. The metal is gone. You see the ground the
   charm rests on straight through it, exactly as through the hoop's hole.
   Never metal, never enamel, never engraving, never a dark patch.
+
+  BLACK area in the drawing → ENGRAVED metal. The metal is still there and
+  only its surface is worked. Never a hole.
 
   RED boundary in the drawing → ONLY THAT LINE is engraved. Its interior is
   flat polished metal, identical to the surface around it. Never fill it.
