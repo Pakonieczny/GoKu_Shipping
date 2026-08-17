@@ -971,7 +971,7 @@ const IMAGE_ROLE_LABELS = {
     single:
       "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat B/W line art of a charm on white. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
     lock:
-      "FINAL IMAGE-ROLE LOCK: this is a 1:1 structural replication, drawing → finished charm. The output's silhouette laid over the drawing's silhouette must match. Nothing is added, nothing is removed, nothing is redesigned, nothing is 'improved'. HARD FAIL: an output whose outline, engraving layout or cutouts differ from the drawing. HARD FAIL: line art, sketch styling or a white background in the output.",
+      "FINAL IMAGE-ROLE LOCK: this is a 1:1 structural replication, drawing → finished charm. The output's silhouette laid over the drawing's silhouette must match. Nothing is added, nothing is removed, nothing is redesigned, nothing is 'improved'. HARD FAIL: an output whose outline, engraving layout or cutouts differ from the drawing. HARD FAIL: an output that is still line art, a sketch or a flat graphic rather than a photograph of real metal. The GROUND the charm is photographed on is not this block's business — it is set by the presentation instructions, and a plain white ground is correct.",
   },
   line_art_style: {
     first:
@@ -2623,6 +2623,47 @@ Applying the wrong one of these three is the single worst error you can make
 on this job: it produces a charm that is physically different from the one
 the customer designed. Count them before you draw and count them again after.`;
 
+/* ── THE SAME LAW, FOR THE RENDER STEP ONLY ───────────────────────────────
+   FILL_LAW above is written from the DRAWING's point of view — half of it
+   instructs how the three colours are drawn ("paper white inside", "in the
+   B/W production drawing…"), which is noise once the drawing already exists,
+   and worse, it hands the model a second description of a hole to reconcile
+   with the render's own. The render prompt then restated the whole mapping a
+   third time in its own header.
+
+   Three descriptions of one rule are not three times the emphasis; they are a
+   reconciliation problem, and a model resolves those by picking. So the render
+   says it ONCE, in the only vocabulary that applies to a photograph of metal,
+   and leads with the distinction that actually fails: a hole and an engraving
+   must not look alike. This block is SHORTER than the three it replaces. */
+const FILL_LAW_RENDER =
+`THE GOLDEN RULE OF THIS WORKSHOP — ABOVE EVERY OTHER INSTRUCTION HERE.
+The drawing's three instruction colours are manufacturing orders, not pigment.
+The finished charm obeys all three exactly, and shows none of them.
+
+  BLACK area in the drawing → ENGRAVED metal. The metal is still there and
+  only its surface is worked. Never a hole.
+
+  BLUE area in the drawing → A HOLE. The metal is gone. You see the ground the
+  charm rests on straight through it, exactly as through the hoop's hole.
+  Never metal, never enamel, never engraving, never a dark patch.
+
+  RED boundary in the drawing → ONLY THAT LINE is engraved. Its interior is
+  flat polished metal, identical to the surface around it. Never fill it.
+
+  WHITE inside the charm → untouched polished metal.
+
+A HOLE AND AN ENGRAVING MUST NEVER LOOK ALIKE. This is the distinction the
+whole charm depends on. A hole shows the ground through it and is bounded by a
+cut edge. An engraving shows worked gold, barely different from the polish
+beside it. If a viewer could not tell instantly which of the two they were
+looking at, the render has failed — and that failure is almost always an
+engraving rendered dark enough to read as an opening.
+
+Applying the wrong one of the three produces a charm physically different from
+the one the customer bought. Count the holes before you finish, then count them
+again.`;
+
 const STUDIO_FALLBACK_CONSTRAINTS =
 `HARD PHYSICAL CONSTRAINTS:
 • ONE CONTINUOUS PIECE cut from a single uniformly flat, thin (~22-gauge) sheet. No separate parts, no floating islands.
@@ -2942,6 +2983,41 @@ the workshop's own designer had made the changes? Render THAT.`);
 }
 
 /* ── the render step's prompt: the Charm Maker's conversion, reversed ───── */
+/* ── THE CONSTRAINTS, MINUS THE BACKGROUND ────────────────────────────────
+   studioConstraintBlocks() is the Charm Maker's doctrine, and the Charm Maker
+   shoots on black — it carries a whole "BACKGROUND — ABSOLUTE:" section
+   ("100% PURE SOLID BLACK edge to edge", "no cast shadow outside its
+   silhouette", "do not begin with white and remove it"). Correct there; the
+   exact opposite of what the studio render needs, which is a white ground and
+   a real contact shadow.
+
+   The filter is SECTION-aware, not line-aware: a line-by-line pass caught the
+   bullets naming #000000 and left the neighbours in the same section — "no
+   white, off-white, grey, studio sweep… anywhere in the background" and "no
+   cast shadow" — which are the two that would have hurt most. Whole sections
+   whose heading names the background go; the remaining sweep catches strays
+   elsewhere. Every physical constraint is untouched, and this is a filter
+   rather than a fork so the doctrine still lives in one place. */
+function renderConstraintBlocks() {
+  const src = String(studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS);
+  const isHeading = (line) => /^[A-Z][A-Z0-9 ,&/'’()—–-]{4,}:\s*$/.test(line.trim());
+  const out = [];
+  let skipping = false;
+  for (const line of src.split("\n")) {
+    if (isHeading(line)) skipping = /BACKGROUND/i.test(line);
+    if (skipping) continue;
+    if (/#000000/.test(line)) continue;
+    if (/^\s*[•\-]\s*BACKGROUND\b/i.test(line)) continue;
+    if (/\bno cast shadow\b|\bempty black margin\b|\bagainst pure black\b/i.test(line)) continue;
+    out.push(line);
+  }
+  return out
+    .join("\n")
+    .replace(/,?\s*(?:and\s+)?black-background treatment/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function buildLineArtToCharmPrompt({ metal, zones }) {
   const m = studioCleanText(metal) || "gold";
   const label = ({
@@ -2952,39 +3028,29 @@ function buildLineArtToCharmPrompt({ metal, zones }) {
     solid14: "polished 14k solid gold",
   })[m] || ("polished " + m);
 
+  /* Presentation — ground, shadow, engraving tone — is stated ONCE, in
+     STUDIO_RENDER_FINISH at the end. The header used to preview it here in
+     different words, and every one of those words had to be reconciled with
+     the block that claimed to supersede them. */
   const header =
 `APPROVED PRODUCTION DRAWING → FINISHED CHARM
 
-Render ONE finished charm as a photorealistic flat ${label} charm on a pure black background. IMAGE 1 is the approved production drawing and is the only structural truth.
+Render ONE finished charm as a photorealistic flat ${label} charm. IMAGE 1 is the approved production drawing and is the only structural truth.
 
 1:1 STRUCTURAL LOCK — HIGHEST PRIORITY
 • Reproduce the drawing exactly. Do not redesign, beautify, simplify, add, remove, move or reinterpret anything.
-• The outer silhouette, integrated top hoop, every cutout, every engraving, every outline-only region, every letterform and every proportion must match the drawing 1:1.
-• The finished charm must contain NO instruction colours. No blue pixels and no red pixels anywhere.
+• The outer silhouette, integrated top hoop, every hole, every engraved area, every outline-only region, every letterform and every proportion must match the drawing 1:1.
+• The finished charm contains NO instruction colours: not one blue pixel, not one red pixel.
 
-DRAWING-TO-METAL MAPPING — NON-NEGOTIABLE
-• BLACK strokes and BLACK filled regions = engraving only. Engraving is recessed metal of the same ${label}, slightly darker because of the recess. Never convert black drawing ink into holes.
-• SOLID BLUE FILLED REGIONS = real cut-through openings. The metal is absent there. Show pure black background through those openings. Never render blue as metal colour, enamel or engraving.
-• RED BOUNDARY = outline-only engraving. Engrave only the red boundary line and leave its interior flat polished metal. Never fill inside a red boundary unless the drawing separately shows a filled area there.
-• WHITE INSIDE THE CHARM = untouched polished metal.
-• The integrated hoop hole and every declared cutout are real openings.
+MATERIAL
+• ${label}. The metal changes tone only, never form.
+• One thin flat sheet, front-facing: no perspective, no visible thickness.
+• The hoop's hole and every hole the drawing declares are real openings.
 
-MATERIAL AND PRESENTATION
-• Material: ${label}. Material changes tone only, never form.
-• Entirely flat front-facing charm cut from one thin sheet.
-• Clean pure black background only.
-• One soft realistic contact shadow only.
-• No props, no hand, no chain, no extra hardware.
-
-COUNT CHECK — HARD RULE
-• The number of cut-through openings in the finished charm must equal the number of declared cutout areas in the drawing, plus the hoop hole.
-• Every declared engraved region must still be engraving in the final charm.
-• Every declared outline-only region must remain outline-only.
-
-${FILL_LAW}
+${FILL_LAW_RENDER}
 ${zoneBlock(zones, "drawing")}`;
 
-  return header + "\n\n" + (studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS) +
+  return header + "\n\n" + renderConstraintBlocks() +
          "\n\n" + STUDIO_RENDER_FINISH;
 }
 
@@ -3016,6 +3082,9 @@ BACKGROUND AND SHADOW:
   soft-edged, short, close under the piece, slightly darker and tighter
   where the metal meets the ground and diffusing outward. A single soft key
   light from the upper left, so the shadow falls gently to the lower right.
+  THE SHADOW IS REQUIRED. A charm sitting on white with no shadow reads as a
+  cut-out pasted onto a blank page, not as a photographed object, and is an
+  incomplete image.
 • THE SHADOW IS A TRUE SILHOUETTE OF THE CHARM AND OF NOTHING ELSE. Every
   opening cut through the metal — the hoop's hole and every cut-out in the
   design — appears in the shadow as a corresponding gap of clean white.
@@ -3025,36 +3094,34 @@ BACKGROUND AND SHADOW:
 • No drop shadow effect, no glow, no outline, no floor line, no horizon, no
   props, no hand, no chain, no packaging.
 
-ENGRAVED SURFACES — TONE AND TEXTURE:
-• An engraved area is THE SAME METAL, barely recessed. Its colour is the
-  charm's own gold shifted only SLIGHTLY: think ONE step down the same
-  swatch — noticeably lighter treatment than a bronze or copper patina.
-  Low contrast is correct here: the engraving should read as worked gold,
-  never brown, never bronze, never copper, never grey, never black, and
-  never a different material. If the engraving is the first thing the eye
-  lands on, it is too dark.
-• DEPTH IS SUPERFICIAL. The etching is a shallow, delicate skim of the
-  surface — a fraction of the sheet's thickness — never a deep carve, a
-  trench, a chisel cut or anything with visible walls or strong internal
-  shadow. Recess is suggested by finish and the gentlest tonal shift, not
-  by depth.
-• CONSISTENT ACROSS THE WHOLE PIECE. Every engraved area is the same tone
-  and the same depth as every other. Blotches, patches, gradients across a
-  single engraved region, or one area darker than another, are wrong.
-• TEXTURE IS SUBTLE. A faint, fine, even micro-texture inside the recess is
-  correct — the trace of a laser, visible only on inspection. Coarse grain,
-  heavy hatching, visible stippling, brushed streaks, canvas or fabric
-  weave, or anything that reads as a material laid into the recess is wrong
-  and is the main thing making this look artificial. When in doubt, less.
-• The polished, unengraved metal stays bright, smooth and specular, and the
-  contrast between polished and engraved comes from FINISH and DEPTH rather
-  than from a change of colour.
+ENGRAVED SURFACES — THE ONE THING THIS RENDER GETS WRONG MOST OFTEN IS
+ENGRAVING RENDERED TOO DARK. Every line below is a CEILING, not a target:
+• An engraved area is the SAME GOLD as the polish beside it. What changes is
+  the FINISH, not the colour — satin where the rest is mirror, like brushed
+  and polished bands on one ring. The polished metal stays bright and
+  specular; the contrast between the two comes from finish and the gentlest
+  tonal shift, never from a change of colour.
+• Converted to greyscale, an engraved area and the polished metal touching it
+  would differ only slightly. Brown, bronze, copper, grey, charcoal or black
+  is wrong, and so is any recess that reads as a dark shape rather than as
+  worked gold.
+• If the engraving is the first thing the eye lands on, or if it could be
+  mistaken for a hole, it is far too dark. Err lighter every time.
+• DEPTH IS SUPERFICIAL. A shallow, delicate skim of the surface — never a
+  deep carve, a trench, a chisel cut, or anything with visible walls or
+  strong internal shadow.
+• EVEN EVERYWHERE. Every engraved area the same tone and the same depth as
+  every other. Blotches, patches, or gradients within one area are wrong.
+• TEXTURE BARELY THERE. A faint, fine, even micro-texture — the trace of a
+  laser, visible only on inspection. Coarse grain, heavy hatching, stippling,
+  brushed streaks or any woven look is wrong, and is the main thing that
+  makes a render look artificial. When in doubt, less.
 
-FINAL CHECK ON THIS BLOCK: white ground, one soft contact shadow, every
-opening present as white inside that shadow, engraving one gentle step
-warmer than the polish — shallow, soft, and even everywhere — texture
-barely there, and not a single blue area from the drawing still present as
-solid metal.`;
+FINAL CHECK ON THIS BLOCK: white ground; one soft contact shadow; every
+opening present as white inside that shadow; every blue area of the drawing a
+real hole rather than metal; and every engraved area so close in tone to the
+polish that no one could mistake it for a hole — shallow, even everywhere,
+texture barely there.`;
 
 function buildCustomerCharmPrompt({ instructions, thread, metal, refine }) {
   const clean = studioCleanText(instructions);
@@ -3602,7 +3669,23 @@ async function handleStudioRender({ body, event, origin }) {
       images,
       imageRoles: "lineart_to_charm",
       charmGeometryPolicy: "flat_integrated_eyelet",
-      backgroundPolicy: "solid_black",
+      /* ── ONE VOICE ABOUT THE BACKGROUND ──────────────────────────────────
+         backgroundPolicy: "solid_black" appends a block headed "BACKEND-
+         ENFORCED, OVERRIDES EVERYTHING ABOVE" as the LITERAL LAST WORDS of
+         the prompt — after STUDIO_RENDER_FINISH, which had already declared
+         itself the final authority and asked for a white ground. Two blocks
+         each claiming the last word, in opposition.
+
+         It cost more than a background. That block also says holes "show
+         pure black through them", and a black hole on a dark ground is
+         indistinguishable from a deeply engraved area — so the one
+         distinction the fill law exists to protect, hole versus engraving,
+         collapsed, and every recess was pulled darker to match a scene the
+         model believed was black. The studio render's presentation is
+         defined ONCE, in STUDIO_RENDER_FINISH. Nothing overrides it.
+
+         The geometry policy stays: it contradicts nothing. */
+      backgroundPolicy: null,
     });
 
     await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
