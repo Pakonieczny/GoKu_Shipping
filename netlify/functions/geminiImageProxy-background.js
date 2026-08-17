@@ -788,7 +788,7 @@ async function callOpenAIImagesEdits({
   let promptText = String(prompt || "");
   if (imageRoles === "style_reference") {
     promptText = `${promptText.trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`;
-  } else if (imageRoles === "line_art_style" || imageRoles === "customer_lineart" || imageRoles === "lineart_to_charm" || imageRoles === "customer_reference") {
+  } else if (["line_art_style", "customer_lineart", "customer_lineart_markup", "customer_reference_markup", "lineart_to_charm", "customer_reference"].includes(imageRoles)) {
     const roles = IMAGE_ROLE_LABELS[imageRoles];
     promptText = (images || []).length >= 2
       ? `${promptText.trim()}\n\n${roles.first}\n\n${roles.second}\n\n${roles.lock}`
@@ -953,11 +953,47 @@ const IMAGE_ROLE_LABELS = {
       "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm and draw it as flat black-and-white production line art on pure white — not to reproduce the photograph, not to invent a different object, and not to render metal.",
     second:
       "IMAGE 2 — THE CUSTOMER'S CURRENT DRAWING OF THIS CHARM. This is your own previous line-art output, which the customer has been refining. Keep its silhouette, proportions, hoop placement, engraving and cutouts EXACTLY as they are and change ONLY what the newest customer instruction — and their markup, if supplied — asks for. It is not a style sample and it is not a second subject.",
-    extra: (n) => `IMAGE ${n} — THE CUSTOMER'S OWN MARKUP OF THE CURRENT DRAWING. The customer drew on top of your previous output to point at what they want changed: circles and highlight strokes mark the areas to change, and any text bubbles are their written instructions for those areas. Read it as DIRECTION ONLY — the coloured strokes, highlights and bubbles themselves must NEVER appear in your output.`,
+    extra: (n) => n === 3
+      ? `IMAGE 3 — THE CUSTOMER'S OWN MARKUP OF THE CURRENT DRAWING. The customer drew on top of your previous output to point at what they want changed. Read it as DIRECTION ONLY — markup strokes, highlights and note bubbles must NEVER appear in your output.`
+      : n === 4
+        ? `IMAGE 4 — PIXEL-LOCKED NOTE ANCHOR DETAIL SHEET. Each occupied cell is a tight crop of IMAGE 2 centred EXACTLY on a pinned note's anchor pixel. The exact CENTER of each cell is the feature the note refers to; neighbouring shapes in the crop are context only. This image is direction only and must never be reproduced in the output.`
+        : `IMAGE ${n} — ADDITIONAL DIRECTION DETAIL. Use only to locate the customer's requested change; never reproduce it as artwork.`,
     single:
       "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm and draw it as flat black-and-white production line art on pure white — not to reproduce the photograph and not to invent a different object.",
     lock:
       "FINAL IMAGE-ROLE LOCK: the SUBJECT comes from IMAGE 1 and the customer's written instructions, and from nowhere else. The OUTPUT is always flat B/W production line art on pure white. When IMAGE 2 is present it is the customer's current drawing: preserve it and apply only the newest direction. When a markup image is present it steers WHERE to change — its ink never appears in the output. HARD FAIL: photorealism, metal rendering, colour, shading or a black background. HARD FAIL: a refinement that redesigns parts of the drawing the customer did not ask to change. HARD FAIL: markup strokes, highlights or text bubbles reproduced in the output.",
+  },
+  // Clean-room Mark-Up refinement. The ORIGINAL reference is deliberately
+  // absent: IMAGE 1 is the current B/W drawing, so nothing older can pull the
+  // geometry back toward a previous concept.
+  customer_lineart_markup: {
+    first:
+      "IMAGE 1 — THE CURRENT PRODUCTION DRAWING (ONLY STRUCTURAL TRUTH). Preserve this drawing exactly except where the customer's markup explicitly asks for a change.",
+    second:
+      "IMAGE 2 — CUSTOMER MARKUP ON IMAGE 1 (DIRECTION ONLY). Use it only to locate and understand requested changes. Never reproduce markup strokes, highlights, arrows or note bubbles as artwork.",
+    extra: (n) => n === 3
+      ? "IMAGE 3 — PIXEL-LOCKED NOTE ANCHOR DETAIL SHEET. Each occupied cell is a tight crop of IMAGE 1. The exact CENTER pixel of the named cell is the precise visual feature the corresponding note refers to. Neighbouring shapes are context only."
+      : `IMAGE ${n} — ADDITIONAL DIRECTION DETAIL ONLY.`,
+    single:
+      "IMAGE 1 — THE CURRENT PRODUCTION DRAWING (ONLY STRUCTURAL TRUTH). Preserve it unless the written direction explicitly changes it.",
+    lock:
+      "FINAL CLEAN-ROOM LOCK: ONLY IMAGE 1, IMAGE 2, IMAGE 3 when present, and the current markup instructions may influence this output. No original reference image, prior render, prior conversation image or unrelated visual context is part of this task. Preserve every unmarked region of IMAGE 1 exactly.",
+  },
+  // Mark-Up applied directly to the original reference. No previous generated
+  // B/W or metal image is supplied, so the model cannot blend old output back
+  // into a fresh reference-directed redraw.
+  customer_reference_markup: {
+    first:
+      "IMAGE 1 — THE ORIGINAL CUSTOMER REFERENCE (SUBJECT TRUTH). Use only this image for the underlying subject and proportions.",
+    second:
+      "IMAGE 2 — CUSTOMER MARKUP ON THE REFERENCE (DIRECTION ONLY). Apply only the requested changes; never reproduce markup graphics themselves.",
+    extra: (n) => n === 3
+      ? "IMAGE 3 — PIXEL-LOCKED NOTE ANCHOR DETAIL SHEET. Each occupied cell is a tight crop centred exactly on a pinned note anchor. The exact CENTER pixel is the feature the note applies to. A small GREEN reticle is only a locator and must never appear in the output."
+      : `IMAGE ${n} — ADDITIONAL DIRECTION DETAIL ONLY.`,
+    single:
+      "IMAGE 1 — THE ORIGINAL CUSTOMER REFERENCE (SUBJECT TRUTH).",
+    lock:
+      "FINAL CLEAN-ROOM LOCK: use only the original reference, the current markup, the anchor detail sheet when present, and the current written markup instructions. No previous generated drawing, previous metal render or stale conversation image may influence the output.",
   },
   // The studio's RENDER step: the approved drawing becomes the charm. This is
   // the Charm Maker's gold→line-art conversion run in REVERSE, so the drawing
@@ -1077,7 +1113,7 @@ async function callGeminiGenerateContentImage({
   // Some studio flows need their structural role lock even with a single
   // image: a one-image approved drawing still needs the 1:1 replication lock,
   // and a one-image customer reference still needs the subject-truth lock.
-  const mustAlwaysLock = ["style_reference", "customer_lineart", "lineart_to_charm", "customer_reference"].includes(String(imageRoles || ""));
+  const mustAlwaysLock = ["style_reference", "customer_lineart", "customer_lineart_markup", "customer_reference_markup", "lineart_to_charm", "customer_reference"].includes(String(imageRoles || ""));
   if (imageInputs.length >= 2 || mustAlwaysLock) {
     parts.push({ text: roleSet.lock });
   }
@@ -2699,6 +2735,8 @@ function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes,
         return {
           text: t,
           where,
+          anchorSlot: ["top-left", "top-right", "bottom-left", "bottom-right"].includes(String(n.anchorSlot || ""))
+            ? String(n.anchorSlot) : null,
           kind: n.kind === "lettering" ? "lettering" : "note",
           h: Number.isFinite(h) && h > 0 && h < 1 ? h : null,
         };
@@ -2710,12 +2748,20 @@ function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes,
     .slice(0, 16);
   const notes = allNotes.filter((n) => n.kind !== "lettering").slice(0, 12);
   const lettering = allNotes.filter((n) => n.kind === "lettering").slice(0, 6);
-  const noteLines = notes.map((n) => `• ${n.where ? `at ${n.where}: ` : ""}${n.text}`).join("\n");
+  const noteLines = notes.map((n) => {
+    const pin = n.anchorSlot
+      ? `target = exact CENTER pixel of the ${n.anchorSlot} cell in IMAGE 3; apply ONLY to the visual feature crossing that centre pixel: `
+      : (n.where ? `at ${n.where}: ` : "");
+    return `• ${pin}${n.text}`;
+  }).join("\n");
   const letteringLines = lettering.map((n) => `• "${n.text}"${n.where ? ` at ${n.where}` : ""}${n.h ? `, same relative size as shown` : ""}`).join("\n");
   const zoneText = zoneBlock(markupMode != null ? markupZones : refZones, markupMode != null ? undefined : "reference");
 
+  const sourceTask = (refine && markupMode != null)
+    ? "TASK: Refine ONE production drawing. IMAGE 1 is the current production drawing and the only structural truth."
+    : "TASK: Create ONE production drawing for a charm from IMAGE 1.";
   const parts = [
-`TASK: Create ONE production drawing for a charm from IMAGE 1.
+`${sourceTask}
 
 OUTPUT CONTRACT:
 • Pure white background only.
@@ -2743,7 +2789,8 @@ ${convo}`);
   if (refine) {
     parts.push(
 `REFINEMENT MODE:
-• IMAGE 2 is the current drawing. Preserve it exactly everywhere the customer did not ask to change.
+• ${markupMode != null ? "IMAGE 1 is the current drawing; IMAGE 2 is markup direction only." : "IMAGE 2 is the current drawing."}
+• Preserve the current drawing exactly everywhere the customer did not ask to change.
 • Change only the newest requested areas.
 • Do not redesign, beautify or reinterpret unmarked regions.`
     );
@@ -2787,7 +2834,8 @@ ${convo}`);
 • Never reproduce the customer's shaky path as artwork.`
       );
     }
-    if (noteLines) parts.push(`PINNED NOTES:
+    if (noteLines) parts.push(`PINNED NOTES — PIXEL-LOCKED:
+When IMAGE 3 is present, the centre pixel of the named crop cell is the anchor itself; the small green reticle merely surrounds that pixel. Identify the smallest distinct visual feature crossing that centre pixel and apply the note to THAT feature only — not to the surrounding quadrant, neighbouring linework, or the whole object. Preserve nearby unmentioned details unchanged.
 ${noteLines}`);
     if (letteringLines) parts.push(`LETTERING TO ENGRAVE:
 ${letteringLines}`);
@@ -3188,7 +3236,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     }
     if (!refImg) throw new Error("no reference image on this session");
 
-    const images = [
+    let images = [
       { buffer: refImg.buffer, mime: refImg.mime, filename: filenameForMime("reference", refImg.mime) },
     ];
     let hasPrev = false;
@@ -3216,7 +3264,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     let markupNotes = [];
     let markupZones = [];                      // the engraving instruction, as data
     let markupMode = null;                     // set ONLY when a markup image is accepted
-    if (isRefine && hasPrev && typeof body?.markupImage === "string") {
+    if ((!isRefine || hasPrev) && typeof body?.markupImage === "string") {
       const mm = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(body.markupImage.trim());
       if (mm) {
         const buf = Buffer.from(mm[2], "base64");
@@ -3225,7 +3273,36 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
           markupNotes = Array.isArray(body.markupNotes) ? body.markupNotes : [];
           markupZones = Array.isArray(body.markupZones) ? body.markupZones : [];
           markupMode = String(body.markupMode) === "exact" ? "exact" : "interpret";
+          /* A compact contact sheet of tight crops whose centre pixels are the
+             note anchors. It is related context only, never a new subject. */
+          if (typeof body?.markupAnchorImage === "string") {
+            const am = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(body.markupAnchorImage.trim());
+            if (am) {
+              const abuf = Buffer.from(am[2], "base64");
+              if (abuf.length > 0 && abuf.length <= 600 * 1024) {
+                images.push({ buffer: abuf, mime: "image/" + am[1], filename: "note-anchor-details." + (am[1] === "png" ? "png" : "jpg") });
+              }
+            }
+          }
         }
+      }
+    }
+
+    /* Clean-room image routing for Mark-Up actions. A B/W markup refinement
+       must NOT also receive the original reference: that old image was the
+       largest source of drift because it competed with the already-approved
+       production drawing. Reference Mark-Up, conversely, receives the
+       original reference but no previous generated outputs. */
+    let studioImageRoles = "customer_lineart";
+    if (markupMode != null) {
+      if (isRefine && hasPrev) {
+        const currentDrawing = images[1];
+        const markupImage = images[2];
+        const anchorDetail = images[3] || null;
+        images = [currentDrawing, markupImage].concat(anchorDetail ? [anchorDetail] : []);
+        studioImageRoles = "customer_lineart_markup";
+      } else {
+        studioImageRoles = "customer_reference_markup";
       }
     }
 
@@ -3259,7 +3336,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
       quality: "high",
       output_format: "png",
       images,
-      imageRoles: "customer_lineart",
+      imageRoles: studioImageRoles,
       charmGeometryPolicy: null,
       backgroundPolicy: null,
     });
@@ -3324,10 +3401,11 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
  * background, so refusals decided before any work starts are written to the
  * doc as well: an HTTP status from a background invocation reaches nobody.
  * ===================================================================== */
-async function studioFailRender(vRef, error) {
+async function studioFailRender(vRef, error, renderRunId) {
   try {
     await vRef.set({
       renderStatus: "failed", renderStage: "failed",
+      renderRunId: String(renderRunId || ""),
       renderError: String(error).slice(0, 300),
     }, { merge: true });
   } catch (e) {
@@ -3343,6 +3421,8 @@ async function handleStudioRender({ body, event, origin }) {
 
   const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
   if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+  const renderRunId = String(body?.renderRunId || `render_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+    .replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
 
   /* Ownership first — a stranger gets the 403 and NOTHING written into the
      doc, exactly as in generate: a failure channel into someone else's
@@ -3366,7 +3446,7 @@ async function handleStudioRender({ body, event, origin }) {
      as the upstream model is concerned. */
   if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
       !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
-    await studioFailRender(vRef, "rate_limited");
+    await studioFailRender(vRef, "rate_limited", renderRunId);
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
 
@@ -3374,7 +3454,7 @@ async function handleStudioRender({ body, event, origin }) {
     await studioDebit(uid, cost, sessionId);
   } catch (err) {
     if (err?.status === 402) {
-      await studioFailRender(vRef, "out_of_credits");
+      await studioFailRender(vRef, "out_of_credits", renderRunId);
       return studioJson(402, { ok: false, error: "out_of_credits" }, origin);
     }
     throw err;
@@ -3383,7 +3463,7 @@ async function handleStudioRender({ body, event, origin }) {
   const metal = studioCleanText(body?.metal || session.metal || "gold");
 
   try {
-    await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal, renderError: null }, { merge: true });
+    await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal, renderRunId, renderError: null }, { merge: true });
 
     const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
     const bw = await storagePathToBuffer(bwPath);
@@ -3394,7 +3474,7 @@ async function handleStudioRender({ body, event, origin }) {
     const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
     const effectivePrompt = buildLineArtToCharmPrompt({ metal, zones: renderZones });
 
-    await vRef.set({ renderStage: "rendering" }, { merge: true });
+    await vRef.set({ renderStage: "rendering", renderRunId }, { merge: true });
 
     const studioModelConfig = resolveImageModel(
       process.env.GEMINI_STUDIO_IMAGE_MODEL || preferredCharmRenderModelId()
@@ -3412,7 +3492,7 @@ async function handleStudioRender({ body, event, origin }) {
       backgroundPolicy: null,
     });
 
-    await vRef.set({ renderStage: "polishing" }, { merge: true });
+    await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
 
     outBuf = embedPngTextMetadata(outBuf, {
       Description: `Custom Charm Studio charm — rendered from approved drawing v${n} (${metal}).`,
@@ -3433,16 +3513,16 @@ async function handleStudioRender({ body, event, origin }) {
     const renderURL = tokenDownloadURLFor(bucket.name, renderPath, token);
 
     await vRef.set({
-      renderStatus: "done", renderStage: "done",
+      renderStatus: "done", renderStage: "done", renderRunId,
       renderURL, renderPath, renderMetal: metal,
       renderedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal }, origin);
+    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal, renderRunId }, origin);
   } catch (err) {
     // A failed render must never cost a credit.
     await studioRefund(uid, cost, sessionId);
-    await studioFailRender(vRef, String(err?.message || err));
+    await studioFailRender(vRef, String(err?.message || err), renderRunId);
     console.error("[studio] render failed:", err?.message || err);
     return studioJson(500, { ok: false, error: "render_failed" }, origin);
   }
