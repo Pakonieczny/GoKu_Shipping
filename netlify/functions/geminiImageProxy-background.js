@@ -2510,6 +2510,11 @@ ${out.length ? `• OUTLINE ONLY (boundary worked, interior left as polished met
 • ENGRAVED SOLID: every remaining dark area of ${src} — ${cw(eng.length)} of
   them. They are not itemised because the picture already shows each one;
   engrave every one of them exactly where and as the picture shows it.
+AN OUTLINE-ONLY INSTRUCTION IS ABOUT ONE SHAPE'S OWN BOUNDARY AND INTERIOR —
+NOTHING ELSE. It never blanks, erases, thins or un-engraves anything outside
+that shape: every other dark area the picture shows stays exactly as dark and
+as engraved as the picture shows it. Turning a solidly engraved band into a
+thin outline because an outline instruction exists nearby is a hard fail.
 EVERY area listed as CUT CLEAN THROUGH must be an actual opening in your
 output, and every dark area must come through as engraved. Check this before
 you finish.
@@ -2629,14 +2634,16 @@ COLOUR-CODED PRODUCTION LINE ART — THE OUTPUT CONTRACT (NON-NEGOTIABLE):
     2. INTERIOR STAYS WHITE: when a stroke forms a CLOSED outline, the area it encloses is polished metal and stays pure WHITE. An outlined cloud is an outlined cloud, never a solid black cloud.
     3. SOLID-REGION ENGRAVING (rare): fill an area solid black ONLY when that ENTIRE area is meant to be engraved metal.
     4. THE FINGERTIP TEST: for every inked area — would a fingertip feel it as recessed engraving? If the interior would feel like the same polished surface as the rest of the charm, it stays white with a black outline stroke.
-    5. CUTOUTS/HOLES: every physical opening cut through the sheet — the hanging hoop's own hole included — is filled SOLID BLUE inside its cut outline. Blue is this drawing's word for "there is no metal here"; a hole is never left plain white and never drawn black.
+    5. CUTOUTS/HOLES — TWO KINDS, DRAWN DIFFERENTLY, HARD RULE:
+       (a) the CUSTOMER'S DECLARED CUT-OUT AREAS in the design are filled SOLID BLUE inside their cut outline — blue area = no metal here.
+       (b) STRUCTURAL CUTS — the hanging hoop's hole and the charm's outer silhouette — are drawn as BLUE LINES ONLY: the hoop's hole is pure WHITE inside ONE clean BLUE circular cut line, never filled solid blue and never black; the outer perimeter is one clean BLUE line. A blue LINE is a cut edge; only a blue FILLED AREA is an opening in the design.
     6. OUTLINE-ONLY AREAS: an area the customer marked outline-only has its boundary drawn as ONE clean RED line of ordinary production weight, interior pure white. Red is this drawing's word for "work the line, leave the inside alone".
 • RECOGNITION AT CHARM SCALE: sparse, recognition-critical engraving only — the few lines that make the subject read at 12 mm.
 • WORDS AND DIGITS: the only text of any kind in your drawing is text visibly present in the customer's own reference/mark-up or given as LETTERING. Never invent, copy or letter anything from these instructions — no numbers, no counts, no percentages, no labels, no filenames. Instructions are read, never drawn.
 HARD FAIL: any shading, grey tone, black background, or any colour other than black, the instruction blue and the instruction red.
 HARD FAIL: an outlined shape rendered as a filled solid when its interior is polished metal.
 HARD FAIL: a cut-through opening left white or drawn black instead of filled blue, or a blue/red instruction dropped, recoloured or moved.
-FINAL CHECK BEFORE RENDERING THE ONE IMAGE: one continuous silhouette with its perimeter drawn blue; one integrated protruding hoop above the center of mass with its hole filled blue; every black mark is genuinely engraved metal; every opening solid blue — count the blue areas the input declares and count them again in your drawing, they must match; every outline-only boundary red with a white interior; pure white background edge to edge.`;
+FINAL CHECK BEFORE RENDERING THE ONE IMAGE: one continuous silhouette with its perimeter drawn as one blue line; one integrated protruding hoop above the center of mass, its hole WHITE inside one blue cut line — never solid blue; every black mark is genuinely engraved metal; every declared opening a solid blue AREA — count the blue areas the input declares and count them again in your drawing, they must match; every outline-only boundary red with a white interior; pure white background edge to edge.`;
 
 /* Where on the drawing a normalized point sits, in words the model can bind
    to what it sees — a note's meaning depends on WHERE it is pinned. */
@@ -2942,7 +2949,16 @@ INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
   – a RED boundary line = outline only: engrave that boundary as an ordinary
     engraved line and leave its interior flat polished metal. No red metal,
     no red enamel, no red inlay anywhere.
-  A finished charm contains no blue and no red of any kind.
+  A finished charm contains no blue and no red of any kind: NOT ONE blue or
+  red pixel anywhere in your output — no blue or red edge, keyline, rim,
+  halo, enamel, inlay or tint, however thin. Rendering any instruction
+  colour as a colour of the metal is a hard fail.
+• THE METAL BEGINS EXACTLY AT THE SILHOUETTE LINE. The drawing's coloured
+  perimeter is the charm's own cut edge: in your render the polished metal
+  reaches all the way to that edge. Never leave a white margin, gap, groove,
+  channel or empty band between the charm's edge and where its surface
+  begins, and never draw the perimeter as a separate ring standing off the
+  body.
 • White INSIDE the outline = flat polished metal. Never engrave, texture or darken it.
 • The hoop's hole (drawn blue or white) and every drawn cutout = REAL holes cut through the sheet, showing pure black through them.
 • The drawing's white background = pure black background in the output.
