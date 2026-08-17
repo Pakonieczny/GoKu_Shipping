@@ -36,7 +36,15 @@ const KICK_BUILD = "geminiImageProxyKick-1.0.0";
    to geminiImageProxy-background: that function also carries the Listing
    Generator's internal kinds, which are same-origin, staff-only and have no
    business being reachable from a storefront page. */
-const SYNC_KINDS  = new Set(["custom_charm_precheck", "custom_session_status"]);
+/* custom_charm_compose is SYNC on purpose. It runs no model — it files a
+   drawing the browser composed itself — so it is a Storage write and a
+   Firestore write, well inside a synchronous budget. And it MUST be sync:
+   the browser needs the downloadURL and storagePath back in the response to
+   put the version on screen, which a background function can never give.
+   Leaving it out of both sets is what produced "unknown_kind": the kick
+   rejected it with a 400 before the background function was ever reached. */
+const SYNC_KINDS  = new Set(["custom_charm_precheck", "custom_session_status",
+                             "custom_charm_compose"]);
 const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine", "custom_charm_render"]);
 
 /* Same list, same order as STUDIO_ALLOWED_ORIGINS in the proxy. */
@@ -94,6 +102,17 @@ exports.handler = async (event) => {
 
   const kind = String(body.kind || "");
   const auth = h.authorization || h.Authorization || "";
+
+  /* A composed drawing arrives as a base64 PNG in the body, which is the only
+     request this endpoint ever receives that carries an image. Netlify caps a
+     synchronous request at 6 MB and answers a larger one with an opaque 413,
+     so it is measured here and refused in words the studio can show. */
+  if (kind === "custom_charm_compose") {
+    const bytes = Buffer.byteLength(event.body || "", "utf8");
+    if (bytes > 5.5 * 1024 * 1024) {
+      return json(413, { ok: false, error: "image_too_large" }, origin);
+    }
+  }
 
   /* ── fast kinds: answer here and now ──────────────────────────────────
      Both are short — a vision pass and a Firestore read — so they fit inside
