@@ -3233,6 +3233,8 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
 
   const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
   if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+  const renderRunId = String(body?.renderRunId || ("rr_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10)))
+    .replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
 
   /* Ownership is checked FIRST, ahead of the rate limits, and the order is
      deliberate. Everything after this point is allowed to write a failure into
@@ -3467,10 +3469,11 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
  * background, so refusals decided before any work starts are written to the
  * doc as well: an HTTP status from a background invocation reaches nobody.
  * ===================================================================== */
-async function studioFailRender(vRef, error) {
+async function studioFailRender(vRef, error, renderRunId) {
   try {
     await vRef.set({
       renderStatus: "failed", renderStage: "failed",
+      renderRunId: String(renderRunId || ""),
       renderError: String(error).slice(0, 300),
     }, { merge: true });
   } catch (e) {
@@ -3509,7 +3512,7 @@ async function handleStudioRender({ body, event, origin }) {
      as the upstream model is concerned. */
   if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
       !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
-    await studioFailRender(vRef, "rate_limited");
+    await studioFailRender(vRef, "rate_limited", renderRunId);
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
 
@@ -3517,7 +3520,7 @@ async function handleStudioRender({ body, event, origin }) {
     await studioDebit(uid, cost, sessionId);
   } catch (err) {
     if (err?.status === 402) {
-      await studioFailRender(vRef, "out_of_credits");
+      await studioFailRender(vRef, "out_of_credits", renderRunId);
       return studioJson(402, { ok: false, error: "out_of_credits" }, origin);
     }
     throw err;
@@ -3526,7 +3529,8 @@ async function handleStudioRender({ body, event, origin }) {
   const metal = studioCleanText(body?.metal || session.metal || "gold");
 
   try {
-    await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal, renderError: null }, { merge: true });
+    await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
+                     renderRunId, renderError: null }, { merge: true });
 
     const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
     const bw = await storagePathToBuffer(bwPath);
@@ -3537,7 +3541,7 @@ async function handleStudioRender({ body, event, origin }) {
     const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
     const effectivePrompt = buildLineArtToCharmPrompt({ metal, zones: renderZones });
 
-    await vRef.set({ renderStage: "rendering" }, { merge: true });
+    await vRef.set({ renderStage: "rendering", renderRunId }, { merge: true });
 
     const studioModelConfig = resolveImageModel(
       process.env.GEMINI_STUDIO_IMAGE_MODEL || preferredCharmRenderModelId()
@@ -3555,7 +3559,7 @@ async function handleStudioRender({ body, event, origin }) {
       backgroundPolicy: "solid_black",
     });
 
-    await vRef.set({ renderStage: "polishing" }, { merge: true });
+    await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
 
     outBuf = embedPngTextMetadata(outBuf, {
       Description: `Custom Charm Studio charm — rendered from approved drawing v${n} (${metal}).`,
@@ -3576,16 +3580,16 @@ async function handleStudioRender({ body, event, origin }) {
     const renderURL = tokenDownloadURLFor(bucket.name, renderPath, token);
 
     await vRef.set({
-      renderStatus: "done", renderStage: "done",
+      renderStatus: "done", renderStage: "done", renderRunId,
       renderURL, renderPath, renderMetal: metal,
       renderedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal }, origin);
+    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal, renderRunId }, origin);
   } catch (err) {
     // A failed render must never cost a credit.
     await studioRefund(uid, cost, sessionId);
-    await studioFailRender(vRef, String(err?.message || err));
+    await studioFailRender(vRef, String(err?.message || err), renderRunId);
     console.error("[studio] render failed:", err?.message || err);
     return studioJson(500, { ok: false, error: "render_failed" }, origin);
   }
