@@ -2291,6 +2291,17 @@ const STUDIO_DEFAULT_CONFIG = {
   guestFreeUploads: 3,
   signupBonusUploads: 7,
   generateCost: 1,
+  /* ── TWO RENDERERS, TWO PRICES ────────────────────────────────────────
+     The metal render is the one step where a second model earns its keep, so
+     it is the one step that offers a choice. "Low" is the Gemini renderer the
+     studio has always used and stays at generateCost. "High" routes to
+     OpenAI's image model, which is slower and dearer, so it costs double.
+     Both values live in config/customStudio alongside everything else, which
+     means the price and the model can be retuned from Firestore with no
+     deploy — and, deliberately, NO new environment variable: the OpenAI key
+     the Listing Generator already uses is the same key. */
+  renderHighCost: 2,
+  renderHighModel: "gpt-image-2",
 };
 let _studioCfg = null, _studioCfgAt = 0;
 async function studioConfig() {
@@ -3485,6 +3496,16 @@ async function handleStudioRender({ body, event, origin }) {
   const cost = Number(cfg.generateCost) || 1;
   const db = getDb();
 
+  /* ── QUALITY: THE CUSTOMER'S CHOICE OF RENDERER ───────────────────────────
+     "low" is the Gemini renderer the studio has always used, at the standard
+     one-credit price. "high" routes the same drawing, the same prompt and the
+     same zone census to OpenAI's image model for two credits. Anything the
+     browser sends that is not exactly "high" is treated as low: a garbled
+     value must never silently cost a customer double. */
+  const quality = String(body?.quality || "low").trim().toLowerCase() === "high" ? "high" : "low";
+  const highCost = Math.max(cost, Number(cfg.renderHighCost) || cost * 2);
+  const renderCost = quality === "high" ? highCost : cost;
+
   const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
   if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
   const renderRunId = String(body?.renderRunId || ("rr_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10)))
@@ -3508,6 +3529,27 @@ async function handleStudioRender({ body, event, origin }) {
     return studioJson(409, { ok: false, error: "version_not_ready" }, origin);
   }
 
+  /* ── PROVE THE RENDERER EXISTS BEFORE TAKING THE MONEY ───────────────────
+     resolveImageModel throws on an unknown id and apiKeyForImageModel throws
+     when the provider's key is not set. Discovering either AFTER the debit
+     means the customer watches their balance drop, waits for a render that
+     was never possible, and gets it back only via the refund path. Both are
+     settled here, before a credit moves, and the refusal is written to the
+     doc in words the studio can show. */
+  let studioModelConfig = null;
+  try {
+    studioModelConfig = resolveImageModel(
+      quality === "high"
+        ? (cfg.renderHighModel || "gpt-image-2")
+        : (process.env.GEMINI_STUDIO_IMAGE_MODEL || preferredCharmRenderModelId())
+    );
+    apiKeyForImageModel(studioModelConfig);
+  } catch (err) {
+    console.error("[studio] render model unavailable:", err?.message || err);
+    await studioFailRender(vRef, quality === "high" ? "high_unavailable" : "render_unavailable", renderRunId);
+    return studioJson(503, { ok: false, error: "render_unavailable" }, origin);
+  }
+
   /* Renders share the generation budgets — a render IS a generation as far
      as the upstream model is concerned. */
   if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
@@ -3517,7 +3559,7 @@ async function handleStudioRender({ body, event, origin }) {
   }
 
   try {
-    await studioDebit(uid, cost, sessionId);
+    await studioDebit(uid, renderCost, sessionId);
   } catch (err) {
     if (err?.status === 402) {
       await studioFailRender(vRef, "out_of_credits", renderRunId);
@@ -3530,7 +3572,8 @@ async function handleStudioRender({ body, event, origin }) {
 
   try {
     await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
-                     renderRunId, renderError: null }, { merge: true });
+                     renderQuality: quality, renderModel: studioModelConfig.id,
+                     renderCost, renderRunId, renderError: null }, { merge: true });
 
     const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
     const bw = await storagePathToBuffer(bwPath);
@@ -3543,9 +3586,12 @@ async function handleStudioRender({ body, event, origin }) {
 
     await vRef.set({ renderStage: "rendering", renderRunId }, { merge: true });
 
-    const studioModelConfig = resolveImageModel(
-      process.env.GEMINI_STUDIO_IMAGE_MODEL || preferredCharmRenderModelId()
-    );
+    /* studioModelConfig was resolved and its key proved above, before the
+       debit. Nothing about the request changes with the renderer: the same
+       drawing, the same prompt and the same zone census go to both, because
+       what "high" buys is a different renderer, not different instructions —
+       and callImageModelEdits already mirrors the lineart_to_charm role
+       labels and the geometry/background policy into the OpenAI prompt. */
     let outBuf = await callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
       model: studioModelConfig.id,
@@ -3582,13 +3628,16 @@ async function handleStudioRender({ body, event, origin }) {
     await vRef.set({
       renderStatus: "done", renderStage: "done", renderRunId,
       renderURL, renderPath, renderMetal: metal,
+      renderQuality: quality, renderModel: studioModelConfig.id, renderCost,
       renderedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal, renderRunId }, origin);
+    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal,
+                             renderQuality: quality, renderModel: studioModelConfig.id,
+                             renderCost, renderRunId }, origin);
   } catch (err) {
-    // A failed render must never cost a credit.
-    await studioRefund(uid, cost, sessionId);
+    // A failed render must never cost a credit — including a double-priced one.
+    await studioRefund(uid, renderCost, sessionId);
     await studioFailRender(vRef, String(err?.message || err), renderRunId);
     console.error("[studio] render failed:", err?.message || err);
     return studioJson(500, { ok: false, error: "render_failed" }, origin);
