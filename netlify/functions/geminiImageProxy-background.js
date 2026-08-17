@@ -2200,6 +2200,8 @@ const STUDIO_KINDS = new Set([
   "custom_charm_precheck",
   "custom_charm_generate",
   "custom_charm_refine",
+  /* the studio composed the drawing itself — this only files it */
+  "custom_charm_compose",
   "custom_charm_render",
   "custom_session_status",
 ]);
@@ -3631,6 +3633,94 @@ async function handleStudioSessionStatus({ body, event, origin }) {
   }, origin);
 }
 
+/* ═══════════ FILING A DRAWING THE STUDIO MADE ITSELF ═════════════════════
+   In "exactly as drawn" the browser composes the production drawing from the
+   customer's own vector items — no model is called and nothing is
+   interpreted. But the render step does not accept a picture: it reads a
+   FIXED Storage path, `.../designs/<session>/v<n>.png`, and refuses any
+   version whose Firestore doc is not marked done. A composed drawing that
+   lived anywhere else was therefore invisible to it — the render answered
+   409 version_not_ready and the customer watched a progress bar to its
+   timeout with no reason given.
+
+   So the composed PNG is filed exactly where a generated one is filed, and
+   its version doc is written in the same shape. Everything downstream — the
+   render, the cart thumbnail, My designs, the order webhook — then treats it
+   as what it is: version n of this design.
+
+   IT COSTS NO GENERATION CREDIT. No model ran, so there is nothing to
+   charge for; the upload allowance the browser already spent is the whole
+   price. The rate limits still apply, because writing megabytes into
+   Storage is worth bounding whoever asks for it. */
+async function handleStudioCompose({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+
+  const n = Number(body?.versionNumber) || (Number(session.currentVersion) || 0) + 1;
+  if (!n || n < 1 || n > 400) return studioJson(400, { ok: false, error: "bad_version" }, origin);
+  const vRef = sRef.collection("versions").doc(String(n));
+
+  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
+      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
+  }
+
+  let img;
+  try {
+    img = dataUrlToBuffer(String(body?.dataUrl || ""));
+  } catch (_e) {
+    return studioJson(400, { ok: false, error: "bad_image" }, origin);
+  }
+  if (!/^image\/png$/i.test(img.mime)) return studioJson(400, { ok: false, error: "png_only" }, origin);
+  if (!img.buffer.length || img.buffer.length > 12 * 1024 * 1024) {
+    return studioJson(413, { ok: false, error: "image_too_large" }, origin);
+  }
+
+  try {
+    /* the same path the generator writes, "uploads" segment included: the
+       cart template keys its thumbnail off that word */
+    const storagePath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
+    const bucket = getBucket();
+    const token = newDownloadToken();
+    await bucket.file(storagePath).save(img.buffer, {
+      resumable: false,
+      contentType: "image/png",
+      metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId,
+                              version: String(n), composed: "1" } },
+    });
+    const downloadURL = tokenDownloadURLFor(bucket.name, storagePath, token);
+
+    await studioStage(vRef, {
+      status: "done", stage: "done", storagePath, downloadURL,
+      composed: true,
+      model: "studio-composer",
+      prompt: "Composed locally from the customer's own vector items — exactly as drawn.",
+      doneAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    try {
+      await sRef.set({
+        currentVersion: n,
+        updatedAtServer: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } catch (_e) {}
+
+    return studioJson(200, { ok: true, n, storagePath, downloadURL }, origin);
+  } catch (err) {
+    console.error("[studio] compose file:", err);
+    return studioJson(500, { ok: false, error: "server_error" }, origin);
+  }
+}
+
 async function handleStudioKind({ kind, body, event }) {
   const origin = (event?.headers && (event.headers.origin || event.headers.Origin)) || "";
   try {
@@ -3638,6 +3728,7 @@ async function handleStudioKind({ kind, body, event }) {
     if (kind === "custom_charm_generate" || kind === "custom_charm_refine") {
       return await handleStudioGenerate({ kind, body, event, origin });
     }
+    if (kind === "custom_charm_compose") return await handleStudioCompose({ body, event, origin });
     if (kind === "custom_charm_render") return await handleStudioRender({ body, event, origin });
     if (kind === "custom_session_status") return await handleStudioSessionStatus({ body, event, origin });
     return studioJson(400, { ok: false, error: "unknown_kind" }, origin);
