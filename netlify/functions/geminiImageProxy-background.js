@@ -950,7 +950,7 @@ const IMAGE_ROLE_LABELS = {
   // customer's own hand-drawn markup of that drawing.
   customer_lineart: {
     first:
-      "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm and draw it as flat black-and-white production line art on pure white — not to reproduce the photograph, not to invent a different object, and not to render metal.",
+      "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm as flat production line art on pure white using only black plus the studio instruction blue/red where required — not to reproduce the photograph, not to invent a different object, and not to render metal.",
     second:
       "IMAGE 2 — THE CUSTOMER'S CURRENT DRAWING OF THIS CHARM. This is your own previous line-art output, which the customer has been refining. Keep its silhouette, proportions, hoop placement, engraving and cutouts EXACTLY as they are and change ONLY what the newest customer instruction — and their markup, if supplied — asks for. It is not a style sample and it is not a second subject.",
     extra: (n) => n === 3
@@ -959,9 +959,9 @@ const IMAGE_ROLE_LABELS = {
         ? `IMAGE 4 — PIXEL-LOCKED NOTE ANCHOR DETAIL SHEET. Each occupied cell is a tight crop of IMAGE 2 centred EXACTLY on a pinned note's anchor pixel. The exact CENTER of each cell is the feature the note refers to; neighbouring shapes in the crop are context only. This image is direction only and must never be reproduced in the output.`
         : `IMAGE ${n} — ADDITIONAL DIRECTION DETAIL. Use only to locate the customer's requested change; never reproduce it as artwork.`,
     single:
-      "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm and draw it as flat black-and-white production line art on pure white — not to reproduce the photograph and not to invent a different object.",
+      "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm as flat production line art on pure white using only black plus the studio instruction blue/red where required — not to reproduce the photograph and not to invent a different object.",
     lock:
-      "FINAL IMAGE-ROLE LOCK: the SUBJECT comes from IMAGE 1 and the customer's written instructions, and from nowhere else. The OUTPUT is always flat B/W production line art on pure white. When IMAGE 2 is present it is the customer's current drawing: preserve it and apply only the newest direction. When a markup image is present it steers WHERE to change — its ink never appears in the output. HARD FAIL: photorealism, metal rendering, colour, shading or a black background. HARD FAIL: a refinement that redesigns parts of the drawing the customer did not ask to change. HARD FAIL: markup strokes, highlights or text bubbles reproduced in the output.",
+      "FINAL PRODUCTION-DRAWING LOCK: output ONE flat 2D production drawing on pure white. Use ONLY black, studio instruction blue and studio instruction red; no other colours, no grey, no shading, no gradients, no photorealism, no metal render, no perspective and no 3D. BLACK means engraving. SOLID BLUE means cut clean through. RED boundary means outline-only with white interior. WHITE inside the charm means untouched metal. Exactly one integrated protruding hoop at the top; no separate hardware. The SUBJECT comes from IMAGE 1 and the customer's written instructions, and from nowhere else. When IMAGE 2 is present it is the customer's current drawing: preserve every unrequested region exactly and apply only the newest direction. Markup graphics are direction only and never appear in the output. HARD FAIL: any dropped/moved manufacturing instruction, changed untouched geometry, extra object, photorealism, or unrelated addition.",
   },
   // Clean-room Mark-Up refinement. The ORIGINAL reference is deliberately
   // absent: IMAGE 1 is the current B/W drawing, so nothing older can pull the
@@ -977,7 +977,7 @@ const IMAGE_ROLE_LABELS = {
     single:
       "IMAGE 1 — THE CURRENT PRODUCTION DRAWING (ONLY STRUCTURAL TRUTH). Preserve it unless the written direction explicitly changes it.",
     lock:
-      "FINAL CLEAN-ROOM LOCK: ONLY IMAGE 1, IMAGE 2, IMAGE 3 when present, and the current markup instructions may influence this output. No original reference image, prior render, prior conversation image or unrelated visual context is part of this task. Preserve every unmarked region of IMAGE 1 exactly.",
+      "FINAL PRODUCTION-DRAWING + CLEAN-ROOM LOCK: output ONE flat 2D production drawing on pure white using ONLY black, studio instruction blue and studio instruction red. No other colours, no grey, no shading, no gradients, no photorealism, no metal render, no perspective and no 3D. BLACK = engraving; SOLID BLUE = cut clean through; RED boundary = outline-only with white interior; WHITE inside the charm = untouched metal. Exactly one integrated protruding hoop at the top; no separate hardware. IMAGE 1 is the current production drawing and structural truth. Preserve every unmarked region, silhouette, proportion, hoop, engraving, cutout, lettering and outline-only region exactly. Apply ONLY the current Mark-Up changes. ONLY IMAGE 1, IMAGE 2, IMAGE 3 when present, the original project brief, and the current markup instructions may influence this output. No original reference image, prior metal render, stale conversation image or unrelated visual context may influence it. Markup graphics and locator reticles must never appear in the output.",
   },
   // Mark-Up applied directly to the original reference. No previous generated
   // B/W or metal image is supplied, so the model cannot blend old output back
@@ -993,7 +993,7 @@ const IMAGE_ROLE_LABELS = {
     single:
       "IMAGE 1 — THE ORIGINAL CUSTOMER REFERENCE (SUBJECT TRUTH).",
     lock:
-      "FINAL CLEAN-ROOM LOCK: use only the original reference, the current markup, the anchor detail sheet when present, and the current written markup instructions. No previous generated drawing, previous metal render or stale conversation image may influence the output.",
+      "FINAL PRODUCTION-DRAWING + CLEAN-ROOM LOCK: output ONE flat 2D production drawing on pure white using ONLY black, studio instruction blue and studio instruction red. No other colours, no grey, no shading, no gradients, no photorealism, no metal render, no perspective and no 3D. BLACK = engraving; SOLID BLUE = cut clean through; RED boundary = outline-only with white interior; WHITE inside the charm = untouched metal. Exactly one integrated protruding hoop at the top; no separate hardware. Use only the original reference, the original project brief, the current markup, the anchor detail sheet when present, and the current written markup instructions. No previous generated drawing, previous metal render, stale conversation image or unrelated visual context may influence the output. Markup graphics and locator reticles must never appear in the output.",
   },
   // The studio's RENDER step: the approved drawing becomes the charm. This is
   // the Charm Maker's gold→line-art conversion run in REVERSE, so the drawing
@@ -1061,14 +1061,20 @@ async function callGeminiGenerateContentImage({
   // photo" — a nudge toward studio-white ecommerce backgrounds that directly
   // fought the Charm Maker's solid-black policy. When a background policy is
   // declared, the closing line enforces it instead of contradicting it.
+  const isProductionDrawing = ["customer_lineart", "customer_lineart_markup", "customer_reference_markup", "line_art_style"].includes(String(imageRoles || ""));
   const closingLine =
-    String(backgroundPolicy || "").trim() === "solid_black"
-      ? `The ENTIRE background must be pure solid black (#000000), edge to edge.`
-      : `Return an image suitable for a product photo.`;
+    isProductionDrawing
+      ? `Return ONE flat 2D production drawing on a pure white background. Do not render a product photo or metal.`
+      : String(backgroundPolicy || "").trim() === "solid_black"
+        ? `The ENTIRE background must be pure solid black (#000000), edge to edge.`
+        : `Return an image suitable for a product photo.`;
 
+  const outputKind = isProductionDrawing
+    ? `OUTPUT (NON-NEGOTIABLE): Return a flat 2D production drawing, ${wantAR}. `
+    : `OUTPUT (NON-NEGOTIABLE): Return a photorealistic ${wantAR} image. `;
   const promptText =
     `${String(prompt || "").trim()}\n\n` +
-    `OUTPUT (NON-NEGOTIABLE): Return a photorealistic ${wantAR} image. ` +
+    outputKind +
     `Exact size ${wantW}x${wantH}. ` +
     closingLine;
 
