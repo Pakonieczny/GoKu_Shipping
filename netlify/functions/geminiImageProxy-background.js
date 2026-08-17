@@ -2302,6 +2302,10 @@ const STUDIO_DEFAULT_CONFIG = {
      the Listing Generator already uses is the same key. */
   renderHighCost: 2,
   renderHighModel: "gpt-image-2",
+  /* "off" | "observe" | "enforce" — see the cut check in handleStudioRender.
+     Ships off: the scan's fill identification is still being corrected, and a
+     check that is sometimes wrong edits a charm somebody paid for. */
+  renderCutCheck: "off",
 };
 let _studioCfg = null, _studioCfgAt = 0;
 async function studioConfig() {
@@ -4013,28 +4017,45 @@ async function handleStudioRender({ body, event, origin }) {
 
     await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
 
-    /* ── THE CUT-OUTS ARE NOT THE MODEL'S DECISION ────────────────────────
-       Every declared opening is punched from the drawing's own geometry, and
-       a render that removed metal nobody declared is refused outright rather
-       than filed. This runs BEFORE the metadata is embedded and before the
-       upload, so what reaches Storage — and therefore the cart, the customer
-       and the workshop — is the corrected artefact, not a corrected preview. */
-    const punch = await studioPunchCutouts(outBuf, bw.buffer);
-    outBuf = punch.buf;
-    if (punch.report.reason === "undeclared_cut") {
-      const e = new Error("cut_check_undeclared");
-      e.studioReport = punch.report;
-      throw e;
+    /* ── THE CUT CHECK IS PARKED ──────────────────────────────────────────
+       The punch is correct on the cases it was proven against, but the fill
+       identification behind it is still being corrected — and a check that is
+       sometimes wrong is worse than no check, because it edits a charm the
+       customer is paying for. So it ships OFF, and the customer sees exactly
+       what they saw before it existed: no verdict, no rejected renders, no
+       pixels touched.
+
+       One value in config/customStudio, no deploy, three settings:
+         "off"      what ships. The scan does not run.
+         "observe"  the scan runs and files its numbers on the version doc,
+                    but the image is returned untouched and nothing is ever
+                    rejected. This is how the identification gets tuned
+                    against real traffic without a customer ever paying for
+                    it — turn it on when we start correcting the fills.
+         "enforce"  punch declared cut-outs, reject undeclared ones. */
+    const cutMode = String(cfg.renderCutCheck || "off").trim().toLowerCase();
+    if (cutMode === "observe" || cutMode === "enforce") {
+      const punch = await studioPunchCutouts(outBuf, bw.buffer);
+      if (cutMode === "enforce") {
+        outBuf = punch.buf;
+        if (punch.report.reason === "undeclared_cut") {
+          const e = new Error("cut_check_undeclared");
+          e.studioReport = punch.report;
+          throw e;
+        }
+      }
+      await vRef.set({
+        renderCutMode: cutMode,
+        renderCutsDeclared: punch.report.declaredCuts,
+        renderCutsPunched: cutMode === "enforce" ? punch.report.punchedPx : 0,
+        renderCutsWouldPunch: punch.report.punchedPx,
+        renderAlignment: Math.round(punch.report.alignment * 1000) / 1000,
+        renderOpenFraction: Math.round(punch.report.openFrac * 1000) / 1000,
+        renderVerified: cutMode === "enforce" && !!punch.report.verified,
+        renderCheck: punch.report.reason,
+        renderRunId,
+      }, { merge: true });
     }
-    await vRef.set({
-      renderCutsDeclared: punch.report.declaredCuts,
-      renderCutsPunched: punch.report.punchedPx,
-      renderAlignment: Math.round(punch.report.alignment * 1000) / 1000,
-      renderOpenFraction: Math.round(punch.report.openFrac * 1000) / 1000,
-      renderVerified: !!punch.report.verified,
-      renderCheck: punch.report.reason,
-      renderRunId,
-    }, { merge: true });
 
     outBuf = embedPngTextMetadata(outBuf, {
       Description: `Custom Charm Studio charm — rendered from approved drawing v${n} (${metal}).`,
