@@ -788,7 +788,7 @@ async function callOpenAIImagesEdits({
   let promptText = String(prompt || "");
   if (imageRoles === "style_reference") {
     promptText = `${promptText.trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`;
-  } else if (imageRoles === "line_art_style" || imageRoles === "customer_lineart" || imageRoles === "lineart_to_charm") {
+  } else if (imageRoles === "line_art_style" || imageRoles === "customer_lineart" || imageRoles === "lineart_to_charm" || imageRoles === "customer_reference") {
     const roles = IMAGE_ROLE_LABELS[imageRoles];
     promptText = (images || []).length >= 2
       ? `${promptText.trim()}\n\n${roles.first}\n\n${roles.second}\n\n${roles.lock}`
@@ -971,7 +971,7 @@ const IMAGE_ROLE_LABELS = {
     single:
       "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat B/W line art of a charm on white. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
     lock:
-      "FINAL IMAGE-ROLE LOCK: this is a 1:1 structural replication, drawing → finished charm. The output's silhouette laid over the drawing's silhouette must match. Nothing is added, nothing is removed, nothing is redesigned, nothing is 'improved'. HARD FAIL: an output whose outline, engraving layout or cutouts differ from the drawing. HARD FAIL: line art, sketch styling or a white background in the output.",
+      "FINAL IMAGE-ROLE LOCK: this is a 1:1 structural replication, drawing → finished charm. IMAGE 1 is the only structural truth. The output's silhouette and internal layout must match the drawing. Nothing is added, nothing is removed, nothing is redesigned, nothing is 'improved'. HARD FAIL: an output whose outline, engraving layout or cutouts differ from the drawing.",
   },
   line_art_style: {
     first:
@@ -1074,12 +1074,11 @@ async function callGeminiGenerateContentImage({
       },
     });
   }
-  // The edit vocabulary only emits its lock for multi-image requests (a
-  // single-image edit needs no disambiguation). The style_reference vocabulary
-  // emits it always: with one reference image the "do not reproduce this
-  // object" instruction is the entire point, and it must be last so it carries
-  // the most weight.
-  if (imageInputs.length >= 2 || roleSet === IMAGE_ROLE_LABELS.style_reference) {
+  // Some studio flows need their structural role lock even with a single
+  // image: a one-image approved drawing still needs the 1:1 replication lock,
+  // and a one-image customer reference still needs the subject-truth lock.
+  const mustAlwaysLock = ["style_reference", "customer_lineart", "lineart_to_charm", "customer_reference"].includes(String(imageRoles || ""));
+  if (imageInputs.length >= 2 || mustAlwaysLock) {
     parts.push({ text: roleSet.lock });
   }
 
@@ -2683,124 +2682,12 @@ function markupRegion(x, y) {
 
 function buildCustomerLineArtPrompt({ instructions, thread, refine, markupNotes, markupZones, markupMode, refMode, refZones }) {
   const clean = studioCleanText(instructions);
-  const log = (Array.isArray(thread) ? thread : [])
-    .filter((m) => m && m.text)
-    .slice(-24)
-    .map((m, i) => `${i + 1}. ${m.role === "studio" ? "STUDIO" : "CUSTOMER"}: ${studioCleanText(m.text)}`)
-    .filter((line) => line.split(": ").slice(1).join(": ").length > 0)
+  const convo = (Array.isArray(thread) ? thread : [])
+    .filter((m) => m && m.text && (m.role === "customer" || m.role === "studio"))
+    .slice(-8)
+    .map((m) => `• ${m.role === "studio" ? "Studio" : "Customer"}: ${studioCleanText(m.text)}`)
     .join("\n");
 
-  const header =
-`CUSTOMER-DIRECTED CHARM DESIGN — B/W PRODUCTION DRAWING. TRANSLATE, DON'T INVENT.
-
-The supplied image is the customer's chosen reference. Design their charm from
-it and draw the design as flat B/W production line art, then apply ONLY the
-customer's requested changes:
-
-CUSTOMER INSTRUCTIONS: ${clean || "(no change requested — translate the reference faithfully)"}
-REFERENCE HANDLING: keep the recognizable subject and proportions; changes
-beyond the instructions are forbidden.
-
-• OUTER CONTOUR BRIEF: follow the reference subject's own recognizable silhouette, simplified into one bold, clean, manufacturable outline.
-• ENGRAVING BRIEF: use only sparse, recognition-critical engraving strokes — the few lines that make the subject read at charm size.
-• INTENTIONAL CUTOUT BRIEF: use negative-space cutouts where they improve recognition or visual appeal; otherwise use none.`;
-
-  const parts = [header];
-  if (log) {
-    parts.push(
-`CUSTOMER DIRECTION LOG — the full conversation so far, oldest first.
-Honour all of it; the last line is the newest request:
-${log}`);
-  }
-  if (refine) {
-    parts.push(
-`REFINEMENT PASS: the second image is the customer's current drawing of this
-charm. Keep it and change ONLY what the newest instruction asks for.`);
-  }
-  /* ── THE SKETCH CONTRACT ─────────────────────────────────────────────────
-     Set only when the reference image is the customer's OWN hand drawing from
-     the studio's sketchpad, with the mode they chose there. Exact means the
-     sketch IS the design, wanted as drawn; interpreted means it is a brief
-     for the real thing. */
-  if (!refine && (refMode === "exact" || refMode === "interpret")) {
-    parts.push(refMode === "exact"
-? `THE REFERENCE IMAGE IS THE CUSTOMER'S OWN HAND-DRAWN DESIGN — EXACT MODE:
-The customer chose "exactly as drawn". Your job is faithful VECTORIZATION,
-not redesign: reproduce the sketch's geometry, composition, positions and
-proportions exactly, converted to clean production line weight. Straighten
-only the hand's jitter; change NOTHING else.
-• LINE COUNT IS SACRED: one drawn line becomes one production line — never
-  doubled, never given an inner or outer parallel, a rim, a border or a halo.
-• LINE colour carries no meaning — the sketchpad offers coloured lines only so
-  the customer can tell their own objects apart, and every line is an engraved
-  line whatever its colour.
-• AREA FILL CARRIES THE WHOLE MEANING, and there are exactly three:
-  SOLID BLACK area = ENGRAVE that area. SOLID BLUE area = CUT IT CLEAN
-  THROUGH — a real opening, drawn in your output as that area filled SOLID
-  BLUE, never black, never engraved, never plain white. RED BOUNDARY, or no
-  fill at all, = outline only: draw that boundary as one clean RED line and
-  leave its interior white as flat polished metal. The instruction colours
-  pass straight through: blue in, blue out; red in, red out. Applying the
-  wrong one produces a physically different charm; it is the worst error
-  available on this job.
-• TEXT in the sketch is reproduced at exactly the drawn position and size, in
-  one clean sans-serif face — never moved, rescaled, reflowed or restyled.
-• Add nothing the sketch does not show; remove nothing it does.
-BEFORE RENDERING, CHECK: laid over the sketch, does every element of your
-output sit on top of its counterpart at the same size? If not, redo it.`
-: `THE REFERENCE IMAGE IS THE CUSTOMER'S OWN HAND-DRAWN DESIGN — INTERPRETED:
-A freehand PEN line's colour carries no meaning — it only tells the
-customer's own objects apart, and every such line is an engraved line. An
-AREA is the opposite: its colour is a manufacturing instruction with exactly
-three values. SOLID BLACK area = engrave it. SOLID BLUE area = CUT IT CLEAN
-THROUGH — a real opening, shown in your output as that area filled SOLID
-BLUE, never as black and never as engraving. A RED BOUNDARY, or no fill at
-all = outline only, its interior left as flat polished metal and its boundary
-drawn as one clean RED line. The instruction colours pass straight through:
-blue in, blue out; red in, red out.
-Read the sketch for what it DEPICTS and draw that subject properly in this
-studio's production line language — clean, manufacturable, symmetric where
-the real subject is symmetric — while keeping the sketch's composition: each
-element at the position and relative scale the customer gave it. Honour any
-text: the same words, at the same place and relative size, in one clean
-sans-serif face.`);
-  }
-  /* ── AND THE LAW ITSELF, IN FULL, ON EVERY PATH THAT HAS A PLAN ─────────
-     This used to be two mutually exclusive branches — "the reference is a
-     sketch" and "this is a refinement" — which between them missed the two
-     commonest journeys in the studio: a FIRST generation from an uploaded
-     picture, and a first generation from a catalogue charm. Those produced a
-     prompt with no fill law in it at all, so the one instruction that
-     changes the physical object was decided by whatever the model felt like.
-     The plan now arrives for all four kinds of reference (the studio reads
-     it off the picture when nobody has drawn one), so the law travels
-     wherever the plan does.
-
-     Not when a MARK-UP is in the request: the mark-up block below carries
-     the same law with the mark-up's own — more recent, more specific — list
-     beside it, and stating the law twice with two different censuses of the
-     same charm is an invitation to split the difference. */
-  const hasRefPlan = Array.isArray(refZones) && refZones.length > 0;
-  const markupInPlay = markupMode !== undefined && markupMode !== null;
-  if (!markupInPlay && (refMode === "exact" || refMode === "interpret" || refine || hasRefPlan)) {
-    parts.push(FILL_LAW);
-    const rz = zoneBlock(refZones, "reference");
-    if (rz) parts.push(rz);
-  }
-  /* ── THE MARKUP CONTRACT ─────────────────────────────────────────────────
-     The customer drew on the previous drawing with a mouse or a fingertip.
-     Two modes, chosen by the customer in the markup studio:
-
-       interpret (default) — every mark is a GESTURE to be read for intent.
-         A hand can only approximate; the studio's job is to understand what
-         the shape MEANS and draw the real thing properly.
-       exact — the customer means their geometry literally; reproduce it,
-         cleaned only to production line weight.
-
-     Notes travel with their anchor points so the model can bind each
-     instruction to the region it is pinned on — "make this bigger" says
-     nothing without the where. Note numbers match the numbered labels baked
-     into the composite image. */
   const allNotes = (Array.isArray(markupNotes) ? markupNotes : [])
     .map((n) => {
       if (n && typeof n === "object") {
@@ -2809,126 +2696,115 @@ sans-serif face.`);
         const x = Number(n.x), y = Number(n.y);
         const where = Number.isFinite(x) && Number.isFinite(y) ? markupRegion(x, y) : null;
         const h = Number(n.h);
-        return { text: t, where, kind: n.kind === "lettering" ? "lettering" : "note",
-                 h: Number.isFinite(h) && h > 0 && h < 1 ? h : null };
+        return {
+          text: t,
+          where,
+          kind: n.kind === "lettering" ? "lettering" : "note",
+          h: Number.isFinite(h) && h > 0 && h < 1 ? h : null,
+        };
       }
-      const t = studioCleanText(n);                     // legacy: bare strings
-      return t ? { text: t, where: null, kind: "note" } : null;
+      const t = studioCleanText(n);
+      return t ? { text: t, where: null, kind: "note", h: null } : null;
     })
-    .filter(Boolean).slice(0, 16);
-  /* Two different things arrive as text, and confusing them ruins a charm:
-     a NOTE is an instruction ABOUT the drawing and must never be drawn; a
-     LETTERING item is a word the customer placed ON the charm and must be
-     engraved. The drawing studio tags them apart at source. */
-  const notes    = allNotes.filter((n) => n.kind !== "lettering").slice(0, 12);
+    .filter(Boolean)
+    .slice(0, 16);
+  const notes = allNotes.filter((n) => n.kind !== "lettering").slice(0, 12);
   const lettering = allNotes.filter((n) => n.kind === "lettering").slice(0, 6);
-  if (markupMode !== undefined && markupMode !== null) {
-    const exact = String(markupMode) === "exact";
-    const noteLines = notes.map((n, i) =>
-      `${i + 1}. ${n.where ? `(pinned at ${n.where} of the drawing) ` : ""}"${n.text}"`).join("\n");
-    const letterLines = lettering.map((n) =>
-      `• "${n.text}"${n.where ? ` — placed at ${n.where} of the charm` : ""}${n.h ? `, cap height ≈ ${Math.round(n.h * 100)}% of the drawing's height — reproduce at THIS size, at THIS position, exactly as shown in the markup image` : ""}`).join("\n");
-    /* the vocabulary the drawing studio can now produce, in both modes */
-    const GRAMMAR =
-`${FILL_LAW}
-${zoneBlock(markupZones)}
-WHAT THE CUSTOMER'S TOOLS MEAN:
-• A FREEHAND PEN LINE's colour carries no meaning. The studio lets the
-  customer draw in more than one colour purely so they can tell their own
-  marks apart, and every such line is the same instruction as a black one:
-  engrave it. This says nothing about AREAS — a closed shape's black, blue or
-  red is governed by the law above, and a RED BOUNDARY around an empty area
-  is that law's third value, not a coloured pen stroke.
-• A RING (a shape with a hole in it) = a genuine cut-out — metal removed, so
-  the background shows through.
-• An ARROW = "this, here": read what it points AT, and treat the note nearest
-  its tail as the instruction for the thing at its head.
-• A rectangle or circle with a small loop on top = the charm plus its BAIL,
-  the loop it hangs from.
-• A dashed leader line from a label to a spot = the same as a pinned note.
-${lettering.length ? `
-LETTERING THE CUSTOMER PLACED ON THE CHARM — these words are part of the
-charm and MUST be engraved, in the studio's ONE lettering face (a clean
-sans-serif — never a serif, script or decorative face), at exactly the
-position and size shown in the markup image, cut deep enough to read at
-charm scale. The customer placed and sized these words deliberately; moving,
-rescaling or restyling them is a defect:
-${letterLines}` : ""}`;
-    parts.push(exact
-? `CUSTOMER MARKUP — EXACT MODE (the customer chose literal):
-The final image is the customer's own hand-drawn markup ON TOP of the current
-drawing. The coloured ink and the note bubbles themselves must never appear in
-your output — but in THIS mode the drawn geometry is meant literally:
-• A drawn SHAPE is reproduced faithfully — same geometry, position and
-  proportions — converted to this drawing's own black production ink at proper
-  line weight.
-• A ring or highlight around existing linework still means "change this area";
-  a scribble or strike THROUGH existing linework still means "remove this".
+  const noteLines = notes.map((n) => `• ${n.where ? `at ${n.where}: ` : ""}${n.text}`).join("\n");
+  const letteringLines = lettering.map((n) => `• "${n.text}"${n.where ? ` at ${n.where}` : ""}${n.h ? `, same relative size as shown` : ""}`).join("\n");
+  const zoneText = zoneBlock(markupMode != null ? markupZones : refZones, markupMode != null ? undefined : "reference");
 
-THE PRIME RULE OF EXACT MODE — CHANGE ONLY WHAT WAS MARKED:
-Everything the customer did NOT mark is reproduced IDENTICALLY from the
-current drawing — same lines, same weights, same positions, same proportions,
-same fills and non-fills. An unrequested "improvement" is a DEFECT, not a
-courtesy. In particular:
-• NEVER double a line. A single outline stays ONE line — no inner or outer
-  parallel lines, no rims, no borders, no halos added to any shape, marked
-  or unmarked.
-• NEVER restyle, thicken, thin, move or resize anything that was not marked.
-• An outlined shape with NO fill stays an outline with NO fill — do not fill,
-  hatch or blacken it, and do not outline a filled shape.
-• LETTERING added by the customer is engraved at EXACTLY the position and
-  size shown in the markup image — same spot, same cap height, one single
-  clean sans-serif face. Do not move it, rescale it, reflow it or restyle it.
-BEFORE RENDERING, CHECK: does every unmarked region of your output match the
-current drawing stroke for stroke? If anything unmarked changed, that is
-wrong — redo it.
+  const parts = [
+`TASK: Create ONE production drawing for a charm from IMAGE 1.
 
-${GRAMMAR}
-${notes.length ? `PINNED NOTES — each anchored to the spot its words are about; honour every one in its own region:
-${noteLines}` : ""}`
-: `CUSTOMER MARKUP — HOW TO READ IT (INTERPRETED, the default):
-The final image is the customer's own hand-drawn markup ON TOP of the current
-drawing. It is DIRECTION, not artwork: the customer's gesture ink — pen
-strokes, highlights, rings, arrows — and the note bubbles themselves must
-never appear in your output. The one exception is the three INSTRUCTION
-colours: a solid blue AREA, a red BOUNDARY and a solid black AREA are the
-fill law speaking, not gestures, and they pass through to your drawing as
-exactly what they are.
+OUTPUT CONTRACT:
+• Pure white background only.
+• Flat 2D production drawing only — never metal, never photorealistic.
+• Use only black, blue, red and white.
+• Show exactly one charm, front-facing, with one integrated hanging hoop at the top.
+• Preserve the subject truth from IMAGE 1. Do not invent a different object.`
+  ];
 
-READ EVERY MARK FOR INTENT, NEVER FOR ITS LITERAL GEOMETRY — it was drawn by
-hand with a mouse or fingertip, so its shape is an APPROXIMATION:
-1. CLASSIFY each mark first:
-   • a ring or highlight AROUND existing linework = "change this area";
-   • a scribble or strike THROUGH existing linework = "remove this";
-   • a drawn SHAPE in open space, or attached to the silhouette = "ADD
-     something like this, here".
-2. For every added shape, NAME the real object the sketch approximates. Use
-   the pinned notes — especially the note nearest the sketch — and the
-   conversation to decide: a rough two-lobed arc at the shoulder with a note
-   saying "wings" is a WING, not a wobbly arc.
-3. Then draw THAT object properly: clean, manufacturable, symmetric where its
-   real counterpart is symmetric, in this drawing's own line language,
-   integrated into the charm's continuous silhouette — at the sketch's
-   position and roughly its scale.
-4. HARD FAIL: output linework that traces, echoes or resembles the customer's
-   hand-drawn path. Their wobble is input error, not design.
+  if (clean) parts.push(`CUSTOMER REQUEST:
+${clean}`);
+  if (convo) parts.push(`RECENT RELEVANT DIRECTION:
+${convo}`);
 
-${GRAMMAR}
-${notes.length ? `
-PINNED NOTES — each anchored to the spot its words are about, numbered to
-match the labels in the markup image. A note applies to the marks and the
-region it is pinned on:
-${noteLines}
-` : ""}
-BEFORE RENDERING, ANSWER INTERNALLY: (a) which areas did the customer mark?
-(b) what is each mark asking — change, remove, or add? (c) what real object
-does each sketched shape stand for, given the note pinned nearest to it?
-(d) what does this charm look like with those intents executed cleanly, as if
-the workshop's own designer had made the changes? Render THAT.`);
+  parts.push(
+`MANUFACTURING COLOUR LAW — NON-NEGOTIABLE:
+• Solid BLACK area = engrave that area.
+• Solid BLUE filled area = cut clean through. Keep it filled solid blue in the drawing.
+• RED boundary with white interior = outline only. Draw the boundary in red and leave the interior white.
+• BLUE line = cut edge only. Use a blue line for the outer perimeter and the hoop hole.
+• WHITE inside the charm = untouched polished metal.`
+  );
+  if (zoneText) parts.push(zoneText);
+
+  if (refine) {
+    parts.push(
+`REFINEMENT MODE:
+• IMAGE 2 is the current drawing. Preserve it exactly everywhere the customer did not ask to change.
+• Change only the newest requested areas.
+• Do not redesign, beautify or reinterpret unmarked regions.`
+    );
   }
-  parts.push(STUDIO_LINEART_CONTRACT);
+
+  if (!refine && refMode === "exact") {
+    parts.push(
+`REFERENCE MODE — EXACTLY AS DRAWN:
+• Clean the drawing into production line weight, but keep the geometry, composition and proportions exactly.
+• One drawn line becomes one production line. Never add parallel lines, halos, borders or doubled edges.
+• Keep any customer lettering exactly where it appears.`
+    );
+  } else if (!refine && refMode === "interpret") {
+    parts.push(
+`REFERENCE MODE — FOR WHAT I MEAN:
+• Read the sketch for subject and layout, then redraw it cleanly in the studio's production-drawing language.
+• Keep the same recognizable subject, composition and relative positions.
+• Do not drift to a different object or style.`
+    );
+  }
+
+  if (markupMode != null) {
+    parts.push(
+`MARKUP IMAGE RULES:
+• The markup image is DIRECTION ONLY. Its circles, arrows, highlights and note bubbles never appear in the output.
+• Only the manufacturing instruction colours survive literally: black area, blue area, red boundary.
+• Unmarked regions of IMAGE 2 must stay unchanged.`
+    );
+    if (String(markupMode) === "exact") {
+      parts.push(
+`MARKUP MODE — EXACT:
+• Treat newly drawn geometry literally, cleaned only for production neatness.
+• Preserve the size, placement and meaning of the marked geometry.
+• Never change anything outside the marked regions.`
+      );
+    } else {
+      parts.push(
+`MARKUP MODE — INTERPRET:
+• Read the hand-drawn marks for intent, not literal wobble.
+• If the customer sketched a rough shape, draw the real intended object cleanly in that spot.
+• Never reproduce the customer's shaky path as artwork.`
+      );
+    }
+    if (noteLines) parts.push(`PINNED NOTES:
+${noteLines}`);
+    if (letteringLines) parts.push(`LETTERING TO ENGRAVE:
+${letteringLines}`);
+  }
+
+  parts.push(
+`FINAL CHECK BEFORE YOU RETURN THE IMAGE:
+• Pure white background.
+• One integrated hoop at the top.
+• All black / blue / red instructions preserved exactly.
+• No shading, no grey, no extra colours, no photorealism.
+• Nothing added, removed or moved without instruction.`
+  );
+
   return parts.join("\n\n");
 }
+
 
 /* ── the render step's prompt: the Charm Maker's conversion, reversed ───── */
 function buildLineArtToCharmPrompt({ metal, zones }) {
@@ -2940,77 +2816,50 @@ function buildLineArtToCharmPrompt({ metal, zones }) {
     solid10: "polished 10k solid gold",
     solid14: "polished 14k solid gold",
   })[m] || ("polished " + m);
-  const header =
-`1:1 STRUCTURAL REPLICATION — APPROVED DRAWING TO FINISHED CHARM
+  const parts = [
+`TASK: Convert IMAGE 1 into a finished charm.
 
-The supplied image is the customer's APPROVED PRODUCTION DRAWING: flat B/W
-line art of a charm on a pure white background. Manufacture EXACTLY this charm
-as a photorealistic flat laser-cut ${label} charm on a pure black background.
+IMAGE 1 is the APPROVED PRODUCTION DRAWING. Treat it as structural truth.
+This is a 1:1 replication job, not a redesign.
 
-INK MAPPING (THE DRAWING'S CONVENTION, APPLIED IN REVERSE — NON-NEGOTIABLE):
-• The drawing's 2px outer perimeter = the charm's cut edge. The silhouette matches 1:1 — laid over the drawing it must align exactly.
-• Black strokes INSIDE the outline = ENGRAVED (recessed) lines in the metal, following the exact same paths at the same relative weights.
-• SOLID BLACK FILLED REGIONS = fully engraved (recessed, hatched) regions.
-  The metal is still there; its surface is worked.
-• SOLID BLUE FILLED REGIONS = CUT CLEAN THROUGH. The metal is absent: render
-  an actual opening in the charm with pure black showing through it, edged
-  the same way the hoop's hole is edged. Never render blue as blue. Never
-  render it as engraving. Never render it as solid metal. It is a hole.
-• AN OUTLINED SHAPE WITH NO FILL IS AN OUTLINE, NOT AN AREA. Engrave its
-  boundary line only; its white interior is flat polished metal exactly like
-  the rest of the surface. A circle drawn as a ring of line NEVER becomes a
-  solid engraved dot — read the drawing's ink literally, pixel for pixel.
-• THE DRAWING IS COLOUR-CODED, and the two colours are instructions, never
-  pigment on the finished piece. A blue LINE and a blue AREA say different
-  things: the drawing's outer perimeter and cut edges may be drawn as blue
-  LINES — those are the silhouette's own laser-cut edges, rendered as the
-  charm's normal clean cut edge, never as a hole and never as blue metal.
-  A blue FILLED AREA is an opening:
-  – a SOLID BLUE area = a REAL opening cut clean through the sheet. Render it
-    as an actual hole showing the pure black background through it — never as
-    metal, never engraved, and never as anything blue. SIZE IS IRRELEVANT: a
-    blue area the size of a pinhead is exactly as much a hole as a blue area
-    the size of the face — small accents INSIDE a logo or glyph are the ones
-    most often lost, and losing one is a hard fail. Before you finish, count
-    the solid blue areas in the drawing and count the openings in your charm:
-    the numbers must match, plus the hoop's own hole.
-  – a RED boundary line = outline only: engrave that boundary as an ordinary
-    engraved line and leave its interior flat polished metal. No red metal,
-    no red enamel, no red inlay anywhere.
-  A finished charm contains no blue and no red of any kind: NOT ONE blue or
-  red pixel anywhere in your output — no blue or red edge, keyline, rim,
-  halo, enamel, inlay or tint, however thin. Rendering any instruction
-  colour as a colour of the metal is a hard fail.
-• THE METAL BEGINS EXACTLY AT THE SILHOUETTE LINE. The drawing's coloured
-  perimeter is the charm's own cut edge: in your render the polished metal
-  reaches all the way to that edge. Never leave a white margin, gap, groove,
-  channel or empty band between the charm's edge and where its surface
-  begins, and never draw the perimeter as a separate ring standing off the
-  body.
-• White INSIDE the outline = flat polished metal. Never engrave, texture or darken it.
-• The hoop's hole (drawn blue or white) and every drawn cutout = REAL holes cut through the sheet, showing pure black through them.
-• The drawing's white background = pure black background in the output.
-
-100% STRUCTURAL MATCH: nothing added, nothing removed, nothing redesigned,
-nothing "improved". Every engraving stroke in the drawing appears as engraving;
-no engraving appears that the drawing does not show. LINE COUNT IS SACRED:
-one drawn line becomes one engraved line — never doubled, never given a
-parallel companion, an inner rim or a halo. Text in the drawing is engraved
-at exactly the drawn position and size, in the same clean face.
-
-METAL: ${label}. Metal choice affects tone only — never form.
-
-${FILL_LAW}
-${zoneBlock(zones, "drawing")}`;
-  /* ── THE PRESENTATION, WHICH IS THIS STUDIO'S AND NOT THE CATALOGUE'S ──
-     Everything above this line is the workshop's own doctrine, shared with
-     the product photography — including a pure black background and no cast
-     shadow, which is right for a catalogue plate and wrong for a customer
-     looking at their own charm for the first time. This block is appended
-     LAST, and says so, because the last word has to be the studio's. */
-  return header + "\n\n" + (studioConstraintBlocks() || STUDIO_FALLBACK_CONSTRAINTS) +
-         "\n\n" + STUDIO_RENDER_FINISH;
+STRUCTURAL RULES:
+• Match the drawing's outer silhouette exactly.
+• Match the hanging hoop exactly.
+• Match every engraving line exactly.
+• Match every cutout exactly.
+• Match every outline-only region exactly.
+• Match any lettering in the drawing exactly.
+• Do not add, remove, simplify, beautify or reinterpret anything.`,
+`DRAWING-TO-METAL MAPPING:
+• Black stroke or black filled area = engraving in the same position.
+• Engraving is shallow, crisp and the SAME METAL, only slightly darker / more matte from the recess.
+• Solid blue filled area = a real cutout through the metal. Show the background through it.
+• Red boundary with white interior = outline-only engraving. Engrave the boundary line and leave the interior plain polished metal.
+• White inside the silhouette = untouched polished metal.
+• The outer perimeter and hoop hole are cut edges, not coloured features.`,
+`MATERIAL AND VIEW:
+• Material: ${label}.
+• Flat laser-cut sheet charm, front-facing.
+• Keep the integrated hoop; no jump rings, no chain, no extra hardware.
+• Keep the charm visually thin and flat, with clean square-cut edges.`,
+`PRESENTATION:
+• Clean pure white studio background.
+• One soft, realistic contact shadow only.
+• No props, no hand, no packaging, no chain, no extra objects.
+• No blue or red visible in the finished charm.`
+  ];
+  const zt = zoneBlock(zones, "drawing");
+  if (zt) parts.push(zt);
+  parts.push(
+`FINAL CHECK BEFORE YOU RETURN THE IMAGE:
+• Count the declared cutouts in the drawing and make sure they are real openings in the charm.
+• Every engraved mark in the drawing appears once, in the same place.
+• The silhouette and hoop still overlay the drawing 1:1.
+• The output is a finished ${label} charm, not line art.`
+  );
+  return parts.join("\n\n");
 }
+
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
    Two things were wrong with it, and both are the kind of wrong that makes
@@ -3392,37 +3241,10 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
                   : body?.refMode === "interpret" ? "interpret" : null;
     /* the fill law, as data, for a reference the customer drew themselves */
     const refZones = Array.isArray(body?.refZones) ? body.refZones.slice(0, 40) : [];
-    const basePrompt = buildCustomerLineArtPrompt({
+    const effectivePrompt = buildCustomerLineArtPrompt({
       instructions, thread: body?.thread, refine: isRefine, markupNotes, markupZones, markupMode,
       refMode, refZones,
     });
-    let effectivePrompt = basePrompt;
-    try {
-      const audited = await auditCharmPromptPreflight({
-        prompt: basePrompt,
-        backgroundPolicy: null,
-        geometryPolicy: null,
-        editIntent: null,
-        imageCount: images.length,
-        imageRoles: "customer_lineart",
-      });
-      if (audited) effectivePrompt = audited;
-    } catch (_e) { /* best effort — never blocks a paid generation */ }
-    /* THE LAW IS NOT NEGOTIABLE, INCLUDING BY OUR OWN AUDITOR. The prompt
-       goes through a preflight model asked to smooth out contradictions,
-       which may return as little as a third of what it was handed.
-       Everything else here can survive being rephrased; this cannot, because
-       what it governs is whether there is a hole in somebody's jewellery.
-       So it is re-stated verbatim afterwards if the audit dropped it. */
-    if ((refMode || isRefine || markupMode || refZones.length) &&
-        effectivePrompt.indexOf("AREA FILL — THREE MEANINGS") < 0) {
-      /* THE MARK-UP'S LIST WINS. It is the more specific account of the two
-         and it is the one the customer is looking at; preferring the
-         reference's list here re-stated an older census of the same charm
-         underneath the newer one. */
-      effectivePrompt += "\n\n" + FILL_LAW +
-        (zoneBlock(markupZones) || zoneBlock(refZones, "reference") || "");
-    }
 
     await studioStage(vRef, { stage: "generating" });
 
@@ -3570,22 +3392,7 @@ async function handleStudioRender({ body, event, origin }) {
     ];
 
     const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
-    const basePrompt = buildLineArtToCharmPrompt({ metal, zones: renderZones });
-    let effectivePrompt = basePrompt;
-    try {
-      const audited = await auditCharmPromptPreflight({
-        prompt: basePrompt,
-        backgroundPolicy: "solid_black",
-        geometryPolicy: "flat_integrated_eyelet",
-        editIntent: null,
-        imageCount: images.length,
-        imageRoles: "lineart_to_charm",
-      });
-      if (audited) effectivePrompt = audited;
-      if (effectivePrompt.indexOf("AREA FILL — THREE MEANINGS") < 0) {
-        effectivePrompt += "\n\n" + FILL_LAW + zoneBlock(renderZones, "drawing");
-      }
-    } catch (_e) { /* best effort */ }
+    const effectivePrompt = buildLineArtToCharmPrompt({ metal, zones: renderZones });
 
     await vRef.set({ renderStage: "rendering" }, { merge: true });
 
@@ -3602,7 +3409,7 @@ async function handleStudioRender({ body, event, origin }) {
       images,
       imageRoles: "lineart_to_charm",
       charmGeometryPolicy: "flat_integrated_eyelet",
-      backgroundPolicy: "solid_black",
+      backgroundPolicy: null,
     });
 
     await vRef.set({ renderStage: "polishing" }, { merge: true });
