@@ -3535,6 +3535,328 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
   }
 }
 
+
+/* ═══════════ DECLARED CUT-OUTS, PUNCHED DETERMINISTICALLY ════════════════
+   The studio KNOWS every hole before a render is ever requested: the customer
+   declared it and the production drawing carries it in blue. Asking a
+   generative model to re-derive that from a coloured region is the one
+   probabilistic step in an otherwise deterministic pipeline, and it fails in
+   both directions — a declared hole rendered as engraving, and metal cut away
+   that nobody declared. So the model is no longer asked. It renders metal;
+   the openings are cut here, in arithmetic.
+
+   THE ONLY HARD PART is telling a blue AREA from a blue LINE: the perimeter
+   and the hoop are drawn in the same instruction blue, and punching those
+   would delete the face of the charm. They separate by LOCAL THICKNESS
+   against the drawing's own pen width, which is scale-free. Measured on a
+   real studio drawing: three genuine fills at 1.9–3.2x the pen, four lines
+   (silhouette, hoop, two strokes) at 0.6–1.0x. A gap that wide is a rule,
+   not a tuned threshold.
+   ===================================================================== */
+let _sharpMod = null, _sharpTried = false;
+function studioSharp() {
+  if (_sharpTried) return _sharpMod;
+  _sharpTried = true;
+  /* NEVER LOAD-BEARING. Sharp is a native module and this repo has watched it
+     fail to package before. If it is not there the render still ships — it is
+     simply recorded as unverified, which is strictly better than a charm the
+     customer cannot buy. */
+  try { _sharpMod = require("sharp"); }
+  catch (err) {
+    console.error("[studio] sharp unavailable — cut-out punch disabled:", err?.message || err);
+    _sharpMod = null;
+  }
+  return _sharpMod;
+}
+
+function studioBlueMask(px, n, stride) {
+  const m = new Uint8Array(n);
+  for (let i = 0, p = 0; i < n; i++, p += stride) {
+    const r = px[p], g = px[p + 1], b = px[p + 2];
+    if (b - (r > g ? r : g) > 40 && b > 90) m[i] = 1;
+  }
+  return m;
+}
+
+/* 4-connected components, iterative — recursion blows the stack on a 2K image
+   long before it finds anything interesting. */
+function studioLabel(mask, w, h) {
+  const labels = new Int32Array(w * h);
+  const stack = new Int32Array(w * h);
+  let count = 0;
+  for (let s = 0; s < w * h; s++) {
+    if (!mask[s] || labels[s]) continue;
+    count++;
+    let top = 0;
+    stack[top++] = s; labels[s] = count;
+    while (top) {
+      const i = stack[--top], x = i % w, y = (i / w) | 0;
+      if (x > 0     && mask[i - 1] && !labels[i - 1]) { labels[i - 1] = count; stack[top++] = i - 1; }
+      if (x < w - 1 && mask[i + 1] && !labels[i + 1]) { labels[i + 1] = count; stack[top++] = i + 1; }
+      if (y > 0     && mask[i - w] && !labels[i - w]) { labels[i - w] = count; stack[top++] = i - w; }
+      if (y < h - 1 && mask[i + w] && !labels[i + w]) { labels[i + w] = count; stack[top++] = i + w; }
+    }
+  }
+  return { labels, count };
+}
+
+function studioLargestComponent(mask, w, h) {
+  const { labels, count } = studioLabel(mask, w, h);
+  if (!count) return mask;
+  const size = new Float64Array(count + 1);
+  for (let i = 0; i < w * h; i++) if (labels[i]) size[labels[i]]++;
+  let best = 1;
+  for (let L = 2; L <= count; L++) if (size[L] > size[best]) best = L;
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) if (labels[i] === best) out[i] = 1;
+  return out;
+}
+
+function studioDilate(mask, w, h, r) {
+  let a = mask;
+  for (let k = 0; k < r; k++) {
+    const b = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (a[i] || (x && a[i - 1]) || (x < w - 1 && a[i + 1]) ||
+            (y && a[i - w]) || (y < h - 1 && a[i + w])) b[i] = 1;
+      }
+    }
+    a = b;
+  }
+  return a;
+}
+
+/* 3-4 chamfer distance, two passes. Divided by three it is within a few
+   percent of Euclidean — far more precision than a RATIO needs. */
+function studioChamfer(mask, w, h) {
+  const d = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) d[i] = mask[i] ? 1e9 : 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x; if (!mask[i]) continue;
+    let v = d[i];
+    if (y > 0)              v = Math.min(v, d[i - w] + 3);
+    if (y > 0 && x > 0)     v = Math.min(v, d[i - w - 1] + 4);
+    if (y > 0 && x < w - 1) v = Math.min(v, d[i - w + 1] + 4);
+    if (x > 0)              v = Math.min(v, d[i - 1] + 3);
+    d[i] = v;
+  }
+  for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
+    const i = y * w + x; if (!mask[i]) continue;
+    let v = d[i];
+    if (y < h - 1)              v = Math.min(v, d[i + w] + 3);
+    if (y < h - 1 && x < w - 1) v = Math.min(v, d[i + w + 1] + 4);
+    if (y < h - 1 && x > 0)     v = Math.min(v, d[i + w - 1] + 4);
+    if (x < w - 1)              v = Math.min(v, d[i + 1] + 3);
+    d[i] = v;
+  }
+  for (let i = 0; i < w * h; i++) d[i] /= 3;
+  return d;
+}
+
+/* The pen width comes from the drawing itself: the LONGEST blue component is
+   always the silhouette, and a silhouette is by definition one pen wide. */
+function studioCutRegions(mask, w, h, minRatio) {
+  const ratio0 = minRatio || 1.8;
+  const { labels, count } = studioLabel(mask, w, h);
+  const cut = new Uint8Array(w * h);
+  if (!count) return { cut, areas: 0, lines: 0, pen: 0, cutPx: 0 };
+  const dist = studioChamfer(mask, w, h);
+  const size = new Float64Array(count + 1), maxd = new Float64Array(count + 1);
+  for (let i = 0; i < w * h; i++) {
+    const L = labels[i]; if (!L) continue;
+    size[L]++; if (dist[i] > maxd[L]) maxd[L] = dist[i];
+  }
+  let biggest = 1;
+  for (let L = 2; L <= count; L++) if (size[L] > size[biggest]) biggest = L;
+  const pen = maxd[biggest] || 1;
+  const minPx = Math.max(24, Math.round(w * h * 0.00002));
+  const keep = new Uint8Array(count + 1);
+  let areas = 0, lines = 0, cutPx = 0;
+  for (let L = 1; L <= count; L++) {
+    if (maxd[L] / pen >= ratio0 && size[L] >= minPx) { keep[L] = 1; areas++; }
+    else lines++;
+  }
+  for (let i = 0; i < w * h; i++) if (labels[i] && keep[labels[i]]) { cut[i] = 1; cutPx++; }
+  return { cut, areas, lines, pen, cutPx };
+}
+
+/* Everything the frame cannot reach across background. Enclosed background is
+   NOT reached, so this is the charm's outer boundary with its holes filled —
+   which is exactly what makes a drawing and a photograph comparable. */
+function studioOuterFace(isWall, w, h) {
+  const n = w * h;
+  const outside = new Uint8Array(n), stack = new Int32Array(n);
+  let top = 0;
+  const push = (i) => { if (!outside[i] && !isWall[i]) { outside[i] = 1; stack[top++] = i; } };
+  for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  while (top) {
+    const i = stack[--top], x = i % w, y = (i / w) | 0;
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (y > 0) push(i - w);
+    if (y < h - 1) push(i + w);
+  }
+  const face = new Uint8Array(n);
+  for (let i = 0; i < n; i++) face[i] = outside[i] ? 0 : 1;
+  /* one continuous piece, by doctrine — so stray marks outside the charm
+     (a label, a speck) cannot distort the bounding box the whole registration
+     depends on */
+  return studioLargestComponent(face, w, h);
+}
+
+function studioBBox(mask, w, h) {
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!mask[y * w + x]) continue;
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  if (x1 < 0) return null;
+  return { x0, y0, x1, y1, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/* Sample into an N x N grid normalised to the mask's own bounding box, so two
+   pictures of the same charm at different scales become comparable. */
+function studioNormalise(mask, w, h, box, N) {
+  const g = new Uint8Array(N * N);
+  for (let j = 0; j < N; j++) {
+    const sy = box.y0 + Math.min(box.h - 1, Math.floor((j + 0.5) * box.h / N));
+    for (let i = 0; i < N; i++) {
+      const sx = box.x0 + Math.min(box.w - 1, Math.floor((i + 0.5) * box.w / N));
+      g[j * N + i] = mask[sy * w + sx];
+    }
+  }
+  return g;
+}
+
+function studioIoU(a, b, n) {
+  let inter = 0, uni = 0;
+  for (let i = 0; i < n; i++) { const x = a[i], y = b[i]; if (x && y) inter++; if (x || y) uni++; }
+  return uni ? inter / uni : 0;
+}
+
+const STUDIO_BG_MIN = 230;
+const studioIsBg = (px, p) => px[p] > STUDIO_BG_MIN && px[p + 1] > STUDIO_BG_MIN && px[p + 2] > STUDIO_BG_MIN;
+
+async function studioRawAt(sharp, buf, side) {
+  const { data, info } = await sharp(buf)
+    .resize(side, side, { fit: "inside" })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return { px: data, w: info.width, h: info.height };
+}
+
+/* ── THE PUNCH ────────────────────────────────────────────────────────────
+   Returns the render unchanged plus a verdict whenever anything is uncertain.
+   The three outcomes, in the order they are decided:
+
+     undeclared_cut  the render removed metal nobody asked to remove. This is
+                     the Image-1 failure, and it is NOT patchable — the metal
+                     is gone. Reject so the render is retried.
+     unaligned       the render's silhouette does not match the drawing's, so
+                     no coordinate mapped from one to the other can be
+                     trusted. Punching blind would be worse than not punching.
+     punched         the declared cut-outs were missing and have been cut.
+   ========================================================================= */
+async function studioPunchCutouts(renderBuf, drawingBuf) {
+  const sharp = studioSharp();
+  const report = { verified: false, reason: "", declaredCuts: 0, punchedPx: 0,
+                   alignment: 0, openFrac: 0 };
+  if (!sharp) { report.reason = "sharp_unavailable"; return { buf: renderBuf, report }; }
+  const W = 768;
+  try {
+    const d = await studioRawAt(sharp, drawingBuf, W);
+    const r = await studioRawAt(sharp, renderBuf, W);
+
+    /* the drawing's face: ink dilated into a wall first, so one anti-aliased
+       gap in the pen cannot leak the fill into the charm and collapse the
+       whole registration */
+    const dInk = new Uint8Array(d.w * d.h);
+    for (let i = 0; i < d.w * d.h; i++) if (!studioIsBg(d.px, i * 3)) dInk[i] = 1;
+    const dFace = studioOuterFace(studioDilate(dInk, d.w, d.h, 2), d.w, d.h);
+    const dBox = studioBBox(dFace, d.w, d.h);
+
+    const rInk = new Uint8Array(r.w * r.h);
+    for (let i = 0; i < r.w * r.h; i++) if (!studioIsBg(r.px, i * 3)) rInk[i] = 1;
+    const rFace = studioOuterFace(rInk, r.w, r.h);
+    const rBox = studioBBox(rFace, r.w, r.h);
+    if (!dBox || !rBox) { report.reason = "no_subject"; return { buf: renderBuf, report }; }
+
+    const blue = studioBlueMask(d.px, d.w * d.h, 3);
+    const { cut, areas, cutPx } = studioCutRegions(blue, d.w, d.h);
+    report.declaredCuts = areas;
+
+    /* how much of the finished face is actually open, against how much the
+       drawing says should be. The hoop's hole is declared by the drawing too,
+       so a generous allowance covers it and ordinary anti-aliasing. */
+    let faceN = 0, openN = 0;
+    for (let i = 0; i < r.w * r.h; i++) {
+      if (!rFace[i]) continue;
+      faceN++;
+      if (studioIsBg(r.px, i * 3)) openN++;
+    }
+    report.openFrac = faceN ? openN / faceN : 0;
+    let dFaceN = 0;
+    for (let i = 0; i < d.w * d.h; i++) if (dFace[i]) dFaceN++;
+    const declaredFrac = dFaceN ? cutPx / dFaceN : 0;
+    const allowed = declaredFrac + 0.08;
+    if (report.openFrac > allowed) {
+      /* Image 1: 45% of the face open against ~2% declared. The metal is
+         already gone and no compositing brings it back. */
+      report.reason = "undeclared_cut";
+      return { buf: renderBuf, report };
+    }
+
+    const N = 192;
+    report.alignment = studioIoU(studioNormalise(dFace, d.w, d.h, dBox, N),
+                                 studioNormalise(rFace, r.w, r.h, rBox, N), N * N);
+    if (report.alignment < 0.90) { report.reason = "unaligned"; return { buf: renderBuf, report }; }
+    if (!areas) { report.verified = true; report.reason = "no_cuts_declared"; return { buf: renderBuf, report }; }
+
+    /* Punch at FULL resolution — the customer's charm is the artefact, not a
+       768px working copy — mapping through both bounding boxes so a render
+       that framed the charm differently still lands on the right pixels. */
+    const full = await sharp(renderBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const fw = full.info.width, fh = full.info.height, fpx = full.data;
+    const sx = fw / r.w, sy = fh / r.h;
+    const fx0 = rBox.x0 * sx, fy0 = rBox.y0 * sy, fbw = rBox.w * sx, fbh = rBox.h * sy;
+    /* the ground the charm sits on, taken from the render's own corners so a
+       punched hole is the same white as the paper around it */
+    const corners = [0, (fw - 1) * 3, (fh - 1) * fw * 3, ((fh - 1) * fw + fw - 1) * 3];
+    const g0 = Math.round(corners.reduce((a, p) => a + fpx[p], 0) / 4);
+    const g1 = Math.round(corners.reduce((a, p) => a + fpx[p + 1], 0) / 4);
+    const g2 = Math.round(corners.reduce((a, p) => a + fpx[p + 2], 0) / 4);
+    let punched = 0;
+    for (let y = Math.max(0, Math.floor(fy0)); y < Math.min(fh, Math.ceil(fy0 + fbh)); y++) {
+      const v = (y - fy0) / fbh;
+      const dy = dBox.y0 + Math.min(dBox.h - 1, Math.floor(v * dBox.h));
+      if (dy < 0 || dy >= d.h) continue;
+      for (let x = Math.max(0, Math.floor(fx0)); x < Math.min(fw, Math.ceil(fx0 + fbw)); x++) {
+        const u = (x - fx0) / fbw;
+        const dx = dBox.x0 + Math.min(dBox.w - 1, Math.floor(u * dBox.w));
+        if (!cut[dy * d.w + dx]) continue;
+        const p = (y * fw + x) * 3;
+        fpx[p] = g0; fpx[p + 1] = g1; fpx[p + 2] = g2;
+        punched++;
+      }
+    }
+    report.punchedPx = punched;
+    report.verified = true;
+    report.reason = punched ? "punched" : "nothing_to_punch";
+    const out = await sharp(fpx, { raw: { width: fw, height: fh, channels: 3 } })
+      .png().toBuffer();
+    return { buf: out, report };
+  } catch (err) {
+    console.error("[studio] cut-out punch failed:", err?.message || err);
+    report.reason = "punch_error";
+    return { buf: renderBuf, report };
+  }
+}
+
 /* ── kind: custom_charm_render ────────────────────────────────────────────
  * The approved drawing becomes the charm: the Charm Maker's gold→line-art
  * conversion run in reverse, with the drawing as structural truth. Costs one
@@ -3690,6 +4012,29 @@ async function handleStudioRender({ body, event, origin }) {
     });
 
     await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
+
+    /* ── THE CUT-OUTS ARE NOT THE MODEL'S DECISION ────────────────────────
+       Every declared opening is punched from the drawing's own geometry, and
+       a render that removed metal nobody declared is refused outright rather
+       than filed. This runs BEFORE the metadata is embedded and before the
+       upload, so what reaches Storage — and therefore the cart, the customer
+       and the workshop — is the corrected artefact, not a corrected preview. */
+    const punch = await studioPunchCutouts(outBuf, bw.buffer);
+    outBuf = punch.buf;
+    if (punch.report.reason === "undeclared_cut") {
+      const e = new Error("cut_check_undeclared");
+      e.studioReport = punch.report;
+      throw e;
+    }
+    await vRef.set({
+      renderCutsDeclared: punch.report.declaredCuts,
+      renderCutsPunched: punch.report.punchedPx,
+      renderAlignment: Math.round(punch.report.alignment * 1000) / 1000,
+      renderOpenFraction: Math.round(punch.report.openFrac * 1000) / 1000,
+      renderVerified: !!punch.report.verified,
+      renderCheck: punch.report.reason,
+      renderRunId,
+    }, { merge: true });
 
     outBuf = embedPngTextMetadata(outBuf, {
       Description: `Custom Charm Studio charm — rendered from approved drawing v${n} (${metal}).`,
