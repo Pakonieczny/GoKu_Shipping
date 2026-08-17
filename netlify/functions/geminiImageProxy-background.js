@@ -31,6 +31,7 @@ function getBucket() {
 // proxy. Old preview IDs are normalized so in-flight manifests and saved local
 // preferences continue to work after the stable model migration.
 const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
+const DEFAULT_RENDER_IMAGE_MODEL = "gemini-3-pro-image";
 const IMAGE_MODEL_ALIASES = Object.freeze({
   "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
   "gemini-3-pro-image-preview": "gemini-3-pro-image",
@@ -64,6 +65,31 @@ function resolveImageModel(value) {
     );
   }
   return config;
+}
+
+function preferredCharmRenderModelId() {
+  return String(
+    process.env.GEMINI_RENDER_IMAGE_MODEL ||
+    process.env.GEMINI_CHARM_RENDER_MODEL ||
+    process.env.GEMINI_STUDIO_IMAGE_MODEL ||
+    DEFAULT_RENDER_IMAGE_MODEL
+  ).trim();
+}
+
+const CHARM_RENDER_KINDS = new Set([
+  "edits",
+  "generations",
+  "run_set_async",
+  "batch_submit",
+  "charm_batch_orchestrate",
+]);
+
+function effectiveRequestImageModel(kind, requestedModel) {
+  const raw = String(requestedModel || "").trim();
+  if (raw) return raw;
+  return CHARM_RENDER_KINDS.has(String(kind || "").trim())
+    ? preferredCharmRenderModelId()
+    : DEFAULT_IMAGE_MODEL;
 }
 
 function apiKeyForImageModel(config) {
@@ -3401,7 +3427,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     await studioStage(vRef, { stage: "generating" });
 
     const studioModelConfig = resolveImageModel(
-      process.env.GEMINI_STUDIO_IMAGE_MODEL || DEFAULT_IMAGE_MODEL
+      process.env.GEMINI_STUDIO_IMAGE_MODEL || preferredCharmRenderModelId()
     );
     let outBuf = await callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
@@ -3564,7 +3590,7 @@ async function handleStudioRender({ body, event, origin }) {
     await vRef.set({ renderStage: "rendering" }, { merge: true });
 
     const studioModelConfig = resolveImageModel(
-      process.env.GEMINI_STUDIO_IMAGE_MODEL || DEFAULT_IMAGE_MODEL
+      process.env.GEMINI_STUDIO_IMAGE_MODEL || preferredCharmRenderModelId()
     );
     let outBuf = await callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
@@ -3905,6 +3931,8 @@ async function _handlerImpl(event) {
       backgroundPolicies: ["solid_black"],
       supportsGenerations: true,
       imageModels: Object.keys(IMAGE_MODEL_CONFIG),
+      defaultImageModel: DEFAULT_IMAGE_MODEL,
+      defaultCharmRenderModel: preferredCharmRenderModelId(),
       // Custom Charm Studio (storefront). Firebase-ID-token authenticated,
       // storefront-locked CORS, server-side wallet with refund on failure.
       supportsCustomCharmStudio: true,
@@ -3934,7 +3962,7 @@ async function _handlerImpl(event) {
 
   let modelConfig;
   try {
-    modelConfig = resolveImageModel(_clientModel);
+    modelConfig = resolveImageModel(effectiveRequestImageModel(kind, _clientModel));
   } catch (err) {
     return json(400, { ok: false, error: safeErr(err) });
   }
@@ -5510,7 +5538,7 @@ async function _handlerImpl(event) {
             batchState: state,
             partial: forceMode && state !== "JOB_STATE_SUCCEEDED",
             imageSize: docData.imageSize || "2K",
-            model: (s.manifest && s.manifest.model) || docData.model || DEFAULT_IMAGE_MODEL,
+            model: (s.manifest && s.manifest.model) || docData.model || preferredCharmRenderModelId(),
             batchSlots: slotsOut,
             collectedAt: new Date().toISOString(),
           };
@@ -5553,7 +5581,7 @@ async function _handlerImpl(event) {
             return null;
           })(),
           timestamp: new Date().toISOString(),
-          model: docData.model || DEFAULT_IMAGE_MODEL,
+          model: docData.model || preferredCharmRenderModelId(),
           batchMode: true,
           batchName,
           batchState: state,
@@ -5672,7 +5700,7 @@ async function _handlerImpl(event) {
           batchName: d.batchName,
           displayName: d.displayName,
           sessionId: d.sessionId || null,
-          model: d.model || DEFAULT_IMAGE_MODEL,
+          model: d.model || preferredCharmRenderModelId(),
           state: d.state,
           collected: !!d.collected,
           batchStats: d.batchStats || null,
