@@ -3908,7 +3908,7 @@ async function studioDrawingPlan(sharp, drawingBuf) {
 
   const pen = studioPenWidth(px, w, h);
   const blue = studioBlueMask(px, n, 3);
-  const { cut } = studioCutRegions(blue, w, h, 2.5, pen);
+  const { cut: blueCuts } = studioCutRegions(blue, w, h, 2.5, pen);
 
   /* black FILLS are engraving and must stay closed; black LINES are outlines
      and are not regions at all — the same thickness test that separates a
@@ -3917,11 +3917,22 @@ async function studioDrawingPlan(sharp, drawingBuf) {
   for (let i = 0; i < n; i++) if (studioIsBlack(px, i * 3)) black[i] = 1;
   const { cut: blackAreas } = studioCutRegions(black, w, h, 2.5, pen);
 
+  /* White enclosed by BLUE is a real opening. White enclosed by BLACK/RED is
+     closed polished metal and must be protected explicitly so later stages do
+     not treat "white inside the charm" as ambiguous absence. */
+  const whiteInfo = studioInteriorWhiteClasses({ px, w, h, n, face });
+  const cut = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (blueCuts[i] || whiteInfo.holes[i]) cut[i] = 1;
+
   /* interior metal: inside the charm, not ink, not a declared hole. Ink is
      dilated so a region's own outline cannot leak it into its neighbour. */
   const inkWall = studioDilate(ink, w, h, 2);
   const metal = new Uint8Array(n);
-  for (let i = 0; i < n; i++) if (face[i] && !inkWall[i] && !cut[i]) metal[i] = 1;
+  const closedMetal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    if (whiteInfo.protectedMetal[i]) { metal[i] = 1; continue; }
+    if (face[i] && !inkWall[i] && !cut[i]) { metal[i] = 1; closedMetal[i] = 1; }
+  }
 
   const minPx = Math.max(200, Math.round(n * 0.0004));
   const regions = [];
@@ -3939,10 +3950,13 @@ async function studioDrawingPlan(sharp, drawingBuf) {
     }
     for (const [L, list] of pts) if (list.length >= 12) regions.push({ kind, px: size[L], pts: list });
   };
-  collect(cut, "open");            // blue: MUST be a hole in the render
-  collect(blackAreas, "closed");   // black fill: engraving, must stay metal
-  collect(metal, "closed");        // untouched metal, must stay metal
-  return { px, w, h, n, ink, face, faceBox, blue, cut, pen, regions };
+  collect(cut, "open");                 // declared openings: MUST be holes in the render
+  collect(blackAreas, "closed");        // black fill: engraving, must stay metal
+  collect(closedMetal, "closed");       // untouched metal, must stay metal
+  collect(whiteInfo.protectedMetal, "protected"); // enclosed polished islands, must stay metal
+  return { px, w, h, n, ink, face, faceBox, blue, cut,
+           whiteHoles: whiteInfo.holes, protected: whiteInfo.protectedMetal,
+           pen, regions };
 }
 
 /* ── DETERMINISTIC MATERIAL SPECIFICATION ────────────────────────────────
@@ -3964,12 +3978,12 @@ async function studioDrawingPlan(sharp, drawingBuf) {
    interprets BLUE/RED/BLACK at all — it photorealises geometry that is already
    resolved. No second model call, no extra customer instruction, no new cost.
    ====================================================================== */
-function studioBlueBoundedWhiteHoles(plan) {
+function studioInteriorWhiteClasses(plan) {
   const { px, w, h, n, face } = plan;
   const white = new Uint8Array(n);
   for (let i = 0; i < n; i++) if (face[i] && studioIsBg(px, i * 3)) white[i] = 1;
   const { labels, count } = studioLabel(white, w, h);
-  if (!count) return new Uint8Array(n);
+  if (!count) return { holes: new Uint8Array(n), protectedMetal: new Uint8Array(n) };
 
   const size = new Float64Array(count + 1);
   for (let i = 0; i < n; i++) if (labels[i]) size[labels[i]]++;
@@ -3995,7 +4009,7 @@ function studioBlueBoundedWhiteHoles(plan) {
       /* Two pixels reaches through antialiasing without reaching across a
          normal studio line into unrelated artwork. We count the actual ink
          colours around the component; a true hole is overwhelmingly blue,
-         while a polished enclosed shape is overwhelmingly red or black. */
+         while a protected polished island is overwhelmingly red or black. */
       for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
         if (Math.abs(dx) + Math.abs(dy) > 2) continue;
         const xx = x + dx, yy = y + dy;
@@ -4011,24 +4025,34 @@ function studioBlueBoundedWhiteHoles(plan) {
   }
 
   const holeLabel = new Uint8Array(count + 1);
+  const protectedLabel = new Uint8Array(count + 1);
   const minPx = Math.max(20, Math.round(n * 0.00001));
   for (let L = 1; L <= count; L++) {
     /* The largest white component is the polished face itself. It is bounded
        by the charm's blue outer cut line and must NEVER be mistaken for one
-       enormous hole. */
+       enormous hole or one enormous protected island. */
     if (L === largest || size[L] < minPx) continue;
     const blue = blueVotes[L], red = redVotes[L], black = blackVotes[L];
-    const votes = blue + red + black;
-    if (votes >= 8 && blue / votes >= 0.72 && blue > (red + black) * 2) holeLabel[L] = 1;
+    const dark = red + black;
+    const votes = blue + dark;
+    if (votes < 8) continue;
+    if (blue / votes >= 0.72 && blue > dark * 2) holeLabel[L] = 1;
+    else if (dark / votes >= 0.72 && dark > blue * 2) protectedLabel[L] = 1;
   }
 
   const holes = new Uint8Array(n);
-  for (let i = 0; i < n; i++) if (labels[i] && holeLabel[labels[i]]) holes[i] = 1;
-  return holes;
+  const protectedMetal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const L = labels[i];
+    if (!L) continue;
+    if (holeLabel[L]) holes[i] = 1;
+    else if (protectedLabel[L]) protectedMetal[i] = 1;
+  }
+  return { holes, protectedMetal };
 }
 
 function studioSpecCutMask(plan, zones) {
-  const { w, h, n, blue, cut } = plan;
+  const { w, h, n, blue, cut, whiteHoles, protected: protectedMetal } = plan;
   const out = new Uint8Array(n);
 
   /* Structured cut-out zones are the customer's own manufacturing data. They
@@ -4047,6 +4071,9 @@ function studioSpecCutMask(plan, zones) {
   if (!cuts.length) {
     for (let i = 0; i < n; i++) if (cut[i]) out[i] = 1;
   }
+  if (whiteHoles) {
+    for (let i = 0; i < n; i++) if (whiteHoles[i]) out[i] = 1;
+  }
   for (const z of cuts) {
     const padX = Math.max(2, Math.round(w * 0.008));
     const padY = Math.max(2, Math.round(h * 0.008));
@@ -4058,6 +4085,9 @@ function studioSpecCutMask(plan, zones) {
       const i = y * w + x;
       if (blue[i]) out[i] = 1;
     }
+  }
+  if (protectedMetal) {
+    for (let i = 0; i < n; i++) if (protectedMetal[i]) out[i] = 0;
   }
   return out;
 }
@@ -4076,14 +4106,13 @@ function studioMetalPalette(metal) {
 
 async function studioMaterialSpec(sharp, plan, metal, zones) {
   if (!sharp || !plan || !plan.faceBox) return null;
-  const { px, w, h, n, face } = plan;
-  const cut = studioSpecCutMask(plan, zones);
-  const bounded = studioBlueBoundedWhiteHoles(plan);
-  const holes = new Uint8Array(n);
-  let holePx = 0, facePx = 0, workPx = 0;
+  const { px, w, h, n, face, protected: protectedMetal } = plan;
+  const holes = studioSpecCutMask(plan, zones);
+  let holePx = 0, facePx = 0, workPx = 0, protectedPx = 0;
   for (let i = 0; i < n; i++) {
-    if (cut[i] || bounded[i]) { holes[i] = 1; holePx++; }
+    if (holes[i]) holePx++;
     if (face[i]) facePx++;
+    if (protectedMetal && protectedMetal[i]) protectedPx++;
   }
   if (!facePx || facePx < n * 0.005) return null;
 
@@ -4094,6 +4123,9 @@ async function studioMaterialSpec(sharp, plan, metal, zones) {
     if (!face[i] || holes[i]) continue;
     const p = i * 3;
     out[p] = base[0]; out[p + 1] = base[1]; out[p + 2] = base[2];
+    /* Enclosed polished islands are an explicit class, not a default. Force
+       them to remain base metal even though they are surrounded by work. */
+    if (protectedMetal && protectedMetal[i]) continue;
     /* BLACK means engrave. RED means outline-only, whose boundary is engraved.
        Both are therefore already the same physical operation by the time the
        AI sees this proof. Blue is intentionally absent from the proof. */
@@ -4104,7 +4136,7 @@ async function studioMaterialSpec(sharp, plan, metal, zones) {
   }
   const buf = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
     .png().toBuffer();
-  return { buf, facePx, holePx, workPx, w, h };
+  return { buf, facePx, holePx, workPx, protectedPx, w, h };
 }
 
 /* the tinted copy that goes to the model — the drawing in Storage is untouched */
@@ -4193,7 +4225,9 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
         bad++;
         if (!worst) worst = reg.kind === "open"
           ? `declared cut-out came back solid (${Math.round(frac * 100)}% open)`
-          : `metal came back cut (${Math.round(frac * 100)}% open)`;
+          : reg.kind === "protected"
+            ? `protected polished island came back cut (${Math.round(frac * 100)}% open)`
+            : `metal came back cut (${Math.round(frac * 100)}% open)`;
       }
     }
     report.regionsOk = ok; report.regionsBad = bad; report.worst = worst;
@@ -4208,7 +4242,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
        repair. A declared cut-out that came back solid IS repairable, and is
        repaired below, so it does not reject. */
     const cutIntoMetal = d.regions.some((reg, k) => {
-      if (reg.kind !== "closed") return false;
+      if (reg.kind !== "closed" && reg.kind !== "protected") return false;
       let seen = 0, open = 0;
       for (const i of reg.pts) { const j = toRender(i); if (j < 0) continue; seen++; if (studioIsBg(rpx, j * 3)) open++; }
       return seen >= 8 && open / seen >= 0.35;
@@ -4412,6 +4446,7 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecFacePx: specUsed ? materialSpec.facePx : 0,
       renderSpecHolePx: specUsed ? materialSpec.holePx : 0,
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
+      renderSpecProtectedPx: specUsed ? materialSpec.protectedPx : 0,
     }, { merge: true });
 
     /* Both renderer choices now receive the SAME deterministic material proof.
