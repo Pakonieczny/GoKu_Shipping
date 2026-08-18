@@ -2643,8 +2643,8 @@ the customer designed. Count them before you draw and count them again after.`;
    must not look alike. This block is SHORTER than the three it replaces. */
 const FILL_LAW_RENDER =
 `THE GOLDEN RULE OF THIS WORKSHOP — ABOVE EVERY OTHER INSTRUCTION HERE.
-The drawing's three instruction colours are manufacturing orders, not pigment.
-The finished charm obeys all three exactly, and shows none of them.
+The drawing's fill colours are manufacturing orders, not pigment.
+The finished charm obeys them exactly, and shows none of these colours.
 
   BLUE area in the drawing → A HOLE. The metal is gone. You see the ground the
   charm rests on straight through it, exactly as through the hoop's hole.
@@ -2656,7 +2656,8 @@ The finished charm obeys all three exactly, and shows none of them.
   RED boundary in the drawing → ONLY THAT LINE is engraved. Its interior is
   flat polished metal, identical to the surface around it. Never fill it.
 
-  WHITE inside the charm → untouched polished metal.
+  GREEN area in the drawing → SOLID METAL, untouched and polished. Nothing is
+  done to it. White is never metal: white is where the charm is not.
 
 A HOLE AND AN ENGRAVING MUST NEVER LOOK ALIKE. This is the distinction the
 whole charm depends on. A hole shows the ground through it and is bounded by a
@@ -3662,10 +3663,37 @@ function studioChamfer(mask, w, h) {
   return d;
 }
 
-/* The pen width comes from the drawing itself: the LONGEST blue component is
-   always the silhouette, and a silhouette is by definition one pen wide. */
-function studioCutRegions(mask, w, h, minRatio) {
-  const ratio0 = minRatio || 1.8;
+/* ── THE PEN, MEASURED ON EVERY MARK ──────────────────────────────────────
+   This used to take the pen from the LONGEST component of the colour being
+   tested, on the reasoning that the longest blue thing is the silhouette and a
+   silhouette is one pen wide. That held only while the silhouette was drawn in
+   blue. On a drawing whose perimeter is BLACK there is no blue line to
+   calibrate against, so the longest blue component is a FILL — the estimate
+   came back five times too thick and every genuine cut-out was dismissed as a
+   line. Measured on a real drawing: three fills at 7.7-11.0px against a "pen"
+   of 11.0, so the detector found nothing at all.
+
+   The pen is now the MEDIAN thickness of every inked pixel in the drawing,
+   whatever its colour. Line work always dominates a production drawing by
+   pixel count, so the median lands on the pen and is unmoved by how many fills
+   there are or what colour anything is: it measured 2.0px on both a
+   blue-silhouette drawing and a black-silhouette one. */
+function studioPenWidth(px, w, h) {
+  const n = w * h;
+  const ink = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (!studioIsBg(px, i * 3)) ink[i] = 1;
+  const d = studioChamfer(ink, w, h);
+  const v = [];
+  for (let i = 0; i < n; i++) if (ink[i]) v.push(d[i]);
+  if (!v.length) return 1;
+  v.sort((a, b) => a - b);
+  return Math.max(1, v[v.length >> 1]);
+}
+
+function studioCutRegions(mask, w, h, minRatio, penIn) {
+  /* 2.5x the pen: a stroke reaches one pen, a fill reaches many. Measured
+     spread on real drawings is fills 3.9-5.5x against lines at 1.0-1.6x. */
+  const ratio0 = minRatio || 2.5;
   const { labels, count } = studioLabel(mask, w, h);
   const cut = new Uint8Array(w * h);
   if (!count) return { cut, areas: 0, lines: 0, pen: 0, cutPx: 0 };
@@ -3675,9 +3703,7 @@ function studioCutRegions(mask, w, h, minRatio) {
     const L = labels[i]; if (!L) continue;
     size[L]++; if (dist[i] > maxd[L]) maxd[L] = dist[i];
   }
-  let biggest = 1;
-  for (let L = 2; L <= count; L++) if (size[L] > size[biggest]) biggest = L;
-  const pen = maxd[biggest] || 1;
+  const pen = penIn || 1;
   const minPx = Math.max(24, Math.round(w * h * 0.00002));
   const keep = new Uint8Array(count + 1);
   let areas = 0, lines = 0, cutPx = 0;
@@ -3757,6 +3783,97 @@ async function studioRawAt(sharp, buf, side) {
   return { px: data, w: info.width, h: info.height };
 }
 
+
+/* ── THE FOURTH INSTRUCTION: SOLID METAL, SAID OUT LOUD ────────────────────
+   White meant two different things. Inside the charm it meant "untouched
+   polished metal"; outside it meant "paper". And since the render moved to a
+   white ground, a HOLE renders white too — so an enclosed white region ringed
+   by a thin outline and a real opening became the same picture, and the model
+   was left inferring which from context. It inferred wrong on two legs.
+
+   Absence is the weakest signal you can hand a vision encoder, so metal stops
+   being an absence. Every interior pixel that is not an instruction and not a
+   declared hole is flooded with this tint before the drawing goes to the
+   model. White then means exactly one thing: not metal.
+
+   Green because it is the one hue the vocabulary does not use — measured
+   against the other four classes its nearest neighbour is dE 103, where the
+   closest existing pair (cut blue vs paper) is 58. The customer never sees
+   it: this is applied to the RENDER'S INPUT only, never to the drawing filed
+   in Storage or shown in the studio. */
+const STUDIO_METAL_TINT = [0x4d, 0xff, 0x4d];
+
+const studioIsBlack = (px, p) => px[p] < 90 && px[p + 1] < 90 && px[p + 2] < 90;
+
+/* every region the drawing declares, at the drawing's own resolution, with
+   sample points kept so the same regions can be interrogated in the render */
+async function studioDrawingPlan(sharp, drawingBuf) {
+  const { data: px, info } = await sharp(drawingBuf).removeAlpha().raw()
+    .toBuffer({ resolveWithObject: true });
+  const w = info.width, h = info.height, n = w * h;
+
+  const ink = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (!studioIsBg(px, i * 3)) ink[i] = 1;
+  const face = studioOuterFace(studioDilate(ink, w, h, 2), w, h);
+  const faceBox = studioBBox(face, w, h);
+
+  const pen = studioPenWidth(px, w, h);
+  const blue = studioBlueMask(px, n, 3);
+  const { cut } = studioCutRegions(blue, w, h, 2.5, pen);
+
+  /* black FILLS are engraving and must stay closed; black LINES are outlines
+     and are not regions at all — the same thickness test that separates a
+     cut-out from a cut edge separates them. */
+  const black = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (studioIsBlack(px, i * 3)) black[i] = 1;
+  const { cut: blackAreas } = studioCutRegions(black, w, h, 2.5, pen);
+
+  /* interior metal: inside the charm, not ink, not a declared hole. Ink is
+     dilated so a region's own outline cannot leak it into its neighbour. */
+  const inkWall = studioDilate(ink, w, h, 2);
+  const metal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (face[i] && !inkWall[i] && !cut[i]) metal[i] = 1;
+
+  const minPx = Math.max(200, Math.round(n * 0.0004));
+  const regions = [];
+  const collect = (mask, kind) => {
+    const { labels, count } = studioLabel(mask, w, h);
+    const size = new Float64Array(count + 1);
+    for (let i = 0; i < n; i++) if (labels[i]) size[labels[i]]++;
+    const pts = new Map();
+    const step = 3;
+    for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) {
+      const i = y * w + x, L = labels[i];
+      if (!L || size[L] < minPx) continue;
+      if (!pts.has(L)) pts.set(L, []);
+      pts.get(L).push(i);
+    }
+    for (const [L, list] of pts) if (list.length >= 12) regions.push({ kind, px: size[L], pts: list });
+  };
+  collect(cut, "open");            // blue: MUST be a hole in the render
+  collect(blackAreas, "closed");   // black fill: engraving, must stay metal
+  collect(metal, "closed");        // untouched metal, must stay metal
+  return { px, w, h, n, ink, face, faceBox, cut, pen, regions };
+}
+
+/* the tinted copy that goes to the model — the drawing in Storage is untouched */
+async function studioTintMetal(sharp, plan) {
+  const { px, w, h, n, face, ink, cut } = plan;
+  const out = Buffer.from(px);
+  const inkWall = studioDilate(ink, w, h, 1);
+  const [tr, tg, tb] = STUDIO_METAL_TINT;
+  let filled = 0;
+  for (let i = 0; i < n; i++) {
+    if (!face[i] || inkWall[i] || cut[i]) continue;
+    const p = i * 3;
+    if (!studioIsBg(px, p)) continue;
+    out[p] = tr; out[p + 1] = tg; out[p + 2] = tb;
+    filled++;
+  }
+  const buf = await sharp(out, { raw: { width: w, height: h, channels: 3 } }).png().toBuffer();
+  return { buf, filled };
+}
+
 /* ── THE PUNCH ────────────────────────────────────────────────────────────
    Returns the render unchanged plus a verdict whenever anything is uncertain.
    The three outcomes, in the order they are decided:
@@ -3769,70 +3886,91 @@ async function studioRawAt(sharp, buf, side) {
                      trusted. Punching blind would be worse than not punching.
      punched         the declared cut-outs were missing and have been cut.
    ========================================================================= */
-async function studioPunchCutouts(renderBuf, drawingBuf) {
+async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
   const sharp = studioSharp();
   const report = { verified: false, reason: "", declaredCuts: 0, punchedPx: 0,
-                   alignment: 0, openFrac: 0 };
+                   alignment: 0, openFrac: 0, regionsOk: 0, regionsBad: 0, worst: "" };
   if (!sharp) { report.reason = "sharp_unavailable"; return { buf: renderBuf, report }; }
-  const W = 768;
   try {
-    const d = await studioRawAt(sharp, drawingBuf, W);
-    const r = await studioRawAt(sharp, renderBuf, W);
+    const d = plan;
+    const r0 = await sharp(renderBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const rw = r0.info.width, rh = r0.info.height, rpx = r0.data;
+    const rInk = new Uint8Array(rw * rh);
+    for (let i = 0; i < rw * rh; i++) if (!studioIsBg(rpx, i * 3)) rInk[i] = 1;
+    const rFace = studioOuterFace(rInk, rw, rh);
+    const rBox = studioBBox(rFace, rw, rh);
+    if (!d.faceBox || !rBox) { report.reason = "no_subject"; return { buf: renderBuf, report }; }
 
-    /* the drawing's face: ink dilated into a wall first, so one anti-aliased
-       gap in the pen cannot leak the fill into the charm and collapse the
-       whole registration */
-    const dInk = new Uint8Array(d.w * d.h);
-    for (let i = 0; i < d.w * d.h; i++) if (!studioIsBg(d.px, i * 3)) dInk[i] = 1;
-    const dFace = studioOuterFace(studioDilate(dInk, d.w, d.h, 2), d.w, d.h);
-    const dBox = studioBBox(dFace, d.w, d.h);
-
-    const rInk = new Uint8Array(r.w * r.h);
-    for (let i = 0; i < r.w * r.h; i++) if (!studioIsBg(r.px, i * 3)) rInk[i] = 1;
-    const rFace = studioOuterFace(rInk, r.w, r.h);
-    const rBox = studioBBox(rFace, r.w, r.h);
-    if (!dBox || !rBox) { report.reason = "no_subject"; return { buf: renderBuf, report }; }
-
-    const blue = studioBlueMask(d.px, d.w * d.h, 3);
-    const { cut, areas, cutPx } = studioCutRegions(blue, d.w, d.h);
-    report.declaredCuts = areas;
-
-    /* how much of the finished face is actually open, against how much the
-       drawing says should be. The hoop's hole is declared by the drawing too,
-       so a generous allowance covers it and ordinary anti-aliasing. */
-    let faceN = 0, openN = 0;
-    for (let i = 0; i < r.w * r.h; i++) {
-      if (!rFace[i]) continue;
-      faceN++;
-      if (studioIsBg(r.px, i * 3)) openN++;
-    }
-    report.openFrac = faceN ? openN / faceN : 0;
-    let dFaceN = 0;
-    for (let i = 0; i < d.w * d.h; i++) if (dFace[i]) dFaceN++;
-    const declaredFrac = dFaceN ? cutPx / dFaceN : 0;
-    const allowed = declaredFrac + 0.08;
-    if (report.openFrac > allowed) {
-      /* Image 1: 45% of the face open against ~2% declared. The metal is
-         already gone and no compositing brings it back. */
-      report.reason = "undeclared_cut";
-      return { buf: renderBuf, report };
-    }
-
+    /* registration first: every region test below maps a drawing coordinate
+       into the render through these two boxes, so if the silhouettes disagree
+       there is nothing worth measuring and nothing safe to punch. */
     const N = 192;
-    report.alignment = studioIoU(studioNormalise(dFace, d.w, d.h, dBox, N),
-                                 studioNormalise(rFace, r.w, r.h, rBox, N), N * N);
+    report.alignment = studioIoU(studioNormalise(d.face, d.w, d.h, d.faceBox, N),
+                                 studioNormalise(rFace, rw, rh, rBox, N), N * N);
     if (report.alignment < 0.90) { report.reason = "unaligned"; return { buf: renderBuf, report }; }
-    if (!areas) { report.verified = true; report.reason = "no_cuts_declared"; return { buf: renderBuf, report }; }
 
-    /* Punch at FULL resolution — the customer's charm is the artefact, not a
-       768px working copy — mapping through both bounding boxes so a render
-       that framed the charm differently still lands on the right pixels. */
+    const toRender = (i) => {
+      const x = i % d.w, y = (i / d.w) | 0;
+      const u = (x - d.faceBox.x0) / d.faceBox.w, v = (y - d.faceBox.y0) / d.faceBox.h;
+      const rx = Math.round(rBox.x0 + u * rBox.w), ry = Math.round(rBox.y0 + v * rBox.h);
+      if (rx < 0 || ry < 0 || rx >= rw || ry >= rh) return -1;
+      return ry * rw + rx;
+    };
+
+    /* ── EVERY REGION, NOT THE TOTAL ──────────────────────────────────────
+       The old test compared total open AREA against total declared area with
+       an 8-point allowance. Measured on a real failure — seven openings, 4.6%
+       of the face, against three declared at 1% — that test passes: the two
+       wrongly cut legs hide inside the allowance. Area cannot see WHERE a
+       hole is. So each declared region is now interrogated on its own: a blue
+       region must read open, and a black fill or a metal region must read
+       closed. One region in the wrong state fails the render. */
+    let bad = 0, ok = 0, worst = "";
+    for (const reg of d.regions) {
+      let seen = 0, open = 0;
+      for (const i of reg.pts) {
+        const j = toRender(i);
+        if (j < 0) continue;
+        seen++;
+        if (studioIsBg(rpx, j * 3)) open++;
+      }
+      if (seen < 8) continue;
+      const frac = open / seen;
+      const good = reg.kind === "open" ? frac > 0.5 : frac < 0.35;
+      if (good) ok++;
+      else {
+        bad++;
+        if (!worst) worst = reg.kind === "open"
+          ? `declared cut-out came back solid (${Math.round(frac * 100)}% open)`
+          : `metal came back cut (${Math.round(frac * 100)}% open)`;
+      }
+    }
+    report.regionsOk = ok; report.regionsBad = bad; report.worst = worst;
+    report.declaredCuts = d.regions.filter((x) => x.kind === "open").length;
+
+    let faceN = 0, openN = 0;
+    for (let i = 0; i < rw * rh; i++) { if (!rFace[i]) continue; faceN++; if (studioIsBg(rpx, i * 3)) openN++; }
+    report.openFrac = faceN ? openN / faceN : 0;
+
+    /* A region the drawing declared as metal that came back open is the one
+       failure compositing cannot undo — the metal is gone. Reject; never
+       repair. A declared cut-out that came back solid IS repairable, and is
+       repaired below, so it does not reject. */
+    const cutIntoMetal = d.regions.some((reg, k) => {
+      if (reg.kind !== "closed") return false;
+      let seen = 0, open = 0;
+      for (const i of reg.pts) { const j = toRender(i); if (j < 0) continue; seen++; if (studioIsBg(rpx, j * 3)) open++; }
+      return seen >= 8 && open / seen >= 0.35;
+    });
+    if (cutIntoMetal) { report.reason = "undeclared_cut"; return { buf: renderBuf, report }; }
+
+    if (!report.declaredCuts) { report.verified = true; report.reason = "no_cuts_declared"; return { buf: renderBuf, report }; }
+
+    /* punch at FULL render resolution: the customer's charm is the artefact */
     const full = await sharp(renderBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
     const fw = full.info.width, fh = full.info.height, fpx = full.data;
-    const sx = fw / r.w, sy = fh / r.h;
+    const sx = fw / rw, sy = fh / rh;
     const fx0 = rBox.x0 * sx, fy0 = rBox.y0 * sy, fbw = rBox.w * sx, fbh = rBox.h * sy;
-    /* the ground the charm sits on, taken from the render's own corners so a
-       punched hole is the same white as the paper around it */
     const corners = [0, (fw - 1) * 3, (fh - 1) * fw * 3, ((fh - 1) * fw + fw - 1) * 3];
     const g0 = Math.round(corners.reduce((a, p) => a + fpx[p], 0) / 4);
     const g1 = Math.round(corners.reduce((a, p) => a + fpx[p + 1], 0) / 4);
@@ -3840,22 +3978,21 @@ async function studioPunchCutouts(renderBuf, drawingBuf) {
     let punched = 0;
     for (let y = Math.max(0, Math.floor(fy0)); y < Math.min(fh, Math.ceil(fy0 + fbh)); y++) {
       const v = (y - fy0) / fbh;
-      const dy = dBox.y0 + Math.min(dBox.h - 1, Math.floor(v * dBox.h));
+      const dy = d.faceBox.y0 + Math.min(d.faceBox.h - 1, Math.floor(v * d.faceBox.h));
       if (dy < 0 || dy >= d.h) continue;
       for (let x = Math.max(0, Math.floor(fx0)); x < Math.min(fw, Math.ceil(fx0 + fbw)); x++) {
         const u = (x - fx0) / fbw;
-        const dx = dBox.x0 + Math.min(dBox.w - 1, Math.floor(u * dBox.w));
-        if (!cut[dy * d.w + dx]) continue;
+        const dx = d.faceBox.x0 + Math.min(d.faceBox.w - 1, Math.floor(u * d.faceBox.w));
+        if (!d.cut[dy * d.w + dx]) continue;
         const p = (y * fw + x) * 3;
         fpx[p] = g0; fpx[p + 1] = g1; fpx[p + 2] = g2;
         punched++;
       }
     }
     report.punchedPx = punched;
-    report.verified = true;
+    report.verified = bad === 0;
     report.reason = punched ? "punched" : "nothing_to_punch";
-    const out = await sharp(fpx, { raw: { width: fw, height: fh, channels: 3 } })
-      .png().toBuffer();
+    const out = await sharp(fpx, { raw: { width: fw, height: fh, channels: 3 } }).png().toBuffer();
     return { buf: out, report };
   } catch (err) {
     console.error("[studio] cut-out punch failed:", err?.message || err);
@@ -3967,6 +4104,7 @@ async function handleStudioRender({ body, event, origin }) {
 
   const metal = studioCleanText(body?.metal || session.metal || "gold");
 
+  const cutMode = String(cfg.renderCutCheck || "off").trim().toLowerCase();
   try {
     await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
                      renderQuality: quality, renderModel: studioModelConfig.id,
@@ -3974,8 +4112,29 @@ async function handleStudioRender({ body, event, origin }) {
 
     const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
     const bw = await storagePathToBuffer(bwPath);
+
+    /* ── THE MODEL IS A SHADER, NOT A DRAUGHTSMAN ─────────────────────────
+       Topology — what is metal and what is a hole — is known exactly from the
+       drawing before this request is made, so it is not left to the model to
+       infer. Interior metal is flooded with an explicit tint (nothing is meant
+       by absence any more), the declared holes are punched afterwards, and a
+       render that cut into metal is rejected rather than repaired. What the
+       model is asked for is what gold looks like. */
+    const sharpMod = studioSharp();
+    let studioPlan = null, drawingForModel = bw.buffer;
+    if (sharpMod && cutMode !== "off") {
+      try {
+        studioPlan = await studioDrawingPlan(sharpMod, bw.buffer);
+        const tinted = await studioTintMetal(sharpMod, studioPlan);
+        if (tinted.filled > 0) drawingForModel = tinted.buf;
+        await vRef.set({ renderMetalFilled: tinted.filled, renderRunId }, { merge: true });
+      } catch (e) {
+        console.error("[studio] metal tint skipped:", e?.message || e);
+        studioPlan = null; drawingForModel = bw.buffer;
+      }
+    }
     const images = [
-      { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" },
+      { buffer: drawingForModel, mime: "image/png", filename: "drawing.png" },
     ];
 
     const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
@@ -4036,9 +4195,8 @@ async function handleStudioRender({ body, event, origin }) {
                     against real traffic without a customer ever paying for
                     it — turn it on when we start correcting the fills.
          "enforce"  punch declared cut-outs, reject undeclared ones. */
-    const cutMode = String(cfg.renderCutCheck || "off").trim().toLowerCase();
     if (cutMode === "observe" || cutMode === "enforce") {
-      const punch = await studioPunchCutouts(outBuf, bw.buffer);
+      const punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan);
       if (cutMode === "enforce") {
         outBuf = punch.buf;
         if (punch.report.reason === "undeclared_cut") {
@@ -4055,6 +4213,9 @@ async function handleStudioRender({ body, event, origin }) {
         renderAlignment: Math.round(punch.report.alignment * 1000) / 1000,
         renderOpenFraction: Math.round(punch.report.openFrac * 1000) / 1000,
         renderVerified: cutMode === "enforce" && !!punch.report.verified,
+        renderRegionsOk: punch.report.regionsOk,
+        renderRegionsBad: punch.report.regionsBad,
+        renderWorstRegion: punch.report.worst || "",
         renderCheck: punch.report.reason,
         renderRunId,
       }, { merge: true });
