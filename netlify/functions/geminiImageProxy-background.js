@@ -2414,7 +2414,10 @@ const STUDIO_DEFAULT_CONFIG = {
      having to interpret manufacturing colours. Set false only as an emergency
      fallback; the legacy colour-coded render path remains intact underneath. */
   renderDeterministicSpec: true,
-  /* "off" | "observe" | "enforce" — see the cut check in handleStudioRender.
+  /* "off" | "punch" | "observe" | "enforce" — see the cut check in
+     handleStudioRender. "punch" is the one to reach for when the render keeps
+     engraving a declared cut-out: it composites the openings the mask already
+     knows about and judges nothing else.
      This is POST-render verification and remains deliberately separate from
      the deterministic PRE-render specification above. */
   renderCutCheck: "off",
@@ -5058,24 +5061,40 @@ async function handleStudioRender({ body, event, origin }) {
                     against real traffic without a customer ever paying for
                     it — turn it on when we start correcting the fills.
          "enforce"  punch declared cut-outs, reject undeclared ones. */
-    if (cutMode === "observe" || cutMode === "enforce") {
+    /* ── "punch": HONOUR THE DECLARED CUT-OUTS, JUDGE NOTHING ─────────────
+       The mask says a region is cut clean through; the model renders it as a
+       shallow engraving anyway, and does so inconsistently — the same render
+       cut the hoop and engraved the knife. That is not a wording problem. It
+       is the one question the model keeps getting wrong, and it does not have
+       to be asked: the openings are already known exactly, deterministically,
+       before the render is ever requested.
+
+       So this mode composites them and stops there. It never rejects a render
+       and never charges a customer for a verdict:
+         "off"      nothing runs (what shipped while identification was tuned)
+         "punch"    declared cut-outs are cut into the render. Nothing else.
+         "observe"  scan and file the numbers, image untouched
+         "enforce"  punch AND reject undeclared cuts (the strict mode)
+       Alignment still guards it — if the render's silhouette does not match
+       the drawing's, no coordinate maps between them and studioPunchCutouts
+       declines to punch rather than cutting blind. */
+    const doPunch = cutMode === "enforce" || cutMode === "punch";
+    if (cutMode !== "off") {
       const punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan);
-      if (cutMode === "enforce") {
-        outBuf = punch.buf;
-        if (punch.report.reason === "undeclared_cut") {
-          const e = new Error("cut_check_undeclared");
-          e.studioReport = punch.report;
-          throw e;
-        }
+      if (doPunch) outBuf = punch.buf;
+      if (cutMode === "enforce" && punch.report.reason === "undeclared_cut") {
+        const e = new Error("cut_check_undeclared");
+        e.studioReport = punch.report;
+        throw e;
       }
       await vRef.set({
         renderCutMode: cutMode,
         renderCutsDeclared: punch.report.declaredCuts,
-        renderCutsPunched: cutMode === "enforce" ? punch.report.punchedPx : 0,
+        renderCutsPunched: doPunch ? punch.report.punchedPx : 0,
         renderCutsWouldPunch: punch.report.punchedPx,
         renderAlignment: Math.round(punch.report.alignment * 1000) / 1000,
         renderOpenFraction: Math.round(punch.report.openFrac * 1000) / 1000,
-        renderVerified: cutMode === "enforce" && !!punch.report.verified,
+        renderVerified: doPunch && !!punch.report.verified,
         renderRegionsOk: punch.report.regionsOk,
         renderRegionsBad: punch.report.regionsBad,
         renderWorstRegion: punch.report.worst || "",
