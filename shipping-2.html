@@ -1198,6 +1198,7 @@ function normalizeMetalLabel(raw){
   //    e.g. "Metal Choice / Necklace LengthGold - 20" → "... Gold - 20"
   //    - split camelCase first so "LengthGold" → "Length Gold"
   metalSel = metalSel.replace(/([a-z])([A-Z])/g, "$1 $2");
+  metalSel = metalSel.replace(/([a-z])(?=10k\b)/gi, "$1 ");
 
   // remove label heads
   metalSel = metalSel
@@ -1237,6 +1238,9 @@ function normalizeMetalLabel(raw){
   if (/(?:color\s*)?sterling\s*silver\b|silv[ae]?r\b/.test(norm)) {
     return "Silver";
   }
+  if (/\b10k\b/.test(norm)) {
+    return "10K";
+  }
   if (/\b14k\b/.test(norm)) {
     return "14K";
   }
@@ -1251,6 +1255,7 @@ function normalizeMetalLabel(raw){
 function metalToBadge(label){
   const canon = normalizeMetalLabel(label);
   switch ((canon || "").toLowerCase()){
+    case "10k":        return "🟡 10K";
     case "14k":        return "🟡 14K";
     case "rose gold":  return "🟠";
     case "silver":     return "⚪";
@@ -1526,7 +1531,7 @@ function metalToBadge(label){
     // Order Details prints "Metal Choice: ..." already, we parse it:
     // e.g. "... Metal Choice: Rose Gold"
     const m = txt.match(/^\s*Metal Choice\s*:\s*(.+)$/mi);
-    return m ? normalizeMetalLabel(m[1]) : null;  // normalize to: Gold | Rose Gold | 14K | Gold Filled | Silver
+    return m ? normalizeMetalLabel(m[1]) : null;  // normalize to: Gold | Rose Gold | 10K | 14K | Gold Filled | Silver
   }
 
   function detectCanonMetalFromItem(it){
@@ -1540,7 +1545,7 @@ function metalToBadge(label){
         return (
           name.includes("metal") ||
           name.startsWith("color") || name.startsWith("colour") ||
-          /rose\s*gold|rosegold|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|14k/.test(val.toLowerCase())
+          /rose\s*gold|rosegold|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|10k|14k/.test(val.toLowerCase())
         );
       });
       const raw = hit ? (hit.formatted_value || (Array.isArray(hit?.values)? hit.values[0] : hit?.value) || "") : "";
@@ -1555,8 +1560,8 @@ function metalToBadge(label){
     if (c === "silver" || c === "sterling silver") {
       return { hs: "7113115000", sku: "SS_187" };
     }
-    // Gold family (Gold, Rose Gold, 14K, Gold Filled)
-    if (c === "gold" || c === "rose gold" || c === "14k" || c === "gold filled" || c === "rose") {
+    // Gold family (Gold, Rose Gold, 10K, 14K, Gold Filled)
+    if (c === "gold" || c === "rose gold" || c === "10k" || c === "14k" || c === "gold filled" || c === "rose") {
       return { hs: "7113205000", sku: "GF_187" };
     }
     return null;
@@ -3007,7 +3012,7 @@ function metalToBadge(label){
                 if (!metalVar) {
                   metalVar = item.variations.find(v => {
                     const val = (v.formatted_value || "").toLowerCase();
-                    return /rose\s*gold|rosegold|rosefilled|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|14k|white\s*gold/.test(val);
+                    return /rose\s*gold|rosegold|rosefilled|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|10k|14k|white\s*gold/.test(val);
                   });
                 }
 
@@ -3029,6 +3034,7 @@ function metalToBadge(label){
 
                   /* split camelCase, drop length noise, normalize odd punctuation */
                   metalSel = metalSel.replace(/([a-z])([A-Z])/g, "$1 $2");
+                  metalSel = metalSel.replace(/([a-z])(?=10k\b)/gi, "$1 ");
                   metalSel = metalSel
                     .replace(/\bnecklace\s*length\b[\s\/:]*/gi, "")
                     .replace(/\s*-\s*\d+(\.\d+)?\s*$/g, "")
@@ -3044,6 +3050,8 @@ function metalToBadge(label){
                     metalSel = "Gold Filled";
                   } else if (/(?:color\s*)?sterling\s*silver\b|silv[ae]?r\b/.test(norm)) {
                     metalSel = "Silver";
+                  } else if (/\b10k\b/.test(norm)) {
+                    metalSel = "10K";
                   } else if (/\b14k\b/.test(norm)) {
                     metalSel = "14K";
                   } else if (/\bgold\b/.test(norm)) {
