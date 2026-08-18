@@ -2560,8 +2560,10 @@ that shape: every other black area the picture shows stays exactly as dark and
 as engraved as the picture shows it. Turning a solidly engraved band into a
 thin outline because an outline instruction exists nearby is a hard fail.
 EVERY area listed as CUT CLEAN THROUGH must be an actual opening in your
-output, and every black area must come through as engraved. Check this before
-you finish.
+output, and every black area must come through as engraved. THE LIST IS ALSO
+COMPLETE: those are the only openings this charm has. An opening anywhere the
+list does not name — however much the design might look better open — is a
+hard fail. Count your openings against it before you finish.
 NOTHING IN THIS LIST IS ARTWORK. It describes where areas sit; it is not
 lettering, not a caption, not a label, not a legend and not part of the
 design. Never draw, engrave, set or letter ANY word, letter, digit or number
@@ -2643,8 +2645,8 @@ the customer designed. Count them before you draw and count them again after.`;
    must not look alike. This block is SHORTER than the three it replaces. */
 const FILL_LAW_RENDER =
 `THE GOLDEN RULE OF THIS WORKSHOP — ABOVE EVERY OTHER INSTRUCTION HERE.
-The drawing's fill colours are manufacturing orders, not pigment.
-The finished charm obeys them exactly, and shows none of these colours.
+The drawing's three instruction colours are manufacturing orders, not pigment.
+The finished charm obeys all three exactly, and shows none of them.
 
   BLUE area in the drawing → A HOLE. The metal is gone. You see the ground the
   charm rests on straight through it, exactly as through the hoop's hole.
@@ -2656,8 +2658,9 @@ The finished charm obeys them exactly, and shows none of these colours.
   RED boundary in the drawing → ONLY THAT LINE is engraved. Its interior is
   flat polished metal, identical to the surface around it. Never fill it.
 
-  GREEN area in the drawing → SOLID METAL, untouched and polished. Nothing is
-  done to it. White is never metal: white is where the charm is not.
+  WHITE inside the charm → untouched polished metal, INCLUDING a white shape
+  fully enclosed by an outline. An enclosed white shape is solid sheet with a
+  worked line around it, never an opening. Only blue declares an opening.
 
 A HOLE AND AN ENGRAVING MUST NEVER LOOK ALIKE. This is the distinction the
 whole charm depends on. A hole shows the ground through it and is bounded by a
@@ -4120,21 +4123,29 @@ async function handleStudioRender({ body, event, origin }) {
        by absence any more), the declared holes are punched afterwards, and a
        render that cut into metal is rejected rather than repaired. What the
        model is asked for is what gold looks like. */
+    /* ── THE METAL TINT IS REVERTED. DO NOT REINSTATE IT UNCOUPLED. ───────
+       Tinting interior metal green was supposed to stop white meaning two
+       things. It shipped as TWO changes that were not bound together: the
+       prompt was told "white is never metal", and a separate pixel pass was
+       supposed to make that true. Any time the pixel pass did not run or did
+       not reach every white pixel — sharp missing, a leaked flood fill, an
+       anti-aliased edge, cutMode off — the model was reading a drawing whose
+       metal was still WHITE while being told white is never metal. It did
+       exactly what it was told and cut the field out. That is the big white
+       opening in every render since.
+
+       If this is ever tried again the tint and the prompt line must be
+       decided by the same value at the same moment, and the prompt must fall
+       back to the white wording whenever the tint reports zero pixels
+       filled. studioTintMetal() is left in the file, unused, for that. */
     const sharpMod = studioSharp();
-    let studioPlan = null, drawingForModel = bw.buffer;
+    let studioPlan = null;
     if (sharpMod && cutMode !== "off") {
-      try {
-        studioPlan = await studioDrawingPlan(sharpMod, bw.buffer);
-        const tinted = await studioTintMetal(sharpMod, studioPlan);
-        if (tinted.filled > 0) drawingForModel = tinted.buf;
-        await vRef.set({ renderMetalFilled: tinted.filled, renderRunId }, { merge: true });
-      } catch (e) {
-        console.error("[studio] metal tint skipped:", e?.message || e);
-        studioPlan = null; drawingForModel = bw.buffer;
-      }
+      try { studioPlan = await studioDrawingPlan(sharpMod, bw.buffer); }
+      catch (e) { console.error("[studio] drawing plan skipped:", e?.message || e); studioPlan = null; }
     }
     const images = [
-      { buffer: drawingForModel, mime: "image/png", filename: "drawing.png" },
+      { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" },
     ];
 
     const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
