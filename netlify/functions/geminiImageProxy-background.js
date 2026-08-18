@@ -3110,7 +3110,8 @@ Render ONE finished charm as a photorealistic flat ${label} charm. IMAGE 1 is a 
 • Preserve IMAGE 1 exactly: same outer silhouette, same integrated top hoop, same openings, same worked regions, same proportions.
 • Do not redesign, beautify, simplify, add, remove, move, resize or reinterpret any geometry.
 • The lighter metal-coloured face is polished sheet metal. The darker same-metal marks are shallow engraved/outlined work. White areas are already absent/background.
-• Convert only the flat proof into believable real ${label}: material, polish, subtle engraving finish, light and contact shadow. Nothing structural changes.`;
+• Convert only the flat proof into believable real ${label}: material, polish, subtle engraving finish, light and contact shadow. Nothing structural changes.
+• FRONT VIEW: perfectly front-facing orthographic view with 0% perspective tilt.`;
 
   return header + "\n\n" + renderConstraintBlocks() +
          "\n\n" + STUDIO_RENDER_FINISH;
