@@ -2700,10 +2700,10 @@ const STUDIO_LINEART_CONTRACT =
 This studio's production drawings are colour-coded. Exactly three colours may
 carry meaning, and they are manufacturing instructions, never decoration:
 • SOLID BLACK area → ENGRAVED metal.
-• SOLID BLUE (a saturated royal blue, close to #1f6fe0) area → CUT CLEAN
+• SOLID BLUE (a bright cyan-blue, close to #00b4ff) area → CUT CLEAN
   THROUGH: a real opening in the sheet. In your drawing that opening is
   filled SOLID BLUE so the instruction is visible at a glance.
-• RED (close to #d81f2a) boundary line → OUTLINE ONLY: that boundary is a
+• RED (close to #e00000) boundary line → OUTLINE ONLY: that boundary is a
   worked line and the area it encloses is flat polished metal, left WHITE.
 Whatever colour an instruction arrives in — on the reference, the sketch or
 the mark-up — it leaves in the SAME colour on your drawing. Losing an
@@ -3577,7 +3577,10 @@ function studioBlueMask(px, n, stride) {
   const m = new Uint8Array(n);
   for (let i = 0, p = 0; i < n; i++, p += stride) {
     const r = px[p], g = px[p + 1], b = px[p + 2];
-    if (b - (r > g ? r : g) > 40 && b > 90) m[i] = 1;
+    /* the cut-out blue is now a LIGHT cyan-blue, chosen so it cannot be read
+       as black — which means its green channel is high and the old margin of
+       40 would have missed it wherever it feathered into the paper */
+    if (b - (r > g ? r : g) > 28 && b > 120) m[i] = 1;
   }
   return m;
 }
