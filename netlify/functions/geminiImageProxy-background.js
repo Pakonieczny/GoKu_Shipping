@@ -982,12 +982,12 @@ const IMAGE_ROLE_LABELS = {
     first:
       "IMAGE 1 — DETERMINISTIC MATERIAL SPECIFICATION (STRUCTURAL TRUTH). Its silhouette, openings and worked regions are already resolved exactly. Photorealistically materialise this same object without changing any geometry.",
     second:
-      "IMAGE 2 — UNUSED. Ignore any additional image.",
+      "IMAGE 2 — APPEARANCE REFERENCE ONLY. Use it ONLY for metal colour, polish, reflection behaviour, engraving finish, flatness, edge character, lighting, shadow and photographic realism. Its subject, silhouette, engraving layout, hole layout and hardware are OFF LIMITS and must NOT be copied.",
     extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
     single:
       "IMAGE 1 — DETERMINISTIC MATERIAL SPECIFICATION (STRUCTURAL TRUTH). Its silhouette, openings and worked regions are already resolved exactly. Photorealistically materialise this same object without changing any geometry.",
     lock:
-      "FINAL IMAGE-ROLE LOCK: materialise IMAGE 1 exactly. Do not add, remove, move, resize or reinterpret any edge, opening, engraving or outline. Change only flat material-map appearance into a photograph of real metal.",
+      "FINAL IMAGE-ROLE LOCK: IMAGE 1 owns all structure and geometry. IMAGE 2, when present, owns appearance only: material, polish, lighting, shadow and engraving finish. Materialise IMAGE 1 exactly. Do not add, remove, move, resize or reinterpret any edge, opening, engraving or outline. Do not copy IMAGE 2's subject or hardware.",
   },
   line_art_style: {
     first:
@@ -4401,6 +4401,18 @@ async function handleStudioRender({ body, event, origin }) {
       ? { buffer: materialSpec.buf, mime: "image/png", filename: "material-spec.png" }
       : { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" }
     ];
+    let renderStyleRef = null;
+    if (specUsed) {
+      try { renderStyleRef = await ensureStudioGoldStyleReference(); }
+      catch (e) { console.error("[studio] gold style reference unavailable:", e?.message || e); renderStyleRef = null; }
+      if (renderStyleRef?.buffer?.length) {
+        images.push({
+          buffer: renderStyleRef.buffer,
+          mime: renderStyleRef.mime || STUDIO_GOLD_STYLE_REFERENCE_MIME,
+          filename: renderStyleRef.filename || STUDIO_GOLD_STYLE_REFERENCE_FILENAME,
+        });
+      }
+    }
 
     const effectivePrompt = specUsed
       ? buildMaterialSpecToCharmPrompt({ metal })
@@ -4412,6 +4424,9 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecFacePx: specUsed ? materialSpec.facePx : 0,
       renderSpecHolePx: specUsed ? materialSpec.holePx : 0,
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
+      renderStyleRefPath: renderStyleRef?.storagePath || null,
+      renderStyleRefSeeded: !!renderStyleRef?.seeded,
+      renderStyleRefUsed: !!renderStyleRef?.buffer?.length,
     }, { merge: true });
 
     /* Both renderer choices now receive the SAME deterministic material proof.
