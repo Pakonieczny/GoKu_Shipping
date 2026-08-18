@@ -788,7 +788,8 @@ async function callOpenAIImagesEdits({
   let promptText = String(prompt || "");
   if (imageRoles === "style_reference") {
     promptText = `${promptText.trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`;
-  } else if (imageRoles === "line_art_style" || imageRoles === "customer_lineart" || imageRoles === "lineart_to_charm") {
+  } else if (imageRoles === "line_art_style" || imageRoles === "customer_lineart" ||
+             imageRoles === "lineart_to_charm" || imageRoles === "material_spec_to_charm") {
     const roles = IMAGE_ROLE_LABELS[imageRoles];
     promptText = (images || []).length >= 2
       ? `${promptText.trim()}\n\n${roles.first}\n\n${roles.second}\n\n${roles.lock}`
@@ -972,6 +973,21 @@ const IMAGE_ROLE_LABELS = {
       "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat COLOUR-CODED line art of a charm on white: its fills are instructions, and black and blue are different instructions. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
     lock:
       "FINAL IMAGE-ROLE LOCK: this is a 1:1 structural replication, drawing → finished charm. The output's silhouette laid over the drawing's silhouette must match. Nothing is added, nothing is removed, nothing is redesigned, nothing is 'improved'. HARD FAIL: an output whose outline, engraving layout or cutouts differ from the drawing. HARD FAIL: an output that is still line art, a sketch or a flat graphic rather than a photograph of real metal. The GROUND the charm is photographed on is not this block's business — it is set by the presentation instructions, and a plain white ground is correct.",
+  },
+  /* The render's new normal path. IMAGE 1 is not an instruction-colour drawing
+     anymore: deterministic code has already converted every manufacturing
+     colour into actual metal/opening/engraving semantics. This role therefore
+     tells the model to materialise, not decode. */
+  material_spec_to_charm: {
+    first:
+      "IMAGE 1 — DETERMINISTIC MATERIAL SPECIFICATION (STRUCTURAL TRUTH). Its silhouette, openings and worked regions are already resolved exactly. Photorealistically materialise this same object without changing any geometry.",
+    second:
+      "IMAGE 2 — UNUSED. Ignore any additional image.",
+    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
+    single:
+      "IMAGE 1 — DETERMINISTIC MATERIAL SPECIFICATION (STRUCTURAL TRUTH). Its silhouette, openings and worked regions are already resolved exactly. Photorealistically materialise this same object without changing any geometry.",
+    lock:
+      "FINAL IMAGE-ROLE LOCK: materialise IMAGE 1 exactly. Do not add, remove, move, resize or reinterpret any edge, opening, engraving or outline. Change only flat material-map appearance into a photograph of real metal.",
   },
   line_art_style: {
     first:
@@ -2302,9 +2318,17 @@ const STUDIO_DEFAULT_CONFIG = {
      the Listing Generator already uses is the same key. */
   renderHighCost: 2,
   renderHighModel: "gpt-image-2",
+  /* PRE-RENDER STRUCTURAL SPEC. When enabled, the coloured production drawing
+     is deterministically resolved into a flat material map BEFORE any image
+     model sees it: actual metal is already metal-coloured, actual openings are
+     already white/background, and black/red work is already a darker tone of
+     the same metal. The model therefore renders material and light instead of
+     having to interpret manufacturing colours. Set false only as an emergency
+     fallback; the legacy colour-coded render path remains intact underneath. */
+  renderDeterministicSpec: true,
   /* "off" | "observe" | "enforce" — see the cut check in handleStudioRender.
-     Ships off: the scan's fill identification is still being corrected, and a
-     check that is sometimes wrong edits a charm somebody paid for. */
+     This is POST-render verification and remains deliberately separate from
+     the deterministic PRE-render specification above. */
   renderCutCheck: "off",
 };
 let _studioCfg = null, _studioCfgAt = 0;
@@ -3063,6 +3087,35 @@ ${zoneBlock(zones, "drawing")}`;
          "\n\n" + STUDIO_RENDER_FINISH;
 }
 
+/* Normal render path after the deterministic material-spec pass. This is
+   intentionally SHORTER than buildLineArtToCharmPrompt(): BLUE/RED/BLACK have
+   already been resolved by code, so repeating the colour law here would put
+   interpretation back into the very stage we just made deterministic. */
+function buildMaterialSpecToCharmPrompt({ metal }) {
+  const m = studioCleanText(metal) || "gold";
+  const label = ({
+    silver: "polished sterling silver",
+    gold: "polished 14k gold",
+    rose: "polished 14k rose gold",
+    solid10: "polished 10k solid gold",
+    solid14: "polished 14k solid gold",
+  })[m] || ("polished " + m);
+
+  const header =
+`DETERMINISTIC MATERIAL SPECIFICATION → FINISHED CHARM
+
+Render ONE finished charm as a photorealistic flat ${label} charm. IMAGE 1 is a machine-resolved material specification and is the only structural truth.
+
+1:1 STRUCTURAL LOCK — HIGHEST PRIORITY
+• Preserve IMAGE 1 exactly: same outer silhouette, same integrated top hoop, same openings, same worked regions, same proportions.
+• Do not redesign, beautify, simplify, add, remove, move, resize or reinterpret any geometry.
+• The lighter metal-coloured face is polished sheet metal. The darker same-metal marks are shallow engraved/outlined work. White areas are already absent/background.
+• Convert only the flat proof into believable real ${label}: material, polish, subtle engraving finish, light and contact shadow. Nothing structural changes.`;
+
+  return header + "\n\n" + renderConstraintBlocks() +
+         "\n\n" + STUDIO_RENDER_FINISH;
+}
+
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
    Two things were wrong with it, and both are the kind of wrong that makes
    a real object look like a picture of one.
@@ -3577,14 +3630,31 @@ function studioSharp() {
   return _sharpMod;
 }
 
+const studioIsBluePixel = (px, p) => {
+  const r = px[p], g = px[p + 1], b = px[p + 2];
+  /* Same tolerant classifier as the browser's reserved-blue reader. It is
+     deliberately about hue dominance, not an exact hex value, so antialiasing
+     around a one-pixel edge does not erase the instruction. */
+  return b - (r > g ? r : g) > 28 && b > 120;
+};
+const studioIsRedPixel = (px, p) => {
+  const r = px[p], g = px[p + 1], b = px[p + 2];
+  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+  return r - (g > b ? g : b) > 45 && r > 105 && lum < 220;
+};
+
 function studioBlueMask(px, n, stride) {
   const m = new Uint8Array(n);
   for (let i = 0, p = 0; i < n; i++, p += stride) {
-    const r = px[p], g = px[p + 1], b = px[p + 2];
-    /* the cut-out blue is now a LIGHT cyan-blue, chosen so it cannot be read
-       as black — which means its green channel is high and the old margin of
-       40 would have missed it wherever it feathered into the paper */
-    if (b - (r > g ? r : g) > 28 && b > 120) m[i] = 1;
+    if (studioIsBluePixel(px, p)) m[i] = 1;
+  }
+  return m;
+}
+
+function studioRedMask(px, n, stride) {
+  const m = new Uint8Array(n);
+  for (let i = 0, p = 0; i < n; i++, p += stride) {
+    if (studioIsRedPixel(px, p)) m[i] = 1;
   }
   return m;
 }
@@ -3694,24 +3764,40 @@ function studioPenWidth(px, w, h) {
 }
 
 function studioCutRegions(mask, w, h, minRatio, penIn) {
-  /* 2.5x the pen: a stroke reaches one pen, a fill reaches many. Measured
-     spread on real drawings is fills 3.9-5.5x against lines at 1.0-1.6x. */
+  /* Primary discriminator: local thickness against the drawing's pen.
+     Secondary discriminator: component fill density. The density path exists
+     for exactly the failure a thick engraved border exposed: the global pen
+     estimate can be biased upward by a large black band, while a genuine blue
+     fill is still visibly a filled blob. A blue perimeter remains extremely
+     sparse inside its own bounding box, so density separates the two without
+     asking a model or using a magic absolute pixel width. */
   const ratio0 = minRatio || 2.5;
   const { labels, count } = studioLabel(mask, w, h);
   const cut = new Uint8Array(w * h);
   if (!count) return { cut, areas: 0, lines: 0, pen: 0, cutPx: 0 };
   const dist = studioChamfer(mask, w, h);
   const size = new Float64Array(count + 1), maxd = new Float64Array(count + 1);
+  const x0 = new Int32Array(count + 1); x0.fill(w);
+  const y0 = new Int32Array(count + 1); y0.fill(h);
+  const x1 = new Int32Array(count + 1); x1.fill(-1);
+  const y1 = new Int32Array(count + 1); y1.fill(-1);
   for (let i = 0; i < w * h; i++) {
     const L = labels[i]; if (!L) continue;
+    const x = i % w, y = (i / w) | 0;
     size[L]++; if (dist[i] > maxd[L]) maxd[L] = dist[i];
+    if (x < x0[L]) x0[L] = x; if (x > x1[L]) x1[L] = x;
+    if (y < y0[L]) y0[L] = y; if (y > y1[L]) y1[L] = y;
   }
   const pen = penIn || 1;
   const minPx = Math.max(24, Math.round(w * h * 0.00002));
   const keep = new Uint8Array(count + 1);
   let areas = 0, lines = 0, cutPx = 0;
   for (let L = 1; L <= count; L++) {
-    if (maxd[L] / pen >= ratio0 && size[L] >= minPx) { keep[L] = 1; areas++; }
+    const bw = x1[L] - x0[L] + 1, bh = y1[L] - y0[L] + 1;
+    const density = size[L] / Math.max(1, bw * bh);
+    const thickEnough = maxd[L] / pen >= ratio0;
+    const denseFill = density >= 0.24 && Math.min(bw, bh) >= Math.max(4, pen * 1.8);
+    if ((thickEnough || denseFill) && size[L] >= minPx) { keep[L] = 1; areas++; }
     else lines++;
   }
   for (let i = 0; i < w * h; i++) if (labels[i] && keep[labels[i]]) { cut[i] = 1; cutPx++; }
@@ -3856,7 +3942,169 @@ async function studioDrawingPlan(sharp, drawingBuf) {
   collect(cut, "open");            // blue: MUST be a hole in the render
   collect(blackAreas, "closed");   // black fill: engraving, must stay metal
   collect(metal, "closed");        // untouched metal, must stay metal
-  return { px, w, h, n, ink, face, faceBox, cut, pen, regions };
+  return { px, w, h, n, ink, face, faceBox, blue, cut, pen, regions };
+}
+
+/* ── DETERMINISTIC MATERIAL SPECIFICATION ────────────────────────────────
+   The production drawing is useful to a person because three reserved colours
+   explain three manufacturing operations. It is a poor final input to an
+   image model because the model still has to DECIDE what each colour means.
+
+   This pass removes that decision. Before the renderer is called, the drawing
+   is converted into a flat proof of the finished topology:
+     · actual sheet metal is already shown in the requested metal family;
+     · black and red work is already shown as worked metal of that same family;
+     · blue filled areas are already absent;
+     · white holes enclosed by a blue boundary (most importantly the hoop hole)
+       are already absent;
+     · blue cut/perimeter lines themselves are NOT reproduced as decoration.
+
+   The customer never sees this image. It exists only between the deterministic
+   drawing and the probabilistic material renderer. The renderer no longer
+   interprets BLUE/RED/BLACK at all — it photorealises geometry that is already
+   resolved. No second model call, no extra customer instruction, no new cost.
+   ====================================================================== */
+function studioBlueBoundedWhiteHoles(plan) {
+  const { px, w, h, n, face } = plan;
+  const white = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (face[i] && studioIsBg(px, i * 3)) white[i] = 1;
+  const { labels, count } = studioLabel(white, w, h);
+  if (!count) return new Uint8Array(n);
+
+  const size = new Float64Array(count + 1);
+  for (let i = 0; i < n; i++) if (labels[i]) size[labels[i]]++;
+  let largest = 1;
+  for (let L = 2; L <= count; L++) if (size[L] > size[largest]) largest = L;
+
+  /* One pass over the sheet, not one pass PER component. A 2K drawing can
+     contain hundreds of tiny enclosed white islands; O(regions × pixels)
+     would turn a deterministic pre-pass into the slowest part of the render. */
+  const blueVotes = new Float64Array(count + 1);
+  const redVotes = new Float64Array(count + 1);
+  const blackVotes = new Float64Array(count + 1);
+  const at = (x, y) => y * w + x;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = at(x, y), L = labels[i];
+      if (!L || L === largest) continue;
+      const boundary = (x === 0 || labels[i - 1] !== L) ||
+                       (x === w - 1 || labels[i + 1] !== L) ||
+                       (y === 0 || labels[i - w] !== L) ||
+                       (y === h - 1 || labels[i + w] !== L);
+      if (!boundary) continue;
+      /* Two pixels reaches through antialiasing without reaching across a
+         normal studio line into unrelated artwork. We count the actual ink
+         colours around the component; a true hole is overwhelmingly blue,
+         while a polished enclosed shape is overwhelmingly red or black. */
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) > 2) continue;
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const q = at(xx, yy);
+        if (labels[q] === L) continue;
+        const p = q * 3;
+        if (studioIsBluePixel(px, p)) blueVotes[L]++;
+        else if (studioIsRedPixel(px, p)) redVotes[L]++;
+        else if (studioIsBlack(px, p)) blackVotes[L]++;
+      }
+    }
+  }
+
+  const holeLabel = new Uint8Array(count + 1);
+  const minPx = Math.max(20, Math.round(n * 0.00001));
+  for (let L = 1; L <= count; L++) {
+    /* The largest white component is the polished face itself. It is bounded
+       by the charm's blue outer cut line and must NEVER be mistaken for one
+       enormous hole. */
+    if (L === largest || size[L] < minPx) continue;
+    const blue = blueVotes[L], red = redVotes[L], black = blackVotes[L];
+    const votes = blue + red + black;
+    if (votes >= 8 && blue / votes >= 0.72 && blue > (red + black) * 2) holeLabel[L] = 1;
+  }
+
+  const holes = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (labels[i] && holeLabel[labels[i]]) holes[i] = 1;
+  return holes;
+}
+
+function studioSpecCutMask(plan, zones) {
+  const { w, h, n, blue, cut } = plan;
+  const out = new Uint8Array(n);
+
+  /* Structured cut-out zones are the customer's own manufacturing data. They
+     do not replace the exact pixels; they tell us WHICH blue pixels are an
+     area when a global line-thickness estimate is ambiguous. This keeps the
+     exact contour from the drawing while the decision 'line or hole?' comes
+     from deterministic data, not from an image model. */
+  const cuts = (Array.isArray(zones) ? zones : []).filter((z) =>
+    z && z.intent === "cutout" && Number(z.w) > 0.004 && Number(z.h) > 0.004);
+  /* When the structured list exists it is the authority. In particular, a
+     filled blue area can physically touch the blue outer perimeter; component
+     analysis then sees one connected blue object and could otherwise erase the
+     whole silhouette. Zones let us take only the exact blue pixels inside the
+     declared area. With no structured list (old/uploaded references), fall
+     back to the image-only fill detector. */
+  if (!cuts.length) {
+    for (let i = 0; i < n; i++) if (cut[i]) out[i] = 1;
+  }
+  for (const z of cuts) {
+    const padX = Math.max(2, Math.round(w * 0.008));
+    const padY = Math.max(2, Math.round(h * 0.008));
+    const x0 = Math.max(0, Math.floor(Number(z.x) * w) - padX);
+    const y0 = Math.max(0, Math.floor(Number(z.y) * h) - padY);
+    const x1 = Math.min(w, Math.ceil((Number(z.x) + Number(z.w)) * w) + padX);
+    const y1 = Math.min(h, Math.ceil((Number(z.y) + Number(z.h)) * h) + padY);
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      const i = y * w + x;
+      if (blue[i]) out[i] = 1;
+    }
+  }
+  return out;
+}
+
+function studioMetalPalette(metal) {
+  const m = String(metal || "gold").trim().toLowerCase();
+  const palettes = {
+    silver:  { base: [214, 218, 222], work: [158, 164, 170] },
+    gold:    { base: [224, 181,  74], work: [176, 132,  43] },
+    rose:    { base: [220, 151, 132], work: [173, 108,  93] },
+    solid10: { base: [216, 169,  66], work: [169, 124,  39] },
+    solid14: { base: [229, 185,  76], work: [180, 136,  44] },
+  };
+  return palettes[m] || palettes.gold;
+}
+
+async function studioMaterialSpec(sharp, plan, metal, zones) {
+  if (!sharp || !plan || !plan.faceBox) return null;
+  const { px, w, h, n, face } = plan;
+  const cut = studioSpecCutMask(plan, zones);
+  const bounded = studioBlueBoundedWhiteHoles(plan);
+  const holes = new Uint8Array(n);
+  let holePx = 0, facePx = 0, workPx = 0;
+  for (let i = 0; i < n; i++) {
+    if (cut[i] || bounded[i]) { holes[i] = 1; holePx++; }
+    if (face[i]) facePx++;
+  }
+  if (!facePx || facePx < n * 0.005) return null;
+
+  const red = studioRedMask(px, n, 3);
+  const { base, work } = studioMetalPalette(metal);
+  const out = Buffer.alloc(n * 3, 255);
+  for (let i = 0; i < n; i++) {
+    if (!face[i] || holes[i]) continue;
+    const p = i * 3;
+    out[p] = base[0]; out[p + 1] = base[1]; out[p + 2] = base[2];
+    /* BLACK means engrave. RED means outline-only, whose boundary is engraved.
+       Both are therefore already the same physical operation by the time the
+       AI sees this proof. Blue is intentionally absent from the proof. */
+    if (studioIsBlack(px, p) || red[i]) {
+      out[p] = work[0]; out[p + 1] = work[1]; out[p + 2] = work[2];
+      workPx++;
+    }
+  }
+  const buf = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
+    .png().toBuffer();
+  return { buf, facePx, holePx, workPx, w, h };
 }
 
 /* the tinted copy that goes to the model — the drawing in Storage is untouched */
@@ -4108,6 +4356,7 @@ async function handleStudioRender({ body, event, origin }) {
   const metal = studioCleanText(body?.metal || session.metal || "gold");
 
   const cutMode = String(cfg.renderCutCheck || "off").trim().toLowerCase();
+  const deterministicSpecEnabled = cfg.renderDeterministicSpec !== false;
   try {
     await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
                      renderQuality: quality, renderModel: studioModelConfig.id,
@@ -4116,49 +4365,60 @@ async function handleStudioRender({ body, event, origin }) {
     const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
     const bw = await storagePathToBuffer(bwPath);
 
-    /* ── THE MODEL IS A SHADER, NOT A DRAUGHTSMAN ─────────────────────────
-       Topology — what is metal and what is a hole — is known exactly from the
-       drawing before this request is made, so it is not left to the model to
-       infer. Interior metal is flooded with an explicit tint (nothing is meant
-       by absence any more), the declared holes are punched afterwards, and a
-       render that cut into metal is rejected rather than repaired. What the
-       model is asked for is what gold looks like. */
-    /* ── THE METAL TINT IS REVERTED. DO NOT REINSTATE IT UNCOUPLED. ───────
-       Tinting interior metal green was supposed to stop white meaning two
-       things. It shipped as TWO changes that were not bound together: the
-       prompt was told "white is never metal", and a separate pixel pass was
-       supposed to make that true. Any time the pixel pass did not run or did
-       not reach every white pixel — sharp missing, a leaked flood fill, an
-       anti-aliased edge, cutMode off — the model was reading a drawing whose
-       metal was still WHITE while being told white is never metal. It did
-       exactly what it was told and cut the field out. That is the big white
-       opening in every render since.
+    /* ── DETERMINISTIC SPECIFICATION → AI MATERIAL RENDER ──────────────────
+       This is the boundary the render previously did not have. The approved
+       drawing still contains BLUE/RED/BLACK because those colours are ideal
+       production instructions for people and for the editor. The image model
+       no longer receives that vocabulary on the normal path.
 
-       If this is ever tried again the tint and the prompt line must be
-       decided by the same value at the same moment, and the prompt must fall
-       back to the white wording whenever the tint reports zero pixels
-       filled. studioTintMetal() is left in the file, unused, for that. */
+       Code resolves the drawing first into a flat material proof in which:
+         polished metal is already metal-coloured,
+         engraved/outline work is already darker metal,
+         and openings are already absent/white.
+
+       The AI therefore has exactly one job: make that already-resolved object
+       look like real jewellery. If Sharp is unavailable or the deterministic
+       plan cannot be built safely, the old colour-coded path remains as the
+       automatic fallback rather than failing a paid render. */
     const sharpMod = studioSharp();
     let studioPlan = null;
-    if (sharpMod && cutMode !== "off") {
+    if (sharpMod && (deterministicSpecEnabled || cutMode !== "off")) {
       try { studioPlan = await studioDrawingPlan(sharpMod, bw.buffer); }
       catch (e) { console.error("[studio] drawing plan skipped:", e?.message || e); studioPlan = null; }
     }
-    const images = [
-      { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" },
-    ];
 
     const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
-    const effectivePrompt = buildLineArtToCharmPrompt({ metal, zones: renderZones });
+    let materialSpec = null;
+    if (deterministicSpecEnabled && sharpMod && studioPlan) {
+      try { materialSpec = await studioMaterialSpec(sharpMod, studioPlan, metal, renderZones); }
+      catch (e) {
+        console.error("[studio] material spec skipped:", e?.message || e);
+        materialSpec = null;
+      }
+    }
+    const specUsed = !!(materialSpec && materialSpec.buf);
+    const images = [specUsed
+      ? { buffer: materialSpec.buf, mime: "image/png", filename: "material-spec.png" }
+      : { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" }
+    ];
 
-    await vRef.set({ renderStage: "rendering", renderRunId }, { merge: true });
+    const effectivePrompt = specUsed
+      ? buildMaterialSpecToCharmPrompt({ metal })
+      : buildLineArtToCharmPrompt({ metal, zones: renderZones });
 
-    /* studioModelConfig was resolved and its key proved above, before the
-       debit. Nothing about the request changes with the renderer: the same
-       drawing, the same prompt and the same zone census go to both, because
-       what "high" buys is a different renderer, not different instructions —
-       and callImageModelEdits already mirrors the lineart_to_charm role
-       labels and the geometry/background policy into the OpenAI prompt. */
+    await vRef.set({
+      renderStage: "rendering", renderRunId,
+      renderSpecMode: specUsed ? "deterministic-material" : "legacy-colour-fallback",
+      renderSpecFacePx: specUsed ? materialSpec.facePx : 0,
+      renderSpecHolePx: specUsed ? materialSpec.holePx : 0,
+      renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
+    }, { merge: true });
+
+    /* Both renderer choices now receive the SAME deterministic material proof.
+       The old geometry override is intentionally not appended on this path:
+       the exact hoop and silhouette already exist in IMAGE 1, and another
+       prose description of where the hoop ought to be would reintroduce a
+       second authority. The legacy fallback keeps the old policy unchanged. */
     let outBuf = await callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
       model: studioModelConfig.id,
@@ -4167,8 +4427,8 @@ async function handleStudioRender({ body, event, origin }) {
       quality: "high",
       output_format: "png",
       images,
-      imageRoles: "lineart_to_charm",
-      charmGeometryPolicy: "flat_integrated_eyelet",
+      imageRoles: specUsed ? "material_spec_to_charm" : "lineart_to_charm",
+      charmGeometryPolicy: specUsed ? null : "flat_integrated_eyelet",
       /* ── ONE VOICE ABOUT THE BACKGROUND ──────────────────────────────────
          backgroundPolicy: "solid_black" appends a block headed "BACKEND-
          ENFORCED, OVERRIDES EVERYTHING ABOVE" as the LITERAL LAST WORDS of
@@ -4184,7 +4444,8 @@ async function handleStudioRender({ body, event, origin }) {
          model believed was black. The studio render's presentation is
          defined ONCE, in STUDIO_RENDER_FINISH. Nothing overrides it.
 
-         The geometry policy stays: it contradicts nothing. */
+         The legacy fallback keeps its geometry policy; the deterministic-spec
+         path does not add one because IMAGE 1 is already the exact geometry. */
       backgroundPolicy: null,
     });
 
