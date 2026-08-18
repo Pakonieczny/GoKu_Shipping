@@ -4588,23 +4588,6 @@ async function handleStudioRender({ body, event, origin }) {
       ? { buffer: materialSpec.buf, mime: "image/png", filename: "material-spec.png" }
       : { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" }
     ];
-    const bucket = getBucket();
-    let renderSpecURL = "", renderSpecPath = "";
-    if (specUsed) {
-      try {
-        renderSpecPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-material-spec.png`;
-        const specToken = newDownloadToken();
-        await bucket.file(renderSpecPath).save(materialSpec.buf, {
-          resumable: false,
-          contentType: "image/png",
-          metadata: { metadata: { firebaseStorageDownloadTokens: specToken, uid, sessionId, version: String(n), renderSpec: "1" } },
-        });
-        renderSpecURL = tokenDownloadURLFor(bucket.name, renderSpecPath, specToken);
-      } catch (e) {
-        console.error("[studio] material spec upload skipped:", e?.message || e);
-        renderSpecURL = ""; renderSpecPath = "";
-      }
-    }
     let renderStyleRef = null;
     if (specUsed) {
       try { renderStyleRef = await ensureStudioGoldStyleReference(); }
@@ -4631,8 +4614,6 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecRoiSignalPx: Number(studioPlan?.roiSignalPx || 0),
       renderSpecRoiBox: studioPlan?.roiBox || null,
       renderSpecSignalBox: studioPlan?.roiSignalBox || null,
-      renderSpecURL: renderSpecURL || null,
-      renderSpecPath: renderSpecPath || null,
       renderStyleRefPath: renderStyleRef?.storagePath || null,
       renderStyleRefSeeded: !!renderStyleRef?.seeded,
       renderStyleRefUsed: !!renderStyleRef?.buffer?.length,
@@ -4726,6 +4707,7 @@ async function handleStudioRender({ body, event, origin }) {
        templates render any property URL containing uploads+extension as a
        clickable thumbnail, and BOTH halves of the pair go into the cart. */
     const renderPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-charm.png`;
+    const bucket = getBucket();
     const token = newDownloadToken();
     await bucket.file(renderPath).save(outBuf, {
       resumable: false,
@@ -4736,14 +4718,13 @@ async function handleStudioRender({ body, event, origin }) {
 
     await vRef.set({
       renderStatus: "done", renderStage: "done", renderRunId,
-      renderURL, renderPath, renderSpecURL: renderSpecURL || null, renderSpecPath: renderSpecPath || null, renderMetal: metal,
+      renderURL, renderPath, renderMetal: metal,
       renderQuality: quality, renderModel: studioModelConfig.id, renderCost,
       renderedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    return studioJson(200, { ok: true, n, renderURL, renderPath,
-                             renderSpecURL: renderSpecURL || "", renderSpecPath: renderSpecPath || "",
-                             renderMetal: metal, renderQuality: quality, renderModel: studioModelConfig.id,
+    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal,
+                             renderQuality: quality, renderModel: studioModelConfig.id,
                              renderCost, renderRunId }, origin);
   } catch (err) {
     // A failed render must never cost a credit — including a double-priced one.
