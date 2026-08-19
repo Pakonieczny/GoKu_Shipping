@@ -5449,9 +5449,8 @@ async function handleStudioRender({ body, event, origin }) {
        can see, and the server can never run a mode the button never offered.
        With the UI off, `renderPromptMode` in config still decides, which is
        how the mode is set without any UI at all. */
-    const uiOn = cfg.renderPromptModeUI === true;
     const asked = String(body?.promptMode || "").trim().toLowerCase();
-    const promptMode = (uiOn && (asked === "short" || asked === "full"))
+    const promptMode = (asked === "short" || asked === "full")
       ? asked
       : String(cfg.renderPromptMode || "full").trim().toLowerCase();
     const useShort = specUsed && promptMode === "short";
