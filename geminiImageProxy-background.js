@@ -733,6 +733,7 @@ async function callGeminiImagesEdits({
   imageRoles,
   charmGeometryPolicy,
   backgroundPolicy,
+  imageSizeTier,
 }) {
   return callGeminiGenerateContentImage({
     apiKey,
@@ -743,6 +744,7 @@ async function callGeminiImagesEdits({
     imageRoles,
     charmGeometryPolicy,
     backgroundPolicy,
+    imageSizeTier,
   });
 }
 
@@ -819,8 +821,10 @@ async function callOpenAIImagesEdits({
   let promptText = String(prompt || "");
   if (imageRoles === "style_reference") {
     promptText = `${promptText.trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`;
-  } else if (imageRoles === "line_art_style" || imageRoles === "customer_lineart" ||
-             imageRoles === "lineart_to_charm" || imageRoles === "material_spec_to_charm") {
+  } else if (imageRoles !== "none" &&
+             (imageRoles === "line_art_style" || imageRoles === "customer_lineart" ||
+              imageRoles === "lineart_to_charm" || imageRoles === "material_spec_to_charm" ||
+              imageRoles === "colour_drawing_to_charm")) {
     const roles = IMAGE_ROLE_LABELS[imageRoles];
     promptText = (images || []).length >= 2
       ? `${promptText.trim()}\n\n${roles.first}\n\n${roles.second}\n\n${roles.lock}`
@@ -831,7 +835,7 @@ async function callOpenAIImagesEdits({
   const policyText = charmPolicyFinalText({ geometryPolicy: charmGeometryPolicy, backgroundPolicy });
   if (policyText) promptText = `${promptText}\n\n${policyText}`;
   form.append("prompt", promptText);
-  form.append("size", String(size || "1024x1024"));
+  form.append("size", String(size || "2048x2048"));
   form.append("quality", normalizeOpenAIQuality(quality));
   form.append("output_format", normalizeOpenAIOutputFormat(output_format));
   form.append("n", "1");
@@ -873,7 +877,7 @@ async function callOpenAIImagesGenerations({
     body: JSON.stringify({
       model,
       prompt: String(prompt || ""),
-      size: String(size || "1024x1024"),
+      size: String(size || "2048x2048"),
       quality: normalizeOpenAIQuality(quality),
       output_format: normalizeOpenAIOutputFormat(output_format),
       n: 1,
@@ -903,7 +907,7 @@ async function callImageModelGenerations(options) {
     : callGeminiImagesGenerations({ ...options, apiKey, model: config.id });
 }
 
-function sizeToAspectRatio(size = "1024x1024") {
+function sizeToAspectRatio(size = "2048x2048") {
   const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());
   if (!m) return "1:1";
   const w = Number(m[1]), h = Number(m[2]);
@@ -1009,16 +1013,43 @@ const IMAGE_ROLE_LABELS = {
      anymore: deterministic code has already converted every manufacturing
      colour into actual metal/opening/engraving semantics. This role therefore
      tells the model to materialise, not decode. */
-  material_spec_to_charm: {
+  /* ── SHORT ON PURPOSE ─────────────────────────────────────────────────
+     These were ~1,400 characters restating the three-tone law, the colour
+     ban and the subject ban — all of which the prompt now states, in the
+     structure borrowed from promptStrBW. Two descriptions of one rule is a
+     reconciliation problem the model resolves by picking, which is how this
+     pipeline lost the black background, then blue-as-engraving, then the
+     kettlebell. So these say only what a LABEL should: which image is which.
+
+     They are never removed entirely. `IMAGE_ROLE_LABELS[imageRoles] ||
+     IMAGE_ROLE_LABELS.edit` means an absent role set silently selects the
+     edit labels, whose IMAGE 2 text declares that image the design truth to
+     reproduce — the exact instruction that produced a kettlebell-shaped
+     charm. Short, never absent. */
+  /* Short, like material_spec_to_charm, and never absent: an absent role set
+     falls through to `edit`, whose IMAGE 2 text declares that image the
+     design truth to reproduce. */
+  colour_drawing_to_charm: {
     first:
-      "IMAGE 1 — DETERMINISTIC MATERIAL SPECIFICATION (STRUCTURAL TRUTH). Its silhouette, openings and worked regions are already resolved exactly. Photorealistically materialise this same object without changing any geometry.",
+      "IMAGE 1 — the colour-coded production drawing. Structural truth. Read its inks as instructed in the prompt above.",
     second:
-      "IMAGE 2 — APPEARANCE REFERENCE ONLY. Use it ONLY for metal colour, polish, reflection behaviour, engraving finish, flatness, edge character, lighting, shadow and photographic realism. Its subject, silhouette, engraving layout, hole layout and hardware are OFF LIMITS and must NOT be copied.",
+      "IMAGE 2 — material reference only. Its subject, outline, artwork, lettering and jump ring must not appear in your output.",
     extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
     single:
-      "IMAGE 1 — DETERMINISTIC MATERIAL SPECIFICATION (STRUCTURAL TRUTH). Its silhouette, openings and worked regions are already resolved exactly. Photorealistically materialise this same object without changing any geometry.",
+      "IMAGE 1 — the colour-coded production drawing. Structural truth. Read its inks as instructed in the prompt above.",
     lock:
-      "FINAL IMAGE-ROLE LOCK: IMAGE 1 owns all structure and geometry. IMAGE 2, when present, owns appearance only: material, polish, lighting, shadow and engraving finish. Materialise IMAGE 1 exactly. Do not add, remove, move, resize or reinterpret any edge, opening, engraving or outline. Do not copy IMAGE 2's subject or hardware.",
+      "FINAL LOCK: geometry from IMAGE 1, material from IMAGE 2. Copying IMAGE 2's subject is a hard fail.",
+  },
+  material_spec_to_charm: {
+    first:
+      "IMAGE 1 — the greyscale map. Structural truth. Read it as instructed in the prompt above.",
+    second:
+      "IMAGE 2 — material reference only. Its subject, outline, artwork, lettering and jump ring must not appear in your output.",
+    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
+    single:
+      "IMAGE 1 — the greyscale map. Structural truth. Read it as instructed in the prompt above.",
+    lock:
+      "FINAL LOCK: geometry from IMAGE 1, material from IMAGE 2. Copying IMAGE 2's subject is a hard fail.",
   },
   line_art_style: {
     first:
@@ -1042,6 +1073,7 @@ async function callGeminiGenerateContentImage({
   imageRoles,
   charmGeometryPolicy,
   backgroundPolicy,
+  imageSizeTier,
 }) {
   const geminiModel =
     String(model || DEFAULT_IMAGE_MODEL).trim() ||
@@ -1049,23 +1081,33 @@ async function callGeminiGenerateContentImage({
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
   // ============================================================
-  // 1K HARD-LOCK — every synchronous image generated by this
+  // 2K BY DEFAULT — every synchronous image generated by this
   // function (Redo button, Standard mode generate, Charm Maker,
-  // run_set_async edits tasks, etc.) outputs at 1K. The batch path
-  // has its own JSONL builder that's also locked to 1K, so every
-  // image-producing surface in the app is consistent. Any `size`
-  // string passed by callers (e.g., "2048x2048") is honored only
-  // for the post-process resize and the prompt's size hint; the
-  // tier sent to Gemini via imageConfig is always 1K.
+  // run_set_async edits tasks, etc.) outputs at 2K, and the batch
+  // path's own JSONL builder honours the tier it is handed, so
+  // every image-producing surface that does not ask for something
+  // else is unchanged.
+  //
+  // This was briefly a 1K hard-lock, which quietly halved the
+  // Listing Generator, the Charm Maker and every batch run. Only
+  // the Custom Charm Studio wanted 1K, and only for its FINAL
+  // render — so 1K is now something a caller asks for, one call at
+  // a time, never something the shared path imposes on everybody.
+  // A caller that passes nothing gets 2K exactly as before, and an
+  // unrecognised tier falls back to 2K rather than to whatever the
+  // model's own default happens to be.
   // ============================================================
-  const sizeKey = "1K";
+  const TIER_PX = { "1K": 1024, "2K": 2048, "4K": 4096 };
+  const askedTier = String(imageSizeTier || "").trim().toUpperCase();
+  const sizeKey = TIER_PX[askedTier] ? askedTier : "2K";
 
   // Existing WxH derivation, used for the post-process resize and
-  // the in-prompt size hint. Default 1024×1024 when no size string
-  // was passed, so the hint matches the locked tier.
+  // the in-prompt size hint. Falls back to the tier's own pixel
+  // size when no size string was passed, so the hint always
+  // matches the tier actually requested.
   const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());
-  const wantW = m ? Number(m[1]) : 1024;
-  const wantH = m ? Number(m[2]) : 1024;
+  const wantW = m ? Number(m[1]) : TIER_PX[sizeKey];
+  const wantH = m ? Number(m[2]) : TIER_PX[sizeKey];
   const wantAR = sizeToAspectRatio(size) || "1:1";
 
   // The generic closing line used to always end with "suitable for a product
@@ -1086,6 +1128,13 @@ async function callGeminiGenerateContentImage({
   const imageInputs = Array.isArray(images) ? images : [];
   // Unknown values fall back to "edit" so a typo can never silently unlock the
   // compositor's guarantees.
+  /* ── "none" IS THE ONLY WAY TO SEND NO LABELS ────────────────────────
+     Passing null or omitting imageRoles does NOT mean "no roles": the lookup
+     below falls back to `edit`, whose IMAGE 2 label declares that image the
+     design truth to reproduce. That fallback is deliberate — a typo must not
+     silently unlock the compositor's guarantees — but it left no way to send
+     a bare prompt. This is that way, and it is explicit at the call site. */
+  const noRoles = String(imageRoles || "") === "none";
   const roleSet = IMAGE_ROLE_LABELS[imageRoles] || IMAGE_ROLE_LABELS.edit;
 
   const parts = [{ text: promptText }];
@@ -1094,17 +1143,19 @@ async function callGeminiGenerateContentImage({
     // the source template with the master charm or reversing their jobs.
     // Every two-image Listing Generator request uses this same ordering:
     // image 1 = destination/template, image 2 = master charm.
-    if (imageInputs.length >= 2) {
-      parts.push({
-        text:
-          index === 0
-            ? roleSet.first
-            : index === 1
-              ? roleSet.second
-              : roleSet.extra(index + 1),
-      });
-    } else {
-      parts.push({ text: roleSet.single });
+    if (!noRoles) {
+      if (imageInputs.length >= 2) {
+        parts.push({
+          text:
+            index === 0
+              ? roleSet.first
+              : index === 1
+                ? roleSet.second
+                : roleSet.extra(index + 1),
+        });
+      } else {
+        parts.push({ text: roleSet.single });
+      }
     }
 
     // Gemini will hard-crash if passed application/octet-stream.
@@ -1126,7 +1177,7 @@ async function callGeminiGenerateContentImage({
   // emits it always: with one reference image the "do not reproduce this
   // object" instruction is the entire point, and it must be last so it carries
   // the most weight.
-  if (imageInputs.length >= 2 || roleSet === IMAGE_ROLE_LABELS.style_reference) {
+  if (!noRoles && (imageInputs.length >= 2 || roleSet === IMAGE_ROLE_LABELS.style_reference)) {
     parts.push({ text: roleSet.lock });
   }
 
@@ -1141,11 +1192,11 @@ async function callGeminiGenerateContentImage({
     contents: [{ role: "user", parts }],
     generationConfig: {
       responseModalities: ["TEXT", "IMAGE"],
-      // imageConfig.imageSize: "1K" tells Gemini to natively produce
-      // a 2048×2048 image. Without this, the model uses its default
-      // (~1024 area) and post-process upscaling has to compensate,
-      // which loses fidelity. Same field/structure the batch JSONL
-      // builder uses (see buildBatchJsonlLine).
+      // imageConfig.imageSize tells Gemini which tier to produce
+      // natively — "2K" for a 2048×2048 image. Without it the model
+      // uses its own default (~1024 area) and post-process upscaling
+      // has to compensate, which loses fidelity. Same field/structure
+      // the batch JSONL builder uses (see buildBatchJsonlLine).
       imageConfig: { imageSize: sizeKey },
     },
   });
@@ -1782,10 +1833,10 @@ const GEMINI_UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1b
 // Build one JSONL request line for the Batch API. Encodes both reference
 // images as inline_data (base64). responseModalities: ["IMAGE"] saves a
 // few output tokens by skipping the model's default text preamble.
-// imageConfig.imageSize: "1K" is the supported way to request the 1K tier
+// imageConfig.imageSize: "2K" is the supported way to lock 2048x2048
 // output per Google's image-generation docs.
 function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize, opts) {
-  const sizeKey = "1K";
+  const sizeKey = String(imageSize || "2K").toUpperCase();
   const safeRefMime = (refMime && refMime.startsWith("image/")) ? refMime : "image/png";
   const safeCharmMime = (charmMime && charmMime.startsWith("image/")) ? charmMime : "image/png";
   const o = opts || {};
@@ -1799,8 +1850,11 @@ function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBa
   // turn causes the charm to appear at the wrong scale relative to
   // the reference image. Standard and Batch modes must produce the
   // same output for the same inputs.
-  // Pixel-size hint follows the requested tier; normal operation is hard-locked to 1K.
-  const sizeHint = "1024x1024";
+  // Pixel-size hint: at 2K we tell the model 2048x2048; at 1K, 1024x1024.
+  const sizeHint = sizeKey === "1K" ? "1024x1024"
+                 : sizeKey === "2K" ? "2048x2048"
+                 : sizeKey === "4K" ? "4096x4096"
+                 : "2048x2048";
   // Same closing-line swap Standard mode performs: when the caller declares
   // a solid-black background, the generic "product photo" line (a white-
   // studio nudge) is replaced by the black-background mandate.
@@ -2273,6 +2327,8 @@ const STUDIO_KINDS = new Set([
   /* the studio composed the drawing itself — this only files it */
   "custom_charm_compose",
   "custom_charm_render",
+  /* read-only: returns the exact prompt a render would send */
+  "custom_charm_prompt",
   "custom_session_status",
 ]);
 
@@ -2346,20 +2402,163 @@ const STUDIO_DEFAULT_CONFIG = {
      the Listing Generator already uses is the same key. */
   renderHighCost: 2,
   renderHighModel: "gpt-image-2",
+  /* ── THE SECOND RENDERER IS PARKED, NOT DELETED ───────────────────────
+     The Standard/High control is hidden in the studio while the render
+     pipeline is being corrected, so every press must land on ONE renderer —
+     otherwise a stale browser tab, or a session saved while the control was
+     still on screen, keeps sending quality:"high" and quietly charges two
+     credits for a tier nobody can see or choose. The server is the authority
+     on price, so the server is where it is switched off. Flip this to true in
+     config/customStudio to bring the tier back with no deploy; the client
+     reveals its control from the same value. */
+  renderQualityTiers: false,
+  /* ── 2K IN, 1K OUT ────────────────────────────────────────────────────
+     The two studio steps are not the same job, so they do not share a tier,
+     and NEITHER of them reaches outside the studio: the shared image call
+     defaults to 2K for everybody and only moves when a caller asks.
+
+     studioDrawingTier is the INPUT side. The production drawing is what the
+     renderer is later handed, and it is also what code measures —
+     studioPenWidth and the 2.5×-pen test that separates a cut-out from a cut
+     edge both read the pen off the drawing itself, so halving the canvas
+     halves the pen and leaves a hairline with fewer pixels to be judged on.
+     It stays at 2K.
+
+     studioRenderTier is the OUTPUT side — the finished metal charm the
+     customer looks at. Nothing downstream measures it, so the extra tier buys
+     presentation only, at real latency on every press.
+
+     Values are "1K" | "2K" | "4K"; anything else falls back to that step's
+     OWN default, so a typo in one cannot silently change the other. No new
+     environment variable — GEMINI_STUDIO_IMAGE_MODEL is still read if it is
+     already set, below studioImageModel so Firestore stays the faster lever. */
+  studioImageModel: "gemini-3-pro-image",
+  studioDrawingTier: "2K",
+  studioRenderTier: "1K",
+  /* THE MASK NEVER GOES TO THE MODEL SMALLER THAN THIS. It is built at the
+     drawing's own resolution, so a drawing that arrived small (an older
+     session, a reduced upload, a fallback that skipped the 2K tier) produced
+     a small mask — and a small mask is a blurred instruction: the thin
+     engraved strokes and the one-pen-wide cut edges are exactly the features
+     that vanish first when a vision encoder downsamples. Upscaling happens
+     AFTER detection, so nothing about which pixels are cut, engraved or
+     polished changes; only the picture the model is handed gets bigger. */
+  studioMaskMinPx: 2048,
   /* PRE-RENDER STRUCTURAL SPEC. When enabled, the coloured production drawing
      is deterministically resolved into a flat material map BEFORE any image
-     model sees it: actual metal is already metal-coloured, actual openings are
+     model sees it: solid metal, engraved work and actual openings are each a
+     distinct GREY (colour belongs to the finish reference, never to this map);
+     openings are
      already white/background, and black/red work is already a darker tone of
      the same metal. The model therefore renders material and light instead of
      having to interpret manufacturing colours. Set false only as an emergency
      fallback; the legacy colour-coded render path remains intact underneath. */
   renderDeterministicSpec: true,
-  /* "off" | "observe" | "enforce" — see the cut check in handleStudioRender.
+  /* "off" | "punch" | "observe" | "enforce" — see the cut check in
+     handleStudioRender. "punch" is the one to reach for when the render keeps
+     engraving a declared cut-out: it composites the openings the mask already
+     knows about and judges nothing else.
      This is POST-render verification and remains deliberately separate from
      the deterministic PRE-render specification above. */
+  /* ── THE CUT CHECK IS LIVE, WITH AUTOMATIC RE-RENDERS ─────────────────
+     "punch" is the mode to run: the declared openings are composited in by
+     code, which is the repairable failure and needs no model and no retry.
+     The two verdicts code CANNOT repair — metal removed that should be solid,
+     or a silhouette that drifted too far to map — trigger a fresh render,
+     up to `renderRetries` extra attempts.
+     Modes: "off" | "punch" | "observe" | "enforce". */
+  /* ── NO PIXEL EDITING. THIS IS "off" AND SHOULD STAY THERE. ────────────
+     "punch" fills declared openings with ONE flat colour sampled from the
+     render's corners, at hard 1px edges, mapped through a bounding-box
+     scaling. When the mapping is a few pixels out — and it routinely is —
+     that flat shape spills over the metal and reads as a white sticker laid
+     on the charm. Measured on a real render: 66% of the affected pixels were
+     the single value (249,248,248). It cannot blend, so it can only be right
+     or obviously wrong.
+
+     Modes:
+       "off"      nothing runs. What ships.
+       "verify"   the check runs and a failed render is RE-RENDERED. No pixel
+                  is ever touched. This is the mode to use if you want the
+                  openings enforced.
+       "observe"  the check runs and files its numbers; image untouched.
+       "punch"    fills declared openings. Produces the sticker artefact.
+       "enforce"  punch AND reject undeclared cuts. */
+  /* WHICH IMAGE THE RENDERER IS SHOWN.
+       "mask"    the greyscale material spec (176/96/255) — deterministic code
+                 has already resolved every cut/engrave/polish decision.
+       "drawing" the colour-coded production drawing itself, with the model
+                 reading the fill law directly.
+     The gold material reference is attached either way. Flip in Firestore,
+     no deploy. */
+  renderInput: "mask",
   renderCutCheck: "off",
+  /* The naming pass. PARKED — the prompt no longer carries the census, so
+     nothing read its output. Turning this back on also requires appending
+     `census` in buildMaterialSpecToCharmPrompt; on its own it just pays for
+     a vision call nobody reads. */
+  renderNameRegions: false,
+  /* Extra attempts after a failed check. 0 restores the previous behaviour
+     exactly. Retries are never charged: the debit happens once, before the
+     first attempt. */
+  renderRetries: 2,
+  /* A retry must not outlive the browser. The client's watcher gives up at
+     GEN_TIMEOUT_MS (180s) and shows the customer a failure even though the
+     server is still working and will eventually write renderStatus:"done" —
+     so a new attempt is only STARTED if the time already spent, plus the
+     time the previous attempt actually took, still fits inside this budget.
+     Renders measured at 35-80s upstream, so this admits a second attempt
+     comfortably and a third only when the first two were quick. */
+  renderRetryBudgetMs: 150000,
 };
 let _studioCfg = null, _studioCfgAt = 0;
+/* ── ONE PLACE THAT DECIDES WHAT THE STUDIO GENERATES WITH ────────────────
+   Both studio image steps resolved their model inline, in two separate
+   expressions that had to be kept in step by hand. They now come from here,
+   so "what is the studio running on" has one answer and one place to change
+   it. Order is deliberate: Firestore first (no deploy), then the existing env
+   var if someone has already set it, then the built-in default. */
+const STUDIO_IMAGE_MODEL_FALLBACK = "gemini-3-pro-image";
+const STUDIO_DRAWING_TIER_FALLBACK = "2K";   // the input side
+const STUDIO_RENDER_TIER_FALLBACK = "1K";    // the output side
+const STUDIO_MASK_MIN_PX_FALLBACK = 2048;
+
+function studioImageModelId(cfg) {
+  return String(
+    (cfg && cfg.studioImageModel) ||
+    process.env.GEMINI_STUDIO_IMAGE_MODEL ||
+    STUDIO_IMAGE_MODEL_FALLBACK
+  ).trim();
+}
+
+/* An unrecognised value falls back to this step's OWN default rather than to
+   a shared one — a typo in the render key must not silently drop the drawing,
+   and a typo in the drawing key must not silently inflate every render. */
+function studioTier(value, fallback) {
+  const t = String(value || "").trim().toUpperCase();
+  return t === "1K" || t === "2K" || t === "4K" ? t : fallback;
+}
+
+/* the production drawing — the render's input, and what the pixel plan measures */
+function studioDrawingTier(cfg) {
+  return studioTier(cfg && cfg.studioDrawingTier, STUDIO_DRAWING_TIER_FALLBACK);
+}
+
+/* the finished metal charm — presentation only, nothing downstream measures it */
+function studioRenderTier(cfg) {
+  return studioTier(cfg && cfg.studioRenderTier, STUDIO_RENDER_TIER_FALLBACK);
+}
+
+/* the mask's minimum long edge; 0 or a junk value disables the floor */
+function studioMaskMinPx(cfg) {
+  const n = Number(cfg && cfg.studioMaskMinPx);
+  return Number.isFinite(n) && n >= 256 && n <= 8192 ? Math.round(n) : STUDIO_MASK_MIN_PX_FALLBACK;
+}
+
+function studioImageSizeString(tier) {
+  return tier === "1K" ? "1024x1024" : tier === "4K" ? "4096x4096" : "2048x2048";
+}
+
 async function studioConfig() {
   if (_studioCfg && Date.now() - _studioCfgAt < 60000) return _studioCfg;
   try {
@@ -2374,6 +2573,31 @@ async function studioConfig() {
 
 /** Hourly ceiling on top of the wallet, so a stolen ID token cannot burn the
  *  Gemini budget in one go. */
+/* ── RATE CEILING, WITH AN EXEMPTION ──────────────────────────────────────
+   Checks the hourly ceilings unless the account is unlimited, in which case
+   the counter is not read and not incremented — a testing session must not
+   silently fill the window for the account's own later use.
+
+   Reads the user doc once and only when a uid is supplied. A failure to read
+   it is treated as "not unlimited", so the ceiling still applies: the safe
+   direction for a limiter is to stay on. */
+async function studioUnlimitedUid(uid) {
+  if (!uid) return false;
+  try {
+    const snap = await getDb().doc(`users/${uid}`).get();
+    return walletIsUnlimited(snap.exists ? snap.data()?.wallet : null);
+  } catch (e) {
+    console.error("[studio] unlimited check failed, ceiling stays on:", e?.message || e);
+    return false;
+  }
+}
+
+async function studioGateOk(uid, event) {
+  if (await studioUnlimitedUid(uid)) return true;
+  return (await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) &&
+         (await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP));
+}
+
 async function studioBudgetOk(key, id, max) {
   const db = getDb();
   const hash = require("crypto").createHash("sha256").update(String(id)).digest("hex").slice(0, 32);
@@ -2400,8 +2624,17 @@ async function studioBudgetOk(key, id, max) {
    generation fails. */
 /* ── UNLIMITED ACCOUNTS ────────────────────────────────────────────────────
  * `users/{uid}.wallet.unlimited === true` exempts an account from the credit
- * meter: generations and renders still run, still log to the ledger, and
- * still obey the hourly rate ceilings — only the balance is left alone.
+ * meter AND from the hourly rate ceilings. Generations and renders still run
+ * and still log to the ledger; only the balance and the counter are left
+ * alone.
+ *
+ * The ceilings (25 gens/hour per uid, 60 per IP, drawings and renders sharing
+ * one counter) exist so a public storefront cannot be used to drive the
+ * Gemini key as fast as somebody can click. That is right for a shopper and
+ * wrong for whoever is developing the studio, who can exhaust an hour's
+ * budget in twenty-five minutes of testing and then be locked out for the
+ * rest of the window — the counter resets an hour after its FIRST request,
+ * not on a sliding hour, so there is no partial recovery.
  *
  * It lives on the USER document rather than in config/customStudio because
  * that config doc is readable by any signed-in visitor (see firestore.rules),
@@ -3119,29 +3352,124 @@ ${zoneBlock(zones, "drawing")}`;
    intentionally SHORTER than buildLineArtToCharmPrompt(): BLUE/RED/BLACK have
    already been resolved by code, so repeating the colour law here would put
    interpretation back into the very stage we just made deterministic. */
-function buildMaterialSpecToCharmPrompt({ metal }) {
+/* ── TWO IMAGES, TWO JOBS, NO OVERLAP ─────────────────────────────────────
+   IMAGE 1 says WHERE: cut through, engraved, or plain polished metal. It is
+   greyscale and says nothing about colour.
+   IMAGE 2 says HOW METAL BEHAVES: polish, specularity, how a shallow engraved
+   stroke catches light, edge character, lighting, shadow.
+
+   THE ALLOY IS NOW NAMED EVEN WHEN THE SAMPLE IS ATTACHED, and that reverses
+   a deliberate earlier decision, so here is why. The old rule was "one colour
+   authority, never two": with the sample attached the metal went unnamed and
+   IMAGE 2 owned colour outright. That is airtight reasoning about prompt
+   conflict and it produced a real defect — the customer's metal choice
+   reached nothing. Whatever alloy the stored sample happens to be is the
+   alloy every customer receives, silver and rose alike.
+
+   The split that fixes it is not "two opinions about colour", it is one
+   opinion each about two different things: the WORDS own which alloy it is,
+   the SAMPLE owns how that alloy behaves under light. Those cannot contradict
+   each other because they answer different questions, and the sample is told
+   in as many words that its own colour is not the subject. Replacing the
+   stored sample with a correctly-coloured one is then an improvement rather
+   than a prerequisite.                                                    */
+/* ── THE SAME PROMPT, FOR THE COLOUR-CODED DRAWING ───────────────────────
+   Identical skeleton to the greyscale builder below — itself a mirror of the
+   Listing Generator's promptStrBW — with the mapping swapped for the studio's
+   own fill law: black engraves, blue cuts, red outlines, white is polished.
+
+   One case the greyscale map does not need. BLUE IS USED TWO WAYS in these
+   drawings: a blue FILLED AREA is an opening, but a blue LINE is a cut EDGE —
+   the outer silhouette and the hoop's ring are drawn as blue strokes with
+   white inside. Reading those as openings would cut the charm's own body
+   away, so it gets its own numbered case. Red is likewise always a line and
+   never an area. Both are recorded failure modes in this pipeline, not
+   hypotheticals.                                                           */
+function buildColourDrawingToCharmPrompt({ metal, hasReference }) {
   const m = studioCleanText(metal) || "gold";
-  const label = ({
-    silver: "polished sterling silver",
-    gold: "polished 14k gold",
-    rose: "polished 14k rose gold",
-    solid10: "polished 10k solid gold",
-    solid14: "polished 14k solid gold",
-  })[m] || ("polished " + m);
+  const bare = ({
+    silver: "sterling silver",
+    gold: "14k gold",
+    rose: "14k rose gold",
+    solid10: "10k solid gold",
+    solid14: "14k solid gold",
+  })[m] || m;
 
-  const header =
-`DETERMINISTIC MATERIAL SPECIFICATION → FINISHED CHARM
+  const second = hasReference
+    ? `\n    The SECOND image is strictly a MATERIAL REFERENCE. You must NEVER copy, merge, or include the subject matter or object shown in the second image. \n`
+    : "";
+  const ignoreSecond = hasReference
+    ? `\n    • IGNORE SECOND IMAGE SUBJECT: Do NOT add or draw the object from the SECOND image. Use the second image ONLY to understand the metal's colour, polish and lighting.`
+    : "";
 
-Render ONE finished charm as a photorealistic flat ${label} charm. IMAGE 1 is a machine-resolved material specification and is the only structural truth.
+  return `CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a photorealistic ${bare} charm.
+${second}
+    TASK: Generate a photograph of a real metal charm based STRICTLY on the object shown in the FIRST image. The final image must be the EXACT SAME object as the FIRST image.
 
-1:1 STRUCTURAL LOCK — HIGHEST PRIORITY
-• Preserve IMAGE 1 exactly: same outer silhouette, same integrated top hoop, same openings, same worked regions, same proportions.
-• Do not redesign, beautify, simplify, add, remove, move, resize or reinterpret any geometry.
-• The lighter metal-coloured face is polished sheet metal. The darker same-metal marks are shallow engraved/outlined work. White areas are already absent/background.
-• Convert only the flat proof into believable real ${label}: material, polish, subtle engraving finish, light and contact shadow. Nothing structural changes.`;
+    HARD CONSTRAINTS (NON-NEGOTIABLE):
+    • 100% STRUCTURAL MATCH: Keep all outer perimeters, overall shape, and proportions 100% identical to the FIRST image.${ignoreSecond}
+    • FILL LAW (CRITICAL — THE FIRST IMAGE'S INKS ARE INSTRUCTIONS, NOT COLOURS TO COPY):
+        The FIRST image is a production drawing. Its inks tell you what to do with the metal; none of them is the colour of the finished charm. Take no colour from it. Before rendering any region, classify it:
+        1. WHITE INSIDE THE CHARM — POLISHED METAL (the most common case): plain unworked sheet. Render it as bright, smooth, reflective ${bare}.
+        2. BLACK FILLED AREA — ENGRAVED METAL: the sheet is unbroken and the metal is still there; only its surface has been worked. Render it as the SAME alloy in the SAME colour, told apart by finish alone — satin against mirror, the way a brushed band reads against a polished one on a single ring. NEVER render it as a different metal, a separate inlay, enamel, or a printed disc.
+        3. BLUE FILLED AREA — CUT CLEAN THROUGH: the metal is ABSENT. You see the background straight through the charm, bounded by a thin bright inner cut edge where the sheet's thickness catches the light, with a small soft shadow just inside. That edge and that shadow are what prove it is open.
+        4. BLUE LINE — A CUT EDGE, NOT AN OPENING: a blue STROKE with white on the inside is the boundary the metal is cut along, not a hole. The charm's outer silhouette and the hoop's ring are drawn this way. Render solid metal right up to that line and stop. Cutting away everything a blue line encloses would remove the charm itself.
+        5. RED LINE — AN OUTLINE ONLY: it marks a boundary. The area it encloses is unchanged polished metal, exactly as in case 1. Never fill it, never engrave it, never cut it.
+        6. THE FINGERTIP TEST: for every region ask — would a fingertip find smooth polished metal, find metal whose surface is textured but continuous, or pass straight through and touch nothing? Smooth → case 1. Textured but continuous → case 2. Nothing there → case 3.
+        HARD FAIL: a blue filled area rendered as engraving, shading or a darker patch instead of an actual opening.
+        HARD FAIL: a black area, a red area, or the inside of a blue LINE rendered as an opening. Metal the drawing says is there must be there.
+    • MATERIAL: The whole charm is one alloy: ${bare}. Thin flat sheet metal with crisp cut edges, not a thick moulded token, and the top hoop is part of the same sheet rather than an attached jump ring.
+    • BACKGROUND: A plain pure WHITE studio background with one soft contact shadow beneath the charm. Every opening cut through the metal appears in that shadow as a corresponding gap of clean white.
+    • NO INVENTION: Do not add, remove, move, resize or reinterpret any geometry, and add no gemstones, borders, engraving or lettering the FIRST image does not show.`;
+}
 
-  return header + "\n\n" + renderConstraintBlocks() +
-         "\n\n" + STUDIO_RENDER_FINISH;
+/* ── promptStrBW, REVERSED. NOTHING ELSE. ────────────────────────────────
+   A direct mirror of the Listing Generator's line-art prompt, which works.
+   Same skeleton, same section order, same numbered-classification rule, same
+   two HARD FAILs, same three short mechanical bullets at the end.
+
+   Only the mapping is inverted: that prompt reads a gold photo and decides
+   what to INK; this one reads the grey map and decides what to RENDER.
+
+   Everything I had accumulated on top — the region census, a tone ceiling,
+   a third hard fail, an extra numbered case, the presentation and doctrine
+   blocks — is gone. The census is still computed and still filed on the
+   version doc; it is simply not appended here. Restoring it is one line.  */
+function buildMaterialSpecToCharmPrompt({ metal, hasReference, census }) {
+  const m = studioCleanText(metal) || "gold";
+  const bare = ({
+    silver: "sterling silver",
+    gold: "14k gold",
+    rose: "14k rose gold",
+    solid10: "10k solid gold",
+    solid14: "14k solid gold",
+  })[m] || m;
+
+  const second = hasReference
+    ? `\n    The SECOND image is strictly a MATERIAL REFERENCE. You must NEVER copy, merge, or include the subject matter or object shown in the second image. \n`
+    : "";
+  const ignoreSecond = hasReference
+    ? `\n    • IGNORE SECOND IMAGE SUBJECT: Do NOT add or draw the object from the SECOND image. Use the second image ONLY to understand the metal's colour, polish and lighting.`
+    : "";
+
+  return `CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a photorealistic ${bare} charm.
+${second}
+    TASK: Generate a photograph of a real metal charm based STRICTLY on the object shown in the FIRST image. The final image must be the EXACT SAME object as the FIRST image.
+
+    HARD CONSTRAINTS (NON-NEGOTIABLE):
+    • 100% STRUCTURAL MATCH: Keep all outer perimeters, overall shape, and proportions 100% identical to the FIRST image.${ignoreSecond}
+    • GREY MAP RULE (CRITICAL — GREY MAPS 1:1 TO METAL, WHITE TO ABSENT METAL):
+        Grey in the FIRST image represents metal that is physically there. White enclosed by the charm represents metal that has been cut away. Take no colour from the FIRST image. Before rendering any region, classify it:
+        1. MID GREY — POLISHED METAL (the most common case): plain unworked sheet. Render it as bright, smooth, reflective ${bare}.
+        2. DARK GREY — ENGRAVED METAL: the sheet is unbroken and the metal is still there; only its surface has been worked. Render it as the SAME alloy in the SAME colour, told apart by finish alone — satin against mirror, the way a brushed band reads against a polished one on a single ring. NEVER render it as a different metal, a separate inlay, enamel, or a printed disc.
+        3. WHITE — CUT CLEAN THROUGH: the metal is ABSENT. You see the background straight through the charm, bounded by a thin bright inner cut edge where the sheet's thickness catches the light, with a small soft shadow just inside. That edge and that shadow are what prove it is open.
+        4. THE FINGERTIP TEST: for every region ask — would a fingertip find smooth polished metal, find metal whose surface is textured but continuous, or pass straight through and touch nothing? Smooth → case 1. Textured but continuous → case 2. Nothing there → case 3.
+        5. GREY IS NEVER AN OPENING, however it is surrounded. A mid grey shape sitting inside a dark grey field is unbroken polished metal standing in an engraved field, and a charm often carries one directly beside a cut-out of similar size and shape.
+        HARD FAIL: a region the FIRST image shows as white rendered as engraving, shading or a darker patch instead of an actual opening.
+        HARD FAIL: a region the FIRST image shows as grey rendered as an opening. Metal the map says is there must be there.
+    • MATERIAL: The whole charm is one alloy: ${bare}. Thin flat sheet metal with crisp cut edges, not a thick moulded token, and the top hoop is part of the same sheet rather than an attached jump ring.
+    • BACKGROUND: A plain pure WHITE studio background with one soft contact shadow beneath the charm. Every opening cut through the metal appears in that shadow as a corresponding gap of clean white.
+    • NO INVENTION: Do not add, remove, move, resize or reinterpret any geometry, and add no gemstones, borders, engraving or lettering the FIRST image does not show.`;
 }
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
@@ -3175,6 +3503,11 @@ BACKGROUND AND SHADOW:
   THE SHADOW IS REQUIRED. A charm sitting on white with no shadow reads as a
   cut-out pasted onto a blank page, not as a photographed object, and is an
   incomplete image.
+• AN OPENING IS A PHYSICAL EVENT, NOT A DARKER PATCH. You see the white ground
+  straight through it, bounded by a thin bright inner cut edge where the
+  sheet's thickness catches the light, with a small soft shadow just inside.
+  That edge and that shadow are what prove it is open. Filled, tinted,
+  recessed, sculpted or merely shaded is the worst failure in this render.
 • THE SHADOW IS A TRUE SILHOUETTE OF THE CHARM AND OF NOTHING ELSE. Every
   opening cut through the metal — the hoop's hole and every cut-out in the
   design — appears in the shadow as a corresponding gap of clean white.
@@ -3191,10 +3524,11 @@ ENGRAVING RENDERED TOO DARK. Every line below is a CEILING, not a target:
   and polished bands on one ring. The polished metal stays bright and
   specular; the contrast between the two comes from finish and the gentlest
   tonal shift, never from a change of colour.
-• Converted to greyscale, an engraved area and the polished metal touching it
-  would differ only slightly. Brown, bronze, copper, grey, charcoal or black
-  is wrong, and so is any recess that reads as a dark shape rather than as
-  worked gold.
+• Converted to greyscale, an engraved area sits about a fifth darker than the
+  polished metal touching it, and that is a CEILING — closer is always better,
+  further apart is always wrong. Brown, bronze, copper, grey, charcoal or black
+  is wrong, and so is any recess that reads as a dark shape, a separate inlay
+  or a second alloy rather than as the same worked gold.
 • If the engraving is the first thing the eye lands on, or if it could be
   mistaken for a hole, it is far too dark. Err lighter every time.
 • DEPTH IS SUPERFICIAL. A shallow, delicate skim of the surface — never a
@@ -3208,8 +3542,8 @@ ENGRAVING RENDERED TOO DARK. Every line below is a CEILING, not a target:
   makes a render look artificial. When in doubt, less.
 
 FINAL CHECK ON THIS BLOCK: white ground; one soft contact shadow; every
-opening present as white inside that shadow; every blue area of the drawing a
-real hole rather than metal; and every engraved area so close in tone to the
+opening present as white inside that shadow; every declared opening a real
+hole rather than metal; and every engraved area so close in tone to the
 polish that no one could mistake it for a hole — shallow, even everywhere,
 texture barely there.`;
 
@@ -3327,7 +3661,8 @@ async function handleStudioPrecheck({ body, event, origin }) {
   if (!p.startsWith(`custom-studio/${uid}/`)) {
     return studioJson(403, { ok: false, error: "forbidden" }, origin);
   }
-  if (!(await studioBudgetOk("pc", uid, STUDIO_MAX_GENS_HOUR_UID))) {
+  if (!(await studioUnlimitedUid(uid)) &&
+      !(await studioBudgetOk("pc", uid, STUDIO_MAX_GENS_HOUR_UID))) {
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
 
@@ -3424,8 +3759,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
   const n = Number(body?.versionNumber) || (Number(session.currentVersion) || 0) + 1;
   const vRef = sRef.collection("versions").doc(String(n));
 
-  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
-      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+  if (!(await studioGateOk(uid, event))) {
     await studioFailVersion(vRef, n, "rate_limited");
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
@@ -3559,14 +3893,17 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
 
     await studioStage(vRef, { stage: "generating" });
 
-    const studioModelConfig = resolveImageModel(
-      process.env.GEMINI_STUDIO_IMAGE_MODEL || preferredCharmRenderModelId()
-    );
+    const studioModelConfig = resolveImageModel(studioImageModelId(cfg));
+    /* NOT named studioTier: that is a module-level function, and a const of
+       the same name inside this scope would shadow it — silently here, and as
+       a TDZ throw the moment anything above this line reached for it. */
+    const drawingTier = studioDrawingTier(cfg);
     let outBuf = await callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
       model: studioModelConfig.id,
       prompt: effectivePrompt,
-      size: "1024x1024",
+      size: studioImageSizeString(drawingTier),
+      imageSizeTier: drawingTier,
       quality: "high",
       output_format: "png",
       images,
@@ -3598,8 +3935,20 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     });
     const downloadURL = tokenDownloadURLFor(bucket.name, storagePath, token);
 
+    /* Build the gold mask now, so the customer sees both pictures before
+       paying for a render. Never allowed to fail this step. */
+    let specURL = "", specPath = "";
+    try {
+      const sp = await studioStoreSpecForVersion({
+        uid, sessionId, n, metal,
+        drawingBuffer: outBuf, zones: [],
+      });
+      if (sp) { specURL = sp.specURL; specPath = sp.specPath; }
+    } catch (e) { console.error("[studio] gold mask at generation skipped:", e?.message || e); }
+
     await studioStage(vRef, {
       status: "done", stage: "done", storagePath, downloadURL,
+      specURL, specPath,
       prompt: String(effectivePrompt).slice(0, 4000),
       model: studioModelConfig.id,
       doneAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -4249,16 +4598,497 @@ function studioSpecCutMask(plan, zones) {
   return out;
 }
 
-function studioMetalPalette(metal) {
-  const m = String(metal || "gold").trim().toLowerCase();
-  const palettes = {
-    silver:  { base: [214, 218, 222], work: [158, 164, 170] },
-    gold:    { base: [224, 181,  74], work: [176, 132,  43] },
-    rose:    { base: [220, 151, 132], work: [173, 108,  93] },
-    solid10: { base: [216, 169,  66], work: [169, 124,  39] },
-    solid14: { base: [229, 185,  76], work: [180, 136,  44] },
+/* ── THE MASK IS GREYSCALE, ON PURPOSE ────────────────────────────────────
+   IMAGE 1 answers exactly one question: which pixels are cut clean through,
+   which are engraved, and which are plain polished metal. Nothing else about
+   it is meant to be read.
+
+   It used to be painted in the CUSTOMER'S metal — gold face, darker gold
+   engraving, and a different pair of hues per metal. That made it a second
+   opinion about colour, competing with the finish reference (IMAGE 2) and
+   with the metal named in the prompt: three sources, and on a non-gold order
+   two of them disagreed with the third. Same failure family as the earlier
+   black-background and "B/W line art" finds — an input DESCRIBED wrongly
+   defeats every rule written downstream of it.
+
+   So the three states are three greys, far apart in luminance and with zero
+   saturation, which is also the clearest possible signal that this image is a
+   map and not a photograph. Colour now has exactly one owner: IMAGE 2.
+
+   Luminance ladder: hole 255 → polished 176 → engraved 96. Minimum gap 79,
+   which survives the downsampling a vision encoder does first. If these are
+   ever retuned, the GAPS are the point — keep them wide.                  */
+const STUDIO_MASK_POLISHED = [176, 176, 176];
+const STUDIO_MASK_ENGRAVED = [96, 96, 96];
+
+/* exact squared euclidean distance transform, Felzenszwalb & Huttenlocher */
+function studioEdt1d(f, n) {
+  const d = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1);
+  let k = 0; v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+    k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++;
+    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+  }
+  return d;
+}
+
+function studioEdt2d(mask, w, h) {           // distance to nearest ZERO pixel
+  const INF = 1e12;
+  const f = new Float64Array(Math.max(w, h));
+  const dist = new Float64Array(w * h);
+  for (let i = 0; i < w * h; i++) dist[i] = mask[i] ? INF : 0;
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) f[y] = dist[y * w + x];
+    const d = studioEdt1d(f, h);
+    for (let y = 0; y < h; y++) dist[y * w + x] = d[y];
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) f[x] = dist[y * w + x];
+    const d = studioEdt1d(f, w);
+    for (let x = 0; x < w; x++) dist[y * w + x] = Math.sqrt(d[x]);
+  }
+  return dist;
+}
+
+/* negative inside the shape, positive outside, in source pixels */
+function studioSignedField(mask, w, h) {
+  const inv = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) inv[i] = mask[i] ? 0 : 1;
+  /* edt2d returns the distance to the nearest ZERO of what it is handed.
+     Handed the mask, that is the distance to the nearest OUTSIDE pixel — the
+     right number for a pixel that is inside. Handed the inverse, it is the
+     distance to the nearest INSIDE pixel — the right number for a pixel that
+     is outside. Getting these the wrong way round inverts the field and fills
+     the whole frame, which is exactly what it did the first time. */
+  const dToOutside = studioEdt2d(mask, w, h);
+  const dToInside = studioEdt2d(inv, w, h);
+  const sdf = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    sdf[i] = mask[i] ? -(dToOutside[i] - 0.5) : (dToInside[i] - 0.5);
+  }
+  return sdf;
+}
+
+function studioBilinearField(sdf, w, h, tw, th) {
+  const out = new Float32Array(tw * th);
+  const sx = w / tw, sy = h / th;
+  for (let y = 0; y < th; y++) {
+    const fy = Math.min(h - 1, Math.max(0, (y + 0.5) * sy - 0.5));
+    const y0 = Math.floor(fy), y1 = Math.min(h - 1, y0 + 1), wy = fy - y0;
+    for (let x = 0; x < tw; x++) {
+      const fx = Math.min(w - 1, Math.max(0, (x + 0.5) * sx - 0.5));
+      const x0 = Math.floor(fx), x1 = Math.min(w - 1, x0 + 1), wx = fx - x0;
+      const a = sdf[y0 * w + x0], b = sdf[y0 * w + x1];
+      const c = sdf[y1 * w + x0], d = sdf[y1 * w + x1];
+      out[y * tw + x] = (a * (1 - wx) + b * wx) * (1 - wy) + (c * (1 - wx) + d * wx) * wy;
+    }
+  }
+  return out;
+}
+
+/* separable gaussian on a float field. Blurring a DISTANCE FIELD is not the
+   same as blurring a picture: it is curvature flow on the boundary, so the
+   high-frequency stair steps flatten out while the shape itself is kept. The
+   sigma is tied to the SOURCE pixel size, because that is the wavelength of
+   the staircase we are removing — anything much larger starts rounding real
+   corners. */
+function studioGaussField(field, w, h, sigma) {
+  const r = Math.max(1, Math.ceil(sigma * 3));
+  const k = new Float32Array(2 * r + 1);
+  let sum = 0;
+  for (let i = -r; i <= r; i++) { const v = Math.exp(-(i * i) / (2 * sigma * sigma)); k[i + r] = v; sum += v; }
+  for (let i = 0; i < k.length; i++) k[i] /= sum;
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let i = -r; i <= r; i++) {
+      const xx = Math.min(w - 1, Math.max(0, x + i));
+      acc += field[y * w + xx] * k[i + r];
+    }
+    tmp[y * w + x] = acc;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let i = -r; i <= r; i++) {
+      const yy = Math.min(h - 1, Math.max(0, y + i));
+      acc += tmp[yy * w + x] * k[i + r];
+    }
+    out[y * w + x] = acc;
+  }
+  return out;
+}
+
+/* drop islands smaller than minPx — these are threshold speckle, never design */
+function studioDespeckleMask(mask, w, h, minPx) {
+  const lab = new Int32Array(w * h).fill(-1);
+  const stack = new Int32Array(w * h);
+  let comp = 0;
+  for (let s = 0; s < w * h; s++) {
+    if (!mask[s] || lab[s] >= 0) continue;
+    let sp = 0, size = 0; stack[sp++] = s; lab[s] = comp;
+    const members = [];
+    while (sp) {
+      const i = stack[--sp]; members.push(i); size++;
+      const x = i % w, y = (i / w) | 0;
+      if (x > 0 && mask[i - 1] && lab[i - 1] < 0) { lab[i - 1] = comp; stack[sp++] = i - 1; }
+      if (x < w - 1 && mask[i + 1] && lab[i + 1] < 0) { lab[i + 1] = comp; stack[sp++] = i + 1; }
+      if (y > 0 && mask[i - w] && lab[i - w] < 0) { lab[i - w] = comp; stack[sp++] = i - w; }
+      if (y < h - 1 && mask[i + w] && lab[i + w] < 0) { lab[i + w] = comp; stack[sp++] = i + w; }
+    }
+    if (size < minPx) for (const i of members) mask[i] = 0;
+    comp++;
+  }
+  return mask;
+}
+
+
+/* ── THE MASK IS RESAMPLED, NOT MAGNIFIED ─────────────────────────────────
+   Classifying the drawing pixel by pixel leaves a staircase along every
+   curve — the drawing's own anti-aliasing hard-thresholded onto the pixel
+   grid — plus stray single-pixel marks and pinholes. Nearest-neighbour
+   upscaling then turned each of those artefacts into a visible block.
+
+   So each class is rebuilt from its own signed distance field: de-speckled in
+   both polarities, converted to a field, resampled, smoothed by a sigma tied
+   to the SOURCE pixel size, and thresholded back at zero. Thresholding is
+   what keeps exactly three tones and hard edges; doing it after the resample
+   is what makes those edges follow the real curve.
+
+   NOTHING IS RECLASSIFIED. Which regions are cut, engraved or polished was
+   decided by studioMaterialSpec at the drawing's own resolution and is not
+   revisited — this only decides where each region's boundary falls at the
+   higher resolution. Deterministic throughout: exact EDT, exact bilinear,
+   fixed kernel, fixed threshold; the same drawing yields the same bytes. */
+async function studioRefineMask(sharp, maskBuf, targetLong) {
+  const POLISHED = STUDIO_MASK_POLISHED[0], ENGRAVED = STUDIO_MASK_ENGRAVED[0], ABSENT = 255;
+  const { data, info } = await sharp(maskBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const w = info.width, h = info.height, n = w * h, ch = info.channels;
+  const near = (v, t) => Math.abs(v - t) <= 24;
+
+  const A = new Uint8Array(n), B = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = data[i * ch];
+    if (near(v, ENGRAVED)) B[i] = 1;
+    else if (near(v, POLISHED)) A[i] = 1;
+  }
+
+  const speck = Math.max(6, Math.round(n * 0.00004));
+  const fillHoles = (mask) => {
+    const inv = new Uint8Array(n);
+    for (let i = 0; i < n; i++) inv[i] = mask[i] ? 0 : 1;
+    studioDespeckleMask(inv, w, h, speck);
+    for (let i = 0; i < n; i++) if (!inv[i]) mask[i] = 1;
   };
-  return palettes[m] || palettes.gold;
+  studioDespeckleMask(A, w, h, speck); fillHoles(A);
+  studioDespeckleMask(B, w, h, speck); fillHoles(B);
+
+  const scale = Math.max(1, targetLong / Math.max(w, h));
+  const tw = Math.round(w * scale), th = Math.round(h * scale);
+  const sigma = Math.max(0.8, scale * 0.85);
+
+  const upA = studioGaussField(studioBilinearField(studioSignedField(A, w, h), w, h, tw, th), tw, th, sigma);
+  const upB = studioGaussField(studioBilinearField(studioSignedField(B, w, h), w, h, tw, th), tw, th, sigma);
+
+  const rgb = Buffer.alloc(tw * th * 3, ABSENT);
+  for (let i = 0; i < tw * th; i++) {
+    const p = i * 3;
+    if (upB[i] < 0) { rgb[p] = rgb[p + 1] = rgb[p + 2] = ENGRAVED; }
+    else if (upA[i] < 0) { rgb[p] = rgb[p + 1] = rgb[p + 2] = POLISHED; }
+  }
+  const buf = await sharp(rgb, { raw: { width: tw, height: th, channels: 3 } }).png().toBuffer();
+  return { buf, w: tw, h: th };
+}
+
+/* ── NAME EVERY REGION, DON'T JUST STATE THE LAW ──────────────────────────
+   The three-tone law was stated abstractly and the renderer applied it
+   abstractly: it saw a light shape, a dark shape and a white shape and
+   painted a charm that resembled them, treating two differently-declared
+   shapes inside one field as the same thing.
+
+   This block says, per region, WHAT IS THERE — computed from the resolved
+   map, never from the model's reading of it. It is the same information the
+   map already carries, spoken once in the vocabulary the renderer answers
+   to, which is the one thing the abstract statement of the law never did.
+
+   Two deliberate restrictions, both learned the hard way:
+     · NO BOUNDING BOXES. A region is named by where its centre sits, never
+       by a rectangle — a box around a thin shape is a claim about every
+       pixel it encloses, and that is how a whole field gets wiped.
+     · NO DIGITS. Counts are spelled as words. The render step forbids text
+       on the charm, and a numeral in the prompt is a numeral the renderer
+       can decide to engrave.
+   ====================================================================== */
+const STUDIO_CENSUS_WORDS = ["none", "one", "two", "three", "four", "five",
+                             "six", "seven", "eight", "nine", "ten"];
+
+function studioCensusCount(n) {
+  return n <= 10 ? STUDIO_CENSUS_WORDS[n] : "many";
+}
+
+function studioCensusWhere(u, v) {
+  const col = u < 0.34 ? "left" : u > 0.66 ? "right" : "centre";
+  const row = v < 0.34 ? "upper" : v > 0.66 ? "lower" : "middle";
+  if (col === "centre" && row === "middle") return "at the centre of the charm";
+  if (col === "centre") return `${row} centre of the charm`;
+  if (row === "middle") return `middle ${col} of the charm`;
+  return `${row} ${col} of the charm`;
+}
+
+function studioCensusSize(frac) {
+  if (frac >= 0.25) return "a large field";
+  if (frac >= 0.08) return "a broad area";
+  if (frac >= 0.02) return "a modest shape";
+  return "a small shape";
+}
+
+/* Components of a mask, largest first, with a centroid and an area share.
+   Sub-threshold specks are dropped: naming a stray dot as an opening is how a
+   renderer gets told to punch a hole nobody asked for. */
+function studioCensusRegions(mask, w, h, facePx, minFrac, cap) {
+  const { labels, count } = studioLabel(mask, w, h);
+  if (!count) return { total: 0, list: [] };
+  const area = new Float64Array(count + 1);
+  const sx = new Float64Array(count + 1), sy = new Float64Array(count + 1);
+  for (let i = 0; i < labels.length; i++) {
+    const L = labels[i];
+    if (!L) continue;
+    area[L]++; sx[L] += i % w; sy[L] += (i / w) | 0;
+  }
+  const out = [];
+  for (let L = 1; L <= count; L++) {
+    if (area[L] / facePx < minFrac) continue;
+    out.push({ px: area[L], cx: sx[L] / area[L], cy: sy[L] / area[L] });
+  }
+  out.sort((a, b) => b.px - a.px);
+  /* `total` is the TRUE count and `list` is capped. Reporting the capped
+     length as the count would be a false statement in a block that tells the
+     renderer to count — a charm with eight openings would be instructed to
+     produce five, and the three it dropped are metal it would fill back in. */
+  return { total: out.length, list: out.slice(0, cap) };
+}
+
+/* `spec` is the return of studioMaterialSpec, so the words and the picture are
+   built from the SAME masks. Reading plan.regions instead would undercount:
+   its "open" list is blue FILLED areas only, while the spec image also removes
+   blue-BOUNDED white holes — the hoop hole among them. A census that names one
+   opening beside a map showing two is worse than no census at all. */
+/* ── THE SHAPE THAT WAS NEVER MENTIONED ───────────────────────────────────
+   A metal shape sitting INSIDE an engraved field is the case the census kept
+   silent about. Openings were named, engraved fields were named, and
+   everything else fell under one blanket line — "everything else inside the
+   silhouette is plain polished metal". On the knife-and-fork charm that
+   blanket line is the only thing standing between the renderer and cutting
+   the knife, while the fork right beside it, of similar size and in the same
+   field, is named explicitly as an opening.
+
+   These islands are found the cheap way: the metal mask's LARGEST component
+   is the charm's body, and any other component above the floor is a shape
+   surrounded by worked metal. No adjacency walk, no geometry. */
+function studioMetalIslands(plan, spec) {
+  if (!spec || !spec.holeMask || !spec.workMask) return [];
+  const { w, h, n, face } = plan;
+  const metal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (face[i] && !spec.holeMask[i] && !spec.workMask[i]) metal[i] = 1;
+  const { labels, count } = studioLabel(metal, w, h);
+  if (count < 2) return [];
+  const area = new Float64Array(count + 1);
+  const sx = new Float64Array(count + 1), sy = new Float64Array(count + 1);
+  for (let i = 0; i < n; i++) {
+    const L = labels[i];
+    if (!L) continue;
+    area[L]++; sx[L] += i % w; sy[L] += (i / w) | 0;
+  }
+  let body = 1;
+  for (let L = 2; L <= count; L++) if (area[L] > area[body]) body = L;
+
+  /* ── SURROUNDED, NOT MERELY SEPARATE ──────────────────────────────────
+     "Any metal component that is not the body" is too loose: a hoop ring
+     segment, or a sliver left by an antialiased edge, satisfies it and gets
+     announced to the renderer as a solid shape standing in an engraved
+     field. On the real knife-and-fork mask that produced three islands where
+     there is one.
+
+     So a candidate must actually be enclosed by worked metal: of the pixels
+     touching it from outside, most must be engraved. The knife's border is
+     the engraved disc on every side; a hoop fragment's border is background
+     and cut edge, and is dropped. */
+  const enclosedByWork = (L) => {
+    let touch = 0, worked = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (labels[i] !== L) continue;
+        for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1,
+                         y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) {
+          if (j < 0 || labels[j] === L) continue;
+          touch++;
+          if (spec.workMask[j]) worked++;
+        }
+      }
+    }
+    return touch >= 8 && worked / touch >= 0.6;
+  };
+
+  const out = [];
+  for (let L = 1; L <= count; L++) {
+    if (L === body) continue;
+    if (area[L] / spec.facePx < 0.004) continue;
+    if (!enclosedByWork(L)) continue;
+    out.push({ px: area[L], cx: sx[L] / area[L], cy: sy[L] / area[L] });
+  }
+  return out.sort((a, b) => b.px - a.px).slice(0, 5);
+}
+
+/* ── NAMING, NOT CLASSIFYING ──────────────────────────────────────────────
+   A vision model is asked ONE question about the mask: what is each region a
+   picture of. It is never asked, and is never believed about, whether a
+   region is cut, engraved or solid — those come from the pixels and are
+   already settled before this runs. Only the noun is taken; everything else
+   in the reply is discarded.
+
+   This matters because the whole failure being addressed is a model deciding
+   a shape's class for itself. Letting a second model do the same thing one
+   step earlier would move the fault, not remove it. So the reply is filtered:
+   a name is rejected outright if it contains a class word.
+
+   Degrades to no names at all. Positions and areas still describe every
+   region, which is what the census did before this existed. */
+const STUDIO_NAME_BANNED = /\b(cut|cutout|cut-out|hole|opening|open|engrav\w*|etch\w*|solid|metal|polish\w*|raised|recess\w*|void|negative|space|background|shape|region|area)\b/i;
+
+function studioCleanRegionName(raw) {
+  const s = studioCleanText(raw).toLowerCase().replace(/[^a-z \-]/g, "").trim();
+  if (!s || s.length > 24) return "";
+  if (s.split(/\s+/).length > 3) return "";
+  if (STUDIO_NAME_BANNED.test(s)) return "";
+  return s;
+}
+
+async function studioNameRegions(maskBuf, items) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !maskBuf || !items.length) return {};
+  const model = String(
+    process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
+    process.env.GEMINI_CHARM_PREFLIGHT_MODEL ||
+    DEFAULT_IMAGE_MODEL
+  ).trim();
+
+  const list = items.map((it, k) =>
+    `${k}: centre at ${Math.round(it.u * 100)}% across, ${Math.round(it.v * 100)}% down; ` +
+    `covers about ${(it.frac * 100).toFixed(1)}% of the charm`).join("\n");
+
+  const instruction =
+`You are looking at a greyscale manufacturing map of one flat jewellery charm.
+
+Your ONLY job is to say what each listed region DEPICTS — the everyday noun for
+the object or motif drawn there. One to three words. A common noun.
+
+You are NOT being asked whether anything is cut, engraved, raised or solid.
+That is already decided and you must not comment on it. Never use the words
+cut, hole, opening, engraved, solid, metal, polished, shape, region or area.
+If you cannot tell what a region depicts, return an empty string for it.
+
+REGIONS (coordinates are relative to the charm, not the image):
+${list}
+
+Return ONLY valid JSON in exactly this shape:
+{"names":[{"i":0,"name":"..."}]}`;
+
+  const resp = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [
+          { text: instruction },
+          { inline_data: { mime_type: "image/png", data: Buffer.from(maskBuf).toString("base64") } },
+        ],
+      }],
+      generationConfig: { temperature: 0, responseMimeType: "application/json" },
+    }),
+  });
+  const data = await readUpstreamJson(resp, "gemini");
+  const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p?.text || "").join("").trim();
+  const parsed = extractJsonObject(text);
+  const out = {};
+  for (const row of (parsed?.names || [])) {
+    const i = Number(row?.i);
+    if (!Number.isInteger(i) || i < 0 || i >= items.length) continue;
+    const name = studioCleanRegionName(row?.name);
+    if (name) out[i] = name;
+  }
+  return out;
+}
+
+function studioCensusItems(plan, spec) {
+  if (!plan || !plan.faceBox || !spec || !spec.facePx) return null;
+  const box = plan.faceBox;
+  if (!(box.w > 0) || !(box.h > 0)) return null;
+  const { w, h } = plan, facePx = spec.facePx;
+  const empty = { total: 0, list: [] };
+  const open = spec.holeMask
+    ? studioCensusRegions(spec.holeMask, w, h, facePx, 0.004, 5) : empty;
+  const worked = spec.workMask
+    ? studioCensusRegions(spec.workMask, w, h, facePx, 0.004, 5) : empty;
+  const islands = studioMetalIslands(plan, spec);
+  if (!open.total && !worked.total && !islands.length) return null;
+  const decorate = (r) => Object.assign({}, r, {
+    u: (r.cx - box.x0) / box.w, v: (r.cy - box.y0) / box.h, frac: r.px / facePx });
+  return {
+    open: { total: open.total, list: open.list.map(decorate) },
+    worked: { total: worked.total, list: worked.list.map(decorate) },
+    islands: islands.map(decorate),
+  };
+}
+
+/* `names` is optional and is keyed by the index each region has in the flat
+   order open -> worked -> islands. Absent names simply leave the measured
+   description, which is what shipped before naming existed. */
+function studioSpecCensus(plan, spec, names) {
+  const items = studioCensusItems(plan, spec);
+  if (!items) return "";
+  const nm = names || {};
+  let k = 0;
+  const describe = (r) => {
+    const name = nm[k++];
+    const where = `${studioCensusSize(r.frac)} ${studioCensusWhere(r.u, r.v)}`;
+    return name ? `the ${name} — ${where}` : where;
+  };
+  const partial = (r) => r.total > r.list.length ? "  The largest are:" : "  They are:";
+
+  const lines = [];
+  lines.push(`OPENINGS — ${studioCensusCount(items.open.total)} in this charm.`);
+  if (items.open.total) {
+    lines.push(partial(items.open));
+    for (const r of items.open.list) lines.push(`  · ${describe(r)}: METAL IS ABSENT HERE.`);
+    lines.push("  Each one is cut clean through the sheet. The ground the charm rests on is visible through it, bounded by a thin bright cut edge, with a small shadow inside the opening. It is never filled, tinted, recessed, engraved or shaded over.");
+  }
+  lines.push(`ENGRAVED FIELDS — ${studioCensusCount(items.worked.total)} in this charm.`);
+  if (items.worked.total) {
+    lines.push(partial(items.worked));
+    for (const r of items.worked.list) lines.push(`  · ${describe(r)}: METAL IS STILL THERE, ITS SURFACE WORKED.`);
+    lines.push("  Solid metal throughout, only the surface finish differs. Never open, never a separate material, never a different alloy.");
+  }
+  /* ── THE LINE THE KNIFE NEEDED ────────────────────────────────────────
+     A plain shape standing inside an engraved field, beside an opening of
+     similar size, is the exact confusion this render keeps losing. It used
+     to be covered only by the blanket "everything else" sentence below. */
+  if (items.islands.length) {
+    lines.push(`SOLID SHAPES STANDING INSIDE AN ENGRAVED FIELD — ${studioCensusCount(items.islands.length)}.`);
+    for (const r of items.islands) lines.push(`  · ${describe(r)}: SOLID METAL, NOT AN OPENING.`);
+    lines.push("  These are the hardest thing in this charm to get right. Each is unbroken sheet with the engraved field worked around it, so it reads as bright polished metal standing clear of the darker worked surface. One of them sits beside an opening of similar size and shape: THEY ARE NOT THE SAME. You cannot see the ground through these. Cutting one of them out produces a charm the customer did not buy.");
+  }
+  lines.push("EVERYTHING ELSE INSIDE THE SILHOUETTE IS PLAIN POLISHED METAL, identical in colour to the rest of the charm.");
+  lines.push("An opening and an engraved field are the two things this render most often confuses. Count the openings above, then count them again in your finished image.");
+
+  return "RESOLVED REGIONS — THIS IS WHAT IMAGE 1'S TONES ALREADY MEAN. DO NOT RE-READ THEM:\n" +
+         lines.join("\n");
 }
 
 async function studioMaterialSpec(sharp, plan, metal, zones) {
@@ -4275,8 +5105,12 @@ async function studioMaterialSpec(sharp, plan, metal, zones) {
   if (!facePx || facePx < n * 0.005) return null;
 
   const red = studioRedMask(px, n, 3);
-  const { base, work } = studioMetalPalette(metal);
+  /* `metal` is deliberately unused: this proof carries geometry, not colour. */
+  const base = STUDIO_MASK_POLISHED, work = STUDIO_MASK_ENGRAVED;
   const out = Buffer.alloc(n * 3, 255);
+  /* The worked pixels are recorded as they are painted, so the census can
+     describe exactly what this image encodes rather than recomputing it. */
+  const workMask = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     if (!face[i] || holes[i]) continue;
     const p = i * 3;
@@ -4286,12 +5120,16 @@ async function studioMaterialSpec(sharp, plan, metal, zones) {
        AI sees this proof. Blue is intentionally absent from the proof. */
     if (studioIsBlack(px, p) || red[i]) {
       out[p] = work[0]; out[p + 1] = work[1]; out[p + 2] = work[2];
-      workPx++;
+      workMask[i] = 1; workPx++;
     }
   }
   const buf = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
     .png().toBuffer();
-  return { buf, facePx, holePx, workPx, w, h };
+  /* holeMask/workMask are for the census only. They describe THIS buffer, and
+     they are handed out before studioRefineMask resamples it — refinement
+     moves boundaries by sub-pixel amounts and never reclassifies, so region
+     counts, centroids and area shares are unaffected. */
+  return { buf, facePx, holePx, workPx, w, h, holeMask: holes, workMask };
 }
 
 /* the tinted copy that goes to the model — the drawing in Storage is untouched */
@@ -4439,6 +5277,44 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
   }
 }
 
+/* ── WHAT A RE-RENDER IS TOLD ─────────────────────────────────────────────
+   A retry is a FRESH generation, not a surgical edit. Image models cannot be
+   handed a picture and told to change one region and nothing else — the whole
+   frame is regenerated every time, which is precisely why the repairable
+   failure (a declared opening that came back solid) is fixed in code by
+   studioPunchCutouts instead of being asked for again.
+
+   So this note is deliberately phrased against IMAGE 1, never against the
+   previous attempt. The renderer is not shown that attempt and cannot
+   preserve what it cannot see; telling it to "keep everything else the same"
+   would be an instruction it has no way to follow, and an instruction that
+   cannot be followed is one more thing competing with the ones that can.
+
+   Only the two unrepairable verdicts reach here:
+     undeclared_cut  metal that must be solid came back open
+     unaligned       the silhouette drifted far enough that no coordinate in
+                     one image maps into the other                          */
+function studioRetryNote(report, attempt) {
+  const reason = String(report?.reason || "");
+  const worst = studioCleanText(report?.worst || "");
+  const lines = ["THIS IS A RE-RENDER. THE PREVIOUS ATTEMPT WAS REJECTED. Render IMAGE 1 again from scratch and correct exactly this:"];
+
+  if (reason === "undeclared_cut") {
+    lines.push("• IT REMOVED METAL THAT MUST BE SOLID. A region IMAGE 1 shows as metal came back open, showing the ground through a place where the charm is continuous sheet.");
+    if (worst) lines.push(`• Measured on that attempt: ${worst}.`);
+    lines.push("• Cut through ONLY where IMAGE 1 is white. Every grey pixel of IMAGE 1 — mid grey and dark grey alike — is solid metal with the ground hidden behind it. An engraved field is metal. A dark area is metal.");
+  } else if (reason === "unaligned") {
+    lines.push("• ITS SILHOUETTE DID NOT MATCH. The outer outline drifted from IMAGE 1 — reshaped, rescaled, recentred or cropped differently.");
+    lines.push("• Reproduce IMAGE 1's outer silhouette, its integrated top hoop and its proportions exactly, at the same scale and centred the same way in the frame.");
+  } else {
+    lines.push("• It failed the geometry check against IMAGE 1. Reproduce IMAGE 1's silhouette, openings and worked regions exactly.");
+  }
+
+  lines.push("Everything else about this render is unchanged and is still governed by the instructions above: same alloy, same finish, same white ground, same single soft contact shadow, same framing. Do not compensate for the correction by altering anything else.");
+  if (attempt >= 2) lines.push("This correction has already been asked for once. Follow IMAGE 1 literally rather than producing a more attractive charm.");
+  return lines.join("\n");
+}
+
 /* ── kind: custom_charm_render ────────────────────────────────────────────
  * The approved drawing becomes the charm: the Charm Maker's gold→line-art
  * conversion run in reverse, with the drawing as structural truth. Costs one
@@ -4462,6 +5338,143 @@ async function studioFailRender(vRef, error, renderRunId) {
   }
 }
 
+/* ── THE MASK IS BUILT WHEN THE DRAWING IS, NOT WHEN THE RENDER IS ────────
+   The greyscale mask used to be produced inside handleStudioRender, which
+   meant it only existed after a paid render — so the customer approved a
+   drawing without ever seeing the thing the renderer would actually be shown.
+
+   This builds and stores it the moment a drawing is filed, by both routes
+   that file one (the model generator and the local composer), and writes
+   specURL/specPath onto the version doc so the studio can show both pictures
+   side by side before "See it in metal" is pressed.
+
+   It can NEVER fail the step that calls it. A drawing that generated fine
+   must not be lost because sharp was unavailable or Storage hiccupped — the
+   render still builds its own mask exactly as before, so a miss here costs a
+   preview, not a render. Every call site wraps it and ignores the result. */
+async function studioStoreSpecForVersion({ uid, sessionId, n, metal, drawingBuffer, zones }) {
+  const sharpMod = studioSharp();
+  if (!sharpMod || !drawingBuffer?.length) return null;
+  const cfg = await studioConfig();
+  if (cfg.renderDeterministicSpec === false) return null;
+
+  const plan = await studioDrawingPlan(sharpMod, drawingBuffer);
+  if (!plan) return null;
+  let spec = await studioMaterialSpec(sharpMod, plan, metal,
+                                      Array.isArray(zones) ? zones.slice(0, 40) : []);
+  if (!spec?.buf) return null;
+  /* Same refinement the render applies, or the preview would show softer
+     edges than the picture the model is handed. */
+  try {
+    const refined = await studioRefineMask(sharpMod, spec, cfg);
+    if (refined?.buf) spec = refined;
+  } catch (e) { console.error("[studio] mask refine skipped:", e?.message || e); }
+
+  const specPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-spec.png`;
+  const bucket = getBucket();
+  const token = newDownloadToken();
+  await bucket.file(specPath).save(spec.buf, {
+    resumable: false,
+    contentType: "image/png",
+    metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId,
+                            version: String(n), spec: "1" } },
+  });
+  return { specPath, specURL: tokenDownloadURLFor(bucket.name, specPath, token) };
+}
+
+/* ── WHAT THE RENDER WOULD ACTUALLY SEND ──────────────────────────────────
+   The prompt is assembled from the drawing plan, the material spec, the
+   region census and the naming pass — none of which the browser has. So the
+   studio cannot show a truthful prompt by rebuilding it client-side; it has
+   to ask the server for the real one.
+
+   This runs the SAME code the render runs, in the same order, and returns
+   the result. It renders nothing, debits nothing and writes nothing. It is
+   deliberately not cheap — it pays for sharp and the naming call — because a
+   preview that skips those is a different prompt, and a different prompt is
+   worse than no preview.                                                  */
+async function handleStudioPromptPreview({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const cfg = await studioConfig();
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+  const n = Number(body?.versionNumber) || Number(session.currentVersion) || 0;
+  if (!n || n < 1) return studioJson(400, { ok: false, error: "missing_version" }, origin);
+  const vSnap = await sRef.collection("versions").doc(String(n)).get();
+  if (!vSnap.exists || vSnap.data().status !== "done") {
+    return studioJson(409, { ok: false, error: "version_not_ready" }, origin);
+  }
+
+  const metal = studioCleanText(body?.metal || session.metal || "gold");
+  const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
+  let bw = null;
+  try { bw = await storagePathToBuffer(bwPath); }
+  catch (e) {
+    console.error("[studio] prompt preview: drawing unreadable:", e?.message || e);
+    return studioJson(409, { ok: false, error: "drawing_unavailable" }, origin);
+  }
+
+  const sharpMod = studioSharp();
+  let plan = null, spec = null, census = "", names = {};
+  if (sharpMod && cfg.renderDeterministicSpec !== false) {
+    try { plan = await studioDrawingPlan(sharpMod, bw.buffer); } catch (_e) { plan = null; }
+    if (plan) {
+      const zones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
+      try { spec = await studioMaterialSpec(sharpMod, plan, metal, zones); } catch (_e) { spec = null; }
+    }
+    /* Parked with the render's copy. The preview must do exactly what the
+       render does or it stops being a preview — including doing nothing here
+       while the prompt carries no census. Both sites read the same key. */
+    if (plan && spec && cfg.renderNameRegions !== false) {
+      try {
+        const items = studioCensusItems(plan, spec);
+        const flat = items ? items.open.list.concat(items.worked.list, items.islands) : [];
+        if (flat.length) names = await studioNameRegions(spec.buf, flat);
+        census = studioSpecCensus(plan, spec, names);
+      } catch (_e) { names = {}; census = ""; }
+    }
+  }
+
+  let hasReference = false;
+  try { hasReference = !!(await ensureStudioGoldStyleReference())?.buffer?.length; }
+  catch (_e) { hasReference = false; }
+
+  /* The preview must choose its input the same way the render does, or the
+     box shows a prompt the render would never send. Same config key, same
+     precedence. */
+  const askedInput = String(body?.renderInput || "").trim().toLowerCase();
+  const wantDrawing = (askedInput === "drawing" || askedInput === "mask")
+    ? askedInput === "drawing"
+    : String(cfg.renderInput || "mask").trim().toLowerCase() === "drawing";
+  const specUsed = !wantDrawing && !!spec;
+  const prompt = specUsed
+    ? buildMaterialSpecToCharmPrompt({ metal, hasReference, census })
+    : buildColourDrawingToCharmPrompt({ metal, hasReference });
+
+  /* The role labels are attached to the images, not to the prompt, so they
+     are returned separately rather than pretended into one string — editing
+     them here would have no effect and the box must not imply otherwise. */
+  const roleSet = IMAGE_ROLE_LABELS[specUsed ? "material_spec_to_charm" : "colour_drawing_to_charm"];
+  return studioJson(200, {
+    ok: true,
+    prompt,
+    chars: prompt.length,
+    specUsed,
+    input: specUsed ? "mask" : "drawing",
+    roles: hasReference
+      ? [roleSet.first, roleSet.second, roleSet.lock]
+      : [roleSet.single, roleSet.lock],
+  }, origin);
+}
+
 async function handleStudioRender({ body, event, origin }) {
   const uid = await requireStudioUser(event);
   const cfg = await studioConfig();
@@ -4474,7 +5487,17 @@ async function handleStudioRender({ body, event, origin }) {
      same zone census to OpenAI's image model for two credits. Anything the
      browser sends that is not exactly "high" is treated as low: a garbled
      value must never silently cost a customer double. */
-  const quality = String(body?.quality || "low").trim().toLowerCase() === "high" ? "high" : "low";
+  /* WHILE THE TIER IS PARKED there is only one renderer, and "high" is not a
+     thing a customer can ask for — the control is not on screen. A browser
+     that still sends it (an open tab from before the change, a session doc
+     saved while the control existed) is therefore not expressing a choice,
+     and charging it two credits for a tier it cannot see would be taking
+     money for something nobody picked. So the request is DOWNGRADED, not
+     refused: same render, standard price. `renderQualityTiers` in
+     config/customStudio brings the choice back with no deploy. */
+  const tiersOn = cfg.renderQualityTiers === true;
+  const askedHigh = String(body?.quality || "low").trim().toLowerCase() === "high";
+  const quality = (tiersOn && askedHigh) ? "high" : "low";
   const highCost = Math.max(cost, Number(cfg.renderHighCost) || cost * 2);
   const renderCost = quality === "high" ? highCost : cost;
 
@@ -4513,7 +5536,7 @@ async function handleStudioRender({ body, event, origin }) {
     studioModelConfig = resolveImageModel(
       quality === "high"
         ? (cfg.renderHighModel || "gpt-image-2")
-        : (process.env.GEMINI_STUDIO_IMAGE_MODEL || preferredCharmRenderModelId())
+        : studioImageModelId(cfg)
     );
     apiKeyForImageModel(studioModelConfig);
   } catch (err) {
@@ -4524,8 +5547,7 @@ async function handleStudioRender({ body, event, origin }) {
 
   /* Renders share the generation budgets — a render IS a generation as far
      as the upstream model is concerned. */
-  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
-      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+  if (!(await studioGateOk(uid, event))) {
     await studioFailRender(vRef, "rate_limited", renderRunId);
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
@@ -4542,7 +5564,11 @@ async function handleStudioRender({ body, event, origin }) {
 
   const metal = studioCleanText(body?.metal || session.metal || "gold");
 
-  const cutMode = String(cfg.renderCutCheck || "off").trim().toLowerCase();
+  /* STUDIO_DEFAULT_CONFIG is merged in before this, so cfg.renderCutCheck is
+     always set and a `|| "off"` fallback here would be dead code — which is
+     exactly how a default of "punch" once kept running after the fallback was
+     "reverted". The default above is the only place the mode is decided. */
+  const cutMode = String(cfg.renderCutCheck).trim().toLowerCase();
   const deterministicSpecEnabled = cfg.renderDeterministicSpec !== false;
   try {
     await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
@@ -4559,7 +5585,7 @@ async function handleStudioRender({ body, event, origin }) {
        no longer receives that vocabulary on the normal path.
 
        Code resolves the drawing first into a flat material proof in which:
-         polished metal is already metal-coloured,
+         polished metal is already one grey,
          engraved/outline work is already darker metal,
          and openings are already absent/white.
 
@@ -4583,32 +5609,144 @@ async function handleStudioRender({ body, event, origin }) {
         materialSpec = null;
       }
     }
-    const specUsed = !!(materialSpec && materialSpec.buf);
+    /* Smoothed and resampled to the working resolution. Runs AFTER the
+       cut/engrave/polish decisions, never before, so nothing is reclassified. */
+    if (materialSpec && materialSpec.buf) {
+      const floor = studioMaskMinPx(cfg);
+      if (floor) {
+        try {
+          const t0 = Date.now();
+          const refined = await studioRefineMask(sharpMod, materialSpec.buf, floor);
+          materialSpec.buf = refined.buf;
+          console.log("[studio] mask refined ->", refined.w + "x" + refined.h,
+                      "(" + (Date.now() - t0) + "ms)");
+          materialSpec.w = refined.w; materialSpec.h = refined.h;
+        } catch (e) {
+          console.error("[studio] mask refine skipped:", e?.message || e);
+        }
+      }
+    }
+
+    /* ── WHICH IMAGE THE RENDERER SEES ───────────────────────────────────
+       `renderInput: "drawing"` sends the colour-coded production drawing and
+       lets the model read the fill law directly; "mask" sends the greyscale
+       spec, where code has already resolved every decision.
+
+       The material reference is attached in BOTH cases. It used only to be
+       attached on the spec path, so simply pointing the old fallback at the
+       drawing would have silently dropped the alloy colour — the same class
+       of bug as the metal name being discarded. */
+    /* THE BROWSER DECIDES. This is a UI switch in the prompt lab, not a
+       config value — the config key is only the fallback for a request that
+       predates the control. Anything other than the two words falls back. */
+    const askedInput = String(body?.renderInput || "").trim().toLowerCase();
+    const wantDrawing = (askedInput === "drawing" || askedInput === "mask")
+      ? askedInput === "drawing"
+      : String(cfg.renderInput || "mask").trim().toLowerCase() === "drawing";
+    const specUsed = !wantDrawing && !!(materialSpec && materialSpec.buf);
+    const drawingUsed = !specUsed;
     const images = [specUsed
       ? { buffer: materialSpec.buf, mime: "image/png", filename: "material-spec.png" }
       : { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" }
     ];
     let renderStyleRef = null;
-    if (specUsed) {
-      try { renderStyleRef = await ensureStudioGoldStyleReference(); }
-      catch (e) { console.error("[studio] gold style reference unavailable:", e?.message || e); renderStyleRef = null; }
-      if (renderStyleRef?.buffer?.length) images.push({
-        buffer: renderStyleRef.buffer,
-        mime: renderStyleRef.mime || STUDIO_GOLD_STYLE_REFERENCE_MIME,
-        filename: renderStyleRef.filename || STUDIO_GOLD_STYLE_REFERENCE_FILENAME,
-      });
-    }
+    try { renderStyleRef = await ensureStudioGoldStyleReference(); }
+    catch (e) { console.error("[studio] gold style reference unavailable:", e?.message || e); renderStyleRef = null; }
+    if (renderStyleRef?.buffer?.length) images.push({
+      buffer: renderStyleRef.buffer,
+      mime: renderStyleRef.mime || STUDIO_GOLD_STYLE_REFERENCE_MIME,
+      filename: renderStyleRef.filename || STUDIO_GOLD_STYLE_REFERENCE_FILENAME,
+    });
+    console.log(`[studio] render input=${specUsed ? "mask" : "drawing"} reference=${renderStyleRef?.buffer?.length ? "yes" : "no"}`);
 
-    const effectivePrompt = specUsed
-      ? buildMaterialSpecToCharmPrompt({ metal })
-      : buildLineArtToCharmPrompt({ metal, zones: renderZones });
+    /* Built from the SAME plan the spec image was built from, so the words
+       and the picture can never disagree. Never allowed to fail a render:
+       an empty census simply means the prompt states the law without naming
+       regions, which is exactly the behaviour that shipped before it. */
+    /* ── THE CENSUS AND THE NAMING PASS ARE PARKED ───────────────────────
+       Both are still in the file and still correct. Neither runs.
+
+       The prompt no longer appends the census, so the naming call — a vision
+       call and several seconds of latency on every render — produced text
+       nothing read. Paying a model to write something no one is shown is
+       worse than not having it.
+
+       The MASK is untouched and still essential: studioDrawingPlan and
+       studioMaterialSpec run exactly as before, and their output IS the image
+       the renderer receives. It is only the words about that image that stop.
+
+       To bring them back: set renderNameRegions true in config/customStudio
+       AND append `census` in buildMaterialSpecToCharmPrompt. Both, or the
+       naming call is unread again. */
+    const specCensus = "";
+    const regionNames = {};
+
+    /* ── THE PROMPT IS BUILT ONCE, AND CAN BE OVERRIDDEN ─────────────────
+       `promptOverride` is the studio's live prompt box: whatever text is in
+       it replaces the built prompt verbatim for this render and nothing
+       else changes — same images, same roles, same model, same credit. That
+       is the point: it is the only way to tell whether a wording change is
+       responsible for a difference in the result.
+
+       NOTE FOR PAUL, once: this accepts arbitrary text from the browser on a
+       public storefront, so anyone who finds the endpoint can spend a credit
+       driving the image model with a prompt of their own. Capped at 20k
+       characters and still behind auth, ownership, budget and the debit —
+       but it is not the same risk profile as a fixed prompt. */
+    const hasRef = !!renderStyleRef?.buffer?.length;
+    const built = specUsed
+      ? buildMaterialSpecToCharmPrompt({ metal, hasReference: hasRef, census: specCensus })
+      : buildColourDrawingToCharmPrompt({ metal, hasReference: hasRef });
+    const override = String(body?.promptOverride || "").trim().slice(0, 20000);
+    const effectivePrompt = override || built;
+    console.log(`[studio] prompt ${override ? "OVERRIDDEN" : "built"} chars=${effectivePrompt.length}`);
+
+    /* ── THE GOLD MASK IS EVIDENCE, SO IT IS KEPT ─────────────────────────
+       This proof is the last structural instruction the model receives and
+       the only image in the chain that states, without colour vocabulary,
+       what is metal, what is worked and what is not there at all. It was
+       being built, sent and thrown away — so when a render came back wrong
+       there was no way to tell a bad proof from a bad render, which are
+       opposite problems with opposite fixes.
+
+       It is filed beside its own pair, on the SAME "uploads" segment as the
+       drawing and the charm for the same cart-thumbnail reason, and written
+       to the version doc BEFORE the model is called: if the render then fails
+       or times out, the proof for that attempt still exists to be looked at.
+
+       It must never be able to fail a render. A proof that could not be
+       stored is a missing picture; a render that dies because a picture could
+       not be stored is a lost credit. */
+    let renderSpecURL = "", renderSpecPath = "";
+    if (specUsed) {
+      try {
+        renderSpecPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-spec.png`;
+        const specBucket = getBucket();
+        const specToken = newDownloadToken();
+        await specBucket.file(renderSpecPath).save(materialSpec.buf, {
+          resumable: false,
+          contentType: "image/png",
+          metadata: { metadata: { firebaseStorageDownloadTokens: specToken, uid, sessionId,
+                                  version: String(n), spec: "1" } },
+        });
+        renderSpecURL = tokenDownloadURLFor(specBucket.name, renderSpecPath, specToken);
+      } catch (e) {
+        console.error("[studio] gold mask not stored:", e?.message || e);
+        renderSpecURL = ""; renderSpecPath = "";
+      }
+    }
 
     await vRef.set({
       renderStage: "rendering", renderRunId,
+      renderSpecURL, renderSpecPath,
       renderSpecMode: specUsed ? "deterministic-material" : "legacy-colour-fallback",
       renderSpecFacePx: specUsed ? materialSpec.facePx : 0,
       renderSpecHolePx: specUsed ? materialSpec.holePx : 0,
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
+      renderInput: specUsed ? "mask" : "drawing",
+      renderPromptText: effectivePrompt.slice(0, 40000),
+      renderPromptChars: effectivePrompt.length,
+      renderPromptOverridden: !!override,
       renderSpecRoiMode: studioPlan?.roiMode || "unknown",
       renderSpecRoiGuard: studioPlan?.roiGuard || "unknown",
       renderSpecRoiSignalPx: Number(studioPlan?.roiSignalPx || 0),
@@ -4624,15 +5762,31 @@ async function handleStudioRender({ body, event, origin }) {
        the exact hoop and silhouette already exist in IMAGE 1, and another
        prose description of where the hoop ought to be would reintroduce a
        second authority. The legacy fallback keeps the old policy unchanged. */
-    let outBuf = await callImageModelEdits({
+    const renderOnce = (promptText) => callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
       model: studioModelConfig.id,
-      prompt: effectivePrompt,
-      size: "1024x1024",
+      prompt: promptText,
+      size: studioImageSizeString(studioRenderTier(cfg)),
+      imageSizeTier: studioRenderTier(cfg),
       quality: "high",
       output_format: "png",
       images,
-      imageRoles: specUsed ? "material_spec_to_charm" : "lineart_to_charm",
+      /* Role labels are ~1,400 characters of their own and are appended by
+         callImageModelEdits. Sending them on the short path would defeat the
+         only thing the short path is testing. */
+      /* ── LABELS PAUSED ────────────────────────────────────────────────
+         Paul asked for the prompt alone. "none" is explicit: null or an
+         omitted value would fall through to the `edit` labels, whose IMAGE 2
+         text declares that image the design truth to reproduce — the
+         instruction that produced a kettlebell-shaped charm.
+
+         So the model now receives: prompt, image 1, image 2. Nothing else.
+         The two labels the prompt does NOT replace are the ones naming which
+         image is which; the prompt says "FIRST image" and "SECOND image" and
+         is now relied on to carry that alone. To restore them, swap "none"
+         for the commented value below. */
+      imageRoles: "none",
+      // imageRoles: specUsed ? "material_spec_to_charm" : "colour_drawing_to_charm",
       charmGeometryPolicy: specUsed ? null : "flat_integrated_eyelet",
       /* ── ONE VOICE ABOUT THE BACKGROUND ──────────────────────────────────
          backgroundPolicy: "solid_black" appends a block headed "BACKEND-
@@ -4654,6 +5808,57 @@ async function handleStudioRender({ body, event, origin }) {
       backgroundPolicy: null,
     });
 
+    /* ── ATTEMPT LOOP ─────────────────────────────────────────────────────
+       One debit, up to 1 + renderRetries model calls. Only the two verdicts
+       code cannot repair cause a retry; a declared opening that came back
+       solid is composited in by studioPunchCutouts and accepted, because
+       cutting those pixels is exact and asking a model again is not.
+
+       The budget is the hard stop, not the attempt count: the browser's
+       watcher gives up at 180s, and a render the customer was told had
+       failed is worse than one imperfect region. A new attempt only starts
+       if the elapsed time plus the LAST attempt's measured duration still
+       fits, so a slow first render never buys a doomed second one. */
+    const maxRetries = Math.max(0, Math.min(4, Number(cfg.renderRetries) || 0));
+    const retryBudgetMs = Math.max(0, Number(cfg.renderRetryBudgetMs) || 0);
+    const RETRYABLE = new Set(["undeclared_cut", "unaligned"]);
+    const doPunch = cutMode === "enforce" || cutMode === "punch";
+    /* In "verify" nothing is repaired, so a repairable failure is not
+       repaired — it is re-rendered. `verified` is false whenever any declared
+       region read the wrong way, which is precisely the set that "punch"
+       would have painted over. */
+    const retryable = (rep) => RETRYABLE.has(rep.reason) ||
+      (cutMode === "verify" && rep.reason !== "no_cuts_declared" && !rep.verified);
+    const startedAt = Date.now();
+
+    let outBuf = null, punch = null, attempt = 0, lastMs = 0, failedVerdicts = [];
+    while (true) {
+      attempt++;
+      const promptText = attempt === 1
+        ? effectivePrompt
+        : effectivePrompt + "\n\n" + studioRetryNote(punch.report, attempt - 1);
+      if (attempt > 1) {
+        await vRef.set({ renderStage: "rendering", renderAttempt: attempt, renderRunId }, { merge: true });
+        console.log(`[studio] render retry ${attempt - 1}/${maxRetries} after ${punch.report.reason}`);
+      }
+      const t0 = Date.now();
+      outBuf = await renderOnce(promptText);
+      lastMs = Date.now() - t0;
+
+      if (cutMode === "off") { punch = null; break; }
+
+      punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan);
+      if (!retryable(punch.report)) break;
+
+      failedVerdicts.push(punch.report.reason);
+      const spent = Date.now() - startedAt;
+      if (attempt > maxRetries) { console.log("[studio] retries exhausted:", failedVerdicts.join(",")); break; }
+      if (retryBudgetMs && spent + lastMs > retryBudgetMs) {
+        console.log(`[studio] retry budget reached (${spent}ms + ${lastMs}ms > ${retryBudgetMs}ms)`);
+        break;
+      }
+    }
+
     await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
 
     /* ── THE CUT CHECK IS PARKED ──────────────────────────────────────────
@@ -4672,24 +5877,46 @@ async function handleStudioRender({ body, event, origin }) {
                     against real traffic without a customer ever paying for
                     it — turn it on when we start correcting the fills.
          "enforce"  punch declared cut-outs, reject undeclared ones. */
-    if (cutMode === "observe" || cutMode === "enforce") {
-      const punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan);
-      if (cutMode === "enforce") {
-        outBuf = punch.buf;
-        if (punch.report.reason === "undeclared_cut") {
-          const e = new Error("cut_check_undeclared");
-          e.studioReport = punch.report;
-          throw e;
-        }
+    /* ── "punch": HONOUR THE DECLARED CUT-OUTS, JUDGE NOTHING ─────────────
+       The mask says a region is cut clean through; the model renders it as a
+       shallow engraving anyway, and does so inconsistently — the same render
+       cut the hoop and engraved the knife. That is not a wording problem. It
+       is the one question the model keeps getting wrong, and it does not have
+       to be asked: the openings are already known exactly, deterministically,
+       before the render is ever requested.
+
+       So this mode composites them and stops there. It never rejects a render
+       and never charges a customer for a verdict:
+         "off"      nothing runs (what shipped while identification was tuned)
+         "punch"    declared cut-outs are cut into the render. Nothing else.
+         "observe"  scan and file the numbers, image untouched
+         "enforce"  punch AND reject undeclared cuts (the strict mode)
+       Alignment still guards it — if the render's silhouette does not match
+       the drawing's, no coordinate maps between them and studioPunchCutouts
+       declines to punch rather than cutting blind. */
+    if (punch) {
+      if (doPunch) outBuf = punch.buf;
+      /* Rejection is reserved for the one failure that survived every attempt
+         AND cannot be repaired: metal removed that should be solid. An
+         "unaligned" render is not damaged, only unjudgeable, so it ships
+         unpunched rather than costing the customer their credit and their
+         wait. */
+      if (cutMode === "enforce" && punch.report.reason === "undeclared_cut") {
+        const e = new Error("cut_check_undeclared");
+        e.studioReport = punch.report;
+        throw e;
       }
       await vRef.set({
         renderCutMode: cutMode,
+        renderAttempts: attempt,
+        /* one entry per attempt that failed the check, in order */
+        renderAttemptVerdicts: failedVerdicts.slice(0, 5),
         renderCutsDeclared: punch.report.declaredCuts,
-        renderCutsPunched: cutMode === "enforce" ? punch.report.punchedPx : 0,
+        renderCutsPunched: doPunch ? punch.report.punchedPx : 0,
         renderCutsWouldPunch: punch.report.punchedPx,
         renderAlignment: Math.round(punch.report.alignment * 1000) / 1000,
         renderOpenFraction: Math.round(punch.report.openFrac * 1000) / 1000,
-        renderVerified: cutMode === "enforce" && !!punch.report.verified,
+        renderVerified: doPunch && !!punch.report.verified,
         renderRegionsOk: punch.report.regionsOk,
         renderRegionsBad: punch.report.regionsBad,
         renderWorstRegion: punch.report.worst || "",
@@ -4719,11 +5946,13 @@ async function handleStudioRender({ body, event, origin }) {
     await vRef.set({
       renderStatus: "done", renderStage: "done", renderRunId,
       renderURL, renderPath, renderMetal: metal,
+      renderSpecURL, renderSpecPath,
       renderQuality: quality, renderModel: studioModelConfig.id, renderCost,
       renderedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
     return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal,
+                             renderSpecURL, renderSpecPath,
                              renderQuality: quality, renderModel: studioModelConfig.id,
                              renderCost, renderRunId }, origin);
   } catch (err) {
@@ -4790,8 +6019,7 @@ async function handleStudioCompose({ body, event, origin }) {
   if (!n || n < 1 || n > 400) return studioJson(400, { ok: false, error: "bad_version" }, origin);
   const vRef = sRef.collection("versions").doc(String(n));
 
-  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
-      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+  if (!(await studioGateOk(uid, event))) {
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
 
@@ -4820,8 +6048,20 @@ async function handleStudioCompose({ body, event, origin }) {
     });
     const downloadURL = tokenDownloadURLFor(bucket.name, storagePath, token);
 
+    /* Build the gold mask now, so the customer sees both pictures before
+       paying for a render. Never allowed to fail this step. */
+    let specURL = "", specPath = "";
+    try {
+      const sp = await studioStoreSpecForVersion({
+        uid, sessionId, n, metal: session.metal || "gold",
+        drawingBuffer: img.buffer, zones: body?.zones,
+      });
+      if (sp) { specURL = sp.specURL; specPath = sp.specPath; }
+    } catch (e) { console.error("[studio] gold mask at generation skipped:", e?.message || e); }
+
     await studioStage(vRef, {
       status: "done", stage: "done", storagePath, downloadURL,
+      specURL, specPath,
       composed: true,
       model: "studio-composer",
       prompt: "Composed locally from the customer's own vector items — exactly as drawn.",
@@ -4850,6 +6090,7 @@ async function handleStudioKind({ kind, body, event }) {
     }
     if (kind === "custom_charm_compose") return await handleStudioCompose({ body, event, origin });
     if (kind === "custom_charm_render") return await handleStudioRender({ body, event, origin });
+    if (kind === "custom_charm_prompt") return await handleStudioPromptPreview({ body, event, origin });
     if (kind === "custom_session_status") return await handleStudioSessionStatus({ body, event, origin });
     return studioJson(400, { ok: false, error: "unknown_kind" }, origin);
   } catch (err) {
@@ -4914,7 +6155,7 @@ async function _handlerImpl(event) {
     kind = "edits",
     model: _clientModel,
     prompt,
-    size = "1024x1024",
+    size = "2048x2048",
     quality = "high",
     output_format = "png",
     input_storage_path,
@@ -5185,14 +6426,14 @@ async function _handlerImpl(event) {
         const dn = `cm-charms-${String(orch.sessionId).slice(-8)}-part${partN}`;
         let resp = await inProcess({
           kind: "batch_submit", model: orch.model, sets: chunk,
-          imageSize: "1K", displayName: dn, sessionId: orch.sessionId,
+          imageSize: "2K", displayName: dn, sessionId: orch.sessionId,
         });
         if (!(resp.body && resp.body.ok)) {
           console.warn(`[orchestrate] chunk ${dn} submit failed — retrying once`, resp.body?.error);
           await sleep(8000);
           resp = await inProcess({
             kind: "batch_submit", model: orch.model, sets: chunk,
-            imageSize: "1K", displayName: dn, sessionId: orch.sessionId,
+            imageSize: "2K", displayName: dn, sessionId: orch.sessionId,
           });
         }
         if (resp.body && resp.body.ok) {
@@ -5439,10 +6680,10 @@ async function _handlerImpl(event) {
         pendingSets = [];
         const partN = (orch.chunksSubmitted || 0) + 1;
         const dn = `cm-recover-${String(orch.sessionId).slice(-8)}-part${partN}`;
-        let resp = await inProcess({ kind: "batch_submit", model: orch.model, sets: chunk, imageSize: "1K", displayName: dn, sessionId: orch.sessionId });
+        let resp = await inProcess({ kind: "batch_submit", model: orch.model, sets: chunk, imageSize: "2K", displayName: dn, sessionId: orch.sessionId });
         if (!(resp.body && resp.body.ok)) {
           await sleep(8000);
-          resp = await inProcess({ kind: "batch_submit", model: orch.model, sets: chunk, imageSize: "1K", displayName: dn, sessionId: orch.sessionId });
+          resp = await inProcess({ kind: "batch_submit", model: orch.model, sets: chunk, imageSize: "2K", displayName: dn, sessionId: orch.sessionId });
         }
         if (resp.body && resp.body.ok) {
           await persist({ chunksSubmitted: partN, resubmitted: (orch.resubmitted || 0), batchNames: [...(orch.batchNames || []), resp.body.batchName].filter(Boolean) });
@@ -6064,7 +7305,7 @@ async function _handlerImpl(event) {
       }
 
       const displayName = String(body?.displayName || `lg1-batch-${Date.now()}`).slice(0, 100);
-      const imageSize = "1K";
+      const imageSize = String(body?.imageSize || "2K").toUpperCase();
       const bucket = admin.storage().bucket();
 
       // Validate every output_base_path up front so we fail fast.
@@ -6631,7 +7872,7 @@ async function _handlerImpl(event) {
             batchName,
             batchState: state,
             partial: forceMode && state !== "JOB_STATE_SUCCEEDED",
-            imageSize: docData.imageSize || "1K",
+            imageSize: docData.imageSize || "2K",
             model: (s.manifest && s.manifest.model) || docData.model || preferredCharmRenderModelId(),
             batchSlots: slotsOut,
             collectedAt: new Date().toISOString(),
@@ -6680,7 +7921,7 @@ async function _handlerImpl(event) {
           batchName,
           batchState: state,
           partial: forceMode && state !== "JOB_STATE_SUCCEEDED",
-          imageSize: docData.imageSize || "1K",
+          imageSize: docData.imageSize || "2K",
           slots: slotsOut,
         };
         const manifestPath = `${s.outputBasePath}/manifest.json`;
@@ -7021,7 +8262,7 @@ async function _handlerImpl(event) {
               apiKey,
               model,
               prompt: promptT,
-              size: String(t?.size || body?.size || "1024x1024"),
+              size: String(t?.size || body?.size || "2048x2048"),
               quality: String(
                 t?.quality ||
                 body?.quality ||
