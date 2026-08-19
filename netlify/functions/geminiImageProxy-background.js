@@ -1024,6 +1024,20 @@ const IMAGE_ROLE_LABELS = {
      edit labels, whose IMAGE 2 text declares that image the design truth to
      reproduce — the exact instruction that produced a kettlebell-shaped
      charm. Short, never absent. */
+  /* Short, like material_spec_to_charm, and never absent: an absent role set
+     falls through to `edit`, whose IMAGE 2 text declares that image the
+     design truth to reproduce. */
+  colour_drawing_to_charm: {
+    first:
+      "IMAGE 1 — the colour-coded production drawing. Structural truth. Read its inks as instructed in the prompt above.",
+    second:
+      "IMAGE 2 — material reference only. Its subject, outline, artwork, lettering and jump ring must not appear in your output.",
+    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
+    single:
+      "IMAGE 1 — the colour-coded production drawing. Structural truth. Read its inks as instructed in the prompt above.",
+    lock:
+      "FINAL LOCK: geometry from IMAGE 1, material from IMAGE 2. Copying IMAGE 2's subject is a hard fail.",
+  },
   material_spec_to_charm: {
     first:
       "IMAGE 1 — the greyscale map. Structural truth. Read it as instructed in the prompt above.",
@@ -1034,32 +1048,6 @@ const IMAGE_ROLE_LABELS = {
       "IMAGE 1 — the greyscale map. Structural truth. Read it as instructed in the prompt above.",
     lock:
       "FINAL LOCK: geometry from IMAGE 1, material from IMAGE 2. Copying IMAGE 2's subject is a hard fail.",
-  },
-  lineart_to_charm: {
-    first:
-      "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat COLOUR-CODED line art of a charm on white: its fills are instructions, and black and blue are different instructions. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
-    second:
-      "IMAGE 2 — UNUSED. Ignore any additional image.",
-    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
-    single:
-      "IMAGE 1 — THE APPROVED PRODUCTION DRAWING (STRUCTURAL TRUTH). Flat COLOUR-CODED line art of a charm on white: its fills are instructions, and black and blue are different instructions. Manufacture EXACTLY this charm: its outer perimeter, proportions, hanging hoop, every engraving stroke and every cutout are authoritative, 1:1.",
-    lock:
-      "FINAL IMAGE-ROLE LOCK: this is a 1:1 structural replication, drawing → finished charm. The output's silhouette laid over the drawing's silhouette must match. Nothing is added, nothing is removed, nothing is redesigned, nothing is 'improved'. HARD FAIL: an output whose outline, engraving layout or cutouts differ from the drawing. HARD FAIL: an output that is still line art, a sketch or a flat graphic rather than a photograph of real metal. The GROUND the charm is photographed on is not this block's business — it is set by the presentation instructions, and a plain white ground is correct.",
-  },
-  /* The render's new normal path. IMAGE 1 is not an instruction-colour drawing
-     anymore: deterministic code has already converted every manufacturing
-     colour into actual metal/opening/engraving semantics. This role therefore
-     tells the model to materialise, not decode. */
-  material_spec_to_charm: {
-    first:
-      "IMAGE 1 — GREYSCALE GEOMETRY MAP (STRUCTURAL TRUTH, NO COLOUR). It marks three things and only three: MID GREY = plain polished metal, DARK GREY = shallow engraved work, WHITE = cut clean through. Its greys are instructions, NOT the colour of the finished piece — take no colour from it. Its silhouette, openings and worked regions are already resolved exactly; materialise this same object without changing any geometry.",
-    second:
-      "IMAGE 2 — THE FINISH. This is a real photograph of one of our charms and it is the authority on HOW METAL BEHAVES: the polish and reflection behaviour, how a shallow engraved stroke reads against a polished surface beside it, the edge character, the thinness of the sheet, the lighting and the contact shadow. Match all of that. It is NOT the authority on which alloy this charm is — the alloy is named in the instructions above and overrides IMAGE 2's own colour, which may differ. Its SUBJECT is off limits — the object it depicts, its outline, its engraved artwork, its numerals, its lettering and its attached jump ring must NOT appear in your output in whole, in part, or blended.",
-    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
-    single:
-      "IMAGE 1 — GREYSCALE GEOMETRY MAP (STRUCTURAL TRUTH, NO COLOUR). It marks three things and only three: MID GREY = plain polished metal, DARK GREY = shallow engraved work, WHITE = cut clean through. Its silhouette, openings and worked regions are already resolved exactly; materialise this same object without changing any geometry.",
-    lock:
-      "FINAL IMAGE-ROLE LOCK: IMAGE 1 owns WHERE — every edge, opening, engraved region and outline, exactly as mapped, nothing added, removed, moved, resized or reinterpreted. THE INSTRUCTIONS own WHICH ALLOY. IMAGE 2 owns HOW THAT ALLOY BEHAVES — polish, reflection, engraving finish, edge, lighting, shadow. HARD FAIL: reading IMAGE 1's greys as colours or as different materials — one alloy throughout. HARD FAIL: a region mapped as cut through rendered filled, recessed, tinted or shaded instead of open. HARD FAIL: any part of IMAGE 2's subject, artwork, lettering or jump ring appearing in the output.",
   },
   line_art_style: {
     first:
@@ -2485,6 +2473,14 @@ const STUDIO_DEFAULT_CONFIG = {
        "observe"  the check runs and files its numbers; image untouched.
        "punch"    fills declared openings. Produces the sticker artefact.
        "enforce"  punch AND reject undeclared cuts. */
+  /* WHICH IMAGE THE RENDERER IS SHOWN.
+       "mask"    the greyscale material spec (176/96/255) — deterministic code
+                 has already resolved every cut/engrave/polish decision.
+       "drawing" the colour-coded production drawing itself, with the model
+                 reading the fill law directly.
+     The gold material reference is attached either way. Flip in Firestore,
+     no deploy. */
+  renderInput: "mask",
   renderCutCheck: "off",
   /* The naming pass. PARKED — the prompt no longer carries the census, so
      nothing read its output. Turning this back on also requires appending
@@ -3332,6 +3328,56 @@ ${zoneBlock(zones, "drawing")}`;
    in as many words that its own colour is not the subject. Replacing the
    stored sample with a correctly-coloured one is then an improvement rather
    than a prerequisite.                                                    */
+/* ── THE SAME PROMPT, FOR THE COLOUR-CODED DRAWING ───────────────────────
+   Identical skeleton to the greyscale builder below — itself a mirror of the
+   Listing Generator's promptStrBW — with the mapping swapped for the studio's
+   own fill law: black engraves, blue cuts, red outlines, white is polished.
+
+   One case the greyscale map does not need. BLUE IS USED TWO WAYS in these
+   drawings: a blue FILLED AREA is an opening, but a blue LINE is a cut EDGE —
+   the outer silhouette and the hoop's ring are drawn as blue strokes with
+   white inside. Reading those as openings would cut the charm's own body
+   away, so it gets its own numbered case. Red is likewise always a line and
+   never an area. Both are recorded failure modes in this pipeline, not
+   hypotheticals.                                                           */
+function buildColourDrawingToCharmPrompt({ metal, hasReference }) {
+  const m = studioCleanText(metal) || "gold";
+  const bare = ({
+    silver: "sterling silver",
+    gold: "14k gold",
+    rose: "14k rose gold",
+    solid10: "10k solid gold",
+    solid14: "14k solid gold",
+  })[m] || m;
+
+  const second = hasReference
+    ? `\n    The SECOND image is strictly a MATERIAL REFERENCE. You must NEVER copy, merge, or include the subject matter or object shown in the second image. \n`
+    : "";
+  const ignoreSecond = hasReference
+    ? `\n    • IGNORE SECOND IMAGE SUBJECT: Do NOT add or draw the object from the SECOND image. Use the second image ONLY to understand the metal's colour, polish and lighting.`
+    : "";
+
+  return `CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a photorealistic ${bare} charm.
+${second}
+    TASK: Generate a photograph of a real metal charm based STRICTLY on the object shown in the FIRST image. The final image must be the EXACT SAME object as the FIRST image.
+
+    HARD CONSTRAINTS (NON-NEGOTIABLE):
+    • 100% STRUCTURAL MATCH: Keep all outer perimeters, overall shape, and proportions 100% identical to the FIRST image.${ignoreSecond}
+    • FILL LAW (CRITICAL — THE FIRST IMAGE'S INKS ARE INSTRUCTIONS, NOT COLOURS TO COPY):
+        The FIRST image is a production drawing. Its inks tell you what to do with the metal; none of them is the colour of the finished charm. Take no colour from it. Before rendering any region, classify it:
+        1. WHITE INSIDE THE CHARM — POLISHED METAL (the most common case): plain unworked sheet. Render it as bright, smooth, reflective ${bare}.
+        2. BLACK FILLED AREA — ENGRAVED METAL: the sheet is unbroken and the metal is still there; only its surface has been worked. Render it as the SAME alloy in the SAME colour, told apart by finish alone — satin against mirror, the way a brushed band reads against a polished one on a single ring. NEVER render it as a different metal, a separate inlay, enamel, or a printed disc.
+        3. BLUE FILLED AREA — CUT CLEAN THROUGH: the metal is ABSENT. You see the background straight through the charm, bounded by a thin bright inner cut edge where the sheet's thickness catches the light, with a small soft shadow just inside. That edge and that shadow are what prove it is open.
+        4. BLUE LINE — A CUT EDGE, NOT AN OPENING: a blue STROKE with white on the inside is the boundary the metal is cut along, not a hole. The charm's outer silhouette and the hoop's ring are drawn this way. Render solid metal right up to that line and stop. Cutting away everything a blue line encloses would remove the charm itself.
+        5. RED LINE — AN OUTLINE ONLY: it marks a boundary. The area it encloses is unchanged polished metal, exactly as in case 1. Never fill it, never engrave it, never cut it.
+        6. THE FINGERTIP TEST: for every region ask — would a fingertip find smooth polished metal, find metal whose surface is textured but continuous, or pass straight through and touch nothing? Smooth → case 1. Textured but continuous → case 2. Nothing there → case 3.
+        HARD FAIL: a blue filled area rendered as engraving, shading or a darker patch instead of an actual opening.
+        HARD FAIL: a black area, a red area, or the inside of a blue LINE rendered as an opening. Metal the drawing says is there must be there.
+    • MATERIAL: The whole charm is one alloy: ${bare}. Thin flat sheet metal with crisp cut edges, not a thick moulded token, and the top hoop is part of the same sheet rather than an attached jump ring.
+    • BACKGROUND: A plain pure WHITE studio background with one soft contact shadow beneath the charm. Every opening cut through the metal appears in that shadow as a corresponding gap of clean white.
+    • NO INVENTION: Do not add, remove, move, resize or reinterpret any geometry, and add no gemstones, borders, engraving or lettering the FIRST image does not show.`;
+}
+
 /* ── promptStrBW, REVERSED. NOTHING ELSE. ────────────────────────────────
    A direct mirror of the Listing Generator's line-art prompt, which works.
    Same skeleton, same section order, same numbered-classification rule, same
@@ -5300,19 +5346,28 @@ async function handleStudioPromptPreview({ body, event, origin }) {
   try { hasReference = !!(await ensureStudioGoldStyleReference())?.buffer?.length; }
   catch (_e) { hasReference = false; }
 
-  const prompt = spec
+  /* The preview must choose its input the same way the render does, or the
+     box shows a prompt the render would never send. Same config key, same
+     precedence. */
+  const askedInput = String(body?.renderInput || "").trim().toLowerCase();
+  const wantDrawing = (askedInput === "drawing" || askedInput === "mask")
+    ? askedInput === "drawing"
+    : String(cfg.renderInput || "mask").trim().toLowerCase() === "drawing";
+  const specUsed = !wantDrawing && !!spec;
+  const prompt = specUsed
     ? buildMaterialSpecToCharmPrompt({ metal, hasReference, census })
-    : buildLineArtToCharmPrompt({ metal, zones: [] });
+    : buildColourDrawingToCharmPrompt({ metal, hasReference });
 
   /* The role labels are attached to the images, not to the prompt, so they
      are returned separately rather than pretended into one string — editing
      them here would have no effect and the box must not imply otherwise. */
-  const roleSet = IMAGE_ROLE_LABELS[spec ? "material_spec_to_charm" : "lineart_to_charm"];
+  const roleSet = IMAGE_ROLE_LABELS[specUsed ? "material_spec_to_charm" : "colour_drawing_to_charm"];
   return studioJson(200, {
     ok: true,
     prompt,
     chars: prompt.length,
-    specUsed: !!spec,
+    specUsed,
+    input: specUsed ? "mask" : "drawing",
     roles: hasReference
       ? [roleSet.first, roleSet.second, roleSet.lock]
       : [roleSet.single, roleSet.lock],
@@ -5472,21 +5527,37 @@ async function handleStudioRender({ body, event, origin }) {
       }
     }
 
-    const specUsed = !!(materialSpec && materialSpec.buf);
+    /* ── WHICH IMAGE THE RENDERER SEES ───────────────────────────────────
+       `renderInput: "drawing"` sends the colour-coded production drawing and
+       lets the model read the fill law directly; "mask" sends the greyscale
+       spec, where code has already resolved every decision.
+
+       The material reference is attached in BOTH cases. It used only to be
+       attached on the spec path, so simply pointing the old fallback at the
+       drawing would have silently dropped the alloy colour — the same class
+       of bug as the metal name being discarded. */
+    /* THE BROWSER DECIDES. This is a UI switch in the prompt lab, not a
+       config value — the config key is only the fallback for a request that
+       predates the control. Anything other than the two words falls back. */
+    const askedInput = String(body?.renderInput || "").trim().toLowerCase();
+    const wantDrawing = (askedInput === "drawing" || askedInput === "mask")
+      ? askedInput === "drawing"
+      : String(cfg.renderInput || "mask").trim().toLowerCase() === "drawing";
+    const specUsed = !wantDrawing && !!(materialSpec && materialSpec.buf);
+    const drawingUsed = !specUsed;
     const images = [specUsed
       ? { buffer: materialSpec.buf, mime: "image/png", filename: "material-spec.png" }
       : { buffer: bw.buffer, mime: bw.mime || "image/png", filename: "drawing.png" }
     ];
     let renderStyleRef = null;
-    if (specUsed) {
-      try { renderStyleRef = await ensureStudioGoldStyleReference(); }
-      catch (e) { console.error("[studio] gold style reference unavailable:", e?.message || e); renderStyleRef = null; }
-      if (renderStyleRef?.buffer?.length) images.push({
-        buffer: renderStyleRef.buffer,
-        mime: renderStyleRef.mime || STUDIO_GOLD_STYLE_REFERENCE_MIME,
-        filename: renderStyleRef.filename || STUDIO_GOLD_STYLE_REFERENCE_FILENAME,
-      });
-    }
+    try { renderStyleRef = await ensureStudioGoldStyleReference(); }
+    catch (e) { console.error("[studio] gold style reference unavailable:", e?.message || e); renderStyleRef = null; }
+    if (renderStyleRef?.buffer?.length) images.push({
+      buffer: renderStyleRef.buffer,
+      mime: renderStyleRef.mime || STUDIO_GOLD_STYLE_REFERENCE_MIME,
+      filename: renderStyleRef.filename || STUDIO_GOLD_STYLE_REFERENCE_FILENAME,
+    });
+    console.log(`[studio] render input=${specUsed ? "mask" : "drawing"} reference=${renderStyleRef?.buffer?.length ? "yes" : "no"}`);
 
     /* Built from the SAME plan the spec image was built from, so the words
        and the picture can never disagree. Never allowed to fail a render:
@@ -5522,15 +5593,12 @@ async function handleStudioRender({ body, event, origin }) {
        driving the image model with a prompt of their own. Capped at 20k
        characters and still behind auth, ownership, budget and the debit —
        but it is not the same risk profile as a fixed prompt. */
-    const built = buildMaterialSpecToCharmPrompt({
-      metal,
-      hasReference: !!renderStyleRef?.buffer?.length,
-      census: specCensus,
-    });
+    const hasRef = !!renderStyleRef?.buffer?.length;
+    const built = specUsed
+      ? buildMaterialSpecToCharmPrompt({ metal, hasReference: hasRef, census: specCensus })
+      : buildColourDrawingToCharmPrompt({ metal, hasReference: hasRef });
     const override = String(body?.promptOverride || "").trim().slice(0, 20000);
-    const effectivePrompt = !specUsed
-      ? buildLineArtToCharmPrompt({ metal, zones: renderZones })
-      : (override || built);
+    const effectivePrompt = override || built;
     console.log(`[studio] prompt ${override ? "OVERRIDDEN" : "built"} chars=${effectivePrompt.length}`);
 
     /* ── THE GOLD MASK IS EVIDENCE, SO IT IS KEPT ─────────────────────────
@@ -5575,6 +5643,7 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecFacePx: specUsed ? materialSpec.facePx : 0,
       renderSpecHolePx: specUsed ? materialSpec.holePx : 0,
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
+      renderInput: specUsed ? "mask" : "drawing",
       renderPromptText: effectivePrompt.slice(0, 40000),
       renderPromptChars: effectivePrompt.length,
       renderPromptOverridden: !!override,
@@ -5608,7 +5677,7 @@ async function handleStudioRender({ body, event, origin }) {
       /* NEVER null here. `IMAGE_ROLE_LABELS[imageRoles] || IMAGE_ROLE_LABELS.edit`
          means an absent value silently selects the edit roles, whose IMAGE 2
          label tells the model to reproduce that image's silhouette. */
-      imageRoles: specUsed ? "material_spec_to_charm" : "lineart_to_charm",
+      imageRoles: specUsed ? "material_spec_to_charm" : "colour_drawing_to_charm",
       charmGeometryPolicy: specUsed ? null : "flat_integrated_eyelet",
       /* ── ONE VOICE ABOUT THE BACKGROUND ──────────────────────────────────
          backgroundPolicy: "solid_black" appends a block headed "BACKEND-
