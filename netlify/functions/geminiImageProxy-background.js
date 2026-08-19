@@ -1011,6 +1011,28 @@ const IMAGE_ROLE_LABELS = {
      anymore: deterministic code has already converted every manufacturing
      colour into actual metal/opening/engraving semantics. This role therefore
      tells the model to materialise, not decode. */
+  /* ── THE SHORT PATH NEEDS ITS OWN ROLES, NOT NONE ─────────────────────
+     Passing imageRoles:null does NOT mean "no roles": the lookup falls back
+     to `edit`, whose IMAGE 2 label reads "MASTER CHARM / DESIGN TRUTH. Use
+     its exact silhouette, integrated eyelet, cutouts and engraving
+     topology." That label is attached to the finish sample itself, so the
+     model was instructed — correctly, from its point of view — to reproduce
+     the kettlebell. Prompt sentences arguing the opposite lost to a label
+     bolted onto the image.
+
+     These are the short path's own, and they are short: the two facts that
+     cannot be dropped, and nothing else. */
+  short_spec_to_charm: {
+    first:
+      "IMAGE 1 — THE GREY MAP. It alone decides the charm's shape, its engraving and its cut-outs. Reproduce it exactly.",
+    second:
+      "IMAGE 2 — COLOUR SAMPLE ONLY. Take from it the metal colour and the engraving colour, nothing else. Its shape, its artwork and its lettering must NOT appear in your output.",
+    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
+    single:
+      "IMAGE 1 — THE GREY MAP. It alone decides the charm's shape, its engraving and its cut-outs. Reproduce it exactly.",
+    lock:
+      "FINAL LOCK: shape from IMAGE 1, colour from IMAGE 2. Copying IMAGE 2's shape is a hard fail.",
+  },
   material_spec_to_charm: {
     first:
       "IMAGE 1 — GREYSCALE GEOMETRY MAP (STRUCTURAL TRUTH, NO COLOUR). It marks three things and only three: MID GREY = plain polished metal, DARK GREY = shallow engraved work, WHITE = cut clean through. Its greys are instructions, NOT the colour of the finished piece — take no colour from it. Its silhouette, openings and worked regions are already resolved exactly; materialise this same object without changing any geometry.",
@@ -3337,10 +3359,31 @@ function buildShortSpecPrompt({ metal, hasReference, cfg }) {
   })[studioCleanText(metal) || "gold"] || ("polished " + studioCleanText(metal));
 
   const body = studioCleanText(cfg && cfg.renderShortPrompt) || STUDIO_SHORT_PROMPT;
-  /* One sentence added, and only when a sample is attached: without it the
-     model has no statement of which alloy the customer bought, and IMAGE 2's
-     own colour would decide it — the defect this build already fixed once. */
-  return hasReference ? `${body}\n\nThe metal is ${label}.` : `${body}\n\nRender it in ${label}.`;
+
+  /* ── THE ONE THING THAT CANNOT BE CUT ─────────────────────────────────
+     The first version of this path stripped `imageRoles` along with
+     everything else, on the reasoning that role labels are 1,400 characters
+     and the short prompt is a test of brevity. That was wrong, and it
+     produced a charm shaped like the finish sample: the model received a
+     greyscale map, a photograph of a kettlebell charm, and 262 characters
+     that never said the two images have different jobs — so it blended them.
+
+     Paul's wording works when he pastes it into ChatGPT because he attaches
+     the two images himself and the separation is obvious in context. Sent
+     through an API with both images in one call, nothing states it.
+
+     Role separation is not verbosity. Without it the second image has no
+     defined purpose, and an image with no defined purpose gets copied. This
+     is ~190 characters against the 1,400 of the full role block, and it is
+     the floor — the short path does not go below this. */
+  /* The image roles are no longer stated here. They are attached to the
+     images themselves by `short_spec_to_charm`, which is where a statement
+     about an image belongs and where it outranks prose. Repeating them in
+     the prompt would be a second description of one rule — the reconciliation
+     problem this pipeline has now hit three times. */
+  return hasReference
+    ? `${body}\n\nThe metal is ${label}.`
+    : `${body}\n\nRender it in ${label}.`;
 }
 
 function buildMaterialSpecToCharmPrompt({ metal, hasReference, census }) {
@@ -5538,7 +5581,10 @@ async function handleStudioRender({ body, event, origin }) {
       /* Role labels are ~1,400 characters of their own and are appended by
          callImageModelEdits. Sending them on the short path would defeat the
          only thing the short path is testing. */
-      imageRoles: useShort ? null : (specUsed ? "material_spec_to_charm" : "lineart_to_charm"),
+      /* NEVER null here. `IMAGE_ROLE_LABELS[imageRoles] || IMAGE_ROLE_LABELS.edit`
+         means an absent value silently selects the edit roles, which tell the
+         model IMAGE 2 is the design truth to reproduce. */
+      imageRoles: useShort ? "short_spec_to_charm" : (specUsed ? "material_spec_to_charm" : "lineart_to_charm"),
       charmGeometryPolicy: specUsed ? null : "flat_integrated_eyelet",
       /* ── ONE VOICE ABOUT THE BACKGROUND ──────────────────────────────────
          backgroundPolicy: "solid_black" appends a block headed "BACKEND-
