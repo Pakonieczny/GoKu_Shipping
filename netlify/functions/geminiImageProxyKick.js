@@ -43,8 +43,20 @@ const KICK_BUILD = "geminiImageProxyKick-1.0.0";
    put the version on screen, which a background function can never give.
    Leaving it out of both sets is what produced "unknown_kind": the kick
    rejected it with a 400 before the background function was ever reached. */
+/* custom_charm_prompt is SYNC for the same reason: the browser needs the
+   prompt text back in the response body, which a background function can
+   never give. It runs sharp, the material spec and one text call — heavier
+   than the other sync kinds, but well inside a synchronous budget, and it
+   calls no image model.
+
+   NOTE THE PATTERN. This is the second kind added to the studio that had to
+   be registered HERE as well as in the proxy's STUDIO_KINDS. The kick is the
+   only door; a kind missing from both sets is rejected with 400 unknown_kind
+   before the proxy is ever loaded, and the failure looks exactly like the
+   proxy not having the handler. Any new studio kind goes in one of these two
+   sets, always. */
 const SYNC_KINDS  = new Set(["custom_charm_precheck", "custom_session_status",
-                             "custom_charm_compose"]);
+                             "custom_charm_compose", "custom_charm_prompt"]);
 const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine", "custom_charm_render"]);
 
 /* Same list, same order as STUDIO_ALLOWED_ORIGINS in the proxy. */
