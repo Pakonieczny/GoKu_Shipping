@@ -2573,6 +2573,65 @@ async function studioConfig() {
 
 /** Hourly ceiling on top of the wallet, so a stolen ID token cannot burn the
  *  Gemini budget in one go. */
+/* ── RATE CEILING, WITH AN EXEMPTION ──────────────────────────────────────
+   Checks the hourly ceilings unless the account is unlimited, in which case
+   the counter is not read and not incremented — a testing session must not
+   silently fill the window for the account's own later use.
+
+   Reads the user doc once and only when a uid is supplied. A failure to read
+   it is treated as "not unlimited", so the ceiling still applies: the safe
+   direction for a limiter is to stay on. */
+async function studioUnlimitedUid(uid) {
+  if (!uid) return false;
+  try {
+    const snap = await getDb().doc(`users/${uid}`).get();
+    if (!snap.exists) {
+      console.log(`[studio] gate: users/${uid} does not exist — ceiling applies`);
+      return false;
+    }
+    const w = snap.data()?.wallet;
+    const un = walletIsUnlimited(w);
+    if (!un) {
+      /* The commonest cause of "I set unlimited and it still limits me" is the
+         value being the STRING "true", or the field sitting on the user doc
+         rather than inside `wallet`. Say which, rather than just refusing. */
+      const raw = w && Object.prototype.hasOwnProperty.call(w, "unlimited")
+        ? `wallet.unlimited=${JSON.stringify(w.unlimited)} (${typeof w.unlimited}) — must be boolean true`
+        : (w ? "wallet exists but has no `unlimited` field" : "no `wallet` map on the user doc");
+      console.log(`[studio] gate: uid ${uid} NOT unlimited — ${raw}`);
+    }
+    return un;
+  } catch (e) {
+    console.error("[studio] unlimited check failed, ceiling stays on:", e?.message || e);
+    return false;
+  }
+}
+
+/* Says WHICH ceiling refused, and whether the exemption was even consulted.
+   A limiter that returns a bare 429 with no reason is how an afternoon gets
+   spent blaming the upstream provider. */
+async function studioGateOk(uid, event) {
+  if (await studioUnlimitedUid(uid)) {
+    console.log(`[studio] gate: uid ${uid} is unlimited — ceilings skipped`);
+    return true;
+  }
+  const ip = studioClientIp(event);
+  const okUid = await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID);
+  if (!okUid) {
+    console.log(`[studio] gate: BLOCKED by the per-account ceiling ` +
+                `(${STUDIO_MAX_GENS_HOUR_UID}/hour, drawings and renders share it, ` +
+                `window resets an hour after its first request) uid=${uid}`);
+    return false;
+  }
+  const okIp = await studioBudgetOk("genip", ip, STUDIO_MAX_GENS_HOUR_IP);
+  if (!okIp) {
+    console.log(`[studio] gate: BLOCKED by the per-IP ceiling ` +
+                `(${STUDIO_MAX_GENS_HOUR_IP}/hour) ip=${ip}`);
+    return false;
+  }
+  return true;
+}
+
 async function studioBudgetOk(key, id, max) {
   const db = getDb();
   const hash = require("crypto").createHash("sha256").update(String(id)).digest("hex").slice(0, 32);
@@ -2599,8 +2658,17 @@ async function studioBudgetOk(key, id, max) {
    generation fails. */
 /* ── UNLIMITED ACCOUNTS ────────────────────────────────────────────────────
  * `users/{uid}.wallet.unlimited === true` exempts an account from the credit
- * meter: generations and renders still run, still log to the ledger, and
- * still obey the hourly rate ceilings — only the balance is left alone.
+ * meter AND from the hourly rate ceilings. Generations and renders still run
+ * and still log to the ledger; only the balance and the counter are left
+ * alone.
+ *
+ * The ceilings (25 gens/hour per uid, 60 per IP, drawings and renders sharing
+ * one counter) exist so a public storefront cannot be used to drive the
+ * Gemini key as fast as somebody can click. That is right for a shopper and
+ * wrong for whoever is developing the studio, who can exhaust an hour's
+ * budget in twenty-five minutes of testing and then be locked out for the
+ * rest of the window — the counter resets an hour after its FIRST request,
+ * not on a sliding hour, so there is no partial recovery.
  *
  * It lives on the USER document rather than in config/customStudio because
  * that config doc is readable by any signed-in visitor (see firestore.rules),
@@ -3627,7 +3695,8 @@ async function handleStudioPrecheck({ body, event, origin }) {
   if (!p.startsWith(`custom-studio/${uid}/`)) {
     return studioJson(403, { ok: false, error: "forbidden" }, origin);
   }
-  if (!(await studioBudgetOk("pc", uid, STUDIO_MAX_GENS_HOUR_UID))) {
+  if (!(await studioUnlimitedUid(uid)) &&
+      !(await studioBudgetOk("pc", uid, STUDIO_MAX_GENS_HOUR_UID))) {
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
 
@@ -3724,8 +3793,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
   const n = Number(body?.versionNumber) || (Number(session.currentVersion) || 0) + 1;
   const vRef = sRef.collection("versions").doc(String(n));
 
-  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
-      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+  if (!(await studioGateOk(uid, event))) {
     await studioFailVersion(vRef, n, "rate_limited");
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
@@ -5513,8 +5581,7 @@ async function handleStudioRender({ body, event, origin }) {
 
   /* Renders share the generation budgets — a render IS a generation as far
      as the upstream model is concerned. */
-  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
-      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+  if (!(await studioGateOk(uid, event))) {
     await studioFailRender(vRef, "rate_limited", renderRunId);
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
@@ -5986,8 +6053,7 @@ async function handleStudioCompose({ body, event, origin }) {
   if (!n || n < 1 || n > 400) return studioJson(400, { ok: false, error: "bad_version" }, origin);
   const vRef = sRef.collection("versions").doc(String(n));
 
-  if (!(await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID)) ||
-      !(await studioBudgetOk("genip", studioClientIp(event), STUDIO_MAX_GENS_HOUR_IP))) {
+  if (!(await studioGateOk(uid, event))) {
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
 
