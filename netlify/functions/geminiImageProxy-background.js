@@ -1015,12 +1015,12 @@ const IMAGE_ROLE_LABELS = {
     first:
       "IMAGE 1 — GREYSCALE GEOMETRY MAP (STRUCTURAL TRUTH, NO COLOUR). It marks three things and only three: MID GREY = plain polished metal, DARK GREY = shallow engraved work, WHITE = cut clean through. Its greys are instructions, NOT the colour of the finished piece — take no colour from it. Its silhouette, openings and worked regions are already resolved exactly; materialise this same object without changing any geometry.",
     second:
-      "IMAGE 2 — THE FINISH AND THE METAL. This is a real photograph of one of our charms, and it is the ONLY authority on what the finished piece looks like: its metal and its exact colour, the polish, the reflection behaviour, how a shallow engraved stroke reads against that metal, the edge character, the lighting and the shadow. Match it. Its SUBJECT is off limits — the object it depicts, its outline, its engraved artwork, its numerals, its lettering and its attached jump ring must NOT appear in your output in whole, in part, or blended.",
+      "IMAGE 2 — THE FINISH. This is a real photograph of one of our charms and it is the authority on HOW METAL BEHAVES: the polish and reflection behaviour, how a shallow engraved stroke reads against a polished surface beside it, the edge character, the thinness of the sheet, the lighting and the contact shadow. Match all of that. It is NOT the authority on which alloy this charm is — the alloy is named in the instructions above and overrides IMAGE 2's own colour, which may differ. Its SUBJECT is off limits — the object it depicts, its outline, its engraved artwork, its numerals, its lettering and its attached jump ring must NOT appear in your output in whole, in part, or blended.",
     extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
     single:
       "IMAGE 1 — GREYSCALE GEOMETRY MAP (STRUCTURAL TRUTH, NO COLOUR). It marks three things and only three: MID GREY = plain polished metal, DARK GREY = shallow engraved work, WHITE = cut clean through. Its silhouette, openings and worked regions are already resolved exactly; materialise this same object without changing any geometry.",
     lock:
-      "FINAL IMAGE-ROLE LOCK: IMAGE 1 owns WHERE — every edge, opening, engraved region and outline, exactly as mapped, nothing added, removed, moved, resized or reinterpreted. IMAGE 2 owns WHAT IT LOOKS LIKE — the metal, its colour, the polish, the lighting, the shadow and the engraving finish. HARD FAIL: taking colour from IMAGE 1's greys. HARD FAIL: any part of IMAGE 2's subject, artwork, lettering or jump ring appearing in the output.",
+      "FINAL IMAGE-ROLE LOCK: IMAGE 1 owns WHERE — every edge, opening, engraved region and outline, exactly as mapped, nothing added, removed, moved, resized or reinterpreted. THE INSTRUCTIONS own WHICH ALLOY. IMAGE 2 owns HOW THAT ALLOY BEHAVES — polish, reflection, engraving finish, edge, lighting, shadow. HARD FAIL: reading IMAGE 1's greys as colours or as different materials — one alloy throughout. HARD FAIL: a region mapped as cut through rendered filled, recessed, tinted or shaded instead of open. HARD FAIL: any part of IMAGE 2's subject, artwork, lettering or jump ring appearing in the output.",
   },
   line_art_style: {
     first:
@@ -3232,15 +3232,25 @@ ${zoneBlock(zones, "drawing")}`;
 /* ── TWO IMAGES, TWO JOBS, NO OVERLAP ─────────────────────────────────────
    IMAGE 1 says WHERE: cut through, engraved, or plain polished metal. It is
    greyscale and says nothing about colour.
-   IMAGE 2 says WHAT IT LOOKS LIKE: the metal, its colour, its polish, how an
-   engraved stroke catches light.
+   IMAGE 2 says HOW METAL BEHAVES: polish, specularity, how a shallow engraved
+   stroke catches light, edge character, lighting, shadow.
 
-   `hasReference` is what keeps that clean. With the finish sample attached,
-   the metal is NOT named in words — naming it would put a third opinion
-   about colour into a prompt that already has one authority. Without the
-   sample (the sample failed to load), words are all that is left, so the
-   metal name comes back. One or the other, never both.                    */
-function buildMaterialSpecToCharmPrompt({ metal, hasReference }) {
+   THE ALLOY IS NOW NAMED EVEN WHEN THE SAMPLE IS ATTACHED, and that reverses
+   a deliberate earlier decision, so here is why. The old rule was "one colour
+   authority, never two": with the sample attached the metal went unnamed and
+   IMAGE 2 owned colour outright. That is airtight reasoning about prompt
+   conflict and it produced a real defect — the customer's metal choice
+   reached nothing. Whatever alloy the stored sample happens to be is the
+   alloy every customer receives, silver and rose alike.
+
+   The split that fixes it is not "two opinions about colour", it is one
+   opinion each about two different things: the WORDS own which alloy it is,
+   the SAMPLE owns how that alloy behaves under light. Those cannot contradict
+   each other because they answer different questions, and the sample is told
+   in as many words that its own colour is not the subject. Replacing the
+   stored sample with a correctly-coloured one is then an improvement rather
+   than a prerequisite.                                                    */
+function buildMaterialSpecToCharmPrompt({ metal, hasReference, census }) {
   const m = studioCleanText(metal) || "gold";
   const label = ({
     silver: "polished sterling silver",
@@ -3250,22 +3260,32 @@ function buildMaterialSpecToCharmPrompt({ metal, hasReference }) {
     solid14: "polished 14k solid gold",
   })[m] || ("polished " + m);
 
-  const material = hasReference
-    ? "the metal shown in IMAGE 2"
-    : label;
+  /* Each tone is bound to something the renderer can actually see, rather
+     than to an abstract idea it has to invent a look for. "DARK GREY means
+     engraved" leaves the renderer free to decide engraved metal is a
+     different material; "DARK GREY looks like the engraved strokes in
+     IMAGE 2" does not. */
+  const toneMap = hasReference
+    ? `• IMAGE 1 IS A GREYSCALE MAP, NOT A PICTURE OF METAL — take no colour from it. Each tone is already shown to you in IMAGE 2:
+   · MID GREY → its plain polished surface.
+   · DARK GREY → its shallow engraved marks: same metal, worked surface, nothing more.
+   · WHITE → cut clean through to the ground, as IMAGE 2's own opening is.`
+    : `• IMAGE 1 IS A GREYSCALE MAP, NOT A PICTURE OF METAL — take no colour from it: MID GREY is plain polished metal, DARK GREY is shallow engraved work on that same metal, WHITE is cut clean through to the ground.`;
 
   const header =
 `DETERMINISTIC MATERIAL SPECIFICATION → FINISHED CHARM
 
-Render ONE finished charm as a photorealistic flat metal charm in ${material}. IMAGE 1 is a machine-resolved geometry specification and is the only structural truth.
+Render ONE finished charm as a photorealistic flat charm in ${label}. IMAGE 1 is a machine-resolved geometry specification and is the only structural truth.
 
 1:1 STRUCTURAL LOCK — HIGHEST PRIORITY
 • Preserve IMAGE 1 exactly: same outer silhouette, same integrated top hoop, same openings, same worked regions, same proportions.
 • Do not redesign, beautify, simplify, add, remove, move, resize or reinterpret any geometry.
-• IMAGE 1 IS A GREYSCALE MAP, NOT A PICTURE OF METAL. Its three tones are instructions and nothing else: MID GREY is plain polished metal, DARK GREY is shallow engraved work, WHITE is cut clean through to the background. Take no colour from it whatsoever.
-• Convert that map into believable real metal in ${material}: material, polish, subtle engraving finish, light and contact shadow. Nothing structural changes.`;
+${toneMap}
+• THE WHOLE CHARM IS ONE ALLOY: ${label}. Polished metal, engraved metal and cut edge are that same alloy in the same colour, differing in finish, never in material. Render it as believable real metal — polish, engraving finish, light, contact shadow — changing nothing structural.`;
 
-  return header + "\n\n" + renderConstraintBlocks() +
+  const regions = studioCleanText(census) ? "\n\n" + census : "";
+
+  return header + regions + "\n\n" + renderConstraintBlocks() +
          "\n\n" + STUDIO_RENDER_FINISH;
 }
 
@@ -3300,6 +3320,11 @@ BACKGROUND AND SHADOW:
   THE SHADOW IS REQUIRED. A charm sitting on white with no shadow reads as a
   cut-out pasted onto a blank page, not as a photographed object, and is an
   incomplete image.
+• AN OPENING IS A PHYSICAL EVENT, NOT A DARKER PATCH. You see the white ground
+  straight through it, bounded by a thin bright inner cut edge where the
+  sheet's thickness catches the light, with a small soft shadow just inside.
+  That edge and that shadow are what prove it is open. Filled, tinted,
+  recessed, sculpted or merely shaded is the worst failure in this render.
 • THE SHADOW IS A TRUE SILHOUETTE OF THE CHARM AND OF NOTHING ELSE. Every
   opening cut through the metal — the hoop's hole and every cut-out in the
   design — appears in the shadow as a corresponding gap of clean white.
@@ -3316,10 +3341,11 @@ ENGRAVING RENDERED TOO DARK. Every line below is a CEILING, not a target:
   and polished bands on one ring. The polished metal stays bright and
   specular; the contrast between the two comes from finish and the gentlest
   tonal shift, never from a change of colour.
-• Converted to greyscale, an engraved area and the polished metal touching it
-  would differ only slightly. Brown, bronze, copper, grey, charcoal or black
-  is wrong, and so is any recess that reads as a dark shape rather than as
-  worked gold.
+• Converted to greyscale, an engraved area sits about a fifth darker than the
+  polished metal touching it, and that is a CEILING — closer is always better,
+  further apart is always wrong. Brown, bronze, copper, grey, charcoal or black
+  is wrong, and so is any recess that reads as a dark shape, a separate inlay
+  or a second alloy rather than as the same worked gold.
 • If the engraving is the first thing the eye lands on, or if it could be
   mistaken for a hole, it is far too dark. Err lighter every time.
 • DEPTH IS SUPERFICIAL. A shallow, delicate skim of the surface — never a
@@ -3333,8 +3359,8 @@ ENGRAVING RENDERED TOO DARK. Every line below is a CEILING, not a target:
   makes a render look artificial. When in doubt, less.
 
 FINAL CHECK ON THIS BLOCK: white ground; one soft contact shadow; every
-opening present as white inside that shadow; every blue area of the drawing a
-real hole rather than metal; and every engraved area so close in tone to the
+opening present as white inside that shadow; every declared opening a real
+hole rather than metal; and every engraved area so close in tone to the
 polish that no one could mistake it for a hole — shallow, even everywhere,
 texture barely there.`;
 
@@ -4584,6 +4610,117 @@ async function studioRefineMask(sharp, maskBuf, targetLong) {
   return { buf, w: tw, h: th };
 }
 
+/* ── NAME EVERY REGION, DON'T JUST STATE THE LAW ──────────────────────────
+   The three-tone law was stated abstractly and the renderer applied it
+   abstractly: it saw a light shape, a dark shape and a white shape and
+   painted a charm that resembled them, treating two differently-declared
+   shapes inside one field as the same thing.
+
+   This block says, per region, WHAT IS THERE — computed from the resolved
+   map, never from the model's reading of it. It is the same information the
+   map already carries, spoken once in the vocabulary the renderer answers
+   to, which is the one thing the abstract statement of the law never did.
+
+   Two deliberate restrictions, both learned the hard way:
+     · NO BOUNDING BOXES. A region is named by where its centre sits, never
+       by a rectangle — a box around a thin shape is a claim about every
+       pixel it encloses, and that is how a whole field gets wiped.
+     · NO DIGITS. Counts are spelled as words. The render step forbids text
+       on the charm, and a numeral in the prompt is a numeral the renderer
+       can decide to engrave.
+   ====================================================================== */
+const STUDIO_CENSUS_WORDS = ["none", "one", "two", "three", "four", "five",
+                             "six", "seven", "eight", "nine", "ten"];
+
+function studioCensusCount(n) {
+  return n <= 10 ? STUDIO_CENSUS_WORDS[n] : "many";
+}
+
+function studioCensusWhere(u, v) {
+  const col = u < 0.34 ? "left" : u > 0.66 ? "right" : "centre";
+  const row = v < 0.34 ? "upper" : v > 0.66 ? "lower" : "middle";
+  if (col === "centre" && row === "middle") return "at the centre of the charm";
+  if (col === "centre") return `${row} centre of the charm`;
+  if (row === "middle") return `middle ${col} of the charm`;
+  return `${row} ${col} of the charm`;
+}
+
+function studioCensusSize(frac) {
+  if (frac >= 0.25) return "a large field";
+  if (frac >= 0.08) return "a broad area";
+  if (frac >= 0.02) return "a modest shape";
+  return "a small shape";
+}
+
+/* Components of a mask, largest first, with a centroid and an area share.
+   Sub-threshold specks are dropped: naming a stray dot as an opening is how a
+   renderer gets told to punch a hole nobody asked for. */
+function studioCensusRegions(mask, w, h, facePx, minFrac, cap) {
+  const { labels, count } = studioLabel(mask, w, h);
+  if (!count) return { total: 0, list: [] };
+  const area = new Float64Array(count + 1);
+  const sx = new Float64Array(count + 1), sy = new Float64Array(count + 1);
+  for (let i = 0; i < labels.length; i++) {
+    const L = labels[i];
+    if (!L) continue;
+    area[L]++; sx[L] += i % w; sy[L] += (i / w) | 0;
+  }
+  const out = [];
+  for (let L = 1; L <= count; L++) {
+    if (area[L] / facePx < minFrac) continue;
+    out.push({ px: area[L], cx: sx[L] / area[L], cy: sy[L] / area[L] });
+  }
+  out.sort((a, b) => b.px - a.px);
+  /* `total` is the TRUE count and `list` is capped. Reporting the capped
+     length as the count would be a false statement in a block that tells the
+     renderer to count — a charm with eight openings would be instructed to
+     produce five, and the three it dropped are metal it would fill back in. */
+  return { total: out.length, list: out.slice(0, cap) };
+}
+
+/* `spec` is the return of studioMaterialSpec, so the words and the picture are
+   built from the SAME masks. Reading plan.regions instead would undercount:
+   its "open" list is blue FILLED areas only, while the spec image also removes
+   blue-BOUNDED white holes — the hoop hole among them. A census that names one
+   opening beside a map showing two is worse than no census at all. */
+function studioSpecCensus(plan, spec) {
+  if (!plan || !plan.faceBox || !spec || !spec.facePx) return "";
+  const box = plan.faceBox;
+  if (!(box.w > 0) || !(box.h > 0)) return "";
+  const { w, h } = plan, facePx = spec.facePx;
+
+  const describe = (r) => `${studioCensusSize(r.px / facePx)} ${studioCensusWhere(
+    (r.cx - box.x0) / box.w, (r.cy - box.y0) / box.h)}`;
+
+  const empty = { total: 0, list: [] };
+  const open = spec.holeMask
+    ? studioCensusRegions(spec.holeMask, w, h, facePx, 0.004, 5) : empty;
+  const worked = spec.workMask
+    ? studioCensusRegions(spec.workMask, w, h, facePx, 0.004, 5) : empty;
+  if (!open.total && !worked.total) return "";
+
+  const partial = (r) => r.total > r.list.length ? "  The largest are:" : "  They are:";
+
+  const lines = [];
+  lines.push(`OPENINGS — ${studioCensusCount(open.total)} in this charm.`);
+  if (open.total) {
+    lines.push(partial(open));
+    for (const r of open.list) lines.push(`  · ${describe(r)}: METAL IS ABSENT HERE.`);
+    lines.push("  Each one is cut clean through the sheet. The ground the charm rests on is visible through it, bounded by a thin bright cut edge, with a small shadow inside the opening. It is never filled, tinted, recessed, engraved or shaded over.");
+  }
+  lines.push(`ENGRAVED FIELDS — ${studioCensusCount(worked.total)} in this charm.`);
+  if (worked.total) {
+    lines.push(partial(worked));
+    for (const r of worked.list) lines.push(`  · ${describe(r)}: METAL IS STILL THERE, ITS SURFACE WORKED.`);
+    lines.push("  Solid metal throughout, only the surface finish differs. Never open, never a separate material, never a different alloy.");
+  }
+  lines.push("EVERYTHING ELSE INSIDE THE SILHOUETTE IS PLAIN POLISHED METAL, identical in colour to the rest of the charm.");
+  lines.push("An opening and an engraved field are the two things this render most often confuses. Count the openings above, then count them again in your finished image.");
+
+  return "RESOLVED REGIONS — THIS IS WHAT IMAGE 1'S TONES ALREADY MEAN. DO NOT RE-READ THEM:\n" +
+         lines.join("\n");
+}
+
 async function studioMaterialSpec(sharp, plan, metal, zones) {
   if (!sharp || !plan || !plan.faceBox) return null;
   const { px, w, h, n, face } = plan;
@@ -4601,6 +4738,9 @@ async function studioMaterialSpec(sharp, plan, metal, zones) {
   /* `metal` is deliberately unused: this proof carries geometry, not colour. */
   const base = STUDIO_MASK_POLISHED, work = STUDIO_MASK_ENGRAVED;
   const out = Buffer.alloc(n * 3, 255);
+  /* The worked pixels are recorded as they are painted, so the census can
+     describe exactly what this image encodes rather than recomputing it. */
+  const workMask = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     if (!face[i] || holes[i]) continue;
     const p = i * 3;
@@ -4610,12 +4750,16 @@ async function studioMaterialSpec(sharp, plan, metal, zones) {
        AI sees this proof. Blue is intentionally absent from the proof. */
     if (studioIsBlack(px, p) || red[i]) {
       out[p] = work[0]; out[p + 1] = work[1]; out[p + 2] = work[2];
-      workPx++;
+      workMask[i] = 1; workPx++;
     }
   }
   const buf = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
     .png().toBuffer();
-  return { buf, facePx, holePx, workPx, w, h };
+  /* holeMask/workMask are for the census only. They describe THIS buffer, and
+     they are handed out before studioRefineMask resamples it — refinement
+     moves boundaries by sub-pixel amounts and never reclassifies, so region
+     counts, centroids and area shares are unaffected. */
+  return { buf, facePx, holePx, workPx, w, h, holeMask: holes, workMask };
 }
 
 /* the tinted copy that goes to the model — the drawing in Storage is untouched */
@@ -4951,8 +5095,22 @@ async function handleStudioRender({ body, event, origin }) {
       });
     }
 
+    /* Built from the SAME plan the spec image was built from, so the words
+       and the picture can never disagree. Never allowed to fail a render:
+       an empty census simply means the prompt states the law without naming
+       regions, which is exactly the behaviour that shipped before it. */
+    let specCensus = "";
+    if (specUsed && studioPlan) {
+      try { specCensus = studioSpecCensus(studioPlan, materialSpec); }
+      catch (e) { console.error("[studio] region census skipped:", e?.message || e); specCensus = ""; }
+    }
+
     const effectivePrompt = specUsed
-      ? buildMaterialSpecToCharmPrompt({ metal, hasReference: !!renderStyleRef?.buffer?.length })
+      ? buildMaterialSpecToCharmPrompt({
+          metal,
+          hasReference: !!renderStyleRef?.buffer?.length,
+          census: specCensus,
+        })
       : buildLineArtToCharmPrompt({ metal, zones: renderZones });
 
     /* ── THE GOLD MASK IS EVIDENCE, SO IT IS KEPT ─────────────────────────
@@ -4997,6 +5155,7 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecFacePx: specUsed ? materialSpec.facePx : 0,
       renderSpecHolePx: specUsed ? materialSpec.holePx : 0,
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
+      renderSpecCensus: specCensus ? specCensus.slice(0, 4000) : "",
       renderSpecRoiMode: studioPlan?.roiMode || "unknown",
       renderSpecRoiGuard: studioPlan?.roiGuard || "unknown",
       renderSpecRoiSignalPx: Number(studioPlan?.roiSignalPx || 0),
