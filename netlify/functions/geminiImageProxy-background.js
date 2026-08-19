@@ -5529,9 +5529,12 @@ async function handleStudioRender({ body, event, origin }) {
      money for something nobody picked. So the request is DOWNGRADED, not
      refused: same render, standard price. `renderQualityTiers` in
      config/customStudio brings the choice back with no deploy. */
-  const tiersOn = cfg.renderQualityTiers === true;
+  /* UNPARKED. The control is a UI toggle in the pair rail, so a browser
+     asking for "high" IS expressing a choice and gets it. Anything other
+     than the two words still falls to standard rather than being refused —
+     a junk value must not cost two credits. */
   const askedHigh = String(body?.quality || "low").trim().toLowerCase() === "high";
-  const quality = (tiersOn && askedHigh) ? "high" : "low";
+  const quality = askedHigh ? "high" : "low";
   const highCost = Math.max(cost, Number(cfg.renderHighCost) || cost * 2);
   const renderCost = quality === "high" ? highCost : cost;
 
