@@ -2427,15 +2427,24 @@ const STUDIO_DEFAULT_CONFIG = {
      or a silhouette that drifted too far to map — trigger a fresh render,
      up to `renderRetries` extra attempts.
      Modes: "off" | "punch" | "observe" | "enforce". */
-  /* ── NEW KEY ON PURPOSE ────────────────────────────────────────────────
-     This was `renderCutCheck`, and live Firestore still carries that field
-     set to "off" from when the check was parked. A stored value outranks a
-     code default, so shipping a new default under the old name would have
-     changed nothing and looked like a code failure. `renderCuts` has no
-     stored value, so the default below is what runs. The old field is not
-     read at all — setting it now does nothing, and a warning is logged if
-     it is still present so it can be deleted. */
-  renderCuts: "punch",
+  /* ── NO PIXEL EDITING. THIS IS "off" AND SHOULD STAY THERE. ────────────
+     "punch" fills declared openings with ONE flat colour sampled from the
+     render's corners, at hard 1px edges, mapped through a bounding-box
+     scaling. When the mapping is a few pixels out — and it routinely is —
+     that flat shape spills over the metal and reads as a white sticker laid
+     on the charm. Measured on a real render: 66% of the affected pixels were
+     the single value (249,248,248). It cannot blend, so it can only be right
+     or obviously wrong.
+
+     Modes:
+       "off"      nothing runs. What ships.
+       "verify"   the check runs and a failed render is RE-RENDERED. No pixel
+                  is ever touched. This is the mode to use if you want the
+                  openings enforced.
+       "observe"  the check runs and files its numbers; image untouched.
+       "punch"    fills declared openings. Produces the sticker artefact.
+       "enforce"  punch AND reject undeclared cuts. */
+  renderCutCheck: "off",
   /* Extra attempts after a failed check. 0 restores the previous behaviour
      exactly. Retries are never charged: the debit happens once, before the
      first attempt. */
@@ -4819,67 +4828,13 @@ async function studioTintMetal(sharp, plan) {
                      trusted. Punching blind would be worse than not punching.
      punched         the declared cut-outs were missing and have been cut.
    ========================================================================= */
-/* Components of a mask with sampled interior points, in the same shape and at
-   the same 3px sampling step studioDrawingPlan's own collect() uses, so the
-   region test treats them identically to the ones it already knows. */
-function studioMaskRegions(mask, w, h, minPx) {
-  const { labels, count } = studioLabel(mask, w, h);
-  if (!count) return [];
-  const size = new Float64Array(count + 1);
-  for (let i = 0; i < labels.length; i++) if (labels[i]) size[labels[i]]++;
-  const pts = new Map();
-  for (let y = 0; y < h; y += 3) for (let x = 0; x < w; x += 3) {
-    const i = y * w + x, L = labels[i];
-    if (!L || size[L] < minPx) continue;
-    if (!pts.has(L)) pts.set(L, []);
-    pts.get(L).push(i);
-  }
-  const out = [];
-  for (const [L, list] of pts) if (list.length >= 12) out.push({ kind: "open", px: size[L], pts: list });
-  return out;
-}
-
-/* ── WHAT COUNTS AS A HOLE, DECIDED ONCE ──────────────────────────────────
-   The punch was built when the only openings were blue FILLED areas, so it
-   read plan.cut. The gold mask has since been the thing the renderer is shown,
-   and the mask's hole set is wider: studioMaterialSpec unions plan.cut with
-   blue-BOUNDED white holes. Two components then disagreed about the same
-   question, and the disagreement was not merely a missed repair:
-
-     · an opening only the mask knew about was never punched, because it was
-       not in plan.cut; and
-     · worse, those same pixels were classified by studioDrawingPlan as
-       interior METAL (face && !inkWall && !cut), so a render that cut them
-       CORRECTLY was measured as metal-came-back-open and rejected as an
-       undeclared cut. The check punished the right answer.
-
-   With `spec` present the hole set is the mask's own, for both the test and
-   the punch. Without it — sharp missing, spec declined — the original
-   behaviour is kept exactly. */
-function studioPunchRegions(plan, spec) {
-  if (!spec || !spec.holeMask) return { regions: plan.regions, holes: plan.cut };
-  const minPx = Math.max(200, Math.round(plan.n * 0.0004));
-  const open = studioMaskRegions(spec.holeMask, plan.w, plan.h, minPx);
-  /* A closed region whose sample points now sit inside the hole set was never
-     metal; it is one of the openings the old classification missed. */
-  const closed = (plan.regions || []).filter((r) => {
-    if (r.kind !== "closed") return false;
-    let inside = 0;
-    for (const i of r.pts) if (spec.holeMask[i]) inside++;
-    return inside / r.pts.length <= 0.5;
-  });
-  return { regions: open.concat(closed), holes: spec.holeMask };
-}
-
-async function studioPunchCutouts(renderBuf, drawingBuf, plan, spec) {
+async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
   const sharp = studioSharp();
   const report = { verified: false, reason: "", declaredCuts: 0, punchedPx: 0,
                    alignment: 0, openFrac: 0, regionsOk: 0, regionsBad: 0, worst: "" };
   if (!sharp) { report.reason = "sharp_unavailable"; return { buf: renderBuf, report }; }
   try {
     const d = plan;
-    const resolved = studioPunchRegions(plan, spec);
-    const punchRegions = resolved.regions, punchHoles = resolved.holes;
     const r0 = await sharp(renderBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
     const rw = r0.info.width, rh = r0.info.height, rpx = r0.data;
     const rInk = new Uint8Array(rw * rh);
@@ -4913,7 +4868,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan, spec) {
        region must read open, and a black fill or a metal region must read
        closed. One region in the wrong state fails the render. */
     let bad = 0, ok = 0, worst = "";
-    for (const reg of punchRegions) {
+    for (const reg of d.regions) {
       let seen = 0, open = 0;
       for (const i of reg.pts) {
         const j = toRender(i);
@@ -4933,7 +4888,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan, spec) {
       }
     }
     report.regionsOk = ok; report.regionsBad = bad; report.worst = worst;
-    report.declaredCuts = punchRegions.filter((x) => x.kind === "open").length;
+    report.declaredCuts = d.regions.filter((x) => x.kind === "open").length;
 
     let faceN = 0, openN = 0;
     for (let i = 0; i < rw * rh; i++) { if (!rFace[i]) continue; faceN++; if (studioIsBg(rpx, i * 3)) openN++; }
@@ -4943,7 +4898,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan, spec) {
        failure compositing cannot undo — the metal is gone. Reject; never
        repair. A declared cut-out that came back solid IS repairable, and is
        repaired below, so it does not reject. */
-    const cutIntoMetal = punchRegions.some((reg) => {
+    const cutIntoMetal = d.regions.some((reg, k) => {
       if (reg.kind !== "closed") return false;
       let seen = 0, open = 0;
       for (const i of reg.pts) { const j = toRender(i); if (j < 0) continue; seen++; if (studioIsBg(rpx, j * 3)) open++; }
@@ -4970,7 +4925,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan, spec) {
       for (let x = Math.max(0, Math.floor(fx0)); x < Math.min(fw, Math.ceil(fx0 + fbw)); x++) {
         const u = (x - fx0) / fbw;
         const dx = d.faceBox.x0 + Math.min(d.faceBox.w - 1, Math.floor(u * d.faceBox.w));
-        if (!punchHoles[dy * d.w + dx]) continue;
+        if (!d.cut[dy * d.w + dx]) continue;
         const p = (y * fw + x) * 3;
         fpx[p] = g0; fpx[p + 1] = g1; fpx[p + 2] = g2;
         punched++;
@@ -5139,11 +5094,11 @@ async function handleStudioRender({ body, event, origin }) {
 
   const metal = studioCleanText(body?.metal || session.metal || "gold");
 
-  const cutMode = String(cfg.renderCuts || "punch").trim().toLowerCase();
-  if (cfg.renderCutCheck !== undefined) {
-    console.warn("[studio] config/customStudio still has the retired key renderCutCheck=" +
-                 JSON.stringify(cfg.renderCutCheck) + "; it is ignored. Delete it. Active key is renderCuts=" + cutMode);
-  }
+  /* STUDIO_DEFAULT_CONFIG is merged in before this, so cfg.renderCutCheck is
+     always set and a `|| "off"` fallback here would be dead code — which is
+     exactly how a default of "punch" once kept running after the fallback was
+     "reverted". The default above is the only place the mode is decided. */
+  const cutMode = String(cfg.renderCutCheck).trim().toLowerCase();
   const deterministicSpecEnabled = cfg.renderDeterministicSpec !== false;
   try {
     await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
@@ -5340,6 +5295,12 @@ async function handleStudioRender({ body, event, origin }) {
     const retryBudgetMs = Math.max(0, Number(cfg.renderRetryBudgetMs) || 0);
     const RETRYABLE = new Set(["undeclared_cut", "unaligned"]);
     const doPunch = cutMode === "enforce" || cutMode === "punch";
+    /* In "verify" nothing is repaired, so a repairable failure is not
+       repaired — it is re-rendered. `verified` is false whenever any declared
+       region read the wrong way, which is precisely the set that "punch"
+       would have painted over. */
+    const retryable = (rep) => RETRYABLE.has(rep.reason) ||
+      (cutMode === "verify" && rep.reason !== "no_cuts_declared" && !rep.verified);
     const startedAt = Date.now();
 
     let outBuf = null, punch = null, attempt = 0, lastMs = 0, failedVerdicts = [];
@@ -5358,8 +5319,8 @@ async function handleStudioRender({ body, event, origin }) {
 
       if (cutMode === "off") { punch = null; break; }
 
-      punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan, materialSpec);
-      if (!RETRYABLE.has(punch.report.reason)) break;
+      punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan);
+      if (!retryable(punch.report)) break;
 
       failedVerdicts.push(punch.report.reason);
       const spent = Date.now() - startedAt;
