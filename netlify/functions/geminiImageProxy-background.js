@@ -2449,6 +2449,18 @@ const STUDIO_DEFAULT_CONFIG = {
      studio already uses. Set false to fall back to measured descriptions
      only — the census still names every region by size and position. */
   renderNameRegions: true,
+  /* "full" | "short" — see buildShortSpecPrompt. Used when the UI control is
+     off, and as the fallback for anything the browser sends that is not one
+     of the two words. */
+  renderPromptMode: "full",
+  /* Reveals the Full/Short control in the studio's pair rail AND is what
+     permits the server to honour a promptMode from the browser. Off by
+     default: "Full" and "Short" are engineering words and a shopper should
+     not be choosing between them. */
+  renderPromptModeUI: false,
+  /* Overrides the short prompt's wording from Firestore, no deploy. Empty
+     falls back to STUDIO_SHORT_PROMPT. */
+  renderShortPrompt: "",
   /* Extra attempts after a failed check. 0 restores the previous behaviour
      exactly. Retries are never charged: the debit happens once, before the
      first attempt. */
@@ -3290,6 +3302,47 @@ ${zoneBlock(zones, "drawing")}`;
    in as many words that its own colour is not the subject. Replacing the
    stored sample with a correctly-coloured one is then an improvement rather
    than a prerequisite.                                                    */
+/* ── THE SHORT PROMPT ─────────────────────────────────────────────────────
+   Paul's own wording, which produces a correct charm reliably when pasted
+   straight into ChatGPT or Gemini with the same two images. It is 262
+   characters against this pipeline's ~5,000, and every one of those 5,000 was
+   added to fix something real — the role labels, the region census, the
+   cut-out physics, the engraving ceiling, the hoop rule, the background and
+   shadow policy, the flatness rule, the final checklist.
+
+   The hypothesis this mode exists to test is that the difference IS the
+   length: that stating the three rules once, with nothing competing, beats
+   stating them once inside four thousand characters of everything else.
+   Three descriptions of one rule are a reconciliation problem, and this
+   pipeline has learned that lesson twice already.
+
+   So this path sends the three rules and nothing else. No census, no role
+   labels, no doctrine block, no presentation block. The metal is named
+   because the customer chose it; the sample carries the rest of the look.
+   Editable from Firestore as `renderShortPrompt` without a deploy, so the
+   wording itself can be tuned against real renders. */
+const STUDIO_SHORT_PROMPT =
+"Make this Grey image into a real charm image. Light grey means no engraving, " +
+"Dark grey means Engraved, No grey means Cut out. Use the colours of the " +
+"material and engraving to generate a new image in that same style, but from " +
+"the gray scale image.";
+
+function buildShortSpecPrompt({ metal, hasReference, cfg }) {
+  const label = ({
+    silver: "polished sterling silver",
+    gold: "polished 14k gold",
+    rose: "polished 14k rose gold",
+    solid10: "polished 10k solid gold",
+    solid14: "polished 14k solid gold",
+  })[studioCleanText(metal) || "gold"] || ("polished " + studioCleanText(metal));
+
+  const body = studioCleanText(cfg && cfg.renderShortPrompt) || STUDIO_SHORT_PROMPT;
+  /* One sentence added, and only when a sample is attached: without it the
+     model has no statement of which alloy the customer bought, and IMAGE 2's
+     own colour would decide it — the defect this build already fixed once. */
+  return hasReference ? `${body}\n\nThe metal is ${label}.` : `${body}\n\nRender it in ${label}.`;
+}
+
 function buildMaterialSpecToCharmPrompt({ metal, hasReference, census }) {
   const m = studioCleanText(metal) || "gold";
   const label = ({
@@ -5384,13 +5437,34 @@ async function handleStudioRender({ body, event, origin }) {
       catch (e) { console.error("[studio] region census skipped:", e?.message || e); specCensus = ""; }
     }
 
-    const effectivePrompt = specUsed
-      ? buildMaterialSpecToCharmPrompt({
-          metal,
-          hasReference: !!renderStyleRef?.buffer?.length,
-          census: specCensus,
-        })
-      : buildLineArtToCharmPrompt({ metal, zones: renderZones });
+    /* ── THE TOGGLE ──────────────────────────────────────────────────────
+       "short" sends the three rules and nothing else. "full" is everything
+       this pipeline has accumulated. Same design, same mask, same sample,
+       same credit — so a customer can render twice and the two paths are
+       directly comparable. Flip in config/customStudio, no deploy. */
+    /* ── SERVER IS THE AUTHORITY, AS WITH THE TIER ────────────────────────
+       The browser may ASK for a mode, but only while `renderPromptModeUI` is
+       true — the same value the client reads before it will show the control.
+       One switch for both, so a stale tab cannot keep sending a mode nobody
+       can see, and the server can never run a mode the button never offered.
+       With the UI off, `renderPromptMode` in config still decides, which is
+       how the mode is set without any UI at all. */
+    const uiOn = cfg.renderPromptModeUI === true;
+    const asked = String(body?.promptMode || "").trim().toLowerCase();
+    const promptMode = (uiOn && (asked === "short" || asked === "full"))
+      ? asked
+      : String(cfg.renderPromptMode || "full").trim().toLowerCase();
+    const useShort = specUsed && promptMode === "short";
+    const effectivePrompt = !specUsed
+      ? buildLineArtToCharmPrompt({ metal, zones: renderZones })
+      : useShort
+        ? buildShortSpecPrompt({ metal, hasReference: !!renderStyleRef?.buffer?.length, cfg })
+        : buildMaterialSpecToCharmPrompt({
+            metal,
+            hasReference: !!renderStyleRef?.buffer?.length,
+            census: specCensus,
+          });
+    console.log(`[studio] prompt mode=${useShort ? "short" : "full"} chars=${effectivePrompt.length}`);
 
     /* ── THE GOLD MASK IS EVIDENCE, SO IT IS KEPT ─────────────────────────
        This proof is the last structural instruction the model receives and
@@ -5436,6 +5510,8 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
       renderSpecCensus: specCensus ? specCensus.slice(0, 4000) : "",
       renderRegionNames: Object.values(regionNames).slice(0, 12),
+      renderPromptMode: useShort ? "short" : "full",
+      renderPromptChars: effectivePrompt.length,
       renderSpecRoiMode: studioPlan?.roiMode || "unknown",
       renderSpecRoiGuard: studioPlan?.roiGuard || "unknown",
       renderSpecRoiSignalPx: Number(studioPlan?.roiSignalPx || 0),
@@ -5460,7 +5536,10 @@ async function handleStudioRender({ body, event, origin }) {
       quality: "high",
       output_format: "png",
       images,
-      imageRoles: specUsed ? "material_spec_to_charm" : "lineart_to_charm",
+      /* Role labels are ~1,400 characters of their own and are appended by
+         callImageModelEdits. Sending them on the short path would defeat the
+         only thing the short path is testing. */
+      imageRoles: useShort ? null : (specUsed ? "material_spec_to_charm" : "lineart_to_charm"),
       charmGeometryPolicy: specUsed ? null : "flat_integrated_eyelet",
       /* ── ONE VOICE ABOUT THE BACKGROUND ──────────────────────────────────
          backgroundPolicy: "solid_black" appends a block headed "BACKEND-
