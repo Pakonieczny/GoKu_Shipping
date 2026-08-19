@@ -2445,6 +2445,10 @@ const STUDIO_DEFAULT_CONFIG = {
        "punch"    fills declared openings. Produces the sticker artefact.
        "enforce"  punch AND reject undeclared cuts. */
   renderCutCheck: "off",
+  /* The naming pass. One extra text+vision call per render, on the key the
+     studio already uses. Set false to fall back to measured descriptions
+     only — the census still names every region by size and position. */
+  renderNameRegions: true,
   /* Extra attempts after a failed check. 0 restores the previous behaviour
      exactly. Retries are never charged: the debit happens once, before the
      first attempt. */
@@ -4719,36 +4723,211 @@ function studioCensusRegions(mask, w, h, facePx, minFrac, cap) {
    its "open" list is blue FILLED areas only, while the spec image also removes
    blue-BOUNDED white holes — the hoop hole among them. A census that names one
    opening beside a map showing two is worse than no census at all. */
-function studioSpecCensus(plan, spec) {
-  if (!plan || !plan.faceBox || !spec || !spec.facePx) return "";
+/* ── THE SHAPE THAT WAS NEVER MENTIONED ───────────────────────────────────
+   A metal shape sitting INSIDE an engraved field is the case the census kept
+   silent about. Openings were named, engraved fields were named, and
+   everything else fell under one blanket line — "everything else inside the
+   silhouette is plain polished metal". On the knife-and-fork charm that
+   blanket line is the only thing standing between the renderer and cutting
+   the knife, while the fork right beside it, of similar size and in the same
+   field, is named explicitly as an opening.
+
+   These islands are found the cheap way: the metal mask's LARGEST component
+   is the charm's body, and any other component above the floor is a shape
+   surrounded by worked metal. No adjacency walk, no geometry. */
+function studioMetalIslands(plan, spec) {
+  if (!spec || !spec.holeMask || !spec.workMask) return [];
+  const { w, h, n, face } = plan;
+  const metal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (face[i] && !spec.holeMask[i] && !spec.workMask[i]) metal[i] = 1;
+  const { labels, count } = studioLabel(metal, w, h);
+  if (count < 2) return [];
+  const area = new Float64Array(count + 1);
+  const sx = new Float64Array(count + 1), sy = new Float64Array(count + 1);
+  for (let i = 0; i < n; i++) {
+    const L = labels[i];
+    if (!L) continue;
+    area[L]++; sx[L] += i % w; sy[L] += (i / w) | 0;
+  }
+  let body = 1;
+  for (let L = 2; L <= count; L++) if (area[L] > area[body]) body = L;
+
+  /* ── SURROUNDED, NOT MERELY SEPARATE ──────────────────────────────────
+     "Any metal component that is not the body" is too loose: a hoop ring
+     segment, or a sliver left by an antialiased edge, satisfies it and gets
+     announced to the renderer as a solid shape standing in an engraved
+     field. On the real knife-and-fork mask that produced three islands where
+     there is one.
+
+     So a candidate must actually be enclosed by worked metal: of the pixels
+     touching it from outside, most must be engraved. The knife's border is
+     the engraved disc on every side; a hoop fragment's border is background
+     and cut edge, and is dropped. */
+  const enclosedByWork = (L) => {
+    let touch = 0, worked = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (labels[i] !== L) continue;
+        for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1,
+                         y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) {
+          if (j < 0 || labels[j] === L) continue;
+          touch++;
+          if (spec.workMask[j]) worked++;
+        }
+      }
+    }
+    return touch >= 8 && worked / touch >= 0.6;
+  };
+
+  const out = [];
+  for (let L = 1; L <= count; L++) {
+    if (L === body) continue;
+    if (area[L] / spec.facePx < 0.004) continue;
+    if (!enclosedByWork(L)) continue;
+    out.push({ px: area[L], cx: sx[L] / area[L], cy: sy[L] / area[L] });
+  }
+  return out.sort((a, b) => b.px - a.px).slice(0, 5);
+}
+
+/* ── NAMING, NOT CLASSIFYING ──────────────────────────────────────────────
+   A vision model is asked ONE question about the mask: what is each region a
+   picture of. It is never asked, and is never believed about, whether a
+   region is cut, engraved or solid — those come from the pixels and are
+   already settled before this runs. Only the noun is taken; everything else
+   in the reply is discarded.
+
+   This matters because the whole failure being addressed is a model deciding
+   a shape's class for itself. Letting a second model do the same thing one
+   step earlier would move the fault, not remove it. So the reply is filtered:
+   a name is rejected outright if it contains a class word.
+
+   Degrades to no names at all. Positions and areas still describe every
+   region, which is what the census did before this existed. */
+const STUDIO_NAME_BANNED = /\b(cut|cutout|cut-out|hole|opening|open|engrav\w*|etch\w*|solid|metal|polish\w*|raised|recess\w*|void|negative|space|background|shape|region|area)\b/i;
+
+function studioCleanRegionName(raw) {
+  const s = studioCleanText(raw).toLowerCase().replace(/[^a-z \-]/g, "").trim();
+  if (!s || s.length > 24) return "";
+  if (s.split(/\s+/).length > 3) return "";
+  if (STUDIO_NAME_BANNED.test(s)) return "";
+  return s;
+}
+
+async function studioNameRegions(maskBuf, items) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !maskBuf || !items.length) return {};
+  const model = String(
+    process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
+    process.env.GEMINI_CHARM_PREFLIGHT_MODEL ||
+    DEFAULT_IMAGE_MODEL
+  ).trim();
+
+  const list = items.map((it, k) =>
+    `${k}: centre at ${Math.round(it.u * 100)}% across, ${Math.round(it.v * 100)}% down; ` +
+    `covers about ${(it.frac * 100).toFixed(1)}% of the charm`).join("\n");
+
+  const instruction =
+`You are looking at a greyscale manufacturing map of one flat jewellery charm.
+
+Your ONLY job is to say what each listed region DEPICTS — the everyday noun for
+the object or motif drawn there. One to three words. A common noun.
+
+You are NOT being asked whether anything is cut, engraved, raised or solid.
+That is already decided and you must not comment on it. Never use the words
+cut, hole, opening, engraved, solid, metal, polished, shape, region or area.
+If you cannot tell what a region depicts, return an empty string for it.
+
+REGIONS (coordinates are relative to the charm, not the image):
+${list}
+
+Return ONLY valid JSON in exactly this shape:
+{"names":[{"i":0,"name":"..."}]}`;
+
+  const resp = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [
+          { text: instruction },
+          { inline_data: { mime_type: "image/png", data: Buffer.from(maskBuf).toString("base64") } },
+        ],
+      }],
+      generationConfig: { temperature: 0, responseMimeType: "application/json" },
+    }),
+  });
+  const data = await readUpstreamJson(resp, "gemini");
+  const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p?.text || "").join("").trim();
+  const parsed = extractJsonObject(text);
+  const out = {};
+  for (const row of (parsed?.names || [])) {
+    const i = Number(row?.i);
+    if (!Number.isInteger(i) || i < 0 || i >= items.length) continue;
+    const name = studioCleanRegionName(row?.name);
+    if (name) out[i] = name;
+  }
+  return out;
+}
+
+function studioCensusItems(plan, spec) {
+  if (!plan || !plan.faceBox || !spec || !spec.facePx) return null;
   const box = plan.faceBox;
-  if (!(box.w > 0) || !(box.h > 0)) return "";
+  if (!(box.w > 0) || !(box.h > 0)) return null;
   const { w, h } = plan, facePx = spec.facePx;
-
-  const describe = (r) => `${studioCensusSize(r.px / facePx)} ${studioCensusWhere(
-    (r.cx - box.x0) / box.w, (r.cy - box.y0) / box.h)}`;
-
   const empty = { total: 0, list: [] };
   const open = spec.holeMask
     ? studioCensusRegions(spec.holeMask, w, h, facePx, 0.004, 5) : empty;
   const worked = spec.workMask
     ? studioCensusRegions(spec.workMask, w, h, facePx, 0.004, 5) : empty;
-  if (!open.total && !worked.total) return "";
+  const islands = studioMetalIslands(plan, spec);
+  if (!open.total && !worked.total && !islands.length) return null;
+  const decorate = (r) => Object.assign({}, r, {
+    u: (r.cx - box.x0) / box.w, v: (r.cy - box.y0) / box.h, frac: r.px / facePx });
+  return {
+    open: { total: open.total, list: open.list.map(decorate) },
+    worked: { total: worked.total, list: worked.list.map(decorate) },
+    islands: islands.map(decorate),
+  };
+}
 
+/* `names` is optional and is keyed by the index each region has in the flat
+   order open -> worked -> islands. Absent names simply leave the measured
+   description, which is what shipped before naming existed. */
+function studioSpecCensus(plan, spec, names) {
+  const items = studioCensusItems(plan, spec);
+  if (!items) return "";
+  const nm = names || {};
+  let k = 0;
+  const describe = (r) => {
+    const name = nm[k++];
+    const where = `${studioCensusSize(r.frac)} ${studioCensusWhere(r.u, r.v)}`;
+    return name ? `the ${name} — ${where}` : where;
+  };
   const partial = (r) => r.total > r.list.length ? "  The largest are:" : "  They are:";
 
   const lines = [];
-  lines.push(`OPENINGS — ${studioCensusCount(open.total)} in this charm.`);
-  if (open.total) {
-    lines.push(partial(open));
-    for (const r of open.list) lines.push(`  · ${describe(r)}: METAL IS ABSENT HERE.`);
+  lines.push(`OPENINGS — ${studioCensusCount(items.open.total)} in this charm.`);
+  if (items.open.total) {
+    lines.push(partial(items.open));
+    for (const r of items.open.list) lines.push(`  · ${describe(r)}: METAL IS ABSENT HERE.`);
     lines.push("  Each one is cut clean through the sheet. The ground the charm rests on is visible through it, bounded by a thin bright cut edge, with a small shadow inside the opening. It is never filled, tinted, recessed, engraved or shaded over.");
   }
-  lines.push(`ENGRAVED FIELDS — ${studioCensusCount(worked.total)} in this charm.`);
-  if (worked.total) {
-    lines.push(partial(worked));
-    for (const r of worked.list) lines.push(`  · ${describe(r)}: METAL IS STILL THERE, ITS SURFACE WORKED.`);
+  lines.push(`ENGRAVED FIELDS — ${studioCensusCount(items.worked.total)} in this charm.`);
+  if (items.worked.total) {
+    lines.push(partial(items.worked));
+    for (const r of items.worked.list) lines.push(`  · ${describe(r)}: METAL IS STILL THERE, ITS SURFACE WORKED.`);
     lines.push("  Solid metal throughout, only the surface finish differs. Never open, never a separate material, never a different alloy.");
+  }
+  /* ── THE LINE THE KNIFE NEEDED ────────────────────────────────────────
+     A plain shape standing inside an engraved field, beside an opening of
+     similar size, is the exact confusion this render keeps losing. It used
+     to be covered only by the blanket "everything else" sentence below. */
+  if (items.islands.length) {
+    lines.push(`SOLID SHAPES STANDING INSIDE AN ENGRAVED FIELD — ${studioCensusCount(items.islands.length)}.`);
+    for (const r of items.islands) lines.push(`  · ${describe(r)}: SOLID METAL, NOT AN OPENING.`);
+    lines.push("  These are the hardest thing in this charm to get right. Each is unbroken sheet with the engraved field worked around it, so it reads as bright polished metal standing clear of the darker worked surface. One of them sits beside an opening of similar size and shape: THEY ARE NOT THE SAME. You cannot see the ground through these. Cutting one of them out produces a charm the customer did not buy.");
   }
   lines.push("EVERYTHING ELSE INSIDE THE SILHOUETTE IS PLAIN POLISHED METAL, identical in colour to the rest of the charm.");
   lines.push("An opening and an engraved field are the two things this render most often confuses. Count the openings above, then count them again in your finished image.");
@@ -5177,9 +5356,31 @@ async function handleStudioRender({ body, event, origin }) {
        and the picture can never disagree. Never allowed to fail a render:
        an empty census simply means the prompt states the law without naming
        regions, which is exactly the behaviour that shipped before it. */
+    /* ── ONE NAMING CALL, BEFORE THE LOOP ────────────────────────────────
+       A cheap text+vision call attaches a noun to each measured region. It
+       runs ONCE per render, not once per attempt, so retries reuse the same
+       census and cost nothing extra. It is never allowed to fail a render or
+       to change a classification — only to supply words. */
     let specCensus = "";
+    let regionNames = {};
     if (specUsed && studioPlan) {
-      try { specCensus = studioSpecCensus(studioPlan, materialSpec); }
+      try {
+        if (cfg.renderNameRegions !== false) {
+          const items = studioCensusItems(studioPlan, materialSpec);
+          const flat = items
+            ? items.open.list.concat(items.worked.list, items.islands)
+            : [];
+          if (flat.length) {
+            const t0 = Date.now();
+            regionNames = await studioNameRegions(materialSpec.buf, flat);
+            console.log(`[studio] region naming: ${Object.keys(regionNames).length}/${flat.length} named (${Date.now() - t0}ms)`);
+          }
+        }
+      } catch (e) {
+        console.error("[studio] region naming skipped:", e?.message || e);
+        regionNames = {};
+      }
+      try { specCensus = studioSpecCensus(studioPlan, materialSpec, regionNames); }
       catch (e) { console.error("[studio] region census skipped:", e?.message || e); specCensus = ""; }
     }
 
@@ -5234,6 +5435,7 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecHolePx: specUsed ? materialSpec.holePx : 0,
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
       renderSpecCensus: specCensus ? specCensus.slice(0, 4000) : "",
+      renderRegionNames: Object.values(regionNames).slice(0, 12),
       renderSpecRoiMode: studioPlan?.roiMode || "unknown",
       renderSpecRoiGuard: studioPlan?.roiGuard || "unknown",
       renderSpecRoiSignalPx: Number(studioPlan?.roiSignalPx || 0),
