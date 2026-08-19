@@ -2420,7 +2420,34 @@ const STUDIO_DEFAULT_CONFIG = {
      knows about and judges nothing else.
      This is POST-render verification and remains deliberately separate from
      the deterministic PRE-render specification above. */
-  renderCutCheck: "off",
+  /* ── THE CUT CHECK IS LIVE, WITH AUTOMATIC RE-RENDERS ─────────────────
+     "punch" is the mode to run: the declared openings are composited in by
+     code, which is the repairable failure and needs no model and no retry.
+     The two verdicts code CANNOT repair — metal removed that should be solid,
+     or a silhouette that drifted too far to map — trigger a fresh render,
+     up to `renderRetries` extra attempts.
+     Modes: "off" | "punch" | "observe" | "enforce". */
+  /* ── NEW KEY ON PURPOSE ────────────────────────────────────────────────
+     This was `renderCutCheck`, and live Firestore still carries that field
+     set to "off" from when the check was parked. A stored value outranks a
+     code default, so shipping a new default under the old name would have
+     changed nothing and looked like a code failure. `renderCuts` has no
+     stored value, so the default below is what runs. The old field is not
+     read at all — setting it now does nothing, and a warning is logged if
+     it is still present so it can be deleted. */
+  renderCuts: "punch",
+  /* Extra attempts after a failed check. 0 restores the previous behaviour
+     exactly. Retries are never charged: the debit happens once, before the
+     first attempt. */
+  renderRetries: 2,
+  /* A retry must not outlive the browser. The client's watcher gives up at
+     GEN_TIMEOUT_MS (180s) and shows the customer a failure even though the
+     server is still working and will eventually write renderStatus:"done" —
+     so a new attempt is only STARTED if the time already spent, plus the
+     time the previous attempt actually took, still fits inside this budget.
+     Renders measured at 35-80s upstream, so this admits a second attempt
+     comfortably and a third only when the first two were quick. */
+  renderRetryBudgetMs: 150000,
 };
 let _studioCfg = null, _studioCfgAt = 0;
 /* ── ONE PLACE THAT DECIDES WHAT THE STUDIO GENERATES WITH ────────────────
@@ -4792,13 +4819,67 @@ async function studioTintMetal(sharp, plan) {
                      trusted. Punching blind would be worse than not punching.
      punched         the declared cut-outs were missing and have been cut.
    ========================================================================= */
-async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
+/* Components of a mask with sampled interior points, in the same shape and at
+   the same 3px sampling step studioDrawingPlan's own collect() uses, so the
+   region test treats them identically to the ones it already knows. */
+function studioMaskRegions(mask, w, h, minPx) {
+  const { labels, count } = studioLabel(mask, w, h);
+  if (!count) return [];
+  const size = new Float64Array(count + 1);
+  for (let i = 0; i < labels.length; i++) if (labels[i]) size[labels[i]]++;
+  const pts = new Map();
+  for (let y = 0; y < h; y += 3) for (let x = 0; x < w; x += 3) {
+    const i = y * w + x, L = labels[i];
+    if (!L || size[L] < minPx) continue;
+    if (!pts.has(L)) pts.set(L, []);
+    pts.get(L).push(i);
+  }
+  const out = [];
+  for (const [L, list] of pts) if (list.length >= 12) out.push({ kind: "open", px: size[L], pts: list });
+  return out;
+}
+
+/* ── WHAT COUNTS AS A HOLE, DECIDED ONCE ──────────────────────────────────
+   The punch was built when the only openings were blue FILLED areas, so it
+   read plan.cut. The gold mask has since been the thing the renderer is shown,
+   and the mask's hole set is wider: studioMaterialSpec unions plan.cut with
+   blue-BOUNDED white holes. Two components then disagreed about the same
+   question, and the disagreement was not merely a missed repair:
+
+     · an opening only the mask knew about was never punched, because it was
+       not in plan.cut; and
+     · worse, those same pixels were classified by studioDrawingPlan as
+       interior METAL (face && !inkWall && !cut), so a render that cut them
+       CORRECTLY was measured as metal-came-back-open and rejected as an
+       undeclared cut. The check punished the right answer.
+
+   With `spec` present the hole set is the mask's own, for both the test and
+   the punch. Without it — sharp missing, spec declined — the original
+   behaviour is kept exactly. */
+function studioPunchRegions(plan, spec) {
+  if (!spec || !spec.holeMask) return { regions: plan.regions, holes: plan.cut };
+  const minPx = Math.max(200, Math.round(plan.n * 0.0004));
+  const open = studioMaskRegions(spec.holeMask, plan.w, plan.h, minPx);
+  /* A closed region whose sample points now sit inside the hole set was never
+     metal; it is one of the openings the old classification missed. */
+  const closed = (plan.regions || []).filter((r) => {
+    if (r.kind !== "closed") return false;
+    let inside = 0;
+    for (const i of r.pts) if (spec.holeMask[i]) inside++;
+    return inside / r.pts.length <= 0.5;
+  });
+  return { regions: open.concat(closed), holes: spec.holeMask };
+}
+
+async function studioPunchCutouts(renderBuf, drawingBuf, plan, spec) {
   const sharp = studioSharp();
   const report = { verified: false, reason: "", declaredCuts: 0, punchedPx: 0,
                    alignment: 0, openFrac: 0, regionsOk: 0, regionsBad: 0, worst: "" };
   if (!sharp) { report.reason = "sharp_unavailable"; return { buf: renderBuf, report }; }
   try {
     const d = plan;
+    const resolved = studioPunchRegions(plan, spec);
+    const punchRegions = resolved.regions, punchHoles = resolved.holes;
     const r0 = await sharp(renderBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
     const rw = r0.info.width, rh = r0.info.height, rpx = r0.data;
     const rInk = new Uint8Array(rw * rh);
@@ -4832,7 +4913,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
        region must read open, and a black fill or a metal region must read
        closed. One region in the wrong state fails the render. */
     let bad = 0, ok = 0, worst = "";
-    for (const reg of d.regions) {
+    for (const reg of punchRegions) {
       let seen = 0, open = 0;
       for (const i of reg.pts) {
         const j = toRender(i);
@@ -4852,7 +4933,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
       }
     }
     report.regionsOk = ok; report.regionsBad = bad; report.worst = worst;
-    report.declaredCuts = d.regions.filter((x) => x.kind === "open").length;
+    report.declaredCuts = punchRegions.filter((x) => x.kind === "open").length;
 
     let faceN = 0, openN = 0;
     for (let i = 0; i < rw * rh; i++) { if (!rFace[i]) continue; faceN++; if (studioIsBg(rpx, i * 3)) openN++; }
@@ -4862,7 +4943,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
        failure compositing cannot undo — the metal is gone. Reject; never
        repair. A declared cut-out that came back solid IS repairable, and is
        repaired below, so it does not reject. */
-    const cutIntoMetal = d.regions.some((reg, k) => {
+    const cutIntoMetal = punchRegions.some((reg) => {
       if (reg.kind !== "closed") return false;
       let seen = 0, open = 0;
       for (const i of reg.pts) { const j = toRender(i); if (j < 0) continue; seen++; if (studioIsBg(rpx, j * 3)) open++; }
@@ -4889,7 +4970,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
       for (let x = Math.max(0, Math.floor(fx0)); x < Math.min(fw, Math.ceil(fx0 + fbw)); x++) {
         const u = (x - fx0) / fbw;
         const dx = d.faceBox.x0 + Math.min(d.faceBox.w - 1, Math.floor(u * d.faceBox.w));
-        if (!d.cut[dy * d.w + dx]) continue;
+        if (!punchHoles[dy * d.w + dx]) continue;
         const p = (y * fw + x) * 3;
         fpx[p] = g0; fpx[p + 1] = g1; fpx[p + 2] = g2;
         punched++;
@@ -4905,6 +4986,44 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
     report.reason = "punch_error";
     return { buf: renderBuf, report };
   }
+}
+
+/* ── WHAT A RE-RENDER IS TOLD ─────────────────────────────────────────────
+   A retry is a FRESH generation, not a surgical edit. Image models cannot be
+   handed a picture and told to change one region and nothing else — the whole
+   frame is regenerated every time, which is precisely why the repairable
+   failure (a declared opening that came back solid) is fixed in code by
+   studioPunchCutouts instead of being asked for again.
+
+   So this note is deliberately phrased against IMAGE 1, never against the
+   previous attempt. The renderer is not shown that attempt and cannot
+   preserve what it cannot see; telling it to "keep everything else the same"
+   would be an instruction it has no way to follow, and an instruction that
+   cannot be followed is one more thing competing with the ones that can.
+
+   Only the two unrepairable verdicts reach here:
+     undeclared_cut  metal that must be solid came back open
+     unaligned       the silhouette drifted far enough that no coordinate in
+                     one image maps into the other                          */
+function studioRetryNote(report, attempt) {
+  const reason = String(report?.reason || "");
+  const worst = studioCleanText(report?.worst || "");
+  const lines = ["THIS IS A RE-RENDER. THE PREVIOUS ATTEMPT WAS REJECTED. Render IMAGE 1 again from scratch and correct exactly this:"];
+
+  if (reason === "undeclared_cut") {
+    lines.push("• IT REMOVED METAL THAT MUST BE SOLID. A region IMAGE 1 shows as metal came back open, showing the ground through a place where the charm is continuous sheet.");
+    if (worst) lines.push(`• Measured on that attempt: ${worst}.`);
+    lines.push("• Cut through ONLY where IMAGE 1 is white. Every grey pixel of IMAGE 1 — mid grey and dark grey alike — is solid metal with the ground hidden behind it. An engraved field is metal. A dark area is metal.");
+  } else if (reason === "unaligned") {
+    lines.push("• ITS SILHOUETTE DID NOT MATCH. The outer outline drifted from IMAGE 1 — reshaped, rescaled, recentred or cropped differently.");
+    lines.push("• Reproduce IMAGE 1's outer silhouette, its integrated top hoop and its proportions exactly, at the same scale and centred the same way in the frame.");
+  } else {
+    lines.push("• It failed the geometry check against IMAGE 1. Reproduce IMAGE 1's silhouette, openings and worked regions exactly.");
+  }
+
+  lines.push("Everything else about this render is unchanged and is still governed by the instructions above: same alloy, same finish, same white ground, same single soft contact shadow, same framing. Do not compensate for the correction by altering anything else.");
+  if (attempt >= 2) lines.push("This correction has already been asked for once. Follow IMAGE 1 literally rather than producing a more attractive charm.");
+  return lines.join("\n");
 }
 
 /* ── kind: custom_charm_render ────────────────────────────────────────────
@@ -5020,7 +5139,11 @@ async function handleStudioRender({ body, event, origin }) {
 
   const metal = studioCleanText(body?.metal || session.metal || "gold");
 
-  const cutMode = String(cfg.renderCutCheck || "off").trim().toLowerCase();
+  const cutMode = String(cfg.renderCuts || "punch").trim().toLowerCase();
+  if (cfg.renderCutCheck !== undefined) {
+    console.warn("[studio] config/customStudio still has the retired key renderCutCheck=" +
+                 JSON.stringify(cfg.renderCutCheck) + "; it is ignored. Delete it. Active key is renderCuts=" + cutMode);
+  }
   const deterministicSpecEnabled = cfg.renderDeterministicSpec !== false;
   try {
     await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
@@ -5171,10 +5294,10 @@ async function handleStudioRender({ body, event, origin }) {
        the exact hoop and silhouette already exist in IMAGE 1, and another
        prose description of where the hoop ought to be would reintroduce a
        second authority. The legacy fallback keeps the old policy unchanged. */
-    let outBuf = await callImageModelEdits({
+    const renderOnce = (promptText) => callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
       model: studioModelConfig.id,
-      prompt: effectivePrompt,
+      prompt: promptText,
       size: studioImageSizeString(studioRenderTier(cfg)),
       imageSizeTier: studioRenderTier(cfg),
       quality: "high",
@@ -5201,6 +5324,51 @@ async function handleStudioRender({ body, event, origin }) {
          path does not add one because IMAGE 1 is already the exact geometry. */
       backgroundPolicy: null,
     });
+
+    /* ── ATTEMPT LOOP ─────────────────────────────────────────────────────
+       One debit, up to 1 + renderRetries model calls. Only the two verdicts
+       code cannot repair cause a retry; a declared opening that came back
+       solid is composited in by studioPunchCutouts and accepted, because
+       cutting those pixels is exact and asking a model again is not.
+
+       The budget is the hard stop, not the attempt count: the browser's
+       watcher gives up at 180s, and a render the customer was told had
+       failed is worse than one imperfect region. A new attempt only starts
+       if the elapsed time plus the LAST attempt's measured duration still
+       fits, so a slow first render never buys a doomed second one. */
+    const maxRetries = Math.max(0, Math.min(4, Number(cfg.renderRetries) || 0));
+    const retryBudgetMs = Math.max(0, Number(cfg.renderRetryBudgetMs) || 0);
+    const RETRYABLE = new Set(["undeclared_cut", "unaligned"]);
+    const doPunch = cutMode === "enforce" || cutMode === "punch";
+    const startedAt = Date.now();
+
+    let outBuf = null, punch = null, attempt = 0, lastMs = 0, failedVerdicts = [];
+    while (true) {
+      attempt++;
+      const promptText = attempt === 1
+        ? effectivePrompt
+        : effectivePrompt + "\n\n" + studioRetryNote(punch.report, attempt - 1);
+      if (attempt > 1) {
+        await vRef.set({ renderStage: "rendering", renderAttempt: attempt, renderRunId }, { merge: true });
+        console.log(`[studio] render retry ${attempt - 1}/${maxRetries} after ${punch.report.reason}`);
+      }
+      const t0 = Date.now();
+      outBuf = await renderOnce(promptText);
+      lastMs = Date.now() - t0;
+
+      if (cutMode === "off") { punch = null; break; }
+
+      punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan, materialSpec);
+      if (!RETRYABLE.has(punch.report.reason)) break;
+
+      failedVerdicts.push(punch.report.reason);
+      const spent = Date.now() - startedAt;
+      if (attempt > maxRetries) { console.log("[studio] retries exhausted:", failedVerdicts.join(",")); break; }
+      if (retryBudgetMs && spent + lastMs > retryBudgetMs) {
+        console.log(`[studio] retry budget reached (${spent}ms + ${lastMs}ms > ${retryBudgetMs}ms)`);
+        break;
+      }
+    }
 
     await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
 
@@ -5237,10 +5405,13 @@ async function handleStudioRender({ body, event, origin }) {
        Alignment still guards it — if the render's silhouette does not match
        the drawing's, no coordinate maps between them and studioPunchCutouts
        declines to punch rather than cutting blind. */
-    const doPunch = cutMode === "enforce" || cutMode === "punch";
-    if (cutMode !== "off") {
-      const punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan);
+    if (punch) {
       if (doPunch) outBuf = punch.buf;
+      /* Rejection is reserved for the one failure that survived every attempt
+         AND cannot be repaired: metal removed that should be solid. An
+         "unaligned" render is not damaged, only unjudgeable, so it ships
+         unpunched rather than costing the customer their credit and their
+         wait. */
       if (cutMode === "enforce" && punch.report.reason === "undeclared_cut") {
         const e = new Error("cut_check_undeclared");
         e.studioReport = punch.report;
@@ -5248,6 +5419,9 @@ async function handleStudioRender({ body, event, origin }) {
       }
       await vRef.set({
         renderCutMode: cutMode,
+        renderAttempts: attempt,
+        /* one entry per attempt that failed the check, in order */
+        renderAttemptVerdicts: failedVerdicts.slice(0, 5),
         renderCutsDeclared: punch.report.declaredCuts,
         renderCutsPunched: doPunch ? punch.report.punchedPx : 0,
         renderCutsWouldPunch: punch.report.punchedPx,
