@@ -30,9 +30,10 @@
 // ENV: nothing new. process.env.URL is set by Netlify itself, which is how
 // verifyCharmSetsKick.js finds the site too.
 
-const KICK_BUILD = "geminiImageProxyKick-1.0.0";
+const KICK_BUILD = "geminiImageProxyKick-1.3.0";
 
-/* Only these four. This function is deliberately NOT a general-purpose proxy
+/* Only these explicitly enumerated storefront operations. This function is
+   deliberately NOT a general-purpose proxy
    to geminiImageProxy-background: that function also carries the Listing
    Generator's internal kinds, which are same-origin, staff-only and have no
    business being reachable from a storefront page. */
@@ -44,7 +45,8 @@ const KICK_BUILD = "geminiImageProxyKick-1.0.0";
    Leaving it out of both sets is what produced "unknown_kind": the kick
    rejected it with a 400 before the background function was ever reached. */
 const SYNC_KINDS  = new Set(["custom_charm_precheck", "custom_session_status",
-                             "custom_charm_compose"]);
+                             "custom_proof_claim", "custom_charm_compose",
+                             "custom_session_delete", "custom_version_delete"]);
 const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine", "custom_charm_render"]);
 
 /* Same list, same order as STUDIO_ALLOWED_ORIGINS in the proxy. */
@@ -80,7 +82,7 @@ let fetchFn = globalThis.fetch;
 if (!fetchFn) { try { fetchFn = require("node-fetch"); } catch { /* leave undefined */ } }
 
 function siteBase() {
-  return process.env.URL ||
+  return process.env.DEPLOY_PRIME_URL || process.env.URL ||
          ("https://" + (process.env.SITE_NAME || "goldenspike") + ".netlify.app");
 }
 
@@ -115,8 +117,7 @@ exports.handler = async (event) => {
   }
 
   /* ── fast kinds: answer here and now ──────────────────────────────────
-     Both are short — a vision pass and a Firestore read — so they fit inside
-     a synchronous function's budget, and both NEED a real response body,
+     These operations fit inside a synchronous function's budget and NEED a real response body,
      which a background function can never give. */
   if (SYNC_KINDS.has(kind)) {
     let proxy;
@@ -162,11 +163,85 @@ exports.handler = async (event) => {
     }
     if (!fetchFn) return json(500, { ok: false, error: "no_fetch" }, origin);
 
+    if (kind === "custom_charm_generate" || kind === "custom_charm_refine") {
+      const sessionId = String(body.sessionId || "");
+      const versionNumber = Number(body.versionNumber);
+      const generationRunId = String(body.generationRunId || "");
+      const baseVersionNumber = Number(body.baseVersionNumber);
+      if (!/^[A-Za-z0-9_-]{1,60}$/.test(sessionId) || !Number.isInteger(versionNumber) || versionNumber < 1 ||
+          !/^[A-Za-z0-9_-]{1,80}$/.test(generationRunId) ||
+          (kind === "custom_charm_refine" && (!Number.isInteger(baseVersionNumber) ||
+            baseVersionNumber < 1 || baseVersionNumber >= versionNumber))) {
+        return json(400, { ok: false, error: "bad_generation_request" }, origin);
+      }
+      let proxy;
+      try { proxy = require("./geminiImageProxy-background"); }
+      catch (_e) { return json(500, { ok: false, error: "proxy_unavailable" }, origin); }
+      let preflight;
+      try {
+        preflight = await proxy.handler({
+          httpMethod: "POST", headers: event.headers || {},
+          body: JSON.stringify({ kind: "custom_session_status", sessionId, versionNumber }),
+        });
+      } catch (_e) {
+        return json(500, { ok: false, error: "generation_preflight_failed" }, origin);
+      }
+      let preflightBody = {};
+      try { preflightBody = JSON.parse(preflight?.body || "{}"); } catch (_e) {}
+      if (Number(preflight?.statusCode) !== 200) {
+        return json(Number(preflight?.statusCode) || 403,
+          { ok: false, error: preflightBody.error || "generation_preflight_failed" }, origin);
+      }
+    }
+
+    /* A background response body is discarded by the platform. Validate the
+       render's ownership/version synchronously so missing, forbidden or
+       not-ready jobs do not leave the shopper watching an unwritable doc. */
+    if (kind === "custom_charm_render") {
+      const sessionId = String(body.sessionId || "");
+      const versionNumber = Number(body.versionNumber);
+      const renderRunId = String(body.renderRunId || "");
+      const metal = String(body.metal || "gold").toLowerCase();
+      if (!/^[A-Za-z0-9_-]{1,60}$/.test(sessionId) || !Number.isInteger(versionNumber) || versionNumber < 1 ||
+          !/^[A-Za-z0-9_-]{1,80}$/.test(renderRunId) ||
+          !["silver", "gold", "rose", "solid10", "solid14"].includes(metal) ||
+          (body.zones != null && (!Array.isArray(body.zones) || body.zones.length > 40))) {
+        return json(400, { ok: false, error: "bad_render_request" }, origin);
+      }
+      let proxy;
+      try { proxy = require("./geminiImageProxy-background"); }
+      catch (_e) { return json(500, { ok: false, error: "proxy_unavailable" }, origin); }
+      let preflight;
+      try {
+        preflight = await proxy.handler({
+          httpMethod: "POST", headers: event.headers || {},
+          body: JSON.stringify({ kind: "custom_session_status", sessionId, versionNumber }),
+        });
+      } catch (_e) {
+        return json(500, { ok: false, error: "render_preflight_failed" }, origin);
+      }
+      let preflightBody = {};
+      try { preflightBody = JSON.parse(preflight?.body || "{}"); } catch (_e) {}
+      if (Number(preflight?.statusCode) !== 200) {
+        return json(Number(preflight?.statusCode) || 403,
+          { ok: false, error: preflightBody.error || "render_preflight_failed" }, origin);
+      }
+      if (!preflightBody.version || preflightBody.version.status !== "done") {
+        return json(409, { ok: false, error: "version_not_ready", renderRunId }, origin);
+      }
+    }
+
     let upstream;
     try {
+      /* The background function applies a second per-IP ceiling. Preserve the
+         platform-derived client address; never accept an arbitrary value from
+         the JSON body. Netlify supplies this header from the connection. */
+      const clientIp = h["x-nf-client-connection-ip"] || h["X-Nf-Client-Connection-Ip"] || "";
+      const forwardHeaders = { "Content-Type": "application/json", Authorization: auth };
+      if (clientIp) forwardHeaders["X-Nf-Client-Connection-Ip"] = String(clientIp).slice(0, 80);
       upstream = await fetchFn(siteBase() + "/.netlify/functions/geminiImageProxy-background", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: auth },
+        headers: forwardHeaders,
         body: event.body,
       });
     } catch (err) {
