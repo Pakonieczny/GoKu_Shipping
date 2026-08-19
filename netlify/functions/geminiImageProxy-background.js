@@ -2486,10 +2486,11 @@ const STUDIO_DEFAULT_CONFIG = {
        "punch"    fills declared openings. Produces the sticker artefact.
        "enforce"  punch AND reject undeclared cuts. */
   renderCutCheck: "off",
-  /* The naming pass. One extra text+vision call per render, on the key the
-     studio already uses. Set false to fall back to measured descriptions
-     only — the census still names every region by size and position. */
-  renderNameRegions: true,
+  /* The naming pass. PARKED — the prompt no longer carries the census, so
+     nothing read its output. Turning this back on also requires appending
+     `census` in buildMaterialSpecToCharmPrompt; on its own it just pays for
+     a vision call nobody reads. */
+  renderNameRegions: false,
   /* Extra attempts after a failed check. 0 restores the previous behaviour
      exactly. Retries are never charged: the debit happens once, before the
      first attempt. */
@@ -5282,14 +5283,17 @@ async function handleStudioPromptPreview({ body, event, origin }) {
       const zones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
       try { spec = await studioMaterialSpec(sharpMod, plan, metal, zones); } catch (_e) { spec = null; }
     }
+    /* Parked with the render's copy. The preview must do exactly what the
+       render does or it stops being a preview — including doing nothing here
+       while the prompt carries no census. Both sites read the same key. */
     if (plan && spec && cfg.renderNameRegions !== false) {
       try {
         const items = studioCensusItems(plan, spec);
         const flat = items ? items.open.list.concat(items.worked.list, items.islands) : [];
         if (flat.length) names = await studioNameRegions(spec.buf, flat);
-      } catch (_e) { names = {}; }
+        census = studioSpecCensus(plan, spec, names);
+      } catch (_e) { names = {}; census = ""; }
     }
-    if (plan && spec) { try { census = studioSpecCensus(plan, spec, names); } catch (_e) { census = ""; } }
   }
 
   let hasReference = false;
@@ -5488,33 +5492,23 @@ async function handleStudioRender({ body, event, origin }) {
        and the picture can never disagree. Never allowed to fail a render:
        an empty census simply means the prompt states the law without naming
        regions, which is exactly the behaviour that shipped before it. */
-    /* ── ONE NAMING CALL, BEFORE THE LOOP ────────────────────────────────
-       A cheap text+vision call attaches a noun to each measured region. It
-       runs ONCE per render, not once per attempt, so retries reuse the same
-       census and cost nothing extra. It is never allowed to fail a render or
-       to change a classification — only to supply words. */
-    let specCensus = "";
-    let regionNames = {};
-    if (specUsed && studioPlan) {
-      try {
-        if (cfg.renderNameRegions !== false) {
-          const items = studioCensusItems(studioPlan, materialSpec);
-          const flat = items
-            ? items.open.list.concat(items.worked.list, items.islands)
-            : [];
-          if (flat.length) {
-            const t0 = Date.now();
-            regionNames = await studioNameRegions(materialSpec.buf, flat);
-            console.log(`[studio] region naming: ${Object.keys(regionNames).length}/${flat.length} named (${Date.now() - t0}ms)`);
-          }
-        }
-      } catch (e) {
-        console.error("[studio] region naming skipped:", e?.message || e);
-        regionNames = {};
-      }
-      try { specCensus = studioSpecCensus(studioPlan, materialSpec, regionNames); }
-      catch (e) { console.error("[studio] region census skipped:", e?.message || e); specCensus = ""; }
-    }
+    /* ── THE CENSUS AND THE NAMING PASS ARE PARKED ───────────────────────
+       Both are still in the file and still correct. Neither runs.
+
+       The prompt no longer appends the census, so the naming call — a vision
+       call and several seconds of latency on every render — produced text
+       nothing read. Paying a model to write something no one is shown is
+       worse than not having it.
+
+       The MASK is untouched and still essential: studioDrawingPlan and
+       studioMaterialSpec run exactly as before, and their output IS the image
+       the renderer receives. It is only the words about that image that stop.
+
+       To bring them back: set renderNameRegions true in config/customStudio
+       AND append `census` in buildMaterialSpecToCharmPrompt. Both, or the
+       naming call is unread again. */
+    const specCensus = "";
+    const regionNames = {};
 
     /* ── THE PROMPT IS BUILT ONCE, AND CAN BE OVERRIDDEN ─────────────────
        `promptOverride` is the studio's live prompt box: whatever text is in
@@ -5581,8 +5575,6 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecFacePx: specUsed ? materialSpec.facePx : 0,
       renderSpecHolePx: specUsed ? materialSpec.holePx : 0,
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
-      renderSpecCensus: specCensus ? specCensus.slice(0, 4000) : "",
-      renderRegionNames: Object.values(regionNames).slice(0, 12),
       renderPromptText: effectivePrompt.slice(0, 40000),
       renderPromptChars: effectivePrompt.length,
       renderPromptOverridden: !!override,
