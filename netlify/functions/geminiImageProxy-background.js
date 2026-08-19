@@ -1011,28 +1011,6 @@ const IMAGE_ROLE_LABELS = {
      anymore: deterministic code has already converted every manufacturing
      colour into actual metal/opening/engraving semantics. This role therefore
      tells the model to materialise, not decode. */
-  /* ── THE SHORT PATH NEEDS ITS OWN ROLES, NOT NONE ─────────────────────
-     Passing imageRoles:null does NOT mean "no roles": the lookup falls back
-     to `edit`, whose IMAGE 2 label reads "MASTER CHARM / DESIGN TRUTH. Use
-     its exact silhouette, integrated eyelet, cutouts and engraving
-     topology." That label is attached to the finish sample itself, so the
-     model was instructed — correctly, from its point of view — to reproduce
-     the kettlebell. Prompt sentences arguing the opposite lost to a label
-     bolted onto the image.
-
-     These are the short path's own, and they are short: the two facts that
-     cannot be dropped, and nothing else. */
-  short_spec_to_charm: {
-    first:
-      "IMAGE 1 — THE GREY MAP. It alone decides the charm's shape, its engraving and its cut-outs. Reproduce it exactly.",
-    second:
-      "IMAGE 2 — COLOUR SAMPLE ONLY. Take from it the metal colour and the engraving colour, nothing else. Its shape, its artwork and its lettering must NOT appear in your output.",
-    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
-    single:
-      "IMAGE 1 — THE GREY MAP. It alone decides the charm's shape, its engraving and its cut-outs. Reproduce it exactly.",
-    lock:
-      "FINAL LOCK: shape from IMAGE 1, colour from IMAGE 2. Copying IMAGE 2's shape is a hard fail.",
-  },
   material_spec_to_charm: {
     first:
       "IMAGE 1 — GREYSCALE GEOMETRY MAP (STRUCTURAL TRUTH, NO COLOUR). It marks three things and only three: MID GREY = plain polished metal, DARK GREY = shallow engraved work, WHITE = cut clean through. Its greys are instructions, NOT the colour of the finished piece — take no colour from it. Its silhouette, openings and worked regions are already resolved exactly; materialise this same object without changing any geometry.",
@@ -2311,6 +2289,8 @@ const STUDIO_KINDS = new Set([
   /* the studio composed the drawing itself — this only files it */
   "custom_charm_compose",
   "custom_charm_render",
+  /* read-only: returns the exact prompt a render would send */
+  "custom_charm_prompt",
   "custom_session_status",
 ]);
 
@@ -2471,18 +2451,6 @@ const STUDIO_DEFAULT_CONFIG = {
      studio already uses. Set false to fall back to measured descriptions
      only — the census still names every region by size and position. */
   renderNameRegions: true,
-  /* "full" | "short" — see buildShortSpecPrompt. Used when the UI control is
-     off, and as the fallback for anything the browser sends that is not one
-     of the two words. */
-  renderPromptMode: "full",
-  /* Reveals the Full/Short control in the studio's pair rail AND is what
-     permits the server to honour a promptMode from the browser. Off by
-     default: "Full" and "Short" are engineering words and a shopper should
-     not be choosing between them. */
-  renderPromptModeUI: false,
-  /* Overrides the short prompt's wording from Firestore, no deploy. Empty
-     falls back to STUDIO_SHORT_PROMPT. */
-  renderShortPrompt: "",
   /* Extra attempts after a failed check. 0 restores the previous behaviour
      exactly. Retries are never charged: the debit happens once, before the
      first attempt. */
@@ -3324,68 +3292,6 @@ ${zoneBlock(zones, "drawing")}`;
    in as many words that its own colour is not the subject. Replacing the
    stored sample with a correctly-coloured one is then an improvement rather
    than a prerequisite.                                                    */
-/* ── THE SHORT PROMPT ─────────────────────────────────────────────────────
-   Paul's own wording, which produces a correct charm reliably when pasted
-   straight into ChatGPT or Gemini with the same two images. It is 262
-   characters against this pipeline's ~5,000, and every one of those 5,000 was
-   added to fix something real — the role labels, the region census, the
-   cut-out physics, the engraving ceiling, the hoop rule, the background and
-   shadow policy, the flatness rule, the final checklist.
-
-   The hypothesis this mode exists to test is that the difference IS the
-   length: that stating the three rules once, with nothing competing, beats
-   stating them once inside four thousand characters of everything else.
-   Three descriptions of one rule are a reconciliation problem, and this
-   pipeline has learned that lesson twice already.
-
-   So this path sends the three rules and nothing else. No census, no role
-   labels, no doctrine block, no presentation block. The metal is named
-   because the customer chose it; the sample carries the rest of the look.
-   Editable from Firestore as `renderShortPrompt` without a deploy, so the
-   wording itself can be tuned against real renders. */
-const STUDIO_SHORT_PROMPT =
-"Make this Grey image into a real charm image. Light grey means no engraving, " +
-"Dark grey means Engraved, No grey means Cut out. Use the colours of the " +
-"material and engraving to generate a new image in that same style, but from " +
-"the gray scale image.";
-
-function buildShortSpecPrompt({ metal, hasReference, cfg }) {
-  const label = ({
-    silver: "polished sterling silver",
-    gold: "polished 14k gold",
-    rose: "polished 14k rose gold",
-    solid10: "polished 10k solid gold",
-    solid14: "polished 14k solid gold",
-  })[studioCleanText(metal) || "gold"] || ("polished " + studioCleanText(metal));
-
-  const body = studioCleanText(cfg && cfg.renderShortPrompt) || STUDIO_SHORT_PROMPT;
-
-  /* ── THE ONE THING THAT CANNOT BE CUT ─────────────────────────────────
-     The first version of this path stripped `imageRoles` along with
-     everything else, on the reasoning that role labels are 1,400 characters
-     and the short prompt is a test of brevity. That was wrong, and it
-     produced a charm shaped like the finish sample: the model received a
-     greyscale map, a photograph of a kettlebell charm, and 262 characters
-     that never said the two images have different jobs — so it blended them.
-
-     Paul's wording works when he pastes it into ChatGPT because he attaches
-     the two images himself and the separation is obvious in context. Sent
-     through an API with both images in one call, nothing states it.
-
-     Role separation is not verbosity. Without it the second image has no
-     defined purpose, and an image with no defined purpose gets copied. This
-     is ~190 characters against the 1,400 of the full role block, and it is
-     the floor — the short path does not go below this. */
-  /* The image roles are no longer stated here. They are attached to the
-     images themselves by `short_spec_to_charm`, which is where a statement
-     about an image belongs and where it outranks prose. Repeating them in
-     the prompt would be a second description of one rule — the reconciliation
-     problem this pipeline has now hit three times. */
-  return hasReference
-    ? `${body}\n\nThe metal is ${label}.`
-    : `${body}\n\nRender it in ${label}.`;
-}
-
 function buildMaterialSpecToCharmPrompt({ metal, hasReference, census }) {
   const m = studioCleanText(metal) || "gold";
   const label = ({
@@ -5279,6 +5185,87 @@ async function studioFailRender(vRef, error, renderRunId) {
   }
 }
 
+/* ── WHAT THE RENDER WOULD ACTUALLY SEND ──────────────────────────────────
+   The prompt is assembled from the drawing plan, the material spec, the
+   region census and the naming pass — none of which the browser has. So the
+   studio cannot show a truthful prompt by rebuilding it client-side; it has
+   to ask the server for the real one.
+
+   This runs the SAME code the render runs, in the same order, and returns
+   the result. It renders nothing, debits nothing and writes nothing. It is
+   deliberately not cheap — it pays for sharp and the naming call — because a
+   preview that skips those is a different prompt, and a different prompt is
+   worse than no preview.                                                  */
+async function handleStudioPromptPreview({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const cfg = await studioConfig();
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+  const n = Number(body?.versionNumber) || Number(session.currentVersion) || 0;
+  if (!n || n < 1) return studioJson(400, { ok: false, error: "missing_version" }, origin);
+  const vSnap = await sRef.collection("versions").doc(String(n)).get();
+  if (!vSnap.exists || vSnap.data().status !== "done") {
+    return studioJson(409, { ok: false, error: "version_not_ready" }, origin);
+  }
+
+  const metal = studioCleanText(body?.metal || session.metal || "gold");
+  const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
+  let bw = null;
+  try { bw = await storagePathToBuffer(bwPath); }
+  catch (e) {
+    console.error("[studio] prompt preview: drawing unreadable:", e?.message || e);
+    return studioJson(409, { ok: false, error: "drawing_unavailable" }, origin);
+  }
+
+  const sharpMod = studioSharp();
+  let plan = null, spec = null, census = "", names = {};
+  if (sharpMod && cfg.renderDeterministicSpec !== false) {
+    try { plan = await studioDrawingPlan(sharpMod, bw.buffer); } catch (_e) { plan = null; }
+    if (plan) {
+      const zones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
+      try { spec = await studioMaterialSpec(sharpMod, plan, metal, zones); } catch (_e) { spec = null; }
+    }
+    if (plan && spec && cfg.renderNameRegions !== false) {
+      try {
+        const items = studioCensusItems(plan, spec);
+        const flat = items ? items.open.list.concat(items.worked.list, items.islands) : [];
+        if (flat.length) names = await studioNameRegions(spec.buf, flat);
+      } catch (_e) { names = {}; }
+    }
+    if (plan && spec) { try { census = studioSpecCensus(plan, spec, names); } catch (_e) { census = ""; } }
+  }
+
+  let hasReference = false;
+  try { hasReference = !!(await ensureStudioGoldStyleReference())?.buffer?.length; }
+  catch (_e) { hasReference = false; }
+
+  const prompt = spec
+    ? buildMaterialSpecToCharmPrompt({ metal, hasReference, census })
+    : buildLineArtToCharmPrompt({ metal, zones: [] });
+
+  /* The role labels are attached to the images, not to the prompt, so they
+     are returned separately rather than pretended into one string — editing
+     them here would have no effect and the box must not imply otherwise. */
+  const roleSet = IMAGE_ROLE_LABELS[spec ? "material_spec_to_charm" : "lineart_to_charm"];
+  return studioJson(200, {
+    ok: true,
+    prompt,
+    chars: prompt.length,
+    specUsed: !!spec,
+    roles: hasReference
+      ? [roleSet.first, roleSet.second, roleSet.lock]
+      : [roleSet.single, roleSet.lock],
+  }, origin);
+}
+
 async function handleStudioRender({ body, event, origin }) {
   const uid = await requireStudioUser(event);
   const cfg = await studioConfig();
@@ -5480,33 +5467,28 @@ async function handleStudioRender({ body, event, origin }) {
       catch (e) { console.error("[studio] region census skipped:", e?.message || e); specCensus = ""; }
     }
 
-    /* ── THE TOGGLE ──────────────────────────────────────────────────────
-       "short" sends the three rules and nothing else. "full" is everything
-       this pipeline has accumulated. Same design, same mask, same sample,
-       same credit — so a customer can render twice and the two paths are
-       directly comparable. Flip in config/customStudio, no deploy. */
-    /* ── SERVER IS THE AUTHORITY, AS WITH THE TIER ────────────────────────
-       The browser may ASK for a mode, but only while `renderPromptModeUI` is
-       true — the same value the client reads before it will show the control.
-       One switch for both, so a stale tab cannot keep sending a mode nobody
-       can see, and the server can never run a mode the button never offered.
-       With the UI off, `renderPromptMode` in config still decides, which is
-       how the mode is set without any UI at all. */
-    const asked = String(body?.promptMode || "").trim().toLowerCase();
-    const promptMode = (asked === "short" || asked === "full")
-      ? asked
-      : String(cfg.renderPromptMode || "full").trim().toLowerCase();
-    const useShort = specUsed && promptMode === "short";
+    /* ── THE PROMPT IS BUILT ONCE, AND CAN BE OVERRIDDEN ─────────────────
+       `promptOverride` is the studio's live prompt box: whatever text is in
+       it replaces the built prompt verbatim for this render and nothing
+       else changes — same images, same roles, same model, same credit. That
+       is the point: it is the only way to tell whether a wording change is
+       responsible for a difference in the result.
+
+       NOTE FOR PAUL, once: this accepts arbitrary text from the browser on a
+       public storefront, so anyone who finds the endpoint can spend a credit
+       driving the image model with a prompt of their own. Capped at 20k
+       characters and still behind auth, ownership, budget and the debit —
+       but it is not the same risk profile as a fixed prompt. */
+    const built = buildMaterialSpecToCharmPrompt({
+      metal,
+      hasReference: !!renderStyleRef?.buffer?.length,
+      census: specCensus,
+    });
+    const override = String(body?.promptOverride || "").trim().slice(0, 20000);
     const effectivePrompt = !specUsed
       ? buildLineArtToCharmPrompt({ metal, zones: renderZones })
-      : useShort
-        ? buildShortSpecPrompt({ metal, hasReference: !!renderStyleRef?.buffer?.length, cfg })
-        : buildMaterialSpecToCharmPrompt({
-            metal,
-            hasReference: !!renderStyleRef?.buffer?.length,
-            census: specCensus,
-          });
-    console.log(`[studio] prompt mode=${useShort ? "short" : "full"} chars=${effectivePrompt.length}`);
+      : (override || built);
+    console.log(`[studio] prompt ${override ? "OVERRIDDEN" : "built"} chars=${effectivePrompt.length}`);
 
     /* ── THE GOLD MASK IS EVIDENCE, SO IT IS KEPT ─────────────────────────
        This proof is the last structural instruction the model receives and
@@ -5552,8 +5534,9 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecWorkPx: specUsed ? materialSpec.workPx : 0,
       renderSpecCensus: specCensus ? specCensus.slice(0, 4000) : "",
       renderRegionNames: Object.values(regionNames).slice(0, 12),
-      renderPromptMode: useShort ? "short" : "full",
+      renderPromptText: effectivePrompt.slice(0, 40000),
       renderPromptChars: effectivePrompt.length,
+      renderPromptOverridden: !!override,
       renderSpecRoiMode: studioPlan?.roiMode || "unknown",
       renderSpecRoiGuard: studioPlan?.roiGuard || "unknown",
       renderSpecRoiSignalPx: Number(studioPlan?.roiSignalPx || 0),
@@ -5582,9 +5565,9 @@ async function handleStudioRender({ body, event, origin }) {
          callImageModelEdits. Sending them on the short path would defeat the
          only thing the short path is testing. */
       /* NEVER null here. `IMAGE_ROLE_LABELS[imageRoles] || IMAGE_ROLE_LABELS.edit`
-         means an absent value silently selects the edit roles, which tell the
-         model IMAGE 2 is the design truth to reproduce. */
-      imageRoles: useShort ? "short_spec_to_charm" : (specUsed ? "material_spec_to_charm" : "lineart_to_charm"),
+         means an absent value silently selects the edit roles, whose IMAGE 2
+         label tells the model to reproduce that image's silhouette. */
+      imageRoles: specUsed ? "material_spec_to_charm" : "lineart_to_charm",
       charmGeometryPolicy: specUsed ? null : "flat_integrated_eyelet",
       /* ── ONE VOICE ABOUT THE BACKGROUND ──────────────────────────────────
          backgroundPolicy: "solid_black" appends a block headed "BACKEND-
@@ -5877,6 +5860,7 @@ async function handleStudioKind({ kind, body, event }) {
     }
     if (kind === "custom_charm_compose") return await handleStudioCompose({ body, event, origin });
     if (kind === "custom_charm_render") return await handleStudioRender({ body, event, origin });
+    if (kind === "custom_charm_prompt") return await handleStudioPromptPreview({ body, event, origin });
     if (kind === "custom_session_status") return await handleStudioSessionStatus({ body, event, origin });
     return studioJson(400, { ok: false, error: "unknown_kind" }, origin);
   } catch (err) {
