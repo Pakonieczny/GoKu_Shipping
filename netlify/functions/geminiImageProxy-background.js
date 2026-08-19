@@ -821,8 +821,10 @@ async function callOpenAIImagesEdits({
   let promptText = String(prompt || "");
   if (imageRoles === "style_reference") {
     promptText = `${promptText.trim()}\n\n${IMAGE_ROLE_LABELS.style_reference.single}\n\n${IMAGE_ROLE_LABELS.style_reference.lock}`;
-  } else if (imageRoles === "line_art_style" || imageRoles === "customer_lineart" ||
-             imageRoles === "lineart_to_charm" || imageRoles === "material_spec_to_charm") {
+  } else if (imageRoles !== "none" &&
+             (imageRoles === "line_art_style" || imageRoles === "customer_lineart" ||
+              imageRoles === "lineart_to_charm" || imageRoles === "material_spec_to_charm" ||
+              imageRoles === "colour_drawing_to_charm")) {
     const roles = IMAGE_ROLE_LABELS[imageRoles];
     promptText = (images || []).length >= 2
       ? `${promptText.trim()}\n\n${roles.first}\n\n${roles.second}\n\n${roles.lock}`
@@ -1126,6 +1128,13 @@ async function callGeminiGenerateContentImage({
   const imageInputs = Array.isArray(images) ? images : [];
   // Unknown values fall back to "edit" so a typo can never silently unlock the
   // compositor's guarantees.
+  /* ── "none" IS THE ONLY WAY TO SEND NO LABELS ────────────────────────
+     Passing null or omitting imageRoles does NOT mean "no roles": the lookup
+     below falls back to `edit`, whose IMAGE 2 label declares that image the
+     design truth to reproduce. That fallback is deliberate — a typo must not
+     silently unlock the compositor's guarantees — but it left no way to send
+     a bare prompt. This is that way, and it is explicit at the call site. */
+  const noRoles = String(imageRoles || "") === "none";
   const roleSet = IMAGE_ROLE_LABELS[imageRoles] || IMAGE_ROLE_LABELS.edit;
 
   const parts = [{ text: promptText }];
@@ -1134,17 +1143,19 @@ async function callGeminiGenerateContentImage({
     // the source template with the master charm or reversing their jobs.
     // Every two-image Listing Generator request uses this same ordering:
     // image 1 = destination/template, image 2 = master charm.
-    if (imageInputs.length >= 2) {
-      parts.push({
-        text:
-          index === 0
-            ? roleSet.first
-            : index === 1
-              ? roleSet.second
-              : roleSet.extra(index + 1),
-      });
-    } else {
-      parts.push({ text: roleSet.single });
+    if (!noRoles) {
+      if (imageInputs.length >= 2) {
+        parts.push({
+          text:
+            index === 0
+              ? roleSet.first
+              : index === 1
+                ? roleSet.second
+                : roleSet.extra(index + 1),
+        });
+      } else {
+        parts.push({ text: roleSet.single });
+      }
     }
 
     // Gemini will hard-crash if passed application/octet-stream.
@@ -1166,7 +1177,7 @@ async function callGeminiGenerateContentImage({
   // emits it always: with one reference image the "do not reproduce this
   // object" instruction is the entire point, and it must be last so it carries
   // the most weight.
-  if (imageInputs.length >= 2 || roleSet === IMAGE_ROLE_LABELS.style_reference) {
+  if (!noRoles && (imageInputs.length >= 2 || roleSet === IMAGE_ROLE_LABELS.style_reference)) {
     parts.push({ text: roleSet.lock });
   }
 
@@ -3890,8 +3901,20 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     });
     const downloadURL = tokenDownloadURLFor(bucket.name, storagePath, token);
 
+    /* Build the gold mask now, so the customer sees both pictures before
+       paying for a render. Never allowed to fail this step. */
+    let specURL = "", specPath = "";
+    try {
+      const sp = await studioStoreSpecForVersion({
+        uid, sessionId, n, metal,
+        drawingBuffer: outBuf, zones: [],
+      });
+      if (sp) { specURL = sp.specURL; specPath = sp.specPath; }
+    } catch (e) { console.error("[studio] gold mask at generation skipped:", e?.message || e); }
+
     await studioStage(vRef, {
       status: "done", stage: "done", storagePath, downloadURL,
+      specURL, specPath,
       prompt: String(effectivePrompt).slice(0, 4000),
       model: studioModelConfig.id,
       doneAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -5281,6 +5304,50 @@ async function studioFailRender(vRef, error, renderRunId) {
   }
 }
 
+/* ── THE MASK IS BUILT WHEN THE DRAWING IS, NOT WHEN THE RENDER IS ────────
+   The greyscale mask used to be produced inside handleStudioRender, which
+   meant it only existed after a paid render — so the customer approved a
+   drawing without ever seeing the thing the renderer would actually be shown.
+
+   This builds and stores it the moment a drawing is filed, by both routes
+   that file one (the model generator and the local composer), and writes
+   specURL/specPath onto the version doc so the studio can show both pictures
+   side by side before "See it in metal" is pressed.
+
+   It can NEVER fail the step that calls it. A drawing that generated fine
+   must not be lost because sharp was unavailable or Storage hiccupped — the
+   render still builds its own mask exactly as before, so a miss here costs a
+   preview, not a render. Every call site wraps it and ignores the result. */
+async function studioStoreSpecForVersion({ uid, sessionId, n, metal, drawingBuffer, zones }) {
+  const sharpMod = studioSharp();
+  if (!sharpMod || !drawingBuffer?.length) return null;
+  const cfg = await studioConfig();
+  if (cfg.renderDeterministicSpec === false) return null;
+
+  const plan = await studioDrawingPlan(sharpMod, drawingBuffer);
+  if (!plan) return null;
+  let spec = await studioMaterialSpec(sharpMod, plan, metal,
+                                      Array.isArray(zones) ? zones.slice(0, 40) : []);
+  if (!spec?.buf) return null;
+  /* Same refinement the render applies, or the preview would show softer
+     edges than the picture the model is handed. */
+  try {
+    const refined = await studioRefineMask(sharpMod, spec, cfg);
+    if (refined?.buf) spec = refined;
+  } catch (e) { console.error("[studio] mask refine skipped:", e?.message || e); }
+
+  const specPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-spec.png`;
+  const bucket = getBucket();
+  const token = newDownloadToken();
+  await bucket.file(specPath).save(spec.buf, {
+    resumable: false,
+    contentType: "image/png",
+    metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId,
+                            version: String(n), spec: "1" } },
+  });
+  return { specPath, specURL: tokenDownloadURLFor(bucket.name, specPath, token) };
+}
+
 /* ── WHAT THE RENDER WOULD ACTUALLY SEND ──────────────────────────────────
    The prompt is assembled from the drawing plan, the material spec, the
    region census and the naming pass — none of which the browser has. So the
@@ -5674,10 +5741,19 @@ async function handleStudioRender({ body, event, origin }) {
       /* Role labels are ~1,400 characters of their own and are appended by
          callImageModelEdits. Sending them on the short path would defeat the
          only thing the short path is testing. */
-      /* NEVER null here. `IMAGE_ROLE_LABELS[imageRoles] || IMAGE_ROLE_LABELS.edit`
-         means an absent value silently selects the edit roles, whose IMAGE 2
-         label tells the model to reproduce that image's silhouette. */
-      imageRoles: specUsed ? "material_spec_to_charm" : "colour_drawing_to_charm",
+      /* ── LABELS PAUSED ────────────────────────────────────────────────
+         Paul asked for the prompt alone. "none" is explicit: null or an
+         omitted value would fall through to the `edit` labels, whose IMAGE 2
+         text declares that image the design truth to reproduce — the
+         instruction that produced a kettlebell-shaped charm.
+
+         So the model now receives: prompt, image 1, image 2. Nothing else.
+         The two labels the prompt does NOT replace are the ones naming which
+         image is which; the prompt says "FIRST image" and "SECOND image" and
+         is now relied on to carry that alone. To restore them, swap "none"
+         for the commented value below. */
+      imageRoles: "none",
+      // imageRoles: specUsed ? "material_spec_to_charm" : "colour_drawing_to_charm",
       charmGeometryPolicy: specUsed ? null : "flat_integrated_eyelet",
       /* ── ONE VOICE ABOUT THE BACKGROUND ──────────────────────────────────
          backgroundPolicy: "solid_black" appends a block headed "BACKEND-
@@ -5940,8 +6016,20 @@ async function handleStudioCompose({ body, event, origin }) {
     });
     const downloadURL = tokenDownloadURLFor(bucket.name, storagePath, token);
 
+    /* Build the gold mask now, so the customer sees both pictures before
+       paying for a render. Never allowed to fail this step. */
+    let specURL = "", specPath = "";
+    try {
+      const sp = await studioStoreSpecForVersion({
+        uid, sessionId, n, metal: session.metal || "gold",
+        drawingBuffer: img.buffer, zones: body?.zones,
+      });
+      if (sp) { specURL = sp.specURL; specPath = sp.specPath; }
+    } catch (e) { console.error("[studio] gold mask at generation skipped:", e?.message || e); }
+
     await studioStage(vRef, {
       status: "done", stage: "done", storagePath, downloadURL,
+      specURL, specPath,
       composed: true,
       model: "studio-composer",
       prompt: "Composed locally from the customer's own vector items — exactly as drawn.",
