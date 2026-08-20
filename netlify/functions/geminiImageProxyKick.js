@@ -32,7 +32,7 @@
 
 const KICK_BUILD = "geminiImageProxyKick-1.0.0";
 
-/* Only these four. This function is deliberately NOT a general-purpose proxy
+/* Only these six. This function is deliberately NOT a general-purpose proxy
    to geminiImageProxy-background: that function also carries the Listing
    Generator's internal kinds, which are same-origin, staff-only and have no
    business being reachable from a storefront page. */
@@ -43,21 +43,25 @@ const KICK_BUILD = "geminiImageProxyKick-1.0.0";
    put the version on screen, which a background function can never give.
    Leaving it out of both sets is what produced "unknown_kind": the kick
    rejected it with a 400 before the background function was ever reached. */
-/* custom_charm_prompt is SYNC for the same reason: the browser needs the
+/* custom_charm_prompt was SYNC for the same reason — the browser needed the
    prompt text back in the response body, which a background function can
-   never give. It runs sharp, the material spec and one text call — heavier
-   than the other sync kinds, but well inside a synchronous budget, and it
-   calls no image model.
+   never give — and it is REMOVED. It fed the studio's prompt lab, which is
+   gone from the storefront along with the Model and Send toggles. The render
+   prompt is a fixed string in the proxy now, so there is nothing to preview
+   and nothing to override. The kind is dropped from the proxy's STUDIO_KINDS
+   in the same change, so a tab left open from before it gets 400
+   unknown_kind here, which is the honest answer.
 
-   NOTE THE PATTERN. This is the second kind added to the studio that had to
-   be registered HERE as well as in the proxy's STUDIO_KINDS. The kick is the
-   only door; a kind missing from both sets is rejected with 400 unknown_kind
-   before the proxy is ever loaded, and the failure looks exactly like the
-   proxy not having the handler. Any new studio kind goes in one of these two
-   sets, always. */
+   NOTE THE PATTERN, still. The kick is the only door; a kind missing from
+   both sets is rejected with 400 unknown_kind before the proxy is ever
+   loaded, and the failure looks exactly like the proxy not having the
+   handler. Any new studio kind goes in one of these two sets, always. */
 const SYNC_KINDS  = new Set(["custom_charm_precheck", "custom_session_status",
-                             "custom_charm_compose", "custom_charm_prompt"]);
-const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine", "custom_charm_render"]);
+                             "custom_charm_compose"]);
+/* custom_charm_gold_edit is ASYNC for the same reason the render is: one
+   image-model call, minutes long, result read off the version doc. */
+const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine",
+                             "custom_charm_render", "custom_charm_gold_edit"]);
 
 /* Same list, same order as STUDIO_ALLOWED_ORIGINS in the proxy. */
 const ALLOWED_ORIGINS = [
