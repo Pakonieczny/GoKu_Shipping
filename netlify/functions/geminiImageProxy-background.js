@@ -4562,11 +4562,20 @@ async function studioDrawingPlan(sharp, drawingBuf) {
    resolved. No second model call, no extra customer instruction, no new cost.
    ====================================================================== */
 function studioBlueBoundedWhiteHoles(plan) {
-  const { px, w, h, n, face } = plan;
+  const { px, w, h, n, face, blue } = plan;
   const white = new Uint8Array(n);
   for (let i = 0; i < n; i++) if (face[i] && studioIsBg(px, i * 3)) white[i] = 1;
   const { labels, count } = studioLabel(white, w, h);
   if (!count) return new Uint8Array(n);
+
+  /* A structural hoop is two nested BLUE cut lines: the outer contour cuts
+     the hoop from the sheet and the inner contour cuts its opening. The white
+     band between them is METAL, not a hole. The previous blue-vote test saw
+     blue on both sides of that band and therefore classified the entire hoop
+     body as empty. Track the distinct blue contours touching each white
+     region so a band between two contours remains solid; the white centre,
+     which touches only the inner contour, is still cut out. */
+  const blueComponents = studioLabel(blue || studioBlueMask(px, n, 3), w, h).labels;
 
   const size = new Float64Array(count + 1);
   for (let i = 0; i < n; i++) if (labels[i]) size[labels[i]]++;
@@ -4579,6 +4588,13 @@ function studioBlueBoundedWhiteHoles(plan) {
   const blueVotes = new Float64Array(count + 1);
   const redVotes = new Float64Array(count + 1);
   const blackVotes = new Float64Array(count + 1);
+  const firstBlueComponent = new Int32Array(count + 1);
+  const secondBlueComponent = new Int32Array(count + 1);
+  const noteBlueComponent = (L, B) => {
+    if (!B || firstBlueComponent[L] === B || secondBlueComponent[L] === B) return;
+    if (!firstBlueComponent[L]) firstBlueComponent[L] = B;
+    else if (!secondBlueComponent[L]) secondBlueComponent[L] = B;
+  };
   const at = (x, y) => y * w + x;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -4600,7 +4616,10 @@ function studioBlueBoundedWhiteHoles(plan) {
         const q = at(xx, yy);
         if (labels[q] === L) continue;
         const p = q * 3;
-        if (studioIsBluePixel(px, p)) blueVotes[L]++;
+        if (studioIsBluePixel(px, p)) {
+          blueVotes[L]++;
+          noteBlueComponent(L, blueComponents[q]);
+        }
         else if (studioIsRedPixel(px, p)) redVotes[L]++;
         else if (studioIsBlack(px, p)) blackVotes[L]++;
       }
@@ -4616,7 +4635,10 @@ function studioBlueBoundedWhiteHoles(plan) {
     if (L === largest || size[L] < minPx) continue;
     const blue = blueVotes[L], red = redVotes[L], black = blackVotes[L];
     const votes = blue + red + black;
-    if (votes >= 8 && blue / votes >= 0.72 && blue > (red + black) * 2) holeLabel[L] = 1;
+    const betweenTwoBlueContours = !!secondBlueComponent[L];
+    if (!betweenTwoBlueContours && votes >= 8 && blue / votes >= 0.72 && blue > (red + black) * 2) {
+      holeLabel[L] = 1;
+    }
   }
 
   const holes = new Uint8Array(n);
@@ -5764,7 +5786,7 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecHolePx: materialSpec.holePx,
       renderSpecWorkPx: materialSpec.workPx,
       renderInput: "mask",
-      renderTopologyMode: "binary-black-metal",
+      renderTopologyMode: "binary-light-grey-metal",
       renderTopologyMetalPx: topologyMask.metalPx,
       renderTopologyEmptyPx: topologyMask.emptyPx,
       renderPromptText: effectivePrompt.slice(0, 40000),
