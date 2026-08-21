@@ -2533,6 +2533,40 @@ const STUDIO_DEFAULT_CONFIG = {
      Renders measured at 35-80s upstream, so this admits a second attempt
      comfortably and a third only when the first two were quick. */
   renderRetryBudgetMs: 150000,
+
+  /* ══════════ THE ADJUDICATOR — POST-RENDER SCORING ══════════════════════
+     Reads the finished gold charm against the deterministic greyscale map
+     with a vision model, scores six categories, and re-renders when the
+     result is not good enough. See the adjudicator block above
+     studioAdjudicateOnce for what it catches that the cut check cannot.
+
+     THE WHOLE SUBSYSTEM REVERTS WITH THIS ONE VALUE, no deploy:
+       "off"      nothing runs. Byte-for-byte the behaviour before it existed:
+                  no judge call, no extra render, no fields on the version doc.
+       "observe"  every render is scored and the numbers are filed, but the
+                  image is returned untouched and nothing is ever re-rendered.
+                  One cheap vision call per render, no extra image calls. This
+                  is how the threshold gets set from real traffic.
+       "enforce"  what ships. Score; if it fails, render again — up to
+                  renderScoreRetries more times — and return the HIGHEST
+                  SCORING attempt, never the last one.
+
+     WHAT IT COSTS. In "enforce" a single credit can now buy up to three image
+     calls and three judge calls instead of one image call. The customer is
+     debited once, before the first attempt, and is never charged for a retry.
+     renderRetryBudgetMs still caps the wall clock, so a slow first render
+     simply ships as the best of however many attempts fitted. */
+  renderAdjudicate: "enforce",
+  /* The pass mark for the weighted total. A render is accepted only when it
+     clears this AND no single category is below its floor. */
+  renderScoreThreshold: 95,
+  /* Extra renders after a failing score. Never charged. */
+  renderScoreRetries: 2,
+  /* Both optional. A partial object overrides only the keys it names, so
+     {"tone": 4} changes tone's weight and leaves the other five alone.
+     Defaults live in STUDIO_SCORE_WEIGHTS / STUDIO_SCORE_FLOORS. */
+  renderScoreWeights: null,
+  renderScoreFloors: null,
 };
 let _studioCfg = null, _studioCfgAt = 0;
 /* ── ONE PLACE THAT DECIDES WHAT THE STUDIO GENERATES WITH ────────────────
@@ -3756,6 +3790,358 @@ async function studioVisionVerdict(img) {
   const parsed = extractJsonObject(text);
   if (!parsed) return { usable: false, reason: "" };
   return parsed;
+}
+
+/* ═══════════ THE ADJUDICATOR ═════════════════════════════════════════════
+   Everything before this point tries to make the render come out right. This
+   is the first thing that CHECKS whether it did, and it exists because the
+   failure it catches cannot be caught any other way.
+
+   The cut check beside it is geometric: it measures pixels against the
+   drawing and can say "this declared opening came back solid". It cannot say
+   "this render is a two-panel diptych with a caption", or "there is a second
+   charm", or "the engraving is bronze", because none of those are
+   registration failures — they are the render answering a different question
+   entirely, and the pixels it produces are internally consistent. Those are
+   the ones that reach a customer looking obviously wrong, and only something
+   that can LOOK at both pictures can tell.
+
+   So: the deterministic greyscale map and the finished gold charm go to a
+   vision model together, with the same fill law the render prompt was given,
+   and it scores the realisation in six named categories. The score decides
+   whether the render ships or gets rolled again.
+
+   TWO WAYS TO FAIL, deliberately. A weighted total catches the render that
+   is slightly wrong everywhere. Per-category floors catch the render that is
+   excellent everywhere except in the one way that makes it unusable — a
+   diptych scores well on geometry, engraving and tone, and its average would
+   sail past any single threshold. `fidelity` is what kills it.
+
+   IT CAN NEVER FAIL A RENDER. A judge that errors, times out or answers
+   nonsense returns null, and null means "accepted": the customer has already
+   paid, and a charm nobody scored is infinitely better than no charm. The
+   worst this can do is spend more model calls than it needed to.
+
+   OFF IN ONE VALUE: config/customStudio → renderAdjudicate: "off". See the
+   note beside that key for what each mode does.
+   ═══════════════════════════════════════════════════════════════════════ */
+const STUDIO_SCORE_KEYS = ["geometry", "cutouts", "engraving", "fidelity", "tone", "presentation"];
+
+/* WHAT MATTERS MOST, AS NUMBERS. Geometry and cut-outs are the shape of the
+   object the customer is buying and together carry over half the score;
+   fidelity is third because an invented detail is a lie about the product.
+   Tone and presentation are real but recoverable — a slightly dark engraving
+   is a worse photograph of the right charm, not the wrong charm. */
+const STUDIO_SCORE_WEIGHTS = Object.freeze({
+  geometry: 28, cutouts: 24, engraving: 18, fidelity: 16, tone: 8, presentation: 6,
+});
+/* THE FLOORS ARE NOT THE WEIGHTS. A floor asks a different question: not
+   "how much does this contribute" but "how bad is too bad, whatever else is
+   right". Fidelity's floor is high because there is no acceptable amount of
+   fabricated detail; tone's is low because engraving a shade dark is a
+   disappointment and not a defect. */
+const STUDIO_SCORE_FLOORS = Object.freeze({
+  geometry: 90, cutouts: 85, engraving: 80, fidelity: 90, tone: 70, presentation: 70,
+});
+
+/* The judge is shown the SAME fill law the renderer was given — the exact
+   three tones out of studioMaterialSpec — so it is checking the contract
+   that was actually issued rather than a paraphrase of it. If the render
+   prompt's vocabulary ever changes, this changes with it. */
+const STUDIO_ADJUDICATE_PROMPT =
+`You are the final quality check in a workshop that laser-cuts flat 14K gold charms.
+
+You are given two pictures of the SAME charm.
+
+IMAGE A — STRUCTURE_MAP. A deterministic greyscale manufacturing map produced by
+code, not by a model. It is THE SPECIFICATION. Its three tones are exact:
+• WHITE (255) — NOT METAL. Either outside the charm, or a through-cut opening:
+  a hole with the background visible straight through it.
+• LIGHT GREY (176) — SOLID METAL, polished smooth, unengraved.
+• DARK GREY (96) — SOLID METAL, shallow engraved recess. Still the same gold,
+  only worked.
+
+IMAGE B — the rendered photograph of the finished 14K gold charm. Judge it.
+
+Score each category from 0 to 100 for how faithfully IMAGE B realises IMAGE A.
+Calibrate strictly: 95 means a jeweller comparing the two would find nothing to
+correct. 85 means clearly the right charm with one visible discrepancy. 60 means
+recognisably related but wrong in a way a customer would notice. Below 40 means
+the render did not follow the map.
+
+1. "geometry" — outer silhouette and proportion. Does the outline of the metal
+in B match the outline of all non-white area in A: the same shape, the same
+aspect ratio, the hanging hoop in the same place and the same relative size,
+every feature where the map puts it? Penalise drift, added or removed lobes, a
+changed aspect ratio, and a hoop that has become a separate attached jump ring
+rather than part of the same sheet.
+
+2. "cutouts" — the WHITE-inside-the-charm rule, and the one most often broken.
+Every white region enclosed by metal in A must be a real hole in B, with the
+background visible through it and a bright cut edge where the sheet's thickness
+catches the light. Penalise heavily any opening rendered instead as engraving,
+as a dark patch, as a recess, as tinted or shaded metal, or filled solid.
+Penalise just as heavily any hole in B that is NOT white in A — metal removed
+that should be solid. Count the openings in A, then count them in B.
+
+3. "engraving" — DARK GREY coverage and placement. Every dark region in A must
+be visibly engraved in B at full coverage, including regions that touch the
+outer edge or cover most of the charm. Every light-grey region must be smooth
+polished metal. Penalise engraving that stops short of its region, spreads
+beyond it, appears where A is light grey, or is missing altogether.
+
+4. "fidelity" — NO INVENTION. Does B contain anything at all that is not in A?
+This is the most serious failure here even when everything else is perfect.
+Look for: a second charm, a duplicate, a mirrored or split panel, a diptych,
+side-by-side or before-and-after halves, any label, caption, watermark, letter
+or number, a chain, a hand, a prop, packaging, a border, a frame, gemstones,
+added ornament, engraved lines the map does not contain, or a second background.
+Any one of those makes this score 20 or below. If the picture is anything other
+than ONE single charm photographed once, this score is 10 or below.
+
+5. "tone" — material and engraving colour. The whole charm is ONE alloy: warm
+yellow 14K gold. An engraved area is THE SAME GOLD and differs only in finish —
+satin against mirror — sitting, in greyscale, at most about a fifth darker than
+the polished metal beside it. Penalise engraving rendered brown, bronze, copper,
+grey, charcoal or black; any recess dark enough to be mistaken for a hole; any
+second metal, inlay, enamel, paint or patina; silver, rose or white gold; and
+heavy grain, coarse hatching or a woven texture.
+
+6. "presentation" — a plain pure white seamless ground and ONE soft contact
+shadow beneath the charm, with every opening appearing in that shadow as a gap
+of clean white. Penalise a black, grey, gradient or textured ground; no shadow;
+a drop-shadow effect, glow or outline; a floor line or horizon; and a shadow
+with the holes missing.
+
+Answer with EXACTLY this JSON and nothing else:
+{"geometry":0,"cutouts":0,"engraving":0,"fidelity":0,"tone":0,"presentation":0,
+ "fabricated":["each invented element, 2-6 words; empty array if none"],
+ "worst":"the single biggest discrepancy, at most 18 words"}
+
+Judge only what you can see, and do not be generous: a score above 95 asserts
+that nothing needs correcting.`;
+
+/* One vision call. Never throws — a judge that cannot answer must not be able
+   to cost a customer their charm. */
+async function studioAdjudicateOnce(specBuf, goldBuf) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  const model = String(
+    process.env.GEMINI_STUDIO_JUDGE_MODEL ||
+    process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
+    DEFAULT_IMAGE_MODEL
+  ).trim();
+  try {
+    const resp = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{
+          role: "user",
+          parts: [
+            { text: STUDIO_ADJUDICATE_PROMPT },
+            { text: "IMAGE A — STRUCTURE_MAP (the specification):" },
+            { inline_data: { mime_type: "image/png", data: Buffer.from(specBuf).toString("base64") } },
+            { text: "IMAGE B — the rendered 14K gold charm (judge this):" },
+            { inline_data: { mime_type: "image/png", data: Buffer.from(goldBuf).toString("base64") } },
+          ],
+        }],
+        generationConfig: { temperature: 0, responseMimeType: "application/json" },
+      }),
+    });
+    const data = await readUpstreamJson(resp, "gemini");
+    const text = (data?.candidates?.[0]?.content?.parts || [])
+      .map((p) => p?.text || "").join("").trim();
+    return extractJsonObject(text);
+  } catch (e) {
+    console.error("[studio] adjudicator call failed:", e?.message || e);
+    return null;
+  }
+}
+
+/* Turns the model's six numbers into a decision. Kept separate from the call
+   so the arithmetic can be tested without a network. */
+function studioScoreVerdict(raw, cfg) {
+  if (!raw || typeof raw !== "object") return null;
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
+  };
+  const cats = {};
+  for (const k of STUDIO_SCORE_KEYS) {
+    const v = num(raw[k]);
+    if (v === null) return null;            /* an incomplete answer is no answer */
+    cats[k] = v;
+  }
+  const weights = Object.assign({}, STUDIO_SCORE_WEIGHTS, (cfg && cfg.renderScoreWeights) || {});
+  const floors  = Object.assign({}, STUDIO_SCORE_FLOORS,  (cfg && cfg.renderScoreFloors)  || {});
+  let sum = 0, wsum = 0;
+  for (const k of STUDIO_SCORE_KEYS) {
+    const w = Number(weights[k]);
+    if (!Number.isFinite(w) || w <= 0) continue;
+    sum += cats[k] * w; wsum += w;
+  }
+  const total = wsum ? Math.round(sum / wsum) : 0;
+  const thresholdRaw = Number(cfg && cfg.renderScoreThreshold);
+  const threshold = Number.isFinite(thresholdRaw) && thresholdRaw > 0 && thresholdRaw <= 100
+    ? thresholdRaw : 95;
+  /* BOTH TESTS, NOT EITHER. The total catches "slightly wrong everywhere";
+     the floors catch "excellent except for the one thing that ruins it". */
+  const floorFails = STUDIO_SCORE_KEYS.filter((k) => {
+    const f = Number(floors[k]);
+    return Number.isFinite(f) && f > 0 && cats[k] < f;
+  });
+  const fabricated = Array.isArray(raw.fabricated)
+    ? raw.fabricated.map((s) => String(s || "").slice(0, 60)).filter(Boolean).slice(0, 8)
+    : [];
+  return {
+    cats, total, threshold,
+    pass: total >= threshold && floorFails.length === 0,
+    floorFails,
+    fabricated,
+    worst: String(raw.worst || "").slice(0, 160),
+  };
+}
+
+/* What the next attempt is told. Naming the failure is the whole value of
+   having judged it — a bare re-roll is just another sample from the same
+   distribution. */
+function studioScoreRetryNote(scored, attemptNo) {
+  const worstCat = STUDIO_SCORE_KEYS
+    .slice()
+    .sort((a, b) => scored.cats[a] - scored.cats[b])[0];
+  const lines = [
+    `RETRY ${attemptNo} — THE PREVIOUS ATTEMPT WAS REJECTED BY THE WORKSHOP'S OWN CHECK.`,
+    `It scored ${scored.total} against a required ${scored.threshold}.`,
+  ];
+  if (scored.floorFails.length) {
+    lines.push(`Unacceptable in: ${scored.floorFails.join(", ")}.`);
+  }
+  lines.push(`Weakest area: ${worstCat} (${scored.cats[worstCat]}/100).`);
+  if (scored.worst) lines.push(`What was wrong: ${scored.worst}`);
+  if (scored.fabricated.length) {
+    lines.push(`THE PREVIOUS ATTEMPT INVENTED DETAIL THAT IS NOT IN THE MAPS: ` +
+               `${scored.fabricated.join("; ")}. Render ONE charm and nothing else — ` +
+               `no second panel, no duplicate, no caption, no border, no props.`);
+  }
+  lines.push(`Correct exactly this and change nothing that was already right. ` +
+             `IMAGE 1 remains the only authority for the silhouette and every ` +
+             `through-cut; IMAGE 2 remains the only authority for what is engraved.`);
+  return lines.join("\n");
+}
+
+/* ═══════════ THE ATTEMPT LOOP ════════════════════════════════════════════
+   Lifted out of handleStudioRender so it can be exercised without a model, a
+   bucket or a Firestore. Everything it needs arrives as an argument and
+   nothing it does touches global state, which is the only reason the two
+   things most worth being sure of — that the BEST attempt ships rather than
+   the last one, and that neither judge can spend more attempts than it was
+   given — can be proven rather than asserted.
+
+   TWO JUDGES, TWO ALLOWANCES, ONE CLOCK.
+     · the cut check (geometric, repairs what it can) may ask for up to
+       `maxRetries` more attempts
+     · the adjudicator (looks at the picture, scores it) may ask for up to
+       `scoreRetries` more
+     · `retryBudgetMs` overrules both, because the browser's watcher gives up
+       at 180s and a render the customer was told had failed is worse than an
+       imperfect one. A new attempt only STARTS if the time already spent plus
+       the previous attempt's measured duration still fits — so a slow first
+       render never buys a doomed second one.
+   ═══════════════════════════════════════════════════════════════════════ */
+async function studioRenderAttempts(opts) {
+  const {
+    renderOnce, basePrompt, cutMode, maxRetries, retryable, punchFn,
+    adjMode, scoreRetries, judgeFn, retryBudgetMs, onRetry,
+  } = opts;
+  const now = opts.now || (() => Date.now());
+  const startedAt = opts.startedAt != null ? opts.startedAt : now();
+  const adjudicating = adjMode === "observe" || adjMode === "enforce";
+  const log = opts.log || ((...a) => console.log(...a));
+
+  let outBuf = null, punch = null, attempts = 0, lastMs = 0, nextNote = "";
+  const failedVerdicts = [], scoreLog = [];
+  let scoreBest = null;
+
+  while (true) {
+    attempts++;
+    const promptText = nextNote ? basePrompt + "\n\n" + nextNote : basePrompt;
+    if (attempts > 1 && onRetry) await onRetry(attempts);
+    const t0 = now();
+    outBuf = await renderOnce(promptText);
+    nextNote = "";
+
+    punch = cutMode === "off" ? null : await punchFn(outBuf);
+
+    /* THE JUDGE. Never throws, and a null answer means "accepted" — see the
+       adjudicator block above. The buffer judged is the one the model
+       produced; the punch, when it runs at all, only fills declared openings. */
+    let scored = null;
+    if (adjudicating) {
+      const j0 = now();
+      scored = await judgeFn(outBuf);
+      if (scored) {
+        scored.attempt = attempts;
+        scored.ms = now() - j0;
+        scoreLog.push(scored);
+        /* strictly greater, so an equal later score does not displace an
+           earlier one — the first render to reach a given quality wins */
+        if (!scoreBest || scored.total > scoreBest.scored.total) {
+          scoreBest = { buf: outBuf, punch, scored };
+        }
+        log(`[studio] adjudicator attempt ${attempts}: ${scored.total}/${scored.threshold}` +
+            ` ${STUDIO_SCORE_KEYS.map((k) => k[0] + scored.cats[k]).join(" ")}` +
+            (scored.floorFails.length ? ` FLOOR:${scored.floorFails.join(",")}` : "") +
+            (scored.fabricated.length ? ` INVENTED:${scored.fabricated.join("|")}` : "") +
+            ` (${scored.ms}ms)`);
+      } else {
+        log(`[studio] adjudicator attempt ${attempts}: no verdict — accepting`);
+      }
+    }
+    /* the budget must account for the judge too, or three scored attempts
+       overrun a limit that was measured for three bare renders */
+    lastMs = now() - t0;
+
+    const cutWants = !!punch && retryable(punch.report) && attempts <= maxRetries;
+    const scoreWants = adjMode === "enforce" && !!scored && !scored.pass && attempts <= scoreRetries;
+    if (!cutWants && !scoreWants) break;
+
+    if (cutWants) failedVerdicts.push(punch.report.reason);
+    const spent = now() - startedAt;
+    if (retryBudgetMs && spent + lastMs > retryBudgetMs) {
+      log(`[studio] retry budget reached (${spent}ms + ${lastMs}ms > ${retryBudgetMs}ms)` +
+          (scoreWants ? " — shipping the best attempt so far" : ""));
+      break;
+    }
+    /* The cut check's verdict is the more specific instruction, so it wins
+       the wording when both want another go. */
+    nextNote = cutWants ? studioRetryNote(punch.report, attempts)
+                        : studioScoreRetryNote(scored, attempts);
+    log(`[studio] render retry ${attempts}/${cutWants ? maxRetries : scoreRetries} after ` +
+        (cutWants ? punch.report.reason : `score ${scored.total}`));
+  }
+
+  /* ── THE BEST ONE SHIPS, NOT THE LAST ONE ───────────────────────────────
+     A third attempt can easily score below the second. Returning whatever
+     came out of the final iteration would mean the customer sometimes gets a
+     worse charm BECAUSE the studio tried harder, which is the one outcome
+     this subsystem must not produce. In "observe" nothing is swapped: that
+     mode's whole promise is that the image is returned untouched.
+
+     AN UNSCORED ATTEMPT IS NOT A CANDIDATE. If the judge fails on the last
+     attempt but scored an earlier one, the earlier one ships even though its
+     score was poor — "the highest rated" can only mean the highest of the
+     ones that were actually rated, and an unmeasured render is not evidence
+     of anything. When NO attempt could be scored, scoreBest is null, nothing
+     is swapped, and the last render ships exactly as it would have with the
+     whole subsystem off. */
+  if (adjMode === "enforce" && scoreBest && scoreBest.buf !== outBuf) {
+    log(`[studio] adjudicator: shipping attempt ${scoreBest.scored.attempt} ` +
+        `(${scoreBest.scored.total}) over the last one`);
+    outBuf = scoreBest.buf;
+    punch = scoreBest.punch;
+  }
+  return { outBuf, punch, attempts, failedVerdicts, scoreLog, scoreBest };
 }
 
 /* ── version doc: what drives the client's staged progress bar ───────────
@@ -5978,32 +6364,69 @@ async function handleStudioRender({ body, event, origin }) {
       (cutMode === "verify" && rep.reason !== "no_cuts_declared" && !rep.verified);
     const startedAt = Date.now();
 
-    let outBuf = null, punch = null, attempt = 0, lastMs = 0, failedVerdicts = [];
-    while (true) {
-      attempt++;
-      const promptText = attempt === 1
-        ? effectivePrompt
-        : effectivePrompt + "\n\n" + studioRetryNote(punch.report, attempt - 1);
-      if (attempt > 1) {
-        await vRef.set({ renderStage: "rendering", renderAttempt: attempt, renderRunId }, { merge: true });
-        console.log(`[studio] render retry ${attempt - 1}/${maxRetries} after ${punch.report.reason}`);
-      }
-      const t0 = Date.now();
-      outBuf = await renderOnce(promptText);
-      lastMs = Date.now() - t0;
+    /* ── AND THE SECOND REASON TO ROLL AGAIN ──────────────────────────────
+       The loop below now has two independent judges with two independent
+       allowances. The cut check is geometric and repairs what it can; the
+       adjudicator looks at the finished picture and scores it. Either may ask
+       for another attempt, each is capped by its own retry count, and the
+       wall-clock budget stops both. With renderAdjudicate:"off" every line
+       added here is skipped and the loop behaves exactly as it did before. */
+    const adjMode = String(cfg.renderAdjudicate || "off").trim().toLowerCase();
+    const adjudicating = adjMode === "observe" || adjMode === "enforce";
+    const scoreRetries = adjMode === "enforce"
+      ? Math.max(0, Math.min(4, Number(cfg.renderScoreRetries) === 0 ? 0 : (Number(cfg.renderScoreRetries) || 2)))
+      : 0;
 
-      if (cutMode === "off") { punch = null; break; }
+    const loop = await studioRenderAttempts({
+      renderOnce, basePrompt: effectivePrompt, cfg,
+      cutMode, maxRetries, retryable,
+      punchFn: (buf) => studioPunchCutouts(buf, bw.buffer, studioPlan),
+      adjMode, scoreRetries,
+      judgeFn: async (buf) => studioScoreVerdict(await studioAdjudicateOnce(materialSpec.buf, buf), cfg),
+      retryBudgetMs, startedAt,
+      onRetry: (n) => vRef.set({ renderStage: "rendering", renderAttempt: n, renderRunId }, { merge: true }),
+    });
+    let outBuf = loop.outBuf;
+    let punch = loop.punch;
+    const attempt = loop.attempts;
+    const failedVerdicts = loop.failedVerdicts;
+    const scoreLog = loop.scoreLog;
+    const scoreBest = loop.scoreBest;
 
-      punch = await studioPunchCutouts(outBuf, bw.buffer, studioPlan);
-      if (!retryable(punch.report)) break;
-
-      failedVerdicts.push(punch.report.reason);
-      const spent = Date.now() - startedAt;
-      if (attempt > maxRetries) { console.log("[studio] retries exhausted:", failedVerdicts.join(",")); break; }
-      if (retryBudgetMs && spent + lastMs > retryBudgetMs) {
-        console.log(`[studio] retry budget reached (${spent}ms + ${lastMs}ms > ${retryBudgetMs}ms)`);
-        break;
-      }
+    if (scoreLog.length) {
+      const best = scoreBest.scored;
+      await vRef.set({
+        renderScoreMode: adjMode,
+        renderScore: best.total,
+        renderScoreThreshold: best.threshold,
+        renderScorePass: best.pass,
+        renderScoreChosen: best.attempt,
+        renderScoreCount: scoreLog.length,
+        /* also written by the cut-check block, which does not run when that
+           check is off — so the count of images actually generated is filed
+           here too, and the studio's own read-out can always find it */
+        renderAttempts: attempt,
+        renderScoreFloorFails: best.floorFails,
+        renderScoreFabricated: best.fabricated,
+        renderScoreWorst: best.worst,
+        renderScoreGeometry: best.cats.geometry,
+        renderScoreCutouts: best.cats.cutouts,
+        renderScoreEngraving: best.cats.engraving,
+        renderScoreFidelity: best.cats.fidelity,
+        renderScoreTone: best.cats.tone,
+        renderScorePresentation: best.cats.presentation,
+        /* Every attempt, in order, so a bad run can be read back whole. The
+           two list fields are joined into strings rather than left as arrays:
+           an array inside a map inside an array is legal in Firestore but
+           reads badly in the console and buys nothing here. */
+        renderScoreAttempts: scoreLog.map((s) => Object.assign(
+          { n: s.attempt, total: s.total, ms: s.ms,
+            floorFails: s.floorFails.join(","),
+            fabricated: s.fabricated.join("; "),
+            worst: s.worst },
+          s.cats)),
+        renderRunId,
+      }, { merge: true });
     }
 
     await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
@@ -6101,7 +6524,12 @@ async function handleStudioRender({ body, event, origin }) {
     return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal,
                              renderSpecURL, renderSpecPath,
                              renderQuality: quality, renderModel: studioModelConfig.id,
-                             renderCost, renderRunId }, origin);
+                             renderCost, renderRunId,
+                             /* the browser watches the version doc, so this is
+                                belt and braces for the poll path */
+                             renderAttempts: attempt,
+                             renderScore: scoreBest ? scoreBest.scored.total : null,
+                             renderScoreMode: adjudicating ? adjMode : "off" }, origin);
   } catch (err) {
     // A failed render must never cost a credit — including a double-priced one.
     await studioRefund(uid, renderCost, sessionId);
