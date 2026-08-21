@@ -3507,7 +3507,7 @@ Transform IMAGE 1 and IMAGE 2 into a photorealistic 14K gold charm. Treat both a
 
 IMAGE 1 — TOPOLOGY_MASK: LIGHT GREY = SOLID METAL; WHITE = EMPTY; BLACK IS UNUSED. It is the exclusive authority for the silhouette and every through-cut.
 
-IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. It controls surface treatment only and cannot add or remove metal.
+IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. Coverage is literal: every dark region remains engraved even when it touches the outer silhouette or occupies most of the charm; none may become polished. It controls surface treatment only and cannot add or remove metal.
 
 Hard Fail — never allow any leakage of colours from STRUCTURE_MAP to affect the final 14K gold charm image.
 
@@ -3522,7 +3522,7 @@ The source darkness in IMAGE 2 is a classification code only. Engraving remains 
 Before rendering, silently verify:
 1. Every white region in IMAGE 1 is empty.
 2. Every light-grey region in IMAGE 1 contains solid gold.
-3. IMAGE 2 changes surface finish only, never topology.
+3. Every dark region in IMAGE 2 is visibly engraved at full coverage, including edge-touching regions; every light region is polished. IMAGE 2 never changes topology.
 
 Correct any topology mismatch before producing the image.
 
