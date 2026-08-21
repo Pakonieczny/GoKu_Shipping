@@ -1042,14 +1042,14 @@ const IMAGE_ROLE_LABELS = {
   },
   material_spec_to_charm: {
     first:
-      "IMAGE 1 — the greyscale map. Structural truth. Read it as instructed in the prompt above.",
+      "IMAGE 1 — BINARY TOPOLOGY MASK. LIGHT GREY is solid metal; WHITE is empty; BLACK is unused. This image alone determines the silhouette and every through-cut.",
     second:
-      "IMAGE 2 — material reference only. Its subject, outline, artwork, lettering and jump ring must not appear in your output.",
-    extra: (n) => `IMAGE ${n} — UNUSED. Ignore.`,
+      "IMAGE 2 — GREYSCALE SURFACE MAP. Dark grey is engraving; light grey is smooth metal. It controls surface treatment only and cannot add or remove metal.",
+    extra: (n) => `IMAGE ${n} — MATERIAL REFERENCE ONLY. Its subject, silhouette, artwork and hardware must not appear in the output.`,
     single:
-      "IMAGE 1 — the greyscale map. Structural truth. Read it as instructed in the prompt above.",
+      "IMAGE 1 — BINARY TOPOLOGY MASK. LIGHT GREY is solid metal; WHITE is empty; BLACK is unused. This image alone determines the silhouette and every through-cut.",
     lock:
-      "FINAL LOCK: geometry from IMAGE 1, material from IMAGE 2. Copying IMAGE 2's subject is a hard fail.",
+      "FINAL LOCK: topology only from IMAGE 1; surface treatment only from IMAGE 2; any later image supplies material and lighting only.",
   },
   line_art_style: {
     first:
@@ -2327,9 +2327,6 @@ const STUDIO_KINDS = new Set([
   /* the studio composed the drawing itself — this only files it */
   "custom_charm_compose",
   "custom_charm_render",
-  /* words-only surgical edit of the EXISTING gold render — touches
-     v{n}-charm.png and nothing else, never the drawing or the greyscale */
-  "custom_charm_gold_edit",
   /* custom_charm_prompt — read-only, returned the exact prompt a render
      would send — is REMOVED. It existed to feed the studio's prompt lab,
      which is gone; the render prompt is fixed and nothing needs to ask what
@@ -3389,16 +3386,16 @@ ${zoneBlock(zones, "drawing")}`;
    intentionally SHORTER than buildLineArtToCharmPrompt(): BLUE/RED/BLACK have
    already been resolved by code, so repeating the colour law here would put
    interpretation back into the very stage we just made deterministic. */
-/* ── TWO IMAGES, TWO JOBS, NO OVERLAP ─────────────────────────────────────
-   IMAGE 1 says WHERE: cut through, engraved, or plain polished metal. It is
-   greyscale and says nothing about colour.
-   IMAGE 2 says HOW METAL BEHAVES: polish, specularity, how a shallow engraved
-   stroke catches light, edge character, lighting, shadow.
+/* ── THREE IMAGES, THREE JOBS, NO OVERLAP ─────────────────────────────────
+   IMAGE 1 says WHERE METAL EXISTS: light-grey metal, white empty.
+   IMAGE 2 says HOW EXISTING METAL IS WORKED: dark engraved, light polished.
+   IMAGE 3 says HOW GOLD BEHAVES: polish, specularity, edge character,
+   lighting and shadow. It supplies no subject geometry.
 
    THE ALLOY IS NOW NAMED EVEN WHEN THE SAMPLE IS ATTACHED, and that reverses
    a deliberate earlier decision, so here is why. The old rule was "one colour
    authority, never two": with the sample attached the metal went unnamed and
-   IMAGE 2 owned colour outright. That is airtight reasoning about prompt
+   the sample owned colour outright. That is airtight reasoning about prompt
    conflict and it produced a real defect — the customer's metal choice
    reached nothing. Whatever alloy the stored sample happens to be is the
    alloy every customer receives, silver and rose alike.
@@ -3506,32 +3503,26 @@ ${second}
 function buildMaterialSpecToCharmPrompt(_opts) {
   return `PRIMARY OPERATION — MATERIAL TRANSFER ONLY
 
-Transform the provided STRUCTURE_MAP into a photorealistic 14K gold charm. STRUCTURE_MAP is a pixel-level manufacturing specification and the sole authority for silhouette, geometry and topology. Ignore object identity, symmetry, visual pairing and real-world expectations.
+Transform IMAGE 1 and IMAGE 2 into a photorealistic 14K gold charm. Treat both as pixel-level manufacturing maps, never as recognizable objects.
 
-Before rendering, internally derive and freeze a binary TOPOLOGY MASK: designated pure white = empty; every non-white pixel = solid metal. Use this frozen mask as the exclusive authority for all through-cuts.
+IMAGE 1 — TOPOLOGY_MASK: LIGHT GREY = SOLID METAL; WHITE = EMPTY; BLACK IS UNUSED. It is the exclusive authority for the silhouette and every through-cut.
+
+IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. It controls surface treatment only and cannot add or remove metal.
 
 Hard Fail — never allow any leakage of colours from STRUCTURE_MAP to affect the final 14K gold charm image.
 
 TOPOLOGY LOCK — RESOLVE BEFORE RENDERING
 
-Assign every region of the source charm exactly one material state:
+Every light-grey region in IMAGE 1 must remain occupied by opaque 14K gold. Only white regions in IMAGE 1 may be empty. OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly.
 
-- PURE WHITE = EMPTY THROUGH-CUT exposing the background.
-- DARK GREY OR BLACK = CONTINUOUS SOLID GOLD with a shallow recessed engraving matching that exact filled region. The source darkness is a classification code only; the engraving remains warm yellow 14K gold and only slightly darker than the surrounding gold.
-- LIGHT GREY = CONTINUOUS SOLID GOLD with a smooth, unengraved front surface at the original metal height.
+FILL-PRIORITY RULE: IMAGE 1 fill overrides every outline and all familiar meaning. A region is open only when its interior is white in IMAGE 1; every light-grey interior remains solid gold.
 
-ABSOLUTE INVARIANT:
-
-Every grey or black source region must remain occupied by opaque 14K gold. Only pure-white source regions may become empty.
-
-OUTPUT CUT-OUT MASK = SOURCE PURE-WHITE CUT-OUT MASK, exactly.
-
-A grey region remains solid gold even when isolated inside another tone, resembles a familiar object, forms a visual pair with a white region or would conventionally be interpreted as a hole. Never infer cut-outs from meaning or appearance; derive them exclusively from pure-white source fill.
+The source darkness in IMAGE 2 is a classification code only. Engraving remains warm yellow 14K gold and only slightly darker than the surrounding gold.
 
 Before rendering, silently verify:
-1. Every designated pure-white region is open.
-2. Every light-grey, dark-grey and black region contains solid gold.
-3. No background is visible through any non-white region.
+1. Every white region in IMAGE 1 is empty.
+2. Every light-grey region in IMAGE 1 contains solid gold.
+3. IMAGE 2 changes surface finish only, never topology.
 
 Correct any topology mismatch before producing the image.
 
@@ -4875,6 +4866,36 @@ async function studioRefineMask(sharp, maskBuf, targetLong) {
   return { buf, w: tw, h: th };
 }
 
+/* ── TOPOLOGY WITHOUT SEMANTICS ─────────────────────────────────────────
+   The three-tone material map still resembles the customer's subject. That
+   lets a learned symbol prior overrule a light-grey fill and turn a familiar
+   enclosed shape into a hole. Collapse both metal tones to one light-grey mass
+   before Gemini sees topology: the model can no longer pair, mirror or
+   reinterpret an internal smooth-metal island. The greyscale map is sent
+   separately and remains the sole surface-treatment instruction. */
+async function studioTopologyMask(sharp, materialSpecBuf) {
+  if (!sharp || !materialSpecBuf?.length) return null;
+  const { data, info } = await sharp(materialSpecBuf).removeAlpha().raw()
+    .toBuffer({ resolveWithObject: true });
+  const w = info.width, h = info.height, n = w * h, ch = info.channels;
+  const out = Buffer.alloc(n * 3, 255);
+  const TOPOLOGY_METAL = STUDIO_MASK_POLISHED[0];
+  let metalPx = 0;
+  for (let i = 0; i < n; i++) {
+    const p = i * ch;
+    /* Material-spec pixels are exact 96, 176 or 255. The small margin keeps
+       this safe if a future PNG decoder introduces a near-white edge value. */
+    if (Math.max(data[p], data[p + 1], data[p + 2]) < 240) {
+      const q = i * 3;
+      out[q] = out[q + 1] = out[q + 2] = TOPOLOGY_METAL;
+      metalPx++;
+    }
+  }
+  const buf = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
+    .png().toBuffer();
+  return { buf, w, h, metalPx, emptyPx: n - metalPx };
+}
+
 /* ── NAME EVERY REGION, DON'T JUST STATE THE LAW ──────────────────────────
    The three-tone law was stated abstractly and the renderer applied it
    abstractly: it saw a light shape, a dark shape and a white shape and
@@ -5618,7 +5639,20 @@ async function handleStudioRender({ body, event, origin }) {
       }
     }
 
-    /* ── THE GREY MAP, OR NOTHING ────────────────────────────────────────
+    /* Build topology from the FINAL refined material map so IMAGE 1 and
+       IMAGE 2 have identical dimensions and registration. This is a pure
+       threshold pass: both grey metal classes become light grey; only white stays
+       empty. No model and no second interpretation are involved. */
+    let topologyMask = null;
+    if (materialSpec?.buf) {
+      try { topologyMask = await studioTopologyMask(sharpMod, materialSpec.buf); }
+      catch (e) {
+        console.error("[studio] topology mask skipped:", e?.message || e);
+        topologyMask = null;
+      }
+    }
+
+    /* ── THE TOPOLOGY + GREY MAPS, OR NOTHING ───────────────────────────
        There were two inputs and a switch between them: `renderInput:
        "drawing"` sent the colour-coded production drawing and let the model
        read the fill law itself, "mask" sent the greyscale spec where code
@@ -5626,47 +5660,26 @@ async function handleStudioRender({ body, event, origin }) {
        Send toggle chose, with cfg.renderInput as the fallback.
 
        Both are gone. `body.renderInput` and `cfg.renderInput` are not read.
-       The grey map is the only image this renderer is ever handed, which is
-       what makes the fixed prompt truthful — it describes a STRUCTURE_MAP in
-       pure white, light grey, dark grey and black, and describes nothing
-       else.
+       The binary topology mask is handed over first and exclusively decides
+       where metal exists. The grey map follows and can decide only whether
+       that existing metal is smooth or engraved.
 
        AND THE COLOUR DRAWING IS NO LONGER A FALLBACK. It used to be sent
        automatically whenever the deterministic pass could not produce a
        spec — better a render than a failure, the reasoning went. It is the
        opposite: the prompt would then be describing an image the model was
        not given, and the customer pays a credit for a charm built from a
-       vocabulary nobody resolved.
-
-       THE ONE FALLBACK THAT IS ALLOWED IS ANOTHER GREYSCALE. Every render —
-       the first press and every Re-Render — works from the LATEST greyscale
-       available for this version. The freshest possible one is the build
-       above: it reads the current drawing and this click's zones, so marks
-       added since the last render are in it. When that build fails (sharp
-       missing, plan refused), the stored v{n}-spec.png is loaded instead —
-       the same picture from the last successful pass, filed at drawing time
-       and refreshed on every render. It is one generation staler at worst
-       and it is the SAME vocabulary, so the fixed prompt still describes
-       exactly the image the model receives. Only when neither exists does
-       the render fail, and the throw lands in the catch below, which
-       refunds the credit before writing the failure to the version doc. */
-    if (!(materialSpec && materialSpec.buf)) {
-      try {
-        const storedSpec = await storagePathToBuffer(
-          `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-spec.png`);
-        if (storedSpec?.buffer?.length) {
-          materialSpec = { buf: storedSpec.buffer, facePx: 0, holePx: 0, workPx: 0 };
-          console.log("[studio] fresh mask build failed — rendering from the stored latest greyscale");
-        }
-      } catch (e) {
-        console.error("[studio] stored greyscale also unavailable:", e?.message || e);
-      }
-    }
-    if (!(materialSpec && materialSpec.buf)) {
+       vocabulary nobody resolved. So a missing mask FAILS the render, and
+       the throw lands in the catch below, which refunds the credit before
+       writing the failure to the version doc. */
+    if (!(materialSpec?.buf && topologyMask?.buf)) {
       throw new Error("mask_unavailable");
     }
     const specUsed = true;
-    const images = [{ buffer: materialSpec.buf, mime: "image/png", filename: "material-spec.png" }];
+    const images = [
+      { buffer: topologyMask.buf, mime: "image/png", filename: "topology-mask.png" },
+      { buffer: materialSpec.buf, mime: "image/png", filename: "material-spec.png" },
+    ];
     let renderStyleRef = null;
     try { renderStyleRef = await ensureStudioGoldStyleReference(); }
     catch (e) { console.error("[studio] gold style reference unavailable:", e?.message || e); renderStyleRef = null; }
@@ -5675,7 +5688,7 @@ async function handleStudioRender({ body, event, origin }) {
       mime: renderStyleRef.mime || STUDIO_GOLD_STYLE_REFERENCE_MIME,
       filename: renderStyleRef.filename || STUDIO_GOLD_STYLE_REFERENCE_FILENAME,
     });
-    console.log(`[studio] render input=mask reference=${renderStyleRef?.buffer?.length ? "yes" : "no"}`);
+    console.log(`[studio] render input=topology+mask reference=${renderStyleRef?.buffer?.length ? "yes" : "no"}`);
 
     /* ── THE CENSUS AND THE NAMING PASS ARE PARKED ───────────────────────
        Both are still in the file and still correct. Neither runs.
@@ -5709,9 +5722,9 @@ async function handleStudioRender({ body, event, origin }) {
     console.log(`[studio] prompt fixed chars=${effectivePrompt.length}`);
 
     /* ── THE GREYSCALE MASK IS EVIDENCE, SO IT IS KEPT ───────────────────
-       This proof is the last structural instruction the model receives and
-       the only image in the chain that states, without colour vocabulary,
-       what is metal, what is worked and what is not there at all. It was
+       This proof records, without manufacturing-colour vocabulary, what is
+       metal, what is worked and what is not there at all. The binary topology
+       input is derived directly from it and carries no independent judgement. It was
        being built, sent and thrown away — so when a render came back wrong
        there was no way to tell a bad proof from a bad render, which are
        opposite problems with opposite fixes.
@@ -5751,6 +5764,9 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecHolePx: materialSpec.holePx,
       renderSpecWorkPx: materialSpec.workPx,
       renderInput: "mask",
+      renderTopologyMode: "binary-black-metal",
+      renderTopologyMetalPx: topologyMask.metalPx,
+      renderTopologyEmptyPx: topologyMask.emptyPx,
       renderPromptText: effectivePrompt.slice(0, 40000),
       renderPromptChars: effectivePrompt.length,
       /* renderPromptOverridden is written as a constant false rather than
@@ -5768,8 +5784,9 @@ async function handleStudioRender({ body, event, origin }) {
       renderStyleRefUsed: !!renderStyleRef?.buffer?.length,
     }, { merge: true });
 
-    /* The renderer receives the deterministic material proof and nothing
-       else. The geometry override is not appended: the exact hoop and
+    /* The renderer receives the derived topology mask, its deterministic
+       material proof and the material reference. The geometry override is
+       not appended: the exact hoop and
        silhouette already exist in IMAGE 1, and another prose description of
        where the hoop ought to be would reintroduce a second authority. */
     const renderOnce = (promptText) => callImageModelEdits({
@@ -5781,22 +5798,10 @@ async function handleStudioRender({ body, event, origin }) {
       quality: "high",
       output_format: "png",
       images,
-      /* Role labels are ~1,400 characters of their own and are appended by
-         callImageModelEdits. Sending them on the short path would defeat the
-         only thing the short path is testing. */
-      /* ── LABELS PAUSED ────────────────────────────────────────────────
-         Paul asked for the prompt alone. "none" is explicit: null or an
-         omitted value would fall through to the `edit` labels, whose IMAGE 2
-         text declares that image the design truth to reproduce — the
-         instruction that produced a kettlebell-shaped charm.
-
-         So the model now receives: prompt, image 1, image 2. Nothing else.
-         The two labels the prompt does NOT replace are the ones naming which
-         image is which; the prompt says "FIRST image" and "SECOND image" and
-         is now relied on to carry that alone. To restore them, swap "none"
-         for the commented value below. */
-      imageRoles: "none",
-      // imageRoles: "material_spec_to_charm",
+      /* Three short labels keep the independent evidence channels from being
+         blended or reversed: topology, surface treatment, then material.
+         The role set is intentionally concise and adds no new design rules. */
+      imageRoles: "material_spec_to_charm",
       /* null, not "flat_integrated_eyelet": that policy belonged to the
          colour-drawing fallback, which no longer exists. IMAGE 1 is the
          geometry. */
@@ -5975,173 +5980,6 @@ async function handleStudioRender({ body, event, origin }) {
   }
 }
 
-/* ═══════════ SURGICAL EDIT OF THE GOLD CHARM — WORDS ONLY ════════════════
-   custom_charm_gold_edit. The composer's send arrow, pressed while the stage
-   is showing the rendered charm: the customer has a finished gold picture
-   and wants one small thing different about IT — the engraving a touch
-   lighter, the shadow softer, a scratch gone.
-
-   THIS KIND TOUCHES EXACTLY ONE PICTURE. IMAGE 1 is the CURRENT GOLD RENDER
-   (v{n}-charm.png), the prompt is the customer's words wrapped in a
-   keep-everything-else lock, and the output overwrites v{n}-charm.png and
-   nothing besides. The drawing (v{n}.png) and the greyscale (v{n}-spec.png)
-   are never read and never written — they are a different pipeline, and the
-   whole value of this kind is that it cannot disturb them. A design whose
-   metal is edited five times still re-renders from the same greyscale the
-   moment Re-Render is pressed.
-
-   It debits like a render (it is one image-model call), refunds on failure,
-   and streams progress through the SAME version-doc fields, so the browser
-   watches it with the render watcher, unchanged. */
-function buildGoldSurgicalEditPrompt(instruction) {
-  const ask = studioCleanText(instruction).slice(0, 400);
-  return `SURGICAL PHOTO EDIT — ONE CHANGE ONLY
-
-IMAGE 1 is a finished photograph of a 14K gold charm. It is correct and approved in every respect except the single change requested below. Your output is the SAME photograph with ONLY that change applied.
-
-CUSTOMER'S REQUESTED CHANGE:
-"${ask}"
-
-HARD CONSTRAINTS (NON-NEGOTIABLE):
-- APPLY ONLY THE REQUESTED CHANGE. If a pixel is not required to change by the request, reproduce it faithfully.
-- GEOMETRY IS FROZEN unless the request itself names a geometric change: the outer silhouette, the top hoop, every hole, every engraved region and every proportion stay exactly as photographed.
-- TOPOLOGY IS FROZEN: never open a new hole, never close an existing one, never turn engraving into a hole or a hole into engraving, unless the request explicitly asks for exactly that.
-- MATERIAL STAYS 14K GOLD: one alloy, thin flat sheet, crisp cut edges, the hoop part of the same sheet.
-- PRESENTATION STAYS: plain pure WHITE studio background with one soft contact shadow beneath the charm, matching the original lighting.
-- NO INVENTION: add no gemstones, borders, engraving, lettering or objects the request does not name.
-- INTERPRET THE REQUEST NARROWLY. When the words are ambiguous, make the smallest change that satisfies them.`;
-}
-
-async function handleStudioGoldEdit({ body, event, origin }) {
-  const uid = await requireStudioUser(event);
-  const cfg = await studioConfig();
-  const cost = Number(cfg.generateCost) || 1;
-  const db = getDb();
-
-  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
-  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
-  const instruction = studioCleanText(body?.instruction || "").slice(0, 400);
-  if (!instruction) return studioJson(400, { ok: false, error: "missing_instruction" }, origin);
-  const renderRunId = String(body?.renderRunId || ("ge_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10)))
-    .replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
-
-  /* Ownership first, exactly as in render: a stranger gets the 403 and
-     nothing written anywhere. */
-  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
-  const sSnap = await sRef.get();
-  if (!sSnap.exists || sSnap.data().uid !== uid) {
-    return studioJson(403, { ok: false, error: "forbidden" }, origin);
-  }
-  const session = sSnap.data();
-
-  const n = Number(body?.versionNumber) || Number(session.currentVersion) || 0;
-  if (!n || n < 1) return studioJson(400, { ok: false, error: "missing_version" }, origin);
-  const vRef = sRef.collection("versions").doc(String(n));
-  const vSnap = await vRef.get();
-  /* No gold, nothing to edit. The 409 is precise so the studio can say
-     "render it in metal first" instead of a generic failure. */
-  if (!vSnap.exists || vSnap.data().status !== "done") {
-    return studioJson(409, { ok: false, error: "version_not_ready" }, origin);
-  }
-  const renderPath = String(vSnap.data().renderPath ||
-    `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-charm.png`);
-  if (!vSnap.data().renderURL) {
-    return studioJson(409, { ok: false, error: "no_render" }, origin);
-  }
-
-  /* Model and key proven before the debit, same as render. */
-  let studioModelConfig = null;
-  try {
-    studioModelConfig = resolveImageModel(studioImageModelId(cfg));
-    apiKeyForImageModel(studioModelConfig);
-  } catch (err) {
-    console.error("[studio] gold edit model unavailable:", err?.message || err);
-    await studioFailRender(vRef, "render_unavailable", renderRunId);
-    return studioJson(503, { ok: false, error: "render_unavailable" }, origin);
-  }
-
-  if (!(await studioGateOk(uid, event))) {
-    await studioFailRender(vRef, "rate_limited", renderRunId);
-    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
-  }
-
-  try {
-    await studioDebit(uid, cost, sessionId);
-  } catch (err) {
-    if (err?.status === 402) {
-      await studioFailRender(vRef, "out_of_credits", renderRunId);
-      return studioJson(402, { ok: false, error: "out_of_credits" }, origin);
-    }
-    throw err;
-  }
-
-  const metal = studioCleanText(body?.metal || session.metal || "gold");
-  try {
-    await vRef.set({ renderStatus: "rendering", renderStage: "rendering",
-                     renderMetal: metal, renderRunId, renderError: null,
-                     renderEditNote: instruction }, { merge: true });
-
-    /* The CURRENT gold picture — the one and only input. */
-    const gold = await storagePathToBuffer(renderPath);
-    if (!gold?.buffer?.length) throw new Error("no_render");
-
-    const prompt = buildGoldSurgicalEditPrompt(instruction);
-    console.log(`[studio] gold edit v${n} chars=${prompt.length} ask="${instruction.slice(0, 80)}"`);
-
-    let outBuf = await callImageModelEdits({
-      apiKey: apiKeyForImageModel(studioModelConfig),
-      model: studioModelConfig.id,
-      prompt,
-      size: studioImageSizeString(studioRenderTier(cfg)),
-      imageSizeTier: studioRenderTier(cfg),
-      quality: "high",
-      output_format: "png",
-      images: [{ buffer: gold.buffer, mime: gold.mime || "image/png", filename: "charm.png" }],
-      /* One image, and the prompt already names it. No role labels, no
-         geometry policy, no background policy — every extra voice is a way
-         for "change one thing" to become "reinterpret the charm". */
-      imageRoles: "none",
-      charmGeometryPolicy: null,
-      backgroundPolicy: null,
-    });
-
-    outBuf = embedPngTextMetadata(outBuf, {
-      Description: `Custom Charm Studio charm — surgical metal edit of v${n} (${metal}).`,
-      CharmTitle: `Custom charm v${n}`,
-    });
-
-    /* Overwrites the charm at its own path with a NEW token, so the URL
-       changes and no cache can show the old picture. The drawing and the
-       greyscale paths are not touched. */
-    const bucket = getBucket();
-    const token = newDownloadToken();
-    await bucket.file(renderPath).save(outBuf, {
-      resumable: false,
-      contentType: "image/png",
-      metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId, version: String(n), render: "1" } },
-    });
-    const renderURL = tokenDownloadURLFor(bucket.name, renderPath, token);
-
-    await vRef.set({
-      renderStatus: "done", renderStage: "done", renderRunId,
-      renderURL, renderPath, renderMetal: metal,
-      renderModel: studioModelConfig.id, renderCost: cost,
-      renderEditNote: instruction,
-      renderedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-
-    return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal,
-                             renderModel: studioModelConfig.id, renderCost: cost,
-                             renderRunId, edited: true }, origin);
-  } catch (err) {
-    // A failed edit must never cost a credit.
-    await studioRefund(uid, cost, sessionId);
-    await studioFailRender(vRef, String(err?.message || err), renderRunId);
-    console.error("[studio] gold edit failed:", err?.message || err);
-    return studioJson(500, { ok: false, error: "render_failed" }, origin);
-  }
-}
-
 async function handleStudioSessionStatus({ body, event, origin }) {
   const uid = await requireStudioUser(event);
   const db = getDb();
@@ -6268,7 +6106,6 @@ async function handleStudioKind({ kind, body, event }) {
     }
     if (kind === "custom_charm_compose") return await handleStudioCompose({ body, event, origin });
     if (kind === "custom_charm_render") return await handleStudioRender({ body, event, origin });
-    if (kind === "custom_charm_gold_edit") return await handleStudioGoldEdit({ body, event, origin });
     /* custom_charm_prompt is gone — see STUDIO_KINDS. A tab left open from
        before the prompt lab was removed falls to unknown_kind below, which
        is the right answer: there is nothing to preview. */
