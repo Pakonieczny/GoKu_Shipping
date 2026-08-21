@@ -3913,24 +3913,52 @@ of clean white. Penalise a black, grey, gradient or textured ground; no shadow;
 a drop-shadow effect, glow or outline; a floor line or horizon; and a shadow
 with the holes missing.
 
+FIRST COUNT, THEN SCORE. Before any score, fill in "observations" by actually
+looking at the two pictures. These are facts, not opinions, and the workshop
+checks your scores against them — a score that contradicts your own
+observations is discarded. Count the enclosed white regions inside the charm
+in IMAGE A, then count the real holes in IMAGE B, and say how many separate
+charms are visible in IMAGE B.
+
 Answer with EXACTLY this JSON and nothing else:
-{"geometry":0,"cutouts":0,"engraving":0,"fidelity":0,"tone":0,"presentation":0,
+{"observations":{"charmsVisible":1,"openingsInSpec":0,"openingsInRender":0,
+  "engravedRegionsInSpec":0,"engravedRegionsInRender":0,
+  "groundIsWhite":true,"shadowPresent":true,
+  "describeRender":"what IMAGE B actually shows, 8-20 words"},
+ "geometry":0,"cutouts":0,"engraving":0,"fidelity":0,"tone":0,"presentation":0,
  "fabricated":["each invented element, 2-6 words; empty array if none"],
  "worst":"the single biggest discrepancy, at most 18 words"}
 
-Judge only what you can see, and do not be generous: a score above 95 asserts
-that nothing needs correcting.`;
+Judge only what you can see, and do not be generous. A score of 100 asserts
+that a jeweller could find NOTHING to change; almost no render earns it, and
+one that contradicts your observations will be thrown out. If the two pictures
+match well but not perfectly, the honest answer is in the 80s or low 90s.`;
 
 /* One vision call. Never throws — a judge that cannot answer must not be able
    to cost a customer their charm. */
-async function studioAdjudicateOnce(specBuf, goldBuf) {
+async function studioAdjudicateOnce(specBuf, goldBuf, cfg) {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) return { raw: null, model: "", text: "", why: "no_api_key" };
+  /* ── WHICH MODEL IS DOING THE JUDGING ─────────────────────────────────
+     This mattered more than it looks. The fallback at the end of the chain
+     is DEFAULT_IMAGE_MODEL — an image GENERATION model. Asking one of those
+     for a JSON critique is the wrong tool, and it is exactly the sort of
+     thing that answers with a filled-in template rather than a judgement.
+     config/customStudio wins so the model can be changed without a deploy,
+     and whichever one answered is written onto the version document, so
+     "what judged this render" is never a guess again. */
   const model = String(
+    (cfg && cfg.renderScoreModel) ||
     process.env.GEMINI_STUDIO_JUDGE_MODEL ||
     process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
     DEFAULT_IMAGE_MODEL
   ).trim();
+  if (/-image$/.test(model)) {
+    console.warn(`[studio] adjudicator is pointed at "${model}", an image-generation ` +
+                 `model. Set renderScoreModel on config/customStudio (or ` +
+                 `GEMINI_STUDIO_JUDGE_MODEL) to a text model, or its verdicts are ` +
+                 `not worth acting on.`);
+  }
   try {
     const resp = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
       method: "POST",
@@ -3952,10 +3980,18 @@ async function studioAdjudicateOnce(specBuf, goldBuf) {
     const data = await readUpstreamJson(resp, "gemini");
     const text = (data?.candidates?.[0]?.content?.parts || [])
       .map((p) => p?.text || "").join("").trim();
-    return extractJsonObject(text);
+    /* THE REPLY IS KEPT, WHATEVER IT IS. When the scores looked wrong there
+       was no way to tell a model that had judged badly from one that had not
+       judged at all, because the only thing anybody could see was the six
+       numbers that came out the far end. The raw text is filed on the
+       version document now, truncated, so that question is one look away. */
+    let raw = null;
+    try { raw = extractJsonObject(text); }
+    catch (e) { return { raw: null, model, text, why: "unparsable" }; }
+    return { raw, model, text, why: "" };
   } catch (e) {
     console.error("[studio] adjudicator call failed:", e?.message || e);
-    return null;
+    return { raw: null, model, text: "", why: String(e?.message || e).slice(0, 120) };
   }
 }
 
@@ -4001,6 +4037,119 @@ function studioScoreVerdict(raw, cfg) {
     fabricated,
     worst: String(raw.worst || "").slice(0, 160),
   };
+}
+
+/* ═══════════ CHECKING THE JUDGE ══════════════════════════════════════════
+   A vision model asked "is this good?" will tell you it is good. The first
+   thing this subsystem produced in the wild was 100 across all six
+   categories, on a render nobody believed was perfect — and a scorer that
+   cannot fail is worse than no scorer, because it costs a call per render
+   and licenses whatever comes back.
+
+   So the model is no longer asked only for opinions. It is asked to COUNT
+   first — how many openings are in the map, how many holes are in the
+   render, how many charms it can see — and those counts are facts that its
+   own scores can be checked against. A judge that says the render has two
+   holes where the map has three, and then scores cut-outs 100, has
+   contradicted itself; the score is capped at something the observation can
+   support and the cap is recorded.
+
+   This cannot make a bad judge good. What it does is make a bad judge
+   VISIBLE — an answer with no observations at all is marked suspect and, in
+   enforce mode, is treated as no answer rather than as a pass. */
+const STUDIO_SCORE_CAPS = Object.freeze({
+  multipleCharms:   { cat: "fidelity",     to: 10 },
+  fabricatedListed: { cat: "fidelity",     to: 20 },
+  openingsMismatch: { cat: "cutouts",      to: 55 },
+  engravingMismatch:{ cat: "engraving",    to: 65 },
+  groundNotWhite:   { cat: "presentation", to: 40 },
+  noShadow:         { cat: "presentation", to: 60 },
+});
+
+function studioScoreAudit(raw, scored, cfg) {
+  if (!scored) return scored;
+  const obs = raw && typeof raw.observations === "object" && raw.observations ? raw.observations : null;
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const caps = [];
+  const cap = (rule) => {
+    const c = STUDIO_SCORE_CAPS[rule];
+    if (!c || scored.cats[c.cat] <= c.to) return;
+    scored.cats[c.cat] = c.to;
+    caps.push(rule);
+  };
+
+  if (obs) {
+    const charms = num(obs.charmsVisible);
+    if (charms !== null && charms !== 1) cap("multipleCharms");
+    const oa = num(obs.openingsInSpec), ob = num(obs.openingsInRender);
+    if (oa !== null && ob !== null && oa !== ob) cap("openingsMismatch");
+    const ea = num(obs.engravedRegionsInSpec), eb = num(obs.engravedRegionsInRender);
+    if (ea !== null && eb !== null && ea !== eb) cap("engravingMismatch");
+    if (obs.groundIsWhite === false) cap("groundNotWhite");
+    if (obs.shadowPresent === false) cap("noShadow");
+  }
+  if (scored.fabricated.length) cap("fabricatedListed");
+
+  /* WHAT A NON-ANSWER LOOKS LIKE. Not "it scored highly" — a genuinely good
+     render should score highly. It is an answer with no evidence behind it:
+     no observations at all, or six identical numbers, which is the shape of
+     a model filling in a template rather than looking at two pictures. */
+  const vals = STUDIO_SCORE_KEYS.map((k) => scored.cats[k]);
+  const allSame = vals.every((v) => v === vals[0]);
+  /* Counts are the corroboration. Six numbers are cheap to invent; saying
+     how many openings are in each picture, and how many charms are visible,
+     is not — a model that fabricates those has to fabricate them
+     CONSISTENTLY, and the caps above are checking exactly that. */
+  const hasCounts = !!obs && [obs.charmsVisible, obs.openingsInSpec, obs.openingsInRender,
+                              obs.engravedRegionsInSpec, obs.engravedRegionsInRender]
+                              .some((v) => num(v) !== null);
+  const reasons = [];
+  if (!obs) reasons.push("no_observations");
+  else if (!String(obs.describeRender || "").trim()) reasons.push("no_description");
+  /* Six identical perfect scores across six unrelated criteria is the shape
+     of a filled-in template. It is only damning when nothing corroborates
+     it: a render really can be perfect, and calling every perfect render a
+     liar would mean the pass flag could never be true and the panel wore a
+     red warning for ever. So with counts present it is recorded and shown,
+     but not held against the verdict. */
+  if (allSame && vals[0] >= 99 && !hasCounts) reasons.push("uniform_perfect");
+  scored.uniform = allSame && vals[0] >= 99;
+  scored.suspect = reasons.length > 0;
+  scored.suspectWhy = reasons;
+  scored.caps = caps;
+  scored.observations = obs ? {
+    charmsVisible: num(obs.charmsVisible),
+    openingsInSpec: num(obs.openingsInSpec),
+    openingsInRender: num(obs.openingsInRender),
+    engravedRegionsInSpec: num(obs.engravedRegionsInSpec),
+    engravedRegionsInRender: num(obs.engravedRegionsInRender),
+    groundIsWhite: obs.groundIsWhite === true ? true : obs.groundIsWhite === false ? false : null,
+    shadowPresent: obs.shadowPresent === true ? true : obs.shadowPresent === false ? false : null,
+    describeRender: String(obs.describeRender || "").slice(0, 200),
+  } : null;
+
+  /* the caps may have moved the total and the floors, so both are recomputed
+     from the corrected numbers rather than from what the model claimed */
+  if (caps.length) {
+    /* the SAME weights and floors the first pass used, overrides included —
+       recomputing against the built-in defaults would quietly undo a
+       config/customStudio override the moment a cap fired */
+    const weights = Object.assign({}, STUDIO_SCORE_WEIGHTS, (cfg && cfg.renderScoreWeights) || {});
+    const floors  = Object.assign({}, STUDIO_SCORE_FLOORS,  (cfg && cfg.renderScoreFloors)  || {});
+    let sum = 0, wsum = 0;
+    for (const k of STUDIO_SCORE_KEYS) {
+      const w = Number(weights[k]);
+      if (!Number.isFinite(w) || w <= 0) continue;
+      sum += scored.cats[k] * w; wsum += w;
+    }
+    scored.total = wsum ? Math.round(sum / wsum) : 0;
+    scored.floorFails = STUDIO_SCORE_KEYS.filter((k) => {
+      const f = Number(floors[k]);
+      return Number.isFinite(f) && f > 0 && scored.cats[k] < f;
+    });
+    scored.pass = scored.total >= scored.threshold && scored.floorFails.length === 0;
+  }
+  return scored;
 }
 
 /* What the next attempt is told. Naming the failure is the whole value of
@@ -4092,8 +4241,14 @@ async function studioRenderAttempts(opts) {
         log(`[studio] adjudicator attempt ${attempts}: ${scored.total}/${scored.threshold}` +
             ` ${STUDIO_SCORE_KEYS.map((k) => k[0] + scored.cats[k]).join(" ")}` +
             (scored.floorFails.length ? ` FLOOR:${scored.floorFails.join(",")}` : "") +
+            (scored.caps && scored.caps.length ? ` CAPPED:${scored.caps.join(",")}` : "") +
             (scored.fabricated.length ? ` INVENTED:${scored.fabricated.join("|")}` : "") +
-            ` (${scored.ms}ms)`);
+            (scored.suspect ? ` SUSPECT:${(scored.suspectWhy || []).join(",")}` : "") +
+            ` [${scored.model || "?"}] (${scored.ms}ms)`);
+        if (scored.suspect) {
+          log(`[studio] adjudicator answer NOT TRUSTED — it is not gating this ` +
+              `render. Reply was: ${String(scored.reply || "").slice(0, 300)}`);
+        }
       } else {
         log(`[studio] adjudicator attempt ${attempts}: no verdict — accepting`);
       }
@@ -4102,8 +4257,17 @@ async function studioRenderAttempts(opts) {
        overrun a limit that was measured for three bare renders */
     lastMs = now() - t0;
 
+    /* ── AN ANSWER WITH NO EVIDENCE DECIDES NOTHING ─────────────────────
+       studioScoreAudit marks a verdict suspect when the model returned no
+       observations, no description of what it was looking at, or six
+       identical perfect numbers — the shape of a template being filled in
+       rather than two pictures being compared. Such a verdict is recorded in
+       full, and then ignored: it neither passes a render nor spends a retry,
+       so a broken judge degrades to no gating at all rather than to a
+       rubber stamp on everything. */
+    const trusted = !!scored && !scored.suspect;
     const cutWants = !!punch && retryable(punch.report) && attempts <= maxRetries;
-    const scoreWants = adjMode === "enforce" && !!scored && !scored.pass && attempts <= scoreRetries;
+    const scoreWants = adjMode === "enforce" && trusted && !scored.pass && attempts <= scoreRetries;
     if (!cutWants && !scoreWants) break;
 
     if (cutWants) failedVerdicts.push(punch.report.reason);
@@ -4135,7 +4299,7 @@ async function studioRenderAttempts(opts) {
      of anything. When NO attempt could be scored, scoreBest is null, nothing
      is swapped, and the last render ships exactly as it would have with the
      whole subsystem off. */
-  if (adjMode === "enforce" && scoreBest && scoreBest.buf !== outBuf) {
+  if (adjMode === "enforce" && scoreBest && !scoreBest.scored.suspect && scoreBest.buf !== outBuf) {
     log(`[studio] adjudicator: shipping attempt ${scoreBest.scored.attempt} ` +
         `(${scoreBest.scored.total}) over the last one`);
     outBuf = scoreBest.buf;
@@ -6095,9 +6259,34 @@ async function handleStudioRender({ body, event, origin }) {
      failure, so the pass is mandatory and the key gates only the preview
      mask built at drawing time. */
   try {
-    await vRef.set({ renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
-                     renderQuality: quality, renderModel: studioModelConfig.id,
-                     renderCost, renderRunId, renderError: null }, { merge: true });
+    /* ── A NEW RUN STARTS WITH NO VERDICT ─────────────────────────────────
+       Every write to this document is a merge, so the previous render's
+       scores survived into the next one: press Re-render and the read-out
+       went on showing the last run's table — the old attempt count, the old
+       numbers — until a new verdict finally landed, and any field the new
+       run did not happen to write stayed there for ever.
+
+       So the score fields are CLEARED here, at the top of the run, in the
+       same write that stamps this run's id. Between this moment and the new
+       verdict the read-out shows nothing rather than something untrue, which
+       is the only honest state for a judgement that has not been made yet.
+       A Firestore merge has no way to delete a key, so they go to null and
+       every reader treats null as absent. */
+    const clearedScore = {
+      renderScore: null, renderScoreMode: null, renderScorePass: null,
+      renderScoreThreshold: null, renderScoreChosen: null, renderScoreCount: null,
+      renderScoreFloorFails: null, renderScoreFabricated: null, renderScoreWorst: null,
+      renderScoreGeometry: null, renderScoreCutouts: null, renderScoreEngraving: null,
+      renderScoreFidelity: null, renderScoreTone: null, renderScorePresentation: null,
+      renderScoreAttempts: null, renderScoreSuspect: null, renderScoreSuspectWhy: null, renderScoreUniform: null,
+      renderScoreCaps: null, renderScoreJudgeModel: null, renderScoreReply: null,
+      renderScoreObservations: null, renderAttempts: null, renderAttempt: null,
+    };
+    await vRef.set(Object.assign({
+      renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
+      renderQuality: quality, renderModel: studioModelConfig.id,
+      renderCost, renderRunId, renderError: null,
+    }, clearedScore), { merge: true });
 
     const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
     const bw = await storagePathToBuffer(bwPath);
@@ -6382,7 +6571,17 @@ async function handleStudioRender({ body, event, origin }) {
       cutMode, maxRetries, retryable,
       punchFn: (buf) => studioPunchCutouts(buf, bw.buffer, studioPlan),
       adjMode, scoreRetries,
-      judgeFn: async (buf) => studioScoreVerdict(await studioAdjudicateOnce(materialSpec.buf, buf), cfg),
+      judgeFn: async (buf) => {
+        const ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg);
+        const scored = studioScoreAudit(ans.raw, studioScoreVerdict(ans.raw, cfg), cfg);
+        if (scored) { scored.model = ans.model; scored.reply = String(ans.text || "").slice(0, 1200); }
+        else {
+          console.warn(`[studio] adjudicator (${ans.model}) gave no usable verdict` +
+                       (ans.why ? ` — ${ans.why}` : "") +
+                       (ans.text ? `; replied: ${ans.text.slice(0, 300)}` : ""));
+        }
+        return scored;
+      },
       retryBudgetMs, startedAt,
       onRetry: (n) => vRef.set({ renderStage: "rendering", renderAttempt: n, renderRunId }, { merge: true }),
     });
@@ -6409,6 +6608,19 @@ async function handleStudioRender({ body, event, origin }) {
         renderScoreFloorFails: best.floorFails,
         renderScoreFabricated: best.fabricated,
         renderScoreWorst: best.worst,
+        /* WHO JUDGED, WHAT THEY SAW, AND WHETHER TO BELIEVE THEM.
+           Without these three there is no way to tell a model that judged
+           badly from one that never looked — which is the question the first
+           run in the wild raised, and could not answer. */
+        renderScoreJudgeModel: best.model || "",
+        renderScoreSuspect: !!best.suspect,
+        renderScoreSuspectWhy: best.suspectWhy || [],
+        /* six identical perfect scores: not disqualifying on its own, but
+           always worth being able to see */
+        renderScoreUniform: !!best.uniform,
+        renderScoreCaps: best.caps || [],
+        renderScoreObservations: best.observations || null,
+        renderScoreReply: best.reply || "",
         renderScoreGeometry: best.cats.geometry,
         renderScoreCutouts: best.cats.cutouts,
         renderScoreEngraving: best.cats.engraving,
@@ -6423,6 +6635,9 @@ async function handleStudioRender({ body, event, origin }) {
           { n: s.attempt, total: s.total, ms: s.ms,
             floorFails: s.floorFails.join(","),
             fabricated: s.fabricated.join("; "),
+            caps: (s.caps || []).join(","),
+            suspect: !!s.suspect,
+            model: s.model || "",
             worst: s.worst },
           s.cats)),
         renderRunId,
