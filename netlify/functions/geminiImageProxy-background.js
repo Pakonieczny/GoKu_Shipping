@@ -2338,8 +2338,31 @@ const STUDIO_KINDS = new Set([
 const STUDIO_SESSIONS_COLL = "customSessions";
 const STUDIO_RATE_COLL     = "Brites_Studio_RateLimits";
 const STUDIO_CONFIG_DOC    = "config/customStudio";
-const STUDIO_MAX_GENS_HOUR_UID = 25;
-const STUDIO_MAX_GENS_HOUR_IP  = 60;
+/* ══════════ THE HOURLY CEILINGS ARE OFF ═══════════════════════════════════
+   These were 25 generations an hour per account and 60 per IP. They were not
+   a security control — nothing here is protected by them that is not already
+   protected by the ID token check, the session-ownership check and the
+   credit wallet — they were a spend guard on the image model, and they were
+   costing the person who owns the studio a working afternoon.
+
+   ZERO MEANS NO CEILING. The mechanism is left in place, in full, so turning
+   one back on is a number rather than a rewrite, and it can be done WITHOUT
+   A DEPLOY from either of two places:
+
+     · Netlify environment: STUDIO_MAX_GENS_HOUR_UID / STUDIO_MAX_GENS_HOUR_IP
+     · config/customStudio: maxGensHourUid / maxGensHourIp   (checked first,
+       cached for a minute like the rest of that document)
+
+   WHAT IS STILL ENFORCED, and deliberately so: every studio kind still
+   requires a verified Firebase ID token, still refuses a session the caller
+   does not own, and every call that reaches the image model still debits the
+   credit wallet in an atomic transaction before the model is touched. The
+   wallet is what stands between a stranger and the API key now. Anything
+   with `wallet.unlimited === true` bypasses that too — which is why that flag
+   belongs on staff accounts and nowhere else.
+   ═══════════════════════════════════════════════════════════════════════ */
+const STUDIO_MAX_GENS_HOUR_UID = Number(process.env.STUDIO_MAX_GENS_HOUR_UID) || 0;
+const STUDIO_MAX_GENS_HOUR_IP  = Number(process.env.STUDIO_MAX_GENS_HOUR_IP)  || 0;
 const STUDIO_MAX_INSTRUCTION   = 400;
 
 /* Storefront-locked CORS. Deliberately NOT the "*" that json() returns. */
@@ -2610,29 +2633,57 @@ async function studioUnlimitedUid(uid) {
 /* Says WHICH ceiling refused, and whether the exemption was even consulted.
    A limiter that returns a bare 429 with no reason is how an afternoon gets
    spent blaming the upstream provider. */
+/* Whatever the ceilings are RIGHT NOW. config/customStudio wins over the
+   environment so a ceiling can be raised, lowered or switched off from the
+   Firebase console while the storefront is live; the document is already
+   cached for a minute, so asking costs nothing. */
+async function studioCeilings() {
+  let cfg = null;
+  try { cfg = await studioConfig(); } catch (_e) { cfg = null; }
+  const pick = (k, fallback) => {
+    const v = cfg && cfg[k] != null ? Number(cfg[k]) : fallback;
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  };
+  return {
+    uid: pick("maxGensHourUid", STUDIO_MAX_GENS_HOUR_UID),
+    ip:  pick("maxGensHourIp",  STUDIO_MAX_GENS_HOUR_IP),
+  };
+}
+
 async function studioGateOk(uid, event) {
+  const ceil = await studioCeilings();
+  /* No ceiling configured is the shipped default — see the note beside
+     STUDIO_MAX_GENS_HOUR_UID. Nothing is read and nothing is counted, so an
+     account that is not being limited does not pay a Firestore transaction
+     per generation either. */
+  if (!ceil.uid && !ceil.ip) return true;
   if (await studioUnlimitedUid(uid)) {
     console.log(`[studio] gate: uid ${uid} is unlimited — ceilings skipped`);
     return true;
   }
   const ip = studioClientIp(event);
-  const okUid = await studioBudgetOk("gen", uid, STUDIO_MAX_GENS_HOUR_UID);
+  const okUid = await studioBudgetOk("gen", uid, ceil.uid);
   if (!okUid) {
     console.log(`[studio] gate: BLOCKED by the per-account ceiling ` +
-                `(${STUDIO_MAX_GENS_HOUR_UID}/hour, drawings and renders share it, ` +
+                `(${ceil.uid}/hour, drawings and renders share it, ` +
                 `window resets an hour after its first request) uid=${uid}`);
     return false;
   }
-  const okIp = await studioBudgetOk("genip", ip, STUDIO_MAX_GENS_HOUR_IP);
+  const okIp = await studioBudgetOk("genip", ip, ceil.ip);
   if (!okIp) {
     console.log(`[studio] gate: BLOCKED by the per-IP ceiling ` +
-                `(${STUDIO_MAX_GENS_HOUR_IP}/hour) ip=${ip}`);
+                `(${ceil.ip}/hour) ip=${ip}`);
     return false;
   }
   return true;
 }
 
 async function studioBudgetOk(key, id, max) {
+  /* THE OFF SWITCH, IN ONE PLACE. A ceiling of zero is no ceiling: nothing is
+     read, nothing is written, nothing is counted. Every caller passes its
+     limit through here, so switching one off can never leave a counter
+     ticking somewhere that a later change turns back into a refusal. */
+  if (!(Number(max) > 0)) return true;
   const db = getDb();
   const hash = require("crypto").createHash("sha256").update(String(id)).digest("hex").slice(0, 32);
   const ref = db.doc(`${STUDIO_RATE_COLL}/${key}_${hash}`);
@@ -3722,8 +3773,12 @@ async function handleStudioPrecheck({ body, event, origin }) {
   if (!p.startsWith(`custom-studio/${uid}/`)) {
     return studioJson(403, { ok: false, error: "forbidden" }, origin);
   }
-  if (!(await studioUnlimitedUid(uid)) &&
-      !(await studioBudgetOk("pc", uid, STUDIO_MAX_GENS_HOUR_UID))) {
+  /* Shares the per-account ceiling, which ships switched off — see the note
+     beside STUDIO_MAX_GENS_HOUR_UID. With no ceiling configured this reads
+     nothing and counts nothing. */
+  const pcCeil = (await studioCeilings()).uid;
+  if (pcCeil && !(await studioUnlimitedUid(uid)) &&
+      !(await studioBudgetOk("pc", uid, pcCeil))) {
     return studioJson(429, { ok: false, error: "rate_limited" }, origin);
   }
 
@@ -6111,9 +6166,19 @@ async function handleStudioCompose({ body, event, origin }) {
   if (!n || n < 1 || n > 400) return studioJson(400, { ok: false, error: "bad_version" }, origin);
   const vRef = sRef.collection("versions").doc(String(n));
 
-  if (!(await studioGateOk(uid, event))) {
-    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
-  }
+  /* ── NO CEILING HERE, EVER, WHATEVER THE CEILINGS ARE SET TO ───────────
+     This was the wrong gate on the wrong door, and it is the one that was
+     actually refusing work. A compose calls NO model, spends NO credit and
+     costs nothing upstream — the browser painted the picture itself and this
+     is where it gets filed. It was nevertheless counted against the same
+     hourly generation budget as a Gemini render, so filing your own drawing
+     used up the allowance for making new ones, and the studio answered a
+     purely local operation with `rate_limited`.
+
+     The controls that matter are still every one of them above: a verified
+     ID token, a session this caller owns, a bounded version number, and the
+     5.5 MB body cap the kick enforces before this function is even loaded.
+     A ceiling here protects nothing that those do not already protect. */
 
   let img;
   try {

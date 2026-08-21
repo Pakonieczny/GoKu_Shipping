@@ -274,7 +274,30 @@ const STUDIO_DEFAULTS = {
   maxUploadPx: 2048,
 };
 const UPLOAD_MIME = { "image/jpeg": "jpg", "image/png": "png" };
-const MAX_UPLOADS_HOUR = 30;                 // per uid, on top of the allowance
+/* ══════════ THE PER-ACCOUNT STORAGE THROTTLES ARE OFF ═════════════════════
+   Three hourly ceilings used to sit on top of the upload allowance and the
+   ownership checks: 30 uploads, 600 reads and 400 deletes per account per
+   hour. None of them protected anything. Every one of those endpoints
+   already requires a verified ID token and already refuses any path that is
+   not under `custom-studio/{that caller's own uid}/`, and how many pictures
+   an account may keep is decided by the wallet allowance, not by a clock.
+   All they did was stop somebody using their own studio quickly.
+
+   ZERO MEANS NO CEILING, and checkUidBudget enforces that in one place, so
+   any of these becomes a number again without touching a call site:
+   BRITES_MAX_UPLOADS_HOUR / BRITES_MAX_READS_HOUR / BRITES_MAX_DELETES_HOUR
+   in the Netlify environment.
+
+   NOT TOUCHED, because they are the actual security of this file: the
+   verification-code ceilings (per address, per IP, the resend cooldown and
+   the five-attempt limit on a code) and the handoff mint ceiling. Those stop
+   a stranger mail-bombing an address, brute-forcing a six-digit code, and
+   farming custom tokens from a stolen ID token respectively. See each one at
+   its own call site below — all four are deliberately still on.
+   ═══════════════════════════════════════════════════════════════════════ */
+const MAX_UPLOADS_HOUR = Number(process.env.BRITES_MAX_UPLOADS_HOUR) || 0;
+const MAX_READS_HOUR   = Number(process.env.BRITES_MAX_READS_HOUR)   || 0;
+const MAX_DELETES_HOUR = Number(process.env.BRITES_MAX_DELETES_HOUR) || 0;
 
 /* Runtime config — a Firestore doc, not env vars. Cached per warm lambda. */
 const CONFIG_DOC = "config/customStudio";
@@ -636,6 +659,11 @@ function uploadAllowance(wallet, cfg, signedIn) {
 /** Hourly per-uid ceiling on top of the wallet, so a stolen ID token cannot
  *  burn the allowance in one go. Same shape as checkIpBudget above. */
 async function checkUidBudget(uid, key, max) {
+  /* THE OFF SWITCH, IN ONE PLACE. A ceiling of zero is no ceiling: nothing is
+     read, nothing is written, nothing is counted — so a limit that is off
+     cannot leave a counter ticking that a later change turns into a refusal.
+     The ceilings that are still ON pass real numbers and are unaffected. */
+  if (!(Number(max) > 0)) return true;
   const ref = db.doc(`${RATE_COL}/${key}_${crypto.createHash("sha256").update(uid).digest("hex").slice(0, 32)}`);
   const now = Date.now();
   return db.runTransaction(async (tx) => {
@@ -802,7 +830,7 @@ async function assetFetch(body, event) {
   if (!path || path.indexOf(`custom-studio/${uid}/`) !== 0 || path.indexOf("..") >= 0) {
     return json(403, { ok: false, error: "not_yours" });
   }
-  if (!(await checkUidBudget(uid, "af", 600))) {
+  if (!(await checkUidBudget(uid, "af", MAX_READS_HOUR))) {
     return json(429, { ok: false, error: "rate_limited" });
   }
   const bucket = studioBucket();
@@ -838,7 +866,7 @@ async function assetDelete(body, event) {
   if (!path || path.indexOf(`custom-studio/${uid}/`) !== 0 || path.indexOf("..") >= 0) {
     return json(403, { ok: false, error: "not_yours" });
   }
-  if (!(await checkUidBudget(uid, "ad", 400))) {
+  if (!(await checkUidBudget(uid, "ad", MAX_DELETES_HOUR))) {
     return json(429, { ok: false, error: "rate_limited" });
   }
   try {
