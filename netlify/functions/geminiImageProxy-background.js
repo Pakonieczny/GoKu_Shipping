@@ -2488,7 +2488,7 @@ const STUDIO_DEFAULT_CONFIG = {
        "enforce"  punch AND reject undeclared cuts. */
   /* renderInput ("mask" | "drawing") is REMOVED. It chose which image the
      renderer was shown, and the studio's Send toggle overrode it per press.
-     There is one input now — the greyscale material spec (192/152/255), the
+     There is one input now — the greyscale material spec (176/96/255), the
      STRUCTURE_MAP the fixed prompt describes — and handleStudioRender reads
      neither this key nor the request field. A drawing with no mask fails
      rather than falling back to the colour-coded production drawing. */
@@ -3507,7 +3507,7 @@ Transform IMAGE 1 and IMAGE 2 into a photorealistic 14K gold charm. Treat both a
 
 IMAGE 1 — TOPOLOGY_MASK: LIGHT GREY = SOLID METAL; WHITE = EMPTY; BLACK IS UNUSED. It is the exclusive authority for the silhouette and every through-cut.
 
-IMAGE 2 — STRUCTURE_MAP: DARKER GREY = very shallow satin-finish engraving; LIGHT GREY = smooth unengraved metal. It controls surface treatment only and cannot add or remove metal.
+IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. It controls surface treatment only and cannot add or remove metal.
 
 Hard Fail — never allow any leakage of colours from STRUCTURE_MAP to affect the final 14K gold charm image.
 
@@ -3517,7 +3517,7 @@ Every light-grey region in IMAGE 1 must remain occupied by opaque 14K gold. Only
 
 FILL-PRIORITY RULE: IMAGE 1 fill overrides every outline and all familiar meaning. A region is open only when its interior is white in IMAGE 1; every light-grey interior remains solid gold.
 
-The source darkness in IMAGE 2 is classification only; never copy its luminance or contrast. Engraving remains warm yellow 14K gold, no more than about one-tenth darker than the surrounding gold.
+The source darkness in IMAGE 2 is a classification code only. Engraving remains warm yellow 14K gold and only slightly darker than the surrounding gold.
 
 Before rendering, silently verify:
 1. Every white region in IMAGE 1 is empty.
@@ -3585,8 +3585,8 @@ ENGRAVING RENDERED TOO DARK. Every line below is a CEILING, not a target:
   and polished bands on one ring. The polished metal stays bright and
   specular; the contrast between the two comes from finish and the gentlest
   tonal shift, never from a change of colour.
-• Converted to greyscale, an engraved area sits only about 10–12% darker than
-  the polished metal touching it, and that is a CEILING — closer is always better,
+• Converted to greyscale, an engraved area sits about a fifth darker than the
+  polished metal touching it, and that is a CEILING — closer is always better,
   further apart is always wrong. Brown, bronze, copper, grey, charcoal or black
   is wrong, and so is any recess that reads as a dark shape, a separate inlay
   or a second alloy rather than as the same worked gold.
@@ -4147,21 +4147,6 @@ function studioDilate(mask, w, h, r) {
   return a;
 }
 
-function studioErode(mask, w, h, r) {
-  let a = mask;
-  for (let k = 0; k < r; k++) {
-    const b = new Uint8Array(w * h);
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const i = y * w + x;
-        if (a[i] && a[i - 1] && a[i + 1] && a[i - w] && a[i + w]) b[i] = 1;
-      }
-    }
-    a = b;
-  }
-  return a;
-}
-
 /* 3-4 chamfer distance, two passes. Divided by three it is within a few
    percent of Euclidean — far more precision than a RATIO needs. */
 function studioChamfer(mask, w, h) {
@@ -4248,47 +4233,13 @@ function studioCutRegions(mask, w, h, minRatio, penIn) {
   const pen = penIn || 1;
   const minPx = Math.max(24, Math.round(w * h * 0.00002));
   const keep = new Uint8Array(count + 1);
-  /* A closed cut LINE can be dense inside its bounding box — a circle is the
-     important case — so density alone must not turn it into a filled blue
-     opening. Flood the non-component pixels from the box perimeter. Any
-     unreached interior is a real enclosed void, proving the component is a
-     ring/outline. A genuinely thick annular filled area still passes through
-     the independent thickness test above. */
-  const enclosesVoid = (L) => {
-    const bw = x1[L] - x0[L] + 1, bh = y1[L] - y0[L] + 1;
-    if (bw < 3 || bh < 3) return false;
-    const total = bw * bh, seen = new Uint8Array(total), stack = new Int32Array(total);
-    let top = 0;
-    const push = (lx, ly) => {
-      const li = ly * bw + lx;
-      if (seen[li] || labels[(y0[L] + ly) * w + x0[L] + lx] === L) return;
-      seen[li] = 1; stack[top++] = li;
-    };
-    for (let x = 0; x < bw; x++) { push(x, 0); push(x, bh - 1); }
-    for (let y = 0; y < bh; y++) { push(0, y); push(bw - 1, y); }
-    while (top) {
-      const li = stack[--top], x = li % bw, y = (li / bw) | 0;
-      if (x > 0) push(x - 1, y);
-      if (x < bw - 1) push(x + 1, y);
-      if (y > 0) push(x, y - 1);
-      if (y < bh - 1) push(x, y + 1);
-    }
-    const minVoid = Math.max(9, Math.round(pen * pen * 3));
-    let enclosed = 0;
-    for (let y = 1; y < bh - 1; y++) for (let x = 1; x < bw - 1; x++) {
-      const li = y * bw + x;
-      if (!seen[li] && labels[(y0[L] + y) * w + x0[L] + x] !== L && ++enclosed >= minVoid) return true;
-    }
-    return false;
-  };
   let areas = 0, lines = 0, cutPx = 0;
   for (let L = 1; L <= count; L++) {
     const bw = x1[L] - x0[L] + 1, bh = y1[L] - y0[L] + 1;
     const density = size[L] / Math.max(1, bw * bh);
     const thickEnough = maxd[L] / pen >= ratio0;
     const denseFill = density >= 0.24 && Math.min(bw, bh) >= Math.max(4, pen * 1.8);
-    const closedOutline = denseFill && !thickEnough && enclosesVoid(L);
-    if ((thickEnough || (denseFill && !closedOutline)) && size[L] >= minPx) { keep[L] = 1; areas++; }
+    if ((thickEnough || denseFill) && size[L] >= minPx) { keep[L] = 1; areas++; }
     else lines++;
   }
   for (let i = 0; i < w * h; i++) if (labels[i] && keep[labels[i]]) { cut[i] = 1; cutPx++; }
@@ -4520,10 +4471,7 @@ async function studioDrawingPlan(sharp, drawingBuf) {
     if (!studioIsBg(px, i * 3)) ink[i] = 1;
   }
 
-  /* Close antialias gaps without changing geometry: dilation seals the line,
-     erosion restores its original outer extent. Previously only the dilation
-     ran, enlarging the hoop and changing the hole-to-hoop ratio. */
-  let face = studioErode(studioOuterFace(studioDilate(ink, w, h, 2), w, h), w, h, 2);
+  let face = studioOuterFace(studioDilate(ink, w, h, 2), w, h);
   let faceBox = studioBBox(face, w, h);
   let roiGuard = "not-needed";
 
@@ -4537,7 +4485,7 @@ async function studioDrawingPlan(sharp, drawingBuf) {
       const p = i * 3;
       if (studioIsBluePixel(px, p) || studioIsRedPixel(px, p) || studioIsBlack(px, p)) strictInk[i] = 1;
     }
-    const strictFace = studioErode(studioOuterFace(studioDilate(strictInk, w, h, 2), w, h), w, h, 2);
+    const strictFace = studioOuterFace(studioDilate(strictInk, w, h, 2), w, h);
     const strictBox = studioBBox(strictFace, w, h);
     if (studioFaceLooksSane(strictBox, roi.signalBox)) {
       face = strictFace; faceBox = strictBox; roiGuard = "strict-recovered";
@@ -4698,6 +4646,58 @@ function studioBlueBoundedWhiteHoles(plan) {
   return holes;
 }
 
+function studioEnlargeTopHoopHole(plan, holes) {
+  const { w, h, n, face, faceBox } = plan;
+  if (!faceBox) return;
+  const { labels, count } = studioLabel(holes, w, h);
+  if (!count) return;
+
+  const size = new Float64Array(count + 1);
+  const x0 = new Int32Array(count + 1); x0.fill(w);
+  const y0 = new Int32Array(count + 1); y0.fill(h);
+  const x1 = new Int32Array(count + 1); x1.fill(-1);
+  const y1 = new Int32Array(count + 1); y1.fill(-1);
+  for (let i = 0; i < n; i++) {
+    const L = labels[i];
+    if (!L) continue;
+    const x = i % w, y = (i / w) | 0;
+    size[L]++;
+    if (x < x0[L]) x0[L] = x; if (x > x1[L]) x1[L] = x;
+    if (y < y0[L]) y0[L] = y; if (y > y1[L]) y1[L] = y;
+  }
+
+  /* The integrated hoop opening is the uppermost compact, near-round hole in
+     the protruding top band. Grow only that final resolved opening, after the
+     blue cut line and white centre have been combined, so its inner diameter
+     increases slightly without moving the outer hoop or any design cut-out. */
+  const topEdgeLimit = faceBox.y0 + faceBox.h * 0.18;
+  const centreLimit = faceBox.y0 + faceBox.h * 0.25;
+  const minDiameter = Math.max(4, faceBox.w * 0.02);
+  const maxDiameter = faceBox.w * 0.18;
+  let hoopLabel = 0;
+  for (let L = 1; L <= count; L++) {
+    const bw = x1[L] - x0[L] + 1, bh = y1[L] - y0[L] + 1;
+    const diameter = Math.min(bw, bh);
+    const ratio = bw / Math.max(1, bh);
+    const density = size[L] / Math.max(1, bw * bh);
+    const cy = (y0[L] + y1[L]) * 0.5;
+    if (y0[L] > topEdgeLimit || cy > centreLimit ||
+        diameter < minDiameter || diameter > maxDiameter ||
+        ratio < 0.55 || ratio > 1.8 || density < 0.45) continue;
+    if (!hoopLabel || y0[L] < y0[hoopLabel] ||
+        (y0[L] === y0[hoopLabel] && size[L] > size[hoopLabel])) hoopLabel = L;
+  }
+  if (!hoopLabel) return;
+
+  const hoopHole = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (labels[i] === hoopLabel) hoopHole[i] = 1;
+  const diameter = Math.min(x1[hoopLabel] - x0[hoopLabel] + 1,
+                            y1[hoopLabel] - y0[hoopLabel] + 1);
+  const grow = Math.max(1, Math.min(3, Math.ceil(diameter * 0.025)));
+  const enlarged = studioDilate(hoopHole, w, h, grow);
+  for (let i = 0; i < n; i++) if (face[i] && enlarged[i]) holes[i] = 1;
+}
+
 function studioSpecCutMask(plan, zones) {
   const { w, h, n, blue, cut } = plan;
   const out = new Uint8Array(n);
@@ -4750,11 +4750,11 @@ function studioSpecCutMask(plan, zones) {
    saturation, which is also the clearest possible signal that this image is a
    map and not a photograph. Colour now has exactly one owner: IMAGE 2.
 
-   Luminance ladder: hole 255 → polished 192 → engraved 152. The engraving
-   remains unambiguous without visually commanding the renderer to make the
-   finished gold brown.                                                    */
-const STUDIO_MASK_POLISHED = [192, 192, 192];
-const STUDIO_MASK_ENGRAVED = [152, 152, 152];
+   Luminance ladder: hole 255 → polished 176 → engraved 96. Minimum gap 79,
+   which survives the downsampling a vision encoder does first. If these are
+   ever retuned, the GAPS are the point — keep them wide.                  */
+const STUDIO_MASK_POLISHED = [176, 176, 176];
+const STUDIO_MASK_ENGRAVED = [96, 96, 96];
 
 /* exact squared euclidean distance transform, Felzenszwalb & Huttenlocher */
 function studioEdt1d(f, n) {
@@ -4904,7 +4904,7 @@ async function studioRefineMask(sharp, maskBuf, targetLong) {
   const POLISHED = STUDIO_MASK_POLISHED[0], ENGRAVED = STUDIO_MASK_ENGRAVED[0], ABSENT = 255;
   const { data, info } = await sharp(maskBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const w = info.width, h = info.height, n = w * h, ch = info.channels;
-  const near = (v, t) => Math.abs(v - t) <= 18;
+  const near = (v, t) => Math.abs(v - t) <= 24;
 
   const A = new Uint8Array(n), B = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
@@ -4957,7 +4957,7 @@ async function studioTopologyMask(sharp, materialSpecBuf) {
   let metalPx = 0;
   for (let i = 0; i < n; i++) {
     const p = i * ch;
-    /* Material-spec pixels are exact 152, 192 or 255. The small margin keeps
+    /* Material-spec pixels are exact 96, 176 or 255. The small margin keeps
        this safe if a future PNG decoder introduces a near-white edge value. */
     if (Math.max(data[p], data[p + 1], data[p + 2]) < 240) {
       const q = i * 3;
@@ -5263,8 +5263,10 @@ async function studioMaterialSpec(sharp, plan, metal, zones) {
   const bounded = studioBlueBoundedWhiteHoles(plan);
   const holes = new Uint8Array(n);
   let holePx = 0, facePx = 0, workPx = 0;
+  for (let i = 0; i < n; i++) if (cut[i] || bounded[i]) holes[i] = 1;
+  studioEnlargeTopHoopHole(plan, holes);
   for (let i = 0; i < n; i++) {
-    if (cut[i] || bounded[i]) { holes[i] = 1; holePx++; }
+    if (holes[i]) holePx++;
     if (face[i]) facePx++;
   }
   if (!facePx || facePx < n * 0.005) return null;
