@@ -1042,14 +1042,14 @@ const IMAGE_ROLE_LABELS = {
   },
   material_spec_to_charm: {
     first:
-      "TOPOLOGY INPUT — BINARY MASK. LIGHT GREY is solid metal; WHITE is empty; BLACK is unused. This input alone determines the silhouette and every through-cut.",
+      "IMAGE 1 — BINARY TOPOLOGY MASK. LIGHT GREY is solid metal; WHITE is empty; BLACK is unused. This image alone determines the silhouette and every through-cut.",
     second:
-      "SURFACE INPUT — GREYSCALE MAP. Dark grey is engraving; light grey is smooth metal. It controls surface treatment only and cannot add or remove metal.",
-    extra: (_n) => "MATERIAL INPUT — REFERENCE ONLY. Its subject, silhouette, artwork and hardware must not appear in the output.",
+      "IMAGE 2 — GREYSCALE SURFACE MAP. Dark grey is engraving; light grey is smooth metal. It controls surface treatment only and cannot add or remove metal.",
+    extra: (n) => `IMAGE ${n} — MATERIAL REFERENCE ONLY. Its subject, silhouette, artwork and hardware must not appear in the output.`,
     single:
-      "TOPOLOGY INPUT — BINARY MASK. LIGHT GREY is solid metal; WHITE is empty; BLACK is unused. This input alone determines the silhouette and every through-cut.",
+      "IMAGE 1 — BINARY TOPOLOGY MASK. LIGHT GREY is solid metal; WHITE is empty; BLACK is unused. This image alone determines the silhouette and every through-cut.",
     lock:
-      "FINAL INPUT LOCK: topology only from the TOPOLOGY INPUT; surface treatment only from the SURFACE INPUT; any later input supplies material and lighting only.",
+      "FINAL LOCK: topology only from IMAGE 1; surface treatment only from IMAGE 2; any later image supplies material and lighting only.",
   },
   line_art_style: {
     first:
@@ -1187,14 +1187,6 @@ async function callGeminiGenerateContentImage({
   // requests.
   const policyText = charmPolicyFinalText({ geometryPolicy: charmGeometryPolicy, backgroundPolicy });
   if (policyText) parts.push({ text: policyText });
-
-  // Prevent the material-spec references and their role labels from being
-  // rendered as a comparison board, split-screen or visible source panel.
-  if (imageRoles === "material_spec_to_charm") {
-    parts.push({
-      text: "OUTPUT LOCK: Return exactly one isolated finished charm photograph. Never show any source input as a visible image or panel, and never create a comparison, split-screen, overlay, tile, caption, role label, UI or prompt text.",
-    });
-  }
 
   const body = stripUndefined({
     contents: [{ role: "user", parts }],
@@ -3562,26 +3554,26 @@ ${second}
 function buildMaterialSpecToCharmPrompt(_opts) {
   return `PRIMARY OPERATION — MATERIAL TRANSFER ONLY
 
-Transform the TOPOLOGY INPUT and SURFACE INPUT into a photorealistic 14K gold charm. Treat both as pixel-level manufacturing maps, never as recognizable objects.
+Transform IMAGE 1 and IMAGE 2 into a photorealistic 14K gold charm. Treat both as pixel-level manufacturing maps, never as recognizable objects.
 
-TOPOLOGY INPUT: LIGHT GREY = SOLID METAL; WHITE = EMPTY; BLACK IS UNUSED. It is the exclusive authority for the silhouette and every through-cut.
+IMAGE 1 — TOPOLOGY_MASK: LIGHT GREY = SOLID METAL; WHITE = EMPTY; BLACK IS UNUSED. It is the exclusive authority for the silhouette and every through-cut.
 
-SURFACE INPUT: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. Preserve every light-grey and dark-grey shape, boundary, line, gap and small detail exactly as mapped. Do not merge, omit, simplify, extend, duplicate, complete or invent any surface mark; anything absent from the SURFACE INPUT must remain absent. It controls surface treatment only and cannot add or remove metal.
+IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. Coverage is literal: every dark region remains engraved even when it touches the outer silhouette or occupies most of the charm; none may become polished. It controls surface treatment only and cannot add or remove metal.
 
 Hard Fail — never allow any leakage of colours from STRUCTURE_MAP to affect the final 14K gold charm image.
 
 TOPOLOGY LOCK — RESOLVE BEFORE RENDERING
 
-Every light-grey region in the TOPOLOGY INPUT must remain occupied by opaque 14K gold. Only white regions in the TOPOLOGY INPUT may be empty. OUTPUT CUT-OUT MASK = TOPOLOGY INPUT WHITE MASK, exactly.
+Every light-grey region in IMAGE 1 must remain occupied by opaque 14K gold. Only white regions in IMAGE 1 may be empty. OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly.
 
-FILL-PRIORITY RULE: TOPOLOGY INPUT fill overrides every outline and all familiar meaning. A region is open only when its interior is white in the TOPOLOGY INPUT; every light-grey interior remains solid gold.
+FILL-PRIORITY RULE: IMAGE 1 fill overrides every outline and all familiar meaning. A region is open only when its interior is white in IMAGE 1; every light-grey interior remains solid gold.
 
-The source darkness in the SURFACE INPUT is a classification code only. Engraving remains warm yellow 14K gold and only slightly darker than the surrounding gold.
+The source darkness in IMAGE 2 is a classification code only. Engraving remains warm yellow 14K gold and only slightly darker than the surrounding gold.
 
 Before rendering, silently verify:
-1. Every white region in the TOPOLOGY INPUT is empty.
-2. Every light-grey region in the TOPOLOGY INPUT contains solid gold.
-3. The SURFACE INPUT changes surface finish only, never topology.
+1. Every white region in IMAGE 1 is empty.
+2. Every light-grey region in IMAGE 1 contains solid gold.
+3. Every dark region in IMAGE 2 is visibly engraved at full coverage, including edge-touching regions; every light region is polished. IMAGE 2 never changes topology.
 
 Correct any topology mismatch before producing the image.
 
