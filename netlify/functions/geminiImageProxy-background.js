@@ -2327,6 +2327,17 @@ const STUDIO_KINDS = new Set([
   /* the studio composed the drawing itself — this only files it */
   "custom_charm_compose",
   "custom_charm_render",
+  /* ── THE ONE THE KICK FORWARDED TO NOBODY ─────────────────────────────
+     geminiImageProxyKick.js has listed custom_charm_gold_edit in its
+     ASYNC_KINDS since the arrow got its second job, and the storefront has
+     been sending it. This file had no handler and did not list the kind, so
+     every one of those requests reached handleStudioKind and fell through to
+     `unknown_kind` — a 400 nobody could see, because an async kind is
+     answered with the platform's own 202 before the proxy is ever consulted.
+     The browser then watched the version document for a result that was
+     never going to be written, and gave up at three minutes. That is the
+     "the arrow just sits there" fault exactly. */
+  "custom_charm_gold_edit",
   /* custom_charm_prompt — read-only, returned the exact prompt a render
      would send — is REMOVED. It existed to feed the studio's prompt lab,
      which is gone; the render prompt is fixed and nothing needs to ask what
@@ -6733,6 +6744,16 @@ async function handleStudioRender({ body, event, origin }) {
       renderURL, renderPath, renderMetal: metal,
       renderSpecURL, renderSpecPath,
       renderQuality: quality, renderModel: studioModelConfig.id, renderCost,
+      /* ── A RENDER IS THE UNDO FOR A GOLD EDIT ─────────────────────────
+         The storefront has always said so — "Re-render puts the charm back
+         to what the drawing says" — and cleared these two on its own copy
+         of the version, claiming in a comment that the server cleared them
+         "in the same breath". It did not: this file had never heard of a
+         gold edit. So a customer who edited the gold, re-rendered, then
+         reopened the design from another device still found the charm
+         flagged as diverged from a drawing it now matched exactly. */
+      goldEdited: false,
+      goldEditCount: 0,
       renderedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
@@ -6751,6 +6772,310 @@ async function handleStudioRender({ body, event, origin }) {
     await studioFailRender(vRef, String(err?.message || err), renderRunId);
     console.error("[studio] render failed:", err?.message || err);
     return studioJson(500, { ok: false, error: "render_failed" }, origin);
+  }
+}
+
+/* ═══════════ THE GOLD EDIT ════════════════════════════════════════════════
+   "Make the wings a little longer", typed while looking at a finished charm.
+
+   THIS IS NOT A RENDER, AND MUST NOT BEHAVE LIKE ONE. A render descends from
+   the greyscale map: it asks the model to realise a specification, and every
+   pixel is up for negotiation because none of them existed yet. A gold edit
+   descends from a PHOTOGRAPH THE CUSTOMER HAS ALREADY ACCEPTED. Ninety-nine
+   percent of it is finished work they did not ask about, and the only
+   acceptable outcome is that picture again with one thing different.
+
+   So the greyscale map is not sent, the drawing is not regenerated and the
+   mask is not rebuilt. One image goes up — the charm as it stands — with one
+   sentence, and the prompt spends most of its length saying what must NOT
+   change. The version keeps its drawing and its mask, and is stamped
+   goldEdited so the stage can tell the customer the two halves of the pair
+   have diverged. Re-render is the way back.
+
+   IT IS ALSO NOT ADJUDICATED. The scoring pass compares a render against the
+   greyscale map, and after an edit the map deliberately no longer describes
+   the charm — the customer asked for the difference. Scoring it would mark
+   down exactly the change that was paid for. See the note at the debit.
+   ═══════════════════════════════════════════════════════════════════════ */
+const STUDIO_GOLD_EDIT_PROMPT_HEAD =
+`SURGICAL EDIT OF AN EXISTING PHOTOGRAPH — PRESERVATION IS THE PRIMARY TASK.
+
+The supplied image is a finished photograph of a real 14K gold charm that the
+customer has already accepted. You are not designing a charm and you are not
+rendering one. You are making ONE requested alteration to this exact
+photograph and returning it otherwise unchanged.
+
+Treat everything not named in the request as FIXED and already correct.`;
+
+const STUDIO_GOLD_EDIT_PROMPT_TAIL =
+`WHAT MUST SURVIVE THE EDIT, PIXEL FOR PIXEL WHERE THE REQUEST DOES NOT REACH:
+• The silhouette and proportions of every part of the charm the request does
+  not name. If the request is about the wings, the hoop, the body, the base
+  and every engraved line stay exactly as they are — same size, same position,
+  same shape, same spacing.
+• The hanging hoop: same place, same diameter, same wall thickness, and still
+  part of the same flat sheet rather than an attached jump ring.
+• EVERY OPENING. Each hole cut through the metal stays open, the same shape
+  and in the same place, with the same bright inner cut edge. Do not fill one,
+  do not add one, do not turn one into an engraved recess.
+• EVERY ENGRAVED AREA: same placement, same coverage, same shallow depth, same
+  satin finish against the polish around it.
+• The material: one alloy, warm yellow 14K gold, the same colour, the same
+  polish, the same warmth. No second metal, no inlay, no enamel, no patina.
+• The photograph itself: the same camera angle, the same framing, the same
+  scale within the frame, the same single soft key light from the upper left,
+  the same plain pure white seamless ground, and the same single soft contact
+  shadow beneath the piece with every opening showing through it as clean
+  white.
+
+ABSOLUTELY FORBIDDEN, whatever the request says:
+• Re-composing, re-cropping, re-lighting, rotating or re-staging the charm.
+• Redrawing the charm "in the same style" — this is an edit of THIS picture,
+  not a new picture of the same subject.
+• More than one charm in the frame. No second view, no before-and-after, no
+  split panel, no duplicate, no inset, no comparison.
+• Any label, caption, watermark, letter, number, arrow, callout or border.
+• Any chain, hand, prop, packaging, backdrop or surface other than the plain
+  white ground.
+• Any ornament, gemstone, texture or engraved line that is not already in the
+  picture and was not asked for.
+
+HOW TO APPLY THE CHANGE:
+• Make the smallest alteration that honestly satisfies the request. If a
+  request could be read as small or large, read it small.
+• Blend it into the surrounding metal so the edited region is the same
+  material under the same light — the seam must not be findable.
+• Where the request would disturb something in the preserved list above,
+  favour the request only in the region it actually concerns and leave the
+  rest alone.
+• If the request is impossible or you cannot tell what it refers to, return
+  the photograph UNCHANGED rather than guessing. An unchanged charm is a
+  recoverable outcome; a redesigned one is not.
+
+FINAL CHECK BEFORE YOU ANSWER: place your result beside the original. A person
+who was not told what was asked for should be able to spot exactly one
+difference, and it should be the one the customer requested.`;
+
+function buildGoldEditPrompt(instruction, metal) {
+  const clean = studioCleanText(instruction).slice(0, STUDIO_MAX_INSTRUCTION);
+  const parts = [STUDIO_GOLD_EDIT_PROMPT_HEAD];
+  parts.push(
+`THE ONE CHANGE THE CUSTOMER ASKED FOR — this, and nothing else:
+"${clean}"`);
+  if (metal) {
+    parts.push(`The metal is ${studioCleanText(metal)} and does not change.`);
+  }
+  parts.push(STUDIO_GOLD_EDIT_PROMPT_TAIL);
+  return parts.join("\n\n");
+}
+
+async function handleStudioGoldEdit({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const cfg = await studioConfig();
+  const cost = Number(cfg.generateCost) || 1;
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+  const renderRunId = String(body?.renderRunId || ("ge_" + Date.now()))
+    .replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
+
+  /* Ownership before anything is written, exactly as in render: a failure
+     channel into somebody else's design would be a way in. */
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+
+  const n = Number(body?.versionNumber) || Number(session.currentVersion) || 0;
+  if (!n || n < 1) return studioJson(400, { ok: false, error: "missing_version" }, origin);
+  const vRef = sRef.collection("versions").doc(String(n));
+  const vSnap = await vRef.get();
+  if (!vSnap.exists) return studioJson(409, { ok: false, error: "version_not_ready" }, origin);
+  const version = vSnap.data();
+
+  /* THE THING BEING EDITED HAS TO EXIST. The browser has its own copy of
+     this check, but a stale tab can still ask, and "no_gold_yet" is a word
+     the storefront already has a sentence for. */
+  const goldPath = String(version.renderPath || "");
+  if (!goldPath) return studioJson(409, { ok: false, error: "no_gold_yet" }, origin);
+
+  const instruction = studioCleanText(body?.instruction || "").slice(0, STUDIO_MAX_INSTRUCTION);
+  if (!instruction) return studioJson(400, { ok: false, error: "missing_instruction" }, origin);
+
+  const metal = studioCleanText(body?.metal || version.renderMetal || session.metal || "gold");
+
+  /* Prove the renderer exists before taking the money — same order as
+     handleStudioRender, for the same reason. */
+  let studioModelConfig = null;
+  try {
+    studioModelConfig = resolveImageModel(studioImageModelId(cfg));
+    apiKeyForImageModel(studioModelConfig);
+  } catch (err) {
+    console.error("[studio] gold edit model unavailable:", err?.message || err);
+    await studioFailRender(vRef, "render_unavailable", renderRunId);
+    return studioJson(503, { ok: false, error: "render_unavailable" }, origin);
+  }
+
+  if (!(await studioGateOk(uid, event))) {
+    await studioFailRender(vRef, "rate_limited", renderRunId);
+    return studioJson(429, { ok: false, error: "rate_limited" }, origin);
+  }
+
+  try {
+    await studioDebit(uid, cost, sessionId);
+  } catch (err) {
+    if (err?.status === 402) {
+      await studioFailRender(vRef, "out_of_credits", renderRunId);
+      return studioJson(402, { ok: false, error: "out_of_credits" }, origin);
+    }
+    throw err;
+  }
+
+  try {
+    /* The stage names match GOLD_EDIT_STAGES in the storefront, so the bar
+       moves through the words the customer is reading rather than jumping. */
+    await vRef.set({
+      renderStatus: "rendering", renderStage: "planning", renderRunId,
+      renderMetal: metal, renderModel: studioModelConfig.id, renderCost: cost,
+      renderError: null,
+      goldEditInstruction: instruction.slice(0, 400),
+      /* NO SCORE FIELDS ARE WRITTEN AND THE OLD ONES ARE CLEARED. The
+         adjudicator scores a charm against the greyscale map, and this
+         charm is deliberately no longer the one the map describes — the
+         customer paid for the difference. A stale verdict left on the doc
+         would be read by the studio's own read-out as a judgement of the
+         edited picture, which it is not. */
+      renderScore: null, renderScoreMode: null, renderScorePass: null,
+      renderScoreThreshold: null, renderScoreChosen: null, renderScoreCount: null,
+      renderScoreFloorFails: null, renderScoreFabricated: null, renderScoreWorst: null,
+      renderScoreGeometry: null, renderScoreCutouts: null, renderScoreEngraving: null,
+      renderScoreFidelity: null, renderScoreTone: null, renderScorePresentation: null,
+      renderScoreAttempts: null, renderScoreSuspect: null, renderScoreSuspectWhy: null,
+      renderScoreUniform: null, renderScoreCaps: null, renderScoreJudgeModel: null,
+      renderScoreReply: null, renderScoreObservations: null,
+      renderAttempts: null, renderAttempt: null,
+    }, { merge: true });
+
+    const gold = await storagePathToBuffer(goldPath);
+    if (!gold?.buffer?.length) throw new Error("gold_missing");
+
+    /* ── THE EDIT COMES BACK THE SIZE IT WENT UP ──────────────────────────
+       A render sizes itself from studioRenderTier, and that is right for a
+       render: it is making a picture that does not exist yet. An edit is
+       making the SAME picture again, so taking its size from a config value
+       is a quiet way to lose half the customer's charm — set the tier to 1K
+       after a charm was rendered at 2K and every subsequent edit silently
+       returns a quarter of the pixels, permanently, over the same file.
+
+       And it compounds. Each edit re-encodes the previous edit's output, so
+       resolution only ever ratchets DOWN; there is no pass that puts detail
+       back. So the source decides, measured from the actual bytes, and the
+       config tier is only the fallback for when it cannot be read. */
+    let editSize = studioImageSizeString(studioRenderTier(cfg));
+    let editTier = studioRenderTier(cfg);
+    try {
+      const sh = studioSharp();
+      if (sh) {
+        const meta = await sh(gold.buffer).metadata();
+        const long = Math.max(Number(meta.width) || 0, Number(meta.height) || 0);
+        if (long >= 3072)      { editSize = "4096x4096"; editTier = "4K"; }
+        else if (long >= 1536) { editSize = "2048x2048"; editTier = "2K"; }
+        else if (long > 0)     { editSize = "1024x1024"; editTier = "1K"; }
+        if (long) console.log(`[studio] gold edit source is ${meta.width}x${meta.height} — ` +
+                              `editing at ${editSize} (config tier would have been ` +
+                              `${studioRenderTier(cfg)})`);
+      }
+    } catch (e) {
+      console.error("[studio] could not measure the charm, falling back to the config tier:",
+                    e?.message || e);
+    }
+
+    await vRef.set({ renderStage: "rendering", renderRunId }, { merge: true });
+
+    const prompt = buildGoldEditPrompt(instruction, metal);
+    console.log(`[studio] gold edit v${n} "${instruction.slice(0, 60)}" ` +
+                `prompt=${prompt.length} chars model=${studioModelConfig.id}`);
+
+    /* ONE IMAGE GOES UP: the charm as it stands. Not the grey map, not the
+       topology mask, not the style reference — every one of those is an
+       instruction to build a charm from a specification, and sending them
+       alongside "change the wings" is how a surgical request turns into a
+       re-render. The picture being edited is the only authority here. */
+    let outBuf = await callImageModelEdits({
+      apiKey: apiKeyForImageModel(studioModelConfig),
+      model: studioModelConfig.id,
+      prompt,
+      size: editSize,
+      imageSizeTier: editTier,
+      quality: "high",
+      output_format: "png",
+      /* ── ONE IMAGE IN, ONE IMAGE OUT, ONE CALL ─────────────────────────
+         There is no attempt loop here and there must never be one. A render
+         may roll again because it is sampling for a specification and a
+         second sample is a fair attempt at the same brief. An edit is not
+         sampling: the customer is looking at a specific charm, and rolling
+         again does not produce a better version of that charm — it produces
+         a DIFFERENT one, with everything the second roll happened to change
+         along the way. One call, whatever comes back, and Re-render is the
+         way out if it comes back wrong. */
+      images: [{ buffer: gold.buffer, mime: gold.mime || "image/png", filename: `v${n}-charm.png` }],
+      imageRoles: null,
+      charmGeometryPolicy: null,
+      backgroundPolicy: null,
+    });
+
+    await vRef.set({ renderStage: "polishing", renderRunId }, { merge: true });
+
+    outBuf = embedPngTextMetadata(outBuf, {
+      Description: `Custom Charm Studio charm — v${n} (${metal}), edited: ${instruction.slice(0, 120)}`,
+      CharmTitle: `Custom charm v${n}`,
+    });
+
+    /* THE SAME PATH THE RENDER USES. The pair in the cart, the thumbnail in
+       My designs and the version strip all point at v{n}-charm.png, so an
+       edit that wrote somewhere else would leave every one of them showing
+       the charm as it was before the customer changed it. A fresh download
+       token is minted so caches cannot serve the old bytes. */
+    const bucket = getBucket();
+    const token = newDownloadToken();
+    await bucket.file(goldPath).save(outBuf, {
+      resumable: false,
+      contentType: "image/png",
+      metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId,
+                              version: String(n), render: "1", goldEdit: "1" } },
+    });
+    const renderURL = tokenDownloadURLFor(bucket.name, goldPath, token);
+
+    await vRef.set({
+      renderStatus: "done", renderStage: "done", renderRunId,
+      renderURL, renderPath: goldPath, renderMetal: metal,
+      renderModel: studioModelConfig.id, renderCost: cost,
+      /* THE PAIR HAS DIVERGED, AND THE STAGE SAYS SO. The drawing and the
+         greyscale map on this version still describe the charm as it was
+         BEFORE this change — deliberately, because rebuilding them is the
+         design step's job and not this one's. */
+      goldEdited: true,
+      goldEditCount: (Number(version.goldEditCount) || 0) + 1,
+      /* what it was actually edited at, so a charm that has lost resolution
+         over a chain of edits can be seen to have done so */
+      goldEditTier: editTier,
+      goldEditedAt: admin.firestore.FieldValue.serverTimestamp(),
+      renderedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return studioJson(200, { ok: true, n, renderURL, renderPath: goldPath,
+                             renderMetal: metal, renderModel: studioModelConfig.id,
+                             renderCost: cost, renderRunId,
+                             goldEdited: true }, origin);
+  } catch (err) {
+    /* A change that did not happen must never cost a credit. */
+    await studioRefund(uid, cost, sessionId);
+    await studioFailRender(vRef, String(err?.message || err), renderRunId);
+    console.error("[studio] gold edit failed:", err?.message || err);
+    return studioJson(500, { ok: false, error: "gold_edit_failed" }, origin);
   }
 }
 
@@ -6890,6 +7215,7 @@ async function handleStudioKind({ kind, body, event }) {
     }
     if (kind === "custom_charm_compose") return await handleStudioCompose({ body, event, origin });
     if (kind === "custom_charm_render") return await handleStudioRender({ body, event, origin });
+    if (kind === "custom_charm_gold_edit") return await handleStudioGoldEdit({ body, event, origin });
     /* custom_charm_prompt is gone — see STUDIO_KINDS. A tab left open from
        before the prompt lab was removed falls to unknown_kind below, which
        is the right answer: there is nothing to preview. */
