@@ -824,7 +824,7 @@ async function callOpenAIImagesEdits({
   } else if (imageRoles !== "none" &&
              (imageRoles === "line_art_style" || imageRoles === "customer_lineart" ||
               imageRoles === "lineart_to_charm" || imageRoles === "material_spec_to_charm" ||
-              imageRoles === "colour_drawing_to_charm")) {
+              imageRoles === "colour_drawing_to_charm" || imageRoles === "gold_edit_markup")) {
     const roles = IMAGE_ROLE_LABELS[imageRoles];
     promptText = (images || []).length >= 2
       ? `${promptText.trim()}\n\n${roles.first}\n\n${roles.second}\n\n${roles.lock}`
@@ -994,6 +994,25 @@ const IMAGE_ROLE_LABELS = {
       "IMAGE 1 — THE CUSTOMER'S CHOSEN REFERENCE (SUBJECT TRUTH). This is the object the customer asked to have made into a charm. Its subject, recognizable proportions and defining features are authoritative and must survive into your output. Your job is to DESIGN that charm and draw it as flat black-and-white production line art on pure white — not to reproduce the photograph and not to invent a different object.",
     lock:
       "FINAL IMAGE-ROLE LOCK: the SUBJECT comes from IMAGE 1 and the customer's written instructions, and from nowhere else. The OUTPUT is always flat B/W production line art on pure white. When IMAGE 2 is present it is the customer's current drawing: preserve it and apply only the newest direction. When a markup image is present it steers WHERE to change — its ink never appears in the output. HARD FAIL: photorealism, metal rendering, colour, shading or a black background. HARD FAIL: a refinement that redesigns parts of the drawing the customer did not ask to change. HARD FAIL: markup strokes, highlights or text bubbles reproduced in the output.",
+  },
+  /* The studio's SURGICAL GOLD EDIT with the customer's marks on it. It is
+     deliberately NOT customer_lineart with different words: that role set
+     tells the model to DESIGN, and the whole point of a gold edit is that it
+     must not. Both images here are the same photograph — IMAGE 1 is the
+     charm, IMAGE 2 is that charm with the customer's marks drawn over it —
+     which makes exactly one thing worth saying twice: the marks say WHERE,
+     and no mark ever becomes metal. A customer who circles a wing is not
+     asking for a circle engraved on the wing. */
+  gold_edit_markup: {
+    first:
+      "IMAGE 1 — THE CHARM ITSELF, AND THE ONLY THING YOU ARE EDITING. A finished photograph of a real 14K gold charm the customer already owns the design of. Every pixel of it is correct until the written request below says otherwise. Return this photograph with one alteration made to it.",
+    second:
+      "IMAGE 2 — THE SAME PHOTOGRAPH WITH THE CUSTOMER'S MARKS ON IT. DIRECTION ONLY, NEVER SUBJECT. The customer drew on top of IMAGE 1 to show you WHERE their request applies: circles, highlights and arrows point at the region to change, and any text is their note about that region. It is a pointing finger, not a design. Do NOT edit IMAGE 2, do not return it, and do not treat any difference between it and IMAGE 1 as a change to make — the only difference is their ink.",
+    extra: (n) => `IMAGE ${n} — ADDITIONAL CUSTOMER MARKING OF THE SAME CHARM. Direction only, on the same terms as IMAGE 2.`,
+    single:
+      "IMAGE 1 — THE CHARM ITSELF, AND THE ONLY THING YOU ARE EDITING. A finished photograph of a real 14K gold charm. Every pixel of it is correct until the written request below says otherwise. Return this photograph with one alteration made to it.",
+    lock:
+      "FINAL IMAGE-ROLE LOCK: the OUTPUT is IMAGE 1, edited in place, as a photograph of the same charm on the same white ground under the same light. The marks in IMAGE 2 locate the customer's request and carry no other meaning: no stroke, highlight, circle, arrow, outline, colour or letter from IMAGE 2 may appear in your output as ink, as engraving, as a cut-out, as a raised line or as anything else. HARD FAIL: a mark reproduced on the metal. HARD FAIL: a charm rebuilt, restyled or re-staged rather than edited. HARD FAIL: any part of the charm the marks do not touch and the request does not name coming back different.",
   },
   // The studio's RENDER step: the approved drawing becomes the charm. This is
   // the Charm Maker's gold→line-art conversion run in REVERSE, so the drawing
@@ -6902,6 +6921,84 @@ only, both are suspended. Everything else they protect — the silhouette, the
 hoop, every opening, every engraved area, the alloy, the light, the white
 ground and the single contact shadow — is preserved exactly as written.`;
 
+/* ── THE CUSTOMER POINTING AT THEIR OWN CHARM ─────────────────────────────
+   A charm adopted from our catalogue has no production drawing, so marks made
+   on it cannot send the arrow back to a design step — there is no drawing to
+   redraw. The studio therefore keeps them on the gold edit, and this is the
+   half of that which the model sees.
+
+   IT IS A LOCATOR, NOT A BRIEF, and every line here exists to keep it one.
+   The design step's markup contract is a rich grammar — a ring means a
+   cut-out, a pen line means engrave this — because there the customer IS
+   designing. Here they are not: they have a finished charm and a sentence,
+   and the marks answer only "where". Importing that grammar would hand a
+   surgical edit a licence to re-cut the piece, which is precisely what the
+   customer asked this path never to do.
+
+   The notes still travel with their anchors, because "make this bigger" is
+   not an instruction until you know what `this` is. */
+function buildGoldEditMarkupBlock(markupNotes, markupMode) {
+  const notes = (Array.isArray(markupNotes) ? markupNotes : [])
+    .map((nRaw) => {
+      const o = nRaw && typeof nRaw === "object" ? nRaw : { text: nRaw };
+      const t = studioCleanText(o.text);
+      if (!t) return null;
+      const x = Number(o.x), y = Number(o.y);
+      const where = Number.isFinite(x) && Number.isFinite(y) ? markupRegion(x, y) : null;
+      return { text: t, where, lettering: o.kind === "lettering" };
+    })
+    .filter(Boolean).slice(0, 12);
+  const plain = notes.filter((nn) => !nn.lettering);
+  const letters = notes.filter((nn) => nn.lettering);
+  const exact = String(markupMode || "") === "exact";
+
+  const lines = [
+`THE CUSTOMER HAS MARKED THE CHARM TO SHOW YOU WHERE.
+
+A second image is supplied: it is the SAME photograph of this charm with the
+customer's own marks drawn on top of it. Read it for ONE thing only — the
+place on the charm their request refers to.
+
+• The marks are a pointing finger. A circle, a highlight, a scribble or an
+  arrow means "the part of the charm underneath or ahead of this", and
+  nothing more. A circle drawn around the hoop is not a request for a circle.
+• NO MARK EVER BECOMES METAL. Not as ink, not as an engraved line, not as a
+  cut-out, not as a raised edge, not as a change of finish. The output must
+  look as though the marks were never made — because the customer's finger
+  was never part of the jewellery.
+• The marks do NOT enlarge the request. They say where the sentence below
+  applies; the sentence still says what to do, and it is still the only
+  change being made. If the marks appear to ask for more than the sentence
+  does, follow the sentence.
+• If a mark and the sentence disagree about WHERE, the mark wins — it is the
+  more precise of the two, which is why the customer drew it.`,
+  ];
+  if (exact) {
+    lines.push(
+`The customer set their marks to EXACT, which here means only that they have
+placed them carefully: read the boundary of each mark as the true extent of
+the region they mean, rather than as a rough gesture near it. It does not
+mean reproduce the marks, and it does not licence a change the sentence
+below did not ask for.`);
+  }
+  if (plain.length) {
+    lines.push(
+`THEIR NOTES, EACH PINNED TO THE PART OF THE CHARM IT IS ABOUT:
+${plain.map((nn, i) => `${i + 1}. ${nn.where ? `(pinned at ${nn.where} of the charm) ` : ""}"${nn.text}"`).join("\n")}
+
+These are instructions ABOUT the charm. Not one word of them is to be
+engraved, printed or otherwise written onto the metal.`);
+  }
+  if (letters.length) {
+    lines.push(
+`TEXT THE CUSTOMER PLACED ON THE CHARM — this, unlike their notes, IS to be
+engraved, at the position shown, in the same shallow satin engraving as the
+rest of the piece:
+${letters.map((nn) => `• "${nn.text}"${nn.where ? ` — at ${nn.where} of the charm` : ""}`).join("\n")}`);
+  }
+  return lines.join("\n\n");
+}
+
 function buildGoldEditPrompt(instruction, metal, opts) {
   const clean = studioCleanText(instruction).slice(0, STUDIO_MAX_INSTRUCTION);
   const parts = [STUDIO_GOLD_EDIT_PROMPT_HEAD];
@@ -6910,6 +7007,12 @@ function buildGoldEditPrompt(instruction, metal, opts) {
   parts.push(
 `THE ONE CHANGE THE CUSTOMER ASKED FOR — this, and nothing else:
 "${clean}"`);
+  /* AFTER the request and BEFORE the preservation rules: it qualifies the
+     sentence above by locating it, and it is itself outranked by the list
+     of what must survive — a mark can move the edit, never widen it. */
+  if (opts && opts.markupMode !== undefined && opts.markupMode !== null) {
+    parts.push(buildGoldEditMarkupBlock(opts.markupNotes, opts.markupMode));
+  }
   if (metal) {
     parts.push(`The metal is ${studioCleanText(metal)} and does not change.`);
   }
@@ -7048,16 +7151,55 @@ async function handleStudioGoldEdit({ body, event, origin }) {
        the first time one succeeds, so the clause is sent exactly while it is
        needed and not on every edit thereafter. */
     const stripCaption = version.source === "catalog" && !version.captionStripped;
-    const prompt = buildGoldEditPrompt(instruction, metal, { stripCaption });
+
+    /* THE CHARM IS ALWAYS FIRST AND ALWAYS ALONE UNLESS THE CUSTOMER DREW.
+       Nothing else may ever join it — see the note at the call below. */
+    const editImages = [{ buffer: gold.buffer, mime: gold.mime || "image/png",
+                          filename: `v${n}-charm.png` }];
+
+    /* ── THE MARKS, IF THE CUSTOMER MADE ANY ──────────────────────────────
+       Accepted on exactly the terms the design step accepts them on: a data
+       URL of a known type, decoded, size-capped, and MODE IS SET ONLY IF THE
+       IMAGE ITSELF WAS ACCEPTED. That last part is the whole guard — notes
+       describing an image that never arrived would tell the model to read a
+       second picture that is not there, and a model told to look at a
+       missing image invents one. If anything about the payload is wrong the
+       edit proceeds as the plain sentence it has always been. */
+    let markupNotes = null;
+    let markupMode = null;
+    if (typeof body?.markupImage === "string") {
+      const mm = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(body.markupImage.trim());
+      if (mm) {
+        const mbuf = Buffer.from(mm[2], "base64");
+        if (mbuf.length > 0 && mbuf.length <= 1.5 * 1024 * 1024) {
+          editImages.push({ buffer: mbuf, mime: "image/" + mm[1],
+                            filename: "markup." + (mm[1] === "png" ? "png" : "jpg") });
+          markupNotes = Array.isArray(body.markupNotes) ? body.markupNotes : [];
+          markupMode = String(body.markupMode) === "exact" ? "exact" : "interpret";
+        }
+      }
+    }
+
+    const prompt = buildGoldEditPrompt(instruction, metal,
+                                       { stripCaption, markupNotes, markupMode });
     console.log(`[studio] gold edit v${n} "${instruction.slice(0, 60)}" ` +
                 `prompt=${prompt.length} chars model=${studioModelConfig.id}` +
-                (stripCaption ? " (+ caption removal)" : ""));
+                (stripCaption ? " (+ caption removal)" : "") +
+                (markupMode ? ` (+ marks, ${markupMode}, ` +
+                              `${(markupNotes || []).length} note(s))` : ""));
 
-    /* ONE IMAGE GOES UP: the charm as it stands. Not the grey map, not the
-       topology mask, not the style reference — every one of those is an
-       instruction to build a charm from a specification, and sending them
-       alongside "change the wings" is how a surgical request turns into a
-       re-render. The picture being edited is the only authority here. */
+    /* ONE PICTURE OF THE CHARM GOES UP: the charm as it stands. Not the grey
+       map, not the topology mask, not the style reference — every one of
+       those is an instruction to build a charm from a specification, and
+       sending them alongside "change the wings" is how a surgical request
+       turns into a re-render. The picture being edited is the only authority
+       here, AND THE GREYSCALE MAP IN PARTICULAR IS NEVER SENT.
+
+       The only thing that may ever accompany it is the customer's own marks
+       ON that same picture, which are not a second charm and not a
+       specification — they are where the customer pointed. gold_edit_markup
+       says so in the labels the model reads, and the block in the prompt
+       says it again in words. */
     let outBuf = await callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
       model: studioModelConfig.id,
@@ -7075,8 +7217,12 @@ async function handleStudioGoldEdit({ body, event, origin }) {
          a DIFFERENT one, with everything the second roll happened to change
          along the way. One call, whatever comes back, and Re-render is the
          way out if it comes back wrong. */
-      images: [{ buffer: gold.buffer, mime: gold.mime || "image/png", filename: `v${n}-charm.png` }],
-      imageRoles: null,
+      images: editImages,
+      /* null means "fall back to the `edit` labels", which crown a second
+         image DESIGN TRUTH — exactly wrong for a sheet of arrows. With marks
+         present the role set has to say what they are; without them the old
+         behaviour is kept byte for byte. */
+      imageRoles: markupMode ? "gold_edit_markup" : null,
       charmGeometryPolicy: null,
       backgroundPolicy: null,
     });
@@ -7116,6 +7262,9 @@ async function handleStudioGoldEdit({ body, event, origin }) {
       /* what it was actually edited at, so a charm that has lost resolution
          over a chain of edits can be seen to have done so */
       goldEditTier: editTier,
+      /* whether this change was pointed at as well as described — a charm
+         that came back wrong is a different investigation depending */
+      goldEditMarked: !!markupMode,
       captionStripped: version.captionStripped || stripCaption,
       goldEditedAt: admin.firestore.FieldValue.serverTimestamp(),
       renderedAt: admin.firestore.FieldValue.serverTimestamp(),

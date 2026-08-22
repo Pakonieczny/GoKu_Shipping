@@ -186,6 +186,22 @@ exports.handler = async (event) => {
     }
     if (!fetchFn) return json(500, { ok: false, error: "no_fetch" }, origin);
 
+    /* ── A BACKGROUND INVOCATION IS CAPPED AT 256 KB ──────────────────────
+       A refine, and now a gold edit, both carry the customer's marked-up
+       sheet as a base64 composite — so the note further up, that compose is
+       the only request here that carries an image, has not been true for some
+       time. The studio walks that composite down through sizes and qualities
+       until it fits well inside this ceiling, which is why it has never been
+       reached. But the failure if it ever is would be the worst kind there
+       is: Netlify refuses the invocation, the browser is still told 202, and
+       the customer watches a progress bar for a charm nobody is making.
+       Named and refused here, the studio can say so instead. */
+    const qbytes = Buffer.byteLength(event.body || "", "utf8");
+    if (qbytes > 250 * 1024) {
+      console.error("[kick]", kind, "too large for a background invocation:", qbytes, "bytes");
+      return json(413, { ok: false, error: "request_too_large", bytes: qbytes }, origin);
+    }
+
     let upstream;
     try {
       upstream = await fetchFn(siteBase() + "/.netlify/functions/geminiImageProxy-background", {
