@@ -6864,9 +6864,49 @@ FINAL CHECK BEFORE YOU ANSWER: place your result beside the original. A person
 who was not told what was asked for should be able to spot exactly one
 difference, and it should be the one the customer requested.`;
 
-function buildGoldEditPrompt(instruction, metal) {
+/* ── THE CAPTION ON ONE OF OUR OWN PHOTOGRAPHS ────────────────────────────
+   Every catalogue product image carries "Charm Only" in handwritten script
+   above the piece. It is a listing caption, not jewellery, and it must not
+   survive into a charm the customer is buying.
+
+   IT IS REMOVED HERE RATHER THAN CROPPED OFF EARLIER. Cropping worked — the
+   caption is achromatic and the charm is not, so it separates cleanly — but
+   it throws pixels away before the customer has asked for anything, and the
+   model is about to redraw this piece regardless. One clause in a prompt
+   that is already editing the charm costs nothing extra.
+
+   IT IS ALSO THE ONE THING THAT OVERRIDES THE PRESERVATION RULES BELOW,
+   which is why it is stated as an exception rather than added to the list:
+   those rules demand the same framing and the same scale in the frame, and
+   removing a caption from above the charm means the charm no longer sits
+   where it did. Both are suspended, for this one purpose, and nothing else
+   about the piece may move with them. */
+const STUDIO_GOLD_EDIT_CAPTION =
+`BEFORE ANYTHING ELSE — REMOVE THE CAPTION. The supplied photograph is a
+catalogue listing image and carries handwritten text reading "Charm Only"
+above the charm. That text is a caption on a web page. It is not part of the
+jewellery, it is not engraved on anything, and it must NOT appear anywhere in
+your output.
+
+• Delete it completely. Leave clean, seamless, pure white in its place — no
+  ghost, no smudge, no faint remnant, no blurred patch where it was.
+• Reproduce NO text of any kind: not this caption, not a replacement, not a
+  watermark, not a signature, not lettering engraved onto the charm.
+• With the caption gone, CENTRE THE CHARM in the square frame at a size that
+  fills it comfortably, with even white margin on all four sides.
+
+THIS PARAGRAPH IS THE ONE EXCEPTION to the preservation rules further down.
+Those rules require the same framing and the same scale within the frame;
+removing text from above the charm makes both impossible, so for this purpose
+only, both are suspended. Everything else they protect — the silhouette, the
+hoop, every opening, every engraved area, the alloy, the light, the white
+ground and the single contact shadow — is preserved exactly as written.`;
+
+function buildGoldEditPrompt(instruction, metal, opts) {
   const clean = studioCleanText(instruction).slice(0, STUDIO_MAX_INSTRUCTION);
   const parts = [STUDIO_GOLD_EDIT_PROMPT_HEAD];
+  /* First, so it is read before the preservation rules it overrides. */
+  if (opts && opts.stripCaption) parts.push(STUDIO_GOLD_EDIT_CAPTION);
   parts.push(
 `THE ONE CHANGE THE CUSTOMER ASKED FOR — this, and nothing else:
 "${clean}"`);
@@ -7003,9 +7043,15 @@ async function handleStudioGoldEdit({ body, event, origin }) {
 
     await vRef.set({ renderStage: "rendering", renderRunId }, { merge: true });
 
-    const prompt = buildGoldEditPrompt(instruction, metal);
+    /* A charm adopted from the catalogue still carries its listing caption
+       until an edit has taken it off. captionStripped is set on the version
+       the first time one succeeds, so the clause is sent exactly while it is
+       needed and not on every edit thereafter. */
+    const stripCaption = version.source === "catalog" && !version.captionStripped;
+    const prompt = buildGoldEditPrompt(instruction, metal, { stripCaption });
     console.log(`[studio] gold edit v${n} "${instruction.slice(0, 60)}" ` +
-                `prompt=${prompt.length} chars model=${studioModelConfig.id}`);
+                `prompt=${prompt.length} chars model=${studioModelConfig.id}` +
+                (stripCaption ? " (+ caption removal)" : ""));
 
     /* ONE IMAGE GOES UP: the charm as it stands. Not the grey map, not the
        topology mask, not the style reference — every one of those is an
@@ -7070,6 +7116,7 @@ async function handleStudioGoldEdit({ body, event, origin }) {
       /* what it was actually edited at, so a charm that has lost resolution
          over a chain of edits can be seen to have done so */
       goldEditTier: editTier,
+      captionStripped: version.captionStripped || stripCaption,
       goldEditedAt: admin.firestore.FieldValue.serverTimestamp(),
       renderedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
@@ -7208,7 +7255,8 @@ HARD CONSTRAINTS (NON-NEGOTIABLE):
     HARD FAIL: any enclosed area inked black when the FIRST image shows polished, un-engraved metal inside it.
 • OUTLINE: Ensure the Charm's outer perimeter black outline is only 2px thick.
 • BACKGROUND: Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
-• NO 3D/SHADING: Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
+• NO 3D/SHADING: Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.
+• NO TEXT, EVER: if the FIRST image contains any writing — a caption, a watermark, a signature, a listing label — it is not part of the charm. Do not draw it, do not outline it, do not ink it as an engraving. Draw the charm and nothing else.`;
 
 /* ── the morphology the combine needs ─────────────────────────────────────
    Small, explicit and separable rather than a dependency: each is a couple
@@ -7639,12 +7687,28 @@ const STUDIO_ADOPT_HOSTS = [
 ];
 const STUDIO_ADOPT_MAX_BYTES = 12 * 1024 * 1024;
 
+/* The storefront normalises this before sending it, and this resolves the
+   same three shapes again anyway — a path, a protocol-relative URL and an
+   absolute one — because the browser is not the only thing that can call
+   this and a fixable input should not be a refusal.
+
+   AND THE REFUSAL NAMES WHAT IT SAW. The first version answered a bare
+   "bad_image_url", which is true of a relative path, an http URL, a data
+   URL and a typo alike; the log said the adopt failed and nothing else, and
+   the actual cause — predictive search returning "/cdn/shop/..." rather
+   than a URL — took a code read to find. Every branch below says which
+   thing was wrong now. */
 async function studioFetchCatalogImage(rawUrl) {
+  let raw = String(rawUrl || "").trim();
+  if (!raw) throw new Error("image_url_empty");
+  if (raw.startsWith("//")) raw = "https:" + raw;
   let u;
-  try { u = new URL(String(rawUrl || "")); }
-  catch (e) { throw new Error("bad_image_url"); }
-  if (u.protocol !== "https:") throw new Error("bad_image_url");
-  if (!STUDIO_ADOPT_HOSTS.includes(u.hostname)) throw new Error("image_host_not_allowed");
+  try { u = new URL(raw, "https://britesjewelry.com"); }
+  catch (e) { throw new Error("image_url_unparsable"); }
+  if (u.protocol !== "https:") throw new Error("image_url_not_https_" + u.protocol.replace(":", ""));
+  if (!STUDIO_ADOPT_HOSTS.includes(u.hostname)) {
+    throw new Error("image_host_not_allowed_" + u.hostname);
+  }
   const resp = await fetch(u.toString(), { redirect: "follow" });
   if (!resp.ok) throw new Error("image_fetch_" + resp.status);
   const type = String(resp.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
@@ -7695,9 +7759,17 @@ async function handleStudioAdopt({ body, event, origin }) {
     if (!sharpMod) throw new Error("sharp_unavailable");
     const cfg = await studioConfig();
     const S = studioTierPx(studioRenderTier(cfg));
+    /* ── THE PHOTOGRAPH IS KEPT WHOLE ─────────────────────────────────────
+       An earlier version cropped the "Charm Only" caption off here, finding
+       the charm by chroma and squaring around it. It worked, and it is the
+       wrong place to do it: cropping throws away pixels before the customer
+       has asked for anything, and the model is about to redraw this charm
+       anyway. So the caption is removed as part of the FIRST gold edit,
+       where it is one clause in a prompt that is already redrawing the
+       piece — see buildGoldEditPrompt. Nothing is discarded here. */
     outBuf = await sharpMod(img.buffer)
       .flatten({ background: "#ffffff" })
-      .resize(S, S, { fit: "contain", background: "#ffffff" })
+      .resize(S, S, { fit: "contain", background: "#ffffff", kernel: "lanczos3" })
       .png().toBuffer();
   } catch (err) {
     console.error("[studio] catalogue image could not be normalised:", err?.message || err);
