@@ -2338,6 +2338,14 @@ const STUDIO_KINDS = new Set([
      never going to be written, and gave up at three minutes. That is the
      "the arrow just sits there" fault exactly. */
   "custom_charm_gold_edit",
+  /* Fired on APPROVE, not on design: derives the greyscale map backwards
+     from the approved gold charm, for the versions that never had a
+     drawing to derive it forwards from. Costs no credit and nobody waits
+     on it — see handleStudioSpecFromGold. */
+  "custom_charm_spec_from_gold",
+  /* "From our designs": the catalogue photograph becomes version 1's gold
+     directly. No model, no credit — see handleStudioAdopt. */
+  "custom_charm_adopt",
   /* custom_charm_prompt — read-only, returned the exact prompt a render
      would send — is REMOVED. It existed to feed the studio's prompt lab,
      which is gone; the render prompt is fixed and nothing needs to ask what
@@ -7079,6 +7087,661 @@ async function handleStudioGoldEdit({ body, event, origin }) {
   }
 }
 
+/* ═══════════ THE GREYSCALE MAP, DERIVED BACKWARDS FROM THE GOLD ══════════
+   Every other version in this studio gets its greyscale map for free: the
+   production drawing exists first, and studioMaterialSpec resolves it into
+   the three tones deterministically. A charm chosen from the catalogue has
+   no drawing. It is a photograph, and the map has to be recovered from it.
+
+   HALF OF THAT IS FREE AND HALF OF IT IS NOT, and it is worth writing down
+   which is which, because it decides the whole shape of this.
+
+   Measured on a real charm photograph:
+     · METAL vs GROUND separates at a Fisher ratio of 3.89, with 0.75% of
+       pixels ambiguous. Gold is chromatic; the white ground and its grey
+       contact shadow are not. The silhouette and every hole fall straight
+       out of the saturation channel, exactly, for nothing.
+     · ENGRAVED vs POLISHED does not separate at all. Luminance, local
+       contrast, texture, high-pass and gradient were all tried; the best
+       scored 0.037 where ~0.15 is the floor for two distinguishable
+       clusters. Polished gold's specular variation is louder than the
+       engraving is. No code gets this out of a photograph.
+
+   So the engraving comes from a LINE DRAWING instead — the Charm Maker's
+   gold-to-line-art conversion, whose prompt classifies every engraving
+   before inking it and whose output is unambiguous: black is engraved
+   metal, white is polished. That drawing has its own blind spot, and it is
+   the mirror image of the photograph's: a hole and a polished area enclosed
+   by an outlined engraving are BOTH white, and nothing in the drawing tells
+   them apart.
+
+   Neither source can produce this map alone. Together they are complete:
+
+       photograph ──chroma──→ silhouette + every hole      (exact)
+       drawing    ──ink─────→ engraved vs polished         (one model call)
+       both       ──code────→ 255 / 176 / 96
+
+   Validated against an authored ground truth at 99.42% pixel agreement,
+   with holes kept open 99.82% of the time and the polished interior of an
+   outlined engraving kept polished 97.87% of the time. That number measures
+   the ARITHMETIC, not the model: given a correct drawing the map is
+   correct, and a drawing that misses an engraving produces a map that
+   misses it too.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* The Charm Maker's own line-art style sample, in the same bucket. It is a
+   STYLE reference only — the prompt below forbids its subject appearing —
+   and the newest file in the folder wins, so replacing the sample is a
+   drag-and-drop rather than a deploy. `listing-generator-1/Charm_Maker/` is
+   already on storagePathToBuffer's allowlist. */
+function asMsServer(v) {
+  if (!v) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v.toMillis === "function") { try { return v.toMillis(); } catch (e) { return 0; } }
+  if (typeof v.seconds === "number") return v.seconds * 1000;
+  if (typeof v.toDate === "function") { try { return v.toDate().getTime(); } catch (e) { return 0; } }
+  return 0;
+}
+
+const STUDIO_LINEART_REF_PREFIX = "listing-generator-1/Charm_Maker/Reference_Line_Art_Image/";
+let _lineArtRef = null, _lineArtRefAt = 0;
+
+async function ensureStudioLineArtReference() {
+  if (_lineArtRef && Date.now() - _lineArtRefAt < 600000) return _lineArtRef;
+  try {
+    const bucket = getBucket();
+    const [files] = await bucket.getFiles({ prefix: STUDIO_LINEART_REF_PREFIX, maxResults: 50 });
+    const usable = (files || []).filter((f) => /\.(png|jpe?g|webp)$/i.test(f.name || ""));
+    if (!usable.length) {
+      console.warn("[studio] no line-art style sample in " + STUDIO_LINEART_REF_PREFIX +
+                   " — the drawing will be made from the written rules alone");
+      _lineArtRef = null; _lineArtRefAt = Date.now();
+      return null;
+    }
+    usable.sort((a, b) => {
+      const ta = Date.parse(a.metadata?.updated || a.metadata?.timeCreated || 0) || 0;
+      const tb = Date.parse(b.metadata?.updated || b.metadata?.timeCreated || 0) || 0;
+      return tb - ta;
+    });
+    const pick = usable[0];
+    const got = await storagePathToBuffer(pick.name);
+    _lineArtRef = {
+      buffer: Buffer.from(got.buffer || Buffer.alloc(0)),
+      mime: String(got.mime || "image/png"),
+      filename: pick.name.split("/").pop() || "line-art-style.png",
+      storagePath: pick.name,
+    };
+    _lineArtRefAt = Date.now();
+    console.log("[studio] line-art style sample: " + pick.name);
+    return _lineArtRef;
+  } catch (e) {
+    console.error("[studio] line-art style sample unavailable:", e?.message || e);
+    _lineArtRef = null; _lineArtRefAt = Date.now();
+    return null;
+  }
+}
+
+/* Ported verbatim in substance from the Charm Maker's promptStrBW, which is
+   the version that has been producing these drawings reliably. The engraving
+   fill rule is the whole value of it and is reproduced rule for rule: black
+   maps 1:1 to engraved metal, an outlined engraving keeps a white interior,
+   solid black is reserved for areas recessed all the way across, and holes
+   stay white. Changing any of that changes what the map means. */
+const STUDIO_LINEART_PROMPT =
+`CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a specific Black & White line art style.
+
+The SECOND image is strictly a STYLE REFERENCE. You must NEVER copy, merge, or include the subject matter or object shown in the second image.
+
+TASK: Generate a black and white outline image based STRICTLY on the object shown in the FIRST image. The final image must be the EXACT SAME object as the FIRST image.
+
+HARD CONSTRAINTS (NON-NEGOTIABLE):
+• 100% STRUCTURAL MATCH: Keep all outer perimeters, overall shape, and proportions 100% identical to the FIRST image. Do not move, rescale, re-centre or re-crop the object — it must sit in the same place in the frame, at the same size, so the drawing can be laid directly over the photograph.
+• IGNORE SECOND IMAGE SUBJECT: Do NOT add or draw the object from the SECOND image. Use the second image ONLY to understand the B&W aesthetic.
+• ENGRAVING FILL RULE (CRITICAL — BLACK MAPS 1:1 TO ENGRAVED METAL, WHITE TO POLISHED METAL):
+    Black ink in your output represents ONLY metal that is actually engraved (recessed/etched) in the FIRST image. Polished, un-engraved metal is ALWAYS white. Before inking any engraving, classify it:
+    1. STROKE ENGRAVING (the most common case): the engraving is a LINE — straight, curved, or forming the OUTLINE of a shape such as a cloud, heart, wing, leaf or star. Render it as ONE solid black stroke of matching weight following the exact same path: razor-thin scratch → thin line; wide groove → proportionally thicker line. NEVER draw "double lines" (two thin parallel outlines) around a wide stroke — one solid stroke of equivalent width.
+    2. INTERIOR STAYS WHITE: when a stroke engraving forms a CLOSED OUTLINE, the area it encloses is still polished metal in the FIRST image — so it stays pure WHITE inside your outline. Draw the outlined cloud as an outlined cloud, never as a solid black cloud. The engraving's darkness or the stroke's width NEVER justifies filling the enclosed shape.
+    3. SOLID-REGION ENGRAVING (rare): fill an area with solid black ONLY when the ENTIRE area is engraved in the FIRST image — every part of its interior surface is visibly etched/recessed/darkened, not just its border (e.g. a fully etched snake body or a solid darkened wing vein). If the interior surface matches the surrounding polished face, it is NOT a solid-region engraving — see rule 2.
+    4. THE FINGERTIP TEST: for every candidate area ask — would a fingertip feel the interior as recessed engraving, or as the same smooth polished surface as the rest of the charm? Smooth interior → white with a black outline stroke. Recessed everywhere → solid black.
+    5. CUTOUTS/HOLES: physical holes cut entirely through the metal must remain pure white inside.
+    HARD FAIL: an engraving that is only an outline in the FIRST image (e.g. an outlined cloud, heart or star) rendered as a filled solid black shape.
+    HARD FAIL: any enclosed area inked black when the FIRST image shows polished, un-engraved metal inside it.
+• OUTLINE: Ensure the Charm's outer perimeter black outline is only 2px thick.
+• BACKGROUND: Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
+• NO 3D/SHADING: Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
+
+/* ── the morphology the combine needs ─────────────────────────────────────
+   Small, explicit and separable rather than a dependency: each is a couple
+   of passes over a bit-per-pixel Uint8Array, which is faster than anything
+   general-purpose would be at these sizes and leaves nothing to interpret. */
+function mmErode(src, w, h, r) {
+  if (!r) return src;
+  const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let keep = 1;
+    for (let dx = -r; dx <= r && keep; dx++) {
+      const nx = x + dx;
+      if (nx < 0 || nx >= w || !src[y * w + nx]) keep = 0;
+    }
+    tmp[y * w + x] = keep;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let keep = 1;
+    for (let dy = -r; dy <= r && keep; dy++) {
+      const ny = y + dy;
+      if (ny < 0 || ny >= h || !tmp[ny * w + x]) keep = 0;
+    }
+    out[y * w + x] = keep;
+  }
+  return out;
+}
+function mmDilate(src, w, h, r) {
+  if (!r) return src;
+  const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let hit = 0;
+    for (let dx = -r; dx <= r && !hit; dx++) {
+      const nx = x + dx;
+      if (nx >= 0 && nx < w && src[y * w + nx]) hit = 1;
+    }
+    tmp[y * w + x] = hit;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let hit = 0;
+    for (let dy = -r; dy <= r && !hit; dy++) {
+      const ny = y + dy;
+      if (ny >= 0 && ny < h && tmp[ny * w + x]) hit = 1;
+    }
+    out[y * w + x] = hit;
+  }
+  return out;
+}
+const mmOpen  = (s, w, h, r) => mmDilate(mmErode(s, w, h, r), w, h, r);
+const mmClose = (s, w, h, r) => mmErode(mmDilate(s, w, h, r), w, h, r);
+
+/* Everything NOT reachable from the border is enclosed. Iterative scanline
+   flood rather than a recursive one: a 2048² charm would blow the stack. */
+function mmFillHoles(src, w, h) {
+  const n = w * h;
+  const outside = new Uint8Array(n);
+  const stack = new Int32Array(n);
+  let sp = 0;
+  const push = (i) => { if (!src[i] && !outside[i]) { outside[i] = 1; stack[sp++] = i; } };
+  for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  while (sp > 0) {
+    const i = stack[--sp], x = i % w, y = (i - x) / w;
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (y > 0) push(i - w);
+    if (y < h - 1) push(i + w);
+  }
+  const filled = new Uint8Array(n);
+  for (let i = 0; i < n; i++) filled[i] = src[i] || !outside[i] ? 1 : 0;
+  return { filled, outside };
+}
+function mmBBox(src, w, h) {
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (src[y * w + x]) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  return x1 < 0 ? null : { x0, y0, x1, y1, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+const STUDIO_SPEC_SAT_MIN = 0.16;     /* metal is chromatic; ground and shadow are not */
+const STUDIO_SPEC_INK_MAX = 128;      /* the drawing is pure black on pure white */
+const STUDIO_SPEC_EDGE_R = 4;         /* the perimeter stroke is not an engraving */
+const STUDIO_SPEC_MIN_IOU = 0.86;     /* below this the drawing does not describe this charm */
+
+/**
+ * gold photograph + line drawing → the three-tone map.
+ * Pure arithmetic. No model, no network, same inputs → same bytes.
+ */
+async function studioSpecFromGold(sharp, goldBuf, lineBuf, size) {
+  const S = Math.max(512, Math.min(4096, Number(size) || 2048));
+  const HOLE = 255, POLISH = STUDIO_MASK_POLISHED[0], ENGRAVE = STUDIO_MASK_ENGRAVED[0];
+  const n = S * S;
+
+  /* ── the photograph: what is metal, and what is a hole ────────────────── */
+  const g = await sharp(goldBuf).resize(S, S, { fit: "fill" })
+    .flatten({ background: "#ffffff" }).removeAlpha().raw()
+    .toBuffer({ resolveWithObject: true });
+  const gd = g.data, gch = g.info.channels;
+  let metal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = i * gch, r = gd[p], gg = gd[p + 1], b = gd[p + 2];
+    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+    metal[i] = mx > 0 && (mx - mn) / mx > STUDIO_SPEC_SAT_MIN ? 1 : 0;
+  }
+  metal = mmClose(mmOpen(metal, S, S, 1), S, S, 1);
+  const { filled: body } = mmFillHoles(metal, S, S);
+  let facePx = 0, holePx = 0;
+  for (let i = 0; i < n; i++) { if (metal[i]) facePx++; else if (body[i]) holePx++; }
+  if (facePx < n * 0.01) throw new Error("no_charm_found");
+
+  /* ── the drawing: what is ink ─────────────────────────────────────────── */
+  const l = await sharp(lineBuf).resize(S, S, { fit: "fill" })
+    .flatten({ background: "#ffffff" }).greyscale().removeAlpha().raw()
+    .toBuffer({ resolveWithObject: true });
+  const ld = l.data, lch = l.info.channels;
+  let ink = new Uint8Array(n);
+  for (let i = 0; i < n; i++) ink[i] = ld[i * lch] < STUDIO_SPEC_INK_MAX ? 1 : 0;
+
+  /* ── put the drawing over the photograph ──────────────────────────────
+     The prompt asks for the object in the same place at the same size, and
+     mostly gets it, but "mostly" is not registration. Both silhouettes are
+     known, so the drawing is scaled and shifted onto the photograph's
+     bounding box before a single pixel is read from it — and if the two
+     still do not agree afterwards, the drawing is not of this charm and
+     nothing is derived from it. */
+  const inkBody = mmFillHoles(mmClose(ink, S, S, 1), S, S).filled;
+  const ba = mmBBox(body, S, S), bb = mmBBox(inkBody, S, S);
+  if (!ba || !bb) throw new Error("no_charm_found");
+  if (bb.w !== ba.w || bb.h !== ba.h || bb.x0 !== ba.x0 || bb.y0 !== ba.y0) {
+    const sx = bb.w / ba.w, sy = bb.h / ba.h;
+    const moved = new Uint8Array(n);
+    for (let y = 0; y < S; y++) {
+      const syy = Math.round(bb.y0 + (y - ba.y0) * sy);
+      if (syy < 0 || syy >= S) continue;
+      for (let x = 0; x < S; x++) {
+        const sxx = Math.round(bb.x0 + (x - ba.x0) * sx);
+        if (sxx < 0 || sxx >= S) continue;
+        moved[y * S + x] = ink[syy * S + sxx];
+      }
+    }
+    ink = moved;
+  }
+  const alignedBody = mmFillHoles(mmClose(ink, S, S, 1), S, S).filled;
+  let inter = 0, uni = 0;
+  for (let i = 0; i < n; i++) {
+    const a = body[i], b2 = alignedBody[i];
+    if (a && b2) inter++;
+    if (a || b2) uni++;
+  }
+  const iou = uni ? inter / uni : 0;
+
+  /* ── the combine ──────────────────────────────────────────────────────
+     The perimeter stroke and every hole outline are ink, and neither is an
+     engraving — inked straight in, the charm grows a black rim around
+     itself and around each of its openings. So ink is only read well inside
+     the metal, and the stroke width the erosion cost is given back after. */
+  const inner = mmErode(metal, S, S, STUDIO_SPEC_EDGE_R);
+  let engraved = new Uint8Array(n);
+  for (let i = 0; i < n; i++) engraved[i] = metal[i] && ink[i] && inner[i] ? 1 : 0;
+  engraved = mmOpen(engraved, S, S, 1);
+  engraved = mmDilate(engraved, S, S, 1);
+  let workPx = 0;
+  const out = Buffer.alloc(n * 3, HOLE);
+  for (let i = 0; i < n; i++) {
+    if (!metal[i]) continue;                      /* ground and holes: 255 */
+    const v = engraved[i] && metal[i] ? ENGRAVE : POLISH;
+    if (v === ENGRAVE) workPx++;
+    out[i * 3] = out[i * 3 + 1] = out[i * 3 + 2] = v;
+  }
+  const buf = await sharp(out, { raw: { width: S, height: S, channels: 3 } }).png().toBuffer();
+  return { buf, w: S, h: S, iou, facePx, holePx, workPx,
+           aligned: iou >= STUDIO_SPEC_MIN_IOU };
+}
+
+
+/* ── the job itself ───────────────────────────────────────────────────────
+   Fired when a design is APPROVED, not when it is made. A customer choosing
+   a catalogue charm and then changing the gold five times would otherwise
+   pay for five drawings and five maps, four of which describe charms nobody
+   is going to make. Only the approved one gets a map.
+
+   IT IS NOT ON ANYBODY'S CRITICAL PATH. The browser fires it and walks to
+   checkout; the map lands on the version document whenever it lands. So the
+   one thing that must never happen is a silent failure — an order exists,
+   and the thing production needs does not. specStatus says which of those
+   is true at any moment, and nothing ever leaves it unset:
+
+     "pending"  the job is running (or has just been queued)
+     "done"     the map is on the doc and its URL is beside it
+     "failed"   every attempt was used; specError says what went wrong and
+                specAttempts says how many times it was tried
+
+   NO CREDIT. The customer paid for the gold; this is the workshop's own
+   record of what they bought. */
+const STUDIO_SPEC_MAX_ATTEMPTS = 3;
+const STUDIO_SPEC_STALE_MS = 5 * 60 * 1000;
+
+async function studioSpecFail(vRef, why, attempts) {
+  try {
+    await vRef.set({
+      specStatus: "failed",
+      specError: String(why).slice(0, 300),
+      specAttempts: attempts,
+      specFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  } catch (e) {
+    console.error("[studio] could not record spec failure:", e?.message || e);
+  }
+}
+
+async function handleStudioSpecFromGold({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const cfg = await studioConfig();
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+
+  const n = Number(body?.versionNumber) || Number(session.currentVersion) || 0;
+  if (!n || n < 1) return studioJson(400, { ok: false, error: "missing_version" }, origin);
+  const vRef = sRef.collection("versions").doc(String(n));
+  const vSnap = await vRef.get();
+  if (!vSnap.exists) return studioJson(409, { ok: false, error: "version_not_ready" }, origin);
+  const version = vSnap.data();
+
+  const goldPath = String(version.renderPath || "");
+  if (!goldPath) return studioJson(409, { ok: false, error: "no_gold_yet" }, origin);
+
+  /* ── DOING IT TWICE IS THE EXPENSIVE MISTAKE ──────────────────────────
+     Approve can be pressed twice, a checkout can be retried, and a sweep
+     for stalled jobs will re-fire this by design. The map already on the
+     doc is only stale if the GOLD it was made from has changed since, so
+     that — not a flag — is what decides. A run already in flight is left
+     alone unless it has been in flight long enough to be dead. */
+  const force = body?.force === true;
+  const sourceKey = goldPath + "|" + String(version.renderRunId || "") +
+                    "|" + String(version.goldEditCount || 0);
+  if (!force && version.specStatus === "done" && version.specSource === sourceKey && version.renderSpecURL) {
+    return studioJson(200, { ok: true, n, skipped: "already_done",
+                             renderSpecURL: version.renderSpecURL }, origin);
+  }
+  if (!force && version.specStatus === "pending") {
+    const started = asMsServer(version.specStartedAt);
+    if (started && Date.now() - started < STUDIO_SPEC_STALE_MS) {
+      return studioJson(200, { ok: true, n, skipped: "already_running" }, origin);
+    }
+  }
+
+  const attemptsSoFar = Number(version.specAttempts) || 0;
+  await vRef.set({
+    specStatus: "pending",
+    specSource: sourceKey,
+    specStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+    specError: null,
+  }, { merge: true });
+
+  const sharpMod = studioSharp();
+  if (!sharpMod) {
+    await studioSpecFail(vRef, "sharp_unavailable", attemptsSoFar);
+    return studioJson(503, { ok: false, error: "sharp_unavailable" }, origin);
+  }
+
+  let studioModelConfig = null;
+  try {
+    studioModelConfig = resolveImageModel(studioImageModelId(cfg));
+    apiKeyForImageModel(studioModelConfig);
+  } catch (err) {
+    await studioSpecFail(vRef, "render_unavailable", attemptsSoFar);
+    return studioJson(503, { ok: false, error: "render_unavailable" }, origin);
+  }
+
+  let gold;
+  try {
+    gold = await storagePathToBuffer(goldPath);
+    if (!gold?.buffer?.length) throw new Error("gold_missing");
+  } catch (err) {
+    await studioSpecFail(vRef, String(err?.message || err), attemptsSoFar);
+    return studioJson(500, { ok: false, error: "gold_missing" }, origin);
+  }
+
+  const styleRef = await ensureStudioLineArtReference();
+  const images = [{ buffer: gold.buffer, mime: gold.mime || "image/png", filename: `v${n}-charm.png` }];
+  if (styleRef?.buffer?.length) {
+    images.push({ buffer: styleRef.buffer, mime: styleRef.mime, filename: styleRef.filename });
+  }
+
+  /* ── RETRIED HERE, NOT SOMEWHERE ELSE ─────────────────────────────────
+     Nobody is watching this run, so an attempt that dies has nothing to
+     tell and nowhere to tell it. The cheapest correct place to try again
+     is immediately, inside the invocation that already has the gold in
+     memory and the model resolved. Only the two failures worth retrying
+     are retried: the model call itself, and a drawing that came back
+     unusable. A missing file or a bad configuration will fail the same way
+     every time and is recorded at once. */
+  let attempt = 0, lastErr = null, saved = null;
+  while (attempt < STUDIO_SPEC_MAX_ATTEMPTS) {
+    attempt++;
+    try {
+      const lineBuf = await callImageModelEdits({
+        apiKey: apiKeyForImageModel(studioModelConfig),
+        model: studioModelConfig.id,
+        prompt: STUDIO_LINEART_PROMPT,
+        size: studioImageSizeString(studioRenderTier(cfg)),
+        imageSizeTier: studioRenderTier(cfg),
+        quality: "high",
+        output_format: "png",
+        images,
+        imageRoles: "line_art_style",
+        charmGeometryPolicy: null,
+        backgroundPolicy: null,
+      });
+
+      const spec = await studioSpecFromGold(sharpMod, gold.buffer, lineBuf, studioMaskMinPx(cfg));
+      if (!spec.aligned) {
+        /* The drawing does not lie over this charm, so reading engraving out
+           of it would be reading it off the wrong pixels. Worth one more
+           attempt — this is usually a model that re-cropped. */
+        lastErr = new Error("unaligned_drawing_iou_" + spec.iou.toFixed(3));
+        console.warn(`[studio] spec attempt ${attempt}: drawing does not align (IoU ${spec.iou.toFixed(3)})`);
+        continue;
+      }
+
+      const bucket = getBucket();
+      const base = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}`;
+      const lineToken = newDownloadToken(), specToken = newDownloadToken();
+      /* the drawing is kept as evidence for the same reason the mask always
+         has been: when a map looks wrong, the only way to tell a bad drawing
+         from a bad combine is to have both */
+      await bucket.file(base + "-lineart.png").save(lineBuf, {
+        resumable: false, contentType: "image/png",
+        metadata: { metadata: { firebaseStorageDownloadTokens: lineToken, uid, sessionId,
+                                version: String(n), lineart: "1" } },
+      });
+      await bucket.file(base + "-spec.png").save(spec.buf, {
+        resumable: false, contentType: "image/png",
+        metadata: { metadata: { firebaseStorageDownloadTokens: specToken, uid, sessionId,
+                                version: String(n), spec: "1" } },
+      });
+      saved = {
+        lineArtURL: tokenDownloadURLFor(bucket.name, base + "-lineart.png", lineToken),
+        lineArtPath: base + "-lineart.png",
+        renderSpecURL: tokenDownloadURLFor(bucket.name, base + "-spec.png", specToken),
+        renderSpecPath: base + "-spec.png",
+        spec,
+      };
+      break;
+    } catch (err) {
+      lastErr = err;
+      console.error(`[studio] spec attempt ${attempt} failed:`, err?.message || err);
+    }
+  }
+
+  if (!saved) {
+    await studioSpecFail(vRef, lastErr?.message || "spec_failed", attemptsSoFar + attempt);
+    return studioJson(500, { ok: false, error: "spec_failed",
+                             detail: String(lastErr?.message || "").slice(0, 200) }, origin);
+  }
+
+  await vRef.set({
+    specStatus: "done",
+    specAttempts: attemptsSoFar + attempt,
+    specError: null,
+    specSource: sourceKey,
+    specDoneAt: admin.firestore.FieldValue.serverTimestamp(),
+    renderSpecURL: saved.renderSpecURL,
+    renderSpecPath: saved.renderSpecPath,
+    renderSpecMode: "derived-from-gold",
+    renderSpecFacePx: saved.spec.facePx,
+    renderSpecHolePx: saved.spec.holePx,
+    renderSpecWorkPx: saved.spec.workPx,
+    specLineArtURL: saved.lineArtURL,
+    specLineArtPath: saved.lineArtPath,
+    specAlignIoU: Math.round(saved.spec.iou * 1000) / 1000,
+    specModel: studioModelConfig.id,
+    specStyleRef: styleRef?.storagePath || "",
+  }, { merge: true });
+
+  console.log(`[studio] spec derived for v${n} in ${attempt} attempt(s) — ` +
+              `IoU ${saved.spec.iou.toFixed(3)}, ${saved.spec.workPx}px engraved`);
+  return studioJson(200, { ok: true, n, renderSpecURL: saved.renderSpecURL,
+                           renderSpecPath: saved.renderSpecPath,
+                           specAlignIoU: saved.spec.iou, attempts: attempt }, origin);
+}
+
+/* ═══════════ ADOPTING A CHARM FROM THE CATALOGUE ═════════════════════════
+   "From our designs" used to run the same pipeline as everything else: the
+   product photograph became a REFERENCE, the model drew a production
+   drawing from it, and the drawing was rendered back into metal. Three
+   model calls and two credits to arrive at an approximation of a charm the
+   workshop already makes, photographs of which were sitting in the
+   catalogue the whole time.
+
+   So it does not do that any more. The catalogue photograph IS the charm:
+   it is filed as version 1's gold, no model runs, nothing is charged, and
+   the arrow's surgical gold edit is the only thing that ever changes it.
+
+   THE DRAWING AND THE MAP ARE SIMPLY ABSENT, and that is deliberate rather
+   than missing. A version adopted this way has no production drawing,
+   because none was ever made and inventing one would be inventing a claim
+   about a charm the workshop already knows how to cut. The greyscale map
+   arrives later, derived backwards from whatever gold the customer finally
+   approves — see handleStudioSpecFromGold.
+
+   THE IMAGE IS FETCHED HERE, NOT POSTED. The browser has the URL and could
+   have sent the bytes, but reading a Shopify CDN image from a page is a
+   CORS gamble that fails silently on some stores, and a browser that cannot
+   read it cannot tell anyone why. The server has no such problem — and to
+   keep that from becoming a way to make this function fetch anything at
+   all, the host is checked against a fixed list before a request is made. */
+function studioTierPx(tier) {
+  return tier === "1K" ? 1024 : tier === "4K" ? 4096 : 2048;
+}
+
+const STUDIO_ADOPT_HOSTS = [
+  "cdn.shopify.com",
+  "britesjewelry.com",
+  "www.britesjewelry.com",
+  "brites-jewelry.myshopify.com",
+  "firebasestorage.googleapis.com",
+];
+const STUDIO_ADOPT_MAX_BYTES = 12 * 1024 * 1024;
+
+async function studioFetchCatalogImage(rawUrl) {
+  let u;
+  try { u = new URL(String(rawUrl || "")); }
+  catch (e) { throw new Error("bad_image_url"); }
+  if (u.protocol !== "https:") throw new Error("bad_image_url");
+  if (!STUDIO_ADOPT_HOSTS.includes(u.hostname)) throw new Error("image_host_not_allowed");
+  const resp = await fetch(u.toString(), { redirect: "follow" });
+  if (!resp.ok) throw new Error("image_fetch_" + resp.status);
+  const type = String(resp.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+  if (!/^image\//.test(type)) throw new Error("not_an_image");
+  const ab = await resp.arrayBuffer();
+  if (!ab.byteLength) throw new Error("empty_image");
+  if (ab.byteLength > STUDIO_ADOPT_MAX_BYTES) throw new Error("image_too_large");
+  return { buffer: Buffer.from(ab), mime: type };
+}
+
+async function handleStudioAdopt({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+
+  const n = Number(body?.versionNumber) || (Number(session.currentVersion) || 0) + 1;
+  if (!n || n < 1 || n > 400) return studioJson(400, { ok: false, error: "bad_version" }, origin);
+  const vRef = sRef.collection("versions").doc(String(n));
+
+  const metal = studioCleanText(body?.metal || session.metal || "gold");
+  const title = studioCleanText(body?.title || "").slice(0, 140);
+  const productGid = String(body?.productGid || "").slice(0, 120);
+
+  let img;
+  try { img = await studioFetchCatalogImage(body?.imageUrl); }
+  catch (err) {
+    console.error("[studio] catalogue image:", err?.message || err);
+    return studioJson(400, { ok: false, error: String(err?.message || "bad_image_url") }, origin);
+  }
+
+  /* Normalised to PNG on a white ground at the render tier, so a catalogue
+     photograph and a rendered charm are the same kind of object downstream:
+     the gold edit reads its size from these bytes, and the map derived at
+     approval reads its chroma from them. A JPEG with a transparent-looking
+     white or an odd aspect would make both of those subtly wrong. */
+  let outBuf;
+  try {
+    const sharpMod = studioSharp();
+    if (!sharpMod) throw new Error("sharp_unavailable");
+    const cfg = await studioConfig();
+    const S = studioTierPx(studioRenderTier(cfg));
+    outBuf = await sharpMod(img.buffer)
+      .flatten({ background: "#ffffff" })
+      .resize(S, S, { fit: "contain", background: "#ffffff" })
+      .png().toBuffer();
+  } catch (err) {
+    console.error("[studio] catalogue image could not be normalised:", err?.message || err);
+    return studioJson(500, { ok: false, error: "image_unreadable" }, origin);
+  }
+
+  outBuf = embedPngTextMetadata(outBuf, {
+    Description: `Custom Charm Studio — ${title || "catalogue charm"} adopted as v${n} (${metal}).`,
+    CharmTitle: title || `Custom charm v${n}`,
+  });
+
+  const renderPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-charm.png`;
+  const bucket = getBucket();
+  const token = newDownloadToken();
+  await bucket.file(renderPath).save(outBuf, {
+    resumable: false, contentType: "image/png",
+    metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId,
+                            version: String(n), render: "1", adopted: "1" } },
+  });
+  const renderURL = tokenDownloadURLFor(bucket.name, renderPath, token);
+
+  await vRef.set({
+    n, status: "done", stage: "done",
+    /* NO `url`. There is no production drawing and there is not going to be
+       one; the studio reads the absence and does not offer the Drawing tab. */
+    url: "", storagePath: "",
+    source: "catalog", catalogTitle: title, catalogProductGid: productGid,
+    renderStatus: "done", renderStage: "done",
+    renderURL, renderPath, renderMetal: metal,
+    renderRunId: String(body?.renderRunId || ("ad_" + Date.now())).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80),
+    renderCost: 0,
+    goldEdited: false, goldEditCount: 0,
+    /* the map is owed, and saying so now means a sweep can find a design
+       whose map never arrived without having to guess whether one was due */
+    specStatus: "not_started",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  await sRef.set({ currentVersion: n, updatedAt: Date.now() }, { merge: true });
+
+  return studioJson(200, { ok: true, n, renderURL, renderPath, renderMetal: metal,
+                           source: "catalog" }, origin);
+}
+
 async function handleStudioSessionStatus({ body, event, origin }) {
   const uid = await requireStudioUser(event);
   const db = getDb();
@@ -7216,6 +7879,8 @@ async function handleStudioKind({ kind, body, event }) {
     if (kind === "custom_charm_compose") return await handleStudioCompose({ body, event, origin });
     if (kind === "custom_charm_render") return await handleStudioRender({ body, event, origin });
     if (kind === "custom_charm_gold_edit") return await handleStudioGoldEdit({ body, event, origin });
+    if (kind === "custom_charm_spec_from_gold") return await handleStudioSpecFromGold({ body, event, origin });
+    if (kind === "custom_charm_adopt") return await handleStudioAdopt({ body, event, origin });
     /* custom_charm_prompt is gone — see STUDIO_KINDS. A tab left open from
        before the prompt lab was removed falls to unknown_kind below, which
        is the right answer: there is nothing to preview. */

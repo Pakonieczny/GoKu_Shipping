@@ -56,12 +56,20 @@ const KICK_BUILD = "geminiImageProxyKick-1.0.0";
    both sets is rejected with 400 unknown_kind before the proxy is ever
    loaded, and the failure looks exactly like the proxy not having the
    handler. Any new studio kind goes in one of these two sets, always. */
+/* custom_charm_adopt is SYNC for the same reason compose is: the browser
+   needs the downloadURL back in the response to put the charm on screen,
+   and a background function can never give it one. It runs no model — a
+   fetch, a resize and two writes — so it sits well inside the budget. */
 const SYNC_KINDS  = new Set(["custom_charm_precheck", "custom_session_status",
-                             "custom_charm_compose"]);
+                             "custom_charm_compose", "custom_charm_adopt"]);
 /* custom_charm_gold_edit is ASYNC for the same reason the render is: one
    image-model call, minutes long, result read off the version doc. */
+/* custom_charm_spec_from_gold is ASYNC because nobody waits on it: it is
+   fired when a design is approved and the customer walks straight on to
+   checkout. Its result lands on the version document. */
 const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine",
-                             "custom_charm_render", "custom_charm_gold_edit"]);
+                             "custom_charm_render", "custom_charm_gold_edit",
+                             "custom_charm_spec_from_gold"]);
 
 /* Same list, same order as STUDIO_ALLOWED_ORIGINS in the proxy. */
 const ALLOWED_ORIGINS = [
