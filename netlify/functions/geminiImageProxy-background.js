@@ -2346,6 +2346,9 @@ const STUDIO_KINDS = new Set([
   /* the studio composed the drawing itself — this only files it */
   "custom_charm_compose",
   "custom_charm_render",
+  /* the catalogue photograph, turned into the line drawing the customer will
+     actually edit — see handleStudioRefLineArt */
+  "custom_charm_ref_lineart",
   /* ── THE ONE THE KICK FORWARDED TO NOBODY ─────────────────────────────
      geminiImageProxyKick.js has listed custom_charm_gold_edit in its
      ASYNC_KINDS since the arrow got its second job, and the storefront has
@@ -7617,6 +7620,161 @@ async function studioSpecFail(vRef, why, attempts) {
   }
 }
 
+/* ═══════════ THE REFERENCE, AS A DRAWING ═════════════════════════════════
+   A charm chosen from our own catalogue arrives as a PHOTOGRAPH: gold, lit,
+   shadowed, and carrying "Charm Only" in script above it. A photograph is a
+   fine thing to look at and a poor thing to edit — there is nothing in it to
+   take hold of, and every tool on the mark-up rail is built for line work.
+
+   So the moment the customer commits to a reference by pressing Next, this
+   turns that photograph into the black line drawing of the same charm, and
+   THAT becomes the reference from then on. The customer gets a drawing they
+   can actually work on; the workshop gets geometry rather than a picture.
+
+   IT REUSES THE PIPELINE THAT ALREADY WORKS. This is the same model call,
+   the same prompt and the same style sample that handleStudioSpecFromGold
+   uses to derive a greyscale map at approval — the one the customer told us
+   works flawlessly. The only differences are what it is pointed at (a
+   catalogue URL rather than a filed render) and where the answer is written
+   (the session, because there is no version yet).
+
+   ONCE PER REFERENCE DESIGN. The result is keyed on the product, so choosing
+   the same charm again — or pressing Next twice — costs nothing. A drawing
+   already made is simply returned.                                          */
+const STUDIO_REF_CAPTION_CLAUSE =
+`THE CAPTION IS NOT PART OF THE CHARM. This photograph is a catalogue listing
+image and carries handwritten text reading "Charm Only" above the piece. It is
+a caption on a web page. Do not draw it, do not outline it, do not ink it as
+an engraving, and do not leave any mark where it was — that area is plain
+white paper. Draw the charm and nothing else.`;
+
+async function handleStudioRefLineArt({ body, event, origin }) {
+  const uid = await requireStudioUser(event);
+  const cfg = await studioConfig();
+  const db = getDb();
+
+  const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
+  const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
+  const sSnap = await sRef.get();
+  if (!sSnap.exists || sSnap.data().uid !== uid) {
+    return studioJson(403, { ok: false, error: "forbidden" }, origin);
+  }
+  const session = sSnap.data();
+
+  const gid = String(body?.productGid || body?.imageUrl || "").slice(0, 200);
+  const title = studioCleanText(body?.title || "").slice(0, 140);
+
+  /* ONCE. Already drawn for this exact charm — hand it straight back. */
+  if (!body?.force && session.refLineArtStatus === "done" &&
+      session.refLineArtURL && String(session.refLineArtGid || "") === gid) {
+    return studioJson(200, { ok: true, cached: true, url: session.refLineArtURL,
+                             path: session.refLineArtPath || "" }, origin);
+  }
+  /* and a run already in flight is left to finish rather than raced */
+  const started = asMsServer(session.refLineArtStartedAt);
+  if (!body?.force && session.refLineArtStatus === "pending" &&
+      started && Date.now() - started < STUDIO_SPEC_STALE_MS) {
+    return studioJson(200, { ok: true, pending: true }, origin);
+  }
+
+  await sRef.set({
+    refLineArtStatus: "pending", refLineArtGid: gid, refLineArtTitle: title,
+    refLineArtError: null,
+    refLineArtStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: Date.now(),
+  }, { merge: true });
+
+  const fail = async (why) => {
+    console.error("[studio] ref line art:", why);
+    await sRef.set({ refLineArtStatus: "failed", refLineArtError: String(why).slice(0, 200),
+                     updatedAt: Date.now() }, { merge: true });
+    return studioJson(500, { ok: false, error: String(why) }, origin);
+  };
+
+  let src;
+  try { src = await studioFetchCatalogImage(body?.imageUrl); }
+  catch (err) { return fail(err?.message || "bad_image_url"); }
+
+  let studioModelConfig;
+  try {
+    studioModelConfig = resolveImageModel(studioImageModelId(cfg));
+    apiKeyForImageModel(studioModelConfig);
+  } catch (err) { return fail("render_unavailable"); }
+
+  /* normalised the same way an adopted charm is, so the drawing is made from
+     the same bytes the customer is looking at */
+  let goldBuf = src.buffer;
+  try {
+    const sharpMod = studioSharp();
+    if (sharpMod) {
+      const S = studioTierPx(studioRenderTier(cfg));
+      goldBuf = await sharpMod(src.buffer).flatten({ background: "#ffffff" })
+        .resize(S, S, { fit: "contain", background: "#ffffff" }).png().toBuffer();
+    }
+  } catch (e) { /* the raw bytes will do */ }
+
+  const styleRef = await ensureStudioLineArtReference();
+  const images = [{ buffer: goldBuf, mime: "image/png", filename: "reference-charm.png" }];
+  if (styleRef && styleRef.buffer && styleRef.buffer.length) {
+    images.push({ buffer: styleRef.buffer, mime: styleRef.mime, filename: styleRef.filename });
+  }
+  const prompt = STUDIO_LINEART_PROMPT + "\n\n" + STUDIO_REF_CAPTION_CLAUSE;
+
+  let lineBuf = null, lastErr = null;
+  for (let attempt = 1; attempt <= STUDIO_SPEC_MAX_ATTEMPTS; attempt++) {
+    try {
+      lineBuf = await callImageModelEdits({
+        apiKey: apiKeyForImageModel(studioModelConfig),
+        model: studioModelConfig.id,
+        prompt,
+        size: studioImageSizeString(studioRenderTier(cfg)),
+        imageSizeTier: studioRenderTier(cfg),
+        quality: "high",
+        output_format: "png",
+        images,
+        imageRoles: "line_art_style",
+        charmGeometryPolicy: null,
+        backgroundPolicy: null,
+      });
+      if (lineBuf && lineBuf.length) break;
+      lastErr = new Error("empty_drawing");
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[studio] ref line art attempt ${attempt}:`, err?.message || err);
+    }
+  }
+  if (!lineBuf || !lineBuf.length) return fail(lastErr?.message || "lineart_failed");
+
+  let outBuf = lineBuf;
+  try {
+    outBuf = embedPngTextMetadata(lineBuf, {
+      Description: `Custom Charm Studio — production drawing of ${title || "a catalogue charm"}.`,
+      CharmTitle: title || "Reference drawing",
+    });
+  } catch (e) { /* metadata is a nicety */ }
+
+  try {
+    const bucket = getBucket();
+    const path = `custom-studio/${uid}/uploads/refs/${sessionId}/reference-lineart.png`;
+    const token = newDownloadToken();
+    await bucket.file(path).save(outBuf, {
+      resumable: false, contentType: "image/png",
+      metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId,
+                              refLineArt: "1" } },
+    });
+    const url = tokenDownloadURLFor(bucket.name, path, token);
+    await sRef.set({
+      refLineArtStatus: "done", refLineArtURL: url, refLineArtPath: path,
+      refLineArtGid: gid, refLineArtTitle: title, refLineArtError: null,
+      refLineArtAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: Date.now(),
+    }, { merge: true });
+    console.log(`[studio] ref line art ready for ${title || gid} → ${path}`);
+    return studioJson(200, { ok: true, url, path }, origin);
+  } catch (err) { return fail(err?.message || "save_failed"); }
+}
+
 async function handleStudioSpecFromGold({ body, event, origin }) {
   const uid = await requireStudioUser(event);
   const cfg = await studioConfig();
@@ -8101,6 +8259,7 @@ async function handleStudioKind({ kind, body, event }) {
     if (kind === "custom_charm_render") return await handleStudioRender({ body, event, origin });
     if (kind === "custom_charm_gold_edit") return await handleStudioGoldEdit({ body, event, origin });
     if (kind === "custom_charm_spec_from_gold") return await handleStudioSpecFromGold({ body, event, origin });
+    if (kind === "custom_charm_ref_lineart") return await handleStudioRefLineArt({ body, event, origin });
     if (kind === "custom_charm_adopt") return await handleStudioAdopt({ body, event, origin });
     /* custom_charm_prompt is gone — see STUDIO_KINDS. A tab left open from
        before the prompt lab was removed falls to unknown_kind below, which

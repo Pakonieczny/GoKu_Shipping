@@ -69,7 +69,11 @@ const SYNC_KINDS  = new Set(["custom_charm_precheck", "custom_session_status",
    checkout. Its result lands on the version document. */
 const ASYNC_KINDS = new Set(["custom_charm_generate", "custom_charm_refine",
                              "custom_charm_render", "custom_charm_gold_edit",
-                             "custom_charm_spec_from_gold"]);
+                             "custom_charm_spec_from_gold",
+                             /* the catalogue photograph becoming a drawing the
+                                customer can edit — kicked off by Next, and
+                                nobody waits on it either */
+                             "custom_charm_ref_lineart"]);
 
 /* Same list, same order as STUDIO_ALLOWED_ORIGINS in the proxy. */
 const ALLOWED_ORIGINS = [
