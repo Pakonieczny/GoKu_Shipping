@@ -8307,7 +8307,17 @@ function studioInkRidge(d, ink, w, h) {
    of the charm's own width and was unreadable, the 3.2 setting landed at
    3.9 and was thin — so the setting sits between them and nearer the fine
    end, where a lost detail is recoverable and a merged one is not. */
-const STUDIO_LINE_PCT_FALLBACK = 4.4;   /* per cent of the charm's short side */
+const STUDIO_LINE_PCT_FALLBACK = 3.3;   /* per cent of the charm's short side */
+/* ── AND A PROPORTIONAL TRIM, BECAUSE THE CAP ALONE MISSES WIDE CHARMS ──
+   The cap is a percentage of the charm's SHORT side, and on a wide, squat
+   charm the short side is its height — enormous — so the model's own weight
+   sails in under the cap and the thinner never engages. The customer then
+   measured that untouched output at exactly a third too heavy. So every
+   drawing is now trimmed by this ratio relative to what the model actually
+   drew, unless the absolute cap already demands more or the canvas floor
+   forbids less. 1.33 IS the customer's number: "the generated black lines
+   are too thick, by 33%". Config lineArtTrimRatio overrides; 1 disables. */
+const STUDIO_LINE_TRIM_FALLBACK = 1.33;
 /* and a floor in absolute pixels, expressed against the CANVAS rather than
    fixed at 2: two pixels is a hairline on a 1K frame and a thread on a 4K
    one, and the same drawing must not get finer just because it got bigger */
@@ -8359,7 +8369,8 @@ async function studioThinLineArt(sharp, buf, cfg) {
     const from = halfNow * 2;
     const short = Math.min(x1 - x0 + 1, y1 - y0 + 1);
     const floor = Math.max(STUDIO_LINE_MIN_PX, Math.max(w, h) * STUDIO_LINE_MIN_FRAC);
-    const target = Math.max(floor, (short * pct) / 100);
+    const trim = Math.max(1, Number(cfg && cfg.lineArtTrimRatio) || STUDIO_LINE_TRIM_FALLBACK);
+    const target = Math.max(floor, Math.min((short * pct) / 100, from / trim));
     report.from = Math.round(from * 10) / 10;
     report.target = Math.round(target * 10) / 10;
     report.charmShort = short;
@@ -8630,6 +8641,22 @@ async function handleStudioSpecFromGold({ body, event, origin }) {
      that — not a flag — is what decides. A run already in flight is left
      alone unless it has been in flight long enough to be dead. */
   const force = body?.force === true;
+  /* ── A MAP THE DRAWING PIPELINE ALREADY BUILT IS THE BETTER MAP ────────
+     The dedupe below only recognises maps this handler made itself
+     (specStatus / specSource are its own fields). A design that went
+     through the markup studio arrives with a map built DETERMINISTICALLY
+     from the drawing — renderSpecKey and renderSpecPath, no specStatus —
+     and deriving a second one from the gold is not only a duplicate, it is
+     a WORSE copy: a model's reading of a photograph, replacing arithmetic
+     on the customer's own instructions. So a drawing-derived map ends this
+     request here, and specStatus is stamped so a watcher already waiting
+     on the doc settles instead of timing out. */
+  if (!force && version.renderSpecURL && version.renderSpecPath && version.renderSpecKey) {
+    await vRef.set({ specStatus: "done", specSource: "drawing-pipeline",
+                     specError: null }, { merge: true });
+    return studioJson(200, { ok: true, n, skipped: "drawing_map",
+                             renderSpecURL: version.renderSpecURL }, origin);
+  }
   const sourceKey = goldPath + "|" + String(version.renderRunId || "") +
                     "|" + String(version.goldEditCount || 0);
   if (!force && version.specStatus === "done" && version.specSource === sourceKey && version.renderSpecURL) {
