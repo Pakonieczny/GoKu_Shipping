@@ -7979,7 +7979,21 @@ async function handleStudioRefLineArt({ body, event, origin }) {
   const sessionId = String(body?.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
   if (!sessionId) return studioJson(400, { ok: false, error: "missing_session" }, origin);
   const sRef = db.collection(STUDIO_SESSIONS_COLL).doc(sessionId);
-  const sSnap = await sRef.get();
+  let sSnap = await sRef.get();
+  /* ── A BRAND-NEW PROJECT'S DOCUMENT MAY NOT EXIST YET ────────────────
+     The browser writes the session and queues this in the same breath, and
+     this runs in the background — refusing on !exists turned a race nobody
+     could see into a 403 nobody could see, and the customer's drawing
+     simply never happened. An absent document is CREATED here, stamped
+     with the caller's own uid; a document that exists and belongs to
+     someone else is refused exactly as before. Session ids are random
+     client-generated strings, so first-writer-wins is the same trust model
+     the browser's own create already has. */
+  if (!sSnap.exists) {
+    await sRef.set({ uid, id: sessionId, createdAt: Date.now(), updatedAt: Date.now() },
+                   { merge: true });
+    sSnap = await sRef.get();
+  }
   if (!sSnap.exists || sSnap.data().uid !== uid) {
     return studioJson(403, { ok: false, error: "forbidden" }, origin);
   }
@@ -8982,10 +8996,22 @@ async function handleStudioSessionStatus({ body, event, origin }) {
     return studioJson(403, { ok: false, error: "forbidden" }, origin);
   }
   const v = await sRef.collection("versions").doc(n).get();
+  const sd = sSnap.data();
   return studioJson(200, {
     ok: true,
-    currentVersion: sSnap.data().currentVersion || 0,
+    currentVersion: sd.currentVersion || 0,
     version: v.exists ? Object.assign({ n: Number(n) }, v.data()) : null,
+    /* the reference drawing's progress lives on the SESSION doc, and the
+       browser's snapshot listener can be refused by the security rules in
+       the first seconds of a brand-new project — this read, made with admin
+       credentials and answered only to the owner, is the channel no rule
+       can refuse */
+    session: {
+      refLineArtStatus: sd.refLineArtStatus || "",
+      refLineArtURL: sd.refLineArtURL || "",
+      refLineArtPath: sd.refLineArtPath || "",
+      refLineArtError: sd.refLineArtError || "",
+    },
   }, origin);
 }
 
