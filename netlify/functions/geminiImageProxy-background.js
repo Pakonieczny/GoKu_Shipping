@@ -7919,6 +7919,12 @@ async function studioTrimToSubject(sharpMod, buf, marginPct) {
   }
 }
 
+/* the drawing pipeline's own version — see the cache gate below. 1 was the
+   raw model output; 2 added orientation matching and the first thinning;
+   3 is the greyscale-erosion thinning, the canvas-relative floor and the
+   tier check. */
+const STUDIO_LINEART_REV = 3;
+
 async function handleStudioRefLineArt({ body, event, origin }) {
   const uid = await requireStudioUser(event);
   const cfg = await studioConfig();
@@ -7936,9 +7942,19 @@ async function handleStudioRefLineArt({ body, event, origin }) {
   const gid = String(body?.productGid || body?.imageUrl || "").slice(0, 200);
   const title = studioCleanText(body?.title || "").slice(0, 140);
 
-  /* ONCE. Already drawn for this exact charm — hand it straight back. */
+  /* ONCE — per charm AND per pipeline. The cache used to check only the
+     charm, which made it a trap that fired exactly when the pipeline
+     improved: a drawing made before a deploy was handed straight back after
+     it, on every visit, for ever. The orientation fix, the weight fix and
+     the anti-aliasing all shipped and the customer kept receiving the
+     drawing from before any of them — "the fix did not get applied", when
+     the fix was deployed and running and never given the chance. So the
+     drawing now remembers which pipeline made it, and a drawing made by an
+     older one is simply stale: the next request redraws it. Bump the rev
+     whenever the drawing pipeline changes what it produces. */
   if (!body?.force && session.refLineArtStatus === "done" &&
-      session.refLineArtURL && String(session.refLineArtGid || "") === gid) {
+      session.refLineArtURL && String(session.refLineArtGid || "") === gid &&
+      Number(session.refLineArtRev || 0) === STUDIO_LINEART_REV) {
     return studioJson(200, { ok: true, cached: true, url: session.refLineArtURL,
                              path: session.refLineArtPath || "" }, origin);
   }
@@ -8129,6 +8145,7 @@ async function handleStudioRefLineArt({ body, event, origin }) {
       refLineArtStrokeWhy: (thin && thin.why) || "",
       refLineArtPxFrom: (gotPx && gotPx.from) || 0,
       refLineArtPx: (gotPx && gotPx.to) || 0,
+      refLineArtRev: STUDIO_LINEART_REV,
       refLineArtAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: Date.now(),
     }, { merge: true });
