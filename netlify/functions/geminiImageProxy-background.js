@@ -7623,7 +7623,7 @@ HARD CONSTRAINTS (NON-NEGOTIABLE):
     5. CUTOUTS/HOLES: physical holes cut entirely through the metal must remain pure white inside.
     HARD FAIL: an engraving that is only an outline in the FIRST image (e.g. an outlined cloud, heart or star) rendered as a filled solid black shape.
     HARD FAIL: any enclosed area inked black when the FIRST image shows polished, un-engraved metal inside it.
-• OUTLINE: Ensure the Charm's outer perimeter black outline is only 2px thick.
+• LINE WEIGHT — MEASURED AGAINST THE CHARM, NOT THE PAGE: every black stroke, the outer perimeter included, must be a FINE line about 1/30th of the charm's own width across. The charm is narrow and sits in a tall frame, so a line that looks fine against the whole picture is a heavy rope against the charm: at this weight the charm is roughly thirty strokes wide, and every stitch, seam and engraved mark stays separately readable. Thick strokes swallow small detail and merge neighbouring lines into one another — that is a HARD FAIL. Do not thicken a line to make it clearer; make it finer and keep the detail.
 • BACKGROUND: Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
 • NO 3D/SHADING: Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.
 • NO TEXT, EVER: if the FIRST image contains any writing — a caption, a watermark, a signature, a listing label — it is not part of the charm. Do not draw it, do not outline it, do not ink it as an engraving. Draw the charm and nothing else.`;
@@ -8046,15 +8046,60 @@ async function handleStudioRefLineArt({ body, event, origin }) {
      the prompt asks for the charm to stay where it was and the model turns
      it anyway, so the turn is measured against the photograph it was drawn
      from and undone. Never allowed to fail the step. */
-  let orient = null;
+  let orient = null, thin = null, gotPx = null;
   try {
     const sharpMod = studioSharp();
     if (sharpMod) {
       const fixed = await studioMatchOrientation(sharpMod, lineBuf, goldBuf);
       orient = fixed.report;
       if (fixed.buf && fixed.buf.length) lineBuf = fixed.buf;
+      /* AFTER the turn, never before: the stroke weight is measured against
+         the charm's own short side, and that is a different number before
+         the drawing has been squared up */
+      /* ── AND IT MUST BE BIG ENOUGH TO HOLD THE DETAIL ────────────────
+         2K is ASKED FOR — studioDrawingTier, and the block above says why —
+         but asking is not the same as receiving, and an image model is free
+         to hand back a smaller frame than the one it was told to draw. The
+         drawing that came with the report measured 103 px across the charm,
+         which is a 1K frame, not the 2K one that was requested. Nothing
+         downstream noticed, because nothing downstream was looking.
+
+         So the frame is checked and brought up to the tier before anything
+         measures or cuts it. That does not create detail the model did not
+         draw — nothing can — but it does three real things: it stops the
+         reference being the narrowest point in a pipeline that reads it
+         twice, it gives the cut below a finer grid to place an edge on, and
+         it puts the number on the record so "the model shortchanged us" and
+         "we asked for too little" stop looking the same. */
+      try {
+        const meta = await sharpMod(lineBuf).metadata();
+        const want = studioTierPx(tier);
+        if (meta && meta.width && meta.width < want) {
+          lineBuf = await sharpMod(lineBuf)
+            .resize(want, want, { fit: "contain", background: "#ffffff",
+                                  kernel: "lanczos3" })
+            .png({ compressionLevel: 9 }).toBuffer();
+          gotPx = { from: meta.width, to: want };
+        } else if (meta && meta.width) {
+          gotPx = { from: meta.width, to: meta.width };
+        }
+      } catch (e) { /* the frame it came in is the frame it keeps */ }
+      const fine = await studioThinLineArt(sharpMod, lineBuf, cfg);
+      thin = fine.report;
+      if (fine.buf && fine.buf.length) lineBuf = fine.buf;
+    } else {
+      /* SAY SO. Without sharp there is no correction at all, and the only
+         symptom is a drawing that arrives lying on its side — which looks
+         exactly like the correction being wrong rather than absent. One
+         field on the session tells the two apart without a bisect. */
+      orient = { applied: false, deg: 0, why: "no_sharp" };
+      thin = { applied: false, why: "no_sharp" };
+      console.warn("[studio] sharp unavailable — line art cannot be squared to its reference");
     }
-  } catch (e) { console.error("[studio] orientation match skipped:", e?.message || e); }
+  } catch (e) {
+    orient = { applied: false, deg: 0, why: "error" };
+    console.error("[studio] orientation match skipped:", e?.message || e);
+  }
 
   let outBuf = lineBuf;
   try {
@@ -8079,12 +8124,300 @@ async function handleStudioRefLineArt({ body, event, origin }) {
       refLineArtGid: gid, refLineArtTitle: title, refLineArtError: null,
       refLineArtTurnedDeg: orient && orient.applied ? orient.deg : 0,
       refLineArtOrientWhy: (orient && orient.why) || "",
+      refLineArtStrokeFrom: (thin && thin.from) || 0,
+      refLineArtStrokeTo: (thin && thin.to) || 0,
+      refLineArtStrokeWhy: (thin && thin.why) || "",
+      refLineArtPxFrom: (gotPx && gotPx.from) || 0,
+      refLineArtPx: (gotPx && gotPx.to) || 0,
       refLineArtAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: Date.now(),
     }, { merge: true });
     console.log(`[studio] ref line art ready for ${title || gid} → ${path}`);
     return studioJson(200, { ok: true, url, path }, origin);
   } catch (err) { return fail(err?.message || "save_failed"); }
+}
+
+/* ═══════════ AND IT MUST COME BACK FINE ENOUGH TO READ ══════════════════
+   Measured on a real drawing the studio produced: the charm was 103 px wide
+   and every black line was 11 px across — the bat was NINE STROKES WIDE. At
+   that weight the stitching, the seam and the engraved shield are finer than
+   the pen drawing them, so they merge into their neighbours or disappear.
+   "The lines are too thick and we are losing fine details" is one fault.
+
+   The prompt asked for "2px thick", which is the wrong unit twice over: an
+   absolute pixel count on a canvas whose size is a config value, describing
+   a charm that occupies a fifth of it. It now asks for a weight relative to
+   the CHARM. But an instruction the model may decline to follow is not a
+   mechanism — see studioMatchOrientation for the same lesson — so the weight
+   is also brought down here, in arithmetic.
+
+   THINNING A DRAWING IS HOW YOU DESTROY A DRAWING, so this cannot be a plain
+   erosion: eroding four pixels from every side removes every stroke thinner
+   than eight, which is precisely the detail being rescued. Two things make
+   it safe:
+
+     · the target is set from the MEDIAN stroke width, which a solid engraved
+       region cannot drag upwards the way a mean would, so the estimate
+       describes the linework rather than the blobs
+     · the skeleton is unioned back in, so every stroke keeps its spine. A
+       thick line loses its shoulders; a line already at the target keeps
+       every pixel it had; nothing can be erased, and the topology of the
+       drawing is the topology it arrived with.
+
+   A happy side effect: two lines the model had merged are pushed apart, so
+   detail can come BACK rather than merely survive. */
+
+/* ── HOW FAR IS THIS PIXEL FROM WHITE ────────────────────────────────────
+   Felzenszwalb & Huttenlocher: the EXACT Euclidean distance transform, in
+   two linear passes over the parabolic lower envelope. It replaces a chamfer
+   approximation, and the reason is not accuracy for its own sake — this
+   field is what an EDGE IS PLACED ON below. A chamfer field's level set is
+   faintly octagonal and quantised to steps of 0.41, so an edge drawn on it
+   inherits both: a curve comes back with flats on it and stairs along it,
+   which is precisely the "much more aliasing than before" in the report.
+   The exact field is isotropic and continuous, so the same edge is smooth.
+
+   AND IT WAS ALREADY IN THIS FILE. studioEdt2d has been here all along,
+   serving the pixel plan. Writing a second copy of it — which is what the
+   first attempt at this did — did not merely duplicate code: two top-level
+   `function studioEdt1d` declarations in one module mean the LAST one wins
+   for every caller, so a private helper with a different signature silently
+   replaced the one studioEdt2d calls, and every mask measurement in the
+   pixel plan would have thrown on a buffer nobody passed it. `node --check`
+   is perfectly happy with that, which is why verify-guards.sh now refuses a
+   duplicate top-level name in either source file.
+
+   The half-pixel matters too. The transform measures centre to centre, so a
+   pixel touching white reads 1 while the boundary it is touching is half a
+   pixel away. Everything downstream — the width estimate, the cut, the
+   anti-aliased ramp — works in distance-to-the-EDGE, so the half is taken
+   off here, once, rather than being forgotten in three places. */
+function studioInkDistance(ink, w, h) {
+  const dist = studioEdt2d(ink, w, h);
+  for (let i = 0; i < dist.length; i++) {
+    dist[i] = ink[i] ? Math.max(0, dist[i] - 0.5) : 0;
+  }
+  return dist;
+}
+
+/* the ridge: ink no lower than any of its eight neighbours. Not a true
+   one-pixel skeleton and it does not need to be — it only has to be a
+   connected subset that survives the erosion, which is what stops a stroke
+   being rubbed out entirely. */
+function studioInkRidge(d, ink, w, h) {
+  const keep = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      if (!ink[i]) continue;
+      const v = d[i];
+      /* A PLATEAU IS NOT A RIDGE. "No neighbour is higher" alone keeps every
+         flat region, and the inside of a thick curve — the bail of a charm,
+         say — is a broad plateau several pixels across. Keeping all of it
+         put the stroke back to sixteen pixels after asking for five. A true
+         ridge has at least one neighbour BELOW it; the flat interior of a
+         heavy stroke does not, and does not need to be rescued either
+         because the cut leaves its middle standing anyway.
+
+         The exception is a stroke so fine its whole cross-section is one
+         value — a one or two pixel line has no lower neighbour to point at,
+         and it is exactly the detail this is all for. */
+      let higher = false, lower = false;
+      for (let dy = -1; dy <= 1 && !higher; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const u = d[i + dy * w + dx];
+          if (u > v + 1e-9) { higher = true; break; }
+          if (u < v - 1e-9) lower = true;
+        }
+      }
+      if (!higher && (lower || v <= 1.5)) keep[i] = 1;
+    }
+  }
+  return keep;
+}
+
+/* ── HOW HEAVY IS RIGHT ──────────────────────────────────────────────────
+   3.2 was the first answer and it was one notch too far: "the lines are now
+   just a little bit too thin". The two ends of the range are both measured
+   rather than guessed — the drawing that started this ran at 10.9 per cent
+   of the charm's own width and was unreadable, the 3.2 setting landed at
+   3.9 and was thin — so the setting sits between them and nearer the fine
+   end, where a lost detail is recoverable and a merged one is not. */
+const STUDIO_LINE_PCT_FALLBACK = 4.4;   /* per cent of the charm's short side */
+/* and a floor in absolute pixels, expressed against the CANVAS rather than
+   fixed at 2: two pixels is a hairline on a 1K frame and a thread on a 4K
+   one, and the same drawing must not get finer just because it got bigger */
+const STUDIO_LINE_MIN_FRAC = 1 / 512;
+const STUDIO_LINE_MIN_PX = 2;           /* below this a line stops being a line */
+
+async function studioThinLineArt(sharp, buf, cfg) {
+  const report = { applied: false, from: 0, to: 0, target: 0, why: "" };
+  if (!sharp || !buf?.length) { report.why = "no_input"; return { buf, report }; }
+  try {
+    const pct = Math.max(1, Math.min(12, Number(cfg && cfg.lineArtStrokePct) ||
+                                        STUDIO_LINE_PCT_FALLBACK));
+    const { data, info } = await sharp(buf).flatten({ background: "#ffffff" })
+      .greyscale().raw().toBuffer({ resolveWithObject: true });
+    const w = info.width, h = info.height, n = w * h;
+    const ink = new Uint8Array(n);
+    let count = 0, x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (data[y * w + x] < 128) {
+          ink[y * w + x] = 1; count++;
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+      }
+    }
+    if (count < 64 || x1 < 0) { report.why = "no_ink"; return { buf, report }; }
+
+    const d = studioInkDistance(ink, w, h);
+    const ridge = studioInkRidge(d, ink, w, h);
+    /* ── MEASURED ON THE SPINE, NOT ON THE INK ─────────────────────────
+       Along the middle of a stroke the distance to white is exactly half its
+       width, so the median distance over RIDGE pixels doubles straight into
+       a stroke width with no fitted constant and no bias.
+
+       Taken over all the ink instead it is neither. It carries a systematic
+       error of about two pixels — the distance across a stroke runs 0.5, 1.5,
+       … so its median is not a quarter of the width — and, worse, a solid
+       engraved region has far more pixels than the lines around it, so the
+       median simply lands INSIDE the blob: a six-pixel linework beside one
+       solid rectangle measured sixty. Every line in that drawing would then
+       have been thinned to nothing. A blob's spine is short and a line's is
+       long, so on the ridge the linework is what the median describes. */
+    const spine = [];
+    for (let i = 0; i < n; i++) if (ridge[i]) spine.push(d[i]);
+    if (!spine.length) { report.why = "no_spine"; return { buf, report }; }
+    spine.sort((a, b) => a - b);
+    const halfNow = spine[spine.length >> 1];
+    const from = halfNow * 2;
+    const short = Math.min(x1 - x0 + 1, y1 - y0 + 1);
+    const floor = Math.max(STUDIO_LINE_MIN_PX, Math.max(w, h) * STUDIO_LINE_MIN_FRAC);
+    const target = Math.max(floor, (short * pct) / 100);
+    report.from = Math.round(from * 10) / 10;
+    report.target = Math.round(target * 10) / 10;
+    report.charmShort = short;
+    if (from <= target * 1.25) {
+      report.why = "already_fine"; report.to = report.from;
+      return { buf, report };
+    }
+    /* How much comes off each side. A stroke of width W keeps the band where
+       the distance exceeds `cut`, which is W - 2*cut wide, so the cut for a
+       target T is simply (W - T)/2.
+
+       The cap is against the DEEPEST point of a stroke, not the median one:
+       halfNow is the median distance over the ink, which for an even stroke
+       is a QUARTER of its width rather than a half. Capping against it took
+       barely half the intended cut — a 12px line came out at 8px when 3px
+       was asked for — and the fault was invisible because the direction was
+       right. Ink that the cut would take entirely is caught by the ridge
+       below, so the only job left for a cap is to stop a runaway. */
+    const cut = Math.min((from - target) / 2, halfNow - 0.6);
+    if (cut <= 0.35) { report.why = "nothing_to_cut"; report.to = report.from; return { buf, report }; }
+
+    /* ── AND IT MUST NOT COME BACK WITH STAIRS ON IT ──────────────────
+       The first version wrote pure black or pure white per pixel. That is
+       the whole of the second half of the report — "you really lost a lot of
+       quality on the aliasing, the previous thicker lines had much higher
+       quality curves" — and it was not a side effect, it was the output
+       format: every intermediate tone the model had drawn to make a curve
+       read as a curve was thrown away, and the new edge was drawn on a
+       staircase of whole pixels.
+
+       The distance field already knows where the edge is to a fraction of a
+       pixel, so the edge is drawn there. A pixel one full pixel inside the
+       level set is solid, one outside is paper, and in between it takes the
+       coverage its distance implies — which is what a rasteriser does and
+       what the model itself did.
+
+       Two rules keep it honest. Nothing is ever drawn DARKER than the model
+       drew it, so no ink is invented; and a spine pixel keeps its original
+       tone whatever the ramp says, so no stroke can be rubbed out. */
+    /* ── DO IT ON THE TONES, NOT ON THE BITS ──────────────────────────
+       "Keep the band where the distance exceeds `cut`" and "erode by a disc
+       of radius `cut`" are the same sentence — {x : d(x) > R} IS the erosion
+       of the shape by a disc of radius R. The first form has to be evaluated
+       on a BINARY mask, so the new edge can only land on a level set of a
+       field computed from whole pixels, and lands within about a third of a
+       pixel of where it should. Down a near-vertical curve that error is
+       fresh on every row, and it reads as exactly what the report says:
+       stairs on a line that was smooth when the model drew it.
+
+       The second form has no such limit. Greyscale erosion — the minimum
+       over a disc — works on the tones themselves, so wherever the model
+       drew a soft edge, the eroded edge is the same soft edge moved inward.
+       Sub-pixel position, curvature and smoothness are all inherited rather
+       than re-derived. A fractional radius is the blend of the two whole
+       radii either side of it, which keeps the weight continuous in `cut`
+       instead of jumping a pixel at a time.
+
+       And it is anti-extensive by construction: a minimum over a set that
+       includes the pixel itself can never exceed the pixel itself, so "never
+       darker than the model drew it" is not a rule that has to be enforced.
+
+       The spine is unioned back at its ORIGINAL tone, so a stroke finer than
+       the cut keeps every tone it had rather than being rescued as a hard
+       black thread — the rescue must not be its own aliasing. */
+    const rad = Math.max(0, cut);
+    const rOut = Math.ceil(rad), rIn = Math.floor(rad), frac = rad - rIn;
+    const disc = [];
+    for (let dy = -rOut; dy <= rOut; dy++) {
+      for (let dx = -rOut; dx <= rOut; dx++) {
+        const rr = dx * dx + dy * dy;
+        if (rr <= rOut * rOut) disc.push([dx, dy, rr]);
+      }
+    }
+    disc.sort((a, b) => a[2] - b[2]);
+    const inSq = rIn * rIn;
+    const out = Buffer.alloc(n * 3, 255);
+    let kept = 0;
+    for (let i = 0; i < n; i++) {
+      const a0 = (255 - data[i]) / 255;
+      if (a0 <= 0) continue;
+      const x = i % w, y = (i / w) | 0;
+      let mIn = a0, mOut = a0;
+      for (let k = 0; k < disc.length; k++) {
+        const nx = x + disc[k][0], ny = y + disc[k][1];
+        const v = (nx < 0 || ny < 0 || nx >= w || ny >= h) ? 0 : (255 - data[ny * w + nx]) / 255;
+        if (disc[k][2] <= inSq && v < mIn) mIn = v;
+        if (v < mOut) mOut = v;
+        if (mOut <= 0 && (disc[k][2] > inSq || mIn <= 0)) break;
+      }
+      let al = mIn * (1 - frac) + mOut * frac;
+      if (ridge[i] && a0 > al) al = a0;
+      if (al <= 0) continue;
+      const g = Math.round(255 * (1 - al));
+      out[i * 3] = g; out[i * 3 + 1] = g; out[i * 3 + 2] = g;
+      if (al >= 0.5) kept++;
+    }
+    if (!kept) { report.why = "would_erase"; report.to = report.from; return { buf, report }; }
+
+    /* measure what actually came out, rather than what was asked for */
+    const ink2 = new Uint8Array(n);
+    /* the same threshold the measurement used going in — reading only PURE
+       black would now skip every anti-aliased edge and report the result
+       thinner than it is */
+    for (let i = 0; i < n; i++) if (out[i * 3] < 128) ink2[i] = 1;
+    const d2 = studioInkDistance(ink2, w, h);
+    const r2 = studioInkRidge(d2, ink2, w, h);
+    const v2 = [];
+    for (let i = 0; i < n; i++) if (r2[i]) v2.push(d2[i]);
+    v2.sort((a, b) => a - b);
+    report.to = v2.length ? Math.round(v2[v2.length >> 1] * 20) / 10 : 0;
+
+    const png = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
+      .png({ compressionLevel: 9 }).toBuffer();
+    report.applied = true;
+    console.log(`[studio] line art was ${report.from}px on a ${short}px charm — thinned to ` +
+                `${report.to}px (target ${report.target}px)`);
+    return { buf: png, report };
+  } catch (e) {
+    report.why = "error:" + String(e?.message || e).slice(0, 80);
+    return { buf, report };
+  }
 }
 
 /* ═══════════ THE DRAWING MUST COME BACK THE WAY IT WENT IN ═══════════════
