@@ -8042,6 +8042,20 @@ async function handleStudioRefLineArt({ body, event, origin }) {
   }
   if (!lineBuf || !lineBuf.length) return fail(lastErr?.message || "lineart_failed");
 
+  /* THE MODEL'S FRAMING IS NOT THE LAST WORD. See studioMatchOrientation:
+     the prompt asks for the charm to stay where it was and the model turns
+     it anyway, so the turn is measured against the photograph it was drawn
+     from and undone. Never allowed to fail the step. */
+  let orient = null;
+  try {
+    const sharpMod = studioSharp();
+    if (sharpMod) {
+      const fixed = await studioMatchOrientation(sharpMod, lineBuf, goldBuf);
+      orient = fixed.report;
+      if (fixed.buf && fixed.buf.length) lineBuf = fixed.buf;
+    }
+  } catch (e) { console.error("[studio] orientation match skipped:", e?.message || e); }
+
   let outBuf = lineBuf;
   try {
     outBuf = embedPngTextMetadata(lineBuf, {
@@ -8063,12 +8077,129 @@ async function handleStudioRefLineArt({ body, event, origin }) {
     await sRef.set({
       refLineArtStatus: "done", refLineArtURL: url, refLineArtPath: path,
       refLineArtGid: gid, refLineArtTitle: title, refLineArtError: null,
+      refLineArtTurnedDeg: orient && orient.applied ? orient.deg : 0,
+      refLineArtOrientWhy: (orient && orient.why) || "",
       refLineArtAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: Date.now(),
     }, { merge: true });
     console.log(`[studio] ref line art ready for ${title || gid} → ${path}`);
     return studioJson(200, { ok: true, url, path }, origin);
   } catch (err) { return fail(err?.message || "save_failed"); }
+}
+
+/* ═══════════ THE DRAWING MUST COME BACK THE WAY IT WENT IN ═══════════════
+   The line-art prompt says it plainly — "do not move, rescale, re-centre or
+   re-crop the object; it must sit in the same place in the frame, at the
+   same size, so the drawing can be laid directly over the photograph" — and
+   the model turns it anyway. A charm photographed upright comes back lying
+   at forty-five degrees across the frame. Everything downstream then
+   inherits it: the customer's first sight of their own charm is a drawing
+   nobody drew that way, the alignment check has nothing to align, and every
+   part the trace produces is filed at the wrong angle.
+
+   An instruction the model declines to follow is not a mechanism. This is
+   the mechanism: the orientation of a shape is a property of its pixels, so
+   it is measured on both pictures and the difference is simply undone.
+
+   WHAT IS AND IS NOT CORRECTED. The principal axis is undirected — it says
+   which way a shape is long, not which end is the top — so a drawing that
+   came back upside down is NOT flipped, because nothing here can tell an
+   upside-down bat from a right-way-up one. Only the turn is undone, and only
+   within a quarter turn either way. A charm too round to have a long axis is
+   left alone entirely: on a disc the axis is noise, and rotating by noise
+   would be worse than the fault being fixed. */
+
+/* Second moments of the ink. Returns the principal angle in radians (-π/2,
+   π/2], the eccentricity 0..1, and how much ink there was to measure — all
+   from one pass over a grayscale buffer, so it costs nothing worth naming. */
+function studioInkAxis(gray, w, h) {
+  let n = 0, sx = 0, sy = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (gray[y * w + x] < 128) { n++; sx += x; sy += y; }
+    }
+  }
+  if (n < 32) return null;
+  const cx = sx / n, cy = sy / n;
+  let mxx = 0, myy = 0, mxy = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (gray[y * w + x] >= 128) continue;
+      const dx = x - cx, dy = y - cy;
+      mxx += dx * dx; myy += dy * dy; mxy += dx * dy;
+    }
+  }
+  mxx /= n; myy /= n; mxy /= n;
+  /* the major axis of the covariance ellipse */
+  const angle = 0.5 * Math.atan2(2 * mxy, mxx - myy);
+  const t = Math.sqrt((mxx - myy) * (mxx - myy) + 4 * mxy * mxy);
+  const l1 = (mxx + myy + t) / 2, l2 = (mxx + myy - t) / 2;
+  const ecc = l1 > 1e-9 ? Math.sqrt(Math.max(0, 1 - l2 / l1)) : 0;
+  return { angle, ecc, n, cx, cy };
+}
+
+/* the smallest turn that brings axis `from` onto axis `to`, in (-π/2, π/2] —
+   an axis has no head or tail, so half a turn is no turn at all */
+function studioAxisDelta(from, to) {
+  let d = to - from;
+  while (d <= -Math.PI / 2) d += Math.PI;
+  while (d > Math.PI / 2) d -= Math.PI;
+  return d;
+}
+
+const STUDIO_ORIENT_MIN_ECC = 0.62;   /* below this a shape has no long axis */
+const STUDIO_ORIENT_MIN_DEG = 4;      /* below this, leave it alone */
+
+/* Never throws and never fails the step: a drawing that arrived is worth
+   more than a drawing that is perfectly square. */
+async function studioMatchOrientation(sharp, drawingBuf, referenceBuf) {
+  const report = { applied: false, deg: 0, why: "" };
+  if (!sharp || !drawingBuf?.length || !referenceBuf?.length) {
+    report.why = "no_input"; return { buf: drawingBuf, report };
+  }
+  try {
+    const W = 320;
+    const read = async (buf) => {
+      const { data, info } = await sharp(buf)
+        .flatten({ background: "#ffffff" }).greyscale()
+        .resize(W, W, { fit: "contain", background: "#ffffff" })
+        .raw().toBuffer({ resolveWithObject: true });
+      return studioInkAxis(data, info.width, info.height);
+    };
+    const a = await read(referenceBuf);
+    const b = await read(drawingBuf);
+    if (!a || !b) { report.why = "no_ink"; return { buf: drawingBuf, report }; }
+    report.refEcc = Math.round(a.ecc * 100) / 100;
+    report.outEcc = Math.round(b.ecc * 100) / 100;
+    if (a.ecc < STUDIO_ORIENT_MIN_ECC || b.ecc < STUDIO_ORIENT_MIN_ECC) {
+      report.why = "too_round"; return { buf: drawingBuf, report };
+    }
+    const d = studioAxisDelta(b.angle, a.angle);
+    const deg = d * 180 / Math.PI;
+    report.deg = Math.round(deg * 10) / 10;
+    if (Math.abs(deg) < STUDIO_ORIENT_MIN_DEG) {
+      report.why = "already_upright"; return { buf: drawingBuf, report };
+    }
+    /* rotate onto the reference's axis, on white, then put it back in a
+       square frame the same way the drawing arrived in one */
+    const meta = await sharp(drawingBuf).metadata();
+    const S = Math.max(meta.width || 1024, meta.height || 1024);
+    const turned = await sharp(drawingBuf)
+      .flatten({ background: "#ffffff" })
+      .rotate(deg, { background: "#ffffff" })
+      .png().toBuffer();
+    const framed = await studioTrimToSubject(sharp, turned, 0.03);
+    const out = await sharp(framed)
+      .flatten({ background: "#ffffff" })
+      .resize(S, S, { fit: "contain", background: "#ffffff" })
+      .png().toBuffer();
+    report.applied = true;
+    console.log(`[studio] line art was ${report.deg}° off the reference's axis — turned back`);
+    return { buf: out, report };
+  } catch (e) {
+    report.why = "error:" + String(e?.message || e).slice(0, 80);
+    return { buf: drawingBuf, report };
+  }
 }
 
 async function handleStudioSpecFromGold({ body, event, origin }) {
