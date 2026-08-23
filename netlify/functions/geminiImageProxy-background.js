@@ -3921,6 +3921,30 @@ const STUDIO_SCORE_FLOORS = Object.freeze({
    three tones out of studioMaterialSpec — so it is checking the contract
    that was actually issued rather than a paraphrase of it. If the render
    prompt's vocabulary ever changes, this changes with it. */
+/* ── THE JUDGE HAS TO BE TOLD THE SAME THING THE RENDERER WAS ────────────
+   The render prompt's hoop sentence is swapped per request on `builtInHoop`,
+   and this prompt's geometry rule was not: it told the judge to "penalise a
+   hoop that has become a separate attached jump ring rather than part of the
+   same sheet" on EVERY render. On a repository charm whose real jump ring
+   the renderer had just been told to reproduce as found, a faithful render
+   was therefore marked down for being faithful — and with renderAdjudicate
+   shipping as "enforce" and renderScoreRetries at 2, it could buy two more
+   renders to make the charm less correct.
+
+   Same flag, same strict true, same shape as the render prompt: one clause,
+   two spellings, everything either side byte-identical. */
+const STUDIO_ADJ_HOOP_INTEGRATED =
+  "and a hoop that has become a separate attached jump ring rather than part " +
+  "of the same sheet";
+const STUDIO_ADJ_HOOP_AS_FOUND =
+  "and any change to the hanging hardware, which is already part of this piece " +
+  "and must be reproduced as it appears rather than re-formed into a flat " +
+  "integrated hoop";
+function buildStudioAdjudicatePrompt(opts) {
+  const hoop = (opts && opts.builtInHoop === true)
+    ? STUDIO_ADJ_HOOP_AS_FOUND : STUDIO_ADJ_HOOP_INTEGRATED;
+  return STUDIO_ADJUDICATE_PROMPT.replace("${HOOP_RULE}", hoop);
+}
 const STUDIO_ADJUDICATE_PROMPT =
 `You are the final quality check in a workshop that laser-cuts flat 14K gold charms.
 
@@ -3946,8 +3970,7 @@ the render did not follow the map.
 in B match the outline of all non-white area in A: the same shape, the same
 aspect ratio, the hanging hoop in the same place and the same relative size,
 every feature where the map puts it? Penalise drift, added or removed lobes, a
-changed aspect ratio, and a hoop that has become a separate attached jump ring
-rather than part of the same sheet.
+changed aspect ratio, \${HOOP_RULE}.
 
 2. "cutouts" — the WHITE-inside-the-charm rule, and the one most often broken.
 Every white region enclosed by metal in A must be a real hole in B, with the
@@ -4009,7 +4032,7 @@ match well but not perfectly, the honest answer is in the 80s or low 90s.`;
 
 /* One vision call. Never throws — a judge that cannot answer must not be able
    to cost a customer their charm. */
-async function studioAdjudicateOnce(specBuf, goldBuf, cfg) {
+async function studioAdjudicateOnce(specBuf, goldBuf, cfg, opts) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return { raw: null, model: "", text: "", why: "no_api_key" };
   /* ── WHICH MODEL IS DOING THE JUDGING ─────────────────────────────────
@@ -4040,7 +4063,7 @@ async function studioAdjudicateOnce(specBuf, goldBuf, cfg) {
         contents: [{
           role: "user",
           parts: [
-            { text: STUDIO_ADJUDICATE_PROMPT },
+            { text: buildStudioAdjudicatePrompt(opts) },
             { text: "IMAGE A — STRUCTURE_MAP (the specification):" },
             { inline_data: { mime_type: "image/png", data: Buffer.from(specBuf).toString("base64") } },
             { text: "IMAGE B — the rendered 14K gold charm (judge this):" },
@@ -4352,7 +4375,7 @@ async function studioRenderAttempts(opts) {
     }
     /* The cut check's verdict is the more specific instruction, so it wins
        the wording when both want another go. */
-    nextNote = cutWants ? studioRetryNote(punch.report, attempts)
+    nextNote = cutWants ? studioRetryNote(punch.report, attempts, opts.builtInHoop)
                         : studioScoreRetryNote(scored, attempts);
     log(`[studio] render retry ${attempts}/${cutWants ? maxRetries : scoreRetries} after ` +
         (cutWants ? punch.report.reason : `score ${scored.total}`));
@@ -4676,22 +4699,33 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
 
     /* Build the Greyscale Mask now, so the customer sees both pictures before
        paying for a render. Never allowed to fail this step. */
-    let specURL = "", specPath = "";
+    let specURL = "", specPath = "", specReuse = null;
     try {
       const sp = await studioStoreSpecForVersion({
         uid, sessionId, n, metal,
         drawingBuffer: outBuf, zones: [],
       });
-      if (sp) { specURL = sp.specURL; specPath = sp.specPath; }
+      if (sp) {
+        specURL = sp.specURL; specPath = sp.specPath;
+        /* THE MAP THE RENDER WILL REUSE. Filed under the render's own field
+           names and with its fingerprint, so the first press of Re-render
+           recognises this map instead of rebuilding it to identical bytes. */
+        specReuse = {
+          renderSpecURL: sp.specURL, renderSpecPath: sp.specPath,
+          renderSpecKey: sp.specKey, renderSpecMode: "deterministic-material",
+          renderSpecFacePx: sp.facePx, renderSpecHolePx: sp.holePx,
+          renderSpecWorkPx: sp.workPx,
+        };
+      }
     } catch (e) { console.error("[studio] greyscale mask at generation skipped:", e?.message || e); }
 
-    await studioStage(vRef, {
+    await studioStage(vRef, Object.assign({
       status: "done", stage: "done", storagePath, downloadURL,
       specURL, specPath,
       prompt: String(effectivePrompt).slice(0, 4000),
       model: studioModelConfig.id,
       doneAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }, specReuse || {}));
     try {
       await sRef.set({
         currentVersion: n,
@@ -6139,7 +6173,7 @@ async function studioPunchCutouts(renderBuf, drawingBuf, plan) {
      undeclared_cut  metal that must be solid came back open
      unaligned       the silhouette drifted far enough that no coordinate in
                      one image maps into the other                          */
-function studioRetryNote(report, attempt) {
+function studioRetryNote(report, attempt, builtInHoop) {
   const reason = String(report?.reason || "");
   const worst = studioCleanText(report?.worst || "");
   const lines = ["THIS IS A RE-RENDER. THE PREVIOUS ATTEMPT WAS REJECTED. Render IMAGE 1 again from scratch and correct exactly this:"];
@@ -6150,7 +6184,13 @@ function studioRetryNote(report, attempt) {
     lines.push("• Cut through ONLY where IMAGE 1 is white. Every grey pixel of IMAGE 1 — mid grey and dark grey alike — is solid metal with the ground hidden behind it. An engraved field is metal. A dark area is metal.");
   } else if (reason === "unaligned") {
     lines.push("• ITS SILHOUETTE DID NOT MATCH. The outer outline drifted from IMAGE 1 — reshaped, rescaled, recentred or cropped differently.");
-    lines.push("• Reproduce IMAGE 1's outer silhouette, its integrated top hoop and its proportions exactly, at the same scale and centred the same way in the frame.");
+    /* the same clause, the same flag: this note is appended to the render
+       prompt, so asserting an integrated hoop here would contradict the
+       sentence the prompt itself just swapped out */
+    lines.push("• Reproduce IMAGE 1's outer silhouette, " +
+               (builtInHoop === true ? "its hanging hardware exactly as it appears"
+                                     : "its integrated top hoop") +
+               " and its proportions exactly, at the same scale and centred the same way in the frame.");
   } else {
     lines.push("• It failed the geometry check against IMAGE 1. Reproduce IMAGE 1's silhouette, openings and worked regions exactly.");
   }
@@ -6197,23 +6237,60 @@ async function studioFailRender(vRef, error, renderRunId) {
    must not be lost because sharp was unavailable or Storage hiccupped — the
    render still builds its own mask exactly as before, so a miss here costs a
    preview, not a render. Every call site wraps it and ignores the result. */
+/* ── ONE DEFINITION OF "STILL DESCRIBES THIS VERSION" ─────────────────────
+   The greyscale map is a function of exactly three things: the drawing it
+   was derived from, the customer's account of which areas are holes, and
+   the resolution floor it was refined at. Both the place that BUILDS the
+   map and the place that decides whether to REUSE it have to agree about
+   that, byte for byte, or the reuse test can never match and the map is
+   rebuilt on every press — which is what happened: this function filed its
+   result as specURL/specPath and wrote no key at all, while the render
+   looked for renderSpecKey. The two never met, so the very first press of
+   Re-render threw away a map that was already correct, rebuilt it to the
+   identical bytes, and re-uploaded it under a fresh download token — so the
+   greyscale picture on screen visibly changed for no reason.
+
+   Computed here, in one place, used by both. */
+function studioSpecKey(drawingBuffer, zones, floorPx) {
+  return require("crypto").createHash("sha256")
+    .update(drawingBuffer)
+    .update("\u0000" + JSON.stringify(Array.isArray(zones) ? zones.slice(0, 40) : []))
+    .update("\u0000" + String(floorPx))
+    .digest("hex").slice(0, 32);
+}
+
 async function studioStoreSpecForVersion({ uid, sessionId, n, metal, drawingBuffer, zones }) {
   const sharpMod = studioSharp();
   if (!sharpMod || !drawingBuffer?.length) return null;
   const cfg = await studioConfig();
   if (cfg.renderDeterministicSpec === false) return null;
 
+  const planZones = Array.isArray(zones) ? zones.slice(0, 40) : [];
   const plan = await studioDrawingPlan(sharpMod, drawingBuffer);
   if (!plan) return null;
-  let spec = await studioMaterialSpec(sharpMod, plan, metal,
-                                      Array.isArray(zones) ? zones.slice(0, 40) : []);
+  let spec = await studioMaterialSpec(sharpMod, plan, metal, planZones);
   if (!spec?.buf) return null;
   /* Same refinement the render applies, or the preview would show softer
-     edges than the picture the model is handed. */
-  try {
-    const refined = await studioRefineMask(sharpMod, spec, cfg);
-    if (refined?.buf) spec = refined;
-  } catch (e) { console.error("[studio] mask refine skipped:", e?.message || e); }
+     edges than the picture the model is handed — AND, now that the render
+     reuses this map rather than rebuilding it, different bytes here would
+     mean the model saw a different picture depending on which press it was.
+
+     This call used to read `studioRefineMask(sharpMod, spec, cfg)`. The
+     signature is (sharp, maskBuf, targetLong): it was handed the spec
+     OBJECT where a buffer belongs and the whole config where a pixel count
+     belongs, so sharp() threw on every call, the catch swallowed it, and
+     the stored map was never once refined. It was invisible while the map
+     was rebuilt at render time anyway; it is load-bearing now. */
+  const floor = studioMaskMinPx(cfg);
+  if (floor) {
+    try {
+      const refined = await studioRefineMask(sharpMod, spec.buf, floor);
+      if (refined?.buf) {
+        spec.buf = refined.buf;
+        spec.w = refined.w; spec.h = refined.h;
+      }
+    } catch (e) { console.error("[studio] mask refine skipped:", e?.message || e); }
+  }
 
   const specPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-spec.png`;
   const bucket = getBucket();
@@ -6224,7 +6301,15 @@ async function studioStoreSpecForVersion({ uid, sessionId, n, metal, drawingBuff
     metadata: { metadata: { firebaseStorageDownloadTokens: token, uid, sessionId,
                             version: String(n), spec: "1" } },
   });
-  return { specPath, specURL: tokenDownloadURLFor(bucket.name, specPath, token) };
+  return {
+    specPath,
+    specURL: tokenDownloadURLFor(bucket.name, specPath, token),
+    /* what the render needs in order to recognise this map as current */
+    specKey: studioSpecKey(drawingBuffer, planZones, floor),
+    facePx: Number(spec.facePx) || 0,
+    holePx: Number(spec.holePx) || 0,
+    workPx: Number(spec.workPx) || 0,
+  };
 }
 
 /* ── WHAT THE RENDER WOULD SEND — HANDLER REMOVED ─────────────────────────
@@ -6381,11 +6466,10 @@ async function handleStudioRender({ body, event, origin }) {
        which would be a far worse fault than the slowness being fixed. */
     const vNow = vSnap.data() || {};
     const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
-    const specKey = require("crypto").createHash("sha256")
-      .update(bw.buffer)
-      .update("\u0000" + JSON.stringify(renderZones))
-      .update("\u0000" + String(studioMaskMinPx(cfg)))
-      .digest("hex").slice(0, 32);
+    /* the same three inputs, hashed by the same function the BUILDER uses —
+       see studioSpecKey. Inlining the hash in two places is exactly what let
+       the two drift apart and made reuse unreachable on the first press. */
+    const specKey = studioSpecKey(bw.buffer, renderZones, studioMaskMinPx(cfg));
     let reusedSpec = null;
     if (vNow.renderSpecPath && String(vNow.renderSpecKey || "") === specKey) {
       try {
@@ -6701,11 +6785,37 @@ async function handleStudioRender({ body, event, origin }) {
 
     const loop = await studioRenderAttempts({
       renderOnce, basePrompt: effectivePrompt, cfg,
+      /* the retry note is appended to basePrompt, so it has to know which
+         hoop sentence that prompt already carries */
+      builtInHoop,
       cutMode, maxRetries, retryable,
-      punchFn: (buf) => studioPunchCutouts(buf, bw.buffer, studioPlan),
+      /* ── THE CUT CHECK NEEDS THE PLAN, AND REUSE SKIPS BUILDING IT ─────
+         studioPlan is only derived when the greyscale map is being built
+         from scratch, so on a reuse it is null — and studioPunchCutouts
+         reads plan.faceBox on its second line. That is a TypeError into a
+         catch that reports "punch_error" and hands the render back
+         unpunched: first renders would keep their declared holes and every
+         re-render would quietly lose them. It is invisible only because
+         renderCutCheck ships "off"; turning it on would have shipped the
+         bug. The plan is cheap and derived from the same drawing bytes, so
+         it is built on demand here rather than made a reason not to reuse
+         the map. */
+      punchFn: async (buf) => {
+        let plan = studioPlan;
+        if (!plan && sharpMod) {
+          try { plan = await studioDrawingPlan(sharpMod, bw.buffer); }
+          catch (e) { console.error("[studio] cut-check plan skipped:", e?.message || e); }
+        }
+        if (!plan) {
+          return { buf, report: { verified: false, reason: "no_plan", declaredCuts: 0,
+                                  punchedPx: 0, alignment: 0, openFrac: 0,
+                                  regionsOk: 0, regionsBad: 0, worst: "" } };
+        }
+        return studioPunchCutouts(buf, bw.buffer, plan);
+      },
       adjMode, scoreRetries,
       judgeFn: async (buf) => {
-        const ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg);
+        const ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg, { builtInHoop });
         const scored = studioScoreAudit(ans.raw, studioScoreVerdict(ans.raw, cfg), cfg);
         if (scored) { scored.model = ans.model; scored.reply = String(ans.text || "").slice(0, 1200); }
         else {
@@ -6935,8 +7045,7 @@ const STUDIO_GOLD_EDIT_PROMPT_TAIL =
   not name. If the request is about the wings, the hoop, the body, the base
   and every engraved line stay exactly as they are — same size, same position,
   same shape, same spacing.
-• The hanging hoop: same place, same diameter, same wall thickness, and still
-  part of the same flat sheet rather than an attached jump ring.
+• The hanging hoop: same place, same diameter, same wall thickness\${HOOP_RULE}.
 • EVERY OPENING. Each hole cut through the metal stays open, the same shape
   and in the same place, with the same bright inner cut edge. Do not fill one,
   do not add one, do not turn one into an engraved recess.
@@ -7111,7 +7220,21 @@ function buildGoldEditPrompt(instruction, metal, opts) {
   if (metal) {
     parts.push(`The metal is ${studioCleanText(metal)} and does not change.`);
   }
-  parts.push(STUDIO_GOLD_EDIT_PROMPT_TAIL);
+  /* ── THE HOOP CLAUSE, ON THIS PIPELINE TOO ──────────────────────────
+     The render's hoop sentence is swapped per request on `builtInHoop`, and
+     this tail carried the un-swapped doctrine — "still part of the same flat
+     sheet rather than an attached jump ring" — on every edit. So the very
+     first edit of a repository charm re-asserted, in the list of things that
+     must survive PIXEL FOR PIXEL, the one thing the render had just been
+     told was false of it: a real jump ring would be re-formed into a flat
+     integrated hoop while the model believed it was preserving the piece.
+
+     Same flag, same strict true, same one-clause swap. */
+  parts.push(STUDIO_GOLD_EDIT_PROMPT_TAIL.replace("${HOOP_RULE}",
+    (opts && opts.builtInHoop === true)
+      ? ", and still the hanging hardware the piece arrived with rather than " +
+        "re-formed into a hoop cut from the same sheet"
+      : ", and still part of the same flat sheet rather than an attached jump ring"));
   return parts.join("\n\n");
 }
 
@@ -7275,8 +7398,11 @@ async function handleStudioGoldEdit({ body, event, origin }) {
       }
     }
 
+    /* the same per-request flag the render reads, so an edit cannot contradict
+       the charm the render was told to make — see buildGoldEditPrompt's tail */
+    const builtInHoop = body?.builtInHoop === true;
     const prompt = buildGoldEditPrompt(instruction, metal,
-                                       { stripCaption, markupNotes, markupMode });
+                                       { stripCaption, markupNotes, markupMode, builtInHoop });
     console.log(`[studio] gold edit v${n} "${instruction.slice(0, 60)}" ` +
                 `prompt=${prompt.length} chars model=${studioModelConfig.id}` +
                 (stripCaption ? " (+ caption removal)" : "") +
@@ -8387,23 +8513,31 @@ async function handleStudioCompose({ body, event, origin }) {
 
     /* Build the Greyscale Mask now, so the customer sees both pictures before
        paying for a render. Never allowed to fail this step. */
-    let specURL = "", specPath = "";
+    let specURL = "", specPath = "", specReuse = null;
     try {
       const sp = await studioStoreSpecForVersion({
         uid, sessionId, n, metal: session.metal || "gold",
         drawingBuffer: img.buffer, zones: body?.zones,
       });
-      if (sp) { specURL = sp.specURL; specPath = sp.specPath; }
+      if (sp) {
+        specURL = sp.specURL; specPath = sp.specPath;
+        specReuse = {
+          renderSpecURL: sp.specURL, renderSpecPath: sp.specPath,
+          renderSpecKey: sp.specKey, renderSpecMode: "deterministic-material",
+          renderSpecFacePx: sp.facePx, renderSpecHolePx: sp.holePx,
+          renderSpecWorkPx: sp.workPx,
+        };
+      }
     } catch (e) { console.error("[studio] greyscale mask at generation skipped:", e?.message || e); }
 
-    await studioStage(vRef, {
+    await studioStage(vRef, Object.assign({
       status: "done", stage: "done", storagePath, downloadURL,
       specURL, specPath,
       composed: true,
       model: "studio-composer",
       prompt: "Composed locally from the customer's own vector items — exactly as drawn.",
       doneAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }, specReuse || {}));
     try {
       await sRef.set({
         currentVersion: n,
