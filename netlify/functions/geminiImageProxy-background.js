@@ -3626,7 +3626,39 @@ ${second}
 
    The region census is still computed and still filed on the version doc; it
    is not appended here, and appending it would change the tested text.    */
-function buildMaterialSpecToCharmPrompt(_opts) {
+/* ── THE ONE SENTENCE THAT ASSUMES WE MADE THE HOOP ────────────────────────
+   Everything this workshop draws from scratch hangs from an integrated hoop
+   — a flat annulus cut from the same sheet — and the MATERIAL line below
+   says so, which is right for a charm the studio designed.
+
+   It is wrong for a charm that came out of our own repository. Those are
+   finished pieces with their own hanging hardware already on them, and it is
+   frequently a REAL jump ring: round wire, attached, unmistakably not cut
+   from the sheet. Telling the renderer that "the top hoop is part of the
+   same sheet rather than an attached jump ring" asks it to contradict the
+   photograph — to flatten a wire ring into an annulus, or to fuse it into
+   the body — on the one pipeline where the hoop is not ours to design.
+
+   So the sentence is swapped, and ONLY when the caller says this charm came
+   from the repository. Everything else about the prompt is byte-identical,
+   the swap is confined to this builder, and no other pipeline reaches it:
+   the Charm Maker's own doctrine lives in studioConstraintBlocks() and is
+   not consulted here, buildLineArtToCharmPrompt is a different builder for a
+   path this render does not take, and the flag arrives per request rather
+   than from config. The regression suite asserts each of those separately. */
+const STUDIO_HOOP_INTEGRATED =
+  "and the top hoop is part of the same sheet rather than an attached jump ring";
+const STUDIO_HOOP_AS_FOUND =
+  "and its hanging hardware is ALREADY PART OF THE PIECE in IMAGE 1 — " +
+  "reproduce it exactly as it appears there, whether it is a flat integrated " +
+  "hoop or a separate round jump ring. Do not add a hoop, do not remove one, " +
+  "do not re-form one into the other, and do not add a second ring, bail or chain";
+
+function buildMaterialSpecToCharmPrompt(opts) {
+  /* strict true in the builder as well as at the call site: a truthy string
+     arriving from somewhere unexpected must not quietly drop the hoop rule
+     for a charm the studio drew itself */
+  const hoop = (opts && opts.builtInHoop === true) ? STUDIO_HOOP_AS_FOUND : STUDIO_HOOP_INTEGRATED;
   return `PRIMARY OPERATION — MATERIAL TRANSFER ONLY
 
 Transform IMAGE 1 and IMAGE 2 into a photorealistic 14K gold charm. Treat both as pixel-level manufacturing maps, never as recognizable objects.
@@ -3652,7 +3684,7 @@ Before rendering, silently verify:
 
 Correct any topology mismatch before producing the image.
 
-MATERIAL: The whole charm is one alloy: 14K gold. Thin flat sheet metal with crisp cut edges, not a thick moulded token, and the top hoop is part of the same sheet rather than an attached jump ring.
+MATERIAL: The whole charm is one alloy: 14K gold. Thin flat sheet metal with crisp cut edges, not a thick moulded token, ${hoop}.
 
 IMAGE BACKGROUND: A plain pure WHITE studio background with one soft contact shadow beneath the charm.
 
@@ -6332,6 +6364,46 @@ async function handleStudioRender({ body, event, origin }) {
     const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
     const bw = await storagePathToBuffer(bwPath);
 
+    /* ── RE-RENDER RE-RENDERS. IT DOES NOT RE-DERIVE. ─────────────────────
+       Everything between here and the model call resolves the approved
+       drawing into the greyscale material map, and it did so on EVERY press:
+       press Re-render twice with nothing changed and the map was built,
+       refined, thresholded and re-uploaded from scratch both times, to
+       arrive — deterministically — at the identical bytes. The customer
+       asked for another cut of the metal and got the whole pipeline.
+
+       So the map this version already has is reused when it still describes
+       this version. "Still describes" is the whole of the care here: the map
+       is a function of the drawing, of the customer's account of which areas
+       are holes, and of the resolution floor it was refined at. Those three
+       are fingerprinted with the map, and a change in any of them rebuilds
+       it — so editing a fill and pressing Re-render is not quietly ignored,
+       which would be a far worse fault than the slowness being fixed. */
+    const vNow = vSnap.data() || {};
+    const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
+    const specKey = require("crypto").createHash("sha256")
+      .update(bw.buffer)
+      .update("\u0000" + JSON.stringify(renderZones))
+      .update("\u0000" + String(studioMaskMinPx(cfg)))
+      .digest("hex").slice(0, 32);
+    let reusedSpec = null;
+    if (vNow.renderSpecPath && String(vNow.renderSpecKey || "") === specKey) {
+      try {
+        const got = await storagePathToBuffer(vNow.renderSpecPath);
+        if (got?.buffer?.length) {
+          reusedSpec = { buf: got.buffer,
+                         facePx: Number(vNow.renderSpecFacePx) || 0,
+                         holePx: Number(vNow.renderSpecHolePx) || 0,
+                         workPx: Number(vNow.renderSpecWorkPx) || 0 };
+          console.log("[studio] re-render: reusing the greyscale map already on v" + n);
+        }
+      } catch (e) {
+        /* the map is gone from Storage, or unreadable — build it again */
+        console.warn("[studio] stored greyscale map unusable, rebuilding:", e?.message || e);
+        reusedSpec = null;
+      }
+    }
+
     /* ── DETERMINISTIC SPECIFICATION → AI MATERIAL RENDER ──────────────────
        This is the boundary the render previously did not have. The approved
        drawing still contains BLUE/RED/BLACK because those colours are ideal
@@ -6352,16 +6424,15 @@ async function handleStudioRender({ body, event, origin }) {
        has had its chance. */
     const sharpMod = studioSharp();
     let studioPlan = null;
-    if (sharpMod) {
+    if (sharpMod && !reusedSpec) {
       try { studioPlan = await studioDrawingPlan(sharpMod, bw.buffer); }
       catch (e) { console.error("[studio] drawing plan skipped:", e?.message || e); studioPlan = null; }
-    } else {
+    } else if (!sharpMod) {
       console.error("[studio] sharp unavailable — no grey map can be built");
     }
 
-    const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
-    let materialSpec = null;
-    if (sharpMod && studioPlan) {
+    let materialSpec = reusedSpec;
+    if (sharpMod && studioPlan && !materialSpec) {
       try { materialSpec = await studioMaterialSpec(sharpMod, studioPlan, metal, renderZones); }
       catch (e) {
         console.error("[studio] material spec skipped:", e?.message || e);
@@ -6370,7 +6441,7 @@ async function handleStudioRender({ body, event, origin }) {
     }
     /* Smoothed and resampled to the working resolution. Runs AFTER the
        cut/engrave/polish decisions, never before, so nothing is reclassified. */
-    if (materialSpec && materialSpec.buf) {
+    if (materialSpec && materialSpec.buf && !reusedSpec) {
       const floor = studioMaskMinPx(cfg);
       if (floor) {
         try {
@@ -6465,7 +6536,13 @@ async function handleStudioRender({ body, event, origin }) {
        text into our image model" is not a risk a fixed prompt carries at
        all. The field is ignored rather than rejected — an old tab that
        still sends it gets a normal render, not an error. */
-    const effectivePrompt = buildMaterialSpecToCharmPrompt();
+    /* ── DOES THIS CHARM ALREADY HAVE ITS OWN HOOP? ────────────────────────
+       Only a design that began life in our repository does, and only the
+       storefront knows that — so it says so per request rather than the
+       server guessing from the shape of the session. Read as a strict
+       boolean: an older tab that sends nothing renders exactly as it did. */
+    const builtInHoop = body?.builtInHoop === true;
+    const effectivePrompt = buildMaterialSpecToCharmPrompt({ builtInHoop });
     console.log(`[studio] prompt fixed chars=${effectivePrompt.length}`);
 
     /* ── THE GREYSCALE MASK IS EVIDENCE, SO IT IS KEPT ───────────────────
@@ -6487,25 +6564,37 @@ async function handleStudioRender({ body, event, origin }) {
     /* No `if (specUsed)` guard any more — the render has already thrown if
        there is no mask, so reaching here means there is one. */
     let renderSpecURL = "", renderSpecPath = "";
-    try {
-      renderSpecPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-spec.png`;
-      const specBucket = getBucket();
-      const specToken = newDownloadToken();
-      await specBucket.file(renderSpecPath).save(materialSpec.buf, {
-        resumable: false,
-        contentType: "image/png",
-        metadata: { metadata: { firebaseStorageDownloadTokens: specToken, uid, sessionId,
-                                version: String(n), spec: "1" } },
-      });
-      renderSpecURL = tokenDownloadURLFor(specBucket.name, renderSpecPath, specToken);
-    } catch (e) {
-      console.error("[studio] greyscale mask not stored:", e?.message || e);
-      renderSpecURL = ""; renderSpecPath = "";
+    if (reusedSpec) {
+      /* the same bytes are already in Storage under the same path, with a
+         download token the customer's browser is already using — writing
+         them again would only change the token and cost a round trip */
+      renderSpecURL = String(vNow.renderSpecURL || "");
+      renderSpecPath = String(vNow.renderSpecPath || "");
+    } else {
+      try {
+        renderSpecPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}-spec.png`;
+        const specBucket = getBucket();
+        const specToken = newDownloadToken();
+        await specBucket.file(renderSpecPath).save(materialSpec.buf, {
+          resumable: false,
+          contentType: "image/png",
+          metadata: { metadata: { firebaseStorageDownloadTokens: specToken, uid, sessionId,
+                                  version: String(n), spec: "1" } },
+        });
+        renderSpecURL = tokenDownloadURLFor(specBucket.name, renderSpecPath, specToken);
+      } catch (e) {
+        console.error("[studio] greyscale mask not stored:", e?.message || e);
+        renderSpecURL = ""; renderSpecPath = "";
+      }
     }
 
     await vRef.set({
       renderStage: "rendering", renderRunId,
       renderSpecURL, renderSpecPath,
+      /* what this map was derived FROM, so the next press can tell whether
+         it still describes this version — see the note where it is read */
+      renderSpecKey: renderSpecPath ? specKey : null,
+      renderSpecReused: !!reusedSpec,
       renderSpecMode: "deterministic-material",
       renderSpecFacePx: materialSpec.facePx,
       renderSpecHolePx: materialSpec.holePx,
@@ -6521,11 +6610,14 @@ async function handleStudioRender({ body, event, origin }) {
          change keeps a field that means the same thing, and it is now the
          only answer the field can have. */
       renderPromptOverridden: false,
-      renderSpecRoiMode: studioPlan?.roiMode || "unknown",
-      renderSpecRoiGuard: studioPlan?.roiGuard || "unknown",
-      renderSpecRoiSignalPx: Number(studioPlan?.roiSignalPx || 0),
-      renderSpecRoiBox: studioPlan?.roiBox || null,
-      renderSpecSignalBox: studioPlan?.roiSignalBox || null,
+      /* on a reuse there is no fresh plan to read these from, and writing
+         "unknown" over the values the map was actually built with would make
+         the record of this version worse than it was */
+      renderSpecRoiMode: studioPlan?.roiMode || (reusedSpec ? (vNow.renderSpecRoiMode || "unknown") : "unknown"),
+      renderSpecRoiGuard: studioPlan?.roiGuard || (reusedSpec ? (vNow.renderSpecRoiGuard || "unknown") : "unknown"),
+      renderSpecRoiSignalPx: Number(studioPlan?.roiSignalPx || (reusedSpec ? vNow.renderSpecRoiSignalPx : 0) || 0),
+      renderSpecRoiBox: studioPlan?.roiBox || (reusedSpec ? (vNow.renderSpecRoiBox || null) : null),
+      renderSpecSignalBox: studioPlan?.roiSignalBox || (reusedSpec ? (vNow.renderSpecSignalBox || null) : null),
       renderStyleRefPath: renderStyleRef?.storagePath || null,
       renderStyleRefSeeded: !!renderStyleRef?.seeded,
       renderStyleRefUsed: !!renderStyleRef?.buffer?.length,
