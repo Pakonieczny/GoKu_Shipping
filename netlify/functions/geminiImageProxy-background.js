@@ -7648,6 +7648,59 @@ a caption on a web page. Do not draw it, do not outline it, do not ink it as
 an engraving, and do not leave any mark where it was — that area is plain
 white paper. Draw the charm and nothing else.`;
 
+/* ── A LISTING PHOTOGRAPH IS SHOT WITH ROOM AROUND THE PIECE ───────────────
+   and every pixel of that room is a pixel the model does not spend on the
+   charm. The margin is measured on a small copy — a 4096-pixel photograph
+   does not have to be read at full size to find where the white stops — and
+   then cut from the original, leaving a thin border so the outer perimeter
+   is never flush against the frame.
+
+   Everything here fails soft and hands the photograph back untouched. A
+   tighter frame is an improvement, never a requirement, and a charm that is
+   genuinely pale must not be cropped down to nothing on the strength of a
+   threshold. */
+async function studioTrimToSubject(sharpMod, buf, marginPct) {
+  try {
+    const meta = await sharpMod(buf).metadata();
+    const W = meta.width || 0, H = meta.height || 0;
+    if (!W || !H) return buf;
+    const P = 512;
+    const sc = Math.min(P / W, P / H, 1);
+    const w2 = Math.max(1, Math.round(W * sc)), h2 = Math.max(1, Math.round(H * sc));
+    const { data } = await sharpMod(buf)
+      .flatten({ background: "#ffffff" })
+      .resize(w2, h2, { fit: "fill" })
+      .greyscale().raw().toBuffer({ resolveWithObject: true });
+    let x0 = w2, y0 = h2, x1 = -1, y1 = -1;
+    for (let y = 0; y < h2; y++) {
+      const row = y * w2;
+      for (let x = 0; x < w2; x++) {
+        if (data[row + x] < 244) {
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+        }
+      }
+    }
+    if (x1 < x0 || y1 < y0) return buf;                 /* an entirely blank sheet */
+    const cw = (x1 - x0 + 1) / w2, chh = (y1 - y0 + 1) / h2;
+    if (cw > 0.97 && chh > 0.97) return buf;            /* already tight */
+    if (cw < 0.02 || chh < 0.02) return buf;            /* a speck, not a charm */
+    const m = marginPct == null ? 0.03 : Number(marginPct);
+    const px = Math.round(W * m), py = Math.round(H * m);
+    const left = Math.max(0, Math.round((x0 / w2) * W) - px);
+    const top = Math.max(0, Math.round((y0 / h2) * H) - py);
+    const right = Math.min(W, Math.round(((x1 + 1) / w2) * W) + px);
+    const bottom = Math.min(H, Math.round(((y1 + 1) / h2) * H) + py);
+    const width = right - left, height = bottom - top;
+    if (width < 8 || height < 8) return buf;
+    return await sharpMod(buf).extract({ left, top, width, height }).png().toBuffer();
+  } catch (e) {
+    return buf;
+  }
+}
+
 async function handleStudioRefLineArt({ body, event, origin }) {
   const uid = await requireStudioUser(event);
   const cfg = await studioConfig();
@@ -7702,14 +7755,39 @@ async function handleStudioRefLineArt({ body, event, origin }) {
     apiKeyForImageModel(studioModelConfig);
   } catch (err) { return fail("render_unavailable"); }
 
+  /* ── THIS DRAWING IS THE INPUT SIDE, NOT THE OUTPUT SIDE ─────────────────
+     It borrowed studioRenderTier, which is 1K, and the config block that
+     defines these two tiers says in as many words why that is the wrong one:
+     the RENDER tier is the finished metal the customer looks at, where
+     "nothing downstream measures it, so the extra tier buys presentation
+     only". This drawing is measured by everything. It becomes the reference,
+     it is what the mark-up sheet opens on, and it is taken apart stroke by
+     stroke into editable layers — every pixel of it is read twice.
+
+     The borrowed tier cost real fidelity, and the arithmetic is not close. A
+     charm is a tall narrow object photographed on white: the baseball bat
+     measures 111 x 546 in its listing image, so letterboxed into a 1024
+     square it is 194 pixels wide and holds 18% of the frame. Each stitch on
+     it is then about five pixels across — under what a vision encoder can
+     resolve — so the model stopped replicating the stitching that is there
+     and started drawing a generic one from memory, and lost the engraved
+     shield altogether. At 2K the same charm is 388 pixels wide and a stitch
+     is eleven. That is also simply what the Charm Maker has always run at:
+     callGeminiGenerateContentImage gives every caller 2K and only the studio
+     ever asked it for less. */
+  const tier = studioDrawingTier(cfg);
+
   /* normalised the same way an adopted charm is, so the drawing is made from
-     the same bytes the customer is looking at */
+     the same bytes the customer is looking at — but framed on the charm
+     first, because the listing's white margin is model attention spent on
+     nothing */
   let goldBuf = src.buffer;
   try {
     const sharpMod = studioSharp();
     if (sharpMod) {
-      const S = studioTierPx(studioRenderTier(cfg));
-      goldBuf = await sharpMod(src.buffer).flatten({ background: "#ffffff" })
+      const S = studioTierPx(tier);
+      const framed = await studioTrimToSubject(sharpMod, src.buffer, 0.03);
+      goldBuf = await sharpMod(framed).flatten({ background: "#ffffff" })
         .resize(S, S, { fit: "contain", background: "#ffffff" }).png().toBuffer();
     }
   } catch (e) { /* the raw bytes will do */ }
@@ -7728,8 +7806,8 @@ async function handleStudioRefLineArt({ body, event, origin }) {
         apiKey: apiKeyForImageModel(studioModelConfig),
         model: studioModelConfig.id,
         prompt,
-        size: studioImageSizeString(studioRenderTier(cfg)),
-        imageSizeTier: studioRenderTier(cfg),
+        size: studioImageSizeString(tier),
+        imageSizeTier: tier,
         quality: "high",
         output_format: "png",
         images,
