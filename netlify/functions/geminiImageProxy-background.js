@@ -850,11 +850,11 @@ async function callOpenAIImagesEdits({
     );
   }
 
-  const resp = await fetch("https://api.openai.com/v1/images/edits", {
+  const resp = await studioFetchWithTimeout("https://api.openai.com/v1/images/edits", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
-  });
+  }, STUDIO_UPSTREAM_TIMEOUT_MS, "OpenAI images/edits");
   return openAIImageBufferFromResponse(
     await readUpstreamJson(resp, "OpenAI images/edits")
   );
@@ -868,7 +868,7 @@ async function callOpenAIImagesGenerations({
   quality,
   output_format,
 }) {
-  const resp = await fetch("https://api.openai.com/v1/images/generations", {
+  const resp = await studioFetchWithTimeout("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -882,10 +882,42 @@ async function callOpenAIImagesGenerations({
       output_format: normalizeOpenAIOutputFormat(output_format),
       n: 1,
     }),
-  });
+ }, STUDIO_UPSTREAM_TIMEOUT_MS, "OpenAI images/generations");
   return openAIImageBufferFromResponse(
     await readUpstreamJson(resp, "OpenAI images/generations")
   );
+}
+
+/* ── NO CALL WAITS FOR EVER ──────────────────────────────────────────────
+   A plain `await fetch` with no signal is a promise that can simply never
+   settle: the upstream accepts the connection and goes quiet, the background
+   function sits suspended until the platform kills it, and the one thing
+   that never happens is the write that tells the customer anything.
+   Measured in the wild: a render reached "rendering", the model call hung,
+   and the version doc stayed frozen there while the browser's watcher waited
+   out its entire timeout for a verdict nobody was ever going to write.
+
+   So every upstream model call goes through this: an AbortController, a
+   deadline, and an error that names the call and the deadline — which lands
+   in the normal retry/catch paths, becomes a retry or a REFUNDED, WRITTEN
+   failure, and cannot leave the document lying about what is happening. */
+const STUDIO_UPSTREAM_TIMEOUT_MS = 100000;   /* one image generation */
+const STUDIO_JUDGE_TIMEOUT_MS = 60000;       /* one adjudication read */
+async function studioFetchWithTimeout(url, opts, ms, label) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), Math.max(1000, ms || STUDIO_UPSTREAM_TIMEOUT_MS));
+  try {
+    return await fetch(url, Object.assign({}, opts, { signal: ctl.signal }));
+  } catch (e) {
+    if (e && (e.name === "AbortError" || ctl.signal.aborted)) {
+      const err = new Error(`${label || "upstream call"} timed out after ${Math.round((ms || STUDIO_UPSTREAM_TIMEOUT_MS) / 1000)}s`);
+      err.status = 504;
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 async function callImageModelEdits(options) {
@@ -1220,14 +1252,14 @@ async function callGeminiGenerateContentImage({
     },
   });
 
-  const resp = await fetch(url, {
+  const resp = await studioFetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify(body),
-  });
+  }, STUDIO_UPSTREAM_TIMEOUT_MS, "Gemini image generation");
 
   const raw = await resp.text().catch(() => "");
   let data = null;
@@ -4056,7 +4088,7 @@ async function studioAdjudicateOnce(specBuf, goldBuf, cfg, opts) {
                  `not worth acting on.`);
   }
   try {
-    const resp = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
+    const resp = await studioFetchWithTimeout(`${GEMINI_BASE}/models/${model}:generateContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
@@ -4072,7 +4104,7 @@ async function studioAdjudicateOnce(specBuf, goldBuf, cfg, opts) {
         }],
         generationConfig: { temperature: 0, responseMimeType: "application/json" },
       }),
-    });
+    }, STUDIO_JUDGE_TIMEOUT_MS, "render adjudicator");
     const data = await readUpstreamJson(resp, "gemini");
     const text = (data?.candidates?.[0]?.content?.parts || [])
       .map((p) => p?.text || "").join("").trim();
@@ -5441,6 +5473,20 @@ function studioSpecCutMask(plan, zones) {
       const i = y * w + x;
       if (blue[i]) out[i] = 1;
     }
+  }
+  /* ── AND THE DECLARED LIST IS NOT ALLOWED TO LOSE A SOLID HOLE ──────────
+     The list is capped upstream, and a capped list can arrive missing a
+     genuine cut-out — a 55-layer sheet did, and the hoop's hole was simply
+     never punched. So a blue component the image itself proves is a FILLED
+     BLOB is honoured even when no declared zone claims it. Density is the
+     discriminator, deliberately alone: a blue fill that touches the blue
+     perimeter merges into one sparse component and fails it, so the failure
+     the zones-authority exists to prevent — erasing the silhouette — cannot
+     come back through this door. (minRatio Infinity turns the thickness
+     test off; only denseFill survives.) */
+  if (cuts.length) {
+    const dense = studioCutRegions(blue, plan.w, plan.h, Infinity, plan.pen);
+    for (let i = 0; i < n; i++) if (dense.cut[i]) out[i] = 1;
   }
   return out;
 }
