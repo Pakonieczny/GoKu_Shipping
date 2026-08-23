@@ -4184,7 +4184,31 @@ function studioScoreVerdict(raw, cfg) {
 
    This cannot make a bad judge good. What it does is make a bad judge
    VISIBLE — an answer with no observations at all is marked suspect and, in
-   enforce mode, is treated as no answer rather than as a pass. */
+   enforce mode, is treated as no answer rather than as a pass.
+
+   ── AND THEN IT WAS NOT ENOUGH ─────────────────────────────────────────
+   Reported from the wild: 98/100/100/100/98/100 on a render the customer
+   could see was wrong, wearing no warning at all. Every safeguard above was
+   working exactly as written, and all three of them missed it:
+
+   • The caps compared the model's TWO OWN NUMBERS TO EACH OTHER. "openings
+     1 -> 1" satisfies every one of them, and a model filling in a template
+     writes the same number twice by construction. Self-consistency is free.
+   • Worse, those invented counts set hasCounts, and hasCounts was what
+     switched OFF the uniform-perfect suspicion. The fabrication was not
+     merely missed; it was the thing that bought the verdict its clean bill.
+   • And the template test demanded six IDENTICAL numbers. Two categories
+     jittered by two points walked straight through it.
+
+   The repair is to stop asking the judge to be its own witness. IMAGE A is
+   not a photograph and not a model's output — it is a three-tone PNG this
+   code generated, so how many openings and engraved fields it contains is a
+   measurable fact, and studioSpecTruth measures it. The judge's first two
+   answers become an EXAM with an answer sheet: a judge that miscounts the
+   specification it was handed did not read it, whatever its six numbers say
+   about the render. The render-side counts are then compared against that
+   same truth rather than against the judge's own claim, which is what turns
+   "the render lost a hole" from an opinion into a measurement. */
 const STUDIO_SCORE_CAPS = Object.freeze({
   multipleCharms:   { cat: "fidelity",     to: 10 },
   fabricatedListed: { cat: "fidelity",     to: 20 },
@@ -4192,18 +4216,83 @@ const STUDIO_SCORE_CAPS = Object.freeze({
   engravingMismatch:{ cat: "engraving",    to: 65 },
   groundNotWhite:   { cat: "presentation", to: 40 },
   noShadow:         { cat: "presentation", to: 60 },
+  /* ── measured against the map, not against the judge's own arithmetic ──
+     A judge that cannot count the SPECIFICATION has disqualified itself from
+     scoring the category that specification defines; these two caps are
+     lower than the self-consistency ones above because a wrong answer about
+     IMAGE A is worse evidence than a disagreement about IMAGE B. */
+  specOpeningsWrong:  { cat: "cutouts",   to: 40 },
+  specEngravingWrong: { cat: "engraving", to: 50 },
+  /* the render genuinely disagrees with the map — the real defect, finally
+     measurable, because one side of the comparison is now a fact */
+  renderOpeningsWrong:  { cat: "cutouts",   to: 45 },
+  renderEngravingWrong: { cat: "engraving", to: 55 },
 });
 
-function studioScoreAudit(raw, scored, cfg) {
+/* ── WHAT THE MAP ACTUALLY CONTAINS ───────────────────────────────────────
+   Measured from the BUFFER that was sent to the judge, not from the masks
+   studioMaterialSpec happens to be holding: a reused map arrives with no
+   masks at all, and the buffer is the only thing that is certainly what the
+   judge was looking at. Never throws — an unmeasurable map means no exam,
+   which leaves the judge exactly as trusted as it was before this existed. */
+const STUDIO_TRUTH_MIN_FRAC = 0.004;   /* the census's own floor, so the two agree */
+
+async function studioSpecTruth(sharp, specBuf) {
+  if (!sharp || !specBuf) return null;
+  try {
+    const { data, info } = await sharp(specBuf).removeAlpha().raw()
+      .toBuffer({ resolveWithObject: true });
+    const w = info.width, h = info.height, n = w * h, ch = info.channels;
+    if (!n) return null;
+    const POLISHED = STUDIO_MASK_POLISHED[0], ENGRAVED = STUDIO_MASK_ENGRAVED[0];
+    /* the same tolerance studioRefineMask classifies with. The refined map is
+       anti-aliased, and a boundary pixel sitting halfway between two tones
+       belongs to neither region's count. */
+    const near = (v, t) => Math.abs(v - t) <= 24;
+    const metal = new Uint8Array(n), engraved = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const v = data[i * ch];
+      if (near(v, ENGRAVED)) { metal[i] = 1; engraved[i] = 1; }
+      else if (near(v, POLISHED)) metal[i] = 1;
+    }
+    /* THE CHARM'S BODY INCLUDES ITS HOLES. Flooding from the border through
+       everything that is not metal leaves the silhouette; white inside that
+       silhouette is an opening, white outside it is the studio backdrop. That
+       distinction is the entire cut-out category. */
+    const face = studioOuterFace(metal, w, h);
+    let facePx = 0;
+    for (let i = 0; i < n; i++) if (face[i]) facePx++;
+    if (!facePx) return null;
+    const holes = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (face[i] && !metal[i]) holes[i] = 1;
+    const tally = (mask) =>
+      studioCensusRegions(mask, w, h, facePx, STUDIO_TRUTH_MIN_FRAC, 1).total;
+    return { openings: tally(holes), engraved: tally(engraved), facePx, w, h };
+  } catch (e) {
+    console.error("[studio] could not measure the spec map:", e?.message || e);
+    return null;
+  }
+}
+
+function studioScoreAudit(raw, scored, cfg, extra) {
   if (!scored) return scored;
   const obs = raw && typeof raw.observations === "object" && raw.observations ? raw.observations : null;
+  const truth = (extra && extra.truth && Number.isFinite(Number(extra.truth.openings)))
+    ? extra.truth : null;
+  const judgeModel = String((extra && extra.model) || "");
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
   const caps = [];
+  /* EVERY CONTRADICTION IS RECORDED, not only the one that happened to move
+     the number furthest. Two rules can hit the same category — "you misread
+     the map" and "the render is short a hole" are different findings — and
+     when the first has already pulled the score below the second's ceiling,
+     dropping the second from the list loses the more interesting half of the
+     diagnosis. The score itself is still only ever lowered. */
   const cap = (rule) => {
     const c = STUDIO_SCORE_CAPS[rule];
-    if (!c || scored.cats[c.cat] <= c.to) return;
-    scored.cats[c.cat] = c.to;
-    caps.push(rule);
+    if (!c) return;
+    if (scored.cats[c.cat] > c.to) scored.cats[c.cat] = c.to;
+    if (caps.indexOf(rule) < 0) caps.push(rule);
   };
 
   if (obs) {
@@ -4218,33 +4307,87 @@ function studioScoreAudit(raw, scored, cfg) {
   }
   if (scored.fabricated.length) cap("fabricatedListed");
 
+  /* ── THE EXAM, MARKED AGAINST THE ANSWER SHEET ───────────────────────
+     The two questions about IMAGE A have right answers, and this is where
+     the judge finds that out. `graded` is what it was asked and could be
+     marked on; `matched` is what it got right; `wrong` is what it did not.
+     A judge with an empty `graded` refused the only checkable question on
+     the paper, which is its own kind of answer. */
+  const graded = [], matched = [], wrong = [];
+  if (obs && truth) {
+    const exam = [
+      ["openingsInSpec", "openings", "specOpeningsWrong"],
+      ["engravedRegionsInSpec", "engraved", "specEngravingWrong"],
+    ];
+    for (const [field, key, rule] of exam) {
+      const said = num(obs[field]);
+      if (said === null) continue;
+      graded.push(key);
+      if (said === Number(truth[key])) matched.push(key);
+      else { wrong.push(key); cap(rule); }
+    }
+    /* AND THE RENDER, AGAINST THE MAP RATHER THAN AGAINST ITS OWN CLAIM.
+       This is the comparison the customer actually cares about: the map has
+       three openings, the judge can see two in the photograph, so a hole is
+       missing — a fact that survives the judge having also misread the map,
+       because only one side of it comes from the judge. */
+    const inRender = [
+      ["openingsInRender", "openings", "renderOpeningsWrong"],
+      ["engravedRegionsInRender", "engraved", "renderEngravingWrong"],
+    ];
+    for (const [field, key, rule] of inRender) {
+      const said = num(obs[field]);
+      if (said !== null && said !== Number(truth[key])) cap(rule);
+    }
+  }
+
   /* WHAT A NON-ANSWER LOOKS LIKE. Not "it scored highly" — a genuinely good
      render should score highly. It is an answer with no evidence behind it:
-     no observations at all, or six identical numbers, which is the shape of
-     a model filling in a template rather than looking at two pictures. */
+     no observations at all, or a set of numbers with the shape of a template
+     being filled in rather than two pictures being compared. */
   const vals = STUDIO_SCORE_KEYS.map((k) => scored.cats[k]);
-  const allSame = vals.every((v) => v === vals[0]);
-  /* Counts are the corroboration. Six numbers are cheap to invent; saying
-     how many openings are in each picture, and how many charms are visible,
-     is not — a model that fabricates those has to fabricate them
-     CONSISTENTLY, and the caps above are checking exactly that. */
-  const hasCounts = !!obs && [obs.charmsVisible, obs.openingsInSpec, obs.openingsInRender,
-                              obs.engravedRegionsInSpec, obs.engravedRegionsInRender]
-                              .some((v) => num(v) !== null);
+  const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  /* NOT "identical" — NEAR-identical, which is what actually arrived. Six
+     unrelated criteria landing within three points of each other at the very
+     top of the scale is the template shape; demanding they be exactly equal
+     let 98/100/100/100/98/100 through untouched. */
+  const nearPerfect = lo >= 97 && (hi - lo) <= 3;
+  /* ── A COUNT IS ONLY EVIDENCE WHEN IT COULD HAVE BEEN WRONG ──────────
+     The old test accepted the mere PRESENCE of a count as corroboration,
+     which is how invented numbers came to vouch for the scores they were
+     invented alongside. Two things have to be true now. The count must have
+     been marked correct against the map — and it must be a count worth
+     getting right: nearly every charm has exactly one opening, its hanging
+     hole, so a judge that writes "1" has told us nothing it could not have
+     guessed from the shape of the question. A 3 that matches a 3 is a judge
+     that looked, and there is no cheap way to fake it. */
+  const corroborated = matched.some((k) => Number(truth[k]) >= 2);
   const reasons = [];
   if (!obs) reasons.push("no_observations");
   else if (!String(obs.describeRender || "").trim()) reasons.push("no_description");
-  /* Six identical perfect scores across six unrelated criteria is the shape
-     of a filled-in template. It is only damning when nothing corroborates
-     it: a render really can be perfect, and calling every perfect render a
-     liar would mean the pass flag could never be true and the panel wore a
-     red warning for ever. So with counts present it is recorded and shown,
-     but not held against the verdict. */
-  if (allSame && vals[0] >= 99 && !hasCounts) reasons.push("uniform_perfect");
-  scored.uniform = allSame && vals[0] >= 99;
+  /* it got a checkable question wrong: it did not read the specification, and
+     nothing else it says about the render is worth acting on */
+  if (wrong.length) reasons.push("miscounted_spec");
+  else if (truth && obs && !graded.length) reasons.push("uncounted_spec");
+  if (nearPerfect && !corroborated) reasons.push("uniform_perfect");
+  /* ── THE WRONG TOOL, NAMED WHERE SOMEBODY WILL SEE IT ────────────────
+     Every model chain in this file ends at DEFAULT_IMAGE_MODEL, so a
+     deployment that never set renderScoreModel has been having its renders
+     judged by an image GENERATOR — which is precisely the thing that answers
+     with a filled-in template. That used to be a console.warn in a
+     background function nobody reads, while the verdict it produced went on
+     to gate renders. It is a reason for distrust now, and the studio's own
+     panel says so. An image model that counted the map correctly has proved
+     it looked, so corroboration still excuses it: this is a rule about
+     evidence, not about names. */
+  if (/-image(-preview)?$/.test(judgeModel) && !corroborated) reasons.push("image_model_judge");
+  scored.uniform = nearPerfect;
+  scored.corroborated = corroborated;
   scored.suspect = reasons.length > 0;
   scored.suspectWhy = reasons;
   scored.caps = caps;
+  scored.truth = truth
+    ? { openings: Number(truth.openings), engraved: Number(truth.engraved) } : null;
   scored.observations = obs ? {
     charmsVisible: num(obs.charmsVisible),
     openingsInSpec: num(obs.openingsInSpec),
@@ -6828,6 +6971,10 @@ async function handleStudioRender({ body, event, origin }) {
     const scoreRetries = adjMode === "enforce"
       ? Math.max(0, Math.min(4, Number(cfg.renderScoreRetries) === 0 ? 0 : (Number(cfg.renderScoreRetries) || 2)))
       : 0;
+    /* undefined = not measured yet; null = measured and unmeasurable. The
+       three states matter, because "we could not read the map" and "we have
+       not looked at the map" mean different things to the audit. */
+    let specTruth;
 
     const loop = await studioRenderAttempts({
       renderOnce, basePrompt: effectivePrompt, cfg,
@@ -6861,8 +7008,19 @@ async function handleStudioRender({ body, event, origin }) {
       },
       adjMode, scoreRetries,
       judgeFn: async (buf) => {
+        /* THE ANSWER SHEET, MEASURED ONCE. The map does not change between
+           attempts, so neither does its census; measuring it per attempt
+           would be the same numbers at three times the cost. */
+        if (specTruth === undefined) {
+          specTruth = await studioSpecTruth(sharpMod, materialSpec.buf);
+          if (specTruth) {
+            log(`[studio] spec map contains ${specTruth.openings} opening(s) and ` +
+                `${specTruth.engraved} engraved field(s) — the judge is marked against this`);
+          }
+        }
         const ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg, { builtInHoop });
-        const scored = studioScoreAudit(ans.raw, studioScoreVerdict(ans.raw, cfg), cfg);
+        const scored = studioScoreAudit(ans.raw, studioScoreVerdict(ans.raw, cfg), cfg,
+                                        { truth: specTruth, model: ans.model });
         if (scored) { scored.model = ans.model; scored.reply = String(ans.text || "").slice(0, 1200); }
         else {
           console.warn(`[studio] adjudicator (${ans.model}) gave no usable verdict` +
@@ -6904,11 +7062,17 @@ async function handleStudioRender({ body, event, origin }) {
         renderScoreJudgeModel: best.model || "",
         renderScoreSuspect: !!best.suspect,
         renderScoreSuspectWhy: best.suspectWhy || [],
-        /* six identical perfect scores: not disqualifying on its own, but
+        /* near-identical perfect scores: not disqualifying on its own, but
            always worth being able to see */
         renderScoreUniform: !!best.uniform,
         renderScoreCaps: best.caps || [],
         renderScoreObservations: best.observations || null,
+        /* WHAT THE MAP ACTUALLY CONTAINS, beside what the judge claimed it
+           contains. Two numbers, and the whole argument about whether a
+           verdict is worth anything can be settled by looking at them. */
+        renderScoreSpecOpenings: best.truth ? best.truth.openings : null,
+        renderScoreSpecEngraved: best.truth ? best.truth.engraved : null,
+        renderScoreCorroborated: !!best.corroborated,
         renderScoreReply: best.reply || "",
         renderScoreGeometry: best.cats.geometry,
         renderScoreCutouts: best.cats.cutouts,
