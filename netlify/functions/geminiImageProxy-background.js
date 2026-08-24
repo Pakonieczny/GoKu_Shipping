@@ -2726,7 +2726,7 @@ const STUDIO_DEFAULT_CONFIG = {
        "enforce"  punch AND reject undeclared cuts. */
   /* renderInput ("mask" | "drawing") is REMOVED. It chose which image the
      renderer was shown, and the studio's Send toggle overrode it per press.
-     There is one input now — the greyscale material spec (176/96/255), the
+     There is one input now — the greyscale material spec (176/136/255), the
      STRUCTURE_MAP the fixed prompt describes — and handleStudioRender reads
      neither this key nor the request field. A drawing with no mask fails
      rather than falling back to the colour-coded production drawing. */
@@ -4273,7 +4273,7 @@ code, not by a model. It is THE SPECIFICATION. Its three tones are exact:
 • WHITE (255) — NOT METAL. Either outside the charm, or a through-cut opening:
   a hole with the background visible straight through it.
 • LIGHT GREY (176) — SOLID METAL, polished smooth, unengraved.
-• DARK GREY (96) — SOLID METAL, shallow engraved recess. Still the same gold,
+• DARK GREY (136) — SOLID METAL, shallow engraved recess. Still the same gold,
   only worked.
 
 IMAGE B — the rendered photograph of the finished 14K gold charm. Judge it.
@@ -4570,7 +4570,7 @@ const STUDIO_SCORE_CAPS = Object.freeze({
    engraved misses are not near-misses — 1 and 30 against a truth of 3.
 
    That is not a judge that cannot count. It is two things counting
-   DIFFERENT OBJECTS. studioLabel is 4-connected over the exact 96-grey, so
+   DIFFERENT OBJECTS. studioLabel is 4-connected over the exact 136-grey, so
    a butterfly's wing detailing is fifteen separate components to this code
    and one engraved pattern to anything with eyes; strokes that meet at a
    corner are two regions to the machine and one to the viewer. Openings do
@@ -4648,16 +4648,23 @@ async function studioSpecTruth(sharp, specBuf) {
     for (let i = 0; i < n; i++) if (face[i]) facePx++;
     if (!facePx) return null;
     /* ── AN OPENING IS WHITE, NOT MERELY "NOT METAL" ──────────────────────
-       This read `face[i] && !metal[i]`, and the tolerance above leaves a gap:
-       the map is anti-aliased, so the seam between a polished region and an
-       engraved one runs through values near 136 — inside the silhouette,
-       matching neither tone, and therefore NOT METAL. Every such seam was a
-       hole. They arrive as a thin ring around each engraved field, and on a
-       charm with a large one that ring can clear the census floor and be
-       filed as a ninth opening the map does not contain — an answer sheet
-       with a wrong answer on it, marking a judge that read the map correctly
-       as having failed. The judge is told "only white ENCLOSED by metal is
-       an opening"; this now measures the same thing it asks for. */
+       This read `face[i] && !metal[i]`, and the tolerance above could leave a
+       gap: the map is anti-aliased, so the seam between a polished region and
+       an engraved one runs through the midpoint of the two tones — inside the
+       silhouette, and if that midpoint matches neither tone it is NOT METAL.
+       Every such seam was then a hole. They arrive as a thin ring around each
+       engraved field, and on a charm with a large one that ring can clear the
+       census floor and be filed as a ninth opening the map does not contain —
+       an answer sheet with a wrong answer on it, marking a judge that read the
+       map correctly as having failed. The judge is told "only white ENCLOSED
+       by metal is an opening"; this now measures the same thing it asks for.
+
+       NOTE ON THE CURRENT LADDER: at 136/176 the ±24 windows OVERLAP (152..160)
+       and ENGRAVED is tested first, so a seam pixel classifies as engraved
+       rather than as neither and this class of phantom opening cannot arise at
+       all. The guard is kept because it is correct either way and because the
+       ladder is a tunable — widen the gap again and the gap-in-tolerance
+       returns. */
     const holes = new Uint8Array(n);
     for (let i = 0; i < n; i++) if (face[i] && white[i]) holes[i] = 1;
     const tally = (mask) =>
@@ -6294,11 +6301,11 @@ function studioSpecCutMask(plan, zones) {
    saturation, which is also the clearest possible signal that this image is a
    map and not a photograph. Colour now has exactly one owner: IMAGE 2.
 
-   Luminance ladder: hole 255 → polished 176 → engraved 96. Minimum gap 79,
-   which survives the downsampling a vision encoder does first. If these are
-   ever retuned, the GAPS are the point — keep them wide.                  */
+   Luminance ladder: hole 255 → polished 176 → engraved 136. The 40-level
+   engraving gap remains distinct after vision downsampling while no longer
+   visually commanding an excessively dark gold finish.                   */
 const STUDIO_MASK_POLISHED = [176, 176, 176];
-const STUDIO_MASK_ENGRAVED = [96, 96, 96];
+const STUDIO_MASK_ENGRAVED = [136, 136, 136];
 
 /* exact squared euclidean distance transform, Felzenszwalb & Huttenlocher */
 function studioEdt1d(f, n) {
@@ -6501,7 +6508,7 @@ async function studioTopologyMask(sharp, materialSpecBuf) {
   let metalPx = 0;
   for (let i = 0; i < n; i++) {
     const p = i * ch;
-    /* Material-spec pixels are exact 96, 176 or 255. The small margin keeps
+    /* Material-spec pixels are exact 136, 176 or 255. The small margin keeps
        this safe if a future PNG decoder introduces a near-white edge value. */
     if (Math.max(data[p], data[p + 1], data[p + 2]) < 240) {
       const q = i * 3;
@@ -8547,7 +8554,7 @@ async function handleStudioGoldEdit({ body, event, origin }) {
 
        photograph ──chroma──→ silhouette + every hole      (exact)
        drawing    ──ink─────→ engraved vs polished         (one model call)
-       both       ──code────→ 255 / 176 / 96
+       both       ──code────→ 255 / 176 / 136
 
    Validated against an authored ground truth at 99.42% pixel agreement,
    with holes kept open 99.82% of the time and the polished interior of an
