@@ -4995,6 +4995,10 @@ async function studioRenderAttempts(opts) {
   const log = opts.log || ((...a) => console.log(...a));
 
   let outBuf = null, punch = null, attempts = 0, lastMs = 0, nextNote = "";
+  /* the verdict belonging to the most recent attempt — null when that one
+     could not be judged. Kept because the render that ships is the last one
+     unless the swap below moves it, and the panel must describe THAT one. */
+  let lastScored = null;
   /* ── ONE ROW PER IMAGE MADE, NOT PER IMAGE JUDGED ─────────────────────
      scoreLog only ever held attempts the judge answered on, and the panel's
      table is built from it — so a run that made two images and could only
@@ -5058,6 +5062,7 @@ async function studioRenderAttempts(opts) {
        above. The buffer judged is the one the model produced; the punch,
        when it runs at all, only fills declared openings. */
     let scored = null;
+    lastScored = null;
     if (adjudicating) {
       const j0 = now();
       /* the attempt number goes IN so the reason a judge failed can come back
@@ -5072,12 +5077,23 @@ async function studioRenderAttempts(opts) {
       if (scored) {
         scored.attempt = attempts;
         scored.ms = now() - j0;
+        lastScored = scored;
         scoreLog.push(scored);
-        /* strictly greater, so an equal later score does not displace an
-           earlier one — the first render to reach a given quality wins */
-        if (!scoreBest || scored.total > scoreBest.scored.total) {
-          scoreBest = { buf: outBuf, punch, scored };
-        }
+        /* ── TRUST FIRST, THEN THE SCORE ──────────────────────────────
+           Strictly greater, so an equal later score does not displace an
+           earlier one — the first render to reach a given quality wins.
+           But a TRUSTED verdict outranks an untrusted one whatever the two
+           numbers say, because an untrusted number is not a rating and
+           cannot be compared with one. Without that, a distrusted 95 became
+           `scoreBest`, the swap below refused to ship a suspect winner, and
+           a trusted 90 that was sitting right there never got its turn.
+           Now that an untrusted verdict can spend a retry, that race is
+           reachable rather than theoretical. */
+        const better = !scoreBest ||
+          (!scored.suspect && scoreBest.scored.suspect) ||
+          (!!scored.suspect === !!scoreBest.scored.suspect &&
+           scored.total > scoreBest.scored.total);
+        if (better) scoreBest = { buf: outBuf, punch, scored };
         log(`[studio] adjudicator attempt ${attempts}: ${scored.total}/${scored.threshold}` +
             ` ${STUDIO_SCORE_KEYS.map((k) => k[0] + scored.cats[k]).join(" ")}` +
             (scored.floorFails.length ? ` FLOOR:${scored.floorFails.join(",")}` : "") +
@@ -5120,17 +5136,40 @@ async function studioRenderAttempts(opts) {
         ? (punch.report.verified ? "ok" : String(punch.report.reason || "")) : "",
     });
 
-    /* ── AN ANSWER WITH NO EVIDENCE DECIDES NOTHING ─────────────────────
-       studioScoreAudit marks a verdict suspect when the model returned no
-       observations, no description of what it was looking at, or six
-       identical perfect numbers — the shape of a template being filled in
-       rather than two pictures being compared. Such a verdict is recorded in
-       full, and then ignored: it neither passes a render nor spends a retry,
-       so a broken judge degrades to no gating at all rather than to a
-       rubber stamp on everything. */
+    /* ── A DISTRUSTED VERDICT MAY OBJECT. IT MAY NOT APPROVE. ───────────
+       "Suspect" used to mean the verdict decided nothing at all — it could
+       neither pass a render nor spend a retry. That was built to stop a
+       template-filler rubber-stamping everything, and for passing it is
+       exactly right. For failing it is exactly wrong, and the asymmetry is
+       the whole point:
+
+         · a verdict that wrongly PASSES ships a bad charm to a customer
+         · a verdict that wrongly FAILS spends one more render
+
+       Those are not comparable costs, so they must not share a rule. The
+       camera charm is what made it plain: the map holds two openings, the
+       judge read one — which disqualifies it from vouching for anything —
+       and then reported one opening in the render and said the centre ring
+       had come out as two thin lines. The render really had lost a hole.
+       Every safeguard fired correctly, the verdict was binned as untrusted,
+       and the flawed charm shipped anyway with a banner about the check.
+
+       So trust now gates the PASS only. A suspect verdict that wants to
+       reject is allowed to buy a retry — but one, not the full allowance,
+       because a judge that cannot count the map is a poor guide to how many
+       more attempts are worth paying for. A trusted verdict spends the full
+       renderScoreRetries as before. */
     const trusted = !!scored && !scored.suspect;
     const cutWants = !!punch && retryable(punch.report) && attempts <= maxRetries;
-    const scoreWants = adjMode === "enforce" && trusted && !scored.pass && attempts <= scoreRetries;
+    /* the pass is the thing trust buys: an untrusted verdict can never be
+       the reason a render is accepted, which is unchanged */
+    const scoreAllowance = trusted ? scoreRetries : Math.min(1, scoreRetries);
+    const scoreWants = adjMode === "enforce" && !!scored && !scored.pass &&
+                       attempts <= scoreAllowance;
+    if (scoreWants && !trusted) {
+      log(`[studio] adjudicator attempt ${attempts} is NOT TRUSTED, but it is ` +
+          `objecting rather than approving — spending one retry on it`);
+    }
     if (!cutWants && !scoreWants) break;
 
     if (cutWants) failedVerdicts.push(punch.report.reason);
@@ -5144,7 +5183,7 @@ async function studioRenderAttempts(opts) {
        the wording when both want another go. */
     nextNote = cutWants ? studioRetryNote(punch.report, attempts, opts.builtInHoop)
                         : studioScoreRetryNote(scored, attempts);
-    log(`[studio] render retry ${attempts}/${cutWants ? maxRetries : scoreRetries} after ` +
+    log(`[studio] render retry ${attempts}/${cutWants ? maxRetries : scoreAllowance} after ` +
         (cutWants ? punch.report.reason : `score ${scored.total}`));
   }
 
@@ -5162,13 +5201,25 @@ async function studioRenderAttempts(opts) {
      of anything. When NO attempt could be scored, scoreBest is null, nothing
      is swapped, and the last render ships exactly as it would have with the
      whole subsystem off. */
+  /* ── AND THE PANEL REPORTS THE ONE THAT SHIPPED ────────────────────────
+     `shipped` is the buffer, the punch and the VERDICT THAT BELONGS TO IT,
+     resolved in one place so the readout cannot describe a different image
+     from the one the customer received. The record was built from scoreBest
+     whether or not the swap happened, so a run whose attempts were all
+     distrusted — now reachable, because a distrusted verdict can spend a
+     retry — printed "showing #1" over the second render's picture. The
+     numbers were real and belonged to the wrong image, which is the worst
+     kind of wrong a readout can be. */
+  let shipped = { buf: outBuf, punch, scored: lastScored };
   if (adjMode === "enforce" && scoreBest && !scoreBest.scored.suspect && scoreBest.buf !== outBuf) {
     log(`[studio] adjudicator: shipping attempt ${scoreBest.scored.attempt} ` +
         `(${scoreBest.scored.total}) over the last one`);
+    shipped = scoreBest;
     outBuf = scoreBest.buf;
     punch = scoreBest.punch;
   }
-  return { outBuf, punch, attempts, failedVerdicts, scoreLog, attemptLog, scoreBest };
+  return { outBuf, punch, attempts, failedVerdicts, scoreLog, attemptLog,
+           scoreBest, shipped };
 }
 
 /* ── version doc: what drives the client's staged progress bar ───────────
@@ -7725,7 +7776,11 @@ async function handleStudioRender({ body, event, origin }) {
     const scoreBest = loop.scoreBest;
 
     if (scoreLog.length) {
-      const best = scoreBest.scored;
+      /* the verdict of the image the customer actually received — see
+         `shipped` in studioRenderAttempts. It falls back to the best scored
+         attempt only when the shipped render itself could not be judged,
+         which is the one case where there is nothing truer to report. */
+      const best = (loop.shipped && loop.shipped.scored) || scoreBest.scored;
       await vRef.set({
         renderScoreMode: adjMode,
         renderScore: best.total,
