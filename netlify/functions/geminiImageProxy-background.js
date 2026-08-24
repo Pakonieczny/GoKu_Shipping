@@ -60,6 +60,18 @@ const DEFAULT_RENDER_IMAGE_MODEL = "gemini-3-pro-image";
    list, and prefer a loud failure to a silent fallback — a chain that
    heals itself onto the wrong tool hides exactly this bug. */
 const DEFAULT_TEXT_MODEL = "gemini-3.7-flash";
+/* ── THE JUDGE ALONE RUNS ON THE PRO MODEL ────────────────────────────────
+   Its whole verdict stands or falls on counting eight small openings in a
+   complex charm — the exam that decides whether anything it says is trusted
+   — and the first real 3.7-flash verdict in the wild failed exactly that
+   exam on a flawless render (said 6 and 4 against a machine count of 8 and
+   3). gemini-3.1-pro-preview is the documentation's own recommendation for
+   read-two-images-answer-JSON work, and at ~$0.012 a render the upgrade is
+   noise next to the render itself. The other three reading jobs stay on
+   flash: none of them is graded against an answer sheet, so none of them
+   needs the sharper eye. Overrides win as before; renderScoreModel on
+   config/customStudio remains the no-deploy lever. */
+const DEFAULT_JUDGE_MODEL = "gemini-3.1-pro-preview";
 const IMAGE_MODEL_ALIASES = Object.freeze({
   "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
   "gemini-3-pro-image-preview": "gemini-3-pro-image",
@@ -4156,6 +4168,20 @@ observations is discarded. Count the enclosed white regions inside the charm
 in IMAGE A, then count the real holes in IMAGE B, and say how many separate
 charms are visible in IMAGE B.
 
+COUNT THE WAY THE WORKSHOP COUNTS, because your count is marked against a
+machine count of IMAGE A made with these exact rules:
+• SEPARATE means not touching. Two regions joined by even a thin channel of
+  the same tone are ONE region; two regions divided by metal are TWO. A
+  cluster of engraved lines that touch one another is ONE engraved region.
+• Small still counts. A droplet, a slot, a gap between two shapes — if it is
+  an enclosed patch of white you can plainly see, it is an opening. Do not
+  fold small openings into a neighbour or skip them as detail.
+• Only white ENCLOSED by metal is an opening. White outside the silhouette is
+  the backdrop, never an opening — but white reaching INTO the charm through
+  a mouth in the outline is still backdrop, not a hole.
+Trace the charm once, region by region, and count as you go; do not estimate
+the total from a glance.
+
 Answer with EXACTLY this JSON and nothing else:
 {"observations":{"charmsVisible":1,"openingsInSpec":0,"openingsInRender":0,
   "engravedRegionsInSpec":0,"engravedRegionsInRender":0,
@@ -4180,18 +4206,22 @@ async function studioAdjudicateOnce(specBuf, goldBuf, cfg, opts) {
      DEFAULT_IMAGE_MODEL — an image GENERATION model. Asking one of those
      for a JSON critique is the wrong tool, and it is exactly the sort of
      thing that answers with a filled-in template rather than a judgement;
-     it ends at DEFAULT_TEXT_MODEL now. config/customStudio still wins so
-     the model can be changed without a deploy, and whichever one answered
-     is written onto the version document, so "what judged this render" is
+     it ends at DEFAULT_JUDGE_MODEL now — the pro model, because this is
+     the one reading job whose answers are marked against a machine count
+     and thrown out when they miss. config/customStudio still wins so the
+     model can be changed without a deploy, and whichever one answered is
+     written onto the version document, so "what judged this render" is
      never a guess again. The -image warning below stays: the default can
-     no longer trip it, but an override still can. */
+     no longer trip it, but an override still can — and it tests the same
+     spelling the audit distrusts, previews included, so an override can
+     never be distrusted silently with nothing in the log. */
   const model = String(
     (cfg && cfg.renderScoreModel) ||
     process.env.GEMINI_STUDIO_JUDGE_MODEL ||
     process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
-    DEFAULT_TEXT_MODEL
+    DEFAULT_JUDGE_MODEL
   ).trim();
-  if (/-image$/.test(model)) {
+  if (/-image(-preview)?$/.test(model)) {
     console.warn(`[studio] adjudicator is pointed at "${model}", an image-generation ` +
                  `model. Set renderScoreModel on config/customStudio (or ` +
                  `GEMINI_STUDIO_JUDGE_MODEL) to a text model, or its verdicts are ` +
@@ -7164,22 +7194,25 @@ async function handleStudioRender({ body, event, origin }) {
         }
         let ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg, { builtInHoop });
         /* ── ONE RUNG DOWN BEFORE GIVING UP ─────────────────────────────
-           mk29 pointed the judge's default at the text model — and in a
+           mk29 pointed the judge's default at a text model — and in a
            deployment where that ID is not available, every call fails, the
            render ships unscored (correct), and the studio's readout simply
            vanishes (the reported symptom). A judge whose CALL failed is
-           retried once on the image model: mk28's audit already knows an
-           image model is the wrong tool and marks its verdict untrusted
-           unless it proves it read the map, so the worst this rung can
-           produce is a readout that says "here are numbers, don't act on
-           them" — which beats no readout, silently, every time. Garbage
-           ANSWERS ("unparsable") are not retried on a worse tool, and a
-           missing API key is not retried on anything. */
+           retried once — on the FLASH TEXT MODEL, not the image generator
+           the rung used to reach for. The image model's verdict on the
+           first live run was pure fabrication (invented counts arriving in
+           a filled-in template), and mk31's other fix means an unreachable
+           judge now files a record the panel reads out — so the choice is
+           no longer "wrong numbers or silence", it is "a cheaper real
+           judge, or an honest sentence saying nobody judged". A fabricated
+           verdict lost its only selling point. Garbage ANSWERS
+           ("unparsable") are not retried on a worse tool, and a missing
+           API key is not retried on anything. */
         if (!ans.raw && ans.why && ans.why !== "no_api_key" && ans.why !== "unparsable" &&
-            ans.model && ans.model !== DEFAULT_IMAGE_MODEL) {
+            ans.model && ans.model !== DEFAULT_TEXT_MODEL) {
           console.warn(`[studio] adjudicator (${ans.model}) unreachable — ${ans.why}; ` +
-                       `retrying once on ${DEFAULT_IMAGE_MODEL}`);
-          const cfg2 = Object.assign({}, cfg, { renderScoreModel: DEFAULT_IMAGE_MODEL });
+                       `retrying once on ${DEFAULT_TEXT_MODEL}`);
+          const cfg2 = Object.assign({}, cfg, { renderScoreModel: DEFAULT_TEXT_MODEL });
           ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg2, { builtInHoop });
         }
         const scored = studioScoreAudit(ans.raw, studioScoreVerdict(ans.raw, cfg), cfg,
