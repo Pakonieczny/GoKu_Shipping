@@ -34,17 +34,32 @@ const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
 const DEFAULT_RENDER_IMAGE_MODEL = "gemini-3-pro-image";
 /* ── THE READING JOBS GET A READING MODEL ─────────────────────────────────
    Every fallback chain in this file used to end at DEFAULT_IMAGE_MODEL — an
-   image GENERATOR — including the three jobs that never draw anything: the
-   render judge, the upload precheck and the prompt audit. That is how a
-   deployment with no model configuration ended up having its quality gate
-   answered by the one kind of model that fills in templates instead of
-   grading (the 99-on-a-bad-render report). Text jobs now end HERE instead:
-   the vision-capable text sibling of the flash image model — cheaper per
-   call than any image model, and actually built for look-and-answer work.
-   Every env/config override above it still wins, and all three callers fail
-   OPEN (verdict null / audit null / precheck degraded:true), so a deployment
-   where this ID is unavailable degrades to "unchecked", never to "down". */
-const DEFAULT_TEXT_MODEL = "gemini-3.1-flash";
+   image GENERATOR — including the four jobs that never draw anything: the
+   render judge, the upload precheck, the prompt audit and the region namer.
+   That is how a deployment with no model configuration ended up having its
+   quality gate answered by the one kind of model that fills in templates
+   instead of grading (the 99-on-a-bad-render report). Text jobs end HERE.
+
+   ── AND THE ID HAS TO BE ONE THAT EXISTS ────────────────────────────────
+   This constant was "gemini-3.1-flash" for two builds. There is no such
+   model. It was arrived at by taking the image model's name and deleting
+   the suffix — an inference from a naming pattern, never checked against
+   the model list — and the real 3.1 family is flash-LITE, flash-image,
+   flash-lite-image and pro-preview, with no plain flash in it. So every
+   call all four jobs made returned 404, and because all four fail OPEN by
+   design (verdict null / audit null / precheck degraded:true / no names),
+   three of them went dark in total silence. Only the judge has a readout,
+   which is the sole reason anybody found out: it dropped one rung onto an
+   image model, and that model's invented counts became the customer-facing
+   77 on a flawless charm.
+
+   gemini-3.7-flash is a stable, listed ID that takes image input and
+   documents structured JSON output — the three properties the old value
+   was assumed to have and did not. RULE FOR THE NEXT CHANGE: a model ID is
+   not a guess to be pattern-matched. Check it against the published model
+   list, and prefer a loud failure to a silent fallback — a chain that
+   heals itself onto the wrong tool hides exactly this bug. */
+const DEFAULT_TEXT_MODEL = "gemini-3.7-flash";
 const IMAGE_MODEL_ALIASES = Object.freeze({
   "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
   "gemini-3-pro-image-preview": "gemini-3-pro-image",
@@ -2529,19 +2544,24 @@ const STUDIO_DEFAULT_CONFIG = {
 
      studioRenderTier is the OUTPUT side — the finished metal charm the
      customer looks at. Nothing downstream measures it, so the extra tier buys
-     presentation only, at real latency on every press.
+     presentation only, at real latency on every press. It is now PINNED at
+     1024 and this key is inert; see studioRenderTier().
 
      Values are "1K" | "2K" | "4K"; anything else falls back to that step's
      OWN default, so a typo in one cannot silently change the other. No new
      environment variable — GEMINI_STUDIO_IMAGE_MODEL is still read if it is
      already set, below studioImageModel so Firestore stays the faster lever. */
   studioImageModel: "gemini-3-pro-image",
-  /* the two steps whose output is rewritten by code before anyone sees it
-     run on the cheaper image model; set either key to "gemini-3-pro-image"
-     to put that one step back on the full-fat model without a deploy.
+  /* the steps that do NOT run on studioImageModel. The first two are
+     rewritten by code before anyone sees them; the third is the gold charm
+     itself, which Paul moved onto the flash image model. Set any key to
+     "gemini-3-pro-image" to put that one step back without a deploy.
      Deliberately NOT lifted by studioImageModel — see studioImageModelId. */
   studioLineArtModel: "gemini-3.1-flash-image",
   studioSpecModel: "gemini-3.1-flash-image",
+  /* the gold charm: handleStudioRender AND handleStudioGoldEdit, one key so
+     a rendered charm and an edited one can never come off different models */
+  studioRenderModel: "gemini-3.1-flash-image",
   studioDrawingTier: "2K",
   studioRenderTier: "1K",
   /* THE MASK NEVER GOES TO THE MODEL SMALLER THAN THIS. It is built at the
@@ -2691,16 +2711,35 @@ const STUDIO_MASK_MIN_PX_FALLBACK = 2048;
    either can be put back on the pro model without a deploy. The keys resolve
    BEFORE the shared chain on purpose: the global studioImageModel /
    GEMINI_STUDIO_IMAGE_MODEL lever keeps meaning "the model the studio
-   renders with", and turning it up must not silently drag the two planed
-   steps up with it. The render, generate and gold-edit steps are untouched:
-   their output is the product. */
+   generates with", and turning it up must not silently drag the planed
+   steps up with it.
+
+   ── THE GOLD CHARM HAS ITS OWN KEY TOO ──────────────────────────────────
+   render and goldedit produce the SAME artefact — the photoreal metal charm
+   the customer buys — and Paul moved that artefact onto the flash image
+   model. They share one key, studioRenderModel, so the two can never drift
+   apart and hand the customer a different-looking charm depending on which
+   button was pressed.
+
+   generate is deliberately NOT in this group. Its output is the production
+   drawing, which is the render's INPUT and the thing studioPenWidth, the
+   2.5x-pen cut test and studioMaterialSpec all measure — a downgrade there
+   is a downgrade to every measurement downstream of it, which is a separate
+   decision from what the finished charm is rendered with. It stays on the
+   shared studioImageModel knob. */
 const STUDIO_STEP_MODEL_KEYS = Object.freeze({
   lineart: "studioLineArtModel",
   specgold: "studioSpecModel",
+  render: "studioRenderModel",
+  goldedit: "studioRenderModel",
 });
 const STUDIO_STEP_MODEL_FALLBACK = Object.freeze({
   lineart: "gemini-3.1-flash-image",
   specgold: "gemini-3.1-flash-image",
+  /* the finished metal charm — "Nano Banana 2", a stable listed ID, verified
+     against the published model list rather than inferred from another name */
+  render: "gemini-3.1-flash-image",
+  goldedit: "gemini-3.1-flash-image",
 });
 
 function studioImageModelId(cfg, step) {
@@ -2729,9 +2768,23 @@ function studioDrawingTier(cfg) {
   return studioTier(cfg && cfg.studioDrawingTier, STUDIO_DRAWING_TIER_FALLBACK);
 }
 
-/* the finished metal charm — presentation only, nothing downstream measures it */
-function studioRenderTier(cfg) {
-  return studioTier(cfg && cfg.studioRenderTier, STUDIO_RENDER_TIER_FALLBACK);
+/* ── THE FINISHED METAL CHARM IS 1024, FULL STOP ──────────────────────────
+   Presentation only — nothing downstream measures it, so the tier buys the
+   customer nothing but a bigger file and a slower render. Paul's ruling is
+   1024 ONLY, so this no longer reads config: studioRenderTier was already
+   "1K" by default and a Firestore value could still inflate it, which is
+   the one thing "only" rules out. The key is deliberately dead rather than
+   deleted — an existing studioRenderTier:"2K" in anyone's config document
+   now does nothing instead of silently costing more, and putting the knob
+   back is a one-line deploy.
+
+   NOT clamped anywhere shared. studioDrawingTier stays 2K — that is the
+   render's INPUT, the thing studioPenWidth and the 2.5x-pen cut test
+   measure — and every non-studio caller (Listing Generator, Charm Maker,
+   batch) still resolves its own tier through callGeminiGenerateContentImage
+   exactly as before, defaulting to 2K when it passes nothing. */
+function studioRenderTier(_cfg) {
+  return STUDIO_RENDER_TIER_FALLBACK;
 }
 
 /* the mask's minimum long edge; 0 or a junk value disables the floor */
@@ -6646,8 +6699,10 @@ async function handleStudioRender({ body, event, origin }) {
   let studioModelConfig = null;
   try {
     /* One id, not a branch on quality. cfg.renderHighModel is no longer
-       consulted: there is no request that can reach the second renderer. */
-    studioModelConfig = resolveImageModel(studioImageModelId(cfg));
+       consulted: there is no request that can reach the second renderer.
+       The "render" step resolves studioRenderModel first — the gold charm
+       has its own key so the drawing step can be moved without moving it. */
+    studioModelConfig = resolveImageModel(studioImageModelId(cfg, "render"));
     apiKeyForImageModel(studioModelConfig);
   } catch (err) {
     console.error("[studio] render model unavailable:", err?.message || err);
@@ -7615,10 +7670,13 @@ async function handleStudioGoldEdit({ body, event, origin }) {
   const metal = studioCleanText(body?.metal || version.renderMetal || session.metal || "gold");
 
   /* Prove the renderer exists before taking the money — same order as
-     handleStudioRender, for the same reason. */
+     handleStudioRender, for the same reason. Same "goldedit" step key too,
+     which resolves the same studioRenderModel: an edited gold charm and a
+     freshly rendered one must come off the same model or the customer sees
+     the metal change when they touch it. */
   let studioModelConfig = null;
   try {
-    studioModelConfig = resolveImageModel(studioImageModelId(cfg));
+    studioModelConfig = resolveImageModel(studioImageModelId(cfg, "goldedit"));
     apiKeyForImageModel(studioModelConfig);
   } catch (err) {
     console.error("[studio] gold edit model unavailable:", err?.message || err);
