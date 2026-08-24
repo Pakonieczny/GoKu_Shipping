@@ -7055,6 +7055,9 @@ async function handleStudioRender({ body, event, origin }) {
        three states matter, because "we could not read the map" and "we have
        not looked at the map" mean different things to the audit. */
     let specTruth;
+    /* what the judge tried and why it answered nothing — so a run with no
+       verdict can still file a record the studio's readout can show */
+    let judgeTriedModel = "", judgeFailWhy = "";
 
     const loop = await studioRenderAttempts({
       renderOnce, basePrompt: effectivePrompt, cfg,
@@ -7104,11 +7107,32 @@ async function handleStudioRender({ body, event, origin }) {
                 `${specTruth.engraved} engraved field(s) — the judge is marked against this`);
           }
         }
-        const ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg, { builtInHoop });
+        let ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg, { builtInHoop });
+        /* ── ONE RUNG DOWN BEFORE GIVING UP ─────────────────────────────
+           mk29 pointed the judge's default at the text model — and in a
+           deployment where that ID is not available, every call fails, the
+           render ships unscored (correct), and the studio's readout simply
+           vanishes (the reported symptom). A judge whose CALL failed is
+           retried once on the image model: mk28's audit already knows an
+           image model is the wrong tool and marks its verdict untrusted
+           unless it proves it read the map, so the worst this rung can
+           produce is a readout that says "here are numbers, don't act on
+           them" — which beats no readout, silently, every time. Garbage
+           ANSWERS ("unparsable") are not retried on a worse tool, and a
+           missing API key is not retried on anything. */
+        if (!ans.raw && ans.why && ans.why !== "no_api_key" && ans.why !== "unparsable" &&
+            ans.model && ans.model !== DEFAULT_IMAGE_MODEL) {
+          console.warn(`[studio] adjudicator (${ans.model}) unreachable — ${ans.why}; ` +
+                       `retrying once on ${DEFAULT_IMAGE_MODEL}`);
+          const cfg2 = Object.assign({}, cfg, { renderScoreModel: DEFAULT_IMAGE_MODEL });
+          ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg2, { builtInHoop });
+        }
         const scored = studioScoreAudit(ans.raw, studioScoreVerdict(ans.raw, cfg), cfg,
                                         { truth: specTruth, model: ans.model });
         if (scored) { scored.model = ans.model; scored.reply = String(ans.text || "").slice(0, 1200); }
         else {
+          judgeTriedModel = ans.model || judgeTriedModel;
+          judgeFailWhy = String(ans.why || (ans.text ? "unusable answer" : "no answer")).slice(0, 200);
           console.warn(`[studio] adjudicator (${ans.model}) gave no usable verdict` +
                        (ans.why ? ` — ${ans.why}` : "") +
                        (ans.text ? `; replied: ${ans.text.slice(0, 300)}` : ""));
@@ -7179,6 +7203,24 @@ async function handleStudioRender({ body, event, origin }) {
             model: s.model || "",
             worst: s.worst },
           s.cats)),
+        renderRunId,
+      }, { merge: true });
+    } else if (adjudicating) {
+      /* ── AN UNSCORED RUN STILL FILES A RECORD ──────────────────────────
+         When no attempt could be judged, this used to write nothing at all —
+         and the studio's readout, which paints only what the version doc
+         carries, silently disappeared. That is how "the judge's model ID is
+         wrong in this deployment" surfaced as "my little readout is gone"
+         instead of as a sentence naming the problem. The record says how
+         many images were made, that none was scored, which model was tried,
+         and why it answered nothing — so the panel can come back and say so. */
+      await vRef.set({
+        renderScoreMode: adjMode,
+        renderScoreCount: 0,
+        renderAttempts: attempt,
+        renderScoreJudgeModel: judgeTriedModel,
+        renderScoreUnscoredWhy: judgeFailWhy ||
+          (specTruth === undefined ? "the judge was never reached" : "no usable verdict"),
         renderRunId,
       }, { merge: true });
     }
