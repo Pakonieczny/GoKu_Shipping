@@ -32,6 +32,19 @@ function getBucket() {
 // preferences continue to work after the stable model migration.
 const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
 const DEFAULT_RENDER_IMAGE_MODEL = "gemini-3-pro-image";
+/* ── THE READING JOBS GET A READING MODEL ─────────────────────────────────
+   Every fallback chain in this file used to end at DEFAULT_IMAGE_MODEL — an
+   image GENERATOR — including the three jobs that never draw anything: the
+   render judge, the upload precheck and the prompt audit. That is how a
+   deployment with no model configuration ended up having its quality gate
+   answered by the one kind of model that fills in templates instead of
+   grading (the 99-on-a-bad-render report). Text jobs now end HERE instead:
+   the vision-capable text sibling of the flash image model — cheaper per
+   call than any image model, and actually built for look-and-answer work.
+   Every env/config override above it still wins, and all three callers fail
+   OPEN (verdict null / audit null / precheck degraded:true), so a deployment
+   where this ID is unavailable degrades to "unchecked", never to "down". */
+const DEFAULT_TEXT_MODEL = "gemini-3.1-flash";
 const IMAGE_MODEL_ALIASES = Object.freeze({
   "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
   "gemini-3-pro-image-preview": "gemini-3-pro-image",
@@ -633,7 +646,7 @@ async function auditCharmPromptPreflight({
     const model = String(
       process.env.GEMINI_CHARM_PREFLIGHT_MODEL ||
       process.env.GEMINI_CHARM_CONCEPT_MODEL ||
-      DEFAULT_IMAGE_MODEL
+      DEFAULT_TEXT_MODEL
     ).trim();
 
     const contractLines = [];
@@ -2523,6 +2536,12 @@ const STUDIO_DEFAULT_CONFIG = {
      environment variable — GEMINI_STUDIO_IMAGE_MODEL is still read if it is
      already set, below studioImageModel so Firestore stays the faster lever. */
   studioImageModel: "gemini-3-pro-image",
+  /* the two steps whose output is rewritten by code before anyone sees it
+     run on the cheaper image model; set either key to "gemini-3-pro-image"
+     to put that one step back on the full-fat model without a deploy.
+     Deliberately NOT lifted by studioImageModel — see studioImageModelId. */
+  studioLineArtModel: "gemini-3.1-flash-image",
+  studioSpecModel: "gemini-3.1-flash-image",
   studioDrawingTier: "2K",
   studioRenderTier: "1K",
   /* THE MASK NEVER GOES TO THE MODEL SMALLER THAN THIS. It is built at the
@@ -2653,7 +2672,43 @@ const STUDIO_DRAWING_TIER_FALLBACK = "2K";   // the input side
 const STUDIO_RENDER_TIER_FALLBACK = "1K";    // the output side
 const STUDIO_MASK_MIN_PX_FALLBACK = 2048;
 
-function studioImageModelId(cfg) {
+/* ── NOT EVERY STEP EARNS THE EXPENSIVE MODEL ─────────────────────────────
+   One knob for five steps meant the two steps whose output is REWRITTEN BY
+   CODE before anyone sees it were paying the same rate as the charm the
+   customer actually looks at:
+
+     lineart   the catalogue trace is thinned, re-measured and smoothed by
+               studioThinLineArt before it becomes the reference — most of
+               the pro model's extra fidelity is planed off deterministically.
+               The flash image model at the same 2K drawing tier keeps the
+               fidelity that survives that pass.
+     specgold  the from-gold greyscale map is the FALLBACK path: since mk24
+               the drawing pipeline builds this map deterministically and the
+               deriver yields to it, so this should rarely run at all — and
+               when it does, its output is a three-tone map, not a picture.
+
+   Each has its own Firestore key (studioLineArtModel / studioSpecModel) so
+   either can be put back on the pro model without a deploy. The keys resolve
+   BEFORE the shared chain on purpose: the global studioImageModel /
+   GEMINI_STUDIO_IMAGE_MODEL lever keeps meaning "the model the studio
+   renders with", and turning it up must not silently drag the two planed
+   steps up with it. The render, generate and gold-edit steps are untouched:
+   their output is the product. */
+const STUDIO_STEP_MODEL_KEYS = Object.freeze({
+  lineart: "studioLineArtModel",
+  specgold: "studioSpecModel",
+});
+const STUDIO_STEP_MODEL_FALLBACK = Object.freeze({
+  lineart: "gemini-3.1-flash-image",
+  specgold: "gemini-3.1-flash-image",
+});
+
+function studioImageModelId(cfg, step) {
+  const key = step && STUDIO_STEP_MODEL_KEYS[step];
+  if (key) {
+    const own = cfg && cfg[key];
+    return String(own || STUDIO_STEP_MODEL_FALLBACK[step]).trim();
+  }
   return String(
     (cfg && cfg.studioImageModel) ||
     process.env.GEMINI_STUDIO_IMAGE_MODEL ||
@@ -3870,7 +3925,7 @@ async function studioVisionVerdict(img) {
   const model = String(
     process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
     process.env.GEMINI_CHARM_PREFLIGHT_MODEL ||
-    DEFAULT_IMAGE_MODEL
+    DEFAULT_TEXT_MODEL
   ).trim();
   let mime = img?.mime || "image/jpeg";
   if (!String(mime).startsWith("image/")) mime = "image/jpeg";
@@ -4068,18 +4123,20 @@ async function studioAdjudicateOnce(specBuf, goldBuf, cfg, opts) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return { raw: null, model: "", text: "", why: "no_api_key" };
   /* ── WHICH MODEL IS DOING THE JUDGING ─────────────────────────────────
-     This mattered more than it looks. The fallback at the end of the chain
-     is DEFAULT_IMAGE_MODEL — an image GENERATION model. Asking one of those
+     This mattered more than it looks. The chain used to end at
+     DEFAULT_IMAGE_MODEL — an image GENERATION model. Asking one of those
      for a JSON critique is the wrong tool, and it is exactly the sort of
-     thing that answers with a filled-in template rather than a judgement.
-     config/customStudio wins so the model can be changed without a deploy,
-     and whichever one answered is written onto the version document, so
-     "what judged this render" is never a guess again. */
+     thing that answers with a filled-in template rather than a judgement;
+     it ends at DEFAULT_TEXT_MODEL now. config/customStudio still wins so
+     the model can be changed without a deploy, and whichever one answered
+     is written onto the version document, so "what judged this render" is
+     never a guess again. The -image warning below stays: the default can
+     no longer trip it, but an override still can. */
   const model = String(
     (cfg && cfg.renderScoreModel) ||
     process.env.GEMINI_STUDIO_JUDGE_MODEL ||
     process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
-    DEFAULT_IMAGE_MODEL
+    DEFAULT_TEXT_MODEL
   ).trim();
   if (/-image$/.test(model)) {
     console.warn(`[studio] adjudicator is pointed at "${model}", an image-generation ` +
@@ -4371,13 +4428,14 @@ function studioScoreAudit(raw, scored, cfg, extra) {
   else if (truth && obs && !graded.length) reasons.push("uncounted_spec");
   if (nearPerfect && !corroborated) reasons.push("uniform_perfect");
   /* ── THE WRONG TOOL, NAMED WHERE SOMEBODY WILL SEE IT ────────────────
-     Every model chain in this file ends at DEFAULT_IMAGE_MODEL, so a
-     deployment that never set renderScoreModel has been having its renders
-     judged by an image GENERATOR — which is precisely the thing that answers
-     with a filled-in template. That used to be a console.warn in a
-     background function nobody reads, while the verdict it produced went on
-     to gate renders. It is a reason for distrust now, and the studio's own
-     panel says so. An image model that counted the map correctly has proved
+     Until mk29 every model chain in this file ended at DEFAULT_IMAGE_MODEL,
+     so a deployment that never set renderScoreModel had its renders judged
+     by an image GENERATOR — precisely the thing that answers with a
+     filled-in template. The judge's chain ends at DEFAULT_TEXT_MODEL now,
+     so only an explicit override can put an image model here again — and
+     when one does, it is a reason for distrust and the studio's own panel
+     says so, rather than a console.warn nobody reads while the verdict
+     gates renders. An image model that counted the map correctly has proved
      it looked, so corroboration still excuses it: this is a rule about
      evidence, not about names. */
   if (/-image(-preview)?$/.test(judgeModel) && !corroborated) reasons.push("image_model_judge");
@@ -6041,7 +6099,7 @@ async function studioNameRegions(maskBuf, items) {
   const model = String(
     process.env.GEMINI_STUDIO_PRECHECK_MODEL ||
     process.env.GEMINI_CHARM_PREFLIGHT_MODEL ||
-    DEFAULT_IMAGE_MODEL
+    DEFAULT_TEXT_MODEL
   ).trim();
 
   const list = items.map((it, k) =>
@@ -8209,7 +8267,7 @@ async function handleStudioRefLineArt({ body, event, origin }) {
 
   let studioModelConfig;
   try {
-    studioModelConfig = resolveImageModel(studioImageModelId(cfg));
+    studioModelConfig = resolveImageModel(studioImageModelId(cfg, "lineart"));
     apiKeyForImageModel(studioModelConfig);
   } catch (err) { return fail("render_unavailable"); }
 
@@ -8864,7 +8922,7 @@ async function handleStudioSpecFromGold({ body, event, origin }) {
 
   let studioModelConfig = null;
   try {
-    studioModelConfig = resolveImageModel(studioImageModelId(cfg));
+    studioModelConfig = resolveImageModel(studioImageModelId(cfg, "specgold"));
     apiKeyForImageModel(studioModelConfig);
   } catch (err) {
     await studioSpecFail(vRef, "render_unavailable", attemptsSoFar);
