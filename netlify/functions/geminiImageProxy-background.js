@@ -4556,6 +4556,60 @@ const STUDIO_SCORE_CAPS = Object.freeze({
   renderEngravingWrong: { cat: "engraving", to: 55 },
 });
 
+/* ═══════════ WHICH OF THE MAP'S COUNTS ARE FAIR TO BE MARKED ON ═════════
+   The exam only means anything if a competent answerer could pass it. Four
+   live runs say the engraved count is not such a question and the openings
+   count is:
+
+     v7  jug        map 8 openings → judge said 8 ✓   map 3 engraved → 1  ✗
+     v8  jug        map 8 openings → judge said 8 ✓   map 3 engraved → 30 ✗
+     v9  jug        openings ✓                        engraved ✗
+     v1  butterfly  map 1 opening  → judge said 1 ✓   map 15 engraved → 7 ✗
+
+   Four out of four on openings, nought out of four on engraved, and the
+   engraved misses are not near-misses — 1 and 30 against a truth of 3.
+
+   That is not a judge that cannot count. It is two things counting
+   DIFFERENT OBJECTS. studioLabel is 4-connected over the exact 96-grey, so
+   a butterfly's wing detailing is fifteen separate components to this code
+   and one engraved pattern to anything with eyes; strokes that meet at a
+   corner are two regions to the machine and one to the viewer. Openings do
+   not have that problem: a through-cut is a white island with a hard edge,
+   and both counters agree about what one is.
+
+   So the engraved count is COLLECTED AND SHOWN and never marked. It stays
+   in the prompt because it costs nothing, it goes on the panel because a
+   reader may want it, and if the two counters are ever brought into
+   agreement — 8-connectivity, or merging regions closer together than the
+   pen is wide — putting the question back is one line here.
+
+   What is NOT lost: engraving is still scored 0-100 by the judge's own
+   category 3, which asks whether every dark region is engraved at full
+   coverage and nothing else is, and still carries a floor. It is measured
+   the way tone and presentation are measured — by eye, against the map —
+   rather than by a count the two sides define differently.
+
+   This is why the butterfly kept shipping unverified while the jug did not:
+   with engraved marked and openings at 1, the only question the judge could
+   pass was the uninformative one, so every render of that charm failed the
+   exam on the unanswerable half. Nothing was wrong with the render, the
+   judge, or the charm. */
+const STUDIO_EXAM_QUESTIONS = Object.freeze([
+  /* [ the judge's field, the truth key, the cap when it is wrong ] */
+  Object.freeze(["openingsInSpec", "openings", "specOpeningsWrong"]),
+]);
+/* The comparison the customer actually cares about — the map's count against
+   what the judge can see in the photograph — and it is restricted to the
+   same question for the same reason. One side of it is a machine count, so
+   it is only a measurement where both sides count the same object. */
+const STUDIO_RENDER_COUNT_CHECKS = Object.freeze([
+  Object.freeze(["openingsInRender", "openings", "renderOpeningsWrong"]),
+]);
+/* How far the render's engraved count may fall below the judge's own count
+   of the map before it reads as engraving gone missing rather than as the
+   noise of counting a pattern twice. */
+const STUDIO_ENGRAVED_SHORTFALL = 0.25;
+
 /* ── WHAT THE MAP ACTUALLY CONTAINS ───────────────────────────────────────
    Measured from the BUFFER that was sent to the judge, not from the masks
    studioMaterialSpec happens to be holding: a reused map arrives with no
@@ -4645,8 +4699,21 @@ function studioScoreAudit(raw, scored, cfg, extra) {
     if (charms !== null && charms !== 1) cap("multipleCharms");
     const oa = num(obs.openingsInSpec), ob = num(obs.openingsInRender);
     if (oa !== null && ob !== null && oa !== ob) cap("openingsMismatch");
+    /* ── THE JUDGE'S OWN TWO ENGRAVED NUMBERS, COMPARED PROPORTIONALLY ──
+       Exact inequality was the wrong test the moment the counts got large.
+       A judge that reported 30 engraved regions in the map and 31 in the
+       render was saying the engraving is all there; the old `ea !== eb`
+       read that one-region difference as a defect and capped engraving at
+       65. What this test is actually for is engraving that went MISSING, so
+       that is what it asks: a material shortfall in the render against the
+       judge's own reading of the map. Both numbers come from the same eye,
+       so the ratio survives the miscounting that the absolute values do
+       not. */
     const ea = num(obs.engravedRegionsInSpec), eb = num(obs.engravedRegionsInRender);
-    if (ea !== null && eb !== null && ea !== eb) cap("engravingMismatch");
+    if (ea !== null && eb !== null && ea > 0 &&
+        eb < ea - Math.max(0, Math.floor(ea * STUDIO_ENGRAVED_SHORTFALL))) {
+      cap("engravingMismatch");
+    }
     if (obs.groundIsWhite === false) cap("groundNotWhite");
     if (obs.shadowPresent === false) cap("noShadow");
   }
@@ -4660,11 +4727,7 @@ function studioScoreAudit(raw, scored, cfg, extra) {
      the paper, which is its own kind of answer. */
   const graded = [], matched = [], wrong = [], wrongRules = [], unmarked = [];
   if (obs && truth) {
-    const exam = [
-      ["openingsInSpec", "openings", "specOpeningsWrong"],
-      ["engravedRegionsInSpec", "engraved", "specEngravingWrong"],
-    ];
-    for (const [field, key, rule] of exam) {
+    for (const [field, key, rule] of STUDIO_EXAM_QUESTIONS) {
       const said = num(obs[field]);
       if (said === null) continue;
       graded.push(key);
@@ -4688,11 +4751,7 @@ function studioScoreAudit(raw, scored, cfg, extra) {
        three openings, the judge can see two in the photograph, so a hole is
        missing — a fact that survives the judge having also misread the map,
        because only one side of it comes from the judge. */
-    const inRender = [
-      ["openingsInRender", "openings", "renderOpeningsWrong"],
-      ["engravedRegionsInRender", "engraved", "renderEngravingWrong"],
-    ];
-    for (const [field, key, rule] of inRender) {
+    for (const [field, key, rule] of STUDIO_RENDER_COUNT_CHECKS) {
       const said = num(obs[field]);
       if (said !== null && said !== Number(truth[key])) cap(rule);
     }
