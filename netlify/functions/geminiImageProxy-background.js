@@ -3937,7 +3937,7 @@ Transform IMAGE 1 and IMAGE 2 into a photorealistic 14K gold charm. Treat both a
 
 IMAGE 1 — TOPOLOGY_MASK: LIGHT GREY = SOLID METAL; WHITE = EMPTY; BLACK IS UNUSED. It is the exclusive authority for the silhouette and every through-cut.
 
-IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. Coverage is literal: every dark region remains engraved even when it touches the outer silhouette or occupies most of the charm; none may become polished. It controls surface treatment only and cannot add or remove metal.
+IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. It controls surface treatment only and cannot add or remove metal.
 
 Hard Fail — never allow any leakage of colours from STRUCTURE_MAP to affect the final 14K gold charm image.
 
@@ -3952,7 +3952,7 @@ The source darkness in IMAGE 2 is a classification code only. Engraving remains 
 Before rendering, silently verify:
 1. Every white region in IMAGE 1 is empty.
 2. Every light-grey region in IMAGE 1 contains solid gold.
-3. Every dark region in IMAGE 2 is visibly engraved at full coverage, including edge-touching regions; every light region is polished. IMAGE 2 never changes topology.
+3. IMAGE 2 changes surface finish only, never topology.
 
 Correct any topology mismatch before producing the image.
 
@@ -4015,8 +4015,8 @@ ENGRAVING RENDERED TOO DARK. Every line below is a CEILING, not a target:
   and polished bands on one ring. The polished metal stays bright and
   specular; the contrast between the two comes from finish and the gentlest
   tonal shift, never from a change of colour.
-• Converted to greyscale, an engraved area sits about a fifth darker than the
-  polished metal touching it, and that is a CEILING — closer is always better,
+• Converted to greyscale, an engraved area sits no more than about one-eighth
+  darker than the polished metal touching it, and that is a CEILING — closer is always better,
   further apart is always wrong. Brown, bronze, copper, grey, charcoal or black
   is wrong, and so is any recess that reads as a dark shape, a separate inlay
   or a second alloy rather than as the same worked gold.
