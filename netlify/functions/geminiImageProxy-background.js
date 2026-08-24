@@ -943,6 +943,56 @@ async function callOpenAIImagesGenerations({
    failure, and cannot leave the document lying about what is happening. */
 const STUDIO_UPSTREAM_TIMEOUT_MS = 100000;   /* one image generation */
 const STUDIO_JUDGE_TIMEOUT_MS = 60000;       /* one adjudication read */
+
+/* ═══════════ WHAT A RUN'S VERDICT OCCUPIES ON THE VERSION DOCUMENT ═══════
+   EVERY score field, in one list, because the alternative was two hand-kept
+   copies of it and they drifted.
+
+   A Firestore write is a merge and has no way to delete a key, so the start
+   of a render nulls these out: between pressing Re-render and the new
+   verdict landing the panel must show nothing rather than the last run's
+   answer. That clearing list was written by hand in two places, and a field
+   added to the WRITE and not to both copies of the CLEAR simply never got
+   cleared again — it survived from run to run for ever.
+
+   Which is what Paul saw on v9. The second render could not be scored at
+   all, and the panel printed "No image could be scored" directly above "the
+   check miscounted the map's engraved" and "Map contains: 8 openings · 3
+   engraved fields" — the FIRST render's findings, still on the document,
+   under the second render's warning. Three fields had been missing from the
+   clear since they were introduced (renderScoreSpecOpenings,
+   renderScoreSpecEngraved, renderScoreCorroborated) and two more joined
+   them when the exam was made per-question.
+
+   So there is one list now and both clears are generated from it. A new
+   field is cleared by virtue of being named here, which is the only way
+   this stays true. */
+const STUDIO_SCORE_DOC_FIELDS = Object.freeze([
+  "renderScore", "renderScoreMode", "renderScorePass", "renderScoreThreshold",
+  "renderScoreChosen", "renderScoreCount", "renderScoreFloorFails",
+  "renderScoreFabricated", "renderScoreWorst",
+  "renderScoreGeometry", "renderScoreCutouts", "renderScoreEngraving",
+  "renderScoreFidelity", "renderScoreTone", "renderScorePresentation",
+  "renderScoreAttempts", "renderScoreSuspect", "renderScoreSuspectWhy",
+  "renderScoreUniform", "renderScoreCaps", "renderScoreJudgeModel",
+  "renderScoreReply", "renderScoreObservations",
+  /* the answer sheet and how the judge did against it */
+  "renderScoreSpecOpenings", "renderScoreSpecEngraved", "renderScoreCorroborated",
+  "renderScoreExamWrong", "renderScoreUnmarked",
+  /* why a run produced no verdict — as stale as any other finding once the
+     next run starts, and the reason a re-render that DID score could still
+     be wearing the last one's "the judge answered nothing" */
+  "renderScoreUnscoredWhy",
+  /* how many images were made, which the panel's heading reads */
+  "renderAttempts", "renderAttempt",
+  /* the cut check's failed verdicts — same lifetime, same staleness */
+  "renderAttemptVerdicts",
+]);
+function studioClearedScore() {
+  const out = {};
+  for (const k of STUDIO_SCORE_DOC_FIELDS) out[k] = null;
+  return out;
+}
 async function studioFetchWithTimeout(url, opts, ms, label) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), Math.max(1000, ms || STUDIO_UPSTREAM_TIMEOUT_MS));
@@ -4126,10 +4176,34 @@ const STUDIO_ADJ_HOOP_AS_FOUND =
   "and any change to the hanging hardware, which is already part of this piece " +
   "and must be reproduced as it appears rather than re-formed into a flat " +
   "integrated hoop";
+/* ── WHAT IS ADDED WHEN THE FIRST ASK CAME BACK MALFORMED ────────────────
+   Appended only on the second ask, and it says what was wrong rather than
+   repeating the format for its own sake: a model that produced prose, or an
+   object missing a score, has already read the format once and needs to be
+   told which part of it it broke. Nothing about the CHARM changes — the
+   judgement being asked for is identical, so a repaired answer is the same
+   verdict correctly shaped, not a second opinion. */
+const STUDIO_ADJ_REPAIR = {
+  no_object:
+    "\n\nYOUR PREVIOUS REPLY CONTAINED NO JSON OBJECT. Answer again with the " +
+    "JSON object described above and nothing else — no prose before it, no " +
+    "explanation after it, no code fence.",
+  unparsable:
+    "\n\nYOUR PREVIOUS REPLY WAS NOT VALID JSON. Answer again with the JSON " +
+    "object described above and nothing else. Check that every string is " +
+    "quoted, every brace is closed, and there is no trailing comma.",
+  incomplete:
+    "\n\nYOUR PREVIOUS REPLY WAS MISSING ONE OR MORE OF THE SIX SCORES. All " +
+    "six of \"geometry\", \"cutouts\", \"engraving\", \"fidelity\", \"tone\" and " +
+    "\"presentation\" must be present and must each be a number from 0 to 100. " +
+    "An answer missing one is discarded whole.",
+};
 function buildStudioAdjudicatePrompt(opts) {
   const hoop = (opts && opts.builtInHoop === true)
     ? STUDIO_ADJ_HOOP_AS_FOUND : STUDIO_ADJ_HOOP_INTEGRATED;
-  return STUDIO_ADJUDICATE_PROMPT.replace("${HOOP_RULE}", hoop);
+  const base = STUDIO_ADJUDICATE_PROMPT.replace("${HOOP_RULE}", hoop);
+  const repair = opts && opts.repair ? STUDIO_ADJ_REPAIR[opts.repair] : "";
+  return repair ? base + repair : base;
 }
 const STUDIO_ADJUDICATE_PROMPT =
 `You are the final quality check in a workshop that laser-cuts flat 14K gold charms.
@@ -4290,6 +4364,16 @@ async function studioAdjudicateOnce(specBuf, goldBuf, cfg, opts) {
     let raw = null;
     try { raw = extractJsonObject(text); }
     catch (e) { return { raw: null, model, text, why: "unparsable" }; }
+    /* ── A CALL THAT SUCCEEDED IS NOT AN ANSWER THAT ARRIVED ─────────────
+       extractJsonObject either throws or returns whatever JSON.parse gave
+       it — and `null`, `0` and `false` are all valid JSON. A reply of the
+       four characters "null" therefore came back here as {raw:null,
+       why:""}: no reason, no retry, and the caller reported it as the
+       vague "unusable answer" that told nobody anything. If there is no
+       object, say so where the retry logic can see it. */
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { raw: null, model, text, why: "no_object" };
+    }
     return { raw, model, text, why: "" };
   } catch (e) {
     console.error("[studio] adjudicator call failed:", e?.message || e);
@@ -6996,16 +7080,8 @@ async function handleStudioRender({ body, event, origin }) {
        is the only honest state for a judgement that has not been made yet.
        A Firestore merge has no way to delete a key, so they go to null and
        every reader treats null as absent. */
-    const clearedScore = {
-      renderScore: null, renderScoreMode: null, renderScorePass: null,
-      renderScoreThreshold: null, renderScoreChosen: null, renderScoreCount: null,
-      renderScoreFloorFails: null, renderScoreFabricated: null, renderScoreWorst: null,
-      renderScoreGeometry: null, renderScoreCutouts: null, renderScoreEngraving: null,
-      renderScoreFidelity: null, renderScoreTone: null, renderScorePresentation: null,
-      renderScoreAttempts: null, renderScoreSuspect: null, renderScoreSuspectWhy: null, renderScoreUniform: null,
-      renderScoreCaps: null, renderScoreJudgeModel: null, renderScoreReply: null,
-      renderScoreObservations: null, renderAttempts: null, renderAttempt: null,
-    };
+    /* every score field, from the one list — see STUDIO_SCORE_DOC_FIELDS */
+    const clearedScore = studioClearedScore();
     await vRef.set(Object.assign({
       renderStatus: "rendering", renderStage: "planning", renderMetal: metal,
       renderQuality: quality, renderModel: studioModelConfig.id,
@@ -7354,7 +7430,7 @@ async function handleStudioRender({ body, event, origin }) {
     let specTruth;
     /* what the judge tried and why it answered nothing — so a run with no
        verdict can still file a record the studio's readout can show */
-    let judgeTriedModel = "", judgeFailWhy = "";
+    let judgeTriedModel = "", judgeFailWhy = "", judgeFailReply = "";
     /* and the same, per attempt — the two above are the run's LAST failure,
        which is all the "nothing could be scored" record needs, and is the
        wrong thing to print beside image #2 when image #1 scored fine */
@@ -7424,15 +7500,58 @@ async function handleStudioRender({ body, event, origin }) {
            verdict lost its only selling point. Garbage ANSWERS
            ("unparsable") are not retried on a worse tool, and a missing
            API key is not retried on anything. */
-        if (!ans.raw && ans.why && ans.why !== "no_api_key" && ans.why !== "unparsable" &&
-            ans.model && ans.model !== DEFAULT_TEXT_MODEL) {
+        const UNREACHABLE = (a) => a.why && a.why !== "no_api_key" &&
+              a.why !== "unparsable" && a.why !== "no_object" && a.why !== "incomplete";
+        if (!ans.raw && UNREACHABLE(ans) && ans.model && ans.model !== DEFAULT_TEXT_MODEL) {
           console.warn(`[studio] adjudicator (${ans.model}) unreachable — ${ans.why}; ` +
                        `retrying once on ${DEFAULT_TEXT_MODEL}`);
           const cfg2 = Object.assign({}, cfg, { renderScoreModel: DEFAULT_TEXT_MODEL });
           ans = await studioAdjudicateOnce(materialSpec.buf, buf, cfg2, { builtInHoop });
         }
-        const scored = studioScoreAudit(ans.raw, studioScoreVerdict(ans.raw, cfg), cfg,
-                                        { truth: specTruth, model: ans.model });
+
+        let scored = studioScoreAudit(ans.raw, studioScoreVerdict(ans.raw, cfg), cfg,
+                                      { truth: specTruth, model: ans.model });
+        /* an object arrived and was still not a verdict — studioScoreVerdict
+           refuses an answer missing any of the six, which is right, but the
+           reason has to survive to the panel */
+        if (!scored && ans.raw && !ans.why) ans = Object.assign({}, ans, { why: "incomplete" });
+
+        /* ── A MALFORMED REPLY IS A TRANSIENT, NOT A VERDICT ──────────────
+           The judge REACHED, answered, and the answer was not usable: no
+           JSON object in it, or an object missing one of the six scores.
+           The rung-down above deliberately does not fire for that — a
+           cheaper model is no answer to a formatting slip, and mk31 was
+           right that a fabricated verdict is worse than none.
+
+           But "do not ask a WORSE model" was implemented as "do not ask
+           again", and those are different things. This is a temperature-0
+           call: the same request with nothing added would return the same
+           malformed reply, so it is asked once more WITH THE SLIP NAMED,
+           which is the ordinary repair and is how every other structured
+           call in this file would be written if it had one.
+
+           This is what shipped v9 unjudged. The first render of that
+           version scored normally; the re-render's judge answered with
+           something that carried no six scores, there was no second ask,
+           and the panel could only say "unusable answer" — about a call
+           that had cost sixty seconds and would very likely have answered
+           correctly if asked twice. */
+        if (!scored && (ans.why === "no_object" || ans.why === "unparsable" ||
+                        ans.why === "incomplete")) {
+          console.warn(`[studio] adjudicator (${ans.model}) answered but the answer ` +
+                       `was not usable (${ans.why}) — asking the same model once more`);
+          const retryAns = await studioAdjudicateOnce(materialSpec.buf, buf, cfg,
+            { builtInHoop, repair: ans.why });
+          const retryScored = studioScoreAudit(retryAns.raw, studioScoreVerdict(retryAns.raw, cfg),
+                                               cfg, { truth: specTruth, model: retryAns.model });
+          if (retryScored) { ans = retryAns; scored = retryScored; }
+          else {
+            /* keep the FIRST reply's text — it is the one worth reading, and
+               the second is usually the same shape */
+            ans = Object.assign({}, ans, { why: ans.why + "_twice" });
+          }
+        }
+
         if (scored) { scored.model = ans.model; scored.reply = String(ans.text || "").slice(0, 1200); }
         else {
           judgeTriedModel = ans.model || judgeTriedModel;
@@ -7440,6 +7559,11 @@ async function handleStudioRender({ body, event, origin }) {
           /* filed against THIS image, so a table row for an unscored attempt
              can say what happened to it instead of showing six blanks */
           if (attemptNo != null) judgeFailByAttempt[attemptNo] = judgeFailWhy;
+          /* AND THE REPLY ITSELF. It was filed only when a verdict was
+             produced — so on the one failure where anybody would want to
+             read what the judge actually said, renderScoreReply was never
+             written and the panel had nothing but an adjective. */
+          judgeFailReply = String(ans.text || "").slice(0, 1200) || judgeFailReply;
           console.warn(`[studio] adjudicator (${ans.model}) gave no usable verdict` +
                        (ans.why ? ` — ${ans.why}` : "") +
                        (ans.text ? `; replied: ${ans.text.slice(0, 300)}` : ""));
@@ -7561,6 +7685,10 @@ async function handleStudioRender({ body, event, origin }) {
         renderScoreJudgeModel: judgeTriedModel,
         renderScoreUnscoredWhy: judgeFailWhy ||
           (specTruth === undefined ? "the judge was never reached" : "no usable verdict"),
+        /* WHAT IT ACTUALLY SAID, on the run where that is the only useful
+           thing there is. This field was written only alongside a verdict,
+           so the reply was thrown away in exactly the case worth reading. */
+        renderScoreReply: judgeFailReply || "",
         /* AND A ROW PER IMAGE HERE TOO. This branch wrote a count and no
            table, so a run that made three images and scored none reported
            the number three with nothing to attach it to. Every row comes
@@ -8008,15 +8136,7 @@ async function handleStudioGoldEdit({ body, event, origin }) {
          customer paid for the difference. A stale verdict left on the doc
          would be read by the studio's own read-out as a judgement of the
          edited picture, which it is not. */
-      renderScore: null, renderScoreMode: null, renderScorePass: null,
-      renderScoreThreshold: null, renderScoreChosen: null, renderScoreCount: null,
-      renderScoreFloorFails: null, renderScoreFabricated: null, renderScoreWorst: null,
-      renderScoreGeometry: null, renderScoreCutouts: null, renderScoreEngraving: null,
-      renderScoreFidelity: null, renderScoreTone: null, renderScorePresentation: null,
-      renderScoreAttempts: null, renderScoreSuspect: null, renderScoreSuspectWhy: null,
-      renderScoreUniform: null, renderScoreCaps: null, renderScoreJudgeModel: null,
-      renderScoreReply: null, renderScoreObservations: null,
-      renderAttempts: null, renderAttempt: null,
+      ...studioClearedScore(),
     }, { merge: true });
 
     const gold = await storagePathToBuffer(goldPath);
