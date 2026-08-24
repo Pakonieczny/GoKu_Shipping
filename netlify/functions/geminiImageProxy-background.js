@@ -4549,15 +4549,37 @@ async function studioRenderAttempts(opts) {
     outBuf = await renderOnce(promptText);
     nextNote = "";
 
-    punch = cutMode === "off" ? null : await punchFn(outBuf);
+    /* THE CHECKS CANNOT BE ALLOWED TO COST THE CHARM. Both callbacks are
+       WRITTEN never to throw — and mk28 proved that a promise is not a
+       property: one out-of-scope identifier inside judgeFn's closure threw
+       ReferenceError past every internal try/catch, the loop trusted it,
+       and a paid render died with "log is not defined". So the loop holds
+       the doctrine itself now: a punch that crashes degrades to an
+       unpunched render with the failure named in its report, and a judge
+       that crashes is a judge that answered nothing. */
+    if (cutMode === "off") punch = null;
+    else {
+      try { punch = await punchFn(outBuf); }
+      catch (e) {
+        console.error("[studio] cut check crashed — shipping unpunched:", e?.message || e);
+        punch = { buf: outBuf, report: { verified: false,
+          reason: "punch_crashed: " + String(e?.message || e).slice(0, 120),
+          declaredCuts: 0, punchedPx: 0, alignment: 0, openFrac: 0,
+          regionsOk: 0, regionsBad: 0, worst: "" } };
+      }
+    }
 
-    /* THE JUDGE. Never throws, and a null answer means "accepted" — see the
-       adjudicator block above. The buffer judged is the one the model
-       produced; the punch, when it runs at all, only fills declared openings. */
+    /* THE JUDGE. A null answer means "accepted" — see the adjudicator block
+       above. The buffer judged is the one the model produced; the punch,
+       when it runs at all, only fills declared openings. */
     let scored = null;
     if (adjudicating) {
       const j0 = now();
-      scored = await judgeFn(outBuf);
+      try { scored = await judgeFn(outBuf); }
+      catch (e) {
+        console.error("[studio] adjudicator crashed — accepting unscored:", e?.message || e);
+        scored = null;
+      }
       if (scored) {
         scored.attempt = attempts;
         scored.ms = now() - j0;
@@ -7069,10 +7091,16 @@ async function handleStudioRender({ body, event, origin }) {
         /* THE ANSWER SHEET, MEASURED ONCE. The map does not change between
            attempts, so neither does its census; measuring it per attempt
            would be the same numbers at three times the cost. */
+        /* console.log, NOT log: `log` is a local of studioRenderAttempts and
+           does not exist in this scope. mk28 wrote `log(...)` here, the first
+           judged render threw ReferenceError, and — because the loop trusted
+           judgeFn never to throw — the whole render died with "log is not
+           defined". The judge crashing a render is the one outcome the
+           adjudicator doctrine forbids; the loop is armoured now too. */
         if (specTruth === undefined) {
           specTruth = await studioSpecTruth(sharpMod, materialSpec.buf);
           if (specTruth) {
-            log(`[studio] spec map contains ${specTruth.openings} opening(s) and ` +
+            console.log(`[studio] spec map contains ${specTruth.openings} opening(s) and ` +
                 `${specTruth.engraved} engraved field(s) — the judge is marked against this`);
           }
         }
