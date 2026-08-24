@@ -2594,6 +2594,36 @@ function studioClientIp(event) {
   ).trim();
 }
 
+/* ═══════════ ⏸ GOLD CHARM VERIFICATION — TEMPORARILY PAUSED ══════════════
+   ONE SWITCH. Set to false to bring the whole verification stack back
+   exactly as it was; there is nothing else to undo.
+
+       const STUDIO_VERIFICATION_PAUSED = false;
+
+   WHAT TRUE DOES. It forces the two check modes to "off" at the single
+   point each is read, so a render makes ONE image and returns it:
+     • the adjudicator never runs — no judge call, no score, no re-render,
+       and no renderScore* fields on the version document;
+     • the cut check never runs — no punch, no verify, no cut-driven retry.
+   The attempt loop's two retry conditions (cutWants / scoreWants) are both
+   false on the first pass, so it breaks after attempt 1 and the customer is
+   shown the first image generated.
+
+   WHY IT IS A FLAG AND NOT AN EDIT TO THE CONFIG BELOW. renderCutCheck and
+   renderAdjudicate keep their intended production values ("off" / "enforce")
+   so the deployment's real settings are not lost in a temporary pause, and
+   so un-pausing cannot silently restore the wrong ones. This flag also wins
+   over config/customStudio, which means a stale override in Firestore cannot
+   quietly switch a check back on while the pause is meant to be in force.
+
+   THE STAFF READ-OUT IS PAUSED WITH IT, in britescustomstudio.js — the same
+   flag name, the same one-line revert. See qaAllowed() there.
+
+   NOT AFFECTED, deliberately: callImageWithRetry's transport-level retry on
+   an overloaded provider. That is not a verification step — it is what makes
+   a 503 not cost the customer a credit.                                    */
+const STUDIO_VERIFICATION_PAUSED = true;
+
 const STUDIO_DEFAULT_CONFIG = {
   guestFreeCredits: 3,
   signupBonusCredits: 7,
@@ -7250,7 +7280,10 @@ async function handleStudioRender({ body, event, origin }) {
      always set and a `|| "off"` fallback here would be dead code — which is
      exactly how a default of "punch" once kept running after the fallback was
      "reverted". The default above is the only place the mode is decided. */
-  const cutMode = String(cfg.renderCutCheck).trim().toLowerCase();
+  /* ⏸ paused: forced "off" regardless of config — see STUDIO_VERIFICATION_PAUSED */
+  const cutMode = STUDIO_VERIFICATION_PAUSED
+    ? "off"
+    : String(cfg.renderCutCheck).trim().toLowerCase();
   /* cfg.renderDeterministicSpec is deliberately NOT read here. It used to
      gate the material-spec pass, on the understanding that switching it off
      dropped the render to the colour-coded drawing. With that fallback gone
@@ -7612,7 +7645,10 @@ async function handleStudioRender({ body, event, origin }) {
        for another attempt, each is capped by its own retry count, and the
        wall-clock budget stops both. With renderAdjudicate:"off" every line
        added here is skipped and the loop behaves exactly as it did before. */
-    const adjMode = String(cfg.renderAdjudicate || "off").trim().toLowerCase();
+    /* ⏸ paused: forced "off" regardless of config — see STUDIO_VERIFICATION_PAUSED */
+    const adjMode = STUDIO_VERIFICATION_PAUSED
+      ? "off"
+      : String(cfg.renderAdjudicate || "off").trim().toLowerCase();
     const adjudicating = adjMode === "observe" || adjMode === "enforce";
     const scoreRetries = adjMode === "enforce"
       ? Math.max(0, Math.min(4, Number(cfg.renderScoreRetries) === 0 ? 0 : (Number(cfg.renderScoreRetries) || 2)))
