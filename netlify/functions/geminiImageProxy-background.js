@@ -4363,6 +4363,13 @@ const STUDIO_SCORE_CAPS = Object.freeze({
      IMAGE A is worse evidence than a disagreement about IMAGE B. */
   specOpeningsWrong:  { cat: "cutouts",   to: 40 },
   specEngravingWrong: { cat: "engraving", to: 50 },
+  /* ── AND THESE TWO SAY NOTHING ABOUT THE CHARM ────────────────────────
+     A wrong answer about IMAGE A is a fact about the JUDGE. Left in the
+     score it becomes a fact about the render: the cap drops the category
+     under its floor, the render fails, and the workshop spends a retry
+     making a charm less wrong in a way nobody actually observed. So the
+     two spec caps are recorded and then LIFTED OUT — see `unmarked` — and
+     the category they name is scored by nobody rather than scored badly. */
   /* the render genuinely disagrees with the map — the real defect, finally
      measurable, because one side of the comparison is now a fact */
   renderOpeningsWrong:  { cat: "cutouts",   to: 45 },
@@ -4389,11 +4396,14 @@ async function studioSpecTruth(sharp, specBuf) {
        anti-aliased, and a boundary pixel sitting halfway between two tones
        belongs to neither region's count. */
     const near = (v, t) => Math.abs(v - t) <= 24;
-    const metal = new Uint8Array(n), engraved = new Uint8Array(n);
+    const metal = new Uint8Array(n), engraved = new Uint8Array(n), white = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       const v = data[i * ch];
       if (near(v, ENGRAVED)) { metal[i] = 1; engraved[i] = 1; }
       else if (near(v, POLISHED)) metal[i] = 1;
+      else if (v >= 255 - 24) white[i] = 1;
+      /* everything else is an anti-aliased boundary pixel and belongs to no
+         region — see the hole mask below for why saying so matters */
     }
     /* THE CHARM'S BODY INCLUDES ITS HOLES. Flooding from the border through
        everything that is not metal leaves the silhouette; white inside that
@@ -4403,8 +4413,19 @@ async function studioSpecTruth(sharp, specBuf) {
     let facePx = 0;
     for (let i = 0; i < n; i++) if (face[i]) facePx++;
     if (!facePx) return null;
+    /* ── AN OPENING IS WHITE, NOT MERELY "NOT METAL" ──────────────────────
+       This read `face[i] && !metal[i]`, and the tolerance above leaves a gap:
+       the map is anti-aliased, so the seam between a polished region and an
+       engraved one runs through values near 136 — inside the silhouette,
+       matching neither tone, and therefore NOT METAL. Every such seam was a
+       hole. They arrive as a thin ring around each engraved field, and on a
+       charm with a large one that ring can clear the census floor and be
+       filed as a ninth opening the map does not contain — an answer sheet
+       with a wrong answer on it, marking a judge that read the map correctly
+       as having failed. The judge is told "only white ENCLOSED by metal is
+       an opening"; this now measures the same thing it asks for. */
     const holes = new Uint8Array(n);
-    for (let i = 0; i < n; i++) if (face[i] && !metal[i]) holes[i] = 1;
+    for (let i = 0; i < n; i++) if (face[i] && white[i]) holes[i] = 1;
     const tally = (mask) =>
       studioCensusRegions(mask, w, h, facePx, STUDIO_TRUTH_MIN_FRAC, 1).total;
     return { openings: tally(holes), engraved: tally(engraved), facePx, w, h };
@@ -4421,6 +4442,10 @@ function studioScoreAudit(raw, scored, cfg, extra) {
     ? extra.truth : null;
   const judgeModel = String((extra && extra.model) || "");
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  /* kept before anything is capped — the template test below is a question
+     about the answer the model gave, not about the answer after this
+     function has finished punishing it */
+  const rawCats = STUDIO_SCORE_KEYS.map((k) => scored.cats[k]);
   const caps = [];
   /* EVERY CONTRADICTION IS RECORDED, not only the one that happened to move
      the number furthest. Two rules can hit the same category — "you misread
@@ -4453,7 +4478,7 @@ function studioScoreAudit(raw, scored, cfg, extra) {
      marked on; `matched` is what it got right; `wrong` is what it did not.
      A judge with an empty `graded` refused the only checkable question on
      the paper, which is its own kind of answer. */
-  const graded = [], matched = [], wrong = [];
+  const graded = [], matched = [], wrong = [], wrongRules = [], unmarked = [];
   if (obs && truth) {
     const exam = [
       ["openingsInSpec", "openings", "specOpeningsWrong"],
@@ -4464,7 +4489,19 @@ function studioScoreAudit(raw, scored, cfg, extra) {
       if (said === null) continue;
       graded.push(key);
       if (said === Number(truth[key])) matched.push(key);
-      else { wrong.push(key); cap(rule); }
+      else {
+        wrong.push(key);
+        /* RECORDED, NOT SCORED. The rule goes on the caps list so the panel
+           can say which question was missed, and the category it names is
+           added to `unmarked` so the recompute below leaves it out of the
+           total and out of the floors entirely. A judge that misread the
+           map's engraved fields has not told us the engraving is bad; it
+           has told us it cannot be believed about engraving. */
+        wrongRules.push(rule);
+        if (caps.indexOf(rule) < 0) caps.push(rule);
+        const c = STUDIO_SCORE_CAPS[rule];
+        if (c && unmarked.indexOf(c.cat) < 0) unmarked.push(c.cat);
+      }
     }
     /* AND THE RENDER, AGAINST THE MAP RATHER THAN AGAINST ITS OWN CLAIM.
        This is the comparison the customer actually cares about: the map has
@@ -4485,7 +4522,12 @@ function studioScoreAudit(raw, scored, cfg, extra) {
      render should score highly. It is an answer with no evidence behind it:
      no observations at all, or a set of numbers with the shape of a template
      being filled in rather than two pictures being compared. */
-  const vals = STUDIO_SCORE_KEYS.map((k) => scored.cats[k]);
+  /* THE MODEL'S OWN SIX, NOT THE CAPPED ONES. This read scored.cats, which
+     the caps above have already pulled down — so any cap firing at all
+     widened the spread and switched the template test off. That is exactly
+     backwards: a contradiction is a reason to look harder at the shape of
+     the answer, not to stop looking. The test asks what the MODEL wrote. */
+  const vals = rawCats.slice();
   const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
   /* NOT "identical" — NEAR-identical, which is what actually arrived. Six
      unrelated criteria landing within three points of each other at the very
@@ -4505,10 +4547,50 @@ function studioScoreAudit(raw, scored, cfg, extra) {
   const reasons = [];
   if (!obs) reasons.push("no_observations");
   else if (!String(obs.describeRender || "").trim()) reasons.push("no_description");
-  /* it got a checkable question wrong: it did not read the specification, and
-     nothing else it says about the render is worth acting on */
-  if (wrong.length) reasons.push("miscounted_spec");
-  else if (truth && obs && !graded.length) reasons.push("uncounted_spec");
+  /* ── A WRONG ANSWER DISQUALIFIES A QUESTION, NOT THE WHOLE PAPER ─────
+     This used to read `if (wrong.length) reasons.push("miscounted_spec")`,
+     and that single line is what made the check useless on the render that
+     needed it most.
+
+     Reported from the wild, v7: the map held 8 openings and 3 engraved
+     fields. The judge counted the map's openings and got 8 — exactly right,
+     on the one question there is no cheap way to fake — then counted 3
+     openings in the render and described what it saw as "the central jug is
+     a large cutout". Five openings had merged into one. That finding is a
+     MEASUREMENT: the render side comes from the judge, the map side comes
+     from studioSpecTruth, and it is the whole reason this subsystem exists.
+     It capped cutouts at 45, under a floor of 85, and the render should have
+     been rejected and re-rolled with the loss named.
+
+     It was not. The same judge had said the map held 1 engraved field where
+     the machine counted 3, `wrong.length` was 1, the entire verdict was
+     marked suspect, and `trusted` in studioRenderAttempts turned the whole
+     thing off. The check found the defect and then disqualified itself over
+     an unrelated sub-question, and the customer got the broken charm with a
+     banner explaining that the check could not be trusted.
+
+     The engraved question is also the harder half by some distance, and not
+     symmetrically so. studioLabel is 4-CONNECTED: engraved strokes that meet
+     only at a corner are two regions to the machine and one wave to anything
+     with eyes, and the prompt's own rule — "SEPARATE means not touching" —
+     reads the other way. A wave engraving is exactly that case. So the
+     question the old line hung the entire verdict on is the one it is most
+     reasonable to get wrong.
+
+     The paper is now marked question by question. The whole verdict falls
+     only when the judge shows it did not read the map AT ALL — every graded
+     answer wrong. One right and one wrong is a judge that looked: it keeps
+     the category it proved itself on, and loses the other to `unmarked`.
+
+     HALF CREDIT HAS TO BE EARNED, THOUGH. The question it got right must be
+     one it could not have guessed: nearly every charm has exactly one
+     opening, its hanging hole, so "1" against a truth of 1 proves nothing —
+     the same `corroborated` bar the uniform-perfect test uses. A judge that
+     missed a question and passed only an uninformative one has shown no
+     evidence it read the map, and the whole verdict falls as before. */
+  if (graded.length && (!matched.length || (wrong.length && !corroborated))) {
+    reasons.push("miscounted_spec");
+  } else if (truth && obs && !graded.length) reasons.push("uncounted_spec");
   if (nearPerfect && !corroborated) reasons.push("uniform_perfect");
   /* ── THE WRONG TOOL, NAMED WHERE SOMEBODY WILL SEE IT ────────────────
      Until mk29 every model chain in this file ended at DEFAULT_IMAGE_MODEL,
@@ -4522,11 +4604,29 @@ function studioScoreAudit(raw, scored, cfg, extra) {
      it looked, so corroboration still excuses it: this is a rule about
      evidence, not about names. */
   if (/-image(-preview)?$/.test(judgeModel) && !corroborated) reasons.push("image_model_judge");
+  /* ── A DEAD VERDICT IS RECORDED AS THE JUDGE EARNED IT ────────────────
+     Unmarking exists so a HALF-credible verdict can still gate on its
+     credible half. When the paper failed outright there is no credible
+     half: nothing is lifted out, the two spec caps land on the score as
+     they always did, and the number filed beside "not trusted" is the
+     judge's mark rather than a total flattered by the questions it got
+     wrong being quietly dropped. */
+  if (reasons.indexOf("miscounted_spec") >= 0) {
+    unmarked.length = 0;
+    for (const rule of wrongRules) cap(rule);
+  }
   scored.uniform = nearPerfect;
   scored.corroborated = corroborated;
   scored.suspect = reasons.length > 0;
   scored.suspectWhy = reasons;
   scored.caps = caps;
+  /* which of the map's two questions it got wrong, and which categories are
+     therefore scored by nobody. Both are filed on the version document: a
+     verdict that gated a render on half the paper has to be able to say
+     which half, or the panel is back to six numbers with nothing behind
+     them. */
+  scored.examWrong = wrong;
+  scored.unmarked = unmarked;
   scored.truth = truth
     ? { openings: Number(truth.openings), engraved: Number(truth.engraved) } : null;
   scored.observations = obs ? {
@@ -4542,20 +4642,28 @@ function studioScoreAudit(raw, scored, cfg, extra) {
 
   /* the caps may have moved the total and the floors, so both are recomputed
      from the corrected numbers rather than from what the model claimed */
-  if (caps.length) {
+  if (caps.length || unmarked.length) {
     /* the SAME weights and floors the first pass used, overrides included —
        recomputing against the built-in defaults would quietly undo a
        config/customStudio override the moment a cap fired */
     const weights = Object.assign({}, STUDIO_SCORE_WEIGHTS, (cfg && cfg.renderScoreWeights) || {});
     const floors  = Object.assign({}, STUDIO_SCORE_FLOORS,  (cfg && cfg.renderScoreFloors)  || {});
+    /* ── AN UNMARKED CATEGORY IS LEFT OUT, NOT SCORED ZERO ───────────────
+       The weighted mean is taken over the categories that still have a
+       credible number, so removing one RENORMALISES rather than dragging
+       the total down by its weight. Scoring it low instead would fail the
+       render for the judge's mistake — which is the failure this whole
+       change exists to remove — and scoring it 100 would let a judge buy a
+       pass by misreading the map. Neither: it is not counted. */
+    const counted = STUDIO_SCORE_KEYS.filter((k) => unmarked.indexOf(k) < 0);
     let sum = 0, wsum = 0;
-    for (const k of STUDIO_SCORE_KEYS) {
+    for (const k of counted) {
       const w = Number(weights[k]);
       if (!Number.isFinite(w) || w <= 0) continue;
       sum += scored.cats[k] * w; wsum += w;
     }
     scored.total = wsum ? Math.round(sum / wsum) : 0;
-    scored.floorFails = STUDIO_SCORE_KEYS.filter((k) => {
+    scored.floorFails = counted.filter((k) => {
       const f = Number(floors[k]);
       return Number.isFinite(f) && f > 0 && scored.cats[k] < f;
     });
@@ -4568,13 +4676,40 @@ function studioScoreAudit(raw, scored, cfg, extra) {
    having judged it — a bare re-roll is just another sample from the same
    distribution. */
 function studioScoreRetryNote(scored, attemptNo) {
-  const worstCat = STUDIO_SCORE_KEYS
+  /* an unmarked category's number is the judge's, not the charm's — naming it
+     as the weakest area would send the retry after a fault nobody observed */
+  const gradedKeys = STUDIO_SCORE_KEYS.filter((k) => (scored.unmarked || []).indexOf(k) < 0);
+  const worstCat = (gradedKeys.length ? gradedKeys : STUDIO_SCORE_KEYS)
     .slice()
     .sort((a, b) => scored.cats[a] - scored.cats[b])[0];
   const lines = [
     `RETRY ${attemptNo} — THE PREVIOUS ATTEMPT WAS REJECTED BY THE WORKSHOP'S OWN CHECK.`,
     `It scored ${scored.total} against a required ${scored.threshold}.`,
   ];
+  /* ── THE ONE THING HERE THAT IS NOT AN OPINION ───────────────────────
+     The map's counts are machine-measured and the render's counts came from
+     something that just looked at the render. Where they disagree, say so in
+     numbers before saying anything about scores: "8 openings became 3" is an
+     instruction a renderer can act on, and "cutouts: 45/100" is not. On the
+     v7 jug this is the difference between a targeted retry and a re-roll. */
+  const t = scored.truth, o = scored.observations;
+  const unmarked = scored.unmarked || [];
+  if (t && o) {
+    if (o.openingsInRender != null && Number(o.openingsInRender) !== Number(t.openings) &&
+        unmarked.indexOf("cutouts") < 0) {
+      lines.push(`COUNT: the map specifies ${t.openings} separate through-cut opening(s) ` +
+                 `and only ${o.openingsInRender} were visible as real holes in your last ` +
+                 `attempt. Openings that merged into one larger cut-out, or were filled ` +
+                 `with metal, are the defect. Cut every white region enclosed by metal in ` +
+                 `IMAGE 1 as its own hole, separated by the metal the map puts between them.`);
+    }
+    if (o.engravedRegionsInRender != null && Number(o.engravedRegionsInRender) !== Number(t.engraved) &&
+        unmarked.indexOf("engraving") < 0) {
+      lines.push(`COUNT: the map specifies ${t.engraved} separate engraved field(s) and ` +
+                 `${o.engravedRegionsInRender} were visible in your last attempt. Engrave ` +
+                 `every dark-grey region of IMAGE 2 at full coverage and nothing else.`);
+    }
+  }
   if (scored.floorFails.length) {
     lines.push(`Unacceptable in: ${scored.floorFails.join(", ")}.`);
   }
@@ -4676,12 +4811,21 @@ async function studioRenderAttempts(opts) {
             ` ${STUDIO_SCORE_KEYS.map((k) => k[0] + scored.cats[k]).join(" ")}` +
             (scored.floorFails.length ? ` FLOOR:${scored.floorFails.join(",")}` : "") +
             (scored.caps && scored.caps.length ? ` CAPPED:${scored.caps.join(",")}` : "") +
+            (scored.unmarked && scored.unmarked.length
+              ? ` NOTMARKED:${scored.unmarked.join(",")}` : "") +
             (scored.fabricated.length ? ` INVENTED:${scored.fabricated.join("|")}` : "") +
             (scored.suspect ? ` SUSPECT:${(scored.suspectWhy || []).join(",")}` : "") +
             ` [${scored.model || "?"}] (${scored.ms}ms)`);
         if (scored.suspect) {
           log(`[studio] adjudicator answer NOT TRUSTED — it is not gating this ` +
               `render. Reply was: ${String(scored.reply || "").slice(0, 300)}`);
+        } else if (scored.unmarked && scored.unmarked.length) {
+          /* the half-credit case, said out loud: this verdict IS gating the
+             render, on the categories the judge proved it could read */
+          log(`[studio] adjudicator misread the map's ` +
+              `${(scored.examWrong || []).join(", ")} — ` +
+              `${scored.unmarked.join(", ")} left unmarked; the rest of the ` +
+              `verdict still gates this render`);
         }
       } else {
         log(`[studio] adjudicator attempt ${attempts}: no verdict — accepting`);
@@ -7264,6 +7408,12 @@ async function handleStudioRender({ body, event, origin }) {
            always worth being able to see */
         renderScoreUniform: !!best.uniform,
         renderScoreCaps: best.caps || [],
+        /* WHICH HALF OF THE PAPER THE JUDGE FAILED, AND WHAT THAT COST IT.
+           A verdict that gated a render on one of the map's two questions
+           has to be able to say which one, or the panel is back to numbers
+           with nothing behind them. */
+        renderScoreExamWrong: best.examWrong || [],
+        renderScoreUnmarked: best.unmarked || [],
         renderScoreObservations: best.observations || null,
         /* WHAT THE MAP ACTUALLY CONTAINS, beside what the judge claimed it
            contains. Two numbers, and the whole argument about whether a
@@ -7287,6 +7437,7 @@ async function handleStudioRender({ body, event, origin }) {
             floorFails: s.floorFails.join(","),
             fabricated: s.fabricated.join("; "),
             caps: (s.caps || []).join(","),
+            unmarked: (s.unmarked || []).join(","),
             suspect: !!s.suspect,
             model: s.model || "",
             worst: s.worst },
