@@ -5772,7 +5772,12 @@ function studioPenWidth(px, w, h, scope) {
   return Math.max(1, v[v.length >> 1]);
 }
 
-function studioCutRegions(mask, w, h, minRatio, penIn) {
+/* opts.noDenseFill turns the DENSITY path off, exactly as minRatio:Infinity
+   turns the THICKNESS path off. Both discriminators are now independently
+   suppressible, so a caller can ask for "thick blobs only" — which is what
+   the capped-list fallback in studioSpecCutMask needs and could not express
+   before. Omitted by every existing caller, so their behaviour is unchanged. */
+function studioCutRegions(mask, w, h, minRatio, penIn, opts) {
   /* Primary discriminator: local thickness against the drawing's pen.
      Secondary discriminator: component fill density. The density path exists
      for exactly the failure a thick engraved border exposed: the global pen
@@ -5781,6 +5786,7 @@ function studioCutRegions(mask, w, h, minRatio, penIn) {
      sparse inside its own bounding box, so density separates the two without
      asking a model or using a magic absolute pixel width. */
   const ratio0 = minRatio || 2.5;
+  const noDenseFill = !!(opts && opts.noDenseFill);
   const { labels, count } = studioLabel(mask, w, h);
   const cut = new Uint8Array(w * h);
   if (!count) return { cut, areas: 0, lines: 0, pen: 0, cutPx: 0 };
@@ -5805,7 +5811,8 @@ function studioCutRegions(mask, w, h, minRatio, penIn) {
     const bw = x1[L] - x0[L] + 1, bh = y1[L] - y0[L] + 1;
     const density = size[L] / Math.max(1, bw * bh);
     const thickEnough = maxd[L] / pen >= ratio0;
-    const denseFill = density >= 0.24 && Math.min(bw, bh) >= Math.max(4, pen * 1.8);
+    const denseFill = !noDenseFill &&
+      density >= 0.24 && Math.min(bw, bh) >= Math.max(4, pen * 1.8);
     if ((thickEnough || denseFill) && size[L] >= minPx) { keep[L] = 1; areas++; }
     else lines++;
   }
@@ -6305,10 +6312,38 @@ function studioSpecCutMask(plan, zones) {
      discriminator, deliberately alone: a blue fill that touches the blue
      perimeter merges into one sparse component and fails it, so the failure
      the zones-authority exists to prevent — erasing the silhouette — cannot
-     come back through this door. (minRatio Infinity turns the thickness
-     test off; only denseFill survives.) */
+     come back through this door.
+
+     ── THE DISCRIMINATOR IS THICKNESS, NOT BOUNDING-BOX DENSITY ───────────
+     This ran as studioCutRegions(blue, w, h, Infinity, pen): thickness off,
+     density alone. The safety argument above only ever covered the PERIMETER
+     — a big sparse loop — and the perimeter was never what broke. Density is
+     a property of a component's BOUNDING BOX, and a short, gently curved
+     stroke very nearly fills its own box: measured on the real code, a 20°
+     arc scores 0.31 and a 12° arc 0.52, both clear of the 0.24 mark, while a
+     90° arc scores 0.11 and the perimeter 0.04. So the strokes that got
+     punched into holes were the SHORT ones, and the long sweeps that the
+     argument was checked against passed exactly as predicted. Every stray
+     curve on a charm became a through-cut the customer never asked for —
+     the white slashes across solid metal on the crescent and ring maps.
+
+     Local thickness separates the two cleanly and does not care how long a
+     stroke is. Measured with pen=10: strokes score 0.33 (6px) to 1.27 (24px)
+     however they curve; filled blobs score 1.47 (r=15) to 9.47 (r=100). The
+     gap is wide and the shapes never cross it.
+
+     2.5 is not a new constant — it is the ratio studioDrawingPlan already
+     passes for plan.cut, so "what counts as a filled area" has one answer in
+     this file. Measured, it punches a blob from about r=26 up (r=25 scores
+     2.40 and is left alone, r=30 scores 2.90 and is cut), which a hoop hole
+     clears comfortably, and it errs toward LEAVING METAL ALONE, which is the
+     side to err on: a missed cut-out is one region wrong, a wrongly punched
+     one is a hole in a charm that had none. Note that this restores no v7
+     behaviour — v7 had no fallback at all — it keeps the fix and drops the
+     failure mode. */
   if (cuts.length) {
-    const dense = studioCutRegions(blue, plan.w, plan.h, Infinity, plan.pen);
+    const dense = studioCutRegions(blue, plan.w, plan.h, 2.5, plan.pen,
+                                   { noDenseFill: true });
     for (let i = 0; i < n; i++) if (dense.cut[i]) out[i] = 1;
   }
   return out;
