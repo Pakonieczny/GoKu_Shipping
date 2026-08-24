@@ -942,6 +942,19 @@ async function callOpenAIImagesGenerations({
    in the normal retry/catch paths, becomes a retry or a REFUNDED, WRITTEN
    failure, and cannot leave the document lying about what is happening. */
 const STUDIO_UPSTREAM_TIMEOUT_MS = 100000;   /* one image generation */
+/* ── THE FINISHED CHARM GETS LONGER THAN THE SHARED CEILING ───────────────
+   The gold render moved to gemini-3-pro-image, which is the premium model
+   for exactly the kind of work this is — eight small openings that have to
+   land where a machine-drawn map puts them — and it thinks for longer than
+   flash did. A measured flash render on v9 already spent ~121s between the
+   "rendering" and "polishing" stage writes; the pro model will spend more,
+   and at the shared 100s it would abort mid-thought and hand the customer a
+   504 for a render that was working.
+
+   180s, and it is a per-call value rather than a raise of the shared one:
+   the Listing Generator, the Charm Maker and the batch paths are all still
+   on flash and have no reason to wait longer for a failure. */
+const STUDIO_RENDER_TIMEOUT_MS = 180000;     /* one gold charm, pro model  */
 const STUDIO_JUDGE_TIMEOUT_MS = 60000;       /* one adjudication read */
 
 /* ═══════════ WHAT A RUN'S VERDICT OCCUPIES ON THE VERSION DOCUMENT ═══════
@@ -1215,6 +1228,13 @@ async function callGeminiGenerateContentImage({
   charmGeometryPolicy,
   backgroundPolicy,
   imageSizeTier,
+  /* ── ONE CALL MAY ASK FOR LONGER THAN THE SHARED CEILING ──────────────
+     STUDIO_UPSTREAM_TIMEOUT_MS is 100s and was written for flash. A caller
+     that passes nothing still gets exactly that, so every existing surface
+     is unchanged; the gold render passes its own, because a pro image model
+     legitimately spends longer than a flash one and a 504 at 100s would
+     read to the customer as a broken render rather than a slow one. */
+  timeoutMs,
 }) {
   const geminiModel =
     String(model || DEFAULT_IMAGE_MODEL).trim() ||
@@ -1349,7 +1369,7 @@ async function callGeminiGenerateContentImage({
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify(body),
-  }, STUDIO_UPSTREAM_TIMEOUT_MS, "Gemini image generation");
+  }, timeoutMs || STUDIO_UPSTREAM_TIMEOUT_MS, "Gemini image generation");
 
   const raw = await resp.text().catch(() => "");
   let data = null;
@@ -2623,7 +2643,28 @@ const STUDIO_DEFAULT_CONFIG = {
   studioSpecModel: "gemini-3.1-flash-image",
   /* the gold charm: handleStudioRender AND handleStudioGoldEdit, one key so
      a rendered charm and an edited one can never come off different models */
-  studioRenderModel: "gemini-3.1-flash-image",
+  /* ── THE FINISHED GOLD CHARM RENDERS ON THE PRO IMAGE MODEL ───────────
+     gemini-3-pro-image ("Nano Banana Pro"), checked against the published
+     model list rather than inferred from another name — the rule beside
+     DEFAULT_TEXT_MODEL, which exists because that constant was once a
+     model that did not exist. Same request shape as the flash model, same
+     imageConfig.imageSize tiers, so nothing about the call changes but the
+     id. It is the render step's job that argues for it: reproducing a
+     deterministic map's openings and engraved fields exactly is the
+     "complex visual task with precise control" case, and it is what the
+     adjudicator has been failing renders on.
+
+     IT COSTS DOUBLE. $0.134 against $0.067 per 1K image at list price, and
+     the studio renders 1K only. The adjudicator may spend up to
+     renderScoreRetries extra images on top, so a worst-case gated render
+     goes from about $0.20 to about $0.40 in model spend. generateCost —
+     what the CUSTOMER is debited — is unchanged and is a separate decision.
+
+     The gold edit resolves through this same key (see
+     STUDIO_STEP_MODEL_KEYS), so it moves with the render, which is right:
+     both produce the finished metal charm. The drawing steps, lineart and
+     specgold, stay on flash — they feed the measurements, not the eye. */
+  studioRenderModel: "gemini-3-pro-image",
   studioDrawingTier: "2K",
   studioRenderTier: "1K",
   /* THE MASK NEVER GOES TO THE MODEL SMALLER THAN THIS. It is built at the
@@ -2699,14 +2740,27 @@ const STUDIO_DEFAULT_CONFIG = {
      exactly. Retries are never charged: the debit happens once, before the
      first attempt. */
   renderRetries: 2,
-  /* A retry must not outlive the browser. The client's watcher gives up at
-     GEN_TIMEOUT_MS (180s) and shows the customer a failure even though the
-     server is still working and will eventually write renderStatus:"done" —
-     so a new attempt is only STARTED if the time already spent, plus the
-     time the previous attempt actually took, still fits inside this budget.
-     Renders measured at 35-80s upstream, so this admits a second attempt
-     comfortably and a third only when the first two were quick. */
-  renderRetryBudgetMs: 150000,
+  /* A retry must not outlive the browser — but the number this was set
+     against is long gone, and so is the client it names. GEN_TIMEOUT_MS
+     (180s) is the CONCEPT generator's clock; the render watcher was since
+     rewritten to a silence window plus a hard cap (MK_RENDER_IDLE_MS,
+     MK_RENDER_HARD_MS), and the cap is 480s.
+
+     At 150s against a flash render measured at 35-80s this admitted a
+     second attempt comfortably. Against gemini-3-pro-image it admits none:
+     the loop starts a new attempt only if elapsed PLUS the previous
+     attempt's measured duration still fits, and one pro attempt — image
+     plus judge — lands near 140s on its own, so 140 + 140 > 150 and the
+     adjudicator's retries would be dead on arrival. The verification work
+     of the last few days would then be gating renders it could never ask
+     to be redone.
+
+     300s admits a second attempt and stops there: after two attempts at
+     ~140s each the same test refuses a third (280 + 140 > 300), so a run
+     settles around 280s against the client's 480s cap. That margin is the
+     point — this budget must stay comfortably under MK_RENDER_HARD_MS, and
+     the two are edited together or not at all. */
+  renderRetryBudgetMs: 300000,
 
   /* ══════════ THE ADJUDICATOR — POST-RENDER SCORING ══════════════════════
      Reads the finished gold charm against the deterministic greyscale map
@@ -2810,10 +2864,14 @@ const STUDIO_STEP_MODEL_KEYS = Object.freeze({
 const STUDIO_STEP_MODEL_FALLBACK = Object.freeze({
   lineart: "gemini-3.1-flash-image",
   specgold: "gemini-3.1-flash-image",
-  /* the finished metal charm — "Nano Banana 2", a stable listed ID, verified
-     against the published model list rather than inferred from another name */
-  render: "gemini-3.1-flash-image",
-  goldedit: "gemini-3.1-flash-image",
+  /* the finished metal charm — "Nano Banana Pro", a stable listed ID,
+     verified against the published model list rather than inferred from
+     another name. Reached only when config/customStudio cannot be read at
+     all; it matches STUDIO_CFG_DEFAULTS.studioRenderModel deliberately, so
+     an unreachable Firestore does not quietly change which model draws the
+     charm the customer is paying for. */
+  render: "gemini-3-pro-image",
+  goldedit: "gemini-3-pro-image",
 });
 
 function studioImageModelId(cfg, step) {
@@ -4870,7 +4928,7 @@ function studioScoreRetryNote(scored, attemptNo) {
 async function studioRenderAttempts(opts) {
   const {
     renderOnce, basePrompt, cutMode, maxRetries, retryable, punchFn,
-    adjMode, scoreRetries, judgeFn, retryBudgetMs, onRetry,
+    adjMode, scoreRetries, judgeFn, retryBudgetMs, onRetry, onStage,
   } = opts;
   const now = opts.now || (() => Date.now());
   const startedAt = opts.startedAt != null ? opts.startedAt : now();
@@ -4920,6 +4978,22 @@ async function studioRenderAttempts(opts) {
           regionsOk: 0, regionsBad: 0, worst: "" } };
       }
     }
+
+    /* ── THE DOCUMENT HAS TO MOVE BEFORE THE JUDGE RUNS ──────────────────
+       The storefront's watcher gives up when the version document has been
+       SILENT too long, and between "rendering" and "polishing" there was no
+       write at all — so one attempt's silence was the image call PLUS the
+       cut check PLUS the judge, added together. A measured flash run on v9
+       spent 121s in that gap; with a pro image model at a 180s ceiling and
+       a 60s judge behind it, the sum comfortably clears any idle window
+       worth having, and the customer would be told a working render had
+       stalled.
+
+       So the image landing is reported the moment it lands. The silence is
+       now bounded by the LONGER of the two calls rather than their sum, the
+       two clocks can be reasoned about separately, and the progress bar
+       gains a step that is true: the charm exists and is being checked. */
+    if (onStage) await onStage("engraving", attempts);
 
     /* THE JUDGE. A null answer means "accepted" — see the adjudicator block
        above. The buffer judged is the one the model produced; the punch,
@@ -7360,6 +7434,8 @@ async function handleStudioRender({ body, event, origin }) {
       prompt: promptText,
       size: studioImageSizeString(studioRenderTier(cfg)),
       imageSizeTier: studioRenderTier(cfg),
+      /* the pro model's own ceiling — see STUDIO_RENDER_TIMEOUT_MS */
+      timeoutMs: STUDIO_RENDER_TIMEOUT_MS,
       quality: "high",
       output_format: "png",
       images,
@@ -7572,6 +7648,14 @@ async function handleStudioRender({ body, event, origin }) {
       },
       retryBudgetMs, startedAt,
       onRetry: (n) => vRef.set({ renderStage: "rendering", renderAttempt: n, renderRunId }, { merge: true }),
+      /* best-effort, and never allowed to fail a render: this is a progress
+         note, and a Firestore hiccup writing one must not cost a charm the
+         customer has already paid for */
+      onStage: async (stage, n) => {
+        try {
+          await vRef.set({ renderStage: stage, renderAttempt: n, renderRunId }, { merge: true });
+        } catch (_e) {}
+      },
     });
     let outBuf = loop.outBuf;
     let punch = loop.punch;
@@ -8235,6 +8319,8 @@ async function handleStudioGoldEdit({ body, event, origin }) {
     let outBuf = await callImageModelEdits({
       apiKey: apiKeyForImageModel(studioModelConfig),
       model: studioModelConfig.id,
+      /* the gold edit moved to the pro model with the render — same ceiling */
+      timeoutMs: STUDIO_RENDER_TIMEOUT_MS,
       prompt,
       size: editSize,
       imageSizeTier: editTier,
