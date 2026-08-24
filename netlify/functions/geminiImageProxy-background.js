@@ -2682,8 +2682,20 @@ const STUDIO_DEFAULT_CONFIG = {
      simply ships as the best of however many attempts fitted. */
   renderAdjudicate: "enforce",
   /* The pass mark for the weighted total. A render is accepted only when it
-     clears this AND no single category is below its floor. */
-  renderScoreThreshold: 95,
+     clears this AND no single category is below its floor.
+
+     80, not 95. At 95 the total was the binding constraint on nearly every
+     render: a charm a jeweller would ship scores in the high 80s, because
+     the prompt calibrates 95 as "nothing to correct" and 85 as "clearly the
+     right charm with one visible discrepancy". The workshop was re-rolling
+     good charms to chase a mark the scale itself describes as perfection,
+     spending two extra image calls to do it.
+
+     The floors are what this leans on instead, and they are the better
+     instrument: they ask "how bad is too bad in this one respect", which is
+     the question that decides whether a charm is sellable. A v7 — cut-outs
+     at 45 against a floor of 85 — still fails at any total threshold. */
+  renderScoreThreshold: 80,
   /* Extra renders after a failing score. Never charged. */
   renderScoreRetries: 2,
   /* Both optional. A partial object overrides only the keys it names, so
@@ -4064,9 +4076,31 @@ const STUDIO_SCORE_WEIGHTS = Object.freeze({
    "how much does this contribute" but "how bad is too bad, whatever else is
    right". Fidelity's floor is high because there is no acceptable amount of
    fabricated detail; tone's is low because engraving a shade dark is a
-   disappointment and not a defect. */
+   disappointment and not a defect.
+
+   ── SET AGAINST THE PASS MARK, WHICH IS NOW 80 ──────────────────────────
+   Geometry and cut-outs came down from 90 and 85, engraving from 80 to 75.
+   They were written when the mark was 95 and were calibrated to it, so
+   leaving them where they were while the mark dropped would have moved the
+   whole decision onto the floors without anybody choosing that: a charm
+   totalling 89 was still rejected on a geometry of 88, and the lower mark
+   would have changed nothing except the number printed on the panel.
+
+   The scale the judge is given is what these are pinned to. Its own words:
+   95 is "a jeweller comparing the two would find nothing to correct", 85 is
+   "clearly the right charm with one visible discrepancy", 60 is
+   "recognisably related but wrong in a way a customer would notice". A
+   floor is the "customer would notice" line, not the "jeweller would
+   correct" line — the second is a standard for a re-roll, and re-rolls cost
+   two more image calls and a slower page for a charm that was sellable.
+
+   FIDELITY DOES NOT MOVE. It is not a quality scale: the prompt makes any
+   invented element score 20 or below and anything that is not one single
+   charm 10 or below, so this floor is a switch, and there is no amount of a
+   second charm or a caption that ships. Tone and presentation do not move
+   either — they were already set below the mark and mean what they meant. */
 const STUDIO_SCORE_FLOORS = Object.freeze({
-  geometry: 90, cutouts: 85, engraving: 80, fidelity: 90, tone: 70, presentation: 70,
+  geometry: 80, cutouts: 80, engraving: 75, fidelity: 90, tone: 70, presentation: 70,
 });
 
 /* The judge is shown the SAME fill law the renderer was given — the exact
@@ -4286,9 +4320,13 @@ function studioScoreVerdict(raw, cfg) {
     sum += cats[k] * w; wsum += w;
   }
   const total = wsum ? Math.round(sum / wsum) : 0;
+  /* The fallback here and STUDIO_CFG_DEFAULTS.renderScoreThreshold are the
+     same number for a reason: this one is reached when studioConfig() could
+     not be read at all, and a stricter mark on the day Firestore is
+     unreachable would reject renders that pass on every other day. */
   const thresholdRaw = Number(cfg && cfg.renderScoreThreshold);
   const threshold = Number.isFinite(thresholdRaw) && thresholdRaw > 0 && thresholdRaw <= 100
-    ? thresholdRaw : 95;
+    ? thresholdRaw : 80;
   /* BOTH TESTS, NOT EITHER. The total catches "slightly wrong everywhere";
      the floors catch "excellent except for the one thing that ruins it". */
   const floorFails = STUDIO_SCORE_KEYS.filter((k) => {
@@ -4756,7 +4794,19 @@ async function studioRenderAttempts(opts) {
   const log = opts.log || ((...a) => console.log(...a));
 
   let outBuf = null, punch = null, attempts = 0, lastMs = 0, nextNote = "";
-  const failedVerdicts = [], scoreLog = [];
+  /* ── ONE ROW PER IMAGE MADE, NOT PER IMAGE JUDGED ─────────────────────
+     scoreLog only ever held attempts the judge answered on, and the panel's
+     table is built from it — so a run that made two images and could only
+     score one printed "2 images generated" above a table with one row, and
+     the second image left no trace anywhere the customer could see. Whether
+     an attempt was judged is a fact about the JUDGE; that an image was made
+     is a fact about the run, and the run's own record has to carry it.
+
+     attemptLog has an entry for every iteration of this loop, judged or
+     not, and it is what the version document's table is built from now.
+     scoreLog stays exactly what it was — the scored subset, which is what
+     scoreBest and renderScoreCount mean — so nothing that reads it changes. */
+  const failedVerdicts = [], scoreLog = [], attemptLog = [];
   let scoreBest = null;
 
   while (true) {
@@ -4793,7 +4843,11 @@ async function studioRenderAttempts(opts) {
     let scored = null;
     if (adjudicating) {
       const j0 = now();
-      try { scored = await judgeFn(outBuf); }
+      /* the attempt number goes IN so the reason a judge failed can come back
+         out attributed to the right image — a bare `judgeFailWhy` on the
+         handler is overwritten by the next failure and cannot say which
+         attempt it belonged to */
+      try { scored = await judgeFn(outBuf, attempts); }
       catch (e) {
         console.error("[studio] adjudicator crashed — accepting unscored:", e?.message || e);
         scored = null;
@@ -4834,6 +4888,20 @@ async function studioRenderAttempts(opts) {
     /* the budget must account for the judge too, or three scored attempts
        overrun a limit that was measured for three bare renders */
     lastMs = now() - t0;
+
+    /* EVERY IMAGE MADE GETS A ROW, whatever happened to it after. `judged`
+       is the honest distinction the panel needs: an unjudged attempt has no
+       scores rather than bad ones, and printing a zero for it would read as
+       the worst render of the run when it is the unmeasured one. */
+    attemptLog.push({
+      n: attempts,
+      ms: lastMs,
+      judged: !!scored,
+      /* what the geometric check made of this image, which is a fact about
+         the image even when no model would grade it */
+      cut: punch && punch.report
+        ? (punch.report.verified ? "ok" : String(punch.report.reason || "")) : "",
+    });
 
     /* ── AN ANSWER WITH NO EVIDENCE DECIDES NOTHING ─────────────────────
        studioScoreAudit marks a verdict suspect when the model returned no
@@ -4883,7 +4951,7 @@ async function studioRenderAttempts(opts) {
     outBuf = scoreBest.buf;
     punch = scoreBest.punch;
   }
-  return { outBuf, punch, attempts, failedVerdicts, scoreLog, scoreBest };
+  return { outBuf, punch, attempts, failedVerdicts, scoreLog, attemptLog, scoreBest };
 }
 
 /* ── version doc: what drives the client's staged progress bar ───────────
@@ -7287,6 +7355,10 @@ async function handleStudioRender({ body, event, origin }) {
     /* what the judge tried and why it answered nothing — so a run with no
        verdict can still file a record the studio's readout can show */
     let judgeTriedModel = "", judgeFailWhy = "";
+    /* and the same, per attempt — the two above are the run's LAST failure,
+       which is all the "nothing could be scored" record needs, and is the
+       wrong thing to print beside image #2 when image #1 scored fine */
+    const judgeFailByAttempt = {};
 
     const loop = await studioRenderAttempts({
       renderOnce, basePrompt: effectivePrompt, cfg,
@@ -7319,7 +7391,7 @@ async function handleStudioRender({ body, event, origin }) {
         return studioPunchCutouts(buf, bw.buffer, plan);
       },
       adjMode, scoreRetries,
-      judgeFn: async (buf) => {
+      judgeFn: async (buf, attemptNo) => {
         /* THE ANSWER SHEET, MEASURED ONCE. The map does not change between
            attempts, so neither does its census; measuring it per attempt
            would be the same numbers at three times the cost. */
@@ -7365,6 +7437,9 @@ async function handleStudioRender({ body, event, origin }) {
         else {
           judgeTriedModel = ans.model || judgeTriedModel;
           judgeFailWhy = String(ans.why || (ans.text ? "unusable answer" : "no answer")).slice(0, 200);
+          /* filed against THIS image, so a table row for an unscored attempt
+             can say what happened to it instead of showing six blanks */
+          if (attemptNo != null) judgeFailByAttempt[attemptNo] = judgeFailWhy;
           console.warn(`[studio] adjudicator (${ans.model}) gave no usable verdict` +
                        (ans.why ? ` — ${ans.why}` : "") +
                        (ans.text ? `; replied: ${ans.text.slice(0, 300)}` : ""));
@@ -7379,6 +7454,7 @@ async function handleStudioRender({ body, event, origin }) {
     const attempt = loop.attempts;
     const failedVerdicts = loop.failedVerdicts;
     const scoreLog = loop.scoreLog;
+    const attemptLog = loop.attemptLog || [];
     const scoreBest = loop.scoreBest;
 
     if (scoreLog.length) {
@@ -7428,20 +7504,45 @@ async function handleStudioRender({ body, event, origin }) {
         renderScoreFidelity: best.cats.fidelity,
         renderScoreTone: best.cats.tone,
         renderScorePresentation: best.cats.presentation,
-        /* Every attempt, in order, so a bad run can be read back whole. The
-           two list fields are joined into strings rather than left as arrays:
-           an array inside a map inside an array is legal in Firestore but
-           reads badly in the console and buys nothing here. */
-        renderScoreAttempts: scoreLog.map((s) => Object.assign(
-          { n: s.attempt, total: s.total, ms: s.ms,
+        /* ── EVERY IMAGE MADE, IN ORDER, JUDGED OR NOT ────────────────────
+           This mapped scoreLog, which holds only the attempts a judge
+           answered on — so a run that made two images and scored one wrote
+           a one-row table under a heading that said "2 images generated",
+           and the second image was unreachable from the panel entirely.
+           There was nothing wrong with the render; the record simply had no
+           row to put it in.
+
+           It maps attemptLog now, which the loop appends to on every pass
+           whatever the judge did, and the score fields are merged in from
+           scoreLog where one exists. `judged:false` is the flag the panel
+           reads to print an honest "not scored" row rather than six blanks
+           and a total of zero — an unmeasured render must not read as the
+           worst one of the run.
+
+           The two list fields are joined into strings rather than left as
+           arrays: an array inside a map inside an array is legal in
+           Firestore but reads badly in the console and buys nothing here. */
+        renderScoreAttempts: attemptLog.map((a) => {
+          const s = scoreLog.find((x) => x.attempt === a.n);
+          const row = { n: a.n, ms: a.ms, judged: !!s, cut: a.cut || "" };
+          if (!s) {
+            /* why THIS image has no scores, attributed to it rather than to
+               the run — the panel prints it in place of the numbers */
+            row.unscoredWhy = judgeFailByAttempt[a.n] ||
+                              (adjudicating ? "no usable verdict" : "not judged");
+            return row;
+          }
+          return Object.assign(row, {
+            total: s.total,
             floorFails: s.floorFails.join(","),
             fabricated: s.fabricated.join("; "),
             caps: (s.caps || []).join(","),
             unmarked: (s.unmarked || []).join(","),
             suspect: !!s.suspect,
             model: s.model || "",
-            worst: s.worst },
-          s.cats)),
+            worst: s.worst,
+          }, s.cats);
+        }),
         renderRunId,
       }, { merge: true });
     } else if (adjudicating) {
@@ -7460,6 +7561,16 @@ async function handleStudioRender({ body, event, origin }) {
         renderScoreJudgeModel: judgeTriedModel,
         renderScoreUnscoredWhy: judgeFailWhy ||
           (specTruth === undefined ? "the judge was never reached" : "no usable verdict"),
+        /* AND A ROW PER IMAGE HERE TOO. This branch wrote a count and no
+           table, so a run that made three images and scored none reported
+           the number three with nothing to attach it to. Every row comes
+           back `judged:false` with its own reason; the panel prints them
+           under the warning instead of leaving the customer to take the
+           count on trust. */
+        renderScoreAttempts: attemptLog.map((a) => ({
+          n: a.n, ms: a.ms, judged: false, cut: a.cut || "",
+          unscoredWhy: judgeFailByAttempt[a.n] || judgeFailWhy || "no usable verdict",
+        })),
         renderRunId,
       }, { merge: true });
     }
