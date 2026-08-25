@@ -2833,11 +2833,21 @@ const STUDIO_DEFAULT_CONFIG = {
      well — 0.977 and 0.984 on good renders, 0.731 on the astronaut that drew
      itself standing. It costs no credit and no model call. */
   renderShapeGate: "on",
-  /* Below this the render is a different charm. 0.90 sits well clear of both
-     populations measured: no good render has come in under 0.97 and no bad
-     one over 0.84. Raising it chases pose accuracy the model cannot hit;
-     lowering it lets a redrawn charm through. */
-  renderShapeMinIoU: 0.90,
+  /* Below this the render is a different charm — a re-roll, never a cancelled
+     composite; the composite's own floor lives in SCO_FIT_FAIL / SCO_FIT_IOU
+     and is a boundary distance, for the reason set out there.
+
+     0.90 came from two populations that looked well separated: no good render
+     under 0.97, no bad one over 0.84. Ten pairs later they overlap — a good
+     dragon reads 0.9053 and a heart drawn for a shield reads 0.9119 — because
+     IoU is an AREA ratio and a coiled dragon is nearly all perimeter, so the
+     same accuracy scores far worse on the customer's most intricate designs.
+     0.80 keeps what IoU is genuinely good at, catching gross drift: it still
+     rejects the wrong astronaut at 0.7308 and every mismatched dragon pair
+     (0.7628-0.7983), while leaving the worst good render 0.10 of margin. The
+     fine discrimination is the boundary distance's job, and it does separate
+     — 1.72 good against 2.61 bad. */
+  renderShapeMinIoU: 0.80,
   /* How many re-rolls a rejected render may buy, independent of the cut
      check's and the adjudicator's allowances — "this is not the customer's
      charm" is a different complaint from "this charm is not good enough",
@@ -2853,11 +2863,18 @@ const STUDIO_DEFAULT_CONFIG = {
      times what a 1600 px render needs, and the composite's own deadline
      makes an overrun a no-op rather than a late render. */
   renderCompositeBudgetMs: 30000,
-  /* How closely the render's silhouette must match the map's before any
-     coordinate is trusted between them. Below this the model drew a
-     different charm, and cutting one charm's openings into another's outline
-     makes it worse rather than better — so the composite declines. */
-  renderCompositeMinIoU: 0.90,
+  /* The RE-ROLL threshold the composite reports against. It no longer cancels
+     anything: THE CANCEL TEST IS A DISTANCE, not an overlap, and it is not
+     configurable — see SCO_FIT_FAIL.
+
+     This one number used to do both jobs and that is what cost customers
+     their cut-outs. Measured on a dragon: 0.8 degrees of tilt — a drift
+     nobody would notice, boundary error moving 1.72 to 1.82 — dropped IoU
+     from 0.9053 to 0.8925 and cancelled the whole composite, so all 27
+     declared openings shipped as the model's engraving instead of as holes.
+     "A whole bunch of scales are engraved instead of cut out" is that
+     sentence, in a photograph. */
+  renderCompositeMinIoU: 0.80,
   /* ── HOW EXACTLY THE OPENINGS FOLLOW THE MAP ───────────────────────────
      "on" (what ships) lets each cluster of openings take a small, bounded,
      evidence-backed correction against the render's own drawing, because the
@@ -4137,21 +4154,42 @@ function buildMaterialSpecToCharmPrompt(opts) {
      arriving from somewhere unexpected must not quietly drop the hoop rule
      for a charm the studio drew itself */
   const hoop = (opts && opts.builtInHoop === true) ? STUDIO_HOOP_AS_FOUND : STUDIO_HOOP_INTEGRATED;
+  /* ── SEVEN BLOCKS INTO FOUR, WITH EVERY INSTRUCTION STILL IN IT ───────────
+     Nothing was decided to be unnecessary. What came out was RESTATEMENT, and
+     restatement is what dilutes: sixteen distinct rules were being carried by
+     twenty-three sentences, so the fill law — the one rule that must never be
+     missed — was competing for salience with two paraphrases of itself.
+
+     Three ideas were each said three times and are now said once:
+       · "not a recognizable object" / "overrides all familiar meaning" /
+         "if you recognise what it depicts" — one idea, kept in the form that
+         tells the model what to DO about it.
+       · the legend's WHITE = EMPTY / "every grey stays opaque, only white is
+         empty" / "OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly" — the
+         equation was a third phrasing of the clause above it, not a stronger
+         one, and an equation invites arithmetic rather than looking.
+       · NO INVENTION's "do not add, remove, move, resize or reinterpret any
+         geometry, and add nothing IMAGE 1 does not already contain" against
+         "exclusive authority" and "traced, not interpreted" — the verbs are
+         kept, the block they sat in is not.
+
+     Two headings also went, and headings are not free: each one announces a
+     new topic and spends attention on the announcement. Four blocks — what it
+     is, trace it, what it is made of, what the picture looks like — is the
+     whole instruction set with no section that exists only to be a section.
+
+     The count, for the next person tempted to add a paragraph: 1,652 chars to
+     1,346, and all sixteen rules verifiable one by one against the old text.
+     See SHORTER, NOT LONGER above for why that direction is the right one. */
   return `PRIMARY OPERATION — MATERIAL TRANSFER ONLY
 
-Transform IMAGE 1 into a photorealistic 14K gold charm. Treat it as a pixel-level manufacturing map, never as a recognizable object.
+Transform IMAGE 1 into a photorealistic 14K gold charm. It is a pixel-level manufacturing map and the exclusive authority for the silhouette, every through-cut and every worked surface: WHITE = EMPTY; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow recessed engraving.
 
-IMAGE 1 — WHITE = EMPTY; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow recessed engraving. It is the exclusive authority for the silhouette, every through-cut and every worked surface.
-
-TOPOLOGY LOCK: every grey region of IMAGE 1 stays opaque gold and only its white regions are empty — OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly. IMAGE 1's fill overrides every outline and all familiar meaning.
-
-SILHOUETTE LOCK: IMAGE 1's outer boundary is traced, not interpreted. Every notch, concavity, asymmetry and tilt in it is the design. If you recognise what it depicts, draw the outline you were given rather than the tidier, more symmetrical version you remember — a better-looking charm with a different outline is a failed render.
+TRACE, DO NOT INTERPRET: every grey region stays opaque gold and only the white regions are empty, and every notch, concavity, asymmetry and tilt of the outer boundary is the design. If you recognise what IMAGE 1 depicts, draw the map you were given rather than the tidier, more symmetrical version you remember, and add, remove, move or resize nothing — a better-looking charm with a different outline is a failed render.
 
 MATERIAL: ONE alloy across the whole piece — 14K gold, thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer; IMAGE 1's greys are a classification code and must never reach the output as colour.
 
-FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them, and no lettering, appears anywhere in the picture.
-
-NO INVENTION: do not add, remove, move, resize or reinterpret any geometry, and add nothing IMAGE 1 does not already contain.`;
+FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them, and no lettering, appears anywhere in the picture.`;
 }
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
@@ -5141,14 +5179,20 @@ function shapeBadness(s, minIoU) {
   const iouShort = s.iou == null || s.iou >= minIoU ? 0 : (minIoU - s.iou) / minIoU;
   return iouShort +
     over(s.outline && s.outline.mean, STUDIO_OUTLINE_MEAN_LIMIT) +
-    over(s.outline && s.outline.p95, STUDIO_OUTLINE_P95_LIMIT) +
     over(s.furniture && s.furniture.biggest, STUDIO_FURN_LIMIT) +
     over(s.alloy && s.alloy.offAlloy, STUDIO_ALLOY_LIMIT);
 }
 /* the same limits the compositor applies, named here so the ranking and the
-   gate can never drift apart */
-const STUDIO_OUTLINE_MEAN_LIMIT = 1.5;
-const STUDIO_OUTLINE_P95_LIMIT = 5.0;
+   gate can never drift apart.
+
+   THE TAIL WAS DROPPED because it could not order its own evidence: two good
+   dragons scored 3.16 and 17.98 on the p95 while the heart that passed for a
+   shield scored 9.83, so the worst reading of the eight belonged to a render
+   the customer liked. A ranking term that points the wrong way makes the
+   least-bad attempt the wrong attempt, so it is gone and the mean — which
+   does separate, 0.40/0.57/0.73/1.72 good against 2.64/2.94/5.43/6.06 bad —
+   carries the outline on its own at the limit it was calibrated for. */
+const STUDIO_OUTLINE_MEAN_LIMIT = 2.2;
 const STUDIO_FURN_LIMIT = 0.06;
 const STUDIO_ALLOY_LIMIT = 0.12;
 
@@ -7560,9 +7604,71 @@ const SCO_ALLOY_FRAC        = 0.35;/* below this share of the piece's own chroma
 const SCO_ALLOY_FLOOR       = 34; /* and never a looser test than this in absolute terms */
 const SCO_ALLOY_LIMIT       = 0.12;/* this much of the metal off-alloy and the piece is two-tone */
 /* the outline check: see scoBoundaryError. Percentages of the charm's size. */
-const SCO_OUTLINE_MEAN      = 1.5; /* average distance between the two outlines */
-const SCO_OUTLINE_P95       = 5.0; /* and the tail, which one wrong shoulder moves first */
+/* ── AND THE TAIL TURNED OUT TO BE NOISE ──────────────────────────────────
+   The p95 was kept because "one wrong shoulder moves the tail before it moves
+   the average". True — but so does one nearly-closed coil, and a dragon has
+   several. Two good dragons scored 3.16 and 17.98 on it while the heart that
+   passed for a shield scored 9.83: the good and the bad populations OVERLAP,
+   and on the second dragon the good one is the worst reading of the eight.
+   A test that cannot order its own evidence is not a test, so it is gone.
+
+   The mean still separates, but not by much, and that is worth stating
+   plainly: good renders run 0.40 / 0.57 / 0.73 / 1.72 and bad ones 2.64 /
+   2.94 / 5.43 / 6.06. The limit sits at 2.2 — 1.3x above the worst good and
+   1.2x below the best bad. That is the thinnest margin of the four checks
+   and the only one calibrated on four samples rather than a clean gap.
+
+   It earns its place because it is the ONLY check that caught the heart
+   drawn for a shield: that render passed IoU at 0.9119, passed the alloy
+   test at 0.0862 and had no stray content at all. And it is safe to keep at
+   a thin margin because it no longer blocks the composite — a false positive
+   costs a re-roll, never the customer's cut-outs. */
+const SCO_OUTLINE_MEAN      = 2.2; /* average distance between the two outlines */
 const SCO_CMP_CLOSE         = 4;  /* both silhouettes are closed by this before comparing */
+
+/* ── AND IoU IS INVERTED IN THE BAND THAT MATTERS ─────────────────────────
+   THIS IS WHY A DRAGON SHIPS WITH ITS SCALES ENGRAVED. The composite has
+   always been cancelled outright when the silhouette IoU fell under 0.90 —
+   the reasoning being that without a fit, every placement below is a guess.
+   The reasoning is right. The measurement is not.
+
+   Ten pairs, good and bad, ranked by both numbers:
+
+     GOOD dragon-1      IoU 0.9689   boundary 0.43
+     GOOD dragon-2      IoU 0.9528   boundary 0.73
+     GOOD dragon-4      IoU 0.9053   boundary 1.72
+     BAD  heart/shield  IoU 0.9119   boundary 2.64
+     BAD  dragon-3/dr4  IoU 0.7983   boundary 2.61
+     BAD  dragon-3/dr   IoU 0.7628   boundary 2.94
+     BAD  dragon-2/dr4  IoU 0.7905   boundary 3.25
+     BAD  astronaut     IoU 0.7308   boundary 6.06
+     BAD  p-pair        IoU 0.6678   boundary 12.02
+
+   The worst GOOD IoU is 0.9053 and the best BAD is 0.9119. No threshold
+   separates them; the order is wrong. The boundary distance separates them
+   cleanly — 1.72 against 2.61 — because it is a DISTANCE and IoU is an AREA.
+   A one-pixel boundary error costs a blob almost no overlap and costs a
+   coiled dragon a great deal, since a dragon is nearly all perimeter. IoU
+   therefore measures how thin the charm is at least as much as how wrong the
+   render is, and the customer's most intricate designs are exactly the ones
+   it punishes. A dragon at 0.89 lost EVERY declared opening — not a few
+   scales, all of them — and shipped the model's engraving instead.
+
+   So the cancel gate becomes a distance, and it sits far looser than the
+   re-roll limit above, because the two ask different questions. 2.2 asks
+   "is this worth another attempt?" — a false positive there costs one
+   render. This one asks "does any coordinate mapping exist between these
+   two pictures?" — a false positive here costs the customer their cut-outs,
+   which is the expensive mistake and the one that has already been made.
+   At 5.0 it cancels only the astronaut and the p-pair, where the model drew
+   a different charm; the heart-for-shield still gets its openings cut, and
+   the re-roll gate has already objected to it on its own account.
+
+   The IoU floor stays as a backstop against a render that is not a charm at
+   all, at 0.70 — below every bad sample here except the two the distance
+   already catches, and 0.20 clear of the worst good one. */
+const SCO_FIT_FAIL          = 5.0; /* boundary distance past which no placement is meaningful */
+const SCO_FIT_IOU           = 0.70;/* and a floor for the case where there is no charm to trace */
 
 /* ── WHAT A HOLE LOOKS LIKE FROM THE INSIDE ────────────────────────────────
    A hole the model cuts is NOT the plain ground showing through: the metal
@@ -7975,7 +8081,7 @@ function scoBoundaryError(a, b, w, h, scale) {
   return {
     mean: Math.round(mean * 100) / 100,
     p95: Math.round(p95 * 100) / 100,
-    dirty: mean > SCO_OUTLINE_MEAN || p95 > SCO_OUTLINE_P95,
+    dirty: mean > SCO_OUTLINE_MEAN,
   };
 }
 
@@ -8283,7 +8389,19 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     const lab = studioLabel(mp.holes, M.w, M.h);
     const area = new Float64Array(lab.count + 1);
     for (let i = 0; i < mn; i++) if (lab.labels[i]) area[lab.labels[i]]++;
-    const minArea = Math.max(60, 0.00025 * mb.w * mb.h);
+    /* ── THE FLOOR WAS SET IN PIXELS, AND PIXELS ARE NOT A SIZE ──────────
+       A dragon's map declared thirty-seven openings and six of them — 35, 30,
+       18, 12, 12 and 9 px — fell under the floor and were silently dropped.
+       On a 353 px charm a 35 px region is about six pixels across, which on a
+       20 mm piece is a third of a millimetre: small, and entirely
+       manufacturable. It was excluded because the absolute term, 60, is a
+       count rather than a proportion — the same feature on the same charm
+       photographed at 2048 px would have sailed through at four times the
+       pixel count.
+       Both terms come down: the share of the charm to a figure that keeps a
+       six-pixel detail on a 353 px piece, and the absolute floor to what is
+       genuinely speckle at any size. */
+    const minArea = Math.max(24, 0.00012 * mb.w * mb.h);
     const severMin = Math.max(120, SCO_SEVER_FRAC * mb.w * mb.h);
     /* one representative pixel and one bounding box per label, taken in the
        pass that was already walking every pixel */
@@ -8363,7 +8481,11 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     const mCmp = mp.outerCmp || mp.outer;
     const fit = scoGlobalFit(mCmp, M.w, M.h, mb, rp.outer, R.w, R.h, rb);
     report.iou = Math.round(fit.iou * 1e4) / 1e4;
-    const minIoU = Number(o.minIoU) || 0.90;
+    /* the RE-ROLL threshold, which the caller sets and which never cancels
+       anything; the CANCEL thresholds are SCO_FIT_FAIL / SCO_FIT_IOU below
+       and are deliberately not caller-tunable — see the note at their
+       definition for why one number could not do both jobs. */
+    const minIoU = Number(o.minIoU) || 0.80;
     /* THE OUTLINE, MEASURED WHERE THE FIT PUT IT. The mask's silhouette is
        carried into the render's frame by the transform just found, and the
        two boundaries are compared there — so this is asking "having lined
@@ -8423,10 +8545,15 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
        the fit itself failed, so every placement below would be a guess; and
        a contact sheet is not a product shot, so the thing identified as the
        charm may not be one. Everything else is reported and composited. */
-    if (fit.iou < minIoU) {
-      /* THE MODEL DREW A DIFFERENT CHARM. Nothing downstream rescues that,
-         and cutting a mask's openings into someone else's silhouette makes
-         it worse rather than better. */
+    /* THE MODEL DREW A DIFFERENT CHARM. Nothing downstream rescues that, and
+       cutting a mask's openings into someone else's silhouette makes it worse
+       rather than better. Asked as a DISTANCE, not as an overlap: an overlap
+       is an area, and on a shape that is nearly all perimeter — a coiled
+       dragon — the same one-pixel accuracy scores far worse than it does on a
+       blob. Measured, IoU put a good dragon at 0.9053 BELOW a bad heart at
+       0.9119, so the old 0.90 floor cancelled the composite on the customer's
+       most intricate designs and let a wrong shape through. See SCO_FIT_FAIL. */
+    if (report.outline.mean > SCO_FIT_FAIL || fit.iou < SCO_FIT_IOU) {
       report.why = "silhouette_drift";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
@@ -8890,6 +9017,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     return { buf: renderBuf, report };
   }
 }
+
 
 
 
@@ -9506,7 +9634,7 @@ async function handleStudioRender({ body, event, origin }) {
     const shapeMode = String(cfg.renderShapeGate == null ? "on" : cfg.renderShapeGate)
       .trim().toLowerCase();
     const shapeGating = shapeMode === "on" && !!sharpMod;
-    const shapeMinIoU = Math.min(0.99, Math.max(0.5, Number(cfg.renderShapeMinIoU) || 0.90));
+    const shapeMinIoU = Math.min(0.99, Math.max(0.5, Number(cfg.renderShapeMinIoU) || 0.80));
     const shapeRetries = Math.max(0, Math.min(3,
       Number(cfg.renderShapeRetries) === 0 ? 0 : (Number(cfg.renderShapeRetries) || 1)));
     const STUDIO_COMPOSITE_HARD_MS = Math.max(4000, Math.min(60000,
@@ -10002,7 +10130,7 @@ async function handleStudioRender({ body, event, origin }) {
            the wrong one would declare its ink as openings. */
         comp = await studioCompositeOpenings(outBuf, materialSpec && materialSpec.buf, {
           budgetMs: Math.max(2000, Math.min(STUDIO_COMPOSITE_HARD_MS, leftOfRun)),
-          minIoU: Math.min(0.99, Math.max(0.5, Number(cfg.renderCompositeMinIoU) || 0.90)),
+          minIoU: Math.min(0.99, Math.max(0.5, Number(cfg.renderCompositeMinIoU) || 0.80)),
           localFit: String(cfg.renderCompositeLocalFit == null ? "on" : cfg.renderCompositeLocalFit)
             .trim().toLowerCase() !== "off",
         });
