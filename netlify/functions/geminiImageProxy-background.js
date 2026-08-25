@@ -4087,6 +4087,39 @@ const STUDIO_HOOP_AS_FOUND =
    declared role at all. The Charm Maker's prompt has carried an explicit
    image-role lock for exactly this reason since the day a style reference's
    subject turned up in an output.                                          */
+/* ── THE RENDER CAME BACK AS A CONTACT SHEET ──────────────────────────────
+   One output contained the finished charm in the middle and, beside it, the
+   model's own two input maps redrawn as inset panels — bordered, and with the
+   words "IMAGE 1" and "IMAGE 2" lettered underneath in a typeface the studio
+   does not own. It had drawn its instructions.
+
+   That is a documented hazard of naming reference images in a prompt, and
+   this prompt names them constantly: "IMAGE 1" and "IMAGE 2" appear a dozen
+   times as things to obey, and nothing anywhere said they were not also
+   things to depict. Nothing said the output was one object either. The
+   background clause describes the ground the charm sits on and stops there,
+   so a frame holding three panels, two captions and a charm satisfies every
+   sentence in the prompt.
+
+   The other render path has carried a "no props, no hand, no chain, no
+   packaging" clause for a long time (STUDIO_RENDER_FINISH) — but that block
+   belongs to the line-art builder and this path has never used it. This is
+   the equivalent, written for the failure actually observed: the frame holds
+   one charm, the references are read and never drawn, and there is no text
+   in the output at all.                                                    */
+const STUDIO_OUTPUT_FRAME =
+`OUTPUT FRAME — ONE OBJECT, AND NO PAGE FURNITURE
+
+The output is a single photograph of the finished charm and NOTHING ELSE.
+
+THE IMAGES YOU WERE GIVEN ARE INSTRUCTIONS TO READ, NEVER CONTENT TO DRAW. Do not reproduce IMAGE 1, IMAGE 2 or IMAGE 3 in the output at any size, in any corner, as a panel, an inset, a thumbnail, a swatch, a border or a backdrop. Do not place a map beside the charm, above it, behind it or anywhere else in the frame.
+
+THERE IS NO TEXT ANYWHERE IN THE OUTPUT. No captions, no labels, no titles, no legends, no numbers, no dimensions, no "IMAGE 1", no watermark, no logo, no signature.
+
+THERE IS NO LAYOUT. No panels, no insets, no frames, no borders, no rules, no grid, no collage, no contact sheet, no side-by-side, no before-and-after, no multiple views, no second copy of the charm, no props, no hand, no chain, no packaging.
+
+One charm, alone, centred on the plain white ground with its own single soft contact shadow. If your draft contains anything else at all, delete it and render the charm by itself.`;
+
 const STUDIO_SILHOUETTE_LOCK =
 `SILHOUETTE LOCK — TRACE THE OUTLINE, DO NOT RECOGNISE IT
 
@@ -4138,6 +4171,8 @@ Correct any topology mismatch before producing the image.
 MATERIAL: The whole charm is one alloy: 14K gold. Thin flat sheet metal with crisp cut edges, not a thick moulded token, ${hoop}.
 
 IMAGE BACKGROUND: A plain pure WHITE studio background with one soft contact shadow beneath the charm.
+
+${STUDIO_OUTPUT_FRAME}
 
 NO INVENTION: Do not add, remove, move, resize or reinterpret any geometry, and add no gemstones, borders, engraving or lettering which STRUCTURE_MAP does not already contain.`;
 }
@@ -5108,6 +5143,28 @@ function studioScoreAudit(raw, scored, cfg, extra) {
    No measurement is quoted at the model. A number it cannot verify invites it
    to reason about the number instead of looking at the picture, and "IoU
    0.73" means nothing in a drawing instruction.                            */
+/* ── WHAT THE NEXT ATTEMPT IS TOLD AFTER A CONTACT SHEET ──────────────────
+   The complaint here is not about the charm — the charm may be perfect. It
+   is about everything ELSE in the frame, so the note says nothing about
+   shape, alloy or finish and stays on the one point: the frame holds one
+   object. Naming the specific thing that happened matters, because "make it
+   cleaner" is not an instruction and "do not draw the reference images"
+   is.                                                                      */
+function studioFrameRetryNote(attemptNo) {
+  const lines = [
+    "CORRECTION — THE PREVIOUS ATTEMPT WAS NOT A PRODUCT PHOTOGRAPH.",
+    "• It returned a page rather than a photograph: the frame contained the charm AND other content beside it — panels, inset thumbnails of the reference images, borders, captions or lettering.",
+    "• THE REFERENCE IMAGES ARE INSTRUCTIONS, NOT SUBJECTS. Read them; never draw them. No copy of IMAGE 1, IMAGE 2 or IMAGE 3 appears anywhere in your output, at any size, in any corner, as a panel, inset, thumbnail, swatch, border or backdrop.",
+    "• NO TEXT AT ALL. No captions, labels, titles, legends, numbers, dimensions, watermarks, logos or signatures anywhere in the frame.",
+    "• NO LAYOUT. No panels, insets, frames, borders, rules, grids, collages, contact sheets, side-by-sides, before-and-afters, multiple views or second copies of the charm.",
+    "• Output ONE charm, alone, centred on the plain white ground with its own single soft contact shadow, filling the frame the way a catalogue photograph of one piece of jewellery does. Everything else in the frame is empty white ground.",
+  ];
+  if (attemptNo >= 2) {
+    lines.push("This correction has already been asked for once. Produce the photograph only — nothing beside it, nothing behind it, nothing written on it.");
+  }
+  return lines.join("\n");
+}
+
 function studioShapeRetryNote(shape, attemptNo, builtInHoop) {
   const lines = [
     "CORRECTION — THE PREVIOUS ATTEMPT DREW THE WRONG SHAPE.",
@@ -5307,9 +5364,11 @@ async function studioRenderAttempts(opts) {
         lastShape = null;
       }
       if (lastShape && lastShape.iou != null) {
-        log(`[studio] shape gate attempt ${attempts}: silhouette IoU ` +
-            `${lastShape.iou} vs ${shapeMinIoU} — ${lastShape.ok ? "same charm" : "DIFFERENT SHAPE"}` +
-            ` (${lastShape.ms}ms)`);
+        log(`[studio] frame gate attempt ${attempts}: silhouette IoU ${lastShape.iou} ` +
+            `vs ${shapeMinIoU}, stray content ${lastShape.furniture ? lastShape.furniture.biggest : "?"} ` +
+            `— ${lastShape.ok ? "one charm, right shape"
+                 : lastShape.why === "frame_furniture" ? "NOT A PRODUCT SHOT"
+                 : "DIFFERENT SHAPE"} (${lastShape.ms}ms)`);
         if (!shapeBest || lastShape.iou > shapeBest.iou) {
           shapeBest = { buf: outBuf, iou: lastShape.iou, attempt: attempts };
         }
@@ -5439,7 +5498,8 @@ async function studioRenderAttempts(opts) {
     if (!cutWants && !shapeWants && !scoreWants) break;
 
     if (cutWants) failedVerdicts.push(punch.report.reason);
-    if (shapeWants) failedVerdicts.push("wrong_shape");
+    if (shapeWants) failedVerdicts.push(lastShape.why === "frame_furniture"
+      ? "frame_furniture" : "wrong_shape");
     const spent = now() - startedAt;
     if (retryBudgetMs && spent + lastMs > retryBudgetMs) {
       log(`[studio] retry budget reached (${spent}ms + ${lastMs}ms > ${retryBudgetMs}ms)` +
@@ -5451,12 +5511,16 @@ async function studioRenderAttempts(opts) {
        model three things at once is how a correction note stops correcting
        anything. */
     nextNote = cutWants ? studioRetryNote(punch.report, attempts, opts.builtInHoop)
-             : shapeWants ? studioShapeRetryNote(lastShape, attempts, opts.builtInHoop)
+             : shapeWants ? (lastShape.why === "frame_furniture"
+                              ? studioFrameRetryNote(attempts)
+                              : studioShapeRetryNote(lastShape, attempts, opts.builtInHoop))
              : studioScoreRetryNote(scored, attempts);
     log(`[studio] render retry ${attempts}/` +
         (cutWants ? maxRetries : shapeWants ? shapeRetries : scoreAllowance) + ` after ` +
         (cutWants ? punch.report.reason
-                  : shapeWants ? `wrong shape (IoU ${lastShape.iou})`
+                  : shapeWants ? (lastShape.why === "frame_furniture"
+                                    ? `not a product shot (stray ${lastShape.furniture.biggest})`
+                                    : `wrong shape (IoU ${lastShape.iou})`)
                   : `score ${scored.total}`));
   }
 
@@ -7457,6 +7521,17 @@ const SCO_SEARCH_CAP    = 0.037;  /* and never more than this share of the charm
 const SCO_MATCH_SAMPLES = 5000;   /* pixels per mean in the match — see the note there */
 const SCO_SHIFT_PAD_FRAC = 0.005; /* how far past its own radius an opening may be nudged */
 const SCO_MATCH_MARGIN  = 6;      /* levels the best offset must beat standing still by */
+/* ── the frame check: see scoFurniture ─────────────────────────────────────
+   Measured, the biggest stray blob as a share of the charm's bounding box:
+     a clean render          0.001 and 0.009
+     a contact-sheet render  0.47
+   The limit sits at 0.06 — six times the worst clean render and eight times
+   under the failure — so neither population is anywhere near it.          */
+const SCO_SHADOW_REACH  = 0.10;   /* how far a contact shadow may reach, of charm size */
+const SCO_FURN_DEV      = 26;     /* levels from the ground before a pixel is not ground */
+const SCO_FURN_SAT      = 36;     /* or this saturated, whatever its brightness */
+const SCO_FURN_MIN_BLOB = 0.00035;/* smaller than this share of the charm is speckle */
+const SCO_FURN_LIMIT    = 0.06;   /* one blob this big and the frame is not a product shot */
 
 /* ── WHAT A HOLE LOOKS LIKE FROM THE INSIDE ────────────────────────────────
    A hole the model cuts is NOT the plain ground showing through: the metal
@@ -7705,6 +7780,94 @@ function scoMaskParts(px, w, h, ch) {
   return { outer, holes, alpha, engraved, polish };
 }
 
+/* ── THE GROUND, READ FROM THE GROUND ─────────────────────────────────────
+   The ground colour used to be the mean of two 24 px corners. That is right
+   for a product shot and catastrophic for anything else: a render that came
+   back as a contact sheet had a BLACK inset panel occupying one of those
+   corners, and every composited opening would have been filled with the
+   average of white paper and that panel. A colour used to paint holes must
+   not be readable off two arbitrary squares.
+
+   So it is read from the whole border ring, and only from pixels that could
+   plausibly BE ground — bright and unsaturated — taken as a median so a
+   panel, a caption or a stray object cannot drag it. The old corner mean
+   stays as the fallback for the case where the border holds no such pixels
+   at all, because a wrong ground is still better than no render.           */
+function scoGroundColour(px, w, h, ch, outer) {
+  const band = Math.max(4, Math.round(0.03 * Math.max(w, h)));
+  const rs = [], gs = [], bs = [];
+  for (let y = 0; y < h; y++) {
+    const edgeRow = y < band || y >= h - band;
+    for (let x = 0; x < w; x++) {
+      if (!edgeRow && x >= band && x < w - band) { x = w - band - 1; continue; }
+      const i = y * w + x;
+      if (outer && outer[i]) continue;
+      const p = i * ch, r = px[p], g = px[p + 1], b = px[p + 2];
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      if (mx < 170) continue;                       /* too dark to be paper */
+      if (mx && (mx - mn) * 255 / mx > 26) continue; /* too coloured to be paper */
+      rs.push(r); gs.push(g); bs.push(b);
+    }
+  }
+  if (rs.length >= 64) {
+    const med = (a) => { a.sort((p, q) => p - q); return a[a.length >> 1]; };
+    return { r: med(rs), g: med(gs), b: med(bs), read: rs.length };
+  }
+  let cr = 0, cg = 0, cb = 0, cn = 0;
+  const corner = 24;
+  for (let y = 0; y < Math.min(corner, h); y++) {
+    for (let x = 0; x < Math.min(corner, w); x++) {
+      const p = (y * w + x) * ch; cr += px[p]; cg += px[p + 1]; cb += px[p + 2]; cn++;
+    }
+    for (let x = Math.max(0, w - corner); x < w; x++) {
+      const p = (y * w + x) * ch; cr += px[p]; cg += px[p + 1]; cb += px[p + 2]; cn++;
+    }
+  }
+  return { r: cr / (cn || 1), g: cg / (cn || 1), b: cb / (cn || 1), read: 0 };
+}
+
+/* ── WHAT ELSE IS IN THE PICTURE ──────────────────────────────────────────
+   A product shot is the charm, its own contact shadow, and empty ground.
+   Anything else in the frame — an inset panel, a caption, a border, a
+   swatch, a second object — is furniture, and a render carrying furniture is
+   not a photograph of a charm however good the charm in it looks.
+
+   The shadow is the one thing that must not be mistaken for furniture, and
+   it is distinguished by proximity rather than by colour: it lies under and
+   beside the piece. Everything within reach of the silhouette is therefore
+   excused, and the reach is a share of the charm's own size so it holds at
+   any framing.                                                             */
+function scoFurniture(px, w, h, ch, outer, rb, gnd) {
+  const n = w * h;
+  const reach = Math.max(12, SCO_SHADOW_REACH * Math.sqrt(Math.max(1, rb.w * rb.h)));
+  const near = scoWithin(outer, w, h, reach);
+  const dirty = new Uint8Array(n);
+  let count = 0;
+  for (let i = 0; i < n; i++) {
+    if (outer[i] || near[i]) continue;
+    const p = i * ch, r = px[p], g = px[p + 1], b = px[p + 2];
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    const dev = Math.max(Math.abs(r - gnd.r), Math.abs(g - gnd.g), Math.abs(b - gnd.b));
+    if (dev > SCO_FURN_DEV || (mx && (mx - mn) * 255 / mx > SCO_FURN_SAT)) { dirty[i] = 1; count++; }
+  }
+  const lab = studioLabel(dirty, w, h);
+  const area = new Float64Array(lab.count + 1);
+  for (let i = 0; i < n; i++) if (lab.labels[i]) area[lab.labels[i]]++;
+  const charmArea = Math.max(1, rb.w * rb.h);
+  const minBlob = Math.max(80, SCO_FURN_MIN_BLOB * charmArea);
+  let blobs = 0, biggest = 0;
+  for (let L = 1; L <= lab.count; L++) {
+    if (area[L] >= minBlob) blobs++;
+    if (area[L] > biggest) biggest = area[L];
+  }
+  return {
+    frac: Math.round(count / n * 1e4) / 1e4,
+    biggest: Math.round(biggest / charmArea * 1e4) / 1e4,
+    blobs,
+    dirty: biggest / charmArea > SCO_FURN_LIMIT,
+  };
+}
+
 /* ── placing a mask-space field into the render's frame ─────────────────── */
 /* BILINEAR, not a windowed sinc: the scale here is within a per cent of 1:1,
    so the operation is almost pure sub-pixel translation and a sharper filter
@@ -7898,6 +8061,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     declared: 0, refused: 0, composited: 0, leftAlone: 0,
     iou: null, openFrac: null, declaredFrac: null, shadeK: null, clusters: 0,
     maxShift: 0, localFit: true,
+    furniture: { frac: 0, biggest: 0, blobs: 0, dirty: false },
   };
   if (!sharp || !renderBuf?.length || !specBuf?.length) {
     report.why = "no_inputs";
@@ -7916,6 +8080,29 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       report.why = "no_silhouette";
       return { buf: renderBuf, report };
     }
+
+    /* ── IS THERE ANYTHING IN THIS FRAME BUT THE CHARM? ───────────────────
+       A render came back as a CONTACT SHEET: the finished charm in the
+       middle, and beside it the model's own two input maps redrawn as inset
+       panels, complete with borders and with the words "IMAGE 1", "IMAGE 2"
+       and "YOUR CHARM" lettered in. Nothing upstream could see it. The
+       silhouette gate passes — the charm in the middle is a charm — the
+       adjudicator is parked, and the composite happily cut openings into a
+       picture that was never a product shot.
+
+       It is trivially measurable, because a product shot has a defining
+       property: outside the charm and its own contact shadow, the frame is
+       empty ground. So the ground is sampled, everything meaningfully
+       different from it is found, whatever lies within reach of the charm is
+       excused as its shadow, and what remains is FURNITURE — panels, text,
+       borders, swatches, a second object, anything at all.
+
+       Measured, the two populations are two orders of magnitude apart:
+         clean renders   biggest stray blob   0.1% and 0.9% of the charm's box
+         the contact sheet                    47%
+       so the line can sit anywhere between and never be near either. */
+    const gnd = scoGroundColour(R.px, R.w, R.h, R.ch, rp.outer);
+    report.furniture = scoFurniture(R.px, R.w, R.h, R.ch, rp.outer, rb, gnd);
     /* one number for the whole charm, so every threshold below is a share of
        the object rather than a pixel count that only suits one resolution */
     let roCount = 0;
@@ -8014,7 +8201,15 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
        per render at about a third of the full cost, so a drifted render can
        be re-rolled instead of shipped. */
     if (o.fitOnly) {
-      report.why = fit.iou < minIoU ? "silhouette_drift" : "fit_ok";
+      report.why = report.furniture.dirty ? "frame_furniture"
+                 : fit.iou < minIoU ? "silhouette_drift" : "fit_ok";
+      report.ms = Date.now() - t0;
+      return { buf: renderBuf, report };
+    }
+    if (report.furniture.dirty) {
+      /* the same refusal the drift gate makes, for the same reason: cutting
+         openings into a picture that is not a product shot cannot improve it */
+      report.why = "frame_furniture";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
     }
@@ -8354,17 +8549,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     const rimPx = px(SCO_RIM_FRAC, 1.2), shPx = px(SCO_SHADOW_FRAC, 3);
 
     /* ── the ground inside a hole, shaded by the metal around it ────────── */
-    let cr = 0, cg = 0, cb = 0, cn = 0;
-    const corner = 24;
-    for (let y = 0; y < Math.min(corner, R.h); y++) {
-      for (let x = 0; x < Math.min(corner, R.w); x++) {
-        const p = (y * R.w + x) * R.ch; cr += R.px[p]; cg += R.px[p + 1]; cb += R.px[p + 2]; cn++;
-      }
-      for (let x = Math.max(0, R.w - corner); x < R.w; x++) {
-        const p = (y * R.w + x) * R.ch; cr += R.px[p]; cg += R.px[p + 1]; cb += R.px[p + 2]; cn++;
-      }
-    }
-    cr /= cn || 1; cg /= cn || 1; cb /= cn || 1;
+    const cr = gnd.r, cg = gnd.g, cb = gnd.b;
     const plain = 0.299 * cr + 0.587 * cg + 0.114 * cb;
 
     const metalAfter = new Float32Array(rn);
@@ -8495,6 +8680,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     return { buf: renderBuf, report };
   }
 }
+
 
 
 /* ── kind: custom_charm_render ────────────────────────────────────────────
@@ -9148,7 +9334,13 @@ async function handleStudioRender({ body, event, origin }) {
         const r = await studioCompositeOpenings(buf, materialSpec && materialSpec.buf,
           { fitOnly: true, budgetMs: 20000, minIoU: shapeMinIoU });
         if (!r || !r.report || r.report.iou == null) return null;
-        return { iou: r.report.iou, ok: r.report.why === "fit_ok", ms: r.report.ms };
+        return {
+          iou: r.report.iou,
+          ok: r.report.why === "fit_ok",
+          why: r.report.why,
+          furniture: r.report.furniture,
+          ms: r.report.ms,
+        };
       },
       shapeRetries: shapeGating ? shapeRetries : null,
       shapeMinIoU,
@@ -9301,14 +9493,18 @@ async function handleStudioRender({ body, event, origin }) {
     if (shapeGating && loop.shape && loop.shape.iou != null) {
       const s = loop.shape;
       if (!s.ok) {
-        console.warn(`[studio] SHIPPING A RENDER THAT FAILED THE SHAPE GATE — ` +
-          `silhouette IoU ${s.iou} vs ${shapeMinIoU} after ${attempt} attempt(s)`);
+        console.warn(`[studio] SHIPPING A RENDER THAT FAILED THE FRAME GATE (${s.why}) — ` +
+          `silhouette IoU ${s.iou} vs ${shapeMinIoU}, stray content ` +
+          `${s.furniture ? s.furniture.biggest : "?"} after ${attempt} attempt(s)`);
       }
       await studioStage(vRef, {
         renderShapeMode: shapeMode,
         renderShapeIoU: s.iou,
         renderShapeOk: !!s.ok,
         renderShapeMinIoU: shapeMinIoU,
+        renderShapeWhy: s.why || "",
+        renderFrameStray: s.furniture ? s.furniture.biggest : null,
+        renderFrameBlobs: s.furniture ? s.furniture.blobs : null,
         renderShapeSwapped: !!s.swapped,
         renderRunId,
       });
@@ -9580,6 +9776,7 @@ async function handleStudioRender({ body, event, origin }) {
                different investigations, and is not recoverable afterwards
                from the finished picture. */
             renderCompositeMaxShift: comp.report.maxShift,
+            renderCompositeStray: comp.report.furniture ? comp.report.furniture.biggest : null,
             renderCompositeLocalFit: !!comp.report.localFit,
             renderRunId,
           }, { merge: true });
