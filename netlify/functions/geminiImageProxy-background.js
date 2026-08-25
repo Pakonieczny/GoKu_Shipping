@@ -2848,6 +2848,20 @@ const STUDIO_DEFAULT_CONFIG = {
      different charm, and cutting one charm's openings into another's outline
      makes it worse rather than better — so the composite declines. */
   renderCompositeMinIoU: 0.90,
+  /* ── HOW EXACTLY THE OPENINGS FOLLOW THE MAP ───────────────────────────
+     "on" (what ships) lets each cluster of openings take a small, bounded,
+     evidence-backed correction against the render's own drawing, because the
+     model does not transform the map — it redraws the charm, with its own
+     slightly different internal proportions, and on the bow the corrections
+     differ between regions by five pixels.
+
+     "off" removes that stage: every opening lands exactly where the global
+     silhouette fit puts it, which is the map's geometry and nothing else.
+     That is the most literally repeatable placement available — the position
+     of any one opening then cannot be influenced by what the model happened
+     to draw anywhere else on the charm — at the cost of a few pixels against
+     the render's own recesses where the interior really has drifted. */
+  renderCompositeLocalFit: "on",
 
   /* ══════════ THE ADJUDICATOR — POST-RENDER SCORING ══════════════════════
      Reads the finished gold charm against the deterministic greyscale map
@@ -7441,6 +7455,8 @@ const SCO_SHADOW_K      = 0.26;   /* how deep the shadow beside it goes */
 const SCO_SEARCH_FRAC   = 0.42;   /* search radius, as a share of a cluster's own size */
 const SCO_SEARCH_CAP    = 0.037;  /* and never more than this share of the charm */
 const SCO_MATCH_SAMPLES = 5000;   /* pixels per mean in the match — see the note there */
+const SCO_SHIFT_PAD_FRAC = 0.005; /* how far past its own radius an opening may be nudged */
+const SCO_MATCH_MARGIN  = 6;      /* levels the best offset must beat standing still by */
 
 /* ── WHAT A HOLE LOOKS LIKE FROM THE INSIDE ────────────────────────────────
    A hole the model cuts is NOT the plain ground showing through: the metal
@@ -7881,6 +7897,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     ran: false, why: "", ms: 0,
     declared: 0, refused: 0, composited: 0, leftAlone: 0,
     iou: null, openFrac: null, declaredFrac: null, shadeK: null, clusters: 0,
+    maxShift: 0, localFit: true,
   };
   if (!sharp || !renderBuf?.length || !specBuf?.length) {
     report.why = "no_inputs";
@@ -7940,6 +7957,10 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
        hoop's phantom ring fills 10% of its own bounding box, a triangle
        fills 45%. */
     const holeDist = studioEdt2d(mp.holes, M.w, M.h);
+    /* kept because the match below needs it: how far it is safe to move an
+       opening is a question about the opening, and this is already measuring
+       exactly that. */
+    const rInL = new Float32Array(lab.count + 1);
     for (let L = 1; L <= lab.count; L++) {
       if (area[L] < minArea) continue;
       const bw = bx1[L] - bx0[L] + 1, bh = by1[L] - by0[L] + 1;
@@ -7950,6 +7971,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
           if (lab.labels[i] === L && holeDist[i] > rIn) rIn = holeDist[i];
         }
       }
+      rInL[L] = rIn;
       if (area[L] < 0.35 * bw * bh && rIn < 0.12 * Math.max(bw, bh)) {
         const cut = new Uint8Array(mn);
         for (let i = 0; i < mn; i++) cut[i] = (mp.outer[i] && lab.labels[i] !== L) ? 1 : 0;
@@ -8022,10 +8044,21 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     }
     report.clusters = groups.size;
 
-    /* ── the fine half: each cluster, matched on contrast ───────────────── */
+    /* ── the fine half: each cluster, matched on contrast ─────────────────
+       ONE SWITCH REMOVES IT. With localFit off every opening lands exactly
+       where the global fit puts it — the map's own geometry, rigidly
+       registered to the render's silhouette, with nothing downstream reading
+       the render's interior at all. That is the most repeatable placement
+       there is: identical inputs give identical output, and the position of
+       any one opening cannot be influenced by what the model happened to draw
+       anywhere else. It is also, on a render whose interior really has
+       drifted, a few pixels less flattering than the match — which is why the
+       match ships on. */
+    const localFit = o.localFit !== false;
     const ringR = Math.max(3, px(SCO_RING_FRAC));
     const wants = [];
     for (const [key, members] of groups) {
+      if (!localFit) { wants.push({ key, members, dy: 0, dx: 0, score: 0, cap: 0 }); continue; }
       if (Date.now() > deadline) throw new Error("budget");
       const inGroup = new Uint8Array(lab.count + 1);
       let gx0 = M.w, gy0 = M.h, gx1 = -1, gy1 = -1;
@@ -8128,9 +8161,27 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       const lum = rp.lum;
       const gbw = Math.round((gb.x1 - gb.x0 + 1) * (rb.x1 - rb.x0 + 1) / (mb.x1 - mb.x0 + 1));
       const gbh = Math.round((gb.y1 - gb.y0 + 1) * (rb.y1 - rb.y0 + 1) / (mb.y1 - mb.y0 + 1));
+      /* ── AN OPENING MAY NOT BE MOVED OFF ITSELF ────────────────────────
+         Both existing bounds are about the CHARM — 0.42 of the cluster's box,
+         0.037 of the whole piece — and on a real charm the second one binds
+         every time: measured on the bow, every cluster got ±16 px whatever
+         it contained, including one holding three slots five pixels wide. A
+         search that wide is not a refinement of the global fit, it is an
+         invitation to land somewhere else entirely, and it is how two 8 px
+         circles on an astronaut's chest ended up sitting half off their own
+         recesses.
+
+         The third bound is about the OPENING: its own inscribed radius plus
+         a small pad. A shift can then always be seen as a correction to the
+         feature it belongs to, because the feature is still underneath it. */
+      let rInMin = Infinity;
+      for (const L of members) if (rInL[L] < rInMin) rInMin = rInL[L];
+      const m2r = (rb.x1 - rb.x0 + 1) / (mb.x1 - mb.x0 + 1);
+      const featureCap = Math.max(2, Math.round(rInMin * m2r + px(SCO_SHIFT_PAD_FRAC, 2)));
       const rad = Math.round(Math.min(
         Math.max(4, SCO_SEARCH_FRAC * Math.min(gbw, gbh)),
-        Math.max(6, SCO_SEARCH_CAP * scale)
+        Math.max(6, SCO_SEARCH_CAP * scale),
+        featureCap
       ));
       const contrast = (ddy, ddx) => {
         if (idxI.length < 10 || idxR.length < 10) return -1e9;
@@ -8157,22 +8208,66 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
           if (v > bs) { bs = v; by = ddy; bx = ddx; }
         }
       }
-      const ok = bs > Math.max(base, SCO_MIN_CONTRAST);
-      wants.push({ key, members, dy: ok ? by : 0, dx: ok ? bx : 0, score: bs });
+      /* AND IT HAS TO BEAT STANDING STILL BY SOMETHING. The margin here was
+         literally zero — a hundredth of a level bought a shift — so noise
+         could move an opening whenever the surface under it was flat. */
+      const ok = bs > base + SCO_MATCH_MARGIN && bs > SCO_MIN_CONTRAST;
+      wants.push({ key, members, dy: ok ? by : 0, dx: ok ? bx : 0, score: bs, cap: featureCap });
     }
 
-    /* A WEAK READING IS NOT A READING. Below the confidence line a cluster
-       takes the consensus of the ones that are sure, which is measurably
-       right where two weak clusters' own answers were not. */
+    /* ── A BORROWED ANSWER IS STILL SOMEBODY ELSE'S ───────────────────────
+       Below the confidence line a cluster adopts the median shift of the
+       clusters that are sure, and on the bow that is measurably right: three
+       binding slots whose own readings were nonsense (-57 and -17 at rest)
+       land correctly on the borrowed one.
+
+       But it was adopted UNCONDITIONALLY and UNCLAMPED, and that is how two
+       small circles on an astronaut's chest — different clusters, neither
+       able to read its own feature — ended up displaced by the same amount
+       off their own recesses. An identical offset on two unrelated clusters
+       is the fingerprint of a borrowed answer rather than a measured one, and
+       the borrowing has to earn its place:
+
+         · THE LENDERS MUST AGREE. On the bow the sure clusters answered
+           dy-1, dy-3 and dy-8 — five pixels apart across one charm, which is
+           the whole reason this stage is per-cluster and not one affine
+           field. Spread that wide and there is no single correction to lend.
+         · AND IT MUST FIT THE BORROWER. A shift is a refinement of the
+           global fit, so it may never be large enough to carry an opening
+           off its own feature — the same bound its own search already obeys.
+
+       Fail either test and the cluster holds at the global fit: a whole-charm
+       registration measured on the silhouette at IoU 0.977, and the answer
+       that does not depend on what the model happened to draw elsewhere. */
     const sure = wants.filter((w) => w.score >= SCO_SURE_CONTRAST);
-    let cy = 0, cx = 0;
-    if (sure.length) {
+    let cy = 0, cx = 0, agree = Infinity;
+    if (sure.length >= 2) {
       const ys = sure.map((w) => w.dy).sort((a, b) => a - b);
       const xs = sure.map((w) => w.dx).sort((a, b) => a - b);
       cy = ys[(ys.length - 1) >> 1];
       cx = xs[(xs.length - 1) >> 1];
+      agree = 0;
+      for (const w of sure) {
+        agree = Math.max(agree, Math.abs(w.dy - cy), Math.abs(w.dx - cx));
+      }
     }
-    for (const w of wants) if (w.score < SCO_SURE_CONTRAST) { w.dy = cy; w.dx = cx; }
+    for (const w of wants) {
+      if (w.score >= SCO_SURE_CONTRAST) continue;
+      const cap = w.cap;
+      if (agree > cap) { w.dy = 0; w.dx = 0; continue; }
+      w.dy = Math.max(-cap, Math.min(cap, cy));
+      w.dx = Math.max(-cap, Math.min(cap, cx));
+    }
+
+    /* THE BIGGEST CORRECTION THIS RENDER TOOK, on the record. If an opening
+       ever lands wrong again, this one number says immediately whether a
+       local shift was involved or whether the global fit itself was off —
+       which is the difference between two entirely different investigations,
+       and it is not recoverable from the finished picture. */
+    let maxShift = 0;
+    for (const w of wants) maxShift = Math.max(maxShift, Math.abs(w.dy), Math.abs(w.dx));
+    report.maxShift = maxShift;
+    report.localFit = localFit;
 
     /* ── place each opening, skipping the ones already cut ──────────────── */
     const alpha = new Float32Array(rn);
@@ -8400,6 +8495,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     return { buf: renderBuf, report };
   }
 }
+
 
 /* ── kind: custom_charm_render ────────────────────────────────────────────
  * The approved drawing becomes the charm: the Charm Maker's gold→line-art
@@ -9448,12 +9544,15 @@ async function handleStudioRender({ body, event, origin }) {
         comp = await studioCompositeOpenings(outBuf, materialSpec && materialSpec.buf, {
           budgetMs: Math.max(2000, Math.min(STUDIO_COMPOSITE_HARD_MS, leftOfRun)),
           minIoU: Math.min(0.99, Math.max(0.5, Number(cfg.renderCompositeMinIoU) || 0.90)),
+          localFit: String(cfg.renderCompositeLocalFit == null ? "on" : cfg.renderCompositeLocalFit)
+            .trim().toLowerCase() !== "off",
         });
         if (comp && comp.buf && comp.buf.length && compositeMode === "on") outBuf = comp.buf;
         console.log(`[studio] cut-out composite: ran=${comp.report.ran} ` +
           `declared=${comp.report.declared} composited=${comp.report.composited} ` +
           `refused=${comp.report.refused} leftAlone=${comp.report.leftAlone} ` +
-          `iou=${comp.report.iou} ${comp.report.why ? "why=" + comp.report.why + " " : ""}` +
+          `iou=${comp.report.iou} shift=${comp.report.maxShift}px ` +
+          `${comp.report.why ? "why=" + comp.report.why + " " : ""}` +
           `${comp.report.ms}ms`);
       } catch (e) {
         console.error("[studio] cut-out composite skipped:", e?.message || e);
@@ -9475,6 +9574,13 @@ async function handleStudioRender({ body, event, origin }) {
               ? null : Math.round(comp.report.declaredFrac * 1e4) / 1e4,
             renderCompositeShadeK: comp.report.shadeK,
             renderCompositeClusters: comp.report.clusters,
+            /* the largest local correction any cluster took. If an opening
+               ever lands wrong, this says in one number whether a shift was
+               involved at all — which is the difference between two entirely
+               different investigations, and is not recoverable afterwards
+               from the finished picture. */
+            renderCompositeMaxShift: comp.report.maxShift,
+            renderCompositeLocalFit: !!comp.report.localFit,
             renderRunId,
           }, { merge: true });
         } catch (e) { /* the numbers are a record, not the product */ }
