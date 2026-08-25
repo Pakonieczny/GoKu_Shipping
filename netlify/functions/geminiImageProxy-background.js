@@ -2624,6 +2624,12 @@ function studioClientIp(event) {
    a 503 not cost the customer a credit.                                    */
 const STUDIO_VERIFICATION_PAUSED = true;
 
+/* THE MOST IMAGES ONE RENDER MAY EVER COST. Every gate and every judge in
+   the attempt loop is capped by this together, not each separately — see the
+   ceiling in studioRenderAttempts. The storefront shows it as the "of 3" in
+   its counter, so changing it here changes both. */
+const STUDIO_MAX_RENDER_ATTEMPTS = 3;
+
 const STUDIO_DEFAULT_CONFIG = {
   guestFreeCredits: 3,
   signupBonusCredits: 7,
@@ -5459,6 +5465,17 @@ async function studioRenderAttempts(opts) {
     const shapeWants = shaping && !!lastShape && lastShape.iou != null &&
                        !lastShape.ok && attempts <= shapeRetries;
     if (!cutWants && !shapeWants && !scoreWants) break;
+    /* ── THREE IMAGES, EVER ───────────────────────────────────────────────
+       Three judges can each ask for another attempt and each carries its own
+       allowance, so the worst case was the sum of three budgets rather than
+       any one of them. One ceiling over all of them: the original render and
+       at most two re-rolls. It is the number the storefront's counter shows
+       as the denominator, so the two must not be able to disagree. */
+    if (attempts >= STUDIO_MAX_RENDER_ATTEMPTS) {
+      log(`[studio] attempt ceiling reached (${attempts}/${STUDIO_MAX_RENDER_ATTEMPTS})` +
+          ` — shipping the best attempt so far`);
+      break;
+    }
 
     if (cutWants) failedVerdicts.push(punch.report.reason);
     if (shapeWants) failedVerdicts.push(lastShape.why || "wrong_shape");
@@ -9501,7 +9518,12 @@ async function handleStudioRender({ body, event, origin }) {
         return scored;
       },
       retryBudgetMs, startedAt,
-      onRetry: (n) => vRef.set({ renderStage: "rendering", renderAttempt: n, renderRunId }, { merge: true }),
+      /* renderAttempts as well as renderAttempt: the counter on the storefront
+         reads ONE field, and it has to tick while the run is still going
+         rather than appear at the end. renderAttempt stays for the watcher's
+         own liveness test, which has read it since before this existed. */
+      onRetry: (n) => vRef.set({ renderStage: "rendering", renderAttempt: n,
+                                 renderAttempts: n, renderRunId }, { merge: true }),
       /* best-effort, and never allowed to fail a render: this is a progress
          note, and a Firestore hiccup writing one must not cost a charm the
          customer has already paid for */
@@ -9514,6 +9536,17 @@ async function handleStudioRender({ body, event, origin }) {
     let outBuf = loop.outBuf;
     let punch = loop.punch;
     const attempt = loop.attempts;
+    /* ── HOW MANY IMAGES THIS RENDER COST, ON THE RECORD, ALWAYS ──────────
+       renderAttempts was written in two places and both are parked: inside
+       the cut check's block and inside the adjudicator's. With the pause on,
+       a run that quietly made three images filed the number nowhere and the
+       storefront had nothing to show. It is a fact about the run, not about
+       either judge, so it is written here where neither can withhold it. */
+    await studioStage(vRef, {
+      renderAttempts: attempt,
+      renderMaxAttempts: STUDIO_MAX_RENDER_ATTEMPTS,
+      renderRunId,
+    });
     /* THE GATE'S VERDICT ON THE IMAGE THAT SHIPPED, filed whether it passed
        or not. A render that reached the customer with the wrong outline
        because the clock ran out is exactly the run worth being able to find
