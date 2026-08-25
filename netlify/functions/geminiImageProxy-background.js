@@ -10494,29 +10494,39 @@ async function ensureStudioLineArtReference() {
    maps 1:1 to engraved metal, an outlined engraving keeps a white interior,
    solid black is reserved for areas recessed all the way across, and holes
    stay white. Changing any of that changes what the map means. */
+/* ── TRACE, NOT ILLUSTRATE ────────────────────────────────────────────────
+   An armadillo charm — flat, geometric, a separate jump ring, a tail of
+   discrete segments — came back as a cartoon armadillo: a smiling face the
+   metal does not have, a thick sticker border round the whole piece, the
+   tail restyled as a taper, the ring turned into an integrated loop. The
+   drawing's silhouette scores IoU 0.376 against the photograph it was traced
+   from; their bounding boxes do not even share an aspect ratio.
+
+   The prompt this replaces was 4,139 characters and did not contain the
+   sentence that would have stopped it. It said "100% STRUCTURAL MATCH" —
+   which is about geometry — while the model's failure was one of SUBJECT: it
+   recognised an armadillo and drew the armadillo it knows. Meanwhile the
+   style-reference rule was stated four separate times (twice here, and twice
+   more in the role labels the model receives as its own parts), and the
+   engraving fill rule ran to five numbered cases and two hard fails for one
+   idea. That is the shape of a prompt that has been added to after every bad
+   result, and it is the same shape buildMaterialSpecToCharmPrompt was in
+   before it was cut back — see the note there for why length works against
+   this rather than for it.
+
+   So: every rule once, positively, and the recognition failure named. The
+   guarantee is not here — it is studioLineArtIoU, which measures whether the
+   drawing lies over the photograph and spends a re-roll when it does not. */
 const STUDIO_LINEART_PROMPT =
-`CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a specific Black & White line art style.
+`Trace the charm in the FIRST image as flat black-and-white line art. This is a manufacturing drawing of one specific object that already exists — not an illustration of what that object depicts.
 
-The SECOND image is strictly a STYLE REFERENCE. You must NEVER copy, merge, or include the subject matter or object shown in the second image.
+TRACE, DO NOT REDRAW. Keep the outline, the proportions and every internal line exactly as the photograph shows them, in the same place in the frame and at the same size, so the drawing can be laid straight over the photograph. If you recognise the subject, draw the piece you were given rather than the friendlier or more familiar version of that thing: add no face, expression, border, pattern, texture or detail the metal does not have, and simplify away none that it does. Draw the charm and nothing else — no caption, watermark, signature or listing text, and no mark where any of those were.
 
-TASK: Generate a black and white outline image based STRICTLY on the object shown in the FIRST image. The final image must be the EXACT SAME object as the FIRST image.
+BLACK IS ENGRAVED METAL; EVERYTHING ELSE IS WHITE. An engraving that reads as a LINE in the photograph is drawn as a line, and whatever that line encloses stays white — polished metal is white, and a hole cut clean through the piece is white. Fill an area solid black only when its whole interior is visibly recessed in the photograph.
 
-HARD CONSTRAINTS (NON-NEGOTIABLE):
-• 100% STRUCTURAL MATCH: Keep all outer perimeters, overall shape, and proportions 100% identical to the FIRST image. Do not move, rescale, re-centre or re-crop the object — it must sit in the same place in the frame, at the same size, so the drawing can be laid directly over the photograph.
-• IGNORE SECOND IMAGE SUBJECT: Do NOT add or draw the object from the SECOND image. Use the second image ONLY to understand the B&W aesthetic.
-• ENGRAVING FILL RULE (CRITICAL — BLACK MAPS 1:1 TO ENGRAVED METAL, WHITE TO POLISHED METAL):
-    Black ink in your output represents ONLY metal that is actually engraved (recessed/etched) in the FIRST image. Polished, un-engraved metal is ALWAYS white. Before inking any engraving, classify it:
-    1. STROKE ENGRAVING (the most common case): the engraving is a LINE — straight, curved, or forming the OUTLINE of a shape such as a cloud, heart, wing, leaf or star. Render it as ONE solid black stroke of matching weight following the exact same path: razor-thin scratch → thin line; wide groove → proportionally thicker line. NEVER draw "double lines" (two thin parallel outlines) around a wide stroke — one solid stroke of equivalent width.
-    2. INTERIOR STAYS WHITE: when a stroke engraving forms a CLOSED OUTLINE, the area it encloses is still polished metal in the FIRST image — so it stays pure WHITE inside your outline. Draw the outlined cloud as an outlined cloud, never as a solid black cloud. The engraving's darkness or the stroke's width NEVER justifies filling the enclosed shape.
-    3. SOLID-REGION ENGRAVING (rare): fill an area with solid black ONLY when the ENTIRE area is engraved in the FIRST image — every part of its interior surface is visibly etched/recessed/darkened, not just its border (e.g. a fully etched snake body or a solid darkened wing vein). If the interior surface matches the surrounding polished face, it is NOT a solid-region engraving — see rule 2.
-    4. THE FINGERTIP TEST: for every candidate area ask — would a fingertip feel the interior as recessed engraving, or as the same smooth polished surface as the rest of the charm? Smooth interior → white with a black outline stroke. Recessed everywhere → solid black.
-    5. CUTOUTS/HOLES: physical holes cut entirely through the metal must remain pure white inside.
-    HARD FAIL: an engraving that is only an outline in the FIRST image (e.g. an outlined cloud, heart or star) rendered as a filled solid black shape.
-    HARD FAIL: any enclosed area inked black when the FIRST image shows polished, un-engraved metal inside it.
-• LINE WEIGHT — MEASURED AGAINST THE CHARM, NOT THE PAGE: every black stroke, the outer perimeter included, must be a FINE line about 1/30th of the charm's own width across. The charm is narrow and sits in a tall frame, so a line that looks fine against the whole picture is a heavy rope against the charm: at this weight the charm is roughly thirty strokes wide, and every stitch, seam and engraved mark stays separately readable. Thick strokes swallow small detail and merge neighbouring lines into one another — that is a HARD FAIL. Do not thicken a line to make it clearer; make it finer and keep the detail.
-• BACKGROUND: Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
-• NO 3D/SHADING: Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.
-• NO TEXT, EVER: if the FIRST image contains any writing — a caption, a watermark, a signature, a listing label — it is not part of the charm. Do not draw it, do not outline it, do not ink it as an engraving. Draw the charm and nothing else.`;
+LINE WEIGHT: every stroke, the outer perimeter included, about 1/30th of the charm's own width — fine enough that two neighbouring lines stay separate.
+
+Flat 2D only: no shading, no 3D, no grey, no colour. Solid pure white (#FFFFFF) background, no transparency.`;
 
 /* ── the morphology the combine needs ─────────────────────────────────────
    Small, explicit and separable rather than a dependency: each is a couple
@@ -10606,6 +10616,72 @@ const STUDIO_SPEC_MIN_IOU = 0.86;     /* below this the drawing does not describ
  * gold photograph + line drawing → the three-tone map.
  * Pure arithmetic. No model, no network, same inputs → same bytes.
  */
+/* ── DOES THIS DRAWING DESCRIBE THIS CHARM? ───────────────────────────────
+   The reference-line-art step had a retry loop whose only rejection was an
+   empty buffer, so "the model returned SOMETHING" was the whole test. An
+   armadillo charm came back as a different armadillo — cartoon proportions
+   instead of the piece's flat geometry, a smiling face the metal does not
+   have, a striped tail where the charm has separate segments, a thick
+   sticker border round the whole thing, and the hoop moved from a separate
+   jump ring to an integrated loop. Measured against the photograph it was
+   drawn from, its silhouette scores IoU 0.376. Their bounding boxes do not
+   even share an aspect ratio — 1.353 against 1.482.
+
+   The map-from-gold step next door has scored exactly this since it was
+   written, and refuses at 0.86. There was never a reason for the two to
+   differ: both ask a model to trace one photograph, and one number answers
+   "did it". So the measurement moves out here where both can call it.
+
+   It is the same arithmetic studioSpecFromGold performs on its way to the
+   three-tone map — chroma for the metal, a threshold for the ink, both
+   silhouettes filled, the drawing scaled and shifted onto the photograph's
+   bounding box, then intersection over union. No model, no network, same
+   inputs → same number.                                                    */
+async function studioLineArtIoU(sharp, goldBuf, lineBuf, size) {
+  const S = Math.max(256, Math.min(2048, Number(size) || 768));
+  const n = S * S;
+  const read = async (buf, grey) => {
+    let q = sharp(buf).resize(S, S, { fit: "fill" }).flatten({ background: "#ffffff" });
+    if (grey) q = q.greyscale();
+    return q.removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  };
+  const g = await read(goldBuf, false);
+  const gd = g.data, gch = g.info.channels;
+  let metal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = i * gch, r = gd[p], gg = gd[p + 1], b = gd[p + 2];
+    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+    metal[i] = mx > 0 && (mx - mn) / mx > STUDIO_SPEC_SAT_MIN ? 1 : 0;
+  }
+  metal = mmClose(mmOpen(metal, S, S, 1), S, S, 1);
+  const body = mmFillHoles(metal, S, S).filled;
+  let facePx = 0;
+  for (let i = 0; i < n; i++) if (metal[i]) facePx++;
+  if (facePx < n * 0.01) return { iou: 0, aligned: false, why: "no_charm_in_photo" };
+
+  const l = await read(lineBuf, true);
+  const ld = l.data, lch = l.info.channels;
+  let ink = new Uint8Array(n);
+  for (let i = 0; i < n; i++) ink[i] = ld[i * lch] < STUDIO_SPEC_INK_MAX ? 1 : 0;
+  const inkBody = mmFillHoles(mmClose(ink, S, S, 1), S, S).filled;
+  const ba = mmBBox(body, S, S), bb = mmBBox(inkBody, S, S);
+  if (!ba || !bb) return { iou: 0, aligned: false, why: "no_silhouette" };
+  const sx = bb.w / ba.w, sy = bb.h / ba.h;
+  let inter = 0, uni = 0;
+  for (let y = 0; y < S; y++) {
+    const syy = Math.round(bb.y0 + (y - ba.y0) * sy);
+    for (let x = 0; x < S; x++) {
+      const a = body[y * S + x];
+      const sxx = Math.round(bb.x0 + (x - ba.x0) * sx);
+      const b2 = (sxx >= 0 && sxx < S && syy >= 0 && syy < S && inkBody[syy * S + sxx]) ? 1 : 0;
+      if (a && b2) inter++;
+      if (a || b2) uni++;
+    }
+  }
+  const iou = uni ? inter / uni : 0;
+  return { iou, aligned: iou >= STUDIO_SPEC_MIN_IOU, why: "" };
+}
+
 async function studioSpecFromGold(sharp, goldBuf, lineBuf, size) {
   const S = Math.max(512, Math.min(4096, Number(size) || 2048));
   const HOLE = 255, POLISH = STUDIO_MASK_POLISHED[0], ENGRAVE = STUDIO_MASK_ENGRAVED[0];
@@ -10813,7 +10889,10 @@ async function studioTrimToSubject(sharpMod, buf, marginPct) {
    raw model output; 2 added orientation matching and the first thinning;
    3 is the greyscale-erosion thinning, the canvas-relative floor and the
    tier check. */
-const STUDIO_LINEART_REV = 3;
+/* 4: the prompt was rewritten and a silhouette gate added, so every drawing
+   cached under 3 was made by a version that could not tell a tracing from an
+   illustration. They are re-made on next sight rather than trusted. */
+const STUDIO_LINEART_REV = 4;
 
 async function handleStudioRefLineArt({ body, event, origin }) {
   const uid = await requireStudioUser(event);
@@ -10935,10 +11014,20 @@ async function handleStudioRefLineArt({ body, event, origin }) {
   if (styleRef && styleRef.buffer && styleRef.buffer.length) {
     images.push({ buffer: styleRef.buffer, mime: styleRef.mime, filename: styleRef.filename });
   }
-  const prompt = STUDIO_LINEART_PROMPT + "\n\n" + STUDIO_REF_CAPTION_CLAUSE;
+  /* STUDIO_REF_CAPTION_CLAUSE is no longer appended: it was 389 characters
+     describing one particular catalogue caption ("Charm Only"), and the
+     prompt's own "no caption, watermark, signature or listing text, and no
+     mark where any of those were" covers it and every other one. The
+     constant is kept for the moment in case a specific listing needs naming
+     again. */
+  const prompt = STUDIO_LINEART_PROMPT;
 
   let lineBuf = null, lastErr = null;
+  /* the fit score of the drawing that ships, and the best near-miss to fall
+     back on when no attempt clears the line */
+  let lineIoU = null, bestIoU = -1, bestBuf = null, attemptsMade = 0;
   for (let attempt = 1; attempt <= STUDIO_SPEC_MAX_ATTEMPTS; attempt++) {
+    attemptsMade = attempt;
     try {
       lineBuf = await callImageModelEdits({
         apiKey: apiKeyForImageModel(studioModelConfig),
@@ -10953,12 +11042,53 @@ async function handleStudioRefLineArt({ body, event, origin }) {
         charmGeometryPolicy: null,
         backgroundPolicy: null,
       });
+      if (!lineBuf || !lineBuf.length) { lastErr = new Error("empty_drawing"); continue; }
+      /* ── AND IS IT THIS CHARM? ────────────────────────────────────────
+         "The model returned something" was the entire test on this path.
+         It is the same question the map-from-gold step has scored since it
+         was written, so it gets the same answer and the same threshold. A
+         drawing that does not lie over the photograph is not a drawing of
+         this charm, and every deterministic step below it — the orientation
+         match, the stroke thinning — would then be polishing the wrong
+         object very carefully.
+
+         Never allowed to fail the STEP, only an attempt: if the last try
+         still misses, the closest one ships. A customer looking at an
+         imperfect tracing is in a better position than one looking at an
+         error, and they can redraw it themselves. */
+      let fitOk = true;
+      try {
+        const sharpFit = studioSharp();
+        if (sharpFit) {
+          const m = await studioLineArtIoU(sharpFit, goldBuf, lineBuf, 768);
+          lineIoU = m.iou;
+          fitOk = m.aligned;
+          if (!fitOk) {
+            console.warn(`[studio] ref line art attempt ${attempt}: not this charm ` +
+                         `(IoU ${m.iou.toFixed(3)} < ${STUDIO_SPEC_MIN_IOU}${m.why ? " " + m.why : ""})`);
+            if (m.iou > bestIoU) { bestIoU = m.iou; bestBuf = lineBuf; }
+            lastErr = new Error("unaligned_drawing_iou_" + m.iou.toFixed(3));
+            lineBuf = null;
+            continue;
+          }
+          console.log(`[studio] ref line art attempt ${attempt}: traced this charm (IoU ${m.iou.toFixed(3)})`);
+        }
+      } catch (e) {
+        /* a gate that cannot answer raises no objection */
+        console.error("[studio] ref line art fit check skipped:", e?.message || e);
+      }
       if (lineBuf && lineBuf.length) break;
-      lastErr = new Error("empty_drawing");
     } catch (err) {
       lastErr = err;
       console.warn(`[studio] ref line art attempt ${attempt}:`, err?.message || err);
     }
+  }
+  /* every attempt missed: the closest tracing ships rather than an error */
+  if ((!lineBuf || !lineBuf.length) && bestBuf) {
+    console.warn(`[studio] ref line art: no attempt matched — shipping the closest ` +
+                 `(IoU ${bestIoU.toFixed(3)})`);
+    lineBuf = bestBuf;
+    lineIoU = bestIoU;
   }
   if (!lineBuf || !lineBuf.length) return fail(lastErr?.message || "lineart_failed");
 
@@ -11049,6 +11179,13 @@ async function handleStudioRefLineArt({ body, event, origin }) {
       refLineArtStrokeWhy: (thin && thin.why) || "",
       refLineArtPxFrom: (gotPx && gotPx.from) || 0,
       refLineArtPx: (gotPx && gotPx.to) || 0,
+      /* how closely the drawing lies over the photograph it was traced from,
+         and whether it cleared the line. A drawing that ships below the line
+         is the run worth being able to find afterwards, and it is invisible
+         from the picture alone. */
+      refLineArtIoU: lineIoU == null ? null : Math.round(lineIoU * 1000) / 1000,
+      refLineArtAligned: lineIoU == null ? null : lineIoU >= STUDIO_SPEC_MIN_IOU,
+      refLineArtAttempts: attemptsMade,
       refLineArtRev: STUDIO_LINEART_REV,
       refLineArtAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: Date.now(),
