@@ -1196,14 +1196,14 @@ const IMAGE_ROLE_LABELS = {
   },
   material_spec_to_charm: {
     first:
-      "IMAGE 1 — BINARY TOPOLOGY MASK. LIGHT GREY is solid metal; WHITE is empty; BLACK is unused. This image alone determines the silhouette and every through-cut.",
+      "IMAGE 1 — GREYSCALE MANUFACTURING MAP. White is empty; light grey is smooth metal; dark grey is engraving. It alone determines the silhouette, every through-cut and every worked surface.",
     second:
-      "IMAGE 2 — GREYSCALE SURFACE MAP. Dark grey is engraving; light grey is smooth metal. It controls surface treatment only and cannot add or remove metal.",
+      "IMAGE 2 — MATERIAL REFERENCE ONLY. Its subject, silhouette, artwork and hardware must not appear in the output.",
     extra: (n) => `IMAGE ${n} — MATERIAL REFERENCE ONLY. Its subject, silhouette, artwork and hardware must not appear in the output.`,
     single:
-      "IMAGE 1 — BINARY TOPOLOGY MASK. LIGHT GREY is solid metal; WHITE is empty; BLACK is unused. This image alone determines the silhouette and every through-cut.",
+      "IMAGE 1 — GREYSCALE MANUFACTURING MAP. White is empty; light grey is smooth metal; dark grey is engraving. It alone determines the silhouette, every through-cut and every worked surface.",
     lock:
-      "FINAL LOCK: topology only from IMAGE 1; surface treatment only from IMAGE 2; any later image supplies material and lighting only.",
+      "FINAL LOCK: all geometry and surface treatment from IMAGE 1; any later image supplies material and lighting only.",
   },
   line_art_style: {
     first:
@@ -4139,21 +4139,19 @@ function buildMaterialSpecToCharmPrompt(opts) {
   const hoop = (opts && opts.builtInHoop === true) ? STUDIO_HOOP_AS_FOUND : STUDIO_HOOP_INTEGRATED;
   return `PRIMARY OPERATION — MATERIAL TRANSFER ONLY
 
-Transform IMAGE 1 and IMAGE 2 into a photorealistic 14K gold charm. Treat both as pixel-level manufacturing maps, never as recognizable objects.
+Transform IMAGE 1 into a photorealistic 14K gold charm. Treat it as a pixel-level manufacturing map, never as a recognizable object.
 
-IMAGE 1 — TOPOLOGY_MASK: LIGHT GREY = SOLID METAL; WHITE = EMPTY; BLACK IS UNUSED. It is the exclusive authority for the silhouette and every through-cut.
+IMAGE 1 — WHITE = EMPTY; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow recessed engraving. It is the exclusive authority for the silhouette, every through-cut and every worked surface.
 
-IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. It controls surface treatment only and cannot add or remove metal.
-
-TOPOLOGY LOCK: every light-grey region of IMAGE 1 stays opaque gold and only its white regions are empty — OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly. IMAGE 1's fill overrides every outline and all familiar meaning.
+TOPOLOGY LOCK: every grey region of IMAGE 1 stays opaque gold and only its white regions are empty — OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly. IMAGE 1's fill overrides every outline and all familiar meaning.
 
 SILHOUETTE LOCK: IMAGE 1's outer boundary is traced, not interpreted. Every notch, concavity, asymmetry and tilt in it is the design. If you recognise what it depicts, draw the outline you were given rather than the tidier, more symmetrical version you remember — a better-looking charm with a different outline is a failed render.
 
-MATERIAL: ONE alloy across the whole piece — 14K gold, thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer; IMAGE 2's greys are a classification code and must never reach the output as colour.
+MATERIAL: ONE alloy across the whole piece — 14K gold, thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer; IMAGE 1's greys are a classification code and must never reach the output as colour.
 
 FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them, and no lettering, appears anywhere in the picture.
 
-NO INVENTION: do not add, remove, move, resize or reinterpret any geometry, and add nothing IMAGE 2 does not already contain.`;
+NO INVENTION: do not add, remove, move, resize or reinterpret any geometry, and add nothing IMAGE 1 does not already contain.`;
 }
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
@@ -5128,6 +5126,32 @@ function studioScoreAudit(raw, scored, cfg, extra) {
    worst moment, on the attempt that already went wrong. Each of these says
    one thing, names the failure so the model knows what to change, and stops.
    The gate, not the wording, is what guarantees the outcome.               */
+/* ── HOW BAD IS THIS ONE, ACROSS EVERYTHING MEASURED ──────────────────────
+   Only ever used to pick between attempts that have ALL failed. Each term is
+   the amount by which the attempt overshot that check's own limit, expressed
+   as a multiple of the limit so four different units become comparable. Zero
+   means the check passed; the sum is what the least-bad attempt minimises.
+
+   The four are deliberately unweighted. A render that is a little wrong in
+   every respect is about as unsellable as one that is very wrong in one, and
+   there is no evidence to justify pretending otherwise. */
+function shapeBadness(s, minIoU) {
+  if (!s) return Infinity;
+  const over = (v, lim) => (v == null || !(v > lim) ? 0 : (v - lim) / (lim || 1));
+  const iouShort = s.iou == null || s.iou >= minIoU ? 0 : (minIoU - s.iou) / minIoU;
+  return iouShort +
+    over(s.outline && s.outline.mean, STUDIO_OUTLINE_MEAN_LIMIT) +
+    over(s.outline && s.outline.p95, STUDIO_OUTLINE_P95_LIMIT) +
+    over(s.furniture && s.furniture.biggest, STUDIO_FURN_LIMIT) +
+    over(s.alloy && s.alloy.offAlloy, STUDIO_ALLOY_LIMIT);
+}
+/* the same limits the compositor applies, named here so the ranking and the
+   gate can never drift apart */
+const STUDIO_OUTLINE_MEAN_LIMIT = 1.5;
+const STUDIO_OUTLINE_P95_LIMIT = 5.0;
+const STUDIO_FURN_LIMIT = 0.06;
+const STUDIO_ALLOY_LIMIT = 0.12;
+
 function studioFrameRetryNote(attemptNo) {
   return [
     "CORRECTION — the previous attempt returned a page, not a photograph: the frame held other content beside the charm — panels, inset copies of the reference images, borders or lettering.",
@@ -5339,8 +5363,21 @@ async function studioRenderAttempts(opts) {
             `off-alloy ${lastShape.alloy ? lastShape.alloy.offAlloy : "?"}, ` +
             `outline ${lastShape.outline ? lastShape.outline.mean + "%/" + lastShape.outline.p95 + "%" : "?"} — ` +
             `${lastShape.ok ? "accepted" : "REJECTED: " + lastShape.why} (${lastShape.ms}ms)`);
-        if (!shapeBest || lastShape.iou > shapeBest.iou) {
-          shapeBest = { buf: outBuf, iou: lastShape.iou, attempt: attempts };
+        /* ── RANKED ON EVERYTHING MEASURED, NOT ON ONE NUMBER ────────────
+           When every attempt fails, one of them still has to ship, and the
+           choice was made on silhouette IoU alone — one of four things now
+           measured. A render can be geometrically excellent and come back in
+           the wrong metal entirely; ranked on IoU it wins, and the customer
+           gets a white dragon because it was the roundest failure.
+
+           Each check is scored as how far past its own limit the attempt
+           went, so the numbers are comparable, and the least-bad on the sum
+           is the one that ships. Nothing here changes which attempts PASS —
+           a passing render never reaches this. */
+        lastShape.badness = shapeBadness(lastShape, shapeMinIoU);
+        if (!shapeBest || lastShape.badness < shapeBest.badness) {
+          shapeBest = { buf: outBuf, iou: lastShape.iou, badness: lastShape.badness,
+                        why: lastShape.why, attempt: attempts };
         }
       }
     }
@@ -5512,11 +5549,13 @@ async function studioRenderAttempts(opts) {
      stands: a scored verdict looks at the whole picture and this number does
      not. */
   if (shaping && !scoreBest && shapeBest && lastShape && !lastShape.ok &&
-      shapeBest.iou > (lastShape.iou || 0)) {
-    log(`[studio] every attempt drifted — shipping attempt ${shapeBest.attempt} ` +
-        `(IoU ${shapeBest.iou}) rather than the last one (IoU ${lastShape.iou})`);
+      shapeBest.badness < (lastShape.badness == null ? Infinity : lastShape.badness)) {
+    log(`[studio] every attempt failed — shipping attempt ${shapeBest.attempt} ` +
+        `(${shapeBest.why}, badness ${shapeBest.badness.toFixed(2)}) rather than the ` +
+        `last one (badness ${(lastShape.badness || 0).toFixed(2)})`);
     outBuf = shapeBest.buf;
-    lastShape = { iou: shapeBest.iou, ok: false, ms: 0, swapped: true };
+    lastShape = { iou: shapeBest.iou, ok: false, why: shapeBest.why,
+                  badness: shapeBest.badness, ms: 0, swapped: true };
   }
 
   /* ── THE BEST ONE SHIPS, NOT THE LAST ONE ───────────────────────────────
@@ -9228,12 +9267,37 @@ async function handleStudioRender({ body, event, origin }) {
        vocabulary nobody resolved. So a missing mask FAILS the render, and
        the throw lands in the catch below, which refunds the credit before
        writing the failure to the version doc. */
-    if (!(materialSpec?.buf && topologyMask?.buf)) {
+    if (!materialSpec?.buf) {
       throw new Error("mask_unavailable");
     }
+    /* ── THE TOPOLOGY MASK IS NO LONGER SENT ──────────────────────────────
+       It is not an independent input. studioTopologyMask READS the material
+       spec and collapses 136 to 176 — measured on a real map, the two images
+       are IDENTICAL across 91.05% of their pixels and differ only where the
+       engraved tone was flattened. It is derivable from the other by a
+       threshold and carries nothing the other does not.
+
+       What it did carry was weight. The request went out as TWO grey
+       pictures of exactly the requested object and ONE gold photograph of a
+       different object — and the model was told, in the prompt and in three
+       separate role labels, to ignore the subject of the only gold one. An
+       image model returns something that resembles its inputs; two thirds of
+       these resembled a grey charm, and they were the two that matched the
+       geometry being asked for. A white-and-grey dragon with gold edges is
+       not the model hallucinating. It is the arithmetic of the request.
+
+       Removing it halves the grey and costs no information. It also removes
+       the reason it was added: the note above studioTopologyMask says it
+       exists so "a learned symbol prior" cannot turn an enclosed light-grey
+       island into a hole — and every opening is now cut deterministically by
+       studioCompositeOpenings, whatever the model does with them. That job
+       was taken over by arithmetic; the input kept the cost and lost the
+       purpose.
+
+       It is still COMPUTED, because its census is filed on the version doc
+       and is a cheap check that the map is readable. It is simply not sent. */
     const specUsed = true;
     const images = [
-      { buffer: topologyMask.buf, mime: "image/png", filename: "topology-mask.png" },
       { buffer: materialSpec.buf, mime: "image/png", filename: "material-spec.png" },
     ];
     let renderStyleRef = null;
@@ -9339,8 +9403,8 @@ async function handleStudioRender({ body, event, origin }) {
       renderSpecWorkPx: materialSpec.workPx,
       renderInput: "mask",
       renderTopologyMode: "binary-light-grey-metal",
-      renderTopologyMetalPx: topologyMask.metalPx,
-      renderTopologyEmptyPx: topologyMask.emptyPx,
+      renderTopologyMetalPx: topologyMask ? topologyMask.metalPx : null,
+      renderTopologyEmptyPx: topologyMask ? topologyMask.emptyPx : null,
       renderPromptText: effectivePrompt.slice(0, 40000),
       renderPromptChars: effectivePrompt.length,
       /* renderPromptOverridden is written as a constant false rather than
@@ -9701,6 +9765,10 @@ async function handleStudioRender({ body, event, origin }) {
         renderOutlineErr: s.outline ? s.outline.mean : null,
         renderOutlineP95: s.outline ? s.outline.p95 : null,
         renderShapeSwapped: !!s.swapped,
+        /* the storefront reads this to mark its counter: a render that failed
+           every attempt is not the same thing as one that passed first time,
+           and the customer paid the same credit for both */
+        renderQualityFlag: s.ok ? "" : (s.why || "rejected"),
         renderRunId,
       });
     }
