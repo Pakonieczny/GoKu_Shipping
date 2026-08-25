@@ -5336,7 +5336,8 @@ async function studioRenderAttempts(opts) {
       if (lastShape && lastShape.iou != null) {
         log(`[studio] render gate attempt ${attempts}: IoU ${lastShape.iou}/${shapeMinIoU}, ` +
             `stray ${lastShape.furniture ? lastShape.furniture.biggest : "?"}, ` +
-            `off-alloy ${lastShape.alloy ? lastShape.alloy.offAlloy : "?"} — ` +
+            `off-alloy ${lastShape.alloy ? lastShape.alloy.offAlloy : "?"}, ` +
+            `outline ${lastShape.outline ? lastShape.outline.mean + "%/" + lastShape.outline.p95 + "%" : "?"} — ` +
             `${lastShape.ok ? "accepted" : "REJECTED: " + lastShape.why} (${lastShape.ms}ms)`);
         if (!shapeBest || lastShape.iou > shapeBest.iou) {
           shapeBest = { buf: outBuf, iou: lastShape.iou, attempt: attempts };
@@ -5492,6 +5493,8 @@ async function studioRenderAttempts(opts) {
     nextNote = cutWants ? studioRetryNote(punch.report, attempts, opts.builtInHoop)
              : shapeWants ? (lastShape.why === "frame_furniture" ? studioFrameRetryNote(attempts)
                             : lastShape.why === "two_tone_metal" ? studioAlloyRetryNote(attempts)
+                            : lastShape.why === "outline_mismatch"
+                              ? studioShapeRetryNote(lastShape, attempts, opts.builtInHoop)
                             : studioShapeRetryNote(lastShape, attempts, opts.builtInHoop))
              : studioScoreRetryNote(scored, attempts);
     log(`[studio] render retry ${attempts}/` +
@@ -7517,6 +7520,9 @@ const SCO_ALLOY_OPEN_SAT    = 28;
 const SCO_ALLOY_FRAC        = 0.35;/* below this share of the piece's own chroma is another metal */
 const SCO_ALLOY_FLOOR       = 34; /* and never a looser test than this in absolute terms */
 const SCO_ALLOY_LIMIT       = 0.12;/* this much of the metal off-alloy and the piece is two-tone */
+/* the outline check: see scoBoundaryError. Percentages of the charm's size. */
+const SCO_OUTLINE_MEAN      = 1.5; /* average distance between the two outlines */
+const SCO_OUTLINE_P95       = 5.0; /* and the tail, which one wrong shoulder moves first */
 
 /* ── WHAT A HOLE LOOKS LIKE FROM THE INSIDE ────────────────────────────────
    A hole the model cuts is NOT the plain ground showing through: the metal
@@ -7853,6 +7859,68 @@ function scoFurniture(px, w, h, ch, outer, rb, gnd) {
   };
 }
 
+/* ── THE OUTLINE, NOT JUST THE MASS ───────────────────────────────────────
+   IoU measures MASS, and two shapes of the same rough mass and extent score
+   high however differently their outlines run. A HEART came back for a
+   SHIELD and scored 0.9118 — over the line — because both are wide at the
+   top, pointed at the bottom, symmetric, and fill the same box. What differs
+   is convex lobes against concave shoulders, and an area measure cannot see
+   it. Nine per cent of the area is the whole difference between two shapes
+   nobody would confuse by eye.
+
+   The boundary is what differs, so measure the boundary: for every edge
+   pixel of one silhouette, the distance to the nearest edge pixel of the
+   other, both directions, in units of the charm's own size so the number
+   means the same at any resolution.
+
+   Measured, as a percentage of charm size:
+                              mean     p95
+     good render               0.41     1.15
+     good render               0.57     1.85
+     the same at 512 / 1600px  0.61     1.87    (scale-invariant)
+     a perfect synthetic       0.17     0.40
+     ─────────────────────────────────────
+     heart for a shield        2.64     9.83    ← IoU passed this
+     two-tone bow              3.66     9.41
+     wrong astronaut           6.06    15.06
+   Two populations, four times apart, with nothing in between. The limits sit
+   in the middle of that gap and the p95 is kept as well as the mean because
+   a localised difference — one wrong shoulder on an otherwise right outline
+   — moves the tail long before it moves the average.                       */
+function scoOutlineEdge(m, w, h) {
+  const e = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    const row = y * w;
+    for (let x = 1; x < w - 1; x++) {
+      const i = row + x;
+      if (!m[i]) continue;
+      if (!m[i - 1] || !m[i + 1] || !m[i - w] || !m[i + w]) e[i] = 1;
+    }
+  }
+  return e;
+}
+function scoBoundaryError(a, b, w, h, scale) {
+  const ea = scoOutlineEdge(a, w, h), eb = scoOutlineEdge(b, w, h);
+  const da = studioEdt2d(scoInvert(ea, w, h), w, h);
+  const db = studioEdt2d(scoInvert(eb, w, h), w, h);
+  const all = [];
+  for (let i = 0; i < w * h; i++) {
+    if (ea[i]) all.push(db[i]);
+    if (eb[i]) all.push(da[i]);
+  }
+  if (all.length < 32 || !(scale > 0)) return { mean: 0, p95: 0, dirty: false };
+  all.sort((p, q) => p - q);
+  let sum = 0;
+  for (let k = 0; k < all.length; k++) sum += all[k];
+  const mean = sum / all.length / scale * 100;
+  const p95 = all[Math.floor(all.length * 0.95)] / scale * 100;
+  return {
+    mean: Math.round(mean * 100) / 100,
+    p95: Math.round(p95 * 100) / 100,
+    dirty: mean > SCO_OUTLINE_MEAN || p95 > SCO_OUTLINE_P95,
+  };
+}
+
 /* ── IS THE WHOLE PIECE ONE METAL? ────────────────────────────────────────
    A bow came back half gold and half gunmetal: the outer curve yellow, the
    bow's body and the arrow a flat dark grey, as though two alloys had been
@@ -8103,6 +8171,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     maxShift: 0, localFit: true,
     furniture: { frac: 0, biggest: 0, blobs: 0, dirty: false },
     alloy: { offAlloy: 0, chroma: 0, dirty: false },
+    outline: { mean: 0, p95: 0, dirty: false },
   };
   if (!sharp || !renderBuf?.length || !specBuf?.length) {
     report.why = "no_inputs";
@@ -8236,6 +8305,26 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     const fit = scoGlobalFit(mp.outer, M.w, M.h, mb, rp.outer, R.w, R.h, rb);
     report.iou = Math.round(fit.iou * 1e4) / 1e4;
     const minIoU = Number(o.minIoU) || 0.90;
+    /* THE OUTLINE, MEASURED WHERE THE FIT PUT IT. The mask's silhouette is
+       carried into the render's frame by the transform just found, and the
+       two boundaries are compared there — so this is asking "having lined
+       these up as well as they can be lined up, do their edges run the same
+       way", which is the question a heart passing for a shield exposed. */
+    {
+      const kx = rb.w / mb.w * fit.sx, ky = rb.h / mb.h * fit.sy;
+      const warp = new Uint8Array(rn);
+      for (let y = 0; y < R.h; y++) {
+        const my = Math.round((y - rb.y0 - fit.dy) / ky) + mb.y0;
+        if (my < 0 || my >= M.h) continue;
+        const srow = my * M.w, drow = y * R.w;
+        for (let x = 0; x < R.w; x++) {
+          const mx = Math.round((x - rb.x0 - fit.dx) / kx) + mb.x0;
+          if (mx < 0 || mx >= M.w) continue;
+          if (mp.outer[srow + mx]) warp[drow + x] = 1;
+        }
+      }
+      report.outline = scoBoundaryError(rp.outer, warp, R.w, R.h, scale);
+    }
     /* THE SHAPE GATE STOPS HERE. Everything above is what it takes to answer
        "is this the same charm?" — the two segmentations, the two silhouettes
        and the fit between them — and everything below is repair work that is
@@ -8245,7 +8334,8 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     if (o.fitOnly) {
       report.why = report.furniture.dirty ? "frame_furniture"
                  : report.alloy.dirty ? "two_tone_metal"
-                 : fit.iou < minIoU ? "silhouette_drift" : "fit_ok";
+                 : fit.iou < minIoU ? "silhouette_drift"
+                 : report.outline.dirty ? "outline_mismatch" : "fit_ok";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
     }
@@ -8253,6 +8343,13 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       /* the same refusal the drift gate makes, for the same reason: cutting
          openings into a picture that is not a product shot cannot improve it */
       report.why = "frame_furniture";
+      report.ms = Date.now() - t0;
+      return { buf: renderBuf, report };
+    }
+    if (report.outline.dirty) {
+      /* the mass agrees and the edges do not — a different charm with the
+         same footprint. Nothing below can improve that either. */
+      report.why = "outline_mismatch";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
     }
@@ -8723,6 +8820,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     return { buf: renderBuf, report };
   }
 }
+
 
 
 
@@ -9384,6 +9482,7 @@ async function handleStudioRender({ body, event, origin }) {
           why: r.report.why,
           furniture: r.report.furniture,
           alloy: r.report.alloy,
+          outline: r.report.outline,
           ms: r.report.ms,
         };
       },
@@ -9567,6 +9666,8 @@ async function handleStudioRender({ body, event, origin }) {
         renderFrameStray: s.furniture ? s.furniture.biggest : null,
         renderFrameBlobs: s.furniture ? s.furniture.blobs : null,
         renderOffAlloy: s.alloy ? s.alloy.offAlloy : null,
+        renderOutlineErr: s.outline ? s.outline.mean : null,
+        renderOutlineP95: s.outline ? s.outline.p95 : null,
         renderShapeSwapped: !!s.swapped,
         renderRunId,
       });
