@@ -7523,6 +7523,7 @@ const SCO_ALLOY_LIMIT       = 0.12;/* this much of the metal off-alloy and the p
 /* the outline check: see scoBoundaryError. Percentages of the charm's size. */
 const SCO_OUTLINE_MEAN      = 1.5; /* average distance between the two outlines */
 const SCO_OUTLINE_P95       = 5.0; /* and the tail, which one wrong shoulder moves first */
+const SCO_CMP_CLOSE         = 4;  /* both silhouettes are closed by this before comparing */
 
 /* ── WHAT A HOLE LOOKS LIKE FROM THE INSIDE ────────────────────────────────
    A hole the model cuts is NOT the plain ground showing through: the metal
@@ -7759,6 +7760,24 @@ function scoMaskParts(px, w, h, ch) {
   for (let v = 0; v < 256; v++) if (hist[v] > best) { best = hist[v]; polish = v; }
   const span = Math.max(1, 255 - polish);
 
+  /* ── AND A SILHOUETTE BUILT THE SAME WAY THE RENDER'S IS ──────────────
+     The two sides were segmented with different morphology: the render is
+     closed by radius 4 to bridge the specular gaps a photograph of polished
+     gold always has, the mask by radius 1 because a drawing has none. On a
+     shape whose outline nearly touches itself — a dragon's coil — radius 4
+     seals the gap and radius 1 does not, so one silhouette has a filled loop
+     and the other has a hole in the same place. Measured on that dragon it
+     was a 7,212 px blob, 8% of the charm, and it read to the outline check
+     as a boundary a hundred pixels out of place.
+
+     Nothing about the charm differed; the preprocessing did. A comparison
+     between two silhouettes is only meaningful if both were made the same
+     way, so this one is closed by the same radius. It is used ONLY for the
+     fit and the outline check — `outer` above still decides where the metal
+     is, what is a hole and where everything is placed. */
+  const cmp = studioLargestComponent(
+    scoFillHoles(scoDropBorderTouching(scoClose(solid, w, h, SCO_CMP_CLOSE), w, h), w, h), w, h);
+
   const holes = new Uint8Array(n), engraved = new Uint8Array(n);
   const alpha = new Float32Array(n);
   for (let i = 0; i < n; i++) {
@@ -7768,7 +7787,7 @@ function scoMaskParts(px, w, h, ch) {
     const a = (grey[i] - polish) / span;
     alpha[i] = a < 0 ? 0 : a > 1 ? 1 : a;
   }
-  return { outer, holes, alpha, engraved, polish };
+  return { outer, outerCmp: cmp, holes, alpha, engraved, polish };
 }
 
 /* ── THE GROUND, READ FROM THE GROUND ─────────────────────────────────────
@@ -8302,7 +8321,8 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     report.declaredFrac = moPx ? declaredPx / moPx : null;
 
     /* ── coarse registration ────────────────────────────────────────────── */
-    const fit = scoGlobalFit(mp.outer, M.w, M.h, mb, rp.outer, R.w, R.h, rb);
+    const mCmp = mp.outerCmp || mp.outer;
+    const fit = scoGlobalFit(mCmp, M.w, M.h, mb, rp.outer, R.w, R.h, rb);
     report.iou = Math.round(fit.iou * 1e4) / 1e4;
     const minIoU = Number(o.minIoU) || 0.90;
     /* THE OUTLINE, MEASURED WHERE THE FIT PUT IT. The mask's silhouette is
@@ -8320,7 +8340,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
         for (let x = 0; x < R.w; x++) {
           const mx = Math.round((x - rb.x0 - fit.dx) / kx) + mb.x0;
           if (mx < 0 || mx >= M.w) continue;
-          if (mp.outer[srow + mx]) warp[drow + x] = 1;
+          if (mCmp[srow + mx]) warp[drow + x] = 1;
         }
       }
       report.outline = scoBoundaryError(rp.outer, warp, R.w, R.h, scale);
@@ -8340,19 +8360,30 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       return { buf: renderBuf, report };
     }
     if (report.furniture.dirty) {
-      /* the same refusal the drift gate makes, for the same reason: cutting
-         openings into a picture that is not a product shot cannot improve it */
+      /* the same refusal the drift gate makes, for the same reason: what was
+         identified as the charm in a page full of panels may not be one */
       report.why = "frame_furniture";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
     }
-    if (report.outline.dirty) {
-      /* the mass agrees and the edges do not — a different charm with the
-         same footprint. Nothing below can improve that either. */
-      report.why = "outline_mismatch";
-      report.ms = Date.now() - t0;
-      return { buf: renderBuf, report };
-    }
+    /* ── A CHECK THAT BUYS A RE-ROLL IS NOT A CHECK THAT CANCELS THE CUT ──
+       These two decisions were conflated and it cost a customer their
+       cut-outs. A dragon whose map declared THIRTY-EIGHT openings shipped
+       with none of them, because the outline check objected and the
+       compositor took that as a reason to do nothing.
+
+       They are different questions. The gate asks "is this worth another
+       attempt?" — and the loop above spends one. The composite asks "can I
+       improve the image that is going to ship?" — and by the time it runs,
+       the attempts are over and this image IS shipping. Cutting the
+       customer's declared openings into it is an improvement whatever the
+       metal looks like or however the outline reads.
+
+       Only two failures genuinely stop it, and both for the same reason:
+       no coordinate maps between the two pictures. `silhouette_drift` means
+       the fit itself failed, so every placement below would be a guess; and
+       a contact sheet is not a product shot, so the thing identified as the
+       charm may not be one. Everything else is reported and composited. */
     if (fit.iou < minIoU) {
       /* THE MODEL DREW A DIFFERENT CHARM. Nothing downstream rescues that,
          and cutting a mask's openings into someone else's silhouette makes
@@ -8820,6 +8851,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     return { buf: renderBuf, report };
   }
 }
+
 
 
 
