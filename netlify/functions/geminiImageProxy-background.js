@@ -2817,6 +2817,26 @@ const STUDIO_DEFAULT_CONFIG = {
      Every internal failure already returns the render unmodified, so "off"
      is a convenience rather than a safety net. */
   renderComposite: "on",
+  /* ── THE SHAPE GATE ────────────────────────────────────────────────────
+     "on" measures the silhouette overlap between each render and the
+     greyscale map and re-rolls a render that is not the same charm; "off"
+     measures nothing. It is deliberately NOT tied to STUDIO_VERIFICATION_
+     PAUSED: that pause exists because the punch's FILL identification was
+     still being corrected, and this gate reads no fills. It reads two outer
+     silhouettes, which is the one thing every render in evidence reproduces
+     well — 0.977 and 0.984 on good renders, 0.731 on the astronaut that drew
+     itself standing. It costs no credit and no model call. */
+  renderShapeGate: "on",
+  /* Below this the render is a different charm. 0.90 sits well clear of both
+     populations measured: no good render has come in under 0.97 and no bad
+     one over 0.84. Raising it chases pose accuracy the model cannot hit;
+     lowering it lets a redrawn charm through. */
+  renderShapeMinIoU: 0.90,
+  /* How many re-rolls a wrong shape may buy, independent of the cut check's
+     and the adjudicator's allowances — "this is a different charm" is a
+     different complaint from "this charm is not good enough", and neither
+     should exhaust the other's budget. The wall clock still caps both. */
+  renderShapeRetries: 1,
   /* Its share of the wall clock, reserved out of renderRetryBudgetMs BEFORE
      the retry loop spends it — see the note at the reservation. Measured at
      2.6-2.9s on an 824 px render and scaling with area; 30s is roughly three
@@ -4021,6 +4041,54 @@ const STUDIO_HOOP_AS_FOUND =
   "hoop or a separate round jump ring. Do not add a hoop, do not remove one, " +
   "do not re-form one into the other, and do not add a second ring, bail or chain";
 
+/* ── THE OUTLINE FAILURE, AND WHY IT NEEDED ITS OWN BLOCK ─────────────────
+   Measured on an astronaut charm. The map drew a figure floating: tilted,
+   one arm raised into a fist, the legs bent and tucked. The render came back
+   as a textbook standing astronaut — upright, arms down, feet apart. Correct
+   subject, correct alloy, correct finish, correct hoop, and the wrong shape.
+
+   The numbers say it is not drift and not a bad fit. The two silhouettes
+   share a bounding box to within a few per cent and their principal axes
+   differ by 3.6°, so nothing was rotated or rescaled; the render simply
+   carries 27.5% MORE metal inside that same box, and its solidity — the
+   share of its own convex hull it fills — went from 0.819 to 0.875. The
+   model did not move the outline. It FILLED IN the negative space: the gap
+   under the raised arm, the gap between the bent legs. Best-fit silhouette
+   IoU 0.731 against the 0.977-0.984 a good render scores.
+
+   Nothing in the prompt defended against that. TOPOLOGY LOCK is entirely
+   about FILL — which greys stay metal, which whites go empty — and it was
+   obeyed. FILL-PRIORITY says IMAGE 1's fill "overrides every outline and all
+   familiar meaning", which reads as a rule about interiors, and the only
+   sentence covering the boundary was one clause of NO INVENTION at the very
+   end. So the model was told to treat the map as pixels, recognised an
+   astronaut anyway, and drew the astronaut it knows.
+
+   This block names that failure, says it is a failure even when the result
+   looks better, and gives it its own verification step. It ADDS; it changes
+   no existing sentence, and removing the one interpolation below reverts it.
+
+   It also names IMAGE 3. Three images are sent — topology, structure and the
+   gold sample — and the prompt described two, leaving the third with no
+   declared role at all. The Charm Maker's prompt has carried an explicit
+   image-role lock for exactly this reason since the day a style reference's
+   subject turned up in an output.                                          */
+const STUDIO_SILHOUETTE_LOCK =
+`SILHOUETTE LOCK — TRACE THE OUTLINE, DO NOT RECOGNISE IT
+
+The outer boundary of the light-grey region in IMAGE 1 is the charm's outline, and it is TRACED, not interpreted. Follow it edge for edge. Every notch, concavity, uneven curve, asymmetry and tilt in that boundary is part of the design and part of what is being manufactured.
+
+If you recognise what IMAGE 1 depicts, that recognition is a hazard rather than help. THE COMMONEST FAILURE IN THIS RENDER IS THE RIGHT SUBJECT IN THE WRONG SHAPE: the traced outline is quietly replaced by the more typical, more symmetrical, better-proportioned version of the same familiar thing. A figure drawn leaning, with one limb raised and another tucked, comes back upright and square. Uneven curves come back even. Negative space between two parts gets filled in, because the remembered object does not have a gap there.
+
+That is a HARD FAIL, and it is still a hard fail when the result is a more attractive charm. This is a manufacturing drawing of one specific object that already exists and has been approved. There is nothing here to improve, complete, correct, straighten or idealise.
+
+Silently verify against IMAGE 1 before rendering:
+• Same outline: same lean, same asymmetry, same position of every limb and part, same width at every height down the piece.
+• Every gap of white that separates two parts of the outline in IMAGE 1 is still open between them in your output. Count them.
+• Nothing has been centred, squared up, mirrored, evened out or made more anatomically typical.
+
+IMAGE 3, when one is supplied, is a MATERIAL SAMPLE ONLY. It shows how this alloy behaves under studio light — polish, specularity, the character of a cut edge, the softness of the contact shadow. It contributes NO subject, NO geometry, NO outline and NO colour decision. Its own object must not appear in your output in any form.`;
+
 function buildMaterialSpecToCharmPrompt(opts) {
   /* strict true in the builder as well as at the call site: a truthy string
      arriving from somewhere unexpected must not quietly drop the hoop rule
@@ -4041,6 +4109,8 @@ TOPOLOGY LOCK — RESOLVE BEFORE RENDERING
 Every light-grey region in IMAGE 1 must remain occupied by opaque 14K gold. Only white regions in IMAGE 1 may be empty. OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly.
 
 FILL-PRIORITY RULE: IMAGE 1 fill overrides every outline and all familiar meaning. A region is open only when its interior is white in IMAGE 1; every light-grey interior remains solid gold.
+
+${STUDIO_SILHOUETTE_LOCK}
 
 The source darkness in IMAGE 2 is a classification code only. Engraving remains warm yellow 14K gold and only slightly darker than the surrounding gold.
 
@@ -5013,6 +5083,36 @@ function studioScoreAudit(raw, scored, cfg, extra) {
   return scored;
 }
 
+/* ── WHAT THE NEXT ATTEMPT IS TOLD AFTER A WRONG SHAPE ────────────────────
+   The measurement is a single number and the note must not pretend otherwise:
+   it does not know WHICH part of the outline moved, only that the outline as
+   a whole is not the map's. So it names the failure mode rather than a
+   region — and the failure mode is specific enough to act on, because it is
+   always the same one. The model did not mis-trace the boundary; it stopped
+   tracing and drew the object it recognised.
+
+   No measurement is quoted at the model. A number it cannot verify invites it
+   to reason about the number instead of looking at the picture, and "IoU
+   0.73" means nothing in a drawing instruction.                            */
+function studioShapeRetryNote(shape, attemptNo, builtInHoop) {
+  const lines = [
+    "CORRECTION — THE PREVIOUS ATTEMPT DREW THE WRONG SHAPE.",
+    "• Its outline was measured against IMAGE 1 and does not match. The subject was right; the shape was not.",
+    "• This is the recognition failure: the previous attempt identified what IMAGE 1 depicts and drew the familiar, tidy, symmetrical version of that thing instead of tracing the outline it was given.",
+    "• Draw IMAGE 1's outline exactly as it is. Keep every lean, tilt and asymmetry. Keep each part exactly where IMAGE 1 puts it — a raised part stays raised, a bent part stays bent, a part drawn out of line stays out of line.",
+    "• Keep the negative space. Every gap of white between two parts of the outline in IMAGE 1 must be an actual gap in your output. Do not close a gap because the object you recognise does not have one there.",
+    "• Do not straighten, centre, mirror, even up, re-proportion or otherwise improve the shape. A better-looking charm with a different outline is a failed render.",
+    "• Reproduce IMAGE 1's scale and centring in the frame as well, and " +
+      (builtInHoop === true ? "its hanging hardware exactly as it appears there"
+                            : "its integrated top hoop") + ".",
+    "Everything else about this render is unchanged and still governed by the instructions above: same alloy, same finish, same white ground, same single soft contact shadow, same engraving depth. Do not compensate for the correction by altering anything else.",
+  ];
+  if (attemptNo >= 2) {
+    lines.push("This correction has already been asked for once. Trace IMAGE 1's boundary literally, pixel by pixel, rather than producing a more convincing object.");
+  }
+  return lines.join("\n");
+}
+
 /* What the next attempt is told. Naming the failure is the whole value of
    having judged it — a bare re-roll is just another sample from the same
    distribution. */
@@ -5090,6 +5190,7 @@ async function studioRenderAttempts(opts) {
   const {
     renderOnce, basePrompt, cutMode, maxRetries, retryable, punchFn,
     adjMode, scoreRetries, judgeFn, retryBudgetMs, onRetry, onStage,
+    shapeFn, shapeRetries, shapeMinIoU,
   } = opts;
   const now = opts.now || (() => Date.now());
   const startedAt = opts.startedAt != null ? opts.startedAt : now();
@@ -5115,6 +5216,26 @@ async function studioRenderAttempts(opts) {
      scoreBest and renderScoreCount mean — so nothing that reads it changes. */
   const failedVerdicts = [], scoreLog = [], attemptLog = [];
   let scoreBest = null;
+  /* ── THE THIRD JUDGE, AND THE ONLY FREE ONE ───────────────────────────
+     The shape gate asks one question — is this the same charm the map
+     describes? — by measuring the silhouette overlap between the render and
+     the greyscale map. No model, no credit, no wording: two segmentations
+     and a three-degree-of-freedom fit, about a second of arithmetic.
+
+     It exists because of a failure neither other judge catches. An astronaut
+     map drawn floating, tilted, one fist raised and the legs tucked, came
+     back as a textbook standing astronaut — right subject, right alloy,
+     right finish, right hoop, wrong shape. Silhouette IoU 0.731 where a good
+     render scores 0.977. The cut check would call that "unaligned" and
+     decline; the compositor calls it drift and stands down; and with both
+     parked the render shipped. A number that says "this is not the customer's
+     charm" is worth a re-roll on its own.
+
+     BEST-BY-OVERLAP, NOT LAST. If every attempt drifts, the closest one
+     ships — same doctrine as the adjudicator's, for the same reason: trying
+     harder must never hand the customer a worse charm. */
+  let shapeBest = null, lastShape = null;
+  const shaping = typeof shapeFn === "function" && shapeRetries != null;
 
   while (true) {
     attempts++;
@@ -5159,6 +5280,27 @@ async function studioRenderAttempts(opts) {
        two clocks can be reasoned about separately, and the progress bar
        gains a step that is true: the charm exists and is being checked. */
     if (onStage) await onStage("engraving", attempts);
+
+    /* THE SHAPE GATE. Same doctrine as the other two callbacks: it is written
+       never to throw, and the loop assumes nothing. A gate that cannot answer
+       is a gate that raises no objection — it must never be the reason a paid
+       render is lost. */
+    lastShape = null;
+    if (shaping) {
+      try { lastShape = await shapeFn(outBuf); }
+      catch (e) {
+        console.error("[studio] shape gate crashed — raising no objection:", e?.message || e);
+        lastShape = null;
+      }
+      if (lastShape && lastShape.iou != null) {
+        log(`[studio] shape gate attempt ${attempts}: silhouette IoU ` +
+            `${lastShape.iou} vs ${shapeMinIoU} — ${lastShape.ok ? "same charm" : "DIFFERENT SHAPE"}` +
+            ` (${lastShape.ms}ms)`);
+        if (!shapeBest || lastShape.iou > shapeBest.iou) {
+          shapeBest = { buf: outBuf, iou: lastShape.iou, attempt: attempts };
+        }
+      }
+    }
 
     /* THE JUDGE. A null answer means "accepted" — see the adjudicator block
        above. The buffer judged is the one the model produced; the punch,
@@ -5236,6 +5378,9 @@ async function studioRenderAttempts(opts) {
          the image even when no model would grade it */
       cut: punch && punch.report
         ? (punch.report.verified ? "ok" : String(punch.report.reason || "")) : "",
+      /* the geometric fact about this image, on every row, whether or not
+         anything asked for a retry because of it */
+      iou: lastShape && lastShape.iou != null ? lastShape.iou : null,
     });
 
     /* ── A DISTRUSTED VERDICT MAY OBJECT. IT MAY NOT APPROVE. ───────────
@@ -5272,21 +5417,46 @@ async function studioRenderAttempts(opts) {
       log(`[studio] adjudicator attempt ${attempts} is NOT TRUSTED, but it is ` +
           `objecting rather than approving — spending one retry on it`);
     }
-    if (!cutWants && !scoreWants) break;
+    /* the gate spends its own allowance, independent of the other two, because
+       "this is a different charm" is a different complaint from "this charm is
+       not good enough" and neither should exhaust the other's budget */
+    const shapeWants = shaping && !!lastShape && lastShape.iou != null &&
+                       !lastShape.ok && attempts <= shapeRetries;
+    if (!cutWants && !shapeWants && !scoreWants) break;
 
     if (cutWants) failedVerdicts.push(punch.report.reason);
+    if (shapeWants) failedVerdicts.push("wrong_shape");
     const spent = now() - startedAt;
     if (retryBudgetMs && spent + lastMs > retryBudgetMs) {
       log(`[studio] retry budget reached (${spent}ms + ${lastMs}ms > ${retryBudgetMs}ms)` +
           (scoreWants ? " — shipping the best attempt so far" : ""));
       break;
     }
-    /* The cut check's verdict is the more specific instruction, so it wins
-       the wording when both want another go. */
+    /* MOST SPECIFIC COMPLAINT WINS THE WORDING. The cut check names a region;
+       the shape gate names the outline; the score names a category. Telling a
+       model three things at once is how a correction note stops correcting
+       anything. */
     nextNote = cutWants ? studioRetryNote(punch.report, attempts, opts.builtInHoop)
-                        : studioScoreRetryNote(scored, attempts);
-    log(`[studio] render retry ${attempts}/${cutWants ? maxRetries : scoreAllowance} after ` +
-        (cutWants ? punch.report.reason : `score ${scored.total}`));
+             : shapeWants ? studioShapeRetryNote(lastShape, attempts, opts.builtInHoop)
+             : studioScoreRetryNote(scored, attempts);
+    log(`[studio] render retry ${attempts}/` +
+        (cutWants ? maxRetries : shapeWants ? shapeRetries : scoreAllowance) + ` after ` +
+        (cutWants ? punch.report.reason
+                  : shapeWants ? `wrong shape (IoU ${lastShape.iou})`
+                  : `score ${scored.total}`));
+  }
+
+  /* ── IF EVERY ATTEMPT DRIFTED, THE CLOSEST ONE SHIPS ──────────────────
+     Only when the adjudicator did not pick a winner of its own, so the two
+     selections can never contradict each other. When it did, its choice
+     stands: a scored verdict looks at the whole picture and this number does
+     not. */
+  if (shaping && !scoreBest && shapeBest && lastShape && !lastShape.ok &&
+      shapeBest.iou > (lastShape.iou || 0)) {
+    log(`[studio] every attempt drifted — shipping attempt ${shapeBest.attempt} ` +
+        `(IoU ${shapeBest.iou}) rather than the last one (IoU ${lastShape.iou})`);
+    outBuf = shapeBest.buf;
+    lastShape = { iou: shapeBest.iou, ok: false, ms: 0, swapped: true };
   }
 
   /* ── THE BEST ONE SHIPS, NOT THE LAST ONE ───────────────────────────────
@@ -5321,7 +5491,7 @@ async function studioRenderAttempts(opts) {
     punch = scoreBest.punch;
   }
   return { outBuf, punch, attempts, failedVerdicts, scoreLog, attemptLog,
-           scoreBest, shipped };
+           scoreBest, shipped, shape: lastShape, shapeBest };
 }
 
 /* ── version doc: what drives the client's staged progress bar ───────────
@@ -7246,9 +7416,27 @@ const SCO_RING_FRAC     = 0.026;  /* how wide a ring of surround the match reads
 const SCO_MIN_CONTRAST  = 6;      /* below this there is no evidence to move anything */
 const SCO_SURE_CONTRAST = 60;     /* above this a cluster's own shift is trusted outright */
 const SCO_SEVER_FRAC    = 0.0016; /* a cut leaving a loose piece this big is refused */
-const SCO_RIM_FRAC      = 0.0040; /* width of the bright catch on the cut wall */
+const SCO_RIM_FRAC      = 0.0032; /* width of the bright catch on the cut wall */
 const SCO_SHADOW_FRAC   = 0.0152; /* reach of the shadow on the metal beside a cut */
-const SCO_RIM_K         = 0.38;   /* how bright the cut wall gets */
+/* ── A CATCH OF LIGHT ON GOLD IS STILL GOLD ───────────────────────────────
+   The cut wall was brightened by mixing the metal toward WHITE — one lerp,
+   38% of the way at the crest. That is the wrong operation for a metal, and
+   the measurement says so: on (198,158,62) it lands (219,195,135), which is
+   a 44% loss of saturation. Two or three pixels of pale, chalky, colourless
+   metal ran all the way round every composited opening, and it read worst
+   exactly where the surrounding gold was darkest — the shaded lower edge of
+   a hole — because there the same 38% is a far bigger relative change. That
+   is the "washed out around the hole" the eye keeps catching.
+
+   Brightness and whiteness are not the same thing. A polished bevel catching
+   a key light is BRIGHTER GOLD: every channel scales together, so the hue
+   and the saturation come through untouched, and only the very crest of a
+   specular highlight clips toward white. So the gain is multiplicative and
+   the white is a separate, much smaller term with a squared falloff, which
+   confines it to a single pixel at the peak instead of spreading it across
+   the whole rim.                                                           */
+const SCO_RIM_GAIN      = 0.30;   /* how much brighter the cut wall gets, chroma intact */
+const SCO_RIM_WHITE     = 0.10;   /* and the specular crest on top of it, squared falloff */
 const SCO_SHADOW_K      = 0.26;   /* how deep the shadow beside it goes */
 const SCO_SEARCH_FRAC   = 0.42;   /* search radius, as a share of a cluster's own size */
 const SCO_SEARCH_CAP    = 0.037;  /* and never more than this share of the charm */
@@ -7505,6 +7693,19 @@ function scoMaskParts(px, w, h, ch) {
 /* BILINEAR, not a windowed sinc: the scale here is within a per cent of 1:1,
    so the operation is almost pure sub-pixel translation and a sharper filter
    would only ring along an edge that is already correct. */
+/* ── AND IT LANDS ON A FRACTION OF A PIXEL ────────────────────────────────
+   This used to crop, resample to a whole number of pixels, and stamp the
+   result at a ROUNDED origin — so every opening carried up to half a pixel
+   of placement error in each axis, always in the same direction for the
+   whole cluster, and the error showed as the cut edge sitting a touch inside
+   the metal on one side and a touch outside it on the other.
+
+   The inverse map removes the rounding rather than correcting for it: each
+   OUTPUT pixel asks where it falls in the mask and reads that point, so a
+   target origin of 412.4 is sampled at 412.4 instead of 412. It also drops
+   the intermediate crop and resample buffers, so it is cheaper than what it
+   replaces. With an integer origin it is arithmetically identical to the old
+   path — the sampling convention below is studioBilinearField's own. */
 function scoPlace(field, mw, mh, box, mb, rb, sxN, syN, dx, dy, out, ow, oh, take) {
   /* mask pixels to render pixels: the two bounding boxes give the base
      scale, the fit's sx/sy correct it */
@@ -7512,31 +7713,36 @@ function scoPlace(field, mw, mh, box, mb, rb, sxN, syN, dx, dy, out, ow, oh, tak
   const ky = (rb.y1 - rb.y0 + 1) / (mb.y1 - mb.y0 + 1) * syN;
   const cw = box.x1 - box.x0 + 1, chh = box.y1 - box.y0 + 1;
   const tw = Math.max(2, Math.round(cw * kx)), th = Math.max(2, Math.round(chh * ky));
-  const crop = new Float32Array(cw * chh);
-  for (let y = 0; y < chh; y++) {
-    const sy = (y + box.y0) * mw;
-    for (let x = 0; x < cw; x++) crop[y * cw + x] = field[sy + (x + box.x0)];
-  }
-  const small = studioBilinearField(crop, cw, chh, tw, th);
   /* WHERE THE CROP SITS INSIDE THE MASK'S OWN BOX, scaled — not at the
      render box's origin. Dropping this term put every opening at the top
-     left corner of the charm, where none of them are. */
-  const tx = Math.round((box.x0 - mb.x0) * kx) + rb.x0 + dx;
-  const ty = Math.round((box.y0 - mb.y0) * ky) + rb.y0 + dy;
+     left corner of the charm, where none of them are. Kept fractional. */
+  const txf = (box.x0 - mb.x0) * kx + rb.x0 + dx;
+  const tyf = (box.y0 - mb.y0) * ky + rb.y0 + dy;
+  const sxs = cw / tw, sys = chh / th;
   /* the rectangle actually written, so a caller can read back only what it
      changed instead of walking the whole frame per opening */
   const hit = {
-    x0: Math.max(0, tx), y0: Math.max(0, ty),
-    x1: Math.min(ow - 1, tx + tw - 1), y1: Math.min(oh - 1, ty + th - 1),
+    x0: Math.max(0, Math.floor(txf)), y0: Math.max(0, Math.floor(tyf)),
+    x1: Math.min(ow - 1, Math.ceil(txf + tw - 1)),
+    y1: Math.min(oh - 1, Math.ceil(tyf + th - 1)),
   };
-  for (let y = 0; y < th; y++) {
-    const oy = ty + y;
-    if (oy < 0 || oy >= oh) continue;
+  for (let oy = hit.y0; oy <= hit.y1; oy++) {
+    const cyr = oy - tyf;
+    if (cyr < -0.5 || cyr > th - 0.5) continue;
+    let fy = (cyr + 0.5) * sys - 0.5;
+    if (fy < 0) fy = 0; else if (fy > chh - 1) fy = chh - 1;
+    const y0 = Math.floor(fy), y1 = y0 + 1 < chh ? y0 + 1 : chh - 1, wy = fy - y0;
+    const r0 = (y0 + box.y0) * mw + box.x0, r1 = (y1 + box.y0) * mw + box.x0;
     const row = oy * ow;
-    for (let x = 0; x < tw; x++) {
-      const ox = tx + x;
-      if (ox < 0 || ox >= ow) continue;
-      const v = small[y * tw + x];
+    for (let ox = hit.x0; ox <= hit.x1; ox++) {
+      const cxr = ox - txf;
+      if (cxr < -0.5 || cxr > tw - 0.5) continue;
+      let fx = (cxr + 0.5) * sxs - 0.5;
+      if (fx < 0) fx = 0; else if (fx > cw - 1) fx = cw - 1;
+      const x0 = Math.floor(fx), x1 = x0 + 1 < cw ? x0 + 1 : cw - 1, wx = fx - x0;
+      const a = field[r0 + x0], b = field[r0 + x1];
+      const c = field[r1 + x0], e = field[r1 + x1];
+      const v = (a * (1 - wx) + b * wx) * (1 - wy) + (c * (1 - wx) + e * wx) * wy;
       if (take === "max") { if (v > out[row + ox]) out[row + ox] = v; }
       else out[row + ox] = v;
     }
@@ -7759,7 +7965,11 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       isKept[L] = 1;
     }
     report.declared = keep.length;
-    if (!keep.length) {
+    /* A CHARM WITH NO OPENINGS IS STILL A CHARM THAT CAN BE REDRAWN WRONG.
+       The composite has nothing to do here and stops; the shape gate has the
+       same question to answer as ever and must not be skipped just because
+       this design happens to be solid. */
+    if (!keep.length && !o.fitOnly) {
       report.why = "nothing_declared";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
@@ -7774,7 +7984,19 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     /* ── coarse registration ────────────────────────────────────────────── */
     const fit = scoGlobalFit(mp.outer, M.w, M.h, mb, rp.outer, R.w, R.h, rb);
     report.iou = Math.round(fit.iou * 1e4) / 1e4;
-    if (fit.iou < (Number(o.minIoU) || 0.90)) {
+    const minIoU = Number(o.minIoU) || 0.90;
+    /* THE SHAPE GATE STOPS HERE. Everything above is what it takes to answer
+       "is this the same charm?" — the two segmentations, the two silhouettes
+       and the fit between them — and everything below is repair work that is
+       pointless if the answer is no. The attempt loop asks the question once
+       per render at about a third of the full cost, so a drifted render can
+       be re-rolled instead of shipped. */
+    if (o.fitOnly) {
+      report.why = fit.iou < minIoU ? "silhouette_drift" : "fit_ok";
+      report.ms = Date.now() - t0;
+      return { buf: renderBuf, report };
+    }
+    if (fit.iou < minIoU) {
       /* THE MODEL DREW A DIFFERENT CHARM. Nothing downstream rescues that,
          and cutting a mask's openings into someone else's silhouette makes
          it worse rather than better. */
@@ -8142,11 +8364,14 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
         const t = (d - 0.6) / rimPx;
         const rim = Math.exp(-t * t);
         const sh = d > 0 ? Math.pow(Math.max(0, 1 - d / shPx), 2) : 0;
-        const k = 1 - SCO_SHADOW_K * sh;
+        /* shadow and catch are both lighting, so they multiply — and both
+           scale all three channels, which is what keeps the metal coloured */
+        const k = (1 - SCO_SHADOW_K * sh) * (1 + SCO_RIM_GAIN * rim);
         r *= k; g *= k; b *= k;
-        r += (255 - r) * SCO_RIM_K * rim;
-        g += (255 - g) * SCO_RIM_K * rim;
-        b += (255 - b) * SCO_RIM_K * rim;
+        const spec = SCO_RIM_WHITE * rim * rim;
+        r += (255 - r) * spec;
+        g += (255 - g) * spec;
+        b += (255 - b) * spec;
       }
       const a = alpha[i];
       if (a > 0) {
@@ -8753,6 +8978,17 @@ async function handleStudioRender({ body, event, origin }) {
     const compositeMode = String(cfg.renderComposite == null ? "on" : cfg.renderComposite)
       .trim().toLowerCase();                       /* "on" | "observe" | "off" */
     const compositing = compositeMode === "on" || compositeMode === "observe";
+    /* ── AND THE GATE IN FRONT OF IT ──────────────────────────────────────
+       Same measurement, asked earlier and for a different purpose: the
+       composite REPAIRS a render, the gate REJECTS one. Both need sharp and
+       both need the greyscale map; with neither available the gate simply
+       does not arm, exactly as the composite does not run. */
+    const shapeMode = String(cfg.renderShapeGate == null ? "on" : cfg.renderShapeGate)
+      .trim().toLowerCase();
+    const shapeGating = shapeMode === "on" && !!sharpMod;
+    const shapeMinIoU = Math.min(0.99, Math.max(0.5, Number(cfg.renderShapeMinIoU) || 0.90));
+    const shapeRetries = Math.max(0, Math.min(3,
+      Number(cfg.renderShapeRetries) === 0 ? 0 : (Number(cfg.renderShapeRetries) || 1)));
     const STUDIO_COMPOSITE_HARD_MS = Math.max(4000, Math.min(60000,
       Number(cfg.renderCompositeBudgetMs) || 30000));
     const rawRetryBudgetMs = Math.max(0, Number(cfg.renderRetryBudgetMs) || 0);
@@ -8802,6 +9038,24 @@ async function handleStudioRender({ body, event, origin }) {
          hoop sentence that prompt already carries */
       builtInHoop,
       cutMode, maxRetries, retryable,
+      /* ── THE SHAPE GATE, ONE NUMBER PER ATTEMPT ───────────────────────
+         The compositor's own registration stage, stopped the moment it has
+         answered — about a second against the twenty-odd the full composite
+         takes, because everything after the fit is repair work that a
+         drifted render does not want. Same code, same segmentation, same
+         measurement, so the gate and the composite can never disagree about
+         whether a render is the customer's charm.
+
+         Written never to throw: a gate that cannot answer returns null and
+         the loop treats that as no objection. */
+      shapeFn: !shapeGating ? null : async (buf) => {
+        const r = await studioCompositeOpenings(buf, materialSpec && materialSpec.buf,
+          { fitOnly: true, budgetMs: 20000, minIoU: shapeMinIoU });
+        if (!r || !r.report || r.report.iou == null) return null;
+        return { iou: r.report.iou, ok: r.report.why === "fit_ok", ms: r.report.ms };
+      },
+      shapeRetries: shapeGating ? shapeRetries : null,
+      shapeMinIoU,
       /* ── THE CUT CHECK NEEDS THE PLAN, AND REUSE SKIPS BUILDING IT ─────
          studioPlan is only derived when the greyscale map is being built
          from scratch, so on a reuse it is null — and studioPunchCutouts
@@ -8944,6 +9198,25 @@ async function handleStudioRender({ body, event, origin }) {
     let outBuf = loop.outBuf;
     let punch = loop.punch;
     const attempt = loop.attempts;
+    /* THE GATE'S VERDICT ON THE IMAGE THAT SHIPPED, filed whether it passed
+       or not. A render that reached the customer with the wrong outline
+       because the clock ran out is exactly the run worth being able to find
+       afterwards, and it is invisible unless the number is written down. */
+    if (shapeGating && loop.shape && loop.shape.iou != null) {
+      const s = loop.shape;
+      if (!s.ok) {
+        console.warn(`[studio] SHIPPING A RENDER THAT FAILED THE SHAPE GATE — ` +
+          `silhouette IoU ${s.iou} vs ${shapeMinIoU} after ${attempt} attempt(s)`);
+      }
+      await studioStage(vRef, {
+        renderShapeMode: shapeMode,
+        renderShapeIoU: s.iou,
+        renderShapeOk: !!s.ok,
+        renderShapeMinIoU: shapeMinIoU,
+        renderShapeSwapped: !!s.swapped,
+        renderRunId,
+      });
+    }
     const failedVerdicts = loop.failedVerdicts;
     const scoreLog = loop.scoreLog;
     const attemptLog = loop.attemptLog || [];
