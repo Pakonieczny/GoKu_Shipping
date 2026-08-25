@@ -2792,6 +2792,43 @@ const STUDIO_DEFAULT_CONFIG = {
      the two are edited together or not at all. */
   renderRetryBudgetMs: 300000,
 
+  /* ══════════ THE CUT-OUT COMPOSITE — A POST-PROCESS, NOT A PROMPT ═══════
+     Measured across four renders of one charm: the greyscale map declared
+     sixteen through-cuts covering 44.8% of the piece, and three of the four
+     renders came back with exactly ONE of them. Google's image API documents
+     no seed, no temperature and no mask parameter, so "cut where IMAGE 1 is
+     white" is a request rather than a constraint and asking harder does not
+     close it. What the model DOES reproduce reliably is the outer silhouette
+     — to about a pixel and a half — which is exactly the case where you stop
+     asking and composite.
+
+     It runs once, after the winning render is chosen, and touches nothing
+     upstream of itself: same prompt, same model, same attempt loop, same
+     adjudicator, same cut check. Three settings, no deploy:
+       "on"       what ships. Declared openings the render did not make are
+                  composited into it; ones it already made are left exactly
+                  as the model drew them.
+       "observe"  it runs and files its numbers on the version doc, but the
+                  image is returned untouched. This is how the numbers get
+                  read against real traffic without a customer paying for it.
+       "off"      it does not run at all. Byte-for-byte the behaviour before
+                  it existed, and the reserve below is returned to the retry
+                  loop.
+     Every internal failure already returns the render unmodified, so "off"
+     is a convenience rather than a safety net. */
+  renderComposite: "on",
+  /* Its share of the wall clock, reserved out of renderRetryBudgetMs BEFORE
+     the retry loop spends it — see the note at the reservation. Measured at
+     2.6-2.9s on an 824 px render and scaling with area; 30s is roughly three
+     times what a 1600 px render needs, and the composite's own deadline
+     makes an overrun a no-op rather than a late render. */
+  renderCompositeBudgetMs: 30000,
+  /* How closely the render's silhouette must match the map's before any
+     coordinate is trusted between them. Below this the model drew a
+     different charm, and cutting one charm's openings into another's outline
+     makes it worse rather than better — so the composite declines. */
+  renderCompositeMinIoU: 0.90,
+
   /* ══════════ THE ADJUDICATOR — POST-RENDER SCORING ══════════════════════
      Reads the finished gold charm against the deterministic greyscale map
      with a vision model, scores six categories, and re-renders when the
@@ -2849,6 +2886,34 @@ const STUDIO_IMAGE_MODEL_FALLBACK = "gemini-3-pro-image";
 const STUDIO_DRAWING_TIER_FALLBACK = "2K";   // the input side
 const STUDIO_RENDER_TIER_FALLBACK = "1K";    // the output side
 const STUDIO_MASK_MIN_PX_FALLBACK = 2048;
+
+/* ═══════════ HOW MANY DECLARED ZONES A DESIGN MAY HAVE ═══════════════════
+   This was the literal 40, written out by hand at eight call sites with no
+   comment at any of them, and nothing in the file ever said why. It was not
+   a budget anyone had measured — the cut mask is a per-zone box fill over a
+   bitmap, which costs microseconds a zone, and the prompt does not itemise
+   engraved zones at all. What it DID do was silently drop a customer's 41st
+   zone, and then a fallback was written to guess back what the truncation
+   had thrown away — which punched a charm's entire body out as a hole. Two
+   bugs, both descended from an unexplained constant.
+
+   So the list is not truncated any more. A design with 400 zones renders all
+   400. The number below is a runaway guard — a payload this size is a bug in
+   the caller, not a customer's design — and it is deliberately far above any
+   real design so that it never quietly shapes one.
+
+   AND IF IT EVER DOES BITE, IT SAYS SO. Silent truncation is what made the
+   original 40 so expensive: the map was wrong and nothing anywhere reported
+   a reason. studioZoneList logs loudly and stamps the count it dropped. */
+const STUDIO_ZONE_LIMIT = 2000;
+function studioZoneList(zones, where) {
+  const all = Array.isArray(zones) ? zones : [];
+  if (all.length <= STUDIO_ZONE_LIMIT) return all;
+  console.error(`[studio] ZONE LIST TRUNCATED at ${where}: ${all.length} zones ` +
+                `exceeds STUDIO_ZONE_LIMIT ${STUDIO_ZONE_LIMIT}. This is a caller ` +
+                `bug — the map for this design will be missing declared areas.`);
+  return all.slice(0, STUDIO_ZONE_LIMIT);
+}
 
 /* ── NOT EVERY STEP EARNS THE EXPENSIVE MODEL ─────────────────────────────
    One knob for five steps meant the two steps whose output is REWRITTEN BY
@@ -5475,7 +5540,7 @@ async function handleStudioGenerate({ kind, body, event, origin }) {
     const refMode = body?.refMode === "exact" ? "exact"
                   : body?.refMode === "interpret" ? "interpret" : null;
     /* the fill law, as data, for a reference the customer drew themselves */
-    const refZones = Array.isArray(body?.refZones) ? body.refZones.slice(0, 40) : [];
+    const refZones = studioZoneList(body?.refZones, "refLineArt");
     const basePrompt = buildCustomerLineArtPrompt({
       instructions, thread: body?.thread, refine: isRefine, markupNotes, markupZones, markupMode,
       refMode, refZones,
@@ -5772,12 +5837,7 @@ function studioPenWidth(px, w, h, scope) {
   return Math.max(1, v[v.length >> 1]);
 }
 
-/* opts.noDenseFill turns the DENSITY path off, exactly as minRatio:Infinity
-   turns the THICKNESS path off. Both discriminators are now independently
-   suppressible, so a caller can ask for "thick blobs only" — which is what
-   the capped-list fallback in studioSpecCutMask needs and could not express
-   before. Omitted by every existing caller, so their behaviour is unchanged. */
-function studioCutRegions(mask, w, h, minRatio, penIn, opts) {
+function studioCutRegions(mask, w, h, minRatio, penIn) {
   /* Primary discriminator: local thickness against the drawing's pen.
      Secondary discriminator: component fill density. The density path exists
      for exactly the failure a thick engraved border exposed: the global pen
@@ -5786,7 +5846,6 @@ function studioCutRegions(mask, w, h, minRatio, penIn, opts) {
      sparse inside its own bounding box, so density separates the two without
      asking a model or using a magic absolute pixel width. */
   const ratio0 = minRatio || 2.5;
-  const noDenseFill = !!(opts && opts.noDenseFill);
   const { labels, count } = studioLabel(mask, w, h);
   const cut = new Uint8Array(w * h);
   if (!count) return { cut, areas: 0, lines: 0, pen: 0, cutPx: 0 };
@@ -5811,8 +5870,7 @@ function studioCutRegions(mask, w, h, minRatio, penIn, opts) {
     const bw = x1[L] - x0[L] + 1, bh = y1[L] - y0[L] + 1;
     const density = size[L] / Math.max(1, bw * bh);
     const thickEnough = maxd[L] / pen >= ratio0;
-    const denseFill = !noDenseFill &&
-      density >= 0.24 && Math.min(bw, bh) >= Math.max(4, pen * 1.8);
+    const denseFill = density >= 0.24 && Math.min(bw, bh) >= Math.max(4, pen * 1.8);
     if ((thickEnough || denseFill) && size[L] >= minPx) { keep[L] = 1; areas++; }
     else lines++;
   }
@@ -6304,48 +6362,31 @@ function studioSpecCutMask(plan, zones) {
       if (blue[i]) out[i] = 1;
     }
   }
-  /* ── AND THE DECLARED LIST IS NOT ALLOWED TO LOSE A SOLID HOLE ──────────
-     The list is capped upstream, and a capped list can arrive missing a
-     genuine cut-out — a 55-layer sheet did, and the hoop's hole was simply
-     never punched. So a blue component the image itself proves is a FILLED
-     BLOB is honoured even when no declared zone claims it. Density is the
-     discriminator, deliberately alone: a blue fill that touches the blue
-     perimeter merges into one sparse component and fails it, so the failure
-     the zones-authority exists to prevent — erasing the silhouette — cannot
-     come back through this door.
+  /* ── THERE IS NO FALLBACK HERE, AND THAT IS THE POINT ──────────────────
+     A fallback lived here that punched blue components the image "proved"
+     were filled blobs, whether or not a zone claimed them. It was added to
+     rescue a cut-out that had fallen off a TRUNCATED zone list, and the
+     truncation it was rescuing is gone (see STUDIO_ZONE_LIMIT), so the thing
+     it existed for cannot happen any more.
 
-     ── THE DISCRIMINATOR IS THICKNESS, NOT BOUNDING-BOX DENSITY ───────────
-     This ran as studioCutRegions(blue, w, h, Infinity, pen): thickness off,
-     density alone. The safety argument above only ever covered the PERIMETER
-     — a big sparse loop — and the perimeter was never what broke. Density is
-     a property of a component's BOUNDING BOX, and a short, gently curved
-     stroke very nearly fills its own box: measured on the real code, a 20°
-     arc scores 0.31 and a 12° arc 0.52, both clear of the 0.24 mark, while a
-     90° arc scores 0.11 and the perimeter 0.04. So the strokes that got
-     punched into holes were the SHORT ones, and the long sweeps that the
-     argument was checked against passed exactly as predicted. Every stray
-     curve on a charm became a through-cut the customer never asked for —
-     the white slashes across solid metal on the crescent and ring maps.
+     It also could not have worked. Measured on a moon-and-star charm, the
+     blue CRESCENT BODY is one filled blob of 105,673px, density 0.34, local
+     thickness 7.0 — indistinguishable, by any measure taken on that
+     component alone, from a declared cut-out of the same shape. It IS
+     declared metal. Density punched it; thickness punched it; the charm came
+     back with its whole body opened out as a through-cut. Opening 33.3% of a
+     face where the customer declared 4.8% is not a rescue.
 
-     Local thickness separates the two cleanly and does not care how long a
-     stroke is. Measured with pen=10: strokes score 0.33 (6px) to 1.27 (24px)
-     however they curve; filled blobs score 1.47 (r=15) to 9.47 (r=100). The
-     gap is wide and the shapes never cross it.
+     The lesson is the general one, so it is written here rather than in a
+     commit message: whether a region is a HOLE or is METAL is not a property
+     of its pixels. It is a fact the customer supplied. A picture cannot
+     recover it, and code that tries will be wrong in exactly the cases that
+     matter most — the big, obvious, load-bearing ones. The declared list is
+     the authority. When it is silent about a region, the answer is that the
+     region is not a hole, not that we should go looking for one.
 
-     2.5 is not a new constant — it is the ratio studioDrawingPlan already
-     passes for plan.cut, so "what counts as a filled area" has one answer in
-     this file. Measured, it punches a blob from about r=26 up (r=25 scores
-     2.40 and is left alone, r=30 scores 2.90 and is cut), which a hoop hole
-     clears comfortably, and it errs toward LEAVING METAL ALONE, which is the
-     side to err on: a missed cut-out is one region wrong, a wrongly punched
-     one is a hole in a charm that had none. Note that this restores no v7
-     behaviour — v7 had no fallback at all — it keeps the fix and drops the
-     failure mode. */
-  if (cuts.length) {
-    const dense = studioCutRegions(blue, plan.w, plan.h, 2.5, plan.pen,
-                                   { noDenseFill: true });
-    for (let i = 0; i < n; i++) if (dense.cut[i]) out[i] = 1;
-  }
+     If a cut-out is ever missing from a map again, it is missing from the
+     LIST, and the list is what gets fixed. */
   return out;
 }
 
@@ -6874,12 +6915,16 @@ function studioSpecCensus(plan, spec, names) {
 
 async function studioMaterialSpec(sharp, plan, metal, zones) {
   if (!sharp || !plan || !plan.faceBox) return null;
-  const { px, w, h, n, face } = plan;
+  const { px, w, h, n, face, blue } = plan;
   const cut = studioSpecCutMask(plan, zones);
   const bounded = studioBlueBoundedWhiteHoles(plan);
   const holes = new Uint8Array(n);
   let holePx = 0, facePx = 0, workPx = 0;
-  for (let i = 0; i < n; i++) if (cut[i] || bounded[i]) holes[i] = 1;
+  /* BLUE IS A HOLE AT ANY WIDTH. A blue line is a thin slit cut clean
+     through — the same instruction as a blue area, narrower. Without this
+     term studioCutRegions calls it a "line", it falls through to POLISHED,
+     and the white beside it gets punched instead. */
+  for (let i = 0; i < n; i++) if (cut[i] || bounded[i] || blue[i]) holes[i] = 1;
   studioEnlargeTopHoopHole(plan, holes);
   for (let i = 0; i < n; i++) {
     if (holes[i]) holePx++;
@@ -7104,6 +7149,1033 @@ function studioRetryNote(report, attempt, builtInHoop) {
   return lines.join("\n");
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE OPENINGS ARE CUT BY CODE — a POST-PROCESS, not a prompt change
+   ─────────────────────────────────────────────────────────────────────────
+   Everything below runs AFTER the gold charm is in hand. It never touches
+   the render prompt, the model, the attempt loop, the adjudicator or the cut
+   check; it takes the finished image and the greyscale map the customer
+   approved, and composites the declared through-cuts that the model did not
+   make. It is bounded by a deadline and wrapped so that every failure path —
+   no sharp, an unreadable map, a drifted silhouette, a thrown anything, an
+   exhausted clock — hands the render back exactly as it arrived.
+
+   Nothing here is tuned to one design. Every threshold is a share of the
+   charm's own measured size, the tones are read from each map rather than
+   assumed, and openings are found by connected components, so the shape, the
+   size and the NUMBER of cut-outs are all discovered rather than configured.
+   ═══════════════════════════════════════════════════════════════════════ */
+/* ═══════════ THE OPENINGS ARE CUT BY CODE, NOT ASKED FOR ═══════════════════
+   Measured on four renders of one charm: the grey map declared sixteen
+   through-cuts covering 44.8% of the piece, and three of the four came back
+   with exactly ONE of them — the hoop hole, 1.7% of the silhouette. The two
+   large triangles, 39.5% of the charm between them, were solid metal in
+   three renders out of four. Not drift; a whole instruction discarded.
+
+   It cannot be fixed by asking harder. Google's image API documents no seed,
+   no temperature and no mask parameter, so every render is an independent,
+   unbounded sample and the prompt's "OUTPUT CUT-OUT MASK = IMAGE 1 WHITE
+   MASK, exactly" is a request rather than a constraint. What CAN be relied
+   on is measured too: the render's outer silhouette already matches the
+   mask to about a pixel and a half. The model reproduces the outline and
+   discards the interior topology — which is precisely the situation where
+   you stop asking and start compositing.
+
+   Nothing below touches the prompt or the model. It runs once, after the
+   image is in hand, and it can only ever be skipped: every failure path
+   returns the render untouched.
+
+   ── THE RENDER IS NOT A RIGID COPY OF THE MASK ────────────────────────────
+   A global fit on the silhouette reaches IoU 0.974, which reads as aligned
+   and is not: the model does not transform the mask, it REDRAWS the charm
+   with its own slightly different internal proportions. The openings want
+   corrections that differ from each other by up to 8 px, and a weighted
+   affine field through those corrections scored no better than no correction
+   at all — 0.691 against 0.684. The distortion is local.
+
+   Matching every opening independently is not the answer either: six
+   identical fletching slots 36 px apart are a periodic pattern, and an
+   unbounded search lands each one on its neighbour with a perfect score.
+
+   So openings are matched as RIGID CLUSTERS — neighbours move together,
+   which is what the object does and what keeps the spacing inside a row
+   exactly as the mask drew it.
+
+   ── AND THE SIGNAL HAS A SIGN ─────────────────────────────────────────────
+   The first version matched each opening's boundary band against the
+   render's DARKNESS, reasoning that a cut the model failed to make comes
+   back as an engraved outline so the boundary is always there in ink. The
+   boundary is; the score still had no penalty for sliding, because "mean
+   darkness under a thin band" is maximised by moving that band into whatever
+   is darkest nearby — and on a charm that is the engraved field the opening
+   sits in. The fletching group slid 15 px into its own feather.
+
+   Measured, the polarity runs the other way: a declared opening comes back
+   BRIGHT, because the model renders the hole as raised polished metal rather
+   than cutting it, by +46 to +80 luminance against the engraved ring around
+   it. The score is that contrast, and it FALLS when the placement slides
+   into the engraving. On the fletching cluster it moves the answer from
+   dy+6 dx-15 at +31 to dy+5 dx+3 at +98.
+
+   Contrast also says how much to trust each answer. Anything under the
+   confidence line takes the consensus of the clusters that are sure, which
+   is measurably right where two weak clusters' own readings were not.
+
+   ── AN OPENING THAT WOULD SEVER THE CHARM IS NOT AN OPENING ───────────────
+   One mask declared a 126 px ring around the hoop, 6 px wide at its widest.
+   Cutting it drops the hoop off the body as a separate 10,575 px piece — a
+   charm that leaves the machine in two parts. Tracing artefact, not
+   instruction. Every declared opening is tested first and one whose removal
+   disconnects the metal is refused outright.
+
+   ── AND THE TONES ARE READ, NOT ASSUMED ───────────────────────────────────
+   This began by testing each pixel against a hardcoded 176/136 pair, and the
+   very next mask encoded engraving as 96: forty greys away, every engraved
+   pixel failed the metal test, and the engraved line network came back as a
+   274,000 px through-cut — 27.6% of that charm declared open. The fill law
+   does not need the constants. White is empty; anything else inside the
+   silhouette is metal, which is the same rule studioTopologyMask applies.  */
+
+const SCO_MIN_AREA      = 150;    /* smaller than this is speckle, not design */
+const SCO_BIG_AREA      = 5000;   /* at this size a feature is matched alone */
+const SCO_CLUSTER_FRAC  = 0.040;  /* neighbours within this share of the charm move together */
+const SCO_ALREADY_OPEN  = 0.40;   /* leave alone anything the render already cut this well */
+const SCO_ERODE_FRAC    = 0.0037; /* keep the cut this far inside the render's own metal */
+const SCO_RING_FRAC     = 0.026;  /* how wide a ring of surround the match reads */
+const SCO_MIN_CONTRAST  = 6;      /* below this there is no evidence to move anything */
+const SCO_SURE_CONTRAST = 60;     /* above this a cluster's own shift is trusted outright */
+const SCO_SEVER_FRAC    = 0.0016; /* a cut leaving a loose piece this big is refused */
+const SCO_RIM_FRAC      = 0.0040; /* width of the bright catch on the cut wall */
+const SCO_SHADOW_FRAC   = 0.0152; /* reach of the shadow on the metal beside a cut */
+const SCO_RIM_K         = 0.38;   /* how bright the cut wall gets */
+const SCO_SHADOW_K      = 0.26;   /* how deep the shadow beside it goes */
+const SCO_SEARCH_FRAC   = 0.42;   /* search radius, as a share of a cluster's own size */
+const SCO_SEARCH_CAP    = 0.037;  /* and never more than this share of the charm */
+const SCO_MATCH_SAMPLES = 5000;   /* pixels per mean in the match — see the note there */
+
+/* ── WHAT A HOLE LOOKS LIKE FROM THE INSIDE ────────────────────────────────
+   A hole the model cuts is NOT the plain ground showing through: the metal
+   shades the paper. Filling flat white was the whole reason a composited
+   hole read differently from one the model cut — 36 levels of ground against
+   33 on the metal side, where the two already agree.
+
+   Making the shading a function of DEPTH was wrong in a way only a second
+   sample shows. Fitted on a small hoop hole it gave a dip of 0.31 reaching
+   14 px, and applied to the big triangles it washed them grey to the middle.
+   Depth does not know that a small hole is close to metal in EVERY direction
+   while a large one is close to it only near the rim.
+
+   The quantity the two DO agree on is occlusion — how much metal surrounds
+   the point. Blurred at a small sigma and read inside the opening, a 88 px
+   triangle and a 33 px hole fall on one curve to within 1.3% of the ground:
+       occ        0.05   0.10   0.20   0.30   0.40   0.50
+       triangle   0.935  0.909  0.870  0.853  0.829  0.807
+       hoop hole  0.924  0.903  0.870  0.860  0.845  0.815
+   The fit reproduces both, and it goes to 1.0 as occlusion goes to 0 — so
+   the middle of a large opening is plain ground, never a grey wash.
+
+   AND THE BLUR SCALES WITH THE HOLE. One radius for the whole charm is
+   right for a large opening and wrong for a small one, because occlusion is
+   only meaningful relative to the hole it is measured in. At a single sigma
+   of 4.1 px the triangles read 254 at their centres — plain ground, which is
+   why they looked right — while every 5 px slot never fell below 0.22
+   occlusion anywhere inside it and came out at 208-214. Grey, and visibly
+   so. Each opening therefore gets a blur set by its OWN inscribed radius,
+   which makes the shadow a fixed fraction of the hole rather than a fixed
+   number of pixels: every opening then reads as ground through the middle
+   with the shading confined to its rim, whatever its size.                 */
+const SCO_OCC_CEIL  = 0.0094;   /* blur ceiling, as a share of the charm's size */
+const SCO_OCC_FRAC  = 0.050;    /* blur as a share of the opening's inscribed radius */
+const SCO_OCC_MIN   = 0.9;      /* px: the least blur any opening gets */
+const SCO_OCC_POW   = 0.50;     /* shape of the curve, fitted across both samples */
+const SCO_OCC_K     = 0.282;    /* its strength — refitted per render, see below */
+const SCO_OCC_K_LO  = 0.20;     /* the refit is clamped to the band the samples span */
+const SCO_OCC_K_HI  = 0.34;
+
+/* ── local morphology, 8-connected, so the port matches its reference ───── */
+function scoDilate8(mask, w, h, r) {
+  let a = mask;
+  for (let k = 0; k < r; k++) {
+    const b = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
+      for (let x = 0; x < w; x++) {
+        const x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1);
+        let on = 0;
+        for (let yy = y0; yy <= y1 && !on; yy++) {
+          for (let xx = x0; xx <= x1; xx++) if (a[yy * w + xx]) { on = 1; break; }
+        }
+        b[y * w + x] = on;
+      }
+    }
+    a = b;
+  }
+  return a;
+}
+function scoErode8(mask, w, h, r) {
+  let a = mask;
+  for (let k = 0; k < r; k++) {
+    const b = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (x === 0 || y === 0 || x === w - 1 || y === h - 1) { b[y * w + x] = 0; continue; }
+        let on = 1;
+        for (let yy = y - 1; yy <= y + 1 && on; yy++) {
+          for (let xx = x - 1; xx <= x + 1; xx++) if (!a[yy * w + xx]) { on = 0; break; }
+        }
+        b[y * w + x] = on;
+      }
+    }
+    a = b;
+  }
+  return a;
+}
+/* a square structuring element of side 2r+1, separably — the 9x9 closing the
+   render's own segmentation needs would be 4 passes of 3x3 otherwise */
+function scoBoxMorph(mask, w, h, r, grow) {
+  const t = new Uint8Array(w * h), o = new Uint8Array(w * h);
+  const want = grow ? 1 : 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let hit = grow ? 0 : 1;
+      const x0 = Math.max(0, x - r), x1 = Math.min(w - 1, x + r);
+      for (let xx = x0; xx <= x1; xx++) {
+        if ((mask[y * w + xx] ? 1 : 0) === want) { hit = want; break; }
+      }
+      t[y * w + x] = hit;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let hit = grow ? 0 : 1;
+      const y0 = Math.max(0, y - r), y1 = Math.min(h - 1, y + r);
+      for (let yy = y0; yy <= y1; yy++) {
+        if ((t[yy * w + x] ? 1 : 0) === want) { hit = want; break; }
+      }
+      o[y * w + x] = hit;
+    }
+  }
+  return o;
+}
+function scoClose(mask, w, h, r) {
+  return scoBoxMorph(scoBoxMorph(mask, w, h, r, true), w, h, r, false);
+}
+/* everything the border cannot reach is interior */
+function scoFillHoles(mask, w, h) {
+  const out = new Uint8Array(w * h);
+  const seen = new Uint8Array(w * h);
+  const stack = new Int32Array(w * h);
+  let top = 0;
+  const push = (i) => { if (!mask[i] && !seen[i]) { seen[i] = 1; stack[top++] = i; } };
+  for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  while (top) {
+    const i = stack[--top], x = i % w, y = (i / w) | 0;
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (y > 0) push(i - w);
+    if (y < h - 1) push(i + w);
+  }
+  for (let i = 0; i < w * h; i++) out[i] = (mask[i] || !seen[i]) ? 1 : 0;
+  return out;
+}
+
+/* THE CHARM IS NOT THE FRAME. A studio spec or render can carry furniture
+   that touches the edge of the picture — a caption chip, a thin border, a
+   neighbouring tile bleeding in — and any of it can be larger than the charm
+   and win "largest component" outright. Measured on a mask with a caption
+   strip: the silhouette came back as the whole 810x810 frame and every white
+   pixel of the background was read as a declared opening.
+   The charm floats: nothing that reaches the border is part of it. Dropped
+   only when what remains is still substantial, so a legitimately edge-to-edge
+   subject is never thrown away — that case is caught by the drift gate. */
+function scoDropBorderTouching(mask, w, h) {
+  const seen = new Uint8Array(w * h);
+  const stack = new Int32Array(w * h);
+  let top = 0;
+  const push = (i) => { if (mask[i] && !seen[i]) { seen[i] = 1; stack[top++] = i; } };
+  /* SEEDED FROM A MARGIN, NOT THE EDGE ITSELF. The furniture that caused
+     this was a frame rule inset by one pixel — border-adjacent but not
+     border-touching, so an edge-exact seed walked straight past it and the
+     fill-holes that followed filled the entire picture. The margin is a
+     share of the frame so it holds at any render size. */
+  const m = Math.max(2, Math.round(0.006 * Math.max(w, h)));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (x < m || y < m || x >= w - m || y >= h - m) push(y * w + x);
+    }
+  }
+  while (top) {
+    const i = stack[--top], x = i % w, y = (i / w) | 0;
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (y > 0) push(i - w);
+    if (y < h - 1) push(i + w);
+  }
+  let kept = 0, all = 0;
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    if (mask[i]) all++;
+    if (mask[i] && !seen[i]) { out[i] = 1; kept++; }
+  }
+  return kept >= all * 0.2 ? out : mask;
+}
+
+/* DILATION BY DISTANCE, not by iteration. A ring eleven pixels wide costs
+   eleven full-image passes as repeated 4-connected growth and one linear
+   pass as a distance field — and the field's ring is a true circle rather
+   than a diamond, which is what "within eleven pixels" was always meant to
+   say. */
+function scoInvert(mask, w, h) {
+  const inv = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) inv[i] = mask[i] ? 0 : 1;
+  return inv;
+}
+function scoWithin(mask, w, h, r) {
+  const d = studioEdt2d(scoInvert(mask, w, h), w, h);
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) out[i] = d[i] <= r ? 1 : 0;
+  return out;
+}
+
+/* ── reading the two pictures ──────────────────────────────────────────── */
+async function scoReadRaw(sharp, buf) {
+  const { data, info } = await sharp(buf).removeAlpha().raw()
+    .toBuffer({ resolveWithObject: true });
+  return { px: data, w: info.width, h: info.height, ch: info.channels };
+}
+
+/* THE RENDER'S OWN METAL. Saturation, not luminance: gold is the only
+   saturated thing in a white studio shot, and the contact shadow underneath
+   it is grey — so a saturation cut separates metal from both the ground and
+   its own shadow, which no brightness threshold does. */
+function scoRenderParts(px, w, h, ch) {
+  const n = w * h;
+  const sat = new Uint8Array(n), lum = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = i * ch, r = px[p], g = px[p + 1], b = px[p + 2];
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    sat[i] = mx ? (mx - mn) * 255 / mx > 32 ? 1 : 0 : 0;
+    lum[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+  }
+  const closed = scoClose(sat, w, h, 4);
+  const outer = studioLargestComponent(
+    scoFillHoles(scoDropBorderTouching(closed, w, h), w, h), w, h);
+  const metal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) metal[i] = (closed[i] && outer[i]) ? 1 : 0;
+  return { outer, metal, lum };
+}
+
+/* THE MASK, BY THE FILL LAW. White is empty; anything else inside the
+   silhouette is metal. The polished tone is then whatever most of that metal
+   is and engraving is whatever is meaningfully darker, both measured per
+   mask — so a spec at 136 and a spec at 96 read the same way. */
+function scoMaskParts(px, w, h, ch) {
+  const n = w * h;
+  const grey = new Uint8Array(n);
+  for (let i = 0; i < n; i++) grey[i] = px[i * ch];
+  const solid = new Uint8Array(n);
+  for (let i = 0; i < n; i++) solid[i] = grey[i] < 240 ? 1 : 0;
+  const closed = scoDilate8(solid, w, h, 1);
+  const metal0 = scoDropBorderTouching(scoErode8(closed, w, h, 1), w, h);
+  const outer = studioLargestComponent(scoFillHoles(metal0, w, h), w, h);
+  const metal = new Uint8Array(n);
+  for (let i = 0; i < n; i++) metal[i] = (metal0[i] && outer[i]) ? 1 : 0;
+
+  const hist = new Float64Array(256);
+  for (let i = 0; i < n; i++) if (metal[i]) hist[grey[i]]++;
+  let polish = 176, best = -1;
+  for (let v = 0; v < 256; v++) if (hist[v] > best) { best = hist[v]; polish = v; }
+  const span = Math.max(1, 255 - polish);
+
+  const holes = new Uint8Array(n), engraved = new Uint8Array(n);
+  const alpha = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!outer[i]) continue;
+    if (!metal[i]) holes[i] = 1;
+    if (grey[i] < polish - 20) engraved[i] = 1;
+    const a = (grey[i] - polish) / span;
+    alpha[i] = a < 0 ? 0 : a > 1 ? 1 : a;
+  }
+  return { outer, holes, alpha, engraved, polish };
+}
+
+/* ── placing a mask-space field into the render's frame ─────────────────── */
+/* BILINEAR, not a windowed sinc: the scale here is within a per cent of 1:1,
+   so the operation is almost pure sub-pixel translation and a sharper filter
+   would only ring along an edge that is already correct. */
+function scoPlace(field, mw, mh, box, mb, rb, sxN, syN, dx, dy, out, ow, oh, take) {
+  /* mask pixels to render pixels: the two bounding boxes give the base
+     scale, the fit's sx/sy correct it */
+  const kx = (rb.x1 - rb.x0 + 1) / (mb.x1 - mb.x0 + 1) * sxN;
+  const ky = (rb.y1 - rb.y0 + 1) / (mb.y1 - mb.y0 + 1) * syN;
+  const cw = box.x1 - box.x0 + 1, chh = box.y1 - box.y0 + 1;
+  const tw = Math.max(2, Math.round(cw * kx)), th = Math.max(2, Math.round(chh * ky));
+  const crop = new Float32Array(cw * chh);
+  for (let y = 0; y < chh; y++) {
+    const sy = (y + box.y0) * mw;
+    for (let x = 0; x < cw; x++) crop[y * cw + x] = field[sy + (x + box.x0)];
+  }
+  const small = studioBilinearField(crop, cw, chh, tw, th);
+  /* WHERE THE CROP SITS INSIDE THE MASK'S OWN BOX, scaled — not at the
+     render box's origin. Dropping this term put every opening at the top
+     left corner of the charm, where none of them are. */
+  const tx = Math.round((box.x0 - mb.x0) * kx) + rb.x0 + dx;
+  const ty = Math.round((box.y0 - mb.y0) * ky) + rb.y0 + dy;
+  /* the rectangle actually written, so a caller can read back only what it
+     changed instead of walking the whole frame per opening */
+  const hit = {
+    x0: Math.max(0, tx), y0: Math.max(0, ty),
+    x1: Math.min(ow - 1, tx + tw - 1), y1: Math.min(oh - 1, ty + th - 1),
+  };
+  for (let y = 0; y < th; y++) {
+    const oy = ty + y;
+    if (oy < 0 || oy >= oh) continue;
+    const row = oy * ow;
+    for (let x = 0; x < tw; x++) {
+      const ox = tx + x;
+      if (ox < 0 || ox >= ow) continue;
+      const v = small[y * tw + x];
+      if (take === "max") { if (v > out[row + ox]) out[row + ox] = v; }
+      else out[row + ox] = v;
+    }
+  }
+  return hit;
+}
+
+/* ── THE GLOBAL FIT ────────────────────────────────────────────────────────
+   Registration in two stages, because one transform cannot do the job and
+   pretending otherwise is what put the first version's cuts a few pixels off
+   everywhere. This is the coarse half: scale in x and y plus a translation,
+   fitted on the outer silhouette alone, which the model reproduces well.
+
+   It runs on a downsampled pair. The fine half — per-cluster, on contrast —
+   works in full-resolution pixels and is what actually lands each opening,
+   so the only thing asked of this stage is to get within the clusters' own
+   search radius. Doing it at 1:1 would cost a hundred times as much for a
+   correction the next stage makes anyway.                                  */
+function scoGlobalFit(maskOuter, mw, mh, mb, renderOuter, rw, rh, rb) {
+  const SIDE = 224;
+  const shrink = (mask, w, h, box) => {
+    const bw = box.x1 - box.x0 + 1, bh = box.y1 - box.y0 + 1;
+    const f = new Float32Array(bw * bh);
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) f[y * bw + x] = mask[(y + box.y0) * w + (x + box.x0)] ? 1 : 0;
+    }
+    return { f, bw, bh };
+  };
+  const M = shrink(maskOuter, mw, mh, mb);
+  const R = shrink(renderOuter, rw, rh, rb);
+  /* both cropped to their own bounding box, then to one common grid: the
+     bounding-box map is the identity in this frame, so the search below is
+     purely the correction to it */
+  const rSmall = studioBilinearField(R.f, R.bw, R.bh, SIDE, SIDE);
+  /* THE SET PIXELS, AS A LIST. The score only ever asks questions about the
+     render's own silhouette and about totals, so walking all 50,176 cells of
+     the grid 1,234 times to look at the same 25,000 of them is most of this
+     step's cost for none of its answer. */
+  const aX = [], aY = [];
+  for (let y = 0; y < SIDE; y++) {
+    for (let x = 0; x < SIDE; x++) if (rSmall[y * SIDE + x] > 0.5) { aX.push(x); aY.push(y); }
+  }
+  const ax = Int32Array.from(aX), ay = Int32Array.from(aY), aCount = ax.length;
+
+  /* THE RESAMPLE DEPENDS ON THE SCALE, NOT THE SHIFT. Rebuilding it inside
+     the translation loop cost 1,225 resamples where 25 were needed, and was
+     four fifths of the whole step's time. */
+  const cache = new Map();
+  const scaled = (sx, sy) => {
+    const key = sx.toFixed(3) + "," + sy.toFixed(3);
+    let v = cache.get(key);
+    if (!v) {
+      const tw = Math.max(4, Math.round(SIDE * sx)), th = Math.max(4, Math.round(SIDE * sy));
+      const m = studioBilinearField(M.f, M.bw, M.bh, tw, th);
+      const bin = new Uint8Array(tw * th);
+      /* an integral image of the mask side, so "how many of its pixels are
+         inside the window at this shift" is four lookups instead of a scan —
+         which is the only other term the union needs */
+      const sum = new Int32Array((tw + 1) * (th + 1));
+      for (let y = 0; y < th; y++) {
+        let run = 0;
+        for (let x = 0; x < tw; x++) {
+          const on = m[y * tw + x] > 0.5 ? 1 : 0;
+          bin[y * tw + x] = on;
+          run += on;
+          sum[(y + 1) * (tw + 1) + (x + 1)] = sum[y * (tw + 1) + (x + 1)] + run;
+        }
+      }
+      v = { bin, sum, tw, th };
+      cache.set(key, v);
+    }
+    return v;
+  };
+  const scoreAt = (sx, sy, dx, dy) => {
+    const { bin, sum, tw, th } = scaled(sx, sy);
+    let inter = 0;
+    for (let k = 0; k < aCount; k++) {
+      const my = ay[k] - dy;
+      if (my < 0 || my >= th) continue;
+      const mx = ax[k] - dx;
+      if (mx < 0 || mx >= tw) continue;
+      inter += bin[my * tw + mx];
+    }
+    /* mask pixels visible in the window: the rectangle [x0,x1) x [y0,y1) of
+       mask coordinates that maps inside the SIDE-square grid */
+    const mx0 = Math.max(0, -dx), mx1 = Math.min(tw, SIDE - dx);
+    const my0 = Math.max(0, -dy), my1 = Math.min(th, SIDE - dy);
+    let bVis = 0;
+    if (mx1 > mx0 && my1 > my0) {
+      const S = tw + 1;
+      bVis = sum[my1 * S + mx1] - sum[my0 * S + mx1] - sum[my1 * S + mx0] + sum[my0 * S + mx0];
+    }
+    const uni = aCount + bVis - inter;
+    return uni ? inter / uni : 0;
+  };
+  let best = { iou: -1, sx: 1, sy: 1, dx: 0, dy: 0 };
+  for (let sx = 0.975; sx <= 1.0301; sx += 0.011) {
+    for (let sy = 0.975; sy <= 1.0301; sy += 0.011) {
+      for (let dx = -6; dx <= 6; dx += 2) {
+        for (let dy = -6; dy <= 6; dy += 2) {
+          const v = scoreAt(sx, sy, dx, dy);
+          if (v > best.iou) best = { iou: v, sx, sy, dx, dy };
+        }
+      }
+    }
+  }
+  for (let dx = best.dx - 1; dx <= best.dx + 1; dx++) {
+    for (let dy = best.dy - 1; dy <= best.dy + 1; dy++) {
+      const v = scoreAt(best.sx, best.sy, dx, dy);
+      if (v > best.iou) best = { iou: v, sx: best.sx, sy: best.sy, dx, dy };
+    }
+  }
+  /* back into render pixels: the search grid is SIDE wide, the render's own
+     bounding box is not */
+  const kx = (rb.x1 - rb.x0 + 1) / SIDE, ky = (rb.y1 - rb.y0 + 1) / SIDE;
+  return {
+    iou: best.iou,
+    sx: best.sx, sy: best.sy,
+    dx: Math.round(best.dx * kx), dy: Math.round(best.dy * ky),
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE COMPOSITOR
+
+   Returns { buf, report }. `buf` is the render untouched on every failure
+   path — a missing sharp, an unreadable mask, a drifted design, a thrown
+   anything. This step may improve a render and may decline to; it may never
+   cost one.                                                                */
+async function studioCompositeOpenings(renderBuf, specBuf, opts) {
+  const sharp = studioSharp();
+  const o = opts || {};
+  const t0 = Date.now();
+  const deadline = t0 + Math.max(2000, Number(o.budgetMs) || 25000);
+  const report = {
+    ran: false, why: "", ms: 0,
+    declared: 0, refused: 0, composited: 0, leftAlone: 0,
+    iou: null, openFrac: null, declaredFrac: null, shadeK: null, clusters: 0,
+  };
+  if (!sharp || !renderBuf?.length || !specBuf?.length) {
+    report.why = "no_inputs";
+    return { buf: renderBuf, report };
+  }
+  try {
+    const R = await scoReadRaw(sharp, renderBuf);
+    const M = await scoReadRaw(sharp, specBuf);
+    const rn = R.w * R.h, mn = M.w * M.h;
+
+    const rp = scoRenderParts(R.px, R.w, R.h, R.ch);
+    const mp = scoMaskParts(M.px, M.w, M.h, M.ch);
+    const rb = studioBBox(rp.outer, R.w, R.h);
+    const mb = studioBBox(mp.outer, M.w, M.h);
+    if (!rb || !mb || !rb.w || !mb.w) {
+      report.why = "no_silhouette";
+      return { buf: renderBuf, report };
+    }
+    /* one number for the whole charm, so every threshold below is a share of
+       the object rather than a pixel count that only suits one resolution */
+    let roCount = 0;
+    for (let i = 0; i < rn; i++) if (rp.outer[i]) roCount++;
+    const scale = Math.sqrt(Math.max(1, roCount));
+    const px = (frac, min) => Math.max(min == null ? 1 : min, frac * scale);
+
+    /* ── the declared openings, and the ones that are not openings ──────── */
+    const lab = studioLabel(mp.holes, M.w, M.h);
+    const area = new Float64Array(lab.count + 1);
+    for (let i = 0; i < mn; i++) if (lab.labels[i]) area[lab.labels[i]]++;
+    const minArea = Math.max(60, 0.00025 * mb.w * mb.h);
+    const severMin = Math.max(120, SCO_SEVER_FRAC * mb.w * mb.h);
+    /* one representative pixel and one bounding box per label, taken in the
+       pass that was already walking every pixel */
+    const seed = new Int32Array(lab.count + 1).fill(-1);
+    const bx0 = new Int32Array(lab.count + 1).fill(1 << 29);
+    const by0 = new Int32Array(lab.count + 1).fill(1 << 29);
+    const bx1 = new Int32Array(lab.count + 1).fill(-1);
+    const by1 = new Int32Array(lab.count + 1).fill(-1);
+    for (let y = 0; y < M.h; y++) {
+      for (let x = 0; x < M.w; x++) {
+        const L = lab.labels[y * M.w + x];
+        if (!L) continue;
+        if (seed[L] < 0) seed[L] = y * M.w + x;
+        if (x < bx0[L]) bx0[L] = x;
+        if (x > bx1[L]) bx1[L] = x;
+        if (y < by0[L]) by0[L] = y;
+        if (y > by1[L]) by1[L] = y;
+      }
+    }
+    const keep = [];
+    const isKept = new Uint8Array(lab.count + 1);
+    /* THE SEVER TEST IS EXACT BUT NOT UNIVERSAL. Labelling the whole charm
+       once per opening is the most expensive thing here, and only a long
+       thin opening can disconnect anything — a solid blob cannot, and every
+       ordinary cut-out is a solid blob. So the cheap shape question is asked
+       first and the exact one only of what could plausibly fail it: the
+       hoop's phantom ring fills 10% of its own bounding box, a triangle
+       fills 45%. */
+    const holeDist = studioEdt2d(mp.holes, M.w, M.h);
+    for (let L = 1; L <= lab.count; L++) {
+      if (area[L] < minArea) continue;
+      const bw = bx1[L] - bx0[L] + 1, bh = by1[L] - by0[L] + 1;
+      let rIn = 0;
+      for (let y = by0[L]; y <= by1[L]; y++) {
+        for (let x = bx0[L]; x <= bx1[L]; x++) {
+          const i = y * M.w + x;
+          if (lab.labels[i] === L && holeDist[i] > rIn) rIn = holeDist[i];
+        }
+      }
+      if (area[L] < 0.35 * bw * bh && rIn < 0.12 * Math.max(bw, bh)) {
+        const cut = new Uint8Array(mn);
+        for (let i = 0; i < mn; i++) cut[i] = (mp.outer[i] && lab.labels[i] !== L) ? 1 : 0;
+        const sub = studioLabel(cut, M.w, M.h);
+        if (sub.count > 1) {
+          const sz = new Float64Array(sub.count + 1);
+          for (let i = 0; i < mn; i++) if (sub.labels[i]) sz[sub.labels[i]]++;
+          const sorted = Array.from(sz.slice(1)).sort((a, b) => b - a);
+          if (sorted.length > 1 && sorted[1] > severMin) { report.refused++; continue; }
+        }
+      }
+      keep.push(L);
+      isKept[L] = 1;
+    }
+    report.declared = keep.length;
+    if (!keep.length) {
+      report.why = "nothing_declared";
+      report.ms = Date.now() - t0;
+      return { buf: renderBuf, report };
+    }
+    let declaredPx = 0, moPx = 0;
+    for (let i = 0; i < mn; i++) {
+      if (isKept[lab.labels[i]]) declaredPx++;
+      if (mp.outer[i]) moPx++;
+    }
+    report.declaredFrac = moPx ? declaredPx / moPx : null;
+
+    /* ── coarse registration ────────────────────────────────────────────── */
+    const fit = scoGlobalFit(mp.outer, M.w, M.h, mb, rp.outer, R.w, R.h, rb);
+    report.iou = Math.round(fit.iou * 1e4) / 1e4;
+    if (fit.iou < (Number(o.minIoU) || 0.90)) {
+      /* THE MODEL DREW A DIFFERENT CHARM. Nothing downstream rescues that,
+         and cutting a mask's openings into someone else's silhouette makes
+         it worse rather than better. */
+      report.why = "silhouette_drift";
+      report.ms = Date.now() - t0;
+      return { buf: renderBuf, report };
+    }
+
+    /* ── clusters: large features alone, small ones with their neighbours ─ */
+    const bigArea = Math.max(SCO_BIG_AREA, 0.028 * mb.w * mb.h);
+    const smallMask = new Uint8Array(mn);
+    for (let i = 0; i < mn; i++) {
+      const L = lab.labels[i];
+      if (L && isKept[L] && area[L] < bigArea) smallMask[i] = 1;
+    }
+    const clusterR = Math.max(4, SCO_CLUSTER_FRAC * Math.sqrt(mb.w * mb.h) / 2);
+    const cl = studioLabel(scoWithin(smallMask, M.w, M.h, clusterR), M.w, M.h);
+    const groups = new Map();
+    for (const L of keep) {
+      const key = area[L] >= bigArea ? "solo:" + L : "cl:" + cl.labels[seed[L]];
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(L);
+    }
+    report.clusters = groups.size;
+
+    /* ── the fine half: each cluster, matched on contrast ───────────────── */
+    const ringR = Math.max(3, px(SCO_RING_FRAC));
+    const wants = [];
+    for (const [key, members] of groups) {
+      if (Date.now() > deadline) throw new Error("budget");
+      const inGroup = new Uint8Array(lab.count + 1);
+      let gx0 = M.w, gy0 = M.h, gx1 = -1, gy1 = -1;
+      for (const L of members) {
+        inGroup[L] = 1;
+        if (bx0[L] < gx0) gx0 = bx0[L];
+        if (by0[L] < gy0) gy0 = by0[L];
+        if (bx1[L] > gx1) gx1 = bx1[L];
+        if (by1[L] > gy1) gy1 = by1[L];
+      }
+      /* EVERY MASK-SIDE OPERATION HERE IS BOUNDED BY THE CLUSTER'S OWN BOX
+         plus the ring it reads. Run over the whole frame instead and a charm
+         with a dozen clusters pays for a dozen full-image distance fields to
+         answer a question about a twenty-pixel slot. */
+      const pad = Math.ceil(ringR) + 3;
+      const box = {
+        x0: Math.max(0, gx0 - pad), y0: Math.max(0, gy0 - pad),
+        x1: Math.min(M.w - 1, gx1 + pad), y1: Math.min(M.h - 1, gy1 + pad),
+      };
+      const bw = box.x1 - box.x0 + 1, bh = box.y1 - box.y0 + 1;
+      const selB = new Uint8Array(bw * bh);
+      for (let y = 0; y < bh; y++) {
+        const src = (y + box.y0) * M.w + box.x0;
+        for (let x = 0; x < bw; x++) if (inGroup[lab.labels[src + x]]) selB[y * bw + x] = 1;
+      }
+      const growB = scoWithin(selB, bw, bh, ringR);
+      const innerB = scoErode8(selB, bw, bh, 1);
+      const skinB = scoDilate8(selB, bw, bh, 1);
+      const sel = new Uint8Array(mn), grow = new Uint8Array(mn);
+      const inner = new Uint8Array(mn), skin = new Uint8Array(mn);
+      for (let y = 0; y < bh; y++) {
+        const dst = (y + box.y0) * M.w + box.x0, s = y * bw;
+        for (let x = 0; x < bw; x++) {
+          sel[dst + x] = selB[s + x]; grow[dst + x] = growB[s + x];
+          inner[dst + x] = innerB[s + x]; skin[dst + x] = skinB[s + x];
+        }
+      }
+      /* THE REFERENCE IS THE ENGRAVING, not whatever metal happens to be
+         nearby: a binding slot sits in a narrow engraved band with bright
+         polish either side, and including that polish dilutes the very
+         contrast being measured. */
+      let ringAll = 0, ringEng = 0;
+      const ring = new Uint8Array(mn);
+      for (let y = box.y0; y <= box.y1; y++) {
+        const row = y * M.w;
+        for (let x = box.x0; x <= box.x1; x++) {
+          const i = row + x;
+          if (grow[i] && !skin[i]) { ring[i] = 1; ringAll++; if (mp.engraved[i]) ringEng++; }
+        }
+      }
+      if (ringEng >= 0.25 * ringAll) {
+        for (let y = box.y0; y <= box.y1; y++) {
+          const row = y * M.w;
+          for (let x = box.x0; x <= box.x1; x++) {
+            const i = row + x;
+            if (ring[i] && !mp.engraved[i]) ring[i] = 0;
+          }
+        }
+      }
+      const gb = box;
+      const innerF = new Float32Array(mn), ringF = new Float32Array(mn);
+      for (let y = box.y0; y <= box.y1; y++) {
+        const row = y * M.w;
+        for (let x = box.x0; x <= box.x1; x++) { innerF[row + x] = inner[row + x]; ringF[row + x] = ring[row + x]; }
+      }
+      const canvasI = new Float32Array(rn), canvasR = new Float32Array(rn);
+      const hitI = scoPlace(innerF, M.w, M.h, gb, mb, rb, fit.sx, fit.sy, fit.dx, fit.dy, canvasI, R.w, R.h, "set");
+      const hitR = scoPlace(ringF, M.w, M.h, gb, mb, rb, fit.sx, fit.sy, fit.dx, fit.dy, canvasR, R.w, R.h, "set");
+
+      /* only the rectangle the two fields were written into can hold a set
+         pixel, so the census reads that instead of the whole frame */
+      const scanX0 = Math.max(0, Math.min(hitI.x0, hitR.x0));
+      const scanY0 = Math.max(0, Math.min(hitI.y0, hitR.y0));
+      const scanX1 = Math.min(R.w - 1, Math.max(hitI.x1, hitR.x1));
+      const scanY1 = Math.min(R.h - 1, Math.max(hitI.y1, hitR.y1));
+      const idxIa = [], idxRa = [];
+      for (let y = scanY0; y <= scanY1; y++) {
+        const row = y * R.w;
+        for (let x = scanX0; x <= scanX1; x++) {
+          const i = row + x;
+          if (canvasI[i] > 0.5) idxIa.push(i);
+          else if (canvasR[i] > 0.5 && rp.metal[i]) idxRa.push(i);
+        }
+      }
+      /* A MEAN DOES NOT NEED EVERY PIXEL. The search evaluates the same two
+         means at up to 2,809 offsets, so a 30,000 px triangle costs 84
+         million reads to answer a question a fixed, evenly spaced subsample
+         answers to a fraction of a level. The subsample is the SAME set at
+         every offset, so whatever it gets wrong it gets wrong identically
+         across the search and cancels out of the comparison that picks the
+         winner. */
+      const thin = (a) => {
+        if (a.length <= SCO_MATCH_SAMPLES) return Int32Array.from(a);
+        const step = a.length / SCO_MATCH_SAMPLES;
+        const out = new Int32Array(SCO_MATCH_SAMPLES);
+        for (let k = 0; k < SCO_MATCH_SAMPLES; k++) out[k] = a[Math.floor(k * step)];
+        return out;
+      };
+      const idxI = thin(idxIa), idxR = thin(idxRa);
+      const lum = rp.lum;
+      const gbw = Math.round((gb.x1 - gb.x0 + 1) * (rb.x1 - rb.x0 + 1) / (mb.x1 - mb.x0 + 1));
+      const gbh = Math.round((gb.y1 - gb.y0 + 1) * (rb.y1 - rb.y0 + 1) / (mb.y1 - mb.y0 + 1));
+      const rad = Math.round(Math.min(
+        Math.max(4, SCO_SEARCH_FRAC * Math.min(gbw, gbh)),
+        Math.max(6, SCO_SEARCH_CAP * scale)
+      ));
+      const contrast = (ddy, ddx) => {
+        if (idxI.length < 10 || idxR.length < 10) return -1e9;
+        let si = 0, ni = 0, sr = 0, nr = 0;
+        const off = ddy * R.w + ddx;
+        for (let k = 0, K = idxI.length; k < K; k++) {
+          const j = idxI[k] + off;
+          if (j < 0 || j >= rn) continue;
+          si += lum[j]; ni++;
+        }
+        for (let k = 0, K = idxR.length; k < K; k++) {
+          const j = idxR[k] + off;
+          if (j < 0 || j >= rn) continue;
+          sr += lum[j]; nr++;
+        }
+        if (ni < 10 || nr < 10) return -1e9;
+        return si / ni - sr / nr;
+      };
+      const base = contrast(0, 0);
+      let bs = -1e9, by = 0, bx = 0;
+      for (let ddy = -rad; ddy <= rad; ddy++) {
+        for (let ddx = -rad; ddx <= rad; ddx++) {
+          const v = contrast(ddy, ddx);
+          if (v > bs) { bs = v; by = ddy; bx = ddx; }
+        }
+      }
+      const ok = bs > Math.max(base, SCO_MIN_CONTRAST);
+      wants.push({ key, members, dy: ok ? by : 0, dx: ok ? bx : 0, score: bs });
+    }
+
+    /* A WEAK READING IS NOT A READING. Below the confidence line a cluster
+       takes the consensus of the ones that are sure, which is measurably
+       right where two weak clusters' own answers were not. */
+    const sure = wants.filter((w) => w.score >= SCO_SURE_CONTRAST);
+    let cy = 0, cx = 0;
+    if (sure.length) {
+      const ys = sure.map((w) => w.dy).sort((a, b) => a - b);
+      const xs = sure.map((w) => w.dx).sort((a, b) => a - b);
+      cy = ys[(ys.length - 1) >> 1];
+      cx = xs[(xs.length - 1) >> 1];
+    }
+    for (const w of wants) if (w.score < SCO_SURE_CONTRAST) { w.dy = cy; w.dx = cx; }
+
+    /* ── place each opening, skipping the ones already cut ──────────────── */
+    const alpha = new Float32Array(rn);
+    const theirs = new Uint8Array(rn);
+    for (const w of wants) {
+      if (Date.now() > deadline) throw new Error("budget");
+      for (const L of w.members) {
+        const ob = {
+          x0: Math.max(0, bx0[L] - 2), y0: Math.max(0, by0[L] - 2),
+          x1: Math.min(M.w - 1, bx1[L] + 2), y1: Math.min(M.h - 1, by1[L] + 2),
+        };
+        const ow2 = ob.x1 - ob.x0 + 1, oh2 = ob.y1 - ob.y0 + 1;
+        const oneB = new Uint8Array(ow2 * oh2);
+        for (let y = 0; y < oh2; y++) {
+          const row = (y + ob.y0) * M.w + ob.x0;
+          for (let x = 0; x < ow2; x++) if (lab.labels[row + x] === L) oneB[y * ow2 + x] = 1;
+        }
+        const skinB = scoDilate8(oneB, ow2, oh2, 1);
+        const fld = new Float32Array(mn);
+        for (let y = 0; y < oh2; y++) {
+          const row = (y + ob.y0) * M.w + ob.x0;
+          for (let x = 0; x < ow2; x++) if (skinB[y * ow2 + x]) fld[row + x] = mp.alpha[row + x];
+        }
+        const probe = new Float32Array(rn);
+        const hit = scoPlace(fld, M.w, M.h, ob, mb, rb, fit.sx, fit.sy, fit.dx, fit.dy,
+                             probe, R.w, R.h, "set");
+        let hard = 0, solid = 0;
+        for (let y = hit.y0; y <= hit.y1; y++) {
+          const row = y * R.w;
+          for (let x = hit.x0; x <= hit.x1; x++) {
+            const i = row + x;
+            if (probe[i] > 0.5) { hard++; if (rp.metal[i]) solid++; }
+          }
+        }
+        if (!hard) continue;
+        const off = (w.dy * R.w + w.dx);
+        if (solid / hard < 1 - SCO_ALREADY_OPEN) {
+          report.leftAlone++;
+          for (let y = hit.y0; y <= hit.y1; y++) {
+            const row = y * R.w;
+            for (let x = hit.x0; x <= hit.x1; x++) {
+              const i = row + x, j = i + off;
+              if (probe[i] > 0.5 && j >= 0 && j < rn) theirs[j] = 1;
+            }
+          }
+          continue;
+        }
+        report.composited++;
+        for (let y = hit.y0; y <= hit.y1; y++) {
+          const row = y * R.w;
+          for (let x = hit.x0; x <= hit.x1; x++) {
+            const i = row + x, v = probe[i];
+            if (v <= 0) continue;
+            const j = i + off;
+            if (j < 0 || j >= rn) continue;
+            if (v > alpha[j]) alpha[j] = v;
+          }
+        }
+      }
+    }
+    if (!report.composited) {
+      report.why = report.leftAlone ? "already_cut" : "nothing_placed";
+      report.ms = Date.now() - t0;
+      return { buf: renderBuf, report };
+    }
+
+    /* THE SAFETY MARGIN IS A DISTANCE, NOT A BINARY MULTIPLY — a binary
+       erosion stamps a hard staircase wherever it bites, and a staircase on
+       a curve is the one thing that reads as pasted-on. */
+    if (Date.now() > deadline) throw new Error("budget");
+    const erode = px(SCO_ERODE_FRAC, 1.0);
+    const dIn = studioEdt2d(rp.outer, R.w, R.h);
+    for (let i = 0; i < rn; i++) {
+      const room = dIn[i] - erode;
+      const f = room <= 0 ? 0 : room >= 1 ? 1 : room;
+      alpha[i] *= f;
+    }
+
+    /* the cut edge as a signed distance, so rim and shadow are smooth
+       functions of it and neither can step */
+    const hard = new Uint8Array(rn);
+    for (let i = 0; i < rn; i++) hard[i] = alpha[i] > 0.5 ? 1 : 0;
+    const sdf = studioSignedField(hard, R.w, R.h);
+    const rimPx = px(SCO_RIM_FRAC, 1.2), shPx = px(SCO_SHADOW_FRAC, 3);
+
+    /* ── the ground inside a hole, shaded by the metal around it ────────── */
+    let cr = 0, cg = 0, cb = 0, cn = 0;
+    const corner = 24;
+    for (let y = 0; y < Math.min(corner, R.h); y++) {
+      for (let x = 0; x < Math.min(corner, R.w); x++) {
+        const p = (y * R.w + x) * R.ch; cr += R.px[p]; cg += R.px[p + 1]; cb += R.px[p + 2]; cn++;
+      }
+      for (let x = Math.max(0, R.w - corner); x < R.w; x++) {
+        const p = (y * R.w + x) * R.ch; cr += R.px[p]; cg += R.px[p + 1]; cb += R.px[p + 2]; cn++;
+      }
+    }
+    cr /= cn || 1; cg /= cn || 1; cb /= cn || 1;
+    const plain = 0.299 * cr + 0.587 * cg + 0.114 * cb;
+
+    const metalAfter = new Float32Array(rn);
+    for (let i = 0; i < rn; i++) metalAfter[i] = (rp.outer[i] && !hard[i]) ? 1 : 0;
+    const ceil = Math.max(1.5, SCO_OCC_CEIL * scale);
+
+    /* EACH OPENING GETS A BLUR SET BY ITS OWN INSCRIBED RADIUS. One radius
+       for the whole charm leaves a 5 px slot occluded through and through
+       while a 88 px triangle reads plain ground at its centre — the same
+       shading rule, opposite results, purely because of size. */
+    if (Date.now() > deadline) throw new Error("budget");
+    const olab = studioLabel(hard, R.w, R.h);
+    const oIn = studioEdt2d(hard, R.w, R.h);
+    const rIn = new Float64Array(olab.count + 1);
+    for (let i = 0; i < rn; i++) {
+      const L = olab.labels[i];
+      if (L && oIn[i] > rIn[L]) rIn[L] = oIn[i];
+    }
+    const want = new Float32Array(rn);
+    for (let i = 0; i < rn; i++) {
+      const L = olab.labels[i];
+      want[i] = L ? Math.min(ceil, Math.max(SCO_OCC_MIN, SCO_OCC_FRAC * rIn[L])) : 0;
+    }
+    /* carry each opening's own figure a little way onto the metal, so the
+       soft edge of the alpha is shaded by the hole it belongs to */
+    const spread = Math.max(2, Math.round(px(0.005, 2)));
+    for (let pass = 0; pass < spread; pass++) {
+      const nx = new Float32Array(rn);
+      for (let y = 0; y < R.h; y++) {
+        for (let x = 0; x < R.w; x++) {
+          const i = y * R.w + x;
+          let m = want[i];
+          if (x > 0 && want[i - 1] > m) m = want[i - 1];
+          if (x < R.w - 1 && want[i + 1] > m) m = want[i + 1];
+          if (y > 0 && want[i - R.w] > m) m = want[i - R.w];
+          if (y < R.h - 1 && want[i + R.w] > m) m = want[i + R.w];
+          nx[i] = m;
+        }
+      }
+      want.set(nx);
+    }
+    const bands = [];
+    for (let i = 0; i < rn; i++) {
+      if (!want[i]) continue;
+      const q = Math.round(want[i] * 2) / 2;
+      if (bands.indexOf(q) < 0) bands.push(q);
+    }
+    const occ = new Float32Array(rn);
+    for (const bs of bands) {
+      if (Date.now() > deadline) throw new Error("budget");
+      const g = studioGaussField(metalAfter, R.w, R.h, Math.max(0.6, bs));
+      for (let i = 0; i < rn; i++) if (Math.abs(want[i] - bs) < 0.26) occ[i] = g[i];
+    }
+
+    /* the strength is something the render can be ASKED rather than told:
+       when it cut any opening itself, that opening is a sample of its own
+       answer. Clamped narrowly on purpose — the fit is only as good as its
+       sample, and a render whose one self-cut opening is small and deep
+       reads darker than the curve expects. */
+    if (Date.now() > deadline) throw new Error("budget");
+    let shadeK = SCO_OCC_K;
+    let theirsPx = 0;
+    for (let i = 0; i < rn; i++) if (theirs[i]) theirsPx++;
+    if (theirsPx >= Math.max(400, 0.0015 * roCount) && plain > 1) {
+      let rT = 0;
+      const tIn = studioEdt2d(theirs, R.w, R.h);
+      for (let i = 0; i < rn; i++) if (tIn[i] > rT) rT = tIn[i];
+      const sigT = Math.min(ceil, Math.max(SCO_OCC_MIN, SCO_OCC_FRAC * rT));
+      const mT = new Float32Array(rn);
+      for (let i = 0; i < rn; i++) mT[i] = (rp.outer[i] && !theirs[i]) ? 1 : 0;
+      const gT = studioGaussField(mT, R.w, R.h, sigT);
+      const est = [];
+      for (let i = 0; i < rn; i++) {
+        if (!theirs[i] || gT[i] <= 0.02) continue;
+        est.push((1 - rp.lum[i] / plain) / Math.pow(gT[i], SCO_OCC_POW));
+      }
+      if (est.length > 400) {
+        est.sort((a, b) => a - b);
+        const med = est[est.length >> 1];
+        shadeK = Math.min(SCO_OCC_K_HI, Math.max(SCO_OCC_K_LO, med));
+      }
+    }
+    report.shadeK = Math.round(shadeK * 1e3) / 1e3;
+
+    /* ── paint it ───────────────────────────────────────────────────────── */
+    const out = Buffer.alloc(rn * 3);
+    for (let i = 0; i < rn; i++) {
+      const p = i * R.ch;
+      let r = R.px[p], g = R.px[p + 1], b = R.px[p + 2];
+      const d = sdf[i];                       /* negative inside the opening */
+      if (d > -0.4 && d < shPx * 1.2) {
+        const t = (d - 0.6) / rimPx;
+        const rim = Math.exp(-t * t);
+        const sh = d > 0 ? Math.pow(Math.max(0, 1 - d / shPx), 2) : 0;
+        const k = 1 - SCO_SHADOW_K * sh;
+        r *= k; g *= k; b *= k;
+        r += (255 - r) * SCO_RIM_K * rim;
+        g += (255 - g) * SCO_RIM_K * rim;
+        b += (255 - b) * SCO_RIM_K * rim;
+      }
+      const a = alpha[i];
+      if (a > 0) {
+        const shade = Math.max(0, 1 - shadeK * Math.pow(Math.min(1, Math.max(0, occ[i])), SCO_OCC_POW));
+        r = r * (1 - a) + cr * shade * a;
+        g = g * (1 - a) + cg * shade * a;
+        b = b * (1 - a) + cb * shade * a;
+      }
+      const q = i * 3;
+      out[q] = r < 0 ? 0 : r > 255 ? 255 : r;
+      out[q + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+      out[q + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
+    }
+    let openPx = 0;
+    for (let i = 0; i < rn; i++) if (hard[i] || theirs[i]) openPx++;
+    report.openFrac = roCount ? Math.round(openPx / roCount * 1e4) / 1e4 : null;
+
+    const buf = await sharp(out, { raw: { width: R.w, height: R.h, channels: 3 } })
+      .png().toBuffer();
+    report.ran = true;
+    report.ms = Date.now() - t0;
+    return { buf, report };
+  } catch (err) {
+    report.why = String(err?.message || err).slice(0, 80);
+    report.ms = Date.now() - t0;
+    return { buf: renderBuf, report };
+  }
+}
+
 /* ── kind: custom_charm_render ────────────────────────────────────────────
  * The approved drawing becomes the charm: the Charm Maker's gold→line-art
  * conversion run in reverse, with the drawing as structural truth. Costs one
@@ -7158,7 +8230,7 @@ async function studioFailRender(vRef, error, renderRunId) {
 function studioSpecKey(drawingBuffer, zones, floorPx) {
   return require("crypto").createHash("sha256")
     .update(drawingBuffer)
-    .update("\u0000" + JSON.stringify(Array.isArray(zones) ? zones.slice(0, 40) : []))
+    .update("\u0000" + JSON.stringify(studioZoneList(zones, "specKey")))
     .update("\u0000" + String(floorPx))
     .digest("hex").slice(0, 32);
 }
@@ -7169,7 +8241,7 @@ async function studioStoreSpecForVersion({ uid, sessionId, n, metal, drawingBuff
   const cfg = await studioConfig();
   if (cfg.renderDeterministicSpec === false) return null;
 
-  const planZones = Array.isArray(zones) ? zones.slice(0, 40) : [];
+  const planZones = studioZoneList(zones, "storeSpec");
   const plan = await studioDrawingPlan(sharpMod, drawingBuffer);
   if (!plan) return null;
   let spec = await studioMaterialSpec(sharpMod, plan, metal, planZones);
@@ -7366,7 +8438,7 @@ async function handleStudioRender({ body, event, origin }) {
        it — so editing a fill and pressing Re-render is not quietly ignored,
        which would be a far worse fault than the slowness being fixed. */
     const vNow = vSnap.data() || {};
-    const renderZones = Array.isArray(body?.zones) ? body.zones.slice(0, 40) : [];
+    const renderZones = studioZoneList(body?.zones, "render");
     /* the same three inputs, hashed by the same function the BUILDER uses —
        see studioSpecKey. Inlining the hash in two places is exactly what let
        the two drift apart and made reuse unreachable on the first press. */
@@ -7662,7 +8734,31 @@ async function handleStudioRender({ body, event, origin }) {
        if the elapsed time plus the LAST attempt's measured duration still
        fits, so a slow first render never buys a doomed second one. */
     const maxRetries = Math.max(0, Math.min(4, Number(cfg.renderRetries) || 0));
-    const retryBudgetMs = Math.max(0, Number(cfg.renderRetryBudgetMs) || 0);
+
+    /* ── THE COMPOSITOR'S SHARE OF THE CLOCK, TAKEN BEFORE IT IS SPENT ────
+       The cut-out composite runs after the attempt loop, so if the loop is
+       allowed to spend the whole budget the composite starts with nothing
+       left and either overruns the client's cap or refuses itself on every
+       slow render — which is precisely the render most in need of it.
+
+       So its cost is RESERVED here rather than discovered afterwards. The
+       retry loop is handed a budget short by that reserve, which means the
+       decision it already makes — "does another attempt still fit?" — now
+       accounts for the work that follows it. Measured at 2.6-2.9s on an
+       824 px render and scaling with area, a 1600 px render lands near 10s;
+       the reserve is set well above that so the composite is never the thing
+       that runs out of clock, and it is a config value so it can be widened
+       without a deploy. The composite's own deadline then keeps it honest:
+       it aborts and returns the render untouched rather than overrunning.  */
+    const compositeMode = String(cfg.renderComposite == null ? "on" : cfg.renderComposite)
+      .trim().toLowerCase();                       /* "on" | "observe" | "off" */
+    const compositing = compositeMode === "on" || compositeMode === "observe";
+    const STUDIO_COMPOSITE_HARD_MS = Math.max(4000, Math.min(60000,
+      Number(cfg.renderCompositeBudgetMs) || 30000));
+    const rawRetryBudgetMs = Math.max(0, Number(cfg.renderRetryBudgetMs) || 0);
+    const retryBudgetMs = rawRetryBudgetMs
+      ? Math.max(30000, rawRetryBudgetMs - (compositing ? STUDIO_COMPOSITE_HARD_MS : 0))
+      : 0;
     const RETRYABLE = new Set(["undeclared_cut", "unaligned"]);
     const doPunch = cutMode === "enforce" || cutMode === "punch";
     /* In "verify" nothing is repaired, so a repairable failure is not
@@ -8043,6 +9139,73 @@ async function handleStudioRender({ body, event, origin }) {
         renderCheck: punch.report.reason,
         renderRunId,
       }, { merge: true });
+    }
+
+    /* ── THE CUT-OUTS, COMPOSITED ────────────────────────────────────────
+       The last thing done to the image and the first thing skipped. It runs
+       here, after the attempt loop has settled on a winner and BEFORE the
+       PNG text chunks are spliced in, because embedPngTextMetadata writes
+       raw iTXt chunks by hand and any later sharp re-encode would strip
+       them. Everything it needs it already has: the finished render and the
+       same greyscale map every other stage was measured against.
+
+       It cannot fail a render. studioCompositeOpenings catches its own
+       errors and returns the input buffer; this call is wrapped again on top
+       of that, and the assignment only happens when a new buffer came back.
+
+       The clock is real and shared. The stage write below is also what keeps
+       the browser's silence watcher alive while the compositing runs — the
+       render watcher gives up on a quiet document, not a long one. */
+    if (compositing) {
+      try {
+        await vRef.set({ renderStage: "cutting", renderRunId }, { merge: true });
+      } catch (e) { /* a stage write is narration; never a reason to stop */ }
+      let comp = null;
+      try {
+        /* whichever runs out first: the composite's own cap, or what is left
+           of the whole render's wall clock */
+        const leftOfRun = rawRetryBudgetMs
+          ? rawRetryBudgetMs - (Date.now() - startedAt)
+          : STUDIO_COMPOSITE_HARD_MS;
+        /* THE GREYSCALE MATERIAL SPEC, not the drawing. This is IMAGE 1 —
+           the map the render was asked to obey and every other stage is
+           measured against — on the 255/176/136 ladder. The line-art drawing
+           carries the same geometry in a different vocabulary, and reading
+           the wrong one would declare its ink as openings. */
+        comp = await studioCompositeOpenings(outBuf, materialSpec && materialSpec.buf, {
+          budgetMs: Math.max(2000, Math.min(STUDIO_COMPOSITE_HARD_MS, leftOfRun)),
+          minIoU: Math.min(0.99, Math.max(0.5, Number(cfg.renderCompositeMinIoU) || 0.90)),
+        });
+        if (comp && comp.buf && comp.buf.length && compositeMode === "on") outBuf = comp.buf;
+        console.log(`[studio] cut-out composite: ran=${comp.report.ran} ` +
+          `declared=${comp.report.declared} composited=${comp.report.composited} ` +
+          `refused=${comp.report.refused} leftAlone=${comp.report.leftAlone} ` +
+          `iou=${comp.report.iou} ${comp.report.why ? "why=" + comp.report.why + " " : ""}` +
+          `${comp.report.ms}ms`);
+      } catch (e) {
+        console.error("[studio] cut-out composite skipped:", e?.message || e);
+      }
+      if (comp && comp.report) {
+        try {
+          await vRef.set({
+            renderCompositeMode: compositeMode,
+            renderCompositeRan: !!comp.report.ran,
+            renderCompositeWhy: comp.report.why || "",
+            renderCompositeMs: comp.report.ms,
+            renderCompositeDeclared: comp.report.declared,
+            renderCompositeRefused: comp.report.refused,
+            renderCompositeApplied: comp.report.composited,
+            renderCompositeLeftAlone: comp.report.leftAlone,
+            renderCompositeIoU: comp.report.iou,
+            renderCompositeOpenFrac: comp.report.openFrac,
+            renderCompositeDeclaredFrac: comp.report.declaredFrac == null
+              ? null : Math.round(comp.report.declaredFrac * 1e4) / 1e4,
+            renderCompositeShadeK: comp.report.shadeK,
+            renderCompositeClusters: comp.report.clusters,
+            renderRunId,
+          }, { merge: true });
+        } catch (e) { /* the numbers are a record, not the product */ }
+      }
     }
 
     outBuf = embedPngTextMetadata(outBuf, {
