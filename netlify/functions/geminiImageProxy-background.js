@@ -2832,11 +2832,15 @@ const STUDIO_DEFAULT_CONFIG = {
      one over 0.84. Raising it chases pose accuracy the model cannot hit;
      lowering it lets a redrawn charm through. */
   renderShapeMinIoU: 0.90,
-  /* How many re-rolls a wrong shape may buy, independent of the cut check's
-     and the adjudicator's allowances — "this is a different charm" is a
-     different complaint from "this charm is not good enough", and neither
-     should exhaust the other's budget. The wall clock still caps both. */
-  renderShapeRetries: 1,
+  /* How many re-rolls a rejected render may buy, independent of the cut
+     check's and the adjudicator's allowances — "this is not the customer's
+     charm" is a different complaint from "this charm is not good enough",
+     and neither should exhaust the other's budget. The wall clock still caps
+     both, and with the adjudicator parked there is no judge call spending it,
+     so two attempts fit comfortably inside the retry budget. Two, because a
+     single re-roll of an independent draw only halves the chance of shipping
+     a bad one; the gates are cheap and the failures are not. */
+  renderShapeRetries: 2,
   /* Its share of the wall clock, reserved out of renderRetryBudgetMs BEFORE
      the retry loop spends it — see the note at the reservation. Measured at
      2.6-2.9s on an 824 px render and scaling with area; 30s is roughly three
@@ -4087,55 +4091,41 @@ const STUDIO_HOOP_AS_FOUND =
    declared role at all. The Charm Maker's prompt has carried an explicit
    image-role lock for exactly this reason since the day a style reference's
    subject turned up in an output.                                          */
-/* ── THE RENDER CAME BACK AS A CONTACT SHEET ──────────────────────────────
-   One output contained the finished charm in the middle and, beside it, the
-   model's own two input maps redrawn as inset panels — bordered, and with the
-   words "IMAGE 1" and "IMAGE 2" lettered underneath in a typeface the studio
-   does not own. It had drawn its instructions.
+/* ── SHORTER, NOT LONGER ──────────────────────────────────────────────────
+   Two whole blocks were added to this prompt in one week — a silhouette lock
+   and an output-frame lock — each written after a specific bad render, each
+   several hundred words, and the renders got stranger rather than steadier.
+   That is the expected direction, and it is worth writing down so nobody
+   adds a third block the next time one goes wrong.
 
-   That is a documented hazard of naming reference images in a prompt, and
-   this prompt names them constantly: "IMAGE 1" and "IMAGE 2" appear a dozen
-   times as things to obey, and nothing anywhere said they were not also
-   things to depict. Nothing said the output was one object either. The
-   background clause describes the ground the charm sits on and stops there,
-   so a frame holding three panels, two captions and a charm satisfies every
-   sentence in the prompt.
+   AN IMAGE MODEL IS NOT AN INSTRUCTION FOLLOWER WITH A LONGER ATTENTION
+   SPAN. Three things go wrong as this text grows:
+     · Salience is a budget. Twenty rules do not each get the weight one rule
+       gets; the fill law, which is the only thing that must never be missed,
+       competes with a paragraph about captions.
+     · A negation names its subject. "Do not draw IMAGE 1" puts IMAGE 1 in
+       the frame's vocabulary — and the render that prompted the frame lock
+       came back with the words "IMAGE 1" lettered into the picture. Every
+       extra mention raises the odds of the thing it forbids.
+     · The API documents no seed and no temperature, so each render is an
+       independent draw. Wording moves the distribution; it cannot truncate
+       the tail. The tail is what the customer is complaining about.
 
-   The other render path has carried a "no props, no hand, no chain, no
-   packaging" clause for a long time (STUDIO_RENDER_FINISH) — but that block
-   belongs to the line-art builder and this path has never used it. This is
-   the equivalent, written for the failure actually observed: the frame holds
-   one charm, the references are read and never drawn, and there is no text
-   in the output at all.                                                    */
-const STUDIO_OUTPUT_FRAME =
-`OUTPUT FRAME — ONE OBJECT, AND NO PAGE FURNITURE
+   So the rules that survive here are the ones that shape the CENTRAL case,
+   said once, positively, in as few words as carry them. The tail is not
+   argued with — it is measured and re-rolled, deterministically, by the
+   gates in studioCompositeOpenings. Every failure that produced a paragraph
+   above now has a number instead:
+     wrong shape        silhouette IoU        0.98 good / 0.75 bad
+     contact sheet      stray content         0.01 good / 0.61 bad
+     two-tone metal     off-alloy share       0.01 good / 0.39 bad
+   A number does not dilute anything else in the prompt, cannot be argued
+   with by a sampler, and costs nothing per render.
 
-The output is a single photograph of the finished charm and NOTHING ELSE.
-
-THE IMAGES YOU WERE GIVEN ARE INSTRUCTIONS TO READ, NEVER CONTENT TO DRAW. Do not reproduce IMAGE 1, IMAGE 2 or IMAGE 3 in the output at any size, in any corner, as a panel, an inset, a thumbnail, a swatch, a border or a backdrop. Do not place a map beside the charm, above it, behind it or anywhere else in the frame.
-
-THERE IS NO TEXT ANYWHERE IN THE OUTPUT. No captions, no labels, no titles, no legends, no numbers, no dimensions, no "IMAGE 1", no watermark, no logo, no signature.
-
-THERE IS NO LAYOUT. No panels, no insets, no frames, no borders, no rules, no grid, no collage, no contact sheet, no side-by-side, no before-and-after, no multiple views, no second copy of the charm, no props, no hand, no chain, no packaging.
-
-One charm, alone, centred on the plain white ground with its own single soft contact shadow. If your draft contains anything else at all, delete it and render the charm by itself.`;
-
-const STUDIO_SILHOUETTE_LOCK =
-`SILHOUETTE LOCK — TRACE THE OUTLINE, DO NOT RECOGNISE IT
-
-The outer boundary of the light-grey region in IMAGE 1 is the charm's outline, and it is TRACED, not interpreted. Follow it edge for edge. Every notch, concavity, uneven curve, asymmetry and tilt in that boundary is part of the design and part of what is being manufactured.
-
-If you recognise what IMAGE 1 depicts, that recognition is a hazard rather than help. THE COMMONEST FAILURE IN THIS RENDER IS THE RIGHT SUBJECT IN THE WRONG SHAPE: the traced outline is quietly replaced by the more typical, more symmetrical, better-proportioned version of the same familiar thing. A figure drawn leaning, with one limb raised and another tucked, comes back upright and square. Uneven curves come back even. Negative space between two parts gets filled in, because the remembered object does not have a gap there.
-
-That is a HARD FAIL, and it is still a hard fail when the result is a more attractive charm. This is a manufacturing drawing of one specific object that already exists and has been approved. There is nothing here to improve, complete, correct, straighten or idealise.
-
-Silently verify against IMAGE 1 before rendering:
-• Same outline: same lean, same asymmetry, same position of every limb and part, same width at every height down the piece.
-• Every gap of white that separates two parts of the outline in IMAGE 1 is still open between them in your output. Count them.
-• Nothing has been centred, squared up, mirrored, evened out or made more anatomically typical.
-
-IMAGE 3, when one is supplied, is a MATERIAL SAMPLE ONLY. It shows how this alloy behaves under studio light — polish, specularity, the character of a cut edge, the softness of the contact shadow. It contributes NO subject, NO geometry, NO outline and NO colour decision. Its own object must not appear in your output in any form.`;
-
+   THE RULE FOR EDITING THIS: if a bad render suggests new prompt text, first
+   ask whether the same failure can be measured. If it can, measure it. Text
+   is for the rules that decide what a good charm IS; the gates are for
+   catching when the model did not make one.                                */
 function buildMaterialSpecToCharmPrompt(opts) {
   /* strict true in the builder as well as at the call site: a truthy string
      arriving from somewhere unexpected must not quietly drop the hoop rule
@@ -4149,32 +4139,15 @@ IMAGE 1 — TOPOLOGY_MASK: LIGHT GREY = SOLID METAL; WHITE = EMPTY; BLACK IS UNU
 
 IMAGE 2 — STRUCTURE_MAP: DARK GREY OR BLACK = shallow recessed engraving; LIGHT GREY = smooth unengraved metal. It controls surface treatment only and cannot add or remove metal.
 
-Hard Fail — never allow any leakage of colours from STRUCTURE_MAP to affect the final 14K gold charm image.
+TOPOLOGY LOCK: every light-grey region of IMAGE 1 stays opaque gold and only its white regions are empty — OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly. IMAGE 1's fill overrides every outline and all familiar meaning.
 
-TOPOLOGY LOCK — RESOLVE BEFORE RENDERING
+SILHOUETTE LOCK: IMAGE 1's outer boundary is traced, not interpreted. Every notch, concavity, asymmetry and tilt in it is the design. If you recognise what it depicts, draw the outline you were given rather than the tidier, more symmetrical version you remember — a better-looking charm with a different outline is a failed render.
 
-Every light-grey region in IMAGE 1 must remain occupied by opaque 14K gold. Only white regions in IMAGE 1 may be empty. OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly.
+MATERIAL: ONE alloy across the whole piece — 14K gold, thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer; IMAGE 2's greys are a classification code and must never reach the output as colour.
 
-FILL-PRIORITY RULE: IMAGE 1 fill overrides every outline and all familiar meaning. A region is open only when its interior is white in IMAGE 1; every light-grey interior remains solid gold.
+FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them, and no lettering, appears anywhere in the picture.
 
-${STUDIO_SILHOUETTE_LOCK}
-
-The source darkness in IMAGE 2 is a classification code only. Engraving remains warm yellow 14K gold and only slightly darker than the surrounding gold.
-
-Before rendering, silently verify:
-1. Every white region in IMAGE 1 is empty.
-2. Every light-grey region in IMAGE 1 contains solid gold.
-3. IMAGE 2 changes surface finish only, never topology.
-
-Correct any topology mismatch before producing the image.
-
-MATERIAL: The whole charm is one alloy: 14K gold. Thin flat sheet metal with crisp cut edges, not a thick moulded token, ${hoop}.
-
-IMAGE BACKGROUND: A plain pure WHITE studio background with one soft contact shadow beneath the charm.
-
-${STUDIO_OUTPUT_FRAME}
-
-NO INVENTION: Do not add, remove, move, resize or reinterpret any geometry, and add no gemstones, borders, engraving or lettering which STRUCTURE_MAP does not already contain.`;
+NO INVENTION: do not add, remove, move, resize or reinterpret any geometry, and add nothing IMAGE 2 does not already contain.`;
 }
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
@@ -5143,45 +5116,36 @@ function studioScoreAudit(raw, scored, cfg, extra) {
    No measurement is quoted at the model. A number it cannot verify invites it
    to reason about the number instead of looking at the picture, and "IoU
    0.73" means nothing in a drawing instruction.                            */
-/* ── WHAT THE NEXT ATTEMPT IS TOLD AFTER A CONTACT SHEET ──────────────────
-   The complaint here is not about the charm — the charm may be perfect. It
-   is about everything ELSE in the frame, so the note says nothing about
-   shape, alloy or finish and stays on the one point: the frame holds one
-   object. Naming the specific thing that happened matters, because "make it
-   cleaner" is not an instruction and "do not draw the reference images"
-   is.                                                                      */
+/* ── AND THE CORRECTION NOTES OBEY THE SAME RULE ──────────────────────────
+   A retry note is appended to the prompt, so a six-bullet note is the same
+   dilution the prompt itself was just cut back for — and it arrives at the
+   worst moment, on the attempt that already went wrong. Each of these says
+   one thing, names the failure so the model knows what to change, and stops.
+   The gate, not the wording, is what guarantees the outcome.               */
 function studioFrameRetryNote(attemptNo) {
-  const lines = [
-    "CORRECTION — THE PREVIOUS ATTEMPT WAS NOT A PRODUCT PHOTOGRAPH.",
-    "• It returned a page rather than a photograph: the frame contained the charm AND other content beside it — panels, inset thumbnails of the reference images, borders, captions or lettering.",
-    "• THE REFERENCE IMAGES ARE INSTRUCTIONS, NOT SUBJECTS. Read them; never draw them. No copy of IMAGE 1, IMAGE 2 or IMAGE 3 appears anywhere in your output, at any size, in any corner, as a panel, inset, thumbnail, swatch, border or backdrop.",
-    "• NO TEXT AT ALL. No captions, labels, titles, legends, numbers, dimensions, watermarks, logos or signatures anywhere in the frame.",
-    "• NO LAYOUT. No panels, insets, frames, borders, rules, grids, collages, contact sheets, side-by-sides, before-and-afters, multiple views or second copies of the charm.",
-    "• Output ONE charm, alone, centred on the plain white ground with its own single soft contact shadow, filling the frame the way a catalogue photograph of one piece of jewellery does. Everything else in the frame is empty white ground.",
-  ];
-  if (attemptNo >= 2) {
-    lines.push("This correction has already been asked for once. Produce the photograph only — nothing beside it, nothing behind it, nothing written on it.");
-  }
-  return lines.join("\n");
+  return [
+    "CORRECTION — the previous attempt returned a page, not a photograph: the frame held other content beside the charm — panels, inset copies of the reference images, borders or lettering.",
+    "The attached images are instructions to read, never subjects to draw. Output ONE charm alone, centred on plain white ground with its own soft contact shadow, and nothing else anywhere in the frame.",
+    attemptNo >= 2 ? "This has already been asked for once. The photograph only." : "",
+  ].filter(Boolean).join("\n");
+}
+
+function studioAlloyRetryNote(attemptNo) {
+  return [
+    "CORRECTION — the previous attempt rendered the charm in TWO metals: part of it came back as flat grey or gunmetal instead of gold.",
+    "The whole piece is one alloy. An engraved area is the same 14K gold as the polish beside it, only slightly darker and warmer — never a grey, a silver, a black or a separate inlaid material. IMAGE 2's greys classify the surface; they are not colours to copy.",
+    attemptNo >= 2 ? "This has already been asked for once. One alloy, edge to edge." : "",
+  ].filter(Boolean).join("\n");
 }
 
 function studioShapeRetryNote(shape, attemptNo, builtInHoop) {
-  const lines = [
-    "CORRECTION — THE PREVIOUS ATTEMPT DREW THE WRONG SHAPE.",
-    "• Its outline was measured against IMAGE 1 and does not match. The subject was right; the shape was not.",
-    "• This is the recognition failure: the previous attempt identified what IMAGE 1 depicts and drew the familiar, tidy, symmetrical version of that thing instead of tracing the outline it was given.",
-    "• Draw IMAGE 1's outline exactly as it is. Keep every lean, tilt and asymmetry. Keep each part exactly where IMAGE 1 puts it — a raised part stays raised, a bent part stays bent, a part drawn out of line stays out of line.",
-    "• Keep the negative space. Every gap of white between two parts of the outline in IMAGE 1 must be an actual gap in your output. Do not close a gap because the object you recognise does not have one there.",
-    "• Do not straighten, centre, mirror, even up, re-proportion or otherwise improve the shape. A better-looking charm with a different outline is a failed render.",
-    "• Reproduce IMAGE 1's scale and centring in the frame as well, and " +
-      (builtInHoop === true ? "its hanging hardware exactly as it appears there"
-                            : "its integrated top hoop") + ".",
-    "Everything else about this render is unchanged and still governed by the instructions above: same alloy, same finish, same white ground, same single soft contact shadow, same engraving depth. Do not compensate for the correction by altering anything else.",
-  ];
-  if (attemptNo >= 2) {
-    lines.push("This correction has already been asked for once. Trace IMAGE 1's boundary literally, pixel by pixel, rather than producing a more convincing object.");
-  }
-  return lines.join("\n");
+  return [
+    "CORRECTION — the previous attempt drew the WRONG SHAPE. Its outline was measured against IMAGE 1 and does not match: the subject was right, the shape was not.",
+    "Trace IMAGE 1's outline exactly as given — same lean, same asymmetry, same position of every part, and every gap of white between two parts still open. Do not straighten, centre, mirror or otherwise improve it; a better-looking charm with a different outline is a failed render.",
+    "Reproduce its scale and centring in the frame too, and " +
+      (builtInHoop === true ? "its hanging hardware exactly as it appears there." : "its integrated top hoop."),
+    attemptNo >= 2 ? "This has already been asked for once. Trace the boundary literally." : "",
+  ].filter(Boolean).join("\n");
 }
 
 /* What the next attempt is told. Naming the failure is the whole value of
@@ -5364,11 +5328,10 @@ async function studioRenderAttempts(opts) {
         lastShape = null;
       }
       if (lastShape && lastShape.iou != null) {
-        log(`[studio] frame gate attempt ${attempts}: silhouette IoU ${lastShape.iou} ` +
-            `vs ${shapeMinIoU}, stray content ${lastShape.furniture ? lastShape.furniture.biggest : "?"} ` +
-            `— ${lastShape.ok ? "one charm, right shape"
-                 : lastShape.why === "frame_furniture" ? "NOT A PRODUCT SHOT"
-                 : "DIFFERENT SHAPE"} (${lastShape.ms}ms)`);
+        log(`[studio] render gate attempt ${attempts}: IoU ${lastShape.iou}/${shapeMinIoU}, ` +
+            `stray ${lastShape.furniture ? lastShape.furniture.biggest : "?"}, ` +
+            `off-alloy ${lastShape.alloy ? lastShape.alloy.offAlloy : "?"} — ` +
+            `${lastShape.ok ? "accepted" : "REJECTED: " + lastShape.why} (${lastShape.ms}ms)`);
         if (!shapeBest || lastShape.iou > shapeBest.iou) {
           shapeBest = { buf: outBuf, iou: lastShape.iou, attempt: attempts };
         }
@@ -5498,8 +5461,7 @@ async function studioRenderAttempts(opts) {
     if (!cutWants && !shapeWants && !scoreWants) break;
 
     if (cutWants) failedVerdicts.push(punch.report.reason);
-    if (shapeWants) failedVerdicts.push(lastShape.why === "frame_furniture"
-      ? "frame_furniture" : "wrong_shape");
+    if (shapeWants) failedVerdicts.push(lastShape.why || "wrong_shape");
     const spent = now() - startedAt;
     if (retryBudgetMs && spent + lastMs > retryBudgetMs) {
       log(`[studio] retry budget reached (${spent}ms + ${lastMs}ms > ${retryBudgetMs}ms)` +
@@ -5511,16 +5473,16 @@ async function studioRenderAttempts(opts) {
        model three things at once is how a correction note stops correcting
        anything. */
     nextNote = cutWants ? studioRetryNote(punch.report, attempts, opts.builtInHoop)
-             : shapeWants ? (lastShape.why === "frame_furniture"
-                              ? studioFrameRetryNote(attempts)
-                              : studioShapeRetryNote(lastShape, attempts, opts.builtInHoop))
+             : shapeWants ? (lastShape.why === "frame_furniture" ? studioFrameRetryNote(attempts)
+                            : lastShape.why === "two_tone_metal" ? studioAlloyRetryNote(attempts)
+                            : studioShapeRetryNote(lastShape, attempts, opts.builtInHoop))
              : studioScoreRetryNote(scored, attempts);
     log(`[studio] render retry ${attempts}/` +
         (cutWants ? maxRetries : shapeWants ? shapeRetries : scoreAllowance) + ` after ` +
         (cutWants ? punch.report.reason
-                  : shapeWants ? (lastShape.why === "frame_furniture"
-                                    ? `not a product shot (stray ${lastShape.furniture.biggest})`
-                                    : `wrong shape (IoU ${lastShape.iou})`)
+                  : shapeWants ? `${lastShape.why} (IoU ${lastShape.iou}, stray ` +
+                                 `${lastShape.furniture ? lastShape.furniture.biggest : "?"}, off-alloy ` +
+                                 `${lastShape.alloy ? lastShape.alloy.offAlloy : "?"})`
                   : `score ${scored.total}`));
   }
 
@@ -7532,6 +7494,12 @@ const SCO_FURN_DEV      = 26;     /* levels from the ground before a pixel is no
 const SCO_FURN_SAT      = 36;     /* or this saturated, whatever its brightness */
 const SCO_FURN_MIN_BLOB = 0.00035;/* smaller than this share of the charm is speckle */
 const SCO_FURN_LIMIT    = 0.06;   /* one blob this big and the frame is not a product shot */
+/* ── the alloy check: see scoAlloy ─────────────────────────────────────── */
+const SCO_ALLOY_OPEN_MARGIN = 24; /* this close to the ground and neutral = an opening, not metal */
+const SCO_ALLOY_OPEN_SAT    = 28;
+const SCO_ALLOY_FRAC        = 0.35;/* below this share of the piece's own chroma is another metal */
+const SCO_ALLOY_FLOOR       = 34; /* and never a looser test than this in absolute terms */
+const SCO_ALLOY_LIMIT       = 0.12;/* this much of the metal off-alloy and the piece is two-tone */
 
 /* ── WHAT A HOLE LOOKS LIKE FROM THE INSIDE ────────────────────────────────
    A hole the model cuts is NOT the plain ground showing through: the metal
@@ -7868,6 +7836,61 @@ function scoFurniture(px, w, h, ch, outer, rb, gnd) {
   };
 }
 
+/* ── IS THE WHOLE PIECE ONE METAL? ────────────────────────────────────────
+   A bow came back half gold and half gunmetal: the outer curve yellow, the
+   bow's body and the arrow a flat dark grey, as though two alloys had been
+   soldered together. The prompt names one alloy and calls colour leakage a
+   hard fail, and it happened anyway — which is what "asking" is worth
+   against an unseeded sampler.
+
+   It is one number. A charm is one alloy, so its metal has ONE chroma; a
+   render that is part gold and part grey is bimodal in saturation, and the
+   grey half sits far below what the piece's own metal looks like. Measured
+   on the raw model output, before anything is composited:
+     good render      1.2% and 1.1% of the metal is off-alloy
+     the grey bow     48.6%
+   The reference is the piece's own upper-quartile saturation rather than a
+   fixed number, so the test asks "is this all one metal" instead of "is this
+   gold" — a question that stays meaningful if the alloy ever changes.
+
+   Openings are excluded by brightness: ground showing through a cut is
+   neutral too, and it is not metal.                                        */
+function scoAlloy(px, w, h, ch, outer, gnd) {
+  const n = w * h;
+  const gl = 0.299 * gnd.r + 0.587 * gnd.g + 0.114 * gnd.b;
+  const sats = [];
+  const keep = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!outer[i]) continue;
+    const p = i * ch, r = px[p], g = px[p + 1], b = px[p + 2];
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    const sat = mx ? (mx - mn) * 255 / mx : 0;
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    /* the ground seen through a cut-out is not metal and has no alloy */
+    if (lum > gl - SCO_ALLOY_OPEN_MARGIN && sat < SCO_ALLOY_OPEN_SAT) continue;
+    keep[i] = 1;
+    sats.push(sat);
+  }
+  if (sats.length < 500) return { offAlloy: 0, chroma: 0, dirty: false };
+  sats.sort((a, b) => a - b);
+  const p75 = sats[Math.floor(sats.length * 0.75)];
+  const floor = Math.min(SCO_ALLOY_FLOOR, p75 * SCO_ALLOY_FRAC);
+  let off = 0, all = 0;
+  for (let i = 0; i < n; i++) {
+    if (!keep[i]) continue;
+    all++;
+    const p = i * ch, r = px[p], g = px[p + 1], b = px[p + 2];
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if ((mx ? (mx - mn) * 255 / mx : 0) < floor) off++;
+  }
+  const frac = all ? off / all : 0;
+  return {
+    offAlloy: Math.round(frac * 1e4) / 1e4,
+    chroma: Math.round(p75),
+    dirty: frac > SCO_ALLOY_LIMIT,
+  };
+}
+
 /* ── placing a mask-space field into the render's frame ─────────────────── */
 /* BILINEAR, not a windowed sinc: the scale here is within a per cent of 1:1,
    so the operation is almost pure sub-pixel translation and a sharper filter
@@ -8062,6 +8085,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     iou: null, openFrac: null, declaredFrac: null, shadeK: null, clusters: 0,
     maxShift: 0, localFit: true,
     furniture: { frac: 0, biggest: 0, blobs: 0, dirty: false },
+    alloy: { offAlloy: 0, chroma: 0, dirty: false },
   };
   if (!sharp || !renderBuf?.length || !specBuf?.length) {
     report.why = "no_inputs";
@@ -8103,6 +8127,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
        so the line can sit anywhere between and never be near either. */
     const gnd = scoGroundColour(R.px, R.w, R.h, R.ch, rp.outer);
     report.furniture = scoFurniture(R.px, R.w, R.h, R.ch, rp.outer, rb, gnd);
+    report.alloy = scoAlloy(R.px, R.w, R.h, R.ch, rp.outer, gnd);
     /* one number for the whole charm, so every threshold below is a share of
        the object rather than a pixel count that only suits one resolution */
     let roCount = 0;
@@ -8202,6 +8227,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
        be re-rolled instead of shipped. */
     if (o.fitOnly) {
       report.why = report.furniture.dirty ? "frame_furniture"
+                 : report.alloy.dirty ? "two_tone_metal"
                  : fit.iou < minIoU ? "silhouette_drift" : "fit_ok";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
@@ -8680,6 +8706,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     return { buf: renderBuf, report };
   }
 }
+
 
 
 
@@ -9339,6 +9366,7 @@ async function handleStudioRender({ body, event, origin }) {
           ok: r.report.why === "fit_ok",
           why: r.report.why,
           furniture: r.report.furniture,
+          alloy: r.report.alloy,
           ms: r.report.ms,
         };
       },
@@ -9505,6 +9533,7 @@ async function handleStudioRender({ body, event, origin }) {
         renderShapeWhy: s.why || "",
         renderFrameStray: s.furniture ? s.furniture.biggest : null,
         renderFrameBlobs: s.furniture ? s.furniture.blobs : null,
+        renderOffAlloy: s.alloy ? s.alloy.offAlloy : null,
         renderShapeSwapped: !!s.swapped,
         renderRunId,
       });
