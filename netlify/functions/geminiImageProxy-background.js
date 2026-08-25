@@ -10526,6 +10526,8 @@ BLACK IS ENGRAVED METAL; EVERYTHING ELSE IS WHITE. An engraving that reads as a 
 
 LINE WEIGHT: every stroke, the outer perimeter included, about 1/30th of the charm's own width — fine enough that two neighbouring lines stay separate.
 
+HANGING HARDWARE: the photograph shows a separate JUMP RING threaded through the charm — an added ring that opens and closes. It is not part of the piece: leave it out completely, and close the drawing cleanly where it was. The charm's OWN hoop, cut from the same flat sheet and continuous with the body, IS part of the piece and is traced exactly as it appears.
+
 Flat 2D only: no shading, no 3D, no grey, no colour. Solid pure white (#FFFFFF) background, no transparency.`;
 
 /* ── the morphology the combine needs ─────────────────────────────────────
@@ -10610,7 +10612,11 @@ function mmBBox(src, w, h) {
 const STUDIO_SPEC_SAT_MIN = 0.16;     /* metal is chromatic; ground and shadow are not */
 const STUDIO_SPEC_INK_MAX = 128;      /* the drawing is pure black on pure white */
 const STUDIO_SPEC_EDGE_R = 4;         /* the perimeter stroke is not an engraving */
-const STUDIO_SPEC_MIN_IOU = 0.86;     /* below this the drawing does not describe this charm */
+const STUDIO_SPEC_MIN_IOU = 0.86;
+/* the shoulder: the first row down at which the piece reaches this share of
+   its own widest. Everything above it is hanging hardware — see the note in
+   studioLineArtIoU for why neither side may be scored on it. */
+const STUDIO_SPEC_SHOULDER = 0.35;     /* below this the drawing does not describe this charm */
 
 /**
  * gold photograph + line drawing → the three-tone map.
@@ -10664,16 +10670,60 @@ async function studioLineArtIoU(sharp, goldBuf, lineBuf, size) {
   let ink = new Uint8Array(n);
   for (let i = 0; i < n; i++) ink[i] = ld[i * lch] < STUDIO_SPEC_INK_MAX ? 1 : 0;
   const inkBody = mmFillHoles(mmClose(ink, S, S, 1), S, S).filled;
-  const ba = mmBBox(body, S, S), bb = mmBBox(inkBody, S, S);
+
+  /* ── NEITHER SIDE IS SCORED ON ITS HANGING HARDWARE ───────────────────
+     The drawing is asked to leave the catalogue jump ring out, and a
+     bounding-box registration punishes it savagely for obeying: losing the
+     ring costs only 2.8% of the charm's area, but it shortens the box, so
+     the whole drawing is stretched ~11% taller to fit and every feature
+     slides out of place. Measured on the armadillo, dropping the ring took
+     a perfect tracing from 1.000 to 0.853 — under the line. The gate would
+     have rejected every drawing that did what the prompt asks.
+
+     The body has a landmark the hardware cannot move: the highest row at
+     which the silhouette is a real share of its own widest. Above it is
+     hoop and ring; below it is the charm. Both sides are cut there, then
+     registered and scored, so hardware differences leave the measurement
+     entirely — and what remains is the question actually being asked, which
+     is whether this is the same object.
+
+     Measured: a correct tracing 0.93 with the ring and 0.93 without it; the
+     cartoon redraw 0.50. The line at 0.86 sits clear of both. */
+  const shoulder = (mask) => {
+    const bb0 = mmBBox(mask, S, S);
+    if (!bb0) return null;
+    let widest = 0;
+    const rowW = new Int32Array(S);
+    for (let y = bb0.y0; y <= bb0.y1; y++) {
+      let lo = -1, hi = -1;
+      for (let x = bb0.x0; x <= bb0.x1; x++) if (mask[y * S + x]) { if (lo < 0) lo = x; hi = x; }
+      rowW[y] = hi < 0 ? 0 : hi - lo + 1;
+      if (rowW[y] > widest) widest = rowW[y];
+    }
+    for (let y = bb0.y0; y <= bb0.y1; y++) {
+      if (rowW[y] >= widest * STUDIO_SPEC_SHOULDER) return y;
+    }
+    return bb0.y0;
+  };
+  const trim = (mask, y0) => {
+    const o = new Uint8Array(n);
+    for (let y = y0; y < S; y++) for (let x = 0; x < S; x++) o[y * S + x] = mask[y * S + x];
+    return o;
+  };
+  const sg = shoulder(body), sl = shoulder(inkBody);
+  if (sg == null || sl == null) return { iou: 0, aligned: false, why: "no_silhouette" };
+  const gTrim = trim(body, sg), lTrim = trim(inkBody, sl);
+
+  const ba = mmBBox(gTrim, S, S), bb = mmBBox(lTrim, S, S);
   if (!ba || !bb) return { iou: 0, aligned: false, why: "no_silhouette" };
   const sx = bb.w / ba.w, sy = bb.h / ba.h;
   let inter = 0, uni = 0;
   for (let y = 0; y < S; y++) {
     const syy = Math.round(bb.y0 + (y - ba.y0) * sy);
     for (let x = 0; x < S; x++) {
-      const a = body[y * S + x];
+      const a = gTrim[y * S + x];
       const sxx = Math.round(bb.x0 + (x - ba.x0) * sx);
-      const b2 = (sxx >= 0 && sxx < S && syy >= 0 && syy < S && inkBody[syy * S + sxx]) ? 1 : 0;
+      const b2 = (sxx >= 0 && sxx < S && syy >= 0 && syy < S && lTrim[syy * S + sxx]) ? 1 : 0;
       if (a && b2) inter++;
       if (a || b2) uni++;
     }
@@ -10892,7 +10942,7 @@ async function studioTrimToSubject(sharpMod, buf, marginPct) {
 /* 4: the prompt was rewritten and a silhouette gate added, so every drawing
    cached under 3 was made by a version that could not tell a tracing from an
    illustration. They are re-made on next sight rather than trusted. */
-const STUDIO_LINEART_REV = 4;
+const STUDIO_LINEART_REV = 5;
 
 async function handleStudioRefLineArt({ body, event, origin }) {
   const uid = await requireStudioUser(event);
