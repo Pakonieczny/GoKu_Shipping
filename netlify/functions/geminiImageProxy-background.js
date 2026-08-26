@@ -7554,6 +7554,24 @@ const SCO_MIN_AREA      = 150;    /* smaller than this is speckle, not design */
 const SCO_BIG_AREA      = 5000;   /* at this size a feature is matched alone */
 const SCO_CLUSTER_FRAC  = 0.040;  /* neighbours within this share of the charm move together */
 const SCO_ALREADY_OPEN  = 0.40;   /* leave alone anything the render already cut this well */
+/* ── AND "ALREADY CUT" HAS TO TOLERATE THE REGISTRATION IT IS MEASURED IN ─
+   SCO_ALREADY_OPEN asks what share of an opening's own footprint the render
+   has already cut. That is the right question and it was asked in a way a
+   thin feature can never answer: a 12 px feather slot registered 6 px out
+   overlaps its own rendered opening by half, so a hole the model cut
+   perfectly well reads as 50% solid, fails the test, and gets a SECOND copy
+   composited beside it. That is the double-cut with a sliver of gold down
+   the middle — two versions of one hole, which is worse than either.
+
+   So the footprint also asks a question that does not depend on landing
+   dead-on: how far is the render's OWN nearest opening. Under a hole the
+   model cut, that distance is a few pixels across the whole footprint; under
+   metal the model never cut, the nearest opening is the next slot over — a
+   whole feature-spacing away. The tolerance is bounded by the distance to
+   the nearest OTHER declared opening, so it can never adopt a neighbour: the
+   bound is geometry, not a guess.                                          */
+const SCO_NEAR_OPEN_FRAC = 0.70;  /* this share of a footprint within reach of a real opening */
+const SCO_NEAR_TOL_FRAC  = 0.045; /* and "within reach" reaches this far, as a share of the charm */
 const SCO_ERODE_FRAC    = 0.0037; /* keep the cut this far inside the render's own metal */
 const SCO_RING_FRAC     = 0.026;  /* how wide a ring of surround the match reads */
 const SCO_MIN_CONTRAST  = 6;      /* below this there is no evidence to move anything */
@@ -8330,7 +8348,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
   const deadline = t0 + Math.max(2000, Number(o.budgetMs) || 25000);
   const report = {
     ran: false, why: "", ms: 0,
-    declared: 0, refused: 0, composited: 0, leftAlone: 0,
+    declared: 0, refused: 0, composited: 0, leftAlone: 0, leftAloneNear: 0,
     iou: null, openFrac: null, declaredFrac: null, shadeK: null, clusters: 0,
     maxShift: 0, localFit: true,
     furniture: { frac: 0, biggest: 0, blobs: 0, dirty: false },
@@ -8804,6 +8822,34 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     /* ── place each opening, skipping the ones already cut ──────────────── */
     const alpha = new Float32Array(rn);
     const theirs = new Uint8Array(rn);
+    /* THE RENDER'S OWN OPENINGS, AND HOW FAR EVERY PIXEL IS FROM ONE.
+       Interior only — the ground OUTSIDE the charm is open too, and counting
+       it would excuse every opening near the rim. One field for the whole
+       frame, read per footprint below; the alternative is re-walking each
+       footprint at every candidate offset, which is the same answer for a
+       few hundred times the work. */
+    const rOpenIn = new Uint8Array(rn);
+    for (let i = 0; i < rn; i++) rOpenIn[i] = (rp.outer[i] && !rp.metal[i]) ? 1 : 0;
+    const dToOpen = studioEdt2d(scoInvert(rOpenIn, R.w, R.h), R.w, R.h);
+    /* HOW FAR THE NEAREST OTHER DECLARED OPENING IS, per opening, in render
+       pixels. This is what makes the tolerance above safe rather than
+       generous: a slot may look for its own rendered hole as far away as it
+       likes SHORT OF ITS NEIGHBOUR, and no further. Six identical fletching
+       slots 34 px apart give each of them about 15 px of licence, which is
+       more than any registration error measured on this pipeline and less
+       than half the distance to the wrong answer. Centre-to-centre on the
+       bounding boxes: exact spacing is not needed, only a bound. */
+    const m2rN = (rb.x1 - rb.x0 + 1) / (mb.x1 - mb.x0 + 1);
+    const sepL = new Float32Array(lab.count + 1).fill(Infinity);
+    for (const A of keep) {
+      const ax = (bx0[A] + bx1[A]) / 2, ay = (by0[A] + by1[A]) / 2;
+      for (const B of keep) {
+        if (B === A) continue;
+        const dxc = ax - (bx0[B] + bx1[B]) / 2, dyc = ay - (by0[B] + by1[B]) / 2;
+        const dd = Math.hypot(dxc, dyc);
+        if (dd < sepL[A]) sepL[A] = dd;
+      }
+    }
     for (const w of wants) {
       if (Date.now() > deadline) throw new Error("budget");
       for (const L of w.members) {
@@ -8826,23 +8872,63 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
         const probe = new Float32Array(rn);
         const hit = scoPlace(fld, M.w, M.h, ob, mb, rb, fit.sx, fit.sy, fit.dx, fit.dy,
                              probe, R.w, R.h, "set");
-        let hard = 0, solid = 0;
+        /* ── ASK ABOUT THE HOLE WHERE THE HOLE IS ACTUALLY GOING ──────────
+           This census used to read rp.metal at `i` — the GLOBAL-fit position
+           — and then paint at `i + off`, the global fit plus the cluster's
+           local shift. The whole point of the local stage is that those two
+           are not the same place, so the test was inspecting metal `off`
+           pixels away from the opening it was about to cut. An opening the
+           model rendered correctly, in a cluster that took any shift at all,
+           was therefore judged solid and composited over the top of itself.
+           Test where you paint. */
+        const sdx = w.dx | 0, sdy = w.dy | 0;
+        /* as (x,y), not as a linear offset: i + dy*W + dx wraps a row
+           whenever dx carries a pixel past the frame edge, which silently
+           moves an opening near the margin to the opposite side */
+        const at = (x, y, ddx, ddy) => {
+          const nx = x + ddx, ny = y + ddy;
+          return (nx < 0 || ny < 0 || nx >= R.w || ny >= R.h) ? -1 : ny * R.w + nx;
+        };
+        /* HOW FAR OFF THE MODEL'S OWN OPENING MAY SIT and still be this
+           opening. Not the cluster's shift bound — a cluster that could not
+           read itself has a bound of zero, and zero tolerance is exactly
+           what produced the double-cut. It is bounded by the geometry
+           instead: short of the neighbour, and never beyond the largest
+           correction this stage would ever make anyway. */
+        const nearTol = Math.max(2, Math.min(
+          0.45 * sepL[L] * m2rN,                 /* short of the neighbour: the safety bound */
+          Math.max(6, SCO_NEAR_TOL_FRAC * scale) /* and no further than a real drift ever runs */
+        ));
+        let hard = 0, solid = 0, near = 0;
         for (let y = hit.y0; y <= hit.y1; y++) {
           const row = y * R.w;
           for (let x = hit.x0; x <= hit.x1; x++) {
             const i = row + x;
-            if (probe[i] > 0.5) { hard++; if (rp.metal[i]) solid++; }
+            if (probe[i] <= 0.5) continue;
+            hard++;
+            const j = at(x, y, sdx, sdy);
+            if (j < 0) { solid++; continue; }
+            if (rp.metal[j]) solid++;
+            if (dToOpen[j] <= nearTol) near++;
           }
         }
         if (!hard) continue;
-        const off = (w.dy * R.w + w.dx);
-        if (solid / hard < 1 - SCO_ALREADY_OPEN) {
+        /* EITHER answer means the model already cut this opening: the
+           footprint is open where it lands, or — for a feature thinner than
+           the registration it is measured in — the metal under the footprint
+           is everywhere within a few pixels of the render's own opening. */
+        const openFrac = 1 - solid / hard;
+        const nearFrac = near / hard;
+        if (openFrac >= SCO_ALREADY_OPEN || nearFrac >= SCO_NEAR_OPEN_FRAC) {
           report.leftAlone++;
+          if (openFrac < SCO_ALREADY_OPEN) report.leftAloneNear++;
           for (let y = hit.y0; y <= hit.y1; y++) {
             const row = y * R.w;
             for (let x = hit.x0; x <= hit.x1; x++) {
-              const i = row + x, j = i + off;
-              if (probe[i] > 0.5 && j >= 0 && j < rn) theirs[j] = 1;
+              const i = row + x;
+              if (probe[i] <= 0.5) continue;
+              const j = at(x, y, sdx, sdy);
+              if (j >= 0) theirs[j] = 1;
             }
           }
           continue;
@@ -8853,8 +8939,8 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
           for (let x = hit.x0; x <= hit.x1; x++) {
             const i = row + x, v = probe[i];
             if (v <= 0) continue;
-            const j = i + off;
-            if (j < 0 || j >= rn) continue;
+            const j = at(x, y, sdx, sdy);
+            if (j < 0) continue;
             if (v > alpha[j]) alpha[j] = v;
           }
         }
@@ -10138,6 +10224,7 @@ async function handleStudioRender({ body, event, origin }) {
         console.log(`[studio] cut-out composite: ran=${comp.report.ran} ` +
           `declared=${comp.report.declared} composited=${comp.report.composited} ` +
           `refused=${comp.report.refused} leftAlone=${comp.report.leftAlone} ` +
+          `leftAloneNear=${comp.report.leftAloneNear} ` +
           `iou=${comp.report.iou} shift=${comp.report.maxShift}px ` +
           `${comp.report.why ? "why=" + comp.report.why + " " : ""}` +
           `${comp.report.ms}ms`);
@@ -10155,6 +10242,11 @@ async function handleStudioRender({ body, event, origin }) {
             renderCompositeRefused: comp.report.refused,
             renderCompositeApplied: comp.report.composited,
             renderCompositeLeftAlone: comp.report.leftAlone,
+            /* of those, the ones left alone because the render's OWN opening
+               was within reach rather than dead under the footprint. A thin
+               feature registered a few pixels out lands here, and before
+               this counter existed it was composited over instead. */
+            renderCompositeLeftAloneNear: comp.report.leftAloneNear,
             renderCompositeIoU: comp.report.iou,
             renderCompositeOpenFrac: comp.report.openFrac,
             renderCompositeDeclaredFrac: comp.report.declaredFrac == null
