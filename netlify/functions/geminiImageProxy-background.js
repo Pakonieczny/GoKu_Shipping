@@ -2833,6 +2833,18 @@ const STUDIO_DEFAULT_CONFIG = {
      well — 0.977 and 0.984 on good renders, 0.731 on the astronaut that drew
      itself standing. It costs no credit and no model call. */
   renderShapeGate: "on",
+  /* ── AND WHETHER ITS ENGRAVING WAS TRACED OR FILLED ────────────────────
+     "on" re-rolls a render whose engraving is materially thicker than
+     anything its own map declares — an engraved OUTLINE rendered as a filled
+     recess, which is the failure a count of engraved regions can never see
+     because the regions are the same regions, only fatter. "observe"
+     measures it and files the numbers without re-rolling; "off" skips it.
+
+     It ships in "observe" on purpose: the thresholds behind it (SCO_ENG_*)
+     are calibrated on ONE bad render, and a gate that re-rolls on a number
+     nobody has watched yet spends the customer's clock on a guess. Watch
+     renderEngraveOver on a week of renders, then set this to "on". */
+  renderEngraveGate: "observe",
   /* Below this the render is a different charm — a re-roll, never a cancelled
      composite; the composite's own floor lives in SCO_FIT_FAIL / SCO_FIT_IOU
      and is a boundary distance, for the reason set out there.
@@ -4180,16 +4192,43 @@ function buildMaterialSpecToCharmPrompt(opts) {
 
      The count, for the next person tempted to add a paragraph: 1,652 chars to
      1,346, and all sixteen rules verifiable one by one against the old text.
-     See SHORTER, NOT LONGER above for why that direction is the right one. */
+     See SHORTER, NOT LONGER above for why that direction is the right one.
+
+     ONE RULE ADDED SINCE, AT NO COST: "ENGRAVE THE DARK GREY AND NOTHING
+     ELSE". A swallow came back with its head, its flank and its tail band
+     sunk as broad recesses because the model read each closed engraved
+     OUTLINE as the edge of a pocket to hollow out — 17.6% of the map's area
+     engraved against 32.9% of the render's, and engraved strokes three times
+     the map's own thickness. Nothing here forbade it: every other line about
+     engraving is about its TONE. The paragraph was paid for out of the four
+     around it: an opening clause in TRACE that restated the ladder line
+     directly above it, and longer phrasings in TRACE, MATERIAL and FRAME.
+     1,277 chars to 1,314 — the seventeenth rule cost 37.
+
+     TWO OF THOSE SAVINGS WERE PUT BACK, deliberately, and they are the two
+     worth knowing about if this block is ever squeezed again. "smooth
+     unengraved metal" was shortened to "polished metal": polished implies
+     unengraved and the new paragraph says it outright, but dropping the word
+     removed redundancy on precisely the failure being fixed. And "the SAME
+     gold as the polish BESIDE IT" was shortened to "the SAME gold": that
+     phrase anchors the engraved tone to the metal adjacent to it rather than
+     to gold in general, which is the comparison a renderer can actually make.
+     Both are back. 37 characters is a rounding error against 1,277; losing
+     either rule to save them would not have been.
+
+     The enforcement is scoEngraveFill, because a rule in a prompt is a
+     request; see the note there. */
   return `PRIMARY OPERATION — MATERIAL TRANSFER ONLY
 
-Transform IMAGE 1 into a photorealistic 14K gold charm. It is a pixel-level manufacturing map and the exclusive authority for the silhouette, every through-cut and every worked surface: WHITE = EMPTY; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow recessed engraving.
+Transform IMAGE 1 into a photorealistic 14K gold charm. It is a pixel-level manufacturing map and the exclusive authority for the silhouette, every through-cut and every worked surface: WHITE = empty; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow engraved recess.
 
-TRACE, DO NOT INTERPRET: every grey region stays opaque gold and only the white regions are empty, and every notch, concavity, asymmetry and tilt of the outer boundary is the design. If you recognise what IMAGE 1 depicts, draw the map you were given rather than the tidier, more symmetrical version you remember, and add, remove, move or resize nothing — a better-looking charm with a different outline is a failed render.
+ENGRAVE THE DARK GREY AND NOTHING ELSE. A dark grey line is a LINE: the light grey it encloses stays polished, never a sunken field. Engrave a whole area only where the map fills that whole area dark grey.
 
-MATERIAL: ONE alloy across the whole piece — 14K gold, thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer; IMAGE 1's greys are a classification code and must never reach the output as colour.
+TRACE, DO NOT INTERPRET: every notch, concavity, asymmetry and tilt of the outer boundary is the design. If you recognise what IMAGE 1 depicts, draw the map, not the tidier version you remember; add, remove, move or resize nothing — a better-looking charm with a different outline is a failed render.
 
-FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them, and no lettering, appears anywhere in the picture.`;
+MATERIAL: ONE alloy throughout — 14K gold, a thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer; IMAGE 1's greys are a classification code, never a colour to copy.
+
+FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them and no lettering appears anywhere.`;
 }
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
@@ -5212,6 +5251,18 @@ function studioAlloyRetryNote(attemptNo) {
   ].filter(Boolean).join("\n");
 }
 
+/* The correction for a filled outline. Three sentences, and the middle one
+   is the whole instruction: the failure is not "too much engraving", it is a
+   line treated as the edge of a pocket, and a note that says the first does
+   not correct the second. */
+function studioEngraveRetryNote(attemptNo) {
+  return [
+    "CORRECTION — the previous attempt ENGRAVED AREAS THAT IMAGE 1 SHOWS AS POLISHED. Its engraved marks came back far thicker than the marks on the map.",
+    "Engrave the dark grey pixels of IMAGE 1 and nothing else. A dark grey line is a LINE: the light grey it encloses — a head, a body, a wing panel — stays smooth polished metal, not a sunken field. Only fill an area with engraving where IMAGE 1 fills that whole area dark grey.",
+    attemptNo >= 2 ? "This has already been asked for once. Match the map's marks stroke for stroke." : "",
+  ].filter(Boolean).join("\n");
+}
+
 function studioShapeRetryNote(shape, attemptNo, builtInHoop) {
   return [
     "CORRECTION — the previous attempt drew the WRONG SHAPE. Its outline was measured against IMAGE 1 and does not match: the subject was right, the shape was not.",
@@ -5574,6 +5625,7 @@ async function studioRenderAttempts(opts) {
     nextNote = cutWants ? studioRetryNote(punch.report, attempts, opts.builtInHoop)
              : shapeWants ? (lastShape.why === "frame_furniture" ? studioFrameRetryNote(attempts)
                             : lastShape.why === "two_tone_metal" ? studioAlloyRetryNote(attempts)
+                            : lastShape.why === "engraving_filled" ? studioEngraveRetryNote(attempts)
                             : lastShape.why === "outline_mismatch"
                               ? studioShapeRetryNote(lastShape, attempts, opts.builtInHoop)
                             : studioShapeRetryNote(lastShape, attempts, opts.builtInHoop))
@@ -7570,6 +7622,26 @@ const SCO_ALREADY_OPEN  = 0.40;   /* leave alone anything the render already cut
    whole feature-spacing away. The tolerance is bounded by the distance to
    the nearest OTHER declared opening, so it can never adopt a neighbour: the
    bound is geometry, not a guess.                                          */
+/* ── THE ENGRAVING-FILL TEST — see scoEngraveFill ─────────────────────────
+   Calibrated on ONE bad render against its own map, which is why the gate it
+   feeds ships in "observe": it measures and files the numbers, and does not
+   re-roll anything until this pair has been seen on real traffic. One word in
+   config/customStudio (renderEngraveGate: "on") turns it into a re-roll.
+   On the swallow: over = 0.087 at an allowance of 1.25, 0.050 at 1.50. A
+   render that obeys its map cannot be thicker than its map, so a correct one
+   sits near zero and the whole span between is margin.                     */
+const SCO_ENG_EDGE_FRAC = 0.012;  /* start the census this far in from any metal edge */
+/* WHERE THE POLISHED LEVEL IS READ FROM. p75 was the obvious choice and it
+   goes blind on the worst renders: fill 70% of a charm and the 75th
+   percentile of its surface IS the engraving, so the test measures
+   engraving against engraving and reports a clean charm. Measured across
+   p75/p80/p85/p90 on three pairs, p80 through p90 all give the same answer
+   and p75 alone is wrong — so this sits in the middle of the plateau, not
+   on the edge of the cliff. */
+const SCO_ENG_POL_PCT   = 0.85;   /* this percentile of the core surface is polish */
+const SCO_ENG_DROP      = 0.06;   /* darker than the polish by this share of it = engraved */
+const SCO_ENG_ALLOW     = 1.35;   /* a stroke may be this much thicker than the map's thickest */
+const SCO_ENG_FILL_MAX  = 0.05;   /* and this share of the engraving may exceed that */
 const SCO_NEAR_OPEN_FRAC = 0.70;  /* this share of a footprint within reach of a real opening */
 const SCO_NEAR_TOL_FRAC  = 0.045; /* and "within reach" reaches this far, as a share of the charm */
 const SCO_ERODE_FRAC    = 0.0037; /* keep the cut this far inside the render's own metal */
@@ -8122,6 +8194,88 @@ function scoBoundaryError(a, b, w, h, scale) {
 
    Openings are excluded by brightness: ground showing through a cut is
    neutral too, and it is not metal.                                        */
+/* ── DID THE RENDER FILL WHAT THE MAP DREW AS A LINE? ──────────────────────
+   A different failure from a missing cut, and invisible to every check that
+   counts things. Measured on a swallow whose map declares its engraving as a
+   NETWORK OF STROKES — feather ribs, a body contour, a cheek circle, a beak:
+
+                                    map      render
+     engraved area, share of charm   17.6%    26.2%
+     stroke half-width, median       1.0px    2.8px
+     stroke half-width, p90          3.6px    8.5px
+     engraved px in strokes thicker
+       than 2% of the charm            1%      18%
+
+   The render did not invent new decoration. It read each closed engraved
+   OUTLINE as an instruction to recess everything the outline encloses, so
+   the head, the flank under the wing and the tail band came back as broad
+   sunken pockets where the map has plain polished metal inside a thin line.
+   An area check barely moves on that — 17.6 to 26.2 — and a count of
+   engraved regions does not move at all, because the regions are the same
+   regions, only fatter. THICKNESS is what moves, and by eighteen times.
+
+   So the test is thickness, and its ceiling comes from THIS MAP rather than
+   from a constant: a map whose engraving is all hairlines permits only
+   hairlines, and a map that genuinely declares a broad engraved field
+   permits that field. Registration does not enter into it — both sides are
+   measured in their own frame and compared as shares — so this cannot be
+   thrown off by a fit that is a few pixels out.                            */
+function scoEngraveFill(rp, rw, rh, mp, mw, mh, scaleR, m2r) {
+  const out = { renderFrac: null, mapFrac: null, ceil: null, over: null, filled: false };
+  const rn = rw * rh, mn = mw * mh;
+  let mEngN = 0, mOutN = 0;
+  for (let i = 0; i < mn; i++) { if (mp.engraved[i]) mEngN++; if (mp.outer[i]) mOutN++; }
+  /* A MAP THAT DECLARES NO ENGRAVING DECLARES NO CEILING. There is nothing
+     to be thicker than, so this test has no opinion — the render's own
+     invented engraving is the adjudicator's business, not this one's. */
+  if (!mEngN || !mOutN) return out;
+  const dM = studioEdt2d(mp.engraved, mw, mh);
+  const histM = new Int32Array(512);
+  for (let i = 0; i < mn; i++) if (mp.engraved[i]) histM[Math.min(511, Math.round(dM[i]))]++;
+  let acc = 0, mP99 = 0;
+  for (let r = 0; r < 512; r++) { acc += histM[r]; if (acc >= mEngN * 0.99) { mP99 = r; break; } }
+
+  /* THE BEVEL IS NOT ENGRAVING. Every cut edge and every outer edge carries a
+     wall of shaded gold, and it is darker than the polish by more than any
+     engraving is. Reading it as engraving would report a filled charm on a
+     render with no engraving at all, so the census starts a little way in
+     from every edge the metal has. */
+  const din = studioEdt2d(rp.metal, rw, rh);
+  const edge = Math.max(2, SCO_ENG_EDGE_FRAC * scaleR);
+  const core = new Uint8Array(rn);
+  let coreN = 0;
+  for (let i = 0; i < rn; i++) if (rp.metal[i] && din[i] > edge) { core[i] = 1; coreN++; }
+  if (coreN < 600) return out;
+  /* the polished level, read from this render rather than assumed: engraving
+     is a minority of any charm even on a bad render, so a high percentile of
+     the core IS polish — see SCO_ENG_POL_PCT for why it is not p75 */
+  const histL = new Int32Array(256);
+  for (let i = 0; i < rn; i++) if (core[i]) histL[Math.max(0, Math.min(255, Math.round(rp.lum[i])))]++;
+  let a2 = 0, pol = 255;
+  for (let v = 0; v < 256; v++) { a2 += histL[v]; if (a2 >= coreN * SCO_ENG_POL_PCT) { pol = v; break; } }
+  const drop = Math.max(6, SCO_ENG_DROP * pol);
+  const rEng = new Uint8Array(rn);
+  let rEngN = 0;
+  for (let i = 0; i < rn; i++) if (core[i] && rp.lum[i] < pol - drop) { rEng[i] = 1; rEngN++; }
+  let rOutN = 0;
+  for (let i = 0; i < rn; i++) if (rp.outer[i]) rOutN++;
+  out.mapFrac = Math.round(mEngN / mOutN * 1e4) / 1e4;
+  out.renderFrac = rOutN ? Math.round(rEngN / rOutN * 1e4) / 1e4 : null;
+  if (rEngN < 400) { out.over = 0; return out; }
+  const dR = studioEdt2d(rEng, rw, rh);
+  const ceil = mP99 * m2r * SCO_ENG_ALLOW + 1;
+  let over = 0;
+  for (let i = 0; i < rn; i++) if (rEng[i] && dR[i] > ceil) over++;
+  out.ceil = Math.round(ceil * 10) / 10;
+  out.over = Math.round(over / rEngN * 1e4) / 1e4;
+  /* BOTH, OR NEITHER. Thickness alone can be a legitimately bolder stroke on
+     a map drawn thin; area alone is the 17.6-to-26.2 that a filled charm
+     barely registers on. Together they are the fill and nothing else. */
+  out.filled = out.over > SCO_ENG_FILL_MAX &&
+               out.renderFrac != null && out.renderFrac > out.mapFrac * 1.15;
+  return out;
+}
+
 function scoAlloy(px, w, h, ch, outer, gnd) {
   const n = w * h;
   const gl = 0.299 * gnd.r + 0.587 * gnd.g + 0.114 * gnd.b;
@@ -8354,6 +8508,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     furniture: { frac: 0, biggest: 0, blobs: 0, dirty: false },
     alloy: { offAlloy: 0, chroma: 0, dirty: false },
     outline: { mean: 0, p95: 0, dirty: false },
+    engrave: { renderFrac: null, mapFrac: null, ceil: null, over: null, filled: false },
   };
   if (!sharp || !renderBuf?.length || !specBuf?.length) {
     report.why = "no_inputs";
@@ -8524,6 +8679,14 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       }
       report.outline = scoBoundaryError(rp.outer, warp, R.w, R.h, scale);
     }
+    /* AND WHETHER THE ENGRAVING WAS TRACED OR FILLED. Same pass, same two
+       segmentations, no model call and no credit — and, unlike everything
+       else in this gate, no dependence on the fit: both sides are measured
+       in their own frame. */
+    try {
+      report.engrave = scoEngraveFill(rp, R.w, R.h, mp, M.w, M.h, scale,
+                                      (rb.x1 - rb.x0 + 1) / (mb.x1 - mb.x0 + 1));
+    } catch (e) { /* a measurement is never a reason to fail a render */ }
     /* THE SHAPE GATE STOPS HERE. Everything above is what it takes to answer
        "is this the same charm?" — the two segmentations, the two silhouettes
        and the fit between them — and everything below is repair work that is
@@ -8534,7 +8697,13 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       report.why = report.furniture.dirty ? "frame_furniture"
                  : report.alloy.dirty ? "two_tone_metal"
                  : fit.iou < minIoU ? "silhouette_drift"
-                 : report.outline.dirty ? "outline_mismatch" : "fit_ok";
+                 : report.outline.dirty ? "outline_mismatch"
+                 /* LAST of the objections, deliberately: a charm that is the
+                    wrong shape has a more useful thing to be told than that
+                    its engraving is too thick, and the note that goes back to
+                    the renderer carries one correction, not four. */
+                 : (o.engraveGate && report.engrave.filled) ? "engraving_filled"
+                 : "fit_ok";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
     }
@@ -9720,6 +9889,8 @@ async function handleStudioRender({ body, event, origin }) {
     const shapeMode = String(cfg.renderShapeGate == null ? "on" : cfg.renderShapeGate)
       .trim().toLowerCase();
     const shapeGating = shapeMode === "on" && !!sharpMod;
+    const engraveMode = String(cfg.renderEngraveGate == null ? "observe" : cfg.renderEngraveGate)
+      .trim().toLowerCase();                       /* "on" | "observe" | "off" */
     const shapeMinIoU = Math.min(0.99, Math.max(0.5, Number(cfg.renderShapeMinIoU) || 0.80));
     const shapeRetries = Math.max(0, Math.min(3,
       Number(cfg.renderShapeRetries) === 0 ? 0 : (Number(cfg.renderShapeRetries) || 1)));
@@ -9784,7 +9955,8 @@ async function handleStudioRender({ body, event, origin }) {
          the loop treats that as no objection. */
       shapeFn: !shapeGating ? null : async (buf) => {
         const r = await studioCompositeOpenings(buf, materialSpec && materialSpec.buf,
-          { fitOnly: true, budgetMs: 20000, minIoU: shapeMinIoU });
+          { fitOnly: true, budgetMs: 20000, minIoU: shapeMinIoU,
+            engraveGate: engraveMode === "on" });
         if (!r || !r.report || r.report.iou == null) return null;
         return {
           iou: r.report.iou,
@@ -9793,6 +9965,7 @@ async function handleStudioRender({ body, event, origin }) {
           furniture: r.report.furniture,
           alloy: r.report.alloy,
           outline: r.report.outline,
+          engrave: r.report.engrave,
           ms: r.report.ms,
         };
       },
@@ -9978,6 +10151,15 @@ async function handleStudioRender({ body, event, origin }) {
         renderOffAlloy: s.alloy ? s.alloy.offAlloy : null,
         renderOutlineErr: s.outline ? s.outline.mean : null,
         renderOutlineP95: s.outline ? s.outline.p95 : null,
+        /* the engraving-fill numbers, filed whether or not the gate is armed:
+           this is the record that decides whether renderEngraveGate can be
+           turned on, and it is not recoverable from the finished picture */
+        renderEngraveMode: engraveMode,
+        renderEngraveOver: s.engrave ? s.engrave.over : null,
+        renderEngraveCeil: s.engrave ? s.engrave.ceil : null,
+        renderEngraveRenderFrac: s.engrave ? s.engrave.renderFrac : null,
+        renderEngraveMapFrac: s.engrave ? s.engrave.mapFrac : null,
+        renderEngraveFilled: s.engrave ? !!s.engrave.filled : null,
         renderShapeSwapped: !!s.swapped,
         /* the storefront reads this to mark its counter: a render that failed
            every attempt is not the same thing as one that passed first time,
