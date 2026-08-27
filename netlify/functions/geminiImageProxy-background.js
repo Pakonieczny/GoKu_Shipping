@@ -6659,6 +6659,31 @@ async function studioDrawingPlan(sharp, drawingBuf) {
    interprets BLUE/RED/BLACK at all — it photorealises geometry that is already
    resolved. No second model call, no extra customer instruction, no new cost.
    ====================================================================== */
+/* ── A LETTER'S COUNTER IS NOT A HOLE ──────────────────────────────────────
+   An enclosed white island is an opening only if it is at least this many
+   times thicker than the blue stroke that encloses it. Below the line the
+   blue is a PEN and the white is the pen's own counter — the eye of a
+   cursive I, the inside of an o — which is metal.
+
+   Asked as a RATIO of two local measurements, and deliberately not as an
+   area: area is a property of the whole connected blue component, so a
+   letter joined to a long word scores differently from the same letter
+   standing alone, and a hoop ring touching the charm's perimeter reads as
+   one 7,654 px component rather than as a ring. Thickness is local and does
+   none of that. Measured, island inscribed radius ÷ the enclosing stroke's
+   half-width within six pixels:
+
+     the eye of a blue cursive I                  1.2
+     the counter of a blue o                      1.0
+     a hoop hole inside a blue ring               7.8
+     a blue outlined loop, drawn to be cut        7.8
+
+   Two and a half times of margin on each side. */
+const STUDIO_BLUE_COUNTER_MIN = 3.0;
+const STUDIO_BLUE_REACH = 6;      /* how far out the enclosing stroke is measured */
+const STUDIO_RAY_DX = [1, 1, 0, -1, -1, -1, 0, 1];
+const STUDIO_RAY_DY = [0, 1, 1, 1, 0, -1, -1, -1];
+
 function studioBlueBoundedWhiteHoles(plan) {
   const { px, w, h, n, face, blue } = plan;
   const white = new Uint8Array(n);
@@ -6673,7 +6698,23 @@ function studioBlueBoundedWhiteHoles(plan) {
      body as empty. Track the distinct blue contours touching each white
      region so a band between two contours remains solid; the white centre,
      which touches only the inner contour, is still cut out. */
-  const blueComponents = studioLabel(blue || studioBlueMask(px, n, 3), w, h).labels;
+  const blueMask = blue || studioBlueMask(px, n, 3);
+  const blueComponents = studioLabel(blueMask, w, h).labels;
+  /* ── TWO THICKNESS FIELDS, ONE PASS EACH ───────────────────────────────
+     dBlue is how deep inside the blue a pixel sits — half the stroke's width
+     at its spine. dWhite is the same for the enclosed white, so the maximum
+     over an island IS its inscribed radius. Both feed the counter test in
+     the verdict below; see STUDIO_BLUE_COUNTER_MIN. */
+  const dBlue = studioEdt2d(blueMask, w, h);
+  const dWhite = studioEdt2d(white, w, h);
+  const islandRIn = new Float64Array(count + 1);
+  for (let i = 0; i < n; i++) {
+    const L = labels[i];
+    if (L && dWhite[i] > islandRIn[L]) islandRIn[L] = dWhite[i];
+  }
+  /* the thickest blue found within STUDIO_BLUE_REACH of each island — the
+     stroke's spine, which a two-pixel vote window never reaches */
+  const blueDepth = new Float64Array(count + 1);
 
   const size = new Float64Array(count + 1);
   for (let i = 0; i < n; i++) if (labels[i]) size[labels[i]]++;
@@ -6721,6 +6762,19 @@ function studioBlueBoundedWhiteHoles(plan) {
         else if (studioIsRedPixel(px, p)) redVotes[L]++;
         else if (studioIsBlack(px, p)) blackVotes[L]++;
       }
+      /* HOW THICK THE ENCLOSING STROKE IS, along eight rays rather than over
+         a disc: the vote window above stops two pixels out, which on a pen
+         four pixels wide never reaches the spine and reads every stroke as
+         the same thickness. Eight rays is 48 samples against 169 for a full
+         ±6 disc, and the spine is what is being looked for, not a census. */
+      for (let d = 1; d <= STUDIO_BLUE_REACH; d++) {
+        for (let k = 0; k < 8; k++) {
+          const xx = x + STUDIO_RAY_DX[k] * d, yy = y + STUDIO_RAY_DY[k] * d;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const q = at(xx, yy);
+          if (blueMask[q] && dBlue[q] > blueDepth[L]) blueDepth[L] = dBlue[q];
+        }
+      }
     }
   }
 
@@ -6734,7 +6788,27 @@ function studioBlueBoundedWhiteHoles(plan) {
     const blue = blueVotes[L], red = redVotes[L], black = blackVotes[L];
     const votes = blue + red + black;
     const betweenTwoBlueContours = !!secondBlueComponent[L];
-    if (!betweenTwoBlueContours && votes >= 8 && blue / votes >= 0.72 && blue > (red + black) * 2) {
+    /* ── AND THE EYE OF A LETTER IS NOT A HOLE ───────────────────────────
+       The vote test asks WHAT surrounds a white island and a letter's own
+       counter answers "blue, unanimously" — so "I love" written in blue came
+       back with the eye of its I and the counter of its o filled solid, the
+       strokes merged into blobs, while the same words in black traced 1:1
+       (15,031 ink px in, 15,351 engraved px out). It is the one place the
+       blue path is coarser than the black path, and the reason is that black
+       marks only the ink itself while blue also claims what the ink encloses.
+
+       The doctrine that separates them is already written into the render
+       prompt: a blue LINE is a cut edge, only a blue FILLED AREA is an
+       opening. So the test is thickness — how big the island is against the
+       stroke that wraps it. See STUDIO_BLUE_COUNTER_MIN for the numbers.
+
+       It applies ONLY to this vote path. A blue FILLED area is still a hole
+       through `blue[i]` in studioMaterialSpec, at any width, exactly as
+       before, and the two-contour hoop band is still excluded above. */
+    const isStrokeCounter =
+      islandRIn[L] < STUDIO_BLUE_COUNTER_MIN * Math.max(0.5, blueDepth[L]);
+    if (!betweenTwoBlueContours && !isStrokeCounter &&
+        votes >= 8 && blue / votes >= 0.72 && blue > (red + black) * 2) {
       holeLabel[L] = 1;
     }
   }
