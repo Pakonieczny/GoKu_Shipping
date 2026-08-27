@@ -4194,41 +4194,79 @@ function buildMaterialSpecToCharmPrompt(opts) {
      1,346, and all sixteen rules verifiable one by one against the old text.
      See SHORTER, NOT LONGER above for why that direction is the right one.
 
-     ONE RULE ADDED SINCE, AT NO COST: "ENGRAVE THE DARK GREY AND NOTHING
-     ELSE". A swallow came back with its head, its flank and its tail band
-     sunk as broad recesses because the model read each closed engraved
-     OUTLINE as the edge of a pocket to hollow out — 17.6% of the map's area
-     engraved against 32.9% of the render's, and engraved strokes three times
-     the map's own thickness. Nothing here forbade it: every other line about
-     engraving is about its TONE. The paragraph was paid for out of the four
-     around it: an opening clause in TRACE that restated the ladder line
-     directly above it, and longer phrasings in TRACE, MATERIAL and FRAME.
-     1,277 chars to 1,314 — the seventeenth rule cost 37.
+     ONE RULE ADDED SINCE, AND THE FIRST ATTEMPT AT IT BROKE THE CUTTING.
+     A swallow came back with its head, flank and tail band sunk as broad
+     recesses because the model read each closed engraved OUTLINE as the edge
+     of a pocket to hollow out — 17.6% of the map engraved against 32.9% of
+     the render, at three times the map's own stroke thickness. Nothing here
+     forbade it: every other line about engraving is about its TONE.
 
-     TWO OF THOSE SAVINGS WERE PUT BACK, deliberately, and they are the two
-     worth knowing about if this block is ever squeezed again. "smooth
-     unengraved metal" was shortened to "polished metal": polished implies
-     unengraved and the new paragraph says it outright, but dropping the word
-     removed redundancy on precisely the failure being fixed. And "the SAME
-     gold as the polish BESIDE IT" was shortened to "the SAME gold": that
-     phrase anchors the engraved tone to the metal adjacent to it rather than
-     to gold in general, which is the comparison a renderer can actually make.
-     Both are back. 37 characters is a rounding error against 1,277; losing
-     either rule to save them would not have been.
+     THE FIRST FIX WAS WORSE THAN THE FAULT. To pay for the new paragraph out
+     of the block's own length, a clause was deleted from TRACE as "duplicate"
+     — "every grey region stays opaque gold and only the white regions are
+     empty". It is not duplicate. The ladder line above it is a LEGEND, a
+     glossary entry that names the tone; that clause was the only IMPERATIVE
+     in the whole prompt telling the renderer that white is cut through.
+     Deleting it, lowercasing "WHITE = EMPTY", and putting an ALL-CAPS
+     engraving headline in the slot where it had been left a prompt whose
+     single loudest instruction was about engraving and which no longer asked
+     for a hole anywhere. Three renders in a row came back with every opening
+     solid, and the compositor cut all of them — which is also why their
+     alignment became the next complaint.
 
-     The enforcement is scoEngraveFill, because a rule in a prompt is a
-     request; see the note there. */
+     SO THE BLOCK IS THE ORIGINAL, VERBATIM, plus one clause inside MATERIAL
+     where engraving was already being discussed. Not a headline, not a
+     paragraph, and not in front of anything: 1,277 chars to 1,441, every
+     original sentence present unchanged, one ALL-CAPS heading as before, and
+     both mentions of white-as-empty back where they were.
+
+     THE LESSON, FOR THE NEXT PERSON SHORTENING THIS: SHORTER, NOT LONGER is
+     about padding, not about rules, and a sentence is not duplicate because
+     another sentence contains the same word. Diff the imperatives, not the
+     vocabulary. The enforcement for the engraving rule is scoEngraveFill,
+     because a rule in a prompt is a request; see the note there.
+
+     AND THEN THE CUT CLAUSE WAS STRENGTHENED ON PURPOSE, against Google's
+     own published guidance for this model family. Three rules from it apply
+     here and the old clause broke all three:
+
+       · NAME THE OPERATION WITH A VERB. The guide's first rule is to open
+         with a strong verb naming the primary operation. "Cut" appeared
+         NOWHERE in this prompt as a verb — only as the noun "through-cut"
+         and the adjective "crisp cut edges". The one operation the renderer
+         kept failing at was the one operation never asked for.
+       · SAY WHAT IS THERE, NOT WHAT IS ABSENT. "empty street", not "no
+         cars". "Only the white regions are empty" is a restriction, and it
+         asks for an absence — the hardest thing to render. It is now an
+         instruction to cut, and what fills the hole is named: the white
+         ground behind the charm, and a bright bevel on the sheet's edge.
+         That is the guide's own cut-out pattern, which works by describing
+         what is VISIBLE through the opening rather than the opening itself.
+       · A LEGEND IS NOT AN INSTRUCTION. "WHITE = EMPTY" is a glossary
+         entry, and the guide is explicit that a list of keywords is not
+         enough on its own. It stays, because it is compact and the other
+         two tones are served by it, and the white case now has a narrative
+         sentence behind it as well.
+
+     The clause was strengthened IN PLACE — same paragraph, same position —
+     because the last edit's damage came as much from moving and re-ranking
+     instructions as from deleting one. 1,277 chars to 1,748; the length
+     discipline above is about padding, and none of this is padding.
+
+     HOW TO TELL WHETHER IT WORKED, without waiting for a customer:
+     renderModelCutShare on the version doc is the share of declared
+     openings the model cut itself. 1.0 is a clean render; 0.0 means every
+     hole in the picture was cut by code. The three renders that prompted
+     this were 0.0. There is a console warning on that case too. */
   return `PRIMARY OPERATION — MATERIAL TRANSFER ONLY
 
-Transform IMAGE 1 into a photorealistic 14K gold charm. It is a pixel-level manufacturing map and the exclusive authority for the silhouette, every through-cut and every worked surface: WHITE = empty; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow engraved recess.
+Transform IMAGE 1 into a photorealistic 14K gold charm. It is a pixel-level manufacturing map and the exclusive authority for the silhouette, every through-cut and every worked surface: WHITE = EMPTY; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow recessed engraving.
 
-ENGRAVE THE DARK GREY AND NOTHING ELSE. A dark grey line is a LINE: the light grey it encloses stays polished, never a sunken field. Engrave a whole area only where the map fills that whole area dark grey.
+TRACE, DO NOT INTERPRET: every grey region stays opaque gold, and every white region enclosed by grey is CUT clean through the sheet — a real opening, with the white ground behind the charm showing through it and a bright bevel where the sheet's own thickness catches the light. Cut every one of them, whatever their size or number, and never stand one in with engraving, shading, tinted metal or filled gold. Every notch, concavity, asymmetry and tilt of the outer boundary is the design. If you recognise what IMAGE 1 depicts, draw the map you were given rather than the tidier, more symmetrical version you remember, and add, remove, move or resize nothing — a better-looking charm with a different outline is a failed render.
 
-TRACE, DO NOT INTERPRET: every notch, concavity, asymmetry and tilt of the outer boundary is the design. If you recognise what IMAGE 1 depicts, draw the map, not the tidier version you remember; add, remove, move or resize nothing — a better-looking charm with a different outline is a failed render.
+MATERIAL: ONE alloy across the whole piece — 14K gold, thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer; IMAGE 1's greys are a classification code and must never reach the output as colour. Engrave the dark grey pixels themselves and no more: a dark grey line is a line, and the light grey it encloses stays polished rather than becoming a sunken field.
 
-MATERIAL: ONE alloy throughout — 14K gold, a thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer; IMAGE 1's greys are a classification code, never a colour to copy.
-
-FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them and no lettering appears anywhere.`;
+FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them, and no lettering, appears anywhere in the picture.`;
 }
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
@@ -10403,6 +10441,21 @@ async function handleStudioRender({ body, event, origin }) {
             .trim().toLowerCase() !== "off",
         });
         if (comp && comp.buf && comp.buf.length && compositeMode === "on") outBuf = comp.buf;
+        /* ── THE ALARM THAT WAS MISSING ────────────────────────────────
+           A render where the compositor cut EVERY declared opening is not a
+           compositor success, it is the generator having produced none of
+           them — and the finished picture looks broadly right, so nobody
+           notices. Three renders shipped that way after a prompt edit
+           removed the only imperative telling the model white means cut
+           through, and the fault was found by eye, from a customer, on the
+           third one. It is one comparison off numbers already in hand. */
+        if (comp.report.declared > 0 && comp.report.leftAlone === 0 &&
+            comp.report.composited >= comp.report.declared) {
+          console.warn(`[studio] THE MODEL CUT NOTHING — all ` +
+            `${comp.report.declared} declared opening(s) were composited in by code. ` +
+            `Every opening in this charm is deterministic. If this repeats across ` +
+            `renders, suspect the render prompt rather than the compositor.`);
+        }
         console.log(`[studio] cut-out composite: ran=${comp.report.ran} ` +
           `declared=${comp.report.declared} composited=${comp.report.composited} ` +
           `refused=${comp.report.refused} leftAlone=${comp.report.leftAlone} ` +
@@ -10429,6 +10482,15 @@ async function handleStudioRender({ body, event, origin }) {
                feature registered a few pixels out lands here, and before
                this counter existed it was composited over instead. */
             renderCompositeLeftAloneNear: comp.report.leftAloneNear,
+            /* ONE NUMBER FOR "DID THE GENERATOR CUT ANYTHING": the share of
+               declared openings the model made itself. 1 is a clean render,
+               0 means every hole in the picture was cut by code. Watch this
+               across renders after any change to the render prompt — it is
+               the field that would have caught the prompt edit that removed
+               the cut instruction, on the first render instead of the third. */
+            renderModelCutShare: comp.report.declared
+              ? Math.round((comp.report.leftAlone / comp.report.declared) * 1e3) / 1e3
+              : null,
             renderCompositeIoU: comp.report.iou,
             renderCompositeOpenFrac: comp.report.openFrac,
             renderCompositeDeclaredFrac: comp.report.declaredFrac == null
