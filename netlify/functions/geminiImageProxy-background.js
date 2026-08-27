@@ -2867,6 +2867,18 @@ const STUDIO_DEFAULT_CONFIG = {
      nobody has watched yet spends the customer's clock on a guess. Watch
      renderEngraveOver on a week of renders, then set this to "on". */
   renderEngraveGate: "observe",
+  /* ── HOW FAR A RENDER MAY BE STRETCHED ON ONE AXIS ─────────────────────
+     Bounding-box anisotropy: (rb.w/mb.w) ÷ (rb.h/mb.h), never below 1. The
+     composite REFUSES above this whatever the gate is set to — placing an
+     opening into a charm this far out of proportion cannot be right, and
+     doing nothing leaves the model's own cut-outs intact. See SCO_ASPECT_MAX
+     for the three measurements this sits between. */
+  renderAspectMax: 1.15,
+  /* And whether the SHAPE GATE also re-rolls on it. "off" by default: the
+     refusal above costs nothing and cannot damage a render, while a re-roll
+     spends the clock, and three calibration pairs is not a population. Watch
+     renderAspect on the version docs first. */
+  renderAspectGate: "off",
   /* Below this the render is a different charm — a re-roll, never a cancelled
      composite; the composite's own floor lives in SCO_FIT_FAIL / SCO_FIT_IOU
      and is a boundary distance, for the reason set out there.
@@ -5337,6 +5349,19 @@ function studioEngraveToneRetryNote(shape, attemptNo) {
   ].filter(Boolean).join("\n");
 }
 
+/* A charm redrawn at the wrong proportions, told as a proportion rather than
+   as "the shape is wrong" — the outline IS right, which is why every other
+   check passed it; what moved is the ratio between its width and its height. */
+function studioAspectRetryNote(shape, attemptNo) {
+  const k = shape && shape.aspect;
+  return [
+    "CORRECTION — the previous attempt drew the charm at the WRONG PROPORTIONS. Its outline was right and its width-to-height ratio was not: the piece came back stretched on one axis.",
+    (k ? `Measured against IMAGE 1, it was off by a factor of ${k}. ` : "") +
+      "Reproduce IMAGE 1's width and height in the SAME ratio it has. Do not stretch, squash, or refit the charm to the frame — its proportions are part of the design, and every engraved line and every opening sits where it does because of them.",
+    attemptNo >= 2 ? "This has already been asked for once. Measure the map's width against its height and match it." : "",
+  ].filter(Boolean).join("\n");
+}
+
 function studioShapeRetryNote(shape, attemptNo, builtInHoop) {
   return [
     "CORRECTION — the previous attempt drew the WRONG SHAPE. Its outline was measured against IMAGE 1 and does not match: the subject was right, the shape was not.",
@@ -5701,6 +5726,7 @@ async function studioRenderAttempts(opts) {
                             : lastShape.why === "two_tone_metal" ? studioAlloyRetryNote(attempts)
                             : lastShape.why === "engraving_filled" ? studioEngraveRetryNote(attempts)
                             : lastShape.why === "engraving_too_dark" ? studioEngraveToneRetryNote(lastShape, attempts)
+                            : lastShape.why === "aspect_drift" ? studioAspectRetryNote(lastShape, attempts)
                             : lastShape.why === "outline_mismatch"
                               ? studioShapeRetryNote(lastShape, attempts, opts.builtInHoop)
                             : studioShapeRetryNote(lastShape, attempts, opts.builtInHoop))
@@ -7850,6 +7876,43 @@ const SCO_CMP_CLOSE         = 4;  /* both silhouettes are closed by this before 
    already catches, and 0.20 clear of the worst good one. */
 const SCO_FIT_FAIL          = 5.0; /* boundary distance past which no placement is meaningful */
 const SCO_FIT_IOU           = 0.70;/* and a floor for the case where there is no charm to trace */
+/* ── AND THE ONE THE FIT ITSELF HIDES: A CHARM REDRAWN AT A DIFFERENT SHAPE ─
+   Every placement in this file maps a mask coordinate through the two
+   BOUNDING BOXES — kx = rb.w/mb.w, ky = rb.h/mb.h — and that pair is a free
+   non-uniform scale. So a render that reproduces the outline but stretches
+   it on one axis is normalised away before anything is measured: the fit
+   reports a good IoU, the outline check passes, and every interior feature
+   is then placed by a transform that squashes one axis by however much the
+   model stretched it. Nothing downstream can see it, because it was removed
+   before the measuring began.
+
+   Measured, bounding-box anisotropy — (rb.w/mb.w) ÷ (rb.h/mb.h), folded so
+   it is never below 1:
+
+     swallow, the render the customer approved          1.079
+     swallow, same map, the one rejected for tone       1.079   (identical: it
+                                                                 is a property
+                                                                 of the pair)
+     bow and arrow, which fails on almost every render  1.208
+
+   The bow's silhouette IoU is 0.812 and its outline distance passes; on
+   every existing gate it is a good render. It is not: scaled to one height,
+   its right limb sits 17% narrower than the map's, so the map's fletching
+   slots land nowhere near the ones the model actually cut, the "already cut"
+   test misses them, and a second set is composited beside the first.
+
+   WHAT THIS DOES ABOUT IT IS REFUSE TO COMPOSITE, not re-roll. On a charm
+   this far out no placement is trustworthy, and the two outcomes are not
+   symmetrical: leaving the model's own openings alone gives a charm missing
+   some holes, while placing ours gives a charm with holes in the wrong
+   places AND the model's still there. Missing is recoverable by generating
+   again; doubled is a disaster on the customer's screen.
+
+   THE THRESHOLD IS CALIBRATED ON THREE PAIRS AND IS A CONFIG VALUE for that
+   reason: renderAspectMax. Two good renders at 1.079 and one bad at 1.208
+   is a real gap but a narrow one, and renderAspect is written to every
+   version doc so the population can be watched before it is tightened. */
+const SCO_ASPECT_MAX        = 1.15;/* bbox anisotropy past which no placement is trustworthy */
 
 /* ── WHAT A HOLE LOOKS LIKE FROM THE INSIDE ────────────────────────────────
    A hole the model cuts is NOT the plain ground showing through: the metal
@@ -8634,7 +8697,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
   const report = {
     ran: false, why: "", ms: 0,
     declared: 0, refused: 0, composited: 0, leftAlone: 0, leftAloneNear: 0,
-    iou: null, openFrac: null, declaredFrac: null, shadeK: null, clusters: 0,
+    iou: null, aspect: null, openFrac: null, declaredFrac: null, shadeK: null, clusters: 0,
     maxShift: 0, localFit: true,
     furniture: { frac: 0, biggest: 0, blobs: 0, dirty: false },
     alloy: { offAlloy: 0, chroma: 0, dirty: false },
@@ -8658,6 +8721,15 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     if (!rb || !mb || !rb.w || !mb.w) {
       report.why = "no_silhouette";
       return { buf: renderBuf, report };
+    }
+    /* ── THE DISTORTION THE BOUNDING-BOX MAP IS ABOUT TO ABSORB ───────────
+       Measured HERE, before kx and ky are used for anything, because using
+       them is what makes it invisible. See SCO_ASPECT_MAX. */
+    {
+      const kx = (rb.x1 - rb.x0 + 1) / (mb.x1 - mb.x0 + 1);
+      const ky = (rb.y1 - rb.y0 + 1) / (mb.y1 - mb.y0 + 1);
+      const k = (kx > 0 && ky > 0) ? Math.max(kx / ky, ky / kx) : null;
+      report.aspect = k == null ? null : Math.round(k * 1e3) / 1e3;
     }
 
     /* ── IS THERE ANYTHING IN THIS FRAME BUT THE CHARM? ───────────────────
@@ -8829,6 +8901,15 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       report.why = report.furniture.dirty ? "frame_furniture"
                  : report.alloy.dirty ? "two_tone_metal"
                  : fit.iou < minIoU ? "silhouette_drift"
+                 /* REPORTED HERE, NOT ENFORCED. The composite refuses on this
+                    unconditionally — that can only ever leave a render alone —
+                    but making the shape gate RE-ROLL on it spends the
+                    customer's clock on a threshold calibrated from three
+                    pairs. Set renderAspectGate:"on" once renderAspect has
+                    been watched across a real population. */
+                 : (o.aspectGate && report.aspect != null &&
+                    report.aspect > Math.max(1.0, Number(o.aspectMax) || SCO_ASPECT_MAX))
+                     ? "aspect_drift"
                  : report.outline.dirty ? "outline_mismatch"
                  /* LAST of the objections, deliberately: a charm that is the
                     wrong shape has a more useful thing to be told than that
@@ -8875,6 +8956,20 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
        most intricate designs and let a wrong shape through. See SCO_FIT_FAIL. */
     if (report.outline.mean > SCO_FIT_FAIL || fit.iou < SCO_FIT_IOU) {
       report.why = "silhouette_drift";
+      report.ms = Date.now() - t0;
+      return { buf: renderBuf, report };
+    }
+    /* ── AND THE SAME REFUSAL FOR A CHARM REDRAWN AT A DIFFERENT SHAPE ────
+       Third and last thing that stops the composite, for the same reason as
+       the other two: no coordinate maps between the two pictures. The
+       difference is that this one passes every existing test — the bbox map
+       normalises it away before the fit is measured — so it has to be asked
+       before that map is trusted. Refusing leaves the model's own openings
+       exactly as it cut them, which on a distorted render is the best
+       available outcome. See SCO_ASPECT_MAX. */
+    const aspectMax = Math.max(1.0, Number(o.aspectMax) || SCO_ASPECT_MAX);
+    if (report.aspect != null && report.aspect > aspectMax) {
+      report.why = "aspect_drift";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
     }
@@ -10024,6 +10119,9 @@ async function handleStudioRender({ body, event, origin }) {
     const shapeGating = shapeMode === "on" && !!sharpMod;
     const engraveMode = String(cfg.renderEngraveGate == null ? "observe" : cfg.renderEngraveGate)
       .trim().toLowerCase();                       /* "on" | "observe" | "off" */
+    const aspectMax = Math.max(1.0, Math.min(2.0, Number(cfg.renderAspectMax) || SCO_ASPECT_MAX));
+    const aspectGating = String(cfg.renderAspectGate == null ? "off" : cfg.renderAspectGate)
+      .trim().toLowerCase() === "on";
     const shapeMinIoU = Math.min(0.99, Math.max(0.5, Number(cfg.renderShapeMinIoU) || 0.80));
     const shapeRetries = Math.max(0, Math.min(3,
       Number(cfg.renderShapeRetries) === 0 ? 0 : (Number(cfg.renderShapeRetries) || 1)));
@@ -10089,10 +10187,12 @@ async function handleStudioRender({ body, event, origin }) {
       shapeFn: !shapeGating ? null : async (buf) => {
         const r = await studioCompositeOpenings(buf, materialSpec && materialSpec.buf,
           { fitOnly: true, budgetMs: 20000, minIoU: shapeMinIoU,
-            engraveGate: engraveMode === "on" });
+            engraveGate: engraveMode === "on",
+            aspectMax, aspectGate: aspectGating });
         if (!r || !r.report || r.report.iou == null) return null;
         return {
           iou: r.report.iou,
+          aspect: r.report.aspect,
           ok: r.report.why === "fit_ok",
           why: r.report.why,
           furniture: r.report.furniture,
@@ -10279,6 +10379,11 @@ async function handleStudioRender({ body, event, origin }) {
         renderShapeOk: !!s.ok,
         renderShapeMinIoU: shapeMinIoU,
         renderShapeWhy: s.why || "",
+        /* the distortion every other measurement in this file normalises
+           away before it looks. 1.0 is a faithful render; the bow that fails
+           on almost every attempt reads 1.208. */
+        renderAspect: s.aspect == null ? null : s.aspect,
+        renderAspectMax: aspectMax,
         renderFrameStray: s.furniture ? s.furniture.biggest : null,
         renderFrameBlobs: s.furniture ? s.furniture.blobs : null,
         renderOffAlloy: s.alloy ? s.alloy.offAlloy : null,
@@ -10537,6 +10642,7 @@ async function handleStudioRender({ body, event, origin }) {
         comp = await studioCompositeOpenings(outBuf, materialSpec && materialSpec.buf, {
           budgetMs: Math.max(2000, Math.min(STUDIO_COMPOSITE_HARD_MS, leftOfRun)),
           minIoU: Math.min(0.99, Math.max(0.5, Number(cfg.renderCompositeMinIoU) || 0.80)),
+          aspectMax,
           localFit: String(cfg.renderCompositeLocalFit == null ? "on" : cfg.renderCompositeLocalFit)
             .trim().toLowerCase() !== "off",
         });
@@ -10560,7 +10666,7 @@ async function handleStudioRender({ body, event, origin }) {
           `declared=${comp.report.declared} composited=${comp.report.composited} ` +
           `refused=${comp.report.refused} leftAlone=${comp.report.leftAlone} ` +
           `leftAloneNear=${comp.report.leftAloneNear} ` +
-          `iou=${comp.report.iou} shift=${comp.report.maxShift}px ` +
+          `iou=${comp.report.iou} aspect=${comp.report.aspect} shift=${comp.report.maxShift}px ` +
           `${comp.report.why ? "why=" + comp.report.why + " " : ""}` +
           `${comp.report.ms}ms`);
       } catch (e) {
