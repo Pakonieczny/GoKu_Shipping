@@ -2247,6 +2247,26 @@ function stuckCard(a){var pl=a.payload||{};var dry=(((typeof DASH!=="undefined"&
   body+='<div class="actions"><button class="btn gold sm" data-retry="'+a.id+'">Retry apply'+(dry?" (dry-run)":"")+'</button><button class="btn ghost sm" data-rj="'+a.id+'">Discard</button></div>';
   return elFrom('<div class="draft"><div class="draft__top"><span class="tagk creative" style="background:var(--clay-soft);color:var(--clay)">stuck</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me" style="color:var(--clay)">approved \u00b7 apply errored</div></div><span class="chev">\u25be</span></div><div class="draft__body">'+body+'</div></div>');
 }
+function setApprovalDetailsOpen(card,open){
+  if(!card)return;
+  open=!!open;
+  card.classList.toggle("open",open);
+  var body=card.querySelector(".draft__body");
+  var reviewBtn=card.querySelector(".draft-review");
+  if(body){
+    if(reviewBtn)body.style.display=open?"block":"none";
+    else body.style.removeProperty("display");
+    body.setAttribute("aria-hidden",open?"false":"true");
+  }
+  if(reviewBtn){reviewBtn.setAttribute("aria-expanded",open?"true":"false");reviewBtn.textContent=open?"Hide Details":"Review Details";}
+}
+function toggleApprovalDetails(source,e){
+  if(e){e.preventDefault();e.stopPropagation();}
+  var card=source&&source.closest?source.closest(".draft"):null;
+  if(!card)return false;
+  setApprovalDetailsOpen(card,!card.classList.contains("open"));
+  return false;
+}
 function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var stuck=DASH.stuck||[];
   list.innerHTML="";
   if(stuck.length){
@@ -2307,13 +2327,9 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
     var dryApproval=((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun);
     var quick='<div class="draft__quick" role="group" aria-label="Campaign approval actions">'+
       '<button type="button" class="btn gold draft-approve" data-ap="'+a.id+'">Approve Campaign'+(dryApproval?" (dry-run)":"")+'</button>'+
-      '<button type="button" class="btn ghost sm draft-review" aria-expanded="false">Review Details</button>'+
+      '<button type="button" class="btn ghost sm draft-review" aria-expanded="false" onclick="toggleApprovalDetails(this,event)">Review Details</button>'+
       '<button type="button" class="btn ghost sm draft-reject" data-rj="'+a.id+'">Reject</button></div>';
-    var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div>'+quick+'<div class="draft__body">'+body+'</div></div>');
-    var reviewBtn=card.querySelector(".draft-review");
-    function setDraftOpen(open){card.classList.toggle("open",open);reviewBtn.setAttribute("aria-expanded",open?"true":"false");reviewBtn.textContent=open?"Hide Details":"Review Details";}
-    reviewBtn.onclick=function(e){e.stopPropagation();setDraftOpen(!card.classList.contains("open"));};
-    card.querySelector(".draft__top").onclick=function(e){e.stopPropagation();setDraftOpen(!card.classList.contains("open"));};
+    var card=elFrom('<div class="draft"><div class="draft__top" onclick="toggleApprovalDetails(this,event)"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div>'+quick+'<div class="draft__body" aria-hidden="true">'+body+'</div></div>');
     list.appendChild(card);
   });
   list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Sending\u2026");var aid=actStart("approve");try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
@@ -3211,7 +3227,7 @@ function uiRestore(snap){if(!snap)return;
   var seen={};
   document.querySelectorAll("details").forEach(function(d){var k=_pkeyFor(d);seen[k]=(seen[k]||0)+1;k=k+"#"+seen[k];if(k in snap.details)d.open=!!snap.details[k];});
   document.querySelectorAll(".cdet").forEach(function(r){var k=r.getAttribute("data-cid")||r.getAttribute("data-d");if(k!=null&&snap.cdet[k])r.style.display="";});
-  document.querySelectorAll(".draft").forEach(function(d){var ti=d.querySelector(".ti"),isOpen=!!(ti&&snap.drafts[ti.textContent.trim().slice(0,70)]);if(isOpen){d.classList.add("open");var rb=d.querySelector(".draft-review");if(rb){rb.setAttribute("aria-expanded","true");rb.textContent="Hide Details";}}});
+  document.querySelectorAll(".draft").forEach(function(d){var ti=d.querySelector(".ti"),isOpen=!!(ti&&snap.drafts[ti.textContent.trim().slice(0,70)]);if(isOpen)setApprovalDetailsOpen(d,true);});
 }
 function renderAll(){var snap=uiSnapshot();renderControlBar();renderCommand();renderSales();renderSalesSummary();renderConvStrip();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();try{renderDiag();}catch(e){}uiRestore(snap);}
 
