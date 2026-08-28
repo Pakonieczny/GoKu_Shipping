@@ -72,7 +72,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
-  const READONLY = new Set(["scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate"]); // drafts/read-only analysis never mutate Google Ads before approval
+  const READONLY = new Set(["scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // drafts/read-only analysis never mutate Google Ads before approval
   const allReadOnly = tasks.every(t => READONLY.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -108,6 +108,43 @@ exports.handler = async (event) => {
     try {
       if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
       else if (task === "scanOpportunities") { const sc = await E.opportunitiesWithStatus({ force: true, runId: body.scanRunId || null }); result.scanOpportunities = { n: (sc.opportunities || []).length, pmax: (sc.pmaxList || []).length, pmaxError: sc.pmaxError || null, runId: body.scanRunId || null, auditStatus: sc.scanAudit && sc.scanAudit.status || null }; }
+      else if (task === "designStudioScan") {
+        const gId = String(body.genId || `studio-scan-${Date.now()}`);
+        try { await E.setGenStatus(gId, { phase: "running", kind: "design-studio-scan", startedAt: Date.now() }); } catch (e) {}
+        try {
+          const out = await E.scanDesignStudioOpportunity({ force: true }); result.designStudioScan = out;
+          try { await E.setGenStatus(gId, { phase: "done", ok: !!out.ok, scannedAt: out.scannedAt || Date.now(), error: out.error || null }); } catch (e) {}
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 400); result.designStudioScan = { ok: false, error: msg };
+          try { await E.setGenStatus(gId, { phase: "done", ok: false, error: msg }); } catch (e2) {}
+        }
+      }
+      else if (task === "designStudioGenerate") {
+        const gId = String(body.genId || `studio-generate-${Date.now()}`);
+        try { await E.setGenStatus(gId, { phase: "running", kind: "design-studio-generate", startedAt: Date.now() }); } catch (e) {}
+        try {
+          const out = await E.generateDesignStudioApprovals({ dailyBudget: body.dailyBudget,
+            pmaxDaily: body.pmaxDaily, searchDaily: body.searchDaily,
+            countries: Array.isArray(body.countries) ? body.countries.slice(0, 20) : [], maxCpc: body.maxCpc });
+          result.designStudioGenerate = out;
+          try { await E.setGenStatus(gId, { phase: "done", ok: true, ...out }); } catch (e) {}
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 400); result.designStudioGenerate = { ok: false, error: msg };
+          try { await E.setGenStatus(gId, { phase: "done", ok: false, error: msg }); } catch (e2) {}
+        }
+      }
+      else if (task === "designStudioAnalyze" || task === "designStudioLearn") {
+        const gId = String(body.genId || `studio-learning-${Date.now()}`);
+        if (task === "designStudioAnalyze") { try { await E.setGenStatus(gId, { phase: "running", kind: "design-studio-analysis", startedAt: Date.now() }); } catch (e) {} }
+        try {
+          const out = await E.refreshDesignStudioLearning({ days: Math.max(1, Math.min(180, Number(body.days) || 30)) });
+          result[task] = { ok: true, phase: out.phase, recommendations: (out.recommendations || []).length, generatedAt: out.generatedAt };
+          if (task === "designStudioAnalyze") { try { await E.setGenStatus(gId, { phase: "done", ok: true, learningPhase: out.phase, recommendations: (out.recommendations || []).length, generatedAt: out.generatedAt }); } catch (e) {} }
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 400); result[task] = { ok: false, error: msg };
+          if (task === "designStudioAnalyze") { try { await E.setGenStatus(gId, { phase: "done", ok: false, error: msg }); } catch (e2) {} }
+        }
+      }
       else if (task === "pmaxGenerate") {
         const gId = String(body.genId || Date.now());
         try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax" }); } catch (e) {}

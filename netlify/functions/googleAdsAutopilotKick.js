@@ -76,14 +76,14 @@ async function decideTasks() {
       const ref = f.db.collection(E.COL.state).doc("cycle");
       const s = await ref.get(); const st = s.exists ? s.data() : {};
       if (st.lastDailyKey !== dayKey) {
-        ["measure", "mine", "prune", "events"].forEach(t => tasks.add(t)); ranDaily = true;
+        ["measure", "mine", "prune", "events", "designStudioLearn"].forEach(t => tasks.add(t)); ranDaily = true;
         if (now.getUTCDay() === weeklyDow && st.lastWeeklyKey !== dayKey) { tasks.add("budgets"); ranWeekly = true; }
         await ref.set({ lastDailyKey: dayKey, lastWeeklyKey: ranWeekly ? dayKey : (st.lastWeeklyKey || null),
                         lastDecidedAt: f.FV.serverTimestamp() }, { merge: true });
       }
     } catch (e) {}
   } else if (isDailySlot && !f) {
-    ["measure", "mine", "prune", "events"].forEach(t => tasks.add(t));
+    ["measure", "mine", "prune", "events", "designStudioLearn"].forEach(t => tasks.add(t));
     if (now.getUTCDay() === weeklyDow) tasks.add("budgets");
   }
   return { tasks: [...tasks], ranDaily, ranWeekly };
@@ -298,6 +298,28 @@ async function handleAction(body) {
     catch (e) { return { ok: false, error: e.message }; }
   }
 
+  // ---- Design Studio acquisition: isolated PMax + high-intent Search engine ----
+  if (a === "designStudioStatus") {
+    try { return await E.designStudioOpportunityStatus({ refreshMetrics: !!body.refreshMetrics }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (["designStudioScan", "designStudioGenerate", "designStudioAnalyze"].includes(a)) {
+    try {
+      const task = a === "designStudioScan" ? "designStudioScan" : a === "designStudioGenerate" ? "designStudioGenerate" : "designStudioAnalyze";
+      const genId = `studio-${task}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks: [task], genId, dailyBudget: body.dailyBudget,
+          pmaxDaily: body.pmaxDaily, searchDaily: body.searchDaily,
+          countries: Array.isArray(body.countries) ? body.countries.slice(0, 20) : [],
+          maxCpc: body.maxCpc, days: Math.max(1, Math.min(180, Number(body.days) || 30)),
+          token: process.env.EDIT_PASSCODE || undefined })
+      });
+      if (res.status >= 400) return { ok: false, error: "background dispatch failed: HTTP " + res.status };
+      return { ok: true, queued: true, genId, upstream: res.status };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
   if (a === "opportunities") {
     try {
       if (body.force) {
@@ -306,7 +328,7 @@ async function handleAction(body) {
         // from “worker never received it”, then pass the same runId through every layer.
         const runId = "opp-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
         const dispatchAt = Date.now();
-        const baseAudit = { schema: 2, engineVersion:E.OPPORTUNITY_ENGINE_VERSION||"12.2.0-opportunity-scan-observability", runId, status: "queued", startedAt: dispatchAt, completedAt: null, updatedAt: dispatchAt,
+        const baseAudit = { schema: 2, engineVersion:E.OPPORTUNITY_ENGINE_VERSION||"13.1.0-design-studio-budget-control", runId, status: "queued", startedAt: dispatchAt, completedAt: null, updatedAt: dispatchAt,
           summary: { total: 2, ok: 1, warning: 0, failed: 0, skipped: 0, running: 0, queued: 1 },
           checks: [
             { id:"console_request",category:"orchestration",label:"Console scan request",status:"ok",startedAt:dispatchAt,endedAt:dispatchAt,tookMs:0,detail:"Authenticated Opportunities scan request accepted by the API gateway." },
