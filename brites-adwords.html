@@ -132,13 +132,13 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .draft__top .me{font-size:12px;color:var(--ink-45);margin-top:2px}
 .draft__top .chev{margin-left:auto;color:var(--ink-45);transition:transform .2s}
 .draft.open .chev{transform:rotate(180deg)}
-.draft__quick{display:flex;align-items:center;justify-content:flex-end;gap:9px;padding:12px 16px;border-top:1px solid var(--line-2);background:linear-gradient(180deg,#fffefb,#fbf8f1)}
+.draft__quick{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:9px;padding:12px 16px;border-top:1px solid var(--line-2);background:linear-gradient(180deg,#fffefb,#fbf8f1)}
 .draft__quick .draft-approve{min-width:190px;min-height:42px;font-size:13.5px;box-shadow:0 4px 14px rgba(169,130,63,.18)}
-.draft__quick .draft-review{min-width:118px}
+.draft__quick .draft-review{min-width:118px;display:inline-flex;align-items:center;justify-content:center}
 .draft__quick .draft-reject{background:transparent;border-color:var(--line);color:var(--ink-70)}
 .draft__quick .draft-reject:hover{border-color:var(--ink-25);color:var(--ink);background:var(--card-2)}
 .draft__body{display:none;border-top:1px solid var(--line-2);padding:16px;background:var(--card-2)}
-.draft.open .draft__body{display:block;animation:slidein .22s ease}
+.draft.open > .draft__body{display:block;animation:slidein .22s ease}
 @keyframes slidein{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .why{display:flex;gap:9px;background:var(--gold-soft);border:1px solid var(--gold-line);border-radius:10px;padding:10px 12px;font-size:12.5px;margin-bottom:14px}
 .why .i{flex:0 0 auto}
@@ -509,26 +509,25 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .convbar .convchev{display:inline-block;transition:transform .18s}
 .convbar[open] .convchev{transform:rotate(180deg)}
 
-/* ---- approval details: one reachable scroller, no nested draft scrolling ---- */
-/* Keep the approval queue as the only vertical scroller and add generous tail room so
-   the controls at the bottom of every expanded campaign can always be brought fully
-   above the viewport edge. The draft body itself never becomes a nested scroller. */
+/* ---- approval details: use the page scroll, never a trapped inner scroller ---- */
+/* The approval queue is intentionally allowed to grow with the page. This removes the
+   finite inner-scroll area that previously stopped before the bottom controls. Draft
+   details also remain natural-height, so there is only one predictable vertical scroll. */
 #apprList.scrollcap{
-  max-height:calc(100dvh - 176px);
-  overflow-y:auto;
-  overflow-x:hidden;
-  padding-right:8px;
-  padding-bottom:clamp(190px,24dvh,320px);
-  scroll-padding-bottom:clamp(190px,24dvh,320px);
-  overscroll-behavior:contain;
+  max-height:none;
+  overflow:visible;
+  padding-right:0;
+  padding-bottom:clamp(120px,16dvh,220px);
+  scroll-padding-bottom:0;
+  overscroll-behavior:auto;
 }
 .draft__body{max-height:none;overflow:visible}
 @media(max-width:760px){
   #apprList.scrollcap{
-    max-height:calc(100dvh - 150px);
-    padding-right:2px;
-    padding-bottom:max(220px,30dvh);
-    scroll-padding-bottom:max(220px,30dvh);
+    max-height:none;
+    overflow:visible;
+    padding-right:0;
+    padding-bottom:max(140px,env(safe-area-inset-bottom));
   }
 }
 /* the Bench draft output lists every headline/description too */
@@ -2245,34 +2244,42 @@ function stuckCard(a){var pl=a.payload||{};var dry=(((typeof DASH!=="undefined"&
     body+='<div class="kv" style="margin-top:10px;color:var(--ink-45)">'+(c.finalUrl?'URL <span style="color:var(--ink)">'+esc(c.finalUrl.replace("https://britesjewelry.com",""))+'</span> \u00b7 ':"")+(c.budget!=null?'budget <span style="color:var(--ink)">'+money(c.budget)+'/day</span> \u00b7 ':"")+'status <span style="color:var(--ink)">PAUSED</span></div>'+adExtrasLine(c);
   } else if(pl.operations){body+='<div class="kv muted">'+pl.operations.length+' operation(s) on '+esc(pl.service||"")+'</div>';}
   body+='<div class="actions"><button class="btn gold sm" data-retry="'+a.id+'">Retry apply'+(dry?" (dry-run)":"")+'</button><button class="btn ghost sm" data-rj="'+a.id+'">Discard</button></div>';
-  return elFrom('<div class="draft"><div class="draft__top"><span class="tagk creative" style="background:var(--clay-soft);color:var(--clay)">stuck</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me" style="color:var(--clay)">approved \u00b7 apply errored</div></div><span class="chev">\u25be</span></div><div class="draft__body">'+body+'</div></div>');
+  return elFrom('<div class="draft"><div class="draft__top" role="button" tabindex="0" aria-expanded="false"><span class="tagk creative" style="background:var(--clay-soft);color:var(--clay)">stuck</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me" style="color:var(--clay)">approved \u00b7 apply errored</div></div><span class="chev">\u25be</span></div><div class="draft__body" aria-hidden="true">'+body+'</div></div>');
 }
 function setApprovalDetailsOpen(card,open){
   if(!card)return;
   open=!!open;
-  card.classList.toggle("open",open);
   var body=card.querySelector(".draft__body");
   var reviewBtn=card.querySelector(".draft-review");
-  if(body){
-    if(reviewBtn)body.style.display=open?"block":"none";
-    else body.style.removeProperty("display");
-    body.setAttribute("aria-hidden",open?"false":"true");
+  var top=card.querySelector(".draft__top");
+  card.classList.toggle("open",open);
+  if(body)body.setAttribute("aria-hidden",open?"false":"true");
+  if(reviewBtn){
+    reviewBtn.setAttribute("aria-expanded",open?"true":"false");
+    reviewBtn.textContent=open?"Hide Details":"Review Details";
   }
-  if(reviewBtn){reviewBtn.setAttribute("aria-expanded",open?"true":"false");reviewBtn.textContent=open?"Hide Details":"Review Details";}
+  if(top)top.setAttribute("aria-expanded",open?"true":"false");
 }
-function toggleApprovalDetails(source,e){
-  if(e){e.preventDefault();e.stopPropagation();}
-  var card=source&&source.closest?source.closest(".draft"):null;
-  if(!card)return false;
-  setApprovalDetailsOpen(card,!card.classList.contains("open"));
-  return false;
+function wireApprovalCardDisclosure(card){
+  if(!card)return;
+  var top=card.querySelector(".draft__top");
+  var reviewBtn=card.querySelector(".draft-review");
+  function toggle(e){
+    if(e){e.preventDefault();e.stopPropagation();}
+    setApprovalDetailsOpen(card,!card.classList.contains("open"));
+  }
+  if(reviewBtn)reviewBtn.onclick=toggle;
+  if(top){
+    top.onclick=toggle;
+    top.onkeydown=function(e){if(e.key==="Enter"||e.key===" ")toggle(e);};
+  }
 }
 function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var stuck=DASH.stuck||[];
   list.innerHTML="";
   if(stuck.length){
     var banner=elFrom('<div class="card pad" style="border:1px solid var(--clay);background:var(--clay-soft);margin-bottom:14px"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--clay);white-space:nowrap">\u26a0 '+stuck.length+' approved draft'+(stuck.length>1?"s":"")+' didn\u2019t apply</span><span style="font-size:12.5px;color:var(--ink-70);flex:1;min-width:160px">Approved before a fix and errored on send. Retry to create them in Google Ads now (they\u2019ll start PAUSED).</span><button class="btn gold sm" id="retryAll">Retry all</button></div></div>');
     list.appendChild(banner);
-    stuck.forEach(function(a){var c=stuckCard(a);c.querySelector(".draft__top").onclick=function(){c.classList.toggle("open");};list.appendChild(c);});
+    stuck.forEach(function(a){var c=stuckCard(a);list.appendChild(c);wireApprovalCardDisclosure(c);});
     banner.querySelector("#retryAll").onclick=async function(){var btn=this;btnBusy(btn,"Retrying\u2026");var aid=actStart("retryStuck");try{var r=await api("retryStuck",{});if(r&&r.error)toast("Retry failed: "+r.error);else{var f=(r.failed&&r.failed.length)||0;toast(r.dryRun?"Validated "+(r.tried||0)+" (dry-run) \u2014 nothing created":((r.applied||0)+" created"+(f?", "+f+" still failing":"")+" \u2713"),!f);}}catch(x){toast(x.message);}actEnd(aid);await reload();};
   }
   if(!p.length&&!stuck.length){list.innerHTML='<div class="empty" style="height:240px"><div class="ring"></div><div>Queue\u2019s clear.</div><div style="font-size:12px">New drafts land here when the autopilot runs.</div></div>';return;}
@@ -2327,10 +2334,11 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
     var dryApproval=((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun);
     var quick='<div class="draft__quick" role="group" aria-label="Campaign approval actions">'+
       '<button type="button" class="btn gold draft-approve" data-ap="'+a.id+'">Approve Campaign'+(dryApproval?" (dry-run)":"")+'</button>'+
-      '<button type="button" class="btn ghost sm draft-review" aria-expanded="false" onclick="toggleApprovalDetails(this,event)">Review Details</button>'+
+      '<button type="button" class="btn ghost sm draft-review" aria-expanded="false">Review Details</button>'+
       '<button type="button" class="btn ghost sm draft-reject" data-rj="'+a.id+'">Reject</button></div>';
-    var card=elFrom('<div class="draft"><div class="draft__top" onclick="toggleApprovalDetails(this,event)"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div>'+quick+'<div class="draft__body" aria-hidden="true">'+body+'</div></div>');
+    var card=elFrom('<div class="draft"><div class="draft__top" role="button" tabindex="0" aria-expanded="false"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div>'+quick+'<div class="draft__body" aria-hidden="true">'+body+'</div></div>');
     list.appendChild(card);
+    wireApprovalCardDisclosure(card);
   });
   list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Sending\u2026");var aid=actStart("approve");try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
   list.querySelectorAll("[data-retry]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Creating\u2026");var aid=actStart("apply");try{var r=await api("apply",{id:b.dataset.retry});if(r&&r.error){toast("Still failing: "+r.error);}else{toast((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?"Validated (dry-run) \u2014 nothing created":"Created in Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
