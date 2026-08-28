@@ -127,6 +127,7 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .tagk.keywords{background:var(--sage-soft);color:#3c5a39}
 .tagk.negatives{background:#efe7e2;color:#7a5440}
 .tagk.pmax{background:#e9e2ef;color:#52427a}
+.tagk.studio{background:#201d19;color:#e7c881;border:1px solid #4b4031}
 .draft__top .ti{font-size:14px;font-weight:600}
 .draft__top .me{font-size:12px;color:var(--ink-45);margin-top:2px}
 .draft__top .chev{margin-left:auto;color:var(--ink-45);transition:transform .2s}
@@ -243,6 +244,34 @@ svg{display:block}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-70);margin-top:10px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 
+/* ---- Design Studio acquisition engine ---- */
+.studioGrowth{position:relative;overflow:hidden;margin-bottom:18px;border-radius:18px;background:linear-gradient(145deg,#211d18 0%,#2c251c 58%,#241f19 100%);color:#f8f1e3;border:1px solid #3d352b;box-shadow:0 16px 42px rgba(35,29,21,.12)}
+.studioGrowth:before{content:"";position:absolute;width:420px;height:420px;border-radius:50%;right:-180px;top:-250px;background:radial-gradient(circle,rgba(202,168,97,.2),rgba(202,168,97,0) 70%);pointer-events:none}
+.sgHead{position:relative;display:grid;grid-template-columns:minmax(0,1.45fr) minmax(250px,.7fr);gap:24px;padding:24px 26px;border-bottom:1px solid rgba(230,211,173,.15)}
+.sgKicker{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#d8b86e;font-weight:800;margin-bottom:9px}
+.sgHead h3{font:500 29px/1.12 var(--serif);margin:0 0 9px;color:#fffdf8;letter-spacing:.01em}
+.sgHead p{font-size:13px;line-height:1.65;color:#c8beaf;max-width:720px;margin:0}
+.sgInvariant{align-self:center;border:1px solid rgba(224,195,133,.28);background:rgba(255,255,255,.035);border-radius:13px;padding:13px 15px}
+.sgInvariant .url{font:600 11.5px var(--mono);color:#f1d99d;margin-top:5px;word-break:break-word}
+.sgInvariant .lock{display:inline-grid;place-items:center;width:25px;height:25px;border-radius:50%;background:#c6a052;color:#201a13;margin-right:9px}
+.sgBody{position:relative;padding:20px 26px 24px}
+.sgActions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:17px}
+.sgActions .btn.ghost{color:#f5eddf;border-color:#5a5145}.sgActions .btn.ghost:hover{background:rgba(255,255,255,.06)}
+.sgMeta{font-size:11.5px;color:#a99f91;margin-left:auto}
+.sgGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.sgLane{border:1px solid rgba(231,215,184,.15);border-radius:13px;background:rgba(255,255,255,.035);padding:15px}
+.sgLaneTop{display:flex;align-items:center;gap:9px;margin-bottom:10px}.sgLaneTop b{font-size:13.5px}.sgLaneTop .sgState{margin-left:auto;font:700 9.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:3px 7px;border-radius:999px;background:rgba(255,255,255,.08);color:#c5bbad}
+.sgState.ready{background:rgba(95,122,91,.28);color:#cce0c8}.sgState.pending{background:rgba(202,168,97,.2);color:#f1d99d}
+.sgLane p{font-size:11.8px;line-height:1.55;color:#bdb3a4;margin:0 0 11px}.sgLaneFacts{display:flex;gap:6px;flex-wrap:wrap}.sgLaneFacts span{font:600 10px var(--mono);color:#e8dcc6;border:1px solid rgba(230,211,173,.17);border-radius:999px;padding:3px 7px}
+.sgSection{margin-top:18px}.sgLabel{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#b9a98e;font-weight:800;margin-bottom:9px}
+.sgThemes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.sgTheme{border-top:1px solid rgba(225,197,141,.28);padding:11px 3px 2px}.sgTheme b{display:block;font:500 15px var(--serif);color:#fff;margin-bottom:4px}.sgTheme span{display:block;font-size:10.8px;line-height:1.45;color:#a99f91}
+.sgMetrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;border:1px solid rgba(230,211,173,.14);border-radius:12px;overflow:hidden;background:rgba(230,211,173,.14)}
+.sgMetric{background:#29241e;padding:12px 11px;min-width:0}.sgMetric .v{font:600 18px var(--mono);color:#fff;overflow:hidden;text-overflow:ellipsis}.sgMetric .l{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#948b7e;margin-top:2px}
+.sgFunnel{display:flex;align-items:center;gap:5px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:thin}.sgStep{min-width:105px;flex:1;border:1px solid rgba(230,211,173,.14);border-radius:9px;padding:8px 9px;background:rgba(255,255,255,.025)}.sgStep b{display:block;font:600 13px var(--mono);color:#fff}.sgStep span{font-size:9.5px;color:#a99f91;text-transform:uppercase;letter-spacing:.07em}.sgArrow{color:#8f7650;flex:0 0 auto}
+.sgLearn{display:grid;gap:7px}.sgRec{display:grid;grid-template-columns:auto 1fr;gap:9px;padding:10px 11px;border-radius:10px;background:rgba(255,255,255,.035);border:1px solid rgba(230,211,173,.12)}.sgRec i{width:7px;height:7px;border-radius:50%;background:#caa861;margin-top:6px}.sgRec.high i,.sgRec.critical i{background:#d87d62}.sgRec b{font-size:11.8px}.sgRec p{font-size:10.8px;line-height:1.45;color:#a99f91;margin:2px 0 0}
+.sgSetup{padding:25px 26px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;align-items:center}.sgSetup h3{font:500 27px var(--serif);margin:0 0 7px}.sgSetup p{max-width:700px;color:#beb4a5;font-size:12.5px;line-height:1.6;margin:0}.sgBusy{padding:36px 26px;display:flex;align-items:center;justify-content:center;gap:12px;color:#d8cdbb}
+.sgBudget{display:inline-flex;align-items:center;gap:6px;border:1px solid #5a5145;border-radius:9px;padding:0 8px;height:40px;color:#bdb3a4;font-size:11px}.sgBudget b{color:#f4ead9;font-size:10px;letter-spacing:.08em;text-transform:uppercase}.sgBudget input{width:54px;border:0;background:transparent;color:#fff;font:600 13px var(--mono);outline:none;padding:0}.sgBudget:focus-within{border-color:#b79a5b;box-shadow:0 0 0 2px rgba(183,154,91,.13)}.sgBudgetTotal{display:inline-flex;align-items:center;gap:6px;border-left:1px solid #5a5145;padding-left:10px;color:#bdb3a4;font-size:10.5px}.sgBudgetTotal b{color:#f7e5b8;font:700 12px var(--mono)}.sgBudgetTotal small{color:#8f8679}.sgBudgetTotal.over b,.sgBudgetTotal.over small{color:#f1a58e}.sgCtys{display:inline-flex;align-items:center;gap:5px;max-width:240px;overflow:hidden;white-space:nowrap;font-size:10.5px;color:#bdb3a4}
+
 /* =================== Responsive layer: tablet + phone + folds =================== */
 .navburger{display:none;flex-direction:column;justify-content:center;gap:4px;width:42px;height:42px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:0 10px;cursor:pointer}
 .navburger span{display:block;height:2px;border-radius:2px;background:var(--ink)}
@@ -270,6 +299,7 @@ svg{display:block}
   .adlvl table{min-width:560px}
   #snapshot th:first-child,#snapshot td:first-child,.adlvl th:first-child,.adlvl td:first-child{position:sticky;left:0;background:var(--card);z-index:2}
   .rpPop{position:fixed!important;left:50%!important;top:12vh!important;transform:translateX(-50%);width:min(540px,94vw)!important}
+  .sgHead{grid-template-columns:1fr}.sgInvariant{max-width:none}.sgMetrics{grid-template-columns:repeat(3,1fr)}
 }
 
 @media (max-width:760px){
@@ -298,6 +328,7 @@ svg{display:block}
   .oppm{flex-wrap:wrap;row-gap:8px}
   .pmxrow{grid-template-columns:1fr;align-items:start}
   .pmxrow>div:last-child{justify-content:flex-start!important}
+  .studioGrowth{border-radius:13px}.sgHead,.sgBody,.sgSetup{padding-left:14px;padding-right:14px}.sgHead h3,.sgSetup h3{font-size:23px}.sgGrid,.sgThemes{grid-template-columns:1fr}.sgMetrics{grid-template-columns:repeat(2,1fr)}.sgActions{align-items:stretch}.sgActions .btn{flex:1 1 145px}.sgBudget{flex:1 1 135px;justify-content:center}.sgBudgetTotal{flex:1 1 100%;justify-content:center;border-left:0;padding-left:0}.sgMeta{width:100%;margin-left:0}.sgSetup{grid-template-columns:1fr}.sgSetup .btn{width:100%}
   .draft .ti{font-size:13.5px}
   /* full-screen sheet modals */
   .ovsheet{align-items:flex-end!important}
@@ -517,6 +548,28 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 .auditData{margin-top:5px}.auditData>summary{display:inline-flex;align-items:center;gap:4px;list-style:none;cursor:pointer;color:var(--slate);font:600 10.5px var(--mono)}.auditData>summary::-webkit-details-marker{display:none}.auditData>summary::before{content:"▸"}.auditData[open]>summary::before{content:"▾"}.auditData pre{white-space:pre-wrap;word-break:break-word;margin:5px 0 0;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink-70);font:10px/1.4 var(--mono);max-height:210px;overflow:auto}
 @media(max-width:760px){.auditRow{grid-template-columns:20px 1fr}.auditDetail,.auditMeta{grid-column:2}.auditMeta{text-align:left;white-space:normal}.auditRows{max-height:62vh}}
 
+/* ===== Opportunities workspace · calm hierarchy, progressive detail ===== */
+.oppPageHead{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;margin:2px 0 26px}
+.oppPageHead h2{font:500 34px/1.08 var(--serif);margin:4px 0 7px;letter-spacing:.005em}.oppPageHead p{max-width:720px;margin:0;color:var(--ink-70);font-size:13.5px;line-height:1.6}
+.oppJourney{display:flex;align-items:center;gap:7px;padding:7px;border:1px solid var(--line);border-radius:12px;background:rgba(255,254,251,.7)}.oppJourney span{display:flex;align-items:center;gap:6px;padding:6px 9px;color:var(--ink-70);font-size:11.5px;white-space:nowrap}.oppJourney b{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--paper-2);color:var(--ink);font:700 10px var(--mono)}.oppJourney i{width:16px;height:1px;background:var(--line);display:block}
+.oppZone{margin-bottom:30px}.oppZoneHead{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:13px;align-items:center;margin:0 2px 12px}.oppZoneNumber{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;border:1px solid var(--gold-line);background:var(--gold-soft);color:#7a5a1d;font:700 11px var(--mono)}.oppZoneLabel{display:block;margin-bottom:1px;color:var(--gold);font-size:9.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}.oppZoneHead h3{font:500 22px/1.2 var(--serif);margin:0}.oppZoneHead p{margin:3px 0 0;color:var(--ink-45);font-size:12.5px}.oppZoneBadge{padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--ink-45);font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;background:var(--card)}
+.oppStoreShell{border:1px solid var(--line);border-radius:18px;background:rgba(255,254,251,.54);padding:18px;box-shadow:0 12px 35px rgba(30,26,20,.035)}
+.oppStoreHead{display:flex;align-items:center;gap:13px;padding:2px 2px 15px;border-bottom:1px solid var(--line)}.oppStoreHead .oppZoneNumber{flex:0 0 38px}.oppStoreHeadText{min-width:0;flex:1}.oppStoreHead h3{font:500 22px/1.2 var(--serif);margin:0}.oppStoreHead p{margin:3px 0 0;color:var(--ink-45);font-size:12.5px}.oppScanAction{min-width:176px;min-height:42px}
+.oppStoreStatus{display:flex;align-items:center;gap:9px;min-height:42px;padding:10px 3px 9px;color:var(--ink-70);font-size:12px}.oppStatusDot{width:8px;height:8px;border-radius:50%;background:var(--sage);box-shadow:0 0 0 4px var(--sage-soft);flex:0 0 8px}
+.oppToolbox{margin:0 0 16px;border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden}.oppToolbox>summary{list-style:none;display:flex;align-items:center;gap:11px;padding:12px 14px;cursor:pointer;user-select:none}.oppToolbox>summary::-webkit-details-marker{display:none}.oppToolbox>summary:before{content:"+";display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:var(--paper-2);color:var(--gold);font:600 17px/1 var(--sans)}.oppToolbox[open]>summary:before{content:"−"}.oppToolbox>summary b{display:block;font-size:12.5px}.oppToolbox>summary small{display:block;color:var(--ink-45);font-size:10.5px;margin-top:1px}.oppOptional{margin-left:auto;padding:3px 8px;border-radius:999px;background:var(--paper-2);color:var(--ink-45);font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppToolBody{padding:14px;border-top:1px solid var(--line-2);background:var(--card-2)}
+.oppDefaults{display:grid;grid-template-columns:1fr auto;gap:12px;margin-bottom:13px}.oppDefault{display:flex;align-items:center;gap:11px;min-height:42px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.oppDefault>span:first-child{font-size:11px;font-weight:700;color:var(--ink-70);white-space:nowrap}.oppDefault:last-child{justify-content:flex-end}.oppPlaybook{margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:11px;background:var(--card)}.oppPlaybookHead{display:flex;align-items:center;gap:10px;margin-bottom:8px}.oppPlaybookHead h4{margin:0;font-size:12.5px}.oppPlaybookHead .sub{margin-left:auto;font-size:10.5px;color:var(--ink-45)}
+.oppResultsStage{display:flex;flex-direction:column}.oppChannel{margin-bottom:16px;border:1px solid var(--line);border-radius:15px;background:var(--card);overflow:hidden;box-shadow:var(--sh)}.oppChannelHead{display:flex;align-items:center;gap:12px;padding:15px 16px;border-bottom:1px solid var(--line-2)}.oppChannelIcon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--gold-soft);color:#7a5a1d;font-weight:800;flex:0 0 34px}.oppChannelHeadText{min-width:0;flex:1}.oppChannelHeadText .eyebrow{font-size:9px}.oppChannelHead h3{font-size:14px;margin:1px 0 0}.oppChannelHead p{font-size:11.5px;color:var(--ink-45);margin:2px 0 0}.oppChannelCount{padding:4px 9px;border-radius:999px;background:var(--paper-2);color:var(--ink-70);font:700 10px var(--mono);white-space:nowrap}.oppChannelEmpty{padding:17px 18px;color:var(--ink-70);font-size:12.5px;line-height:1.55}
+.oppResultsBar{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--line-2);background:var(--card-2)}.oppTabs{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}.oppTab{border:0;border-radius:7px;padding:7px 11px;background:transparent;color:var(--ink-70);font-size:12px;font-weight:650;cursor:pointer}.oppTab span{font:700 10px var(--mono);opacity:.65;margin-left:4px}.oppTab.active{background:var(--ink);color:#fff;box-shadow:var(--sh)}.oppSortField{margin-left:auto;display:flex;align-items:center;gap:7px;color:var(--ink-45);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppSortField select{width:auto;min-width:145px;padding:7px 28px 7px 9px;font-size:12px!important;text-transform:none;letter-spacing:0;color:var(--ink);background-color:var(--card)}
+.oppCardList{display:grid;gap:11px;padding:12px;background:var(--paper)}.oppCard{position:relative;padding:16px 17px!important;border-left-width:3px!important;box-shadow:none}.oppCard:hover{border-color:var(--ink-25);box-shadow:0 8px 22px rgba(30,26,20,.055)}.oppCardHeader{display:flex;align-items:flex-start;gap:11px}.oppCardPriority{width:9px;height:9px;border-radius:50%;margin-top:7px;flex:0 0 9px}.oppCardTitle{min-width:0;flex:1}.oppCardTitle h4{font-size:15px;line-height:1.3;margin:0}.oppCardMeta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:3px;color:var(--ink-45);font:10.5px var(--mono)}.oppCardMeta .sep{width:3px;height:3px;border-radius:50%;background:var(--ink-25)}.oppCardBadges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.oppCardWhy{margin:11px 0 12px;padding-left:20px;color:var(--ink-70);font-size:12.5px;line-height:1.5;max-width:920px}.oppCardMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line-2);border-radius:10px;overflow:hidden;background:var(--line-2)}.oppCardMetric{padding:9px 11px;background:var(--card-2);min-width:0}.oppCardMetric b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font:700 14px var(--mono)}.oppCardMetric span{display:block;margin-top:1px;color:var(--ink-45);font-size:8.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppCardActions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px}.oppCardActions .opDx{margin:0!important}.oppCardActions .opMsg{min-width:120px}.oppCard .opDx>summary{margin:0!important;background:transparent}.oppDetailsBody{margin-top:12px;padding:14px;border:1px solid var(--line-2);border-radius:11px;background:var(--card-2)}.oppDetailsIntro{margin:0 0 12px;color:var(--ink-70);font-size:12.5px;line-height:1.55}.oppCard .xd:not([open])>summary{margin-bottom:0}.oppCard .xd>summary{background:var(--card)}
+.oppCardActions .opDx[open]{flex:1 1 100%;order:3}.oppCardActions .opMsg{order:2}
+.oppInUse{padding:15px 16px!important}.oppInUseHead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.oppInUseHead h4{margin:0;font-size:14px}.oppInUseLoc{margin-left:auto;color:var(--ink-45);font:10.5px var(--mono)}
+.pmxList{display:grid}.pmxOpportunity{display:grid;grid-template-columns:minmax(0,1fr) auto!important;gap:13px!important;align-items:center!important;padding:15px 16px!important;border-top:1px solid var(--line-2)!important}.pmxOpportunity:first-child{border-top:0!important}.pmxMain{min-width:0}.pmxTitle{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.pmxTitle b{font-size:14px}.pmxRationale{margin-top:5px;color:var(--ink-70);font-size:12px;line-height:1.5}.pmxMetrics{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.pmxMetric{padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card-2);color:var(--ink-70);font-size:10px}.pmxMetric b{color:var(--ink);font-family:var(--mono)}.pmxActions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}.pmxBudget{display:inline-flex;align-items:center;gap:3px;padding:6px 8px;border:1px solid var(--line);border-radius:9px;background:var(--card-2);font-size:11px;white-space:nowrap}.pmxBudget input{width:50px!important;border:0!important;background:transparent!important;padding:0!important;font:700 12px var(--mono)}.pmxEvidence{grid-column:1/-1}.pmxEvidence>summary{list-style:none;display:inline-flex;align-items:center;gap:6px;color:var(--gold);font-size:11px;font-weight:700;cursor:pointer}.pmxEvidence>summary::-webkit-details-marker{display:none}.pmxEvidence>summary:before{content:"+"}.pmxEvidence[open]>summary:before{content:"−"}.pmxEvidenceBody{margin-top:8px;padding:10px 12px;border-radius:9px;background:var(--card-2);color:var(--ink-70);font-size:11px;line-height:1.65}
+#customWrap.oppCustom{margin-top:16px;padding:0;overflow:hidden;box-shadow:none}#customWrap.oppCustom>summary{display:flex;width:100%;align-items:center;border:0;border-radius:0;padding:14px 15px!important;background:var(--card);margin:0!important}#customWrap.oppCustom>summary:before{content:"+";display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--paper-2);font-size:17px}#customWrap.oppCustom[open]>summary:before{content:"−"}#customWrap.oppCustom>summary>span:first-of-type{display:flex;flex-direction:column;align-items:flex-start}#customWrap.oppCustom>summary b{font-size:12.5px}#customWrap.oppCustom>summary small{font-size:10.5px;color:var(--ink-45);font-weight:400}#customWrap.oppCustom>.bench{margin:0!important;padding:16px;border-top:1px solid var(--line-2);background:var(--card-2)}
+.sgControlStack{display:grid;gap:11px;margin-bottom:15px}.sgPrimaryActions,.sgLaunchSettings{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.sgPrimaryActions .sgMeta{margin-left:auto}.sgLaunchSettings{padding:10px;border:1px solid rgba(230,211,173,.14);border-radius:11px;background:rgba(255,255,255,.025)}.sgLaunchLabel{color:#b9a98e;font-size:9px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;margin-right:2px}.sgMore{margin-top:14px;border-top:1px solid rgba(230,211,173,.15)}.sgMore>summary{list-style:none;display:flex;align-items:center;gap:9px;padding:13px 1px 0;cursor:pointer;color:#e8dcc6;font-size:11.5px;font-weight:700}.sgMore>summary::-webkit-details-marker{display:none}.sgMore>summary:before{content:"+";display:grid;place-items:center;width:22px;height:22px;border-radius:7px;background:rgba(255,255,255,.06);color:#d8b86e}.sgMore[open]>summary:before{content:"−"}.sgMoreMeta{margin-left:auto;color:#a99f91;font-size:10.5px;font-weight:500}.sgMoreBody{padding:2px 0 1px}
+@media(max-width:900px){.oppPageHead{grid-template-columns:1fr}.oppJourney{width:max-content}.oppDefaults{grid-template-columns:1fr}.oppDefault:last-child{justify-content:flex-start}.oppCardMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}.pmxOpportunity{grid-template-columns:1fr!important}.pmxActions{justify-content:flex-start}.pmxEvidence{grid-column:1}.sgPrimaryActions .sgMeta{width:100%;margin-left:0}}
+@media(max-width:760px){.oppPageHead{margin-bottom:20px;padding:0 10px}.oppPageHead h2{font-size:28px}.oppJourney{width:100%;overflow-x:auto}.oppJourney span{padding:5px 6px}.oppZoneHead{padding:0 8px;grid-template-columns:34px 1fr}.oppZoneNumber{width:32px;height:32px}.oppZoneBadge{display:none}.oppZoneHead h3,.oppStoreHead h3{font-size:19px}.oppStoreShell{padding:10px 8px;border-radius:14px}.oppStoreHead{align-items:flex-start;flex-wrap:wrap}.oppStoreHeadText{min-width:calc(100% - 48px)}.oppScanAction{width:100%;margin-top:2px}.oppStoreStatus{padding-left:7px}.oppToolBody{padding:10px}.oppDefault{align-items:flex-start;flex-direction:column}.oppResultsBar{align-items:stretch;flex-direction:column}.oppTabs{width:100%}.oppTab{flex:1}.oppSortField{margin-left:0;justify-content:space-between}.oppSortField select{flex:1}.oppCardList{padding:8px 0;background:transparent}.oppCard{padding:14px 12px!important}.oppCardHeader{align-items:flex-start}.oppCardBadges{justify-content:flex-start}.oppCardWhy{padding-left:0}.oppCardMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}.oppCardActions{align-items:stretch}.oppCardActions>.btn,.oppCardActions>.opDx{flex:1 1 145px}.oppCardActions .opDx>summary{justify-content:center;width:100%}.oppDetailsBody{padding:11px}.oppInUseLoc{width:100%;margin-left:0}.pmxOpportunity{padding:13px 11px!important}.pmxActions{align-items:stretch}.pmxActions .btn{flex:1 1 120px}.pmxBudget{flex:1 1 100%;justify-content:center}.oppChannelHead{padding:13px 11px}.oppChannelHead p{display:none}.sgPrimaryActions .btn{flex:1 1 140px}.sgLaunchSettings{align-items:stretch}.sgLaunchLabel{width:100%}.sgLaunchSettings .sgBudget{flex:1 1 130px}.sgLaunchSettings .sgBudgetTotal{flex:1 1 100%}.sgMoreMeta{display:none}}
+@media(max-width:760px){.oppCardHeader{flex-wrap:wrap}.oppCardTitle{min-width:calc(100% - 24px)}.oppCardBadges{margin-left:20px}.oppCard .oppDetailsBody>.grid{grid-template-columns:1fr!important}.oppCardActions .opDx[open]{flex-basis:100%}}
+
 /* ===== Ad Preview Studio (in-app modal) ===== */
 #apvModal{position:fixed;inset:0;background:rgba(20,17,13,.72);z-index:80;display:none;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 14px}
 #apvModal.on{display:flex}
@@ -588,7 +641,7 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
         <li>Every applied change written to an audit ledger</li>
       </ul>
       <div class="signin__brandfoot">
-        <span>Google Ads API v24</span><span class="signin__dotsep">·</span><span>Opportunity engine v12.2</span>
+        <span>Google Ads API v24</span><span class="signin__dotsep">·</span><span>Opportunity engine v13.2</span>
       </div>
     </aside>
 
@@ -658,7 +711,7 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
   <aside class="rail">
     <div class="rail__brand"><div class="logo">Brites <b>·</b> Autopilot</div><div class="tag">Ad Control Room</div></div>
     <nav class="nav" id="nav"></nav>
-    <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">connected</span> <a href="#" id="signOut" style="float:right;color:#8c8476;font-size:10.5px;text-decoration:underline" onclick="sessClear();location.reload();return false;">sign out</a><br><span class="muted" style="font-size:10px">live · Google Ads v24 · opportunity engine v12.2</span></div>
+    <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">connected</span> <a href="#" id="signOut" style="float:right;color:#8c8476;font-size:10.5px;text-decoration:underline" onclick="sessClear();location.reload();return false;">sign out</a><br><span class="muted" style="font-size:10px">live · Google Ads v24 · opportunity engine v13.2</span></div>
   </aside>
   <div class="navscrim" id="navScrim"></div>
   <div class="main">
@@ -711,23 +764,32 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 
 
     <section class="view hidden" id="v-bench">
-      <div class="card pad" style="margin-bottom:16px" id="pbCard"><div class="card__h"><h3>Learned playbook</h3><span style="display:flex;gap:10px;align-items:center"><span class="sub" id="pbSub"></span><button class="btn ghost sm" id="pbRelearn" style="padding:4px 12px;font-size:12px">Re-learn now</button></span></div><div id="pbBody"><div class="muted" style="font-size:12.5px;padding:6px 0">Loading playbook…</div></div></div>
-      <div class="view__head"><div><h2>Opportunities</h2><p>Campaigns the AI recommends right now — scanned across all your collections, best-sellers, the calendar, and past performance. Adjust the budget, then generate: it builds a paused Search campaign (themed copy + keywords) and sends it to Approvals.</p></div></div>
-      <div class="card pad" style="margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <button class="btn gold" id="oppScan">Scan for opportunities</button>
-        <span id="oppMeta" class="muted" style="font-size:12.5px"></span>
-        <div style="flex:1"></div>
-        <button class="btn ghost sm" id="kwDiag" style="padding:6px 12px;font-size:12px">Test keyword research</button>
-        <div id="oppBid" style="display:flex;align-items:center"></div>
-        <div class="legend" style="margin:0"><span><i style="background:var(--gold)"></i><b>High</b>&nbsp;act now</span><span><i style="background:var(--sage)"></i><b>Medium</b>&nbsp;solid bet</span><span><i style="background:var(--slate)"></i><b>Test</b>&nbsp;speculative</span></div>
-      </div>
-      <div id="kwDiagPanel" style="display:none;margin-bottom:14px"></div>
+      <header class="oppPageHead">
+        <div><div class="eyebrow">Campaign planning</div><h2>Growth opportunities</h2><p>Review clear, evidence-backed campaign ideas. Generate only the ones you want; every draft still goes through Approvals before it can run.</p></div>
+        <div class="oppJourney" aria-label="Opportunity workflow"><span><b>1</b> Scan</span><i></i><span><b>2</b> Review</span><i></i><span><b>3</b> Approve</span></div>
+      </header>
+      <section class="oppZone">
+        <div class="oppZoneHead"><span class="oppZoneNumber">01</span><div><span class="oppZoneLabel">Dedicated acquisition</span><h3>Design Studio campaigns</h3><p>A separate program for people who want to design their own charm.</p></div><span class="oppZoneBadge">Separate program</span></div>
+      <div class="studioGrowth" id="studioGrowth"><div class="sgBusy"><span class="spin gold"></span><span>Loading the Design Studio acquisition engine…</span></div></div>
+      </section>
+      <section class="oppZone">
+        <div class="oppStoreShell">
+          <header class="oppStoreHead"><span class="oppZoneNumber">02</span><div class="oppStoreHeadText"><span class="oppZoneLabel">Store advertising</span><h3>Recommended store campaigns</h3><p>Search and feed ideas ranked from demand, timing, product evidence, and past performance.</p></div><button class="btn gold oppScanAction" id="oppScan">Scan for opportunities</button></header>
+          <div class="oppStoreStatus"><span class="oppStatusDot"></span><span id="oppMeta">Ready to scan</span></div>
+          <details class="oppToolbox">
+            <summary><span><b>Campaign defaults &amp; recommendation learning</b><small>Bidding preference, keyword diagnostic, and the rules learned from past results</small></span><span class="oppOptional">Optional</span></summary>
+            <div class="oppToolBody">
+              <div class="oppDefaults"><div class="oppDefault"><span>Default bidding</span><div id="oppBid"></div></div><div class="oppDefault"><span>Keyword data health</span><button class="btn ghost sm" id="kwDiag">Test keyword research</button></div></div>
+              <div id="kwDiagPanel" style="display:none;margin-bottom:12px"></div>
+              <div class="oppPlaybook" id="pbCard"><div class="oppPlaybookHead"><h4>Learned playbook</h4><span class="sub" id="pbSub"></span><button class="btn ghost sm" id="pbRelearn">Re-learn now</button></div><div id="pbBody"><div class="muted" style="font-size:12.5px;padding:6px 0">Loading playbook…</div></div></div>
+            </div>
+          </details>
       <div id="oppErr" style="display:none"></div>
       <div id="scanProg" style="display:none"></div>
       <div id="scanAudit" style="display:none"></div>
-      <div id="oppList"><div class="empty" style="height:200px"><div class="ring"></div><div>Hit \u201cScan for opportunities\u201d.</div><div style="font-size:12px">The AI cross-references your catalog, the calendar, and past results, then ranks what to act on.</div></div></div>
-      <details class="card pad" style="margin-top:16px" id="customWrap">
-        <summary style="cursor:pointer;font-weight:600;font-size:14px">Custom build \u2014 pick any collection \u00d7 occasion manually</summary>
+      <div class="oppResultsStage"><div id="oppList"><div class="oppChannel"><div class="oppChannelEmpty"><b>No recommendations loaded yet.</b><br>Run a scan and the strongest opportunities will be organized here by campaign type.</div></div></div></div>
+      <details class="card oppCustom" id="customWrap">
+        <summary><span><b>Build a campaign manually</b><small>Choose any collection and occasion when you already know what you want to promote.</small></span><span class="oppOptional">Optional</span></summary>
         <div class="grid bench" style="margin-top:14px">
           <div style="align-self:start">
             <div class="field"><label>Collection <button type="button" id="bCollRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">\u21bb refresh</button></label><select id="bColl"></select></div>
@@ -739,6 +801,8 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
           <div class="card pad benchout" id="benchOut"><div class="empty"><div class="ring"></div><div>Pick a collection and occasion, then generate.</div></div></div>
         </div>
       </details>
+        </div>
+      </section>
     </section>
 
     <section class="view hidden" id="v-controls">
@@ -895,6 +959,9 @@ var LOADINFO={
   occasions:{verb:"Suggesting occasions with AI",detail:"From your history, catalog & the calendar",eta:"10\u201320s"},
   collections:{verb:"Loading collections",detail:"From your Shopify catalog",eta:"2\u20135s"},
   opportunities:{verb:"Scanning for opportunities",detail:"Cross-referencing catalog, calendar & past results",eta:"up to a minute"},
+  designStudioScan:{verb:"Reading the Design Studio",detail:"Landing page, customer value, demand and conversion readiness",eta:"1–3 min"},
+  designStudioGenerate:{verb:"Building the Studio acquisition program",detail:"Separate PMax and high-intent Search proposals, both paused",eta:"1–3 min"},
+  designStudioAnalyze:{verb:"Reading Studio results",detail:"Funnel economics, asset groups and the next controlled test",eta:"30–90s"},
   approve:{verb:"Approving \u2192 Google Ads",detail:"Creating the campaign (starts paused)",eta:"3\u20138s"},
   apply:{verb:"Creating in Google Ads",detail:"Building the campaign (starts paused)",eta:"3\u20138s"},
   retryStuck:{verb:"Retrying stuck drafts",detail:"Re-sending approved campaigns to Google Ads",eta:"5\u201315s"},
@@ -993,7 +1060,7 @@ async function api(action, extra){
    preserves expanded/collapsed UI state via uiSnapshot/uiRestore, so re-renders don't disturb
    whatever the user has open. Read-only actions (dashboard, dailyStats, genStatus polling, …)
    never trigger this. */
-var API_MUTATING=new Set(["approve","reject","apply","applyRec","applyRemedy","dismissRec","setBudget","setStatus","setCountries","setApprovalCountries","setApprovalDates","setControl","startNow","syncConversions","generate","generatePmax","retryStuck","releaseOpportunity","kill","resume","dryRun","backfillOrders","clearLedger","enforceCeiling","runNow","pmaxUpgradeAdStrength","pmaxBackfillImages"]);
+var API_MUTATING=new Set(["approve","reject","apply","applyRec","applyRemedy","dismissRec","setBudget","setStatus","setCountries","setApprovalCountries","setApprovalDates","setControl","startNow","syncConversions","generate","generatePmax","designStudioGenerate","retryStuck","releaseOpportunity","kill","resume","dryRun","backfillOrders","clearLedger","enforceCeiling","runNow","pmaxUpgradeAdStrength","pmaxBackfillImages"]);
 var _rlFast=null,_rlSettle=null;
 function scheduleReload(){
   if(syncBlocked)return;               // nothing to re-sync while the API is refusing us
@@ -1284,7 +1351,7 @@ function navDrawer(open){document.body.classList[open?"add":"remove"]("navOpen")
 (function(){var b=document.getElementById("navBurger"),sc=document.getElementById("navScrim");
   if(b)b.onclick=function(){navDrawer(!document.body.classList.contains("navOpen"));};
   if(sc)sc.onclick=function(){navDrawer(false);};})();
-function go(k){navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench"){ensureOpportunities();loadPlaybook();}}
+function go(k){navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench"){ensureOpportunities();loadPlaybook();loadDesignStudioGrowth(false);}}
 
 /* ---- attribution basis ----
    Google Ads files a conversion under the day the AD WAS CLICKED. Shopify (and the Sales
@@ -2166,7 +2233,24 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
   }
   if(!p.length&&!stuck.length){list.innerHTML='<div class="empty" style="height:240px"><div class="ring"></div><div>Queue\u2019s clear.</div><div style="font-size:12px">New drafts land here when the autopilot runs.</div></div>';return;}
   p.forEach(function(a){var pl=a.payload||{};var body='<div class="why"><span class="i">\ud83d\udca1</span><div><b>Why this:</b> '+esc(a.summary||"")+'</div></div>';
-    if(a.type==="pmax"&&pl.meta){var m=pl.meta;var c2=parseCreative(pl.mutateOperations||[]);
+    if(a.type==="studio"&&pl.meta){var sm=pl.meta,sc=parseCreative(pl.mutateOperations||[]),isSP=sm.kind==="designStudioPmax";
+      body+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 10px"><span class="chip on" style="background:#201d19;color:#e7c881;border-color:#5a4930">DESIGN STUDIO · '+(isSP?'PMAX':'SEARCH')+'</span><span class="chip">'+money(sm.dailyBudget)+'/day</span><span class="chip">'+(isSP?'Maximize conversions':'high-intent exact + phrase')+'</span><span class="chip">created PAUSED</span><span class="chip">approval required</span></div>'+
+        '<div style="padding:11px 12px;border:1px solid var(--gold-line);background:var(--gold-soft);border-radius:10px;font-size:12px"><b>Locked destination</b> · every ad opens <span class="mono">/pages/custom-studio</span>'+(isSP?' · Final URL expansion is off':' · Google Search only')+'</div>';
+      if(isSP){var groups=sm.groups||[],pre=sm.textPreview||[];
+        body+='<details class="xd" style="margin-top:11px" open><summary>Intent-led asset groups <span class="xd-n">'+groups.length+'</span></summary><div style="display:grid;gap:8px;margin-top:8px">'+groups.map(function(g){return '<div style="border:1px solid var(--line);border-radius:8px;padding:9px 10px"><b style="font-size:12.5px">'+esc(g.name||"Intent")+'</b><div class="muted" style="font-size:11px;margin-top:2px">'+esc(g.angle||"")+'</div><div class="chips" style="margin-top:6px">'+(g.searchThemes||[]).slice(0,8).map(function(t){return '<span class="chip">'+esc(t)+'</span>';}).join("")+'</div></div>';}).join("")+'</div></details>';
+        body+='<details class="xd" style="margin-top:9px"><summary>Ad copy <span class="xd-n">'+pre.reduce(function(n,x){return n+(x.headlines||[]).length+(x.longHeadlines||[]).length+(x.descriptions||[]).length;},0)+' assets</span></summary>'+pre.map(function(g){return '<div class="eyebrow" style="margin:11px 0 5px">'+esc(g.name||"Intent")+' · headlines</div>'+(g.headlines||[]).map(function(t){return copyLine(t,30);}).join("")+'<div class="eyebrow" style="margin:10px 0 5px">Long headlines</div>'+(g.longHeadlines||[]).map(function(t){return copyLine(t,90);}).join("")+'<div class="eyebrow" style="margin:10px 0 5px">Descriptions</div>'+(g.descriptions||[]).map(function(t){return copyLine(t,90);}).join("");}).join("")+'</details>';
+        body+='<div class="muted" style="font-size:11px;margin-top:9px">Non-retail PMax · '+groups.length+' asset groups · '+Number(sm.imageSources||0)+' verified Studio image sources · audience and search themes are optimization signals, not hard targeting.</div>';
+      }else{
+        if(sc.headlines.length)body+='<div class="eyebrow" style="margin:12px 0 6px">Headlines · ≤30</div>'+sc.headlines.map(function(t){return copyLine(t,30);}).join("");
+        if(sc.descriptions.length)body+='<div class="eyebrow" style="margin:12px 0 6px">Descriptions · ≤90</div>'+sc.descriptions.map(function(t){return copyLine(t,90);}).join("");
+        if(sc.keywords.length)body+='<div class="eyebrow" style="margin:12px 0 6px">High-intent keywords · '+sc.keywords.length+'</div><div class="chips">'+(sc.kwDetail||[]).map(function(k){return '<span class="chip on">'+esc(k.text)+' <span style="opacity:.55;font-size:9px">'+(k.matchType==="EXACT"?'[E]':'“P”')+'</span></span>';}).join("")+'</div>';
+        if(pl.adGroupSummary&&pl.adGroupSummary.length)body+='<details class="xd" style="margin-top:10px"><summary>Intent structure <span class="xd-n">'+pl.adGroupSummary.length+' ad groups</span></summary><div style="font-size:11.5px;color:var(--ink-70);margin-top:7px">'+pl.adGroupSummary.map(function(g){return '<b>'+esc(g.name||"Intent")+'</b> · '+(g.keywords||[]).map(esc).join(", ");}).join("<br><br>")+'</div></details>';
+      }
+      var sct=pl.countries||sm.countries||[],ssd=sc.startDate||sm.startDate||"",sed=sc.endDate||sm.endDate||"";
+      body+='<div class="eyebrow" style="margin:14px 0 7px">Countries</div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'+ctyChips(sct)+'<button class="btn ghost sm apcty-edit" data-id="'+a.id+'" data-sel="'+sct.join(",")+'" style="padding:3px 9px;font-size:11px">Edit</button></div>'+
+        '<div class="eyebrow" style="margin:14px 0 7px">90-day learning flight</div><div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:12px"><label class="muted" style="font-size:11px">Start</label><input type="date" class="apd-s" value="'+esc(ssd)+'" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--paper);font-size:12px"><label class="muted" style="font-size:11px">End</label><input type="date" class="apd-e" value="'+esc(sed)+'" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--paper);font-size:12px"><button class="btn ghost sm apd-save" data-id="'+a.id+'" style="padding:4px 11px;font-size:11px">Save dates</button><span class="muted apd-msg" style="font-size:11px"></span></div>';
+    }
+    else if(a.type==="pmax"&&pl.meta){var m=pl.meta;var c2=parseCreative(pl.mutateOperations||[]);
       body+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px">'
         +'<span class="chip on" style="background:var(--gold-soft);border-color:var(--gold)">PERFORMANCE MAX \u00b7 feed</span>'
         +'<span class="chip">'+money(m.dailyBudget)+'/day</span>'
@@ -2403,6 +2487,63 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");var p=r.plan;var
 }
 
 
+/* ---- Design Studio acquisition engine (separate from store advertising) ---- */
+var STUDIO_GROWTH=null,studioGrowthLoaded=false,studioGrowthBusy=null,studioGrowthPoll=null,studioGrowthCountries=null;
+function sgMetric(v,kind){if(v==null||!isFinite(Number(v)))return "—";v=Number(v);if(kind==="pct")return (v*100).toFixed(v<.1?1:0)+"%";if(kind==="money")return money(v);if(kind==="roas")return v.toFixed(2)+"×";return v.toLocaleString(undefined,{maximumFractionDigits:v<10?1:0});}
+function sgLaneState(x){x=x||{};var st=String(x.status||"").toUpperCase(),w=x.where||"";if(w==="campaign"&&st==="ENABLED")return {label:"live",cls:"ready"};if(w==="campaign"&&st==="PAUSED")return {label:"published · paused",cls:"pending"};if(w==="approval")return {label:st==="APPROVED"?"approved · applying":"awaiting approval",cls:"pending"};return {label:"not built",cls:""};}
+function sgCountryText(ids){ids=ids||[];if(!ids.length)return "No country selected";return ids.slice(0,3).map(ctyName).join(" · ")+(ids.length>3?" +"+(ids.length-3):"");}
+function renderDesignStudioGrowth(){
+  var el=$("#studioGrowth");if(!el)return;var s=STUDIO_GROWTH||{},b=s.blueprint;
+  if(studioGrowthBusy&&!b){el.innerHTML='<div class="sgBusy"><span class="spin gold"></span><span>'+esc(studioGrowthBusy)+'</span></div>';return;}
+  if(!b){el.innerHTML='<div class="sgSetup"><div><div class="sgKicker">Dedicated acquisition program</div><h3>Find the people who want to make something personal.</h3><p>This purpose-built engine reads the live Design Studio, maps its real value, measures high-intent demand and builds a separate PMax + Search program. Every ad is locked to the Studio home page and every campaign starts paused.</p>'+(s.lastError?'<div style="color:#e5a28f;font-size:11px;margin-top:8px">'+esc(s.lastError)+'</div>':'')+'</div><button class="btn gold" id="sgStart">Scan Design Studio</button></div>';var sb=$("#sgStart");if(sb)sb.onclick=function(){studioGrowthRun("designStudioScan",this);};return;}
+  if(!studioGrowthCountries)studioGrowthCountries=((b.budget||{}).countries||defCountries()).slice();
+  var p=sgLaneState((s.lanes||{}).pmax),q=sgLaneState((s.lanes||{}).search),perf=s.performance&&s.performance.ok!==false?s.performance:null,m=perf&&perf.overall||{},purchase=perf&&perf.purchase||{},f=perf&&perf.funnel||{},r=perf&&perf.rates||{},learn=s.learning||null;
+  var ready=(perf&&perf.readiness)||((b.measurement||{}).readiness)||{},av=f.available||{start:!!(ready.start||[]).length,design:!!(ready.design||[]).length,approve:!!(ready.approve||[]).length,cart:!!(ready.cart||[]).length,purchase:!!(ready.purchase||[]).length};
+  var budget=Number((b.budget||{}).recommendedDaily)||10,ceiling=Number((b.budget||{}).ceiling)||Number((((DASH||{}).control||{}).maxDailyBudgetTotal)||100);
+  var themes=(((b.pmax||{}).groups)||[]).slice(0,3);
+  var themeHtml=themes.map(function(t){return '<div class="sgTheme"><b>'+esc(t.name||"Intent")+'</b><span>'+esc(t.angle||"")+'</span></div>';}).join("");
+  var funnelSteps=[["Visits",m.clicks],["Studio starts",av.start?f.start:null],["First designs",av.design?f.design:null],["Approvals",av.approve?f.approve:null],["Carts",av.cart?f.cart:null],["Purchases",av.purchase?f.purchase:null]];
+  var funnelHtml=funnelSteps.map(function(x,i){return (i?'<span class="sgArrow">→</span>':'')+'<div class="sgStep"><b>'+sgMetric(x[1])+'</b><span>'+esc(x[0])+'</span></div>';}).join("");
+  var recs=(learn&&learn.recommendations||[]).slice(0,3),recHtml=recs.map(function(x){return '<div class="sgRec '+esc(x.priority||"")+'"><i></i><div><b>'+esc(x.area||"Next move")+' · '+esc(x.observation||"")+'</b><p>'+esc(x.action||"")+'</p></div></div>';}).join("");
+  var bb=b.budget||{},headroomRaw=bb.headroom,budgetCap=headroomRaw==null?ceiling:Number(headroomRaw);if(!isFinite(budgetCap))budgetCap=ceiling;budgetCap=Math.max(0,budgetCap);
+  var pmaxDaily=Number(bb.pmaxDaily);if(!(pmaxDaily>0))pmaxDaily=Math.max(1,Math.round(budget*0.40*100)/100);
+  var searchDaily=Number(bb.searchDaily);if(!(searchDaily>0))searchDaily=Math.max(1,Math.round((budget-pmaxDaily)*100)/100);
+  var startingTotal=pmaxDaily+searchDaily,pmaxPct=startingTotal?Math.round(pmaxDaily/startingTotal*100):40,searchPct=100-pmaxPct;
+  var canGen=ready.purchaseReady!==false&&budgetCap>=4&&((p.label==="not built")||(q.label==="not built"));
+  var genLabel=p.label==="not built"&&q.label==="not built"?"Build campaign proposals":p.label==="not built"||q.label==="not built"?"Build missing proposal":"Program already built";
+  var scanMeta=s.scanning?"Scanning now…":(s.scannedAt?("Studio scanned "+timeago(Number(s.scannedAt))+" ago"):(b.page&&b.page.source)||"");
+  var detailMeta=purchase.roas?("ROAS "+sgMetric(purchase.roas,"roas")+" · CPA "+sgMetric(purchase.cpa,"money")):"Open for evidence and next tests";
+  el.innerHTML='<div class="sgHead"><div><div class="sgKicker">Design Studio acquisition · separate program</div><h3>'+esc((b.positioning||{}).promise||"Turn what matters into a charm you design")+'</h3><p>Built from the live Studio experience: 1,200+ editable charm templates, photo or drawing uploads, a blank canvas, visual editing, version comparison and a metal preview before approval.</p></div><div class="sgInvariant"><div style="display:flex;align-items:center"><span class="lock">⌁</span><div><div class="sgKicker" style="margin:0">Fixed destination</div><div class="url">/pages/custom-studio</div></div></div><div style="font-size:10.5px;color:#a99f91;margin-top:8px">Final URL expansion off · no product or collection detours</div></div></div>'+
+    '<div class="sgBody"><div class="sgControlStack"><div class="sgPrimaryActions"><button class="btn gold sm" id="sgGenerate" '+(canGen?'':'disabled style="opacity:.45;cursor:not-allowed"')+'>'+genLabel+'</button><button class="btn ghost sm" id="sgScan">Re-scan Studio</button><button class="btn ghost sm" id="sgAnalyze">Refresh results & next test</button><span class="sgMeta">'+esc(studioGrowthBusy||scanMeta)+'</span></div><div class="sgLaunchSettings"><span class="sgLaunchLabel">Launch settings</span><span class="sgBudget"><b>Search</b> $ <input id="sgSearchBudget" aria-label="Search daily budget" type="number" min="1" max="'+Math.max(1,budgetCap)+'" step="0.50" value="'+searchDaily.toFixed(2)+'"></span><span class="sgBudget"><b>PMax</b> $ <input id="sgPmaxBudget" aria-label="PMax daily budget" type="number" min="1" max="'+Math.max(1,budgetCap)+'" step="0.50" value="'+pmaxDaily.toFixed(2)+'"></span><span class="sgBudgetTotal" id="sgBudgetTotalWrap">Combined <b id="sgBudgetTotal">$'+(searchDaily+pmaxDaily).toFixed(2)+'/day</b><small>$'+budgetCap.toFixed(2)+' available · 60/40 suggested</small></span><button class="btn ghost sm" id="sgCountries">Countries</button><span class="sgCtys" id="sgCountryText">'+esc(sgCountryText(studioGrowthCountries))+'</span></div></div>'+
+    '<div class="sgGrid"><div class="sgLane"><div class="sgLaneTop"><span style="color:#d8b86e">✦</span><b>PMax · qualified discovery</b><span class="sgState '+p.cls+'">'+esc(p.label)+'</span></div><p>Three intent-led asset groups introduce the Studio across Google while bidding to conversion outcomes, not page views.</p><div class="sgLaneFacts"><span id="sgPmaxShare">'+pmaxPct+'% budget</span><span>Maximize conversions</span><span>3 creative themes</span><span>search + audience signals</span></div></div><div class="sgLane"><div class="sgLaneTop"><span style="color:#d8b86e">⌕</span><b>Search · expressed intent</b><span class="sgState '+q.cls+'">'+esc(q.label)+'</span></div><p>Exact and phrase-match demand capture for designing a charm, creating from a photo and meaningful personalized gifts.</p><div class="sgLaneFacts"><span id="sgSearchShare">'+searchPct+'% budget</span><span>Google Search only</span><span>3 intent groups</span><span>dedicated negatives</span></div></div></div>'+
+    '<details class="sgMore"><summary>Performance, creative strategy &amp; learning <span class="sgMoreMeta">'+esc(detailMeta)+'</span></summary><div class="sgMoreBody"><div class="sgSection"><div class="sgLabel">Creative strategy</div><div class="sgThemes">'+themeHtml+'</div></div>'+
+    '<div class="sgSection"><div class="sgLabel">Results · '+(perf?(esc(perf.start)+" → "+esc(perf.end)):"awaiting campaign data")+'</div><div class="sgMetrics"><div class="sgMetric"><div class="v">'+sgMetric(m.cost,"money")+'</div><div class="l">Spend</div></div><div class="sgMetric"><div class="v">'+sgMetric(m.clicks)+'</div><div class="l">Qualified visits</div></div><div class="sgMetric"><div class="v">'+sgMetric(r.visitToStart,"pct")+'</div><div class="l">Visit → start</div></div><div class="sgMetric"><div class="v">'+sgMetric(purchase.cpa,"money")+'</div><div class="l">Purchase CPA</div></div><div class="sgMetric"><div class="v">'+sgMetric(purchase.roas,"roas")+'</div><div class="l">Purchase ROAS</div></div></div><div class="sgFunnel" style="margin-top:9px">'+funnelHtml+'</div></div>'+
+    '<div class="sgSection"><div class="sgLabel">Learning contract · '+esc((learn&&learn.phase)||"pre-launch")+'</div><div class="sgLearn">'+(recHtml||'<div class="sgRec"><i></i><div><b>Measure the whole journey</b><p>Visit → Studio start → first design → approval → cart → purchase. Recommendations appear after real evidence; nothing is auto-applied.</p></div></div>')+'</div></div>'+
+    '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:16px"><span class="sgLaneFacts"><span>'+(ready.purchaseReady?'Purchase goal verified':(ready.apiOk?'Purchase goal needs review':'Conversion API check pending'))+'</span><span>'+Number(ready.assistCoverage||0)+'/4 Studio milestones imported</span><span>created paused</span><span>approval required</span><span>budget ceiling</span><span>duplicate protection</span></span><span style="flex:1"></span>'+((p.label!=="not built"||q.label!=="not built")?'<button class="btn ghost sm" id="sgApprovals">Open Approvals</button>':'')+'</div></div></details></div>';
+  var scan=$("#sgScan"),gen=$("#sgGenerate"),an=$("#sgAnalyze"),ct=$("#sgCountries"),ap=$("#sgApprovals"),sbud=$("#sgSearchBudget"),pbud=$("#sgPmaxBudget"),bt=$("#sgBudgetTotal"),btw=$("#sgBudgetTotalWrap"),spct=$("#sgSearchShare"),ppct=$("#sgPmaxShare");
+  function syncStudioBudgets(){var sv=Number(sbud&&sbud.value),pv=Number(pbud&&pbud.value),tv=Math.round((sv+pv)*100)/100,bad=!isFinite(sv)||!isFinite(pv)||sv<1||pv<1||tv<4||tv>budgetCap+.001;if(bt)bt.textContent=isFinite(tv)?("$"+tv.toFixed(2)+"/day"):"—";if(isFinite(tv)&&tv>0){var ppc=Math.round(pv/tv*100);if(ppct)ppct.textContent=ppc+"% budget";if(spct)spct.textContent=(100-ppc)+"% budget";}if(btw){btw.classList.toggle("over",bad);btw.title=bad?(tv>budgetCap?"Combined budget exceeds the available account ceiling.":"Each campaign needs at least $1 and the combined budget must be at least $4."):"Search and PMax will be created as separate campaigns with these exact daily budgets.";}if(gen&&canGen&&!studioGrowthBusy){gen.disabled=bad;gen.style.opacity=bad?".45":"";gen.style.cursor=bad?"not-allowed":"";}}
+  [sbud,pbud].forEach(function(x){if(x)x.addEventListener("input",syncStudioBudgets);});syncStudioBudgets();
+  if(studioGrowthBusy)[scan,gen,an,ct].forEach(function(x){if(x){x.disabled=true;x.style.opacity=".5";x.style.cursor="wait";}});
+  if(scan)scan.onclick=function(){studioGrowthRun("designStudioScan",this);};
+  if(gen&&canGen)gen.onclick=function(){studioGrowthRun("designStudioGenerate",this);};
+  if(an)an.onclick=function(){studioGrowthRun("designStudioAnalyze",this);};
+  if(ap)ap.onclick=function(){go("approvals");};
+  if(ct)ct.onclick=function(){openCountryEditor({selected:studioGrowthCountries||defCountries(),title:"Design Studio countries",subtitle:"Shared by both Studio campaign lanes.",saveLabel:"Use these",onSave:function(ids,done){studioGrowthCountries=ids.slice();var t=$("#sgCountryText");if(t)t.textContent=sgCountryText(ids);done();}});};
+}
+async function loadDesignStudioGrowth(refreshMetrics){
+  var el=$("#studioGrowth");if(!el)return;if(!studioGrowthLoaded)el.innerHTML='<div class="sgBusy"><span class="spin gold"></span><span>Loading the Design Studio acquisition engine…</span></div>';
+  studioGrowthLoaded=true;
+  try{var loaded=await Promise.all([api("designStudioStatus",{refreshMetrics:!!refreshMetrics}),ensureCountries().catch(function(){return [];} )]);STUDIO_GROWTH=loaded[0];if(STUDIO_GROWTH&&STUDIO_GROWTH.error)throw new Error(STUDIO_GROWTH.error);renderDesignStudioGrowth();}
+  catch(e){el.innerHTML='<div class="sgSetup"><div><div class="sgKicker">Design Studio acquisition</div><h3>Could not load this program.</h3><p>'+esc(e.message)+'</p></div><button class="btn gold" id="sgRetry">Retry</button></div>';var b=$("#sgRetry");if(b)b.onclick=function(){studioGrowthLoaded=false;loadDesignStudioGrowth(false);};}
+}
+async function studioGrowthRun(action,btn){
+  if(studioGrowthPoll){clearInterval(studioGrowthPoll);studioGrowthPoll=null;}var bb=(((STUDIO_GROWTH||{}).blueprint||{}).budget)||{},si=$("#sgSearchBudget"),pi=$("#sgPmaxBudget"),chosenSearch=si?Number(si.value):Number(bb.searchDaily),chosenPmax=pi?Number(pi.value):Number(bb.pmaxDaily),cap=bb.headroom==null?Number(bb.ceiling):Number(bb.headroom),chosenBudget=Math.round((chosenSearch+chosenPmax)*100)/100;if(action==="designStudioGenerate"&&(!isFinite(chosenSearch)||!isFinite(chosenPmax)||chosenSearch<1||chosenPmax<1||chosenBudget<4)){toast("Set at least $1/day for each campaign and $4/day combined.");return;}if(action==="designStudioGenerate"&&isFinite(cap)&&chosenBudget>cap+.001){toast("The combined Studio budget exceeds the $"+cap.toFixed(2)+" currently available under your account ceiling.");return;}var label=action==="designStudioScan"?"Scanning the live Studio…":action==="designStudioGenerate"?"Building two approval-gated proposals…":"Reading the latest Studio results…";studioGrowthBusy=label;renderDesignStudioGrowth();
+  try{var extra={};if(action==="designStudioGenerate"){extra.dailyBudget=chosenBudget;extra.searchDaily=Math.round(chosenSearch*100)/100;extra.pmaxDaily=Math.round(chosenPmax*100)/100;extra.countries=(studioGrowthCountries||defCountries()).slice();}if(action==="designStudioAnalyze")extra.days=30;
+    var r=await api(action,extra);if(!r||r.error||!r.genId)throw new Error((r&&r.error)||"The background worker did not accept this job.");var genId=r.genId,tries=0;
+    studioGrowthPoll=setInterval(async function(){tries++;try{var st=await api("genStatus",{genId:genId});if(st&&!st.pending&&(st.phase==="done"||st.ok===true||st.ok===false)){clearInterval(studioGrowthPoll);studioGrowthPoll=null;studioGrowthBusy=null;if(st.ok===false){toast(st.error||"Design Studio job failed");}else{toast(action==="designStudioGenerate"?"Studio proposals are ready in Approvals ✓":action==="designStudioScan"?"Design Studio scan complete ✓":"Studio learning report refreshed ✓",true);}await loadDesignStudioGrowth(action==="designStudioAnalyze");if(action==="designStudioGenerate")await reload();}else if(tries>=360){clearInterval(studioGrowthPoll);studioGrowthPoll=null;studioGrowthBusy=null;toast("The Studio job is still running. You can leave this tab and return later.");await loadDesignStudioGrowth(false);}}catch(e){if(tries>=360){clearInterval(studioGrowthPoll);studioGrowthPoll=null;studioGrowthBusy=null;renderDesignStudioGrowth();}}},2500);
+  }catch(e){studioGrowthBusy=null;renderDesignStudioGrowth();toast(e.message);}
+}
+
 /* ---- render: opportunities (Unused vs In-use reconciliation) ---- */
 var OPPS=[]; var PMAXOPPS=[]; var PMAXERR=null; var PMAXAT=null; var SCAN_AUDIT=null; var oppLoaded=false; var oppView="unused"; var oppSort="best";
 function oppSorters(mode){
@@ -2552,7 +2693,7 @@ function actedBadge(a){
   return ap[a.status]||["Acted","var(--slate-soft)","#33525d"];
 }
 function oppTabBtn(key,label,n){ var on=oppView===key;
-  return '<button class="oppTab" data-view="'+key+'" style="padding:8px 15px;border-radius:9px;border:1px solid '+(on?"var(--ink)":"var(--line)")+';background:'+(on?"var(--ink)":"transparent")+';color:'+(on?"var(--paper)":"var(--ink-70)")+';font-weight:600;font-size:13px;cursor:pointer">'+label+' <span style="opacity:.65;font-family:var(--mono)">'+n+'</span></button>'; }
+  return '<button class="oppTab'+(on?' active':'')+'" role="tab" aria-selected="'+(on?'true':'false')+'" data-view="'+key+'">'+label+' <span>'+n+'</span></button>'; }
 async function runKwDiag(){var btn=$("#kwDiag");var panel=$("#kwDiagPanel");if(!panel)return;var done=btnBusy(btn,"Testing\u2026");panel.style.display="block";
   panel.innerHTML='<div class="card pad"><div class="muted" style="font-size:12.5px">Running a live Google Keyword Planner request\u2026</div></div>';
   try{var r=await api("keywordDiag",{keyword:"name necklace"});var ok=r&&r.ok&&r.ideaCount>0;
@@ -2584,20 +2725,13 @@ function renderPmaxSection(host){
   var insertTop=function(el){host.parentNode.insertBefore(el,host);};
   if(!PMAXOPPS.length){
     var sec0=document.createElement("div");sec0.id="pmaxSec";
-    sec0.innerHTML='<div class="card pad" style="margin-bottom:16px;border:1px dashed var(--line)">'
-      +'<div class="card__h"><h3>Feed campaigns · Google Shopping</h3><span class="sub">Merchant Center organic winners → paid growth</span></div>'
-      +(PMAXAT
-        ?('<div class="muted" style="font-size:12.5px">'+(PMAXERR?('Feed scan issue: <span style="color:#b3402a">'+esc(PMAXERR)+'</span> — re-run Scan.'):'No eligible Merchant Center opportunities were found on this scan.')+'</div>')
-        :'<div class="muted" style="font-size:12.5px">No feed scan yet — run <b>Scan for opportunities</b>. The engine matches recent unpaid Google/free-listing sales to the live Merchant Center offer catalogue.</div>')
-      +'</div>';
+    sec0.innerHTML='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>Performance Max opportunities</h3><p>Merchant Center products with enough evidence to test paid growth.</p></div><span class="oppChannelCount">0 ready</span></header><div class="oppChannelEmpty">'+(PMAXAT?(PMAXERR?('<b>Feed scan needs attention.</b><br>'+esc(PMAXERR)+' Re-run the scan when ready.'):'<b>No eligible feed opportunities this time.</b><br>The latest scan found no Merchant Center products with enough evidence to recommend.'):'<b>No feed scan yet.</b><br>Run a scan to match recent free-listing sales with the live Merchant Center catalogue.')+'</div></section>';
     insertTop(sec0);return;
   }
   var sec=document.createElement("div");sec.id="pmaxSec";
-  var inner='<div class="card pad" style="margin-bottom:16px;border:1px solid var(--gold)">'
-    +'<div class="card__h"><h3>Feed campaigns · Google Shopping</h3><span class="sub">ranked from actual organic sales and exact GMC offers</span></div>';
+  var inner='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>Performance Max opportunities</h3><p>Ranked from organic sales and exact Merchant Center offers.</p></div><span class="oppChannelCount">'+PMAXOPPS.length+' ready</span></header><div class="pmxList">';
   PMAXOPPS.forEach(function(o,i){
     var org=o.organic||{};
-    var proof=(org.orders30d||0)+' matched organic orders · $'+(org.organicRevenue30d||0)+' revenue · ~$'+(o.estimatedProfit30d||0)+' est. contribution';
     var products=(o.productTitles||[]).slice(0,4);
     var free=(o.freePerformance&&o.freePerformance.days30)||null;
     var scope=(o.itemIds&&o.itemIds.length)?(o.itemIds.length+' exact GMC offers'):(o.types&&o.types.length?('product types: '+o.types.join('/')):'feed scope');
@@ -2605,17 +2739,13 @@ function renderPmaxSection(host){
     var state=acted?('<span class="badge2 '+(acted.where==="campaign"?"b-on":"b-pause")+'">'+esc((acted.where==="campaign"?"CAMPAIGN ":"APPROVAL ")+(acted.status||"IN USE"))+'</span>'):'';
     var disabled=acted?' disabled aria-disabled="true"':'';
     var buttonText=acted?'Already in use':'Generate';
-    inner+='<div class="pmxrow" style="border-top:1px solid var(--line);padding:14px 2px">'
-      +'<div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="chip on" style="background:var(--gold-soft);border-color:var(--gold)">PMAX</span>'+(o.feedLabel?'<span class="chip">'+esc(String(o.feedLabel).toUpperCase())+' FEED</span>':'')+'<b>'+esc(o.collectionTitle)+'</b>'+state+'</div>'
-      +'<div class="muted" style="font-size:11.5px;margin-top:5px">'+esc(proof)+' · confidence '+(o.confidence||'—')+'/100 · '+esc(String(o.opportunityClass||'').replace(/_/g,' '))+'</div>'
-      +'<div class="muted" style="font-size:11px;margin-top:3px">'+esc(scope)+' · '+esc(org.signalSource||"organic sales signal")+(o.feedLabel?' · location locked to '+esc(String(o.feedLabel).toUpperCase()):'')+'</div></div>'
-      +'<div><div style="font-size:12.5px">'+esc(o.rationale||"")+(o.angle?' · <i>'+esc(o.angle)+'</i>':'')+'</div>'
-      +(products.length?'<div style="font-size:11.5px;color:var(--ink-70);margin-top:6px"><b>Products:</b> '+products.map(esc).join(' · ')+'</div>':'')+((o.searchThemes||[]).length?'<div style="font-size:11px;color:var(--ink-45);margin-top:5px"><b>Search themes:</b> '+o.searchThemes.slice(0,6).map(esc).join(' · ')+'</div>':'')+((free&&(Number(free.conversions||0)>0||Number(free.clicks||0)>0))?'<div style="font-size:11px;color:var(--sage);margin-top:4px"><b>Google free-listing report:</b> '+Number(free.clicks||0)+' clicks · '+Number(free.conversions||0).toFixed(1)+' conv · $'+Number(free.value||0).toFixed(2)+' conversion value</div>':'')+(o.merchantReportWarning?'<div style="font-size:10.5px;color:var(--clay);margin-top:3px"><b>Merchant report fallback:</b> '+esc(String(o.merchantReportWarning).slice(0,170))+'</div>':'')+((o.paidPerformance&&o.paidPerformance.cost)?'<div style="font-size:11px;color:var(--ink-45);margin-top:4px"><b>Paid product history:</b> $'+Number(o.paidPerformance.cost).toFixed(2)+' spend · '+Number(o.paidPerformance.conversions||0).toFixed(1)+' conv · '+(o.paidPerformance.roas!=null?Number(o.paidPerformance.roas).toFixed(1)+'x ROAS':'learning')+'</div>':'')+'<div style="font-size:11px;color:var(--ink-45);margin-top:4px"><b>Bidding:</b> '+(o.recommendedTargetRoas?('Max conversion value · evidence-gated tROAS '+Number(o.recommendedTargetRoas).toFixed(2)+'x'):'Max conversion value · unconstrained learning')+(o.breakEvenRoas?(' · est. break-even '+Number(o.breakEvenRoas).toFixed(2)+'x'):'')+'</div></div>'
-      +'<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap"><span style="white-space:nowrap">$<input type="number" class="pmx-bud" data-i="'+i+'" value="'+(o.dailyBudget||10)+'" min="3" max="30" style="width:58px;padding:4px 6px;border:1px solid var(--line);border-radius:7px">/day · '+(o.days||30)+'d</span>'
+    inner+='<article class="pmxrow pmxOpportunity"><div class="pmxMain"><div class="pmxTitle"><span class="chip on" style="background:var(--gold-soft);border-color:var(--gold)">PMAX</span>'+(o.feedLabel?'<span class="chip">'+esc(String(o.feedLabel).toUpperCase())+' FEED</span>':'')+'<b>'+esc(o.collectionTitle)+'</b>'+state+'</div><div class="pmxRationale">'+esc(o.rationale||"")+(o.angle?' · <i>'+esc(o.angle)+'</i>':'')+'</div><div class="pmxMetrics"><span class="pmxMetric"><b>'+Number(org.orders30d||0)+'</b> matched orders</span><span class="pmxMetric"><b>$'+Number(org.organicRevenue30d||0).toFixed(0)+'</b> organic revenue</span><span class="pmxMetric"><b>~$'+Number(o.estimatedProfit30d||0).toFixed(0)+'</b> contribution</span><span class="pmxMetric"><b>'+(o.confidence||'—')+'/100</b> confidence</span></div></div>'
+      +'<div class="pmxActions"><label class="pmxBudget">$<input type="number" class="pmx-bud" data-i="'+i+'" value="'+(o.dailyBudget||10)+'" min="3" max="30" aria-label="PMax daily budget">/day · '+(o.days||30)+'d</label>'
       +'<button class="btn ghost sm" onclick="apvOpen(\''+apvEnc(o.handle)+'\',\''+apvEnc(JSON.stringify((o.productTitles||o.itemIds||[]).slice(0,8)))+'\',\''+apvEnc(o.collectionTitle||"")+'\')">Preview ads</button>'
-      +'<button class="btn gold sm pmx-gen" data-i="'+i+'"'+disabled+'>'+buttonText+'</button><span class="pmx-msg" data-i="'+i+'" style="font-size:12px;color:var(--ink-45)"></span></div></div>';
+      +'<button class="btn gold sm pmx-gen" data-i="'+i+'"'+disabled+'>'+buttonText+'</button><span class="pmx-msg" data-i="'+i+'" style="font-size:12px;color:var(--ink-45)"></span></div>'
+      +'<details class="pmxEvidence"><summary>Why this recommendation</summary><div class="pmxEvidenceBody"><b>Feed scope:</b> '+esc(scope)+' · '+esc(org.signalSource||"organic sales signal")+(o.feedLabel?' · location locked to '+esc(String(o.feedLabel).toUpperCase()):'')+(products.length?'<br><b>Products:</b> '+products.map(esc).join(' · '):'')+((o.searchThemes||[]).length?'<br><b>Search themes:</b> '+o.searchThemes.slice(0,6).map(esc).join(' · '):'')+((free&&(Number(free.conversions||0)>0||Number(free.clicks||0)>0))?'<br><b>Free-listing evidence:</b> '+Number(free.clicks||0)+' clicks · '+Number(free.conversions||0).toFixed(1)+' conversions · $'+Number(free.value||0).toFixed(2)+' value':'')+(o.merchantReportWarning?'<br><span style="color:var(--clay)"><b>Merchant report fallback:</b> '+esc(String(o.merchantReportWarning).slice(0,170))+'</span>':'')+((o.paidPerformance&&o.paidPerformance.cost)?'<br><b>Paid product history:</b> $'+Number(o.paidPerformance.cost).toFixed(2)+' spend · '+Number(o.paidPerformance.conversions||0).toFixed(1)+' conversions · '+(o.paidPerformance.roas!=null?Number(o.paidPerformance.roas).toFixed(1)+'x ROAS':'learning'):'')+'<br><b>Bidding:</b> '+(o.recommendedTargetRoas?('Max conversion value · evidence-gated tROAS '+Number(o.recommendedTargetRoas).toFixed(2)+'x'):'Max conversion value · unconstrained learning')+(o.breakEvenRoas?(' · est. break-even '+Number(o.breakEvenRoas).toFixed(2)+'x'):'')+'</div></details></article>';
   });
-  sec.innerHTML=inner+'</div>';insertTop(sec);
+  sec.innerHTML=inner+'</div></section>';insertTop(sec);
   Array.prototype.forEach.call(sec.querySelectorAll(".pmx-gen:not([disabled])"),function(b){b.onclick=async function(){
     var i=+this.getAttribute("data-i"),o=PMAXOPPS[i],btn=this;
     var bud=+(sec.querySelector('.pmx-bud[data-i="'+i+'"]')||{}).value||o.dailyBudget||10;
@@ -2643,17 +2773,16 @@ function renderOpportunities(){
       er.innerHTML='<div class="card pad" style="border:1px solid #f0c8bc;background:#fdeee9;margin-bottom:14px;font-size:12.5px;color:#b3402a"><b>Feed section render error:</b> '+esc(String(e.message||e))+'</div>';
       if(box&&box.parentNode)box.parentNode.insertBefore(er,box);}catch(e2){}}
   },0);
-  if(!OPPS.length){box.innerHTML='<div class="empty" style="height:160px"><div>No opportunities surfaced.</div><div style="font-size:12px">Try Scan again, or use Custom build below.</div></div>';return;}
+  if(!OPPS.length){box.innerHTML='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">S</span><div class="oppChannelHeadText"><div class="eyebrow">Intent-led campaigns</div><h3>Search opportunities</h3><p>Recommended from demand, timing and past campaign evidence.</p></div><span class="oppChannelCount">0 ready</span></header><div class="oppChannelEmpty"><b>No Search opportunities surfaced.</b><br>Try another scan, or use the optional manual builder below.</div></section>';return;}
   var unused=[],inuse=[];
   OPPS.forEach(function(o,i){ (o.acted?inuse:unused).push({o:o,i:i}); });
-  var sortChip=function(k,l,t){var on=oppSort===k;return '<button class="oppSort" data-k="'+k+'" title="'+t+'" style="padding:4px 12px;border:1px solid '+(on?"var(--gold)":"var(--line)")+';border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;background:'+(on?"var(--gold-soft)":"transparent")+';color:'+(on?"#7a5a1d":"var(--ink-45)")+'">'+l+'</button>';};
-  var tabs='<div style="display:flex;gap:8px;margin-bottom:18px;align-items:center;flex-wrap:wrap">'+oppTabBtn("unused","Unused",unused.length)+oppTabBtn("inuse","In use",inuse.length)+'<span style="flex:1"></span><span class="muted" style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:700">Sort</span>'+sortChip("best","Best bets","Conversion likelihood, urgency-boosted \u2014 the AI\u2019s blend")+sortChip("urgent","Most urgent","Soonest start, shortest window first")+sortChip("reach","Reach","Highest researched search volume first")+'</div>';
-  box.innerHTML=tabs+'<div id="oppCards" class="scrollcap"></div>';
+  var tabs='<div class="oppResultsBar"><div class="oppTabs" role="tablist">'+oppTabBtn("unused","Recommended",unused.length)+oppTabBtn("inuse","Already in use",inuse.length)+'</div><label class="oppSortField">Sort by <select id="oppSortSelect"><option value="best"'+(oppSort==="best"?' selected':'')+'>Best match</option><option value="urgent"'+(oppSort==="urgent"?' selected':'')+'>Most urgent</option><option value="reach"'+(oppSort==="reach"?' selected':'')+'>Highest reach</option></select></label></div>';
+  box.innerHTML='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">S</span><div class="oppChannelHeadText"><div class="eyebrow">Intent-led campaigns</div><h3>Search opportunities</h3><p>Recommended from demand, timing and past campaign evidence.</p></div><span class="oppChannelCount">'+(unused.length+inuse.length)+' found</span></header>'+tabs+'<div id="oppCards" class="oppCardList"></div></section>';
   box.querySelectorAll(".oppTab").forEach(function(b){ b.onclick=function(){ oppView=b.dataset.view; renderOpportunities(); }; });
-  box.querySelectorAll(".oppSort").forEach(function(b){ b.onclick=function(){ oppSort=b.dataset.k; renderOpportunities(); }; });
+  var sortSelect=$("#oppSortSelect");if(sortSelect)sortSelect.onchange=function(){oppSort=this.value;renderOpportunities();};
   var cards=$("#oppCards"); var list=oppView==="inuse"?inuse:unused;
   if(oppView!=="inuse") list=list.slice().sort(oppSorters(oppSort));
-  if(!list.length){ cards.innerHTML='<div class="empty" style="height:150px"><div>'+(oppView==="inuse"?"Nothing here yet.":"All current suggestions are already in use.")+'</div><div style="font-size:12px">'+(oppView==="inuse"?"Generated, approved, or live campaigns show up here so they\u2019re never re-suggested.":"Re-scan to surface fresh ideas.")+'</div></div>'; return; }
+  if(!list.length){ cards.innerHTML='<div class="oppChannelEmpty"><b>'+(oppView==="inuse"?"Nothing is in use yet.":"All current suggestions are already in use.")+'</b><br>'+(oppView==="inuse"?"Generated, approved, and live campaigns will appear here.":"Re-scan to surface fresh ideas.")+'</div>'; return; }
   if(oppView==="inuse"){ list.forEach(function(x){ cards.appendChild(inUseCard(x.o)); });
     cards.querySelectorAll(".opRelease").forEach(function(b){ b.onclick=function(){ releaseOpp(b.dataset.tag,b); }; });
     return; }
@@ -2789,33 +2918,13 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
   var winTxt=fmtDate(o.startDate)+" \u2013 "+fmtDate(o.endDate);
   var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+o.pastStats.roas+'x last run</span>':'<span class="muted">no history yet</span>';
   var edge=o.priority==="high"?"var(--gold)":o.priority==="medium"?"var(--sage)":"var(--slate)";
-  return elFrom('<div class="exp" data-i="'+i+'" style="border-left:3px solid '+edge+';padding-left:15px">'+
-    // ---- GLANCE FACE ----
-    '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'+
-      '<span style="font-size:15px;font-weight:700;color:var(--ink)">'+esc(o.occasion)+'</span>'+
-      urgPill(o)+
-      '<span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+';font-size:9.5px">'+pm[0]+'</span>'+'<span class="badge2 b-learn" style="font-size:9px">'+esc(String(o.opportunityClass||'controlled_experiment').replace(/_/g,' ').toUpperCase())+'</span>'+
-      '<span style="flex:1"></span>'+kwDot(o)+
-    '</div>'+
-    '<div class="muted mono" style="font-size:11px;margin:2px 0 9px">'+esc(o.collectionTitle)+' \u00b7 <span class="opWin" data-i="'+i+'">'+winTxt+'</span> \u00b7 <span class="opDur" data-i="'+i+'">'+o.durationDays+'</span>d</div>'+
-    '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:10px">'+scoreMeter(o)+
-      faceStat("fBud",i,money(o.recommendedDailyBudget)+"/d","budget")+
-      faceStat("planSales",i,pr0.sales,"est. sales")+
-      faceStat("planRev2",i,pr0.rev!=null?("~"+money(pr0.rev)):"\u2014","proj. revenue")+
-      faceStat("planProfit",i,pr0.profit!=null?((pr0.profit>=0?"+":"")+money(pr0.profit)):"\u2014","est. profit",1)+
-      faceStat("planRoas",i,pr0.roas?pr0.roas.band:(o.expectedRoasBand||"\u2014"),"roas",1)+
-      faceStat("oppConf",i,((o.confidence&&o.confidence.score)||"\u2014")+"/100","confidence")+
-    '</div>'+
-    (o.audience?('<div class="muted" style="font-size:11.5px;margin-bottom:10px">'+esc(o.audience.buyer||"")+(o.audience.recipient?(' \u2192 '+esc(o.audience.recipient)):'')+' \u00b7 past: '+past+'</div>'):('<div class="muted" style="font-size:11.5px;margin-bottom:10px">past: '+past+'</div>'))+
-    '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">'+
-      '<button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button>'+
-      '<span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span>'+
-    '</div>'+
-    // ---- FULL DETAIL (collapsed) ----
-    '<details class="opDx" style="margin-top:11px"><summary style="cursor:pointer;font-size:12px;color:var(--gold);font-weight:600">Adjust budget, dates, bidding &amp; research</summary>'+
-    '<div style="margin-top:12px">'+
-    '<div style="font-size:13px;color:var(--ink-70);margin:0 0 6px">'+esc(o.rationale||"")+'</div>'+
-    (o.audience&&o.audience.searchStyle?('<div class="muted" style="font-size:11.5px;margin:0 0 12px">'+(o.audience.motivation?('Motivation: '+esc(o.audience.motivation)+' \u00b7 '):'')+'Searches like: \u201c'+esc(o.audience.searchStyle)+'\u201d</div>'):'<div style="margin-bottom:6px"></div>')+
+  return elFrom('<div class="exp oppCard" data-i="'+i+'" style="border-left-color:'+edge+'">'+
+    '<div class="oppCardHeader"><span class="oppCardPriority" style="background:'+edge+'"></span><div class="oppCardTitle"><h4>'+esc(o.occasion)+'</h4><div class="oppCardMeta"><span>'+esc(o.collectionTitle)+'</span><span class="sep"></span><span class="opWin" data-i="'+i+'">'+winTxt+'</span><span class="sep"></span><span><span class="opDur" data-i="'+i+'">'+o.durationDays+'</span> days</span></div></div><div class="oppCardBadges"><span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+';font-size:9.5px">'+pm[0]+'</span>'+urgPill(o)+kwDot(o)+'</div></div>'+
+    '<div class="oppCardWhy">'+esc(o.rationale||"")+'</div>'+
+    '<div class="oppCardMetrics"><div class="oppCardMetric"><b class="fBud" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'/day</b><span>Daily budget</span></div><div class="oppCardMetric"><b class="planSales" data-i="'+i+'">'+pr0.sales+'</b><span>Estimated sales</span></div><div class="oppCardMetric"><b class="planRev2" data-i="'+i+'">'+(pr0.rev!=null?("~"+money(pr0.rev)):"\u2014")+'</b><span>Projected revenue</span></div><div class="oppCardMetric"><b class="planRoas" data-i="'+i+'">'+esc(pr0.roas?pr0.roas.band:(o.expectedRoasBand||"\u2014"))+'</b><span>Expected ROAS</span></div></div>'+
+    '<div class="oppCardActions"><button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button><details class="opDx"><summary>Review &amp; adjust</summary><div class="oppDetailsBody">'+
+    '<div class="oppDetailsIntro">'+(o.audience?(esc(o.audience.buyer||"")+(o.audience.recipient?(' \u2192 '+esc(o.audience.recipient)):'')+' \u00b7 '):'')+'Confidence '+((o.confidence&&o.confidence.score)||"\u2014")+'/100 \u00b7 score '+(o.score||0)+' \u00b7 past: '+past+'</div>'+
+    (o.audience&&o.audience.searchStyle?('<div class="muted" style="font-size:11.5px;margin:0 0 12px">'+(o.audience.motivation?('Motivation: '+esc(o.audience.motivation)+' \u00b7 '):'')+'Searches like: \u201c'+esc(o.audience.searchStyle)+'\u201d</div>'):'')+
 '<div class="grid" style="grid-template-columns:1.4fr 1fr 1fr;gap:16px;align-items:end">'+
       '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">Planned <span class="opPlanned" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span> \u00b7 \u2248<span class="planClicks" data-i="'+i+'">'+Math.round(pr0.cpd)+'</span> clicks/day</div></div>'+
       '<div><label style="'+lab+'">Start date</label><div style="padding-top:6px"><input type="date" class="opStart" data-i="'+i+'" value="'+esc(o.startDate||"")+'" style="'+din+'"></div></div>'+
@@ -2835,23 +2944,23 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
     '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b class="planRoas" data-i="'+i+'" style="color:var(--ink);font-family:var(--mono)">'+esc(pr0.roas?pr0.roas.band:(o.expectedRoasBand||"\u2014"))+'</b>&nbsp;<span style="font-size:11px" title="Projected revenue \u00f7 projected spend with \u00b130% conversion-rate uncertainty \u2014 computed from the same numbers on this card, and re-computed live as you edit budget, dates or CPC.">(computed'+(o.proven?" \u00b7 occasion proven in history":"")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
     '<div class="muted" style="font-size:11.5px;margin-top:7px"><b>Contribution economics:</b> margin '+Math.round((((o.plan||{}).expected||{}).marginRate||0.65)*100)+'% · break-even ROAS '+((((o.plan||{}).expected||{}).breakEvenRoas!=null)?Number((o.plan||{}).expected.breakEvenRoas).toFixed(2):'—')+'x · expected profit <b class="planProfit" data-i="'+i+'">'+(pr0.profit!=null?((pr0.profit>=0?'+':'')+money(pr0.profit)):'—')+'</b> ('+(pr0.profitLow!=null?money(pr0.profitLow):'—')+' to '+(pr0.profitHigh!=null?money(pr0.profitHigh):'—')+')</div>'+
     planBlock(o,i)+
-    '<details class="xd" style="margin-top:12px" open><summary>Keyword research &amp; phrases</summary>'+
+    '<details class="xd" style="margin-top:12px"><summary>Keyword research &amp; phrases</summary>'+
       kwResearchPanel(o)+
       '<div class="eyebrow" style="margin:12px 0 6px">Key phrases <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">\u00b7 emotional ad copy</span></div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
       '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">When generated, this campaign auto-adds <b>4 sitelinks</b>, <b>4 callouts</b> &amp; a <b>structured snippet</b> for more ad real estate, and <b>excludes ~28 non-buyer terms</b> (free, diy, wholesale, cheap, repair\u2026) to stop wasted spend.</div></details>'+
 '<div style="margin-top:11px;font-size:12px;color:var(--ink-70);display:flex;gap:7px;align-items:center;flex-wrap:wrap">Countries: <span class="opCty" data-i="'+i+'" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm opCtyEdit" data-i="'+i+'" style="padding:2px 8px;font-size:11px">Edit</button></div>'+
-    '</div></details>'+
+    '</div></details><span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span></div>'+
   '</div>');
 }
 function inUseCard(o){ var b=actedBadge(o.acted); var a=o.acted||{};
   var loc = a.where==="campaign" ? ('Google Ads \u00b7 campaign '+(a.campaignId||"")) : 'Approval pipeline';
   var link = (a.where==="campaign"&&a.status!=="REMOVED") ? '<a href="#" onclick="go(&#39;perf&#39;);return false" style="color:var(--gold)">View in Performance</a>'
            : (a.where==="approval"&&a.status==="PENDING") ? '<a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">View in Approvals</a>' : '';
-  return elFrom('<div class="exp" style="opacity:.94">'+
-    '<div class="exp__h"><span class="verdict" style="background:'+b[1]+';color:'+b[2]+'">'+b[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:11px">'+esc(loc)+'</span></div>'+
-    '<div style="font-size:12.5px;color:var(--ink-70);margin:4px 0 0">'+esc(o.rationale||"")+'</div>'+
+  return elFrom('<div class="exp oppInUse">'+
+    '<div class="oppInUseHead"><span class="verdict" style="background:'+b[1]+';color:'+b[2]+'">'+b[0]+'</span><h4>'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</h4><span class="oppInUseLoc">'+esc(loc)+'</span></div>'+
+    '<div class="oppCardWhy" style="padding-left:0;margin-bottom:5px">'+esc(o.rationale||"")+'</div>'+
     ((o.startDate&&o.endDate)?'<div class="muted" style="font-size:11.5px;margin-top:6px;font-family:var(--mono)">Window '+fmtDate(o.startDate)+' \u2013 '+fmtDate(o.endDate)+'</div>':'')+
-    '<div class="muted" style="font-size:11.5px;margin-top:8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span>Already acted on \u2014 won\u2019t be re-suggested. '+link+'</span>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:9px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span>Reserved from future recommendations. '+link+'</span>'+
     ((a.where==="campaign"&&a.status!=="REMOVED")
       ? '<span class="muted" style="font-size:10.5px">(a live campaign holds this \u2014 archive it in Command Center to release)</span>'
       : '<button class="btn ghost sm opRelease" data-tag="'+esc(o.tag||"")+'" style="padding:3px 10px;font-size:11px">Remove from In use</button><span class="opRelMsg muted" style="font-size:11px"></span>')+
