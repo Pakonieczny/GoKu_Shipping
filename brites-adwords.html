@@ -132,6 +132,11 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .draft__top .me{font-size:12px;color:var(--ink-45);margin-top:2px}
 .draft__top .chev{margin-left:auto;color:var(--ink-45);transition:transform .2s}
 .draft.open .chev{transform:rotate(180deg)}
+.draft__quick{display:flex;align-items:center;justify-content:flex-end;gap:9px;padding:12px 16px;border-top:1px solid var(--line-2);background:linear-gradient(180deg,#fffefb,#fbf8f1)}
+.draft__quick .draft-approve{min-width:190px;min-height:42px;font-size:13.5px;box-shadow:0 4px 14px rgba(169,130,63,.18)}
+.draft__quick .draft-review{min-width:118px}
+.draft__quick .draft-reject{background:transparent;border-color:var(--line);color:var(--ink-70)}
+.draft__quick .draft-reject:hover{border-color:var(--ink-25);color:var(--ink);background:var(--card-2)}
 .draft__body{display:none;border-top:1px solid var(--line-2);padding:16px;background:var(--card-2)}
 .draft.open .draft__body{display:block;animation:slidein .22s ease}
 @keyframes slidein{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
@@ -330,6 +335,11 @@ svg{display:block}
   .pmxrow>div:last-child{justify-content:flex-start!important}
   .studioGrowth{border-radius:13px}.sgHead,.sgBody,.sgSetup{padding-left:14px;padding-right:14px}.sgHead h3,.sgSetup h3{font-size:23px}.sgGrid,.sgThemes{grid-template-columns:1fr}.sgMetrics{grid-template-columns:repeat(2,1fr)}.sgActions{align-items:stretch}.sgActions .btn{flex:1 1 145px}.sgBudget{flex:1 1 135px;justify-content:center}.sgBudgetTotal{flex:1 1 100%;justify-content:center;border-left:0;padding-left:0}.sgMeta{width:100%;margin-left:0}.sgSetup{grid-template-columns:1fr}.sgSetup .btn{width:100%}
   .draft .ti{font-size:13.5px}
+  .draft__top{align-items:flex-start;padding:13px 12px}
+  .draft__quick{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 12px}
+  .draft__quick .draft-approve{grid-column:1/-1;width:100%;min-width:0;min-height:46px;font-size:14px}
+  .draft__quick .draft-review,.draft__quick .draft-reject{width:100%;min-width:0}
+  .draft__body{padding:13px 12px}
   /* full-screen sheet modals */
   .ovsheet{align-items:flex-end!important}
   .ovsheet>div{width:100%!important;max-width:100%!important;max-height:92dvh!important;border-radius:18px 18px 0 0!important;padding-bottom:calc(14px + env(safe-area-inset-bottom))!important}
@@ -499,14 +509,28 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .convbar .convchev{display:inline-block;transition:transform .18s}
 .convbar[open] .convchev{transform:rotate(180deg)}
 
-/* ---- long expandable content scrolls inside its own card ---- */
-/* an open approval draft can list 15+ headlines; keep it from blowing past the window */
-.draft__body{max-height:62vh;overflow-y:auto;overflow-x:hidden}
-.draft__body::-webkit-scrollbar{width:9px}
-.draft__body::-webkit-scrollbar-thumb{background:var(--ink-25);border-radius:7px;border:2px solid var(--card-2)}
-.draft__body{scrollbar-width:thin;scrollbar-color:var(--ink-25) transparent}
-/* keep Approve/Reject reachable without scrolling to the bottom */
-.draft__body .actions{position:sticky;bottom:0;margin:15px -16px 0;padding:12px 16px;background:var(--card-2);border-top:1px solid var(--line-2)}
+/* ---- approval details: one reachable scroller, no nested draft scrolling ---- */
+/* Keep the approval queue as the only vertical scroller and add generous tail room so
+   the controls at the bottom of every expanded campaign can always be brought fully
+   above the viewport edge. The draft body itself never becomes a nested scroller. */
+#apprList.scrollcap{
+  max-height:calc(100dvh - 176px);
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding-right:8px;
+  padding-bottom:clamp(190px,24dvh,320px);
+  scroll-padding-bottom:clamp(190px,24dvh,320px);
+  overscroll-behavior:contain;
+}
+.draft__body{max-height:none;overflow:visible}
+@media(max-width:760px){
+  #apprList.scrollcap{
+    max-height:calc(100dvh - 150px);
+    padding-right:2px;
+    padding-bottom:max(220px,30dvh);
+    scroll-padding-bottom:max(220px,30dvh);
+  }
+}
 /* the Bench draft output lists every headline/description too */
 .benchout{max-height:64vh;overflow:auto}
 .benchout::-webkit-scrollbar{width:9px}
@@ -2280,9 +2304,17 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
       body+='<div class="eyebrow" style="margin:14px 0 7px">Countries <span class="muted" style="text-transform:none;font-weight:400;letter-spacing:0">\u00b7 where it runs</span></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'+ctyChips(pl.countries)+'<button class="btn ghost sm apcty-edit" data-id="'+a.id+'" data-sel="'+((pl.countries||[]).join(","))+'" style="padding:3px 9px;font-size:11px">Edit</button></div>';
       body+='<div class="eyebrow" style="margin:14px 0 7px">Schedule <span class="muted" style="text-transform:none;font-weight:400;letter-spacing:0">\u00b7 when it runs \u2014 editable until you approve</span></div><div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:12px"><label class="muted" style="font-size:11px">Start</label><input type="date" class="apd-s" value="'+esc(c.startDate||"")+'" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--paper);font-size:12px"><label class="muted" style="font-size:11px">End</label><input type="date" class="apd-e" value="'+esc(c.endDate||"")+'" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--paper);font-size:12px"><button class="btn ghost sm apd-save" data-id="'+a.id+'" style="padding:4px 11px;font-size:11px">Save dates</button><span class="muted apd-msg" style="font-size:11px"></span></div>';
     } else if(pl.operations){ body+='<div class="kv muted">'+pl.operations.length+' operation(s) on '+esc(pl.service||"")+'</div>'; }
-    body+='<div class="actions"><button class="btn gold sm" data-ap="'+a.id+'">Approve'+((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?" (dry-run)":"")+'</button><button class="btn ghost sm" data-rj="'+a.id+'">Reject</button></div>';
-    var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div><div class="draft__body">'+body+'</div></div>');
-    card.querySelector(".draft__top").onclick=()=>card.classList.toggle("open");list.appendChild(card);
+    var dryApproval=((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun);
+    var quick='<div class="draft__quick" role="group" aria-label="Campaign approval actions">'+
+      '<button type="button" class="btn gold draft-approve" data-ap="'+a.id+'">Approve Campaign'+(dryApproval?" (dry-run)":"")+'</button>'+
+      '<button type="button" class="btn ghost sm draft-review" aria-expanded="false">Review Details</button>'+
+      '<button type="button" class="btn ghost sm draft-reject" data-rj="'+a.id+'">Reject</button></div>';
+    var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div>'+quick+'<div class="draft__body">'+body+'</div></div>');
+    var reviewBtn=card.querySelector(".draft-review");
+    function setDraftOpen(open){card.classList.toggle("open",open);reviewBtn.setAttribute("aria-expanded",open?"true":"false");reviewBtn.textContent=open?"Hide Details":"Review Details";}
+    reviewBtn.onclick=function(e){e.stopPropagation();setDraftOpen(!card.classList.contains("open"));};
+    card.querySelector(".draft__top").onclick=function(e){e.stopPropagation();setDraftOpen(!card.classList.contains("open"));};
+    list.appendChild(card);
   });
   list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Sending\u2026");var aid=actStart("approve");try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
   list.querySelectorAll("[data-retry]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Creating\u2026");var aid=actStart("apply");try{var r=await api("apply",{id:b.dataset.retry});if(r&&r.error){toast("Still failing: "+r.error);}else{toast((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?"Validated (dry-run) \u2014 nothing created":"Created in Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
@@ -3179,7 +3211,7 @@ function uiRestore(snap){if(!snap)return;
   var seen={};
   document.querySelectorAll("details").forEach(function(d){var k=_pkeyFor(d);seen[k]=(seen[k]||0)+1;k=k+"#"+seen[k];if(k in snap.details)d.open=!!snap.details[k];});
   document.querySelectorAll(".cdet").forEach(function(r){var k=r.getAttribute("data-cid")||r.getAttribute("data-d");if(k!=null&&snap.cdet[k])r.style.display="";});
-  document.querySelectorAll(".draft").forEach(function(d){var ti=d.querySelector(".ti");if(ti&&snap.drafts[ti.textContent.trim().slice(0,70)])d.classList.add("open");});
+  document.querySelectorAll(".draft").forEach(function(d){var ti=d.querySelector(".ti"),isOpen=!!(ti&&snap.drafts[ti.textContent.trim().slice(0,70)]);if(isOpen){d.classList.add("open");var rb=d.querySelector(".draft-review");if(rb){rb.setAttribute("aria-expanded","true");rb.textContent="Hide Details";}}});
 }
 function renderAll(){var snap=uiSnapshot();renderControlBar();renderCommand();renderSales();renderSalesSummary();renderConvStrip();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();try{renderDiag();}catch(e){}uiRestore(snap);}
 
