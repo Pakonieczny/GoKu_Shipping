@@ -14,7 +14,11 @@
   #               per-stage prompts under prompts/sales/)
   included_files = [
     "netlify/functions/fonts/**",
-    "netlify/functions/prompts/**"
+    "netlify/functions/prompts/**",
+    # investor/  — Investor_AI's strategies/v1.json and universe/v1.json are
+    # require()'d at runtime by investorCycle-background and investorApi.
+    # Without this line the first cycle dies with MODULE_NOT_FOUND.
+    "investor/**"
   ]
 
 # ─── M3: Etsy receipts sync — REMOVED 2026-05-21 ─────────────────────────
@@ -158,6 +162,24 @@
 [functions."charmBatchSweepCron"]
   schedule = "4-59/10 * * * *"
 
+# ─── Investor_AI — volatility desk, August 2026 ─────────────────────────────
+# The ONLY scheduled function in that system. investorKick reads control state,
+# decides what is due, and dispatches a job id plus a single-use nonce to
+# investorCycle-background. It never fetches a source, never calls a model and
+# never touches the ledger, so it finishes well inside Netlify's 30s scheduled
+# ceiling. investorCycle-background needs no entry here — Netlify grants any
+# -background function the 15-minute budget from the filename suffix.
+#
+# Offset 2-59/5 (:02, :07, :12, …) follows the same convention as
+# etsyPricingScheduleCron and charmBatchSweepCron: the plain */5 slot already
+# carries etsyMailReapers and etsyMailTrackingSweepStuck, and :00 is the
+# busiest minute on this site.
+#
+# The function suppresses its own price cycle outside US market hours, so most
+# ticks are a cheap no-op. That is the single largest cost lever in the system.
+[functions."investorKick"]
+  schedule = "2-59/5 * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]
@@ -173,6 +195,17 @@
     Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"
     Pragma = "no-cache"
     Expires = "0"
+
+# Same treatment for the Investor_AI console: never let a cached page run an
+# older approval flow against newer functions. noindex because a private
+# trading desk has no business in search results.
+[[headers]]
+  for = "/investor.html"
+  [headers.values]
+    Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"
+    Pragma = "no-cache"
+    Expires = "0"
+    X-Robots-Tag = "noindex, nofollow, noarchive"
 
 [[redirects]]
   from = "https://scanner.goldenspike.app"
@@ -353,6 +386,16 @@
 [[redirects]]
   from = "https://etsy-pricing.goldenspike.app"
   to = "/etsy-pricing.html"
+  status = 200
+  force = true
+
+# ─── Investor_AI — volatility desk ──────────────────────────────────────────
+# Serves the console at its own subdomain. It calls
+# /.netlify/functions/investorApi same-origin from here, so no CORS is needed —
+# the same pattern as the EtsyMail inbox and the Ad Autopilot console.
+[[redirects]]
+  from = "https://investor.goldenspike.app"
+  to = "/investor.html"
   status = 200
   force = true
 
