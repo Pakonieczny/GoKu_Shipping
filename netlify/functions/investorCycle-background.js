@@ -43,14 +43,14 @@ const FN_NAME = "investorCycle-background";
 async function loadUniverse(version) {
   const snap = await A.col(A.COL.universe).doc(version || "v1").get();
   if (snap.exists) return snap.data();
-  const fallback = require("../../investor/universe/v1.json");
+  const fallback = require("./_investorUniverse.js");
   return fallback;
 }
 
 async function loadStrategy(version) {
   const snap = await A.col(A.COL.strategies).doc(version || "v1").get();
   if (snap.exists) return snap.data();
-  return require("../../investor/strategies/v1.json");
+  return require("./_investorStrategy.js");
 }
 
 async function controlDoc() {

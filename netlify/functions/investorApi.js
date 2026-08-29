@@ -286,12 +286,12 @@ const ACTIONS = {
     const ctrl = await ctrlDoc();
     const snap = await A.col(A.COL.universe).doc(ctrl.universeVersion || "v1").get();
     if (snap.exists) return { ok: true, universe: snap.data(), source: "firestore" };
-    return { ok: true, universe: require("../../investor/universe/v1.json"), source: "repo" };
+    return { ok: true, universe: require("./_investorUniverse.js"), source: "repo" };
   },
 
   /* Freeze a universe version so additions can never be backdated. */
   async freezeUniverse({ operator }) {
-    const u = require("../../investor/universe/v1.json");
+    const u = require("./_investorUniverse.js");
     const ref = A.col(A.COL.universe).doc(u.version);
     const existing = await ref.get();
     if (existing.exists) return { ok: true, frozen: false, note: `${u.version} already frozen` };
@@ -313,7 +313,7 @@ const ACTIONS = {
     for (const v of Object.values(r.json)) {
       if (v && v.ticker) map[String(v.ticker).toUpperCase()] = String(v.cik_str).padStart(10, "0").replace(/^0+/, "");
     }
-    const u = require("../../investor/universe/v1.json");
+    const u = require("./_investorUniverse.js");
     const resolved = [], mismatched = [], missing = [];
     const apply = (row) => {
       const got = map[row.symbol];
@@ -384,7 +384,12 @@ exports.handler = async (event) => {
 
   try {
     const out = await fn(body);
-    const extra = guard.session ? { session: guard.session } : {};
+    /* The auth token is returned as authToken, NEVER as "session".
+       The dashboard action already returns `session` meaning the MARKET
+       session state, and the collision meant that on the second request the
+       client overwrote its bearer token with a market-state object, sent
+       "[object Object]" as the header, and locked itself out. */
+    const extra = guard.session ? { authToken: guard.session } : {};
     return AUTH.json(event, 200, { ...out, ...extra });
   } catch (e) {
     console.error("investorApi", action, AUTH.redact({ error: e.message, stack: (e.stack || "").slice(0, 300) }));
