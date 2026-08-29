@@ -244,9 +244,11 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <button data-v="candidates">Candidates <span class="badge" id="nBreach">0</span></button>
       <button data-v="positions">Positions <span class="badge" id="nPos">0</span></button>
       <button data-v="approvals">Approvals <span class="badge" id="nOrders">0</span></button>
+      <button data-v="learning">Learning <span class="badge" id="nLearn">—</span></button>
       <button data-v="notrade">No-trade log</button>
       <button data-v="ledger">Ledger &amp; cost</button>
       <button data-v="sources">Sources</button>
+      <button data-v="knobs">Settings explained</button>
       <button data-v="control">Control room</button>
     </nav>
     <div class="rail__foot">
@@ -309,7 +311,17 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             </tr></thead><tbody></tbody></table></div>
           </div>
           <div class="card pad">
-            <div class="card__h"><h3>Regime</h3><span class="sub" id="regimeAsOf">—</span></div>
+            <div class="card__h"><h3>Auto-setup</h3><span class="sub" id="bootAt">—</span></div>
+            <div id="bootBox"></div>
+            <div class="card__h" style="margin-top:18px"><h3>What it is running</h3><span class="sub" id="liveCfgAsOf">—</span></div>
+            <div id="liveCfgBox"></div>
+            <div class="card__h" style="margin-top:18px"><h3>Automation stage</h3><span class="sub" id="ladderAsOf">—</span></div>
+            <div id="ladderBox"></div>
+            <div class="card__h" style="margin-top:18px"><h3>Risk &amp; the book</h3><span class="sub" id="riskAsOf">—</span></div>
+            <div id="riskBox"></div>
+            <div class="card__h" style="margin-top:18px"><h3>Memory</h3><span class="sub" id="memAsOf">—</span></div>
+            <div id="memBox"></div>
+            <div class="card__h" style="margin-top:18px"><h3>Regime</h3><span class="sub" id="regimeAsOf">—</span></div>
             <div id="regimeBox"></div>
             <div class="card__h" style="margin-top:18px"><h3>Recent cycles</h3></div>
             <div class="feed" id="runFeed"></div>
@@ -348,6 +360,54 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           approving writes a simulated fill against the next eligible bar's open plus adverse slippage.
         </div>
         <div class="appr" id="orderList"></div>
+      </section>
+
+      <!-- ─── LEARNING ─── -->
+      <section class="view" id="v-learning">
+        <div class="note">
+          Six fixed strategies run side by side on every stock, every cycle — whether or not anything was
+          actually bought. They cost nothing and they tell us which approach works. <b>None of them ever
+          changes.</b> A system that rewrites its own rules always looks like it is improving, because it is
+          just memorising past noise. These six were locked in before any data arrived, so we are picking a
+          winner rather than inventing one.
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h"><h3>Evidence collected</h3><span class="sub" id="learnHash">—</span></div>
+          <p style="font-size:12.5px;color:var(--ink-70);line-height:1.6;max-width:76ch">
+            We count <b>separate days</b>, not separate trades. Ten stocks bought on the same morning all rise
+            or fall together, so they only really tell us one thing. Counting them as ten would make us think
+            we know far more than we do.
+          </p>
+          <div class="meter"><i id="learnBar" class="good" style="width:0%"></i></div>
+          <div class="meterlab">
+            <span>collected <b id="learnHave">0</b> days</span>
+            <span>needed <b id="learnNeed">625</b></span>
+            <span id="learnPct">0%</span>
+          </div>
+          <div class="note" id="learnNote" style="margin-top:12px">—</div>
+        </div>
+
+        <div class="card pad">
+          <div class="card__h"><h3>The six strategies</h3><span class="sub" id="learnClosed">—</span></div>
+          <div class="scrollcap"><table id="tLearn"><thead><tr>
+            <th>Strategy</th><th class="num">Share of the book (once proven)</th><th class="num">Trades</th>
+            <th class="num">Days</th><th class="num">Avg result</th><th class="num">Avg cost</th>
+            <th class="num">Win rate</th><th>Verdict</th>
+          </tr></thead><tbody></tbody></table></div>
+          <div id="learnCards" style="margin-top:16px"></div>
+        </div>
+      </section>
+
+      <!-- ─── KNOBS ─── -->
+      <section class="view" id="v-knobs">
+        <div class="note">
+          Every setting the system uses, in plain language. These live in
+          <b>_investorStrategy.js</b> — edit that file and redeploy to change them.
+          Nothing here changes by itself; the system only learns which of the eight fixed
+          strategies to favour, never what these numbers should be.
+        </div>
+        <div id="knobBox"></div>
       </section>
 
       <!-- ─── NO-TRADE ─── -->
@@ -526,6 +586,8 @@ var TITLES = { briefing:["Briefing","Cycle summary, regime and the cost meter"],
   candidates:["Candidates","Every ranked name with its full gate stack"],
   positions:["Positions","Open exposure and exit progress"],
   approvals:["Approvals","Proposed orders awaiting a human decision"],
+  learning:["Learning","Six fixed strategies competing — which one earns the money"],
+  knobs:["Settings explained","Every dial, what it does, and what happens if you move it"],
   notrade:["No-trade log","Why candidates were stopped"],
   ledger:["Ledger & cost","Double-entry journal and the friction meter"],
   sources:["Sources","Evidence lane permission and health"],
@@ -539,6 +601,8 @@ $$("#nav button").forEach(function(b){
     $("#v-"+v).classList.add("on");
     $("#viewTitle").textContent=TITLES[v][0]; $("#viewSub").textContent=TITLES[v][1];
     document.body.classList.remove("navOpen");
+    if(v==="learning") loadLearning();
+    if(v==="knobs") loadKnobs();
     if(v==="notrade") loadNoTrade();
     if(v==="ledger") loadLedger();
     if(v==="sources") loadSources();
@@ -608,6 +672,11 @@ function render(){
 
   renderCost(cost);
   renderMovers(cands);
+  renderBootstrap(DASH.bootstrap||{});
+  renderMemory(sum.history||null, sum.symbols||0);
+  renderRisk(sum.risk||null);
+  renderLiveConfig(sum.liveConfig||null);
+  renderLadder(sum.ladder||null);
   renderRegime(DASH.regime||{});
   renderRuns(DASH.runs||[]);
   renderCandidates(cands);
@@ -665,6 +734,143 @@ function renderMovers(cands){
       '<td>'+(c.pass?'<span class="badge2 b-on">pass</span>':'<span class="badge2 b-bad">'+esc(c.firstBlock||"blocked")+'</span>')+'</td>';
     tb.appendChild(tr);
   });
+}
+
+function renderBootstrap(b){
+  $("#bootAt").textContent = b.at ? new Date(b.at).toLocaleString() : "not run yet";
+  var rep = b.report||[];
+  if(!rep.length){ $("#bootBox").innerHTML='<div class="empty" style="padding:14px">Runs by itself on the first cycle — freezes the roster, resolves CIKs from SEC, opens the paper account, derives earnings windows and fetches VIX.</div>'; return; }
+  $("#bootBox").innerHTML = rep.map(function(x){
+    var d = "";
+    if(x.step==="universe") d = (x.resolved||0)+" CIKs resolved"+(x.missing&&x.missing.length?(", "+x.missing.length+" unmatched"):"")+(x.mismatched&&x.mismatched.length?(", "+x.mismatched.length+" CORRECTED"):"");
+    if(x.step==="account")  d = x.accountId+(x.existing?" (already open)":" opened");
+    if(x.step&&x.step.indexOf("earnings")===0){
+      d = (x.derived||0)+" windows derived";
+      if(x.failed&&x.failed.length) d += ", "+x.failed.length+" symbol(s) blocked until derivable";
+    }
+    if(x.step&&x.step.indexOf("regime")===0)  d = "VIX "+(x.vix||"—")+(x.cor3m?(", COR3M "+x.cor3m):", COR3M unavailable");
+    if(x.step&&x.step.indexOf("dailyHistory")===0){
+      if(x.note) d = x.note;
+      else d = (x.done||x.fetched||0)+" of "+(x.symbols||0)+" names have ~"+(x.avgDays||0)+" days of daily history"+
+               (x.complete?" — complete":" — still filling in, resumes next cycle")+
+               (x.failed?(", "+x.failed+" unavailable"):"");
+      if(x.updated!=null) d = x.updated+" names topped up with the latest sessions";
+    }
+    return '<div class="ctrlrow" style="padding:7px 0"><span class="lab" style="min-width:120px">'+esc(x.step)+'</span>'+
+      '<span class="badge2 '+(x.ok?"b-on":"b-bad")+'">'+(x.ok?"ok":"failed")+'</span>'+
+      '<span class="kv" style="font-size:11.5px">'+esc(d||x.error||x.note||"")+'</span></div>';
+  }).join("");
+}
+
+/* How much history the system actually had on the last cycle. If coverage is
+   low, most names are being judged on today alone — and that is worth saying
+   out loud rather than hiding behind a green tick. */
+/* The book, its concentration, and whether the account has halted itself.
+   None of this existed: every portfolio control was configuration no code read,
+   and open losses were invisible because positions were reported at cost. */
+/* WHICH STRATEGY IS ACTUALLY RUNNING RIGHT NOW.
+   This panel exists because for a long time the answer was "always the
+   baseline", while a table headed "Share of money" implied otherwise. */
+function renderLiveConfig(lc){
+  var box=$("#liveCfgBox"); if(!box) return;
+  if(!lc){ $("#liveCfgAsOf").textContent="—"; box.innerHTML='<div class="empty" style="padding:14px">No cycle yet.</div>'; return; }
+  $("#liveCfgAsOf").textContent = lc.variantId ? ("variant "+lc.variantId) : "baseline";
+  box.innerHTML =
+    '<div class="note'+(lc.variantId?"":" warn")+'"><b>'+
+      (lc.variantId ? ("Running variant "+esc(lc.variantId)+" — "+esc(lc.variantName||"")) : "Running the baseline settings")+
+    '.</b><div style="margin-top:6px;color:var(--ink-70)">'+esc(lc.source||"")+'</div>'+
+    '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:9px">'+
+      '<span class="badge2">buys below rank '+num(lc.entryRank,2)+'</span>'+
+      '<span class="badge2">needs z under -'+num(lc.minAbsZ,1)+'</span>'+
+      '<span class="badge2">sells at rank '+num(lc.exitRank,2)+'</span>'+
+      '<span class="badge2">max hold '+num(lc.maxHoldDays,0)+'d</span>'+
+    '</div></div>';
+}
+
+/* THE LADDER. Each rung shows what it still needs, measured rather than
+   asserted — the previous version let the operator pick any stage from a
+   dropdown while claiming the gates were measured. */
+function renderLadder(l){
+  var box=$("#ladderBox"); if(!box) return;
+  if(!l||l.error){ $("#ladderAsOf").textContent="—";
+    box.innerHTML='<div class="empty" style="padding:14px">'+esc(l&&l.error?l.error:"No cycle yet.")+'</div>'; return; }
+  $("#ladderAsOf").textContent = l.stage+" · ceiling "+l.ceiling;
+  var STAGES=["research","approval","shadow","limited_auto"];
+  var LABEL={research:"Watch only",approval:"You approve each buy",shadow:"Approve, while it records what it would do alone",limited_auto:"Buys small positions by itself"};
+  var curIdx=STAGES.indexOf(l.stage), earnIdx=STAGES.indexOf(l.earned), ceilIdx=STAGES.indexOf(l.ceiling);
+  var rungs=STAGES.map(function(st,i){
+    var state = i===curIdx?"b-on":(i<=earnIdx?"":"b-bad");
+    var mark = i===curIdx?"▶ ":(i<=earnIdx?"✓ ":"· ");
+    var capped = i>ceilIdx ? ' <small style="color:var(--ink-45)">(above your ceiling)</small>' : '';
+    return '<div class="ctrlrow" style="padding:6px 0"><span class="badge2 '+state+'" style="min-width:118px">'+mark+esc(st)+'</span>'+
+      '<span class="kv" style="font-size:11.5px">'+esc(LABEL[st])+capped+'</span></div>';
+  }).join("");
+  var pending=(l.gates||[]).filter(function(g){return g.blocking&&!g.pass;});
+  box.innerHTML = rungs +
+    (l.changed?'<div class="note" style="margin-top:9px"><b>Stage changed.</b> '+esc(l.reason)+'</div>':'')+
+    (pending.length?'<div style="margin-top:10px"><div class="eyebrow" style="margin-bottom:5px">Still required</div>'+
+      pending.map(function(g){return '<div style="font-size:11.5px;color:var(--ink-70);margin-bottom:4px">• '+esc(g.detail)+'</div>';}).join("")+'</div>':
+      '<div class="note" style="margin-top:9px">Every measured gate is passing.</div>')+
+    (l.notes&&l.notes.length?'<div style="color:var(--ink-70);font-size:11.5px;margin-top:9px;line-height:1.55">'+l.notes.map(function(n){return esc(n);}).join("<br>")+'</div>':'');
+}
+
+function renderRisk(r){
+  var box=$("#riskBox"); if(!box) return;
+  if(!r){
+    $("#riskAsOf").textContent="—";
+    box.innerHTML='<div class="empty" style="padding:14px">No cycle has run yet.</div>';
+    return;
+  }
+  $("#riskAsOf").textContent = r.openPositions+" open · "+num(r.grossPct,1)+"% invested";
+  var rows=[
+    ["Open positions", r.openPositions+" of 12"],
+    ["Invested", num(r.grossPct,1)+"% of the account (ceiling 60%)"],
+    ["Unrealised", num(r.unrealisedPct,2)+"%"],
+    ["Below its best", num(r.drawdownPct,2)+"% (freezes at -6%)"],
+    ["Today", num(r.dayPnlPct,2)+"% (pauses at -1%)"]
+  ];
+  var top=(r.topClusters||[]).map(function(c){
+    var over = c[1] > 10;
+    return '<span class="badge2 '+(over?"b-bad":"")+'">'+esc(c[0])+' '+num(c[1],1)+'%</span>';
+  }).join(" ");
+  box.innerHTML =
+    (r.halted?'<div class="note warn" style="margin-bottom:10px"><b>Trading paused.</b> '+
+       esc((r.breakers||[]).map(function(b){return b.reason;}).join("; "))+
+       ' Existing positions are still managed and can still be sold.</div>':'')+
+    rows.map(function(x){
+      return '<div class="ctrlrow" style="padding:6px 0"><span class="lab" style="min-width:150px">'+esc(x[0])+'</span>'+
+        '<span class="kv">'+esc(x[1])+'</span></div>';
+    }).join("")+
+    (top?'<div style="margin-top:9px"><div class="eyebrow" style="margin-bottom:5px">Biggest concentrations (cap 10%)</div>'+top+'</div>':'')+
+    (r.markCoveragePct!=null&&r.markCoveragePct<100
+      ? '<div class="note warn" style="margin-top:9px">Only '+num(r.markCoveragePct,0)+'% of positions have a live price. The rest are shown at what was paid, so the real figure could be better or worse.</div>'
+      : '')+
+    (r.portfolioBlocks?'<div style="color:var(--ink-70);font-size:11.5px;margin-top:9px">'+r.portfolioBlocks+' candidate(s) were refused this cycle because the book had no room — see the no-trade log.</div>':'');
+}
+
+function renderMemory(h, symbols){
+  var box=$("#memBox"); if(!box) return;
+  if(!h){
+    $("#memAsOf").textContent="—";
+    box.innerHTML='<div class="empty" style="padding:14px">No cycle has run yet. Once it does, this shows how many names have a six-month record behind them.</div>';
+    return;
+  }
+  var pct = h.coveragePct!=null? h.coveragePct : 0;
+  var cls = pct>=90?"b-on":(pct>=40?"":"b-bad");
+  $("#memAsOf").textContent = h.namesWithContext+" of "+(symbols||"—")+" names";
+  box.innerHTML =
+    '<div class="ctrlrow" style="padding:7px 0"><span class="lab" style="min-width:150px">Names with 6-month context</span>'+
+      '<span class="badge2 '+cls+'">'+num(pct,1)+'%</span>'+
+      '<span class="kv" style="font-size:11.5px">'+h.namesWithContext+' of '+(symbols||0)+'</span></div>'+
+    '<div class="ctrlrow" style="padding:7px 0"><span class="lab" style="min-width:150px">Average history per name</span>'+
+      '<span class="kv">'+ (h.avgDays||0) +' trading days</span></div>'+
+    '<div class="ctrlrow" style="padding:7px 0"><span class="lab" style="min-width:150px">Roster-wide bounce average</span>'+
+      '<span class="kv">'+num(h.pooledReversionPct,2)+'% over the week after a big drop</span></div>'+
+    '<div style="color:var(--ink-70);font-size:11.5px;margin-top:9px;line-height:1.5">'+
+      (pct>=90
+        ? 'Every name is being judged against its own six-month record, not just the last two days.'
+        : 'The backfill is still filling in. Names without history are judged on today alone, and the long-horizon gate abstains for them rather than guessing — it resumes automatically each cycle.')+
+    '</div>';
 }
 
 function renderRegime(r){
@@ -746,6 +952,88 @@ function sparkline(bars, opts){
       '<span>'+bars.length+' bars</span></div></div>';
 }
 
+/* ── the six-month daily chart ──────────────────────────────────────────
+   The intraday sparkline above answers "what just happened". This answers
+   "does that mean anything", which is the question the intraday view cannot
+   reach. Shows the 200-day average, the six-month range band, and where the
+   stock sits inside it. */
+function dailyChart(daily, ctx){
+  if(!daily||daily.length<20)
+    return '<div class="empty" style="padding:16px">No daily history stored yet. The backfill pulls ~13 months for every roster name on the next cycle; until then this name is judged on today alone.</div>';
+  var W=680,H=210,P=28;
+  var cl=daily.map(function(b){return b.c;});
+  var lo=Math.min.apply(null,cl), hi=Math.max.apply(null,cl);
+  if(hi===lo) hi=lo+1;
+  var pad=(hi-lo)*0.06; lo-=pad; hi+=pad;
+  var x=function(i){ return P+(i/(daily.length-1))*(W-P*2); };
+  var y=function(v){ return H-P-((v-lo)/(hi-lo))*(H-P*2); };
+  var d=cl.map(function(v,i){ return (i?"L":"M")+x(i).toFixed(1)+" "+y(v).toFixed(1); }).join(" ");
+  var area=d+" L"+x(cl.length-1).toFixed(1)+" "+(H-P)+" L"+x(0).toFixed(1)+" "+(H-P)+" Z";
+
+  // 200-day average, drawn only where it exists
+  var ma="";
+  if(cl.length>=200){
+    var pts=[];
+    for(var i=199;i<cl.length;i++){
+      var sum=0; for(var k=i-199;k<=i;k++) sum+=cl[k];
+      pts.push((pts.length?"L":"M")+x(i).toFixed(1)+" "+y(sum/200).toFixed(1));
+    }
+    ma='<path d="'+pts.join(" ")+'" fill="none" stroke="#6b7f6b" stroke-width="1.3" stroke-dasharray="4 3" opacity=".85"/>';
+  }
+
+  // six-month high/low band
+  var band="";
+  if(ctx&&ctx.ok&&ctx.high6m&&ctx.low6m){
+    var yh=y(ctx.high6m), ylo=y(ctx.low6m);
+    band='<rect x="'+P+'" y="'+yh.toFixed(1)+'" width="'+(W-P*2)+'" height="'+Math.max(1,(ylo-yh)).toFixed(1)+'" fill="#a9823f" opacity=".05"/>'+
+         '<line x1="'+P+'" y1="'+yh.toFixed(1)+'" x2="'+(W-P)+'" y2="'+yh.toFixed(1)+'" stroke="#a9823f" stroke-dasharray="2 4" opacity=".5"/>'+
+         '<text x="'+(W-P-2)+'" y="'+(yh-4).toFixed(1)+'" text-anchor="end" font-size="9" fill="#a9823f" font-family="ui-monospace,monospace">6-month high '+ctx.high6m.toFixed(2)+'</text>'+
+         '<line x1="'+P+'" y1="'+ylo.toFixed(1)+'" x2="'+(W-P)+'" y2="'+ylo.toFixed(1)+'" stroke="#a9823f" stroke-dasharray="2 4" opacity=".5"/>'+
+         '<text x="'+(W-P-2)+'" y="'+(ylo+12).toFixed(1)+'" text-anchor="end" font-size="9" fill="#a9823f" font-family="ui-monospace,monospace">6-month low '+ctx.low6m.toFixed(2)+'</text>';
+  }
+
+  var lastY=y(cl[cl.length-1]);
+  var trendCol=(ctx&&ctx.downtrend)?"#a5643f":"#221f1b";
+  return '<div class="chartbox"><svg viewBox="0 0 '+W+' '+(H+6)+'" role="img" aria-label="six month daily price">'+
+    '<defs><linearGradient id="gfill2" x1="0" y1="0" x2="0" y2="1">'+
+    '<stop offset="0%" stop-color="'+trendCol+'" stop-opacity=".13"/><stop offset="100%" stop-color="'+trendCol+'" stop-opacity="0"/>'+
+    '</linearGradient></defs>'+
+    '<line x1="'+P+'" y1="'+(H-P)+'" x2="'+(W-P)+'" y2="'+(H-P)+'" stroke="#e4ddd0"/>'+
+    band+
+    '<path d="'+area+'" fill="url(#gfill2)"/>'+
+    '<path d="'+d+'" fill="none" stroke="'+trendCol+'" stroke-width="1.5" stroke-linejoin="round"/>'+
+    ma+
+    '<circle cx="'+x(cl.length-1).toFixed(1)+'" cy="'+lastY.toFixed(1)+'" r="3.4" fill="#a9823f"/>'+
+    '<text x="'+P+'" y="'+(H-P+15)+'" font-size="9" fill="#938c80" font-family="ui-monospace,monospace">'+esc(daily[0].d)+'</text>'+
+    '<text x="'+(W-P)+'" y="'+(H-P+15)+'" text-anchor="end" font-size="9" fill="#938c80" font-family="ui-monospace,monospace">'+esc(daily[daily.length-1].d)+'</text>'+
+    '</svg><div class="chartlegend">'+
+      '<span><i style="background:'+trendCol+'"></i>daily close</span>'+
+      (ma?'<span><i style="background:#6b7f6b"></i>200-day average</span>':'')+
+      '<span><i style="background:#a9823f;opacity:.35"></i>6-month range</span>'+
+      '<span>'+daily.length+' sessions</span></div></div>';
+}
+
+/* The long-horizon read-out in words, next to the chart. */
+function historyBlock(ctx, notes){
+  if(!ctx) return "";
+  if(!ctx.ok)
+    return '<div class="note warn"><b>No long-horizon read yet.</b> '+esc(ctx.reason||"history still loading")+
+      ' Until it has enough, this name is judged on today alone — and the trend gate abstains rather than guessing.</div>';
+  var chips=[
+    ["Six-month position", Math.round(ctx.rangePct6m*100)+"% up its range"],
+    ["Off its high", ctx.drawdown6mPct+"%"],
+    ["Normal daily move", ctx.atrPct+"%"],
+    ["Longer trend", ctx.aboveSma200===true?"up (above 200-day)":"down (below 200-day)"]
+  ];
+  return '<div class="note'+(ctx.downtrend?" warn":"")+'">'+
+    '<b>'+(ctx.downtrend?"Flagged as a downtrend.":"Six-month picture.")+'</b> '+
+    '<div style="display:flex;gap:7px;flex-wrap:wrap;margin:8px 0">'+
+      chips.map(function(c){ return '<span class="badge2">'+esc(c[0])+': '+esc(c[1])+'</span>'; }).join("")+
+    '</div>'+
+    (notes&&notes.length?'<div style="color:var(--ink-70);line-height:1.55">'+notes.map(function(n){return esc(n);}).join("<br>")+'</div>':'')+
+    '</div>';
+}
+
 function gateChips(gates){
   if(!gates||!gates.length) return "";
   return '<div class="gates">'+gates.map(function(g){
@@ -766,6 +1054,20 @@ function derivation(c){
     t:"Market and sector returns removed using leave-one-out factors, so the name is not part of its own benchmark. Controlling for factor exposure roughly doubles the Sharpe and lifts break-even cost from 10bp to 56bp."});
   steps.push({n:"3 · residual", v:(c.cumResidualBps==null?"—":num(c.cumResidualBps,0)+"bp over the window, z "+num(c.z,2)),
     t:"What is left after the market and the sector are accounted for. This is the number the strategy trades."});
+  var hx = c.history||null;
+  if(hx){
+    steps.push({n:"3b · six-month context", v:(hx.downtrend?"DOWNTREND — blocked":(Math.round(hx.rangePct6m*100)+"% up its 6-month range, "+hx.drawdown6mPct+"% off high")),
+      t:"How unusual today is depends on how this stock normally behaves. Its typical daily move is "+num(hx.atrPct,2)+"% and its 60-day volatility "+num(hx.vol60Pct,2)+"%; that long record supplies 60% of the yardstick this move is measured against, so a quiet couple of days can no longer make an ordinary drop look extraordinary."+
+        (hx.downtrend?" This name is below its 200-day average, more than 20% off its six-month high, and its 50-day line is still falling — all three at once, which is a downtrend, not a dip.":"")});
+  } else {
+    steps.push({n:"3b · six-month context", v:"none yet",
+      t:"No daily history stored for this name yet, so today is being judged without any longer-term yardstick. The backfill fills this in automatically."});
+  }
+  var rv = c.reversion||null;
+  if(rv&&rv.n){
+    steps.push({n:"3c · its own bounce record", v:num(rv.shrunkPct,2)+"% expected (from "+rv.n+" past drops)",
+      t:"After similar drops before, this name averaged "+num(rv.rawPct,2)+"% over the following week. That is only "+rv.n+" events, which is far too few to trust on its own, so it is blended toward the roster-wide average of "+num(rv.pooledPct,2)+"% — keeping just "+Math.round((rv.weightOwn||0)*100)+"% of its own record. The result can nudge position size by at most ±30%, and can never open a gate that is closed."});
+  }
   steps.push({n:"4 · cross-section", v:"rank "+num(c.rank,3),
     t:"Position within today's ranked universe. Entry at the bottom decile; exit deferred to the median rank."});
   steps.push({n:"5 · attention", v:"volume z "+num(c.attentionZ,2),
@@ -822,6 +1124,9 @@ function renderCandidates(cands){
         '<div class="why"><span class="i">◆</span><div><b>How this was derived.</b> '+
           'Each step below is a value the code actually computed, in the order it computed it. '+
           'Nothing here is a black-box score.</div></div>'+
+        '<div class="eyebrow" style="margin:16px 0 7px">Six months of context</div>'+
+        '<div id="daily-'+esc(c.symbol)+'"><div class="empty" style="padding:14px">loading history…</div></div>'+
+        '<div id="hist-'+esc(c.symbol)+'"></div>'+
         derivation(c)+
         coverageBlock(c.coverage)+
         '<div class="eyebrow" style="margin:14px 0 7px">Gate stack</div>'+
@@ -842,6 +1147,10 @@ function loadCandidateDetail(c){
   api("candidate",{symbol:c.symbol, cycleId:c.cycleId}).then(function(r){
     var box=document.getElementById("chart-"+c.symbol);
     if(box) box.innerHTML = sparkline(r.bars||[], {window:12});
+    var dbox=document.getElementById("daily-"+c.symbol);
+    if(dbox) dbox.innerHTML = dailyChart(r.daily||[], r.history||null);
+    var hbox=document.getElementById("hist-"+c.symbol);
+    if(hbox) hbox.innerHTML = historyBlock(r.history||null, (r.history&&r.history.notes)||null);
     var docs=document.getElementById("docs-"+c.symbol);
     if(docs){
       var list=(r.documents||[]);
@@ -853,7 +1162,7 @@ function loadCandidateDetail(c){
               'published '+esc(x.source_published_at||"unknown")+' · first seen '+
               (x.first_seen_at?new Date(x.first_seen_at).toLocaleString():"—")+
             '</div></div>'+
-            (x.link?'<a class="btn ghost sm" style="align-self:center" target="_blank" rel="noopener noreferrer" href="'+esc(x.link)+'">open</a>':'')+
+            (x.link&&/^https?:\/\//i.test(x.link)?'<a class="btn ghost sm" style="align-self:center" target="_blank" rel="noopener noreferrer" href="'+esc(x.link)+'">open</a>':'')+
             '</div>'; }).join("")+'</div>'
           : '<div class="empty" style="padding:14px">No documents captured for this symbol yet. The evidence sweep runs on a slower clock than the price loop.</div>');
     }
@@ -916,6 +1225,103 @@ function renderOrders(ords){
 }
 
 /* ── secondary views ── */
+function loadLearning(){
+  api("learning").then(function(r){
+    $("#learnHash").textContent = "rules fingerprint "+String(r.variantsHash||"").slice(0,8)+
+      (r.storedHash && r.storedHash!==r.variantsHash ? "  ⚠ RULES CHANGED — past results no longer comparable" : "");
+    var have=r.bestEffectiveN||0, need=r.requiredEffectiveN||625;
+    $("#learnHave").textContent=have; $("#learnNeed").textContent=need;
+    var pct=Math.min(100,(have/need)*100);
+    $("#learnPct").textContent=pct.toFixed(1)+"%";
+    $("#learnBar").style.width=pct+"%";
+    $("#learnBar").className = r.powered ? "good" : "bad";
+    $("#learnNote").innerHTML = r.powered
+      ? "<b>Enough evidence.</b> The leading strategy is now the one the system actually trades — but only after beating the strategy it replaced on the days they overlap, not just topping the table."
+      : "<b>Still gathering.</b> "+esc(r.note||"")+" Until then every strategy gets an equal share, on purpose. Acting on too little evidence is how a system convinces itself it has learned something.";
+    $("#learnClosed").textContent = (r.totalClosed||0)+" completed test trades · "+
+      ((r.openShadow&&r.openShadow.total)||0)+" currently open";
+    /* Forgetting and paired-test read-outs — the two mechanisms that keep the
+       learner honest about a changing world. */
+    var extra = "";
+    if (r.resets && Object.keys(r.resets).length) {
+      extra += '<div class="note warn" style="margin-top:9px"><b>Fresh starts.</b> ' +
+        Object.entries(r.resets).map(function(e){
+          return "Strategy "+esc(e[0])+"'s results broke around "+esc(e[1])+" — its record restarted there, because a strategy that stopped working must not coast on its glory days.";
+        }).join(" ") + '</div>';
+    }
+    if (r.paired) {
+      extra += '<div class="note" style="margin-top:9px"><b>Head-to-head.</b> '+esc(r.paired.note||"")+'</div>';
+    }
+    var xbox = document.getElementById("learnExtra");
+    if (!xbox) {
+      xbox = document.createElement("div"); xbox.id = "learnExtra";
+      var host = $("#learnNote"); if (host && host.parentNode) host.parentNode.insertBefore(xbox, host.nextSibling);
+    }
+    if (xbox) xbox.innerHTML = extra;
+    $("#nLearn").textContent = have;
+
+    var tb=$("#tLearn tbody"); tb.innerHTML="";
+    (r.rows||[]).forEach(function(x){
+      var cls = x.verdict==="evidence of a real edge" ? "b-on"
+              : x.verdict==="no edge shown" ? "b-bad" : "b-warn";
+      var tr=document.createElement("tr");
+      tr.innerHTML='<td><b>'+esc(x.id)+' · '+esc(x.name)+'</b></td>'+
+        '<td class="num"><b>'+num(x.weightPct,1)+'%</b></td>'+
+        '<td class="num">'+(x.trades||0)+'</td>'+
+        '<td class="num">'+(x.independentDays||0)+'</td>'+
+        '<td class="num" style="color:'+((x.avgNetBps||0)>=0?"var(--sage)":"var(--clay)")+'">'+num(x.avgNetBps,1)+'</td>'+
+        '<td class="num">'+num(x.avgCostBps,1)+'</td>'+
+        '<td class="num">'+(x.winRate!=null?(x.winRate*100).toFixed(0)+"%":"—")+'</td>'+
+        '<td><span class="badge2 '+cls+'">'+esc(x.verdict)+'</span></td>';
+      tb.appendChild(tr);
+    });
+
+    $("#learnCards").innerHTML = (r.rows||[]).map(function(x){
+      var belief = x.beliefRangeBps ? ("best guess "+num(x.beliefBps,1)+" (likely between "+x.beliefRangeBps[0]+" and "+x.beliefRangeBps[1]+")") : "no evidence yet";
+      return '<div class="draft" style="margin-bottom:9px"><div class="draft__top" style="cursor:default">'+
+        '<span class="sym">'+esc(x.id)+'</span><span class="co"><b>'+esc(x.name)+'</b> — '+esc(x.plain)+'</span>'+
+        '</div><div class="draft__body" style="display:block">'+
+        '<div class="kv" style="font-size:12px">'+esc(belief)+' hundredths of a percent per trade, after costs</div>'+
+        '</div></div>';
+    }).join("");
+  }).catch(function(e){toast(e.message);});
+}
+
+function loadKnobs(){
+  api("knobs").then(function(r){
+    var m = r.memory||null;
+    var memHtml = m ? ('<div class="card pad" style="margin-bottom:14px">'+
+      '<div class="card__h"><h3>What the system remembers</h3></div>'+
+      '<div style="font-size:12.5px;color:var(--ink-70);max-width:80ch;line-height:1.6">'+
+        '<p style="margin:0 0 10px"><b>What is stored.</b> '+esc(m.whatIsStored)+'</p>'+
+        '<p style="margin:0 0 10px"><b>Why it matters.</b> '+esc(m.whyItMatters)+'</p>'+
+        '<p style="margin:0 0 6px"><b>How it changes decisions.</b></p>'+
+        '<ol style="margin:0 0 10px;padding-left:20px">'+
+          (m.howItChangesDecisions||[]).map(function(x){return '<li style="margin-bottom:5px">'+esc(x)+'</li>';}).join("")+
+        '</ol>'+
+        '<p style="margin:0 0 10px;padding:9px 12px;background:var(--sage-soft);border-radius:8px"><b>The rule that keeps it honest.</b> '+esc(m.theLeakageRule)+'</p>'+
+        '<p style="margin:0;padding:9px 12px;background:var(--clay-soft);border-radius:8px"><b>Where it falls short.</b> '+esc(m.honestLimit)+'</p>'+
+      '</div></div>') : "";
+    $("#knobBox").innerHTML = memHtml + (r.groups||[]).map(function(g){
+      return '<div class="card pad" style="margin-bottom:14px">'+
+        '<div class="card__h"><h3>'+esc(g.group)+'</h3></div>'+
+        g.items.map(function(k){
+          return '<div style="padding:12px 0;border-bottom:1px solid var(--line-2)">'+
+            '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'+
+              '<b style="font-size:14px">'+esc(k.label)+'</b>'+
+              '<span class="badge2 b-info">'+esc(String(k.value))+'</span>'+
+              '<span class="kv" style="color:var(--ink-45);font-size:11px">'+esc(k.key)+'</span>'+
+            '</div>'+
+            '<div style="font-size:12.5px;color:var(--ink-70);margin-top:5px;max-width:78ch">'+esc(k.what)+'</div>'+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;font-size:11.5px">'+
+              '<div style="background:var(--sage-soft);padding:7px 10px;border-radius:8px"><b>Raise it →</b> '+esc(k.higher)+'</div>'+
+              '<div style="background:var(--clay-soft);padding:7px 10px;border-radius:8px"><b>Lower it →</b> '+esc(k.lower)+'</div>'+
+            '</div></div>';
+        }).join("")+'</div>';
+    }).join("");
+  }).catch(function(e){toast(e.message);});
+}
+
 function loadNoTrade(){
   api("decisions",{limit:80}).then(function(r){
     var t=r.blockTally||{}, box=$("#blockTally");
@@ -1011,6 +1417,16 @@ $("#btnDry").addEventListener("click",function(){
   api("setControl",{patch:{dryRun:!(DASH.control||{}).dryRun}}).then(function(){toast("Dry run toggled");refresh(false);}).catch(function(e){toast(e.message);}); });
 $("#btnCycle").addEventListener("click",function(){
   api("setControl",{patch:{cycleSeconds:Number($("#inpCycle").value)}}).then(function(){toast("Interval set");refresh(false);}).catch(function(e){toast(e.message);}); });
+$("#btnCeil").addEventListener("click",function(){
+  api("setControl",{patch:{operatorCeiling:$("#ceilSel").value}})
+    .then(function(){toast("Ceiling set to "+$("#ceilSel").value);load();})
+    .catch(function(e){toast(e.message);});
+});
+$("#btnHwm").addEventListener("click",function(){
+  api("setControl",{patch:{highWaterMarkUsd:0}})
+    .then(function(){toast("High-water mark reset - the freeze clears on the next cycle.");load();})
+    .catch(function(e){toast(e.message);});
+});
 $("#btnKill").addEventListener("click",function(){
   if(!confirm("Engage the kill switch? Proposed orders are cancelled and new decisions stop. Evidence and the ledger are untouched.")) return;
   api("kill",{}).then(function(r){toast("Killed · "+r.cancelledProposals+" proposals cancelled");refresh(false);}).catch(function(e){toast(e.message);}); });
