@@ -498,7 +498,12 @@ function api(action, extra){
   return fetch(API,{method:"POST",headers:headers,body:JSON.stringify(body)})
     .then(function(r){ return r.json().then(function(j){
       if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
-      if(j.session){ SESSION=j.session; try{sessionStorage.setItem("inv_s",j.session);}catch(e){} }
+      // Only a STRING is a bearer token. The dashboard payload also has a
+      // "session" key holding market-session state, and accepting that here
+      // is what previously clobbered the token and caused a 401 loop.
+      if(typeof j.authToken==="string" && j.authToken){
+        SESSION=j.authToken; try{sessionStorage.setItem("inv_s",j.authToken);}catch(e){}
+      }
       return j; }); });
 }
 
@@ -512,7 +517,7 @@ $("#gateForm").addEventListener("submit", function(e){
     render(); startPolling();
   }).catch(function(err){ $("#gateErr").textContent = err.message; window.__pc=null; });
 });
-try { var s = sessionStorage.getItem("inv_s"); if(s){ SESSION=s;
+try { var s = sessionStorage.getItem("inv_s"); if(s && typeof s==="string" && s.indexOf(".")>0){ SESSION=s;
   api("dashboard").then(function(d){ DASH=d; $("#gate").style.display="none";
     $("#app").style.display="grid"; render(); startPolling(); }).catch(function(){ SESSION=null; }); } } catch(e){}
 
@@ -551,8 +556,20 @@ function startPolling(){
 }
 function refresh(loud){
   api("dashboard").then(function(d){ DASH=d; render(); if(loud) toast("Refreshed"); })
-    .catch(function(e){ $("#railState").textContent="error"; $("#railDot").style.background="var(--clay)";
-      if(loud) toast(e.message); });
+    .catch(function(e){
+      if(/Authentication required|Invalid passcode/i.test(e.message)) return signOut(e.message);
+      $("#railState").textContent="error"; $("#railDot").style.background="var(--clay)";
+      if(loud) toast(e.message);
+    });
+}
+
+/* A dead or rejected token must return the operator to the gate rather than
+   leaving them clicking into an app that 401s on every action. */
+function signOut(reason){
+  SESSION=null; try{sessionStorage.removeItem("inv_s");}catch(e){}
+  if(TIMER) clearInterval(TIMER);
+  $("#app").style.display="none"; $("#gate").style.display="flex";
+  $("#gateErr").textContent = reason ? ("Session ended: "+reason) : "";
 }
 
 /* ── render ── */
