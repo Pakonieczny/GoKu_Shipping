@@ -154,32 +154,68 @@ function slippageBps({ advUsd, grade, wideSpreadWindow, vixNorm = 1 }) {
 }
 
 /* ── adapters ──────────────────────────────────────────────────────────── */
-async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120 }) {
-  const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${encodeURIComponent(symbols.join(","))}`
-            + `&timeframe=${timeframe}&limit=${limit}&adjustment=all&feed=iex&sort=asc`;
-  const r = await fetchPublic(url, {
-    sourceId: "alpaca.bars", accept: ["json"], timeoutMs: 15000,
-    headers: {
-      "APCA-API-KEY-ID": process.env.ALPACA_API_KEY_ID || "",
-      "APCA-API-SECRET-KEY": process.env.ALPACA_API_SECRET_KEY || "",
-    },
-  });
+/**
+ * Alpaca multi-symbol bars.
+ *
+ * TWO CORRECTIONS THAT MATTER, both found by audit:
+ *
+ * 1. `limit` on this endpoint is the TOTAL bar count across every symbol in the
+ *    request, not per symbol. Asking for 342 symbols with limit=120 returned
+ *    ~120 bars for the whole roster — a handful of names got data and the rest
+ *    got nothing, silently. The limit is therefore scaled by the symbol count.
+ *
+ * 2. The response is paginated by `next_page_token`, which was never read. Any
+ *    request larger than one page was silently truncated. We now follow pages
+ *    until the token is exhausted or a safety bound is hit.
+ */
+async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed } = {}) {
   const out = {};
-  const bars = (r.json && r.json.bars) || {};
-  for (const [sym, arr] of Object.entries(bars)) {
-    out[sym] = (arr || []).map((b) => ({
-      t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, n: b.n || null, vw: b.vw || null,
-    }));
-  }
-  return { bars: out, provider: "alpaca", sha256: r.sha256, fetchedAt: r.fetchedAt };
+  let pageToken = null, pages = 0, lastHash = null, lastAt = null;
+  const useFeed = feed || process.env.ALPACA_FEED || "iex";
+  // per-symbol limit -> total, capped at the endpoint maximum
+  const total = Math.min(10000, Math.max(limit, limit * symbols.length));
+
+  do {
+    const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${encodeURIComponent(symbols.join(","))}`
+              + `&timeframe=${timeframe}&limit=${total}&adjustment=all&feed=${encodeURIComponent(useFeed)}&sort=asc`
+              + (pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : "");
+    const r = await fetchPublic(url, {
+      sourceId: "alpaca.bars", accept: ["json"], timeoutMs: 20000,
+      headers: {
+        "APCA-API-KEY-ID": process.env.ALPACA_API_KEY_ID || "",
+        "APCA-API-SECRET-KEY": process.env.ALPACA_API_SECRET_KEY || "",
+      },
+    });
+    const bars = (r.json && r.json.bars) || {};
+    for (const [sym, arr] of Object.entries(bars)) {
+      const mapped = (arr || []).map((b) => ({
+        t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, n: b.n || null, vw: b.vw || null,
+      }));
+      out[sym] = out[sym] ? out[sym].concat(mapped) : mapped;
+    }
+    pageToken = (r.json && r.json.next_page_token) || null;
+    lastHash = r.sha256; lastAt = r.fetchedAt;
+    pages += 1;
+  } while (pageToken && pages < 12);
+
+  return { bars: out, provider: "alpaca", sha256: lastHash, fetchedAt: lastAt,
+           pages, truncated: !!pageToken, feed: useFeed };
 }
 
 async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
   // Massive uses one ticker per aggregates call; unlimited calls make that fine.
-  const mult = timeframe === "5Min" ? 5 : timeframe === "1Min" ? 1 : 1;
-  const span = "minute";
+  /* "1Day" used to fall through this ternary to mult=1/span="minute", so the
+     13-month daily backfill silently requested 1-MINUTE bars over a hardcoded
+     5-day window. Every "daily" bar was one arbitrary minute of trading, the
+     series never reached the 40-day minimum, and the downtrend gate abstained
+     for every name on this provider while appearing to work. */
+  const daily = /day/i.test(timeframe);
+  const mult = daily ? 1 : (timeframe === "1Min" ? 1 : 5);
+  const span = daily ? "day" : "minute";
   const to = new Date().toISOString().slice(0, 10);
-  const from = new Date(Date.now() - 5 * 864e5).toISOString().slice(0, 10);
+  // enough calendar days to yield `limit` trading days, plus slack for holidays
+  const lookbackDays = daily ? Math.ceil(limit * 1.5) + 10 : 5;
+  const from = new Date(Date.now() - lookbackDays * 864e5).toISOString().slice(0, 10);
   const out = {};
   let lastHash = null, lastAt = null;
   for (const sym of symbols) {
@@ -188,6 +224,11 @@ async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
               + `&apiKey=${encodeURIComponent(process.env.MASSIVE_API_KEY || "")}`;
     try {
       const r = await fetchPublic(url, { sourceId: "massive.aggs", accept: ["json"], timeoutMs: 15000 });
+      /* NOTE ON ADJUSTMENT: Polygon-shaped `adjusted=true` is SPLIT-adjusted
+         but not dividend-adjusted, whereas Alpaca's `adjustment=all` is both.
+         The two providers therefore return different series for the same name.
+         The convention is recorded on every stored bar so a series built from
+         one is never silently compared against the other. */
       out[sym] = ((r.json && r.json.results) || []).map((b) => ({
         t: new Date(b.t).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, n: b.n || null, vw: b.vw || null,
       }));
@@ -196,12 +237,14 @@ async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
       out[sym] = []; // one symbol failing must not fail the cycle
     }
   }
-  return { bars: out, provider: "massive", sha256: lastHash, fetchedAt: lastAt || new Date().toISOString() };
+  return { bars: out, provider: "massive", sha256: lastHash,
+           fetchedAt: lastAt || new Date().toISOString(),
+           adjustment: "split_only" };
 }
 
 async function fetchBars(symbols, opts = {}) {
   const p = activeProvider();
-  if (p.id === "alpaca") return fetchBarsAlpaca(symbols, opts);
+  if (p.id === "alpaca") return { ...(await fetchBarsAlpaca(symbols, opts)), adjustment: "split_and_dividend" };
   if (p.id === "massive") return fetchBarsMassive(symbols, opts);
   return { bars: {}, provider: "manual", sha256: null, fetchedAt: new Date().toISOString(),
            note: p.degradedFrom ? `degraded from ${p.degradedFrom}: ${p.reason}` : "manual import only" };

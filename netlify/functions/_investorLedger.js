@@ -148,7 +148,7 @@ async function balances(accountId) {
 async function proposeOrder({
   accountId, symbol, side, decisionId, strategyVersion,
   qty, refPriceUsd, slippageBps, sizing, gates, cause, evidenceRefs = [],
-  decisionAtMs, quality,
+  decisionAtMs, quality, variantId = "baseline", cost = null,
 }) {
   const orderId = txnId([accountId, symbol, decisionId]);
   const ref = A.col(A.COL.orders).doc(orderId);
@@ -160,7 +160,11 @@ async function proposeOrder({
     orderId, accountId, symbol, side, decisionId, strategyVersion,
     qty, refPriceInt: priceInt, refPriceUsd: fromPrice(priceInt),
     grossCents, frictionCents, slippageBps,
-    sizing, gates, cause, evidenceRefs,
+    sizing, gates, cause, evidenceRefs, variantId,
+    /* The cost-hurdle verdict rides on the order so auto-approval can refuse
+       marginal passes. It previously read order.cost.ratio — a field nothing
+       wrote — so the "never auto-approve a marginal pass" guard was dead code. */
+    cost: cost ? { ratio: cost.ratio, expectedGrossBps: cost.expectedGrossBps, requiredBps: cost.requiredBps } : null,
     quality,
     status: "proposed",
     decisionAtMs,
@@ -178,6 +182,17 @@ async function approveOrder(orderId, operator) {
   const o = snap.data();
   if (o.status !== "proposed") return { orderId, status: o.status, noop: true };
 
+  /* The reservation only prevents over-commitment if something actually checks
+     the balance. Nothing did: stacked approvals could drive CASH negative with
+     no error. Refuse an approval the account cannot fund. */
+  const bal = await balances(o.accountId);
+  const cashCents = bal.cents[ACCT.CASH] || 0;
+  const needCents = o.grossCents + o.frictionCents;
+  if (needCents > cashCents) {
+    return { orderId, status: "proposed", noop: true,
+             refused: `needs ${fromCents(needCents)} but only ${fromCents(cashCents)} cash is free` };
+  }
+
   // Reserve the cash so two concurrent approvals cannot over-commit.
   await post({
     accountId: o.accountId, kind: "reserve",
@@ -192,6 +207,37 @@ async function approveOrder(orderId, operator) {
   await ref.set({ status: "approved", approvedBy: operator || "operator",
                   operator_approved_at: A.FV.serverTimestamp() }, { merge: true });
   return { orderId, status: "approved" };
+}
+
+/**
+ * Release an approved-but-unfilled order and return its reserved cash.
+ *
+ * approveOrder debits CASH into RESERVED so two concurrent approvals cannot
+ * over-commit. Nothing ever reversed that. An order whose symbol stopped
+ * returning bars was skipped by settlement forever, and its cash sat in
+ * RESERVED permanently — an account could quietly reserve itself into
+ * paralysis with no error and no way back through the UI.
+ */
+async function releaseOrder(orderId, reason) {
+  const ref = A.col(A.COL.orders).doc(orderId);
+  const snap = await ref.get();
+  if (!snap.exists) return { orderId, noop: true, reason: "not found" };
+  const o = snap.data();
+  if (o.status !== "approved") return { orderId, noop: true, status: o.status };
+
+  await post({
+    accountId: o.accountId, kind: "release",
+    idParts: [orderId, "release"],
+    legs: [
+      { account: ACCT.RESERVED, amountCents: -(o.grossCents + o.frictionCents), memo: `release ${orderId}` },
+      { account: ACCT.CASH, amountCents: (o.grossCents + o.frictionCents), memo: `returned unfilled ${o.symbol}` },
+    ],
+    meta: { orderId, symbol: o.symbol, reason: reason || "released" },
+  });
+
+  await ref.set({ status: "expired", expireReason: reason || "released",
+                  expired_at: A.FV.serverTimestamp() }, { merge: true });
+  return { orderId, status: "expired", releasedCents: o.grossCents + o.frictionCents };
 }
 
 async function rejectOrder(orderId, reason, operator) {
@@ -217,6 +263,26 @@ async function recordFill({ orderId, bar, barProvenance }) {
   const o = snap.data();
   if (o.status === "filled") return { orderId, duplicate: true, status: "filled" };
   if (o.status !== "approved") throw new Error(`recordFill: order ${orderId} is ${o.status}, not approved`);
+
+  /* DOUBLE-FILL GUARD. The position doc is written with {merge:true}, so a
+     second fill for the same symbol would OVERWRITE qty and cost basis while
+     the ledger credited POSITIONS twice — cash spent twice, the book showing
+     one position, and the excess cost stranded forever (closePosition reverses
+     only the recorded basis). Refuse the fill and release its reservation. */
+  const existing = await A.col(A.COL.positions).doc(`${o.accountId}_${o.symbol}`).get();
+  if (existing.exists && existing.data().open) {
+    await post({
+      accountId: o.accountId, kind: "release",
+      idParts: [orderId, "release_dup"],
+      legs: [
+        { account: ACCT.RESERVED, amountCents: -(o.grossCents + o.frictionCents), memo: `duplicate ${o.symbol}` },
+        { account: ACCT.CASH, amountCents: (o.grossCents + o.frictionCents), memo: `returned: already holding ${o.symbol}` },
+      ],
+      meta: { orderId, symbol: o.symbol, reason: "already holding this symbol" },
+    });
+    await oref.set({ status: "cancelled", cancelReason: "already holding this symbol — duplicate fill refused" }, { merge: true });
+    return { orderId, duplicate: true, status: "cancelled", reason: "position already open" };
+  }
 
   const openInt = toPrice(bar.o);
   const adverse = o.side === "buy" ? 1 : -1;
@@ -260,6 +326,12 @@ async function recordFill({ orderId, bar, barProvenance }) {
     costBasisCents: baseCents,
     entryPriceUsd: fromPrice(fillInt),
     openedAt: bar.t, openOrderId: orderId,
+    /* Carried from the order so that when this position closes, its realized
+       result can be attributed to the variant that chose it. Real trades are
+       the scarcest and most expensive evidence the system will ever get; not
+       tagging them meant they taught it nothing. */
+    variantId: o.variantId || "baseline",
+    entrySlippageBps: o.slippageBps || 0,
     updated_at: A.FV.serverTimestamp(),
   }, { merge: true });
 
@@ -293,14 +365,28 @@ async function closePosition({ accountId, symbol, bar, slippageBps, reason, barP
     meta: { symbol, exitId, reason, barOpenAt: bar.t, barProvenance },
   });
 
+  const entryUsd = Number(p.entryPriceUsd) || 0;
+  const exitUsd = fromPrice(fillInt);
+  const grossBps = entryUsd > 0 ? ((exitUsd - entryUsd) / entryUsd) * 1e4 : 0;
+  const costBps = (Number(p.entrySlippageBps) || 0) + (Number(slippageBps) || 0);
+
   await pref.set({
     open: false, closedAt: bar.t, closeReason: reason,
-    exitPriceUsd: fromPrice(fillInt), realizedCents: realized,
+    exitPriceUsd: exitUsd, realizedCents: realized,
+    grossBps: Number(grossBps.toFixed(2)),
+    costBps: Number(costBps.toFixed(2)),
+    netBps: Number((grossBps - costBps).toFixed(2)),
     updated_at: A.FV.serverTimestamp(),
   }, { merge: true });
 
   return { symbol, realizedCents: realized, realizedUsd: fromCents(realized),
-           exitPriceUsd: fromPrice(fillInt), frictionCents };
+           exitPriceUsd: exitUsd, frictionCents,
+           variantId: p.variantId || "baseline",
+           openedDate: String(p.openedAt || "").slice(0, 10),
+           heldDays: p.openedAt ? (Date.parse(bar.t) - Date.parse(p.openedAt)) / 864e5 : null,
+           grossBps: Number(grossBps.toFixed(2)),
+           costBps: Number(costBps.toFixed(2)),
+           netBps: Number((grossBps - costBps).toFixed(2)) };
 }
 
 /* ── THE COST METER ────────────────────────────────────────────────────── */
@@ -330,6 +416,7 @@ async function costMeter(accountId) {
 }
 
 module.exports = {
+  releaseOrder,
   ACCT, CENTS, PRICE_SCALE,
   toCents, fromCents, toPrice, fromPrice, notionalCents,
   txnId, assertBalanced,

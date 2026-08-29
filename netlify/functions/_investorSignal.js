@@ -47,6 +47,7 @@
 "use strict";
 
 const M = require("./_investorMarket");
+const H = require("./_investorHistory");
 
 /* ── small numeric helpers (fixed, defensive, no deps) ─────────────────── */
 const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
@@ -75,18 +76,14 @@ function ols(y, x) {
   return { beta, alpha: my - beta * mx, n };
 }
 
-/* ── sector map for the roster (used to build the sector factor) ───────── */
-const SECTOR = {
-  NVDA:"semi", MU:"semi", AMD:"semi", AVGO:"semi", MRVL:"semi", INTC:"semi",
-  AMAT:"semi", LRCX:"semi", KLAC:"semi", QCOM:"semi", TXN:"semi", MCHP:"semi",
-  WDC:"semi", STX:"semi", SMCI:"hw", DELL:"hw", HPE:"hw", VRT:"hw", GEV:"hw",
-  ORCL:"sw", CRM:"sw", NOW:"sw", ADBE:"sw", INTU:"sw", WDAY:"sw",
-  PANW:"sw", CRWD:"sw", SNOW:"sw", NET:"sw", DDOG:"sw", MDB:"sw",
-  AMZN:"plat", NFLX:"plat", UBER:"plat", DASH:"plat", ABNB:"plat",
-  SPOT:"plat", APP:"plat", TTD:"plat", RBLX:"plat", TTWO:"plat",
-  COIN:"fin", HOOD:"fin", SOFI:"fin", PYPL:"fin",
-  WMT:"retail",
-};
+/* ── sector resolution ─────────────────────────────────────────────────
+ * Sectors come from the UNIVERSE file, not from a table hardcoded here — the
+ * roster is the thing that changes, and a 350-name roster against a 46-name
+ * hardcoded map silently dumped 300 names into a single "other" bucket, which
+ * destroys the factor model. The cycle calls setSectorMap() once per run.
+ */
+let SECTOR = {};
+function setSectorMap(map) { SECTOR = map || {}; return Object.keys(SECTOR).length; }
 function sectorOf(sym) { return SECTOR[sym] || "other"; }
 
 /* ── 1. RESIDUAL RETURN ENGINE ─────────────────────────────────────────── */
@@ -232,19 +229,43 @@ function residualPanel(panel, opts = {}) {
 
 /** Cumulative residual move over the trailing `window` steps, and its z-score
  *  against that symbol's own residual volatility. */
-function residualZ(residSeries, window = 12) {
+function residualZ(residSeries, window = 12, ctx = null) {
   if (!residSeries || residSeries.length < window + 12) return null;
   const recent = residSeries.slice(-window);
   const cum = recent.reduce((s, r) => s + r, 0);
   // Baseline volatility comes from the estimation window only. Including the
   // event would inflate sigma with the very move being scored and shrink its z.
   const baseline = residSeries.slice(0, -window);
-  const sd = stdev(baseline) * Math.sqrt(window);
-  if (!(sd > 0)) return null;
+  const shortSd = stdev(baseline) * Math.sqrt(window);
+  if (!(shortSd > 0)) return null;
+
+  /* BLEND IN THE LONG RECORD.
+   *
+   * shortSd is estimated from a couple of sessions. That makes it both noisy
+   * and short-sighted: on a quiet two days it is far too small, so an ordinary
+   * move scores as a three-sigma event, and the system trades noise. Measured
+   * on synthetic data, a genuinely volatile name's two-day sigma came out
+   * roughly five times too small, turning a z of 0.9 into a z of 3.
+   *
+   * H.blendedSigma mixes it with the name's own 60-day daily volatility,
+   * rescaled to this window by root-time: 40% on what is happening now, 60% on
+   * the long record. Those weights are pre-registered constants, not tuned.
+   * With no history the short sigma is used alone and `blended` is false, so
+   * the card can say which it was.
+   */
+  let sd = shortSd, blend = { blended: false };
+  if (ctx && ctx.ok) {
+    blend = H.blendedSigma(shortSd, ctx, { window });
+    if (blend.sigma > 0) sd = blend.sigma;
+  }
+
   return {
     cumResidual: cum,
     z: cum / sd,
     residVol: sd,
+    shortResidVol: shortSd,
+    sigmaBlend: blend,
+    zShortOnly: cum / shortSd,
     window,
   };
 }
@@ -284,20 +305,115 @@ function sectorCrowding(ranks, sectorFor, threshold = 0.25) {
 const ENTRY_RANK = 0.10;   // bottom decile of residual return = oversold
 const EXIT_RANK  = 0.50;   // the buy/hold spread: hold until the median
 
-function entrySignal(rank, z, cfg) {
+function entrySignal(rank, z, cfg, ctx) {
   const entryRank = cfg.entryRank ?? ENTRY_RANK;
   const minZ = cfg.minAbsZ ?? 2.0;
   if (rank > entryRank) return { fire: false, reason: `rank ${rank.toFixed(3)} above entry ${entryRank}` };
   if (!(z <= -minZ)) return { fire: false, reason: `z ${z.toFixed(2)} not below -${minZ}` };
+
+  /* Variant-specific long-horizon conditions (G and H). Both require history:
+     with none, the condition cannot be evaluated and the variant declines to
+     trade rather than guessing. A variant that fires on missing data is a
+     variant whose record means nothing. */
+  if (cfg.requireAboveSma200) {
+    if (!ctx || !ctx.ok) return { fire: false, reason: "needs 6-month history to confirm the uptrend; none yet" };
+    if (ctx.aboveSma200 !== true) return { fire: false, reason: "below its 200-day average — this variant only buys dips in names still trending up" };
+  }
+  if (cfg.requireDrawdownPct != null) {
+    if (!ctx || !ctx.ok) return { fire: false, reason: "needs 6-month history to measure the drawdown; none yet" };
+    if (!(ctx.drawdown6mPct <= cfg.requireDrawdownPct)) {
+      return { fire: false, reason: `only ${ctx.drawdown6mPct}% off its 6-month high — this variant wants at least ${cfg.requireDrawdownPct}%` };
+    }
+  }
+
   return { fire: true, reason: `rank ${rank.toFixed(3)} <= ${entryRank} and z ${z.toFixed(2)} <= -${minZ}` };
 }
 
-function exitSignal(rank, heldDays, cfg) {
+/**
+ * WHEN TO SELL.
+ *
+ * The original version of this function took only (rank, heldDays, cfg) — it
+ * could not see price at all. That was the single most dangerous hole in the
+ * system, and not because a stop was merely missing: the exit trigger is a
+ * cross-sectional rank crossing the median, and a collapsing stock's residual
+ * goes MORE negative, which pushes its rank AWAY from the exit. Falling harder
+ * made a position less likely to be sold, and a name down 40% simply sat there
+ * until the 10-day timer expired.
+ *
+ * Exits are now checked in order of severity, and the price-based ones come
+ * first so that no amount of rank behaviour can defer them.
+ *
+ * `mark` is the current price, `entry` the fill price. If either is missing the
+ * price rules cannot be evaluated, and that fact is reported rather than
+ * silently treated as "no stop triggered".
+ */
+function exitSignal(rank, heldDays, cfg, opts = {}) {
   const exitRank = cfg.exitRank ?? EXIT_RANK;
   const maxDays = cfg.maxHoldDays ?? 10;
-  if (rank >= exitRank) return { exit: true, reason: `rank ${rank.toFixed(3)} crossed exit ${exitRank}` };
-  if (heldDays >= maxDays) return { exit: true, reason: `max hold ${maxDays}d reached` };
-  return { exit: false, reason: `rank ${rank.toFixed(3)} below exit ${exitRank}, held ${heldDays}d` };
+  const { mark, entry, peak, earningsInDays } = opts;
+
+  const havePrice = Number.isFinite(mark) && Number.isFinite(entry) && entry > 0;
+  const pnlPct = havePrice ? ((mark - entry) / entry) * 100 : null;
+
+  if (havePrice) {
+    // 1. HARD STOP. The floor under every position.
+    const stopPct = cfg.stopLossPct ?? -8;
+    if (pnlPct <= stopPct) {
+      return { exit: true, urgent: true, reason: `down ${pnlPct.toFixed(1)}% — hard stop at ${stopPct}%`,
+               kind: "stop_loss", pnlPct: Number(pnlPct.toFixed(2)) };
+    }
+
+    // 2. TRAILING STOP, once a position has actually made money. Protects a
+    //    winner from round-tripping back to flat, which is the most common way
+    //    a short-horizon reversion trade wastes a correct call.
+    const trailPct = cfg.trailingStopPct ?? -4;
+    if (Number.isFinite(peak) && peak > entry) {
+      const fromPeak = ((mark - peak) / peak) * 100;
+      const peakGainPct = ((peak - entry) / entry) * 100;
+      if (peakGainPct >= (cfg.trailingArmsAtPct ?? 3) && fromPeak <= trailPct) {
+        return { exit: true, urgent: true,
+                 reason: `up ${peakGainPct.toFixed(1)}% at best, now ${fromPeak.toFixed(1)}% off that peak — trailing stop`,
+                 kind: "trailing_stop", pnlPct: Number(pnlPct.toFixed(2)) };
+      }
+    }
+
+    // 3. PROFIT TARGET. The research expects partial reversion, not full.
+    const takePct = cfg.takeProfitPct ?? null;
+    if (takePct != null && pnlPct >= takePct) {
+      return { exit: true, urgent: false, reason: `up ${pnlPct.toFixed(1)}% — profit target ${takePct}%`,
+               kind: "take_profit", pnlPct: Number(pnlPct.toFixed(2)) };
+    }
+  }
+
+  /* 4. EARNINGS. The entry gate refuses to OPEN near an earnings date, but for
+        most of this system's life nothing made it CLOSE before one. Holding a
+        mean-reversion position through an earnings print is a coin flip with a
+        20% standard deviation attached, and it undoes the entry gate entirely. */
+  if (Number.isFinite(earningsInDays) && earningsInDays <= (cfg.exitBeforeEarningsDays ?? 2)) {
+    return { exit: true, urgent: true, reason: `earnings in ${earningsInDays} day(s) — closing before the print`,
+             kind: "earnings_exit", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
+  }
+
+  // 5. The signal exit: the move we were trading has reverted.
+  if (rank >= exitRank) {
+    return { exit: true, urgent: false, reason: `rank ${rank.toFixed(3)} crossed exit ${exitRank}`,
+             kind: "signal", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
+  }
+
+  // 6. Time stop.
+  if (heldDays >= maxDays) {
+    return { exit: true, urgent: false, reason: `max hold ${maxDays}d reached`,
+             kind: "time", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
+  }
+
+  return {
+    exit: false, kind: null,
+    pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null,
+    priceRulesEvaluated: havePrice,
+    reason: `rank ${rank.toFixed(3)} below exit ${exitRank}, held ${heldDays}d`
+          + (havePrice ? `, ${pnlPct >= 0 ? "up" : "down"} ${Math.abs(pnlPct).toFixed(1)}%`
+                       : ", NO PRICE AVAILABLE so the stop could not be checked"),
+  };
 }
 
 /* ── 3 + 4. REGIME GATES ───────────────────────────────────────────────── */
@@ -326,14 +442,36 @@ function dispersionGate(cor3m, cfg) {
    scheduled dates a year. AMD's 95th-percentile earnings move is +/-21.2% on a
    +/-9.9% median; CRWD +/-22.7% on +/-8.9%. Excluding a 2-day window converts
    those names from dangerous to ordinary and is the whole gap-risk solution. */
-function earningsBlackout(symbol, earningsDates, nowMs, cfg) {
-  const days = cfg.blackoutDays ?? 2;
-  const win = days * 864e5;
+function earningsBlackout(symbol, earningsDates, nowMs, cfg, opts = {}) {
+  /* An UNKNOWN window blocks. Previously an empty array passed the gate
+     trivially, which is the single most dangerous default in the system:
+     AMD's 95th-percentile earnings move is +/-21.2% against a +/-9.9% median,
+     and a strategy taking hundreds of positions a year cannot absorb that
+     blind. Fail closed. */
+  if (!earningsDates || !earningsDates.length) {
+    return { blocked: true, reason: "no earnings window known for this symbol — blocked until derived", unknown: true };
+  }
+  /* Derived windows are projections from EDGAR filing cadence, not exact
+     dates, so they get a wider blackout to absorb the projection error. */
+  const days = opts.estimated ? (cfg.blackoutDaysEstimated ?? 5) : (cfg.blackoutDays ?? 2);
+  /* The window is ASYMMETRIC. Before earnings the risk is the print itself.
+     After it, the risk is different and subtler: prices DRIFT in the direction
+     of an earnings surprise for days (post-earnings announcement drift), so a
+     post-earnings drop is disproportionately a move with real information
+     behind it — the exact kind a reversion trade must not fade. The
+     announcement-stripped construction in Medhat & Novy-Marx (NBER w30917)
+     more than tripled the usable signal, which is why the post window extends
+     beyond the pre window here. */
+  const postDays = Math.max(days, cfg.postEarningsDays ?? (opts.estimated ? 6 : 4));
   for (const d of (earningsDates || [])) {
     const t = Date.parse(d);
     if (!isFinite(t)) continue;
-    if (Math.abs(nowMs - t) <= win) {
-      return { blocked: true, reason: `earnings ${d} within +/-${days}d`, date: d };
+    const diff = nowMs - t;                     // positive = after the print
+    if (diff >= -days * 864e5 && diff <= postDays * 864e5) {
+      return { blocked: true, date: d,
+               reason: diff >= 0
+                 ? `earnings ${d} was ${Math.ceil(diff / 864e5)}d ago — post-earnings moves carry information and drift, not noise`
+                 : `earnings ${d} within ${days}d` };
     }
   }
   return { blocked: false, reason: "outside earnings blackout" };
@@ -377,12 +515,18 @@ function directionFromCause(cause, cfg) {
  * the post-publication decay the literature documents (Chen & Velikov find
  * roughly half of in-sample gross returns vanish; we take 50%).
  */
-function costHurdle({ cumResidual, advUsd, grade, wideSpreadWindow, vixNorm, cfg }) {
+function costHurdle({ cumResidual, advUsd, grade, wideSpreadWindow, vixNorm, cfg, reversionMult }) {
   const halfTripBps = M.slippageBps({ advUsd, grade, wideSpreadWindow, vixNorm });
   const roundTripBps = halfTripBps * 2;
   const decay = cfg.decayHaircut ?? 0.5;
   const capture = cfg.reversionCapture ?? 0.35;      // we do not expect full reversion
-  const expectedBps = Math.abs(cumResidual) * 1e4 * capture * decay;
+  /* This name's own bounce-back record, shrunk hard toward the roster average
+     and clamped to [0.7, 1.3] upstream. It can make a marginal idea pass or
+     fail the cost test, which is the correct amount of influence for a number
+     estimated from roughly ten events. It can never open a closed gate. */
+  const revMult = (typeof reversionMult === "number" && isFinite(reversionMult))
+    ? Math.max(0.7, Math.min(1.3, reversionMult)) : 1;
+  const expectedBps = Math.abs(cumResidual) * 1e4 * capture * decay * revMult;
   const marginMult = cfg.costMarginMultiple ?? 2.0;  // demand 2x the frictions
   const required = roundTripBps * marginMult;
   return {
@@ -391,7 +535,8 @@ function costHurdle({ cumResidual, advUsd, grade, wideSpreadWindow, vixNorm, cfg
     requiredBps: Number(required.toFixed(1)),
     pass: expectedBps >= required,
     ratio: required > 0 ? Number((expectedBps / required).toFixed(2)) : 0,
-    assumptions: { decayHaircut: decay, reversionCapture: capture, costMarginMultiple: marginMult },
+    reversionMult: revMult,
+    assumptions: { decayHaircut: decay, reversionCapture: capture, costMarginMultiple: marginMult, reversionMult: revMult },
   };
 }
 
@@ -406,6 +551,8 @@ function evaluateCandidate(input) {
     symbol, rank, zStat, quality, advUsd, earningsDates, nowMs,
     cause, vixNorm, cor3m, session, cfg, position,
   } = input;
+  const ctx = input.historyContext || null;      // six-month picture for this name
+  const rev = input.reversion || null;           // its own bounce-back record
 
   const gates = [];
   const add = (id, label, pass, detail, blocking = true) =>
@@ -423,7 +570,9 @@ function evaluateCandidate(input) {
 
   // 1. Data quality — an F grade freezes the symbol entirely.
   add("quality", "Price quality", quality && quality.tradable,
-      quality ? `grade ${quality.grade}${quality.reasons.length ? " — " + quality.reasons.join(", ") : ""}` : "no data");
+      quality
+        ? `grade ${quality.grade}${(quality.reasons && quality.reasons.length) ? " — " + quality.reasons.join(", ") : ""}`
+        : "no data");
 
   // 2. Session — never open in the wide-spread auction windows.
   const sessionOk = session.open && !session.wideSpreadWindow;
@@ -436,8 +585,9 @@ function evaluateCandidate(input) {
   add("dispersion", "Dispersion regime", disp.pass, disp.note);
 
   // 4. Earnings blackout.
-  const bo = earningsBlackout(symbol, earningsDates, nowMs, cfg);
-  add("blackout", "Earnings blackout", !bo.blocked, bo.reason);
+  const bo = earningsBlackout(symbol, earningsDates, nowMs, cfg, { estimated: input.earningsEstimated });
+  add("blackout", "Earnings blackout", !bo.blocked,
+      bo.reason + (input.earningsEstimated && !bo.unknown ? " (estimated window, widened)" : ""));
 
   // 5. Liquidity floor — cost is the binding constraint.
   const minAdv = cfg.minAdvUsd ?? 3e8;
@@ -445,7 +595,7 @@ function evaluateCandidate(input) {
       `$${(advUsd / 1e6).toFixed(0)}M/day vs $${(minAdv / 1e6).toFixed(0)}M floor`);
 
   // 6. The signal itself.
-  const sig = zStat ? entrySignal(rank, zStat.z, cfg) : { fire: false, reason: "no z statistic" };
+  const sig = zStat ? entrySignal(rank, zStat.z, cfg, ctx) : { fire: false, reason: "no z statistic" };
   add("signal", "Residual signal", sig.fire, sig.reason);
 
   // 6b. Sector crowding — is this one idea, or one sector falling together?
@@ -454,14 +604,66 @@ function evaluateCandidate(input) {
      by chance, so the cap is expressed as a multiple of that baseline rather
      than as an absolute number. 1.4x flags genuine over-representation without
      firing on ordinary dispersion. */
-  const tailBase = cfg.entryRank != null ? Math.max(cfg.entryRank, 0.25) : 0.25;
+  /* CALIBRATION FIX. The tail fraction is measured at cfg.entryRank (0.10),
+     but this baseline used Math.max(entryRank, 0.25) = 0.25, so a statistic
+     whose chance expectation is 10% was compared against a 35% cap. That
+     needed 3.5x over-representation to fire, not the 1.4x the comment claims,
+     and with 39 semis in the roster it would effectively never trip. The
+     baseline must be the same threshold the fraction was measured at. */
+  const tailBase = cfg.entryRank != null ? cfg.entryRank : 0.25;
   const crowdMult = cfg.sectorCrowdingMultiple ?? 1.4;
-  const crowdMax = Math.min(0.9, tailBase * crowdMult);
+  const crowdMax = Math.min(0.9, Math.max(0.15, tailBase * crowdMult));
   const crowdFrac = input.sectorTailFraction;
   if (crowdFrac != null) {
     add("crowding", "Sector crowding", crowdFrac <= crowdMax,
         `${Math.round(crowdFrac * 100)}% of ${sectorOf(symbol)} is in the oversold tail ` +
         `vs ${Math.round(crowdMax * 100)}% cap (${crowdMult}x the ${Math.round(tailBase * 100)}% baseline)`);
+  }
+
+  /* 6c. LONG-HORIZON TREND. The gate this system was missing entirely.
+     A drop is only a dislocation relative to a stable base. A name that is
+     below its 200-day average, more than 20% off its six-month high, and whose
+     50-day line is still falling is not oversold — it is in a downtrend, and
+     mean-reversion strategies bleed in exactly those names. All three
+     conditions must hold, so ordinary weakness does not trip it.
+
+     If the name has too little history the gate ABSTAINS rather than passing
+     silently, and says so on the card. An unknown is reported as an unknown. */
+  if (ctx && ctx.ok) {
+    const blockTrend = cfg.blockDowntrends !== false;
+    add("trend", "Long-horizon trend", !(blockTrend && ctx.downtrend),
+        ctx.downtrend
+          ? `downtrend: ${ctx.drawdown6mPct}% off its 6-month high, below the 200-day, 50-day line falling ${ctx.sma50SlopePct}%`
+          : `${Math.round(ctx.rangePct6m * 100)}% up its 6-month range, ${ctx.aboveSma200 === true ? "above" : "below"} the 200-day (${ctx.downtrendFlags}/3 downtrend flags)`);
+  } else {
+    add("trend", "Long-horizon trend", true,
+        ctx ? `no long-horizon read yet — ${ctx.reason}` : "history not loaded for this name yet");
+  }
+
+  /* 6d. TURNOVER CONDITIONING — the strongest published conditioning result
+     for this exact strategy. Medhat & Schmeling (Review of Financial Studies,
+     2022) split the reversal effect by share turnover: in LOW-turnover names
+     last month's losers reliably bounce (-1.41%/mo continuation of the classic
+     effect), while in the HIGHEST-turnover names losers keep falling and
+     winners keep winning — short-term MOMENTUM, the exact opposite trade.
+     Fading a heavily-traded name's drop is not contrarian, it is standing in
+     front of informed flow.
+
+     Turnover = shares traded / shares outstanding, cross-sectional. Names in
+     the top decile are refused. Unknown shares outstanding abstains with a
+     note rather than blocking — the gate cannot fail closed on data it may
+     never have for every name, and the cause/evidence gate still stands
+     behind it. */
+  const toPctile = input.turnoverPctile;
+  if (toPctile != null && isFinite(toPctile)) {
+    const cap = cfg.turnoverPctileCap ?? 0.90;
+    add("turnover", "Turnover conditioning", toPctile < cap,
+        toPctile >= cap
+          ? `top-decile turnover (${Math.round(toPctile * 100)}th pctile) — heavily-traded losers continue falling rather than bouncing (Medhat–Schmeling RFS 2022)`
+          : `${Math.round(toPctile * 100)}th percentile turnover — inside the range where reversal actually works`);
+  } else {
+    add("turnover", "Turnover conditioning", true,
+        "shares outstanding not yet known for this name — gate abstains", true);
   }
 
   // 7. Evidence classification decides direction.
@@ -472,6 +674,7 @@ function evaluateCandidate(input) {
   const cost = zStat ? costHurdle({
     cumResidual: zStat.cumResidual, advUsd, grade: quality ? quality.grade : "F",
     wideSpreadWindow: session.wideSpreadWindow, vixNorm, cfg,
+    reversionMult: rev ? rev.multiplier : 1,
   }) : { pass: false, expectedGrossBps: 0, requiredBps: 0, roundTripBps: 0, ratio: 0 };
   add("cost", "Cost hurdle", cost.pass,
       `expect ${cost.expectedGrossBps}bp vs ${cost.requiredBps}bp required (${cost.ratio}x)`);
@@ -488,6 +691,14 @@ function evaluateCandidate(input) {
     rank, z: zStat ? Number(zStat.z.toFixed(2)) : null,
     cumResidualBps: zStat ? Number((zStat.cumResidual * 1e4).toFixed(1)) : null,
     cause, direction: dir,
+    historyContext: ctx && ctx.ok ? {
+      days: ctx.days, vol60Pct: ctx.vol60Pct, atrPct: ctx.atrPct,
+      rangePct6m: ctx.rangePct6m, drawdown6mPct: ctx.drawdown6mPct,
+      aboveSma200: ctx.aboveSma200, sma50SlopePct: ctx.sma50SlopePct,
+      downtrend: ctx.downtrend, downtrendFlags: ctx.downtrendFlags,
+      gapFreqPct: ctx.gapFreqPct, advUsd20: ctx.advUsd20,
+    } : null,
+    reversion: rev || null,
     cost,
     sizing: {
       volScaler: vol.scaler, volNote: vol.note,
@@ -500,7 +711,7 @@ function evaluateCandidate(input) {
 
 module.exports = {
   mean, stdev, pctReturns, ols,
-  sectorOf, SECTOR,
+  sectorOf, setSectorMap,
   residualPanel, residualZ, crossSectionalRanks,
   entrySignal, exitSignal, ENTRY_RANK, EXIT_RANK, sectorCrowding,
   volatilityScaler, dispersionGate, earningsBlackout,

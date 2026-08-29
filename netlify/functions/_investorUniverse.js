@@ -19,11 +19,11 @@
 "use strict";
 
 module.exports = {
-  "version": "v1",
-  "name": "Investor_AI trade tier \u2014 high-cadence residual reversal",
+  "version": "v2",
+  "name": "Investor_AI trade tier \u2014 wide breadth for counterfactual learning",
   "createdAt": "2026-08-29",
-  "marketDataAsOf": "2026-08-28 close",
-  "rationale": "Selected for the high-cadence, 1-10 day, high-turnover objective, NOT for rare high-materiality catalysts. Three binding constraints drove the roster: (1) turnover cost dominates - ~5-day holds are ~400% one-sided monthly turnover, so only the most liquid tier survives (de Groot/Huij/Zhou: 1,500 largest nets -103.7bp/wk, 100 largest nets +31.5bp/wk on an identical signal); (2) breadth is required - IR scales with the square root of independent bets and every published net-profitable short-hold reversal result uses at minimum the 100 largest names, so 15 names sits below the evidence floor; (3) gap risk is solved by an earnings blackout calendar, not by name exclusion, because the fat tail lives almost entirely on ~4 scheduled dates a year.",
+  "supersedes": "v1 (45 names)",
+  "rationale": "Widened from 45 to ~300 liquid US-listed common shares. Two reasons, both about learning speed. (1) Information ratio scales with the SQUARE ROOT of the number of independent bets, so breadth improves results directly \u2014 it is what Medallion actually exploits, winning on a 50.75% hit rate across enormous volume. (2) The shadow harness scores every variant against every ranked name each cycle, so more names means proportionally more counterfactual observations per day, and the ~625 independent days needed to tell a real edge from luck arrives far sooner. Average dollar volume is now MEASURED from the bars the system already fetches rather than hardcoded, because hardcoded volume goes stale within weeks and the liquidity gate is the main defence against cost drag.",
   "exclusions": {
     "binary_biopharma": "Unscheduled FDA/Phase 3 readouts gap 40%+ and no blackout calendar or stop can protect against them. Structurally incompatible with hundreds of position-exposures a year on an edge of tens of basis points.",
     "commodity_beta": "OXY DVN FANG SLB HAL FCX NUE AA CLF - track WTI/copper/steel. Systematic risk wearing a company name; no company-specific event for the evidence engine to find.",
@@ -33,729 +33,2524 @@ module.exports = {
     "adrs": "Excluded by the plan's universe boundary until ADR ratio, depositary fee, withholding and termination treatment are implemented."
   },
   "deadTickers": {
-    "X": "US Steel ceased NYSE trading 2025-06-18 (Nippon Steel close). Aggregators still show a frozen quote.",
+    "X": "US Steel \u2014 delisted June 2025 (Nippon Steel)",
     "PARA": "Ticker recycled - now Banzai International, a ~$4M microcap. Paramount Skydance is PSKY.",
-    "EA": "$55B take-private closed Aug 2026. Apparent 48.7M daily shares is merger-arb pinning, not liquidity.",
+    "EA": "take-private closed Aug 2026",
     "MASI": "Danaher acquisition closed; delisted from Nasdaq 2026-06-10.",
-    "KLAC_NOTE": "KLAC is live but executed a 10-for-1 split ~May 2026 - unadjusted history shows a spurious -90% gap."
+    "KLAC_NOTE": "KLAC is live but executed a 10-for-1 split ~May 2026 - unadjusted history shows a spurious -90% gap.",
+    "PXD": "Pioneer \u2014 acquired by ExxonMobil, closed 2024",
+    "MRO": "Marathon Oil \u2014 acquired by ConocoPhillips, closed 2024",
+    "WRK": "WestRock \u2014 merged into Smurfit Westrock (SW), 2024",
+    "FISV": "Fiserv \u2014 ticker changed to FI",
+    "SWN": "Southwestern \u2014 merged into Expand Energy (EXE), 2024",
+    "GPS": "Gap \u2014 ticker changed to GAP"
   },
+  "liquidityNote": "advUsd is computed per cycle from measured price x volume. The gate blocks anything under the floor in _investorStrategy.js. No volume figure is asserted in this file.",
   "tradeTier": [
     {
       "symbol": "NVDA",
-      "company": "NVIDIA",
       "sector": "semi",
-      "advUsd": 42400000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "1045810",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 5250
-    },
-    {
-      "symbol": "MU",
-      "company": "Micron Technology",
-      "sector": "semi",
-      "advUsd": 21400000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "723125",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 1050
-    },
-    {
-      "symbol": "AMZN",
-      "company": "Amazon.com",
-      "sector": "plat",
-      "advUsd": 13200000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "1018724",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 2870
-    },
-    {
-      "symbol": "MRVL",
-      "company": "Marvell Technology",
-      "sector": "semi",
-      "advUsd": 10600000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 190
-    },
-    {
-      "symbol": "CRM",
-      "company": "Salesforce",
-      "sector": "sw",
-      "advUsd": 8800000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 210.7
+      "advUsdSource": "measured_at_runtime"
     },
     {
       "symbol": "AMD",
-      "company": "Advanced Micro Devices",
       "sector": "semi",
-      "advUsd": 6900000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "2488",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 785.1
-    },
-    {
-      "symbol": "AVGO",
-      "company": "Broadcom",
-      "sector": "semi",
-      "advUsd": 6830000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 1690
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "MU",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
     },
     {
       "symbol": "INTC",
-      "company": "Intel",
       "sector": "semi",
-      "advUsd": 6680000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "50863",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 463.7
-    },
-    {
-      "symbol": "NOW",
-      "company": "ServiceNow",
-      "sector": "sw",
-      "advUsd": 4200000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 149.6
+      "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "CRWD",
-      "company": "CrowdStrike",
-      "sector": "sw",
-      "advUsd": 3220000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 223.6
-    },
-    {
-      "symbol": "AMAT",
-      "company": "Applied Materials",
+      "symbol": "AVGO",
       "sector": "semi",
-      "advUsd": 3020000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "6951",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 366.4
-    },
-    {
-      "symbol": "ORCL",
-      "company": "Oracle",
-      "sector": "sw",
-      "advUsd": 2680000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 434.5
-    },
-    {
-      "symbol": "LRCX",
-      "company": "Lam Research",
-      "sector": "semi",
-      "advUsd": 2430000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "707549",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 377.8
-    },
-    {
-      "symbol": "NFLX",
-      "company": "Netflix",
-      "sector": "plat",
-      "advUsd": 2380000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "1065280",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 340.3
-    },
-    {
-      "symbol": "STX",
-      "company": "Seagate Technology",
-      "sector": "semi",
-      "advUsd": 2330000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 188.1
-    },
-    {
-      "symbol": "PANW",
-      "company": "Palo Alto Networks",
-      "sector": "sw",
-      "advUsd": 2170000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 302.9
-    },
-    {
-      "symbol": "APP",
-      "company": "AppLovin",
-      "sector": "plat",
-      "advUsd": 2110000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 106.3
-    },
-    {
-      "symbol": "WMT",
-      "company": "Walmart",
-      "sector": "plat",
-      "advUsd": 2000000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "104169",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 820.4
-    },
-    {
-      "symbol": "WDC",
-      "company": "Western Digital",
-      "sector": "semi",
-      "advUsd": 1990000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "106040",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 165.7
-    },
-    {
-      "symbol": "PYPL",
-      "company": "PayPal",
-      "sector": "fin",
-      "advUsd": 1950000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "DELL",
-      "company": "Dell Technologies",
-      "sector": "hw",
-      "advUsd": 1800000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "COIN",
-      "company": "Coinbase Global",
-      "sector": "fin",
-      "advUsd": 1790000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "WDAY",
-      "company": "Workday",
-      "sector": "sw",
-      "advUsd": 1780000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "KLAC",
-      "company": "KLA Corporation",
-      "sector": "semi",
-      "advUsd": 1750000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "319201",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 229.4
-    },
-    {
-      "symbol": "GEV",
-      "company": "GE Vernova",
-      "sector": "hw",
-      "advUsd": 1730000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 242.9
-    },
-    {
-      "symbol": "HOOD",
-      "company": "Robinhood Markets",
-      "sector": "fin",
-      "advUsd": 1700000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "TXN",
-      "company": "Texas Instruments",
-      "sector": "semi",
-      "advUsd": 1520000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "97476",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "INTU",
-      "company": "Intuit",
-      "sector": "sw",
-      "advUsd": 1480000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
       "symbol": "QCOM",
-      "company": "QUALCOMM",
       "sector": "semi",
-      "advUsd": 1270000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "804328",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "SMCI",
-      "company": "Super Micro Computer",
-      "sector": "hw",
-      "advUsd": 1080000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "1375365",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "ADBE",
-      "company": "Adobe",
-      "sector": "sw",
-      "advUsd": 1060000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "796343",
-      "cikSource": "high_confidence_manual",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
-    },
-    {
-      "symbol": "SNOW",
-      "company": "Snowflake",
-      "sector": "sw",
-      "advUsd": 1010000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "VRT",
-      "company": "Vertiv Holdings",
-      "sector": "hw",
-      "advUsd": 990000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "1674101",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 99.0
+      "symbol": "TXN",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MRVL",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "ADI",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NXPI",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
     },
     {
       "symbol": "MCHP",
-      "company": "Microchip Technology",
       "sector": "semi",
-      "advUsd": 810000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "UBER",
-      "company": "Uber Technologies",
-      "sector": "plat",
-      "advUsd": 840000000,
-      "advUsdAsOf": "2026-08-28",
+      "symbol": "ON",
+      "sector": "semi",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "SOFI",
-      "company": "SoFi Technologies",
-      "sector": "fin",
-      "advUsd": 830000000,
-      "advUsdAsOf": "2026-08-28",
+      "symbol": "SWKS",
+      "sector": "semi",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "NET",
-      "company": "Cloudflare",
-      "sector": "sw",
-      "advUsd": 760000000,
-      "advUsdAsOf": "2026-08-28",
+      "symbol": "QRVO",
+      "sector": "semi",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "SPOT",
-      "company": "Spotify Technology",
-      "sector": "plat",
-      "advUsd": 760000000,
-      "advUsdAsOf": "2026-08-28",
+      "symbol": "MPWR",
+      "sector": "semi",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LSCC",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ALAB",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CRDO",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AMKR",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ONTO",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ENTG",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MKSI",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ACLS",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "UCTT",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ICHR",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AMAT",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "LRCX",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "KLAC",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TER",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "COHR",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "WOLF",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SLAB",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SITM",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "POWI",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DIOD",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DELL",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HPQ",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
     },
     {
       "symbol": "HPE",
-      "company": "Hewlett Packard Enterprise",
       "sector": "hw",
-      "advUsd": 730000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "DASH",
-      "company": "DoorDash",
-      "sector": "plat",
-      "advUsd": 710000000,
-      "advUsdAsOf": "2026-08-28",
+      "symbol": "SMCI",
+      "sector": "hw",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
     },
     {
-      "symbol": "ABNB",
-      "company": "Airbnb",
-      "sector": "plat",
-      "advUsd": 920000000,
-      "advUsdAsOf": "2026-08-28",
+      "symbol": "WDC",
+      "sector": "hw",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "TTWO",
-      "company": "Take-Two Interactive",
-      "sector": "plat",
-      "advUsd": 870000000,
-      "advUsdAsOf": "2026-08-28",
+      "symbol": "STX",
+      "sector": "hw",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NTAP",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PSTG",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ANET",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CSCO",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "JNPR",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "VRT",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "NVT",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GEV",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ZBRA",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "KEYS",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TDY",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TRMB",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FLEX",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "JBL",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SANM",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BHE",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PLXS",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FN",
+      "sector": "hw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MSFT",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ORCL",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "CRM",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ADBE",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "INTU",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NOW",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "WDAY",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SNOW",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PANW",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CRWD",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "ZS",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "OKTA",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NET",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
     },
     {
       "symbol": "DDOG",
-      "company": "Datadog",
       "sector": "sw",
-      "advUsd": 600000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
     },
     {
       "symbol": "MDB",
-      "company": "MongoDB",
       "sector": "sw",
-      "advUsd": 650000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TEAM",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HUBS",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "VEEV",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TYL",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PTC",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ANSS",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CDNS",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SNPS",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ADSK",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ROP",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FTNT",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GEN",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DOCU",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ZM",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TWLO",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BILL",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PCTY",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PAYC",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AMZN",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GOOGL",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "META",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NFLX",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "DIS",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SPOT",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "RBLX",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TTWO",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "APP",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
     },
     {
       "symbol": "TTD",
-      "company": "The Trade Desk",
       "sector": "plat",
-      "advUsd": 180000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "trade",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PINS",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SNAP",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "RDDT",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "UBER",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "LYFT",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DASH",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ABNB",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BKNG",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EXPE",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ETSY",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EBAY",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CHWY",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "W",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SHOP",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "JPM",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BAC",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "WFC",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "C",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GS",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MS",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SCHW",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BLK",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BX",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "KKR",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "APO",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ARES",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "COIN",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "HOOD",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SOFI",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PYPL",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "V",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MA",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AXP",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "COF",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DFS",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SYF",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FIS",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GPN",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ICE",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CME",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NDAQ",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SPGI",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MCO",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MSCI",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TROW",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BEN",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "IVZ",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "STT",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NTRS",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "UNH",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ELV",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CI",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CVS",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HUM",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CNC",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MCK",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "COR",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CAH",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ABT",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BSX",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SYK",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MDT",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ISRG",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EW",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DXCM",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PODD",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ZBH",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BDX",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BAX",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "RMD",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ALGN",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TMO",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DHR",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "A",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "WAT",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MTD",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "IQV",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CRL",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HCA",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "UHS",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "THC",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DVA",
+      "sector": "health",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LLY",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MRK",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PFE",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ABBV",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BMY",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AMGN",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GILD",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "VRTX",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "REGN",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BIIB",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MRNA",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "INCY",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NBIX",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ALNY",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BMRN",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EXEL",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "UTHR",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "JAZZ",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HALO",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SRPT",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "IONS",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "RARE",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FOLD",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ITCI",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AXSM",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CORT",
+      "sector": "pharma",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CAT",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DE",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HON",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GE",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "RTX",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LMT",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NOC",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GD",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LHX",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HII",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BA",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TXT",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TDG",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HEI",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CW",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LDOS",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BAH",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CACI",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SAIC",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PSN",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "KBR",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "J",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ACM",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EME",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PWR",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MAS",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BLDR",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "URI",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FAST",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "GWW",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ETN",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EMR",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ROK",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PH",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DOV",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "IEX",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "XYL",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AME",
+      "sector": "indus",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "XOM",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CVX",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "COP",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "OXY",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DVN",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FANG",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EOG",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HES",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "APA",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SLB",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HAL",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BKR",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NOV",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FTI",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CHRD",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MTDR",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AR",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "RRC",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CTRA",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LNG",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "OKE",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "WMB",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "KMI",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TRGP",
+      "sector": "energy",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NEE",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DUK",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SO",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "D",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AEP",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EXC",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "XEL",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ED",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "WEC",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ES",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PEG",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SRE",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PCG",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CEG",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "VST",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NRG",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TLN",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AES",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ETR",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FE",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CNP",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CMS",
+      "sector": "power",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "WMT",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "COST",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TGT",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "HD",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LOW",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DG",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DLTR",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "KR",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ROST",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TJX",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BURL",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ULTA",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DKS",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "BBY",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AZO",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ORLY",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AAP",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "TSCO",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NKE",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LULU",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DECK",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CROX",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SKX",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "RL",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PVH",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "VFC",
+      "sector": "cons",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "FCX",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NUE",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "STLD",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CLF",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "AA",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MP",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LIN",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "APD",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "SHW",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ECL",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DD",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "DOW",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "LYB",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PPG",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "ALB",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CE",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "EMN",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "CF",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "MOS",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "NTR",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "IP",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
+    },
+    {
+      "symbol": "PKG",
+      "sector": "mat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime"
     }
   ],
   "researchTier": [
     {
-      "symbol": "MU",
-      "company": "Micron Technology",
+      "symbol": "AMD",
       "sector": "semi",
-      "advUsd": 21400000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "723125",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 1050
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "MU",
+      "sector": "semi",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
     },
     {
       "symbol": "MRVL",
-      "company": "Marvell Technology",
       "sector": "semi",
-      "advUsd": 10600000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 190
-    },
-    {
-      "symbol": "AMD",
-      "company": "Advanced Micro Devices",
-      "sector": "semi",
-      "advUsd": 6900000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "2488",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 785.1
-    },
-    {
-      "symbol": "NOW",
-      "company": "ServiceNow",
-      "sector": "sw",
-      "advUsd": 4200000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 149.6
-    },
-    {
-      "symbol": "CRWD",
-      "company": "CrowdStrike",
-      "sector": "sw",
-      "advUsd": 3220000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 223.6
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
     },
     {
       "symbol": "AMAT",
-      "company": "Applied Materials",
       "sector": "semi",
-      "advUsd": 3020000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "6951",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 366.4
-    },
-    {
-      "symbol": "ORCL",
-      "company": "Oracle",
-      "sector": "sw",
-      "advUsd": 2680000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 434.5
-    },
-    {
-      "symbol": "NFLX",
-      "company": "Netflix",
-      "sector": "plat",
-      "advUsd": 2380000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "1065280",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 340.3
-    },
-    {
-      "symbol": "COIN",
-      "company": "Coinbase Global",
-      "sector": "fin",
-      "advUsd": 1790000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": null,
-      "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
     },
     {
       "symbol": "SMCI",
-      "company": "Super Micro Computer",
       "sector": "hw",
-      "advUsd": 1080000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "1375365",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
     },
     {
       "symbol": "VRT",
-      "company": "Vertiv Holdings",
       "sector": "hw",
-      "advUsd": 990000000,
-      "advUsdAsOf": "2026-08-28",
-      "cik": "1674101",
-      "cikSource": "high_confidence_manual",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 99.0
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "ORCL",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "NOW",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "CRWD",
+      "sector": "sw",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "NFLX",
+      "sector": "plat",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
     },
     {
       "symbol": "UBER",
-      "company": "Uber Technologies",
       "sector": "plat",
-      "advUsd": 840000000,
-      "advUsdAsOf": "2026-08-28",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
-      "tier": "research",
-      "earningsDates": [],
-      "earningsDatesSource": "operator_entry_required"
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
+    },
+    {
+      "symbol": "COIN",
+      "sector": "fin",
+      "cik": null,
+      "cikSource": "unresolved_pending_sec_map",
+      "advUsdSource": "measured_at_runtime",
+      "tier": "research"
     }
-  ]
+  ],
+  "selfCorrection": "Bootstrap resolves every symbol against SEC's own ticker map and DROPS anything it cannot match, recording it under unresolvedDropped. A delisted or renamed ticker therefore removes itself on the next cycle rather than sitting in the roster producing stale data \u2014 which is what happened with X and EA before a fixture caught them."
 };
