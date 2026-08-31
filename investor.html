@@ -589,6 +589,58 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
         </div>
 
         <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h"><h3>Paper learning mode</h3><span class="sub" id="plState">off</span></div>
+          <div class="note">
+            The published settings are calibrated for money that can be lost. On a virtual account that
+            calibration mostly buys silence. This loosens it deliberately so the desk trades and learns —
+            and it is <b>refused outright while dry run is off</b>, so it can never apply to real orders.
+            Every decision still records what the strict settings would have said, so nothing is lost.
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Mode</span>
+            <button class="btn sm" id="plOn">Turn on</button>
+            <button class="btn ghost sm" id="plOff">Turn off</button>
+            <span class="hint">Applies from the next cycle.</span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Act on incomplete information</span>
+            <button class="btn ghost sm" id="plAbstain">Toggle</button>
+            <span class="kv" id="plAbstainState">off</span>
+            <span class="hint">
+              Gates that block only because data is <i>missing</i> — no earnings window yet, no price
+              history yet, no dossier yet, shares outstanding unknown — abstain instead of blocking.
+              Gates that found an actual <i>problem</i> never relax: a known earnings date, a real
+              fundamental cause, a detected downtrend and broken price data still stop the trade.
+            </span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Cost hurdle</span>
+            <input class="inp sm" id="plCost" style="max-width:90px" placeholder="2">
+            <button class="btn ghost sm" id="plCostSet">Set</button>
+            <span class="hint">
+              Expected profit must beat modelled trading costs by this multiple. 2 is the published
+              setting and is why nothing fires. 0.5 trades anything with a positive expected edge —
+              those trades will lose money on average after costs, which is the price of the lesson.
+            </span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Signal strength</span>
+            <input class="inp sm" id="plZ" style="max-width:90px" placeholder="2">
+            <button class="btn ghost sm" id="plZSet">Set</button>
+            <span class="hint">How far a name must fall below its peers before it counts. 2 standard
+              deviations is the published setting; 1.25 fires far more often and less reliably.</span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Maximum hold</span>
+            <input class="inp sm" id="plHold" style="max-width:90px" placeholder="10">
+            <button class="btn ghost sm" id="plHoldSet">Set</button>
+            <span class="hint">Days before a position is closed regardless. Fractions allowed —
+              0.25 is about an hour and a half of trading, for fast feedback.</span>
+          </div>
+          <div id="plApplied" class="mono" style="font-size:11.5px;margin-top:10px"></div>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px">
           <div class="card__h"><h3>Regime inputs</h3><span class="sub">operator-entered</span></div>
           <div class="note">
             Cboe's implied-correlation index has no free programmatic feed. A manual value beats a
@@ -805,6 +857,7 @@ function render(){
   renderCost(cost);
   renderMovers(cands);
   renderBootstrap(DASH.bootstrap||{});
+  try { renderPaperLearning(); } catch(e){}
   renderMemory(sum.history||null, sum.symbols||0);
   renderRisk(sum.risk||null, guardSum.positionCoverage||sum.positionCoverage||null);
   renderLiveConfig(sum.liveConfig||null);
@@ -890,7 +943,12 @@ function renderBootstrap(b){
   if(!rep.length){ $("#bootBox").innerHTML='<div class="empty" style="padding:14px">Runs by itself on the first cycle — freezes the roster, resolves CIKs from SEC, opens the paper account, derives earnings windows and fetches VIX.</div>'; return; }
   $("#bootBox").innerHTML = rep.map(function(x){
     var d = "";
-    if(x.step==="universe") d = (x.resolved||0)+" CIKs resolved"+(x.missing&&x.missing.length?(", "+x.missing.length+" unmatched"):"")+(x.mismatched&&x.mismatched.length?(", "+x.mismatched.length+" CORRECTED"):"");
+    /* A failed step already carries the reason. Rendering only the success
+       shape ("0 CIKs resolved") threw it away and left a red row that named
+       no cause — the operator could see that setup failed but never why. */
+    if(x.ok===false && x.error){ d = String(x.error); }
+    else if(x.step==="universe") d = (x.resolved||0)+" CIKs resolved"+(x.missing&&x.missing.length?(", "+x.missing.length+" unmatched"):"")+(x.mismatched&&x.mismatched.length?(", "+x.mismatched.length+" CORRECTED"):"");
+    if(!(x.ok===false && x.error)){
     if(x.step==="account")  d = x.accountId+(x.existing?" (already open)":" opened");
     if(x.step&&x.step.indexOf("earnings")===0){
       d = (x.derived||0)+" windows derived";
@@ -903,6 +961,7 @@ function renderBootstrap(b){
                (x.complete?" — complete":" — still filling in, resumes next cycle")+
                (x.failed?(", "+x.failed+" unavailable"):"");
       if(x.updated!=null) d = x.updated+" names topped up with the latest sessions";
+    }
     }
     return '<div class="ctrlrow" style="padding:7px 0"><span class="lab" style="min-width:120px">'+esc(x.step)+'</span>'+
       '<span class="badge2 '+(x.ok?"b-on":"b-bad")+'">'+(x.ok?"ok":"failed")+'</span>'+
@@ -1289,10 +1348,10 @@ function loadRoster(){
 function renderCandidates(cands){
   loadRoster();
   var host=$("#candList"); host.innerHTML="";
-  if(!cands.length){ host.innerHTML='<div class="card empty">No shortlist yet for this cycle. '+
-    'The roster below is unaffected — it is always the same. A shortlist appears once a cycle has run '+
-    'with usable price data for these names; if cycles are running but the shortlist stays empty, '+
-    'check the market feed in the control room.</div>'; return; }
+  if(!cands.length){ host.innerHTML='<div class="card empty">No shortlist yet. '+
+    'The roster below is unaffected — it is always the same. A shortlist appears after a cycle runs. '+
+    'If nothing has ever run, use <b>Run a cycle now</b> on the briefing page: cycles are started by a '+
+    'scheduler, and if that schedule is missing the desk stays silent with no other symptom.</div>'; return; }
   cands.slice().sort(function(a,b){
     if(a.breach!==b.breach) return a.breach?-1:1;
     return (a.rank==null?1:a.rank)-(b.rank==null?1:b.rank);
@@ -1817,6 +1876,43 @@ $("#btnKill").addEventListener("click",function(){
   runButton(this,"kill",{},function(r){toast("Killed · "+(r.cancelledProposals||0)+" proposed cancelled · "+(r.releasedApproved||0)+" approved released");refresh(false);}); });
 $("#btnResume").addEventListener("click",function(){
   runButton(this,"resume",{},function(){toast("Monitoring resumed in research dry run; reactivate safety identity when ready");refresh(false);}); });
+/* ── paper learning mode ──────────────────────────────────────────────────
+   Reads the stored request back through the same clamp the cycle uses, so the
+   panel shows what will actually happen rather than what was typed. */
+function plStored(){ var c=(DASH&&DASH.control&&DASH.control.paperLearning)||{}; return c.stored||{}; }
+function plSet(patch, btn){
+  var cur = plStored();
+  runButton(btn||null,"setPaperLearning",{operator:"desk",patch:Object.assign({},cur,patch)},
+    function(r){ toast(r.refused?("Refused — "+r.refused):(r.active?"Paper learning mode on":"Paper learning mode off")); refresh(false); });
+}
+$("#plOn").addEventListener("click",function(){ plSet({enabled:true},this); });
+$("#plOff").addEventListener("click",function(){ plSet({enabled:false},this); });
+$("#plAbstain").addEventListener("click",function(){
+  plSet({abstainOnMissingInfo: !(plStored().abstainOnMissingInfo===true)}, this); });
+$("#plCostSet").addEventListener("click",function(){ plSet({costMarginMultiple:Number($("#plCost").value)},this); });
+$("#plZSet").addEventListener("click",function(){ plSet({minAbsZ:Number($("#plZ").value)},this); });
+$("#plHoldSet").addEventListener("click",function(){ plSet({maxHoldDays:Number($("#plHold").value)},this); });
+
+function renderPaperLearning(){
+  var pl=(DASH&&DASH.control&&DASH.control.paperLearning)||{};
+  var st=pl.stored||{}, applied=pl.applied||{};
+  $("#plState").textContent = pl.active ? "ON — relaxed gates" : (pl.refused ? "refused" : "off");
+  $("#plAbstainState").textContent = st.abstainOnMissingInfo===true ? "on" : "off";
+  if(st.costMarginMultiple!=null) $("#plCost").placeholder=String(st.costMarginMultiple);
+  if(st.minAbsZ!=null) $("#plZ").placeholder=String(st.minAbsZ);
+  if(st.maxHoldDays!=null) $("#plHold").placeholder=String(st.maxHoldDays);
+  var keys=Object.keys(applied);
+  if(pl.refused){ $("#plApplied").innerHTML='<span class="badge2 b-bad">'+esc(pl.refused)+'</span>'; return; }
+  if(!keys.length){ $("#plApplied").textContent = pl.active
+    ? "on, but nothing is loosened yet — turn on \u201cact on incomplete information\u201d or lower the cost hurdle"
+    : "the published calibration is in force"; return; }
+  $("#plApplied").innerHTML = keys.map(function(k){
+    var a=applied[k];
+    return '<div>'+esc(k)+': <b>'+esc(String(a.from))+'</b> \u2192 <b>'+esc(String(a.to))+'</b>'+
+      (a.clampedFrom!=null?' <span class="badge2 b-warn">clamped from '+esc(String(a.clampedFrom))+'</span>':'')+'</div>';
+  }).join("");
+}
+
 $("#btnRegime").addEventListener("click",function(){
   runButton(this,"setRegime",{vix:$("#inpVix").value,vixMedian:$("#inpVixMed").value,cor3m:$("#inpCor").value},function(){toast("Regime fields updated with current timestamps");refresh(false);}); });
 $("#btnAccount").addEventListener("click",function(){
@@ -1933,10 +2029,31 @@ $("#btnRecall").addEventListener("click",function(){
       + '</div>'
       + '<button class="btn ' + (st === "paused" ? "gold" : "ghost") + '" id="deskBtn" '
       +   'style="font-size:16px;padding:16px 34px;min-width:210px">' + c.btn + '</button>'
+      +   '<button class="btn" id="deskRun" style="font-size:13px;padding:10px 18px;margin-top:9px;'
+      +     'display:block;width:100%">Run a cycle now</button>'
+      +   '<div class="hint" id="deskRunMsg" style="margin-top:7px;text-align:center;max-width:230px">'
+      +     'Normally it runs itself every few minutes.</div>'
       + '</div>' + warn;
     document.getElementById("deskBtn").onclick = function(){
       if (st === "paused") { STEP = 1; CHOICE = "watch"; dialog(); }
       else pauseDialog();
+    };
+    /* A desk whose only trigger is cron gives the operator no way to tell a
+       stopped system from a quiet one. This asks for a cycle immediately and
+       says plainly what came back. */
+    document.getElementById("deskRun").onclick = function(){
+      var b = this, msg = document.getElementById("deskRunMsg");
+      b.disabled = true; msg.textContent = "Starting…";
+      api("runCycleNow", { operator: "desk" }).then(function(r){
+        if (r && r.ok) {
+          msg.textContent = r.note || "A cycle is running.";
+          setTimeout(function(){ if (window.refresh) window.refresh(); }, 12000);
+        } else {
+          msg.textContent = "Not started — " + ((r && r.refused) || "refused")
+            + (r && r.retryInSeconds ? " (try again in " + r.retryInSeconds + "s)" : "");
+        }
+      }).catch(function(e){ msg.textContent = "Could not start it: " + e.message; })
+        .finally(function(){ b.disabled = false; });
     };
   }
 
