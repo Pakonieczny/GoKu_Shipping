@@ -954,6 +954,7 @@ const ACTIONS = {
 
   async health() {
     const settings = await M.loadMarketSettings({ force: true });
+    const auth = await AUTH.loadAuthSecrets({ force: true });
     const p = M.activeProvider();
     return {
       ok: true,
@@ -964,8 +965,15 @@ const ACTIONS = {
       env: {
         firebase: !!(process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_PROJECT_ID),
         openai: !!process.env.OPENAI_API_KEY,
-        passcode: !!process.env.INVESTOR_PASSCODE,
-        alpacaCredentials: !!(process.env.ALPACA_API_KEY_ID && process.env.ALPACA_API_SECRET_KEY),
+      },
+      /* Presence and origin only. No secret value is ever returned here. */
+      secrets: {
+        passcode: !!(auth.passcode || "").length,
+        sessionSecret: (auth.sessionSecret || "").length >= 32,
+        authSource: auth.source,
+        alpacaCredentials: M.providerCredentialed("alpaca"),
+        credentialSource: settings.credentialSource,
+        ...(auth.note ? { authNote: auth.note } : {}),
       },
       /* provider/feed are operator settings in InvestorAI_Control/marketConfig,
          not environment variables; `source` says which layer answered. */
@@ -990,6 +998,9 @@ exports.handler = async (event) => {
   if ((event.body || "").length > MAX_BODY) {
     return AUTH.json(event, 413, { error: "request too large" });
   }
+  /* Resolve the operator secrets before the guard reads them. A failed read
+     leaves requireOperator answering AUTH_NOT_CONFIGURED, never open. */
+  await AUTH.loadAuthSecrets();
 
   let body = {};
   try { body = JSON.parse(event.body || "{}"); }

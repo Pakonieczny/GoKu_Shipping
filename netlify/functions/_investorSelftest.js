@@ -490,6 +490,27 @@ function runFixtures() {
     }
   }));
 
+  cases.push(fixture("secret_pair_gate_refuses_every_unusable_shape", () => {
+    /* Operator secrets moved from the Lambda environment to
+       InvestorAI_Control. usableSecretPair is the gate that decides whether a
+       document may authenticate at all; it is attested here as a pure
+       predicate so the result cannot depend on cache state. */
+    const AU = require("./_investorAuth");
+    const P = "p".repeat(16), S32 = "s".repeat(32);
+    if (AU.usableSecretPair(P, S32) !== true) return false;
+    const bad = [
+      [P, "s".repeat(31)], ["p".repeat(15), S32], ["", S32], [P, ""],
+      [null, S32], [P, null], [undefined, undefined],
+      [12345678901234567890, S32], [true, S32], [[P], S32], [{}, S32],
+      ["   " + "p".repeat(13), S32], [P, "   " + "s".repeat(29)],
+    ];
+    for (const [a, b] of bad) if (AU.usableSecretPair(a, b) !== false) return false;
+    /* And an uncredentialed provider degrades to a lane that cannot trade. */
+    return M.activeProvider.length === 0
+      && M.providerCredentialed("nonexistent-provider") === true
+      && M.providerCredentialed("alpaca") === M.providerCredentialed("alpaca");
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */

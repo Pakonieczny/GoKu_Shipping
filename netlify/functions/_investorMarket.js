@@ -104,8 +104,31 @@ function envMarketSettings() {
   return {
     provider: PROVIDERS[provider] ? provider : "manual",
     feed: FEEDS.has(feed) ? feed : "iex",
+    alpacaKeyId: String(process.env.ALPACA_API_KEY_ID || ""),
+    alpacaSecretKey: String(process.env.ALPACA_API_SECRET_KEY || ""),
     source: process.env.INVESTOR_MARKET_PROVIDER ? "environment" : "default",
+    credentialSource: process.env.ALPACA_API_KEY_ID ? "environment" : "unset",
   };
+}
+
+/** Credentials for a provider, resolved the same way as provider/feed. */
+function providerCredentials(providerId) {
+  const s = marketSettings();
+  if (String(providerId || "").toLowerCase() === "alpaca") {
+    return { keyId: s.alpacaKeyId || "", secretKey: s.alpacaSecretKey || "" };
+  }
+  return { keyId: "", secretKey: "" };
+}
+
+/** Whether every credential the provider needs has resolved from some layer. */
+function providerCredentialed(providerId) {
+  const id = String(providerId || "").toLowerCase();
+  if (id === "alpaca") {
+    const c = providerCredentials("alpaca");
+    return !!(c.keyId && c.secretKey);
+  }
+  if (id === "massive") return !!process.env.MASSIVE_API_KEY;
+  return true;
 }
 
 /** Synchronous view of the resolved settings. Never throws. */
@@ -132,9 +155,17 @@ async function loadMarketSettings({ force = false } = {}) {
       const rawFeed = String(d.feed || "").toLowerCase();
       const provider = PROVIDERS[rawProvider] ? rawProvider : null;
       const feed = FEEDS.has(rawFeed) ? rawFeed : null;
+      /* Credentials are taken as a PAIR or not at all. A document carrying
+         only a key id must not silently pair it with an environment secret. */
+      const keyId = typeof d.alpacaKeyId === "string" ? d.alpacaKeyId.trim() : "";
+      const secretKey = typeof d.alpacaSecretKey === "string" ? d.alpacaSecretKey.trim() : "";
+      const bothPresent = keyId.length > 0 && secretKey.length > 0;
       _marketSettings = {
         provider: provider || fallback.provider,
         feed: feed || fallback.feed,
+        alpacaKeyId: bothPresent ? keyId : fallback.alpacaKeyId,
+        alpacaSecretKey: bothPresent ? secretKey : fallback.alpacaSecretKey,
+        credentialSource: bothPresent ? "firestore" : fallback.credentialSource,
         source: provider ? "firestore" : fallback.source,
         ...(rawProvider && !provider
           ? { note: `unrecognised provider "${rawProvider.slice(0, 24)}" ignored` } : {}),
@@ -185,9 +216,10 @@ function feedVolumeShare(provider, feed = null) {
 function activeProvider() {
   const want = String(marketSettings().provider || "manual").toLowerCase();
   const p = PROVIDERS[want] || PROVIDERS.manual;
-  if (p.keyEnv.length && !p.keyEnv.every((k) => process.env[k])) {
+  if (p.keyEnv.length && !providerCredentialed(p.id)) {
     // Configured but not credentialed — degrade loudly rather than fail a cycle.
-    return { ...PROVIDERS.manual, degradedFrom: p.id, reason: `missing ${p.keyEnv.join("/")}` };
+    return { ...PROVIDERS.manual, degradedFrom: p.id,
+      reason: `missing credentials for ${p.id} (InvestorAI_Control/marketConfig or ${p.keyEnv.join("/")})` };
   }
   return p.id === "alpaca" ? providerConfig(p.id) : p;
 }
@@ -421,8 +453,8 @@ async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed 
     const r = await fetchPublic(url, {
       sourceId: "alpaca.bars", accept: ["json"], timeoutMs: 20000,
       headers: {
-        "APCA-API-KEY-ID": process.env.ALPACA_API_KEY_ID || "",
-        "APCA-API-SECRET-KEY": process.env.ALPACA_API_SECRET_KEY || "",
+        "APCA-API-KEY-ID": providerCredentials("alpaca").keyId,
+        "APCA-API-SECRET-KEY": providerCredentials("alpaca").secretKey,
       },
     });
     const bars = (r.json && r.json.bars) || {};
@@ -688,6 +720,7 @@ module.exports = {
   PROVIDERS, providerConfig, activeProvider, FEED_VOLUME_SHARE, feedVolumeShare,
   sessionState, marketCalendar, nyParts, CALENDAR_VERSION, lastRegularOpenMs,
   marketSettings, loadMarketSettings, MARKET_SETTINGS_DOC,
+  providerCredentials, providerCredentialed,
   tradingSessionsBetween,
   slippageBps, executionCostContext,
   fetchBars, mapMassiveResults, validateBar, normalizeBars, partitionBarsBySession, gradeSeries, firstEligibleBar,

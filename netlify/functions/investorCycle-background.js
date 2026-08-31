@@ -30,7 +30,8 @@
 "use strict";
 
 const A = require("./_investorAdmin");
-const { verifyWorkerNonce, redact } = require("./_investorAuth");
+const AUTH = require("./_investorAuth");
+const { verifyWorkerNonce, redact } = AUTH;
 const M = require("./_investorMarket");
 const H = require("./_investorHistory");
 const W = require("./_investorWorkset");
@@ -1864,6 +1865,11 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch {}
   const { jobId, task, nonce } = body;
+
+  /* The nonce is verified against the session secret, so it must resolve
+     first. If it cannot, verifyWorkerNonce returns null and this public URL
+     rejects everything — including its own scheduler. */
+  await AUTH.loadAuthSecrets();
 
   // A background function is a public URL. Only a nonce minted by the
   // scheduler for THIS job and THIS function is accepted.
