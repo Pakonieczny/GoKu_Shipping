@@ -3,7 +3,10 @@
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["sharp", "@resvg/resvg-js"]
+  # @google-cloud/firestore is external because it loads gRPC .proto files
+  # through dynamic requires that esbuild cannot follow. Bundled, the
+  # Investor_AI functions deploy clean and fail at runtime.
+  external_node_modules = ["sharp", "@resvg/resvg-js", "@google-cloud/firestore"]
   # Asset bundling: every file matching these patterns gets copied into
   # the bundle directory of every function, alongside the bundled .js.
   # Functions reference these via path.join(__dirname, "...") at runtime.

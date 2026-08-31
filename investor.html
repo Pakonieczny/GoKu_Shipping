@@ -195,9 +195,11 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
   .wrap{padding:14px}
   .topbar{padding:11px 14px}
   .kpis{grid-template-columns:repeat(2,1fr)}
+  #perfKpis{grid-template-columns:repeat(2,1fr)!important}
   .two,.three{grid-template-columns:1fr}
   .signin{grid-template-columns:1fr}.signin__art{display:none}
 }
+@media(max-width:520px){#perfKpis{grid-template-columns:1fr!important}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -243,8 +245,10 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <button data-v="briefing" class="active">Briefing</button>
       <button data-v="candidates">Candidates <span class="badge" id="nBreach">0</span></button>
       <button data-v="positions">Positions <span class="badge" id="nPos">0</span></button>
+      <button data-v="performance">Performance</button>
       <button data-v="approvals">Approvals <span class="badge" id="nOrders">0</span></button>
       <button data-v="learning">Learning <span class="badge" id="nLearn">—</span></button>
+      <button data-v="intelligence">Intelligence <span class="badge" id="nIntel">0</span></button>
       <button data-v="notrade">No-trade log</button>
       <button data-v="ledger">Ledger &amp; cost</button>
       <button data-v="sources">Sources</button>
@@ -290,9 +294,9 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <span class="sub" id="costVerdict">—</span>
           </div>
           <p style="font-size:12.5px;color:var(--ink-70);line-height:1.6;max-width:74ch">
-            At roughly 400% one-sided monthly turnover this book spends between 2.4% and 9.6% a year on
-            frictions depending on where it trades. Whether cumulative gross edge exceeds cumulative
-            friction <b>is</b> the experiment — so it leads the page rather than hiding in a footnote.
+            High-turnover signals can disappear after spread and impact. Whether this account's recorded
+            gross edge exceeds its own recorded friction <b>is</b> the experiment — so measured dollars,
+            not a backtest estimate, lead the page.
           </p>
           <div class="meter"><i id="costBar" class="good" style="width:0%"></i></div>
           <div class="meterlab">
@@ -334,7 +338,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
         <div class="note">
           Every ranked name appears here, not just the ones that fired. A candidate that was
           <b>stopped</b> is as informative as one that passed — the chip that blocked it is shown
-          first, and the full gate stack is inside.
+          first, and the full gate stack is inside. <span id="candCoverage"></span>
         </div>
         <div class="appr" id="candList"></div>
       </section>
@@ -342,10 +346,9 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <!-- ─── POSITIONS ─── -->
       <section class="view" id="v-positions">
         <div class="note">
-          Exits are evaluated on every cycle. The <b>buy/hold spread</b> holds a position until its
-          cross-sectional rank crosses the median rather than exiting at a fixed threshold — on an
-          identical signal that change moved net returns from +31.5bp/week to +53.1bp/week and cut
-          turnover from ~700% to ~330%. The exit rule is the highest-value use of the 5-minute loop.
+          Exits are evaluated on every guard cycle, including while entries are killed or paused.
+          Rank exits require a current cross-section; otherwise only price, earnings, or time controls
+          may close the position. A missing rank is shown as unknown rather than silently treated as zero.
         </div>
         <div class="card pad"><div class="scrollcap"><table id="tPos"><thead><tr>
           <th>Symbol</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Last</th>
@@ -353,11 +356,38 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
         </tr></thead><tbody></tbody></table></div></div>
       </section>
 
+      <!-- ─── PERFORMANCE ─── -->
+      <section class="view" id="v-performance">
+        <div class="note">
+          Performance uses daily marked NAV and source-hashed open-position marks. The comparator is an
+          equal-weight buy-and-hold of every frozen eligible name with overlapping history, over the same
+          dates. It is descriptive until enough daily marks exist and is never used to tune the frozen rules.
+        </div>
+        <div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px" id="perfKpis">
+          <div class="kpi"><div class="lab">Account return</div><div class="val" id="perfReturn">—</div><div class="delta" id="perfDays">daily marks</div></div>
+          <div class="kpi accent"><div class="lab">Vs frozen universe</div><div class="val" id="perfExcess">—</div><div class="delta" id="perfBench">same dates</div></div>
+          <div class="kpi"><div class="lab">Max drawdown</div><div class="val" id="perfDrawdown">—</div><div class="delta" id="perfDdDate">peak to trough</div></div>
+          <div class="kpi"><div class="lab">Daily Sharpe</div><div class="val" id="perfSharpe">—</div><div class="delta">annualised; zero cash rate</div></div>
+        </div>
+        <div class="grid two">
+          <div class="card pad">
+            <div class="card__h"><h3>Marked equity curve</h3><span class="sub" id="perfWindow">—</span></div>
+            <div id="perfChart"><div class="empty">Open this view to load performance.</div></div>
+          </div>
+          <div class="card pad">
+            <div class="card__h"><h3>Interpretation</h3></div>
+            <div id="perfSummary"></div>
+            <div class="card__h" style="margin-top:18px"><h3>Current marked book</h3></div>
+            <div id="perfBook"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- ─── APPROVALS ─── -->
       <section class="view" id="v-approvals">
-        <div class="note warn">
-          Approval mode. Every entry and exit is a human decision. Nothing here reaches a broker —
-          approving writes a simulated fill against the next eligible bar's open plus adverse slippage.
+        <div class="note warn" id="approvalStateNote">
+          Nothing here reaches a broker. Approval reserves virtual cash; a separate guard cycle may fill
+          only against a source-hashed bar whose open is later than the decision, feed delay, and execution latency.
         </div>
         <div class="appr" id="orderList"></div>
       </section>
@@ -365,11 +395,10 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <!-- ─── LEARNING ─── -->
       <section class="view" id="v-learning">
         <div class="note">
-          Six fixed strategies run side by side on every stock, every cycle — whether or not anything was
-          actually bought. They cost nothing and they tell us which approach works. <b>None of them ever
-          changes.</b> A system that rewrites its own rules always looks like it is improving, because it is
-          just memorising past noise. These six were locked in before any data arrived, so we are picking a
-          winner rather than inventing one.
+          A preregistered policy family runs as self-financing shadow portfolios on the same union of eligible
+          opportunities. Each obeys cash, concentration, timing, and cost constraints. <b>None changes in
+          place.</b> Selection uses weighted serially robust inference, DSR/PBO controls, historical stress,
+          and a locked future-paper confirmation; diagnostic weights compare evidence and never split capital.
         </div>
 
         <div class="card pad" style="margin-bottom:16px">
@@ -382,16 +411,16 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           <div class="meter"><i id="learnBar" class="good" style="width:0%"></i></div>
           <div class="meterlab">
             <span>collected <b id="learnHave">0</b> days</span>
-            <span>needed <b id="learnNeed">625</b></span>
+            <span>needed <b id="learnNeed">1137</b></span>
             <span id="learnPct">0%</span>
           </div>
           <div class="note" id="learnNote" style="margin-top:12px">—</div>
         </div>
 
         <div class="card pad">
-          <div class="card__h"><h3>The six strategies</h3><span class="sub" id="learnClosed">—</span></div>
+          <div class="card__h"><h3>The frozen policy family</h3><span class="sub" id="learnClosed">—</span></div>
           <div class="scrollcap"><table id="tLearn"><thead><tr>
-            <th>Strategy</th><th class="num">Share of the book (once proven)</th><th class="num">Trades</th>
+            <th>Policy</th><th class="num">Evidence weight</th><th class="num">Trades</th>
             <th class="num">Days</th><th class="num">Avg result</th><th class="num">Avg cost</th>
             <th class="num">Win rate</th><th>Verdict</th>
           </tr></thead><tbody></tbody></table></div>
@@ -399,13 +428,37 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
         </div>
       </section>
 
+      <!-- ─── COMPANY INTELLIGENCE ─── -->
+      <section class="view" id="v-intelligence">
+        <div class="note">
+          The same research engine is used for every selected company. SEC identity and SIC choose the
+          sector/regulator/publication pack; cited documents build a bounded customer, supplier, union,
+          regulator, product and industry-event graph. Discovery leads never count as confirmation.
+        </div>
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h"><h3>Monitored companies</h3><span class="sub" id="intelMeta">—</span></div>
+          <div class="ctrlrow">
+            <span class="lab">Symbols</span>
+            <input class="inp" id="intelWatch" placeholder="AAPL, MSFT, JPM" style="max-width:420px">
+            <button class="btn sm" id="btnIntelWatch">Save watchlist</button>
+            <span class="hint">1–24 symbols from the frozen eligible universe. A change resets policy attestation and leaves exits active.</span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Optional domains</span>
+            <input class="inp" id="intelDomains" placeholder="NVDA=nvidia.com MSFT=microsoft.com" style="max-width:420px">
+            <span class="hint">Usually automatic from SEC-linked issuer pages. Add only domains you have independently verified.</span>
+          </div>
+        </div>
+        <div class="appr" id="intelList"><div class="empty">No company dossier has completed yet.</div></div>
+      </section>
+
       <!-- ─── KNOBS ─── -->
       <section class="view" id="v-knobs">
         <div class="note">
           Every setting the system uses, in plain language. These live in
           <b>_investorStrategy.js</b> — edit that file and redeploy to change them.
-          Nothing here changes by itself; the system only learns which of the eight fixed
-          strategies to favour, never what these numbers should be.
+          Nothing here changes by itself; the system only learns which preregistered fixed
+          policy to favour, never what these numbers should be.
         </div>
         <div id="knobBox"></div>
       </section>
@@ -449,9 +502,20 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           "No cause detected" means <b>within these lanes</b>. The system cannot bound sources it does
           not cover, so a degraded lane weakens that label rather than being hidden.
         </div>
-        <div class="card pad"><div class="scrollcap"><table id="tSources"><thead><tr>
+        <div class="card pad" style="margin-bottom:16px"><div class="scrollcap"><table id="tSources"><thead><tr>
           <th>Source</th><th>Tier</th><th>Class</th><th>Health</th><th>Last success</th><th>Notes</th>
         </tr></thead><tbody></tbody></table></div></div>
+
+        <div class="card pad">
+          <div class="card__h"><h3>Held-out names</h3><span class="sub" id="elgSummary">—</span></div>
+          <div class="note">
+            These names are never proposed. The exclusions are an explicit property of the experiment,
+            so an operator can distinguish a quiet sector from one deliberately held out of eligibility.
+          </div>
+          <div class="scrollcap"><table id="tEligibility"><thead><tr>
+            <th>Exclusion</th><th>Count</th><th>Symbols</th>
+          </tr></thead><tbody></tbody></table></div>
+        </div>
       </section>
 
       <!-- ─── CONTROL ─── -->
@@ -459,15 +523,32 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
         <div class="card pad" style="margin-bottom:16px">
           <div class="card__h"><h3>Operating mode</h3></div>
           <div class="ctrlrow">
-            <span class="lab">Automation stage</span>
-            <select class="inp" id="selMode" style="max-width:220px">
+            <span class="lab">Measured stage</span>
+            <span class="badge2 b-info" id="modeState">—</span>
+            <span class="hint">The ladder computes this stage from measured gates. It cannot be manually pinned upward.</span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Operator ceiling</span>
+            <select class="inp" id="ceilSel" style="max-width:220px">
               <option value="research">Research only</option>
               <option value="approval">Approval paper</option>
               <option value="shadow">Shadow auto</option>
               <option value="limited_auto">Limited auto paper</option>
             </select>
-            <button class="btn sm" id="btnMode">Set</button>
-            <span class="hint">Research writes candidates and no-trade records but no orders. Each later stage unlocks only after its promotion gate is measured, not asserted.</span>
+            <button class="btn sm" id="btnCeil">Set ceiling</button>
+            <span class="hint">This can cap or immediately lower autonomy. Raising it only permits the measured ladder to advance after every gate passes.</span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Operator hold</span>
+            <button class="btn ghost sm" id="btnHold">Toggle hold</button>
+            <span class="badge2" id="holdState">—</span>
+            <span class="hint">A hold prevents promotion without erasing evidence or interfering with exits.</span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Safety identity</span>
+            <button class="btn sm" id="btnSafety">Activate current build</button>
+            <span class="badge2" id="safetyState">—</span>
+            <span class="hint">Binds account, frozen universe, strategy, variants, fixture result, and deployed commit. Activation leaves dry run on.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Dry run</span>
@@ -481,6 +562,13 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <span style="font-size:12px;color:var(--ink-45)">seconds</span>
             <button class="btn sm" id="btnCycle">Set</button>
             <span class="hint">Netlify documents no minimum cron interval and sub-hourly schedules are known to drift, so nothing assumes an exact fire count.</span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Entry freeze</span>
+            <span class="badge2" id="freezeState">open</span>
+            <button class="btn sm" id="btnFreezeEntries">Freeze</button>
+            <button class="btn ghost sm" id="btnUnfreezeEntries">Unfreeze</button>
+            <span class="hint">A reversible pause on new risk. It blocks proposals, approvals and fills and returns existing entry reservations; exits, marks and stops continue.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Kill switch</span>
@@ -508,15 +596,31 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           <div class="card__h"><h3>Setup</h3></div>
           <div class="ctrlrow">
             <span class="lab">Paper account</span>
+            <input class="inp mono" id="inpAccountId" type="text" value="paper-1" maxlength="40" style="max-width:150px" aria-label="Paper account ID">
             <input class="inp mono" id="inpNav" type="number" value="100000" step="1000" style="max-width:150px">
             <button class="btn sm" id="btnAccount">Open / reopen</button>
-            <span class="hint">Starting virtual NAV in dollars. Opening posts a balanced capital-contribution entry.</span>
+            <span class="hint">Opening or changing an account posts capital if needed, resets the safety identity, and returns the system to research dry run.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Universe</span>
-            <button class="btn ghost sm" id="btnFreeze">Freeze v1</button>
+            <button class="btn ghost sm" id="btnFreeze">Verify &amp; freeze current</button>
             <button class="btn ghost sm" id="btnCiks">Resolve CIKs from SEC</button>
             <span class="hint">Freezing stamps the roster so additions cannot be backdated. CIK resolution pulls SEC's own ticker map — a guessed CIK polls the wrong filer silently.</span>
+          </div>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h"><h3>External cause-recall benchmark</h3><span class="sub">blocking for limited auto</span></div>
+          <div class="note warn">Import only independently labelled known-cause events. The lower 95% Wilson bound, not the point estimate, must reach 80% on at least 100 events. The SHA-256 binds the exact label set.</div>
+          <div class="ctrlrow">
+            <span class="lab">True positives / false negatives</span>
+            <input class="inp mono" id="inpTp" type="number" min="0" step="1" placeholder="TP" style="max-width:100px">
+            <input class="inp mono" id="inpFn" type="number" min="0" step="1" placeholder="FN" style="max-width:100px">
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Label-set SHA-256</span>
+            <input class="inp mono" id="inpRecallHash" type="text" minlength="64" maxlength="64" placeholder="64 lowercase hex characters" style="max-width:520px">
+            <button class="btn sm" id="btnRecall">Record benchmark</button>
           </div>
         </div>
 
@@ -549,6 +653,17 @@ function usd(n){ if(n==null||isNaN(n)) return "—";
   return (n<0?"-$":"$")+Math.abs(Number(n)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function num(n,d){ return n==null||isNaN(n)?"—":Number(n).toFixed(d==null?2:d); }
 function toast(m){ var t=$("#toast"); t.textContent=m; t.classList.add("on"); setTimeout(function(){t.classList.remove("on");},2600); }
+function shortHash(h){ return /^[a-f0-9]{64}$/.test(String(h||"")) ? String(h).slice(0,12)+"…" : "missing"; }
+function ageText(v){ var ms=Date.now()-Date.parse(v||""); if(!Number.isFinite(ms)) return "unknown age";
+  if(ms<60000) return Math.max(0,Math.round(ms/1000))+"s old";
+  if(ms<3600000) return Math.round(ms/60000)+"m old";
+  return Math.round(ms/3600000)+"h old"; }
+function runButton(button, action, payload, onSuccess){
+  if(!button || button.disabled) return;
+  button.disabled=true; button.setAttribute("aria-busy","true");
+  api(action,payload||{}).then(onSuccess).catch(function(e){toast(e.message);})
+    .finally(function(){button.disabled=false;button.removeAttribute("aria-busy");});
+}
 
 function api(action, extra){
   var body = Object.assign({action:action}, extra||{});
@@ -585,8 +700,10 @@ try { var s = sessionStorage.getItem("inv_s"); if(s && typeof s==="string" && s.
 var TITLES = { briefing:["Briefing","Cycle summary, regime and the cost meter"],
   candidates:["Candidates","Every ranked name with its full gate stack"],
   positions:["Positions","Open exposure and exit progress"],
+  performance:["Performance","Marked NAV, drawdown, costs and the frozen-universe comparator"],
   approvals:["Approvals","Proposed orders awaiting a human decision"],
-  learning:["Learning","Six fixed strategies competing — which one earns the money"],
+  learning:["Learning","Frozen self-financing policies under controlled comparison"],
+  intelligence:["Company intelligence","Agnostic public-source dossiers, relationships and decision impact"],
   knobs:["Settings explained","Every dial, what it does, and what happens if you move it"],
   notrade:["No-trade log","Why candidates were stopped"],
   ledger:["Ledger & cost","Double-entry journal and the friction meter"],
@@ -602,6 +719,8 @@ $$("#nav button").forEach(function(b){
     $("#viewTitle").textContent=TITLES[v][0]; $("#viewSub").textContent=TITLES[v][1];
     document.body.classList.remove("navOpen");
     if(v==="learning") loadLearning();
+    if(v==="intelligence") loadIntelligence();
+    if(v==="performance") loadPerformance();
     if(v==="knobs") loadKnobs();
     if(v==="notrade") loadNoTrade();
     if(v==="ledger") loadLedger();
@@ -655,9 +774,12 @@ function render(){
 
   var cands = DASH.candidates||[], breaches = DASH.breaches||[];
   var pos = DASH.positions||[], ords = DASH.orders||[];
+  var intel=DASH.intelligence||[];
   $("#nBreach").textContent=breaches.length; $("#nPos").textContent=pos.length; $("#nOrders").textContent=ords.length;
+  $("#nIntel").textContent=intel.length;
 
   var sum = (c.lastCycleSummary)||{};
+  var guardSum = (c.lastGuardSummary)||{};
   $("#kRanked").textContent = sum.ranked!=null? sum.ranked : cands.length;
   $("#kBreach").textContent = breaches.length;
   $("#kPos").textContent = pos.length;
@@ -674,7 +796,7 @@ function render(){
   renderMovers(cands);
   renderBootstrap(DASH.bootstrap||{});
   renderMemory(sum.history||null, sum.symbols||0);
-  renderRisk(sum.risk||null);
+  renderRisk(sum.risk||null, guardSum.positionCoverage||sum.positionCoverage||null);
   renderLiveConfig(sum.liveConfig||null);
   renderLadder(sum.ladder||null);
   renderRegime(DASH.regime||{});
@@ -682,9 +804,21 @@ function render(){
   renderCandidates(cands);
   renderPositions(pos, cands);
   renderOrders(ords);
+  renderIntelligence(intel, c.intelligenceSymbols||[]);
 
   $("#cycleLab").textContent = DASH.cycleId||"—";
-  $("#selMode").value = c.mode||"research";
+  $("#candCoverage").textContent = DASH.candidateSetComplete
+    ? ("Complete: "+DASH.candidateTotal+" of "+DASH.candidateExpected+" frozen eligible names.")
+    : ("INCOMPLETE: "+DASH.candidateTotal+" of "+(DASH.candidateExpected||"?")+" frozen eligible names; absence is not evidence.");
+  $("#modeState").textContent = c.mode||"research";
+  $("#modeState").className = "badge2 "+((c.mode||"research")==="research"?"b-warn":"b-on");
+  $("#ceilSel").value = c.operatorCeiling||"approval";
+  $("#holdState").textContent = c.operatorHold?"HELD":"open";
+  $("#holdState").className = "badge2 "+(c.operatorHold?"b-warn":"b-on");
+  $("#freezeState").textContent = c.entriesFrozen?"FROZEN":"open";
+  $("#freezeState").className = "badge2 "+(c.entriesFrozen?"b-warn":"b-on");
+  $("#safetyState").textContent = c.safetyEpochValid?"current":"not active";
+  $("#safetyState").className = "badge2 "+(c.safetyEpochValid?"b-on":"b-bad");
   $("#dryState").textContent = c.dryRun?"ON":"OFF";
   $("#dryState").className = "badge2 "+(c.dryRun?"b-warn":"b-on");
   if(!$("#inpCycle").matches(":focus")) $("#inpCycle").value = c.cycleSeconds||300;
@@ -692,6 +826,10 @@ function render(){
   if(!$("#inpVix").matches(":focus") && r.vix) $("#inpVix").value=r.vix;
   if(!$("#inpVixMed").matches(":focus") && r.vixMedian) $("#inpVixMed").value=r.vixMedian;
   if(!$("#inpCor").matches(":focus") && r.cor3m) $("#inpCor").value=r.cor3m;
+  if(!$("#inpAccountId").matches(":focus")) $("#inpAccountId").value=c.accountId||"paper-1";
+  $("#approvalStateNote").innerHTML = c.mode==="approval"
+    ? "<b>Approval stage.</b> Entries await a human decision. Approval reserves virtual cash; a later guard cycle still rechecks controls, policy identity, data quality, and the exact post-decision execution clock."
+    : "<b>Current stage: "+esc(c.mode||"research")+".</b> Nothing reaches a broker. Proposed paper orders, if any, still require the transition appropriate to the measured stage and are revalidated at fill time.";
 }
 
 function renderCost(cost){
@@ -709,7 +847,7 @@ function renderCost(cost){
 
 function causeTag(cause){
   var map = {
-    "attention_driven":["attention","Attention"],
+    "abnormal_activity_without_covered_fundamental_event":["attention","Abnormal activity"],
     "cause_detected_fundamental":["fundamental","Fundamental"],
     "no_cause_detected_in_covered_sources":["nocause","No cause"],
     "evidence_pending":["pending","Pending"]
@@ -770,7 +908,7 @@ function renderBootstrap(b){
    and open losses were invisible because positions were reported at cost. */
 /* WHICH STRATEGY IS ACTUALLY RUNNING RIGHT NOW.
    This panel exists because for a long time the answer was "always the
-   baseline", while a table headed "Share of money" implied otherwise. */
+   baseline", while a diagnostic comparison table implied capital allocation. */
 function renderLiveConfig(lc){
   var box=$("#liveCfgBox"); if(!box) return;
   if(!lc){ $("#liveCfgAsOf").textContent="—"; box.innerHTML='<div class="empty" style="padding:14px">No cycle yet.</div>'; return; }
@@ -814,7 +952,7 @@ function renderLadder(l){
     (l.notes&&l.notes.length?'<div style="color:var(--ink-70);font-size:11.5px;margin-top:9px;line-height:1.55">'+l.notes.map(function(n){return esc(n);}).join("<br>")+'</div>':'');
 }
 
-function renderRisk(r){
+function renderRisk(r, coverage){
   var box=$("#riskBox"); if(!box) return;
   if(!r){
     $("#riskAsOf").textContent="—";
@@ -843,8 +981,14 @@ function renderRisk(r){
     }).join("")+
     (top?'<div style="margin-top:9px"><div class="eyebrow" style="margin-bottom:5px">Biggest concentrations (cap 10%)</div>'+top+'</div>':'')+
     (r.markCoveragePct!=null&&r.markCoveragePct<100
-      ? '<div class="note warn" style="margin-top:9px">Only '+num(r.markCoveragePct,0)+'% of positions have a live price. The rest are shown at what was paid, so the real figure could be better or worse.</div>'
+      ? '<div class="note warn" style="margin-top:9px">Only '+num(r.markCoveragePct,0)+'% of positions have validated current marks. Cost basis is displayed only as an explicit fallback; account breakers halt new entries until every open mark is trusted.</div>'
       : '')+
+    (coverage&&((coverage.unevaluated||[]).length||(coverage.unpriced||[]).length||(coverage.pendingUrgentExits||[]).length)
+      ? '<div class="note warn" style="margin-top:9px"><b>Position-management coverage needs attention.</b> '+
+        (coverage.unpriced||[]).length+' unpriced; '+(coverage.unevaluated||[]).length+' unevaluated; '+
+        (coverage.pendingUrgentExits||[]).length+' urgent exit(s) pending 30+ minutes. Symbols: '+
+        esc([].concat(coverage.unpriced||[],coverage.unevaluated||[],(coverage.pendingUrgentExits||[]).map(function(x){return x.symbol;})).filter(function(x,i,a){return a.indexOf(x)===i;}).join(" ")||"none")+'</div>'
+      : (coverage?'<div class="note" style="margin-top:9px">Position management reached '+coverage.evaluated+' of '+coverage.open+' open positions this cycle.</div>':''))+
     (r.portfolioBlocks?'<div style="color:var(--ink-70);font-size:11.5px;margin-top:9px">'+r.portfolioBlocks+' candidate(s) were refused this cycle because the book had no room — see the no-trade log.</div>':'');
 }
 
@@ -1051,7 +1195,7 @@ function derivation(c){
     t:"Raw price alone is not the signal. A 4% drop on a day the sector fell 3.7% is a 0.3% residual move."});
   var b = c.betas||{};
   steps.push({n:"2 · factor strip", v:"β mkt "+num(b.market,2)+" · β sec "+num(b.sector,2)+" ("+esc(b.sectorId||"?")+")",
-    t:"Market and sector returns removed using leave-one-out factors, so the name is not part of its own benchmark. Controlling for factor exposure roughly doubles the Sharpe and lifts break-even cost from 10bp to 56bp."});
+    t:"Market and sector returns are removed with a joint intercept/market/sector regression and leave-one-out sector-balanced factors, so the name is not part of its own benchmark. The benefit is measured in the shadow experiment rather than asserted here."});
   steps.push({n:"3 · residual", v:(c.cumResidualBps==null?"—":num(c.cumResidualBps,0)+"bp over the window, z "+num(c.z,2)),
     t:"What is left after the market and the sector are accounted for. This is the number the strategy trades."});
   var hx = c.history||null;
@@ -1081,7 +1225,7 @@ function derivation(c){
     t:"Expected reversion is haircut 50% for post-publication decay and must clear twice the modelled round-trip friction before the name is proposed at all."});
   var sz = c.sizing||{};
   steps.push({n:"8 · sizing", v:"×"+num(sz.combined,3),
-    t:"Volatility scaler ×"+num(sz.volScaler,2)+" (reversal in liquid names is near-zero unconditionally; a 1pp rise in normalised VIX predicts +0.22pp of daily return), dispersion ×"+num(sz.dispersionMult,2)+", cause confidence ×"+num(sz.causeConfidence,2)+"."});
+    t:"Volatility scaler ×"+num(sz.volScaler,2)+" (bounded at one, so stress never increases dollars at risk), dispersion ×"+num(sz.dispersionMult,2)+", cause confidence ×"+num(sz.causeConfidence,2)+". Unknown correlation blocks new risk."});
 
   return '<div class="derivation">'+steps.map(function(s){
     return '<div class="step"><span class="n">'+esc(s.n)+'</span>'+
@@ -1179,17 +1323,20 @@ function renderPositions(pos, cands){
   pos.forEach(function(p){
     var c=byS[p.symbol]||{};
     var held = p.openedAt ? ((Date.now()-Date.parse(p.openedAt))/864e5) : 0;
-    var rank = c.rank==null?0:c.rank;
-    var prog = Math.max(0,Math.min(100,(rank/0.5)*100));
+    var hasRank = Number.isFinite(Number(c.rank));
+    var rank = hasRank?Number(c.rank):null;
+    var prog = hasRank?Math.max(0,Math.min(100,(rank/0.5)*100)):null;
+    var mark = Number(p.lastMarkUsd)>0?Number(p.lastMarkUsd):(Number(c.lastPrice)>0?Number(c.lastPrice):null);
     var tr=document.createElement("tr");
     tr.innerHTML='<td><b class="mono">'+esc(p.symbol)+'</b></td>'+
       '<td class="num">'+(p.qty||0)+'</td>'+
       '<td class="num">'+num(p.entryPriceUsd,2)+'</td>'+
-      '<td class="num">'+num(c.lastPrice,2)+'</td>'+
+      '<td class="num">'+num(mark,2)+'</td>'+
       '<td class="num">'+num(held,1)+'d</td>'+
-      '<td class="num">'+num(rank,3)+'</td>'+
-      '<td style="min-width:150px"><div class="meter" style="margin:0"><i class="'+(prog>=100?"good":"bad")+'" style="width:'+prog.toFixed(0)+'%"></i></div>'+
-      '<div style="font-family:var(--mono);font-size:10.5px;color:var(--ink-45);margin-top:3px">'+prog.toFixed(0)+'% to median-rank exit</div></td>';
+      '<td class="num">'+(hasRank?num(rank,3):'<span class="badge2 b-warn">unknown</span>')+'</td>'+
+      '<td style="min-width:150px">'+(hasRank
+        ? '<div class="meter" style="margin:0"><i class="'+(prog>=100?"good":"bad")+'" style="width:'+prog.toFixed(0)+'%"></i></div><div style="font-family:var(--mono);font-size:10.5px;color:var(--ink-45);margin-top:3px">'+prog.toFixed(0)+'% to median-rank exit</div>'
+        : '<span style="color:var(--ink-45);font-size:11.5px">Rank exit abstains; price/time guards remain active.</span>')+'</td>';
     tb.appendChild(tr);
   });
 }
@@ -1198,6 +1345,15 @@ function renderOrders(ords){
   var host=$("#orderList"); host.innerHTML="";
   if(!ords.length){ host.innerHTML='<div class="card empty">No orders awaiting a decision.</div>'; return; }
   ords.forEach(function(o){
+    var cost=o.cost||{}, sizing=o.sizing||{}, tail=sizing.tailInputs||{};
+    var baseCost=Number.isFinite(Number(cost.roundTripBps))?Number(cost.roundTripBps):null;
+    var net15=baseCost==null?null:Number(cost.expectedGrossBps)-1.5*baseCost;
+    var net20=baseCost==null?null:Number(cost.expectedGrossBps)-2*baseCost;
+    var risk=o.portfolioRisk||{}, dc=o.decisionContext||{}, prov=o.decisionMarketProvenance||{};
+    var checks=(risk.checks||[]).map(function(x){return {label:x.id,pass:x.pass,detail:x.reason};});
+    var alternatives=(dc.topAlternatives||[]).map(function(x){
+      return esc(x.symbol)+" (utility "+num(x.conservativeUtilityBps,1)+"bp, rank "+num(x.rank,3)+")";
+    }).join(" · ");
     var d=document.createElement("div"); d.className="draft open";
     d.innerHTML='<div class="draft__top">'+
       '<span class="sym">'+esc(o.symbol)+'</span>'+
@@ -1206,9 +1362,19 @@ function renderOrders(ords){
       '</div>'+
       '<div class="draft__body">'+
         '<div class="why"><span class="i">◆</span><div><b>Simulation only.</b> Approving records a '+
-        'fill against the next eligible bar’s open plus '+num(o.slippageBps,2)+'bp of adverse slippage. '+
-        'The bar has not begun, and no future high, low, close or volume can influence this order.</div></div>'+
+        'cash reservation, not a fill. A later guard cycle must find the first source-hashed bar whose open '+
+        'is after approval, provider delay, and execution latency, then applies '+num(o.slippageBps,2)+'bp adverse entry slippage. No high, low, close, or volume from that bar may choose the trade.</div></div>'+
+        '<div class="grid three" style="margin:12px 0">'+
+          '<div class="card pad"><div class="eyebrow">Economics</div><div class="kv" style="margin-top:7px">Expected gross '+num(cost.expectedGrossBps,1)+'bp<br>Base round trip '+num(baseCost,1)+'bp<br>Net at 1.5× cost '+num(net15,1)+'bp<br>Net at 2× cost '+num(net20,1)+'bp<br>Calibrated lower bound '+num(cost.calibratedNetLowerBoundBps,1)+'bp</div></div>'+
+          '<div class="card pad"><div class="eyebrow">Tail-risk size</div><div class="kv" style="margin-top:7px">Notional '+usd(sizing.usd)+'<br>Planned loss ≤ '+usd(sizing.maxPlannedLossUsd)+'<br>Risk distance '+num(sizing.riskDistancePct,2)+'%<br>5d ES '+num(tail.expectedShortfall5dPct,2)+'%<br>Gap ES '+num(tail.overnightGapEsPct,2)+'%</div></div>'+
+          '<div class="card pad"><div class="eyebrow">Batch choice</div><div class="kv" style="margin-top:7px">Queue '+(dc.queueRank||"—")+' of '+(dc.eligibleBatchSize||"—")+'<br>Cross-section rank '+num(dc.crossSectionRank,3)+'<br>Conservative utility '+num(dc.conservativeUtilityBps,1)+'bp<br>Cluster '+esc(risk.cluster||"—")+'<br>Cash before '+usd(risk.cashUsdBefore)+'</div></div>'+
+        '</div>'+
+        (alternatives?'<div class="note"><b>Top same-cycle alternatives.</b> '+alternatives+'</div>':'')+
+        '<div class="note'+(/^[a-f0-9]{64}$/.test(String(prov.sourceSha256||""))?'':' warn')+'"><b>Decision provenance.</b> '+
+          esc(prov.provider||"unknown")+(prov.feed?' / '+esc(prov.feed):'')+' · '+esc(prov.adjustment||"adjustment unknown")+' · '+ageText(prov.fetchedAt)+
+          '<div class="mono" style="margin-top:5px">source '+esc(shortHash(prov.sourceSha256))+' · universe '+esc(shortHash(o.universeHash))+' · strategy '+esc(shortHash(o.strategyHash))+' · variants '+esc(shortHash(o.variantsHash))+'</div></div>'+
         gateChips(o.gates)+
+        gateChips(checks)+
         '<div style="display:flex;gap:9px;margin-top:15px;padding-top:14px;border-top:1px solid var(--line-2)">'+
           (o.status==="proposed"?'<button class="btn gold" data-ap="'+esc(o.orderId)+'">Approve</button>'+
           '<button class="btn ghost" data-rj="'+esc(o.orderId)+'">Reject</button>':'')+
@@ -1217,27 +1383,29 @@ function renderOrders(ords){
     host.appendChild(d);
   });
   $$("#orderList [data-ap]").forEach(function(b){ b.addEventListener("click",function(){
-    api("approve",{orderId:b.dataset.ap}).then(function(){ toast("Approved"); refresh(false); })
-      .catch(function(e){toast(e.message);}); }); });
+    runButton(b,"approve",{orderId:b.dataset.ap},function(r){ toast("Approved and reserved · "+r.orderId); refresh(false); }); }); });
   $$("#orderList [data-rj]").forEach(function(b){ b.addEventListener("click",function(){
-    api("reject",{orderId:b.dataset.rj,reason:"operator rejected"}).then(function(){ toast("Rejected"); refresh(false); })
-      .catch(function(e){toast(e.message);}); }); });
+    runButton(b,"reject",{orderId:b.dataset.rj,reason:"operator rejected"},function(r){ toast("Rejected · "+r.orderId); refresh(false); }); }); });
 }
 
 /* ── secondary views ── */
 function loadLearning(){
   api("learning").then(function(r){
     $("#learnHash").textContent = "rules fingerprint "+String(r.variantsHash||"").slice(0,8)+
-      (r.storedHash && r.storedHash!==r.variantsHash ? "  ⚠ RULES CHANGED — past results no longer comparable" : "");
-    var have=r.bestEffectiveN||0, need=r.requiredEffectiveN||625;
-    $("#learnHave").textContent=have; $("#learnNeed").textContent=need;
+      " · experiment "+String(r.experimentHash||"none").slice(0,8)+
+      (r.storedHash && r.storedHash!==r.variantsHash ? "  ⚠ RULES CHANGED — stored experiment is isolated" : "");
+    var have=r.bestEffectiveN||0, need=r.requiredEffectiveN||1137;
+    var policyCount=(r.variants||[]).length;
+    $("#learnHave").textContent=num(have,1); $("#learnNeed").textContent=need;
     var pct=Math.min(100,(have/need)*100);
     $("#learnPct").textContent=pct.toFixed(1)+"%";
     $("#learnBar").style.width=pct+"%";
     $("#learnBar").className = r.powered ? "good" : "bad";
-    $("#learnNote").innerHTML = r.powered
-      ? "<b>Enough evidence.</b> The leading strategy is now the one the system actually trades — but only after beating the strategy it replaced on the days they overlap, not just topping the table."
-      : "<b>Still gathering.</b> "+esc(r.note||"")+" Until then every strategy gets an equal share, on purpose. Acting on too little evidence is how a system convinces itself it has learned something.";
+    $("#learnNote").innerHTML = r.powered && r.leaderId
+      ? "<b>Validated leader "+esc(r.leaderId)+".</b> "+esc(r.note||"")+" It was selected on development data, locked before its confirmation tail was read, and passed that stress. Live adoption still requires every automation-ladder gate."
+      : r.powered
+        ? "<b>Comparison powered, no validated replacement.</b> "+esc(r.note||"")+" The incumbent remains the only live policy."
+        : "<b>Still gathering.</b> "+esc(r.note||"")+" All "+policyCount+" policies continue as full self-financing shadow portfolios; none receives capital from these diagnostic weights.";
     $("#learnClosed").textContent = (r.totalClosed||0)+" completed test trades · "+
       ((r.openShadow&&r.openShadow.total)||0)+" currently open";
     /* Forgetting and paired-test read-outs — the two mechanisms that keep the
@@ -1249,24 +1417,49 @@ function loadLearning(){
           return "Strategy "+esc(e[0])+"'s results broke around "+esc(e[1])+" — its record restarted there, because a strategy that stopped working must not coast on its glory days.";
         }).join(" ") + '</div>';
     }
-    if (r.paired) {
-      extra += '<div class="note" style="margin-top:9px"><b>Head-to-head.</b> '+esc(r.paired.note||"")+'</div>';
+    if (r.comparison) {
+      extra += '<div class="note" style="margin-top:9px"><b>Incumbent-relative paired test.</b> '+esc(r.comparison.note||r.comparison.reason||"")+'</div>';
     }
+    var researchLeader = r.leaderId || (r.forwardLock&&r.forwardLock.leaderId);
+    var cal = r.calibration && r.calibration.variants && researchLeader
+      ? r.calibration.variants[researchLeader] : null;
+    if (cal) {
+      extra += '<div class="note'+(cal.pass?'':' warn')+'" style="margin-top:9px"><b>Historical confirmation for '+esc(researchLeader)+'.</b> '+
+        esc(cal.reason||"")+' · '+(cal.sessions||0)+' sessions · '+(cal.embargoSessions||0)+'-session embargo'+
+        (cal.holdout?(' · holdout lower bound '+num(cal.holdout.lowerBoundBps,2)+'bp'):'')+
+        (cal.doubleCost?(' · doubled-cost '+num(cal.doubleCost.lowerBoundBps,2)+'bp'):'')+
+        (cal.worstCase?(' · unresolved-loss stress '+num(cal.worstCase.lowerBoundBps,2)+'bp'):'')+'</div>';
+    } else {
+      extra += '<div class="note warn" style="margin-top:9px"><b>Historical confirmation.</b> No development-selected leader has a precommitted robustness verdict yet.</div>';
+    }
+    var og=r.overfitGuard||{}, dsr=og.dsrByVariant&&researchLeader?og.dsrByVariant[researchLeader]:null, pbo=og.pbo;
+    extra += '<div class="note'+(dsr&&dsr.pass&&pbo&&pbo.pass?'':' warn')+'" style="margin-top:9px"><b>Development overfit guard.</b> DSR '+
+      (dsr&&dsr.probability!=null?num(dsr.probability,3):'warming')+' (needs ≥0.950) · PBO '+
+      (pbo&&pbo.pbo!=null?num(pbo.pbo,3):'warming')+' (needs ≤0.200).</div>';
+    var fw=r.forwardResult;
+    extra += '<div class="note'+(fw&&fw.pass?'':' warn')+'" style="margin-top:9px"><b>Locked future paper.</b> '+
+      esc(fw&&fw.reason||'No winner is locked to a genuinely future confirmation stream yet.')+
+      (fw&&!fw.complete?' · '+(fw.confirmationSessions||0)+' of '+(fw.requiredSessions||126)+' post-embargo sessions':'')+'</div>';
+    var accounts=r.shadowAccounts||[], feedback=r.decisionFeedback||{};
+    if(accounts.length) extra += '<div class="note" style="margin-top:9px"><b>Self-financing state.</b> '+accounts.length+
+      ' policy accounts · equity range $'+num(Math.min.apply(null,accounts.map(function(a){return a.equityUsd||0;})),0)+'–$'+
+      num(Math.max.apply(null,accounts.map(function(a){return a.equityUsd||0;})),0)+' · '+(feedback.resolved||0)+
+      ' resolved decision/no-trade outcomes, '+(feedback.pending||0)+' still observing.</div>';
     var xbox = document.getElementById("learnExtra");
     if (!xbox) {
       xbox = document.createElement("div"); xbox.id = "learnExtra";
       var host = $("#learnNote"); if (host && host.parentNode) host.parentNode.insertBefore(xbox, host.nextSibling);
     }
     if (xbox) xbox.innerHTML = extra;
-    $("#nLearn").textContent = have;
+    $("#nLearn").textContent = Math.round(have);
 
     var tb=$("#tLearn tbody"); tb.innerHTML="";
     (r.rows||[]).forEach(function(x){
-      var cls = x.verdict==="evidence of a real edge" ? "b-on"
-              : x.verdict==="no edge shown" ? "b-bad" : "b-warn";
+      var cls = /passes|positive/i.test(x.verdict||"") ? "b-on"
+              : /no robust|no edge/i.test(x.verdict||"") ? "b-bad" : "b-warn";
       var tr=document.createElement("tr");
       tr.innerHTML='<td><b>'+esc(x.id)+' · '+esc(x.name)+'</b></td>'+
-        '<td class="num"><b>'+num(x.weightPct,1)+'%</b></td>'+
+        '<td class="num"><b>'+num(x.evidenceWeightPct,1)+'%</b></td>'+
         '<td class="num">'+(x.trades||0)+'</td>'+
         '<td class="num">'+(x.independentDays||0)+'</td>'+
         '<td class="num" style="color:'+((x.avgNetBps||0)>=0?"var(--sage)":"var(--clay)")+'">'+num(x.avgNetBps,1)+'</td>'+
@@ -1277,14 +1470,65 @@ function loadLearning(){
     });
 
     $("#learnCards").innerHTML = (r.rows||[]).map(function(x){
-      var belief = x.beliefRangeBps ? ("best guess "+num(x.beliefBps,1)+" (likely between "+x.beliefRangeBps[0]+" and "+x.beliefRangeBps[1]+")") : "no evidence yet";
+      var belief = x.beliefRangeBps ? ("posterior diagnostic "+num(x.beliefBps,1)+"bp (approximately "+x.beliefRangeBps[0]+" to "+x.beliefRangeBps[1]+"bp)") : "no evidence yet";
       return '<div class="draft" style="margin-bottom:9px"><div class="draft__top" style="cursor:default">'+
         '<span class="sym">'+esc(x.id)+'</span><span class="co"><b>'+esc(x.name)+'</b> — '+esc(x.plain)+'</span>'+
         '</div><div class="draft__body" style="display:block">'+
-        '<div class="kv" style="font-size:12px">'+esc(belief)+' hundredths of a percent per trade, after costs</div>'+
+        '<div class="kv" style="font-size:12px">'+esc(belief)+' after costs · selection-adjusted lower bound '+num(x.lowerBoundBps,2)+'bp</div>'+
         '</div></div>';
     }).join("");
   }).catch(function(e){toast(e.message);});
+}
+
+function equityChart(rows){
+  rows=(rows||[]).filter(function(x){return x&&Number(x.navUsd)>0;});
+  if(rows.length<2) return '<div class="empty">At least two daily NAV marks are required.</div>';
+  var W=680,H=240,P=34, vals=rows.map(function(x){return Number(x.navUsd);});
+  var lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+  if(hi===lo){lo*=.999;hi*=1.001;}
+  var pad=(hi-lo)*.08;lo-=pad;hi+=pad;
+  var x=function(i){return P+i/(rows.length-1)*(W-2*P);};
+  var y=function(v){return H-P-(v-lo)/(hi-lo)*(H-2*P);};
+  var path=vals.map(function(v,i){return (i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1);}).join(' ');
+  var zeroY=y(vals[0]);
+  return '<div class="chartbox"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Daily marked account net asset value">'+
+    '<line x1="'+P+'" y1="'+zeroY.toFixed(1)+'" x2="'+(W-P)+'" y2="'+zeroY.toFixed(1)+'" stroke="#a9823f" stroke-dasharray="3 4" opacity=".55"/>'+
+    '<path d="'+path+'" fill="none" stroke="#221f1b" stroke-width="2" stroke-linejoin="round"/>'+
+    '<circle cx="'+x(vals.length-1).toFixed(1)+'" cy="'+y(vals[vals.length-1]).toFixed(1)+'" r="4" fill="#a9823f"/>'+
+    '<text x="'+P+'" y="18" font-size="10" fill="#938c80" font-family="ui-monospace,monospace">'+esc(usd(hi))+'</text>'+
+    '<text x="'+P+'" y="'+(H-8)+'" font-size="10" fill="#938c80" font-family="ui-monospace,monospace">'+esc(usd(lo))+'</text>'+
+    '<text x="'+P+'" y="'+(H-P+18)+'" font-size="10" fill="#938c80" font-family="ui-monospace,monospace">'+esc(rows[0].date)+'</text>'+
+    '<text x="'+(W-P)+'" y="'+(H-P+18)+'" text-anchor="end" font-size="10" fill="#938c80" font-family="ui-monospace,monospace">'+esc(rows[rows.length-1].date)+'</text>'+
+    '</svg><div class="chartlegend"><span><i style="background:#221f1b"></i>marked NAV</span><span><i style="background:#a9823f"></i>starting NAV</span></div></div>';
+}
+
+function loadPerformance(){
+  $("#perfChart").innerHTML='<div class="empty">Loading all frozen-universe histories…</div>';
+  api("performance").then(function(r){
+    var e=r.equity||{}, a=r.attribution||{}, b=r.benchmark||{}, book=r.book||{}, cost=r.costMeter||{};
+    $("#perfReturn").textContent=e.ok?num(e.totalReturnPct,2)+"%":"—";
+    $("#perfDays").textContent=(e.days||0)+" daily marks";
+    $("#perfExcess").textContent=a.ok?((a.excessPct>=0?"+":"")+num(a.excessPct,2)+"%"):"—";
+    $("#perfBench").textContent=b.ok?(b.names+" of "+(b.expectedNames||b.names)+" eligible names"):"benchmark unavailable";
+    $("#perfDrawdown").textContent=e.ok?num(e.maxDrawdownPct,2)+"%":"—";
+    $("#perfDdDate").textContent=e.maxDrawdownDate||"peak to trough";
+    $("#perfSharpe").textContent=e.ok?num(e.sharpe,2):"—";
+    $("#perfWindow").textContent=(r.navHistory||[]).length
+      ? r.navHistory[0].date+" to "+r.navHistory[r.navHistory.length-1].date : "no measured window";
+    $("#perfChart").innerHTML=equityChart(r.navHistory||[]);
+    $("#perfSummary").innerHTML = e.ok
+      ? '<div class="note'+(a.ok&&a.excessPct<0?' warn':'')+'"><b>'+
+          esc(a.ok?a.verdict:(a.reason||"Benchmark unavailable"))+'</b><div style="margin-top:7px">Account '+num(e.totalReturnPct,2)+'% · frozen-universe buy-and-hold '+num(b.equalWeightedPct,2)+'% · annualised volatility '+num(e.annualisedVolPct,2)+'%.</div></div>'+
+        '<div class="ctrlrow" style="padding:7px 0"><span class="lab">Benchmark coverage</span><span class="kv">'+(b.names||0)+' of '+(b.expectedNames||0)+' names with overlapping history</span></div>'+
+        '<div class="ctrlrow" style="padding:7px 0"><span class="lab">Universe identity</span><span class="kv">'+esc(b.universeVersion||"—")+' · '+esc(shortHash(b.universeHash))+'</span></div>'+
+        '<div class="ctrlrow" style="padding:7px 0"><span class="lab">Measured friction</span><span class="kv">'+usd(cost.frictionUsd)+' paid · '+usd(cost.netRealizedUsd)+' net realised</span></div>'
+      : '<div class="note warn"><b>Not decision-grade yet.</b> '+esc(e.reason||"Daily NAV history is incomplete")+'.</div>';
+    $("#perfBook").innerHTML =
+      '<div class="ctrlrow" style="padding:7px 0"><span class="lab">Marked NAV</span><span class="kv">'+usd(book.navUsd)+'</span></div>'+
+      '<div class="ctrlrow" style="padding:7px 0"><span class="lab">Open / gross exposure</span><span class="kv">'+(book.count||0)+' / '+num(book.grossPct,2)+'%</span></div>'+
+      '<div class="ctrlrow" style="padding:7px 0"><span class="lab">Untrusted marks</span><span class="badge2 '+((book.untrustedMarks||0)?'b-bad':'b-on')+'">'+(book.untrustedMarks||0)+'</span></div>'+
+      ((book.untrustedMarks||0)?'<div class="note warn">Performance and new entries fail closed while any open position lacks a validated source hash.</div>':'');
+  }).catch(function(e){ $("#perfChart").innerHTML='<div class="empty">'+esc(e.message)+'</div>'; toast(e.message); });
 }
 
 function loadKnobs(){
@@ -1372,6 +1616,68 @@ function loadLedger(){
   }).catch(function(e){toast(e.message);});
 }
 
+function renderIntelligence(rows, watchlist){
+  rows=rows||[]; watchlist=watchlist||[];
+  var box=$("#intelList");
+  if(!$("#intelWatch").matches(":focus")) $("#intelWatch").value=watchlist.join(", ");
+  $("#intelMeta").textContent=watchlist.length
+    ? (watchlist.length+" monitored · "+rows.length+" dossiers available") : "watchlist not configured";
+  if(!rows.length){ box.innerHTML='<div class="empty">No company dossier has completed yet.</div>'; return; }
+  box.innerHTML=rows.map(function(x){
+    var p=x.policy||{}, cv=x.coverage||{}, pc=x.priceContext||{}, events=x.events||x.topEvents||[];
+    var tc=x.temporalContext||{}, tp=p.temporalPolicy||tc.policy||{}, ts=tc.schedule||{}, seas=tc.seasonality||{}, hz=tc.hazards||{}, drv=tc.drivers||{}, rec=tc.recurring||{}, tcv=tc.coverage||{};
+    var identity=x.identity||{}, rel=x.relatedEntities||x.relationshipGraph||[];
+    var state=!p.monitored?"b-bad":(!p.fresh||!p.complete?"b-warn":(p.entryAllowed?"b-on":"b-bad"));
+    var stateText=!p.monitored?"unmonitored":(!p.fresh?"stale":(!p.complete?"coverage incomplete":(p.entryAllowed?"entry eligible":"entry blocked")));
+    var missing=(cv.missingRoles||[]);
+    var domains=(identity.officialDomains||x.officialDomains||[]).map(function(d){return typeof d==="string"?d:(d.domain||"");}).filter(Boolean);
+    var eventRows=events.slice(0,6).map(function(e){
+      var direction=Number(e.direction)<0?"downside":(Number(e.direction)>0?"upside":"neutral");
+      var dirCls=Number(e.direction)<0?"b-bad":(Number(e.direction)>0?"b-on":"b-info");
+      return '<tr><td><b>'+esc(e.title||e.eventType||"event")+'</b><div class="mono" style="font-size:10.5px;color:var(--ink-45)">'+esc(e.eventType||"")+" · "+esc(e.timing||"uncertain")+'</div></td>'+
+        '<td><span class="badge2 '+dirCls+'">'+direction+'</span></td>'+
+        '<td class="num">'+num(100*Number(e.probabilityTrue||0),0)+'%</td>'+
+        '<td class="num">'+num(100*Number(e.probabilityMaterial||0),0)+'%</td>'+
+        '<td class="num">'+num(e.impactScore,1)+'</td>'+
+        '<td class="num">'+num(e.corroboration&&e.corroboration.independentGroups,0)+'</td></tr>';
+    }).join("");
+    var relationText=rel.slice(0,10).map(function(r){
+      return esc(r.name||r.entity||"")+' <span class="kv">('+esc(r.relationship||r.type||"related")+")</span>";
+    }).join(" · ");
+    var nextEvent=ts.nearest ? (esc(ts.nearest.type||"event")+" "+esc(ts.nearest.date||"")+" ("+num(ts.nearest.daysAway,1)+"d)") : "none identified";
+    var hazardText=(hz.active||[]).length ? esc(hz.active[0].event||"active alert")+" · "+esc((hz.active[0].states||[]).join(",")) : "no matched active alert";
+    var driverTop=(drv.drivers||[]).filter(function(d){return d.status==="ready";}).sort(function(a,b){return Number(b.riskScore||0)-Number(a.riskScore||0);})[0];
+    var recurringTop=(rec.active||[])[0];
+    var temporalGaps=(tcv.requiredMissing||[]);
+    var temporalText='risk '+num(tp.riskScore,1)+'/100 · size ×'+num(tp.sizeMultiplier,2)+' · next '+nextEvent+
+      ' · seasonality '+(seas.status==="ready"?(num(seas.shrunkReturnPct,2)+'% shrunk, n='+num(seas.samples,0)+(seas.decisionEligible===false?' [display only]':'')):esc(seas.status||"unavailable"))+
+      ' · '+hazardText+(driverTop?' · driver '+esc(driverTop.symbol)+' β '+num(driverTop.beta63,2):'')+
+      (recurringTop?' · cycle '+esc(recurringTop.name)+' ('+num(recurringTop.riskScore,1)+')':'')+
+      (temporalGaps.length?' · gaps '+esc(temporalGaps.join(", ")):' · inputs complete');
+    return '<div class="draft" style="margin-bottom:12px"><div class="draft__top" style="cursor:default">'+
+      '<span class="sym">'+esc(x.symbol)+'</span><span class="co"><b>'+esc(x.companyName||x.symbol)+'</b> · '+esc(x.sectorPack||x.sector||"general")+'</span>'+
+      '<span class="badge2 '+state+'">'+esc(stateText)+'</span><span class="badge2 b-info">risk '+num(p.adverseRiskScore,1)+'/100</span></div>'+
+      '<div class="draft__body" style="display:block">'+
+        '<div class="grid two" style="gap:10px;margin-bottom:10px">'+
+          '<div><div class="kv">Decision impact</div><div style="font-size:12px;margin-top:4px">Entry '+(p.entryAllowed?"allowed":"blocked")+' · size ×'+num(p.sizeMultiplier,2)+' · exit review '+(p.exitReview?"yes":"no")+'</div><div style="font-size:11.5px;color:var(--ink-45);margin-top:4px">'+esc((p.reasons||[]).join("; "))+'</div></div>'+
+          '<div><div class="kv">Point-in-time context</div><div style="font-size:12px;margin-top:4px">'+(x.asOf?new Date(x.asOf).toLocaleString():"—")+' · '+num(x.documentCount,0)+' documents · '+num(pc.days,0)+' price days</div><div style="font-size:11.5px;color:var(--ink-45);margin-top:4px">Six-month return '+(pc.ok?num(pc.return6mPct,2)+"%":"unavailable")+' · dossier '+esc(shortHash(x.dossierHash))+'</div></div>'+
+        '</div>'+
+        '<div style="font-size:11.5px;margin-bottom:9px"><b>Coverage:</b> '+(cv.complete?'<span class="badge2 b-on">required lanes healthy</span>':'<span class="badge2 b-warn">missing '+esc(missing.join(", ")||"required lanes")+'</span>')+
+          (domains.length?' <span class="kv">· issuer domains '+esc(domains.join(", "))+'</span>':"")+'</div>'+
+        '<div style="font-size:11.5px;margin-bottom:9px"><b>Temporal context:</b> '+temporalText+'</div>'+
+        (relationText?'<div style="font-size:11.5px;margin-bottom:9px"><b>Verified relationship graph:</b> '+relationText+'</div>':"")+
+        (eventRows?'<div class="scrollcap"><table><thead><tr><th>Evidence-bound event</th><th>Direction</th><th class="num">Truth</th><th class="num">Material</th><th class="num">Impact</th><th class="num">Groups</th></tr></thead><tbody>'+eventRows+'</tbody></table></div>':'<div class="empty">No evidence-bound material event hypotheses.</div>')+
+      '</div></div>';
+  }).join("");
+}
+
+function loadIntelligence(){
+  api("intelligence",{limit:24}).then(function(r){
+    renderIntelligence(r.rows||[],r.watchlist||[]);
+    $("#intelMeta").textContent=(r.watchlist||[]).length+" monitored · "+(r.rows||[]).length+" dossiers · public sources only";
+  }).catch(function(e){ $("#intelList").innerHTML='<div class="empty">'+esc(e.message)+'</div>'; toast(e.message); });
+}
+
 function loadSources(){
   api("sources").then(function(r){
     var tb=$("#tSources tbody"); tb.innerHTML="";
@@ -1389,6 +1695,18 @@ function loadSources(){
         '<td style="font-size:11.5px;max-width:280px">'+esc(s.notes||"")+'</td>';
       tb.appendChild(tr);
     });
+    var el=r.eligibility||{}, eb=$("#tEligibility tbody"); eb.innerHTML="";
+    $("#elgSummary").textContent = el.declared
+      ? (el.declared+" declared · "+el.eligible+" eligible · "+el.excluded+" held out · "+(el.policyVersion||"—"))
+      : "—";
+    (el.byReason||[]).forEach(function(g){
+      var tr2=document.createElement("tr");
+      tr2.innerHTML='<td><b>'+esc(g.reason)+'</b></td>'+
+        '<td class="mono">'+g.count+'</td>'+
+        '<td class="mono" style="font-size:11.5px;max-width:520px">'+esc((g.symbols||[]).join(" "))+'</td>';
+      eb.appendChild(tr2);
+    });
+    if(!eb.children.length) eb.innerHTML='<tr><td colspan="3" class="empty">No exclusions recorded.</td></tr>';
   }).catch(function(e){toast(e.message);});
 }
 
@@ -1403,49 +1721,76 @@ function loadHealth(){
       }).join("")+
       '<div class="ctrlrow" style="padding:7px 0"><span class="lab" style="min-width:190px">Market provider</span>'+
         '<span class="badge2 b-info">'+esc(p.id)+'</span>'+
-        '<span class="kv">'+p.delayMinutes+'m delay, max grade '+esc(p.maxGrade)+'</span></div>'+
+        '<span class="kv">'+esc(p.feed||"feed unknown")+' · '+p.delayMinutes+'m delay · max grade '+esc(p.maxGrade)+' · '+(p.consolidated?'consolidated':'non-consolidated')+'</span></div>'+
       (p.degradedFrom? '<div class="note warn">Degraded from <b>'+esc(p.degradedFrom)+'</b>: '+esc(p.reason)+'</div>':'')+
-      '<div class="note">OpenAI daily ceiling $'+num(r.openaiCeilingUsd,2)+'. Model calls are gated on change detection — '+
-      'unconditional polling would cost roughly ten times the rest of the stack combined.</div>';
+      '<div class="note">OpenAI daily ceiling $'+num(r.openaiCeilingUsd,2)+'. Model calls are reserved for ambiguous evidence after deterministic coverage and change-detection gates; malformed paid responses are still charged to the budget.</div>';
   }).catch(function(e){toast(e.message);});
 }
 
 /* ── control actions ── */
-$("#btnMode").addEventListener("click",function(){
-  api("setControl",{patch:{mode:$("#selMode").value}}).then(function(){toast("Mode set");refresh(false);}).catch(function(e){toast(e.message);}); });
+$("#btnIntelWatch").addEventListener("click",function(){
+  var symbols=$("#intelWatch").value.split(/[\s,]+/).map(function(x){return x.trim().toUpperCase();}).filter(Boolean);
+  var profiles={};
+  $("#intelDomains").value.split(/[\s,]+/).filter(Boolean).forEach(function(pair){
+    var bits=pair.split("="); if(bits.length!==2) return;
+    var sym=bits[0].trim().toUpperCase(), domain=bits[1].trim().toLowerCase();
+    if(!profiles[sym]) profiles[sym]={officialDomains:[]}; profiles[sym].officialDomains.push(domain);
+  });
+  if(!confirm("Save this intelligence watchlist? Entry proposals will close and safety attestation will reset; position exits remain active.")) return;
+  runButton(this,"setIntelligenceWatchlist",{symbols:symbols,profiles:profiles},function(r){
+    toast("Monitoring "+r.symbols.length+" companies · research dry run restored"); refresh(false); loadIntelligence();
+  });
+});
 $("#btnDry").addEventListener("click",function(){
-  api("setControl",{patch:{dryRun:!(DASH.control||{}).dryRun}}).then(function(){toast("Dry run toggled");refresh(false);}).catch(function(e){toast(e.message);}); });
+  runButton(this,"setControl",{patch:{dryRun:!(DASH.control||{}).dryRun}},function(r){
+    toast("Dry run "+(r.patched.dryRun?"ON":"OFF")); refresh(false); }); });
 $("#btnCycle").addEventListener("click",function(){
-  api("setControl",{patch:{cycleSeconds:Number($("#inpCycle").value)}}).then(function(){toast("Interval set");refresh(false);}).catch(function(e){toast(e.message);}); });
+  runButton(this,"setControl",{patch:{cycleSeconds:Number($("#inpCycle").value)}},function(r){
+    toast("Cycle interval "+r.patched.cycleSeconds+"s"); refresh(false); }); });
 $("#btnCeil").addEventListener("click",function(){
-  api("setControl",{patch:{operatorCeiling:$("#ceilSel").value}})
-    .then(function(){toast("Ceiling set to "+$("#ceilSel").value);load();})
-    .catch(function(e){toast(e.message);});
-});
-$("#btnHwm").addEventListener("click",function(){
-  api("setControl",{patch:{highWaterMarkUsd:0}})
-    .then(function(){toast("High-water mark reset - the freeze clears on the next cycle.");load();})
-    .catch(function(e){toast(e.message);});
-});
+  var value=$("#ceilSel").value;
+  runButton(this,"setControl",{patch:{operatorCeiling:value}},function(){
+    toast("Operator ceiling set to "+value); refresh(false); }); });
+$("#btnHold").addEventListener("click",function(){
+  runButton(this,"setControl",{patch:{operatorHold:!(DASH.control||{}).operatorHold}},function(r){
+    toast("Operator hold "+(r.patched.operatorHold?"engaged":"released")); refresh(false); }); });
+$("#btnSafety").addEventListener("click",function(){
+  runButton(this,"activateSafety",{},function(r){
+    toast("Current build identity activated; dry run remains ON"); refresh(false); }); });
+$("#btnFreezeEntries").addEventListener("click",function(){
+  runButton(this,"setControl",{patch:{entriesFrozen:true}},function(r){
+    var c=r.entryCleanup||{};
+    toast("Entries frozen · "+(c.cancelledProposals||0)+" proposals cancelled · "+(c.releasedApproved||0)+" reservations returned");
+    refresh(false); }); });
+$("#btnUnfreezeEntries").addEventListener("click",function(){
+  runButton(this,"setControl",{patch:{entriesFrozen:false}},function(){
+    toast("Entry freeze lifted"); refresh(false); }); });
 $("#btnKill").addEventListener("click",function(){
   if(!confirm("Engage the kill switch? Proposed orders are cancelled and new decisions stop. Evidence and the ledger are untouched.")) return;
-  api("kill",{}).then(function(r){toast("Killed · "+r.cancelledProposals+" proposals cancelled");refresh(false);}).catch(function(e){toast(e.message);}); });
+  runButton(this,"kill",{},function(r){toast("Killed · "+(r.cancelledProposals||0)+" proposed cancelled · "+(r.releasedApproved||0)+" approved released");refresh(false);}); });
 $("#btnResume").addEventListener("click",function(){
-  api("resume",{}).then(function(){toast("Resumed");refresh(false);}).catch(function(e){toast(e.message);}); });
+  runButton(this,"resume",{},function(){toast("Monitoring resumed in research dry run; reactivate safety identity when ready");refresh(false);}); });
 $("#btnRegime").addEventListener("click",function(){
-  api("setRegime",{vix:$("#inpVix").value,vixMedian:$("#inpVixMed").value,cor3m:$("#inpCor").value})
-    .then(function(){toast("Regime updated");refresh(false);}).catch(function(e){toast(e.message);}); });
+  runButton(this,"setRegime",{vix:$("#inpVix").value,vixMedian:$("#inpVixMed").value,cor3m:$("#inpCor").value},function(){toast("Regime fields updated with current timestamps");refresh(false);}); });
 $("#btnAccount").addEventListener("click",function(){
-  api("openAccount",{startingNavUsd:Number($("#inpNav").value)}).then(function(r){
-    toast(r.existing?"Account already open":"Account opened");refresh(false);}).catch(function(e){toast(e.message);}); });
+  runButton(this,"openAccount",{accountId:$("#inpAccountId").value,startingNavUsd:Number($("#inpNav").value)},function(r){
+    toast((r.existing?"Account already existed":"Account opened")+" · safety identity reset · research dry run");refresh(false);}); });
 $("#btnFreeze").addEventListener("click",function(){
-  api("freezeUniverse",{}).then(function(r){toast(r.frozen?("Frozen "+r.version+" · "+r.tradeTier+" names"):r.note);}).catch(function(e){toast(e.message);}); });
+  runButton(this,"freezeUniverse",{},function(r){toast("Verified frozen "+r.version+" · "+r.tradeTier+" eligible names · "+shortHash(r.contentHash));refresh(false);}); });
 $("#btnCiks").addEventListener("click",function(){
   toast("Resolving from SEC…");
-  api("resolveCiks",{}).then(function(r){
+  runButton(this,"resolveCiks",{},function(r){
     toast("Resolved "+r.resolved+(r.mismatched&&r.mismatched.length?(" · "+r.mismatched.length+" CORRECTED"):"")+(r.missing&&r.missing.length?(" · "+r.missing.length+" missing"):""));
     if(r.mismatched&&r.mismatched.length) console.warn("CIK mismatches corrected from SEC:",r.mismatched);
-  }).catch(function(e){toast(e.message);}); });
+  }); });
+$("#btnRecall").addEventListener("click",function(){
+  runButton(this,"recordRecallBenchmark",{
+    truePositives:Number($("#inpTp").value),falseNegatives:Number($("#inpFn").value),
+    labelSetSha256:$("#inpRecallHash").value.trim().toLowerCase()
+  },function(r){
+    var x=r.recallBenchmark||{};
+    toast("Recall "+num(100*x.recall,1)+"% · 95% lower bound "+num(100*x.lowerBound,1)+"% · n="+(x.n||0)); refresh(false);
+  }); });
 </script>
 </body>
 </html>
