@@ -27,6 +27,98 @@
   --r:14px; --r-sm:10px; --sh:0 1px 2px rgba(30,26,20,.04),0 8px 24px rgba(30,26,20,.05);
 }
 *{box-sizing:border-box;margin:0;padding:0}
+
+/* ═══ simplified shell ═══ */
+.navsep{margin-top:10px;padding-top:10px;border-top:1px solid var(--velvet-line)}
+.navmore{display:flex;align-items:center;gap:7px;width:100%;padding:9px 13px;border-radius:var(--r-sm);
+  font-size:12.5px;color:#9a9183;letter-spacing:.04em;text-transform:uppercase}
+.navmore:hover{background:var(--velvet-2);color:#e9e3d7}
+.navmore .chev{transition:transform .18s ease;display:inline-block}
+.navmore[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.navadv{margin-top:4px;padding-left:8px;border-left:1px solid var(--velvet-line);margin-left:8px}
+.navadv button{font-size:12.5px;opacity:.82}
+
+.simplegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin-bottom:16px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:15px 17px;box-shadow:var(--sh)}
+.stat .l{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-45);margin-bottom:7px}
+.stat .v{font-family:var(--mono);font-size:23px;letter-spacing:-.02em;line-height:1.1}
+.stat .d{font-size:12px;color:var(--ink-70);margin-top:5px;line-height:1.45}
+.stat.good .v{color:var(--sage)} .stat.bad .v{color:var(--clay)}
+
+/* ═══ the one control ═══ */
+.desk{background:var(--card);border:2px solid var(--line);border-radius:var(--r);padding:22px 24px;
+  margin-bottom:16px;box-shadow:var(--sh)}
+.desk__top{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.desk__txt{flex:1;min-width:260px}
+.desk__txt h2{font-family:var(--serif);font-size:22px;font-weight:400;margin:6px 0 7px}
+.desk__txt p{font-size:13.5px;color:var(--ink-70);line-height:1.6;max-width:64ch}
+.bigbtn{font-size:16px;padding:17px 36px;min-width:210px;border-radius:var(--r-sm)}
+.desk__opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;
+  margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.opt .oh{font-size:13px;font-weight:600;margin-bottom:3px}
+.opt .od{font-size:12px;color:var(--ink-45);margin-bottom:9px;line-height:1.5}
+.segs{display:flex;gap:0;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;background:var(--card-2)}
+.segs button{flex:1;padding:9px 6px;font-size:12.5px;color:var(--ink-70);border-right:1px solid var(--line);transition:background .14s}
+.segs button:last-child{border-right:0}
+.segs button:hover{background:var(--paper-2)}
+.segs button.on{background:var(--velvet);color:#f0ebe1;font-weight:600}
+.opt .oc{font-size:11.5px;color:var(--ink-45);margin-top:8px;line-height:1.5;min-height:2.6em}
+
+/* ═══ company rows ═══ */
+.coRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.corow{display:grid;grid-template-columns:82px 1fr auto;gap:14px;align-items:center;
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px 16px;
+  margin-bottom:8px;cursor:pointer;transition:border-color .14s,transform .08s;text-align:left;width:100%}
+.corow:hover{border-color:var(--gold-line);transform:translateY(-1px)}
+.corow:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.corow .cs{font-family:var(--mono);font-size:15px;font-weight:600}
+.corow .cn{font-size:12.5px;color:var(--ink-45);margin-top:2px;text-transform:capitalize}
+.corow .cmid{font-size:12.5px;color:var(--ink-70);line-height:1.5}
+.corow .cright{text-align:right;font-family:var(--mono);font-size:14px;white-space:nowrap}
+.corow .cright .sm{font-size:11.5px;color:var(--ink-45);margin-top:3px}
+.sectorhead{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-45);
+  margin:18px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--line-2)}
+.sectorhead:first-child{margin-top:0}
+
+/* ═══ detail sheet ═══ */
+.sheet{position:fixed;inset:0;z-index:900;background:rgba(28,26,23,.55);
+  display:flex;align-items:flex-end;justify-content:center;padding:0}
+.sheet[hidden]{display:none!important}
+.sheet__panel{background:var(--paper);width:min(100%,1180px);max-height:96vh;border-radius:20px 20px 0 0;
+  display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -20px 70px -20px rgba(0,0,0,.5)}
+.sheet__bar{display:flex;gap:20px;align-items:center;padding:18px 24px;background:var(--card);
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+.sheet__sym{font-family:var(--mono);font-size:22px;font-weight:600;letter-spacing:-.01em}
+.sheet__co{font-size:12.5px;color:var(--ink-45);text-transform:capitalize}
+.sheet__px{margin-left:auto;text-align:right}
+.sheet__last{font-family:var(--mono);font-size:21px}
+.sheet__chg{font-family:var(--mono);font-size:12.5px;margin-top:2px}
+.sheet__body{overflow-y:auto;padding:20px 24px 40px}
+.chartbox{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  padding:14px 16px 10px;margin-bottom:16px;box-shadow:var(--sh)}
+.chartbox__h{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.rangebtns{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.rangebtns button{padding:6px 14px;font-size:12px;font-family:var(--mono);color:var(--ink-70);border-right:1px solid var(--line)}
+.rangebtns button:last-child{border-right:0}
+.rangebtns button.on{background:var(--velvet);color:#f0ebe1}
+.chartbox__toggles{display:flex;gap:16px;font-size:12px;color:var(--ink-70)}
+.chartbox__toggles label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.chartwrap{position:relative}
+.chartwrap canvas{width:100%;display:block}
+.crosshair{position:absolute;top:0;bottom:0;width:1px;background:var(--ink-25);pointer-events:none}
+.readout{position:absolute;background:var(--velvet);color:#f0ebe1;border-radius:8px;padding:8px 11px;
+  font-family:var(--mono);font-size:11.5px;line-height:1.65;pointer-events:none;white-space:nowrap;
+  box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:3}
+.readout b{color:var(--gold-2);font-weight:600}
+.chartlegend{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;
+  color:var(--ink-45);margin-top:8px;padding-top:8px;border-top:1px solid var(--line-2)}
+.chartlegend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:5px}
+@media(max-width:700px){
+  .sheet__panel{max-height:100vh;border-radius:0}
+  .corow{grid-template-columns:70px 1fr;gap:10px}
+  .corow .cright{grid-column:1/-1;text-align:left;margin-top:4px}
+}
+
 button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 input,select{font:inherit}
 body{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
@@ -235,6 +327,49 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
 </div>
 
 <!-- ═══════════ APP ═══════════ -->
+<!-- ═══ COMPANY DETAIL OVERLAY ═══ -->
+<div id="coSheet" class="sheet" hidden>
+  <div class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="csSym">
+    <div class="sheet__bar">
+      <div>
+        <div class="sheet__sym" id="csSym">—</div>
+        <div class="sheet__co" id="csName">—</div>
+      </div>
+      <div class="sheet__px">
+        <div class="sheet__last" id="csLast">—</div>
+        <div class="sheet__chg" id="csChg">—</div>
+      </div>
+      <button class="btn ghost sm" id="csClose" aria-label="Close">Close</button>
+    </div>
+    <div class="sheet__body">
+      <div id="csBanner"></div>
+      <div class="chartbox">
+        <div class="chartbox__h">
+          <div class="rangebtns" id="csRange">
+            <button data-r="20" >1M</button>
+            <button data-r="60" >3M</button>
+            <button data-r="120" class="on">6M</button>
+            <button data-r="0"  >All</button>
+          </div>
+          <div class="chartbox__toggles">
+            <label><input type="checkbox" id="csSma" checked> Trend lines</label>
+            <label><input type="checkbox" id="csVol" checked> Volume</label>
+          </div>
+        </div>
+        <div class="chartwrap">
+          <canvas id="csChart" height="360"></canvas>
+          <div class="crosshair" id="csHair" hidden></div>
+          <div class="readout" id="csRead" hidden></div>
+        </div>
+        <div class="chartlegend" id="csLegend"></div>
+      </div>
+      <div class="simplegrid" id="csStats"></div>
+      <div id="csPos"></div>
+      <div id="csWhy"></div>
+    </div>
+  </div>
+</div>
+
 <div class="app" id="app">
   <aside class="rail" id="rail">
     <div class="rail__brand">
@@ -242,18 +377,25 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <div class="tag">Volatility Desk</div>
     </div>
     <nav class="nav" id="nav">
-      <button data-v="briefing" class="active">Briefing</button>
-      <button data-v="candidates">Candidates <span class="badge" id="nBreach">0</span></button>
-      <button data-v="positions">Positions <span class="badge" id="nPos">0</span></button>
-      <button data-v="performance">Performance</button>
-      <button data-v="approvals">Approvals <span class="badge" id="nOrders">0</span></button>
-      <button data-v="learning">Learning <span class="badge" id="nLearn">—</span></button>
-      <button data-v="intelligence">Intelligence <span class="badge" id="nIntel">0</span></button>
-      <button data-v="notrade">No-trade log</button>
-      <button data-v="ledger">Ledger &amp; cost</button>
-      <button data-v="sources">Sources</button>
-      <button data-v="knobs">Settings explained</button>
-      <button data-v="control">Control room</button>
+      <button data-v="today" class="active">Today</button>
+      <button data-v="companies">Companies <span class="badge" id="nHeld">0</span></button>
+      <button data-v="results">Results</button>
+      <div class="navsep"><button class="navmore" id="advToggle" aria-expanded="false">
+        Advanced <span class="chev">▸</span></button></div>
+      <div class="navadv" id="navAdv" hidden>
+        <button data-v="briefing">Full briefing</button>
+        <button data-v="candidates">Every ranked name <span class="badge" id="nBreach">0</span></button>
+        <button data-v="positions">Position detail <span class="badge" id="nPos">0</span></button>
+        <button data-v="performance">Performance detail</button>
+        <button data-v="approvals">Approvals <span class="badge" id="nOrders">0</span></button>
+        <button data-v="learning">Learning <span class="badge" id="nLearn">—</span></button>
+        <button data-v="intelligence">Intelligence <span class="badge" id="nIntel">0</span></button>
+        <button data-v="notrade">No-trade log</button>
+        <button data-v="ledger">Ledger &amp; cost</button>
+        <button data-v="sources">Sources</button>
+        <button data-v="knobs">Settings explained</button>
+        <button data-v="control">Control room</button>
+      </div>
     </nav>
     <div class="rail__foot">
       <span class="dot" id="railDot"></span><span id="railState">connecting…</span>
@@ -265,7 +407,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
     <header class="topbar">
       <button class="btn ghost sm navburger" id="burger">☰</button>
       <div>
-        <h1 id="viewTitle">Briefing</h1>
+        <h1 id="viewTitle">Today</h1>
         <div class="sub" id="viewSub">—</div>
       </div>
       <div class="spacer"></div>
@@ -277,7 +419,82 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
 
     <div class="wrap">
       <!-- ─── BRIEFING ─── -->
-      <section class="view on" id="v-briefing">
+      <!-- ═══ TODAY — the only page most people need ═══ -->
+      <section class="view on" id="v-today">
+        <div id="todayDesk"></div>
+
+        <div class="simplegrid" id="todayStats"></div>
+
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h">
+            <h3>What it owns right now</h3>
+            <span class="sub" id="todayHeldSub">nothing yet</span>
+          </div>
+          <div id="todayHeld"></div>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h">
+            <h3>What it is looking at</h3>
+            <span class="sub" id="todayWatchSub">this cycle</span>
+          </div>
+          <div class="note" style="margin-bottom:12px">
+            These are the companies that fell furthest today after the market's own move is taken out.
+            Click any of them to see the full picture. A name here is <b>not</b> a recommendation — it is
+            simply the top of the list before the safety checks run.
+          </div>
+          <div id="todayWatch"></div>
+        </div>
+
+        <div class="card pad">
+          <div class="card__h"><h3>Why nothing was bought</h3><span class="sub">plain reasons</span></div>
+          <div id="todayBlocks"></div>
+        </div>
+      </section>
+
+      <!-- ═══ COMPANIES ═══ -->
+      <section class="view" id="v-companies">
+        <div class="note">
+          Every company the system is allowed to trade. Click one to open its chart, its recent
+          performance and — if it is held — the position. Search by ticker or sector.
+        </div>
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="coRow">
+            <input class="inp" id="coSearch" placeholder="Search ticker or sector…" style="flex:1;min-width:180px">
+            <select class="inp" id="coFilter" style="max-width:190px">
+              <option value="all">All companies</option>
+              <option value="held">Held right now</option>
+              <option value="ranked">Ranked this cycle</option>
+              <option value="research">Research only</option>
+            </select>
+            <span class="kv" id="coCount">—</span>
+          </div>
+        </div>
+        <div id="coList"></div>
+      </section>
+
+      <!-- ═══ RESULTS ═══ -->
+      <section class="view" id="v-results">
+        <div class="note">
+          Two questions only: is the account up or down in dollars, and has the system proved anything yet?
+          The second matters more than the first while the sample is small.
+        </div>
+        <div class="simplegrid" id="resStats"></div>
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h"><h3>Account value</h3><span class="sub" id="resNavSub">since it opened</span></div>
+          <div id="resNav"></div>
+        </div>
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h"><h3>Closed trades</h3><span class="sub" id="resTradeSub">every completed round trip</span></div>
+          <div id="resTrades"></div>
+        </div>
+        <div class="card pad">
+          <div class="card__h"><h3>How far along the learning is</h3><span class="sub">progress, in plain terms</span></div>
+          <div id="resLearn"></div>
+        </div>
+      </section>
+
+      <section class="view" id="v-briefing">
         <div class="grid kpis" style="margin-bottom:16px">
           <div class="kpi"><div class="lab">Ranked</div><div class="val" id="kRanked">—</div><div class="delta">of universe</div></div>
           <div class="kpi"><div class="lab">Breaches</div><div class="val" id="kBreach">—</div><div class="delta">this cycle</div></div>
@@ -759,7 +976,11 @@ try { var s = sessionStorage.getItem("inv_s"); if(s && typeof s==="string" && s.
     $("#app").style.display="grid"; render(); startPolling(); }).catch(function(){ SESSION=null; }); } } catch(e){}
 
 /* ── nav ── */
-var TITLES = { briefing:["Briefing","Cycle summary, regime and the cost meter"],
+var TITLES = {
+  today:["Today","What the desk is doing, and the few controls that matter"],
+  companies:["Companies","Every company it can trade — open one for its chart and history"],
+  results:["Results","Whether it is making money, and what it has proved"],
+  briefing:["Briefing","Cycle summary, regime and the cost meter"],
   candidates:["Candidates","Every ranked name with its full gate stack"],
   positions:["Positions","Open exposure and exit progress"],
   performance:["Performance","Marked NAV, drawdown, costs and the frozen-universe comparator"],
@@ -771,15 +992,20 @@ var TITLES = { briefing:["Briefing","Cycle summary, regime and the cost meter"],
   ledger:["Ledger & cost","Double-entry journal and the friction meter"],
   sources:["Sources","Evidence lane permission and health"],
   control:["Control room","Mode, regime, kill switch and setup"] };
-$$("#nav button").forEach(function(b){
+/* Only buttons that name a view are routes. The Advanced disclosure also
+   lives inside #nav and must not be treated as one. */
+$$("#nav button[data-v]").forEach(function(b){
   b.addEventListener("click", function(){
-    $$("#nav button").forEach(function(x){x.classList.remove("active");});
+    $$("#nav button[data-v]").forEach(function(x){x.classList.remove("active");});
     b.classList.add("active");
     var v=b.dataset.v;
     $$(".view").forEach(function(x){x.classList.remove("on");});
     $("#v-"+v).classList.add("on");
     $("#viewTitle").textContent=TITLES[v][0]; $("#viewSub").textContent=TITLES[v][1];
     document.body.classList.remove("navOpen");
+    if(v==="companies") renderCompanies();
+    if(v==="today"){ try{renderToday();}catch(e){} }
+    if(v==="results"){ try{renderResults();}catch(e){} }
     if(v==="learning") loadLearning();
     if(v==="intelligence") loadIntelligence();
     if(v==="performance") loadPerformance();
@@ -858,6 +1084,13 @@ function render(){
   renderMovers(cands);
   renderBootstrap(DASH.bootstrap||{});
   try { renderPaperLearning(); } catch(e){}
+  /* Simple mode. Wrapped so a failure in the friendly layer can never take
+     down the detailed views the operator may be relying on. */
+  try { renderToday(); } catch(e){ console.error("today", e); }
+  try { renderResults(); } catch(e){ console.error("results", e); }
+  try { if($("#v-companies").classList.contains("on")) renderCompanies(); } catch(e){}
+  try { var nh=(DASH.positions||[]).filter(function(p){return p.open;}).length;
+        $("#nHeld").textContent=String(nh); } catch(e){}
   renderMemory(sum.history||null, sum.symbols||0);
   renderRisk(sum.risk||null, guardSum.positionCoverage||sum.positionCoverage||null);
   renderLiveConfig(sum.liveConfig||null);
@@ -1340,7 +1573,8 @@ function renderRoster(u){
 }
 function loadRoster(){
   if(ROSTER_LOADED) return; ROSTER_LOADED=true;
-  api("universe").then(function(r){ renderRoster(r&&r.universe); })
+  api("universe").then(function(r){ UNIVERSE=(r&&r.universe)||null; renderRoster(UNIVERSE);
+      try{ if($("#v-companies").classList.contains("on")) renderCompanies(); }catch(e){} })
     .catch(function(e){ ROSTER_LOADED=false; var h=$("#rosterBody");
       if(h) h.innerHTML='<div class="empty">Could not load the roster: '+esc(e.message)+'</div>'; });
 }
@@ -1876,6 +2110,574 @@ $("#btnKill").addEventListener("click",function(){
   runButton(this,"kill",{},function(r){toast("Killed · "+(r.cancelledProposals||0)+" proposed cancelled · "+(r.releasedApproved||0)+" approved released");refresh(false);}); });
 $("#btnResume").addEventListener("click",function(){
   runButton(this,"resume",{},function(){toast("Monitoring resumed in research dry run; reactivate safety identity when ready");refresh(false);}); });
+/* ══════════════════════════════════════════════════════════════════════════
+   SIMPLE MODE
+   Three pages carry everything a first-time operator needs. The twelve
+   original views are untouched and live behind "Advanced" — nothing was
+   removed, only demoted. Each simple control maps onto real API calls; there
+   is no dial here that does not move something in the engine.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Three presets instead of six numeric dials. Each is a real parameter set,
+   and the copy states the consequence rather than the parameter. */
+/* The roster uses internal sector keys. Nobody outside the codebase knows what
+   "plat" or "hw" means, so they are named the way a person would say them. */
+var SECTOR_NAME = {
+  semi:"Semiconductors", hw:"Computers & hardware", sw:"Software",
+  plat:"Internet platforms", fin:"Banks & finance", health:"Healthcare",
+  pharma:"Pharmaceuticals", indus:"Industrials", energy:"Oil & gas",
+  power:"Utilities & power", cons:"Consumer & retail", mat:"Materials & chemicals"
+};
+function secName(k){ k=String(k||"").toLowerCase(); return SECTOR_NAME[k] || k.replace(/_/g," "); }
+function money(n,d){
+  if(n==null||isNaN(n)) return "—";
+  var neg=n<0; n=Math.abs(Number(n));
+  var s=n.toFixed(d==null?2:d).replace(/\B(?=(\d{3})+(?!\d))/g,",");
+  return (neg?"-$":"$")+s;
+}
+function plural(n,one,many){ return n+" "+(n===1?one:(many||one+"s")); }
+
+var EAGER = {
+  careful:  { costMarginMultiple:2.0, minAbsZ:2.5, entryRank:0.05,
+              t:"Careful", c:"Buys rarely. It waits for a big, clear drop and only acts when the expected profit is twice the trading cost. Weeks can pass with nothing." },
+  balanced: { costMarginMultiple:1.0, minAbsZ:2.0, entryRank:0.10,
+              t:"Balanced", c:"Buys when the expected profit at least covers the trading cost. Fewer trades than Active, more than Careful." },
+  active:   { costMarginMultiple:0.5, minAbsZ:1.5, entryRank:0.20,
+              t:"Active", c:"Buys often, including trades expected to lose a little after costs. Use this to gather results quickly — not to make money." }
+};
+var HOLD = {
+  quick:  { maxHoldDays:1,  exitRank:0.35, t:"Hours",
+            c:"Sells the same day or the next. You see results fast, and you pay trading costs more often." },
+  normal: { maxHoldDays:10, exitRank:0.50, t:"Days",
+            c:"Sells when the price recovers to the middle of the pack, or after 10 days. This is the setting the research supports." },
+  patient:{ maxHoldDays:14, exitRank:0.65, t:"Up to two weeks",
+            c:"Waits longer for a fuller recovery. Fewer, larger moves, and money is tied up for longer." }
+};
+
+function ctl(){ return (DASH && DASH.control) || {}; }
+function plNow(){ return (ctl().paperLearning && ctl().paperLearning.stored) || {}; }
+function nearest(map, key, val){
+  var best=null, bd=Infinity;
+  for (var k in map){ var d=Math.abs((map[k][key]!=null?map[k][key]:0)-val); if(d<bd){bd=d;best=k;} }
+  return best;
+}
+function eagerNow(){
+  var st=plNow(); if(st.enabled!==true) return "careful";
+  return nearest(EAGER,"costMarginMultiple", st.costMarginMultiple!=null?st.costMarginMultiple:2);
+}
+function holdNow(){
+  var st=plNow(); return nearest(HOLD,"maxHoldDays", st.maxHoldDays!=null?st.maxHoldDays:10);
+}
+
+/* ── the desk control ─────────────────────────────────────────────────── */
+function renderToday(){
+  var c=ctl(), running=!c.killSwitch && c.enabled!==false && !c.entriesFrozen;
+  var stage=c.mode||"research", approvals=stage!=="research";
+  var host=$("#todayDesk"); if(!host) return;
+
+  var head = !running ? "The desk is paused"
+    : approvals ? "The desk is working, and will ask before it buys"
+    : "The desk is watching";
+  var body = !running ? "It is not looking for anything to buy. Existing holdings are still being watched and can still be sold."
+    : approvals ? "It ranks every company, and when one passes all its checks it puts the order in front of you. Nothing is bought without your say-so."
+    : "It ranks every company and writes down what it would have done, but it will not ask you to buy anything. This is the safe setting to leave it on.";
+
+  var eg=eagerNow(), hd=holdNow();
+  host.innerHTML =
+    '<div class="desk">'
+    + '<div class="desk__top"><div class="desk__txt">'
+    +   '<span class="pill '+(running?"info":"dry")+'"><span class="d"></span>'+(running?(approvals?"Asking before buying":"Watching only"):"Paused")+'</span>'
+    +   '<h2>'+esc(head)+'</h2><p>'+esc(body)+'</p></div>'
+    + '<button class="btn '+(running?"":"gold")+' bigbtn" id="tdBig">'+(running?"Pause the desk":"Start the desk")+'</button>'
+    + '</div>'
+    + '<div class="desk__opts">'
+    +  '<div class="opt"><div class="oh">How eagerly should it buy?</div>'
+    +    '<div class="od">Trades cost money. This sets how much profit it must expect before it is worth it.</div>'
+    +    '<div class="segs" id="tdEager">'
+    +      Object.keys(EAGER).map(function(k){return '<button data-k="'+k+'"'+(k===eg?' class="on"':'')+'>'+esc(EAGER[k].t)+'</button>';}).join("")
+    +    '</div><div class="oc">'+esc(EAGER[eg].c)+'</div></div>'
+    +  '<div class="opt"><div class="oh">How long should it hold?</div>'
+    +    '<div class="od">How long it waits for a price to recover before giving up and selling.</div>'
+    +    '<div class="segs" id="tdHold">'
+    +      Object.keys(HOLD).map(function(k){return '<button data-k="'+k+'"'+(k===hd?' class="on"':'')+'>'+esc(HOLD[k].t)+'</button>';}).join("")
+    +    '</div><div class="oc">'+esc(HOLD[hd].c)+'</div></div>'
+    +  '<div class="opt"><div class="oh">Who approves a purchase?</div>'
+    +    '<div class="od">Whether it can act alone, or must come to you first.</div>'
+    +    '<div class="segs" id="tdWho">'
+    +      '<button data-k="research"'+(stage==="research"?' class="on"':'')+'>Nobody buys</button>'
+    +      '<button data-k="approval"'+(stage!=="research"?' class="on"':'')+'>I approve each one</button>'
+    +    '</div><div class="oc">'+(stage==="research"
+          ? "Watching only. It records what it would have done so you can judge it before letting it act."
+          : "It proposes; you approve. Nothing is bought without a click from you.")+'</div></div>'
+    + '</div>'
+    + '<div class="ctrlrow" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">'
+    +   '<button class="btn ghost sm" id="tdRun">Check for opportunities now</button>'
+    +   '<span class="hint" id="tdRunMsg">It does this by itself every few minutes.</span></div>'
+    + '</div>';
+
+  $("#tdBig").onclick=function(){
+    var b=this;
+    if(running) runButton(b,"kill",{operator:"desk"},function(){toast("Paused. Holdings are still watched.");refresh(false);});
+    else runButton(b,"resume",{operator:"desk"},function(){toast("Started.");refresh(false);});
+  };
+  $$("#tdEager button").forEach(function(b){ b.onclick=function(){
+    var k=b.dataset.k, v=EAGER[k];
+    plSet({enabled:true,abstainOnMissingInfo:true,costMarginMultiple:v.costMarginMultiple,
+           minAbsZ:v.minAbsZ,entryRank:v.entryRank}, b); };});
+  $$("#tdHold button").forEach(function(b){ b.onclick=function(){
+    var k=b.dataset.k, v=HOLD[k];
+    plSet({enabled:true,abstainOnMissingInfo:true,maxHoldDays:v.maxHoldDays,exitRank:v.exitRank}, b); };});
+  $$("#tdWho button").forEach(function(b){ b.onclick=function(){
+    runButton(b,"setControl",{operator:"desk",patch:{operatorCeiling:b.dataset.k}},function(r){
+      toast(r.refused&&Object.keys(r.refused).length?"Not changed — the system has not earned that stage yet":"Updated");
+      refresh(false);}); };});
+  $("#tdRun").onclick=function(){
+    var b=this,m=$("#tdRunMsg"); b.disabled=true; m.textContent="Looking…";
+    api("runCycleNow",{operator:"desk"}).then(function(r){
+      m.textContent = r&&r.ok ? (r.note||"Running. The page fills in as it finishes.")
+        : ("Not started — "+((r&&r.refused)||"refused"));
+      if(r&&r.ok) setTimeout(function(){refresh(false);},12000);
+    }).catch(function(e){m.textContent="Could not start it: "+e.message;})
+      .finally(function(){b.disabled=false;});
+  };
+
+  renderTodayStats(); renderTodayHeld(); renderTodayWatch(); renderTodayBlocks();
+}
+
+function renderTodayStats(){
+  var b=DASH.balances||{}, cost=DASH.cost||{};
+  /* Count only OPEN positions. Counting the whole array reported closed
+     trades as things the account still owns. */
+  var open=(DASH.positions||[]).filter(function(p){return p.open;});
+  var nav=b.navUsd!=null?b.navUsd:(b.cashUsd||0), net=cost.netUsd!=null?cost.netUsd:0;
+  $("#todayStats").innerHTML=[
+    ['Account value', money(nav,2), 'virtual money', ''],
+    ['Owned now', String(open.length), open.length===1?'company':'companies', ''],
+    ['Made or lost', (net>=0?'+':'')+money(Math.abs(net),2), 'on closed trades', net>0?'good':(net<0?'bad':'')],
+    ['Ranked today', String(DASH.candidateTotal||0), 'of '+(DASH.candidateExpected||0)+' companies', '']
+  ].map(function(r){
+    return '<div class="stat '+r[3]+'"><div class="l">'+esc(r[0])+'</div><div class="v">'+esc(r[1])+'</div><div class="d">'+esc(r[2])+'</div></div>';
+  }).join("");
+}
+
+function coBtn(sym, name, mid, right, sub){
+  return '<button class="corow" data-sym="'+esc(sym)+'">'
+    + '<div><div class="cs">'+esc(sym)+'</div><div class="cn">'+(name||"")+'</div></div>'
+    + '<div class="cmid">'+mid+'</div>'
+    + '<div class="cright">'+right+(sub?'<div class="sm">'+sub+'</div>':'')+'</div></button>';
+}
+
+function renderTodayHeld(){
+  var pos=(DASH.positions||[]).filter(function(p){return p.open;});
+  $("#todayHeldSub").textContent = pos.length ? pos.length+" open" : "nothing yet";
+  if(!pos.length){ $("#todayHeld").innerHTML='<div class="empty">It has not bought anything. When it does, each company appears here with what it paid and what it is worth now.</div>'; return; }
+  $("#todayHeld").innerHTML = pos.map(function(p){
+    var last=p.lastMarkUsd!=null?p.lastMarkUsd:p.entryPriceUsd;
+    var pl = (p.entryPriceUsd>0 && last!=null) ? ((last-p.entryPriceUsd)/p.entryPriceUsd)*100 : null;
+    var held = p.openedAt ? ((Date.now()-Date.parse(p.openedAt))/864e5) : null;
+    return coBtn(p.symbol, S_SECTOR(p.symbol),
+      'Bought at '+money(p.entryPriceUsd,2)+(held!=null?(' · held '+num(held,1)+' days'):''),
+      (pl!=null?'<span style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl>=0?'+':'')+num(pl,2)+'%</span>':'—'),
+      last!=null?('now '+money(last,2)):'');
+  }).join("");
+  wireCoRows("#todayHeld");
+}
+
+function renderTodayWatch(){
+  var c=(DASH.candidates||[]).slice().sort(function(a,b){return (a.rank==null?1:a.rank)-(b.rank==null?1:b.rank);}).slice(0,8);
+  if(!c.length){ $("#todayWatch").innerHTML='<div class="empty">Nothing ranked yet this cycle.</div>'; return; }
+  $("#todayWatch").innerHTML = c.map(function(x){
+    return coBtn(x.symbol, secName(x.sector),
+      x.pass ? 'Passed every check' : ('Stopped — '+esc(plainGate(x.firstBlock))),
+      (x.cumResidualBps!=null?('<span style="color:var(--clay)">'+num(x.cumResidualBps,0)+' bp</span>'):'—'),
+      'below where it should be');
+  }).join("");
+  wireCoRows("#todayWatch");
+}
+
+/* Gate labels rewritten for someone who has never traded. */
+var GATE_PLAIN = {
+  "Price quality":"the price feed is not good enough to trade on",
+  "Session":"the market is closed or spreads are too wide right now",
+  "Dispersion regime":"everything is moving together, so single-company bets do not work",
+  "Earnings blackout":"results are due, and prices jump unpredictably around those",
+  "Liquidity floor":"too little of it trades each day to get in and out cheaply",
+  "Residual signal":"it has not fallen far enough to be interesting",
+  "Sector crowding":"too many companies in the same industry already look this way",
+  "Long-horizon trend":"it has been falling for months — this is a decline, not a dip",
+  "Turnover conditioning":"unusually heavy trading, which usually means the fall continues",
+  "Company intelligence":"no recent check on company news",
+  "Evidence classification":"no explanation found for the fall yet",
+  "Cost hurdle":"the likely profit does not cover the cost of trading"
+};
+function plainGate(l){ return GATE_PLAIN[l] || (l||"a safety check"); }
+
+function renderTodayBlocks(){
+  var c=DASH.candidates||[];
+  if(!c.length){ $("#todayBlocks").innerHTML='<div class="empty">Nothing has been evaluated yet.</div>'; return; }
+  var tally={};
+  c.forEach(function(x){ (x.blockedBy||[]).forEach(function(){}); if(x.firstBlock) tally[x.firstBlock]=(tally[x.firstBlock]||0)+1; });
+  var rows=Object.keys(tally).sort(function(a,b){return tally[b]-tally[a];});
+  var passed=c.filter(function(x){return x.pass;}).length;
+  var html='<div class="note" style="margin-bottom:12px">Of '+c.length+' companies ranked this cycle, <b>'+passed+'</b> passed every check.'
+    + (passed?'' : ' The most common reason for stopping is first.')+'</div>';
+  html+=rows.map(function(k){
+    var pct=Math.round(tally[k]/c.length*100);
+    return '<div class="ctrlrow" style="padding:9px 0"><span class="lab" style="min-width:0;flex:1">'
+      + esc(plainGate(k).replace(/^./,function(m){return m.toUpperCase();}))+'</span>'
+      + '<span class="kv">'+plural(tally[k],"company","companies")+' · '+pct+'%</span></div>';
+  }).join("");
+  $("#todayBlocks").innerHTML=html;
+}
+
+/* ── companies page ───────────────────────────────────────────────────── */
+var UNIVERSE=null;
+function S_SECTOR(sym){
+  if(!UNIVERSE) return "";
+  var r=(UNIVERSE.tradeTier||[]).filter(function(x){return x.symbol===sym;})[0];
+  return r?secName(r.sector):"";
+}
+function renderCompanies(){
+  if(!UNIVERSE){ loadRoster(); $("#coList").innerHTML='<div class="empty">Loading…</div>';
+    setTimeout(function(){ if(UNIVERSE) renderCompanies(); },900); return; }
+  var q=($("#coSearch").value||"").trim().toUpperCase();
+  var f=$("#coFilter").value;
+  var held={}; (DASH.positions||[]).forEach(function(p){ if(p.open) held[p.symbol]=p; });
+  var ranked={}; (DASH.candidates||[]).forEach(function(c){ ranked[c.symbol]=c; });
+  var res={}; (UNIVERSE.researchTier||[]).forEach(function(r){ res[r.symbol]=1; });
+
+  var rows=(UNIVERSE.tradeTier||[]).filter(function(r){
+    if(f==="held" && !held[r.symbol]) return false;
+    if(f==="ranked" && !ranked[r.symbol]) return false;
+    if(f==="research" && !res[r.symbol]) return false;
+    if(q && r.symbol.indexOf(q)!==0 && String(r.sector||"").toUpperCase().indexOf(q)<0) return false;
+    return true;
+  });
+  $("#coCount").textContent = rows.length+" of "+(UNIVERSE.tradeTier||[]).length;
+  if(!rows.length){ $("#coList").innerHTML='<div class="empty">Nothing matches that.</div>'; return; }
+
+  var bySec={}; rows.forEach(function(r){ (bySec[r.sector||"other"]=bySec[r.sector||"other"]||[]).push(r); });
+  $("#coList").innerHTML = Object.keys(bySec).sort(function(a,b){
+      return secName(a).localeCompare(secName(b)); }).map(function(sec){
+    return '<div class="sectorhead">'+esc(secName(sec))+' · '+bySec[sec].length+'</div>'
+      + bySec[sec].map(function(r){
+        var h=held[r.symbol], k=ranked[r.symbol];
+        var pl = h && h.entryPriceUsd>0 && h.lastMarkUsd!=null
+          ? ((h.lastMarkUsd-h.entryPriceUsd)/h.entryPriceUsd)*100 : null;
+        var mid = h ? '<b>Owned</b> — bought at '+money(h.entryPriceUsd,2)
+          : k ? (k.pass?'Passed every check today':'Stopped — '+esc(plainGate(k.firstBlock)))
+          : '<span style="color:var(--ink-45)">Watched. Nothing to report today.</span>';
+        var right = pl!=null
+          ? '<span style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl>=0?'+':'')+num(pl,2)+'%</span>'
+          : (h && h.lastMarkUsd!=null ? money(h.lastMarkUsd,2)
+            : (k && k.lastPrice!=null ? money(k.lastPrice,2) : '—'));
+        var sub = h && h.lastMarkUsd!=null ? ('now '+money(h.lastMarkUsd,2))
+          : (k&&k.z!=null?('z '+num(k.z,2)):'');
+        /* The research-only note is a chip, not a name — as prose it wrapped
+           down the narrow first column and read like part of the ticker. */
+        return coBtn(r.symbol, res[r.symbol]?'<span class="badge2 b-info" style="font-size:9.5px">research</span>':"",
+          mid, right, sub);
+      }).join("");
+  }).join("");
+  wireCoRows("#coList");
+}
+
+/* ── results page ─────────────────────────────────────────────────────── */
+function renderResults(){
+  var b=DASH.balances||{}, cost=DASH.cost||{};
+  var nav=b.navUsd!=null?b.navUsd:(b.cashUsd||0), start=b.startingNavUsd||100000;
+  var pct=start>0?((nav-start)/start)*100:0;
+  var net=cost.netUsd!=null?cost.netUsd:0, fric=cost.frictionUsd!=null?cost.frictionUsd:0;
+  var gross=cost.grossEdgeUsd!=null?cost.grossEdgeUsd:0;
+  $("#resStats").innerHTML=[
+    ['Account value',money(nav,2),(pct>=0?'+':'')+num(pct,2)+'% since it opened',pct>0?'good':(pct<0?'bad':'')],
+    ['Profit before costs',(gross>=0?'+':'')+money(Math.abs(gross),2),'what the picks earned',''],
+    ['Cost of trading','-'+money(Math.abs(fric),2),'spread and impact paid',''],
+    ['Left over',(net>=0?'+':'-')+money(Math.abs(net),2),'this is the number that matters',net>0?'good':(net<0?'bad':'')]
+  ].map(function(r){return '<div class="stat '+r[3]+'"><div class="l">'+esc(r[0])+'</div><div class="v">'+esc(r[1])+'</div><div class="d">'+esc(r[2])+'</div></div>';}).join("");
+
+  $("#resNav").innerHTML = '<div class="note">The whole experiment is whether <b>profit before costs</b> stays '
+    + 'bigger than <b>cost of trading</b>. If it does not, the idea does not work no matter how good the picks look.</div>';
+
+  var closed=(DASH.positions||[]).filter(function(p){return !p.open;});
+  $("#resTradeSub").textContent = closed.length ? closed.length+" closed" : "none yet";
+  $("#resTrades").innerHTML = closed.length
+    ? closed.slice(0,30).map(function(p){
+        var pl=p.realisedPnlUsd!=null?p.realisedPnlUsd:null;
+        return coBtn(p.symbol,"", 'Bought '+money(p.entryPriceUsd,2)+(p.closedAt?(' · closed '+new Date(p.closedAt).toLocaleDateString()):''),
+          pl!=null?('<span style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl>=0?'+':'-')+money(Math.abs(pl),2)+'</span>'):'—',
+          p.exitReason||'');
+      }).join("")
+    : '<div class="empty">No completed trades yet. Each one will appear here with what it made or lost.</div>';
+  if(closed.length) wireCoRows("#resTrades");
+
+  /* The ladder lives on the last cycle summary, not at the top level. Reading a
+     key that does not exist made "no data" render as "all checks passed" —
+     the most dangerous direction for this particular claim to be wrong in. */
+  var lad=(ctl().lastCycleSummary||{}).ladder||null;
+  var gates=lad&&lad.gates?lad.gates:null;
+  var need=gates?gates.filter(function(g){return g.blocking&&!g.pass;}):null;
+  var html='<div class="note" style="margin-bottom:12px">The system will not run on its own until it has proved '
+    + 'itself on data it never practised on. That is deliberate — it is the difference between a real edge '
+    + 'and a lucky streak.</div>';
+  if(!gates){
+    html+='<div class="empty">No cycle has reported yet, so there is nothing measured to show. '
+        + 'This fills in after the desk runs.</div>';
+  } else if(need.length){
+    html+='<div class="ctrlrow" style="padding:8px 0"><span class="lab">Still needed</span>'
+        + '<span class="kv">'+plural(need.length,"check")+'</span></div>'
+        + need.slice(0,10).map(function(g){
+            return '<div class="ctrlrow" style="padding:6px 0"><span class="lab" style="min-width:0;flex:1;font-weight:400">'
+              + esc(g.detail||g.label||g.id||"")+'</span><span class="badge2 b-warn">not yet</span></div>'; }).join("");
+  } else {
+    html+='<div class="ctrlrow" style="padding:8px 0"><span class="lab">Every measured check</span>'
+        + '<span class="badge2 b-on">passing</span></div>';
+  }
+  $("#resLearn").innerHTML=html;
+}
+
+/* ══ COMPANY DETAIL + CHART ══════════════════════════════════════════════ */
+var CS={sym:null,daily:[],range:120,hist:null,pos:null,cand:null};
+
+function wireCoRows(sel){
+  $$(sel+" .corow").forEach(function(b){ b.onclick=function(){ openCompany(b.dataset.sym); }; });
+}
+
+function openCompany(sym){
+  if(!sym) return;
+  CS.sym=sym; CS.daily=[]; CS.hist=null; CS.range=120;
+  var sheet=$("#coSheet"); sheet.hidden=false; document.body.style.overflow="hidden";
+  $("#csSym").textContent=sym;
+  $("#csName").textContent=S_SECTOR(sym)||"";
+  $("#csLast").textContent="—"; $("#csChg").textContent="";
+  $("#csBanner").innerHTML='<div class="empty" style="padding:10px">Loading price history…</div>';
+  $("#csStats").innerHTML=""; $("#csPos").innerHTML=""; $("#csWhy").innerHTML="";
+  CS.pos=(DASH.positions||[]).filter(function(p){return p.symbol===sym;})[0]||null;
+  CS.cand=(DASH.candidates||[]).filter(function(c){return c.symbol===sym;})[0]||null;
+
+  api("history",{symbol:sym}).then(function(r){
+    CS.daily=(r&&r.daily)||[]; CS.hist=(r&&r.history)||null;
+    if(!CS.daily.length){
+      $("#csBanner").innerHTML='<div class="note warn">No price history stored for this company yet. '
+        + 'The system fills roughly five years in automatically, a few dozen companies per cycle — '
+        + 'this one has not come up yet.</div>';
+    } else { $("#csBanner").innerHTML=""; }
+    drawCompany();
+  }).catch(function(e){
+    $("#csBanner").innerHTML='<div class="note warn">Could not load history: '+esc(e.message)+'</div>';
+    drawCompany();
+  });
+}
+function closeCompany(){ $("#coSheet").hidden=true; document.body.style.overflow=""; }
+$("#csClose").addEventListener("click",closeCompany);
+$("#coSheet").addEventListener("click",function(e){ if(e.target===this) closeCompany(); });
+document.addEventListener("keydown",function(e){ if(e.key==="Escape" && !$("#coSheet").hidden) closeCompany(); });
+$$("#csRange button").forEach(function(b){ b.onclick=function(){
+  $$("#csRange button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on");
+  CS.range=Number(b.dataset.r); drawChart(); };});
+$("#csSma").addEventListener("change",drawChart);
+$("#csVol").addEventListener("change",drawChart);
+
+function drawCompany(){
+  var d=CS.daily;
+  if(d.length){
+    var last=d[d.length-1], prev=d.length>1?d[d.length-2]:null;
+    $("#csLast").textContent=money(last.c,2);
+    if(prev){
+      var ch=((last.c-prev.c)/prev.c)*100;
+      $("#csChg").innerHTML='<span style="color:'+(ch>=0?'var(--sage)':'var(--clay)')+'">'
+        +(ch>=0?'+':'')+num(ch,2)+'% on the day</span>';
+    }
+  }
+  var h=CS.hist||{};
+  var stats=[];
+  if(h.ok){
+    stats.push(['6-month range', Math.round((h.rangePct6m||0)*100)+'%','0% = at its low, 100% = at its high','']);
+    stats.push(['Off its high', num(h.drawdown6mPct,1)+'%','from the best price in 6 months', h.drawdown6mPct<-20?'bad':'']);
+    stats.push(['Typical daily swing', num(h.vol60Pct,1)+'%','over the last 60 days','']);
+    stats.push(['Traded per day',money((h.advUsd20||0)/1e6,0)+'M','20-day average','']);
+    stats.push(['Long-term trend', h.aboveSma200===true?'Rising':'Falling','versus its 200-day average', h.aboveSma200===true?'good':'bad']);
+    stats.push(['History stored', String(h.days||0),'trading days','']);
+  }
+  $("#csStats").innerHTML = stats.map(function(r){
+    return '<div class="stat '+r[3]+'"><div class="l">'+esc(r[0])+'</div><div class="v">'+esc(r[1])+'</div><div class="d">'+esc(r[2])+'</div></div>';
+  }).join("");
+
+  var p=CS.pos;
+  if(p && p.open){
+    var last2=p.lastMarkUsd!=null?p.lastMarkUsd:p.entryPriceUsd;
+    var pl=(p.entryPriceUsd>0&&last2!=null)?((last2-p.entryPriceUsd)/p.entryPriceUsd)*100:null;
+    var held=p.openedAt?((Date.now()-Date.parse(p.openedAt))/864e5):null;
+    $("#csPos").innerHTML='<div class="card pad" style="margin-bottom:16px">'
+      + '<div class="card__h"><h3>You own this</h3><span class="sub">'+(held!=null?('held '+num(held,1)+' days'):'')+'</span></div>'
+      + '<div class="ctrlrow"><span class="lab">Bought at</span><span class="kv">'+money(p.entryPriceUsd,2)+'</span></div>'
+      + '<div class="ctrlrow"><span class="lab">Worth now</span><span class="kv">'+money(last2,2)+'</span></div>'
+      + '<div class="ctrlrow"><span class="lab">Up or down</span><span class="kv" style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl!=null?((pl>=0?'+':'')+num(pl,2)+'%'):'—')+'</span></div>'
+      + '<div class="note" style="margin-top:12px">It sells automatically when the price recovers to the middle of the pack, '
+      + 'if it falls 8% from what was paid, or when the holding time runs out — whichever comes first.</div></div>';
+  } else { $("#csPos").innerHTML=""; }
+
+  var k=CS.cand;
+  if(k){
+    $("#csWhy").innerHTML='<div class="card pad">'
+      + '<div class="card__h"><h3>What the system thinks today</h3><span class="sub">'+(k.pass?"passed every check":"stopped")+'</span></div>'
+      + '<div class="ctrlrow"><span class="lab">How far it fell</span><span class="kv">'+num(k.cumResidualBps,0)+' bp below where the market alone explains</span></div>'
+      + '<div class="ctrlrow"><span class="lab">How unusual that is</span><span class="kv">'+num(k.z,2)+' standard deviations</span></div>'
+      + '<div class="ctrlrow"><span class="lab">Rank among all companies</span><span class="kv">'+num(k.rank,3)+' (0 = most oversold)</span></div>'
+      + (k.pass?'<div class="note" style="margin-top:12px">This one cleared every safety check.</div>'
+              :'<div class="note warn" style="margin-top:12px"><b>Not bought because</b> '+esc(plainGate(k.firstBlock))+'.</div>')
+      + '</div>';
+  } else { $("#csWhy").innerHTML=""; }
+
+  drawChart();
+}
+
+/* Canvas chart. Drawn by hand rather than pulled from a library: the page is
+   self-contained, and the only marks needed are a line, an area, a volume
+   strip and three averages. */
+function sma(a,n){ var o=[],s=0; for(var i=0;i<a.length;i++){ s+=a[i]; if(i>=n) s-=a[i-n];
+  o.push(i>=n-1?s/n:null);} return o; }
+
+function drawChart(){
+  var cv=$("#csChart"); if(!cv) return;
+  var wrap=cv.parentElement, W=wrap.clientWidth||760, H=360;
+  var dpr=window.devicePixelRatio||1;
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.height=H+"px";
+  var g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+
+  var all=CS.daily;
+  if(!all.length){ g.fillStyle=getVar("--ink-45"); g.font="13px "+getVar("--sans");
+    g.textAlign="center"; g.fillText("No price history for this company yet.",W/2,H/2); 
+    $("#csLegend").innerHTML=""; return; }
+
+  var d = CS.range>0 ? all.slice(-CS.range) : all;
+  var showVol=$("#csVol").checked, showSma=$("#csSma").checked;
+  var padL=8,padR=62,padT=14, volH=showVol?54:0, gap=showVol?10:0;
+  var plotH=H-padT-volH-gap-26, plotW=W-padL-padR;
+
+  var closes=d.map(function(x){return x.c;});
+  var lo=Math.min.apply(null,d.map(function(x){return x.l!=null?x.l:x.c;}));
+  var hi=Math.max.apply(null,d.map(function(x){return x.h!=null?x.h:x.c;}));
+  var sm20=null,sm50=null,sm200=null;
+  if(showSma){
+    var idx=all.length-d.length;
+    var A=all.map(function(x){return x.c;});
+    sm20=sma(A,20).slice(idx); sm50=sma(A,50).slice(idx); sm200=sma(A,200).slice(idx);
+    [sm20,sm50,sm200].forEach(function(ser){ ser.forEach(function(v){ if(v!=null){ if(v<lo)lo=v; if(v>hi)hi=v; } }); });
+  }
+  var span=(hi-lo)||1; lo-=span*0.06; hi+=span*0.06; span=hi-lo;
+  var X=function(i){ return padL + (d.length<2?plotW/2:(i/(d.length-1))*plotW); };
+  var Y=function(v){ return padT + plotH - ((v-lo)/span)*plotH; };
+
+  /* horizontal grid + price axis */
+  g.font="10px "+getVar("--mono"); g.textAlign="left";
+  for(var t=0;t<=4;t++){
+    var yv=lo+span*(t/4), y=Y(yv);
+    g.strokeStyle=getVar("--line-2"); g.lineWidth=1;
+    g.beginPath(); g.moveTo(padL,y+.5); g.lineTo(padL+plotW,y+.5); g.stroke();
+    g.fillStyle=getVar("--ink-45"); g.fillText("$"+yv.toFixed(2),padL+plotW+7,y+3);
+  }
+
+  /* area under the close */
+  var grad=g.createLinearGradient(0,padT,0,padT+plotH);
+  grad.addColorStop(0,"rgba(169,130,63,.16)"); grad.addColorStop(1,"rgba(169,130,63,0)");
+  g.beginPath(); g.moveTo(X(0),Y(closes[0]));
+  for(var i=1;i<d.length;i++) g.lineTo(X(i),Y(closes[i]));
+  g.lineTo(X(d.length-1),padT+plotH); g.lineTo(X(0),padT+plotH); g.closePath();
+  g.fillStyle=grad; g.fill();
+
+  /* averages */
+  function line(ser,color,w){
+    if(!ser) return; g.strokeStyle=color; g.lineWidth=w; g.beginPath(); var started=false;
+    for(var i=0;i<ser.length;i++){ if(ser[i]==null) continue;
+      if(!started){ g.moveTo(X(i),Y(ser[i])); started=true; } else g.lineTo(X(i),Y(ser[i])); }
+    g.stroke();
+  }
+  line(sm20,getVar("--slate"),1.2); line(sm50,getVar("--sage"),1.2); line(sm200,getVar("--clay"),1.4);
+
+  /* the close itself */
+  g.strokeStyle=getVar("--ink"); g.lineWidth=1.8; g.lineJoin="round";
+  g.beginPath(); g.moveTo(X(0),Y(closes[0]));
+  for(var j=1;j<d.length;j++) g.lineTo(X(j),Y(closes[j]));
+  g.stroke();
+
+  /* last point */
+  g.fillStyle=getVar("--gold"); g.beginPath();
+  g.arc(X(d.length-1),Y(closes[closes.length-1]),3.5,0,Math.PI*2); g.fill();
+
+  /* volume strip */
+  if(showVol){
+    var vmax=Math.max.apply(null,d.map(function(x){return x.v||0;}))||1;
+    var vTop=padT+plotH+gap;
+    for(var k2=0;k2<d.length;k2++){
+      var vh=((d[k2].v||0)/vmax)*volH;
+      var bw=Math.max(1,plotW/d.length*0.62);
+      g.fillStyle=getVar("--ink-25");
+      g.fillRect(X(k2)-bw/2, vTop+volH-vh, bw, vh);
+    }
+  }
+
+  /* date axis */
+  g.fillStyle=getVar("--ink-45"); g.font="10px "+getVar("--mono"); g.textAlign="center";
+  var ticks=Math.min(6,d.length);
+  for(var q=0;q<ticks;q++){
+    var ii=Math.round(q*(d.length-1)/(ticks-1||1));
+    /* Clamp inside the plot: a centred label at the first or last point hangs
+       off the canvas and gets clipped mid-date. */
+    var lx=Math.min(padL+plotW-26, Math.max(padL+26, X(ii)));
+    g.fillText(String(d[ii].d).slice(2), lx, H-8);
+  }
+
+  $("#csLegend").innerHTML =
+    '<span><i style="background:'+getVar("--ink")+'"></i>Price</span>'
+    + (showSma?'<span><i style="background:'+getVar("--slate")+'"></i>20-day average</span>'
+      +'<span><i style="background:'+getVar("--sage")+'"></i>50-day</span>'
+      +'<span><i style="background:'+getVar("--clay")+'"></i>200-day — the long-term trend</span>':'')
+    + (showVol?'<span><i style="background:'+getVar("--ink-25")+'"></i>Shares traded</span>':'')
+    + '<span>'+d.length+' trading days shown</span>';
+
+  CS._geom={d:d,X:X,Y:Y,padL:padL,plotW:plotW,padT:padT,plotH:plotH,W:W,H:H};
+}
+
+function getVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#000"; }
+
+/* hover readout */
+(function(){
+  var cv=$("#csChart"); if(!cv) return;
+  function at(e){
+    var G=CS._geom; if(!G) return;
+    var r=cv.getBoundingClientRect(), x=e.clientX-r.left;
+    var i=Math.round(((x-G.padL)/G.plotW)*(G.d.length-1));
+    i=Math.max(0,Math.min(G.d.length-1,i));
+    var b=G.d[i], hair=$("#csHair"), out=$("#csRead");
+    hair.hidden=false; out.hidden=false;
+    hair.style.left=G.X(i)+"px";
+    var prev=i>0?G.d[i-1]:null, ch=prev?((b.c-prev.c)/prev.c)*100:null;
+    out.innerHTML='<b>'+esc(b.d)+'</b><br>close $'+num(b.c,2)
+      + (b.h!=null?('<br>high $'+num(b.h,2)+' · low $'+num(b.l,2)):'')
+      + (ch!=null?('<br>'+(ch>=0?'+':'')+num(ch,2)+'% on the day'):'')
+      + (b.v!=null?('<br>'+num(b.v/1e6,2)+'M shares'):'');
+    var ow=out.offsetWidth||150;
+    out.style.left=Math.min(G.W-ow-6,Math.max(4,G.X(i)+12))+"px";
+    out.style.top="14px";
+  }
+  cv.addEventListener("mousemove",at);
+  cv.addEventListener("mouseleave",function(){ $("#csHair").hidden=true; $("#csRead").hidden=true; });
+})();
+
+window.addEventListener("resize",function(){ if(!$("#coSheet").hidden) drawChart(); });
+
+/* companies page wiring */
+$("#coSearch").addEventListener("input",function(){ renderCompanies(); });
+$("#coFilter").addEventListener("change",function(){ renderCompanies(); });
+
+/* advanced drawer */
+$("#advToggle").addEventListener("click",function(){
+  var open=this.getAttribute("aria-expanded")==="true";
+  this.setAttribute("aria-expanded",open?"false":"true");
+  $("#navAdv").hidden=open;
+});
+
 /* ── paper learning mode ──────────────────────────────────────────────────
    Reads the stored request back through the same clamp the cycle uses, so the
    panel shows what will actually happen rather than what was typed. */
