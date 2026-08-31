@@ -18,7 +18,77 @@
 
 "use strict";
 
+/* ── PAPER LEARNING MODE ───────────────────────────────────────────────────
+ * The published parameters are calibrated for money that can be lost. On a
+ * virtual account that calibration buys nothing and costs the one thing the
+ * desk actually needs early on: outcomes to learn from. This lets an operator
+ * loosen it deliberately, in the open, and only where loosening is defensible.
+ *
+ * Two rules keep it honest.
+ *
+ * 1. It cannot apply to real money. Relaxation is refused unless dry run is on.
+ *    There is no setting that both takes real positions and relaxes the gates.
+ *
+ * 2. The strict verdict is still computed and recorded on every decision, so
+ *    the relaxed run never destroys the measurement it is loosening. "Would
+ *    this have passed the real gates?" stays answerable for every trade, and
+ *    the two populations can be scored separately afterwards.
+ *
+ * Overrides are CLAMPED, not trusted: a typed-in zero cost margin cannot turn
+ * the desk into a random-entry generator.
+ */
+const RELAX_LIMITS = {
+  costMarginMultiple:     { min: 0.25, max: 2,   dflt: 2 },
+  minAbsZ:                { min: 1.0,  max: 3,   dflt: 2 },
+  entryRank:              { min: 0.05, max: 0.5, dflt: 0.1 },
+  exitRank:               { min: 0.2,  max: 0.9, dflt: 0.5 },
+  maxHoldDays:            { min: 0.25, max: 10,  dflt: 10 },
+  sectorCrowdingMultiple: { min: 1.0,  max: 4,   dflt: 1.4 },
+  minAdvUsd:              { min: 5e7,  max: 3e8, dflt: 3e8 },
+};
+
+function clampRelax(key, value) {
+  const lim = RELAX_LIMITS[key];
+  if (!lim) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(lim.max, Math.max(lim.min, n));
+}
+
+/**
+ * @param {object} base     the strategy/variant config the cycle would have used
+ * @param {object} ctrl     the control document
+ * @returns {{cfg:object, active:boolean, refused:string|null, applied:object}}
+ */
+function paperLearningConfig(base, ctrl = {}) {
+  const req = ctrl.paperLearning || {};
+  const cfg = { ...base };
+  if (req.enabled !== true) {
+    return { cfg, active: false, refused: null, applied: {} };
+  }
+  /* The one hard refusal. Relaxed gates and live money never coexist. */
+  if (ctrl.dryRun === false) {
+    return { cfg, active: false, applied: {},
+      refused: "paper learning mode is refused while dry run is off — it cannot apply to real orders" };
+  }
+  const applied = {};
+  for (const key of Object.keys(RELAX_LIMITS)) {
+    if (req[key] == null) continue;
+    const v = clampRelax(key, req[key]);
+    if (v == null || v === cfg[key]) continue;
+    applied[key] = { from: cfg[key], to: v,
+      ...(Number(req[key]) !== v ? { clampedFrom: Number(req[key]) } : {}) };
+    cfg[key] = v;
+  }
+  if (req.abstainOnMissingInfo === true) {
+    cfg.paperAbstainOnMissingInfo = true;
+    applied.abstainOnMissingInfo = { from: false, to: true };
+  }
+  return { cfg, active: true, refused: null, applied };
+}
+
 module.exports = {
+  paperLearningConfig, RELAX_LIMITS, clampRelax,
   "version": "v6",
   "supersedes": "v5",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",

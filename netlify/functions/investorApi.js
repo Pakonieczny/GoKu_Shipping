@@ -176,6 +176,14 @@ const ACTIONS = {
         operatorHold: ctrl.operatorHold === true,
         entriesFrozen: ctrl.entriesFrozen === true,
         cycleSeconds: ctrl.cycleSeconds || 300,
+        paperLearning: (() => {
+          const ST = require("./_investorStrategy");
+          const r = ST.paperLearningConfig(ST.parameters, ctrl);
+          return { stored: ctrl.paperLearning || null, active: r.active,
+                   refused: r.refused, applied: r.applied, limits: ST.RELAX_LIMITS,
+                   defaults: Object.fromEntries(Object.entries(ST.RELAX_LIMITS)
+                     .map(([k, v]) => [k, v.dflt])) };
+        })(),
         guardSeconds: ctrl.guardSeconds || 60,
         intelligenceSymbols: IS.configuredSymbols(ctrl),
         intelligenceFocus: ctrl.intelligenceFocus || [],
@@ -930,6 +938,84 @@ const ACTIONS = {
     const snap = await A.col(A.COL.universe).doc(ctrl.universeVersion || uMod.version || "v1").get();
     if (snap.exists) return { ok: true, universe: snap.data(), source: "firestore" };
     return { ok: true, universe: require("./_investorUniverse.js"), source: "repo" };
+  },
+
+  /* Start a cycle now.
+     A scheduled Netlify function cannot be reached over HTTP, so without this
+     the only way to start a cycle is to wait for cron — and if the schedule is
+     missing from netlify.toml the system is silent forever with no symptom
+     other than an empty dashboard. This is the operator's way to ask, and the
+     only privileged thing it does is mint the same worker nonce the scheduler
+     mints. Every safety decision still belongs to the worker, which re-reads
+     the control document after this returns. */
+  async runCycleNow({ operator, task }) {
+    const wanted = ["cycle", "guard", "evidence"].includes(task) ? task : "cycle";
+    const ctrl = await ctrlDoc();
+    if (ctrl.killSwitch) return { ok: false, refused: "kill switch is on" };
+    if (ctrl.enabled === false) return { ok: false, refused: "the desk is disabled" };
+
+    /* One manual run at a time. Without this an impatient click becomes a
+       queue of overlapping workers competing for the same job documents. */
+    const lastAt = Number(ctrl.lastManualRunAtMs) || 0;
+    const sinceMs = Date.now() - lastAt;
+    if (lastAt && sinceMs < 60000) {
+      return { ok: false, refused: `a manual run started ${Math.round(sinceMs / 1000)}s ago`,
+        retryInSeconds: Math.ceil((60000 - sinceMs) / 1000) };
+    }
+    await A.col(A.COL.control).doc("control")
+      .set({ lastManualRunAtMs: Date.now() }, { merge: true });
+
+    const K = require("./investorKick");
+    const session = M.sessionState(new Date());
+    const result = await K.dispatch(wanted, {
+      enabled: ctrl.enabled !== false, mode: ctrl.mode || "research",
+      dryRun: ctrl.dryRun !== false, killSwitch: !!ctrl.killSwitch,
+      accountId: ctrl.accountId || "paper-1",
+      cycleSeconds: Number(ctrl.cycleSeconds) || 300,
+      guardSeconds: Number(ctrl.guardSeconds) || 60,
+      guardSecondsClosed: Number(ctrl.guardSecondsClosed) || 900,
+      evidenceEverySeconds: Number(ctrl.evidenceEverySeconds) || 900,
+    }, session, { manual: true });
+
+    await A.col(A.COL.audit).add({ action: "run_cycle_now", task: wanted,
+      operator: operator || "operator", jobId: result.jobId || null,
+      upstream: result.upstream ?? null, at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, task: wanted, jobId: result.jobId || null,
+      upstream: result.upstream ?? null,
+      marketOpen: session.open === true,
+      note: session.open === true
+        ? "A cycle is running. The dashboard fills in as it finishes."
+        : "A cycle is running. The exchange is shut, so it will re-read stored "
+          + "bars and refresh evidence rather than fetch new prices." };
+  },
+
+  /* Paper learning mode. Values are stored as requested and CLAMPED at read
+     time by the strategy module, so what the dashboard shows is what the cycle
+     will actually use rather than what was typed. */
+  async setPaperLearning({ operator, patch }) {
+    const ST = require("./_investorStrategy");
+    const p = patch && typeof patch === "object" ? patch : {};
+    const clean = { enabled: p.enabled === true, abstainOnMissingInfo: p.abstainOnMissingInfo === true };
+    for (const key of Object.keys(ST.RELAX_LIMITS)) {
+      if (p[key] == null) continue;
+      const v = ST.clampRelax(key, p[key]);
+      if (v != null) clean[key] = v;
+    }
+    await A.col(A.COL.control).doc("control")
+      .set({ paperLearning: clean }, { merge: true });
+    await A.col(A.COL.audit).add({ action: "set_paper_learning",
+      operator: operator || "operator", patch: clean, at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+
+    const ctrl = await ctrlDoc();
+    const preview = ST.paperLearningConfig(ST.parameters, ctrl);
+    return { ok: true, stored: clean, active: preview.active,
+      refused: preview.refused, applied: preview.applied,
+      limits: ST.RELAX_LIMITS,
+      note: preview.active
+        ? "Relaxed gates apply to paper decisions only. Every decision still records what the strict calibration would have said."
+        : (preview.refused || "Paper learning mode is off — the published calibration is in force.") };
   },
 
   /* Freeze a universe version so additions can never be backdated. */

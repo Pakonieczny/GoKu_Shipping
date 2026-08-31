@@ -468,26 +468,34 @@ function runFixtures() {
     && M.tradingSessionsBetween("", "2026-08-31") === null));
 
   cases.push(fixture("market_config_never_opens_an_unchosen_lane", () => {
-    /* provider/feed moved from the Lambda environment to
-       InvestorAI_Control/marketConfig. Unset, unrecognised and unreadable must
-       all resolve where an absent environment variable always did. */
-    const saved = { p: process.env.INVESTOR_MARKET_PROVIDER, f: process.env.ALPACA_FEED };
-    try {
-      delete process.env.INVESTOR_MARKET_PROVIDER;
-      delete process.env.ALPACA_FEED;
-      const bare = M.marketSettings();
-      if (bare.provider !== "manual" || bare.feed !== "iex") return false;
-      if (M.activeProvider().liquidityEligible !== false) return false;
-      process.env.INVESTOR_MARKET_PROVIDER = "polygon";
-      process.env.ALPACA_FEED = "consolidated";
-      const bad = M.marketSettings();
-      return bad.provider === "manual" && bad.feed === "iex";
-    } finally {
-      if (saved.p == null) delete process.env.INVESTOR_MARKET_PROVIDER;
-      else process.env.INVESTOR_MARKET_PROVIDER = saved.p;
-      if (saved.f == null) delete process.env.ALPACA_FEED;
-      else process.env.ALPACA_FEED = saved.f;
+    /* provider/feed live in InvestorAI_Control/marketConfig. The invariant is
+       that an absent or unrecognised lane resolves where an absent environment
+       variable always did — manual/iex, not tradable.
+
+       This is attested against the PURE resolver, not against marketSettings().
+       marketSettings() reads a cache that Firestore fills, so once the deployed
+       process has loaded its config the function no longer consults the
+       environment at all: deleting env vars proved nothing there and the
+       fixture failed in production while passing on every cold process here.
+       A fixture whose verdict depends on whether a cache happens to be warm is
+       not an invariant, and this one wrongly pinned the desk to research. */
+    const bare = M.normalizeMarketChoice(undefined, undefined);
+    if (bare.provider !== "manual" || bare.feed !== "iex") return false;
+
+    for (const [p, f] of [["polygon", "consolidated"], ["", ""], [null, null],
+                          ["ALPACA_", "sip_"], [{}, []], [0, 0], [true, true]]) {
+      const bad = M.normalizeMarketChoice(p, f);
+      if (bad.provider !== "manual" || bad.feed !== "iex") return false;
+      if (bad.providerRecognised !== false) return false;
     }
+    /* A recognised lane still resolves to itself, case-insensitively, or the
+       fixture would pass by refusing everything. */
+    const good = M.normalizeMarketChoice("ALPACA", "SIP");
+    if (good.provider !== "alpaca" || good.feed !== "sip") return false;
+
+    /* And an uncredentialed manual lane can never be execution grade. */
+    const cfg = M.providerConfig("manual");
+    return cfg.liquidityEligible !== true && cfg.maxGrade !== "A";
   }));
 
   cases.push(fixture("secret_pair_gate_refuses_every_unusable_shape", () => {
@@ -595,6 +603,178 @@ function runFixtures() {
     /* And the ceiling must track the request rather than sit at its floor. */
     return M.alpacaPageBudget(H.KEEP_DAYS, chunk * 8)
          > M.alpacaPageBudget(H.KEEP_DAYS, chunk);
+  }));
+
+  /* A manual run must not become a way around the two switches that stop the
+     desk, and must not reuse the scheduler's cadence slot — a manual run
+     swallowed as a duplicate looks exactly like a manual run that did nothing. */
+  cases.push(fixture("manual_run_is_gated_and_does_not_reuse_the_slot", () => {
+    const fs = require("fs"), path = require("path");
+    const src = fs.readFileSync(path.join(__dirname, "investorApi.js"), "utf8");
+    const act = src.slice(src.indexOf("async runCycleNow("));
+    const body = act.slice(0, act.indexOf("\n  },"));
+    /* Assert the REFUSAL, not a mention: `killSwitch: !!ctrl.killSwitch` also
+       appears in the dispatch payload, so a bare name test still passes with
+       the guard deleted. Both switches must return before dispatching. */
+    const dispatchAt = body.indexOf("K.dispatch(");
+    const beforeDispatch = dispatchAt > 0 ? body.slice(0, dispatchAt) : body;
+    if (!/if \(ctrl\.killSwitch\)\s*return \{ ok: false/.test(beforeDispatch)) return false;
+    if (!/if \(ctrl\.enabled === false\)\s*return \{ ok: false/.test(beforeDispatch)) return false;
+    if (!/manual: true/.test(body)) return false;
+    const kick = fs.readFileSync(path.join(__dirname, "investorKick.js"), "utf8");
+    /* The slot id and the manual id must be different expressions. */
+    if (!/manual \? `\$\{task\}_\$\{account\}_manual_/.test(kick)) return false;
+    /* And direct HTTP to the scheduled dispatcher stays refused. */
+    return /isScheduledInvocation\(event\)/.test(kick);
+  }));
+
+  /* The outbound Accept header must be real media types. `accept` is a list of
+     response-validation SUBSTRINGS, and sending those verbatim gave SEC the
+     literal header `Accept: json` — which an edge cache may answer with a 406,
+     and which is the shape of failure that left the universe unresolved. */
+  cases.push(fixture("accept_header_is_media_types_not_substrings", () => {
+    const F = require("./_investorFetch");
+    const h = F.acceptHeader(["json"]);
+    if (!/^application\/json\b/.test(h)) return false;
+    if (/(^|[,\s])json([,;]|$)/.test(h.replace("application/json", ""))) return false;
+    /* A wildcard fallback must remain so a strict origin cannot refuse us. */
+    if (!/\*\/\*/.test(h)) return false;
+    if (F.acceptHeader(null) !== "*/*") return false;
+    if (F.acceptHeader([]) !== "*/*") return false;
+    if (F.acceptHeader(["weird"]) !== "*/*") return false;
+    const two = F.acceptHeader(["html", "xml"]);
+    if (!(two.includes("text/html") && two.includes("application/xml"))) return false;
+    /* And the request must actually USE it. A correct helper that the call site
+       does not call is the same outage with a passing unit test. */
+    const src = require("fs").readFileSync(
+      require("path").join(__dirname, "_investorFetch.js"), "utf8");
+    if (!/"Accept": acceptHeader\(accept\)/.test(src)) return false;
+    return !/"Accept": accept \? accept\.join/.test(src);
+  }));
+
+  /* ── v8.8: paper learning mode ──────────────────────────────────────── */
+
+  /* The one guarantee that makes a relaxed desk safe: it cannot apply to real
+     orders, and no operator value can talk it into doing so. */
+  cases.push(fixture("relaxation_is_refused_whenever_dry_run_is_off", () => {
+    const ST = require("./_investorStrategy");
+    const req = { enabled: true, abstainOnMissingInfo: true, costMarginMultiple: 0 };
+    const live = ST.paperLearningConfig(ST.parameters, { dryRun: false, paperLearning: req });
+    if (live.active !== false) return false;
+    if (!live.refused) return false;
+    if (live.cfg.paperAbstainOnMissingInfo === true) return false;
+    if (live.cfg.costMarginMultiple !== ST.parameters.costMarginMultiple) return false;
+    /* And it stays off unless explicitly enabled. */
+    const off = ST.paperLearningConfig(ST.parameters, { dryRun: true });
+    if (off.active !== false || off.cfg.paperAbstainOnMissingInfo === true) return false;
+    const on = ST.paperLearningConfig(ST.parameters, { dryRun: true, paperLearning: req });
+    return on.active === true && on.cfg.paperAbstainOnMissingInfo === true;
+  }));
+
+  /* Overrides are clamped, so a typed-in zero cannot turn the desk into a
+     random-entry generator that still calls itself a strategy. */
+  cases.push(fixture("relaxation_overrides_are_clamped_not_trusted", () => {
+    const ST = require("./_investorStrategy");
+    const wild = { enabled: true, costMarginMultiple: 0, minAbsZ: 0, entryRank: 1,
+                   maxHoldDays: 9999, minAdvUsd: 0, sectorCrowdingMultiple: 99 };
+    const r = ST.paperLearningConfig(ST.parameters, { dryRun: true, paperLearning: wild });
+    const L = ST.RELAX_LIMITS;
+    for (const k of Object.keys(L)) {
+      if (r.cfg[k] == null) continue;
+      if (r.cfg[k] < L[k].min || r.cfg[k] > L[k].max) return false;
+    }
+    /* Garbage is ignored rather than coerced to zero. */
+    const junk = ST.paperLearningConfig(ST.parameters,
+      { dryRun: true, paperLearning: { enabled: true, minAbsZ: "loose", entryRank: null } });
+    return junk.cfg.minAbsZ === ST.parameters.minAbsZ
+        && junk.cfg.entryRank === ST.parameters.entryRank;
+  }));
+
+  /* Relaxation applies to MISSING INFORMATION only. A gate that found a
+     problem keeps blocking, or the desk would be taught something false. */
+  cases.push(fixture("relaxation_never_overrides_a_finding", () => {
+    const cfg = { ...strategy.parameters, paperAbstainOnMissingInfo: true };
+    /* A real fundamental cause is a finding: never faded, relaxed or not. */
+    const hard = S.directionFromCause(S.CAUSE.HARD_NEWS, cfg, 3, { complete: true });
+    if (hard.trade !== false) return false;
+    /* Pending evidence is an absence: a paper desk may record it. */
+    const pending = S.directionFromCause("something_unclassified", cfg, 0, null);
+    if (pending.trade !== true || pending.relaxed !== true) return false;
+    if (pending.confidence >= 0.5) return false;
+    /* And with the mode off, pending still blocks. */
+    const strict = S.directionFromCause("something_unclassified", strategy.parameters, 0, null);
+    if (strict.trade !== false) return false;
+    /* An F-graded series is never admitted, relaxed or not. */
+    const bad = M.gradeSeries([{ t: "2026-08-28T14:59:00Z", o: 1, h: 1, l: 1, c: 1, v: 1 }],
+      { provider: "alpaca", feed: "iex", sourceSha256: "nope", nowMs: Date.parse("2026-08-28T15:00:00Z") });
+    return bad.researchEligible === false && bad.tradable === false;
+  }));
+
+  /* A DATED hazard is a finding. Only "no window derivable" may relax. */
+  cases.push(fixture("a_known_earnings_date_blocks_however_relaxed", () => {
+    const relaxed = { ...strategy.parameters, paperAbstainOnMissingInfo: true };
+    const now = Date.parse("2026-08-28T15:00:00Z");
+    /* earningsDates is a LIST of dated windows for the symbol. */
+    const known = S.earningsBlackout("AAA", ["2026-08-29"], now, relaxed, {});
+    if (known.blocked !== true) return false;
+    if (known.unknown === true) return false;        // it is a finding, not an absence
+    /* A dated window that is far away does not block — otherwise this fixture
+       would pass by refusing everything. */
+    const far = S.earningsBlackout("AAA", ["2026-11-29"], now, relaxed, {});
+    if (far.blocked !== false) return false;
+    /* An absent window is an absence, and reports itself as one. */
+    for (const empty of [[], null, undefined]) {
+      const absent = S.earningsBlackout("BBB", empty, now, relaxed, {});
+      if (absent.blocked !== true || absent.unknown !== true) return false;
+    }
+    /* The gate that consumes these must relax ONLY the unknown branch. */
+    const src = require("fs").readFileSync(
+      require("path").join(__dirname, "_investorSignal.js"), "utf8");
+    return /blackoutOk = !bo\.blocked \|\| \(cfg\.paperAbstainOnMissingInfo === true && bo\.unknown === true\)/
+      .test(src);
+  }));
+
+  /* Grade F is broken data, not missing data: never admitted at any setting. */
+  cases.push(fixture("f_grade_data_is_refused_however_relaxed", () => {
+    const src = require("fs").readFileSync(
+      require("path").join(__dirname, "_investorSignal.js"), "utf8");
+    /* The relaxed branch must require researchEligible, which an F never has. */
+    if (!/cfg\.paperAbstainOnMissingInfo === true && quality\.researchEligible === true/.test(src)) return false;
+    const now = Date.parse("2026-08-28T15:00:00Z");
+    const bad = M.gradeSeries([{ t: "2026-08-28T14:59:00Z", o: 1, h: 1, l: 1, c: 1, v: 1 }],
+      { provider: "alpaca", feed: "iex", sourceSha256: "nope", nowMs: now });
+    if (bad.grade !== "F" || bad.researchEligible !== false) return false;
+    /* A stale series is equally broken and equally refused. */
+    const stale = M.gradeSeries([{ t: "2026-08-20T14:59:00Z", o: 1, h: 1, l: 1, c: 1, v: 1 }],
+      { provider: "alpaca", feed: "iex", sourceSha256: "a".repeat(64), nowMs: now });
+    return stale.grade === "F" && stale.researchEligible === false;
+  }));
+
+  /* Every path that rebuilds cfg mid-cycle must re-apply the relaxation, or the
+     desk goes quiet while the dashboard still reports the mode as on. */
+  cases.push(fixture("every_config_reset_reapplies_the_relaxation", () => {
+    const src = require("fs").readFileSync(
+      require("path").join(__dirname, "investorCycle-background.js"), "utf8");
+    const resets = src.match(/^\s*cfg = .*$/gm) || [];
+    if (resets.length < 2) return false;
+    for (const line of resets) {
+      if (/paperLearningConfig/.test(line)) continue;
+      if (/cfg = paperLearning\.cfg;/.test(line)) continue;
+      return false;                                   // a bare reset drops the mode
+    }
+    return true;
+  }));
+
+  /* The relaxed run must not destroy the measurement it loosens. */
+  cases.push(fixture("strict_verdict_is_recorded_alongside_the_relaxed_one", () => {
+    const fs = require("fs"), path = require("path");
+    const src = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
+    if (!/const strictCfg = \{ \.\.\.cfg \};/.test(src)) return false;
+    if (!/const strictRes = paperLearning\.active/.test(src)) return false;
+    if (!/cfg: strictCfg/.test(src)) return false;
+    /* And it must reach the stored card, not just exist as a local. */
+    return /strict: \{ pass: strictRes\.pass/.test(src)
+        && /paperRelaxed: paperLearning\.active === true/.test(src);
   }));
 
   const pass = cases.every((c) => c.pass);

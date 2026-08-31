@@ -118,7 +118,15 @@ function decide(ctrl, session, nowMs) {
   return { tasks, reasons };
 }
 
-async function dispatch(task, ctrl, session = null) {
+/* `manual` exists because the scheduler is the ONLY thing that starts a cycle,
+   and an operator with no way to start one has no way to tell a stopped system
+   apart from a quiet one. It changes exactly two things: the job id no longer
+   collapses into the cadence slot (a manual run inside the current slot would
+   otherwise be swallowed as a duplicate and look like nothing happened), and
+   the audit trail says an operator asked. It grants nothing — the worker still
+   re-reads the control document and still refuses on kill switch or disabled,
+   and the nonce is minted the same way for both paths. */
+async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
   const now = Date.now();
   const guardSeconds = session && session.open === false
     ? ctrl.guardSecondsClosed : ctrl.guardSeconds;
@@ -126,7 +134,7 @@ async function dispatch(task, ctrl, session = null) {
     : task === "guard" ? guardSeconds : ctrl.evidenceEverySeconds;
   const slot = Math.floor(now / (Math.max(60, Number(seconds) || 300) * 1000));
   const account = String(ctrl.accountId || "paper-1").replace(/[^a-zA-Z0-9_-]/g, "_");
-  const jobId = `${task}_${account}_${slot}`;
+  const jobId = manual ? `${task}_${account}_manual_${now}` : `${task}_${account}_${slot}`;
   const fn = "investorCycle-background";
   const nonce = mintWorkerNonce(jobId, fn);
   const jref = A.col(A.COL.jobs).doc(jobId);
@@ -138,8 +146,8 @@ async function dispatch(task, ctrl, session = null) {
       jobId, task, slot, accountId: ctrl.accountId, status: "queued",
       dispatchedAt: A.FV.serverTimestamp(), leaseExpiresAt: now + 14 * 60 * 1000,
       attempts: cur.exists ? Number(cur.data().attempts || 0) : 0,
-      mode: ctrl.mode, dryRun: ctrl.dryRun,
-      ...A.envelope({ created_by: "investorKick" }),
+      mode: ctrl.mode, dryRun: ctrl.dryRun, manual: !!manual,
+      ...A.envelope({ created_by: manual ? "investorApi.runCycleNow" : "investorKick" }),
     });
     const stamp = task === "cycle" ? "lastCycleAt"
       : task === "guard" ? "lastGuardAt" : "lastEvidenceAt";

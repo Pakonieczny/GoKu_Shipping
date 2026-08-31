@@ -336,6 +336,17 @@ async function runCycle(jobId) {
         ? `baseline — only ${allocationRead.bestEffectiveN || 0} of ${allocationRead.requiredEffectiveN || "?"} independent days collected, not enough to favour any variant yet`
         : "baseline — no allocation recorded yet");
 
+  /* Paper learning mode. `strictCfg` is kept untouched so the published
+     calibration can be scored alongside whatever the operator loosened. */
+  const strictCfg = { ...cfg };
+  const paperLearning = require("./_investorStrategy.js").paperLearningConfig(cfg, ctrl);
+  cfg = paperLearning.cfg;
+  if (paperLearning.active) {
+    cfgSource += ` · paper learning mode: ${Object.keys(paperLearning.applied).join(", ") || "no change"}`;
+  } else if (paperLearning.refused) {
+    cfgSource += ` · ${paperLearning.refused}`;
+  }
+
   const accountId = ctrl.accountId || "paper-1";
   let entryControl = L.controlAllowsEntry(ctrl, policyIdentity);
   const session = M.sessionState(new Date());
@@ -513,8 +524,12 @@ async function runCycle(jobId) {
     marketIdentity });
   if (liveVariant && allocationRead && allocationRead.experimentHash !== shadowExperiment.experimentHash) {
     liveVariant = null;
-    cfg = { ...baseParams };
-    cfgSource = "baseline — the stored leader belongs to a different market-data experiment";
+    /* Re-apply the operator's relaxation after the reset. Without this the
+       leader-mismatch branch silently reverted to the published calibration
+       and the desk would go quiet again with the mode still showing as on. */
+    cfg = require("./_investorStrategy.js").paperLearningConfig({ ...baseParams }, ctrl).cfg;
+    cfgSource = "baseline — the stored leader belongs to a different market-data experiment"
+      + (paperLearning.active ? " · paper learning mode still applied" : "");
   }
   const tradable = {};
   for (const sym of tradeSymbols) {
@@ -938,7 +953,17 @@ async function runCycle(jobId) {
       reversion: reversionBySymbol[sym] || null,
       turnoverPctile: turnoverPctile[sym] ?? null,
     };
+    /* Evaluate TWICE. `evalRes` is the verdict the desk acts on; `strictRes` is
+       what the published, real-money calibration would have said. Recording
+       both is what stops paper learning mode from destroying the measurement
+       it loosens: every relaxed trade stays labelled with whether it would
+       have cleared the real gates, so the two populations can be scored apart
+       later instead of blurring into one unusable sample. When the mode is off
+       the two configs are identical and this costs a pure recomputation. */
     const evalRes = S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z, cfg });
+    const strictRes = paperLearning.active
+      ? S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z, cfg: strictCfg })
+      : evalRes;
     const frozenDecision = DF.evaluateFrozenPolicies({ baseInput: baseDecisionInput,
       signalContexts: Object.fromEntries(Object.entries(signalContexts).map(([window, value]) =>
         [window, { ranks: value.ranks, zBySymbol: value.zBySymbol }])) });
@@ -967,6 +992,11 @@ async function runCycle(jobId) {
       sigmaBlend: z ? z.sigmaBlend : null,
       zShortOnly: z && isFinite(z.zShortOnly) ? Number(z.zShortOnly.toFixed(2)) : null,
       pass: evalRes.pass, blockedBy: evalRes.blockedBy, firstBlock: evalRes.firstBlock,
+      /* Always present, and identical to the above when the mode is off. */
+      strict: { pass: strictRes.pass, blockedBy: strictRes.blockedBy,
+                firstBlock: strictRes.firstBlock,
+                costRatio: strictRes.cost ? strictRes.cost.ratio : null },
+      paperRelaxed: paperLearning.active === true,
       frozenDecision,
       cost: evalRes.cost, sizing: evalRes.sizing,
       breach: !!breach, unionEvidenceTrigger: !!evidenceTrigger,

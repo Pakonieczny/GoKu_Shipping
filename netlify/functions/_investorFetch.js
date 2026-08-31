@@ -36,6 +36,26 @@ const fetchFn = (...args) => {
 const UA = process.env.INVESTOR_USER_AGENT ||
   "InvestorAI-Research/1.0 (private single-user research; contact: pakonieczny@gmail.com)";
 
+/* `accept` is a list of content-type SUBSTRINGS used to validate the RESPONSE
+   ("json", "html", "xml"). Those are not media types, so joining them straight
+   into the request header sent SEC the literal `Accept: json` — a malformed
+   header an edge cache is entitled to answer with a 406 or with something
+   other than the document. The substrings stay exactly as they are for the
+   response check; only the outbound header is translated, and a wildcard at low
+   quality is always appended so a strict origin can never refuse us outright. */
+const ACCEPT_MEDIA = {
+  json: "application/json", html: "text/html", xml: "application/xml",
+  text: "text/plain", csv: "text/csv", pdf: "application/pdf",
+  atom: "application/atom+xml", rss: "application/rss+xml",
+};
+function acceptHeader(accept) {
+  if (!Array.isArray(accept) || !accept.length) return "*/*";
+  const media = [...new Set(accept
+    .map((a) => ACCEPT_MEDIA[String(a).toLowerCase()])
+    .filter(Boolean))];
+  return media.length ? `${media.join(", ")}, */*;q=0.1` : "*/*";
+}
+
 /* ── allowlist. A host not on this list cannot be reached, full stop. ───── */
 const ALLOWED_HOSTS = new Set([
   // SEC — primary evidence
@@ -226,7 +246,7 @@ async function fetchPublic(url, opts = {}) {
     const h = {
       "User-Agent": UA,
       "Accept-Encoding": "gzip, deflate",
-      "Accept": accept ? accept.join(", ") : "*/*",
+      "Accept": acceptHeader(accept),
       ...extraHeaders,
     };
     if (method === "POST" && !h["Content-Type"] && !h["content-type"]) {
@@ -325,5 +345,5 @@ function normalizedHash(text) {
 
 module.exports = {
   fetchPublic, normalizedHash, assertSafeUrl,
-  ALLOWED_HOSTS, DENY_HOSTS, scopedHosts, UA,
+  ALLOWED_HOSTS, DENY_HOSTS, scopedHosts, UA, acceptHeader,
 };

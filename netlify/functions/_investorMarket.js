@@ -98,12 +98,30 @@ const FEEDS = new Set(["iex", "sip", "otc"]);
 let _marketSettings = null;
 let _marketSettingsAtMs = 0;
 
-function envMarketSettings() {
-  const provider = String(process.env.INVESTOR_MARKET_PROVIDER || "manual").toLowerCase();
-  const feed = String(process.env.ALPACA_FEED || "iex").toLowerCase();
+/* The one place a provider/feed choice is judged, whichever layer offered it.
+   Extracted so the invariant "an unrecognised or absent lane resolves to
+   manual/iex" can be attested as a PURE function. Attesting it through
+   marketSettings() instead was wrong: that reads a cache which, once Firestore
+   has answered, no longer depends on the environment at all — so the check
+   passed on a cold process and failed in the deployed one, where the cache is
+   always warm. A fixture whose result depends on call order attests nothing. */
+function normalizeMarketChoice(rawProvider, rawFeed) {
+  const p = String(rawProvider == null ? "" : rawProvider).toLowerCase();
+  const f = String(rawFeed == null ? "" : rawFeed).toLowerCase();
   return {
-    provider: PROVIDERS[provider] ? provider : "manual",
-    feed: FEEDS.has(feed) ? feed : "iex",
+    provider: PROVIDERS[p] ? p : "manual",
+    feed: FEEDS.has(f) ? f : "iex",
+    providerRecognised: !!PROVIDERS[p],
+    feedRecognised: FEEDS.has(f),
+  };
+}
+
+function envMarketSettings() {
+  const choice = normalizeMarketChoice(process.env.INVESTOR_MARKET_PROVIDER,
+                                      process.env.ALPACA_FEED);
+  return {
+    provider: choice.provider,
+    feed: choice.feed,
     alpacaKeyId: String(process.env.ALPACA_API_KEY_ID || ""),
     alpacaSecretKey: String(process.env.ALPACA_API_SECRET_KEY || ""),
     source: process.env.INVESTOR_MARKET_PROVIDER ? "environment" : "default",
@@ -153,8 +171,9 @@ async function loadMarketSettings({ force = false } = {}) {
       const d = snap.data() || {};
       const rawProvider = String(d.provider || "").toLowerCase();
       const rawFeed = String(d.feed || "").toLowerCase();
-      const provider = PROVIDERS[rawProvider] ? rawProvider : null;
-      const feed = FEEDS.has(rawFeed) ? rawFeed : null;
+      const choice = normalizeMarketChoice(rawProvider, rawFeed);
+      const provider = choice.providerRecognised ? choice.provider : null;
+      const feed = choice.feedRecognised ? choice.feed : null;
       /* Credentials are taken as a PAIR or not at all. A document carrying
          only a key id must not silently pair it with an environment secret. */
       const keyId = typeof d.alpacaKeyId === "string" ? d.alpacaKeyId.trim() : "";
@@ -779,6 +798,6 @@ module.exports = {
   tradingSessionsBetween,
   slippageBps, executionCostContext,
   fetchBars, mapMassiveResults, validateBar, normalizeBars, partitionBarsBySession, gradeSeries, firstEligibleBar,
-  alpacaWindow, alpacaPageBudget,
+  alpacaWindow, alpacaPageBudget, normalizeMarketChoice,
   writeBars, readBars, readRecentBars, readRecentBarsWithMeta, barDocId,
 };

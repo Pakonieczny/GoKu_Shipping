@@ -537,9 +537,22 @@ function directionFromCause(cause, cfg = {}, attentionScore = null, coverage = n
       // Liquidity-provision premium, but recall risk: a real cause may exist
       // outside covered sources. Traded smaller until the recall benchmark
       // demonstrates acceptable coverage.
+      if (cfg.paperAbstainOnMissingInfo === true) {
+        return { trade: true, side: "long", confidence: 0.2, relaxed: true,
+                 reason: "no cause found in covered sources — taken as a paper observation at reduced confidence" };
+      }
       return { trade: false, side: null, confidence: 0,
                reason: "no-cause automation locked until external known-cause recall is measured" };
     default:
+      /* Pending means the evidence sweep has not reached this name yet. That is
+         an absence of information, not a finding against the trade, so a paper
+         desk may record it. HARD_NEWS above is a FINDING and never relaxes:
+         fading a real repricing is the known-losing trade, and taking it would
+         teach the system something false. */
+      if (cfg.paperAbstainOnMissingInfo === true) {
+        return { trade: true, side: "long", confidence: 0.2, relaxed: true,
+                 reason: "evidence still pending — taken as a paper observation at reduced confidence" };
+      }
       return { trade: false, side: null, confidence: 0, reason: "evidence still pending" };
   }
 }
@@ -619,7 +632,9 @@ function evaluateCandidate(input) {
   }
 
   // 1. Data quality — an F grade freezes the symbol entirely.
-  add("quality", "Price quality", quality && quality.tradable,
+  const qualityOk = !!quality && (quality.tradable === true
+    || (cfg.paperAbstainOnMissingInfo === true && quality.researchEligible === true));
+  add("quality", "Price quality", qualityOk,
       quality
         ? `grade ${quality.grade}${(quality.reasons && quality.reasons.length) ? " — " + quality.reasons.join(", ") : ""}`
         : "no data");
@@ -637,7 +652,10 @@ function evaluateCandidate(input) {
   // 4. Earnings blackout.
   const bo = earningsBlackout(symbol, earningsDates, nowMs, cfg, {
     estimated: input.earningsEstimated, uncertaintyDays: input.earningsUncertaintyDays });
-  add("blackout", "Earnings blackout", !bo.blocked,
+  /* A KNOWN blackout still blocks under every setting — that is a dated hazard.
+     Only "no window derivable yet" relaxes, because that is missing data. */
+  const blackoutOk = !bo.blocked || (cfg.paperAbstainOnMissingInfo === true && bo.unknown === true);
+  add("blackout", "Earnings blackout", blackoutOk,
       bo.reason + (input.earningsEstimated && !bo.unknown ? " (estimated window, widened)" : ""));
 
   // 5. Liquidity floor — cost is the binding constraint.
@@ -687,8 +705,10 @@ function evaluateCandidate(input) {
           ? `downtrend: ${ctx.drawdown6mPct}% off its 6-month high, below the 200-day, 50-day line falling ${ctx.sma50SlopePct}%`
           : `${Math.round(ctx.rangePct6m * 100)}% up its 6-month range, ${ctx.aboveSma200 === true ? "above" : "below"} the 200-day (${ctx.downtrendFlags}/3 downtrend flags)`);
   } else {
-    add("trend", "Long-horizon trend", cfg.blockDowntrends === false,
-        ctx ? `no long-horizon read yet — ${ctx.reason}; new risk blocked` : "history not loaded; new risk blocked");
+    const trendUnknownOk = cfg.blockDowntrends === false || cfg.paperAbstainOnMissingInfo === true;
+    add("trend", "Long-horizon trend", trendUnknownOk,
+        (ctx ? `no long-horizon read yet — ${ctx.reason}` : "history not loaded")
+          + (trendUnknownOk ? "; abstaining while the backfill completes" : "; new risk blocked"));
   }
 
   /* 6d. TURNOVER CONDITIONING — the strongest published conditioning result
@@ -713,8 +733,9 @@ function evaluateCandidate(input) {
           ? `top-decile turnover (${Math.round(toPctile * 100)}th pctile) — heavily-traded losers continue falling rather than bouncing (Medhat–Schmeling RFS 2022)`
           : `${Math.round(toPctile * 100)}th percentile turnover — inside the range where reversal actually works`);
   } else {
-    add("turnover", "Turnover conditioning", false,
-        "shares outstanding not known — new risk blocked", true);
+    add("turnover", "Turnover conditioning", cfg.paperAbstainOnMissingInfo === true,
+        "shares outstanding not known — "
+          + (cfg.paperAbstainOnMissingInfo === true ? "abstaining" : "new risk blocked"), true);
   }
 
   // 7. Company intelligence is a required, point-in-time risk gate. It may
@@ -729,7 +750,10 @@ function evaluateCandidate(input) {
     : { monitored: false, fresh: false, complete: false,
         entryAllowed: cfg.requireCompanyIntelligence !== true, sizeMultiplier: cfg.requireCompanyIntelligence === true ? 0 : 1,
         adverseRiskScore: 0, reasons: ["no current company-intelligence dossier"] };
-  const intelRequired = cfg.requireCompanyIntelligence === true;
+  /* No dossier at all is missing information. A dossier that EXISTS and reports
+     adverse material still blocks and still sizes down, relaxed or not. */
+  const intelRequired = cfg.requireCompanyIntelligence === true
+    && !(cfg.paperAbstainOnMissingInfo === true && !input.intelligence);
   add("intelligence", "Company intelligence", !intelRequired || intelPolicy.entryAllowed,
       `${intelPolicy.reasons.join("; ")}; size ${Math.round(intelPolicy.sizeMultiplier * 100)}%`);
 
