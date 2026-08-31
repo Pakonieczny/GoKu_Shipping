@@ -17,11 +17,11 @@
  *  a single-use nonce, and returns. It never fetches a source, never calls a
  *  model, and never touches the ledger.
  *
- *  CADENCE. netlify.toml schedules this every 5 minutes. Netlify documents no
- *  minimum interval and a forum thread documents real drift on sub-hourly
- *  crons (32/28-minute alternation on a 31-minute schedule), so nothing here
- *  assumes exactly 288 fires a day. Every decision is derived from wall-clock
- *  state, never from a fire count.
+ *  CADENCE. netlify.toml invokes this lightweight dispatcher every minute so a
+ *  delayed cron does not skip an entire five-minute decision slot. The control
+ *  document's wall-clock cadence still gates the expensive worker (five
+ *  minutes by default), so frequent kicks do not imply frequent data/model
+ *  calls. Nothing assumes an exact fire count.
  * ---------------------------------------------------------------------------
  */
 
@@ -39,17 +39,27 @@ async function control() {
   const ref = A.col(A.COL.control).doc("control");
   const snap = await ref.get();
   const d = snap.exists ? snap.data() : {};
+  const bounded = (value, fallback, min, max) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
+  };
   return {
     enabled: d.enabled !== false,
     mode: d.mode || "research",              // research | approval | shadow | limited_auto
     dryRun: d.dryRun !== false,              // dry run defaults ON
     killSwitch: !!d.killSwitch,
     accountId: d.accountId || "paper-1",
-    strategyVersion: d.strategyVersion || "v1",
-    cycleSeconds: Number(d.cycleSeconds || 300),
-    evidenceEverySeconds: Number(d.evidenceEverySeconds || 900),
+    strategyVersion: d.strategyVersion || require("./_investorStrategy").version,
+    cycleSeconds: bounded(d.cycleSeconds, 300, 60, 3600),
+    guardSeconds: bounded(d.guardSeconds, 60, 60, 300),
+    /* The guard also runs while the exchange is shut, on a slower clock. It
+       fetches nothing there — it re-reads stored bars — so the marginal cost
+       is a Firestore read per holding, against a 17.5-hour blind spot. */
+    guardSecondsClosed: bounded(d.guardSecondsClosed, 900, 300, 3600),
+    evidenceEverySeconds: bounded(d.evidenceEverySeconds, 900, 300, 86400),
     afterHoursCycles: d.afterHoursCycles === true,   // default: market hours only
     lastCycleAt: d.lastCycleAt || null,
+    lastGuardAt: d.lastGuardAt || null,
     lastEvidenceAt: d.lastEvidenceAt || null,
   };
 }
@@ -60,20 +70,39 @@ function decide(ctrl, session, nowMs) {
   const tasks = [];
   const reasons = [];
 
-  if (ctrl.killSwitch) return { tasks: [], reasons: ["kill switch engaged"] };
-  if (!ctrl.enabled)   return { tasks: [], reasons: ["system disabled"] };
-
   const sinceCycle = ctrl.lastCycleAt ? nowMs - ctrl.lastCycleAt : Infinity;
+  const sinceGuard = ctrl.lastGuardAt ? nowMs - ctrl.lastGuardAt : Infinity;
   const sinceEvidence = ctrl.lastEvidenceAt ? nowMs - ctrl.lastEvidenceAt : Infinity;
 
+  const entriesClosed = ctrl.killSwitch || !ctrl.enabled;
   const inSession = session.tradingDay && (session.open || session.phase === "premarket");
-  if (!inSession && !ctrl.afterHoursCycles) {
+  const scanAllowed = !entriesClosed && (inSession || ctrl.afterHoursCycles);
+  if (entriesClosed) {
+    reasons.push(`entries closed (${ctrl.killSwitch ? "kill switch" : "disabled"}) — full scan suppressed`);
+  } else if (!scanAllowed) {
     reasons.push(`outside session (${session.phase}) — price cycle suppressed to control cost`);
   } else if (sinceCycle >= ctrl.cycleSeconds * 1000 * 0.9) {
     tasks.push("cycle");
     reasons.push(`price cycle due (${Math.round(sinceCycle / 1000)}s since last)`);
   } else {
     reasons.push(`price cycle not due (${Math.round(sinceCycle / 1000)}s of ${ctrl.cycleSeconds}s)`);
+  }
+
+  /* The guard is independently dispatched even when a full cycle is due. Its
+     held-only, risk-reducing transactions are safe to overlap, so a long
+     opportunity scan cannot delay a stop.
+     It runs on EVERY tick of its clock, in session or not. Positions do not
+     stop existing at 16:00 on Friday, and a guard that only ran while the
+     exchange was open covered a quarter of the week and left a 17.5-hour gap
+     across every overnight. Outside the session it evaluates and arms from
+     stored bars; execution still waits for the regular session, because
+     pre/post-market bars are not priced under regular-session spread
+     assumptions. */
+  const guardPeriodMs = (session.open ? ctrl.guardSeconds : ctrl.guardSecondsClosed) * 1000;
+  if (sinceGuard >= guardPeriodMs * 0.9) {
+    tasks.push("guard");
+    reasons.push(`held-position guard due (${Math.round(sinceGuard / 1000)}s since last`
+      + `${session.open ? "" : ", closed-market evaluation"})`);
   }
 
   // The evidence sweep runs on a slower clock than the price loop and keeps
@@ -88,19 +117,35 @@ function decide(ctrl, session, nowMs) {
   return { tasks, reasons };
 }
 
-async function dispatch(task, ctrl) {
-  const jobId = `${task}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+async function dispatch(task, ctrl, session = null) {
+  const now = Date.now();
+  const guardSeconds = session && session.open === false
+    ? ctrl.guardSecondsClosed : ctrl.guardSeconds;
+  const seconds = task === "cycle" ? ctrl.cycleSeconds
+    : task === "guard" ? guardSeconds : ctrl.evidenceEverySeconds;
+  const slot = Math.floor(now / (Math.max(60, Number(seconds) || 300) * 1000));
+  const account = String(ctrl.accountId || "paper-1").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const jobId = `${task}_${account}_${slot}`;
   const fn = "investorCycle-background";
   const nonce = mintWorkerNonce(jobId, fn);
-
-  await A.col(A.COL.jobs).doc(jobId).set({
-    jobId, task, status: "queued",
-    dispatchedAt: A.FV.serverTimestamp(),
-    leaseExpiresAt: Date.now() + 14 * 60 * 1000,
-    attempts: 0,
-    mode: ctrl.mode, dryRun: ctrl.dryRun,
-    ...A.envelope({ created_by: "investorKick" }),
+  const jref = A.col(A.COL.jobs).doc(jobId);
+  const cref = A.col(A.COL.control).doc("control");
+  const claimed = await A.runTransaction(async (tx) => {
+    const cur = await tx.get(jref);
+    if (cur.exists && ["queued", "running", "complete"].includes(cur.data().status)) return false;
+    tx.set(jref, {
+      jobId, task, slot, accountId: ctrl.accountId, status: "queued",
+      dispatchedAt: A.FV.serverTimestamp(), leaseExpiresAt: now + 14 * 60 * 1000,
+      attempts: cur.exists ? Number(cur.data().attempts || 0) : 0,
+      mode: ctrl.mode, dryRun: ctrl.dryRun,
+      ...A.envelope({ created_by: "investorKick" }),
+    });
+    const stamp = task === "cycle" ? "lastCycleAt"
+      : task === "guard" ? "lastGuardAt" : "lastEvidenceAt";
+    tx.set(cref, { [stamp]: now }, { merge: true });
+    return true;
   });
+  if (!claimed) return { jobId, task, duplicateSlot: true, upstream: null };
 
   // Payload stays tiny: Netlify caps background request bodies at 256KB and
   // the worker must load its own inputs through Firestore pointers anyway.
@@ -109,6 +154,10 @@ async function dispatch(task, ctrl) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jobId, task, nonce }),
   });
+  if (!res.ok) {
+    await jref.set({ status: "dispatch_failed", dispatchStatus: res.status,
+      dispatchFailedAt: A.FV.serverTimestamp() }, { merge: true });
+  }
   return { jobId, task, upstream: res.status };
 }
 
@@ -121,21 +170,15 @@ exports.handler = async (event) => {
 
   const startedAt = Date.now();
   try {
+    await M.loadMarketSettings();
     const ctrl = await control();
     const session = M.sessionState(new Date());
     const { tasks, reasons } = decide(ctrl, session, startedAt);
 
     const dispatched = [];
     for (const t of tasks) {
-      try { dispatched.push(await dispatch(t, ctrl)); }
+      try { dispatched.push(await dispatch(t, ctrl, session)); }
       catch (e) { dispatched.push({ task: t, error: String(e.message).slice(0, 160) }); }
-    }
-
-    if (dispatched.some((d) => d.task === "cycle" && !d.error)) {
-      await A.col(A.COL.control).doc("control").set({ lastCycleAt: startedAt }, { merge: true });
-    }
-    if (dispatched.some((d) => d.task === "evidence" && !d.error)) {
-      await A.col(A.COL.control).doc("control").set({ lastEvidenceAt: startedAt }, { merge: true });
     }
 
     const summary = {
@@ -154,3 +197,4 @@ exports.handler = async (event) => {
 
 exports.control = control;
 exports.decide = decide;
+exports.dispatch = dispatch;

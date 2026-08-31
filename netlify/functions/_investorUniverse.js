@@ -18,12 +18,12 @@
 
 "use strict";
 
-module.exports = {
-  "version": "v2",
-  "name": "Investor_AI trade tier \u2014 wide breadth for counterfactual learning",
+const DECLARED = {
+  "version": "v5",
+  "name": "Investor_AI point-in-time research roster with executable exclusions",
   "createdAt": "2026-08-29",
-  "supersedes": "v1 (45 names)",
-  "rationale": "Widened from 45 to ~300 liquid US-listed common shares. Two reasons, both about learning speed. (1) Information ratio scales with the SQUARE ROOT of the number of independent bets, so breadth improves results directly \u2014 it is what Medallion actually exploits, winning on a 50.75% hit rate across enormous volume. (2) The shadow harness scores every variant against every ranked name each cycle, so more names means proportionally more counterfactual observations per day, and the ~625 independent days needed to tell a real edge from luck arrives far sooner. Average dollar volume is now MEASURED from the bars the system already fetches rather than hardcoded, because hardcoded volume goes stale within weeks and the liquidity gate is the main defence against cost drag.",
+  "supersedes": "v4",
+  "rationale": "Breadth can reduce the variance of a portfolio-day observation but cannot make independent trading days arrive faster. Membership is declared once; machine-enforced exclusions and dynamic data-quality/liquidity eligibility are separate and auditable.",
   "exclusions": {
     "binary_biopharma": "Unscheduled FDA/Phase 3 readouts gap 40%+ and no blackout calendar or stop can protect against them. Structurally incompatible with hundreds of position-exposures a year on an edge of tens of basis points.",
     "commodity_beta": "OXY DVN FANG SLB HAL FCX NUE AA CLF - track WTI/copper/steel. Systematic risk wearing a company name; no company-specific event for the evidence engine to find.",
@@ -2552,5 +2552,24 @@ module.exports = {
       "tier": "research"
     }
   ],
-  "selfCorrection": "Bootstrap resolves every symbol against SEC's own ticker map and DROPS anything it cannot match, recording it under unresolvedDropped. A delisted or renamed ticker therefore removes itself on the next cycle rather than sitting in the roster producing stale data \u2014 which is what happened with X and EA before a fixture caught them."
+  "selfCorrection": "Bootstrap resolves identifiers against SEC's ticker map. Unresolved identifiers fail the freeze rather than silently shrinking an experiment; later eligibility changes are recorded separately from immutable membership."
 };
+
+const EXCLUDED = {
+  OXY:"commodity_beta",DVN:"commodity_beta",FANG:"commodity_beta",SLB:"commodity_beta",HAL:"commodity_beta",
+  FCX:"commodity_beta",NUE:"commodity_beta",AA:"commodity_beta",CLF:"commodity_beta",
+  JPM:"rate_driven_financials",BAC:"rate_driven_financials",GS:"rate_driven_financials",MS:"rate_driven_financials",
+  SCHW:"rate_driven_financials",BLK:"rate_driven_financials",
+  UNH:"managed_care",CVS:"managed_care",CI:"managed_care",
+  COST:"flat_tail_defensives",HD:"flat_tail_defensives",LOW:"flat_tail_defensives",
+  MRNA:"binary_biopharma",BIIB:"binary_biopharma",INCY:"binary_biopharma",NBIX:"binary_biopharma",
+  ALNY:"binary_biopharma",BMRN:"binary_biopharma",EXEL:"binary_biopharma",UTHR:"binary_biopharma",
+  JAZZ:"binary_biopharma",HALO:"binary_biopharma",SRPT:"binary_biopharma",IONS:"binary_biopharma",
+  RARE:"binary_biopharma",FOLD:"binary_biopharma",ITCI:"binary_biopharma",AXSM:"binary_biopharma",CORT:"binary_biopharma",
+};
+const declaredTradeTier = DECLARED.tradeTier;
+const excludedTier = declaredTradeTier.filter((r)=>EXCLUDED[r.symbol]).map((r)=>({...r,exclusionReason:EXCLUDED[r.symbol]}));
+const tradeTier = declaredTradeTier.filter((r)=>!EXCLUDED[r.symbol]);
+module.exports = {...DECLARED,immutable:true,declaredTradeTierCount:declaredTradeTier.length,
+  tradeTier,excludedTier,enforcement:{eligibleCount:tradeTier.length,excludedCount:excludedTier.length,
+    exclusionPolicyVersion:"material-exclusions-v1"}};

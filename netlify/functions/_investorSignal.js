@@ -46,8 +46,11 @@
 
 "use strict";
 
+const T = require("./_investorTemporal");
 const M = require("./_investorMarket");
 const H = require("./_investorHistory");
+const XP = require("./_investorExitPolicy");
+const I = require("./_investorIntelligence");
 
 /* ── small numeric helpers (fixed, defensive, no deps) ─────────────────── */
 const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
@@ -76,6 +79,52 @@ function ols(y, x) {
   return { beta, alpha: my - beta * mx, n };
 }
 
+/** Exact-clock log returns. A missing five-minute interval stays missing; it
+ * must never be converted into a longer return and joined to a five-minute
+ * factor observation. */
+function timestampReturns(bars, intervalMs = 5 * 60 * 1000) {
+  const series = M.normalizeBars(bars);
+  const out = new Map();
+  for (let i = 1; i < series.length; i++) {
+    const p = series[i - 1], c = series[i];
+    if (Date.parse(c.t) - Date.parse(p.t) !== intervalMs) continue;
+    if (!(p.c > 0 && c.c > 0)) continue;
+    out.set(c.t, Math.log(c.c / p.c));
+  }
+  return out;
+}
+
+function solve3(a, b) {
+  const m = a.map((r, i) => [...r, b[i]]);
+  for (let i = 0; i < 3; i++) {
+    let p = i;
+    for (let r = i + 1; r < 3; r++) if (Math.abs(m[r][i]) > Math.abs(m[p][i])) p = r;
+    if (Math.abs(m[p][i]) < 1e-12) return null;
+    [m[i], m[p]] = [m[p], m[i]];
+    const d = m[i][i]; for (let j = i; j < 4; j++) m[i][j] /= d;
+    for (let r = 0; r < 3; r++) if (r !== i) {
+      const q = m[r][i]; for (let j = i; j < 4; j++) m[r][j] -= q * m[i][j];
+    }
+  }
+  return m.map((r) => r[3]);
+}
+
+function jointOls(rows) {
+  if (rows.length < 12) return { alpha: 0, market: 1, sector: 0, n: rows.length };
+  const xtx = [[0,0,0],[0,0,0],[0,0,0]], xty = [0,0,0];
+  for (const r of rows) {
+    const x = [1, r.m, r.s];
+    for (let i = 0; i < 3; i++) {
+      xty[i] += x[i] * r.y;
+      for (let j = 0; j < 3; j++) xtx[i][j] += x[i] * x[j];
+    }
+  }
+  const ridge = 1e-10; xtx[1][1] += ridge; xtx[2][2] += ridge;
+  const v = solve3(xtx, xty);
+  return v ? { alpha: v[0], market: v[1], sector: v[2], n: rows.length }
+    : { alpha: mean(rows.map((r) => r.y)), market: 0, sector: 0, n: rows.length };
+}
+
 /* ── sector resolution ─────────────────────────────────────────────────
  * Sectors come from the UNIVERSE file, not from a table hardcoded here — the
  * roster is the thing that changes, and a 350-name roster against a 46-name
@@ -84,6 +133,7 @@ function ols(y, x) {
  */
 let SECTOR = {};
 function setSectorMap(map) { SECTOR = map || {}; return Object.keys(SECTOR).length; }
+function getSectorMap() { return { ...SECTOR }; }
 function sectorOf(sym) { return SECTOR[sym] || "other"; }
 
 /* ── 1. RESIDUAL RETURN ENGINE ─────────────────────────────────────────── */
@@ -95,21 +145,62 @@ function sectorOf(sym) { return SECTOR[sym] || "other"; }
  * data the system actually has.
  */
 function residualPanel(panel, opts = {}) {
-  // panel: { SYM: [{t,o,h,l,c,v}, ...] }  aligned by index (same cadence)
-  const symbols = Object.keys(panel).filter((s) => (panel[s] || []).length > 12);
+  const quality = opts.quality || {};
+  let symbols = Object.keys(panel).filter((s) => (panel[s] || []).length > 12
+    && (!quality[s] || quality[s].tradable === true));
+  if (symbols.length < 4) return { symbols: [], residuals: {}, betas: {}, note: "insufficient_panel_breadth" };
+  const rets = Object.fromEntries(symbols.map((s) => [s, timestampReturns(panel[s])]));
+
+  /* A synchronous timestamp grid alone is not sufficient. A sparse symbol can
+     appear on only a few of those timestamps and still contaminate the market
+     and sector factors used for every other name. Build the grid and remove
+     under-covered symbols BEFORE factor construction, repeating after each
+     removal because the breadth threshold changes with the population. */
+  const minCoverageRatio = Math.max(0.5, Math.min(1,
+    Number(opts.minCoverageRatio) || 0.65));
+  const requestedSymbolCoverage = opts.minSymbolCoverage != null
+    ? Number(opts.minSymbolCoverage) : Number(opts.minSymbolCoverageRatio);
+  const minSymbolCoverage = Math.max(0.5, Math.min(1,
+    Number.isFinite(requestedSymbolCoverage) ? requestedSymbolCoverage : 0.80));
+  const intervalMs = Math.max(1, Number(opts.intervalMs) || 300000);
+  const maxWindowSpanMultiple = Math.max(1,
+    Number(opts.maxWindowSpanMultiple) || 1.5);
+  const symbolCoverage = {};
+  const coverageExclusions = new Map();
+  let timestamps = [];
+  let minCoverage = 4;
+  while (symbols.length >= 4) {
+    const coverage = new Map();
+    for (const s of symbols) {
+      for (const t of rets[s].keys()) coverage.set(t, (coverage.get(t) || 0) + 1);
+    }
+    minCoverage = Math.max(4, Math.ceil(symbols.length * minCoverageRatio));
+    timestamps = [...coverage.entries()].filter(([, n]) => n >= minCoverage)
+      .map(([t]) => t).sort((a, b) => Date.parse(a) - Date.parse(b));
+    if (timestamps.length < 24) {
+      return { symbols: [], residuals: {}, betas: {}, symbolCoverage,
+        excludedForCoverage: [...coverageExclusions.values()],
+        note: "insufficient_synchronous_history" };
+    }
+    const covered = [];
+    for (const s of symbols) {
+      let seen = 0;
+      for (const t of timestamps) if (Number.isFinite(rets[s].get(t))) seen += 1;
+      const ratio = seen / timestamps.length;
+      symbolCoverage[s] = Number(ratio.toFixed(3));
+      if (ratio < minSymbolCoverage) {
+        coverageExclusions.set(s, { symbol: s, coverage: symbolCoverage[s],
+          reason: `reported ${(ratio * 100).toFixed(0)}% of the synchronised grid, below the ${(minSymbolCoverage * 100).toFixed(0)}% floor` });
+      } else covered.push(s);
+    }
+    if (covered.length === symbols.length) break;
+    symbols = covered;
+  }
   if (symbols.length < 4) {
-    return { symbols: [], residuals: {}, betas: {}, note: "insufficient_panel_breadth" };
+    return { symbols: [], residuals: {}, betas: {}, symbolCoverage,
+      excludedForCoverage: [...coverageExclusions.values()],
+      note: "insufficient_covered_breadth" };
   }
-  const rets = {};
-  let minLen = Infinity;
-  for (const s of symbols) {
-    rets[s] = pctReturns(panel[s].map((b) => b.c));
-    minLen = Math.min(minLen, rets[s].length);
-  }
-  if (!isFinite(minLen) || minLen < 12) {
-    return { symbols: [], residuals: {}, betas: {}, note: "insufficient_history" };
-  }
-  for (const s of symbols) rets[s] = rets[s].slice(-minLen);
 
   /* MINIMUM SECTOR SIZE. A sector holding one or two roster names would take a
      full 1/k slice of the sector-balanced market factor, so a single stock
@@ -127,23 +218,6 @@ function residualPanel(panel, opts = {}) {
   for (const s of symbols) (bySector[effSector[s]] ||= []).push(s);
   const sectorIds = Object.keys(bySector);
 
-  /* ESTIMATION WINDOW vs EVENT WINDOW — the correction that matters most.
-   *
-   * Fitting betas on the WHOLE series, event included, lets the event set the
-   * beta: a name that drops 1.2%/bar while the market drops 0.47%/bar simply
-   * regresses to beta 2.5, and its residual collapses to nothing. The self-test
-   * caught exactly this — COIN's deliberate idiosyncratic drop produced a market
-   * beta of 2.43 and a residual of -3bp, i.e. the signal erased itself.
-   *
-   * Standard event-study practice, applied here: betas are estimated ONLY on
-   * the estimation window (everything before the signal window), then applied
-   * to the event window to produce residuals. The event can no longer influence
-   * the coefficients used to measure it.
-   */
-  const evWin = Math.max(1, Number(opts.signalWindow) || 12);
-  const estEnd = Math.max(12, minLen - evWin);   // index where the event window begins
-  const est = (arr) => arr.slice(0, estEnd);
-
   /* FACTOR CONSTRUCTION — two corrections that the self-test forced.
    *
    * (a) LEAVE-ONE-OUT. A naive mean includes the symbol being regressed, so a
@@ -158,72 +232,76 @@ function residualPanel(panel, opts = {}) {
    *     therefore the mean OF SECTOR MEANS, so each sector contributes once
    *     regardless of how many roster names it holds.
    */
-  const sectorMeanAt = {};                       // sec -> [meanRet per step]
-  const sectorSumAt  = {};
-  for (const [sec, members] of Object.entries(bySector)) {
-    const sums = [], means = [];
-    for (let i = 0; i < minLen; i++) {
-      let acc = 0; for (const s of members) acc += rets[s][i];
-      sums.push(acc); means.push(acc / members.length);
-    }
-    sectorSumAt[sec] = sums; sectorMeanAt[sec] = means;
-  }
-
-  const residuals = {}, betas = {};
+  const residuals = {}, residualTimestamps = {}, betas = {};
+  const evWin = Math.max(1, Number(opts.signalWindow) || 12);
   for (const s of symbols) {
     const sec = effSector[s];
-    const members = bySector[sec];
-    const peers = members.length - 1;
-
-    // (b)+(a): market factor = mean of sector means, with s removed from its own
-    // sector's mean. Sectors that consist only of s drop out entirely.
-    const mkt = [];
-    for (let i = 0; i < minLen; i++) {
-      let acc = 0, k = 0;
+    const peers = bySector[sec].filter((x) => x !== s);
+    const rows = [];
+    for (const t of timestamps) {
+      const y = rets[s].get(t); if (!Number.isFinite(y)) continue;
+      const sectorValues = peers.map((x) => rets[x].get(t)).filter(Number.isFinite);
+      if (sectorValues.length < 2) continue;
+      const sectorFactor = mean(sectorValues);
+      const sectorMeans = [];
       for (const sid of sectorIds) {
-        if (sid === sec) {
-          if (peers >= 1) { acc += (sectorSumAt[sid][i] - rets[s][i]) / peers; k += 1; }
-        } else { acc += sectorMeanAt[sid][i]; k += 1; }
+        const vals = bySector[sid].filter((x) => x !== s).map((x) => rets[x].get(t)).filter(Number.isFinite);
+        if (vals.length) sectorMeans.push(mean(vals));
       }
-      mkt.push(k ? acc / k : 0);
+      if (sectorMeans.length < 2) continue;
+      rows.push({ t, y, m: mean(sectorMeans), s: sectorFactor });
+    }
+    const rowCoverage = rows.length / timestamps.length;
+    if (rows.length < evWin + 12 || rowCoverage < minSymbolCoverage) {
+      coverageExclusions.set(s, { symbol: s, coverage: symbolCoverage[s],
+        factorRowCoverage: Number(rowCoverage.toFixed(3)),
+        reason: "insufficient synchronous factor rows after leave-one-out construction" });
+      continue;
     }
 
-    // sector factor excluding s, orthogonalised against that same market factor
-    let secResid = null;
-    if (peers >= 2) {
-      const secF = [];
-      for (let i = 0; i < minLen; i++) secF.push((sectorSumAt[sec][i] - rets[s][i]) / peers);
-      // Orthogonalisation coefficient ALSO from the estimation window. Fitting it
-      // on the full series lets a sector-wide event inflate it (the event makes
-      // the sector and the market co-move), which distorts the sector factor
-      // exactly when it is needed most.
-      const bSM = ols(est(secF), est(mkt)).beta;
-      secResid = secF.map((f, i) => f - bSM * mkt[i]);
+    /* Array indices are observations, not clocks. Refuse an event window whose
+       trailing observations span an overnight boundary or a long outage while
+       still presenting themselves as (for example) twelve five-minute bars. */
+    const eventRows = rows.slice(-evWin);
+    const spanMs = Date.parse(eventRows[eventRows.length - 1].t)
+      - Date.parse(eventRows[0].t);
+    const expectedSpanMs = (evWin - 1) * intervalMs;
+    if (evWin > 1 && spanMs > expectedSpanMs * maxWindowSpanMultiple) {
+      coverageExclusions.set(s, { symbol: s, coverage: symbolCoverage[s],
+        windowSpanMinutes: Math.round(spanMs / 60000),
+        expectedSpanMinutes: Math.round(expectedSpanMs / 60000),
+        reason: `event window spans ${Math.round(spanMs / 60000)} minutes for a ${evWin}-bar signal expected to span ${Math.round(expectedSpanMs / 60000)}` });
+      continue;
     }
-
-    // Betas from the estimation window; residuals over the full series.
-    const bM = ols(est(rets[s]), est(mkt)).beta;
-    const afterMkt = rets[s].map((r, i) => r - bM * mkt[i]);
-    let bS = 0;
-    if (secResid) bS = ols(est(afterMkt), est(secResid)).beta;
-    residuals[s] = secResid ? afterMkt.map((r, i) => r - bS * secResid[i]) : afterMkt;
-
+    const fitRows = rows.slice(0, -evWin);
+    const fit = jointOls(fitRows);
+    residuals[s] = rows.map((r) => r.y - fit.alpha - fit.market * r.m - fit.sector * r.s);
+    residualTimestamps[s] = rows.map((r) => r.t);
     betas[s] = {
-      market: Number(bM.toFixed(3)),
-      sector: Number(bS.toFixed(3)),
+      alpha: Number(fit.alpha.toFixed(8)),
+      market: Number(fit.market.toFixed(3)),
+      sector: Number(fit.sector.toFixed(3)),
       sectorId: sec,
       declaredSector: sectorOf(s),
-      sectorPeers: peers,
-      sectorAdjusted: !!secResid,
+      sectorPeers: peers.length,
+      sectorAdjusted: true,
       residVol: Number(stdev(residuals[s]).toFixed(6)),
+      estimationN: fit.n,
     };
   }
+  const usable = Object.keys(residuals);
   return {
-    symbols, residuals, betas, length: minLen,
+    symbols: usable, residuals, residualTimestamps, betas, length: timestamps.length,
     sectors: sectorIds.length,
-    estimationBars: estEnd,
+    estimationBars: Math.max(0, timestamps.length - evWin),
     eventBars: evWin,
-    method: "leave-one-out, sector-balanced market factor, betas fit on the estimation window only",
+    synchronizedCoverageRequired: minCoverage,
+    perSymbolCoverageRatioRequired: minSymbolCoverage,
+    symbolCoverage,
+    excludedForCoverage: [...coverageExclusions.values()],
+    minSymbolCoverage,
+    maxWindowSpanMultiple,
+    method: "exact-clock log returns; leave-one-out sector-balanced factors; joint OLS with intercept fit pre-event; pre-factor per-symbol coverage and event-window clock-span floors",
   };
 }
 
@@ -236,7 +314,16 @@ function residualZ(residSeries, window = 12, ctx = null) {
   // Baseline volatility comes from the estimation window only. Including the
   // event would inflate sigma with the very move being scored and shrink its z.
   const baseline = residSeries.slice(0, -window);
-  const shortSd = stdev(baseline) * Math.sqrt(window);
+  const mu = mean(baseline);
+  const maxLag = Math.min(window - 1, 6, baseline.length - 2);
+  let longRunVar = mean(baseline.map((x) => (x - mu) ** 2));
+  for (let lag = 1; lag <= maxLag; lag++) {
+    let cov = 0;
+    for (let i = lag; i < baseline.length; i++) cov += (baseline[i] - mu) * (baseline[i - lag] - mu);
+    cov /= baseline.length;
+    longRunVar += 2 * (1 - lag / (maxLag + 1)) * cov;
+  }
+  const shortSd = Math.sqrt(Math.max(0, longRunVar) * window);
   if (!(shortSd > 0)) return null;
 
   /* BLEND IN THE LONG RECORD.
@@ -266,6 +353,7 @@ function residualZ(residSeries, window = 12, ctx = null) {
     shortResidVol: shortSd,
     sigmaBlend: blend,
     zShortOnly: cum / shortSd,
+    hacLags: maxLag,
     window,
   };
 }
@@ -347,81 +435,14 @@ function entrySignal(rank, z, cfg, ctx) {
  * price rules cannot be evaluated, and that fact is reported rather than
  * silently treated as "no stop triggered".
  */
-function exitSignal(rank, heldDays, cfg, opts = {}) {
-  const exitRank = cfg.exitRank ?? EXIT_RANK;
-  const maxDays = cfg.maxHoldDays ?? 10;
-  const { mark, entry, peak, earningsInDays } = opts;
-
-  const havePrice = Number.isFinite(mark) && Number.isFinite(entry) && entry > 0;
-  const pnlPct = havePrice ? ((mark - entry) / entry) * 100 : null;
-
-  if (havePrice) {
-    // 1. HARD STOP. The floor under every position.
-    const stopPct = cfg.stopLossPct ?? -8;
-    if (pnlPct <= stopPct) {
-      return { exit: true, urgent: true, reason: `down ${pnlPct.toFixed(1)}% — hard stop at ${stopPct}%`,
-               kind: "stop_loss", pnlPct: Number(pnlPct.toFixed(2)) };
-    }
-
-    // 2. TRAILING STOP, once a position has actually made money. Protects a
-    //    winner from round-tripping back to flat, which is the most common way
-    //    a short-horizon reversion trade wastes a correct call.
-    const trailPct = cfg.trailingStopPct ?? -4;
-    if (Number.isFinite(peak) && peak > entry) {
-      const fromPeak = ((mark - peak) / peak) * 100;
-      const peakGainPct = ((peak - entry) / entry) * 100;
-      if (peakGainPct >= (cfg.trailingArmsAtPct ?? 3) && fromPeak <= trailPct) {
-        return { exit: true, urgent: true,
-                 reason: `up ${peakGainPct.toFixed(1)}% at best, now ${fromPeak.toFixed(1)}% off that peak — trailing stop`,
-                 kind: "trailing_stop", pnlPct: Number(pnlPct.toFixed(2)) };
-      }
-    }
-
-    // 3. PROFIT TARGET. The research expects partial reversion, not full.
-    const takePct = cfg.takeProfitPct ?? null;
-    if (takePct != null && pnlPct >= takePct) {
-      return { exit: true, urgent: false, reason: `up ${pnlPct.toFixed(1)}% — profit target ${takePct}%`,
-               kind: "take_profit", pnlPct: Number(pnlPct.toFixed(2)) };
-    }
-  }
-
-  /* 4. EARNINGS. The entry gate refuses to OPEN near an earnings date, but for
-        most of this system's life nothing made it CLOSE before one. Holding a
-        mean-reversion position through an earnings print is a coin flip with a
-        20% standard deviation attached, and it undoes the entry gate entirely. */
-  if (Number.isFinite(earningsInDays) && earningsInDays <= (cfg.exitBeforeEarningsDays ?? 2)) {
-    return { exit: true, urgent: true, reason: `earnings in ${earningsInDays} day(s) — closing before the print`,
-             kind: "earnings_exit", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
-  }
-
-  // 5. The signal exit: the move we were trading has reverted.
-  if (rank >= exitRank) {
-    return { exit: true, urgent: false, reason: `rank ${rank.toFixed(3)} crossed exit ${exitRank}`,
-             kind: "signal", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
-  }
-
-  // 6. Time stop.
-  if (heldDays >= maxDays) {
-    return { exit: true, urgent: false, reason: `max hold ${maxDays}d reached`,
-             kind: "time", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
-  }
-
-  return {
-    exit: false, kind: null,
-    pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null,
-    priceRulesEvaluated: havePrice,
-    reason: `rank ${rank.toFixed(3)} below exit ${exitRank}, held ${heldDays}d`
-          + (havePrice ? `, ${pnlPct >= 0 ? "up" : "down"} ${Math.abs(pnlPct).toFixed(1)}%`
-                       : ", NO PRICE AVAILABLE so the stop could not be checked"),
-  };
-}
+function exitSignal(rank, heldDays, cfg, opts = {}) { return XP.exitSignal(rank, heldDays, cfg, opts); }
 
 /* ── 3 + 4. REGIME GATES ───────────────────────────────────────────────── */
 /** Nagel: scale exposure with normalized volatility. vixNorm = VIX / its own
  *  trailing median. Below 1 the liquidity-provision premium is thin. */
 function volatilityScaler(vixNorm, cfg) {
   const lo = cfg.volScalerFloor ?? 0.35;
-  const hi = cfg.volScalerCeiling ?? 1.75;
+  const hi = Math.min(1, cfg.volScalerCeiling ?? 1);
   if (!isFinite(vixNorm) || vixNorm <= 0) return { scaler: lo, note: "vix_unknown_min_size" };
   const s = Math.max(lo, Math.min(hi, vixNorm));
   return { scaler: Number(s.toFixed(3)), note: `vixNorm ${vixNorm.toFixed(2)}` };
@@ -431,7 +452,7 @@ function volatilityScaler(vixNorm, cfg) {
 function dispersionGate(cor3m, cfg) {
   const stand = cfg.corStandDown ?? 45;     // COR3M index points
   const caution = cfg.corCaution ?? 35;
-  if (!isFinite(cor3m)) return { pass: true, state: "unknown", note: "COR3M unavailable — proceeding at reduced size", sizeMult: 0.5 };
+  if (!isFinite(cor3m)) return { pass: false, state: "unknown", note: "COR3M unavailable — new risk blocked", sizeMult: 0 };
   if (cor3m >= stand) return { pass: false, state: "stand_down", note: `COR3M ${cor3m} >= ${stand}`, sizeMult: 0 };
   if (cor3m >= caution) return { pass: true, state: "caution", note: `COR3M ${cor3m} elevated`, sizeMult: 0.6 };
   return { pass: true, state: "dispersed", note: `COR3M ${cor3m}`, sizeMult: 1 };
@@ -440,8 +461,8 @@ function dispersionGate(cor3m, cfg) {
 /* ── EARNINGS BLACKOUT ─────────────────────────────────────────────────── */
 /* The research is unambiguous: the fat tail lives almost entirely on ~4
    scheduled dates a year. AMD's 95th-percentile earnings move is +/-21.2% on a
-   +/-9.9% median; CRWD +/-22.7% on +/-8.9%. Excluding a 2-day window converts
-   those names from dangerous to ordinary and is the whole gap-risk solution. */
+   +/-9.9% median; CRWD +/-22.7% on +/-8.9%. A blackout reduces one known
+   event risk; it does not eliminate unscheduled or overnight gap risk. */
 function earningsBlackout(symbol, earningsDates, nowMs, cfg, opts = {}) {
   /* An UNKNOWN window blocks. Previously an empty array passed the gate
      trivially, which is the single most dangerous default in the system:
@@ -453,7 +474,9 @@ function earningsBlackout(symbol, earningsDates, nowMs, cfg, opts = {}) {
   }
   /* Derived windows are projections from EDGAR filing cadence, not exact
      dates, so they get a wider blackout to absorb the projection error. */
-  const days = opts.estimated ? (cfg.blackoutDaysEstimated ?? 5) : (cfg.blackoutDays ?? 2);
+  const days = opts.estimated
+    ? Math.max(cfg.blackoutDaysEstimated ?? 5, Number(opts.uncertaintyDays) || 0)
+    : (cfg.blackoutDays ?? 2);
   /* The window is ASYMMETRIC. Before earnings the risk is the print itself.
      After it, the risk is different and subtler: prices DRIFT in the direction
      of an earnings surprise for days (post-earnings announcement drift), so a
@@ -482,27 +505,32 @@ function earningsBlackout(symbol, earningsDates, nowMs, cfg, opts = {}) {
    These are the three states the dashboard must show, and the ONLY three.  */
 const CAUSE = {
   HARD_NEWS: "cause_detected_fundamental",
-  ATTENTION: "attention_driven",
+  ABNORMAL_ACTIVITY: "abnormal_activity_without_covered_fundamental_event",
+  ATTENTION: "abnormal_activity_without_covered_fundamental_event",
   NONE: "no_cause_detected_in_covered_sources",
   PENDING: "evidence_pending",
 };
 
-function directionFromCause(cause, cfg) {
+function directionFromCause(cause, cfg = {}, attentionScore = null, coverage = null) {
   switch (cause) {
     case CAUSE.HARD_NEWS:
       // Fundamental repricing. Not a reversal candidate — the information is
       // real and the move is the market doing its job.
       return { trade: false, side: null, confidence: 0, reason: "fundamental cause — no fade" };
-    case CAUSE.ATTENTION:
+    case CAUSE.ABNORMAL_ACTIVITY:
       // The strongest documented case: retail-attention moves reverse over
       // days t+2..t+8. This is the primary book.
-      return { trade: true, side: "long", confidence: 1.0, reason: "attention-driven move — fade" };
+      if (!coverage || coverage.complete !== true) {
+        return { trade: false, side: null, confidence: 0, reason: "required source coverage incomplete" };
+      }
+      return { trade: true, side: "long", confidence: Math.min(0.75, cfg.abnormalActivityConfidence ?? 0.65),
+               reason: `abnormal activity (${Number(attentionScore || 0).toFixed(1)}z) without a covered fundamental event` };
     case CAUSE.NONE:
       // Liquidity-provision premium, but recall risk: a real cause may exist
       // outside covered sources. Traded smaller until the recall benchmark
       // demonstrates acceptable coverage.
-      return { trade: true, side: "long", confidence: cfg.noCauseConfidence ?? 0.5,
-               reason: "no cause detected in covered sources — reduced size" };
+      return { trade: false, side: null, confidence: 0,
+               reason: "no-cause automation locked until external known-cause recall is measured" };
     default:
       return { trade: false, side: null, confidence: 0, reason: "evidence still pending" };
   }
@@ -529,14 +557,21 @@ function costHurdle({ cumResidual, advUsd, grade, wideSpreadWindow, vixNorm, cfg
   const expectedBps = Math.abs(cumResidual) * 1e4 * capture * decay * revMult;
   const marginMult = cfg.costMarginMultiple ?? 2.0;  // demand 2x the frictions
   const required = roundTripBps * marginMult;
+  const calibrated = Number(cfg.calibratedExpectedEdgeBps);
+  const calibrationKnown = Number.isFinite(calibrated);
+  const calibratedNetLowerBoundBps = calibrationKnown ? calibrated : null;
+  const calibratedPass = cfg.requireCalibratedEdge === false
+    ? true : (calibrationKnown && calibrated > 0);
   return {
     halfTripBps, roundTripBps,
     expectedGrossBps: Number(expectedBps.toFixed(1)),
     requiredBps: Number(required.toFixed(1)),
-    pass: expectedBps >= required,
+    calibratedNetLowerBoundBps,
+    pass: expectedBps >= required && calibratedPass,
     ratio: required > 0 ? Number((expectedBps / required).toFixed(2)) : 0,
     reversionMult: revMult,
-    assumptions: { decayHaircut: decay, reversionCapture: capture, costMarginMultiple: marginMult, reversionMult: revMult },
+    assumptions: { decayHaircut: decay, reversionCapture: capture, costMarginMultiple: marginMult,
+      reversionMult: revMult, calibrationRequired: cfg.requireCalibratedEdge !== false },
   };
 }
 
@@ -561,7 +596,14 @@ function evaluateCandidate(input) {
   // 0. If we already hold it, this is an exit evaluation, not an entry one.
   if (position && position.open) {
     const heldDays = (nowMs - Date.parse(position.openedAt)) / 864e5;
-    const ex = exitSignal(rank, heldDays, cfg);
+    const intelligencePolicy = input.intelligence
+      ? I.decisionPolicy({ coverage: input.intelligence.coverage,
+        events: input.intelligence.events, temporalContext: input.intelligence.temporalContext,
+        requireTemporalContext: false, asOfMs: nowMs,
+        maxAgeHours: cfg.intelligenceMaxAgeHours,
+        temporalMaxAgeHours: cfg.temporalMaxAgeHours,
+        decisionMatrixPolicy: cfg.decisionMatrixPolicy }) : null;
+    const ex = exitSignal(rank, heldDays, cfg, { intelligencePolicy });
     return {
       symbol, kind: "exit", exit: ex.exit, reason: ex.reason,
       rank, heldDays: Number(heldDays.toFixed(2)), gates: [],
@@ -585,7 +627,8 @@ function evaluateCandidate(input) {
   add("dispersion", "Dispersion regime", disp.pass, disp.note);
 
   // 4. Earnings blackout.
-  const bo = earningsBlackout(symbol, earningsDates, nowMs, cfg, { estimated: input.earningsEstimated });
+  const bo = earningsBlackout(symbol, earningsDates, nowMs, cfg, {
+    estimated: input.earningsEstimated, uncertaintyDays: input.earningsUncertaintyDays });
   add("blackout", "Earnings blackout", !bo.blocked,
       bo.reason + (input.earningsEstimated && !bo.unknown ? " (estimated window, widened)" : ""));
 
@@ -636,8 +679,8 @@ function evaluateCandidate(input) {
           ? `downtrend: ${ctx.drawdown6mPct}% off its 6-month high, below the 200-day, 50-day line falling ${ctx.sma50SlopePct}%`
           : `${Math.round(ctx.rangePct6m * 100)}% up its 6-month range, ${ctx.aboveSma200 === true ? "above" : "below"} the 200-day (${ctx.downtrendFlags}/3 downtrend flags)`);
   } else {
-    add("trend", "Long-horizon trend", true,
-        ctx ? `no long-horizon read yet — ${ctx.reason}` : "history not loaded for this name yet");
+    add("trend", "Long-horizon trend", cfg.blockDowntrends === false,
+        ctx ? `no long-horizon read yet — ${ctx.reason}; new risk blocked` : "history not loaded; new risk blocked");
   }
 
   /* 6d. TURNOVER CONDITIONING — the strongest published conditioning result
@@ -662,15 +705,31 @@ function evaluateCandidate(input) {
           ? `top-decile turnover (${Math.round(toPctile * 100)}th pctile) — heavily-traded losers continue falling rather than bouncing (Medhat–Schmeling RFS 2022)`
           : `${Math.round(toPctile * 100)}th percentile turnover — inside the range where reversal actually works`);
   } else {
-    add("turnover", "Turnover conditioning", true,
-        "shares outstanding not yet known for this name — gate abstains", true);
+    add("turnover", "Turnover conditioning", false,
+        "shares outstanding not known — new risk blocked", true);
   }
 
-  // 7. Evidence classification decides direction.
-  const dir = directionFromCause(cause, cfg);
+  // 7. Company intelligence is a required, point-in-time risk gate. It may
+  // block or reduce size, but positive research never increases base risk.
+  const intelPolicy = input.intelligence
+    ? I.decisionPolicy({ coverage: input.intelligence.coverage,
+      events: input.intelligence.events, temporalContext: input.intelligence.temporalContext,
+      requireTemporalContext: cfg.requireTemporalContext === true, asOfMs: nowMs,
+      maxAgeHours: cfg.intelligenceMaxAgeHours,
+      temporalMaxAgeHours: cfg.temporalMaxAgeHours,
+      decisionMatrixPolicy: cfg.decisionMatrixPolicy })
+    : { monitored: false, fresh: false, complete: false,
+        entryAllowed: cfg.requireCompanyIntelligence !== true, sizeMultiplier: cfg.requireCompanyIntelligence === true ? 0 : 1,
+        adverseRiskScore: 0, reasons: ["no current company-intelligence dossier"] };
+  const intelRequired = cfg.requireCompanyIntelligence === true;
+  add("intelligence", "Company intelligence", !intelRequired || intelPolicy.entryAllowed,
+      `${intelPolicy.reasons.join("; ")}; size ${Math.round(intelPolicy.sizeMultiplier * 100)}%`);
+
+  // 8. Evidence classification decides direction.
+  const dir = directionFromCause(cause, cfg, input.attentionScore, input.coverage);
   add("evidence", "Evidence classification", dir.trade, dir.reason);
 
-  // 8. Cost hurdle.
+  // 9. Cost hurdle.
   const cost = zStat ? costHurdle({
     cumResidual: zStat.cumResidual, advUsd, grade: quality ? quality.grade : "F",
     wideSpreadWindow: session.wideSpreadWindow, vixNorm, cfg,
@@ -691,27 +750,86 @@ function evaluateCandidate(input) {
     rank, z: zStat ? Number(zStat.z.toFixed(2)) : null,
     cumResidualBps: zStat ? Number((zStat.cumResidual * 1e4).toFixed(1)) : null,
     cause, direction: dir,
+    intelligencePolicy: intelPolicy,
     historyContext: ctx && ctx.ok ? {
       days: ctx.days, vol60Pct: ctx.vol60Pct, atrPct: ctx.atrPct,
       rangePct6m: ctx.rangePct6m, drawdown6mPct: ctx.drawdown6mPct,
       aboveSma200: ctx.aboveSma200, sma50SlopePct: ctx.sma50SlopePct,
       downtrend: ctx.downtrend, downtrendFlags: ctx.downtrendFlags,
       gapFreqPct: ctx.gapFreqPct, advUsd20: ctx.advUsd20,
+      expectedShortfall5dPct: ctx.expectedShortfall5dPct,
+      overnightGapEsPct: ctx.overnightGapEsPct,
     } : null,
     reversion: rev || null,
     cost,
-    sizing: {
+    sizing: combineSizeMultipliers({
       volScaler: vol.scaler, volNote: vol.note,
       dispersionMult: disp.sizeMult,
       causeConfidence: dir.confidence,
-      combined: Number((vol.scaler * disp.sizeMult * dir.confidence).toFixed(3)),
-    },
+      intelligenceMult: intelPolicy.sizeMultiplier,
+      rule: cfg.sizeAggregation,
+    }),
   };
 }
 
+/* Combine independent size haircuts.
+ *
+ * v8.4 multiplied them: volScaler x dispersionMult x causeConfidence x
+ * intelligenceMult. Each factor is individually calibrated as "the right size
+ * given THIS concern alone", so the product is far below every one of them —
+ * four mild 0.8-ish haircuts compound to 0.36, and the measured median
+ * compound multiplier of 22.7% put the 60% gross-exposure cap out of reach no
+ * matter how good the opportunities were. The product also double-counts:
+ * high volatility depresses volScaler, widens dispersion AND lowers cause
+ * confidence, so one market condition is charged three times.
+ *
+ * The rule here is the one the temporal policy already uses and documents:
+ * the strongest concern applies in full, additional independent concerns at
+ * sharply decreasing weight. A zero from any single factor still zeroes the
+ * size, so every hard block behaves exactly as before. The weights are
+ * T.TEMPORAL_WEIGHTS.combination, shared rather than re-declared, and a
+ * runtime fixture asserts the two paths stay in step. */
+function combineSizeMultipliers(parts) {
+  const weights = T.TEMPORAL_WEIGHTS.combination;
+  const factors = [
+    ["volScaler", parts.volScaler],
+    ["dispersionMult", parts.dispersionMult],
+    ["causeConfidence", parts.causeConfidence],
+    ["intelligenceMult", parts.intelligenceMult],
+  ].map(([id, v]) => ({ id, value: Math.max(0, Math.min(1, Number(v) || 0)) }));
+
+  if (factors.some((f) => f.value <= 0)) {
+    return { ...parts, combined: 0, combinationRule: parts.rule === "product"
+      ? PRODUCT_COMBINATION_RULE : SIZE_COMBINATION_RULE,
+      binding: factors.filter((f) => f.value <= 0).map((f) => f.id) };
+  }
+  if (parts.rule === "product") {
+    const combined = factors.reduce((value, factor) => value * factor.value, 1);
+    return { ...parts, combined: Number(combined.toFixed(3)),
+      combinationRule: PRODUCT_COMBINATION_RULE,
+      binding: factors.filter((f) => f.value < 1)
+        .sort((a, b) => a.value - b.value).slice(0, 2).map((f) => f.id) };
+  }
+  const ranked = factors.map((f) => ({ ...f, haircut: 1 - f.value }))
+    .sort((a, b) => b.haircut - a.haircut);
+  const total = ranked.reduce((sum, f, i) =>
+    sum + f.haircut * (weights[i] == null ? 0.03 : weights[i]), 0);
+  const combined = Math.max(0, Math.min(1, 1 - total));
+  return { ...parts, combined: Number(combined.toFixed(3)),
+    combinationRule: SIZE_COMBINATION_RULE,
+    binding: ranked.filter((f) => f.haircut > 0).slice(0, 2).map((f) => f.id) };
+}
+
+const SIZE_COMBINATION_RULE =
+  "strongest haircut in full, then 1.00/0.35/0.20/0.10/0.05 capped additive weights; "
+  + "any zero factor zeroes the size";
+const PRODUCT_COMBINATION_RULE =
+  "product of all independent multipliers; any zero factor zeroes the size";
+
 module.exports = {
-  mean, stdev, pctReturns, ols,
-  sectorOf, setSectorMap,
+  combineSizeMultipliers,
+  mean, stdev, pctReturns, timestampReturns, ols, jointOls,
+  sectorOf, setSectorMap, getSectorMap,
   residualPanel, residualZ, crossSectionalRanks,
   entrySignal, exitSignal, ENTRY_RANK, EXIT_RANK, sectorCrowding,
   volatilityScaler, dispersionGate, earningsBlackout,

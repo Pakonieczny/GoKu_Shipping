@@ -10,10 +10,10 @@
  *  allowlist, and issues a short-lived signed session token so the passcode is
  *  sent once rather than on every poll of a 5-minute dashboard.
  *
- *  ENV — one new variable, everything else already exists:
+ *  ENV — two purpose-specific secrets are required:
  *    INVESTOR_PASSCODE   (required; refuses all requests when unset)
- *    FIREBASE_PRIVATE_KEY  reused ONLY as HKDF salt for token signing —
- *                          never transmitted, never logged.
+ *    INVESTOR_SESSION_SECRET  required independent 32+ character random secret
+ *                             for sessions and worker nonces.
  *
  *  CORS is a browser mechanic, not authorization. Both are enforced.
  * ---------------------------------------------------------------------------
@@ -62,11 +62,12 @@ function json(event, statusCode, body, extraHeaders = {}) {
 
 /* ── token signing ─────────────────────────────────────────────────────── */
 function signingKey() {
-  const seed = process.env.FIREBASE_PRIVATE_KEY || "";
+  const seed = process.env.INVESTOR_SESSION_SECRET || "";
   const pass = process.env.INVESTOR_PASSCODE || "";
-  if (!seed || !pass) return null;
-  // HKDF-SHA256 over the private key + passcode. Rotating either invalidates
-  // every outstanding session, which is the behaviour we want.
+  if (seed.length < 32 || !pass) return null;
+  // A purpose-specific secret keeps an HTTP-session compromise independent of
+  // the broad Firestore service credential. Rotating either input invalidates
+  // every outstanding operator session and worker nonce.
   return crypto.hkdfSync("sha256", Buffer.from(seed), Buffer.from("investor-ai-session"),
                          Buffer.from(pass), 32);
 }
@@ -104,23 +105,25 @@ function requireOperator(event, body) {
 
   // Fail closed in EVERY context, not just production. The legacy authGate
   // opened when its variable was missing; that is the bug this replaces.
-  if (!expected) {
+  if (!expected || !(process.env.INVESTOR_SESSION_SECRET || "").length
+      || process.env.INVESTOR_SESSION_SECRET.length < 32) {
     return { ok: false, response: json(event, 500, {
-      error: "Server misconfigured: INVESTOR_PASSCODE is required",
+      error: "Server misconfigured: INVESTOR_PASSCODE and a 32+ character INVESTOR_SESSION_SECRET are required",
       errorCode: "AUTH_NOT_CONFIGURED",
     })};
   }
 
   const h = event.headers || {};
   const token = h["x-investor-session"] || h["X-Investor-Session"] || (body && body.session);
-  if (token && verifySession(token)) return { ok: true, via: "session" };
+  const claims = token ? verifySession(token) : null;
+  if (claims) return { ok: true, via: "session", subject: claims.s || "operator" };
 
   const supplied = h["x-investor-passcode"] || h["X-Investor-Passcode"] || (body && body.passcode);
   if (supplied) {
     const a = Buffer.from(String(supplied));
     const b = Buffer.from(String(expected));
     if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
-      return { ok: true, via: "passcode", session: mintSession() };
+      return { ok: true, via: "passcode", subject: "operator", session: mintSession() };
     }
     return { ok: false, response: json(event, 403, { error: "Invalid passcode", errorCode: "AUTH_BAD" }) };
   }
@@ -162,7 +165,6 @@ function isScheduledInvocation(event = {}) {
   for (const [k, v] of Object.entries(raw)) h[String(k).toLowerCase()] = v;
   if (h["x-nf-event-source"] === "scheduled") return true;
   if (h["x-netlify-event"] === "schedule") return true;
-  try { if (event.body && JSON.parse(event.body)._scheduled === true) return true; } catch {}
   return false;
 }
 

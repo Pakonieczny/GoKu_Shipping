@@ -24,6 +24,8 @@ const R = require("./_investorRisk");
 const S = require("./_investorSignal");
 const L = require("./_investorLedger");
 const E = require("./_investorEvidence");
+const IS = require("./_investorIntelligenceSources");
+const I = require("./_investorIntelligence");
 /* SH/AL/V were used by the "learning" action and never imported — the third
    occurrence of this exact bug class. Every click on the Learning tab was a
    500. The end-to-end harness now loads this module and calls the action. */
@@ -32,12 +34,50 @@ const AL = require("./_investorAllocator");
 const V = require("./_investorVariants");
 const LD = require("./_investorLadder");
 const O = require("./_investorOpenai");
+const B = require("./_investorBootstrap");
+const C = require("./_investorCalibration");
 
 const MAX_BODY = 64 * 1024;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const SYMBOL = /^[A-Z][A-Z0-9.-]{0,9}$/;
+
+function commitId() { return process.env.COMMIT_REF || process.env.DEPLOY_ID || "local"; }
+function validEpoch(ctrl) {
+  const e = ctrl.safetyEpoch || {};
+  return ctrl.fixturesPass === true && ctrl.fixturesCommit === commitId()
+    && e.commit === commitId()
+    && ["accountId", "strategyVersion", "universeVersion", "strategyHash", "universeHash", "variantsHash"]
+      .every((k) => e[k] && e[k] === ctrl[k]);
+}
 
 async function ctrlDoc() {
   const s = await A.col(A.COL.control).doc("control").get();
   return s.exists ? s.data() : {};
+}
+
+async function closeEntryQueue(accountId, reason, operator) {
+  let cancelled = 0, released = 0;
+  const failures = [];
+  const proposed = await A.col(A.COL.orders)
+    .where("accountId", "==", accountId).where("status", "==", "proposed").limit(200).get();
+  for (const d of proposed.docs) {
+    const o = d.data();
+    try {
+      const result = await L.rejectOrder(o.orderId, reason, operator || "operator");
+      if (!result.noop) cancelled += 1;
+    } catch (e) { failures.push({ orderId: o.orderId, phase: "reject" }); }
+  }
+  const approved = await A.col(A.COL.orders)
+    .where("accountId", "==", accountId).where("status", "==", "approved").limit(200).get();
+  for (const d of approved.docs) {
+    const o = d.data();
+    try {
+      const result = await L.releaseOrder(o.orderId, reason);
+      if (!result.noop) released += 1;
+    } catch (e) { failures.push({ orderId: o.orderId, phase: "release" }); }
+  }
+  return { cancelledProposals: cancelled, releasedApproved: released,
+    failures: failures.slice(0, 20) };
 }
 
 function latestCycleId(rows) {
@@ -54,13 +94,24 @@ const ACTIONS = {
     const accountId = ctrl.accountId || "paper-1";
     const session = M.sessionState(new Date());
 
-    const [candSnap, ordSnap, posSnap, regSnap, costSnap, runSnap] = await Promise.all([
-      A.col(A.COL.candidates).orderBy("updated_at", "desc").limit(80).get(),
-      A.col(A.COL.orders).where("status", "in", ["proposed", "approved"]).limit(40).get(),
-      A.col(A.COL.positions).where("open", "==", true).limit(40).get(),
+    const uMod = require("./_investorUniverse.js");
+    const [candSnap, proposedSnap, approvedSnap, posSnap, regSnap, costSnap, runSnap, universeSnap, intelligenceSnap] = await Promise.all([
+      A.col(A.COL.candidates).orderBy("updated_at", "desc").limit(500).get(),
+      /* Query active states directly. Filtering an unordered 400-row account
+         sample in memory eventually starves new active records behind old
+         terminal history, which is a silent control-room failure. The exact
+         composite indexes ship with this project. */
+      A.col(A.COL.orders).where("accountId", "==", accountId)
+        .where("status", "==", "proposed").limit(200).get(),
+      A.col(A.COL.orders).where("accountId", "==", accountId)
+        .where("status", "==", "approved").limit(200).get(),
+      A.col(A.COL.positions).where("accountId", "==", accountId)
+        .where("open", "==", true).limit(200).get(),
       A.col(A.COL.control).doc("regime").get(),
       A.col(A.COL.costs).doc(`openai_${new Date().toISOString().slice(0, 10)}`).get(),
       A.col(A.COL.runs).orderBy("startedAt", "desc").limit(8).get(),
+      A.col(A.COL.universe).doc(ctrl.universeVersion || uMod.version).get(),
+      A.col(A.COL.intelligence).limit(40).get(),
     ]);
 
     const candidates = [];
@@ -68,7 +119,9 @@ const ACTIONS = {
     const cycleId = latestCycleId(candidates);
     const current = candidates.filter((c) => c.cycleId === cycleId);
 
-    const orders = []; ordSnap.forEach((d) => orders.push(d.data()));
+    const orders = [];
+    proposedSnap.forEach((d) => orders.push(d.data()));
+    approvedSnap.forEach((d) => orders.push(d.data()));
     const positions = []; posSnap.forEach((d) => positions.push(d.data()));
     const runs = []; runSnap.forEach((d) => {
       const r = d.data();
@@ -76,6 +129,20 @@ const ACTIONS = {
                   proposals: r.proposals, modelCalls: r.modelCalls, elapsedMs: r.elapsedMs,
                   startedAt: r.startedAt && r.startedAt.toDate ? r.startedAt.toDate().toISOString() : null });
     });
+    const intelligence = intelligenceSnap.docs.map((d) => {
+      const x = d.data();
+      const policy = I.decisionPolicy({ coverage: x.coverage, events: x.events,
+        temporalContext: x.temporalContext, requireTemporalContext: true,
+        asOfMs: Date.now(), maxAgeHours: strategy.parameters.intelligenceMaxAgeHours,
+        temporalMaxAgeHours: strategy.parameters.temporalMaxAgeHours });
+      return { symbol: x.symbol, companyName: x.companyName, sectorPack: x.sectorPack,
+        asOf: x.asOf, asOfMs: x.asOfMs, dossierHash: x.dossierHash,
+        documentCount: x.documentCount, coverage: x.coverage, policy,
+        priceContext: x.priceContext || null,
+        identity: x.identity || null, relatedEntities: x.relatedEntities || [],
+        temporalContext: x.temporalContext || null,
+        events: (x.events || []).slice(0, 6) };
+    }).sort((a, b) => a.symbol.localeCompare(b.symbol));
 
     let balances = null, cost = null;
     try { balances = await L.balances(accountId); } catch {}
@@ -84,6 +151,9 @@ const ACTIONS = {
     const reg = regSnap.exists ? regSnap.data() : {};
     const openai = costSnap.exists ? costSnap.data() : { usd: 0, calls: 0 };
 
+    const provider = M.activeProvider();
+    const frozenUniverse = universeSnap.exists ? universeSnap.data() : uMod;
+    const expectedCandidates = (frozenUniverse.tradeTier || []).length;
     return {
       ok: true,
       now: new Date().toISOString(),
@@ -94,22 +164,41 @@ const ACTIONS = {
         dryRun: ctrl.dryRun !== false,
         killSwitch: !!ctrl.killSwitch,
         accountId,
-        strategyVersion: ctrl.strategyVersion || "v1",
+        strategyVersion: ctrl.strategyVersion || require("./_investorStrategy").version,
+        universeVersion: ctrl.universeVersion || null,
+        universeHash: ctrl.universeHash || null,
+        strategyHash: ctrl.strategyHash || null,
+        variantsHash: ctrl.variantsHash || null,
+        fixturesPass: ctrl.fixturesPass === true,
+        fixturesCurrent: ctrl.fixturesCommit === commitId(),
+        safetyEpochValid: validEpoch(ctrl),
+        operatorCeiling: ctrl.operatorCeiling || "approval",
+        operatorHold: ctrl.operatorHold === true,
+        entriesFrozen: ctrl.entriesFrozen === true,
         cycleSeconds: ctrl.cycleSeconds || 300,
+        guardSeconds: ctrl.guardSeconds || 60,
+        intelligenceSymbols: IS.configuredSymbols(ctrl),
+        intelligenceFocus: ctrl.intelligenceFocus || [],
+        lastIntelligenceSummary: ctrl.lastIntelligenceSummary || null,
         lastCycleFinishedAt: ctrl.lastCycleFinishedAt && ctrl.lastCycleFinishedAt.toDate
           ? ctrl.lastCycleFinishedAt.toDate().toISOString() : null,
         lastCycleSummary: ctrl.lastCycleSummary || null,
+        lastGuardFinishedAt: ctrl.lastGuardFinishedAt && ctrl.lastGuardFinishedAt.toDate
+          ? ctrl.lastGuardFinishedAt.toDate().toISOString() : null,
+        lastGuardSummary: ctrl.lastGuardSummary || null,
       },
       market: {
-        provider: M.activeProvider().id,
-        feedDelayMinutes: M.activeProvider().delayMinutes,
-        maxGrade: M.activeProvider().maxGrade,
+        provider: provider.id, feed: provider.feed || null,
+        consolidated: !!provider.consolidated,
+        liquidityEligible: provider.liquidityEligible !== false,
+        feedDelayMinutes: provider.delayMinutes, maxGrade: provider.maxGrade,
       },
       regime: {
-        vix: reg.vix || null, vixMedian: reg.vixMedian || null,
-        vixNorm: reg.vix && reg.vixMedian ? Number((reg.vix / reg.vixMedian).toFixed(2)) : null,
-        cor3m: reg.cor3m || null,
-        gate: S.dispersionGate(Number(reg.cor3m), {}),
+        vix: reg.vixHealthy === true ? (reg.vix || null) : null, vixMedian: reg.vixMedian || null,
+        vixNorm: reg.vixHealthy === true && reg.vix && reg.vixMedian ? Number((reg.vix / reg.vixMedian).toFixed(2)) : null,
+        cor3m: reg.corHealthy === true ? (reg.cor3m || null) : null,
+        gate: S.dispersionGate(reg.corHealthy === true ? Number(reg.cor3m) : NaN, {}),
+        vixHealthy: reg.vixHealthy === true, corHealthy: reg.corHealthy === true,
         asOf: reg.asOf || null,
       },
       bootstrap: {
@@ -118,56 +207,84 @@ const ACTIONS = {
         report: ctrl.bootstrapReport || null,
       },
       cycleId,
+      candidateTotal: current.length,
+      candidateExpected: expectedCandidates,
+      candidateSetComplete: expectedCandidates > 0 && current.length === expectedCandidates,
       candidates: current.sort((a, b) => (a.rank ?? 1) - (b.rank ?? 1)),
-      breaches: current.filter((c) => c.breach),
+      breaches: current.filter((c) => c.unionEvidenceTrigger || c.breach),
       orders, positions,
       balances, cost,
       openaiToday: { usd: Number((openai.usd || 0).toFixed(4)), calls: openai.calls || 0,
                      ceiling: O.DAILY_USD_CEILING },
+      intelligence,
       runs,
     };
   },
 
-  /* The learning view: what each variant has done and how much of the book
-     it currently earns. */
+  /* The learning view: what each frozen variant has done and whether one has
+     earned leader status. Evidence weights are diagnostics, never book shares. */
   async learning() {
     /* The dashboard reports THE STORED VERDICT — what the cycle actually
        computed and acted on — never a fresh recompute with different
        parameters. The old version recomputed with allocator defaults, so a
        strategy-file change would have made the dashboard silently disagree
        with the cycle about who was winning and whether the gate was open. */
-    const [stats, open, allocSnap] = await Promise.all([
-      SH.variantStats({}), SH.openCount(),
-      A.col(A.COL.control).doc("allocation").get(),
-    ]);
+    const allocSnap = await A.col(A.COL.control).doc("allocation").get();
     const stored = allocSnap.exists ? allocSnap.data() : null;
-    let roll = null;
-    try { roll = await SH.rollUpStats(); } catch {}
-
-    const fallback = (() => {
-      const alloc = AL.allocate(stats.variants, {});
-      return AL.explain(alloc, stats.variants);
-    })();
-    const view = stored || fallback;
+    const experimentHash = stored && stored.experimentHash;
+    let stats = { variants: {}, totalClosed: 0 }, open = { total: 0, byVariant: {} }, roll = null,
+      calibration = null, shadowAccounts = [], decisionFeedback = { pending: 0, resolved: 0 };
+    if (/^[a-f0-9]{64}$/.test(String(experimentHash || ""))) {
+      [stats, open, roll, calibration] = await Promise.all([
+        SH.variantStats({ experimentHash }), SH.openCount(experimentHash),
+        SH.rollUpStats({ experimentHash }), C.read(experimentHash),
+      ]);
+      const [accountSnap, observationSnap] = await Promise.all([
+        A.col(A.COL.shadowAccounts).get(), A.col(A.COL.shadowObservations).get(),
+      ]);
+      accountSnap.forEach((d) => { const row = d.data();
+        if (row.experimentHash === experimentHash) shadowAccounts.push(row); });
+      observationSnap.forEach((d) => { const row = d.data();
+        if (row.experimentHash === experimentHash) {
+          if (row.status === "resolved") decisionFeedback.resolved += 1;
+          else decisionFeedback.pending += 1;
+        } });
+    }
+    const equalWeightPct = Number((100 / V.VARIANTS.length).toFixed(4));
+    const zeroRows = V.VARIANTS.map((v) => ({ id: v.id, name: v.name, plain: v.plain,
+      evidenceWeightPct: equalWeightPct, trades: 0, independentDays: 0, avgNetBps: 0,
+      verdict: "no experiment observations yet" }));
+    const view = stored || { rows: zeroRows, powered: false, leaderId: null,
+      requiredEffectiveN: AL.requiredNSelect({ k: V.VARIANTS.length }), bestEffectiveN: 0, progressPct: 0,
+      note: "No provenance-bound shadow experiment has been recorded yet." };
 
     return {
       ok: true,
       variants: V.VARIANTS.map((v) => ({ id: v.id, name: v.name, plain: v.plain, params: v.params })),
       variantsHash: V.variantsHash(),
       storedHash: stored ? stored.variantsHash : null,
-      rows: view.rows || fallback.rows,
+      experimentHash: experimentHash || null,
+      experimentIdentity: view.experimentIdentity || null,
+      rows: view.rows || zeroRows,
       powered: !!view.powered,
       leaderId: view.leaderId || null,
-      requiredEffectiveN: view.requiredEffectiveN ?? fallback.requiredEffectiveN,
-      bestEffectiveN: view.bestEffectiveN ?? fallback.bestEffectiveN,
-      progressPct: view.progressPct ?? fallback.progressPct,
-      note: view.note || fallback.note,
-      paired: view.paired || null,
-      resets: (view.resets && Object.keys(view.resets).length ? view.resets : null)
-           || (roll && Object.keys(roll.resets).length ? roll.resets : null),
+      requiredEffectiveN: view.requiredEffectiveN ?? AL.requiredNSelect({ k: V.VARIANTS.length }),
+      bestEffectiveN: view.bestEffectiveN ?? 0,
+      progressPct: view.progressPct ?? 0,
+      note: view.note,
+      comparison: view.comparison || null,
+      /* Only development-partition resets may be displayed. roll.resets sees
+         the complete stored series, including the locked confirmation tail. */
+      resets: view.resets && Object.keys(view.resets).length ? view.resets : null,
       discountGamma: view.discountGamma ?? (roll ? roll.discountGamma : null),
       totalClosed: stats.totalClosed,
       openShadow: open,
+      shadowAccounts: shadowAccounts.sort((a, b) => String(a.variantId).localeCompare(String(b.variantId))),
+      decisionFeedback,
+      overfitGuard: view.overfitGuard || null,
+      forwardLock: view.forwardLock || null,
+      forwardResult: view.forwardResult || null,
+      calibration,
     };
   },
 
@@ -177,6 +294,9 @@ const ACTIONS = {
     const p = st.parameters;
     const K = (key, label, what, higher, lower) => ({
       key, label, value: p[key], what, higher, lower,
+    });
+    const PK = (key, label, what, higher, lower) => ({
+      key, label, value: st.portfolioControls[key], what, higher, lower,
     });
     return { ok: true, strategyVersion: st.version, memory: st.memory || null, groups: [
       { group: "When to buy", items: [
@@ -212,15 +332,18 @@ const ACTIONS = {
           "more tolerant of sector-wide moves", "stricter, fewer correlated bets"),
       ]},
       { group: "Sizing", items: [
-        K("positionPctOfNav", "Size of a normal position",
-          "Share of the account put into one idea before any scaling down.",
-          "bigger swings both ways", "smaller, slower"),
-        K("volScalerFloor", "Smallest size in calm markets",
-          "This strategy is paid for providing liquidity, and there is less of that to earn when markets are quiet.",
-          "keeps more on in calm periods", "backs off harder"),
-        K("volScalerCeiling", "Largest size in volatile markets",
-          "The opposite end - how much more to commit when volatility is high.",
-          "more aggressive in stress", "more restrained"),
+        PK("riskBudgetPerTradePctOfNav", "Maximum planned loss per idea",
+          "Position dollars are divided by the worst of stop distance, two ATRs, five-day expected shortfall, overnight-gap expected shortfall, and 0.5%.",
+          "larger planned loss budget", "smaller planned loss budget"),
+        PK("ordinaryPositionPctOfNav", "Ordinary notional ceiling",
+          "A second cap prevents a low-volatility estimate from creating an outsized position.",
+          "larger notional ceiling", "smaller notional ceiling"),
+        K("volScalerFloor", "Minimum volatility scaler",
+          "Unknown or adverse volatility can only reduce risk; the scaler never exceeds one.",
+          "less reduction in adverse regimes", "more reduction"),
+        K("volScalerCeiling", "Maximum volatility scaler",
+          "This is hard-capped at one: market stress never increases dollars at risk.",
+          "must remain at or below one", "more conservative"),
         K("corStandDown", "Stop trading when stocks move as one",
           "When everything moves together there is no company-specific opportunity left to find.",
           "keeps trading in correlated markets", "stands down sooner"),
@@ -253,9 +376,26 @@ const ACTIONS = {
           "How many 5-minute bars are added up to measure the drop. 12 bars is about an hour.",
           "smoother, slower to notice", "twitchier, more false alarms"),
       ]},
+      { group: "Company intelligence", items: [
+        K("intelligenceMaxAgeHours", "Maximum dossier age",
+          "New risk is blocked when its point-in-time public-source dossier is older than this.",
+          "accepts older context and more stale-event risk", "refreshes must succeed more often; more conservative"),
+        K("intelligenceLookbackDays", "SEC and event lookback",
+          "How far the dossier considers eligible point-in-time documents. The frozen policy keeps enough history to retain annual filing exposures while the price path remains strictly pre-decision.",
+          "more history and more chance of stale event confusion", "less context and faster reads"),
+        K("temporalMaxAgeHours", "Maximum temporal-context age",
+          "Scheduled events, active public hazards, seasonal estimates, and rolling drivers must be refreshed inside this age before new risk can pass.",
+          "accepts older hazard and calendar state", "requires more frequent successful refreshes"),
+        K("temporalSeasonalityMinTradingDays", "Minimum seasonal history",
+          "Same-calendar-month behavior abstains until this many point-in-time daily observations exist; the frozen value is about three trading years.",
+          "more repeated years but slower warm-up", "thinner and less reliable seasonal evidence"),
+        K("intelligenceCompaniesPerSweep", "Companies researched per evidence sweep",
+          "The rotating number of monitored companies whose public lanes are refreshed in one slower evidence job.",
+          "fresher coverage but more source load and runtime", "lower load but dossiers take longer to rotate"),
+      ]},
       { group: "Learning", items: [
         K("tHurdle", "Proof required before favouring a variant",
-          "How certain we must be that a variant is genuinely better before giving it more money. 3.0 is the academic standard for this field.",
+          `Legacy single-test reference only. Promotion uses a best-of-${V.VARIANTS.length} power gate, serially robust paired comparison, DSR/PBO, historical stress, and locked future paper.`,
           "demands more proof, learns slower but more truthfully",
           "acts on weaker evidence - this is the knob that decides whether the system learns or fools itself"),
         K("expectedEdgeBps", "Edge we are looking for",
@@ -270,7 +410,11 @@ const ACTIONS = {
 
   /* Full detail for one name — the per-candidate panel. */
   async candidate({ symbol, cycleId }) {
-    if (!symbol) return { error: "symbol required" };
+    symbol = String(symbol || "").toUpperCase();
+    if (!SYMBOL.test(symbol)) return { error: "valid symbol required" };
+    if (cycleId != null && !/^\d{4}-\d{2}-\d{2}_\d{4}$/.test(String(cycleId))) {
+      return { error: "invalid cycleId" };
+    }
     let cid = cycleId;
     if (!cid) {
       /* where+orderBy on different fields needs a composite index that no
@@ -348,27 +492,43 @@ const ACTIONS = {
       const uMod = require("./_investorUniverse.js");
       const uSnap = await A.col(A.COL.universe).doc(ctrl.universeVersion || uMod.version || "v1").get();
       const u = uSnap.exists ? uSnap.data() : uMod;
-      const syms = (u.tradeTier || []).map((t) => t.symbol).slice(0, 120);
+      const syms = (u.tradeTier || []).map((t) => t.symbol);
       const daily = {};
-      await Promise.all(syms.map(async (sym) => {
-        try { const ser = await H.readDaily(sym); if (ser.length) daily[sym] = ser; } catch {}
-      }));
+      /* This endpoint is operator-initiated, but 300+ simultaneous Firestore
+         reads can still burst quotas or time out. Bounded batches preserve the
+         exact frozen benchmark without turning it into a first-120 sample. */
+      for (let i = 0; i < syms.length; i += 16) {
+        await Promise.all(syms.slice(i, i + 16).map(async (sym) => {
+          try { const ser = await H.readDaily(sym); if (ser.length) daily[sym] = ser; } catch {}
+        }));
+      }
       bench = R.benchmarkReturn(daily, nav[0].date, nav[nav.length - 1].date);
+      bench.universeVersion = ctrl.universeVersion || u.version || null;
+      bench.universeHash = ctrl.universeHash || u.contentHash || null;
+      bench.expectedNames = syms.length;
     }
 
     const book = await (async () => {
-      const ps = await A.col(A.COL.positions).where("accountId", "==", accountId).get();
+      const ps = await A.col(A.COL.positions).where("accountId", "==", accountId)
+        .where("open", "==", true).get();
       const rows = []; ps.forEach((d) => rows.push(d.data()));
       const b = await L.balances(accountId);
       const marks = {};
-      return R.summarise(rows, marks, null, (b.usd[L.ACCT.CASH] || 0) + (b.usd[L.ACCT.POSITIONS] || 0) || 1);
+      for (const p of rows) {
+        const prov = p.lastMarkProvenance || p.entryBarProvenance;
+        if (Number(p.lastMarkUsd) > 0 && prov
+            && /^[a-f0-9]{64}$/.test(String(prov.sourceSha256 || ""))) marks[p.symbol] = Number(p.lastMarkUsd);
+      }
+      return R.markedBook(rows, marks, null, { cash: b.usd[L.ACCT.CASH] || 0,
+        reserved: b.usd[L.ACCT.RESERVED] || 0 });
     })();
 
     return {
       ok: true, equity, benchmark: bench,
       attribution: R.attribution(equity, bench),
       navHistory: nav.map((n) => ({ date: n.date, navUsd: n.navUsd })),
-      book: { count: book.count, grossPct: book.grossPct, byClusterPct: book.byClusterPct },
+      book: { navUsd: book.navUsd, count: book.book.count, grossPct: book.book.grossPct,
+        byClusterPct: book.book.byClusterPct, untrustedMarks: book.untrustedMarks },
       costMeter: await L.costMeter(accountId).catch(() => null),
     };
   },
@@ -376,7 +536,8 @@ const ACTIONS = {
   /* Standalone history read, so the dashboard can show the six-month picture
      for any roster name even before it has ever become a candidate. */
   async history({ symbol }) {
-    if (!symbol) return { error: "symbol required" };
+    symbol = String(symbol || "").toUpperCase();
+    if (!SYMBOL.test(symbol)) return { error: "valid symbol required" };
     const session = M.sessionState(new Date());
     const series = await H.readDaily(symbol);
     if (!series.length) return { ok: true, symbol, daily: [], history: null,
@@ -393,11 +554,14 @@ const ACTIONS = {
   },
 
   async approve({ orderId, operator }) {
-    if (!orderId) return { error: "orderId required" };
+    if (!/^[a-f0-9]{32}$/.test(String(orderId || ""))) return { error: "valid orderId required" };
     const r = await L.approveOrder(orderId, operator || "operator");
-    await A.col(A.COL.audit).add({ action: "approve", orderId, operator: operator || "operator",
+    const success = r.status === "approved" && !r.noop && !r.refused;
+    await A.col(A.COL.audit).add({ action: success ? "approve" : "approve_refused",
+      orderId, resultingStatus: r.status || null, refusal: r.refused || null,
+      operator: operator || "operator",
       at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
-    return r;
+    return { ...r, ok: success, transitioned: success };
   },
 
   /* Approved orders whose symbol stops returning bars sit forever with cash
@@ -423,110 +587,219 @@ const ACTIONS = {
   },
 
   async reject({ orderId, reason, operator }) {
-    if (!orderId) return { error: "orderId required" };
+    if (!/^[a-f0-9]{32}$/.test(String(orderId || ""))) return { error: "valid orderId required" };
     const r = await L.rejectOrder(orderId, reason, operator || "operator");
-    await A.col(A.COL.audit).add({ action: "reject", orderId, reason: reason || null,
+    const success = ["rejected", "expired"].includes(r.status) && !r.noop;
+    await A.col(A.COL.audit).add({ action: success ? "reject" : "reject_refused",
+      orderId, resultingStatus: r.status || null, reason: String(reason || "").slice(0, 300) || null,
       operator: operator || "operator", at: A.FV.serverTimestamp(),
       ...A.envelope({ created_by: "investorApi" }) });
-    return r;
+    return { ...r, ok: success, transitioned: success };
   },
 
   /* Kill switch cancels proposed and unfilled orders and blocks new decisions.
      It does NOT delete evidence, history, or the ledger. */
   async kill({ operator }) {
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
     await A.col(A.COL.control).doc("control").set({
       killSwitch: true, enabled: false, killedBy: operator || "operator",
-      killedAt: A.FV.serverTimestamp(),
+      killedAt: A.FV.serverTimestamp(), dryRun: true, mode: "research",
+      safetyEpoch: null, ladderStreak: 0,
     }, { merge: true });
-    const snap = await A.col(A.COL.orders).where("status", "==", "proposed").limit(200).get();
-    const b = A.batch();
-    snap.forEach((d) => b.set(d.ref, { status: "cancelled", cancelReason: "kill switch" }, { merge: true }));
-    await b.commit();
+    /* The control document selects one paper account. A kill on that account
+       must never cancel another isolated research account sharing the same
+       project, so both order scans bind accountId as well as status. */
+    const snap = await A.col(A.COL.orders)
+      .where("accountId", "==", accountId).where("status", "==", "proposed").limit(200).get();
+    let cancelled = 0;
+    for (const d of snap.docs) {
+      try { const r = await L.rejectOrder(d.data().orderId, "kill switch", operator); if (!r.noop) cancelled += 1; }
+      catch {}
+    }
 
     /* APPROVED orders must be released too, not only proposed ones. An
        approved order holds cash in RESERVED and would still FILL after a
        resume — a kill switch that leaves live buy orders armed is not a kill
        switch. releaseOrder returns the reserved cash through the ledger. */
     let released = 0;
-    const appSnap = await A.col(A.COL.orders).where("status", "==", "approved").limit(200).get();
+    const appSnap = await A.col(A.COL.orders)
+      .where("accountId", "==", accountId).where("status", "==", "approved").limit(200).get();
     for (const d of appSnap.docs) {
       try { const r = await L.releaseOrder(d.data().orderId, "kill switch"); if (!r.noop) released += 1; }
       catch (e) { /* an unreleasable order is left for expiry */ }
     }
 
-    await A.col(A.COL.audit).add({ action: "kill", cancelled: snap.size, released,
+    await A.col(A.COL.audit).add({ action: "kill", accountId, cancelled, released,
       operator: operator || "operator", at: A.FV.serverTimestamp(),
       ...A.envelope({ created_by: "investorApi" }) });
-    return { killSwitch: true, cancelledProposals: snap.size, releasedApproved: released };
+    return { killSwitch: true, cancelledProposals: cancelled, releasedApproved: released };
   },
 
   async resume({ operator }) {
     await A.col(A.COL.control).doc("control").set({
       killSwitch: false, enabled: true, resumedBy: operator || "operator",
-      resumedAt: A.FV.serverTimestamp(),
+      resumedAt: A.FV.serverTimestamp(), dryRun: true, mode: "research",
+      safetyEpoch: null, ladderStreak: 0,
     }, { merge: true });
-    return { killSwitch: false, enabled: true };
+    return { killSwitch: false, enabled: true, dryRun: true, mode: "research",
+      note: "monitoring resumed; entries remain closed until a new safety epoch is activated" };
+  },
+
+  async activateSafety({ operator }) {
+    const ctrl = await ctrlDoc();
+    if (ctrl.fixturesPass !== true || ctrl.fixturesCommit !== commitId()) {
+      return { error: "current-build fixtures are not attested" };
+    }
+    if (!ctrl.universeVersion || !ctrl.strategyVersion || !ctrl.accountId) {
+      return { error: "bootstrap identity is incomplete" };
+    }
+    const [u, s] = await Promise.all([
+      A.col(A.COL.universe).doc(ctrl.universeVersion || "").get(),
+      A.col(A.COL.strategies).doc(ctrl.strategyVersion || "").get(),
+    ]);
+    if (!u.exists || !s.exists) return { error: "frozen universe or strategy is missing" };
+    const uv = B.validateFrozenUniverse(u.data(), ctrl.universeVersion);
+    const sh = B.strategyHash(s.data());
+    if (!uv.ok || sh !== s.data().contentHash || s.data().immutable !== true) {
+      return { error: "frozen policy hash validation failed" };
+    }
+    const safetyEpoch = { accountId: ctrl.accountId, strategyVersion: ctrl.strategyVersion,
+      universeVersion: ctrl.universeVersion, universeHash: uv.actual, strategyHash: sh,
+      variantsHash: V.variantsHash(), commit: commitId(), activatedAtMs: Date.now(),
+      activatedBy: operator || "operator" };
+    await A.col(A.COL.control).doc("control").set({ safetyEpoch,
+      universeHash: uv.actual, strategyHash: sh, variantsHash: V.variantsHash(),
+      dryRun: true, ladderStreak: 0 }, { merge: true });
+    await A.col(A.COL.audit).add({ action: "activate_safety_epoch", safetyEpoch,
+      at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, safetyEpoch, dryRun: true,
+      note: "identity activated; dry run remains on until the measured ladder earns a stage and the operator opens it" };
   },
 
   async setControl({ patch, operator }) {
-    /* highWaterMarkUsd was NOT settable, and accountBreakers halts all new
-       entries at -6% from it. Once the account dipped, the only ways out were
-       recovering the NAV or hand-editing Firestore — a genuine wedge with no
-       UI escape. operatorCeiling/operatorHold steer the ladder; recallBenchmark
-       records the one measurement that blocks full automation. */
-    const ALLOW = ["mode", "dryRun", "cycleSeconds", "evidenceEverySeconds",
-                   "highWaterMarkUsd", "operatorCeiling", "operatorHold",
-                   "recallBenchmark", "afterHoursCycles", "forceBootstrap",
-                   "accountId", "strategyVersion", "universeVersion"];
+    const ALLOW = ["dryRun", "cycleSeconds", "evidenceEverySeconds",
+      "operatorCeiling", "operatorHold", "afterHoursCycles", "entriesFrozen",
+      "guardSeconds"];
     const MODES = ["research", "approval", "shadow", "limited_auto"];
-    const clean = {};
+    const clean = {}, refused = {};
+    const ctrl = await ctrlDoc();
     for (const k of ALLOW) {
       if (patch && patch[k] !== undefined) {
-        if (k === "mode" && !MODES.includes(patch[k])) continue;
-        if (k === "operatorCeiling" && !MODES.includes(patch[k])) continue;
-        /* A manual stage set is recorded as such so the ladder does not
-           immediately undo an operator's deliberate choice without saying so. */
-        if (k === "mode") { clean.stageChangedBy = "operator"; clean.stageChangedAt = A.FV.serverTimestamp(); }
-        /* Raising the ceiling is the operator's consent for the ladder to
-           climb again — it clears a manual stage pin. */
-        if (k === "operatorCeiling") { clean.stageChangedBy = "ladder_enabled"; clean.ladderStreak = 0; }
-        if (k === "cycleSeconds") { const n = Number(patch[k]); if (n >= 60 && n <= 3600) clean[k] = n; continue; }
-        if (k === "evidenceEverySeconds") { const n = Number(patch[k]); if (n >= 300 && n <= 86400) clean[k] = n; continue; }
-        if (k === "dryRun" || k === "afterHoursCycles") { clean[k] = !!patch[k]; continue; }
-        clean[k] = patch[k];
+        if (k === "operatorCeiling" && !MODES.includes(patch[k])) { refused[k] = "invalid stage"; continue; }
+        if (k === "operatorCeiling") {
+          clean[k] = patch[k]; clean.ladderStreak = 0;
+          if (LD.stageIndex(patch[k]) < LD.stageIndex(ctrl.mode || "research")) {
+            clean.mode = patch[k]; clean.stageChangeReason = "operator lowered automation ceiling";
+            if (patch[k] === "research") clean.dryRun = true;
+          }
+          continue;
+        }
+        if (k === "cycleSeconds") {
+          const n = Number(patch[k]);
+          if (Number.isFinite(n) && n >= 60 && n <= 3600) clean[k] = n;
+          else refused[k] = "must be between 60 and 3600 seconds";
+          continue;
+        }
+        if (k === "guardSeconds") {
+          const n = Number(patch[k]);
+          if (Number.isFinite(n) && n >= 60 && n <= 300) clean[k] = n;
+          else refused[k] = "must be between 60 and 300 seconds";
+          continue;
+        }
+        if (k === "evidenceEverySeconds") {
+          const n = Number(patch[k]);
+          if (Number.isFinite(n) && n >= 300 && n <= 86400) clean[k] = n;
+          else refused[k] = "must be between 300 and 86400 seconds";
+          continue;
+        }
+        if (k === "dryRun") {
+          if (patch[k] === false && (!validEpoch(ctrl) || ctrl.killSwitch
+              || (ctrl.mode || "research") === "research")) {
+            refused[k] = "requires a valid current safety epoch, an earned non-research stage, and a cleared kill switch";
+          } else clean[k] = !!patch[k];
+          continue;
+        }
+        if (k === "afterHoursCycles" || k === "operatorHold" || k === "entriesFrozen") {
+          clean[k] = !!patch[k]; continue;
+        }
       }
     }
-    if (Object.keys(clean).length) {
+    for (const k of Object.keys(patch || {})) if (!ALLOW.includes(k)) refused[k] = "not operator-settable";
+    let entryCleanup = null;
+    if (Object.keys(refused).length === 0 && Object.keys(clean).length) {
       await A.col(A.COL.control).doc("control").set(clean, { merge: true });
-      await A.col(A.COL.audit).add({ action: "setControl", patch: clean,
+      /* Close the gate first, then drain pre-existing entry orders. Approval
+         and fill transactions re-read this same control document, so an order
+         racing the cleanup fails closed and releases its reservation. */
+      if (clean.entriesFrozen === true) {
+        entryCleanup = await closeEntryQueue(ctrl.accountId || "paper-1",
+          "operator entry freeze", operator);
+      }
+      await A.col(A.COL.audit).add({ action: "setControl", patch: clean, entryCleanup,
         operator: operator || "operator", at: A.FV.serverTimestamp(),
         ...A.envelope({ created_by: "investorApi" }) });
     }
-    return { patched: clean };
+    const refusedKeys = Object.keys(refused);
+    return { ok: refusedKeys.length === 0,
+      patched: refusedKeys.length === 0 ? clean : {}, refused, entryCleanup,
+      error: refusedKeys.length
+        ? refusedKeys.map((k) => `${k}: ${refused[k]}`).join("; ")
+        : undefined };
+  },
+
+  async recordRecallBenchmark({ truePositives, falseNegatives, labelSetSha256, operator }) {
+    const tp = Math.floor(Number(truePositives)), fn = Math.floor(Number(falseNegatives));
+    const n = tp + fn;
+    if (!(tp >= 0 && fn >= 0 && n >= 100)) return { error: "at least 100 externally labelled cause events are required" };
+    if (!/^[a-f0-9]{64}$/.test(String(labelSetSha256 || ""))) return { error: "labelSetSha256 must be a full SHA-256" };
+    const p = tp / n, z = 1.959963984540054;
+    const den = 1 + z * z / n;
+    const lowerBound = ((p + z * z / (2 * n)) - z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n)) / den;
+    const row = { source: "external_labeled", n, truePositives: tp, falseNegatives: fn,
+      recall: Number(p.toFixed(6)), lowerBound: Number(lowerBound.toFixed(6)),
+      labelSetSha256, recordedAtMs: Date.now(), recordedBy: operator || "operator" };
+    await A.col(A.COL.control).doc("control").set({ recallBenchmark: row }, { merge: true });
+    await A.col(A.COL.audit).add({ action: "record_recall_benchmark", ...row,
+      at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, recallBenchmark: row };
   },
 
   /* Regime inputs. Entered by the operator or written by a future adapter —
      COR3M has no free programmatic feed, so a manual value beats a fabricated
      one, and a stale value degrades sizing rather than silently passing. */
   async setRegime({ vix, vixMedian, cor3m, operator }) {
-    const patch = { asOf: new Date().toISOString(), setBy: operator || "operator" };
-    if (isFinite(Number(vix))) patch.vix = Number(vix);
-    if (isFinite(Number(vixMedian))) patch.vixMedian = Number(vixMedian);
-    if (isFinite(Number(cor3m))) patch.cor3m = Number(cor3m);
+    const now = new Date().toISOString();
+    const patch = { asOf: now, setBy: operator || "operator" };
+    if (Number(vix) >= 5 && Number(vix) <= 100) {
+      patch.vix = Number(vix); patch.vixHealthy = true; patch.vixFetchedAt = now; patch.vixSource = "operator";
+    }
+    if (Number(vixMedian) >= 5 && Number(vixMedian) <= 100) patch.vixMedian = Number(vixMedian);
+    if (Number(cor3m) >= 0 && Number(cor3m) <= 100) {
+      patch.cor3m = Number(cor3m); patch.corHealthy = true; patch.corFetchedAt = now; patch.corSource = "operator";
+    }
+    if (patch.vix == null && patch.cor3m == null) return { error: "no valid regime value supplied" };
     await A.col(A.COL.control).doc("regime").set(patch, { merge: true });
     return { regime: patch, gate: S.dispersionGate(patch.cor3m, {}) };
   },
 
   async openAccount({ accountId, startingNavUsd }) {
     const ctrl = await ctrlDoc();
-    const id = accountId || ctrl.accountId || "paper-1";
+    const id = String(accountId || ctrl.accountId || "paper-1");
+    if (!/^[a-zA-Z0-9_-]{3,40}$/.test(id)) return { error: "accountId must be 3-40 letters, numbers, underscores, or hyphens" };
+    const nav = Number(startingNavUsd) || 100000;
+    if (!(nav >= 1000 && nav <= 100000000)) return { error: "startingNavUsd outside allowed range" };
     const r = await L.openAccount({
       accountId: id,
-      startingNavUsd: Number(startingNavUsd) || 100000,
-      strategyVersion: ctrl.strategyVersion || "v1",
+      startingNavUsd: nav,
+      strategyVersion: ctrl.strategyVersion || require("./_investorStrategy").version,
     });
-    await A.col(A.COL.control).doc("control").set({ accountId: id }, { merge: true });
-    return r;
+    const accountStart = r.startingNavCents != null ? L.fromCents(r.startingNavCents) : nav;
+    await A.col(A.COL.control).doc("control").set({ accountId: id,
+      safetyEpoch: null, dryRun: true, mode: "research", ladderStreak: 0,
+      highWaterMarkUsd: accountStart, startOfDayNavUsd: accountStart, startOfDayNavDate: null,
+      accountChangedAt: A.FV.serverTimestamp() }, { merge: true });
+    return { ...r, safetyReset: true, dryRun: true, mode: "research" };
   },
 
   async ledger({ accountId, limit }) {
@@ -550,6 +823,9 @@ const ACTIONS = {
 
   /* No-trade reasons are the most valuable dataset this system produces. */
   async decisions({ limit, cycleId }) {
+    if (cycleId != null && !/^\d{4}-\d{2}-\d{2}_\d{4}$/.test(String(cycleId))) {
+      return { error: "invalid cycleId" };
+    }
     let q = A.col(A.COL.decisions);
     q = cycleId ? q.where("cycleId", "==", cycleId) : q.orderBy("decisionAtMs", "desc");
     const snap = await q.limit(Math.min(Number(limit) || 60, 250)).get();
@@ -560,7 +836,7 @@ const ACTIONS = {
   },
 
   async sources() {
-    const snap = await A.col(A.COL.sourceState).limit(60).get();
+    const snap = await A.col(A.COL.sourceState).limit(500).get();
     const state = {}; snap.forEach((d) => {
       const x = d.data();
       state[d.id] = {
@@ -569,7 +845,83 @@ const ACTIONS = {
         lastSuccessAt: x.lastSuccessAt && x.lastSuccessAt.toDate ? x.lastSuccessAt.toDate().toISOString() : null,
       };
     });
-    return { ok: true, registry: E.SOURCES, state };
+    const universe = require("./_investorUniverse.js");
+    const byReason = {};
+    for (const row of universe.excludedTier || []) {
+      const reason = row.reason || row.exclusionReason || "unstated";
+      (byReason[reason] ||= []).push(row.symbol);
+    }
+    return { ok: true, registry: { ...E.SOURCES, ...IS.SOURCE_REGISTRY }, state,
+      eligibility: {
+        declared: universe.declaredTradeTierCount,
+        eligible: (universe.tradeTier || []).length,
+        excluded: (universe.excludedTier || []).length,
+        policyVersion: (universe.enforcement || {}).exclusionPolicyVersion || null,
+        byReason: Object.entries(byReason)
+          .map(([reason, symbols]) => ({ reason, count: symbols.length,
+            symbols: symbols.sort() }))
+          .sort((a, b) => b.count - a.count),
+      } };
+  },
+
+  async intelligence({ symbol, limit }) {
+    const requested = symbol == null ? null : String(symbol).trim().toUpperCase();
+    if (requested && !SYMBOL.test(requested)) return { error: "invalid symbol" };
+    const ctrl = await ctrlDoc();
+    const strategy = require("./_investorStrategy");
+    let snapshots = [];
+    if (requested) {
+      const snap = await A.col(A.COL.intelligence).doc(requested).get();
+      if (snap.exists) snapshots.push(snap.data());
+    } else {
+      const snap = await A.col(A.COL.intelligence).limit(Math.min(Number(limit) || 24, 40)).get();
+      snapshots = snap.docs.map((d) => d.data());
+    }
+    const rows = snapshots.map((x) => ({ ...x,
+      policy: I.decisionPolicy({ coverage: x.coverage, events: x.events,
+        temporalContext: x.temporalContext,
+        requireTemporalContext: strategy.parameters.requireTemporalContext === true,
+        asOfMs: Date.now(), maxAgeHours: strategy.parameters.intelligenceMaxAgeHours,
+        temporalMaxAgeHours: strategy.parameters.temporalMaxAgeHours }) }))
+      .sort((a, b) => a.symbol.localeCompare(b.symbol));
+    return { ok: true, watchlist: IS.configuredSymbols(ctrl),
+      focus: ctrl.intelligenceFocus || [], rows,
+      sourceMode: "authoritative_public_only",
+      coverageMeaning: "Healthy bounded lanes are reported explicitly; complete never means every fact on the internet was found." };
+  },
+
+  async setIntelligenceWatchlist({ symbols, profiles, operator }) {
+    if (!Array.isArray(symbols)) return { error: "symbols must be an array" };
+    const cleaned = [...new Set(symbols.map((x) => String(x || "").trim().toUpperCase()))];
+    if (!cleaned.length || cleaned.length > IS.MAX_FOCUS || cleaned.some((x) => !SYMBOL.test(x))) {
+      return { error: `watchlist must contain 1-${IS.MAX_FOCUS} valid unique symbols` };
+    }
+    const ctrl = await ctrlDoc(), uMod = require("./_investorUniverse");
+    const uSnap = await A.col(A.COL.universe).doc(ctrl.universeVersion || uMod.version).get();
+    const universe = uSnap.exists ? uSnap.data() : uMod;
+    const eligible = new Set([...(universe.tradeTier || []), ...(universe.researchTier || [])]
+      .map((x) => x.symbol));
+    const unknown = cleaned.filter((x) => !eligible.has(x));
+    if (unknown.length) return { error: `symbol(s) outside the frozen eligible universe: ${unknown.join(", ")}` };
+    const nextProfiles = { ...(ctrl.intelligenceProfiles || {}) };
+    for (const symbol of cleaned) {
+      const proposed = profiles && profiles[symbol] || {};
+      const domains = [...new Set((proposed.officialDomains || []).map(IS.cleanDomain).filter(Boolean))].slice(0, 6);
+      nextProfiles[symbol] = domains.length ? { officialDomains: domains,
+        domainBasis: "operator_verified" } : (nextProfiles[symbol] || {});
+    }
+    const queue = await closeEntryQueue(ctrl.accountId || "paper-1",
+      "company-intelligence watchlist changed; policy re-attestation required", operator);
+    await A.col(A.COL.control).doc("control").set({ intelligenceSymbols: cleaned,
+      intelligenceProfiles: nextProfiles, intelligenceCursor: 0,
+      safetyEpoch: null, dryRun: true, mode: "research",
+      intelligenceWatchlistUpdatedAt: A.FV.serverTimestamp() }, { merge: true });
+    await A.col(A.COL.audit).add({ action: "set_intelligence_watchlist", symbols: cleaned,
+      verifiedDomainSymbols: cleaned.filter((x) => (nextProfiles[x].officialDomains || []).length),
+      operator: operator || "operator", at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, symbols: cleaned, profiles: nextProfiles, queue,
+      safetyReset: true, note: "All companies use the same SEC identity, sector/SIC routing, relationship graph and public-source policy." };
   },
 
   async universe() {
@@ -582,68 +934,45 @@ const ACTIONS = {
 
   /* Freeze a universe version so additions can never be backdated. */
   async freezeUniverse({ operator }) {
-    const u = require("./_investorUniverse.js");
-    const ref = A.col(A.COL.universe).doc(u.version);
-    const existing = await ref.get();
-    if (existing.exists) return { ok: true, frozen: false, note: `${u.version} already frozen` };
-    await ref.set({ ...u, frozenAt: A.FV.serverTimestamp(), frozenBy: operator || "operator",
-      ...A.envelope({ created_by: "investorApi.freezeUniverse" }) });
-    return { ok: true, frozen: true, version: u.version, tradeTier: (u.tradeTier || []).length };
+    const { frozen, report } = await B.resolveCiksAndFreeze();
+    await A.col(A.COL.audit).add({ action: "verify_universe_freeze",
+      operator: operator || "operator", version: frozen.version, contentHash: frozen.contentHash,
+      at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, frozen: true, version: frozen.version,
+      contentHash: frozen.contentHash, tradeTier: frozen.tradeTier.length, report };
   },
 
   /* Resolve tickers to CIKs from SEC's own authoritative map. A guessed CIK
      silently polls the WRONG filer, which is worse than no CIK at all — so the
      universe ships with them null and this fills them in from the source. */
   async resolveCiks({ operator }) {
-    const { fetchPublic } = require("./_investorFetch");
-    const r = await fetchPublic("https://www.sec.gov/files/company_tickers.json", {
-      sourceId: "sec.tickers", accept: ["json"], timeoutMs: 20000,
-    });
-    if (!r.json) return { error: "could not parse SEC company_tickers.json" };
-    const map = {};
-    for (const v of Object.values(r.json)) {
-      if (v && v.ticker) map[String(v.ticker).toUpperCase()] = String(v.cik_str).padStart(10, "0").replace(/^0+/, "");
-    }
-    const u = require("./_investorUniverse.js");
-    const resolved = [], mismatched = [], missing = [];
-    const apply = (row) => {
-      const got = map[row.symbol];
-      if (!got) { missing.push(row.symbol); return row; }
-      if (row.cik && row.cik !== got) {
-        mismatched.push({ symbol: row.symbol, had: row.cik, sec: got });
-      }
-      resolved.push({ symbol: row.symbol, cik: got });
-      return { ...row, cik: got, cikSource: "sec_company_tickers" };
-    };
-    const next = {
-      ...u,
-      tradeTier: (u.tradeTier || []).map(apply),
-      researchTier: (u.researchTier || []).map((r2) => {
-        const got = map[r2.symbol];
-        return got ? { ...r2, cik: got, cikSource: "sec_company_tickers" } : r2;
-      }),
-      cikResolvedAt: new Date().toISOString(),
-    };
-    await A.col(A.COL.universe).doc(u.version).set({
-      ...next, frozenAt: A.FV.serverTimestamp(), frozenBy: operator || "operator",
-      ...A.envelope({ created_by: "investorApi.resolveCiks" }),
-    }, { merge: true });
-    return { ok: true, resolved: resolved.length, missing, mismatched,
-             note: mismatched.length ? "MISMATCHES FOUND — the manual CIK was wrong and has been corrected from SEC" : "all manual CIKs agreed with SEC" };
+    const { frozen, report } = await B.resolveCiksAndFreeze();
+    return { ok: true, version: frozen.version, contentHash: frozen.contentHash,
+      resolved: report.resolved, missing: report.missing, mismatched: report.mismatched,
+      note: "SEC resolution was verified against the immutable frozen content hash" };
   },
 
   async health() {
+    const settings = await M.loadMarketSettings({ force: true });
     const p = M.activeProvider();
     return {
       ok: true,
-      provider: { id: p.id, delayMinutes: p.delayMinutes, maxGrade: p.maxGrade,
+      provider: { id: p.id, feed: p.feed || null, consolidated: !!p.consolidated,
+                  liquidityEligible: p.liquidityEligible !== false,
+                  delayMinutes: p.delayMinutes, maxGrade: p.maxGrade,
                   degradedFrom: p.degradedFrom || null, reason: p.reason || null },
       env: {
         firebase: !!(process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_PROJECT_ID),
         openai: !!process.env.OPENAI_API_KEY,
         passcode: !!process.env.INVESTOR_PASSCODE,
-        marketProvider: process.env.INVESTOR_MARKET_PROVIDER || "(unset — manual)",
+        alpacaCredentials: !!(process.env.ALPACA_API_KEY_ID && process.env.ALPACA_API_SECRET_KEY),
       },
+      /* provider/feed are operator settings in InvestorAI_Control/marketConfig,
+         not environment variables; `source` says which layer answered. */
+      marketConfig: { provider: settings.provider, feed: settings.feed,
+        source: settings.source, document: `${A.COL.control}/${M.MARKET_SETTINGS_DOC}`,
+        ...(settings.note ? { note: settings.note } : {}),
+        ...(settings.feedNote ? { feedNote: settings.feedNote } : {}) },
       session: M.sessionState(new Date()),
       openaiCeilingUsd: O.DAILY_USD_CEILING,
     };
@@ -674,14 +1003,15 @@ exports.handler = async (event) => {
   if (!fn) return AUTH.json(event, 400, { error: `unknown action "${action}"` });
 
   try {
-    const out = await fn(body);
+    const out = await fn({ ...body, operator: guard.subject || "operator" });
     /* The auth token is returned as authToken, NEVER as "session".
        The dashboard action already returns `session` meaning the MARKET
        session state, and the collision meant that on the second request the
        client overwrote its bearer token with a market-state object, sent
        "[object Object]" as the header, and locked itself out. */
     const extra = guard.session ? { authToken: guard.session } : {};
-    return AUTH.json(event, 200, { ...out, ...extra });
+    const status = out && out.ok === false ? 409 : (out && out.error ? 400 : 200);
+    return AUTH.json(event, status, { ...out, ...extra });
   } catch (e) {
     console.error("investorApi", action, AUTH.redact({ error: e.message, stack: (e.stack || "").slice(0, 300) }));
     return AUTH.json(event, 500, { error: String(e.message).slice(0, 200), action });
@@ -689,3 +1019,7 @@ exports.handler = async (event) => {
 };
 
 exports.ACTIONS = ACTIONS;
+exports.config = {
+  path: "/.netlify/functions/investorApi",
+  rateLimit: { windowLimit: 60, windowSize: 60, aggregateBy: ["ip", "domain"] },
+};

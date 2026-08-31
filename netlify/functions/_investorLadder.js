@@ -22,8 +22,8 @@
  *      the next stage is actually measured and passes;
  *    · it demotes itself immediately when evidence stops supporting the stage
  *      it is on — demotion needs no permission and no quorum;
- *    · the operator can veto, freeze, or force a stage at any time, and a
- *      manual setting always wins over an automatic one.
+ *    · the operator can veto, hold, set a maximum ceiling, or immediately lower
+ *      autonomy, but cannot force an unearned higher stage.
  *
  *  Self-promotion is deliberately conservative and self-demotion deliberately
  *  trigger-happy. Those asymmetries are the whole safety design: the cost of
@@ -54,57 +54,104 @@ function stageIndex(s) { const i = STAGES.indexOf(String(s || "research")); retu
  */
 function evaluateGates(ev = {}) {
   const g = [];
-  /* `measured: false` marks a gate whose input was UNAVAILABLE this cycle —
-     a Firestore blip, a thrown harness — as distinct from measured-and-
-     failing. An unmeasured gate blocks promotion (conservative) but never
-     triggers demotion: a five-minute outage must not bounce the stage. */
-  const add = (id, stage, pass, detail, blocking = true, measured = true) =>
-    g.push({ id, stage, pass: !!pass, detail, blocking, measured });
+  const add = (id, stage, pass, detail, { blocking = true, measured = true,
+    critical = false } = {}) => g.push({ id, stage, pass: !!pass, detail,
+      blocking, measured, critical });
 
   /* ── to APPROVAL: the accounting has to be trustworthy ─────────────── */
-  add("ledger_balanced", "approval", ev.ledgerBalanced !== false,
-      ev.ledgerBalanced === false ? "the journal does not balance" : "every journal entry balances");
-  add("fixtures", "approval", ev.fixturesPass !== false,
-      ev.fixturesPass === false ? "golden fixtures are failing" : "golden fixtures pass on this deploy");
-  add("execution_clock", "approval", ev.eligibleFillsOnly !== false,
-      "every fill references a post-decision eligible bar");
+  add("ledger_balanced", "approval", ev.ledgerBalanced === true,
+      ev.ledgerBalanced === true ? "journal projection exactly matches its immutable legs"
+        : "ledger reconstruction was absent or discrepant",
+      { measured: ev.ledgerBalanced != null, critical: true });
+  add("fixtures", "approval", ev.fixturesPass === true && ev.fixturesCurrent === true,
+      ev.fixturesPass === true && ev.fixturesCurrent === true
+        ? "golden fixtures are attested to the running commit"
+        : "fixtures are failing, absent, or attested to a different commit",
+      { measured: ev.fixturesPass != null && ev.fixturesCurrent != null, critical: true });
+  add("execution_clock", "approval", ev.eligibleFillsOnly === true,
+      ev.eligibleFillsOnly === true
+        ? "every fill has a post-decision clock and immutable source hash"
+        : "execution provenance audit is absent or failing",
+      { measured: ev.eligibleFillsOnly != null, critical: true });
+  add("safety_epoch", "approval", ev.safetyEpochValid === true,
+      ev.safetyEpochValid === true ? "account and frozen policy hashes match the activated safety epoch"
+        : "the active account/policy identity is not safety-epoch bound",
+      { measured: ev.safetyEpochValid != null, critical: true });
 
   /* ── to SHADOW: the machinery has to be stable ─────────────────────── */
-  add("cycle_health", "shadow", (ev.cycleErrorRate ?? 0) < 0.05,
-      `${Math.round((ev.cycleErrorRate ?? 0) * 100)}% of recent cycles failed (needs under 5%)`);
-  add("history_coverage", "shadow", (ev.historyCoverage ?? 0) >= 0.8,
-      `${Math.round((ev.historyCoverage ?? 0) * 100)}% of the roster has a six-month record (needs 80%)`);
-  add("shadow_flowing", "shadow", (ev.shadowClosed ?? 0) >= 200,
-      ev.shadowUnavailable
-        ? "shadow harness did not report this cycle — holding rather than judging"
-        : `${ev.shadowClosed ?? 0} shadow trades closed (needs 200 before the harness is believable)`,
-      true, !ev.shadowUnavailable);
+  add("cycle_health", "shadow", Number.isFinite(ev.cycleErrorRate) && ev.cycleErrorRate < 0.05,
+      Number.isFinite(ev.cycleErrorRate)
+        ? `${Math.round(ev.cycleErrorRate * 100)}% of recent cycles failed (needs under 5%)`
+        : "recent cycle health is unmeasured",
+      { measured: Number.isFinite(ev.cycleErrorRate) });
+  add("market_provenance", "shadow", ev.marketDataEligible === true,
+      ev.marketDataEligible === true ? "consolidated, hash-bound market data is execution eligible"
+        : "market feed is non-consolidated, stale, or lacks source provenance",
+      { measured: ev.marketDataEligible != null, critical: true });
+  add("history_coverage", "shadow", Number.isFinite(ev.historyCoverage) && ev.historyCoverage >= 0.8,
+      Number.isFinite(ev.historyCoverage)
+        ? `${Math.round(ev.historyCoverage * 100)}% of roster has pre-decision long history (needs 80%)`
+        : "history coverage is unmeasured",
+      { measured: Number.isFinite(ev.historyCoverage) });
+  add("shadow_flowing", "shadow", Number(ev.shadowDays) >= 200,
+      ev.shadowUnavailable ? "shadow portfolio-day ledger is unavailable"
+        : `${Number(ev.shadowDays) || 0} complete shadow portfolio days (needs 200 for machinery validation)`,
+      { measured: !ev.shadowUnavailable });
 
   /* ── to LIMITED_AUTO: the strategy itself has to have shown something ─ */
   const alloc = ev.allocation || {};
-  add("powered", "limited_auto", !!alloc.powered,
-      alloc.powered
-        ? `the allocator has enough evidence to name a leader (${alloc.bestEffectiveN} independent days)`
-        : `only ${alloc.bestEffectiveN ?? 0} of ${alloc.requiredEffectiveN ?? "?"} independent days collected`);
-  add("real_sample", "limited_auto", (ev.closedRealTrades ?? 0) >= 200,
-      `${ev.closedRealTrades ?? 0} real closed positions (needs 200 out of sample)`);
+  add("powered", "limited_auto", alloc.powered === true && !!alloc.leaderId,
+      alloc.powered && alloc.leaderId
+        ? `${alloc.leaderId} passed the selection-corrected absolute and incumbent-relative tests`
+        : `no validated leader; least-observed arm has ${alloc.bestEffectiveN ?? 0} of ${alloc.requiredEffectiveN ?? "?"} required days`,
+      { measured: alloc.powered != null });
+  const overfit = alloc.overfitGuard || {};
+  const guardLeaderId = alloc.leaderId || (alloc.forwardLock && alloc.forwardLock.leaderId);
+  const leaderDsr = overfit.dsrByVariant && overfit.dsrByVariant[guardLeaderId];
+  add("overfit_guard", "limited_auto", !!(leaderDsr && leaderDsr.pass
+      && overfit.pbo && overfit.pbo.pass),
+      leaderDsr && overfit.pbo
+        ? `DSR probability ${Number(leaderDsr.probability || 0).toFixed(3)} (needs .950); PBO ${overfit.pbo.pbo == null ? "warming" : Number(overfit.pbo.pbo).toFixed(3)} (needs <=.200)`
+        : "development-only DSR/PBO guard is unavailable or still warming",
+      { measured: !!(leaderDsr && overfit.pbo), critical: true });
+  const cal = ev.calibration || {};
+  add("chronological_holdout", "limited_auto", cal.pass === true
+      && Number(cal.calibratedNetLowerBoundBps) > 0,
+      cal.pass ? `untouched holdout lower bound +${Number(cal.calibratedNetLowerBoundBps).toFixed(2)}bp/day`
+        : "chronological embargoed holdout, doubled-cost, or unresolved-outcome stress is not positive",
+      { measured: cal.calibrated != null, critical: true });
+  const forward = alloc.forwardResult || {};
+  add("locked_forward_paper", "limited_auto", forward.complete === true
+      && forward.pass === true && Number(forward.calibratedNetLowerBoundBps) > 0,
+      forward.complete
+        ? (forward.pass ? `locked future-paper stress lower bound +${Number(forward.calibratedNetLowerBoundBps).toFixed(2)}bp/day`
+          : "locked future-paper confirmation failed one or more stress bounds")
+        : `${Number(forward.confirmationSessions) || 0} of ${Number(forward.requiredSessions) || 126} untouched post-embargo sessions collected`,
+      { measured: !!alloc.forwardLock, critical: true });
+  add("paper_sample", "limited_auto", Number(ev.closedRealTrades) >= 200,
+      `${Number(ev.closedRealTrades) || 0} immutable closed paper trades (needs 200 out of sample)`,
+      { measured: ev.closedRealTrades != null });
   const cm = ev.costMeter || {};
   add("edge_beats_cost", "limited_auto",
-      Number(cm.grossEdgeUsd) > Number(cm.frictionUsd),
+      Number(cm.grossEdgeUsd) > Number(cm.frictionUsd) && Number(cm.netEdgeUsd) > 0,
       cm.grossEdgeUsd != null
-        ? `gross edge $${Number(cm.grossEdgeUsd).toFixed(2)} vs friction $${Number(cm.frictionUsd).toFixed(2)}`
-        : "cost meter has no realized trades yet");
+        ? `gross $${Number(cm.grossEdgeUsd).toFixed(2)}, friction $${Number(cm.frictionUsd).toFixed(2)}, net $${Number(cm.netEdgeUsd || 0).toFixed(2)}`
+        : "realized paper cost meter is unavailable",
+      { measured: cm.grossEdgeUsd != null });
 
   /* THE BLOCKING ONE. The strategy file is explicit that this gate blocks any
      automation of the no-cause book, because the failure mode — fading into a
      real cause the system never saw — cannot be bounded until recall against
      known causes is measured. It has never been run, so it fails, and it is
      correct that it fails. */
+  const rb = ev.recallBenchmark || {};
   add("recall_benchmark", "limited_auto",
-      ev.recallBenchmark != null && Number(ev.recallBenchmark) >= 0.8,
-      ev.recallBenchmark == null
+      rb.source === "external_labeled" && Number(rb.n) >= 100
+        && Number(rb.lowerBound) >= 0.8,
+      !ev.recallBenchmark
         ? "the known-cause recall benchmark has never been run — the system cannot yet quantify what its sources miss"
-        : `recall ${Math.round(Number(ev.recallBenchmark) * 100)}% against known causes (needs 80%) — OPERATOR-RECORDED, no automated benchmark exists yet, so this gate is your assertion, not the system's measurement`);
+        : `externally labelled recall lower bound ${Math.round(Number(rb.lowerBound || 0) * 100)}% on ${Number(rb.n) || 0} events (needs >=80% on >=100)`,
+      { measured: !!ev.recallBenchmark, critical: true });
 
   return g;
 }
@@ -129,7 +176,7 @@ function highestEarnedStage(gates) {
  * supervision by exception rather than supervision by clicking.
  */
 function decideStage({ current, gates, operatorCeiling, operatorHold, killSwitch,
-                       operatorPinned = false, promotionStreak = 0, streakNeeded = 3 }) {
+                       promotionStreak = 0, streakNeeded = 3 }) {
   const earned = highestEarnedStage(gates);
   const cur = stageIndex(current);
   const ceil = stageIndex(operatorCeiling || "approval");
@@ -140,29 +187,15 @@ function decideStage({ current, gates, operatorCeiling, operatorHold, killSwitch
              reason: "kill switch engaged — everything drops to research" };
   }
 
-  /* DEMOTION: immediate — but only on gates that were actually MEASURED
-     failing. A measurement outage blocks promotion; it must not flap the
-     stage down and back up every five minutes (that was possible before:
-     one Firestore blip zeroed shadowClosed, demoted shadow→approval, and the
-     next cycle promoted straight back — a mode write and audit row per flap). */
-  const measuredFailedBelowCur = gates.filter(
-    (x) => x.blocking && !x.pass && x.measured !== false && stageIndex(x.stage) <= cur);
-  if (measuredFailedBelowCur.length && target < cur) {
+  // Measured failures demote immediately. Missing measurements also demote
+  // when the invariant is critical (ledger, clock, source, holdout, recall).
+  const failedBelowCur = gates.filter((x) => x.blocking && !x.pass
+    && (x.measured !== false || x.critical) && stageIndex(x.stage) <= cur);
+  if ((failedBelowCur.length || target < cur) && target < cur) {
     return {
       stage: STAGES[target], changed: true, direction: "down", streak: 0,
-      reason: `dropped from ${current} to ${STAGES[target]} — ${measuredFailedBelowCur.map((f) => f.detail).join("; ")}`,
+      reason: `automatic rollback from ${current} to ${STAGES[target]} — ${failedBelowCur.map((f) => f.detail).join("; ")}`,
     };
-  }
-
-  /* THE OPERATOR'S WORD WINS UPWARD. When the operator has manually set the
-     stage, the ladder never promotes away from it — before this rule the
-     dropdown was decoration: an operator who set "research" to quiet the
-     system was re-promoted to "approval" on the very next cycle. Safety still
-     wins downward (the demotion branch above runs first). The pin clears when
-     the operator raises the ceiling or sets a new stage. */
-  if (operatorPinned && target > cur) {
-    return { stage: current, changed: false, direction: "pinned", streak: 0,
-             reason: `${STAGES[target]} is earned, but you set the stage to ${current} yourself — it stays until you change it or raise the ceiling` };
   }
 
   // PROMOTION: one rung at a time, only after the evidence has held steady.
@@ -205,6 +238,14 @@ function autoApproval(order, { stage, book, navUsd, cfg, dayCount }) {
 
   if (stage !== "limited_auto") reasons.push(`stage is ${stage}, auto-approval only runs at limited_auto`);
   if (auto.enabled === false) reasons.push("auto-approval is switched off");
+  if (![order.universeHash, order.strategyHash, order.variantsHash]
+      .every((h) => /^[a-f0-9]{64}$/.test(String(h || "")))) {
+    reasons.push("order is not bound to complete frozen policy hashes");
+  }
+  const mp = order.decisionMarketProvenance || {};
+  if (!mp.provider || !/^[a-f0-9]{64}$/.test(String(mp.sourceSha256 || ""))) {
+    reasons.push("order lacks immutable market-source provenance");
+  }
 
   const maxUsd = navUsd * ((auto.maxOrderPctOfNav ?? 1.5) / 100);
   const orderUsd = (order.qty || 0) * (order.refPriceUsd || 0);
@@ -225,6 +266,12 @@ function autoApproval(order, { stage, book, navUsd, cfg, dayCount }) {
   }
   if (order.cause === "no_cause_detected_in_covered_sources" && auto.allowNoCause !== true) {
     reasons.push("no cause was found in covered sources — this book is never auto-approved until the recall benchmark exists");
+  }
+  if (!(Number(order.cost && order.cost.calibratedNetLowerBoundBps) > 0)) {
+    reasons.push("calibrated net lower bound is not positive");
+  }
+  if (!Array.isArray(order.gates) || order.gates.some((g) => g.blocking && !g.pass)) {
+    reasons.push("one or more persisted decision gates is missing or failed");
   }
 
   return {

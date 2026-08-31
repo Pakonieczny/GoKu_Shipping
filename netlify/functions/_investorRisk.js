@@ -149,6 +149,50 @@ function summarise(positions, marks, sectorOf, navUsd) {
   };
 }
 
+/** Revalue the account from executable marks. Cost basis is accounting state,
+ * not risk NAV; using it hides open losses from breakers and sizing. */
+function markedBook(positions, marks, sectorOf, balancesUsd = {}) {
+  const open = (positions || []).filter((p) => p && p.open && Number(p.qty) > 0);
+  let marketValueUsd = 0, untrusted = 0;
+  for (const p of open) {
+    const mark = Number(marks && marks[p.symbol]);
+    if (mark > 0) marketValueUsd += mark * Number(p.qty);
+    else {
+      untrusted += 1;
+      marketValueUsd += Number(p.entryPriceUsd || p.avgPrice || 0) * Number(p.qty);
+    }
+  }
+  const cashUsd = Number(balancesUsd.cash) || 0;
+  const reservedUsd = Number(balancesUsd.reserved) || 0;
+  const navUsd = cashUsd + reservedUsd + marketValueUsd;
+  return { navUsd, cashUsd, reservedUsd, marketValueUsd, untrustedMarks: untrusted,
+    book: summarise(open, marks, sectorOf, navUsd) };
+}
+
+function positionSizeUsd({ navUsd, atrPct, expectedShortfall5dPct, overnightGapEsPct,
+                           signalScaler = 1, cfg }) {
+  const pc = (cfg && cfg.portfolioControls) || {};
+  const p = (cfg && cfg.parameters) || cfg || {};
+  const riskBudgetPct = Math.max(0, Number(pc.riskBudgetPerTradePctOfNav) || 0.25);
+  const ordinaryPct = Math.max(0, Number(pc.ordinaryPositionPctOfNav) || 3);
+  const distances = [Math.abs(Number(p.stopLossPct) || 8),
+    2 * Math.max(0, Number(atrPct) || 0),
+    Math.max(0, Number(expectedShortfall5dPct) || 0),
+    Math.max(0, Number(overnightGapEsPct) || 0), 0.5];
+  const riskDistancePct = Math.max(...distances);
+  const riskBudgetUsd = Math.max(0, Number(navUsd) || 0) * riskBudgetPct / 100;
+  const riskLimitedUsd = riskDistancePct > 0 ? riskBudgetUsd / (riskDistancePct / 100) : 0;
+  const ordinaryCapUsd = Math.max(0, Number(navUsd) || 0) * ordinaryPct / 100;
+  const scaler = Math.max(0, Math.min(1, Number(signalScaler) || 0));
+  const usd = Math.max(0, Math.min(riskLimitedUsd, ordinaryCapUsd) * scaler);
+  return { usd: Number(usd.toFixed(2)), scaler, riskDistancePct,
+    riskBudgetUsd: Number(riskBudgetUsd.toFixed(2)), ordinaryCapUsd: Number(ordinaryCapUsd.toFixed(2)),
+    maxPlannedLossUsd: Number((usd * riskDistancePct / 100).toFixed(2)),
+    tailInputs: { atrPct: Number(atrPct) || null,
+      expectedShortfall5dPct: Number(expectedShortfall5dPct) || null,
+      overnightGapEsPct: Number(overnightGapEsPct) || null } };
+}
+
 /* ── the account-level circuit breakers ────────────────────────────────── */
 /**
  * These stop the whole book, not one trade. Checked once per cycle before any
@@ -158,6 +202,11 @@ function summarise(positions, marks, sectorOf, navUsd) {
 function accountBreakers(state, cfg) {
   const pc = cfg.portfolioControls || {};
   const out = [];
+
+  if (Number(state.untrustedOpenMarks) > 0) {
+    out.push({ id: "untrusted_open_marks", halt: true,
+      reason: `${state.untrustedOpenMarks} open position(s) lack a validated current mark` });
+  }
 
   const ddLimit = -Math.abs(pc.drawdownFreezePctFromHigh ?? 6);
   if (Number.isFinite(state.drawdownPct) && state.drawdownPct <= ddLimit) {
@@ -184,7 +233,7 @@ function accountBreakers(state, cfg) {
  * ones that trim a single position, so the reason recorded is the most
  * fundamental one rather than whichever fired first by accident.
  */
-function checkAdd({ symbol, sector, proposedUsd, book, navUsd, cashUsd, cfg }) {
+function checkAdd({ symbol, sector, proposedUsd, book, navUsd, cashUsd, cfg, dynamicCorrelations = null }) {
   const pc = cfg.portfolioControls || {};
   const nav = Number(navUsd) || 0;
   const pct = (v) => (nav > 0 ? (v / nav) * 100 : 0);
@@ -231,18 +280,41 @@ function checkAdd({ symbol, sector, proposedUsd, book, navUsd, cashUsd, cfg }) {
        + (held.length ? ` — already holding ${held.join(", ")} in the same cluster` : ""));
   } else pass("cluster_cap", `${cl} at ${clAfter.toFixed(1)}% after this, cap ${maxCluster}%`);
 
+  /* 7. Point-in-time correlation network. The hand-drawn cluster remains a
+     prior, while this gate catches relationships that changed with the current
+     regime. Missing pair data fails closed once the book already has risk. */
+  const corrThreshold = pc.dynamicCorrelationThreshold ?? 0.65;
+  const dynamicCap = pc.dynamicCorrelationExposurePctOfNav ?? maxCluster;
+  const requireDynamic = pc.requireDynamicCorrelation === true;
+  const corrRows = dynamicCorrelations || {};
+  const missingCorr = book.rows.filter((r) => !(corrRows[r.symbol] && corrRows[r.symbol].status === "ready"));
+  const correlatedRows = book.rows.filter((r) => corrRows[r.symbol]
+    && corrRows[r.symbol].status === "ready"
+    && Number(corrRows[r.symbol].stressedCorrelation) >= corrThreshold);
+  const dynamicHeldUsd = correlatedRows.reduce((sum, r) => sum + Number(r.valueUsd || 0), 0);
+  const dynamicAfter = pct(dynamicHeldUsd + proposedUsd);
+  if (book.rows.length && requireDynamic && missingCorr.length) {
+    deny("dynamic_correlation_unknown", `point-in-time correlation unavailable versus ${missingCorr.map((x) => x.symbol).join(", ")}`);
+  } else if (dynamicAfter > dynamicCap) {
+    deny("dynamic_correlation_cap", `current correlation network would reach ${dynamicAfter.toFixed(1)}%, above the ${dynamicCap}% cap`
+      + (correlatedRows.length ? ` — linked to ${correlatedRows.map((x) => x.symbol).join(", ")}` : ""));
+  } else pass("dynamic_correlation_cap", `${dynamicAfter.toFixed(1)}% in the current correlation network, cap ${dynamicCap}%`);
+
   const denied = checks.filter((c) => !c.pass);
 
   /* The largest size that would satisfy every cap, so a candidate that is
      merely too BIG is trimmed rather than dropped — but one that breaches a
      count or duplicate rule is refused outright, since no size fixes those. */
+  const dynamicHeadroom = nav * (dynamicCap / 100) - dynamicHeldUsd;
   const headroomUsd = Math.max(0, Math.min(
     nav * (maxGross / 100) - book.grossUsd,
     (Number(cashUsd) || 0) - nav * (minCash / 100),
     nav * (maxSector / 100) - (book.bySectorPct[sector] || 0) * nav / 100,
     nav * (maxCluster / 100) - (book.byClusterPct[cl] || 0) * nav / 100,
+    dynamicHeadroom,
   ));
-  const hardBlock = denied.some((d) => d.id === "max_positions" || d.id === "duplicate");
+  const hardBlock = denied.some((d) => d.id === "max_positions" || d.id === "duplicate"
+    || d.id === "dynamic_correlation_unknown");
 
   return {
     allow: denied.length === 0,
@@ -250,6 +322,8 @@ function checkAdd({ symbol, sector, proposedUsd, book, navUsd, cashUsd, cfg }) {
     permittedUsd: hardBlock ? 0 : Math.min(proposedUsd, headroomUsd),
     headroomUsd,
     cluster: cl,
+    dynamicCorrelation: { threshold: corrThreshold, capPct: dynamicCap,
+      correlatedSymbols: correlatedRows.map((x) => x.symbol), missingSymbols: missingCorr.map((x) => x.symbol) },
     checks,
     blockedBy: denied.map((d) => d.id),
     firstBlock: denied[0] ? denied[0].reason : null,
@@ -372,6 +446,6 @@ function attribution(equity, bench) {
 }
 
 module.exports = {
-  CLUSTERS, clusterOf, summarise, accountBreakers, checkAdd, describe,
+  CLUSTERS, clusterOf, summarise, markedBook, positionSizeUsd, accountBreakers, checkAdd, describe,
   equityStats, benchmarkReturn, attribution,
 };

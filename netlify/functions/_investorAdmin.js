@@ -1,6 +1,6 @@
-/*  netlify/functions/_investorAdmin.js  (v1.0)
+/*  netlify/functions/_investorAdmin.js  (v2.0)
  *  ---------------------------------------------------------------------------
- *  Investor_AI — side-effect-free Firebase Admin initializer + namespace guards.
+ *  Investor_AI — side-effect-free Firestore initializer + namespace guards.
  *
  *  WHY THIS FILE EXISTS INSTEAD OF `require("./firebaseAdmin")`
  *  ------------------------------------------------------------------------
@@ -12,34 +12,30 @@
  *  It also cannot be extended safely: adding "investor.goldenspike.app" to
  *  its CORS_ORIGINS array changes behaviour for ~60 other functions.
  *
- *  So this module initializes its own NAMED firebase-admin app from the SAME
- *  three environment variables (no new credential) and never touches CORS,
- *  never mutates bucket policy, and never writes outside its own namespace.
+ *  This project uses only Firestore. The dedicated Google Cloud Firestore SDK
+ *  avoids importing Firebase Auth and Cloud Storage (and their unused
+ *  transitive dependency surface) while using the same service account.
  *
- *  ZERO NEW ENVIRONMENT VARIABLES:
+ *  REQUIRED ENVIRONMENT VARIABLES:
  *    FIREBASE_PROJECT_ID / FIREBASE_PRIVATE_KEY / FIREBASE_CLIENT_EMAIL
- *    FIREBASE_STORAGE_BUCKET (optional, same default as legacy)
  *
  *  NAMESPACE ENFORCEMENT
  *  ------------------------------------------------------------------------
- *  A shared Admin credential can reach every collection in the project. That
+ *  A shared service credential can reach every collection in the project. That
  *  is a real, unavoidable blast radius under the no-new-credential rule. What
  *  we CAN do is make it impossible for investor code to touch legacy data by
- *  accident: every Firestore path must start with `InvestorAI_` and every
- *  Storage object key must start with `investor-ai/`. col() and obj() throw
- *  on anything else, and no investor module is permitted to call
- *  admin.firestore() directly. This is collision containment, not a security
+ *  accident: every Firestore path must start with `InvestorAI_`, and no investor
+ *  module is permitted to construct an unguarded client directly. This is
+ *  collision containment, not a security
  *  boundary — it is documented as such in docs/threat-model.md.
  * ---------------------------------------------------------------------------
  */
 
 "use strict";
 
-const admin = require("firebase-admin");
+const { Firestore, FieldValue, Timestamp } = require("@google-cloud/firestore");
 
-const APP_NAME       = "investor-ai";
-const COL_PREFIX     = "InvestorAI_";
-const STORAGE_PREFIX = "investor-ai/";
+const COL_PREFIX = "InvestorAI_";
 
 /* ── credential (same three vars the rest of the deployment already uses) ── */
 function serviceAccount() {
@@ -57,44 +53,26 @@ function serviceAccount() {
   };
 }
 
-function normalizeBucket(v) {
-  const s = String(v || "").trim();
-  if (!s) return "";
-  return s.replace(/^gs:\/\//i, "")
-          .replace(/^https?:\/\/storage\.googleapis\.com\//i, "")
-          .replace(/\/.+$/, "");
+let _db = null;
+function rawDb() {
+  if (_db) return _db;
+  const sa = serviceAccount();
+  _db = new Firestore({
+    projectId: sa.project_id,
+    credentials: { client_email: sa.client_email, private_key: sa.private_key },
+    ignoreUndefinedProperties: true,
+  });
+  return _db;
 }
 
-const BUCKET = normalizeBucket(process.env.FIREBASE_STORAGE_BUCKET) || "gokudatabase.firebasestorage.app";
-
-/* A NAMED app. admin.apps is shared across the whole lambda, so if a legacy
-   module has already initialized the default app we must not collide with it,
-   and we must not inherit its configuration either. */
-let _app = null;
-function app() {
-  if (_app) return _app;
-  const existing = admin.apps.find((a) => a && a.name === APP_NAME);
-  if (existing) { _app = existing; return _app; }
-  _app = admin.initializeApp(
-    { credential: admin.credential.cert(serviceAccount()), storageBucket: BUCKET },
-    APP_NAME
-  );
-  return _app;
-}
-/* NOTE: no setCorsConfiguration call anywhere in this file, by design. */
-
-/* firebase-admin exposes FieldValue/Timestamp on the firestore namespace only
-   after that namespace is touched. Reading them at module load crashed on
-   admin v13. They are lazy getters so importing this file stays side-effect
-   free — which is the entire point of the module. */
-const FV = { get serverTimestamp() { return admin.firestore.FieldValue.serverTimestamp; },
-             get increment()       { return admin.firestore.FieldValue.increment; },
-             get arrayUnion()      { return admin.firestore.FieldValue.arrayUnion; },
-             get delete()          { return admin.firestore.FieldValue.delete; } };
-const TS = { get now()      { return admin.firestore.Timestamp.now; },
-             get fromDate() { return admin.firestore.Timestamp.fromDate; } };
-
-function rawDb() { return app().firestore(); }
+/* Keep the existing lazy callable contract: callers use A.FV.increment(x),
+   A.FV.serverTimestamp(), and A.TS.fromDate(d). */
+const FV = { get serverTimestamp() { return FieldValue.serverTimestamp; },
+             get increment()       { return FieldValue.increment; },
+             get arrayUnion()      { return FieldValue.arrayUnion; },
+             get delete()          { return FieldValue.delete; } };
+const TS = { get now()      { return Timestamp.now; },
+             get fromDate() { return Timestamp.fromDate; } };
 
 /* ── guarded accessors ─────────────────────────────────────────────────── */
 
@@ -123,18 +101,6 @@ function doc(path) {
   return rawDb().doc(p);
 }
 
-/** Storage object handle, restricted to the investor-ai/ prefix. */
-function obj(key) {
-  const k = String(key || "");
-  if (!k.startsWith(STORAGE_PREFIX)) {
-    throw new Error(`_investorAdmin.obj: refused key "${k}" outside ${STORAGE_PREFIX}`);
-  }
-  if (k.includes("..")) {
-    throw new Error(`_investorAdmin.obj: refused traversal in key "${k}"`);
-  }
-  return app().storage().bucket(BUCKET).file(k);
-}
-
 /** Firestore transaction — callers still use col()/doc() for refs. */
 function runTransaction(fn) { return rawDb().runTransaction(fn); }
 function batch() { return rawDb().batch(); }
@@ -150,20 +116,30 @@ const COL = {
   versions:   COL_PREFIX + "DocumentVersions",
   claims:     COL_PREFIX + "Claims",        // validated atomic claims + spans
   events:     COL_PREFIX + "Events",        // classified events
+  intelligence:COL_PREFIX + "Intelligence", // latest point-in-time company dossiers
   marketLatest:COL_PREFIX+ "MarketLatest",  // one doc per symbol per day (bar array)
   marketFiles:COL_PREFIX + "MarketFiles",   // imported file manifests
+  marketDaily:COL_PREFIX + "MarketDaily",   // long-horizon daily history + feed provenance
   candidates: COL_PREFIX + "Candidates",    // ranked, with visible factors
   decisions:  COL_PREFIX + "Decisions",     // immutable trade / no-trade
   accounts:   COL_PREFIX + "PaperAccounts",
   orders:     COL_PREFIX + "PaperOrders",
   fills:      COL_PREFIX + "PaperFills",
   positions:  COL_PREFIX + "Positions",
+  trades:     COL_PREFIX + "Trades",
   ledger:     COL_PREFIX + "Ledger",        // immutable balanced journal
   strategies: COL_PREFIX + "StrategyVersions",
   runs:       COL_PREFIX + "Runs",          // cycle manifests
   costs:      COL_PREFIX + "Costs",         // OpenAI + friction meter
   audit:      COL_PREFIX + "Audit",
   sessions:   COL_PREFIX + "Sessions",      // operator sessions
+  shadowDays: COL_PREFIX + "ShadowDays",
+  shadowOpen: COL_PREFIX + "ShadowOpen",
+  shadowClosed:COL_PREFIX + "ShadowClosed",
+  shadowAccounts:COL_PREFIX + "ShadowAccounts", // self-financing policy NAV/cash/HWM
+  shadowObservations:COL_PREFIX + "ShadowObservations", // trade + no-trade forward outcomes
+  calibration:COL_PREFIX + "Calibration",
+  invariants: COL_PREFIX + "Invariants",
 };
 
 /* ── provenance envelope required on every generated record ────────────── */
@@ -178,8 +154,7 @@ function envelope(extra = {}) {
 }
 
 module.exports = {
-  admin, app, FV, TS,
-  col, doc, obj, runTransaction, batch,
-  COL, COL_PREFIX, STORAGE_PREFIX, BUCKET,
+  FV, TS, col, doc, runTransaction, batch,
+  COL, COL_PREFIX,
   envelope,
 };

@@ -40,6 +40,7 @@
 
 "use strict";
 
+const crypto = require("crypto");
 const A = require("./_investorAdmin");
 const { fetchPublic } = require("./_investorFetch");
 
@@ -48,10 +49,11 @@ const PROVIDERS = {
   alpaca: {
     id: "alpaca",
     host: "data.alpaca.markets",
-    delayMinutes: 15,          // REST consolidated is 15-min delayed on free tier
-    maxGrade: "B",
+    delayMinutes: 0,
+    maxGrade: "C",
     keyEnv: ["ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY"],
-    consolidated: true,
+    consolidated: false,
+    liquidityEligible: false,
   },
   massive: {
     id: "massive",
@@ -60,6 +62,7 @@ const PROVIDERS = {
     maxGrade: "A",
     keyEnv: ["MASSIVE_API_KEY"],
     consolidated: true,
+    liquidityEligible: true,
   },
   manual: {
     id: "manual",
@@ -68,26 +71,195 @@ const PROVIDERS = {
     maxGrade: "C",
     keyEnv: [],
     consolidated: false,
+    liquidityEligible: false,
   },
 };
 
+/* ── market settings: Firestore first, environment as fallback ──────────
+ *
+ * `INVESTOR_MARKET_PROVIDER` and `ALPACA_FEED` are static operator choices,
+ * not per-environment secrets, and every variable a Lambda can read counts
+ * against its 4KB environment budget. They live in
+ * InvestorAI_Control/marketConfig instead.
+ *
+ * Resolution order is Firestore -> environment -> "manual"/"iex". The
+ * environment path is kept so tests, local runs and an unreachable Firestore
+ * all behave exactly as before. An unrecognised provider or feed resolves to
+ * the same place an unset one does: manual, grade C, not tradable. There is
+ * no value of this document that can turn an untrusted feed into a tradable
+ * one — gradeSeries still decides that.
+ *
+ * The cache is read synchronously by providerConfig/activeProvider, which are
+ * called from non-async paths. Handlers call loadMarketSettings() once on
+ * entry; the TTL bounds how long a warm container can hold a stale choice. */
+const MARKET_SETTINGS_DOC = "marketConfig";
+const MARKET_SETTINGS_TTL_MS = 60000;
+const FEEDS = new Set(["iex", "sip", "otc"]);
+let _marketSettings = null;
+let _marketSettingsAtMs = 0;
+
+function envMarketSettings() {
+  const provider = String(process.env.INVESTOR_MARKET_PROVIDER || "manual").toLowerCase();
+  const feed = String(process.env.ALPACA_FEED || "iex").toLowerCase();
+  return {
+    provider: PROVIDERS[provider] ? provider : "manual",
+    feed: FEEDS.has(feed) ? feed : "iex",
+    source: process.env.INVESTOR_MARKET_PROVIDER ? "environment" : "default",
+  };
+}
+
+/** Synchronous view of the resolved settings. Never throws. */
+function marketSettings() {
+  if (_marketSettings && Date.now() - _marketSettingsAtMs <= MARKET_SETTINGS_TTL_MS) {
+    return _marketSettings;
+  }
+  return envMarketSettings();
+}
+
+/** Refresh the cache from Firestore. Call once per handler invocation. */
+async function loadMarketSettings({ force = false } = {}) {
+  if (!force && _marketSettings && Date.now() - _marketSettingsAtMs <= MARKET_SETTINGS_TTL_MS) {
+    return _marketSettings;
+  }
+  const fallback = envMarketSettings();
+  try {
+    const snap = await A.col(A.COL.control).doc(MARKET_SETTINGS_DOC).get();
+    if (!snap.exists) {
+      _marketSettings = { ...fallback, note: "InvestorAI_Control/marketConfig not found" };
+    } else {
+      const d = snap.data() || {};
+      const rawProvider = String(d.provider || "").toLowerCase();
+      const rawFeed = String(d.feed || "").toLowerCase();
+      const provider = PROVIDERS[rawProvider] ? rawProvider : null;
+      const feed = FEEDS.has(rawFeed) ? rawFeed : null;
+      _marketSettings = {
+        provider: provider || fallback.provider,
+        feed: feed || fallback.feed,
+        source: provider ? "firestore" : fallback.source,
+        ...(rawProvider && !provider
+          ? { note: `unrecognised provider "${rawProvider.slice(0, 24)}" ignored` } : {}),
+        ...(rawFeed && !feed
+          ? { feedNote: `unrecognised feed "${rawFeed.slice(0, 24)}" ignored` } : {}),
+      };
+    }
+  } catch (e) {
+    /* Fail to the environment, then to manual. A market-config read failure
+       must never open a lane the operator did not choose. */
+    _marketSettings = { ...fallback, note: `marketConfig read failed: ${String(e.message).slice(0, 90)}` };
+  }
+  _marketSettingsAtMs = Date.now();
+  return _marketSettings;
+}
+
+function providerConfig(provider, feed = null) {
+  const id = String(provider || "manual").toLowerCase();
+  const base = PROVIDERS[id] || PROVIDERS.manual;
+  if (id !== "alpaca") return { ...base };
+  const f = String(feed || marketSettings().feed || "iex").toLowerCase();
+  if (f === "sip") return { ...base, feed: f, delayMinutes: 15, maxGrade: "B",
+    consolidated: true, liquidityEligible: true };
+  return { ...base, feed: f, delayMinutes: 0, maxGrade: "C",
+    consolidated: false, liquidityEligible: false };
+}
+
+/* Explicitly bind volume estimates to the feed that produced them. Alpaca's
+   default IEX lane represents only a small fraction of consolidated volume;
+   treating it as the whole tape corrupts liquidity and cost estimates. The
+   environment override is deliberately narrow so an operator cannot turn a
+   single-venue feed into an asserted consolidated one. */
+const FEED_VOLUME_SHARE = Object.freeze({ sip: 1, iex: 0.025, otc: 1, unknown: 1 });
+function feedVolumeShare(provider, feed = null) {
+  const cfg = providerConfig(provider, feed);
+  if (cfg.consolidated) return 1;
+  const f = String(feed || cfg.feed || "unknown").toLowerCase();
+  if (f === "iex") {
+    return Math.max(0.005, Math.min(0.25,
+      Number(process.env.INVESTOR_IEX_VOLUME_SHARE) || FEED_VOLUME_SHARE.iex));
+  }
+  const share = FEED_VOLUME_SHARE[f];
+  /* Unknown/custom feeds are left uninflated (share=1). That is a conservative
+     liquidity estimate, not an assertion that they are consolidated. */
+  return Number.isFinite(share) && share > 0 ? share : FEED_VOLUME_SHARE.unknown;
+}
+
 function activeProvider() {
-  const want = String(process.env.INVESTOR_MARKET_PROVIDER || "manual").toLowerCase();
+  const want = String(marketSettings().provider || "manual").toLowerCase();
   const p = PROVIDERS[want] || PROVIDERS.manual;
   if (p.keyEnv.length && !p.keyEnv.every((k) => process.env[k])) {
     // Configured but not credentialed — degrade loudly rather than fail a cycle.
     return { ...PROVIDERS.manual, degradedFrom: p.id, reason: `missing ${p.keyEnv.join("/")}` };
   }
-  return p;
+  return p.id === "alpaca" ? providerConfig(p.id) : p;
 }
 
 /* ── exchange calendar (versioned; half-days matter for the open rule) ──── */
-const HOLIDAYS_2026 = new Set([
-  "2026-01-01","2026-01-19","2026-02-16","2026-04-03","2026-05-25",
-  "2026-06-19","2026-07-03","2026-09-07","2026-11-26","2026-12-25",
-]);
-const HALF_DAYS_2026 = new Set(["2026-07-02","2026-11-27","2026-12-24"]);
-const CALENDAR_VERSION = "us-equity-2026.1";
+const CALENDAR_VERSION = "us-equity-rule-v2";
+const _calendarCache = new Map();
+
+function isoUtc(d) { return d.toISOString().slice(0, 10); }
+function nthWeekday(year, month, weekday, nth) {
+  const d = new Date(Date.UTC(year, month, 1));
+  d.setUTCDate(1 + ((7 + weekday - d.getUTCDay()) % 7) + (nth - 1) * 7);
+  return d;
+}
+function lastWeekday(year, month, weekday) {
+  const d = new Date(Date.UTC(year, month + 1, 0));
+  d.setUTCDate(d.getUTCDate() - ((7 + d.getUTCDay() - weekday) % 7));
+  return d;
+}
+function observed(year, month, day) {
+  const d = new Date(Date.UTC(year, month, day));
+  if (d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+  else if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
+  return d;
+}
+function easterSunday(year) {
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1;
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month, day));
+}
+function marketCalendar(year) {
+  if (_calendarCache.has(year)) return _calendarCache.get(year);
+  const holidays = new Set();
+  const add = (d) => holidays.add(isoUtc(d));
+  add(observed(year, 0, 1));
+  /* Jan 1 of the NEXT year can be observed on Dec 31 of this year. Building
+     only holidays whose nominal date belongs to `year` incorrectly opened
+     that Friday (for example 2027-12-31 for New Year 2028). */
+  const nextNewYearObserved = observed(year + 1, 0, 1);
+  if (nextNewYearObserved.getUTCFullYear() === year) add(nextNewYearObserved);
+  add(nthWeekday(year, 0, 1, 3));
+  add(nthWeekday(year, 1, 1, 3));
+  const goodFriday = easterSunday(year); goodFriday.setUTCDate(goodFriday.getUTCDate() - 2); add(goodFriday);
+  add(lastWeekday(year, 4, 1));
+  if (year >= 2022) add(observed(year, 5, 19));
+  add(observed(year, 6, 4));
+  add(nthWeekday(year, 8, 1, 1));
+  add(nthWeekday(year, 10, 4, 4));
+  add(observed(year, 11, 25));
+
+  const halfDays = new Set();
+  const thanksgiving = nthWeekday(year, 10, 4, 4);
+  const blackFriday = new Date(thanksgiving); blackFriday.setUTCDate(blackFriday.getUTCDate() + 1);
+  halfDays.add(isoUtc(blackFriday));
+  const julyEarly = observed(year, 6, 4);
+  julyEarly.setUTCDate(julyEarly.getUTCDate() - 1);
+  while (julyEarly.getUTCDay() === 0 || julyEarly.getUTCDay() === 6) {
+    julyEarly.setUTCDate(julyEarly.getUTCDate() - 1);
+  }
+  halfDays.add(isoUtc(julyEarly));
+  const christmasEve = new Date(Date.UTC(year, 11, 24));
+  if (christmasEve.getUTCDay() >= 1 && christmasEve.getUTCDay() <= 5
+      && !holidays.has(isoUtc(christmasEve))) halfDays.add(isoUtc(christmasEve));
+  const out = { holidays, halfDays };
+  _calendarCache.set(year, out);
+  return out;
+}
 
 function nyParts(d) {
   // Intl gives us the wall clock in New York including DST, without a tz lib.
@@ -109,9 +281,10 @@ const HALF_CLOSE_MIN = 13 * 60;    // 13:00 ET
 
 function sessionState(d = new Date()) {
   const { date, minutes, weekday } = nyParts(d);
+  const cal = marketCalendar(Number(date.slice(0, 4)));
   const isWeekend = weekday === "Sat" || weekday === "Sun";
-  const isHoliday = HOLIDAYS_2026.has(date);
-  const isHalf = HALF_DAYS_2026.has(date);
+  const isHoliday = cal.holidays.has(date);
+  const isHalf = cal.halfDays.has(date);
   const close = isHalf ? HALF_CLOSE_MIN : CLOSE_MIN;
   const tradingDay = !isWeekend && !isHoliday;
   let phase = "closed";
@@ -134,6 +307,60 @@ function sessionState(d = new Date()) {
   };
 }
 
+/**
+ * Count trading sessions in the half-open interval (fromDate, toDate].
+ *
+ * Consecutive rows in a daily series are only "consecutive sessions" if this
+ * returns 1. A portfolio-day whose return compounds across a skipped session
+ * is not a daily observation and must not be annualised as one.
+ * Returns null when either date is unusable, and caps the walk so a stale or
+ * corrupt anchor cannot spin.
+ */
+function tradingSessionsBetween(fromDate, toDate, { maxSessions = 400 } = {}) {
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  if (!iso.test(String(fromDate || "")) || !iso.test(String(toDate || ""))) return null;
+  if (String(toDate) <= String(fromDate)) return 0;
+  let count = 0;
+  const cursor = new Date(`${fromDate}T12:00:00Z`);
+  const end = `${toDate}T12:00:00Z`;
+  for (let step = 0; step < maxSessions * 3; step += 1) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const state = sessionState(cursor);
+    if (state.tradingDay) count += 1;
+    if (state.date >= toDate) return count;
+    if (cursor.getTime() > Date.parse(end) + maxSessions * 3 * 864e5) break;
+    if (count > maxSessions) return count;
+  }
+  return count;
+}
+
+/**
+ * The last instant the regular session was open at or before `d`.
+ *
+ * Bars must be aged in MARKET time, not wall time. At 20:00 ET the 15:59 bar
+ * is not stale data — it is the only price that exists, and grading it "F"
+ * was what silenced the held-position guard for every hour the exchange was
+ * closed. Coarse hourly walk back, then a one-minute refinement forward.
+ */
+function lastRegularOpenMs(d = new Date()) {
+  const start = d instanceof Date ? d.getTime() : Number(d);
+  if (!Number.isFinite(start)) return null;
+  if (sessionState(new Date(start)).open) return start;
+  let t = start;
+  for (let h = 0; h < 24 * 10; h += 1) {
+    t -= 3600e3;
+    if (!sessionState(new Date(t)).open) continue;
+    let last = t;
+    for (let m = 0; m < 120; m += 1) {
+      const next = last + 60000;
+      if (next > start || !sessionState(new Date(next)).open) break;
+      last = next;
+    }
+    return last;
+  }
+  return null;
+}
+
 /* ── slippage model ────────────────────────────────────────────────────── */
 /* Anchored on de Groot/Huij/Zhou's 7.4bp round trip for the 100 largest and
    Frazzini/Israel/Moskowitz's ~11-12bp institutional large-cap impact. These
@@ -153,6 +380,18 @@ function slippageBps({ advUsd, grade, wideSpreadWindow, vixNorm = 1 }) {
   return Math.round(bps * 100) / 100;
 }
 
+function executionCostContext({ advUsd, grade, wideSpreadWindow, vixNorm, measuredAtMs = Date.now() } = {}) {
+  const context = {
+    advUsd: Number.isFinite(Number(advUsd)) && Number(advUsd) > 0 ? Number(advUsd) : 0,
+    grade: ["A", "B", "C"].includes(String(grade || "").toUpperCase())
+      ? String(grade).toUpperCase() : "F",
+    wideSpreadWindow: wideSpreadWindow === true,
+    vixNorm: Number.isFinite(Number(vixNorm)) && Number(vixNorm) > 0 ? Number(vixNorm) : 1,
+    measuredAtMs: Number.isFinite(Number(measuredAtMs)) ? Number(measuredAtMs) : Date.now(),
+  };
+  return { ...context, slippageBps: slippageBps(context), modelVersion: "public-adv-half-trip-v2" };
+}
+
 /* ── adapters ──────────────────────────────────────────────────────────── */
 /**
  * Alpaca multi-symbol bars.
@@ -169,9 +408,9 @@ function slippageBps({ advUsd, grade, wideSpreadWindow, vixNorm = 1 }) {
  *    until the token is exhausted or a safety bound is hit.
  */
 async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed } = {}) {
-  const out = {};
-  let pageToken = null, pages = 0, lastHash = null, lastAt = null;
-  const useFeed = feed || process.env.ALPACA_FEED || "iex";
+  const out = {}, pageHashes = [];
+  let pageToken = null, pages = 0, lastAt = null;
+  const useFeed = feed || marketSettings().feed || "iex";
   // per-symbol limit -> total, capped at the endpoint maximum
   const total = Math.min(10000, Math.max(limit, limit * symbols.length));
 
@@ -194,12 +433,15 @@ async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed 
       out[sym] = out[sym] ? out[sym].concat(mapped) : mapped;
     }
     pageToken = (r.json && r.json.next_page_token) || null;
-    lastHash = r.sha256; lastAt = r.fetchedAt;
+    if (r.sha256) pageHashes.push(r.sha256);
+    lastAt = r.fetchedAt;
     pages += 1;
   } while (pageToken && pages < 12);
 
-  return { bars: out, provider: "alpaca", sha256: lastHash, fetchedAt: lastAt,
-           pages, truncated: !!pageToken, feed: useFeed };
+  const manifestSha256 = crypto.createHash("sha256").update(pageHashes.join("|")).digest("hex");
+  return { bars: out, provider: "alpaca", sha256: manifestSha256, manifestSha256,
+           symbolSha256: Object.fromEntries(Object.keys(out).map((s) => [s, manifestSha256])),
+           fetchedAt: lastAt, pages, truncated: !!pageToken, feed: useFeed };
 }
 
 async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
@@ -216,11 +458,13 @@ async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
   // enough calendar days to yield `limit` trading days, plus slack for holidays
   const lookbackDays = daily ? Math.ceil(limit * 1.5) + 10 : 5;
   const from = new Date(Date.now() - lookbackDays * 864e5).toISOString().slice(0, 10);
-  const out = {};
-  let lastHash = null, lastAt = null;
-  for (const sym of symbols) {
+  const out = {}, symbolSha256 = {}, errors = {}, fetchedTimes = [];
+  const requested = [...new Set(symbols.map(String))].sort();
+  let cursor = 0;
+  const concurrency = Math.max(1, Math.min(12, Number(process.env.INVESTOR_MARKET_CONCURRENCY) || 8));
+  const fetchOne = async (sym) => {
     const url = `https://api.massive.com/v2/aggs/ticker/${encodeURIComponent(sym)}`
-              + `/range/${mult}/${span}/${from}/${to}?adjusted=true&sort=asc&limit=${limit}`
+              + `/range/${mult}/${span}/${from}/${to}?adjusted=true&sort=desc&limit=${limit}`
               + `&apiKey=${encodeURIComponent(process.env.MASSIVE_API_KEY || "")}`;
     try {
       const r = await fetchPublic(url, { sourceId: "massive.aggs", accept: ["json"], timeoutMs: 15000 });
@@ -229,17 +473,39 @@ async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
          The two providers therefore return different series for the same name.
          The convention is recorded on every stored bar so a series built from
          one is never silently compared against the other. */
-      out[sym] = ((r.json && r.json.results) || []).map((b) => ({
-        t: new Date(b.t).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, n: b.n || null, vw: b.vw || null,
-      }));
-      lastHash = r.sha256; lastAt = r.fetchedAt;
+      /* Massive applies `limit` before returning. Ascending order therefore
+         returned the oldest bars in the requested range. Request newest-first,
+         then normalize back to chronological order for every downstream use. */
+      out[sym] = mapMassiveResults((r.json && r.json.results) || [], limit);
+      if (r.sha256) symbolSha256[sym] = r.sha256;
+      if (r.fetchedAt) fetchedTimes.push(r.fetchedAt);
     } catch (e) {
       out[sym] = []; // one symbol failing must not fail the cycle
+      errors[sym] = String(e.code || e.message).slice(0, 100);
     }
-  }
-  return { bars: out, provider: "massive", sha256: lastHash,
-           fetchedAt: lastAt || new Date().toISOString(),
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, requested.length) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= requested.length) return;
+      await fetchOne(requested[i]);
+    }
+  }));
+  const manifestSha256 = crypto.createHash("sha256").update(JSON.stringify(
+    requested.map((symbol) => [symbol, symbolSha256[symbol] || null, errors[symbol] || null])
+  )).digest("hex");
+  return { bars: out, provider: "massive", sha256: manifestSha256, manifestSha256,
+           symbolSha256, fetchedAt: fetchedTimes.sort().at(-1) || new Date().toISOString(),
+           failedSymbols: Object.keys(errors), failureCount: Object.keys(errors).length,
            adjustment: "split_only" };
+}
+
+function mapMassiveResults(results, limit) {
+  const mapped = (results || []).map((b) => ({
+    t: new Date(b.t).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v,
+    n: b.n || null, vw: b.vw || null,
+  }));
+  return normalizeBars(mapped).slice(-Math.max(1, Number(limit) || mapped.length));
 }
 
 async function fetchBars(symbols, opts = {}) {
@@ -266,26 +532,51 @@ function validateBar(b) {
   return errs;
 }
 
-function gradeSeries(bars, { provider, nowMs = Date.now(), maxStaleMinutes = 45 }) {
-  if (!Array.isArray(bars) || bars.length === 0) {
+function normalizeBars(bars) {
+  const byTime = new Map();
+  for (const b of Array.isArray(bars) ? bars : []) {
+    if (b && b.t) byTime.set(String(b.t), { ...b, t: new Date(b.t).toISOString() });
+  }
+  return [...byTime.values()].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+}
+
+function partitionBarsBySession(bars) {
+  const out = {};
+  for (const b of normalizeBars(bars)) {
+    if (validateBar(b).length) continue;
+    const date = nyParts(new Date(b.t)).date;
+    (out[date] ||= []).push(b);
+  }
+  return out;
+}
+
+function gradeSeries(bars, { provider, feed = null, sourceSha256 = null,
+                             nowMs = Date.now(), maxStaleMinutes = 45 }) {
+  const series = normalizeBars(bars);
+  if (series.length === 0) {
     return { grade: "F", reasons: ["no_bars"], tradable: false };
   }
   const reasons = [];
   let bad = 0;
-  for (const b of bars) { if (validateBar(b).length) bad += 1; }
+  for (const b of series) { if (validateBar(b).length) bad += 1; }
   if (bad > 0) reasons.push(`invalid_bars:${bad}`);
 
-  const last = bars[bars.length - 1];
+  const last = series[series.length - 1];
   const ageMin = (nowMs - Date.parse(last.t)) / 60000;
-  const cfg = PROVIDERS[provider] || PROVIDERS.manual;
+  const cfg = providerConfig(provider, feed);
+  if (provider !== "manual" && !/^[a-f0-9]{64}$/.test(String(sourceSha256 || ""))) {
+    reasons.push("missing_source_hash");
+  }
   // A delayed feed is expected to be behind by its delay; only count the excess.
   const excessStale = ageMin - cfg.delayMinutes;
   if (excessStale > maxStaleMinutes) reasons.push(`stale:${Math.round(excessStale)}m`);
+  if (ageMin < -2) reasons.push(`future_timestamp:${Math.round(-ageMin)}m`);
 
   let grade;
-  if (bad > 0 || reasons.some((r) => r.startsWith("stale"))) grade = "F";
+  if (bad > 0 || reasons.some((r) => r.startsWith("stale") || r.startsWith("future_timestamp")
+      || r === "missing_source_hash")) grade = "F";
   else if (provider === "manual") grade = "C";
-  else if (provider === "alpaca") grade = "B";        // single-venue prints
+  else if (provider === "alpaca") grade = cfg.consolidated ? "B" : "C";
   else grade = "B";                                    // one consolidated source = B; A needs two
   // maxGrade ceiling from provider config
   const order = { A: 3, B: 2, C: 1, F: 0 };
@@ -293,9 +584,10 @@ function gradeSeries(bars, { provider, nowMs = Date.now(), maxStaleMinutes = 45 
 
   return {
     grade, reasons,
-    tradable: grade === "A" || grade === "B",
-    lastBarAt: last.t, ageMinutes: Math.round(ageMin), barCount: bars.length,
-    provider, feedDelayMinutes: cfg.delayMinutes,
+    tradable: (grade === "A" || grade === "B") && cfg.liquidityEligible !== false,
+    consolidated: !!cfg.consolidated,
+    lastBarAt: last.t, ageMinutes: Math.round(ageMin), barCount: series.length,
+    provider, feed, feedDelayMinutes: cfg.delayMinutes,
   };
 }
 
@@ -305,17 +597,15 @@ function gradeSeries(bars, { provider, nowMs = Date.now(), maxStaleMinutes = 45 
  * have traded. Never returns a bar that opened before the decision was made,
  * and never a bar the feed had not yet published.
  */
-function firstEligibleBar(bars, { decisionAtMs, provider, executionLatencyMs = 60000 }) {
-  const cfg = PROVIDERS[provider] || PROVIDERS.manual;
+function firstEligibleBar(bars, { decisionAtMs, provider, feed = null, executionLatencyMs = 60000 }) {
+  const cfg = providerConfig(provider, feed);
   const availableFrom = decisionAtMs + cfg.delayMinutes * 60000 + executionLatencyMs;
-  for (const b of bars) {
+  for (const b of normalizeBars(bars)) {
     const openMs = Date.parse(b.t);
-    if (openMs > decisionAtMs && openMs >= availableFrom - cfg.delayMinutes * 60000) {
-      // Bar opens after the decision AND its data would have arrived in time
-      // for the system to act on the bar that follows it.
-      if (openMs >= decisionAtMs + executionLatencyMs) {
-        return { bar: b, barOpenAt: b.t, availableFromMs: availableFrom, reason: "ok" };
-      }
+    // With delayed data, a timestamp after the decision but before the
+    // feed-delay horizon was still unobservable and is never fill-eligible.
+    if (openMs > decisionAtMs && openMs >= availableFrom) {
+      return { bar: b, barOpenAt: b.t, availableFromMs: availableFrom, reason: "ok" };
     }
   }
   return { bar: null, barOpenAt: null, availableFromMs: availableFrom, reason: "no_eligible_bar" };
@@ -329,15 +619,30 @@ function firstEligibleBar(bars, { decisionAtMs, provider, executionLatencyMs = 6
 function barDocId(symbol, dateStr) { return `${symbol}_${dateStr}`; }
 
 async function writeBars(symbol, dateStr, bars, meta) {
-  const ref = A.col(A.COL.marketLatest).doc(barDocId(symbol, dateStr));
-  await ref.set({
-    symbol, date: dateStr,
-    bars: bars.slice(-400),
-    barCount: bars.length,
-    ...meta,
-    updated_at: A.FV.serverTimestamp(),
-  }, { merge: true });
-  return ref.id;
+  const ids = [];
+  for (const [sessionDate, sessionBars] of Object.entries(partitionBarsBySession(bars))) {
+    const ref = A.col(A.COL.marketLatest).doc(barDocId(symbol, sessionDate));
+    const prior = await ref.get();
+    const existing = prior.exists ? prior.data() : {};
+    if (existing.provider && meta && (existing.provider !== meta.provider
+        || existing.feed !== (meta.feed || null)
+        || existing.adjustment !== (meta.adjustment || null))) {
+      throw new Error(`writeBars ${symbol}/${sessionDate}: provider/feed/adjustment mismatch`);
+    }
+    const merged = normalizeBars([...(existing.bars || []), ...sessionBars]).slice(-400);
+    const sourceHashes = [...new Set([...(existing.sourceHashes || []), meta && meta.sourceSha256]
+      .filter((h) => /^[a-f0-9]{64}$/.test(String(h))))].sort();
+    const sourceSha256 = sourceHashes.length ? crypto.createHash("sha256")
+      .update(sourceHashes.join("|")).digest("hex") : null;
+    await ref.set({
+      symbol, date: sessionDate, bars: merged, barCount: merged.length,
+      ...meta,
+      ...(sourceSha256 ? { sourceHashes, sourceSha256 } : {}),
+      updated_at: A.FV.serverTimestamp(),
+    }, { merge: true });
+    ids.push(ref.id);
+  }
+  return ids;
 }
 
 async function readBars(symbol, dateStr) {
@@ -347,6 +652,10 @@ async function readBars(symbol, dateStr) {
 
 /** Read the trailing N sessions of bars for one symbol, oldest first. */
 async function readRecentBars(symbol, sessions = 3) {
+  return (await readRecentBarsWithMeta(symbol, sessions)).bars;
+}
+
+async function readRecentBarsWithMeta(symbol, sessions = 3) {
   const dates = [];
   const d = new Date();
   let guard = 0;
@@ -359,15 +668,28 @@ async function readRecentBars(symbol, sessions = 3) {
   dates.reverse();
   const snaps = await Promise.all(dates.map((dt) =>
     A.col(A.COL.marketLatest).doc(barDocId(symbol, dt)).get()));
-  const out = [];
-  for (const s of snaps) if (s.exists) out.push(...(s.data().bars || []));
-  return out;
+  const out = [], docs = [];
+  for (const s of snaps) if (s.exists) {
+    const d = s.data(); docs.push(d); out.push(...(d.bars || []));
+  }
+  const identities = [...new Set(docs.map((d) => JSON.stringify([
+    d.provider || "manual", d.feed || null, d.adjustment || null,
+  ])))];
+  if (identities.length > 1) return { bars: [], provenance: null,
+    reason: "mixed_provider_feed_or_adjustment" };
+  const latest = docs.at(-1) || {};
+  return { bars: normalizeBars(out), provenance: docs.length ? {
+    provider: latest.provider || "manual", feed: latest.feed || null,
+    adjustment: latest.adjustment || null, sourceSha256: latest.sourceSha256 || null,
+  } : null, reason: docs.length ? "ok" : "missing" };
 }
 
 module.exports = {
-  PROVIDERS, activeProvider,
-  sessionState, CALENDAR_VERSION,
-  slippageBps,
-  fetchBars, validateBar, gradeSeries, firstEligibleBar,
-  writeBars, readBars, readRecentBars, barDocId,
+  PROVIDERS, providerConfig, activeProvider, FEED_VOLUME_SHARE, feedVolumeShare,
+  sessionState, marketCalendar, nyParts, CALENDAR_VERSION, lastRegularOpenMs,
+  marketSettings, loadMarketSettings, MARKET_SETTINGS_DOC,
+  tradingSessionsBetween,
+  slippageBps, executionCostContext,
+  fetchBars, mapMassiveResults, validateBar, normalizeBars, partitionBarsBySession, gradeSeries, firstEligibleBar,
+  writeBars, readBars, readRecentBars, readRecentBarsWithMeta, barDocId,
 };

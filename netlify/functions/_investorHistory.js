@@ -21,8 +21,8 @@
  *  WHAT IS STORED
  *  ------------------------------------------------------------------------
  *  One document per symbol in InvestorAI_MarketDaily, holding parallel arrays
- *  of the last ~180 trading days: date, open, high, low, close, volume. Arrays
- *  rather than an array-of-objects because 180 days x 6 fields as columns is a
+ *  of up to five trading years: date, open, high, low, close, volume. Arrays
+ *  rather than an array-of-objects because 1,300 days x 6 fields as columns is a
  *  few KB, comfortably inside Firestore's 1MB document limit, and reads back in
  *  one get() instead of 180.
  *
@@ -45,8 +45,8 @@
 const A = require("./_investorAdmin");
 const M = require("./_investorMarket");
 
-const DAILY_COL = A.COL_PREFIX + "MarketDaily";
-const KEEP_DAYS = 260;          // ~13 months, so a 6-month window is always full
+const DAILY_COL = A.COL.marketDaily;
+const KEEP_DAYS = 1300;         // ~5 years: annual seasonality needs repeated cycles
 const CONTEXT_MIN_DAYS = 40;    // below this we refuse to produce context at all
 
 /* ── small stats helpers ───────────────────────────────────────────────── */
@@ -69,14 +69,23 @@ function pctRets(closes) {
   return r;
 }
 
+/** Positive loss magnitude in the worst (1-alpha) fraction. This is a
+ * historical tail estimate, not a Gaussian extrapolation. */
+function expectedShortfallLoss(returns, alpha = 0.95) {
+  const losses = (returns || []).filter(Number.isFinite).map((r) => Math.max(0, -r))
+    .sort((a, b) => b - a);
+  if (!losses.length) return null;
+  /* Decimal tails such as 1-.95 are not exact in binary. Without the epsilon,
+     100 observations produced ceil(5.000000000000004)=6 and diluted the very
+     loss tail this function is intended to preserve. */
+  const n = Math.max(1, Math.ceil((1 - alpha) * losses.length - 1e-12));
+  return mean(losses.slice(0, n));
+}
+
 /* ── storage ───────────────────────────────────────────────────────────── */
 function dailyRef(symbol) { return A.col(DAILY_COL).doc(String(symbol).toUpperCase()); }
 
-/** Read one symbol's daily series as an array of bar objects, oldest first. */
-async function readDaily(symbol) {
-  const s = await dailyRef(symbol).get();
-  if (!s.exists) return [];
-  const d = s.data() || {};
+function seriesFromDailyDoc(d = {}) {
   const date = d.date || [];
   const out = [];
   for (let i = 0; i < date.length; i++) {
@@ -89,10 +98,39 @@ async function readDaily(symbol) {
   return out;
 }
 
+/** Read the daily series and the market identity that produced its volume.
+ * Keeping these together prevents a current feed label from being applied to
+ * historical volume captured through a different feed. */
+async function readDailyWithMeta(symbol) {
+  const s = await dailyRef(symbol).get();
+  if (!s.exists) return { series: [], provenance: null };
+  const d = s.data() || {};
+  const provider = d.provider || null;
+  const feed = d.feed != null ? d.feed : null;
+  const adjustment = d.adjustment || null;
+  const sourceSha256 = d.sourceSha256 || null;
+  return {
+    series: seriesFromDailyDoc(d),
+    provenance: provider ? {
+      provider, feed, adjustment, sourceSha256,
+      feedVolumeShare: Number.isFinite(Number(d.feedVolumeShare))
+        ? Number(d.feedVolumeShare) : null,
+      fetchedAt: d.marketFetchedAt || null,
+      homogeneous: d.volumeProvenanceHomogeneous === true,
+    } : null,
+  };
+}
+
+/** Read one symbol's daily series as an array of bar objects, oldest first. */
+async function readDaily(symbol) {
+  return (await readDailyWithMeta(symbol)).series;
+}
+
 /** Merge new daily bars into a symbol's series, de-duplicated by date. */
 async function writeDaily(symbol, bars, meta = {}) {
   const sym = String(symbol).toUpperCase();
-  const existing = await readDaily(sym);
+  const prior = await readDailyWithMeta(sym);
+  const existing = prior.series;
   const byDate = new Map();
   for (const b of existing) byDate.set(b.date, b);
   for (const b of bars) {
@@ -104,6 +142,18 @@ async function writeDaily(symbol, bars, meta = {}) {
     .sort((a, b) => (a.date < b.date ? -1 : 1))
     .slice(-KEEP_DAYS);
 
+  const incomingDates = new Set((bars || []).filter((b) => b && b.date).map((b) => b.date));
+  const replacesPrior = existing.length === 0
+    || existing.every((b) => incomingDates.has(b.date))
+    || (bars || []).length >= Math.min(KEEP_DAYS,
+      Math.max(CONTEXT_MIN_DAYS, Math.ceil(existing.length * 0.9)));
+  const priorProv = prior.provenance;
+  const identityFields = ["provider", "feed", "adjustment"];
+  const identitySame = !!priorProv && identityFields.every((k) =>
+    (priorProv[k] || null) === (meta[k] || null));
+  const volumeProvenanceHomogeneous = replacesPrior
+    || (!!priorProv && priorProv.homogeneous === true && identitySame);
+
   await dailyRef(sym).set({
     symbol: sym,
     date: merged.map((b) => b.date),
@@ -114,6 +164,7 @@ async function writeDaily(symbol, bars, meta = {}) {
     firstDate: merged.length ? merged[0].date : null,
     lastDate: merged.length ? merged[merged.length - 1].date : null,
     ...meta,
+    volumeProvenanceHomogeneous,
     updated_at: A.FV.serverTimestamp(),
   }, { merge: true });
 
@@ -126,8 +177,8 @@ async function writeDaily(symbol, bars, meta = {}) {
  * not 342. Massive is one call per ticker but has no call ceiling. Either way
  * the backfill is cheap enough to run inside one background invocation.
  */
-async function fetchDaily(symbols, { days = KEEP_DAYS } = {}) {
-  const out = {};
+async function fetchDailyWithMeta(symbols, { days = KEEP_DAYS } = {}) {
+  const barsBySymbol = {}, provenanceBySymbol = {};
   const chunkSize = 90;
   for (let i = 0; i < symbols.length; i += chunkSize) {
     const chunk = symbols.slice(i, i + chunkSize);
@@ -138,13 +189,27 @@ async function fetchDaily(symbols, { days = KEEP_DAYS } = {}) {
       continue;                       // a failed chunk is retried on the next run
     }
     for (const [sym, arr] of Object.entries(res.bars || {})) {
-      out[sym] = (arr || []).map((b) => ({
+      barsBySymbol[sym] = (arr || []).map((b) => ({
         date: String(b.t).slice(0, 10),
         o: b.o, h: b.h, l: b.l, c: b.c, v: b.v,
       })).filter((b) => isFinite(b.c) && b.c > 0);
+      const sourceSha256 = (res.symbolSha256 || {})[sym]
+        || res.manifestSha256 || res.sha256 || null;
+      provenanceBySymbol[sym] = {
+        provider: res.provider || "manual",
+        feed: res.feed || null,
+        adjustment: res.adjustment || null,
+        sourceSha256,
+        feedVolumeShare: M.feedVolumeShare(res.provider, res.feed),
+        fetchedAt: res.fetchedAt || null,
+      };
     }
   }
-  return out;
+  return { barsBySymbol, provenanceBySymbol };
+}
+
+async function fetchDaily(symbols, opts = {}) {
+  return (await fetchDailyWithMeta(symbols, opts)).barsBySymbol;
 }
 
 /* ── SPLIT DETECTION ───────────────────────────────────────────────────────
@@ -325,11 +390,20 @@ function contextFor(series, asOf) {
      A name that regularly opens 3% away from yesterday's close is one where
      an overnight hold is a coin flip, not a position. */
   let gaps = 0, gapN = 0;
+  const signedGaps = [];
   for (let i = Math.max(1, hist.length - 120); i < hist.length; i++) {
-    const g = closes[i - 1] > 0 ? Math.abs(hist[i].o - closes[i - 1]) / closes[i - 1] : 0;
+    const signed = closes[i - 1] > 0 ? (hist[i].o - closes[i - 1]) / closes[i - 1] : 0;
+    const g = Math.abs(signed);
+    if (isFinite(signed)) signedGaps.push(signed);
     if (isFinite(g)) { gapN += 1; if (g > 0.02) gaps += 1; }
   }
   const gapFreq = gapN ? gaps / gapN : null;
+  const fiveDayReturns = [];
+  for (let i = Math.max(5, closes.length - 120); i < closes.length; i++) {
+    if (closes[i - 5] > 0) fiveDayReturns.push(closes[i] / closes[i - 5] - 1);
+  }
+  const es5d = expectedShortfallLoss(fiveDayReturns, 0.95);
+  const gapEs = expectedShortfallLoss(signedGaps, 0.95);
 
   return {
     ok: true,
@@ -354,6 +428,8 @@ function contextFor(series, asOf) {
     downtrend, downtrendFlags,
     advUsd20: advUsd20 != null ? Math.round(advUsd20) : null,
     gapFreqPct: gapFreq != null ? Number((gapFreq * 100).toFixed(1)) : null,
+    expectedShortfall5dPct: es5d != null ? Number((es5d * 100).toFixed(3)) : null,
+    overnightGapEsPct: gapEs != null ? Number((gapEs * 100).toFixed(3)) : null,
   };
 }
 
@@ -506,8 +582,8 @@ module.exports = {
   DAILY_COL, KEEP_DAYS, CONTEXT_MIN_DAYS,
   REVERSION_SHRINK_K, REVERSION_TRIGGER_SD, REVERSION_HORIZON,
   SIGMA_W_SHORT, BARS_PER_SESSION,
-  dailyRef, readDaily, writeDaily, fetchDaily,
-  contextFor, reversionEvents, shrinkReversion, reversionMultiplier,
+  dailyRef, readDaily, readDailyWithMeta, writeDaily, fetchDaily, fetchDailyWithMeta,
+  expectedShortfallLoss, contextFor, reversionEvents, shrinkReversion, reversionMultiplier,
   blendedSigma, describe,
   _internal: { mean, stdev, sma, pctRets },
 };

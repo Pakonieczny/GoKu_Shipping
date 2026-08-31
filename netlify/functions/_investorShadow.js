@@ -1,535 +1,911 @@
-/*  netlify/functions/_investorShadow.js  (v1.0)
- *  ---------------------------------------------------------------------------
- *  Investor_AI — the shadow harness. The piece that makes learning possible.
- *
- *  THE PROBLEM IT SOLVES
- *  ------------------------------------------------------------------------
- *  To tell a real edge from luck at this signal size you need roughly 625
- *  independent observations. Trading a handful of names a week, that is years
- *  away — and no learning method, however clever, can run without data.
- *
- *  THE FIX: score every variant against every ranked name on every cycle,
- *  whether or not anything was actually traded. Each variant records what it
- *  WOULD have done and what that WOULD have earned. Real trades cost money
- *  and are rare; shadow trades cost nothing and are plentiful, and they carry
- *  the same information about which variant works.
- *
- *  This is off-policy evaluation: learning about actions you did not take.
- *  It is how you learn in a domain where exploring is expensive.
- *
- *  THE HONEST CAVEAT, ENFORCED IN CODE
- *  ------------------------------------------------------------------------
- *  Shadow observations are NOT independent. Two names bought the same morning
- *  in the same selloff win or lose together. Counting them as two independent
- *  data points is how you convince yourself you have 5,000 samples when you
- *  have 400.
- *
- *  So effectiveSampleSize() counts DISTINCT TRADING DAYS, not trades. It is
- *  deliberately conservative: a day on which a variant opened nine positions
- *  counts once. Every power calculation in the allocator uses that number,
- *  never the raw count.
- * ---------------------------------------------------------------------------
- */
-
+/* Investor_AI — feasible, provenance-bound full-information shadow simulator. */
 "use strict";
 
+const crypto = require("crypto");
 const A = require("./_investorAdmin");
 const S = require("./_investorSignal");
 const M = require("./_investorMarket");
 const V = require("./_investorVariants");
+const R = require("./_investorRisk");
+const I = require("./_investorIntelligence");
+const T = require("./_investorTemporal");
+const AL = require("./_investorAllocator");
+const DF = require("./_investorDecisionFeedback");
+const STRATEGY = require("./_investorStrategy");
 
-const OPEN = A.COL_PREFIX + "ShadowOpen";     // one doc per (variant, symbol)
-const CLOSED = A.COL_PREFIX + "ShadowClosed"; // the learning dataset
-const STATS  = A.COL_PREFIX + "ShadowStats";   // running per-variant roll-up
+const OPEN = A.COL.shadowOpen;
+const CLOSED = A.COL.shadowClosed;
+const STATS = A.COL.shadowDays;
+const ACCOUNTS = A.COL.shadowAccounts;
+const SIMULATOR_VERSION = "self-financing-counterfactual-v9-controlled-learning";
+const DISCOUNT_GAMMA = 0.988; // trading-session weighting; asymptotic ESS ~= 166
+const PH_DELTA_FRAC = 0.25;
+const PH_LAMBDA_SD = 12;
 
-/* ── entry: what would each variant have done this cycle? ──────────────── */
-/**
- * @param ctx  { cycleId, ranks, zBySymbol, quality, meta, cause, session,
- *               regime, baseCfg, earnings, crowd, bars }
- * @returns    { opened, evaluated, byVariant }
- */
-async function evaluateEntries(ctx) {
-  const { cycleId, ranks, zBySymbol, quality, meta, causeBySymbol, session,
-          regime, baseCfg, earnings, crowd, lastPrice } = ctx;
-  /* Variants G and H are defined by long-horizon conditions, so the shadow
-     harness must see the same history the live path sees. Without it they
-     would decline every trade and their zero record would be meaningless. */
-  const historyCtx = ctx.historyCtx || {};
-  const reversion = ctx.reversion || {};
-  const turnoverPctile = ctx.turnoverPctile || {};
-
-  const opened = [];
-  const byVariant = {};
-  let evaluated = 0;
-
-  // Which (variant, symbol) pairs are already open — one read, not N.
-  const openSnap = await A.col(OPEN).get();
-  const isOpen = new Set();
-  openSnap.forEach((d) => isOpen.add(d.id));
-
-  for (const variant of V.VARIANTS) {
-    const cfg = V.configFor(variant.id, baseCfg);
-    byVariant[variant.id] = { considered: 0, opened: 0, blocked: {} };
-
-    for (const symbol of Object.keys(ranks)) {
-      const z = zBySymbol[symbol];
-      if (!z) continue;
-      evaluated += 1;
-      byVariant[variant.id].considered += 1;
-
-      const key = `${variant.id}_${symbol}`;
-      if (isOpen.has(key)) continue;             // already holding it
-
-      const m = meta[symbol] || {};
-      const ew = earnings[symbol];
-      const res = S.evaluateCandidate({
-        symbol, rank: ranks[symbol], zStat: z,
-        quality: quality[symbol], advUsd: m.advUsd || 0,
-        earningsDates: (ew && ew.dates) || [],
-        earningsEstimated: !!(ew && ew.estimated),
-        nowMs: Date.now(),
-        cause: causeBySymbol[symbol] || S.CAUSE.PENDING,
-        vixNorm: regime.vixNorm, cor3m: regime.cor3m,
-        sectorTailFraction: crowd.fractionInTail[S.sectorOf(symbol)] ?? 0,
-        session, cfg, position: null,
-        historyContext: historyCtx[symbol] || null,
-        reversion: reversion[symbol] || null,
-        turnoverPctile: turnoverPctile[symbol] ?? null,
-      });
-
-      if (!res.pass) {
-        const b = res.blockedBy[0] || "unknown";
-        byVariant[variant.id].blocked[b] = (byVariant[variant.id].blocked[b] || 0) + 1;
-        continue;
-      }
-
-      /* ANTI-LOOK-AHEAD, DONE THE WAY THE LIVE PATH DOES IT.
-         The previous "fix" asked the caller for an eligible entry price
-         computed with decisionAtMs = Date.now() — and with a 15-minute-delayed
-         feed no bar in the current panel can ever satisfy that, so the
-         fallback (the decision bar's close) was ALWAYS taken and the fix was a
-         no-op. The learning dataset stayed optimistic by one bar per side.
-
-         A shadow entry is now opened PENDING with its decision time recorded,
-         exactly like a real order. The next cycle whose panel contains a bar
-         printed after the decision fills it at that bar's open. Same clock,
-         same rules, same information set as real money. */
-      const slip = M.slippageBps({
-        advUsd: m.advUsd || 0, grade: quality[symbol].grade,
-        wideSpreadWindow: session.wideSpreadWindow, vixNorm: regime.vixNorm,
-      });
-
-      await A.col(OPEN).doc(key).set({
-        variantId: variant.id, symbol, cycleId,
-        pendingEntry: true,
-        decisionAtMs: Date.now(),
-        signalPrice: lastPrice[symbol] || null,   // recorded for slippage audit only
-        openedAt: new Date().toISOString(),
-        openedDate: session.date,
-        entryPrice: null,
-        entrySlippageBps: slip,
-        rank: ranks[symbol], z: res.z, cumResidualBps: res.cumResidualBps,
-        cause: causeBySymbol[symbol] || S.CAUSE.PENDING,
-        sector: S.sectorOf(symbol),
-        sizeMult: res.sizing.combined,
-        ...A.envelope({ created_by: "shadow.evaluateEntries" }),
-      });
-
-      opened.push({ variantId: variant.id, symbol, pending: true });
-      byVariant[variant.id].opened += 1;
-      isOpen.add(key);
-    }
+function stable(value) {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((k) => [k, stable(value[k])]));
   }
-  return { opened: opened.length, evaluated, byVariant, detail: opened.slice(0, 40) };
+  return value;
+}
+function sha(value) {
+  return crypto.createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(stable(value))).digest("hex");
 }
 
-/* ── exit: close any shadow position whose rule has fired ──────────────── */
-async function evaluateExits(ctx) {
-  const { ranks, session, baseCfg, lastPrice, quality, meta, regime } = ctx;
-  const earnings = ctx.earnings || {};
-  const snap = await A.col(OPEN).get();
-  const closed = [];
-  let dataLoss = 0;
-
-  for (const doc of snap.docs) {
-    const p = doc.data();
-    const cfg = V.configFor(p.variantId, baseCfg);
-    const rank = ranks[p.symbol];
-    const px = lastPrice[p.symbol];
-    const heldDays = (Date.now() - Date.parse(p.openedAt)) / 864e5;
-
-    /* PENDING ENTRIES FILL FIRST. The position was opened with only a decision
-       time; it fills at the open of the first bar the feed delivered that was
-       printed after that decision — the same clock real orders use. Until
-       then it has no entry price and cannot be scored. A pending entry that
-       finds no fill within two days never happened. */
-    if (p.pendingEntry) {
-      const pbars = (ctx.panel && ctx.panel[p.symbol]) || [];
-      const pe = pbars.length ? M.firstEligibleBar(pbars, {
-        decisionAtMs: p.decisionAtMs || Date.parse(p.openedAt),
-        provider: ctx.providerId || "alpaca",
-        executionLatencyMs: baseCfg.executionLatencyMs || 60000,
-      }) : { bar: null };
-      if (pe.bar && pe.bar.o > 0) {
-        await doc.ref.set({ pendingEntry: false, entryPrice: pe.bar.o, filledAt: pe.barOpenAt }, { merge: true });
-        p.entryPrice = pe.bar.o; p.pendingEntry = false;
-      } else if (heldDays > 2) {
-        await doc.ref.delete();      // never fillable — not a trade, not a data point
-        continue;
-      } else {
-        continue;                     // waiting for the feed to catch up
-      }
+/** A result from another universe, policy, feed, or simulator is another experiment. */
+function experimentIdentity(ctx = {}) {
+  const p = ctx.marketIdentity || ctx.marketProvenance || {};
+  const identity = {
+    simulatorVersion: SIMULATOR_VERSION,
+    universeHash: ctx.universeHash || null,
+    strategyHash: ctx.strategyHash || null,
+    variantsHash: ctx.variantsHash || V.variantsHash(),
+    provider: p.provider || ctx.providerId || null,
+    feed: p.feed || ctx.feed || null,
+    adjustment: p.adjustment || ctx.adjustment || null,
+  };
+  return { identity, experimentHash: sha(identity) };
+}
+function assertExperiment(ctx = {}) {
+  if (/^[a-f0-9]{64}$/.test(String(ctx.experimentHash || ""))) {
+    return { identity: ctx.experimentIdentity || null, experimentHash: ctx.experimentHash };
+  }
+  const out = experimentIdentity(ctx);
+  for (const k of ["universeHash", "strategyHash", "variantsHash"]) {
+    if (!/^[a-f0-9]{64}$/.test(String(out.identity[k] || ""))) {
+      throw new Error(`shadow experiment missing valid ${k}`);
     }
-    if (!(p.entryPrice > 0)) continue;
+  }
+  if (!out.identity.provider || !out.identity.adjustment) {
+    throw new Error("shadow experiment missing provider/adjustment identity");
+  }
+  return out;
+}
+function provenanceFor(ctx, symbol) {
+  return (ctx.marketProvenanceBySymbol && ctx.marketProvenanceBySymbol[symbol])
+    || ctx.marketProvenance || null;
+}
+function validProvenance(p) {
+  return !!(p && p.provider && /^[a-f0-9]{64}$/.test(String(p.sourceSha256 || "")));
+}
+function openId(experimentHash, variantId, symbol) {
+  return `${experimentHash.slice(0, 20)}_${variantId}_${symbol}`;
+}
+function closedId(experimentHash, variantId, symbol, openedAt) {
+  return sha([experimentHash, variantId, symbol, openedAt].join("|")).slice(0, 40);
+}
+function dayDocId(experimentHash, variantId, date) {
+  return `${experimentHash.slice(0, 20)}_${variantId}_${date}`;
+}
+function accountDocId(experimentHash, variantId) {
+  return `${experimentHash.slice(0, 20)}_${variantId}`;
+}
+function initialAccount(experimentHash, variantId, startingNavUsd) {
+  const nav = Math.max(1, Number(startingNavUsd) || 100000);
+  return {
+    experimentHash, variantId, simulatorVersion: SIMULATOR_VERSION,
+    startingNavUsd: nav, cashUsd: nav, equityUsd: nav, highWaterUsd: nav,
+    drawdownPct: 0, realizedPnlUsd: 0, cumulativeCostsUsd: 0,
+    dayCostDate: null, dayCostsUsd: 0, lastCompleteDate: null,
+    ...A.envelope({ created_by: "shadow.initialAccount" }),
+  };
+}
+async function ensureAccount(experimentHash, variantId, startingNavUsd = 100000) {
+  const ref = A.col(ACCOUNTS).doc(accountDocId(experimentHash, variantId));
+  return A.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) return { id: ref.id, ...snap.data() };
+    const row = initialAccount(experimentHash, variantId, startingNavUsd);
+    tx.set(ref, row);
+    return { id: ref.id, ...row };
+  });
+}
+function accountCostPatch(account, date, costUsd) {
+  const sameDay = account.dayCostDate === date;
+  return {
+    dayCostDate: date,
+    dayCostsUsd: (sameDay ? Number(account.dayCostsUsd) || 0 : 0) + Math.max(0, Number(costUsd) || 0),
+    cumulativeCostsUsd: (Number(account.cumulativeCostsUsd) || 0) + Math.max(0, Number(costUsd) || 0),
+  };
+}
 
-    /* A symbol that has dropped out of the panel for good is usually halted,
-       delisted or acquired — the fattest tails on the downside. The old code
-       let it fall through with a fabricated rank of 0.5, which is >= the 0.50
-       exit for six of eight variants, so it booked an immediate "recovery"
-       exit at the ENTRY price: a tidy -15bp loss standing in for what may have
-       been -60%. That is survivorship bias written straight into the training
-       set. Such a position is now retired as UNRESOLVED and excluded from the
-       statistics rather than recorded as a small controlled loss. */
-    if (rank == null || !(px > 0)) {
-      if (heldDays < (cfg.maxHoldDays ?? 10) + 5) continue;
-      await A.col(CLOSED).add({
-        variantId: p.variantId, symbol: p.symbol,
-        openedAt: p.openedAt, openedDate: p.openedDate,
-        closedAt: new Date().toISOString(), closedDate: session.date,
-        heldDays: Number(heldDays.toFixed(2)),
-        unresolved: true, excludeFromStats: true,
-        exitReason: "symbol left the panel — outcome unknown, excluded from learning rather than guessed",
-        ...A.envelope({ created_by: "shadow.evaluateExits" }),
+/** Fill and cash debit are one transaction. A price gap cannot create cash. */
+async function fillPendingAtomic(doc, pending, eligible, provenance, date) {
+  const accountRef = A.col(ACCOUNTS).doc(accountDocId(pending.experimentHash, pending.variantId));
+  return A.runTransaction(async (tx) => {
+    const [openSnap, accountSnap] = await Promise.all([tx.get(doc.ref), tx.get(accountRef)]);
+    if (!openSnap.exists || openSnap.data().pendingEntry !== true) return { duplicate: true };
+    const account = accountSnap.exists ? accountSnap.data()
+      : initialAccount(pending.experimentHash, pending.variantId, pending.startingNavUsd);
+    const price = Number(eligible.bar && eligible.bar.o);
+    const slipBps = Math.max(0, Number(pending.entrySlippageBps) || 0);
+    const unitDebit = price * (1 + slipBps / 1e4);
+    const requestedQty = Math.max(0, Number(pending.qty) || 0);
+    const qty = unitDebit > 0
+      ? Math.min(requestedQty, Math.max(0, Number(account.cashUsd) || 0) / unitDebit) : 0;
+    const notionalUsd = qty * price;
+    if (!(notionalUsd >= 100)) {
+      tx.delete(doc.ref);
+      if (!accountSnap.exists) tx.set(accountRef, account);
+      return { cancelled: true, reason: "insufficient self-financing cash at eligible fill" };
+    }
+    const entryCostUsd = notionalUsd * slipBps / 1e4;
+    const cashDebitUsd = notionalUsd + entryCostUsd;
+    const equityBeforeFillUsd = Math.max(1, Number(account.equityUsd) || Number(account.startingNavUsd));
+    const patch = {
+      pendingEntry: false, entryPrice: price, filledAt: eligible.barOpenAt,
+      entryMarketProvenance: provenance, entryEligibleAfterMs: eligible.availableFromMs,
+      markDate: date, dayStartPrice: price, lastMarkPrice: price,
+      qty: Number(qty.toFixed(8)), notionalUsd: Number(notionalUsd.toFixed(2)),
+      entryCostUsd: Number(entryCostUsd.toFixed(6)),
+      entryCashDebitUsd: Number(cashDebitUsd.toFixed(6)),
+      equityBeforeFillUsd: Number(equityBeforeFillUsd.toFixed(6)),
+      weightAtEntry: notionalUsd / equityBeforeFillUsd,
+    };
+    tx.set(doc.ref, patch, { merge: true });
+    tx.set(accountRef, {
+      ...(accountSnap.exists ? {} : account),
+      dayStartDate: account.dayStartDate === date ? account.dayStartDate : date,
+      dayStartEquityUsd: account.dayStartDate === date
+        ? Number(account.dayStartEquityUsd) : Number(equityBeforeFillUsd.toFixed(6)),
+      cashUsd: Number(((Number(account.cashUsd) || 0) - cashDebitUsd).toFixed(6)),
+      equityUsd: Number(Math.max(0, equityBeforeFillUsd - entryCostUsd).toFixed(6)),
+      ...accountCostPatch(account, date, entryCostUsd),
+      updatedAt: A.FV.serverTimestamp(),
+    }, { merge: true });
+    return { duplicate: false, patch };
+  });
+}
+
+function riskConfig(params, ctx) {
+  return {
+    ...STRATEGY,
+    parameters: params,
+    portfolioControls: ctx.portfolioControls || STRATEGY.portfolioControls,
+  };
+}
+function positionRows(openRows) {
+  return openRows.filter((p) => !p.pendingEntry && Number(p.qty) > 0).map((p) => ({
+    open: true, symbol: p.symbol, qty: Number(p.qty),
+    entryPriceUsd: Number(p.entryPrice), sector: p.sector,
+  }));
+}
+function updateBook(book, { symbol, sector, usd, price, cluster }) {
+  book.count += 1;
+  book.grossUsd += usd;
+  book.grossPct = book.navUsd > 0 ? 100 * book.grossUsd / book.navUsd : 0;
+  const pct = book.navUsd > 0 ? 100 * usd / book.navUsd : 0;
+  book.bySectorPct[sector] = (book.bySectorPct[sector] || 0) + pct;
+  book.byClusterPct[cluster] = (book.byClusterPct[cluster] || 0) + pct;
+  book.rows.push({ symbol, sector, cluster, valueUsd: usd, mark: price, marked: true });
+}
+
+function dynamicCorrelationMap(symbol, book, dailySeriesBySymbol, dailyProvenanceBySymbol, asOfMs) {
+  const out = {};
+  for (const held of book.rows || []) out[held.symbol] = T.pairwiseCorrelation(
+    dailySeriesBySymbol && dailySeriesBySymbol[symbol] || [],
+    dailySeriesBySymbol && dailySeriesBySymbol[held.symbol] || [], asOfMs, {
+      provenanceA: dailyProvenanceBySymbol && dailyProvenanceBySymbol[symbol] || null,
+      provenanceB: dailyProvenanceBySymbol && dailyProvenanceBySymbol[held.symbol] || null,
+      requireProvenance: true,
+    });
+  return out;
+}
+
+/**
+ * Score every frozen arm against the same opportunity union, then construct a
+ * feasible cash/exposure-constrained portfolio in deterministic utility order.
+ * Calibration is not required to generate research outcomes; it is required
+ * later to promote them or admit live risk.
+ */
+async function evaluateEntries(ctx) {
+  const exp = assertExperiment(ctx);
+  const nowMs = Number(ctx.decisionAtMs) || Date.now();
+  const ranks = ctx.ranks || {}, zBySymbol = ctx.zBySymbol || {};
+  const opportunitySymbols = [...new Set([
+    ...Object.keys(ranks),
+    ...Object.values(ctx.signalContexts || {}).flatMap((x) => Object.keys(x && x.ranks || {})),
+  ])].sort();
+  const openSnap = await A.col(OPEN).get();
+  const existing = [];
+  openSnap.forEach((d) => {
+    const r = d.data();
+    if (r.experimentHash === exp.experimentHash) existing.push({ id: d.id, ...r });
+  });
+  const isOpen = new Set(existing.map((p) => `${p.variantId}_${p.symbol}`));
+  const byVariant = {}, opened = [];
+  let evaluated = 0;
+
+  for (const variant of V.VARIANTS) {
+    const params = { ...V.configFor(variant.id), requireCalibratedEdge: false };
+    const rcfg = riskConfig(params, ctx);
+    const mine = existing.filter((p) => p.variantId === variant.id);
+    const account = await ensureAccount(exp.experimentHash, variant.id,
+      Math.max(1, Number(ctx.shadowNavUsd) || 100000));
+    const navUsd = Math.max(1, Number(account.equityUsd) || Number(account.startingNavUsd));
+    const marks = ctx.lastPrice || {};
+    const book = R.summarise(positionRows(mine), marks, S.sectorOf, navUsd);
+    book.navUsd = navUsd;
+    const reserved = mine.filter((p) => p.pendingEntry).reduce((a, p) => a + (Number(p.notionalUsd) || 0), 0);
+    let cashUsd = Math.max(0, (Number(account.cashUsd) || 0) - reserved);
+    byVariant[variant.id] = { considered: 0, opened: 0, blocked: {}, feasibleRejected: 0,
+      equityUsd: Number(navUsd.toFixed(2)), cashAvailableUsd: Number(cashUsd.toFixed(2)) };
+    const candidates = [];
+
+    for (const symbol of opportunitySymbols) {
+      const signalContext = ctx.signalContexts && ctx.signalContexts[params.signalWindow || 12];
+      const variantRanks = signalContext && signalContext.ranks || ranks;
+      const variantZ = signalContext && signalContext.zBySymbol || zBySymbol;
+      const variantCrowd = S.sectorCrowding(variantRanks, S.sectorOf,
+        params.entryRank == null ? S.ENTRY_RANK : params.entryRank);
+      const z = variantZ[symbol];
+      if (!z || isOpen.has(`${variant.id}_${symbol}`)) continue;
+      evaluated += 1; byVariant[variant.id].considered += 1;
+      const meta = (ctx.meta && ctx.meta[symbol]) || {};
+      const ew = (ctx.earnings && ctx.earnings[symbol]) || {};
+      const result = S.evaluateCandidate({
+        symbol, rank: variantRanks[symbol], zStat: z,
+        quality: ctx.quality && ctx.quality[symbol], advUsd: meta.advUsd || 0,
+        earningsDates: ew.dates || [], earningsEstimated: !!ew.estimated,
+        earningsUncertaintyDays: Number(ew.uncertaintyDays) || null,
+        nowMs, cause: (ctx.causeBySymbol && ctx.causeBySymbol[symbol]) || S.CAUSE.PENDING,
+        coverage: ctx.coverageBySymbol && ctx.coverageBySymbol[symbol],
+        attentionScore: ctx.attentionBySymbol && ctx.attentionBySymbol[symbol],
+        vixNorm: ctx.regime && ctx.regime.vixNorm,
+        cor3m: ctx.regime && ctx.regime.cor3m,
+        sectorTailFraction: variantCrowd && variantCrowd.fractionInTail
+          ? (variantCrowd.fractionInTail[S.sectorOf(symbol)] ?? 0) : 0,
+        session: ctx.session, cfg: params, position: null,
+        intelligence: ctx.intelligenceBySymbol && ctx.intelligenceBySymbol[symbol],
+        historyContext: (ctx.historyCtx && ctx.historyCtx[symbol]) || null,
+        reversion: (ctx.reversion && ctx.reversion[symbol]) || null,
+        turnoverPctile: ctx.turnoverPctile && ctx.turnoverPctile[symbol],
       });
-      await doc.ref.delete();
-      dataLoss += 1;
+      if (!result.pass) {
+        const why = result.blockedBy[0] || "unknown";
+        byVariant[variant.id].blocked[why] = (byVariant[variant.id].blocked[why] || 0) + 1;
+        continue;
+      }
+      const price = Number(ctx.lastPrice && ctx.lastPrice[symbol]);
+      const provenance = provenanceFor(ctx, symbol);
+      if (!(price > 0) || !validProvenance(provenance)) {
+        const why = !(price > 0) ? "missing_price" : "missing_market_provenance";
+        byVariant[variant.id].blocked[why] = (byVariant[variant.id].blocked[why] || 0) + 1;
+        continue;
+      }
+      const hc = (ctx.historyCtx && ctx.historyCtx[symbol]) || {};
+      const sizing = R.positionSizeUsd({
+        navUsd, atrPct: hc.atrPct,
+        expectedShortfall5dPct: hc.expectedShortfall5dPct,
+        overnightGapEsPct: hc.overnightGapEsPct,
+        signalScaler: result.sizing.combined, cfg: rcfg,
+      });
+      const utility = Number(result.cost && result.cost.expectedGrossBps || 0)
+        - Number(result.cost && result.cost.requiredBps || 0);
+      candidates.push({ symbol, result, price, provenance, sizing, utility,
+        rank: variantRanks[symbol], sector: S.sectorOf(symbol), meta });
+    }
+
+    candidates.sort((a, b) => b.utility - a.utility
+      || (a.rank - b.rank) || a.symbol.localeCompare(b.symbol));
+    for (const c of candidates) {
+      const dynamicCorrelations = dynamicCorrelationMap(c.symbol, book, ctx.dailySeriesBySymbol,
+        ctx.dailyProvenanceBySymbol, nowMs);
+      const add = R.checkAdd({ symbol: c.symbol, sector: c.sector,
+        proposedUsd: c.sizing.usd, book, navUsd, cashUsd, cfg: rcfg, dynamicCorrelations });
+      const notionalUsd = add.allow ? c.sizing.usd : (add.allowTrimmed ? add.permittedUsd : 0);
+      if (!(notionalUsd >= 100)) {
+        byVariant[variant.id].feasibleRejected += 1;
+        const why = add.blockedBy[0] || "minimum_notional";
+        byVariant[variant.id].blocked[why] = (byVariant[variant.id].blocked[why] || 0) + 1;
+        continue;
+      }
+      const slip = M.slippageBps({ advUsd: c.meta.advUsd || 0,
+        grade: (ctx.quality[c.symbol] || {}).grade || "F",
+        wideSpreadWindow: !!(ctx.session && ctx.session.wideSpreadWindow),
+        vixNorm: ctx.regime && ctx.regime.vixNorm });
+      const intelligence = ctx.intelligenceBySymbol && ctx.intelligenceBySymbol[c.symbol];
+      const temporalObservation = intelligence && intelligence.temporalContext
+        && intelligence.temporalContext.shadowCalibration;
+      const contextObservation = {
+        schemaVersion: "shadow-context-outcome-v1",
+        mode: "measurement_only", calibrationOutputAffectsDecision: false,
+        observedAtMs: nowMs,
+        features: {
+          residualRank: Number((ctx.signalContexts && ctx.signalContexts[params.signalWindow || 12]
+            && ctx.signalContexts[params.signalWindow || 12].ranks[c.symbol]) ?? ranks[c.symbol]),
+          residualZ: Number(c.result.z),
+          cumulativeResidualBps: Number(c.result.cumResidualBps),
+          intelligenceAdverseRisk: Number(c.result.intelligencePolicy
+            && c.result.intelligencePolicy.adverseRiskScore) || 0,
+          temporalRisk: Number(c.result.intelligencePolicy && c.result.intelligencePolicy.temporalPolicy
+            && c.result.intelligencePolicy.temporalPolicy.riskScore) || 0,
+          ...Object.fromEntries(Object.entries(temporalObservation && temporalObservation.features || {})
+            .map(([key, value]) => ["temporal_" + key, Number(value) || 0])),
+        },
+      };
+      const row = {
+        experimentHash: exp.experimentHash, experimentIdentity: exp.identity,
+        simulatorVersion: SIMULATOR_VERSION, variantId: variant.id, symbol: c.symbol,
+        cycleId: ctx.cycleId, pendingEntry: true, decisionAtMs: nowMs,
+        decisionMarketProvenance: c.provenance,
+        signalPrice: c.price, openedAt: new Date(nowMs).toISOString(),
+        openedDate: ctx.session.date, entryPrice: null,
+        qty: Number((notionalUsd / c.price).toFixed(8)), notionalUsd: Number(notionalUsd.toFixed(2)),
+        weightAtEntry: notionalUsd / navUsd, entrySlippageBps: slip,
+        rank: c.result.rank, z: c.result.z, cumResidualBps: c.result.cumResidualBps,
+        cause: (ctx.causeBySymbol && ctx.causeBySymbol[c.symbol]) || S.CAUSE.PENDING,
+        intelligenceDossierHash: ctx.intelligenceBySymbol && ctx.intelligenceBySymbol[c.symbol]
+          ? ctx.intelligenceBySymbol[c.symbol].dossierHash : null,
+        sector: c.sector, cluster: add.cluster, sizeMult: c.result.sizing.combined,
+        regimeAtEntry: ctx.regime ? { vixNorm: Number(ctx.regime.vixNorm) || null,
+          cor3m: Number(ctx.regime.cor3m) || null } : null,
+        sizing: c.sizing, cost: c.result.cost, dynamicCorrelation: add.dynamicCorrelation,
+        contextObservation,
+        ...A.envelope({ created_by: "shadow.evaluateEntries" }),
+      };
+      await A.col(OPEN).doc(openId(exp.experimentHash, variant.id, c.symbol)).set(row);
+      isOpen.add(`${variant.id}_${c.symbol}`);
+      cashUsd -= notionalUsd;
+      updateBook(book, { symbol: c.symbol, sector: c.sector, usd: notionalUsd,
+        price: c.price, cluster: add.cluster });
+      opened.push({ variantId: variant.id, symbol: c.symbol, pending: true, notionalUsd,
+        accountEquityUsd: navUsd });
+      byVariant[variant.id].opened += 1;
+    }
+  }
+  return { opened: opened.length, evaluated, byVariant, experimentHash: exp.experimentHash,
+    detail: opened.slice(0, 80) };
+}
+
+/** Atomic upsert of one outcome into one policy-day portfolio return. */
+async function accumulate(variantId, row, experimentHashArg = null) {
+  if (!variantId || !row) return { ignored: true };
+  const experimentHash = experimentHashArg || row.experimentHash;
+  if (!/^[a-f0-9]{64}$/.test(String(experimentHash || ""))) {
+    throw new Error("shadow accumulate requires experimentHash");
+  }
+  const date = String(row.closedDate || row.date || row.openedDate || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("shadow accumulate requires ISO trading date");
+  const outcomeId = String(row.outcomeId || sha(stable(row))).slice(0, 120);
+  const ref = A.col(STATS).doc(dayDocId(experimentHash, variantId, date));
+  return A.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const old = snap.exists ? snap.data() : {};
+    const outcomes = Array.isArray(old.outcomes) ? old.outcomes.slice() : [];
+    const next = {
+      id: outcomeId,
+      netBps: Number(row.netContributionBps != null ? row.netContributionBps : row.netBps) || 0,
+      grossBps: Number(row.grossContributionBps != null ? row.grossContributionBps : row.grossBps) || 0,
+      costBps: Number(row.costContributionBps != null ? row.costContributionBps : row.costBps) || 0,
+      unresolved: !!row.unresolved,
+      worstCaseNetBps: Number(row.worstCaseNetBps) || 0,
+    };
+    const at = outcomes.findIndex((o) => o.id === outcomeId);
+    if (at >= 0) outcomes[at] = next; else outcomes.push(next);
+    outcomes.sort((a, b) => a.id.localeCompare(b.id));
+    const included = outcomes.filter((o) => !o.unresolved);
+    const sum = (k, arr = included) => arr.reduce((a, o) => a + (Number(o[k]) || 0), 0);
+    const payload = {
+      experimentHash, variantId, date, simulatorVersion: SIMULATOR_VERSION,
+      outcomes, nOutcomes: included.length,
+      portfolioNetBps: Number(sum("netBps").toFixed(8)),
+      portfolioGrossBps: Number(sum("grossBps").toFixed(8)),
+      portfolioCostBps: Number(sum("costBps").toFixed(8)),
+      unresolvedCount: outcomes.filter((o) => o.unresolved).length,
+      worstCaseNetBps: Number((sum("netBps") + sum("worstCaseNetBps", outcomes.filter((o) => o.unresolved))).toFixed(8)),
+      updatedAt: A.FV.serverTimestamp(),
+      ...(snap.exists ? {} : A.envelope({ created_by: "shadow.accumulate" })),
+    };
+    tx.set(ref, payload, { merge: true });
+    return { duplicate: at >= 0, outcomeId, date };
+  });
+}
+
+async function closeAtomic(doc, p, closeRow, financial = null) {
+  const cref = A.col(CLOSED).doc(closedId(p.experimentHash, p.variantId, p.symbol, p.openedAt));
+  const accountRef = A.col(ACCOUNTS).doc(accountDocId(p.experimentHash, p.variantId));
+  return A.runTransaction(async (tx) => {
+    const [open, closed, accountSnap] = await Promise.all([
+      tx.get(doc.ref), tx.get(cref), tx.get(accountRef),
+    ]);
+    if (closed.exists) { if (open.exists) tx.delete(doc.ref); return { duplicate: true, id: cref.id }; }
+    if (!open.exists) return { duplicate: true, id: cref.id };
+    tx.set(cref, closeRow);
+    tx.delete(doc.ref);
+    if (financial) {
+      const account = accountSnap.exists ? accountSnap.data()
+        : initialAccount(p.experimentHash, p.variantId, p.startingNavUsd);
+      const credit = Math.max(0, Number(financial.cashCreditUsd) || 0);
+      const realized = Number(financial.realizedPnlUsd) || 0;
+      const exitCost = Math.max(0, Number(financial.exitCostUsd) || 0);
+      tx.set(accountRef, {
+        ...(accountSnap.exists ? {} : account),
+        dayStartDate: account.dayStartDate === closeRow.closedDate
+          ? account.dayStartDate : closeRow.closedDate,
+        dayStartEquityUsd: account.dayStartDate === closeRow.closedDate
+          ? Number(account.dayStartEquityUsd) : Number(account.equityUsd),
+        cashUsd: Number(((Number(account.cashUsd) || 0) + credit).toFixed(6)),
+        realizedPnlUsd: Number(((Number(account.realizedPnlUsd) || 0) + realized).toFixed(6)),
+        ...accountCostPatch(account, closeRow.closedDate, exitCost),
+        updatedAt: A.FV.serverTimestamp(),
+      }, { merge: true });
+    }
+    return { duplicate: false, id: cref.id };
+  });
+}
+
+/**
+ * Value each frozen policy as an actual self-financing portfolio. Only a day
+ * with trustworthy marks for every filled position becomes learning evidence.
+ * Pending decisions hold no asset and reserve cash only for feasibility.
+ */
+async function markAccounts(ctx, exp) {
+  if (!(ctx.session && ctx.session.tradingDay && /^\d{4}-\d{2}-\d{2}$/.test(ctx.session.date))) {
+    return { marked: 0, complete: 0, skipped: "not_trading_day" };
+  }
+  const date = ctx.session.date;
+  const openSnap = await A.col(OPEN).get();
+  const rows = openSnap.docs.map((d) => d.data())
+    .filter((p) => p.experimentHash === exp.experimentHash && !p.pendingEntry && Number(p.qty) > 0);
+  const result = { marked: 0, complete: 0, incomplete: 0, byVariant: {} };
+  for (const variant of V.VARIANTS) {
+    const account = await ensureAccount(exp.experimentHash, variant.id,
+      Math.max(1, Number(ctx.shadowNavUsd) || 100000));
+    const mine = rows.filter((p) => p.variantId === variant.id);
+    const missing = [];
+    let marketValueUsd = 0;
+    for (const p of mine) {
+      const price = Number(ctx.lastPrice && ctx.lastPrice[p.symbol]);
+      const provenance = provenanceFor(ctx, p.symbol);
+      if (!(price > 0) || !validProvenance(provenance)) {
+        missing.push(p.symbol); continue;
+      }
+      marketValueUsd += price * Number(p.qty);
+    }
+    const dayRef = A.col(STATS).doc(dayDocId(exp.experimentHash, variant.id, date));
+    if (missing.length) {
+      await dayRef.set({
+        experimentHash: exp.experimentHash, variantId: variant.id, date,
+        simulatorVersion: SIMULATOR_VERSION, completePortfolioDay: false,
+        excludedReason: "missing trustworthy mark for every open position",
+        missingSymbols: [...new Set(missing)].sort(), updatedAt: A.FV.serverTimestamp(),
+      }, { merge: true });
+      result.incomplete += 1;
+      result.byVariant[variant.id] = { complete: false, missingSymbols: missing };
+      continue;
+    }
+    const cashUsd = Number(account.cashUsd) || 0;
+    const equityUsd = Math.max(0, cashUsd + marketValueUsd);
+    const sameDay = account.dayStartDate === date;
+    const dayStartEquityUsd = sameDay
+      ? Math.max(1, Number(account.dayStartEquityUsd) || Number(account.equityUsd) || 1)
+      : Math.max(1, Number(account.equityUsd) || Number(account.startingNavUsd) || 1);
+    /* How many trading sessions this return actually compounds across.
+     *
+     * A day on which any position lacked a trustworthy mark writes no account
+     * update, so the next complete day starts from the last COMPLETE day's
+     * equity — its return spans the gap while still being one row in a series
+     * that calibration slices by position and the Deflated Sharpe annualises
+     * by sqrt(252). Left unmarked, an unchanged edge measured 33% stronger at
+     * a 40% incomplete-day rate, and incomplete marks correlate with the
+     * stressed sessions whose returns are worst. The equity below is real and
+     * is always recorded; only the statistical admissibility of the ROW
+     * depends on the span, so a single gap costs exactly one observation and
+     * cannot cascade. */
+    const priorDate = sameDay ? account.priorCompleteDate : account.lastCompleteDate;
+    const sessionsSpanned = priorDate
+      ? M.tradingSessionsBetween(priorDate, date) : 1;
+    const spanKnown = Number.isFinite(Number(sessionsSpanned)) && Number(sessionsSpanned) > 0;
+    const spanned = spanKnown ? Number(sessionsSpanned) : 1;
+    const contiguous = !priorDate || (spanKnown && spanned === 1);
+    const dayCostsUsd = account.dayCostDate === date ? Math.max(0, Number(account.dayCostsUsd) || 0) : 0;
+    const portfolioNetBps = (equityUsd / dayStartEquityUsd - 1) * 1e4;
+    const portfolioCostBps = dayCostsUsd / dayStartEquityUsd * 1e4;
+    const portfolioGrossBps = portfolioNetBps + portfolioCostBps;
+    const highWaterUsd = Math.max(Number(account.highWaterUsd) || 0, equityUsd);
+    const drawdownPct = highWaterUsd > 0 ? 100 * (equityUsd / highWaterUsd - 1) : 0;
+    await dayRef.set({
+      experimentHash: exp.experimentHash, variantId: variant.id, date,
+      simulatorVersion: SIMULATOR_VERSION,
+      completePortfolioDay: contiguous,
+      marksComplete: true,
+      priorCompleteDate: priorDate || null,
+      sessionsSpanned: spanned,
+      ...(contiguous ? {} : { excludedReason: spanKnown
+        ? `return compounds across ${spanned} trading sessions and is not a daily observation`
+        : "prior complete session could not be resolved" }),
+      accountingMethod: "self_financing_equity_return",
+      dayStartEquityUsd: Number(dayStartEquityUsd.toFixed(6)),
+      endEquityUsd: Number(equityUsd.toFixed(6)), cashUsd: Number(cashUsd.toFixed(6)),
+      marketValueUsd: Number(marketValueUsd.toFixed(6)),
+      portfolioNetBps: Number(portfolioNetBps.toFixed(8)),
+      portfolioGrossBps: Number(portfolioGrossBps.toFixed(8)),
+      portfolioCostBps: Number(portfolioCostBps.toFixed(8)),
+      worstCaseNetBps: Number(portfolioNetBps.toFixed(8)),
+      updatedAt: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "shadow.markAccounts" }),
+    }, { merge: true });
+    /* The account always advances: the equity is real whether or not the row
+       is admissible evidence. This is what stops one missing mark from
+       spanning every later row. */
+    await A.col(ACCOUNTS).doc(accountDocId(exp.experimentHash, variant.id)).set({
+      equityUsd: Number(equityUsd.toFixed(6)), highWaterUsd: Number(highWaterUsd.toFixed(6)),
+      drawdownPct: Number(drawdownPct.toFixed(6)), lastCompleteDate: date,
+      priorCompleteDate: sameDay ? (account.priorCompleteDate || null)
+        : (account.lastCompleteDate || null),
+      dayStartDate: date, dayStartEquityUsd: Number(dayStartEquityUsd.toFixed(6)),
+      updatedAt: A.FV.serverTimestamp(),
+    }, { merge: true });
+    result.marked += 1;
+    if (contiguous) result.complete += 1; else result.spanned = (result.spanned || 0) + 1;
+    result.byVariant[variant.id] = { complete: contiguous, sessionsSpanned: spanned,
+      equityUsd: Number(equityUsd.toFixed(2)),
+      cashUsd: Number(cashUsd.toFixed(2)), drawdownPct: Number(drawdownPct.toFixed(3)),
+      ...(contiguous ? {} : { excluded: "non_contiguous_return" }) };
+  }
+  return result;
+}
+
+async function evaluateExits(ctx) {
+  const exp = assertExperiment(ctx);
+  const snap = await A.col(OPEN).get();
+  const docs = snap.docs.filter((d) => d.data().experimentHash === exp.experimentHash);
+  const closed = [], unresolved = [];
+  const nowMs = Number(ctx.decisionAtMs) || Date.now();
+
+  if (ctx.session && ctx.session.tradingDay) {
+    await Promise.all(V.VARIANTS.map((v) => accumulate(v.id, {
+      experimentHash: exp.experimentHash, date: ctx.session.date,
+      outcomeId: `${v.id}:cash:${ctx.session.date}`, netContributionBps: 0,
+    })));
+  }
+
+  for (const doc of docs) {
+    const p = doc.data();
+    const params = { ...V.configFor(p.variantId), requireCalibratedEdge: false };
+    /* A formation-horizon arm owns its corresponding residual rank for its
+       entire frozen policy. Falling back to the incumbent's 12-bar rank here
+       would let I/J enter on 6/24 bars but exit on a different signal. */
+    const exitSignalContext = ctx.signalContexts
+      && ctx.signalContexts[params.signalWindow || 12];
+    const rank = exitSignalContext && exitSignalContext.ranks
+      ? exitSignalContext.ranks[p.symbol]
+      : ctx.ranks && ctx.ranks[p.symbol];
+    const px = Number(ctx.lastPrice && ctx.lastPrice[p.symbol]);
+    const heldDays = (nowMs - Date.parse(p.openedAt)) / 864e5;
+    const provenance = provenanceFor(ctx, p.symbol);
+    const bars = (ctx.panel && ctx.panel[p.symbol]) || [];
+
+    if (p.pendingEntry) {
+      if (!validProvenance(provenance)) continue;
+      const eligible = M.firstEligibleBar(bars, {
+        decisionAtMs: p.decisionAtMs, provider: provenance.provider, feed: provenance.feed,
+        executionLatencyMs: params.executionLatencyMs || 60000,
+      });
+      if (eligible.bar && Number(eligible.bar.o) > 0) {
+        const fill = await fillPendingAtomic(doc, p, eligible, provenance, ctx.session.date);
+        if (fill.cancelled || fill.duplicate || !fill.patch) continue;
+        Object.assign(p, fill.patch);
+        await accumulate(p.variantId, {
+          experimentHash: exp.experimentHash, date: ctx.session.date,
+          outcomeId: `${doc.id}:mark:${ctx.session.date}`,
+          netContributionBps: -(Number(p.entrySlippageBps) || 0) * Number(p.weightAtEntry || 0),
+          grossContributionBps: 0,
+          costContributionBps: (Number(p.entrySlippageBps) || 0) * Number(p.weightAtEntry || 0),
+        });
+      } else if (heldDays > 2) {
+        await doc.ref.delete();
+      } else continue;
+    }
+    if (!(Number(p.entryPrice) > 0)) continue;
+
+    if (rank == null || !(px > 0)) {
+      if (heldDays < (params.maxHoldDays ?? 10) + 5) continue;
+      const weight = Number(p.weightAtEntry) || 0;
+      const row = { experimentHash: exp.experimentHash, simulatorVersion: SIMULATOR_VERSION,
+        variantId: p.variantId, symbol: p.symbol, openedAt: p.openedAt,
+        openedDate: p.openedDate, closedAt: new Date(nowMs).toISOString(),
+        closedDate: ctx.session.date, heldDays: Number(heldDays.toFixed(2)),
+        unresolved: true, excludeFromStats: true,
+        contextObservation: p.contextObservation || null,
+        measurementOutcome: { available: false, reason: "unresolved_symbol" },
+        worstCaseNetBps: -10000 * weight,
+        componentAttribution: DF.attributeClosed(p, { grossBps: -10000,
+          netBps: -10000, costBps: Number(p.entrySlippageBps) || 0,
+          exitPrice: 0, exitReason: "unresolved_total_loss_stress", heldDays }),
+        exitReason: "symbol unavailable beyond hold horizon; outcome excluded and total-loss stress retained",
+        ...A.envelope({ created_by: "shadow.evaluateExits" }) };
+      const saved = await closeAtomic(doc, p, row, {
+        cashCreditUsd: 0,
+        realizedPnlUsd: -(Number(p.entryCashDebitUsd) || Number(p.notionalUsd) || 0),
+        exitCostUsd: 0,
+      });
+      if (!saved.duplicate) {
+        await accumulate(p.variantId, { ...row, outcomeId: saved.id }, exp.experimentHash);
+        unresolved.push({ variantId: p.variantId, symbol: p.symbol });
+      }
       continue;
     }
 
-    /* THE SHADOW MUST RACE THE STRATEGY THAT ACTUALLY RUNS.
-       This call previously omitted the fourth argument entirely, so inside
-       exitSignal `havePrice` was false and the hard stop, trailing stop, take
-       profit and earnings exit were ALL skipped. The harness was therefore
-       measuring a rank-and-time-only policy that the live system does not run,
-       and the winner it picked would have been the winner of the wrong race. */
-    const ew = earnings[p.symbol];
-    let earningsInDays = null;
-    if (ew && ew.dates && ew.dates.length) {
-      const soonest = ew.dates.map((d) => (Date.parse(d) - Date.now()) / 864e5)
-        .filter((d) => d >= 0).sort((a, b) => a - b)[0];
-      if (soonest != null) earningsInDays = soonest;
+    let dayStartPrice = Number(p.dayStartPrice) || Number(p.entryPrice);
+    if (p.markDate !== ctx.session.date) {
+      dayStartPrice = Number(p.lastMarkPrice) || Number(p.entryPrice);
+      await doc.ref.set({ markDate: ctx.session.date, dayStartPrice }, { merge: true });
+      p.markDate = ctx.session.date; p.dayStartPrice = dayStartPrice;
     }
-    const peak = Math.max(Number(p.peakPrice) || 0, px);
-    if (peak > (Number(p.peakPrice) || 0) * 1.002) {   // write only on a real new high
-      try { await doc.ref.set({ peakPrice: peak }, { merge: true }); } catch {}
-    }
+    const weight = Number(p.weightAtEntry) || 0;
+    const dailyGross = dayStartPrice > 0 ? ((px - dayStartPrice) / dayStartPrice) * 1e4 * weight : 0;
+    const entryCost = p.openedDate === ctx.session.date ? (Number(p.entrySlippageBps) || 0) * weight : 0;
+    await accumulate(p.variantId, {
+      experimentHash: exp.experimentHash, date: ctx.session.date,
+      outcomeId: `${doc.id}:mark:${ctx.session.date}`,
+      grossContributionBps: dailyGross, costContributionBps: entryCost,
+      netContributionBps: dailyGross - entryCost,
+    });
+    await doc.ref.set({ lastMarkPrice: px }, { merge: true });
 
-    /* Record the exit DECISION once; fill it on a later cycle's post-decision
-       bar. Booking the close of the bar whose rank triggered the sale banks
-       the very recovery being detected — the directional look-ahead that made
-       every variant look better than it was. */
+    const ew = (ctx.earnings && ctx.earnings[p.symbol]) || {};
+    const soon = (ew.dates || []).map((d) => (Date.parse(d) - nowMs) / 864e5)
+      .filter((d) => d >= 0).sort((a, b) => a - b)[0];
+    const peak = Math.max(Number(p.peakPrice) || 0, px);
+    if (peak > Number(p.peakPrice || 0)) await doc.ref.set({ peakPrice: peak }, { merge: true });
     let intent = p.exitIntent;
     if (!intent) {
-      const ex = S.exitSignal(rank, heldDays, cfg, {
-        mark: px, entry: p.entryPrice, peak, earningsInDays,
+      const intelligence = ctx.intelligenceBySymbol && ctx.intelligenceBySymbol[p.symbol];
+      const intelligencePolicy = intelligence ? I.decisionPolicy({ coverage: intelligence.coverage,
+        events: intelligence.events, temporalContext: intelligence.temporalContext,
+        requireTemporalContext: false, asOfMs: nowMs,
+        maxAgeHours: params.intelligenceMaxAgeHours,
+        temporalMaxAgeHours: params.temporalMaxAgeHours }) : null;
+      const signal = S.exitSignal(rank, heldDays, params, {
+        mark: px, entry: p.entryPrice, peak, earningsInDays: soon == null ? null : soon,
+        intelligencePolicy,
       });
-      if (!ex.exit) continue;
-      intent = { decisionAtMs: Date.now(), reason: ex.reason, kind: ex.kind || "signal" };
+      if (!signal.exit) continue;
+      if (!validProvenance(provenance)) continue;
+      intent = { decisionAtMs: nowMs, reason: signal.reason, kind: signal.kind || "signal",
+        decisionMarketProvenance: provenance };
       await doc.ref.set({ exitIntent: intent }, { merge: true });
-      continue;                       // fills on a later cycle, like real money
+      continue;
     }
+    if (!validProvenance(provenance)) continue;
+    const eligible = M.firstEligibleBar(bars, { decisionAtMs: intent.decisionAtMs,
+      provider: provenance.provider, feed: provenance.feed,
+      executionLatencyMs: params.executionLatencyMs || 60000 });
+    if (!eligible.bar || !(Number(eligible.bar.o) > 0)) continue;
 
-    const ibars = (ctx.panel && ctx.panel[p.symbol]) || [];
-    const ie = ibars.length ? M.firstEligibleBar(ibars, {
-      decisionAtMs: intent.decisionAtMs,
-      provider: ctx.providerId || "alpaca",
-      executionLatencyMs: baseCfg.executionLatencyMs || 60000,
-    }) : { bar: null };
-    if (!ie.bar || !(ie.bar.o > 0)) continue;   // feed not caught up yet
-
-    const ex = { reason: intent.reason, kind: intent.kind };
-    const m = meta[p.symbol] || {};
-    const exitSlip = M.slippageBps({
-      advUsd: m.advUsd || 0, grade: (quality[p.symbol] || {}).grade || "C",
-      wideSpreadWindow: session.wideSpreadWindow, vixNorm: regime.vixNorm,
-    });
-    const exitPx = ie.bar.o;
-    const grossBps = ((exitPx - p.entryPrice) / p.entryPrice) * 1e4;
-    const costBps = (p.entrySlippageBps || 0) + exitSlip;
+    const meta = (ctx.meta && ctx.meta[p.symbol]) || {};
+    const exitSlip = M.slippageBps({ advUsd: meta.advUsd || 0,
+      grade: (ctx.quality && ctx.quality[p.symbol] || {}).grade || "F",
+      wideSpreadWindow: !!(ctx.session && ctx.session.wideSpreadWindow),
+      vixNorm: ctx.regime && ctx.regime.vixNorm });
+    const exitPrice = Number(eligible.bar.o);
+    const exitProceedsUsd = Math.max(0, Number(p.qty) || 0) * exitPrice;
+    const exitCostUsd = exitProceedsUsd * exitSlip / 1e4;
+    const cashCreditUsd = Math.max(0, exitProceedsUsd - exitCostUsd);
+    const realizedPnlUsd = cashCreditUsd
+      - (Number(p.entryCashDebitUsd) || (Number(p.qty) || 0) * Number(p.entryPrice));
+    const grossBps = ((exitPrice - Number(p.entryPrice)) / Number(p.entryPrice)) * 1e4;
+    const costBps = (Number(p.entrySlippageBps) || 0) + exitSlip;
     const netBps = grossBps - costBps;
-
-    await A.col(CLOSED).add({
-      variantId: p.variantId, symbol: p.symbol,
+    const exitDailyGross = dayStartPrice > 0 ? ((exitPrice - dayStartPrice) / dayStartPrice) * 1e4 * weight : 0;
+    const dailyCost = exitSlip * weight + entryCost;
+    const closeRow = {
+      experimentHash: exp.experimentHash, experimentIdentity: p.experimentIdentity,
+      simulatorVersion: SIMULATOR_VERSION, variantId: p.variantId, symbol: p.symbol,
       openedAt: p.openedAt, openedDate: p.openedDate,
-      closedAt: new Date().toISOString(), closedDate: session.date,
-      heldDays: Number(heldDays.toFixed(2)),
-      entryPrice: p.entryPrice, exitPrice: exitPx,
-      grossBps: Number(grossBps.toFixed(2)),
-      costBps: Number(costBps.toFixed(2)),
-      netBps: Number(netBps.toFixed(2)),
-      exitReason: ex.reason, exitKind: ex.kind || "signal",
-      exitPriceEligible: true,   // structurally guaranteed now — fills only on post-decision bars
+      closedAt: new Date(nowMs).toISOString(), closedDate: ctx.session.date,
+      heldDays: Number(heldDays.toFixed(2)), entryPrice: Number(p.entryPrice), exitPrice,
+      qty: Number(p.qty), notionalUsd: Number(p.notionalUsd), weightAtEntry: weight,
+      grossBps: Number(grossBps.toFixed(4)), costBps: Number(costBps.toFixed(4)),
+      netBps: Number(netBps.toFixed(4)), exitReason: intent.reason, exitKind: intent.kind,
+      exitProceedsUsd: Number(exitProceedsUsd.toFixed(6)),
+      exitCostUsd: Number(exitCostUsd.toFixed(6)),
+      cashCreditUsd: Number(cashCreditUsd.toFixed(6)),
+      realizedPnlUsd: Number(realizedPnlUsd.toFixed(6)),
+      entryMarketProvenance: p.entryMarketProvenance,
+      exitDecisionMarketProvenance: intent.decisionMarketProvenance,
+      exitMarketProvenance: provenance, exitBarOpenAt: eligible.barOpenAt,
       rank: p.rank, z: p.z, cause: p.cause, sector: p.sector,
-      vixNorm: regime.vixNorm, cor3m: regime.cor3m,
+      contextObservation: p.contextObservation || null,
+      measurementOutcome: { available: true, grossBps: Number(grossBps.toFixed(4)),
+        netBps: Number(netBps.toFixed(4)), costBps: Number(costBps.toFixed(4)),
+        heldDays: Number(heldDays.toFixed(2)) },
+      componentAttribution: DF.attributeClosed(p, { grossBps, netBps, costBps,
+        exitPrice, exitReason: intent.reason, heldDays }),
       ...A.envelope({ created_by: "shadow.evaluateExits" }),
+    };
+    const saved = await closeAtomic(doc, p, closeRow, {
+      cashCreditUsd, realizedPnlUsd, exitCostUsd,
     });
-    await doc.ref.delete();
-    try {
+    if (!saved.duplicate) {
       await accumulate(p.variantId, {
-        netBps, grossBps, costBps, heldDays, openedDate: p.openedDate,
+        experimentHash: exp.experimentHash, date: ctx.session.date,
+        outcomeId: `${doc.id}:mark:${ctx.session.date}`,
+        grossContributionBps: exitDailyGross, costContributionBps: dailyCost,
+        netContributionBps: exitDailyGross - dailyCost,
       });
-    } catch (e) { /* the roll-up is an optimisation; the row is the record */ }
-    closed.push({ variantId: p.variantId, symbol: p.symbol, netBps: Number(netBps.toFixed(1)) });
+      closed.push({ variantId: p.variantId, symbol: p.symbol, netBps: Number(netBps.toFixed(2)) });
+    }
   }
-  return { closed: closed.length, dataLoss, detail: closed.slice(0, 40) };
+  const accountMarks = await markAccounts(ctx, exp);
+  return { closed: closed.length, dataLoss: unresolved.length, unresolved,
+    accountMarks, experimentHash: exp.experimentHash, detail: closed.slice(0, 80) };
 }
 
-/* ── the honest sample size ────────────────────────────────────────────── */
-/**
- * Trades on the same day are not independent — they win or lose together in
- * the same market move. Counting distinct DAYS instead of trades is the
- * conservative correction, and it is what every power calculation uses.
- */
-function effectiveSampleSize(rows) {
-  const days = new Set();
-  for (const r of rows) if (r.openedDate) days.add(r.openedDate);
-  return { nominal: rows.length, effective: days.size, distinctDays: days.size };
+function discountEffectiveN(weights) {
+  const w = (weights || []).map(Number).filter((x) => Number.isFinite(x) && x > 0);
+  const s = w.reduce((a, b) => a + b, 0), ss = w.reduce((a, b) => a + b * b, 0);
+  return ss > 0 ? (s * s) / ss : 0;
 }
 
-/* ── per-variant statistics ────────────────────────────────────────────── */
-/* ── THE EVIDENCE LEDGER: ONE DOCUMENT PER VARIANT PER DAY ─────────────────
- *
- * Two prior designs failed here, instructively:
- *   · reading "the most recent N closed trades" silently capped the distinct-
- *     day count below the power gate, so the gate could never open;
- *   · a per-variant accumulator with a `days.<date>` increment relied on
- *     dotted-key semantics that Firestore's set() does not have (set() treats
- *     dots as literal field names; only update() interprets paths), so in
- *     production the distinct-day map never formed and "independent days"
- *     silently became raw trade counts — the gate would have opened on an
- *     eighth of the required evidence. The in-memory test double deep-set
- *     dotted keys and hid it.
- *
- * A day-doc needs neither trick: id `${variantId}_${date}`, plain increments.
- * Distinct days = number of documents. It also gives, for free, the per-day
- * per-variant means that the changepoint detector and the paired promotion
- * test need. ~8 variants × 250 trading days = 2,000 docs/year.
- */
-async function accumulate(variantId, row) {
-  if (!variantId || !row || !Number.isFinite(row.netBps)) return;
-  const date = String(row.openedDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
-  const ref = A.col(STATS).doc(`${variantId}_${date}`);
-  const inc = A.FV.increment;
-  await ref.set({
-    variantId, date,
-    n: inc(1),
-    sumNet: inc(row.netBps),
-    sumNetSq: inc(row.netBps * row.netBps),
-    sumGross: inc(Number(row.grossBps) || 0),
-    sumCost: inc(Number(row.costBps) || 0),
-    sumHold: inc(Number(row.heldDays) || 0),
-    wins: inc(row.netBps > 0 ? 1 : 0),
-    updatedAt: A.FV.serverTimestamp(),
-  }, { merge: true });
-}
-
-/* ── CHANGEPOINT DETECTION: THE SYSTEM MUST BE ABLE TO UN-LEARN ────────────
- *
- * A posterior that accumulates forever cannot notice that the world changed.
- * Published trading edges decay — roughly 26% out of sample and 58% after
- * publication (McLean & Pontiff, Journal of Finance 2016) — so "variant D was
- * good for two years" must not pin the book to D for the third year while D
- * quietly dies. The non-stationary bandit literature (Garivier & Moulines
- * 2011; discounted Thompson sampling) and Bayesian online changepoint
- * detection (Adams & MacKay 2007) both address this; the practical synthesis,
- * per the changepoint-module results of Wood, Roberts & Zohren (2022), is:
- * restart beats slow forgetting for abrupt breaks, and a modest discount
- * handles gradual drift.
- *
- * Implementation: a Page-Hinkley test per variant on the sequence of DAILY
- * mean net returns. Page-Hinkley tracks the cumulative gap between each new
- * observation and the running mean; when the gap exceeds a threshold scaled
- * to the series' own noise, a break is declared. On a break the SELECTION
- * evidence restarts from that date (the posterior re-inflates toward the
- * skeptical prior and Thompson sampling automatically re-explores), while the
- * POWER-GATE evidence keeps the full record — because "how much have we ever
- * observed" and "what do we currently believe" are different questions.
- */
-/* Calibration: Page-Hinkley's false-alarm probability over a long stationary
-   stretch behaves like exp(-2·delta·lambda / sigma²). The first cut used
-   delta=0.1σ, lambda=6σ → exp(-1.2) ≈ 30% — it cried wolf on plain noise, and
-   the fixture caught it. At delta=0.25σ, lambda=12σ the same bound is
-   exp(-6) ≈ 0.25% per stretch, while a real break of ~3σ/day still trips the
-   alarm within about four trading days. Slow false alarms are cheap here (a
-   reset just re-explores); missed breaks are expensive. */
-const PH_DELTA_FRAC = 0.25;   // tolerated drift, as a fraction of daily sd
-const PH_LAMBDA_SD = 12;      // alarm threshold, in units of daily sd
-const DISCOUNT_GAMMA = 0.994; // gradual-drift discount: n_eff ≈ 167 trading days
-
+/** Returns the latest Page-Hinkley break, resetting after every alarm. */
 function pageHinkley(dayMeans, sd) {
-  if (dayMeans.length < 20 || !(sd > 0)) return { break: false, at: null };
-  const delta = PH_DELTA_FRAC * sd;
-  const lambda = PH_LAMBDA_SD * sd;
-  let mean = 0, mT = 0, minM = 0, breakAt = null;
-  for (let i = 0; i < dayMeans.length; i++) {
-    mean += (dayMeans[i].mean - mean) / (i + 1);
-    // watch for DETERIORATION: cumulative shortfall below the running mean
-    mT += mean - dayMeans[i].mean - delta;
-    if (mT < minM) minM = mT;
-    if (mT - minM > lambda) { breakAt = dayMeans[i].date; break; }
+  if (!Array.isArray(dayMeans) || dayMeans.length < 20 || !(sd > 0)) return { break: false, at: null };
+  const delta = PH_DELTA_FRAC * sd, lambda = PH_LAMBDA_SD * sd;
+  let mean = 0, n = 0, down = 0, up = 0, minDown = 0, minUp = 0, latest = null;
+  for (const d of dayMeans) {
+    const x = Number(d.mean != null ? d.mean : d.portfolioNetBps);
+    if (!Number.isFinite(x)) continue;
+    n += 1; mean += (x - mean) / n;
+    down += mean - x - delta; up += x - mean - delta;
+    minDown = Math.min(minDown, down); minUp = Math.min(minUp, up);
+    if (n >= 20 && (down - minDown > lambda || up - minUp > lambda)) {
+      latest = d.date; mean = x; n = 1; down = up = minDown = minUp = 0;
+    }
   }
-  return { break: breakAt != null, at: breakAt };
+  return { break: latest != null, at: latest };
 }
 
-/**
- * Read the day-docs back and produce BOTH evidence tracks per variant:
- *
- *   power     — undiscounted, full history. Answers "have we observed enough
- *               days for any comparison to mean anything". Feeds requiredN.
- *   selection — starts at the last detected changepoint, and discounts what
- *               remains by γ^age (γ=0.994/day, effective memory ≈ 8 months).
- *               Answers "what is each variant's edge NOW". Feeds Thompson
- *               sampling and the leader choice.
- *
- * Also returns each variant's daily series so the paired promotion test can
- * difference two variants on their shared days.
- */
-async function rollUpStats() {
-  const snap = await A.col(STATS).limit(8000).get();
+function aggregateDays(days, { discounted = false } = {}) {
+  if (!days.length) return null;
+  const vals = days.map((d) => Number(d.portfolioNetBps) || 0);
+  const weights = days.map((_, i) => discounted ? Math.pow(DISCOUNT_GAMMA, days.length - 1 - i) : 1);
+  const sw = weights.reduce((a, b) => a + b, 0);
+  const mean = vals.reduce((a, x, i) => a + x * weights[i], 0) / sw;
+  const variance = vals.reduce((a, x, i) => a + weights[i] * Math.pow(x - mean, 2), 0) / sw;
+  const effectiveN = discountEffectiveN(weights);
+  const hacVariance = AL.weightedHacMeanVariance(vals, weights);
+  const hacSe = Number.isFinite(hacVariance) ? Math.sqrt(hacVariance) : null;
+  const gross = days.reduce((a, d, i) => a + (Number(d.portfolioGrossBps) || 0) * weights[i], 0) / sw;
+  const cost = days.reduce((a, d, i) => a + (Number(d.portfolioCostBps) || 0) * weights[i], 0) / sw;
+  const unresolved = days.reduce((a, d) => a + (Number(d.unresolvedCount) || 0), 0);
+  return {
+    trades: days.reduce((a, d) => a + (Number(d.nOutcomes) || 0), 0),
+    independentDays: days.length, effectiveN: Number(effectiveN.toFixed(3)),
+    meanNetBps: Number(mean.toFixed(4)), meanGrossBps: Number(gross.toFixed(4)),
+    meanCostBps: Number(cost.toFixed(4)), sdBps: Number(Math.sqrt(variance).toFixed(4)),
+    hacSeBps: hacSe == null ? null : Number(hacSe.toFixed(4)),
+    tStat: hacSe > 0 ? Number((mean / hacSe).toFixed(3)) : null,
+    winRate: Number((vals.filter((x) => x > 0).length / vals.length).toFixed(4)),
+    unresolved, unresolvedRate: Number((unresolved / Math.max(1, days.length)).toFixed(5)),
+    worstCaseMeanNetBps: Number((days.reduce((a, d) => a + (Number(d.worstCaseNetBps) || 0), 0) / days.length).toFixed(4)),
+  };
+}
+
+async function rollUpStats({ experimentHash } = {}) {
+  if (!/^[a-f0-9]{64}$/.test(String(experimentHash || ""))) {
+    throw new Error("rollUpStats requires experimentHash; experiments are never pooled");
+  }
+  const snap = await A.col(STATS).where("experimentHash", "==", experimentHash).orderBy("date", "asc").get();
   const byVariant = {};
   snap.forEach((d) => {
     const r = d.data();
-    if (!r || !r.variantId || !r.date || !(Number(r.n) > 0)) return;
-    (byVariant[r.variantId] = byVariant[r.variantId] || []).push(r);
+    if (!r.variantId || !r.date) return;
+    (byVariant[r.variantId] ||= []).push(r);
   });
-
-  const powerT = {}, selectionT = {}, dailyByVariant = {}, resets = {};
-  const today = Date.now();
-
-  for (const [vid, rows] of Object.entries(byVariant)) {
-    rows.sort((a, b) => (a.date < b.date ? -1 : 1));
-    const days = rows.map((r) => ({
-      date: r.date,
-      n: Number(r.n) || 0,
-      mean: r.sumNet / r.n,
-      sumNet: r.sumNet, sumNetSq: r.sumNetSq,
-      sumGross: r.sumGross || 0, sumCost: r.sumCost || 0,
-      sumHold: r.sumHold || 0, wins: r.wins || 0,
-    }));
-    dailyByVariant[vid] = days;
-
-    const agg = (subset, discounted) => {
-      let n = 0, sum = 0, sumsq = 0, gross = 0, cost = 0, hold = 0, wins = 0, wsum = 0, wTot = 0;
-      for (const d of subset) {
-        n += d.n; sum += d.sumNet; sumsq += d.sumNetSq;
-        gross += d.sumGross; cost += d.sumCost; hold += d.sumHold; wins += d.wins;
-        if (discounted) {
-          const age = Math.max(0, (today - Date.parse(d.date)) / 864e5);
-          const w = Math.pow(DISCOUNT_GAMMA, age);
-          wsum += w * d.mean; wTot += w;
-        }
-      }
-      if (n < 2 || subset.length < 2) return null;
-      const mean = sum / n;
-      const varr = Math.max(0, sumsq / n - mean * mean) * (n / (n - 1));
-      const sd = Math.sqrt(varr);
-      const distinct = subset.length;
-      const effDays = discounted && wTot > 0
-        ? Math.min(distinct, Math.round(wTot / Math.pow(DISCOUNT_GAMMA, 0)))  // sum of weights ≈ discounted day count
-        : distinct;
-      const useMean = discounted && wTot > 0 ? wsum / wTot : mean;
-      return {
-        trades: n,
-        effectiveN: effDays,
-        meanNetBps: Number(useMean.toFixed(3)),
-        meanGrossBps: Number((gross / n).toFixed(3)),
-        meanCostBps: Number((cost / n).toFixed(3)),
-        sdBps: Number(sd.toFixed(3)),
-        winRate: Number((wins / n).toFixed(3)),
-        avgHoldDays: Number((hold / n).toFixed(2)),
-        tStat: sd > 0 && distinct > 1
-          ? Number((useMean / (sd / Math.sqrt(distinct))).toFixed(2)) : null,
-      };
-    };
-
-    const power = agg(days, false);
-    if (power) powerT[vid] = { ...power, source: "power" };
-
-    // changepoint on the daily means, using the full-history sd as the yardstick
-    const ph = pageHinkley(days, power ? power.sdBps : 0);
-    let selDays = days;
-    if (ph.break) {
-      resets[vid] = ph.at;
-      selDays = days.filter((d) => d.date >= ph.at);
-    }
-    const sel = agg(selDays, true);
-    if (sel) selectionT[vid] = { ...sel, source: "selection", resetAt: ph.break ? ph.at : null };
+  const power = {}, selection = {}, dailyByVariant = {}, resets = {}, admissibility = {};
+  for (const v of V.VARIANTS) {
+    const all = byVariant[v.id] || [];
+    const days = all.filter((d) => d.completePortfolioDay !== false)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    /* Exclusions are counted, not merely applied. A series that silently
+       loses a third of its sessions still reports a lower bound; one that
+       reports the loss can be judged. */
+    const missingMarks = all.filter((d) => d.completePortfolioDay === false
+      && d.marksComplete !== true).length;
+    const nonContiguous = all.filter((d) => d.completePortfolioDay === false
+      && d.marksComplete === true).length;
+    admissibility[v.id] = { observed: all.length, admissible: days.length,
+      excludedMissingMarks: missingMarks, excludedNonContiguous: nonContiguous,
+      admissibleRate: all.length ? Number((days.length / all.length).toFixed(4)) : null,
+      maxSessionsSpanned: all.reduce((a, d) =>
+        Math.max(a, Number(d.sessionsSpanned) || 0), 0) || null };
+    dailyByVariant[v.id] = days.map((d) => ({ date: d.date, mean: Number(d.portfolioNetBps) || 0,
+      cost: Number(d.portfolioCostBps) || 0,
+      worstCaseMean: Number(d.worstCaseNetBps) || 0, unresolved: Number(d.unresolvedCount) || 0 }));
+    const p = aggregateDays(days, { discounted: false });
+    if (p) power[v.id] = { ...p, source: "power" };
+    const ph = pageHinkley(dailyByVariant[v.id], p ? p.sdBps : 0);
+    const selected = ph.break ? days.filter((d) => d.date >= ph.at) : days;
+    if (ph.break) resets[v.id] = ph.at;
+    const s = aggregateDays(selected, { discounted: true });
+    if (s) selection[v.id] = { ...s, source: "selection", resetAt: ph.at };
   }
-
-  return { power: powerT, selection: selectionT, dailyByVariant, resets,
-           discountGamma: DISCOUNT_GAMMA };
+  return { power, selection, dailyByVariant, resets, admissibility, experimentHash,
+    discountGamma: DISCOUNT_GAMMA, simulatorVersion: SIMULATOR_VERSION };
 }
 
-async function variantStats({ limit = 4000 } = {}) {
-  /* Ordered, so that hitting the cap reads the MOST RECENT trades rather than
-     an arbitrary Firestore-ordered subset. Unordered truncation meant that
-     past 4,000 closed shadow trades every statistic silently described a
-     random slice of history. */
-  const snap = await A.col(CLOSED).orderBy("closedAt", "desc").limit(limit).get();
-  /* Unresolved rows carry no outcome. Including them at any assumed value —
-     even zero — teaches the allocator something that was never observed. */
-  const rows = [];
-  let excluded = 0;
-  snap.forEach((d) => {
-    const r = d.data();
-    if (r.excludeFromStats || r.unresolved || !Number.isFinite(r.netBps)) { excluded += 1; return; }
-    rows.push(r);
-  });
+function effectiveSampleSize(rows) {
+  const days = new Set((rows || []).map((r) => r && (r.date || r.openedDate)).filter(Boolean));
+  return { nominal: (rows || []).length, effective: days.size, distinctDays: days.size };
+}
 
+function measurementDiagnostics(rows, { minObservations = 30 } = {}) {
+  const usable = (rows || []).filter((r) => !r.unresolved && !r.excludeFromStats
+    && r.contextObservation && r.contextObservation.mode === "measurement_only"
+    && r.measurementOutcome && r.measurementOutcome.available === true);
+  const featureNames = [...new Set(usable.flatMap((r) =>
+    Object.keys(r.contextObservation.features || {})))].sort();
+  const mean = (values) => values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  const correlation = (pairs) => {
+    if (pairs.length < 3) return null;
+    const mx = mean(pairs.map((x) => x[0])), my = mean(pairs.map((x) => x[1]));
+    const numerator = pairs.reduce((sum, x) => sum + (x[0] - mx) * (x[1] - my), 0);
+    const dx = Math.sqrt(pairs.reduce((sum, x) => sum + (x[0] - mx) ** 2, 0));
+    const dy = Math.sqrt(pairs.reduce((sum, x) => sum + (x[1] - my) ** 2, 0));
+    return dx > 0 && dy > 0 ? numerator / (dx * dy) : null;
+  };
+  const features = {};
+  for (const name of featureNames) {
+    const pairs = usable.map((r) => [Number(r.contextObservation.features[name]),
+      Number(r.measurementOutcome.grossBps), Number(r.measurementOutcome.netBps)])
+      .filter((x) => x.every(Number.isFinite));
+    const active = pairs.filter((x) => x[0] > 0), inactive = pairs.filter((x) => x[0] === 0);
+    const corr = correlation(pairs.map((x) => [x[0], x[1]]));
+    features[name] = {
+      observations: pairs.length,
+      status: pairs.length >= minObservations ? "observational_ready" : "warming",
+      activeObservations: active.length,
+      meanGrossBpsWhenActive: active.length ? Number(mean(active.map((x) => x[1])).toFixed(3)) : null,
+      meanNetBpsWhenActive: active.length ? Number(mean(active.map((x) => x[2])).toFixed(3)) : null,
+      meanGrossBpsWhenInactive: inactive.length ? Number(mean(inactive.map((x) => x[1])).toFixed(3)) : null,
+      adverseDirectionHitRate: active.length
+        ? Number((active.filter((x) => x[1] < 0).length / active.length).toFixed(4)) : null,
+      correlationWithForwardGross: corr == null ? null : Number(corr.toFixed(4)),
+    };
+  }
+  return {
+    schemaVersion: "shadow-feature-diagnostics-v1",
+    mode: "measurement_only", affectsDecision: false,
+    observations: usable.length, minObservations, features,
+    limitation: "Observational shadow diagnostics are selection-affected and cannot alter policy without a separately frozen validation process.",
+  };
+}
+
+async function variantStats({ experimentHash } = {}) {
+  const roll = await rollUpStats({ experimentHash });
+  const closedSnap = await A.col(CLOSED).where("experimentHash", "==", experimentHash).get();
+  let excluded = 0; const closedRows = [];
+  closedSnap.forEach((d) => {
+    const row = d.data(); closedRows.push(row);
+    if (row.unresolved || row.excludeFromStats) excluded += 1;
+  });
   const out = {};
   for (const v of V.VARIANTS) {
-    const mine = rows.filter((r) => r.variantId === v.id);
-    const net = mine.map((r) => r.netBps);
-    const gross = mine.map((r) => r.grossBps);
-    const cost = mine.map((r) => r.costBps);
-    const ess = effectiveSampleSize(mine);
-    const mean = net.length ? S.mean(net) : 0;
-    const sd = net.length > 1 ? S.stdev(net) : 0;
-    const se = ess.effective > 1 ? sd / Math.sqrt(ess.effective) : Infinity;
-
-    out[v.id] = {
-      id: v.id, name: v.name, plain: v.plain,
-      trades: mine.length,
-      effectiveN: ess.effective,
-      meanNetBps: Number(mean.toFixed(2)),
-      meanGrossBps: Number((gross.length ? S.mean(gross) : 0).toFixed(2)),
-      meanCostBps: Number((cost.length ? S.mean(cost) : 0).toFixed(2)),
-      sdBps: Number(sd.toFixed(2)),
-      tStat: isFinite(se) && se > 0 ? Number((mean / se).toFixed(2)) : null,
-      winRate: net.length ? Number((net.filter((x) => x > 0).length / net.length).toFixed(3)) : null,
-      avgHoldDays: mine.length ? Number(S.mean(mine.map((r) => r.heldDays)).toFixed(2)) : null,
-    };
+    out[v.id] = { id: v.id, name: v.name, plain: v.plain,
+      ...(roll.selection[v.id] || { trades: 0, effectiveN: 0, meanNetBps: 0, sdBps: 0 }) };
   }
-  /* `capped` matters: the row cap silently bounds effectiveN, and effectiveN
-     is what the power gate measures. With an 8-variant harness and a 4,000-row
-     window, each variant can never show more than ~500 distinct days against a
-     625-day requirement — the gate would never open, and the progress bar
-     would sit near 80% forever with no explanation. The cycle uses this flag
-     to fall back to a persisted running roll-up instead. */
-  return { variants: out, totalClosed: rows.length, excluded,
-           capped: (rows.length + excluded) >= limit, limit };
+  return { variants: out, totalClosed: closedSnap.size - excluded, excluded,
+    contextMeasurement: Object.fromEntries(V.VARIANTS.map((v) => [v.id,
+      measurementDiagnostics(closedRows.filter((r) => r.variantId === v.id))])),
+    capped: false, experimentHash };
 }
 
-async function openCount() {
-  const snap = await A.col(OPEN).get();
-  const by = {};
-  snap.forEach((d) => { const v = d.data().variantId; by[v] = (by[v] || 0) + 1; });
-  return { total: snap.size, byVariant: by };
+async function openCount(experimentHash = null) {
+  const snap = await A.col(OPEN).get(); const byVariant = {}; let total = 0;
+  snap.forEach((d) => { const r = d.data(); if (experimentHash && r.experimentHash !== experimentHash) return;
+    total += 1; byVariant[r.variantId] = (byVariant[r.variantId] || 0) + 1; });
+  return { total, byVariant, experimentHash };
 }
 
 module.exports = {
-  accumulate, rollUpStats, STATS,
-  OPEN, CLOSED,
-  evaluateEntries, evaluateExits,
-  effectiveSampleSize, variantStats, openCount,
+  OPEN, CLOSED, STATS, ACCOUNTS, SIMULATOR_VERSION, DISCOUNT_GAMMA,
+  stable, experimentIdentity, assertExperiment, dynamicCorrelationMap, discountEffectiveN, pageHinkley,
+  initialAccount, ensureAccount, accountDocId, markAccounts,
+  evaluateEntries, evaluateExits, accumulate, aggregateDays, effectiveSampleSize,
+  measurementDiagnostics, rollUpStats, variantStats, openCount,
 };

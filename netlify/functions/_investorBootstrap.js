@@ -42,13 +42,35 @@
 
 "use strict";
 
+const crypto = require("crypto");
 const A = require("./_investorAdmin");
 const { fetchPublic } = require("./_investorFetch");
 const L = require("./_investorLedger");
 const H = require("./_investorHistory");
+const T = require("./_investorTemporal");
 const U_FALLBACK = require("./_investorUniverse.js");
+const S_FALLBACK = require("./_investorStrategy.js");
+const V = require("./_investorVariants");
 
-const BOOTSTRAP_VERSION = 4;   // bump to force a re-run after a config change
+const BOOTSTRAP_VERSION = 10;
+const DAILY_PROVENANCE_VERSION = 3; // v3 requires exact roster+driver coverage and sufficient depth
+
+function stable(value) {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort()
+    .filter((k) => !["contentHash","frozenAt","cikResolvedAt","created_at","updated_at"].includes(k))
+    .map((k) => [k, stable(value[k])]));
+  return value;
+}
+function hashObject(value) { return crypto.createHash("sha256").update(JSON.stringify(stable(value))).digest("hex"); }
+function universeHash(u) { return hashObject({ version:u.version, tradeTier:u.tradeTier||[], researchTier:u.researchTier||[],
+  excludedTier:u.excludedTier||[], enforcement:u.enforcement||{} }); }
+function strategyHash(s) { return hashObject({ version:s.version, parameters:s.parameters||{},
+  portfolioControls:s.portfolioControls||{}, autoApproval:s.autoApproval||{}, operatorCeiling:s.operatorCeiling||"research" }); }
+function validateFrozenUniverse(u, version) {
+  if (!u || u.version !== version || u.immutable !== true) return { ok:false, reason:"version is not immutable" };
+  const actual=universeHash(u); return {ok:actual===u.contentHash,actual,expected:u.contentHash||null};
+}
 
 /* ── 1 + 2. universe freeze and CIK resolution ─────────────────────────── */
 async function resolveCiksAndFreeze() {
@@ -63,20 +85,25 @@ async function resolveCiksAndFreeze() {
     if (r.json) {
       map = {};
       for (const v of Object.values(r.json)) {
-        if (v && v.ticker) map[String(v.ticker).toUpperCase()] = String(v.cik_str);
+        if (v && v.ticker) map[String(v.ticker).toUpperCase()] = {
+          cik: String(v.cik_str), company: String(v.title || "").trim() || null,
+        };
       }
     }
   } catch (e) {
     report.error = `SEC ticker map unavailable: ${String(e.code || e.message).slice(0, 120)}`;
   }
+  if (!map) throw new Error(report.error || "SEC ticker map unavailable; refusing degraded universe freeze");
 
   const apply = (row) => {
     if (!map) return row;
-    const got = map[row.symbol];
+    const resolved = map[row.symbol];
+    const got = resolved && resolved.cik;
     if (!got) { report.missing.push(row.symbol); return row; }
     if (row.cik && row.cik !== got) report.mismatched.push({ symbol: row.symbol, had: row.cik, sec: got });
     report.resolved += 1;
-    return { ...row, cik: got, cikSource: "sec_company_tickers" };
+    return { ...row, cik: got, company: resolved.company || row.company || null,
+      companySource: "sec_company_tickers", cikSource: "sec_company_tickers" };
   };
 
   /* Drop anything SEC cannot match. A delisted or renamed ticker otherwise
@@ -85,6 +112,9 @@ async function resolveCiksAndFreeze() {
      Self-correction beats me maintaining a list by hand. */
   const resolvedTrade = (base.tradeTier || []).map(apply).filter((r) => !!r.cik);
   const dropped = (base.tradeTier || []).length - resolvedTrade.length;
+  if (dropped > 0 || report.missing.length > 0) {
+    throw new Error(`SEC entity resolution incomplete: ${report.missing.length} unresolved ticker(s): ${report.missing.slice(0, 20).join(", ")}`);
+  }
 
   const frozen = {
     ...base,
@@ -93,17 +123,29 @@ async function resolveCiksAndFreeze() {
     unresolvedDropped: report.missing,
     droppedCount: dropped,
     cikResolvedAt: new Date().toISOString(),
+    immutable: true,
   };
+  frozen.contentHash = universeHash(frozen);
   report.dropped = dropped;
 
-  await A.col(A.COL.universe).doc(base.version).set({
-    ...frozen,
-    frozenAt: A.FV.serverTimestamp(),
-    frozenBy: "bootstrap",
-    ...A.envelope({ created_by: "bootstrap.resolveCiksAndFreeze" }),
-  }, { merge: true });
+  const ref=A.col(A.COL.universe).doc(base.version);
+  await A.runTransaction(async(tx)=>{const cur=await tx.get(ref);
+    if(cur.exists){const check=validateFrozenUniverse(cur.data(),base.version);
+      if(!check.ok||cur.data().contentHash!==frozen.contentHash)throw new Error(`universe ${base.version} already frozen with different content`);
+      return;}
+    tx.set(ref,{...frozen,frozenAt:A.FV.serverTimestamp(),frozenBy:"bootstrap",
+      ...A.envelope({created_by:"bootstrap.resolveCiksAndFreeze"})});});
 
   return { frozen, report };
+}
+
+async function freezeStrategy() {
+  const s=require("./_investorStrategy.js"),contentHash=strategyHash(s),ref=A.col(A.COL.strategies).doc(s.version);
+  await A.runTransaction(async(tx)=>{const cur=await tx.get(ref);
+    if(cur.exists){if(cur.data().contentHash!==contentHash)throw new Error(`strategy ${s.version} immutable content mismatch`);return;}
+    tx.set(ref,{...s,immutable:true,contentHash,frozenAt:A.FV.serverTimestamp(),
+      ...A.envelope({created_by:"bootstrap.freezeStrategy"})});});
+  return{version:s.version,contentHash};
 }
 
 /* ── 4. earnings windows from EDGAR filing cadence ─────────────────────── */
@@ -116,10 +158,61 @@ function median(xs) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-/**
- * Project the next earnings date from the company's own 10-Q / 10-K cadence.
- * @returns {{dates:string[], estimated:true, cadenceDays:number, basis:string}|null}
- */
+/** Prefer issuer 8-K Item 2.02 result-announcement cadence. Periodic filing
+ * dates are retained only as a broad, explicitly wider fallback. */
+function projectEarningsWindow(rec, nowMs = Date.now()) {
+  if (!rec) return null;
+  const forms = rec.form || [], dates = rec.filingDate || [], items = rec.items || [];
+  const periodic = [], resultAnnouncements = [];
+  for (let i = 0; i < forms.length; i++) {
+    if (forms[i] === "8-K" && /(?:^|[,\s])2\.02(?:[,\s]|$)/.test(String(items[i] || ""))) {
+      const t = Date.parse(dates[i]);
+      if (isFinite(t)) resultAnnouncements.push(t);
+    }
+    if (forms[i] === "10-Q" || forms[i] === "10-K") {
+      const t = Date.parse(dates[i]);
+      if (isFinite(t)) periodic.push(t);
+    }
+  }
+  const useAnnouncements = resultAnnouncements.length >= 4;
+  const anchors = useAnnouncements ? resultAnnouncements : periodic;
+  if (anchors.length < 4) return null;
+
+  anchors.sort((a, b) => b - a);               // newest first
+  const gaps = [];
+  for (let i = 0; i + 1 < Math.min(anchors.length, 9); i++) {
+    const g = (anchors[i] - anchors[i + 1]) / MS_DAY;
+    if (g > 40 && g < 140) gaps.push(g);         // ignore amendments and gaps
+  }
+  const cadence = median(gaps);
+  if (!cadence) return null;
+
+  // Project forward from the most recent periodic filing until we are in the
+  // future, then keep the next two so a blackout is never missed at a boundary.
+  const out = [];
+  let t = anchors[0];
+  let guard = 0;
+  while (out.length < 3 && guard < 12) {
+    t += cadence * MS_DAY;
+    if (t > nowMs - 7 * MS_DAY) out.push(new Date(t).toISOString().slice(0, 10));
+    guard += 1;
+  }
+  if (!out.length) return null;
+
+  return {
+    dates: out,
+    estimated: true,
+    cadenceDays: Math.round(cadence),
+    basisKind: useAnnouncements ? "issuer_8k_item_2_02" : "periodic_filing_fallback",
+    uncertaintyDays: useAnnouncements ? 7 : 14,
+    basis: useAnnouncements
+      ? `projected from ${gaps.length + 1} issuer 8-K Item 2.02 results announcements, median cadence ${Math.round(cadence)}d`
+      : `broad fallback projected from ${gaps.length + 1} 10-Q/10-K filing dates, median cadence ${Math.round(cadence)}d`,
+    lastAnchorDate: new Date(anchors[0]).toISOString().slice(0, 10),
+    derivedAt: new Date(nowMs).toISOString(),
+  };
+}
+
 async function deriveEarningsWindow(cik) {
   if (!cik) return null;
   const padded = String(cik).padStart(10, "0");
@@ -130,47 +223,7 @@ async function deriveEarningsWindow(cik) {
     });
   } catch { return null; }
   if (!r.json || !r.json.filings || !r.json.filings.recent) return null;
-
-  const rec = r.json.filings.recent;
-  const forms = rec.form || [], dates = rec.filingDate || [];
-  const periodic = [];
-  for (let i = 0; i < forms.length; i++) {
-    if (forms[i] === "10-Q" || forms[i] === "10-K") {
-      const t = Date.parse(dates[i]);
-      if (isFinite(t)) periodic.push(t);
-    }
-  }
-  if (periodic.length < 4) return null;
-
-  periodic.sort((a, b) => b - a);               // newest first
-  const gaps = [];
-  for (let i = 0; i + 1 < Math.min(periodic.length, 9); i++) {
-    const g = (periodic[i] - periodic[i + 1]) / MS_DAY;
-    if (g > 40 && g < 140) gaps.push(g);         // ignore amendments and gaps
-  }
-  const cadence = median(gaps);
-  if (!cadence) return null;
-
-  // Project forward from the most recent periodic filing until we are in the
-  // future, then keep the next two so a blackout is never missed at a boundary.
-  const out = [];
-  let t = periodic[0];
-  let guard = 0;
-  while (out.length < 3 && guard < 12) {
-    t += cadence * MS_DAY;
-    if (t > Date.now() - 7 * MS_DAY) out.push(new Date(t).toISOString().slice(0, 10));
-    guard += 1;
-  }
-  if (!out.length) return null;
-
-  return {
-    dates: out,
-    estimated: true,
-    cadenceDays: Math.round(cadence),
-    basis: `projected from ${gaps.length + 1} recent 10-Q/10-K filings, median cadence ${Math.round(cadence)}d`,
-    lastPeriodicFiling: new Date(periodic[0]).toISOString().slice(0, 10),
-    derivedAt: new Date().toISOString(),
-  };
+  return projectEarningsWindow(r.json.filings.recent);
 }
 
 async function populateEarnings(universe) {
@@ -185,7 +238,7 @@ async function populateEarnings(universe) {
   }
   await A.col(A.COL.control).doc("earnings").set({
     windows: out, derived, failed,
-    method: "EDGAR 10-Q/10-K cadence projection",
+    method: "issuer 8-K Item 2.02 cadence; broad 10-Q/10-K fallback",
     estimated: true,
     updatedAt: A.FV.serverTimestamp(),
   }, { merge: true });
@@ -213,7 +266,8 @@ function parseCboeCsv(text) {
 }
 
 async function refreshRegime() {
-  const out = { asOf: new Date().toISOString(), setBy: "bootstrap" };
+  const out = { attemptedAt: new Date().toISOString(), setBy: "bootstrap",
+    vixHealthy:false, corHealthy:false };
 
   // VIX — confirmed public CSV, no credential.
   try {
@@ -229,6 +283,7 @@ async function refreshRegime() {
       out.vixMedian = Number(median(last).toFixed(2));
       out.vixAsOf = new Date(rows[rows.length - 1].t).toISOString().slice(0, 10);
       out.vixSource = "cboe VIX_History.csv";
+      out.vixFetchedAt = new Date().toISOString(); out.vixHealthy = true;
     }
   } catch (e) {
     out.vixError = String(e.code || e.message).slice(0, 120);
@@ -248,12 +303,14 @@ async function refreshRegime() {
         out.cor3m = Number(rows[rows.length - 1].close.toFixed(2));
         out.corSource = `cboe ${sym}_History.csv`;
         out.corAsOf = new Date(rows[rows.length - 1].t).toISOString().slice(0, 10);
+        out.corFetchedAt = new Date().toISOString(); out.corHealthy = true;
       }
     } catch (e) {
       out.corError = `${sym}: ${String(e.code || e.message).slice(0, 80)}`;
     }
   }
 
+  if (out.vixHealthy || out.corHealthy) out.asOf = new Date().toISOString();
   await A.col(A.COL.control).doc("regime").set(out, { merge: true });
   return out;
 }
@@ -264,9 +321,9 @@ async function refreshRegime() {
  * Regime and earnings refresh on their own slower clocks.
  */
 /* ── 6. DAILY HISTORY BACKFILL ─────────────────────────────────────────────
- * Pull ~13 months of daily bars for every roster name so the system has a
- * six-month memory from its very first cycle rather than earning one slowly
- * over months of running.
+ * Pull up to five trading years of daily bars for every roster name and
+ * required economic proxy so the temporal layer has repeated annual cycles
+ * and the original six-month context from its first healthy cycle.
  *
  * Resumable by design. A Netlify background function gets 15 minutes; 342
  * symbols of daily bars fits comfortably inside that, but a provider hiccup
@@ -274,19 +331,52 @@ async function refreshRegime() {
  * got, and the next cycle picks up from there. Symbols already holding enough
  * days are skipped, which is what makes the daily top-up cheap.
  */
+function expectedHistorySymbols(universe) {
+  const tier = (universe && universe.tradeTier) || [];
+  return [...new Set([...tier.map((t) => t.symbol).filter(Boolean),
+    ...Object.values(T.DRIVER_BY_SECTOR), ...T.DRIVER_KEYWORDS.map((x) => x.symbol)])];
+}
+
+function historyCursorNeedsReconcile(expectedSymbols, history = {}) {
+  const expected = expectedSymbols || [];
+  const completed = Array.isArray(history.completed) ? history.completed : [];
+  const targets = Array.isArray(history.targetSymbols) ? history.targetSymbols : [];
+  const completedSet = new Set(completed);
+  return completed.length !== expected.length
+    || expected.some((symbol) => !completedSet.has(symbol))
+    || targets.length !== expected.length
+    || targets.some((symbol, index) => symbol !== expected[index]);
+}
+
 async function backfillDailyHistory(universe, { budgetMs = 240000, maxSymbols = 400 } = {}) {
   const started = Date.now();
-  const tier = (universe && universe.tradeTier) || [];
-  const symbols = tier.map((t) => t.symbol).filter(Boolean);
+  const symbols = expectedHistorySymbols(universe);
 
   const curRef = A.col(A.COL.control).doc("history");
   const curSnap = await curRef.get();
   const cur = curSnap.exists ? curSnap.data() : {};
-  const doneSet = new Set(cur.completed || []);
+  /* v8.1 binds volume to its historical feed. A completion cursor from the
+     older schema cannot prove that identity, so one resumable full refresh is
+     required instead of relabelling old volume during a seven-day top-up. */
+  const doneSet = new Set(cur.dailyProvenanceVersion === DAILY_PROVENANCE_VERSION
+    ? (cur.completed || []) : []);
 
   const todo = symbols.filter((s) => !doneSet.has(s)).slice(0, maxSymbols);
   if (!todo.length) {
-    return { complete: true, symbols: symbols.length, fetched: 0, note: "daily history already present for every roster name" };
+    const completed = symbols.filter((symbol) => doneSet.has(symbol));
+    const priorTargets = Array.isArray(cur.targetSymbols) ? cur.targetSymbols : [];
+    const cursorChanged = completed.length !== doneSet.size
+      || priorTargets.length !== symbols.length
+      || priorTargets.some((symbol, i) => symbol !== symbols[i]);
+    if (cursorChanged) await curRef.set({
+      completed, completedCount: completed.length, rosterCount: symbols.length,
+      targetSymbols: symbols, dailyProvenanceVersion: DAILY_PROVENANCE_VERSION,
+      lastRunAt: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorBootstrap" }),
+    }, { merge: true });
+    return { complete: true, symbols: symbols.length, done: completed.length,
+      fetched: 0, reconciled: cursorChanged,
+      note: "daily history already present for every current roster/proxy target" };
   }
 
   let fetched = 0, failed = 0, days = 0;
@@ -294,31 +384,45 @@ async function backfillDailyHistory(universe, { budgetMs = 240000, maxSymbols = 
   for (let i = 0; i < todo.length; i += chunk) {
     if (Date.now() - started > budgetMs) break;      // leave room for the rest of the run
     const part = todo.slice(i, i + chunk);
-    let got = {};
-    try { got = await H.fetchDaily(part, { days: H.KEEP_DAYS }); }
+    let got = { barsBySymbol: {}, provenanceBySymbol: {} };
+    try { got = await H.fetchDailyWithMeta(part, { days: H.KEEP_DAYS }); }
     catch (e) { failed += part.length; continue; }
 
     for (const sym of part) {
-      const bars = got[sym] || [];
+      const bars = got.barsBySymbol[sym] || [];
       if (!bars.length) { failed += 1; continue; }
       try {
-        const n = await H.writeDaily(sym, bars, { source: "bootstrap.backfill" });
-        fetched += 1; days += n; doneSet.add(sym);
+        const provenance = got.provenanceBySymbol[sym] || {};
+        const n = await H.writeDaily(sym, bars, {
+          source: "bootstrap.backfill",
+          provider: provenance.provider || null,
+          feed: provenance.feed || null,
+          adjustment: provenance.adjustment || null,
+          sourceSha256: provenance.sourceSha256 || null,
+          feedVolumeShare: provenance.feedVolumeShare ?? null,
+          marketFetchedAt: provenance.fetchedAt || null,
+        });
+        fetched += 1; days += n;
+        if (n >= T.MIN_SEASONAL_DAYS) doneSet.add(sym);
+        else failed += 1;
       } catch (e) { failed += 1; }
     }
   }
 
+  const completed = symbols.filter((symbol) => doneSet.has(symbol));
   await curRef.set({
-    completed: [...doneSet],
-    completedCount: doneSet.size,
+    completed,
+    completedCount: completed.length,
     rosterCount: symbols.length,
+    targetSymbols: symbols,
+    dailyProvenanceVersion: DAILY_PROVENANCE_VERSION,
     lastRunAt: A.FV.serverTimestamp(),
     ...A.envelope({ created_by: "investorBootstrap" }),
   }, { merge: true });
 
   return {
-    complete: doneSet.size >= symbols.length,
-    symbols: symbols.length, done: doneSet.size,
+    complete: completed.length === symbols.length,
+    symbols: symbols.length, done: completed.length,
     fetched, failed, avgDays: fetched ? Math.round(days / fetched) : 0,
   };
 }
@@ -327,18 +431,29 @@ async function backfillDailyHistory(universe, { budgetMs = 240000, maxSymbols = 
    a 5-day pull per chunk, merged by date, so re-running is harmless. */
 async function topUpDailyHistory(universe, { budgetMs = 90000 } = {}) {
   const started = Date.now();
-  const tier = (universe && universe.tradeTier) || [];
-  const symbols = tier.map((t) => t.symbol).filter(Boolean);
+  const symbols = expectedHistorySymbols(universe);
   let updated = 0;
   const chunk = 90;
   for (let i = 0; i < symbols.length; i += chunk) {
     if (Date.now() - started > budgetMs) break;
     const part = symbols.slice(i, i + chunk);
     try {
-      const got = await H.fetchDaily(part, { days: 7 });
+      const got = await H.fetchDailyWithMeta(part, { days: 7 });
       for (const sym of part) {
-        const bars = got[sym] || [];
-        if (bars.length) { await H.writeDaily(sym, bars, { source: "cycle.topup" }); updated += 1; }
+        const bars = got.barsBySymbol[sym] || [];
+        if (bars.length) {
+          const provenance = got.provenanceBySymbol[sym] || {};
+          await H.writeDaily(sym, bars, {
+            source: "cycle.topup",
+            provider: provenance.provider || null,
+            feed: provenance.feed || null,
+            adjustment: provenance.adjustment || null,
+            sourceSha256: provenance.sourceSha256 || null,
+            feedVolumeShare: provenance.feedVolumeShare ?? null,
+            marketFetchedAt: provenance.fetchedAt || null,
+          });
+          updated += 1;
+        }
       }
     } catch (e) { /* a failed top-up is retried next session */ }
   }
@@ -405,6 +520,20 @@ async function ensureBootstrapped({ force = false } = {}) {
   const c = snap.exists ? snap.data() : {};
   const done = c.bootstrapVersion === BOOTSTRAP_VERSION;
 
+  /* Attest pure invariants on the exact running commit. A stored `true` from
+     an older deploy is not evidence about this one. */
+  const commit = process.env.COMMIT_REF || process.env.DEPLOY_ID || "local";
+  let fixtures;
+  try { fixtures = require("./_investorSelftest").runFixtures(); }
+  catch (e) { fixtures = { pass: false, fixtureHash: null, error: String(e.message).slice(0, 200) }; }
+  await ref.set({ fixturesPass: fixtures.pass === true, fixturesCommit: commit,
+    fixtureHash: fixtures.fixtureHash || null, fixturesCheckedAt: A.FV.serverTimestamp(),
+    fixtureFailures: (fixtures.cases || []).filter((x) => !x.pass).slice(0, 10) }, { merge: true });
+  if (!fixtures.pass) {
+    await ref.set({ dryRun: true, mode: "research",
+      safetyClosedReason: "runtime fixture attestation failed" }, { merge: true });
+  }
+
   const steps = [];
   let universe = null;
 
@@ -416,13 +545,17 @@ async function ensureBootstrapped({ force = false } = {}) {
       steps.push({ step: "universe", ok: true, ...report });
     } catch (e) { steps.push({ step: "universe", ok: false, error: String(e.message).slice(0, 160) }); }
 
+    let frozenStrategy=null;
+    try { frozenStrategy=await freezeStrategy(); steps.push({step:"strategy",ok:true,...frozenStrategy}); }
+    catch(e){steps.push({step:"strategy",ok:false,error:String(e.message).slice(0,160)});}
+
     // 3
     try {
       const accountId = c.accountId || "paper-1";
       const r = await L.openAccount({
         accountId,
         startingNavUsd: Number(c.startingNavUsd) || 100000,
-        strategyVersion: c.strategyVersion || "v1",
+        strategyVersion: S_FALLBACK.version,
       });
       steps.push({ step: "account", ok: true, accountId, existing: !!r.existing });
     } catch (e) { steps.push({ step: "account", ok: false, error: String(e.message).slice(0, 160) }); }
@@ -463,8 +596,12 @@ async function ensureBootstrapped({ force = false } = {}) {
        truncated universe was frozen, and the only recovery was editing
        BOOTSTRAP_VERSION and redeploying. A failed critical step now leaves the
        version unstamped so the next cycle retries. */
+    if (!fixtures.pass) steps.push({ step: "fixtures", ok: false, error: fixtures.error || "runtime invariant failed" });
+    else steps.push({ step: "fixtures", ok: true, passed: fixtures.passed, total: fixtures.total,
+      fixtureHash: fixtures.fixtureHash });
     const criticalFailed = steps.filter((x) =>
-      !x.ok && ["universe", "account"].includes(x.step));
+      !x.ok && ["universe", "strategy", "account"].includes(x.step));
+    if (!fixtures.pass) criticalFailed.push({ step: "fixtures", ok: false });
     if (criticalFailed.length) {
       await ref.set({
         bootstrapAttemptedAt: A.FV.serverTimestamp(),
@@ -482,10 +619,16 @@ async function ensureBootstrapped({ force = false } = {}) {
       bootstrapReport: steps,
       accountId: c.accountId || "paper-1",
       universeVersion: (universe && universe.version) || c.universeVersion || U_FALLBACK.version || "v1",
-      strategyVersion: c.strategyVersion || "v1",
+      strategyVersion: S_FALLBACK.version,
+      universeHash: universe && universe.contentHash,
+      strategyHash: frozenStrategy && frozenStrategy.contentHash,
+      variantsHash: V.variantsHash(),
+      dryRun: true,
+      mode: "research",
     }, { merge: true });
 
-    return { bootstrapped: true, steps };
+    return { bootstrapped: true, steps, fixtures: { pass: fixtures.pass,
+      fixtureHash: fixtures.fixtureHash, commit } };
   }
 
   /* Already bootstrapped — keep the slow-moving inputs fresh. */
@@ -518,9 +661,9 @@ async function ensureBootstrapped({ force = false } = {}) {
 
     const hSnap = await A.col(A.COL.control).doc("history").get();
     const h = hSnap.exists ? hSnap.data() : {};
-    const rosterN = ((u.tradeTier || []).length) || 0;
-
-    if ((h.completedCount || 0) < rosterN) {
+    const expected = expectedHistorySymbols(u);
+    if (h.dailyProvenanceVersion !== DAILY_PROVENANCE_VERSION
+        || historyCursorNeedsReconcile(expected, h)) {
       const r = await backfillDailyHistory(u, { budgetMs: 120000 });
       steps.push({ step: "dailyHistory.resume", ok: true, ...r });
     } else {
@@ -546,14 +689,25 @@ async function ensureBootstrapped({ force = false } = {}) {
     }
   } catch (e) { steps.push({ step: "sharesOutstanding", ok: false, error: String(e.message).slice(0, 120) }); }
 
-  return { bootstrapped: false, steps };
+  const [uFinal, sFinal] = await Promise.all([
+    A.col(A.COL.universe).doc(c.universeVersion || U_FALLBACK.version).get(),
+    A.col(A.COL.strategies).doc(c.strategyVersion || S_FALLBACK.version).get(),
+  ]);
+  if (!uFinal.exists || !sFinal.exists) throw new Error("frozen policy identity missing after bootstrap");
+  const uv = validateFrozenUniverse(uFinal.data(), c.universeVersion || U_FALLBACK.version);
+  const sh = strategyHash(sFinal.data());
+  if (!uv.ok || sh !== sFinal.data().contentHash) throw new Error("frozen policy content hash mismatch");
+  await ref.set({ universeHash: uv.actual, strategyHash: sh, variantsHash: V.variantsHash() }, { merge: true });
+  return { bootstrapped: true, already: true, steps,
+    fixtures: { pass: fixtures.pass, fixtureHash: fixtures.fixtureHash, commit } };
 }
 
 module.exports = {
-  backfillDailyHistory, topUpDailyHistory,
+  expectedHistorySymbols, historyCursorNeedsReconcile, backfillDailyHistory, topUpDailyHistory,
   backfillSharesOutstanding, readShares,
-  BOOTSTRAP_VERSION,
-  ensureBootstrapped, resolveCiksAndFreeze,
-  deriveEarningsWindow, populateEarnings, readEarnings,
+  BOOTSTRAP_VERSION, DAILY_PROVENANCE_VERSION,
+  ensureBootstrapped, resolveCiksAndFreeze, freezeStrategy,
+  universeHash, strategyHash, validateFrozenUniverse,
+  projectEarningsWindow, deriveEarningsWindow, populateEarnings, readEarnings,
   refreshRegime, parseCboeCsv, median,
 };

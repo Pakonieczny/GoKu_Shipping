@@ -1,0 +1,501 @@
+/* Investor_AI — deterministic runtime invariants for deployment attestation. */
+"use strict";
+
+const crypto = require("crypto");
+
+function canonical(v) {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === "object") return Object.fromEntries(Object.keys(v).sort()
+    .map((k) => [k, canonical(v[k])]));
+  return v;
+}
+function digest(v) { return crypto.createHash("sha256").update(JSON.stringify(canonical(v))).digest("hex"); }
+/* The attestation must cover WHAT was asserted, not only that something
+ * passed. v8.4 shipped a fixture hash byte-identical to v8.3's: the case
+ * names and their pass/null details had not changed, so the digest could not
+ * change either, and a reviewer reading "22/22, hash 04ff5e1b" had no way to
+ * tell that none of the release's new invariants were in the set. Hashing the
+ * check's own source means editing an assertion — or replacing a real check
+ * with `return true` — moves the hash. */
+function fixture(name, fn) {
+  const check = digest(String(fn));
+  try {
+    const detail = fn();
+    return { name, check, pass: detail !== false, detail: detail === true ? null : detail };
+  } catch (e) {
+    return { name, check, pass: false, error: String(e.message).slice(0, 200) };
+  }
+}
+
+function runFixtures() {
+  const M = require("./_investorMarket");
+  const S = require("./_investorSignal");
+  const L = require("./_investorLedger");
+  const R = require("./_investorRisk");
+  const V = require("./_investorVariants");
+  const SH = require("./_investorShadow");
+  const C = require("./_investorCalibration");
+  const U = require("./_investorUniverse");
+  const B = require("./_investorBootstrap");
+  const I = require("./_investorIntelligence");
+  const T = require("./_investorTemporal");
+  const AL = require("./_investorAllocator");
+  const RS = require("./_investorResearchStats");
+  const strategy = require("./_investorStrategy");
+  const cases = [];
+
+  cases.push(fixture("ledger_integer_balance", () =>
+    L.assertBalanced([{ account: "a", amountCents: 123 }, { account: "b", amountCents: -123 }])));
+  cases.push(fixture("execution_clock_strictly_post_decision", () => {
+    const d = Date.parse("2026-08-28T14:00:00Z");
+    return L.executionClockCheck({ decisionAtMs: d, eligibleAfterMs: d + 60000,
+      barOpenAt: "2026-08-28T14:01:00Z" }).pass;
+  }));
+  cases.push(fixture("session_partition_and_dedupe", () => {
+    const b = { t: "2026-08-28T14:00:00Z", o: 10, h: 11, l: 9, c: 10.5, v: 100 };
+    const p = M.partitionBarsBySession([b, { ...b, c: 10.6 }]);
+    return Object.keys(p).length === 1 && Object.values(p)[0].length === 1;
+  }));
+  cases.push(fixture("holiday_calendar_rules", () => {
+    const july4 = M.sessionState(new Date("2026-07-03T15:00:00Z"));
+    const monday = M.sessionState(new Date("2026-07-06T15:00:00Z"));
+    return july4.tradingDay === false && monday.tradingDay === true;
+  }));
+  cases.push(fixture("cross_year_new_year_observation", () =>
+    M.sessionState(new Date("2027-12-31T15:00:00Z")).isHoliday === true));
+  cases.push(fixture("nonconsolidated_feed_cannot_trade", () => {
+    const now = Date.parse("2026-08-28T15:00:00Z");
+    const q = M.gradeSeries([{ t: "2026-08-28T14:59:00Z", o: 1, h: 1, l: 1, c: 1, v: 1 }],
+      { provider: "alpaca", feed: "iex", sourceSha256: "a".repeat(64), nowMs: now });
+    return q.grade === "C" && q.tradable === false;
+  }));
+  cases.push(fixture("volatility_never_increases_risk", () => {
+    const unknown = S.volatilityScaler(NaN, strategy.parameters).scaler;
+    const low = S.volatilityScaler(0.8, strategy.parameters).scaler;
+    const high = S.volatilityScaler(2, strategy.parameters).scaler;
+    return unknown === strategy.parameters.volScalerFloor && low <= 1 && high <= 1;
+  }));
+  cases.push(fixture("tail_sizing_is_risk_limited", () => {
+    const s = R.positionSizeUsd({ navUsd: 100000, atrPct: 2, expectedShortfall5dPct: 12,
+      overnightGapEsPct: 4, signalScaler: 1, cfg: strategy });
+    return s.riskDistancePct === 12 && s.maxPlannedLossUsd <= 250.01;
+  }));
+  cases.push(fixture("variants_do_not_inherit_incumbent", () => {
+    const c = V.configFor("C", { entryRank: 0.99, minAbsZ: 99 });
+    return c.entryRank === 0.10 && c.minAbsZ === 2.0 && c.maxHoldDays === 6;
+  }));
+  cases.push(fixture("discount_ess_uses_squared_weights", () => {
+    const w = Array.from({ length: 2000 }, (_, i) => Math.pow(SH.DISCOUNT_GAMMA, 1999 - i));
+    const n = SH.discountEffectiveN(w);
+    return n > 164 && n < 168;
+  }));
+  cases.push(fixture("chronological_holdout_has_embargo", () => {
+    const rows = Array.from({ length: 700 }, (_, i) => ({
+      date: new Date(Date.UTC(2020, 0, 1 + i)).toISOString().slice(0, 10), mean: 1,
+    }));
+    const s = C.chronologicalSplit(rows);
+    const gap1 = s.all.findIndex((r) => r.date === s.calibration[0].date)
+      - s.all.findIndex((r) => r.date === s.train.at(-1).date) - 1;
+    const gap2 = s.all.findIndex((r) => r.date === s.holdout[0].date)
+      - s.all.findIndex((r) => r.date === s.calibration.at(-1).date) - 1;
+    return s.pass && gap1 === 15 && gap2 === 15;
+  }));
+  cases.push(fixture("frozen_identity_hashes_are_full_sha256", () =>
+    /^[a-f0-9]{64}$/.test(B.universeHash(U))
+      && /^[a-f0-9]{64}$/.test(B.strategyHash(strategy))
+      && /^[a-f0-9]{64}$/.test(V.variantsHash())));
+  cases.push(fixture("company_intelligence_missing_coverage_fails_closed", () => {
+    const p = I.decisionPolicy({ coverage: { monitored: true, complete: false,
+      missingRoles: ["company_primary"], asOfMs: Date.now() }, events: [] });
+    return p.entryAllowed === false && p.sizeMultiplier === 0;
+  }));
+  cases.push(fixture("discovery_lead_is_not_independent_confirmation", () => {
+    const d = { documentId: "lead", title: "material safety investigation announced",
+      canonicalText: "A material safety investigation was announced.",
+      canonicalContentSha256: "d".repeat(64), decisionKnownAtMs: Date.now() - 1000,
+      sourceId: "gdelt.discovery", sourceClass: "discovery_index", sourceTier: "C",
+      discoveryOnly: true, publisherGroup: "gdelt" };
+    const raw = I.extractEvents([d])[0];
+    const event = I.calibrateEvent(raw, [d]);
+    return event.corroboration.independentGroups === 0 && event.evidenceEligible === false;
+  }));
+  cases.push(fixture("positive_intelligence_never_levers_base_risk", () => {
+    const p = I.decisionPolicy({ coverage: { monitored: true, complete: true,
+      asOfMs: Date.now() }, events: [{ direction: 1, evidenceEligible: true,
+        opportunityScore: 100 }] });
+    return p.entryAllowed === true && p.sizeMultiplier === 1
+      && p.positiveRiskIncreaseAllowed === false;
+  }));
+  cases.push(fixture("temporal_context_missing_required_input_fails_closed", () => {
+    const now = Date.now();
+    const p = T.temporalPolicy({ asOfMs: now, coverage: { requiredMissing: ["earnings_window"] },
+      schedule: { nearest: null }, hazards: { active: [], riskScore: 0 },
+      seasonality: { status: "warming", riskScore: 0 }, drivers: { drivers: [] } }, { asOfMs: now });
+    return p.entryAllowed === false && p.sizeMultiplier === 0 && p.criticalExit === false;
+  }));
+  cases.push(fixture("temporal_positive_never_increases_risk", () => {
+    const now = Date.now();
+    const p = T.temporalPolicy({ asOfMs: now, coverage: { requiredMissing: [] },
+      schedule: { nearest: null }, hazards: { active: [], riskScore: 0 },
+      seasonality: { status: "ready", shrunkReturnPct: 12, riskScore: 0 },
+      drivers: { drivers: [] } }, { asOfMs: now });
+    return p.entryAllowed === true && p.sizeMultiplier === 1 && p.positiveRiskIncreaseAllowed === false;
+  }));
+  cases.push(fixture("dynamic_correlation_unknown_fails_closed", () => {
+    const book = { count: 1, grossUsd: 3000, bySectorPct: {}, byClusterPct: {},
+      rows: [{ symbol: "HELD", valueUsd: 3000, cluster: "other" }] };
+    const add = R.checkAdd({ symbol: "NEW", sector: "other", proposedUsd: 1000,
+      book, navUsd: 100000, cashUsd: 97000, cfg: strategy, dynamicCorrelations: {} });
+    return add.allow === false && add.blockedBy.includes("dynamic_correlation_unknown");
+  }));
+  cases.push(fixture("temporal_structured_fields_are_quote_grounded", () => {
+    const now = Date.parse("2026-08-15T12:00:00Z");
+    const text = "Our primary factory in Texas is exposed to hurricane disruption in September 2026.";
+    const docs = [{ documentId: "d", canonicalText: text, decisionKnownAtMs: now - 1,
+      sourceTier: "A", sourceClass: "company_primary" }];
+    const rows = T.normalizeExposures([{ exposureType: "weather", name: "Florida August risk",
+      directionWhenDriverRises: "negative", states: ["FL", "TX"], months: [8, 9],
+      scheduledDate: "2026-08-30", support: { claim: "Texas hurricane disruption",
+        quote: text, documentRef: "d" } }], docs, now);
+    return rows.length === 1 && rows[0].states.join() === "TX" && rows[0].months.join() === "9"
+      && rows[0].scheduledDate === null;
+  }));
+  cases.push(fixture("future_temporal_document_is_rejected", () => {
+    const now = Date.parse("2026-08-15T12:00:00Z");
+    const d = { documentId: "future", canonicalText: "Quarterly results on August 16, 2026.",
+      decisionKnownAtMs: now + 1, sourceTier: "A", sourceClass: "company_primary" };
+    return T.extractScheduledEvents([d], now).length === 0;
+  }));
+  cases.push(fixture("independent_temporal_risks_combine_boundedly", () => {
+    const x = T.combineAdverseRisks([{ group: "schedule", score: 34 },
+      { group: "drivers", score: 34 }, { group: "hazards", score: 34 },
+      { group: "hazards", score: 33 }]);
+    return x.components.length === 3 && x.riskScore > 50 && x.riskScore < 60;
+  }));
+  cases.push(fixture("future_context_clock_fails_closed", () => {
+    const now = Date.now();
+    const p = T.temporalPolicy({ asOfMs: now + 3600e3, coverage: { requiredMissing: [] },
+      schedule: { events: [] }, hazards: { active: [], riskScore: 0 },
+      recurring: { active: [], riskScore: 0 }, seasonality: { riskScore: 0 },
+      drivers: { drivers: [] } }, { asOfMs: now });
+    return p.entryAllowed === false && p.fresh === false;
+  }));
+
+  /* ── v8.5 invariants ──────────────────────────────────────────────────
+     Every fix in this release is attested here, in the deployed function.
+     A fixture set that does not change when the invariants change makes the
+     hash a version label rather than evidence: v8.4 shipped a set identical
+     to v8.3's, so the build could not prove it was the build that was
+     tested. Each case below fails if its fix is reverted. */
+
+  const VT = require("./_investorVisibleText");
+
+  cases.push(fixture("visible_text_unclosed_hidden_keeps_following_disclosure", () => {
+    const out = VT.scan("<p>Q3</p><div hidden><span>nav</span>"
+      + "<p>substantial doubt about going concern</p>");
+    return /going concern/.test(out.text) && !/nav/.test(out.text)
+      && out.unbalancedHidden === true;
+  }));
+  cases.push(fixture("visible_text_quoted_markup_is_not_markup", () =>
+    /FAA/.test(VT.visibleText('<p>use of &lt;span class="hidden"&gt; is barred. '
+      + "FAA grounded the fleet.</p>"))));
+  cases.push(fixture("visible_text_same_tag_nesting_releases_nothing", () =>
+    !/LEAK/.test(VT.visibleText("<div hidden>a<div>b</div>LEAK</div><p>kept</p>"))
+    && /kept/.test(VT.visibleText("<div hidden>a<div>b</div>LEAK</div><p>kept</p>"))));
+  cases.push(fixture("visible_text_style_hiding_detected", () =>
+    !/P(?!\w)/.test(VT.visibleText('<div style="opacity:0">P</div><p>kept</p>'))
+    && !/P(?!\w)/.test(VT.visibleText('<div style="font-size:0">P</div><p>kept</p>'))
+    && VT.visibleText('<div style="opacity:0.9">P</div>') === "P"));
+  cases.push(fixture("visible_text_attribute_gt_cannot_end_tag", () =>
+    /* The hiding marker sits AFTER a ">" inside a quoted attribute value. A
+       scanner that ends the tag at the first ">" never sees it. */
+    !/PAYLOAD/.test(VT.visibleText('<div title="a > b" hidden>PAYLOAD</div><p>k</p>'))
+    && !/PAYLOAD/.test(VT.visibleText('<div data-x="]>" style="display:none">PAYLOAD</div><p>k</p>'))));
+
+  cases.push(fixture("retained_seasonality_is_context_only", () => {
+    const H = require("./_investorHistory");
+    return T.MIN_SEASONAL_DECISION_SAMPLES === 8
+      && T.maxSeasonalSamples(H.KEEP_DAYS) < T.MIN_SEASONAL_DECISION_SAMPLES;
+  }));
+  cases.push(fixture("seasonality_bootstrap_is_deterministic", () => {
+    /* Compared across several value sets, and across shrink factors, so a
+       randomised generator cannot coincide on the discrete resample lattice
+       the way a single four-value set can. */
+    const sets = [[-0.083, -0.051, -0.117, -0.024],
+      [-0.0731, 0.0122, -0.0918, -0.0334, -0.0605],
+      [0.0417, -0.0209, 0.0136, -0.0752, 0.0391, -0.0028]];
+    for (const v of sets) {
+      for (const s of [0.5, 0.333]) {
+        if (JSON.stringify(T.bootstrapBounds(v, s)) !== JSON.stringify(T.bootstrapBounds(v, s))) return false;
+      }
+    }
+    const v = sets[0], b = T.bootstrapBounds(v, 0.5);
+    return b.lower < b.upper && b.upper < 0
+      && Math.abs(b.upper) < Math.abs(b.lower);
+  }));
+  cases.push(fixture("sector_driver_carries_no_decision_weight", () => {
+    const days = [];
+    let cd = 100, cc = 100;
+    for (let i = 0; i < 300; i += 1) {
+      const d = new Date(Date.UTC(2025, 0, 5 + i));
+      if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+      const r = i >= 292 ? -0.01 : (i % 2 ? 0.002 : -0.001);
+      cd *= 1 + r; cc *= 1 + 1.7 * r;
+      days.push({ date: d.toISOString().slice(0, 10), driver: cd, company: cc });
+    }
+    const asOf = Date.parse(days[days.length - 1].date + "T23:00:00Z") + 864e5;
+    const mk = (k) => days.map((x) => ({ date: x.date, o: x[k], h: x[k], l: x[k], c: x[k], v: 1e6 }));
+    const ctx = T.driverContext(mk("company"), { XLE: mk("driver") }, [], "energy", asOf);
+    const row = ctx.drivers.find((x) => x.symbol === "XLE");
+    if (!row || row.status !== "ready") return { skipped: row ? row.reason : "no_row" };
+    return row.isSectorDriver === true && row.namedDriverEligible === false
+      && row.riskScore === 0 && row.statisticalRiskScore === 0;
+  }));
+
+  cases.push(fixture("event_clustering_refuses_unrelated_matters", () => {
+    const subjects = [
+      "Acme third quarter safety investigation into brake assemblies opened",
+      "Acme third quarter safety investigation into avionics wiring opened",
+      "Acme third quarter safety investigation into cabin pressurization opened",
+    ];
+    const common = I.batchCommonTokens(subjects);
+    return I.sameEventSubject(subjects[0], subjects[1], common) === false
+      && I.sameEventSubject(subjects[1], subjects[2], common) === false
+      && I.sameEventSubject("Acme recall NHTSA-2026-4417 fuel pump",
+        "NHTSA-2026-4417 remedy filed") === true;
+  }));
+  cases.push(fixture("event_clustering_keeps_followups_together", () => {
+    const s = ["Acme safety investigation into brake assemblies opened",
+      "Acme safety investigation into brake assemblies widens",
+      "Acme safety investigation into brake assemblies continues"];
+    const common = I.batchCommonTokens(s);
+    return I.sameEventSubject(s[0], s[1], common) === true;
+  }));
+  cases.push(fixture("immediacy_is_bounded_by_elapsed_time", () => {
+    const now = Date.parse("2026-08-30T12:00:00Z"), D = 864e5;
+    return I.timingWeight("imminent", now, now) === 1
+      && I.timingWeight("imminent", now - 45 * D, now) <= 0.4
+      && I.timingWeight("near_term", now - 120 * D, now) <= 0.25
+      && I.timingWeight("imminent", now + 10 * D, now) === 1;
+  }));
+
+  cases.push(fixture("guard_is_dispatched_while_the_exchange_is_shut", () => {
+    const K = require("./investorKick");
+    const ctrl = { enabled: true, mode: "approval", dryRun: false, killSwitch: false,
+      accountId: "paper-1", cycleSeconds: 300, guardSeconds: 60, guardSecondsClosed: 900,
+      evidenceEverySeconds: 900, afterHoursCycles: false,
+      lastCycleAt: null, lastEvidenceAt: null };
+    const sat = Date.parse("2026-08-29T18:00:00Z");
+    const closed = M.sessionState(new Date(sat));
+    const due = K.decide({ ...ctrl, lastGuardAt: sat - 900000 }, closed, sat);
+    const notDue = K.decide({ ...ctrl, lastGuardAt: sat - 120000 }, closed, sat);
+    return closed.open === false && due.tasks.includes("guard")
+      && !notDue.tasks.includes("guard") && !due.tasks.includes("cycle");
+  }));
+  cases.push(fixture("market_time_clock_finds_the_last_open_session", () => {
+    const sunday = new Date(Date.parse("2026-08-30T15:00:00Z"));
+    const back = M.lastRegularOpenMs(sunday);
+    const during = Date.parse("2026-08-31T17:00:00Z");
+    return new Date(back).toISOString() === "2026-08-28T19:59:00.000Z"
+      && M.sessionState(new Date(back)).open === true
+      && M.lastRegularOpenMs(new Date(during)) === during;
+  }));
+  cases.push(fixture("closing_bars_are_tradable_in_market_time", () => {
+    const lastOpen = M.lastRegularOpenMs(new Date(Date.parse("2026-08-28T22:00:00Z")));
+    const p = { provider: "alpaca", feed: "sip", sourceSha256: "a".repeat(64),
+      adjustment: "split_and_dividend" };
+    const bars = [];
+    for (let i = 12; i >= 1; i -= 1) {
+      bars.push({ t: new Date(lastOpen - i * 300000).toISOString(),
+        o: 10, h: 10, l: 10, c: 10, v: 1000 });
+    }
+    return M.gradeSeries(bars, { ...p, nowMs: Date.parse("2026-08-28T22:00:00Z") }).tradable === false
+      && M.gradeSeries(bars, { ...p, nowMs: lastOpen }).tradable === true;
+  }));
+
+  cases.push(fixture("size_haircuts_combine_and_do_not_multiply", () => {
+    const four = { volScaler: 0.8, dispersionMult: 0.8, causeConfidence: 0.7, intelligenceMult: 0.8 };
+    const c = S.combineSizeMultipliers(four).combined;
+    const product = 0.8 * 0.8 * 0.7 * 0.8;
+    return c > product && c <= 0.7
+      && S.combineSizeMultipliers({ ...four, intelligenceMult: 0 }).combined === 0
+      && S.combineSizeMultipliers({ volScaler: 1, dispersionMult: 1,
+        causeConfidence: 1, intelligenceMult: 1 }).combined === 1;
+  }));
+  cases.push(fixture("size_and_risk_ladders_are_the_same_ladder", () => {
+    const w = T.TEMPORAL_WEIGHTS.combination;
+    const c = S.combineSizeMultipliers({ volScaler: 0.5, dispersionMult: 0.8,
+      causeConfidence: 1, intelligenceMult: 1 }).combined;
+    return c === Number((1 - (0.5 * w[0] + 0.2 * w[1])).toFixed(3));
+  }));
+  cases.push(fixture("weighted_mean_uses_weighted_hac_uncertainty", () => {
+    const x = Array.from({ length: 80 }, (_, i) => Math.sin(i / 5) + i / 100);
+    const w = x.map((_, i) => Math.pow(0.98, x.length - 1 - i));
+    const weighted = AL.weightedHacMeanVariance(x, w);
+    return Number.isFinite(weighted) && weighted > 0
+      && weighted !== AL.hacMeanVariance(x);
+  }));
+  cases.push(fixture("frozen_family_tests_horizons_and_matrix_components", () => {
+    const windows = new Set(V.VARIANTS.map((v) => V.configFor(v.id).signalWindow));
+    const holds = new Set(V.VARIANTS.map((v) => V.configFor(v.id).maxHoldDays));
+    return V.VARIANTS.length === 14 && [6, 12, 24].every((x) => windows.has(x))
+      && [6, 10, 14].every((x) => holds.has(x))
+      && V.configFor("K").decisionMatrixPolicy.temporalRiskScale === 1.25
+      && V.configFor("L").decisionMatrixPolicy.intelligenceRiskScale === 1.25
+      && V.configFor("M").sizeAggregation === "product"
+      && V.configFor("N").decisionMatrixPolicy.nonBlockingRiskFloor === 25;
+  }));
+  cases.push(fixture("decision_challengers_cannot_weaken_hard_event_block", () => {
+    const now = Date.now();
+    const coverage = { monitored: true, complete: true, asOfMs: now };
+    const events = [{ direction: -1, evidenceEligible: true, adverseRiskScore: 80,
+      probabilityTrue: 0.9, probabilityMaterial: 0.8,
+      corroboration: { unresolvedContradiction: false, independentGroups: 2,
+        governmentPrimary: true }, title: "material decline" }];
+    return [null, V.configFor("K").decisionMatrixPolicy,
+      V.configFor("L").decisionMatrixPolicy, V.configFor("N").decisionMatrixPolicy]
+      .every((decisionMatrixPolicy) => {
+        const p = I.decisionPolicy({ coverage, events, asOfMs: now, decisionMatrixPolicy });
+        return p.entryAllowed === false && p.sizeMultiplier === 0;
+      });
+  }));
+  cases.push(fixture("forward_confirmation_uses_only_post_lock_sessions", () => {
+    const date = (i) => new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+    const lock = C.forwardLockTemplate({ experimentHash: "a".repeat(64), leaderId: "A",
+      dataThroughDate: date(9), embargoSessions: 2, requiredSessions: 30 });
+    const rows = Array.from({ length: 42 }, (_, i) => ({ date: date(i), mean: i < 10 ? -999 : 5,
+      cost: 1, worstCaseMean: 4 }));
+    const out = C.evaluateForward(rows, lock, { alpha: 0.01, k: V.VARIANTS.length });
+    return out.complete && out.pass && out.boundaries.confirmation[0] === date(12)
+      && out.normal.n === 30;
+  }));
+  cases.push(fixture("deflated_sharpe_counts_full_trial_family", () => {
+    const values = Array.from({ length: 240 }, (_, i) => 4 + Math.sin(i / 3) * 2);
+    const d = RS.deflatedSharpe(values, { trials: V.VARIANTS.length });
+    return d.trials === 14 && d.pass && d.probability >= 0.95;
+  }));
+
+  /* ── v8.6.1 ──────────────────────────────────────────────────────────
+     Two findings, attested at the points where they act. */
+
+  const LD = require("./_investorLadder");
+  const CY = require("./investorCycle-background");
+
+  cases.push(fixture("overfit_guard_withholds_the_leader_in_the_cycle", () => {
+    /* The Deflated Sharpe and CSCV/PBO gates were unattested at the point
+       they act: the cycle's withholding and the ladder's rung could both be
+       removed and every test and fixture still passed. */
+    const ok = { pass: true, probability: 0.99 }, bad = { pass: false, probability: 0.61 };
+    const okPbo = { pass: true, pbo: 0.07 }, badPbo = { pass: false, pbo: 0.44 };
+    const g = (d, p) => ({ dsrByVariant: { G: d }, pbo: p });
+    if (CY.applyOverfitGuard({ leaderId: "G", note: "" }, g(ok, okPbo)).leaderId !== "G") return false;
+    for (const guard of [g(bad, okPbo), g(ok, badPbo), g(bad, badPbo), null, {}]) {
+      const alloc = CY.applyOverfitGuard({ leaderId: "G", note: "" }, guard);
+      if (alloc.leaderId !== null) return false;
+      if (!/Overfit guard withheld promotion/.test(String(alloc.note))) return false;
+    }
+    return true;
+  }));
+
+  cases.push(fixture("overfit_guard_rung_is_critical_and_blocks_limited_auto", () => {
+    const ok = { pass: true, probability: 0.99 }, bad = { pass: false, probability: 0.61 };
+    const okPbo = { pass: true, pbo: 0.07 }, badPbo = { pass: false, pbo: 0.44 };
+    const rung = (allocation) => LD.evaluateGates({ allocation })
+      .find((x) => x.id === "overfit_guard");
+    const clean = rung({ leaderId: "G", overfitGuard: { dsrByVariant: { G: ok }, pbo: okPbo } });
+    if (!clean || clean.pass !== true || clean.critical !== true
+      || clean.stage !== "limited_auto") return false;
+    for (const guard of [{ dsrByVariant: { G: bad }, pbo: okPbo },
+      { dsrByVariant: { G: ok }, pbo: badPbo }, undefined]) {
+      const r = rung({ leaderId: "G", overfitGuard: guard });
+      if (!r || r.pass !== false || r.critical !== true) return false;
+    }
+    return true;
+  }));
+
+  cases.push(fixture("passes_guard_refuses_absent_partial_and_mismatched_evidence", () => {
+    const ok = { pass: true, probability: 0.99 }, okPbo = { pass: true, pbo: 0.07 };
+    return RS.passesGuard({ dsrByVariant: { G: ok }, pbo: okPbo }, "G") === true
+      && RS.passesGuard(null, "G") === false
+      && RS.passesGuard({}, "G") === false
+      && RS.passesGuard({ dsrByVariant: { G: ok } }, "G") === false
+      && RS.passesGuard({ pbo: okPbo }, "G") === false
+      && RS.passesGuard({ dsrByVariant: { G: ok }, pbo: okPbo }, "H") === false;
+  }));
+
+  cases.push(fixture("overfit_thresholds_are_load_bearing", () => {
+    /* The 0.95 DSR probability and the 0.20 PBO bar are the numbers that make
+       the guard a guard; neither was attested. */
+    let seed = 99887766;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    const gauss = () => Math.sqrt(-2 * Math.log(Math.max(1e-9, rnd())))
+      * Math.cos(2 * Math.PI * rnd());
+    const marginal = Array.from({ length: 400 }, () => 2.0 + gauss() * 25);
+    const d = RS.deflatedSharpe(marginal, { trials: V.VARIANTS.length });
+    if (!(d.dailySharpe > 0) || d.threshold !== 0.95 || d.probability >= 0.95 || d.pass !== false) return false;
+
+    const dates = Array.from({ length: 300 }, (_, i) =>
+      new Date(Date.UTC(2024, 0, 2 + i)).toISOString().slice(0, 10));
+    const daily = Object.fromEntries(V.VARIANTS.map((v) => [v.id, []]));
+    let s2 = 424242;
+    const r2 = () => { s2 = (s2 * 1103515245 + 12345) % 2147483648; return s2 / 2147483648; };
+    const g2 = () => Math.sqrt(-2 * Math.log(Math.max(1e-9, r2()))) * Math.cos(2 * Math.PI * r2());
+    for (const date of dates) {
+      const common = g2() * 8;
+      for (const v of V.VARIANTS) daily[v.id].push({ date, mean: common + g2() * 10 });
+    }
+    const pbo = RS.probabilityBacktestOverfit(daily);
+    return pbo.splits === 70 && pbo.threshold === 0.20 && pbo.pbo > 0.20 && pbo.pass === false;
+  }));
+
+  cases.push(fixture("session_span_is_stable_across_intraday_remarks", () => {
+    /* The span is measured from the previous complete DAY. A second pass on
+       the same date must not see "today" as the prior session and readmit a
+       row whose return compounds across a skipped one. */
+    const span = (prior, date) => M.tradingSessionsBetween(prior, date);
+    return span("2026-08-27", "2026-08-31") === 2
+      && span("2026-08-31", "2026-08-31") === 0
+      && span("2026-08-31", "2026-09-01") === 1;
+  }));
+
+  cases.push(fixture("trading_sessions_counted_on_the_exchange_calendar", () =>
+    M.tradingSessionsBetween("2026-08-27", "2026-08-28") === 1
+    && M.tradingSessionsBetween("2026-08-28", "2026-08-31") === 1
+    && M.tradingSessionsBetween("2026-08-27", "2026-08-31") === 2
+    && M.tradingSessionsBetween("2026-09-03", "2026-09-08") === 2
+    && M.tradingSessionsBetween("2026-08-31", "2026-08-31") === 0
+    && M.tradingSessionsBetween("2026-08-31", "2026-08-28") === 0
+    && M.tradingSessionsBetween("", "2026-08-31") === null));
+
+  cases.push(fixture("market_config_never_opens_an_unchosen_lane", () => {
+    /* provider/feed moved from the Lambda environment to
+       InvestorAI_Control/marketConfig. Unset, unrecognised and unreadable must
+       all resolve where an absent environment variable always did. */
+    const saved = { p: process.env.INVESTOR_MARKET_PROVIDER, f: process.env.ALPACA_FEED };
+    try {
+      delete process.env.INVESTOR_MARKET_PROVIDER;
+      delete process.env.ALPACA_FEED;
+      const bare = M.marketSettings();
+      if (bare.provider !== "manual" || bare.feed !== "iex") return false;
+      if (M.activeProvider().liquidityEligible !== false) return false;
+      process.env.INVESTOR_MARKET_PROVIDER = "polygon";
+      process.env.ALPACA_FEED = "consolidated";
+      const bad = M.marketSettings();
+      return bad.provider === "manual" && bad.feed === "iex";
+    } finally {
+      if (saved.p == null) delete process.env.INVESTOR_MARKET_PROVIDER;
+      else process.env.INVESTOR_MARKET_PROVIDER = saved.p;
+      if (saved.f == null) delete process.env.ALPACA_FEED;
+      else process.env.ALPACA_FEED = saved.f;
+    }
+  }));
+
+  const pass = cases.every((c) => c.pass);
+  /* The count is inside the hash: silently dropping a fixture must change
+     the attestation, not merely shorten the list behind an unchanged one. */
+  const fixtureHash = digest({ schema: "runtime-fixtures-v7-controlled-learning", count: cases.length, cases });
+  return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
+    total: cases.length, cases };
+}
+
+module.exports = { canonical, digest, fixture, runFixtures };

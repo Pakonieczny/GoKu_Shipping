@@ -9,21 +9,22 @@
  *  travels with every other _investor* helper and esbuild resolves it with
  *  certainty, so that class of failure is gone.
  *
- *  EDIT THIS FILE to retune. It is read at runtime by investorCycle-background
- *  and investorApi. To run a different version, copy to _investorStrategy.v2.js,
- *  register it in Firestore, and switch versions from the control room — never
- *  edit an active version in place.
+ *  DO NOT retune an active version in place. To test a new hypothesis, copy the
+ *  configuration under a new version, register the immutable object and its
+ *  full content hash in Firestore, and explicitly activate that version. Every
+ *  attempted version remains part of the multiple-testing record.
  * ---------------------------------------------------------------------------
  */
 
 "use strict";
 
 module.exports = {
-  "version": "v1",
-  "name": "Residual reversal with evidence classification",
-  "frozenAt": "2026-08-29",
+  "version": "v6",
+  "supersedes": "v5",
+  "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
+  "frozenAt": "2026-08-31",
   "status": "research",
-  "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) that is NOT explained by a fundamental filing in covered sources reverts partially over the following 1-10 trading days, and that reversion exceeds modelled round-trip frictions by a margin.",
+  "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
   "preRegistration": {
     "declaredBefore": "any collection",
     "minimumEvents": 200,
@@ -55,28 +56,39 @@ module.exports = {
     "blackoutDaysEstimated": 5,
     "postEarningsDays": 4,
     "turnoverPctileCap": 0.90,
-    "_blackoutEstimatedNote": "Earnings windows are projected from each company own EDGAR 10-Q/10-K cadence because no free keyless feed of forward earnings dates exists. A projection needs a wider window than an exact date, and a symbol with NO derivable window is blocked outright rather than traded blind.",
-    "_blackoutNote": "AMD's 95th-percentile earnings move is +/-21.2% against a +/-9.9% median; CRWD +/-22.7% against +/-8.9%. The tail lives on ~4 scheduled dates a year, so a 2-day window solves essentially the whole gap problem by calendar.",
+    "_blackoutEstimatedNote": "Earnings windows prefer each issuer's EDGAR 8-K Item 2.02 results-announcement cadence. If that is unavailable, 10-Q/10-K filing cadence is a wider fallback. No free keyless forward calendar is assumed; projections retain their uncertainty and a symbol with no derivable window is blocked rather than traded blind.",
+    "_blackoutNote": "A confirmed blackout reduces scheduled announcement risk but cannot eliminate unscheduled events or overnight gaps. Projected dates use wider windows and never masquerade as confirmed dates.",
     "volScalerFloor": 0.35,
-    "volScalerCeiling": 1.75,
-    "_volNote": "Nagel: in liquid names reversal is near-zero unconditionally, but a 1pp rise in normalised VIX predicts +0.22pp of daily return with a monthly R^2 of 56%. Size with volatility rather than running a flat book.",
+    "volScalerCeiling": 1,
+    "_volNote": "Volatility may condition expected edge, but risk sizing never increases dollars as volatility rises. Unknown or elevated risk scales exposure down.",
     "corCaution": 35,
     "corStandDown": 45,
     "_corNote": "Cboe implied correlation. When dispersion collapses every name trades as one asset and an idiosyncratic strategy has nothing to work with. No free programmatic feed exists, so this is operator-entered and a stale value reduces size rather than silently passing.",
-    "noCauseConfidence": 0.5,
-    "_causeNote": "Ben-Rephael/Da/Easton/Israelsen: 8-Ks drawing institutional attention show no under- or over-reaction (already priced); those drawing retail attention reverse, peaking days t+7..t+8. A fundamental cause means DO NOT FADE. 'No cause detected' is traded at half size because the system cannot bound sources it does not cover.",
+    "abnormalActivityConfidence": 0.65,
+    "requireCompanyIntelligence": true,
+    "requireTemporalContext": true,
+    "temporalMaxAgeHours": 6,
+    "temporalSeasonalityMinTradingDays": 756,
+    "_temporalNote": "Scheduled non-earnings events, quote-grounded geographic/commodity exposures, active provenance-bound NWS hazards, recurring cycles and stable rolling drivers enter one deterministic risk-only layer with continuous sizing. Earnings are enforced once by the existing signal blackout. Same-month seasonality remains visible but cannot alter size below eight completed observations. Named five-day drivers require strong company-specific evidence and coherent stable correlation. Missing required earnings, exposure inventory, weather or price provenance still blocks new risk; temporal context cannot increase size or independently liquidate.",
+    "intelligenceMaxAgeHours": 6,
+    "intelligenceMaxFocus": 24,
+    "intelligenceLookbackDays": 550,
+    "intelligenceCompaniesPerSweep": 4,
+    "_intelligenceNote": "New risk requires a fresh point-in-time dossier across company-specific public-source lanes. Discovery indexes never confirm. Documents corroborate only when they share a concrete event subject; unrelated regulator matters remain separate. Syndicated copies count once, adverse sizing is continuous, positive events cannot increase base risk, and missing coverage blocks. A strongly corroborated material downside can request an exit review; no model can directly trade.",
+    "_causeNote": "Volume is an abnormal-activity feature, not a retail/institutional classifier. Fundamental causes are not faded; no-cause automation stays locked until externally labelled recall is measured.",
     "decayHaircut": 0.5,
     "reversionCapture": 0.35,
     "costMarginMultiple": 2.0,
+    "requireCalibratedEdge": true,
+    "calibratedExpectedEdgeBps": null,
     "_costNote": "A candidate must expect at least twice its modelled round-trip friction before it is proposed at all.",
-    "positionPctOfNav": 0.03,
     "executionLatencyMs": 60000,
     "_crowdingNote": "A sector-wide selloff leaves residual dispersion inside that sector because member betas differ, so its low-beta members look idiosyncratically oversold. Taking several is one bet wearing several tickers. The cap is a MULTIPLE of the tail threshold rather than an absolute number, because the tail threshold is itself the random baseline: if the tail is the bottom 25% of the cross-section, ~25% of any sector lands there by chance. 1.4x flags real over-representation without firing on ordinary dispersion. The portfolio-level correlated-cluster cap remains the primary defence; this is the early warning.",
     "sectorCrowdingMultiple": 1.4,
     "expectedEdgeBps": 30,
     "perTradeSdBps": 250,
     "tHurdle": 3.0,
-    "_learningNote": "These three set how much evidence is required before the system is allowed to favour one strategy variant over another. Required independent days = (tHurdle x perTradeSdBps / expectedEdgeBps)^2, which at these values is 625. Below that the allocator refuses to differentiate and splits evenly. Lowering tHurdle makes it act sooner on weaker evidence - that is the knob that decides whether this system learns or fools itself."
+    "_learningNote": "The legacy single-test arithmetic gives 625 independent days, but production corrects across all 14 preregistered policies at 90% power: about 1,137 complete trading days at the current assumptions. DSR, CSCV/PBO, historical stress, and 126 locked future paper sessions are additional blocking gates. Diagnostic evidence weights are never capital allocations."
   },
   "portfolioControls": {
     "maxOpenPositions": 12,
@@ -86,6 +98,9 @@ module.exports = {
     "riskBudgetPerTradePctOfNav": 0.25,
     "sectorExposurePctOfNav": 20,
     "correlatedClusterPctOfNav": 10,
+    "dynamicCorrelationExposurePctOfNav": 10,
+    "dynamicCorrelationThreshold": 0.65,
+    "requireDynamicCorrelation": true,
     "_clusterNote": "The cap binds on economic cluster, not sector label. Apple exposure through two different suppliers is one bet, not two.",
     "oneDayLossPausePctOfNav": 1,
     "drawdownFreezePctFromHigh": 6,
@@ -131,33 +146,34 @@ module.exports = {
   "promotionGates": {
     "toApproval": "Ledger rebuilds exactly from the journal; duplicate invocations cannot duplicate a fill; every fill references a post-decision eligible bar; golden fixtures pass.",
     "toShadow": "Citation validity above 0.9 on the model lane; entity resolution unambiguous; no state discrepancies across a full week of cycles.",
-    "toLimitedAuto": "200+ closed positions out of sample, t > 3.0 on net return, cumulative gross edge exceeding cumulative friction, AND a completed known-cause recall benchmark for the no-cause label.",
+    "toLimitedAuto": "A selection-corrected leader with DSR >=0.95 and PBO <=0.20, positive historical stress bounds, 126 untouched locked forward-paper sessions passing normal/doubled-cost/worst-case bounds, 200+ closed paper positions, gross edge above friction, and the external known-cause recall benchmark.",
     "blocking": "The recall benchmark is BLOCKING for any automation of the no-cause book. The system cannot quantify sources it does not cover, so the failure mode - fading into a real cause it never saw - must be measured before it is trusted."
   },
   /* Why the system keeps months of daily history, in plain words. Surfaced on
      the "Settings explained" view so the reasoning is never only in the code. */
   "memory": {
-    "whatIsStored": "Every roster name gets about 13 months of daily open/high/low/close/volume, kept in one compact record per company, plus the 5-minute bars from every cycle. The daily history is backfilled automatically the first time the system runs, so it does not start blind.",
+    "whatIsStored": "Every roster name and required economic-driver proxy gets up to about five trading years of daily open/high/low/close/volume, kept in one compact record per symbol, plus the 5-minute bars from every cycle. Exact target coverage and minimum depth are checked before the backfill is called complete.",
     "whyItMatters": "The same 3% drop means completely different things depending on the company. In a stock that normally moves 0.8% a day it is a real dislocation; in one that routinely swings 4% it is an ordinary Tuesday. Without months of history there is no way to tell those apart, and the system would trade noise in volatile names while ignoring genuine opportunities in calm ones.",
     "howItChangesDecisions": [
       "The yardstick. How unusual a move is used to be measured against the last two days, which on a quiet stretch makes ordinary moves look extraordinary. It is now measured 60% against the name's own six-month volatility and 40% against right now.",
       "The downtrend gate. A name below its 200-day average, more than 20% off its six-month high, with its 50-day line still falling, is refused. Buying dips works on stable companies having a bad week, not on companies in a long slide.",
       "Its own bounce record. How this specific company behaved after similar drops in the past adjusts how much is expected from the trade — but only within plus or minus 30%, because ten past events is not a track record.",
-      "Two of the eight strategies are defined entirely by the six-month picture, so the system measures whether long-term context helps rather than assuming it."
+      "Two policies test the six-month picture, two test 6/24-bar formation against the 12-bar baseline, and the 6/10/14-day holding family tests whether the central horizon premise is actually right.",
+      "The temporal layer displays same-calendar-month context after three trading years but gives it zero sizing authority below eight completed observations. Named commodity moves require strong company-specific exposure evidence plus a current, provenance-bound, directionally coherent and stable correlation."
     ],
     "theLeakageRule": "Every historical number used to decide on a given day is computed only from sessions BEFORE that day. Never the day itself. A system that lets today's move help justify today's trade will look excellent in testing and lose money in practice; the test suite checks this explicitly by altering the future and confirming the past-derived numbers do not budge.",
-    "honestLimit": "Six months of daily bars is a real memory but not a long one. A company's history through a full market cycle would be better; this is what a free data tier provides, and the shrinkage arithmetic is set so that thin evidence is treated as thin rather than as proof."
+    "honestLimit": "Five trading years improve recurring-pattern and regime estimates but may still omit a full economic cycle. Seasonal estimates are heavily shrunk, correlations can break, and neither is treated as causal proof or permission to increase risk."
   },
 
   "learning": {
-    "method": "Thompson sampling over eight frozen strategy variants, fed by counterfactual shadow trades — with two evidence tracks and changepoint-triggered forgetting",
-    "twoTracks": "The system keeps two ledgers of evidence. The POWER track counts every day ever observed and gates whether any comparison is statistically meaningful — at the selection-corrected bar of ~775 independent days, because picking the best of eight is harder than testing one (the best of eight zero-skill strategies looks good by pure chance). The SELECTION track starts over at the last detected break in a variant's performance and fades old days (about eight months of effective memory), so what the system BELIEVES tracks the present, while what it has OBSERVED is never thrown away.",
+    "method": "Conservative full-information comparison of 14 frozen, self-financing strategy and decision-matrix policies, with separate lifetime-power, current-regime, and locked-forward evidence tracks",
+    "twoTracks": "The POWER track counts only complete self-financing portfolio days and gates whether comparison is meaningful — about 1,137 days for the current 14-policy family. The discounted SELECTION track uses a matching weighted HAC uncertainty estimate and restarts at a development-only break. Once a leader is forward-locked, all later data is excluded from both tracks and belongs only to its untouched confirmation stream.",
     "forgetting": "Published trading edges decay — roughly 26% out of sample and 58% after publication (McLean & Pontiff, Journal of Finance 2016). A learner that accumulates forever would ride a dead strategy for years. A changepoint detector (Page-Hinkley) watches each variant's daily results; when a variant's performance genuinely breaks, its believed edge restarts from the break and the racing re-opens automatically. Calibrated so plain noise almost never trips it, while a real break is caught within about four trading days.",
-    "promotion": "A variant takes over live trading only when three things hold at once: the power track has ~775 independent days, the selection track ranks it first, and it has beaten the CURRENTLY RUNNING strategy on the days they share (a paired test that cancels market noise). Looking best is not enough; it must be demonstrably better than what is already running.",
-    "whyFrozen": "Variants never change. A system that tunes its own numbers always looks like it is improving, because it is fitting the noise in whatever data it has seen. These eight were committed before any data arrived, so the system is SELECTING among pre-registered options rather than SEARCHING for one that fits. That distinction is what makes it statistically valid.",
-    "shadowHarness": "Every variant is scored against every ranked name on every cycle, traded or not. Real trades are rare and cost money; shadow trades cost nothing and carry the same information about which variant works.",
+    "promotion": "A policy can replace the incumbent only after selection-corrected weighted inference, a positive incumbent-relative bound, DSR >=0.95, PBO <=0.20, and historical stress. The winner is then transactionally locked at the current data boundary. After a 15-session embargo it must pass exactly 126 genuinely future self-financing paper days under normal, doubled-cost, and unresolved-total-loss stress. Operators can cap or demote but cannot force an upgrade.",
+    "whyFrozen": "Policies never rewrite themselves. The 14 complete definitions were committed before their new experiment begins: A-H retain the entry/exit/trend family; I/J test formation; K/L test temporal and intelligence weighting; M tests size aggregation; N tests the non-blocking event threshold. Every edit requires a new identity and restarts evidence.",
+    "shadowHarness": "Every frozen policy owns persistent cash, equity, costs, realized P&L, high-water mark, and drawdown. Actual eligible fills debit its cash, exits return net proceeds, and missing trustworthy marks exclude the entire portfolio-day. Every candidate stores each policy's trade/no-trade counterfactual; future outcomes label missed opportunities, correct avoidances, signal direction, cost erosion, sizing, context, exit giveback, sector, and regime. Attribution remains observational until the frozen comparison and locked forward gate pass.",
     "independenceCorrection": "Trades opened on the same day are not independent - they win or lose together in the same market move. The system counts DISTINCT DAYS, not trades. A day with nine positions counts once. Without this you would think you had 5,000 samples when you had 400.",
     "skepticalPrior": "Every variant starts from 'probably no edge' and evidence has to drag it away from zero. Three wins from four does not become a 75% edge. This shrinkage is the main defence against fitting noise.",
-    "floor": "Every variant keeps at least 5% of the book so it never stops generating evidence and can still prove itself later."
+    "floor": "Evidence weights rank frozen challengers; they are not simultaneous capital allocations. Until the promotion gates pass, the baseline remains the only permissible policy."
   }
 };

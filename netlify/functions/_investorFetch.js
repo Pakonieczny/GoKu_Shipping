@@ -25,12 +25,16 @@
 const crypto = require("crypto");
 const dns = require("dns").promises;
 const net = require("net");
+const fetchFn = (...args) => {
+  if (typeof globalThis.fetch !== "function") throw new Error("Node 22 native fetch is required");
+  return globalThis.fetch(...args);
+};
 
-let fetchFn;
-try { fetchFn = require("node-fetch"); } catch { fetchFn = globalThis.fetch; }
-
+/* SEC fair access requires a real, monitored contact in the User-Agent or the
+   request is throttled. The default carries one so the deployment does not
+   depend on an environment variable; INVESTOR_USER_AGENT still overrides it. */
 const UA = process.env.INVESTOR_USER_AGENT ||
-  "InvestorAI-Research/1.0 (private single-user research; contact: shellribas@gmail.com)";
+  "InvestorAI-Research/1.0 (private single-user research; contact: pakonieczny@gmail.com)";
 
 /* ── allowlist. A host not on this list cannot be reached, full stop. ───── */
 const ALLOWED_HOSTS = new Set([
@@ -40,10 +44,23 @@ const ALLOWED_HOSTS = new Set([
   "www.fda.gov", "api.fda.gov", "clinicaltrials.gov", "www.ema.europa.eu",
   "eutils.ncbi.nlm.nih.gov", "pubmed.ncbi.nlm.nih.gov",
   "www.federalregister.gov", "www.bis.gov",
+  "api.weather.gov", "www.fema.gov", "www.nhc.noaa.gov", "www.eia.gov",
+  "api.gdeltproject.org",
+  "www.justice.gov", "www.ftc.gov", "www.dol.gov", "www.nlrb.gov",
+  "www.cpsc.gov", "www.consumerfinance.gov", "www.federalreserve.gov",
+  "www.fdic.gov", "www.cisa.gov", "api.nvd.nist.gov",
+  "www.faa.gov", "www.ntsb.gov", "data.ntsb.gov", "www.nasa.gov",
+  "www.epa.gov", "api.epa.gov", "api.uspto.gov",
   // Public research
   "export.arxiv.org", "api.openalex.org", "api.crossref.org", "pub.orcid.org",
   // Government spend
-  "api.usaspending.gov", "www.war.gov",
+  "api.usaspending.gov", "www.war.gov", "www.defense.gov",
+  // Curated company, stakeholder, and specialist public feeds. These hosts
+  // remain discovery/evidence inputs; their source tier controls how much
+  // corroborating weight they receive.
+  "aviationweek.com", "www.aviationweek.com",
+  "www.flightglobal.com", "flightglobal.com",
+  "www.farnboroughairshow.com", "www.dubaiairshow.aero",
   // Market data (registry decides which is enabled)
   "data.alpaca.markets", "api.massive.com", "api.polygon.io", "api.tiingo.com",
   "stooq.com",
@@ -62,6 +79,8 @@ const HOST_RATE = {
   "www.sec.gov":   { rps: 4, burst: 4 },   // SEC ceiling is 10/s; stay well under
   "data.sec.gov":  { rps: 4, burst: 4 },
   "efts.sec.gov":  { rps: 2, burst: 2 },
+  "api.gdeltproject.org": { rps: 0.5, burst: 1 },
+  "api.usaspending.gov": { rps: 1, burst: 2 },
   "_default":      { rps: 5, burst: 5 },
 };
 const buckets = new Map();
@@ -104,16 +123,29 @@ function isBlockedIp(ip) {
   return true;
 }
 
-async function assertSafeUrl(urlStr) {
+function scopedHosts(values) {
+  return new Set((values || []).map((x) => String(x || "").toLowerCase().replace(/\.$/, ""))
+    .filter((x) => /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/.test(x) && !DENY_HOSTS.has(x)).slice(0, 30));
+}
+async function assertSafeUrl(urlStr, allowedHosts = []) {
   let u;
   try { u = new URL(urlStr); } catch { throw fail("bad_url", `Unparseable URL: ${urlStr}`); }
   if (u.protocol !== "https:") throw fail("insecure_scheme", `Refused non-HTTPS URL: ${u.protocol}`);
+  if (u.username || u.password || (u.port && u.port !== "443")) {
+    throw fail("bad_authority", "URL credentials and non-standard HTTPS ports are refused");
+  }
   const host = u.hostname.toLowerCase();
   if (DENY_HOSTS.has(host)) throw fail("denied_host", `Host is on the permanent deny list: ${host}`);
-  if (!ALLOWED_HOSTS.has(host)) throw fail("host_not_allowed", `Host not in allowlist: ${host}`);
+  const scoped = scopedHosts(allowedHosts);
+  if (!ALLOWED_HOSTS.has(host) && !scoped.has(host)) {
+    throw fail("host_not_allowed", `Host not in fixed or call-scoped allowlist: ${host}`);
+  }
   let addrs;
   try { addrs = await dns.lookup(host, { all: true }); }
   catch (e) { throw fail("dns_failed", `DNS lookup failed for ${host}: ${e.message}`); }
+  if (!Array.isArray(addrs) || addrs.length === 0) {
+    throw fail("dns_failed", `DNS lookup returned no addresses for ${host}`);
+  }
   for (const a of addrs) {
     if (isBlockedIp(a.address)) throw fail("ssrf_blocked", `${host} resolves to a blocked address (${a.address})`);
   }
@@ -147,9 +179,12 @@ const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
  *   {string}  opts.etag              conditional request
  *   {string}  opts.lastModified      conditional request
  *   {string[]} opts.accept           acceptable content-type substrings
+ *   {string}  opts.method            GET or POST
+ *   {object|string} opts.body        bounded request body for registered APIs
  *   {number}  opts.maxBytes
  *   {number}  opts.timeoutMs
  *   {number}  opts.maxRedirects
+ *   {string[]} opts.allowedHosts      internally resolved, call-scoped hosts
  * @returns {Promise<{status,notModified,bytes,text,json,sha256,contentType,etag,lastModified,finalUrl,fetchedAt,elapsedMs}>}
  */
 async function fetchPublic(url, opts = {}) {
@@ -161,13 +196,31 @@ async function fetchPublic(url, opts = {}) {
     timeoutMs = 20000,
     maxRedirects = 3,
     headers: extraHeaders = {},
+    method: requestedMethod = "GET",
+    body: requestedBody = null,
+    allowedHosts = [],
   } = opts;
+
+  const method = String(requestedMethod || "GET").toUpperCase();
+  if (!new Set(["GET", "POST"]).has(method)) {
+    throw fail("method_not_allowed", `${sourceId}: only GET and POST are permitted`);
+  }
+  let requestBody = null;
+  if (method === "POST") {
+    requestBody = typeof requestedBody === "string"
+      ? requestedBody : JSON.stringify(requestedBody == null ? {} : requestedBody);
+    if (Buffer.byteLength(requestBody, "utf8") > 64 * 1024) {
+      throw fail("request_too_large", `${sourceId}: request body exceeds 64KB`);
+    }
+  } else if (requestedBody != null) {
+    throw fail("body_with_get", `${sourceId}: GET requests cannot carry a body`);
+  }
 
   const startedAt = Date.now();
   let current = url, hops = 0, res = null, u = null;
 
   while (hops <= maxRedirects) {
-    u = await assertSafeUrl(current);
+    u = await assertSafeUrl(current, allowedHosts);
     await throttle(u.hostname.toLowerCase());
 
     const h = {
@@ -176,13 +229,18 @@ async function fetchPublic(url, opts = {}) {
       "Accept": accept ? accept.join(", ") : "*/*",
       ...extraHeaders,
     };
+    if (method === "POST" && !h["Content-Type"] && !h["content-type"]) {
+      h["Content-Type"] = "application/json";
+    }
     if (etag && hops === 0) h["If-None-Match"] = etag;
     if (lastModified && hops === 0) h["If-Modified-Since"] = lastModified;
 
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
-      res = await fetchFn(current, { method: "GET", headers: h, redirect: "manual", signal: ac.signal });
+      res = await fetchFn(current, { method, headers: h,
+        body: method === "POST" ? requestBody : undefined,
+        redirect: "manual", signal: ac.signal });
     } catch (e) {
       clearTimeout(timer);
       throw fail(e.name === "AbortError" ? "timeout" : "network", `${sourceId}: ${e.message}`);
@@ -190,6 +248,9 @@ async function fetchPublic(url, opts = {}) {
     clearTimeout(timer);
 
     if ([301, 302, 303, 307, 308].includes(res.status)) {
+      if (method === "POST") {
+        throw fail("post_redirect_refused", `${sourceId}: POST redirect refused`);
+      }
       const loc = res.headers.get("location");
       if (!loc) throw fail("bad_redirect", `${sourceId}: redirect with no Location`);
       current = new URL(loc, current).toString();   // re-validated at loop top
@@ -264,5 +325,5 @@ function normalizedHash(text) {
 
 module.exports = {
   fetchPublic, normalizedHash, assertSafeUrl,
-  ALLOWED_HOSTS, DENY_HOSTS, UA,
+  ALLOWED_HOSTS, DENY_HOSTS, scopedHosts, UA,
 };
