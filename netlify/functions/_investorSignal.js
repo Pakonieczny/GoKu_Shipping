@@ -146,8 +146,16 @@ function sectorOf(sym) { return SECTOR[sym] || "other"; }
  */
 function residualPanel(panel, opts = {}) {
   const quality = opts.quality || {};
+  /* Measurement admission, not execution admission. With allowResearchGrade a
+     series that is valid but single-venue is admitted to the CROSS-SECTION so
+     the desk can rank and record; nothing downstream treats that as permission
+     to price an order. Default stays execution-grade, so every caller that
+     does not deliberately opt in behaves exactly as before. */
+  const admit = opts.allowResearchGrade
+    ? (q) => !q || q.tradable === true || q.researchEligible === true
+    : (q) => !q || q.tradable === true;
   let symbols = Object.keys(panel).filter((s) => (panel[s] || []).length > 12
-    && (!quality[s] || quality[s].tradable === true));
+    && admit(quality[s]));
   if (symbols.length < 4) return { symbols: [], residuals: {}, betas: {}, note: "insufficient_panel_breadth" };
   const rets = Object.fromEntries(symbols.map((s) => [s, timestampReturns(panel[s])]));
 

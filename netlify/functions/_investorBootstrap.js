@@ -596,7 +596,16 @@ async function ensureBootstrapped({ force = false } = {}) {
        truncated universe was frozen, and the only recovery was editing
        BOOTSTRAP_VERSION and redeploying. A failed critical step now leaves the
        version unstamped so the next cycle retries. */
-    if (!fixtures.pass) steps.push({ step: "fixtures", ok: false, error: fixtures.error || "runtime invariant failed" });
+    if (!fixtures.pass) {
+      /* "runtime invariant failed" names nothing and leaves the operator with a
+         red row and no way to act on it. The failing fixture names are already
+         computed — carry them onto the step so the dashboard can say which. */
+      const failed = (fixtures.cases || []).filter((x) => !x.pass).map((x) => x.name);
+      steps.push({ step: "fixtures", ok: false,
+        error: fixtures.error
+          || (failed.length ? `runtime invariant failed: ${failed.slice(0, 6).join(", ")}` : "runtime invariant failed"),
+        failed, fixtureHash: fixtures.fixtureHash || null });
+    }
     else steps.push({ step: "fixtures", ok: true, passed: fixtures.passed, total: fixtures.total,
       fixtureHash: fixtures.fixtureHash });
     const criticalFailed = steps.filter((x) =>

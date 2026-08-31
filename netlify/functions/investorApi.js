@@ -966,6 +966,16 @@ const ACTIONS = {
         firebase: !!(process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_PROJECT_ID),
         openai: !!process.env.OPENAI_API_KEY,
       },
+      /* Which invariant failed, not merely that one did. Names only — the
+         fixture bodies are code, and the operator needs the label to act. */
+      fixtures: (() => {
+        try {
+          const r = require("./_investorSelftest").runFixtures();
+          return { pass: r.pass, passed: r.passed, total: r.total,
+            fixtureHash: r.fixtureHash,
+            failed: r.cases.filter((c) => !c.pass).map((c) => c.name) };
+        } catch (e) { return { pass: false, error: String(e.message).slice(0, 200) }; }
+      })(),
       /* Presence and origin only. No secret value is ever returned here. */
       secrets: {
         passcode: !!(auth.passcode || "").length,

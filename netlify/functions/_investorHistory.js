@@ -47,6 +47,9 @@ const M = require("./_investorMarket");
 
 const DAILY_COL = A.COL.marketDaily;
 const KEEP_DAYS = 1300;         // ~5 years: annual seasonality needs repeated cycles
+/* Symbols per daily-backfill request. Exported so the page-budget invariant
+   can be attested against the batch that is actually sent. */
+const DAILY_CHUNK_SYMBOLS = 25;
 const CONTEXT_MIN_DAYS = 40;    // below this we refuse to produce context at all
 
 /* ── small stats helpers ───────────────────────────────────────────────── */
@@ -179,7 +182,11 @@ async function writeDaily(symbol, bars, meta = {}) {
  */
 async function fetchDailyWithMeta(symbols, { days = KEEP_DAYS } = {}) {
   const barsBySymbol = {}, provenanceBySymbol = {};
-  const chunkSize = 90;
+  /* 90 symbols x 1300 daily bars is 117k bars — twelve full 10k pages, fetched
+     one after another inside a single invocation. Narrower chunks keep each
+     backfill step inside its time budget and let the cursor resume cleanly;
+     the symbol count is unchanged, only how many go per request. */
+  const chunkSize = DAILY_CHUNK_SYMBOLS;
   for (let i = 0; i < symbols.length; i += chunkSize) {
     const chunk = symbols.slice(i, i + chunkSize);
     let res;
@@ -578,6 +585,7 @@ function describe(ctx, rev) {
 }
 
 module.exports = {
+  DAILY_CHUNK_SYMBOLS,
   detectSplitSeams, repairSplits, SPLIT_MOVE_THRESHOLD,
   DAILY_COL, KEEP_DAYS, CONTEXT_MIN_DAYS,
   REVERSION_SHRINK_K, REVERSION_TRIGGER_SD, REVERSION_HORIZON,

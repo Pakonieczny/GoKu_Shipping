@@ -511,10 +511,96 @@ function runFixtures() {
       && M.providerCredentialed("alpaca") === M.providerCredentialed("alpaca");
   }));
 
+  /* ── v8.7 invariants: measurement admission vs execution admission ──── */
+
+  /* The whole point of the split. A single-venue series must be usable for
+     ranking and unusable for pricing an order, and the second half must not
+     quietly follow the first. */
+  cases.push(fixture("research_grade_measures_but_never_executes", () => {
+    const now = Date.parse("2026-08-28T15:00:00Z");
+    const q = M.gradeSeries([{ t: "2026-08-28T14:59:00Z", o: 1, h: 1, l: 1, c: 1, v: 1 }],
+      { provider: "alpaca", feed: "iex", sourceSha256: "a".repeat(64), nowMs: now });
+    if (!(q.grade === "C" && q.tradable === false && q.researchEligible === true)) return false;
+    /* Execution paths are unmoved by researchEligible: the real refusals are
+       called here, not asserted about. Both are handed provenance that is
+       otherwise perfect, so the only thing left to refuse on is the grade. */
+    const prov = { sourceSha256: "b".repeat(64), provider: "alpaca", feed: "iex",
+                   adjustment: "split_and_dividend" };
+    const W = require("./_investorWorkset");
+    const G = require("./_investorPositionGuard");
+    const wk = W.exitExecutionSourcePolicy(prov, prov, q);
+    const gd = G.trustedDecisionSource(prov, q);
+    if (wk.pass !== false || wk.reason !== "execution_source_not_tradable") return false;
+    if (gd.pass !== false || gd.reason !== "decision_source_not_tradable") return false;
+    /* An F-graded series is not admitted even for measurement. */
+    const bad = M.gradeSeries([{ t: "2026-08-28T14:59:00Z", o: 1, h: 1, l: 1, c: 1, v: 1 }],
+      { provider: "alpaca", feed: "iex", sourceSha256: "not-a-hash", nowMs: now });
+    return bad.grade === "F" && bad.researchEligible === false && bad.tradable === false;
+  }));
+
+  /* Opting in must be explicit: a caller that does not pass the flag keeps the
+     old execution-grade cross-section exactly. */
+  cases.push(fixture("panel_admission_requires_explicit_opt_in", () => {
+    const series = (n) => Array.from({ length: n }, (_, i) => ({
+      t: new Date(Date.parse("2026-08-28T14:00:00Z") + i * 300000).toISOString(),
+      o: 10, h: 10, l: 10, c: 10 + Math.sin(i) * 0.1, v: 1000 }));
+    const panel = { A: series(30), B: series(30), C: series(30), D: series(30) };
+    const q = {}; for (const k of Object.keys(panel)) {
+      q[k] = { grade: "C", tradable: false, researchEligible: true };
+    }
+    /* Admission is the invariant under test, so assert on the breadth verdict:
+       held closed the panel never reaches four names, opened it does. Whether
+       those names then survive the coverage filters is a separate rule with its
+       own fixtures, and this one must not silently depend on it. */
+    const closed = S.residualPanel(panel, { signalWindow: 12, quality: q, intervalMs: 300000 });
+    const open = S.residualPanel(panel, { signalWindow: 12, quality: q, intervalMs: 300000,
+      allowResearchGrade: true });
+    if (closed.note !== "insufficient_panel_breadth") return false;
+    if (open.note === "insufficient_panel_breadth") return false;
+    /* An F grade is refused by both, opt-in or not. */
+    const dead = {}; for (const k of Object.keys(panel)) {
+      dead[k] = { grade: "F", tradable: false, researchEligible: false };
+    }
+    return S.residualPanel(panel, { signalWindow: 12, quality: dead, intervalMs: 300000,
+      allowResearchGrade: true }).note === "insufficient_panel_breadth";
+  }));
+
+  /* The bars endpoint has no implicit lookback: a request that states no window
+     returns the current day, which is what emptied the daily backfill. */
+  cases.push(fixture("history_request_states_an_explicit_window", () => {
+    const day = M.alpacaWindow("1Day", 1300, "iex");
+    const spanDays = (Date.parse(day.end) - Date.parse(day.start)) / 86400000;
+    /* 1300 TRADING days needs materially more than 1300 calendar days. */
+    if (!(spanDays > 1700 && spanDays < 2200)) return false;
+    const min = M.alpacaWindow("5Min", 120, "iex");
+    if (!(Date.parse(min.end) > Date.parse(min.start))) return false;
+    /* The Basic plan does not serve the most recent 15 minutes; asking for it
+       fails the one edge of the series a cycle actually reads. SIP is not
+       clamped, so a paid feed loses no recency. */
+    const lag = (Date.now() - Date.parse(day.end)) / 60000;
+    const sip = (Date.now() - Date.parse(M.alpacaWindow("1Day", 1300, "sip").end)) / 60000;
+    return lag >= 15 && lag < 25 && sip < 2;
+  }));
+
+  /* A backfill that silently loses its tail looks identical to one that
+     succeeded, so the page ceiling must cover the batch the backfill actually
+     sends. Both numbers are asserted together: widening either one alone is
+     the failure mode. */
+  cases.push(fixture("backfill_pages_cover_the_backfill_batch", () => {
+    const H = require("./_investorHistory");
+    const chunk = H.DAILY_CHUNK_SYMBOLS;
+    if (!(Number.isInteger(chunk) && chunk > 0)) return false;
+    const need = H.KEEP_DAYS * chunk;
+    if (M.alpacaPageBudget(H.KEEP_DAYS, chunk) * 10000 < need) return false;
+    /* And the ceiling must track the request rather than sit at its floor. */
+    return M.alpacaPageBudget(H.KEEP_DAYS, chunk * 8)
+         > M.alpacaPageBudget(H.KEEP_DAYS, chunk);
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v7-controlled-learning", count: cases.length, cases });
+  const fixtureHash = digest({ schema: "runtime-fixtures-v8-measurement-admission", count: cases.length, cases });
   return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }

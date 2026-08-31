@@ -439,16 +439,57 @@ function executionCostContext({ advUsd, grade, wideSpreadWindow, vixNorm, measur
  *    request larger than one page was silently truncated. We now follow pages
  *    until the token is exhausted or a safety bound is hit.
  */
+/* The bars endpoint has NO implicit lookback. Omitting `start` returns the
+   current day only, which is why a 1300-day backfill silently produced one bar
+   per symbol and every name failed the history gate. `limit` alone cannot ask
+   for history — it only caps the page. The window must be stated.
+
+   `end` matters just as much on the Basic plan: it does not serve the most
+   recent 15 minutes, so an unbounded request walks into a subscription error
+   at the one edge of the series the cycle cares about. Asking for the window
+   we are actually entitled to is not a workaround; it is the correct request. */
+const ALPACA_BASIC_EMBARGO_MS = 16 * 60000;   // 15m restriction + a minute of slack
+function alpacaWindow(timeframe, limit, feed) {
+  const nowMs = Date.now();
+  const endMs = String(feed).toLowerCase() === "sip" ? nowMs : nowMs - ALPACA_BASIC_EMBARGO_MS;
+  let spanMs;
+  if (/day/i.test(timeframe)) {
+    /* `limit` is in TRADING days; a calendar window has to cover weekends and
+       holidays or the tail of the request is short. 252 sessions ≈ 365 days. */
+    spanMs = Math.ceil(limit * (365 / 252)) * 86400000;
+  } else {
+    const m = /^(\d+)\s*Min/i.exec(timeframe);
+    const barMs = m ? Number(m[1]) * 60000 : 5 * 60000;
+    /* ~78 five-minute bars per session; widen so a long weekend still fills. */
+    const sessionsNeeded = Math.ceil(limit / Math.max(1, Math.floor(23400000 / barMs)));
+    spanMs = Math.max(3, Math.ceil(sessionsNeeded * (365 / 252)) + 4) * 86400000;
+  }
+  return { start: new Date(endMs - spanMs).toISOString(), end: new Date(endMs).toISOString() };
+}
+
+/* Pages are 10k bars. Truncation here is silent — the tail of the request is
+   simply absent — so the ceiling has to be derived from the size of the ask,
+   never left as a constant a larger request quietly outgrows. */
+function alpacaPageBudget(limit, symbolCount) {
+  return Math.min(64, Math.max(12, Math.ceil((limit * symbolCount) / 10000) + 4));
+}
+
 async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed } = {}) {
   const out = {}, pageHashes = [];
   let pageToken = null, pages = 0, lastAt = null;
   const useFeed = feed || marketSettings().feed || "iex";
   // per-symbol limit -> total, capped at the endpoint maximum
   const total = Math.min(10000, Math.max(limit, limit * symbols.length));
+  const win = alpacaWindow(timeframe, limit, useFeed);
+  /* Pages are 10k bars. A 90-symbol x 1300-day backfill is 117k bars, which
+     silently truncated under the old 12-page ceiling. Size the ceiling to the
+     request instead of to a constant. */
+  const maxPages = alpacaPageBudget(limit, symbols.length);
 
   do {
     const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${encodeURIComponent(symbols.join(","))}`
               + `&timeframe=${timeframe}&limit=${total}&adjustment=all&feed=${encodeURIComponent(useFeed)}&sort=asc`
+              + `&start=${encodeURIComponent(win.start)}&end=${encodeURIComponent(win.end)}`
               + (pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : "");
     const r = await fetchPublic(url, {
       sourceId: "alpaca.bars", accept: ["json"], timeoutMs: 20000,
@@ -468,12 +509,13 @@ async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed 
     if (r.sha256) pageHashes.push(r.sha256);
     lastAt = r.fetchedAt;
     pages += 1;
-  } while (pageToken && pages < 12);
+  } while (pageToken && pages < maxPages);
 
   const manifestSha256 = crypto.createHash("sha256").update(pageHashes.join("|")).digest("hex");
   return { bars: out, provider: "alpaca", sha256: manifestSha256, manifestSha256,
            symbolSha256: Object.fromEntries(Object.keys(out).map((s) => [s, manifestSha256])),
-           fetchedAt: lastAt, pages, truncated: !!pageToken, feed: useFeed };
+           fetchedAt: lastAt, pages, truncated: !!pageToken, feed: useFeed,
+           window: win };
 }
 
 async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
@@ -586,7 +628,7 @@ function gradeSeries(bars, { provider, feed = null, sourceSha256 = null,
                              nowMs = Date.now(), maxStaleMinutes = 45 }) {
   const series = normalizeBars(bars);
   if (series.length === 0) {
-    return { grade: "F", reasons: ["no_bars"], tradable: false };
+    return { grade: "F", reasons: ["no_bars"], tradable: false, researchEligible: false };
   }
   const reasons = [];
   let bad = 0;
@@ -617,6 +659,19 @@ function gradeSeries(bars, { provider, feed = null, sourceSha256 = null,
   return {
     grade, reasons,
     tradable: (grade === "A" || grade === "B") && cfg.liquidityEligible !== false,
+    /* `tradable` answers "may an order be priced against this?" and a
+       single-venue feed must always answer no. It is a different question from
+       "is this series good enough to MEASURE with", and conflating the two is
+       what left a paper-only research desk with nothing to observe.
+
+       researchEligible is the measurement answer: the bars are internally
+       valid, carry a source hash, are not stale and are not from the future.
+       It never authorises an order — every execution path keeps testing
+       `tradable`. What it authorises is ranking and recording, and any record
+       made under it is stamped with this grade and, because the market
+       identity is part of the shadow experiment hash, accumulates in its own
+       experiment rather than being blended into consolidated-feed history. */
+    researchEligible: grade !== "F",
     consolidated: !!cfg.consolidated,
     lastBarAt: last.t, ageMinutes: Math.round(ageMin), barCount: series.length,
     provider, feed, feedDelayMinutes: cfg.delayMinutes,
@@ -724,5 +779,6 @@ module.exports = {
   tradingSessionsBetween,
   slippageBps, executionCostContext,
   fetchBars, mapMassiveResults, validateBar, normalizeBars, partitionBarsBySession, gradeSeries, firstEligibleBar,
+  alpacaWindow, alpacaPageBudget,
   writeBars, readBars, readRecentBars, readRecentBarsWithMeta, barDocId,
 };

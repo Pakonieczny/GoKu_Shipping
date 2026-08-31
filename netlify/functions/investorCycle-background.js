@@ -479,10 +479,26 @@ async function runCycle(jobId) {
   }
 
   /* 2 + 3. residuals and ranks ------------------------------------------ */
+  /* A desk that writes no orders is measuring, not trading, and the admission
+     test should say so. While the stage is research or dry run is on, a valid
+     single-venue series is admitted to the cross-section: the desk ranks, marks
+     and records from day one instead of staring at an empty panel until a data
+     plan is bought. Nothing here relaxes execution — `_investorWorkset` and
+     `_investorPositionGuard` still refuse anything that is not `tradable`, so
+     the strongest outcome this unlocks is a written observation.
+
+     The record stays honest by construction rather than by promise: the market
+     identity is already part of the shadow experiment hash, so IEX-graded
+     observations accumulate under their own experiment and can never be
+     blended into consolidated-feed history to satisfy a promotion gate. */
+  const researchObservation = (ctrl.mode || "research") === "research" || ctrl.dryRun !== false;
+  const admits = (q) => !!q && (q.tradable === true
+    || (researchObservation && q.researchEligible === true));
+
   const identityCounts = new Map();
   for (const sym of symbols) {
     const p = marketProvenanceBySymbol[sym];
-    if (!p || !quality[sym] || !quality[sym].tradable) continue;
+    if (!p || !admits(quality[sym])) continue;
     const key = JSON.stringify([p.provider, p.feed || null, p.adjustment || null]);
     identityCounts.set(key, (identityCounts.get(key) || 0) + 1);
   }
@@ -504,7 +520,7 @@ async function runCycle(jobId) {
   for (const sym of tradeSymbols) {
     const p = marketProvenanceBySymbol[sym];
     const key = p ? JSON.stringify([p.provider, p.feed || null, p.adjustment || null]) : null;
-    if ((panel[sym] || []).length >= 24 && quality[sym] && quality[sym].tradable
+    if ((panel[sym] || []).length >= 24 && admits(quality[sym])
         && key === dominantIdentityKey) tradable[sym] = panel[sym];
   }
   /* Build every preregistered formation horizon from the same point-in-time
@@ -518,6 +534,7 @@ async function runCycle(jobId) {
     const panelResult = S.residualPanel(tradable, {
       signalWindow, minCoverageRatio: 0.65, minSymbolCoverageRatio: 0.80,
       intervalMs: barTimeframeMs(cfg.barTimeframe || "5Min"), quality,
+      allowResearchGrade: researchObservation,
     });
     const windowZ = {};
     for (const sym of managedSymbolUnion(panelResult.symbols, allPositions)) {
@@ -576,7 +593,11 @@ async function runCycle(jobId) {
     const b = panel[sym];
     const p = marketProvenanceBySymbol[sym];
     const key = p ? JSON.stringify([p.provider, p.feed || null, p.adjustment || null]) : null;
-    if (b && b.length && quality[sym] && quality[sym].tradable
+    /* The shadow ledger prices its paper entries and exits from this map. Held
+       to execution grade it stays empty on a single-venue feed, and a paper
+       desk with no marks records nothing at all — which is the failure this
+       release exists to remove. The source hash is still mandatory. */
+    if (b && b.length && admits(quality[sym])
         && key === dominantIdentityKey
         && /^[a-f0-9]{64}$/.test(String(p.sourceSha256 || ""))) {
       lastPriceBySymbol[sym] = b[b.length - 1].c;
@@ -706,7 +727,9 @@ async function runCycle(jobId) {
     if (position && position.open) {
       const heldDays = (Date.now() - Date.parse(position.openedAt)) / 864e5;
       const markProv = marketProvenanceBySymbol[sym];
-      if (lastPriceBySymbol[sym] != null && quality[sym] && quality[sym].tradable
+      /* markQuality is written alongside, so a mark taken at research grade is
+         readable as such forever rather than passing as a consolidated one. */
+      if (lastPriceBySymbol[sym] != null && admits(quality[sym])
           && markProv && /^[a-f0-9]{64}$/.test(String(markProv.sourceSha256 || ""))) {
         try { await A.col(A.COL.positions).doc(`${accountId}_${sym}`).set({
           lastMarkUsd: last.c, lastMarkAt: last.t,

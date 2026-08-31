@@ -10,30 +10,10 @@
  *  allowlist, and issues a short-lived signed session token so the passcode is
  *  sent once rather than on every poll of a 5-minute dashboard.
  *
- *  SECRETS — two purpose-specific values are required:
- *    passcode       refuses all requests when unset
- *    sessionSecret  independent 32+ character random secret for sessions and
- *                   worker nonces.
- *
- *  They resolve from InvestorAI_Control/authConfig first and from
- *  INVESTOR_PASSCODE / INVESTOR_SESSION_SECRET second. Every variable a Lambda
- *  can read counts against a 4KB AWS limit that this deployment had already
- *  outgrown before Investor_AI existed.
- *
- *  THE TRADE THIS MAKES. The original comment on signingKey() said a
- *  purpose-specific secret keeps an HTTP-session compromise independent of the
- *  broad Firestore service credential. Storing it in Firestore gives that up:
- *  anything holding the service account can now mint an operator session. On a
- *  paper account with no broker route the blast radius is a disrupted
- *  experiment, and the operator accepted that explicitly. It is recorded here
- *  because a future reader of signingKey() deserves to know it was a decision
- *  rather than an oversight, and because it must be revisited before any real
- *  money is routed.
- *
- *  FAILURE DIRECTION IS UNCHANGED. Firestore unreachable, document missing,
- *  values absent or too short all land where an unset environment variable
- *  always did: signingKey() returns null and requireOperator answers
- *  AUTH_NOT_CONFIGURED. Nothing here can fail open.
+ *  ENV — two purpose-specific secrets are required:
+ *    INVESTOR_PASSCODE   (required; refuses all requests when unset)
+ *    INVESTOR_SESSION_SECRET  required independent 32+ character random secret
+ *                             for sessions and worker nonces.
  *
  *  CORS is a browser mechanic, not authorization. Both are enforced.
  * ---------------------------------------------------------------------------
@@ -42,7 +22,6 @@
 "use strict";
 
 const crypto = require("crypto");
-const A = require("./_investorAdmin");
 
 const ALLOWED_ORIGINS = [
   "https://investor.goldenspike.app",
@@ -81,72 +60,10 @@ function json(event, statusCode, body, extraHeaders = {}) {
   };
 }
 
-/* ── secret resolution: Firestore first, environment second ────────────────
- *
- * signingKey(), requireOperator(), mintSession(), verifySession() and both
- * worker-nonce functions are synchronous and are called from non-async paths,
- * so the cache is filled by loadAuthSecrets() at the top of each handler and
- * read synchronously thereafter. The TTL bounds how long a warm container can
- * hold a rotated secret. */
-const AUTH_SECRETS_DOC = "authConfig";
-const AUTH_SECRETS_TTL_MS = 60000;
-let _authSecrets = null;
-let _authSecretsAtMs = 0;
-
-/* The gate itself, as a pure predicate so it can be attested without
-   depending on cache state. Both values must be present and long enough
-   TOGETHER; a half-populated pair is not a configuration anybody chose. */
-function usableSecretPair(passcode, sessionSecret) {
-  return typeof passcode === "string" && passcode.trim().length >= 16
-    && typeof sessionSecret === "string" && sessionSecret.trim().length >= 32;
-}
-
-function envAuthSecrets() {
-  return {
-    passcode: String(process.env.INVESTOR_PASSCODE || ""),
-    sessionSecret: String(process.env.INVESTOR_SESSION_SECRET || ""),
-    source: process.env.INVESTOR_PASSCODE ? "environment" : "unset",
-  };
-}
-
-/** Synchronous view. Never throws, never invents a secret. */
-function authSecrets() {
-  if (_authSecrets && Date.now() - _authSecretsAtMs <= AUTH_SECRETS_TTL_MS) return _authSecrets;
-  return envAuthSecrets();
-}
-
-/** Refresh the cache from Firestore. Call once at the top of every handler,
- *  BEFORE any nonce or session check. */
-async function loadAuthSecrets({ force = false } = {}) {
-  if (!force && _authSecrets && Date.now() - _authSecretsAtMs <= AUTH_SECRETS_TTL_MS) {
-    return _authSecrets;
-  }
-  const fallback = envAuthSecrets();
-  try {
-    const snap = await A.col(A.COL.control).doc(AUTH_SECRETS_DOC).get();
-    const d = snap.exists ? (snap.data() || {}) : {};
-    const passcode = typeof d.passcode === "string" ? d.passcode.trim() : "";
-    const sessionSecret = typeof d.sessionSecret === "string" ? d.sessionSecret.trim() : "";
-    /* Both must be present and long enough together, or the document is
-       ignored entirely — a half-populated document must not silently pair a
-       Firestore passcode with an environment session secret. */
-    const usable = usableSecretPair(passcode, sessionSecret);
-    _authSecrets = usable
-      ? { passcode, sessionSecret, source: "firestore" }
-      : { ...fallback, ...(snap.exists && (passcode || sessionSecret)
-        ? { note: "authConfig present but passcode<16 or sessionSecret<32; ignored" } : {}) };
-  } catch (e) {
-    _authSecrets = { ...fallback, note: `authConfig read failed: ${String(e.message).slice(0, 90)}` };
-  }
-  _authSecretsAtMs = Date.now();
-  return _authSecrets;
-}
-
 /* ── token signing ─────────────────────────────────────────────────────── */
 function signingKey() {
-  const s = authSecrets();
-  const seed = s.sessionSecret || "";
-  const pass = s.passcode || "";
+  const seed = process.env.INVESTOR_SESSION_SECRET || "";
+  const pass = process.env.INVESTOR_PASSCODE || "";
   if (seed.length < 32 || !pass) return null;
   // A purpose-specific secret keeps an HTTP-session compromise independent of
   // the broad Firestore service credential. Rotating either input invalidates
@@ -184,15 +101,12 @@ function verifySession(token) {
 
 /* ── the guard every HTTP endpoint calls first ─────────────────────────── */
 function requireOperator(event, body) {
-  const secrets = authSecrets();
-  const expected = secrets.passcode;
+  const expected = process.env.INVESTOR_PASSCODE;
 
   // Fail closed in EVERY context, not just production. The legacy authGate
   // opened when its variable was missing; that is the bug this replaces.
-  // Unresolved secrets land here too: a Firestore outage locks the console
-  // rather than opening it.
-  if (!expected || !(secrets.sessionSecret || "").length
-      || secrets.sessionSecret.length < 32) {
+  if (!expected || !(process.env.INVESTOR_SESSION_SECRET || "").length
+      || process.env.INVESTOR_SESSION_SECRET.length < 32) {
     return { ok: false, response: json(event, 500, {
       error: "Server misconfigured: INVESTOR_PASSCODE and a 32+ character INVESTOR_SESSION_SECRET are required",
       errorCode: "AUTH_NOT_CONFIGURED",
@@ -272,7 +186,6 @@ function redact(obj, maxLen = 200) {
 
 module.exports = {
   ALLOWED_ORIGINS, corsHeaders, json,
-  authSecrets, loadAuthSecrets, usableSecretPair, AUTH_SECRETS_DOC,
   requireOperator, mintSession, verifySession,
   mintWorkerNonce, verifyWorkerNonce,
   isScheduledInvocation, redact,

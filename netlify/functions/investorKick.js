@@ -28,8 +28,7 @@
 "use strict";
 
 const A = require("./_investorAdmin");
-const { mintWorkerNonce, isScheduledInvocation, redact,
-        loadAuthSecrets } = require("./_investorAuth");
+const { mintWorkerNonce, isScheduledInvocation, redact } = require("./_investorAuth");
 const M = require("./_investorMarket");
 
 function baseUrl() {
@@ -168,10 +167,6 @@ exports.handler = async (event) => {
   if (!isScheduledInvocation(event)) {
     return { statusCode: 403, body: JSON.stringify({ error: "scheduled invocation only" }) };
   }
-  /* The worker nonce is minted from the session secret, so it must resolve
-     before dispatch. An unresolved secret mints nothing and the worker
-     rejects the invocation — the cycle stops rather than running unsigned. */
-  await loadAuthSecrets();
 
   const startedAt = Date.now();
   try {
