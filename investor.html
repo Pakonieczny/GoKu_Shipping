@@ -1915,10 +1915,12 @@ $("#btnRecall").addEventListener("click",function(){
     var warn = "";
     if (!tradableNow()) {
       warn = '<div class="note warn" style="margin-top:12px;font-size:12.5px">'
-           + '<b>Nothing can be bought yet.</b> The market-data plan you are on covers only one '
-           + 'small exchange, so the system marks every company as not safe to price. It will keep '
-           + 'gathering evidence and learning, but it will not propose a trade until you upgrade the '
-           + 'data plan. This is deliberate, not a fault.</div>';
+           + '<b>It is ranking and recording, but not buying.</b> Your market-data plan covers one '
+           + 'small exchange, so prices are good enough to <i>measure</i> with but not good enough to '
+           + 'price a real order against. So the desk does everything except place the order: it ranks '
+           + 'every company, writes down what it would have done, and marks those paper positions as '
+           + 'they move. That record is kept separately from anything built on full-market prices, so '
+           + 'upgrading later starts a clean run rather than mixing the two. Nothing here is broken.</div>';
     }
     el.innerHTML =
       '<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">'
