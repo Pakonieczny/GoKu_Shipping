@@ -340,6 +340,16 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           <b>stopped</b> is as informative as one that passed — the chip that blocked it is shown
           first, and the full gate stack is inside. <span id="candCoverage"></span>
         </div>
+        <div class="card pad" id="rosterCard">
+          <div class="eyebrow">The companies already chosen</div>
+          <div class="note" style="margin:8px 0 12px">
+            This is the frozen roster the system is allowed to trade. It is fixed in the code,
+            it needs no price data and no subscription, and it does not change between cycles.
+            The ranked list above is different: it is the shortlist this cycle proposed
+            <i>out of</i> this roster, and that one does need live prices.
+          </div>
+          <div id="rosterBody"><div class="empty">Loading roster…</div></div>
+        </div>
         <div class="appr" id="candList"></div>
       </section>
 
@@ -1243,9 +1253,46 @@ function coverageBlock(cov){
     }).join("")+'</div></div>';
 }
 
+var ROSTER_LOADED=false;
+function renderRoster(u){
+  var host=$("#rosterBody"); if(!host) return;
+  var trade=(u&&u.tradeTier)||[], research=(u&&u.researchTier)||[], excluded=(u&&u.excludedTier)||[];
+  if(!trade.length){ host.innerHTML='<div class="empty">Roster unavailable.</div>'; return; }
+  var bySec={}; trade.forEach(function(r){ (bySec[r.sector||"other"]=bySec[r.sector||"other"]||[]).push(r.symbol); });
+  var secs=Object.keys(bySec).sort();
+  var res={}; research.forEach(function(r){ res[r.symbol]=1; });
+  var html='<div class="ctrlrow" style="padding:7px 0"><span class="lab">Tradable roster</span><span class="kv">'+trade.length+' companies across '+secs.length+' sectors</span></div>'+
+    '<div class="ctrlrow" style="padding:7px 0"><span class="lab">Research-only</span><span class="kv">'+research.length+' companies (studied, never traded)</span></div>'+
+    (excluded.length?'<div class="ctrlrow" style="padding:7px 0"><span class="lab">Removed</span><span class="kv">'+excluded.length+' (merged, renamed or delisted)</span></div>':'')+
+    '<div class="ctrlrow" style="padding:7px 0"><span class="lab">Roster identity</span><span class="kv mono">'+esc(u.version||"—")+'</span></div>';
+  secs.forEach(function(sec){
+    var list=bySec[sec].slice().sort();
+    html+='<div class="eyebrow" style="margin:16px 0 7px">'+esc(sec.replace(/_/g," "))+' <span class="kv">('+list.length+')</span></div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:6px">'+
+      list.map(function(sym){
+        return '<span class="badge2 '+(res[sym]?"b-info":"b-on")+'" title="'+(res[sym]?"also studied as research-only":"tradable")+'">'+esc(sym)+'</span>';
+      }).join("")+'</div>';
+  });
+  if(excluded.length){
+    html+='<div class="eyebrow" style="margin:16px 0 7px">Removed from the roster</div>'+
+      excluded.map(function(r){ return '<div class="ctrlrow" style="padding:5px 0"><span class="lab">'+esc(r.symbol)+'</span><span class="kv">'+esc(r.exclusionReason||"excluded")+'</span></div>'; }).join("");
+  }
+  host.innerHTML=html;
+}
+function loadRoster(){
+  if(ROSTER_LOADED) return; ROSTER_LOADED=true;
+  api("universe").then(function(r){ renderRoster(r&&r.universe); })
+    .catch(function(e){ ROSTER_LOADED=false; var h=$("#rosterBody");
+      if(h) h.innerHTML='<div class="empty">Could not load the roster: '+esc(e.message)+'</div>'; });
+}
+
 function renderCandidates(cands){
+  loadRoster();
   var host=$("#candList"); host.innerHTML="";
-  if(!cands.length){ host.innerHTML='<div class="card empty">No candidates yet. Run a cycle from the control room, or wait for the scheduler.</div>'; return; }
+  if(!cands.length){ host.innerHTML='<div class="card empty">No shortlist yet for this cycle. '+
+    'The roster below is unaffected — it is always the same. A shortlist appears once a cycle has run '+
+    'with usable price data for these names; if cycles are running but the shortlist stays empty, '+
+    'check the market feed in the control room.</div>'; return; }
   cands.slice().sort(function(a,b){
     if(a.breach!==b.breach) return a.breach?-1:1;
     return (a.rank==null?1:a.rank)-(b.rank==null?1:b.rank);
@@ -1791,6 +1838,287 @@ $("#btnRecall").addEventListener("click",function(){
     var x=r.recallBenchmark||{};
     toast("Recall "+num(100*x.recall,1)+"% · 95% lower bound "+num(100*x.lowerBound,1)+"% · n="+(x.n||0)); refresh(false);
   }); });
+
+/* ─────────────────────────────────────────────────────────────────────────
+   DESK CONTROL — one button, plain English, consequences before the click.
+
+   Written for an operator who is not a finance professional. Three rules
+   govern every string below:
+
+     1. Say what will happen, not what a field is called. "It will ask you
+        before buying anything" beats "mode: approval".
+     2. State the consequence before the action, never after. A confirm
+        dialog that only says "Are you sure?" has told the reader nothing.
+     3. Say what does NOT change. The most common fear when pausing a system
+        that holds positions is that protection stops too. It does not, and
+        that has to be on the screen.
+
+   Starting is genuinely multi-step — the server resets to a watching-only
+   state on resume and requires a fresh experiment lock before it will
+   propose anything — so it is presented as numbered steps rather than one
+   button that silently does three things.
+   ───────────────────────────────────────────────────────────────────────── */
+(function(){
+  var STEP = 0, CHOICE = "watch", BUSY = false;
+
+  function ctl(){ return (DASH && DASH.control) || {}; }
+
+  /* The three states an operator actually needs to distinguish. */
+  function deskState(){
+    var c = ctl();
+    if (c.killSwitch || c.enabled === false) return "paused";
+    if (c.dryRun !== false || c.mode === "research") return "watching";
+    return "proposing";
+  }
+
+  function tradableNow(){
+    var m = (DASH && DASH.market) || {};
+    return m.liquidityEligible === true || (DASH && DASH.candidateTotal > 0);
+  }
+
+  var COPY = {
+    paused: {
+      badge: "Paused",
+      head: "The desk is paused",
+      body: "It is not opening anything new. Any positions you already hold are still being watched, and their exit rules still work.",
+      btn: "Start the desk", cls: "go"
+    },
+    watching: {
+      badge: "Watching only",
+      head: "The desk is watching",
+      body: "It is ranking companies and writing down what it would have done, but it will not ask you to buy anything. This is the safe setting to leave it on.",
+      btn: "Pause the desk", cls: "stop"
+    },
+    proposing: {
+      badge: "Asking before each buy",
+      head: "The desk is running",
+      body: "When it finds something it will put it in your Approvals list and wait. Nothing is bought unless you click approve.",
+      btn: "Pause the desk", cls: "stop"
+    }
+  };
+
+  function mount(){
+    if (document.getElementById("deskCtl")) return;
+    var host = document.getElementById("v-briefing");
+    if (!host) return;
+    var d = document.createElement("div");
+    d.id = "deskCtl";
+    d.className = "card pad";
+    d.style.cssText = "margin-bottom:16px;border-width:2px";
+    host.insertBefore(d, host.firstChild);
+  }
+
+  function render(){
+    mount();
+    var el = document.getElementById("deskCtl"); if (!el) return;
+    var st = deskState(), c = COPY[st];
+    var warn = "";
+    if (!tradableNow()) {
+      warn = '<div class="note warn" style="margin-top:12px;font-size:12.5px">'
+           + '<b>Nothing can be bought yet.</b> The market-data plan you are on covers only one '
+           + 'small exchange, so the system marks every company as not safe to price. It will keep '
+           + 'gathering evidence and learning, but it will not propose a trade until you upgrade the '
+           + 'data plan. This is deliberate, not a fault.</div>';
+    }
+    el.innerHTML =
+      '<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">'
+      + '<div style="flex:1;min-width:280px">'
+      +   '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+      +     '<span class="pill ' + (st === "paused" ? "dry" : "info") + '"><span class="d"></span>' + c.badge + '</span>'
+      +   '</div>'
+      +   '<h3 style="margin:0 0 6px;font-size:19px">' + c.head + '</h3>'
+      +   '<p style="margin:0;font-size:13px;color:var(--ink-70);line-height:1.6;max-width:70ch">' + c.body + '</p>'
+      + '</div>'
+      + '<button class="btn ' + (st === "paused" ? "gold" : "ghost") + '" id="deskBtn" '
+      +   'style="font-size:16px;padding:16px 34px;min-width:210px">' + c.btn + '</button>'
+      + '</div>' + warn;
+    document.getElementById("deskBtn").onclick = function(){
+      if (st === "paused") { STEP = 1; CHOICE = "watch"; dialog(); }
+      else pauseDialog();
+    };
+  }
+
+  /* ── modal shell ─────────────────────────────────────────────────────── */
+  function shell(inner){
+    var m = document.getElementById("deskModal");
+    if (!m) {
+      m = document.createElement("div"); m.id = "deskModal";
+      m.style.cssText = "position:fixed;inset:0;background:rgba(20,18,14,.55);z-index:9999;"
+        + "display:flex;align-items:center;justify-content:center;padding:20px";
+      document.body.appendChild(m);
+      m.addEventListener("click", function(e){ if (e.target === m && !BUSY) close(); });
+    }
+    m.innerHTML = '<div class="card pad" style="max-width:620px;width:100%;max-height:88vh;overflow:auto">'
+      + inner + '</div>';
+    m.style.display = "flex";
+  }
+  function close(){ var m = document.getElementById("deskModal"); if (m) m.style.display = "none"; }
+  /* Modal controls are queried inside the modal rather than by page id:
+     each step replaces the same markup, so page-global ids would collide
+     across steps even though only one step is ever mounted. */
+  function dkq(n){ var m = document.getElementById("deskModal");
+    return m ? m.querySelector('[data-dk="' + n + '"]') : null; }
+
+  function steps(n, total){
+    var out = '<div style="display:flex;gap:6px;margin-bottom:16px">';
+    for (var i = 1; i <= total; i++) {
+      out += '<div style="flex:1;height:4px;border-radius:2px;background:'
+           + (i <= n ? "var(--gold,#b9974d)" : "var(--line,#e3ded2)") + '"></div>';
+    }
+    return out + '</div><div class="sub" style="margin-bottom:10px">Step ' + n + ' of ' + total + '</div>';
+  }
+
+  /* ── start: numbered walkthrough ─────────────────────────────────────── */
+  function dialog(){
+    if (STEP === 1) {
+      shell(steps(1, 3)
+        + '<h2 style="margin:0 0 12px;font-size:22px">First, lock in what you are testing</h2>'
+        + '<p style="font-size:13.5px;line-height:1.7;color:var(--ink-70)">'
+        + 'The system takes a snapshot of two things and freezes them: the rules it will follow, '
+        + 'and the list of companies it is allowed to look at.</p>'
+        + '<p style="font-size:13.5px;line-height:1.7;color:var(--ink-70)">'
+        + '<b>Why this matters.</b> If the rules could change halfway through, the results would not '
+        + 'mean anything — you could always find a version that looks good after the fact. Freezing '
+        + 'them first is what makes the answer trustworthy.</p>'
+        + '<div class="note" style="font-size:12.5px;margin:14px 0">'
+        + '<b>You can change your mind later.</b> Changing the rules or the company list is allowed, '
+        + 'but it starts a fresh experiment and the track record begins again from zero.</div>'
+        + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
+        + '<button class="btn ghost" data-dk="cancel">Cancel</button>'
+        + '<button class="btn gold" data-dk="next">Continue</button></div>');
+      dkq("cancel").onclick = close;
+      dkq("next").onclick = function(){ STEP = 2; dialog(); };
+      return;
+    }
+
+    if (STEP === 2) {
+      var opt = function(v, title, body){
+        return '<label style="display:block;border:1px solid var(--line,#e3ded2);border-radius:8px;'
+          + 'padding:14px;margin-bottom:10px;cursor:pointer;'
+          + (CHOICE === v ? 'border-color:var(--gold,#b9974d);background:rgba(185,151,77,.06)' : '') + '">'
+          + '<div style="display:flex;gap:10px;align-items:flex-start">'
+          + '<input type="radio" name="dkMode" value="' + v + '"' + (CHOICE === v ? " checked" : "") + ' style="margin-top:3px">'
+          + '<div><div style="font-weight:600;margin-bottom:4px">' + title + '</div>'
+          + '<div style="font-size:12.5px;color:var(--ink-70);line-height:1.6">' + body + '</div></div></div></label>';
+      };
+      shell(steps(2, 3)
+        + '<h2 style="margin:0 0 12px;font-size:22px">How should it behave?</h2>'
+        + '<p style="font-size:13.5px;line-height:1.7;color:var(--ink-70);margin-bottom:16px">'
+        + 'Both options use virtual money. No real account is connected to this system and no part of '
+        + 'it can place a real order.</p>'
+        + opt("watch", "Watch only — recommended to start",
+            "It ranks companies and records what it would have done, so you can see whether the idea "
+            + "works before it asks you for anything. It will never interrupt you.")
+        + opt("approve", "Ask me before each buy",
+            "Same as above, but when it finds something worth buying it adds it to your Approvals "
+            + "list and waits. Nothing is bought unless you click approve. You can switch back to "
+            + "watching at any time.")
+        + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
+        + '<button class="btn ghost" data-dk="back">Back</button>'
+        + '<button class="btn gold" data-dk="next">Continue</button></div>');
+      Array.prototype.forEach.call(document.getElementsByName("dkMode"), function(r){
+        r.onchange = function(){ CHOICE = r.value; dialog(); };
+      });
+      dkq("back").onclick = function(){ STEP = 1; dialog(); };
+      dkq("next").onclick = function(){ STEP = 3; dialog(); };
+      return;
+    }
+
+    var willAsk = CHOICE === "approve";
+    shell(steps(3, 3)
+      + '<h2 style="margin:0 0 12px;font-size:22px">Ready to start</h2>'
+      + '<p style="font-size:13.5px;line-height:1.7;color:var(--ink-70)">Here is exactly what happens '
+      + 'when you click start:</p>'
+      + '<ol style="font-size:13.5px;line-height:1.9;color:var(--ink-70);padding-left:20px">'
+      + '<li>The current rules and company list are frozen as this experiment.</li>'
+      + '<li>It begins checking the market every few minutes during trading hours.</li>'
+      + '<li>' + (willAsk
+          ? 'When it finds something, it adds it to <b>Approvals</b> and waits for you.'
+          : 'It records what it would have done, and does not ask you for anything.') + '</li>'
+      + '<li>Anything it already holds keeps being watched, with its exit rules active.</li>'
+      + '</ol>'
+      + '<div class="note" style="font-size:12.5px;margin:14px 0"><b>To stop it</b>, press the pause '
+      + 'button on the briefing page. Pausing takes effect immediately.</div>'
+      + '<div data-dk="err" style="display:none" class="note warn"></div>'
+      + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
+      + '<button class="btn ghost" data-dk="back">Back</button>'
+      + '<button class="btn gold" data-dk="go">Start the desk</button></div>');
+    dkq("back").onclick = function(){ STEP = 2; dialog(); };
+    dkq("go").onclick = startNow;
+  }
+
+  function fail(msg){
+    BUSY = false;
+    var e = dkq("err");
+    if (e) { e.style.display = "block"; e.innerHTML = "<b>It could not start.</b> " + msg; }
+    var b = dkq("go");
+    if (b) { b.disabled = false; b.textContent = "Try again"; }
+  }
+
+  /* Order matters: resume clears the kill switch but deliberately resets the
+     desk to watching-only with no experiment locked, so the lock has to come
+     after it, and permission to propose after that. */
+  function startNow(){
+    if (BUSY) return; BUSY = true;
+    var b = dkq("go");
+    b.disabled = true; b.textContent = "Starting…";
+    var wasPaused = ctl().killSwitch || ctl().enabled === false;
+    var chain = wasPaused ? api("resume", {operator: "desk"}) : Promise.resolve({});
+    chain.then(function(){
+      return api("activateSafety", {operator: "desk"});
+    }).then(function(r){
+      if (r && r.error) throw new Error(r.error);
+      if (CHOICE !== "approve") return {};
+      return api("setControl", {patch: {dryRun: false}, operator: "desk"}).then(function(x){
+        if (x && x.ok === false) throw new Error(x.error || "the desk would not accept trade proposals yet");
+        return x;
+      });
+    }).then(function(){
+      BUSY = false; close();
+      toast(CHOICE === "approve" ? "Started — it will ask before each buy" : "Started — watching only");
+      refresh(false);
+    }).catch(function(e){
+      fail(String(e && e.message || e) + ".");
+    });
+  }
+
+  /* ── pause ───────────────────────────────────────────────────────────── */
+  function pauseDialog(){
+    shell('<h2 style="margin:0 0 12px;font-size:22px">Pause the desk?</h2>'
+      + '<div style="font-size:13.5px;line-height:1.7;color:var(--ink-70)">'
+      + '<p style="margin:0 0 10px"><b>What stops.</b> It will not open anything new, and it stops '
+      + 'spending on data and analysis.</p>'
+      + '<p style="margin:0 0 10px"><b>What keeps running.</b> Anything you already hold is still '
+      + 'watched, and its exit rules still work. Pausing protects you from new risk — it never '
+      + 'removes protection from risk you already have.</p>'
+      + '<p style="margin:0"><b>Reversing it.</b> You can start again whenever you like. Starting '
+      + 'again does begin a fresh experiment, so the learning record starts over.</p></div>'
+      + '<div data-dk="err" style="display:none" class="note warn"></div>'
+      + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
+      + '<button class="btn ghost" data-dk="cancel">Keep it running</button>'
+      + '<button class="btn" data-dk="go" style="background:#8c2f2f;color:#fff">Pause it</button></div>');
+    dkq("cancel").onclick = close;
+    dkq("go").onclick = function(){
+      if (BUSY) return; BUSY = true;
+      var b = this; b.disabled = true; b.textContent = "Pausing…";
+      api("kill", {operator: "desk"}).then(function(){
+        BUSY = false; close(); toast("Paused — open positions are still protected"); refresh(false);
+      }).catch(function(e){ fail(String(e && e.message || e) + "."); });
+    };
+  }
+
+  /* Re-render after every dashboard refresh so the button always reflects
+     the server's state rather than what the last click intended. */
+  var origRefresh = refresh;
+  refresh = function(){
+    var out = origRefresh.apply(this, arguments);
+    setTimeout(render, 50);
+    return out;
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", render);
+  else setTimeout(render, 300);
+})();
+
 </script>
 </body>
 </html>
