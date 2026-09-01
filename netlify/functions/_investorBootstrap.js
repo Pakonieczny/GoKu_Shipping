@@ -112,8 +112,70 @@ function resolveSecTicker(index, requestedSymbol) {
     canonical: renamedCanonical, resolutionKind: "renamed_ticker" } : null;
 }
 
+/* The deploy archive carries a provenance-bound SEC identity snapshot beside
+   the frozen roster. Prefer that immutable snapshot when it is complete. A
+   fresh paper deployment can then register its decision identity immediately,
+   without waiting for cron or making activation depend on SEC availability at
+   that exact moment. The live SEC map remains the fail-closed fallback for an
+   older bundle that does not contain a complete snapshot. */
+function validateBundledUniverseSnapshot(base) {
+  const trade = Array.isArray(base && base.tradeTier) ? base.tradeTier : [];
+  const research = Array.isArray(base && base.researchTier) ? base.researchTier : [];
+  const snapshot = base && base.identitySnapshot;
+  const symbols = trade.map((row) => String(row && row.symbol || ""));
+  const duplicates = symbols.filter((symbol, i) => symbol && symbols.indexOf(symbol) !== i);
+  const unresolved = [...trade, ...research]
+    .filter((row) => !row || !row.symbol || !/^\d+$/.test(String(row.cik || "")))
+    .map((row) => row && row.symbol || null);
+  const expected = Number(base && base.enforcement && base.enforcement.eligibleCount);
+  const provenanceOk = !!(snapshot
+    && snapshot.schema === "sec-company-identity-snapshot-v1"
+    && snapshot.source
+    && /^[a-f0-9]{64}$/.test(String(snapshot.source.responseSha256 || ""))
+    && /^[a-f0-9]{64}$/.test(String(snapshot.snapshotSha256 || "")));
+  const ok = !!(base && base.immutable === true && base.version
+    && trade.length > 0 && expected === trade.length
+    && unresolved.length === 0 && duplicates.length === 0 && provenanceOk);
+  return { ok, eligible: trade.length, expected,
+    unresolved: unresolved.slice(0, 20),
+    duplicates: [...new Set(duplicates)].slice(0, 20),
+    provenanceOk };
+}
+
+async function freezeBundledUniverse() {
+  const base = require("./_investorUniverse.js");
+  const check = validateBundledUniverseSnapshot(base);
+  if (!check.ok) {
+    throw new Error(`bundled universe identity is incomplete: ${JSON.stringify(check)}`);
+  }
+  const frozen = { ...base, immutable: true };
+  frozen.contentHash = universeHash(frozen);
+  const ref = A.col(A.COL.universe).doc(base.version);
+  await A.runTransaction(async (tx) => {
+    const cur = await tx.get(ref);
+    if (cur.exists) {
+      const current = validateFrozenUniverse(cur.data(), base.version);
+      if (!current.ok || cur.data().contentHash !== frozen.contentHash) {
+        throw new Error(`universe ${base.version} already frozen with different content`);
+      }
+      return;
+    }
+    tx.set(ref, { ...frozen, frozenAt: A.FV.serverTimestamp(),
+      frozenBy: "bootstrap:bundled-sec-snapshot",
+      ...A.envelope({ created_by: "bootstrap.freezeBundledUniverse" }) });
+  });
+  return { frozen, report: { version: base.version, resolved: check.eligible,
+    missing: [], aliases: [], renamed: [], ambiguous: [], dropped: 0,
+    sourceId: "bundled.sec-company-identity-snapshot-v1",
+    sourceSha256: base.identitySnapshot.source.responseSha256,
+    snapshotSha256: base.identitySnapshot.snapshotSha256 } };
+}
+
 async function resolveCiksAndFreeze() {
   const base = require("./_investorUniverse.js");
+  if (validateBundledUniverseSnapshot(base).ok) {
+    return freezeBundledUniverse();
+  }
   const report = { version: base.version, resolved: 0, missing: [], mismatched: [],
     aliases: [], renamed: [], ambiguous: [] };
 
@@ -866,7 +928,8 @@ module.exports = {
   expectedHistorySymbols, historyCursorNeedsReconcile, backfillDailyHistory, topUpDailyHistory,
   backfillSharesOutstanding, readShares,
   BOOTSTRAP_VERSION, DAILY_PROVENANCE_VERSION,
-  ensureBootstrapped, resolveCiksAndFreeze, freezeStrategy,
+  ensureBootstrapped, resolveCiksAndFreeze, freezeBundledUniverse,
+  validateBundledUniverseSnapshot, freezeStrategy,
   SEC_RENAMED_TICKERS, canonicalSecTicker, buildSecTickerMap, resolveSecTicker,
   universeHash, strategyHash, validateFrozenUniverse,
   projectEarningsWindow, deriveEarningsWindow, populateEarnings, readEarnings,

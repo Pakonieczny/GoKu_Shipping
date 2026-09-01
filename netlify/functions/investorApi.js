@@ -827,13 +827,44 @@ const ACTIONS = {
       }
       ctrl = { ...ctrl, ...fixturePatch };
     }
-    if (!ctrl.universeVersion || !ctrl.strategyVersion || !ctrl.accountId) {
-      return { error: "bootstrap identity is incomplete" };
+    let u = null, s = null;
+    if (ctrl.universeVersion && ctrl.strategyVersion && ctrl.accountId) {
+      [u, s] = await Promise.all([
+        A.col(A.COL.universe).doc(ctrl.universeVersion).get(),
+        A.col(A.COL.strategies).doc(ctrl.strategyVersion).get(),
+      ]);
     }
-    const [u, s] = await Promise.all([
-      A.col(A.COL.universe).doc(ctrl.universeVersion || "").get(),
-      A.col(A.COL.strategies).doc(ctrl.strategyVersion || "").get(),
-    ]);
+
+    /* Start Desk is the operator's explicit authorization point, so it must
+       also make a clean deployment usable immediately. Previously it assumed
+       the scheduled worker had already registered the bundled immutable
+       universe and strategy; pressing Start before that first successful cron
+       cycle produced "frozen universe or strategy is missing" indefinitely.
+       Bootstrap only the critical identity/account/ledger path here. Slow
+       company enrichment remains in the background evidence worker. */
+    if (!ctrl.universeVersion || !ctrl.strategyVersion || !ctrl.accountId
+        || !u || !s || !u.exists || !s.exists) {
+      let bootstrap;
+      try {
+        bootstrap = await B.ensureBootstrapped({ force: true, enrich: false });
+      } catch (e) {
+        return { error: "automatic frozen-policy bootstrap failed",
+          bootstrapError: String(e && e.message || e).slice(0, 200) };
+      }
+      if (!bootstrap || bootstrap.bootstrapped !== true) {
+        return { error: "automatic frozen-policy bootstrap failed",
+          bootstrapFailures: (bootstrap && bootstrap.steps || [])
+            .filter((step) => step && step.ok === false).slice(0, 10) };
+      }
+      ctrl = await ctrlDoc();
+      if (!ctrl.universeVersion || !ctrl.strategyVersion || !ctrl.accountId) {
+        return { error: "bootstrap identity is incomplete" };
+      }
+      [u, s] = await Promise.all([
+        A.col(A.COL.universe).doc(ctrl.universeVersion).get(),
+        A.col(A.COL.strategies).doc(ctrl.strategyVersion).get(),
+      ]);
+    }
     if (!u.exists || !s.exists) return { error: "frozen universe or strategy is missing" };
     const uv = B.validateFrozenUniverse(u.data(), ctrl.universeVersion);
     const sh = B.strategyHash(s.data());
