@@ -237,12 +237,23 @@ async function runGuard(jobId) {
     } catch (e) { providerNote = String(e.code || e.message).slice(0, 160); }
 
     for (const symbol of symbols) {
-      if (!panel[symbol] || panel[symbol].length < 20) {
+      const fetchedBars = panel[symbol] || [];
+      if (fetchedBars.length < 20) {
         try {
           const stored = await M.readRecentBarsWithMeta(symbol, 2);
           if (stored.bars.length && stored.provenance) {
-            panel[symbol] = stored.bars;
-            provenance[symbol] = stored.provenance;
+            const fresh = provenance[symbol] || null;
+            if (!fetchedBars.length) {
+              panel[symbol] = stored.bars;
+              provenance[symbol] = stored.provenance;
+            } else if (fresh
+                && fresh.provider === stored.provenance.provider
+                && (fresh.feed || null) === (stored.provenance.feed || null)
+                && (fresh.adjustment || null) === (stored.provenance.adjustment || null)) {
+              /* Preserve the newest in-session observation while adding enough
+                 same-feed history for stops and ranks. */
+              panel[symbol] = M.normalizeBars([...stored.bars, ...fetchedBars]);
+            }
           }
         } catch (e) { /* reported as unpriced below */ }
       }
