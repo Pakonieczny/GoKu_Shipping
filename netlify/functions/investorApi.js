@@ -798,9 +798,34 @@ const ACTIONS = {
   },
 
   async activateSafety({ operator, exploratoryAuto = false }) {
-    const ctrl = await ctrlDoc();
+    let ctrl = await ctrlDoc();
     if (ctrl.fixturesPass !== true || ctrl.fixturesCommit !== commitId()) {
-      return { error: "current-build fixtures are not attested" };
+      /* A new Netlify deployment changes the build identity before the next
+         scheduled/background cycle has necessarily run. Starting the desk
+         must not deadlock on an attestation that this same deployed runtime
+         can produce immediately. Run the existing deterministic fixtures in
+         this function, bind their result to the current deploy identity, and
+         continue only when every fixture passes. */
+      let fixtures;
+      try { fixtures = require("./_investorSelftest").runFixtures(); }
+      catch (e) {
+        fixtures = { pass: false, fixtureHash: null,
+          error: String(e && e.message || e).slice(0, 200), cases: [] };
+      }
+      const fixturePatch = {
+        fixturesPass: fixtures.pass === true,
+        fixturesCommit: commitId(),
+        fixtureHash: fixtures.fixtureHash || null,
+        fixturesCheckedAt: A.FV.serverTimestamp(),
+        fixtureFailures: (fixtures.cases || []).filter((x) => !x.pass).slice(0, 10),
+      };
+      await A.col(A.COL.control).doc("control").set(fixturePatch, { merge: true });
+      if (!fixtures.pass) {
+        return { error: "current-build fixture attestation failed",
+          fixtureFailures: fixturePatch.fixtureFailures,
+          fixtureError: fixtures.error || null };
+      }
+      ctrl = { ...ctrl, ...fixturePatch };
     }
     if (!ctrl.universeVersion || !ctrl.strategyVersion || !ctrl.accountId) {
       return { error: "bootstrap identity is incomplete" };
