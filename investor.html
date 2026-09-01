@@ -64,6 +64,52 @@
 .segs button.on{background:var(--velvet);color:#f0ebe1;font-weight:600}
 .opt .oc{font-size:11.5px;color:var(--ink-45);margin-top:8px;line-height:1.5;min-height:2.6em}
 
+/* ═══ live operations console ═══ */
+.opsconsole{margin-bottom:16px;overflow:hidden}
+.opshead{display:flex;align-items:flex-start;gap:14px;padding:18px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.opshead__copy{flex:1;min-width:240px}
+.opshead h2{font-family:var(--serif);font-size:21px;font-weight:400;line-height:1.2}
+.opshead p{font-size:12.5px;color:var(--ink-45);line-height:1.5;margin-top:4px}
+.opsstate{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:20px;padding:5px 10px;display:inline-flex;align-items:center;gap:7px}
+.opsstate:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.opsstate.working{background:var(--sage-soft);color:#3c5a39}
+.opsstate.working:before{animation:pulse 2s infinite}
+.opsstate.waiting{background:var(--slate-soft);color:#33525d}
+.opsstate.paused{background:var(--gold-soft);color:#7a5a1d}
+.opsstate.failed{background:var(--clay-soft);color:#8a3a26}
+.opsbody{padding:18px 20px 20px}
+.opsnow{border:1px solid var(--line);border-radius:12px;background:var(--card-2);padding:15px 16px;margin-bottom:15px}
+.opsnow__top{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.opsnow__copy{flex:1;min-width:220px}
+.opsnow__title{font-size:15px;font-weight:650}
+.opsnow__detail{font-size:12.5px;color:var(--ink-70);line-height:1.55;margin-top:4px}
+.opsnow__pct{font-family:var(--mono);font-size:20px;line-height:1;white-space:nowrap}
+.opstrack{height:11px;border-radius:20px;background:var(--paper-2);overflow:hidden;margin-top:12px;border:1px solid rgba(164,151,128,.15)}
+.opsfill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--gold),var(--sage));transition:width .45s ease}
+.opsmeta{display:flex;gap:8px 18px;flex-wrap:wrap;margin-top:9px;color:var(--ink-45);font-family:var(--mono);font-size:11px}
+.opsmeta b{color:var(--ink-70);font-weight:600}
+.opscadence{font-size:12px;color:var(--ink-70);line-height:1.5;margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2)}
+.opsstreams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.opsstream{border:1px solid var(--line);border-radius:11px;padding:12px 13px;background:var(--card)}
+.opsstream__top{display:flex;gap:8px;align-items:center}
+.opsstream__name{font-size:12.5px;font-weight:650;flex:1}
+.opsstream__count{font-family:var(--mono);font-size:11.5px;color:var(--ink-70)}
+.opsstream .opstrack{height:7px;margin-top:8px}
+.opsstream__desc{font-size:11px;color:var(--ink-45);line-height:1.45;margin-top:7px}
+.opslower{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.5fr);gap:16px;padding-top:16px;border-top:1px solid var(--line)}
+.opssection h3{font-size:12px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:9px}
+.opsfeed{display:flex;flex-direction:column}
+.opsfeed__item{display:grid;grid-template-columns:8px 1fr auto;gap:9px;align-items:start;padding:8px 0;border-bottom:1px solid var(--line-2);font-size:11.8px;line-height:1.45}
+.opsfeed__item:last-child{border-bottom:0}
+.opsfeed__dot{width:7px;height:7px;border-radius:50%;background:var(--slate);margin-top:5px}
+.opsfeed__dot.good{background:var(--sage)}.opsfeed__dot.bad{background:var(--clay)}.opsfeed__dot.live{background:var(--gold)}
+.opsfeed time{font-family:var(--mono);font-size:10.5px;color:var(--ink-45);white-space:nowrap}
+.opssteps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;list-style:none;counter-reset:opsstep}
+.opssteps li{counter-increment:opsstep;position:relative;padding:9px 9px 9px 34px;border:1px solid var(--line-2);border-radius:9px;background:var(--card-2);font-size:11.5px;line-height:1.45;color:var(--ink-70)}
+.opssteps li:before{content:counter(opsstep);position:absolute;left:9px;top:9px;width:18px;height:18px;border-radius:50%;background:var(--velvet);color:#fff;display:grid;place-items:center;font-family:var(--mono);font-size:9px}
+.opssteps b{display:block;color:var(--ink);font-size:11.8px;margin-bottom:2px}
+.opsfact{margin-top:9px;padding:9px 10px;border-radius:9px;background:var(--slate-soft);color:#2c4a55;font-size:11.5px;line-height:1.5}
+
 /* ═══ company rows ═══ */
 .coRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .corow{display:grid;grid-template-columns:82px 1fr auto;gap:14px;align-items:center;
@@ -117,6 +163,8 @@
   .sheet__panel{max-height:100vh;border-radius:0}
   .corow{grid-template-columns:70px 1fr;gap:10px}
   .corow .cright{grid-column:1/-1;text-align:left;margin-top:4px}
+  .opsstreams,.opslower{grid-template-columns:1fr}
+  .opssteps{grid-template-columns:1fr}
 }
 
 button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
@@ -422,6 +470,13 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <!-- ═══ TODAY — the only page most people need ═══ -->
       <section class="view on" id="v-today">
         <div id="todayDesk"></div>
+
+        <section class="card opsconsole" id="opsConsole" aria-live="polite" aria-label="Live system activity">
+          <div class="opshead"><div class="opshead__copy"><h2>Live desk console</h2>
+            <p>Loading the exact backend activity, remaining work and latest decisions…</p></div>
+            <span class="opsstate waiting">Connecting</span>
+          </div>
+        </section>
 
         <div class="simplegrid" id="todayStats"></div>
 
@@ -937,6 +992,27 @@ function ageText(v){ var ms=Date.now()-Date.parse(v||""); if(!Number.isFinite(ms
   if(ms<60000) return Math.max(0,Math.round(ms/1000))+"s old";
   if(ms<3600000) return Math.round(ms/60000)+"m old";
   return Math.round(ms/3600000)+"h old"; }
+function durationText(seconds){
+  var s=Math.max(0,Math.round(Number(seconds)||0));
+  if(s<60) return s+" sec";
+  if(s<3600) return Math.max(1,Math.round(s/60))+" min";
+  var h=Math.floor(s/3600),m=Math.round((s%3600)/60);
+  return h+"h"+(m?" "+m+"m":"");
+}
+function timeAgo(value){
+  var ms=typeof value==="number"?value:Date.parse(value||"");
+  if(!Number.isFinite(ms)) return "—";
+  var sec=Math.max(0,Math.round((Date.now()-ms)/1000));
+  if(sec<10) return "now";
+  if(sec<60) return sec+"s ago";
+  if(sec<3600) return Math.round(sec/60)+"m ago";
+  if(sec<86400) return Math.round(sec/3600)+"h ago";
+  return Math.round(sec/86400)+"d ago";
+}
+function opKind(kind){
+  return kind==="cycle"?"Opportunity scan":kind==="evidence"?"Company research":
+    kind==="guard"?"Holding protection":"Background work";
+}
 function runButton(button, action, payload, onSuccess){
   if(!button || button.disabled) return;
   button.disabled=true; button.setAttribute("aria-busy","true");
@@ -1020,25 +1096,31 @@ $("#burger").addEventListener("click",function(){ document.body.classList.toggle
 $("#refreshBtn").addEventListener("click", function(){ refresh(true); });
 
 function startPolling(){
-  if(TIMER) clearInterval(TIMER);
-  // The dashboard polls; Netlify has no WebSocket support and Edge Functions'
-  // 50ms CPU budget rules out SSE, so this is the correct pattern here.
-  TIMER = setInterval(function(){ refresh(false); }, 60000);
+  scheduleNextPoll();
+}
+function scheduleNextPoll(){
+  if(TIMER) clearTimeout(TIMER);
+  if(!SESSION) return;
+  var active=DASH&&DASH.operations&&DASH.operations.active;
+  /* Poll quickly only while visible work is running. Idle polling stays light
+     on Firestore while still detecting the one-minute scheduler promptly. */
+  TIMER=setTimeout(function(){ refresh(false); },active?5000:30000);
 }
 function refresh(loud){
-  api("dashboard").then(function(d){ DASH=d; render(); if(loud) toast("Refreshed"); })
+  if(TIMER){clearTimeout(TIMER);TIMER=null;}
+  return api("dashboard").then(function(d){ DASH=d; render(); if(loud) toast("Refreshed"); })
     .catch(function(e){
       if(/Authentication required|Invalid passcode/i.test(e.message)) return signOut(e.message);
       $("#railState").textContent="error"; $("#railDot").style.background="var(--clay)";
       if(loud) toast(e.message);
-    });
+    }).finally(function(){ if(SESSION) scheduleNextPoll(); });
 }
 
 /* A dead or rejected token must return the operator to the gate rather than
    leaving them clicking into an app that 401s on every action. */
 function signOut(reason){
   SESSION=null; try{sessionStorage.removeItem("inv_s");}catch(e){}
-  if(TIMER) clearInterval(TIMER);
+  if(TIMER) clearTimeout(TIMER);
   $("#app").style.display="none"; $("#gate").style.display="flex";
   $("#gateErr").textContent = reason ? ("Session ended: "+reason) : "";
 }
@@ -2175,6 +2257,171 @@ function holdNow(){
   var st=plNow(); return nearest(HOLD,"maxHoldDays", st.maxHoldDays!=null?st.maxHoldDays:10);
 }
 
+function operationBar(pct,label){
+  var n=Math.max(0,Math.min(100,Number(pct)||0));
+  return '<div class="opstrack" role="progressbar" aria-label="'+esc(label)+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(n)+'">'
+    +'<div class="opsfill" style="width:'+n.toFixed(1)+'%"></div></div>';
+}
+function operationStream(name,completed,total,pct,desc){
+  var have=Number.isFinite(Number(completed))?Number(completed):0;
+  var all=Number.isFinite(Number(total))?Number(total):0;
+  return '<div class="opsstream"><div class="opsstream__top"><div class="opsstream__name">'+esc(name)+'</div>'
+    +'<div class="opsstream__count">'+have+' / '+(all||'—')+'</div></div>'
+    +operationBar(pct,name)+'<div class="opsstream__desc">'+esc(desc)+'</div></div>';
+}
+function queueOperation(jobId,kind,note){
+  if(!DASH) return;
+  var now=Date.now(),active={jobId:jobId||("local_"+now),kind:kind||"cycle",status:"queued",
+    dispatchedAt:new Date(now).toISOString(),dispatchedAtMs:now,
+    progress:{phase:"queued",label:"Queued "+opKind(kind||"cycle").toLowerCase(),
+      detail:note||"Netlify accepted the request and is handing it to the background worker.",
+      pct:0,completed:null,total:null,remaining:null,currentItem:null,updatedAtMs:now}};
+  DASH.operations=DASH.operations||{};
+  DASH.operations.state="working";DASH.operations.active=active;
+  DASH.operations.activeAll=[active].concat((DASH.operations.activeAll||[]).filter(function(x){return x.jobId!==active.jobId;}));
+  renderOperationsConsole();
+  if(TIMER) clearTimeout(TIMER);
+  if(SESSION) TIMER=setTimeout(function(){refresh(false);},1000);
+}
+
+function operationFeed(ops){
+  var items=[],seen={};
+  (ops.activeAll||[]).forEach(function(a){
+    if(!a||!a.jobId||seen[a.jobId]) return;seen[a.jobId]=1;
+    var p=a.progress||{};
+    items.push({at:p.updatedAtMs||a.startedAtMs||a.dispatchedAtMs||Date.parse(a.dispatchedAt||""),
+      cls:"live",text:opKind(a.kind)+": "+(p.label||a.status||"working")});
+  });
+  (DASH.runs||[]).forEach(function(r){
+    if(!r||!r.jobId||seen[r.jobId]) return;seen[r.jobId]=1;
+    var text,cls=r.status==="dead"?"bad":"good";
+    if(r.status==="dead") text=opKind(r.kind)+" failed: "+(r.error||"the worker stopped before completion");
+    else if(r.kind==="cycle"){
+      var st=r.settlement||{};
+      text="Opportunity scan finished: "+(r.ranked!=null?r.ranked:(r.symbols||0))+" ranked, "
+        +(r.breaches||0)+" signal breaches, "+(r.proposals||0)+" proposals, "
+        +(st.filled||0)+" fills and "+(st.closed||0)+" closes.";
+    }else if(r.kind==="evidence"){
+      text="Company research finished: "+(r.swept||0)+" dossiers"
+        +(r.selected&&r.selected.length?" ("+r.selected.slice(0,4).join(", ")+")":"")+".";
+    }else if(r.kind==="guard"){
+      var cov=r.positionCoverage||{},gs=r.settlement||{};
+      text="Holding protection finished: "+(cov.evaluated||0)+" of "+(cov.open||r.symbols||0)
+        +" positions checked; "+(gs.closed||0)+" closed.";
+    }else text=opKind(r.kind)+" "+(r.status||"finished")+".";
+    items.push({at:Date.parse(r.finishedAt||r.startedAt||"")||0,cls:cls,text:text});
+  });
+  (ops.jobs||[]).forEach(function(j){
+    if(!j||seen[j.jobId]||!["dead","dispatch_failed"].includes(j.status)) return;seen[j.jobId]=1;
+    items.push({at:Date.parse(j.finishedAt||j.dispatchedAt||"")||0,cls:"bad",
+      text:opKind(j.kind)+" did not complete: "+(j.error||j.status.replace(/_/g," "))+"."});
+  });
+  items.sort(function(a,b){return (b.at||0)-(a.at||0);});
+  if(!items.length) return '<div class="empty" style="padding:18px 4px">No backend activity has been recorded yet.</div>';
+  return items.slice(0,5).map(function(x){return '<div class="opsfeed__item"><span class="opsfeed__dot '+x.cls+'"></span>'
+    +'<span>'+esc(x.text)+'</span><time>'+esc(timeAgo(x.at))+'</time></div>';}).join("");
+}
+
+function renderOperationsConsole(){
+  var host=$("#opsConsole");if(!host||!DASH)return;
+  var ops=DASH.operations||{},active=ops.active||null,c=ctl(),session=DASH.session||{};
+  var runs=DASH.runs||[],latestRun=runs[0]||null;
+  var statusClass=active?"working":(latestRun&&latestRun.status==="dead"?"failed":
+    (ops.state==="paused"||ops.state==="entry_frozen"?"paused":"waiting"));
+  var statusText=active?"Working now":statusClass==="failed"?"Needs attention":
+    ops.state==="paused"?"Paused":ops.state==="entry_frozen"?"Entries frozen":"Between jobs";
+  var nowHtml="",cad=ops.cadence||{};
+  if(active){
+    var p=active.progress||{},pct=Math.max(0,Math.min(100,Number(p.pct)||0));
+    var started=Number(active.startedAtMs)||Number(active.dispatchedAtMs)||Date.parse(active.startedAt||active.dispatchedAt||"");
+    var elapsed=Number.isFinite(started)?Math.max(0,(Date.now()-started)/1000):null;
+    var eta=null;
+    if(active.status!=="queued"&&elapsed!=null&&pct>=10&&pct<100){
+      var estimate=elapsed*(100-pct)/Math.max(1,pct);
+      if(estimate<=1800) eta=Math.max(1,estimate);
+    }
+    var count=(p.completed!=null&&p.total!=null)
+      ? '<b>'+p.completed+' of '+p.total+' complete</b> · '+Math.max(0,p.remaining!=null?p.remaining:p.total-p.completed)+' remaining'
+      : '<b>Count becomes available at the first countable stage</b>';
+    var timing=active.status==="queued"?"waiting for worker":eta!=null?"rough ETA "+durationText(eta):
+      (elapsed!=null?"elapsed "+durationText(elapsed)+" · ETA still estimating":"ETA still estimating");
+    var updated=p.updatedAtMs?"last backend update "+timeAgo(p.updatedAtMs):"waiting for first backend update";
+    nowHtml='<div class="opsnow"><div class="opsnow__top"><div class="opsnow__copy">'
+      +'<div class="opsnow__title">'+esc(p.label||opKind(active.kind))+'</div>'
+      +'<div class="opsnow__detail">'+esc(p.detail||"The worker is processing this job.")
+      +(p.currentItem?' <b>Current company: '+esc(p.currentItem)+'.</b>':'')+'</div></div>'
+      +'<div class="opsnow__pct">'+Math.round(pct)+'%</div></div>'
+      +operationBar(pct,p.label||opKind(active.kind))
+      +'<div class="opsmeta"><span>'+count+'</span><span>'+esc(timing)+'</span><span>'+esc(updated)+'</span></div>';
+    if((ops.activeAll||[]).length>1){
+      nowHtml+='<div class="opscadence"><b>Also active:</b> '+(ops.activeAll||[]).slice(1)
+        .map(function(x){return opKind(x.kind)+" — "+((x.progress||{}).label||x.status);}).map(esc).join(" · ")+'</div>';
+    }
+    nowHtml+='</div>';
+  }else{
+    var title,detail;
+    if(statusClass==="failed"){
+      title="The latest backend job failed";detail=(latestRun&&latestRun.error)||"The worker stopped before recording a successful completion.";
+    }else if(ops.state==="paused"){
+      title="The desk is paused";detail="New-entry opportunity scans are stopped. Holding protection and available exits remain independent.";
+    }else if(ops.state==="entry_frozen"){
+      title="Waiting between scans — new entries are frozen";detail="The system can keep ranking, researching and protecting holdings, but it cannot create a new paper position.";
+    }else if(cad.scanEligible){
+      title="Waiting for the next automatic scan";detail="No backend job is active. This is an idle interval, not hidden work.";
+    }else{
+      title="Waiting for the next eligible market session";detail="New-price opportunity scans wait for premarket or the regular session. Company research and holding protection can still run separately.";
+    }
+    nowHtml='<div class="opsnow"><div class="opsnow__title">'+esc(title)+'</div><div class="opsnow__detail">'+esc(detail)+'</div></div>';
+  }
+  var nextText;
+  if(ops.state==="paused") nextText="Automatic new-entry scans remain paused until you start the desk.";
+  else if(!cad.scanEligible) nextText="Next new-price scan: waiting for an eligible market session; scheduled research and exit protection remain separate.";
+  else{
+    var due=(Number(cad.nextCycleDueAtMs)-Date.now())/1000;
+    nextText=due<=0?"Next automatic opportunity scan is due now; the one-minute dispatcher may take roughly a minute to claim it."
+      :"Next automatic opportunity scan in about "+durationText(due)+". Netlify scheduling can drift, so this is an estimate.";
+  }
+
+  var scan=ops.scan||{completed:DASH.candidateTotal||0,total:DASH.candidateExpected||0,pct:0},
+      research=ops.research||{},learning=ops.learning||{completed:DASH.closedTradeTotal||0,target:200,pct:0};
+  var scanRemaining=scan.remaining!=null?scan.remaining:Math.max(0,(scan.total||0)-(scan.completed||0));
+  var learningRemaining=learning.remaining!=null?learning.remaining:Math.max(0,(learning.target||0)-(learning.completed||0));
+  var researchActive=active&&active.kind==="evidence",rp=researchActive?(active.progress||{}):null;
+  var researchDone=researchActive&&rp.completed!=null?rp.completed:Number(research.swept)||0;
+  var researchTotal=researchActive&&rp.total!=null?rp.total:(research.selected||[]).length;
+  var researchPct=researchTotal?100*researchDone/researchTotal:0;
+  var streams=operationStream("Latest opportunity scan",scan.completed,scan.total,scan.pct||0,
+      scan.complete?"Every frozen eligible company has a recorded decision in the latest set.":scanRemaining+" frozen eligible companies do not yet have a recorded decision in this set.")
+    +operationStream(researchActive?"Current research sweep":"Latest research sweep",researchDone,researchTotal,researchPct,
+      researchActive?Math.max(0,(rp.remaining||0))+" selected dossiers remain in this sweep.":
+        (research.dossierCount||0)+" dossiers stored; "+(research.readyDossiers||0)+" are fresh and complete. The focus queue rotates continuously.")
+    +operationStream("Closed outcome sample",learning.completed,learning.target,learning.pct||0,
+      learningRemaining+" more natural closed observations remain before the preregistered minimum is reached.");
+
+  var cands=DASH.candidates||[],passed=cands.filter(function(x){return x.pass;}).length,tally={};
+  cands.forEach(function(x){if(x.firstBlock)tally[x.firstBlock]=(tally[x.firstBlock]||0)+1;});
+  var top=Object.keys(tally).sort(function(a,b){return tally[b]-tally[a];})[0];
+  var fact=cands.length?("Latest recorded set: "+cands.length+" companies evaluated, "+passed+" passed every company-level gate"
+    +(top?", and the most common first stop was that "+plainGate(top)+" ("+tally[top]+").":".")):
+    "No company decision set has completed yet; the console will replace this sentence with measured counts.";
+
+  host.innerHTML='<div class="opshead"><div class="opshead__copy"><h2>Live desk console</h2>'
+    +'<p>Backend truth only: scheduled jobs, company counts, order/fill work, research and learning progress.</p></div>'
+    +'<span class="opsstate '+statusClass+'">'+esc(statusText)+'</span></div>'
+    +'<div class="opsbody">'+nowHtml+'<div class="opscadence" style="margin:0 0 14px;padding:0 0 12px"><b>Schedule:</b> '+esc(nextText)+'</div>'
+    +'<div class="opsstreams">'+streams+'</div><div class="opslower">'
+    +'<div class="opssection"><h3>Recent backend activity</h3><div class="opsfeed">'+operationFeed(ops)+'</div></div>'
+    +'<div class="opssection"><h3>How companies are evaluated</h3><ol class="opssteps">'
+    +'<li><b>Start with the frozen universe</b>Only configured eligible companies enter the opportunity scan; research priority rotates among holdings, leaders and stale dossiers.</li>'
+    +'<li><b>Measure the unusual move</b>Market and sector movement are removed before each company is ranked, so a broad selloff is not mistaken for a company-specific dip.</li>'
+    +'<li><b>Verify usable inputs</b>Price freshness, source identity, provenance hashes, liquidity, earnings timing and historical context are checked before a trade can proceed.</li>'
+    +'<li><b>Research the company</b>SEC filings and configured public sources are checked for material events, relationships, adverse findings and whether information is missing or stale.</li>'
+    +'<li><b>Apply decision and portfolio gates</b>Trend, cause, expected edge after costs, cash, duplicate ownership, sector/cluster risk and account limits can pass, reduce size or block entry.</li>'
+    +'<li><b>Act, protect and learn</b>A paper order uses a later eligible price; stops and exits are checked first. Purchases, rejections and later outcomes retain the variables and policy identity that produced them.</li>'
+    +'</ol><div class="opsfact">'+esc(fact)+' Strict-policy and exploratory-paper verdicts remain separate in the stored evidence. Every recorded decision also carries a backend input manifest with values, timestamps, source hashes, freshness/validity, decision effect, and configuration identity.</div></div>'
+    +'</div></div>';
+}
+
 /* ── the desk control ─────────────────────────────────────────────────── */
 function renderToday(){
   var c=ctl(), frozen=c.operatingState==="entry_frozen"||c.entriesFrozen,
@@ -2274,12 +2521,12 @@ function renderToday(){
     api("runCycleNow",{operator:"desk"}).then(function(r){
       m.textContent = r&&r.ok ? (r.note||"Running. The page fills in as it finishes.")
         : ("Not started — "+((r&&r.refused)||"refused"));
-      if(r&&r.ok) setTimeout(function(){refresh(false);},12000);
+      if(r&&r.ok) queueOperation(r.jobId,r.task||"cycle",r.note);
     }).catch(function(e){m.textContent="Could not start it: "+e.message;})
       .finally(function(){b.disabled=false;});
   };
 
-  renderTodayStats(); renderTodayHeld(); renderTodayWatch(); renderTodayBlocks();
+  renderOperationsConsole(); renderTodayStats(); renderTodayHeld(); renderTodayWatch(); renderTodayBlocks();
 }
 
 function renderTodayStats(){
@@ -2906,7 +3153,7 @@ $("#btnRecall").addEventListener("click",function(){
       api("runCycleNow", { operator: "desk" }).then(function(r){
         if (r && r.ok) {
           msg.textContent = r.note || "A cycle is running.";
-          setTimeout(function(){ if (window.refresh) window.refresh(); }, 12000);
+          queueOperation(r.jobId,r.task||"cycle",r.note);
         } else {
           msg.textContent = "Not started — " + ((r && r.refused) || "refused")
             + (r && r.retryInSeconds ? " (try again in " + r.retryInSeconds + "s)" : "");
