@@ -1527,6 +1527,10 @@ exports.handler = async (event) => {
 };
 
 exports.ACTIONS = ACTIONS;
+/* Not an HTTP action. Exposed only so the deployed runtime attestation can
+   inspect the exact queue-draining implementation after esbuild bundling,
+   without assuming the original source file still exists on disk. */
+exports._closeEntryQueueForAttestation = closeEntryQueue;
 exports.config = {
   path: "/.netlify/functions/investorApi",
   rateLimit: { windowLimit: 60, windowSize: 60, aggregateBy: ["ip", "domain"] },

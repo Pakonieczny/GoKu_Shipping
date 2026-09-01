@@ -10,6 +10,13 @@ function canonical(v) {
   return v;
 }
 function digest(v) { return crypto.createHash("sha256").update(JSON.stringify(canonical(v))).digest("hex"); }
+/* Netlify's esbuild output contains executable module functions, but it does
+ * not guarantee that the original sibling source files remain on disk.
+ * Function#toString keeps source-attestation checks inside the deployed
+ * bundle instead of turning a successful build into twelve ENOENT failures. */
+function sourceOf(value) {
+  return typeof value === "function" ? Function.prototype.toString.call(value) : "";
+}
 /* The attestation must cover WHAT was asserted, not only that something
  * passed. v8.4 shipped a fixture hash byte-identical to v8.3's: the case
  * names and their pass/null details had not changed, so the digest could not
@@ -622,23 +629,21 @@ function runFixtures() {
      desk, and must not reuse the scheduler's cadence slot — a manual run
      swallowed as a duplicate looks exactly like a manual run that did nothing. */
   cases.push(fixture("manual_run_is_gated_and_does_not_reuse_the_slot", () => {
-    const fs = require("fs"), path = require("path");
-    const src = fs.readFileSync(path.join(__dirname, "investorApi.js"), "utf8");
-    const act = src.slice(src.indexOf("async runCycleNow("));
-    const body = act.slice(0, act.indexOf("\n  },"));
+    const API = require("./investorApi"), K = require("./investorKick");
+    const body = sourceOf(API.ACTIONS.runCycleNow);
     /* Assert the REFUSAL, not a mention: `killSwitch: !!ctrl.killSwitch` also
        appears in the dispatch payload, so a bare name test still passes with
        the guard deleted. Both switches must return before dispatching. */
     const dispatchAt = body.indexOf("K.dispatch(");
     const beforeDispatch = dispatchAt > 0 ? body.slice(0, dispatchAt) : body;
-    if (!/const operating = STATE\.describe\(ctrl\)/.test(beforeDispatch)) return false;
-    if (!/if \(operating\.paused\)\s*return \{ ok: false/.test(beforeDispatch)) return false;
+    if (!/\.describe\(ctrl\)/.test(beforeDispatch)) return false;
+    if (!/if \(operating\w*\.paused\)\s*return \{ ok: false/.test(beforeDispatch)) return false;
     if (!/manual: true/.test(body)) return false;
-    const kick = fs.readFileSync(path.join(__dirname, "investorKick.js"), "utf8");
+    const kick = sourceOf(K.dispatch);
     /* The slot id and the manual id must be different expressions. */
     if (!/manual \? `\$\{task\}_\$\{account\}_manual_/.test(kick)) return false;
     /* And direct HTTP to the scheduled dispatcher stays refused. */
-    return /isScheduledInvocation\(event\)/.test(kick);
+    return /isScheduledInvocation\w*\(event\)/.test(sourceOf(K.handler));
   }));
 
   /* The outbound Accept header must be real media types. `accept` is a list of
@@ -659,8 +664,7 @@ function runFixtures() {
     if (!(two.includes("text/html") && two.includes("application/xml"))) return false;
     /* And the request must actually USE it. A correct helper that the call site
        does not call is the same outage with a passing unit test. */
-    const src = require("fs").readFileSync(
-      require("path").join(__dirname, "_investorFetch.js"), "utf8");
+    const src = sourceOf(F.fetchPublic);
     if (!/"Accept": acceptHeader\(accept\)/.test(src)) return false;
     return !/"Accept": accept \? accept\.join/.test(src);
   }));
@@ -756,16 +760,14 @@ function runFixtures() {
       if (absent.blocked !== true || absent.unknown !== true) return false;
     }
     /* The gate that consumes these must relax ONLY the unknown branch. */
-    const src = require("fs").readFileSync(
-      require("path").join(__dirname, "_investorSignal.js"), "utf8");
-    return /blackoutOk = !bo\.blocked \|\| \(cfg\.paperAbstainOnMissingInfo === true && bo\.unknown === true\)/
+    const src = sourceOf(S.evaluateCandidate);
+    return /blackoutOk\s*=\s*!bo\.blocked\s*\|\|\s*\(?cfg\.paperAbstainOnMissingInfo === true && bo\.unknown === true\)?/
       .test(src);
   }));
 
   /* Grade F is broken data, not missing data: never admitted at any setting. */
   cases.push(fixture("f_grade_data_is_refused_however_relaxed", () => {
-    const src = require("fs").readFileSync(
-      require("path").join(__dirname, "_investorSignal.js"), "utf8");
+    const src = sourceOf(S.evaluateCandidate);
     /* The relaxed branch must require researchEligible, which an F never has. */
     if (!/cfg\.paperAbstainOnMissingInfo === true && quality\.researchEligible === true/.test(src)) return false;
     const now = Date.parse("2026-08-28T15:00:00Z");
@@ -781,8 +783,7 @@ function runFixtures() {
   /* Every path that rebuilds cfg mid-cycle must re-apply the relaxation, or the
      desk goes quiet while the dashboard still reports the mode as on. */
   cases.push(fixture("every_config_reset_reapplies_the_relaxation", () => {
-    const src = require("fs").readFileSync(
-      require("path").join(__dirname, "investorCycle-background.js"), "utf8");
+    const src = sourceOf(require("./investorCycle-background").runCycle);
     const resets = src.match(/^\s*cfg = .*$/gm) || [];
     if (resets.length < 2) return false;
     for (const line of resets) {
@@ -795,13 +796,12 @@ function runFixtures() {
 
   /* The relaxed run must not destroy the measurement it loosens. */
   cases.push(fixture("strict_verdict_is_recorded_alongside_the_relaxed_one", () => {
-    const fs = require("fs"), path = require("path");
-    const src = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
+    const src = sourceOf(require("./investorCycle-background").runCycle);
     if (!/(?:const|let) strictCfg = \{ \.\.\.cfg \};/.test(src)) return false;
     if (!/const strictRes = paperLearning\.active/.test(src)) return false;
     if (!/cfg: strictCfg/.test(src)) return false;
     /* And it must reach the stored card, not just exist as a local. */
-    return /strict: \{ pass: strictRes\.pass/.test(src)
+    return /strict:\s*\{\s*pass:\s*strictRes\.pass/.test(src)
         && /paperRelaxed: paperLearning\.active === true/.test(src);
   }));
 
@@ -835,10 +835,11 @@ function runFixtures() {
   }));
 
   cases.push(fixture("legacy_ledger_flag_cannot_override_authoritative_state", () => {
-    const ST = require("./_investorStrategy"), fs = require("fs"), path = require("path");
+    const ST = require("./_investorStrategy"), API = require("./investorApi");
     const config = ST.paperLearningConfig(ST.parameters, { dryRun: true,
       paperLearning: { enabled: true, ledgerEnabled: false } });
-    const api = fs.readFileSync(path.join(__dirname, "investorApi.js"), "utf8");
+    const api = sourceOf(API.ACTIONS.setControl)
+      + sourceOf(API._closeEntryQueueForAttestation);
     return config.active === true && /STATE\.transition/.test(api)
       && /closeEntryQueue/.test(api);
   }));
@@ -893,17 +894,20 @@ function runFixtures() {
       date: new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(0, 10),
       o: 10, h: 11, l: 9, c: 10.5, v: 1000,
     }));
-    const api = require("fs").readFileSync(
-      require("path").join(__dirname, "investorApi.js"), "utf8");
+    const API = require("./investorApi");
+    const candidate = sourceOf(API.ACTIONS.candidate);
+    const history = sourceOf(API.ACTIONS.history);
+    const api = candidate + history;
     return H.chartSeries(rows).length === 420
       && !/series\.slice\(-180\)/.test(api)
-      && (api.match(/ensureDailyHistory\(/g) || []).length >= 2;
+      && /ensureDailyHistory\(/.test(candidate)
+      && /ensureDailyHistory\(/.test(history);
   }));
 
   cases.push(fixture("daily_evidence_requires_finalization_token", () => {
-    const fs = require("fs"), path = require("path");
-    const shadow = fs.readFileSync(path.join(__dirname, "_investorShadow.js"), "utf8");
-    const feedback = fs.readFileSync(path.join(__dirname, "_investorDecisionFeedback.js"), "utf8");
+    const SHADOW = require("./_investorShadow");
+    const shadow = sourceOf(SHADOW.accumulate) + sourceOf(SHADOW.markAccounts);
+    const feedback = sourceOf(require("./_investorDecisionFeedback").updateObservations);
     return /session\.dailyFinalized === true/.test(shadow)
       && /session\.dailyFinalized === true/.test(feedback)
       && /completePortfolioDay: false,[\s\S]{0,100}provisional: true/.test(shadow)
@@ -912,18 +916,16 @@ function runFixtures() {
   }));
 
   cases.push(fixture("paper_nav_evidence_is_finalized_and_provenance_bound", () => {
-    const fs = require("fs"), path = require("path");
-    const cycle = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
-    const api = fs.readFileSync(path.join(__dirname, "investorApi.js"), "utf8");
+    const cycle = sourceOf(require("./investorCycle-background").runCycle);
+    const api = sourceOf(require("./investorApi").ACTIONS.performance);
     return /const markSetSha256 = sha256Json\(navMarkSources\)/.test(cycle)
       && /finalized === true && row\.marksComplete === true/.test(api)
       && /returnAdmissible/.test(cycle);
   }));
 
   cases.push(fixture("final_nav_snapshot_follows_settlement", () => {
-    const fs = require("fs"), path = require("path");
-    const cycle = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
-    const settlementAt = cycle.indexOf("/* ── SETTLEMENT");
+    const cycle = sourceOf(require("./investorCycle-background").runCycle);
+    const settlementAt = cycle.indexOf("let settled =");
     const finalBookAt = cycle.indexOf("const marked2 = R.markedBook", settlementAt);
     const finalNavWriteAt = cycle.lastIndexOf("navMarkResult = await writeNavSnapshot({");
     const checkpointAt = cycle.indexOf("lastDailyFinalizeDate: session.date", finalNavWriteAt);
@@ -1015,12 +1017,13 @@ function runFixtures() {
   }));
 
   cases.push(fixture("active_paper_scans_are_not_silently_row_capped", () => {
-    const fs = require("fs"), path = require("path");
-    const guard = fs.readFileSync(path.join(__dirname, "_investorPositionGuard.js"), "utf8");
-    const cycle = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
-    const api = fs.readFileSync(path.join(__dirname, "investorApi.js"), "utf8");
-    const cappedState = /\.where\("(?:status|open)"[\s\S]{0,80}?\.limit\((?:50|100|200)\)/;
-    const cappedOrders = /\.where\("status", "==", "(?:proposed|approved)"\)\.limit\((?:50|100|200)\)/;
+    const guard = sourceOf(require("./_investorPositionGuard").runGuard);
+    const cycle = sourceOf(require("./investorCycle-background").runCycle);
+    const API = require("./investorApi");
+    const api = sourceOf(API.ACTIONS.kill) + sourceOf(API.ACTIONS.setControl)
+      + sourceOf(API._closeEntryQueueForAttestation);
+    const cappedState = /\.where\(\s*["'](?:status|open)["'][\s\S]{0,120}?\.limit\(\s*(?:50|100|200)\s*\)/;
+    const cappedOrders = /\.where\(\s*["']status["']\s*,\s*["']==["']\s*,\s*["'](?:proposed|approved)["']\s*\)[\s\S]{0,40}?\.limit\(\s*(?:50|100|200)\s*\)/;
     return !cappedState.test(guard) && !cappedOrders.test(cycle)
       && !cappedOrders.test(api);
   }));
