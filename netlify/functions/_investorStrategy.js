@@ -112,8 +112,8 @@ function paperLearningConfig(base, ctrl = {}) {
 
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax,
-  "version": "v7",
-  "supersedes": "v6",
+  "version": "v8",
+  "supersedes": "v7",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
   "frozenAt": "2026-09-01",
   "immutable": true,
@@ -222,9 +222,15 @@ module.exports = {
      from limited_auto: it gathers labelled outcomes and may lose virtual
      money, but it never claims the strategy has passed the statistical
      promotion ladder. The complete strict verdict remains beside every
-     exploratory verdict so these populations can never be pooled silently. */
+     exploratory verdict so these populations can never be pooled silently.
+
+     v2 widens only this labelled paper-learning cohort: approximately the
+     bottom 30% may be examined once the residual is at least 1 standard
+     deviation unusual, rank recovery exits at 40%, and a three-session time
+     stop turns observations over. Strict v8 remains at rank 10% / |z| 2 /
+     ten sessions, so increased paper activity cannot masquerade as validation. */
   "exploratoryAuto": {
-    "version": "exploratory-auto-v1",
+    "version": "exploratory-auto-v2",
     "enabled": true,
     "autoStartAfterSuccessfulBootstrap": true,
     "startingNavUsd": 100000,
@@ -233,10 +239,10 @@ module.exports = {
       "enabled": true,
       "abstainOnMissingInfo": true,
       "costMarginMultiple": 0.5,
-      "minAbsZ": 1.5,
-      "entryRank": 0.2,
-      "exitRank": 0.5,
-      "maxHoldDays": 10,
+      "minAbsZ": 1.0,
+      "entryRank": 0.3,
+      "exitRank": 0.4,
+      "maxHoldDays": 3,
       "sectorCrowdingMultiple": 4,
       "minAdvUsd": 50000000
     },
