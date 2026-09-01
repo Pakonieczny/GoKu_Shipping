@@ -752,7 +752,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           <div class="ctrlrow">
             <span class="lab">Measured stage</span>
             <span class="badge2 b-info" id="modeState">—</span>
-            <span class="hint">The ladder computes this stage from measured gates. It cannot be manually pinned upward.</span>
+            <span class="hint">Manual paper approval can be selected after build attestation. Shadow and limited-auto stages still come only from measured gates.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Operator ceiling</span>
@@ -763,7 +763,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
               <option value="limited_auto">Limited auto paper</option>
             </select>
             <button class="btn sm" id="btnCeil">Set ceiling</button>
-            <span class="hint">This can cap or immediately lower autonomy. Raising it only permits the measured ladder to advance after every gate passes.</span>
+            <span class="hint">Approval enables human-reviewed paper entries. Raising beyond approval only permits the measured ladder to advance after every gate passes.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Operator hold</span>
@@ -775,13 +775,13 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <span class="lab">Safety identity</span>
             <button class="btn sm" id="btnSafety">Activate current build</button>
             <span class="badge2" id="safetyState">—</span>
-            <span class="hint">Binds account, frozen universe, strategy, variants, fixture result, and deployed commit. Activation leaves dry run on.</span>
+            <span class="hint">Binds account, frozen universe, strategy, variants, fixture result, deployed commit and reconciled paper ledger. Automatic start selects the separately labelled exploratory-paper state.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Dry run</span>
             <button class="btn ghost sm" id="btnDry">Toggle</button>
             <span class="badge2" id="dryState">—</span>
-            <span class="hint">Dry run defaults ON. With it on, the cycle evaluates everything and writes nothing to the ledger.</span>
+            <span class="hint">ON means observation-only. OFF enables the simulated paper ledger; this app has no real-money order path.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Cycle interval</span>
@@ -808,10 +808,10 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
         <div class="card pad" style="margin-bottom:16px">
           <div class="card__h"><h3>Paper learning mode</h3><span class="sub" id="plState">off</span></div>
           <div class="note">
-            The published settings are calibrated for money that can be lost. On a virtual account that
-            calibration mostly buys silence. This loosens it deliberately so the desk trades and learns —
-            and it is <b>refused outright while dry run is off</b>, so it can never apply to real orders.
-            Every decision still records what the strict settings would have said, so nothing is lost.
+            The published settings are the strict comparison policy. On a virtual account, requiring that
+            calibration before collecting outcomes mostly buys silence. This loosens it deliberately so the
+            desk can observe and use its simulated ledger. Every decision still records what the strict
+            settings would have said, so relaxed and strict results remain separable.
           </div>
           <div class="ctrlrow">
             <span class="lab">Mode</span>
@@ -984,7 +984,7 @@ var TITLES = {
   candidates:["Candidates","Every ranked name with its full gate stack"],
   positions:["Positions","Open exposure and exit progress"],
   performance:["Performance","Marked NAV, drawdown, costs and the frozen-universe comparator"],
-  approvals:["Approvals","Proposed orders awaiting a human decision"],
+  approvals:["Approvals","Manual decisions and automatic-paper exceptions"],
   learning:["Learning","Frozen self-financing policies under controlled comparison"],
   intelligence:["Company intelligence","Agnostic public-source dossiers, relationships and decision impact"],
   knobs:["Settings explained","Every dial, what it does, and what happens if you move it"],
@@ -1048,13 +1048,15 @@ function render(){
   if(!DASH) return;
   var c = DASH.control||{}, s = DASH.session||{}, m = DASH.market||{};
 
-  $("#railState").textContent = c.killSwitch ? "killed" : (c.enabled?"running":"stopped");
+  $("#railState").textContent = c.operatingLabel||
+    (c.killSwitch ? "killed" : (c.enabled?"running":"stopped"));
   $("#railDot").style.background = c.killSwitch||!c.enabled ? "var(--clay)" : "var(--sage)";
   $("#railProv").textContent = (m.provider||"?")+" · "+(m.feedDelayMinutes||0)+"m delay · max "+(m.maxGrade||"?");
 
   var mp=$("#modePill");
   mp.className = "pill "+(c.killSwitch?"stop":c.dryRun?"dry":"live");
-  mp.innerHTML = '<span class="d"></span>'+(c.killSwitch?"KILLED":(c.mode||"research")+(c.dryRun?" · dry":""));
+  mp.innerHTML = '<span class="d"></span>'+esc(c.operatingLabel||
+    (c.killSwitch?"KILLED":(c.mode||"research")+(c.dryRun?" · observation":" · paper ledger")));
   var sp=$("#sessPill");
   sp.className="pill "+(s.open?"live":"info");
   sp.innerHTML='<span class="d"></span>'+(s.phase||"—");
@@ -1106,7 +1108,7 @@ function render(){
   $("#candCoverage").textContent = DASH.candidateSetComplete
     ? ("Complete: "+DASH.candidateTotal+" of "+DASH.candidateExpected+" frozen eligible names.")
     : ("INCOMPLETE: "+DASH.candidateTotal+" of "+(DASH.candidateExpected||"?")+" frozen eligible names; absence is not evidence.");
-  $("#modeState").textContent = c.mode||"research";
+  $("#modeState").textContent = c.operatingState||c.mode||"research";
   $("#modeState").className = "badge2 "+((c.mode||"research")==="research"?"b-warn":"b-on");
   $("#ceilSel").value = c.operatorCeiling||"approval";
   $("#holdState").textContent = c.operatorHold?"HELD":"open";
@@ -1123,9 +1125,13 @@ function render(){
   if(!$("#inpVixMed").matches(":focus") && r.vixMedian) $("#inpVixMed").value=r.vixMedian;
   if(!$("#inpCor").matches(":focus") && r.cor3m) $("#inpCor").value=r.cor3m;
   if(!$("#inpAccountId").matches(":focus")) $("#inpAccountId").value=c.accountId||"paper-1";
-  $("#approvalStateNote").innerHTML = c.mode==="approval"
+  $("#approvalStateNote").innerHTML = c.exploratoryAuto
+    ? "<b>Exploratory automatic paper trading.</b> Qualifying entries are approved by the system with no daily order quota and the complete virtual balance available. Every fill still rechecks cash, policy identity, provenance, duplicate ownership and the post-decision execution clock."
+    : c.mode==="approval"
     ? "<b>Approval stage.</b> Entries await a human decision. Approval reserves virtual cash; a later guard cycle still rechecks controls, policy identity, data quality, and the exact post-decision execution clock."
-    : "<b>Current stage: "+esc(c.mode||"research")+".</b> Nothing reaches a broker. Proposed paper orders, if any, still require the transition appropriate to the measured stage and are revalidated at fill time.";
+    : "<b>Current stage: "+esc(c.operatingLabel||c.mode||"research")+".</b> Nothing reaches a broker. Proposed paper orders, if any, still require the transition appropriate to the measured stage and are revalidated at fill time.";
+  if(c.reconciliationFailure) $("#approvalStateNote").innerHTML +=
+    " <b>Ledger reconciliation failed: new entries are frozen; exits and diagnostics remain available.</b>";
 }
 
 function renderCost(cost){
@@ -1236,7 +1242,7 @@ function renderLadder(l){
     box.innerHTML='<div class="empty" style="padding:14px">'+esc(l&&l.error?l.error:"No cycle yet.")+'</div>'; return; }
   $("#ladderAsOf").textContent = l.stage+" · ceiling "+l.ceiling;
   var STAGES=["research","approval","shadow","limited_auto"];
-  var LABEL={research:"Watch only",approval:"You approve each buy",shadow:"Approve, while it records what it would do alone",limited_auto:"Buys small positions by itself"};
+  var LABEL={research:"Watch only",approval:"You approve each buy",shadow:"Approve, while it records what it would do alone",limited_auto:"Statistically validated limited auto"};
   var curIdx=STAGES.indexOf(l.stage), earnIdx=STAGES.indexOf(l.earned), ceilIdx=STAGES.indexOf(l.ceiling);
   var rungs=STAGES.map(function(st,i){
     var state = i===curIdx?"b-on":(i<=earnIdx?"":"b-bad");
@@ -1662,7 +1668,7 @@ function renderPositions(pos, cands){
   var byS={}; cands.forEach(function(c){ byS[c.symbol]=c; });
   pos.forEach(function(p){
     var c=byS[p.symbol]||{};
-    var held = p.openedAt ? ((Date.now()-Date.parse(p.openedAt))/864e5) : 0;
+    var held = Number.isFinite(Number(p.heldTradingDays)) ? Number(p.heldTradingDays) : null;
     var hasRank = Number.isFinite(Number(c.rank));
     var rank = hasRank?Number(c.rank):null;
     var prog = hasRank?Math.max(0,Math.min(100,(rank/0.5)*100)):null;
@@ -1672,7 +1678,7 @@ function renderPositions(pos, cands){
       '<td class="num">'+(p.qty||0)+'</td>'+
       '<td class="num">'+num(p.entryPriceUsd,2)+'</td>'+
       '<td class="num">'+num(mark,2)+'</td>'+
-      '<td class="num">'+num(held,1)+'d</td>'+
+      '<td class="num">'+(held!=null?num(held,0)+' sessions':'—')+'</td>'+
       '<td class="num">'+(hasRank?num(rank,3):'<span class="badge2 b-warn">unknown</span>')+'</td>'+
       '<td style="min-width:150px">'+(hasRank
         ? '<div class="meter" style="margin:0"><i class="'+(prog>=100?"good":"bad")+'" style="width:'+prog.toFixed(0)+'%"></i></div><div style="font-family:var(--mono);font-size:10.5px;color:var(--ink-45);margin-top:3px">'+prog.toFixed(0)+'% to median-rank exit</div>'
@@ -2171,14 +2177,24 @@ function holdNow(){
 
 /* ── the desk control ─────────────────────────────────────────────────── */
 function renderToday(){
-  var c=ctl(), running=!c.killSwitch && c.enabled!==false && !c.entriesFrozen;
-  var stage=c.mode||"research", approvals=stage!=="research";
+  var c=ctl(), frozen=c.operatingState==="entry_frozen"||c.entriesFrozen,
+      paused=c.operatingState==="paused"||c.killSwitch||c.enabled===false,
+      running=!paused&&!frozen;
+  var stage=c.mode||"research", exploratory=c.operatingState==="exploratory_auto";
+  var auto=c.automaticPaperEntries===true||stage==="limited_auto"||exploratory;
+  var approvals=!auto&&(stage==="approval"||stage==="shadow");
   var host=$("#todayDesk"); if(!host) return;
 
-  var head = !running ? "The desk is paused"
+  var head = frozen ? "New entries are frozen"
+    : !running ? "The desk is paused"
+    : exploratory ? "The desk is paper trading automatically"
+    : auto ? "The desk is running validated paper trades automatically"
     : approvals ? "The desk is working, and will ask before it buys"
     : "The desk is watching";
-  var body = !running ? "It is not looking for anything to buy. Existing holdings are still being watched and can still be sold."
+  var body = frozen ? "It is still ranking companies and watching holdings, but it cannot open a new paper position until the freeze is cleared. Exits still work."
+    : !running ? "It is not looking for anything to buy. Existing holdings are still being watched and can still be sold."
+    : exploratory ? "It can use the full virtual account across qualifying opportunities, with no daily order quota. Every decision and outcome remains labelled exploratory and linked to the variables that produced it."
+    : auto ? "It has earned the limited-auto stage. Routine paper orders inside its validated automatic caps can be approved by the system."
     : approvals ? "It ranks every company, and when one passes all its checks it puts the order in front of you. Nothing is bought without your say-so."
     : "It ranks every company and writes down what it would have done, but it will not ask you to buy anything. This is the safe setting to leave it on.";
 
@@ -2186,7 +2202,7 @@ function renderToday(){
   host.innerHTML =
     '<div class="desk">'
     + '<div class="desk__top"><div class="desk__txt">'
-    +   '<span class="pill '+(running?"info":"dry")+'"><span class="d"></span>'+(running?(approvals?"Asking before buying":"Watching only"):"Paused")+'</span>'
+    +   '<span class="pill '+(running?"info":"dry")+'"><span class="d"></span>'+(running?(exploratory?"Exploratory auto paper":(auto?"Validated auto paper":(approvals?"Asking before buying":"Watching only"))):"Paused")+'</span>'
     +   '<h2>'+esc(head)+'</h2><p>'+esc(body)+'</p></div>'
     + '<button class="btn '+(running?"":"gold")+' bigbtn" id="tdBig">'+(running?"Pause the desk":"Start the desk")+'</button>'
     + '</div>'
@@ -2205,10 +2221,13 @@ function renderToday(){
     +    '<div class="od">Whether it can act alone, or must come to you first.</div>'
     +    '<div class="segs" id="tdWho">'
     +      '<button data-k="research"'+(stage==="research"?' class="on"':'')+'>Nobody buys</button>'
-    +      '<button data-k="approval"'+(stage!=="research"?' class="on"':'')+'>I approve each one</button>'
+    +      '<button data-k="approval"'+(approvals?' class="on"':'')+'>I approve each one</button>'
+    +      '<button data-k="auto"'+(auto?' class="on"':'')+'>System automatically</button>'
     +    '</div><div class="oc">'+(stage==="research"
           ? "Watching only. It records what it would have done so you can judge it before letting it act."
-          : "It proposes; you approve. Nothing is bought without a click from you.")+'</div></div>'
+          : (exploratory ? "Automatic exploratory paper trading is active now. It has no daily order quota and can use the full virtual account, but it still rejects invalid data and duplicate or unaffordable orders."
+          : (auto ? "Limited auto was earned from measured paper results."
+          : "It proposes; you approve. Nothing is bought without a click from you.")))+'</div></div>'
     + '</div>'
     + '<div class="ctrlrow" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">'
     +   '<button class="btn ghost sm" id="tdRun">Check for opportunities now</button>'
@@ -2218,7 +2237,8 @@ function renderToday(){
   $("#tdBig").onclick=function(){
     var b=this;
     if(running) runButton(b,"kill",{operator:"desk"},function(){toast("Paused. Holdings are still watched.");refresh(false);});
-    else runButton(b,"resume",{operator:"desk"},function(){toast("Started.");refresh(false);});
+    else runButton(b,"activateSafety",{operator:"desk",exploratoryAuto:true},function(){
+      toast("Started — automatic exploratory paper trading is active");refresh(false);});
   };
   $$("#tdEager button").forEach(function(b){ b.onclick=function(){
     var k=b.dataset.k, v=EAGER[k];
@@ -2228,9 +2248,27 @@ function renderToday(){
     var k=b.dataset.k, v=HOLD[k];
     plSet({enabled:true,abstainOnMissingInfo:true,maxHoldDays:v.maxHoldDays,exitRank:v.exitRank}, b); };});
   $$("#tdWho button").forEach(function(b){ b.onclick=function(){
-    runButton(b,"setControl",{operator:"desk",patch:{operatorCeiling:b.dataset.k}},function(r){
-      toast(r.refused&&Object.keys(r.refused).length?"Not changed — the system has not earned that stage yet":"Updated");
-      refresh(false);}); };});
+    var stage=b.dataset.k;
+    if(stage==="research"){
+      runButton(b,"setControl",{operator:"desk",patch:{operatorCeiling:"research",dryRun:true}},function(){
+        toast("Watching only"); refresh(false);});
+      return;
+    }
+    if(stage==="auto"){
+      runButton(b,"activateSafety",{operator:"desk",exploratoryAuto:true},function(r){
+        toast(r.note||"Automatic exploratory paper trading enabled"); refresh(false);});
+      return;
+    }
+    b.disabled=true;
+    api("activateSafety",{operator:"desk"}).then(function(r){
+      if(r&&r.error) throw new Error(r.error);
+      return api("setControl",{operator:"desk",patch:{operatorCeiling:"approval",dryRun:false}});
+    }).then(function(r){
+      if(r&&r.ok===false) throw new Error(r.error||"paper approval was refused");
+      toast("Paper ledger on — you approve each purchase"); refresh(false);
+    }).catch(function(e){ toast("Not changed — "+String(e&&e.message||e)); })
+      .finally(function(){ b.disabled=false; });
+  };});
   $("#tdRun").onclick=function(){
     var b=this,m=$("#tdRunMsg"); b.disabled=true; m.textContent="Looking…";
     api("runCycleNow",{operator:"desk"}).then(function(r){
@@ -2253,7 +2291,7 @@ function renderTodayStats(){
   $("#todayStats").innerHTML=[
     ['Account value', money(nav,2), 'virtual money', ''],
     ['Owned now', String(open.length), open.length===1?'company':'companies', ''],
-    ['Made or lost', (net>=0?'+':'')+money(Math.abs(net),2), 'on closed trades', net>0?'good':(net<0?'bad':'')],
+    ['Made or lost', (net>0?'+':'')+money(net,2), 'on closed trades', net>0?'good':(net<0?'bad':'')],
     ['Ranked today', String(DASH.candidateTotal||0), 'of '+(DASH.candidateExpected||0)+' companies', '']
   ].map(function(r){
     return '<div class="stat '+r[3]+'"><div class="l">'+esc(r[0])+'</div><div class="v">'+esc(r[1])+'</div><div class="d">'+esc(r[2])+'</div></div>';
@@ -2274,9 +2312,9 @@ function renderTodayHeld(){
   $("#todayHeld").innerHTML = pos.map(function(p){
     var last=p.lastMarkUsd!=null?p.lastMarkUsd:p.entryPriceUsd;
     var pl = (p.entryPriceUsd>0 && last!=null) ? ((last-p.entryPriceUsd)/p.entryPriceUsd)*100 : null;
-    var held = p.openedAt ? ((Date.now()-Date.parse(p.openedAt))/864e5) : null;
+    var held = Number.isFinite(Number(p.heldTradingDays)) ? Number(p.heldTradingDays) : null;
     return coBtn(p.symbol, S_SECTOR(p.symbol),
-      'Bought at '+money(p.entryPriceUsd,2)+(held!=null?(' · held '+num(held,1)+' days'):''),
+      'Bought at '+money(p.entryPriceUsd,2)+(held!=null?(' · held '+num(held,0)+' sessions'):''),
       (pl!=null?'<span style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl>=0?'+':'')+num(pl,2)+'%</span>':'—'),
       last!=null?('now '+money(last,2)):'');
   }).join("");
@@ -2391,7 +2429,7 @@ function renderResults(){
   var gross=cost.grossEdgeUsd!=null?cost.grossEdgeUsd:0;
   $("#resStats").innerHTML=[
     ['Account value',money(nav,2),(pct>=0?'+':'')+num(pct,2)+'% since it opened',pct>0?'good':(pct<0?'bad':'')],
-    ['Profit before costs',(gross>=0?'+':'')+money(Math.abs(gross),2),'what the picks earned',''],
+    ['Profit before costs',(gross>0?'+':'')+money(gross,2),'what the picks earned',''],
     ['Cost of trading','-'+money(Math.abs(fric),2),'spread and impact paid',''],
     ['Left over',(net>=0?'+':'-')+money(Math.abs(net),2),'this is the number that matters',net>0?'good':(net<0?'bad':'')]
   ].map(function(r){return '<div class="stat '+r[3]+'"><div class="l">'+esc(r[0])+'</div><div class="v">'+esc(r[1])+'</div><div class="d">'+esc(r[2])+'</div></div>';}).join("");
@@ -2399,8 +2437,9 @@ function renderResults(){
   $("#resNav").innerHTML = '<div class="note">The whole experiment is whether <b>profit before costs</b> stays '
     + 'bigger than <b>cost of trading</b>. If it does not, the idea does not work no matter how good the picks look.</div>';
 
-  var closed=(DASH.positions||[]).filter(function(p){return !p.open;});
-  $("#resTradeSub").textContent = closed.length ? closed.length+" closed" : "none yet";
+  var closed=DASH.closedTrades||[];
+  var closedTotal=DASH.closedTradeTotal!=null?DASH.closedTradeTotal:closed.length;
+  $("#resTradeSub").textContent = closedTotal ? closedTotal+" closed" : "none yet";
   $("#resTrades").innerHTML = closed.length
     ? closed.slice(0,30).map(function(p){
         var pl=p.realisedPnlUsd!=null?p.realisedPnlUsd:null;
@@ -2445,7 +2484,7 @@ function wireCoRows(sel){
 
 function openCompany(sym){
   if(!sym) return;
-  CS.sym=sym; CS.daily=[]; CS.hist=null; CS.range=120;
+  CS.sym=sym; CS.daily=[]; CS.hist=null;
   var sheet=$("#coSheet"); sheet.hidden=false; document.body.style.overflow="hidden";
   $("#csSym").textContent=sym;
   $("#csName").textContent=S_SECTOR(sym)||"";
@@ -2507,9 +2546,9 @@ function drawCompany(){
   if(p && p.open){
     var last2=p.lastMarkUsd!=null?p.lastMarkUsd:p.entryPriceUsd;
     var pl=(p.entryPriceUsd>0&&last2!=null)?((last2-p.entryPriceUsd)/p.entryPriceUsd)*100:null;
-    var held=p.openedAt?((Date.now()-Date.parse(p.openedAt))/864e5):null;
+    var held=Number.isFinite(Number(p.heldTradingDays))?Number(p.heldTradingDays):null;
     $("#csPos").innerHTML='<div class="card pad" style="margin-bottom:16px">'
-      + '<div class="card__h"><h3>You own this</h3><span class="sub">'+(held!=null?('held '+num(held,1)+' days'):'')+'</span></div>'
+      + '<div class="card__h"><h3>You own this</h3><span class="sub">'+(held!=null?('held '+num(held,0)+' sessions'):'')+'</span></div>'
       + '<div class="ctrlrow"><span class="lab">Bought at</span><span class="kv">'+money(p.entryPriceUsd,2)+'</span></div>'
       + '<div class="ctrlrow"><span class="lab">Worth now</span><span class="kv">'+money(last2,2)+'</span></div>'
       + '<div class="ctrlrow"><span class="lab">Up or down</span><span class="kv" style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl!=null?((pl>=0?'+':'')+num(pl,2)+'%'):'—')+'</span></div>'
@@ -2757,21 +2796,27 @@ $("#btnRecall").addEventListener("click",function(){
    button that silently does three things.
    ───────────────────────────────────────────────────────────────────────── */
 (function(){
-  var STEP = 0, CHOICE = "watch", BUSY = false;
+  var STEP = 0, CHOICE = "auto", BUSY = false;
 
   function ctl(){ return (DASH && DASH.control) || {}; }
 
   /* The three states an operator actually needs to distinguish. */
   function deskState(){
     var c = ctl();
+    if (c.operatingState === "paused") return "paused";
+    if (c.operatingState === "observation" || c.operatingState === "entry_frozen") return "watching";
+    if (c.operatingState === "exploratory_auto") return "exploratory";
+    if (c.operatingState === "limited_auto") return "auto";
+    if (c.operatingState === "manual_approval" || c.operatingState === "shadow") return "proposing";
     if (c.killSwitch || c.enabled === false) return "paused";
     if (c.dryRun !== false || c.mode === "research") return "watching";
+    if (c.mode === "limited_auto") return "auto";
     return "proposing";
   }
 
   function tradableNow(){
     var m = (DASH && DASH.market) || {};
-    return m.liquidityEligible === true || (DASH && DASH.candidateTotal > 0);
+    return m.liquidityEligible === true;
   }
 
   var COPY = {
@@ -2791,6 +2836,18 @@ $("#btnRecall").addEventListener("click",function(){
       badge: "Asking before each buy",
       head: "The desk is running",
       body: "When it finds something it will put it in your Approvals list and wait. Nothing is bought unless you click approve.",
+      btn: "Pause the desk", cls: "stop"
+    },
+    exploratory: {
+      badge: "Exploratory auto paper",
+      head: "The desk is trading and learning automatically",
+      body: "It can keep opening qualifying virtual positions with no daily order quota and may deploy the full $100,000 account. Every success, failure and rejection remains linked to its complete decision inputs.",
+      btn: "Pause the desk", cls: "stop"
+    },
+    auto: {
+      badge: "Validated auto paper",
+      head: "The desk is running validated paper trades automatically",
+      body: "The statistically earned policy is approving paper orders inside its validated automatic limits.",
       btn: "Pause the desk", cls: "stop"
     }
   };
@@ -2813,9 +2870,9 @@ $("#btnRecall").addEventListener("click",function(){
     var warn = "";
     if (!tradableNow()) {
       warn = '<div class="note warn" style="margin-top:12px;font-size:12.5px">'
-           + '<b>It is ranking and recording, but not buying.</b> Your market-data plan covers one '
-           + 'small exchange, so prices are good enough to <i>measure</i> with but not good enough to '
-           + 'price a real order against. So the desk does everything except place the order: it ranks '
+           + '<b>It is ranking and recording, but this feed cannot fill paper orders.</b> The current '
+           + 'market source is not consolidated/execution-eligible, so it is good enough to <i>measure</i> '
+           + 'with but not good enough to price an executable paper fill. The desk still ranks '
            + 'every company, writes down what it would have done, and marks those paper positions as '
            + 'they move. That record is kept separately from anything built on full-market prices, so '
            + 'upgrading later starts a clean run rather than mixing the two. Nothing here is broken.</div>';
@@ -2837,7 +2894,7 @@ $("#btnRecall").addEventListener("click",function(){
       +     'Normally it runs itself every few minutes.</div>'
       + '</div>' + warn;
     document.getElementById("deskBtn").onclick = function(){
-      if (st === "paused") { STEP = 1; CHOICE = "watch"; dialog(); }
+      if (st === "paused") { STEP = 1; CHOICE = "auto"; dialog(); }
       else pauseDialog();
     };
     /* A desk whose only trigger is cron gives the operator no way to tell a
@@ -2925,9 +2982,12 @@ $("#btnRecall").addEventListener("click",function(){
       shell(steps(2, 3)
         + '<h2 style="margin:0 0 12px;font-size:22px">How should it behave?</h2>'
         + '<p style="font-size:13.5px;line-height:1.7;color:var(--ink-70);margin-bottom:16px">'
-        + 'Both options use virtual money. No real account is connected to this system and no part of '
+        + 'All options use virtual money. No real account is connected to this system and no part of '
         + 'it can place a real order.</p>'
-        + opt("watch", "Watch only — recommended to start",
+        + opt("auto", "Trade automatically — selected",
+            "It begins autonomous exploratory paper trading immediately. There is no daily trade quota, "
+            + "the full $100,000 virtual account is available, and every result stays labelled as exploratory evidence.")
+        + opt("watch", "Watch only",
             "It ranks companies and records what it would have done, so you can see whether the idea "
             + "works before it asks you for anything. It will never interrupt you.")
         + opt("approve", "Ask me before each buy",
@@ -2945,7 +3005,7 @@ $("#btnRecall").addEventListener("click",function(){
       return;
     }
 
-    var willAsk = CHOICE === "approve";
+    var willAsk = CHOICE === "approve", willAuto = CHOICE === "auto";
     shell(steps(3, 3)
       + '<h2 style="margin:0 0 12px;font-size:22px">Ready to start</h2>'
       + '<p style="font-size:13.5px;line-height:1.7;color:var(--ink-70)">Here is exactly what happens '
@@ -2953,9 +3013,11 @@ $("#btnRecall").addEventListener("click",function(){
       + '<ol style="font-size:13.5px;line-height:1.9;color:var(--ink-70);padding-left:20px">'
       + '<li>The current rules and company list are frozen as this experiment.</li>'
       + '<li>It begins checking the market every few minutes during trading hours.</li>'
-      + '<li>' + (willAsk
+      + '<li>' + (willAuto
+          ? 'When a qualifying opportunity passes the executable paper gates, it approves and fills it automatically until opportunities or available virtual cash run out.'
+          : (willAsk
           ? 'When it finds something, it adds it to <b>Approvals</b> and waits for you.'
-          : 'It records what it would have done, and does not ask you for anything.') + '</li>'
+          : 'It records what it would have done, and does not ask you for anything.')) + '</li>'
       + '<li>Anything it already holds keeps being watched, with its exit rules active.</li>'
       + '</ol>'
       + '<div class="note" style="font-size:12.5px;margin:14px 0"><b>To stop it</b>, press the pause '
@@ -2986,17 +3048,18 @@ $("#btnRecall").addEventListener("click",function(){
     var wasPaused = ctl().killSwitch || ctl().enabled === false;
     var chain = wasPaused ? api("resume", {operator: "desk"}) : Promise.resolve({});
     chain.then(function(){
-      return api("activateSafety", {operator: "desk"});
+      return api("activateSafety", {operator: "desk", exploratoryAuto: CHOICE === "auto"});
     }).then(function(r){
       if (r && r.error) throw new Error(r.error);
       if (CHOICE !== "approve") return {};
-      return api("setControl", {patch: {dryRun: false}, operator: "desk"}).then(function(x){
+      return api("setControl", {patch: {operatorCeiling: "approval", dryRun: false}, operator: "desk"}).then(function(x){
         if (x && x.ok === false) throw new Error(x.error || "the desk would not accept trade proposals yet");
         return x;
       });
     }).then(function(){
       BUSY = false; close();
-      toast(CHOICE === "approve" ? "Started — it will ask before each buy" : "Started — watching only");
+      toast(CHOICE === "auto" ? "Started — automatic exploratory paper trading is active"
+        : (CHOICE === "approve" ? "Started — it will ask before each buy" : "Started — watching only"));
       refresh(false);
     }).catch(function(e){
       fail(String(e && e.message || e) + ".");
@@ -3007,13 +3070,12 @@ $("#btnRecall").addEventListener("click",function(){
   function pauseDialog(){
     shell('<h2 style="margin:0 0 12px;font-size:22px">Pause the desk?</h2>'
       + '<div style="font-size:13.5px;line-height:1.7;color:var(--ink-70)">'
-      + '<p style="margin:0 0 10px"><b>What stops.</b> It will not open anything new, and it stops '
-      + 'spending on data and analysis.</p>'
+      + '<p style="margin:0 0 10px"><b>What stops.</b> It will not open anything new, and full price-opportunity scans stop.</p>'
       + '<p style="margin:0 0 10px"><b>What keeps running.</b> Anything you already hold is still '
-      + 'watched, and its exit rules still work. Pausing protects you from new risk — it never '
+      + 'watched, its exit rules still work, and scheduled evidence health checks may continue. Pausing protects you from new risk — it never '
       + 'removes protection from risk you already have.</p>'
       + '<p style="margin:0"><b>Reversing it.</b> You can start again whenever you like. Starting '
-      + 'again does begin a fresh experiment, so the learning record starts over.</p></div>'
+      + 'again creates a new safety activation; it does not erase prior decisions, trades or outcomes.</p></div>'
       + '<div data-dk="err" style="display:none" class="note warn"></div>'
       + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
       + '<button class="btn ghost" data-dk="cancel">Keep it running</button>'
