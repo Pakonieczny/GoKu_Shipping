@@ -1187,9 +1187,12 @@ function render(){
   renderIntelligence(intel, c.intelligenceSymbols||[]);
 
   $("#cycleLab").textContent = DASH.cycleId||"—";
-  $("#candCoverage").textContent = DASH.candidateSetComplete
-    ? ("Complete: "+DASH.candidateTotal+" of "+DASH.candidateExpected+" frozen eligible names.")
-    : ("INCOMPLETE: "+DASH.candidateTotal+" of "+(DASH.candidateExpected||"?")+" frozen eligible names; absence is not evidence.");
+  var scanState=(DASH.operations||{}).scan||{};
+  $("#candCoverage").textContent = scanState.complete
+    ? ("Roster checked: "+(scanState.checked!=null?scanState.checked:scanState.completed)+" of "+scanState.total
+      +". Decision cards recorded for "+DASH.candidateTotal+" of "+(scanState.ranked||0)+" rankable names.")
+    : ("CURRENT CHECK INCOMPLETE: "+(scanState.completed||0)+" of "+(scanState.total||DASH.candidateExpected||"?")
+      +" frozen eligible names processed; absence is not evidence.");
   $("#modeState").textContent = c.operatingState||c.mode||"research";
   $("#modeState").className = "badge2 "+((c.mode||"research")==="research"?"b-warn":"b-on");
   $("#ceilSel").value = c.operatorCeiling||"approval";
@@ -2269,6 +2272,16 @@ function operationStream(name,completed,total,pct,desc){
     +'<div class="opsstream__count">'+have+' / '+(all||'—')+'</div></div>'
     +operationBar(pct,name)+'<div class="opsstream__desc">'+esc(desc)+'</div></div>';
 }
+function rankingExclusionSummary(scan){
+  var d=scan.rankingDiagnostics||{},x=d.excludedBeforePanel||{},parts=[];
+  if(Number(x.tooFewBars)>0) parts.push(x.tooFewBars+" lacked 24 usable bars");
+  if(Number(x.unusableQuality)>0) parts.push(x.unusableQuality+" failed freshness or provenance quality");
+  if(Number(x.marketIdentityMismatch)>0) parts.push(x.marketIdentityMismatch+" used a different market-source identity");
+  if(Number(d.excludedForSynchronousCoverage)>0) parts.push(d.excludedForSynchronousCoverage+" lacked synchronized cross-sectional coverage");
+  if(Number(d.excludedForSignalHistory)>0) parts.push(d.excludedForSignalHistory+" lacked enough residual history for a stable score");
+  if(!parts.length&&scan.excludedFromRanking>0) parts.push(scan.excludedFromRanking+" did not have enough comparable data to rank");
+  return parts.join("; ");
+}
 function queueOperation(jobId,kind,note){
   if(!DASH) return;
   var now=Date.now(),active={jobId:jobId||("local_"+now),kind:kind||"cycle",status:"queued",
@@ -2382,7 +2395,7 @@ function renderOperationsConsole(){
       :"Next automatic opportunity scan in about "+durationText(due)+". Netlify scheduling can drift, so this is an estimate.";
   }
 
-  var scan=ops.scan||{completed:DASH.candidateTotal||0,total:DASH.candidateExpected||0,pct:0},
+  var scan=ops.scan||{completed:0,total:DASH.candidateExpected||0,ranked:DASH.candidateTotal||0,pct:0},
       research=ops.research||{},learning=ops.learning||{completed:DASH.closedTradeTotal||0,target:200,pct:0};
   var scanRemaining=scan.remaining!=null?scan.remaining:Math.max(0,(scan.total||0)-(scan.completed||0));
   var learningRemaining=learning.remaining!=null?learning.remaining:Math.max(0,(learning.target||0)-(learning.completed||0));
@@ -2390,8 +2403,13 @@ function renderOperationsConsole(){
   var researchDone=researchActive&&rp.completed!=null?rp.completed:Number(research.swept)||0;
   var researchTotal=researchActive&&rp.total!=null?rp.total:(research.selected||[]).length;
   var researchPct=researchTotal?100*researchDone/researchTotal:0;
-  var streams=operationStream("Latest opportunity scan",scan.completed,scan.total,scan.pct||0,
-      scan.complete?"Every frozen eligible company has a recorded decision in the latest set.":scanRemaining+" frozen eligible companies do not yet have a recorded decision in this set.")
+  var exclusionText=rankingExclusionSummary(scan);
+  var scanDesc=scan.complete
+    ? ((scan.ranked||0)+" companies had enough comparable data to rank; "
+      +(scan.excludedFromRanking||0)+" were excluded before or during ranking"
+      +(exclusionText?" ("+exclusionText+").":"."))
+    : scanRemaining+" frozen eligible companies remain to be checked in this cycle.";
+  var streams=operationStream("Latest roster check",scan.completed,scan.total,scan.pct||0,scanDesc)
     +operationStream(researchActive?"Current research sweep":"Latest research sweep",researchDone,researchTotal,researchPct,
       researchActive?Math.max(0,(rp.remaining||0))+" selected dossiers remain in this sweep.":
         (research.dossierCount||0)+" dossiers stored; "+(research.readyDossiers||0)+" are fresh and complete. The focus queue rotates continuously.")
@@ -2401,9 +2419,15 @@ function renderOperationsConsole(){
   var cands=DASH.candidates||[],passed=cands.filter(function(x){return x.pass;}).length,tally={};
   cands.forEach(function(x){if(x.firstBlock)tally[x.firstBlock]=(tally[x.firstBlock]||0)+1;});
   var top=Object.keys(tally).sort(function(a,b){return tally[b]-tally[a];})[0];
-  var fact=cands.length?("Latest recorded set: "+cands.length+" companies evaluated, "+passed+" passed every company-level gate"
+  var fact=cands.length?("Latest cycle checked "+(scan.checked!=null?scan.checked:scan.total)+" companies and ranked "+cands.length
+    +"; "+passed+" passed every company-level gate"
     +(top?", and the most common first stop was that "+plainGate(top)+" ("+tally[top]+").":".")):
+    scan.complete?("Latest cycle checked "+(scan.checked!=null?scan.checked:scan.total)+" companies, but ranked 0. "
+      +(exclusionText||"The backend did not receive a sufficiently broad, synchronized and provenance-valid panel.")):
     "No company decision set has completed yet; the console will replace this sentence with measured counts.";
+  var market=DASH.market||{};
+  if(market.consolidated!==true||market.liquidityEligible===false) fact += " The current "
+    +(market.provider||"market")+(market.feed?" "+market.feed:"")+" feed is research-only: it can support ratings, but the execution-source gate will not create paper fills from it.";
 
   host.innerHTML='<div class="opshead"><div class="opshead__copy"><h2>Live desk console</h2>'
     +'<p>Backend truth only: scheduled jobs, company counts, order/fill work, research and learning progress.</p></div>'
@@ -2429,6 +2453,8 @@ function renderToday(){
       running=!paused&&!frozen;
   var stage=c.mode||"research", exploratory=c.operatingState==="exploratory_auto";
   var auto=c.automaticPaperEntries===true||stage==="limited_auto"||exploratory;
+  var market=DASH.market||{}, executionFeedReady=market.consolidated===true
+    && market.liquidityEligible!==false;
   var approvals=!auto&&(stage==="approval"||stage==="shadow");
   var host=$("#todayDesk"); if(!host) return;
 
@@ -2444,6 +2470,8 @@ function renderToday(){
     : auto ? "It has earned the limited-auto stage. Routine paper orders inside its validated automatic caps can be approved by the system."
     : approvals ? "It ranks every company, and when one passes all its checks it puts the order in front of you. Nothing is bought without your say-so."
     : "It ranks every company and writes down what it would have done, but it will not ask you to buy anything. This is the safe setting to leave it on.";
+  if(exploratory&&!executionFeedReady) body += " The current "+(market.provider||"market")
+    +(market.feed?" "+market.feed:"")+" feed is research-only: ratings continue, but paper fills remain blocked until an execution-grade consolidated feed is selected.";
 
   var eg=eagerNow(), hd=holdNow();
   host.innerHTML =
@@ -2534,12 +2562,22 @@ function renderTodayStats(){
   /* Count only OPEN positions. Counting the whole array reported closed
      trades as things the account still owns. */
   var open=(DASH.positions||[]).filter(function(p){return p.open;});
-  var nav=b.navUsd!=null?b.navUsd:(b.cashUsd||0), net=cost.netUsd!=null?cost.netUsd:0;
+  var cash=b.usd&&Number.isFinite(Number(b.usd.cash))?Number(b.usd.cash):0;
+  var reserved=b.usd&&Number.isFinite(Number(b.usd.reserved))?Number(b.usd.reserved):0;
+  var marked=open.reduce(function(total,p){
+    var price=Number(p.lastMarkUsd!=null?p.lastMarkUsd:p.entryPriceUsd),qty=Number(p.qty);
+    return total+(price>0&&qty>0?price*qty:0);
+  },0);
+  var risk=((ctl().lastCycleSummary||{}).risk)||{};
+  var nav=risk.navUsd!=null?Number(risk.navUsd):(cash+reserved+marked);
+  var net=cost.netRealizedUsd!=null?Number(cost.netRealizedUsd):0;
+  var scan=(DASH.operations||{}).scan||{};
+  var ranked=scan.ranked!=null?scan.ranked:(DASH.candidateTotal||0);
   $("#todayStats").innerHTML=[
     ['Account value', money(nav,2), 'virtual money', ''],
     ['Owned now', String(open.length), open.length===1?'company':'companies', ''],
     ['Made or lost', (net>0?'+':'')+money(net,2), 'on closed trades', net>0?'good':(net<0?'bad':'')],
-    ['Ranked today', String(DASH.candidateTotal||0), 'of '+(DASH.candidateExpected||0)+' companies', '']
+    ['Ranked today', String(ranked), 'after checking '+(scan.checked!=null?scan.checked:(DASH.candidateExpected||0))+' companies', '']
   ].map(function(r){
     return '<div class="stat '+r[3]+'"><div class="l">'+esc(r[0])+'</div><div class="v">'+esc(r[1])+'</div><div class="d">'+esc(r[2])+'</div></div>';
   }).join("");
