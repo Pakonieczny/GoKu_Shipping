@@ -12,12 +12,13 @@ const T = require("./_investorTemporal");
 const AL = require("./_investorAllocator");
 const DF = require("./_investorDecisionFeedback");
 const STRATEGY = require("./_investorStrategy");
+const CA = require("./_investorCorporateActions");
 
 const OPEN = A.COL.shadowOpen;
 const CLOSED = A.COL.shadowClosed;
 const STATS = A.COL.shadowDays;
 const ACCOUNTS = A.COL.shadowAccounts;
-const SIMULATOR_VERSION = "self-financing-counterfactual-v9-controlled-learning";
+const SIMULATOR_VERSION = "self-financing-counterfactual-v10-finalized-intelligence-bound";
 const DISCOUNT_GAMMA = 0.988; // trading-session weighting; asymptotic ESS ~= 166
 const PH_DELTA_FRAC = 0.25;
 const PH_LAMBDA_SD = 12;
@@ -41,6 +42,9 @@ function experimentIdentity(ctx = {}) {
     universeHash: ctx.universeHash || null,
     strategyHash: ctx.strategyHash || null,
     variantsHash: ctx.variantsHash || V.variantsHash(),
+    buildCommit: ctx.buildCommit || process.env.COMMIT_REF || process.env.DEPLOY_ID || "local",
+    intelligenceConfigHash: ctx.intelligenceConfigHash
+      || sha(ctx.intelligenceConfig == null ? null : ctx.intelligenceConfig),
     provider: p.provider || ctx.providerId || null,
     feed: p.feed || ctx.feed || null,
     adjustment: p.adjustment || ctx.adjustment || null,
@@ -137,6 +141,7 @@ async function fillPendingAtomic(doc, pending, eligible, provenance, date) {
       pendingEntry: false, entryPrice: price, filledAt: eligible.barOpenAt,
       entryMarketProvenance: provenance, entryEligibleAfterMs: eligible.availableFromMs,
       markDate: date, dayStartPrice: price, lastMarkPrice: price,
+      lastMarkAt: eligible.barOpenAt, lastMarkProvenance: provenance,
       qty: Number(qty.toFixed(8)), notionalUsd: Number(notionalUsd.toFixed(2)),
       entryCostUsd: Number(entryCostUsd.toFixed(6)),
       entryCashDebitUsd: Number(cashDebitUsd.toFixed(6)),
@@ -373,6 +378,12 @@ async function accumulate(variantId, row, experimentHashArg = null) {
   return A.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const old = snap.exists ? snap.data() : {};
+    /* A finalized session is immutable evidence. A late/manual cycle may
+       still manage risk, but it may not rewrite the observation already used
+       by selection or calibration. */
+    if (old.dailyFinalized === true) {
+      return { ignored: true, reason: "daily_observation_finalized", outcomeId, date };
+    }
     const outcomes = Array.isArray(old.outcomes) ? old.outcomes.slice() : [];
     const next = {
       id: outcomeId,
@@ -395,6 +406,10 @@ async function accumulate(variantId, row, experimentHashArg = null) {
       portfolioCostBps: Number(sum("costBps").toFixed(8)),
       unresolvedCount: outcomes.filter((o) => o.unresolved).length,
       worstCaseNetBps: Number((sum("netBps") + sum("worstCaseNetBps", outcomes.filter((o) => o.unresolved))).toFixed(8)),
+      completePortfolioDay: false,
+      marksComplete: false,
+      provisional: true,
+      excludedReason: "session has not reached buffered daily finalization",
       updatedAt: A.FV.serverTimestamp(),
       ...(snap.exists ? {} : A.envelope({ created_by: "shadow.accumulate" })),
     };
@@ -442,8 +457,9 @@ async function closeAtomic(doc, p, closeRow, financial = null) {
  * Pending decisions hold no asset and reserve cash only for feasibility.
  */
 async function markAccounts(ctx, exp) {
-  if (!(ctx.session && ctx.session.tradingDay && /^\d{4}-\d{2}-\d{2}$/.test(ctx.session.date))) {
-    return { marked: 0, complete: 0, skipped: "not_trading_day" };
+  if (!(ctx.session && ctx.session.tradingDay && ctx.session.dailyFinalized === true
+      && /^\d{4}-\d{2}-\d{2}$/.test(ctx.session.date))) {
+    return { marked: 0, complete: 0, skipped: "daily_session_not_finalized" };
   }
   const date = ctx.session.date;
   const openSnap = await A.col(OPEN).get();
@@ -454,21 +470,34 @@ async function markAccounts(ctx, exp) {
     const account = await ensureAccount(exp.experimentHash, variant.id,
       Math.max(1, Number(ctx.shadowNavUsd) || 100000));
     const mine = rows.filter((p) => p.variantId === variant.id);
-    const missing = [];
+    const missing = [], markSources = [];
     let marketValueUsd = 0;
     for (const p of mine) {
+      if (p.corporateActionPending) {
+        missing.push(`${p.symbol}:corporate_action_pending`); continue;
+      }
       const price = Number(ctx.lastPrice && ctx.lastPrice[p.symbol]);
       const provenance = provenanceFor(ctx, p.symbol);
       if (!(price > 0) || !validProvenance(provenance)) {
         missing.push(p.symbol); continue;
       }
       marketValueUsd += price * Number(p.qty);
+      markSources.push({ symbol: p.symbol, price: Number(price.toFixed(8)),
+        provider: provenance.provider, feed: provenance.feed || null,
+        adjustment: provenance.adjustment || null,
+        barOpenAt: provenance.barOpenAt || null,
+        sourceSha256: provenance.sourceSha256 });
     }
+    markSources.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    const markSetSha256 = sha(stable(markSources));
     const dayRef = A.col(STATS).doc(dayDocId(exp.experimentHash, variant.id, date));
     if (missing.length) {
       await dayRef.set({
         experimentHash: exp.experimentHash, variantId: variant.id, date,
         simulatorVersion: SIMULATOR_VERSION, completePortfolioDay: false,
+        dailyFinalized: true, provisional: false, marksComplete: false,
+        markSources, markSetSha256,
+        finalizedAt: A.FV.serverTimestamp(),
         excludedReason: "missing trustworthy mark for every open position",
         missingSymbols: [...new Set(missing)].sort(), updatedAt: A.FV.serverTimestamp(),
       }, { merge: true });
@@ -511,11 +540,17 @@ async function markAccounts(ctx, exp) {
       simulatorVersion: SIMULATOR_VERSION,
       completePortfolioDay: contiguous,
       marksComplete: true,
+      dailyFinalized: true,
+      provisional: false,
+      markSources,
+      markSetSha256,
+      missingSymbols: [],
+      finalizedAt: A.FV.serverTimestamp(),
       priorCompleteDate: priorDate || null,
       sessionsSpanned: spanned,
-      ...(contiguous ? {} : { excludedReason: spanKnown
+      excludedReason: contiguous ? null : (spanKnown
         ? `return compounds across ${spanned} trading sessions and is not a daily observation`
-        : "prior complete session could not be resolved" }),
+        : "prior complete session could not be resolved"),
       accountingMethod: "self_financing_equity_return",
       dayStartEquityUsd: Number(dayStartEquityUsd.toFixed(6)),
       endEquityUsd: Number(equityUsd.toFixed(6)), cashUsd: Number(cashUsd.toFixed(6)),
@@ -574,9 +609,22 @@ async function evaluateExits(ctx) {
       ? exitSignalContext.ranks[p.symbol]
       : ctx.ranks && ctx.ranks[p.symbol];
     const px = Number(ctx.lastPrice && ctx.lastPrice[p.symbol]);
-    const heldDays = (nowMs - Date.parse(p.openedAt)) / 864e5;
+    const heldDays = M.tradingDaysHeld(p.openedAt, nowMs) ?? 0;
     const provenance = provenanceFor(ctx, p.symbol);
     const bars = (ctx.panel && ctx.panel[p.symbol]) || [];
+
+    if (!p.pendingEntry && px > 0) {
+      const corporateAction = CA.assessPositionMark({ position: p,
+        currentPrice: px, currentProvenance: provenance });
+      if (corporateAction.quarantine) {
+        const pending = { ...corporateAction, status: "pending_operator_confirmation",
+          detectedAtMs: corporateAction.detectedAtMs || nowMs, currentProvenance: provenance };
+        p.corporateActionPending = pending;
+        await doc.ref.set({ corporateActionPending: pending,
+          updatedAt: A.FV.serverTimestamp() }, { merge: true });
+        continue;
+      }
+    }
 
     if (p.pendingEntry) {
       if (!validProvenance(provenance)) continue;
@@ -599,6 +647,10 @@ async function evaluateExits(ctx) {
         await doc.ref.delete();
       } else continue;
     }
+    /* A price without the exact provider-response hash is not a market mark.
+       Missing-price aging may still resolve as an explicit stressed outcome,
+       but no P/L, exit, or stored mark may consume an unattributed price. */
+    if (px > 0 && !validProvenance(provenance)) continue;
     if (!(Number(p.entryPrice) > 0)) continue;
 
     if (rank == null || !(px > 0)) {
@@ -644,7 +696,9 @@ async function evaluateExits(ctx) {
       grossContributionBps: dailyGross, costContributionBps: entryCost,
       netContributionBps: dailyGross - entryCost,
     });
-    await doc.ref.set({ lastMarkPrice: px }, { merge: true });
+    await doc.ref.set({ lastMarkPrice: px,
+      lastMarkAt: provenance && provenance.barOpenAt || new Date(nowMs).toISOString(),
+      lastMarkProvenance: provenance }, { merge: true });
 
     const ew = (ctx.earnings && ctx.earnings[p.symbol]) || {};
     const soon = (ew.dates || []).map((d) => (Date.parse(d) - nowMs) / 864e5)

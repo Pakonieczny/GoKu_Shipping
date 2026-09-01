@@ -370,8 +370,13 @@ function equityStats(navSeries) {
   }
 
   const rets = [];
-  for (let i = 1; i < pts.length; i++) rets.push((pts[i].navUsd - pts[i - 1].navUsd) / pts[i - 1].navUsd);
-  const m = rets.reduce((a, b) => a + b, 0) / rets.length;
+  for (let i = 1; i < pts.length; i++) {
+    /* A reliable mark after a missing session is still valid for total return
+       and drawdown, but the multi-session jump is not one daily observation. */
+    if (pts[i].returnAdmissible === false) continue;
+    rets.push((pts[i].navUsd - pts[i - 1].navUsd) / pts[i - 1].navUsd);
+  }
+  const m = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : null;
   const sd = rets.length > 1
     ? Math.sqrt(rets.reduce((a, b) => a + (b - m) * (b - m), 0) / (rets.length - 1)) : 0;
 
@@ -385,15 +390,15 @@ function equityStats(navSeries) {
 
   const first = pts[0].navUsd, last = pts[pts.length - 1].navUsd;
   const totalPct = ((last - first) / first) * 100;
-  const annualised = sd > 0 ? (m / sd) * Math.sqrt(252) : null;   // Sharpe, cash rate ignored
+  const annualised = m != null && sd > 0 ? (m / sd) * Math.sqrt(252) : null;   // Sharpe, cash rate ignored
 
   return {
     ok: true,
-    days: pts.length,
+    days: pts.length, returnDays: rets.length,
     startNavUsd: Number(first.toFixed(2)), endNavUsd: Number(last.toFixed(2)),
     totalReturnPct: Number(totalPct.toFixed(3)),
-    dailyVolPct: Number((sd * 100).toFixed(3)),
-    annualisedVolPct: Number((sd * Math.sqrt(252) * 100).toFixed(2)),
+    dailyVolPct: rets.length ? Number((sd * 100).toFixed(3)) : null,
+    annualisedVolPct: rets.length ? Number((sd * Math.sqrt(252) * 100).toFixed(2)) : null,
     maxDrawdownPct: Number((maxDd * 100).toFixed(2)),
     maxDrawdownDate: maxDdDate,
     sharpe: annualised != null ? Number(annualised.toFixed(2)) : null,

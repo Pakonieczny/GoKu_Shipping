@@ -140,6 +140,7 @@ const COL = {
   shadowObservations:COL_PREFIX + "ShadowObservations", // trade + no-trade forward outcomes
   calibration:COL_PREFIX + "Calibration",
   invariants: COL_PREFIX + "Invariants",
+  soakCycles: COL_PREFIX + "SoakCycles",    // idempotent production-paper evidence
 };
 
 /* ── provenance envelope required on every generated record ────────────── */

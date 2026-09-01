@@ -15,6 +15,7 @@ const S = require("./_investorSignal");
 const I = require("./_investorIntelligence");
 const L = require("./_investorLedger");
 const W = require("./_investorWorkset");
+const CA = require("./_investorCorporateActions");
 
 const SHA256 = /^[a-f0-9]{64}$/;
 
@@ -107,7 +108,7 @@ async function releaseClosedEntryQueue(ctrl, accountId, settled) {
     || ctrl.entriesFrozen === true;
   if (explicitlyClosed) {
     const proposed = await A.col(A.COL.orders).where("accountId", "==", accountId)
-      .where("status", "==", "proposed").limit(100).get();
+      .where("status", "==", "proposed").get();
     for (const doc of proposed.docs) {
       const order = doc.data();
       try {
@@ -120,7 +121,7 @@ async function releaseClosedEntryQueue(ctrl, accountId, settled) {
   }
 
   const approved = await A.col(A.COL.orders).where("accountId", "==", accountId)
-    .where("status", "==", "approved").limit(100).get();
+    .where("status", "==", "approved").get();
   const cutoffMs = Date.now() - 24 * 3600e3;
   for (const doc of approved.docs) {
     const order = doc.data();
@@ -150,7 +151,7 @@ async function runGuard(jobId) {
   { merge: true });
 
   const positionSnap = await A.col(A.COL.positions)
-    .where("accountId", "==", accountId).where("open", "==", true).limit(100).get();
+    .where("accountId", "==", accountId).where("open", "==", true).get();
   const positions = positionSnap.docs.map((d) => d.data());
   const symbols = [...new Set(positions.map((p) => p.symbol).filter(Boolean))];
   const intelligenceBySymbol = {};
@@ -250,6 +251,20 @@ async function runGuard(jobId) {
       const source = trustedDecisionSource(provenance[symbol], quality[symbol]);
       if (!source.pass) { untrusted.push({ symbol, reason: source.reason }); continue; }
 
+      const corporateAction = CA.assessPositionMark({ position,
+        currentPrice: last.c, currentProvenance: provenance[symbol] });
+      if (corporateAction.quarantine) {
+        const pending = { ...corporateAction, status: "pending_operator_confirmation",
+          detectedAtMs: corporateAction.detectedAtMs || Date.now(), currentMarkAt: last.t,
+          currentProvenance: provenance[symbol] };
+        await A.col(A.COL.positions).doc(`${accountId}_${symbol}`).set({
+          corporateActionPending: pending,
+          markQuarantinedAt: A.FV.serverTimestamp(), updated_at: A.FV.serverTimestamp(),
+        }, { merge: true });
+        untrusted.push({ symbol, reason: "corporate_action_basis_quarantined" });
+        continue;
+      }
+
       const peak = Math.max(Number(position.peakPriceUsd) || 0, Number(last.c) || 0);
       const priorCost = position.lastExecutionCostContext || position.entryExecutionCostContext || {};
       const currentExecutionCostContext = M.executionCostContext({
@@ -264,8 +279,7 @@ async function runGuard(jobId) {
         lastExecutionCostContext: currentExecutionCostContext,
       }, { merge: true });
 
-      const openedMs = Date.parse(position.openedAt);
-      const heldDays = Number.isFinite(openedMs) ? (nowMs - openedMs) / 864e5 : 0;
+      const heldDays = M.tradingDaysHeld(position.openedAt, nowMs) ?? 0;
       const entry = Number(position.entryPriceUsd != null
         ? position.entryPriceUsd : position.avgPrice);
       const intelligence = intelligenceBySymbol[symbol] || null;
@@ -316,10 +330,15 @@ async function runGuard(jobId) {
     /* Re-read after arming so a newly-created intent and a concurrent full
        cycle's intent are both settled from canonical position state. */
     const liveSnap = await A.col(A.COL.positions)
-      .where("accountId", "==", accountId).where("open", "==", true).limit(100).get();
+      .where("accountId", "==", accountId).where("open", "==", true).get();
     for (const doc of liveSnap.docs) {
       const position = doc.data(), intent = position.exitIntent;
       if (!intent || !(Number(intent.decisionAtMs) > 0)) continue;
+      if (position.corporateActionPending) {
+        settled.skipped.push({ symbol: position.symbol,
+          why: "exit pending — corporate-action price basis awaits operator reconciliation" });
+        continue;
+      }
       const bars = panel[position.symbol] || [];
       const current = provenance[position.symbol];
       const sourcePolicy = W.exitExecutionSourcePolicy(
@@ -373,7 +392,7 @@ async function runGuard(jobId) {
     error: String(e.message).slice(0, 140) }; }
 
   const finalSnap = await A.col(A.COL.positions)
-    .where("accountId", "==", accountId).where("open", "==", true).limit(100).get();
+    .where("accountId", "==", accountId).where("open", "==", true).get();
   const openRows = finalSnap.docs.map((d) => d.data());
   const coverage = {
     open: openRows.length,

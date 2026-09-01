@@ -359,6 +359,17 @@ function runFixtures() {
         return p.entryAllowed === false && p.sizeMultiplier === 0;
       });
   }));
+  cases.push(fixture("nonblocking_risk_floor_cannot_erase_moderate_risk", () => {
+    const now = Date.now();
+    const p = I.decisionPolicy({
+      coverage: { monitored: true, complete: true, asOfMs: now },
+      events: [{ direction: -1, evidenceEligible: true, adverseRiskScore: 40,
+        corroboration: {}, title: "moderate adverse event" }],
+      asOfMs: now, decisionMatrixPolicy: { nonBlockingRiskFloor: 99 },
+    });
+    return p.decisionMatrixPolicy.nonBlockingRiskFloor === 25
+      && p.decisionRiskScore === 40 && p.sizeMultiplier < 1;
+  }));
   cases.push(fixture("forward_confirmation_uses_only_post_lock_sessions", () => {
     const date = (i) => new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
     const lock = C.forwardLockTemplate({ experimentHash: "a".repeat(64), leaderId: "A",
@@ -582,12 +593,14 @@ function runFixtures() {
     if (!(spanDays > 1700 && spanDays < 2200)) return false;
     const min = M.alpacaWindow("5Min", 120, "iex");
     if (!(Date.parse(min.end) > Date.parse(min.start))) return false;
-    /* The Basic plan does not serve the most recent 15 minutes; asking for it
-       fails the one edge of the series a cycle actually reads. SIP is not
-       clamped, so a paid feed loses no recency. */
-    const lag = (Date.now() - Date.parse(day.end)) / 60000;
-    const sip = (Date.now() - Date.parse(M.alpacaWindow("1Day", 1300, "sip").end)) / 60000;
-    return lag >= 15 && lag < 25 && sip < 2;
+    /* Basic IEX is real-time; Basic SIP is embargoed. A paid SIP entitlement
+       must be explicit and then retains recency. */
+    const iexLag = (Date.now() - Date.parse(day.end)) / 60000;
+    const basicSip = (Date.now() - Date.parse(
+      M.alpacaWindow("1Day", 1300, "sip", { sipRealtime: false }).end)) / 60000;
+    const paidSip = (Date.now() - Date.parse(
+      M.alpacaWindow("1Day", 1300, "sip", { sipRealtime: true }).end)) / 60000;
+    return iexLag < 2 && basicSip >= 15 && basicSip < 25 && paidSip < 2;
   }));
 
   /* A backfill that silently loses its tail looks identical to one that
@@ -618,8 +631,8 @@ function runFixtures() {
        the guard deleted. Both switches must return before dispatching. */
     const dispatchAt = body.indexOf("K.dispatch(");
     const beforeDispatch = dispatchAt > 0 ? body.slice(0, dispatchAt) : body;
-    if (!/if \(ctrl\.killSwitch\)\s*return \{ ok: false/.test(beforeDispatch)) return false;
-    if (!/if \(ctrl\.enabled === false\)\s*return \{ ok: false/.test(beforeDispatch)) return false;
+    if (!/const operating = STATE\.describe\(ctrl\)/.test(beforeDispatch)) return false;
+    if (!/if \(operating\.paused\)\s*return \{ ok: false/.test(beforeDispatch)) return false;
     if (!/manual: true/.test(body)) return false;
     const kick = fs.readFileSync(path.join(__dirname, "investorKick.js"), "utf8");
     /* The slot id and the manual id must be different expressions. */
@@ -654,21 +667,29 @@ function runFixtures() {
 
   /* ── v8.8: paper learning mode ──────────────────────────────────────── */
 
-  /* The one guarantee that makes a relaxed desk safe: it cannot apply to real
-     orders, and no operator value can talk it into doing so. */
-  cases.push(fixture("relaxation_is_refused_whenever_dry_run_is_off", () => {
+  /* This entire application is paper-only. Relaxation must behave identically
+     in observation-only and simulated-ledger states, while the strict config
+     remains untouched for the counterfactual verdict. */
+  cases.push(fixture("paper_learning_applies_to_both_paper_states", () => {
     const ST = require("./_investorStrategy");
     const req = { enabled: true, abstainOnMissingInfo: true, costMarginMultiple: 0 };
-    const live = ST.paperLearningConfig(ST.parameters, { dryRun: false, paperLearning: req });
-    if (live.active !== false) return false;
-    if (!live.refused) return false;
-    if (live.cfg.paperAbstainOnMissingInfo === true) return false;
-    if (live.cfg.costMarginMultiple !== ST.parameters.costMarginMultiple) return false;
+    const ledger = ST.paperLearningConfig(ST.parameters, { dryRun: false, paperLearning: req });
+    if (ledger.active !== true || ledger.refused !== null) return false;
+    if (ledger.cfg.paperAbstainOnMissingInfo !== true) return false;
+    if (ledger.cfg.requireCalibratedEdge !== false) return false;
+    if (ledger.cfg.paperObservationSizeFloor !== 0.10) return false;
+    if (ST.parameters.requireCalibratedEdge !== true) return false;
     /* And it stays off unless explicitly enabled. */
     const off = ST.paperLearningConfig(ST.parameters, { dryRun: true });
     if (off.active !== false || off.cfg.paperAbstainOnMissingInfo === true) return false;
     const on = ST.paperLearningConfig(ST.parameters, { dryRun: true, paperLearning: req });
-    return on.active === true && on.cfg.paperAbstainOnMissingInfo === true;
+    if (on.active !== true || on.cfg.paperAbstainOnMissingInfo !== true) return false;
+    const args = { cumResidual: -0.20, advUsd: 1e9, grade: "A",
+      wideSpreadWindow: false, vixNorm: 1, reversionMult: 1 };
+    const exploratory = S.costHurdle({ ...args, cfg: on.cfg });
+    const strict = S.costHurdle({ ...args, cfg: ST.parameters });
+    return exploratory.pass === true && strict.pass === false
+      && strict.calibratedNetLowerBoundBps === null;
   }));
 
   /* Overrides are clamped, so a typed-in zero cannot turn the desk into a
@@ -683,6 +704,7 @@ function runFixtures() {
       if (r.cfg[k] == null) continue;
       if (r.cfg[k] < L[k].min || r.cfg[k] > L[k].max) return false;
     }
+    if (r.cfg.maxHoldDays !== 14) return false;
     /* Garbage is ignored rather than coerced to zero. */
     const junk = ST.paperLearningConfig(ST.parameters,
       { dryRun: true, paperLearning: { enabled: true, minAbsZ: "loose", entryRank: null } });
@@ -704,6 +726,12 @@ function runFixtures() {
     /* And with the mode off, pending still blocks. */
     const strict = S.directionFromCause("something_unclassified", strategy.parameters, 0, null);
     if (strict.trade !== false) return false;
+    /* Unknown correlation is also an absence and is admitted small; a known
+       high-correlation regime is a finding and still blocks. */
+    const unknownCor = S.effectiveDispersionGate(NaN, cfg);
+    if (unknownCor.pass !== true || !(unknownCor.sizeMult > 0 && unknownCor.sizeMult < 1)) return false;
+    const crowded = S.effectiveDispersionGate(99, cfg);
+    if (crowded.pass !== false || crowded.state !== "stand_down") return false;
     /* An F-graded series is never admitted, relaxed or not. */
     const bad = M.gradeSeries([{ t: "2026-08-28T14:59:00Z", o: 1, h: 1, l: 1, c: 1, v: 1 }],
       { provider: "alpaca", feed: "iex", sourceSha256: "nope", nowMs: Date.parse("2026-08-28T15:00:00Z") });
@@ -769,7 +797,7 @@ function runFixtures() {
   cases.push(fixture("strict_verdict_is_recorded_alongside_the_relaxed_one", () => {
     const fs = require("fs"), path = require("path");
     const src = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
-    if (!/const strictCfg = \{ \.\.\.cfg \};/.test(src)) return false;
+    if (!/(?:const|let) strictCfg = \{ \.\.\.cfg \};/.test(src)) return false;
     if (!/const strictRes = paperLearning\.active/.test(src)) return false;
     if (!/cfg: strictCfg/.test(src)) return false;
     /* And it must reach the stored card, not just exist as a local. */
@@ -777,10 +805,250 @@ function runFixtures() {
         && /paperRelaxed: paperLearning\.active === true/.test(src);
   }));
 
+  /* ── v8.8.1: audit hardening and chart-history repair ─────────────── */
+  cases.push(fixture("holding_horizon_uses_exchange_sessions", () => {
+    const held = M.tradingDaysHeld("2026-08-28T15:30:00Z", "2026-08-31T15:30:00Z");
+    return Math.abs(held - 1) < 0.002;
+  }));
+
+  cases.push(fixture("daily_learning_waits_for_buffered_close", () => {
+    const before = M.sessionState(new Date("2026-08-31T20:19:00Z"));
+    const after = M.sessionState(new Date("2026-08-31T20:21:00Z"));
+    return M.dailyFinalizationState(before).ready === false
+      && M.dailyFinalizationState(after).ready === true;
+  }));
+
+  cases.push(fixture("paper_learning_never_overrides_the_authoritative_ledger_state", () => {
+    const ST = require("./_investorStrategy");
+    const id = { accountId: "paper-1", strategyVersion: "v7", universeVersion: "v1",
+      strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64) };
+    const commit = process.env.COMMIT_REF || process.env.DEPLOY_ID || "local";
+    const ctrl = { enabled: true, dryRun: true, mode: "research",
+      paperLearning: { enabled: true, ledgerEnabled: true }, fixturesPass: true,
+      fixturesCommit: commit, safetyEpoch: { ...id, commit } };
+    const config = ST.paperLearningConfig(ST.parameters, ctrl);
+    const observation = L.controlAllowsEntry(ctrl, id);
+    const permission = L.controlAllowsEntry({ ...ctrl, dryRun: false, mode: "approval",
+      operatingState: "manual_approval" }, id);
+    return config.active && config.cfg.requireCalibratedEdge === false
+      && !observation.pass && permission.pass && permission.scope === "paper_ledger";
+  }));
+
+  cases.push(fixture("legacy_ledger_flag_cannot_override_authoritative_state", () => {
+    const ST = require("./_investorStrategy"), fs = require("fs"), path = require("path");
+    const config = ST.paperLearningConfig(ST.parameters, { dryRun: true,
+      paperLearning: { enabled: true, ledgerEnabled: false } });
+    const api = fs.readFileSync(path.join(__dirname, "investorApi.js"), "utf8");
+    return config.active === true && /STATE\.transition/.test(api)
+      && /closeEntryQueue/.test(api);
+  }));
+
+  cases.push(fixture("shadow_experiment_binds_build_and_intelligence", () => {
+    const base = { universeHash: "a".repeat(64), strategyHash: "b".repeat(64),
+      variantsHash: "c".repeat(64), buildCommit: "one",
+      intelligenceConfig: { watchlist: ["AAPL"] },
+      marketIdentity: { provider: "alpaca", feed: "iex", adjustment: "split_and_dividend" } };
+    const one = SH.experimentIdentity(base);
+    const build = SH.experimentIdentity({ ...base, buildCommit: "two" });
+    const watch = SH.experimentIdentity({ ...base,
+      intelligenceConfig: { watchlist: ["MSFT"] } });
+    return one.experimentHash !== build.experimentHash
+      && one.experimentHash !== watch.experimentHash;
+  }));
+
+  cases.push(fixture("holdout_reuse_is_bound_to_full_lock_identity", () => {
+    const base = { experimentHash: "a".repeat(64), leaderId: "A",
+      confirmation: { startDate: "2024-01-01", endDate: "2024-06-30",
+        sessions: 126, embargoSessions: 15, dataThroughDate: "2024-06-30" },
+      variantsHash: "b".repeat(64), simulatorVersion: "sim-v1",
+      calibrationOpts: { alpha: 0.01, k: V.VARIANTS.length, embargoSessions: 15,
+        minTrain: 252, minCalibration: 126, minHoldout: 126 } };
+    const first = C.holdoutLockTemplate(base);
+    const changed = C.holdoutLockTemplate({ ...base,
+      calibrationOpts: { ...base.calibrationOpts, alpha: 0.02 } });
+    return /^[a-f0-9]{64}$/.test(first.lockHash) && first.lockHash !== changed.lockHash;
+  }));
+
+  cases.push(fixture("split_basis_change_is_quarantined", () => {
+    const CA = require("./_investorCorporateActions");
+    const split = CA.assessPositionMark({ position: { symbol: "KLAC", qty: 2,
+      lastMarkUsd: 100, lastMarkProvenance: { adjustment: "split_and_dividend" } },
+      currentPrice: 10, currentProvenance: { adjustment: "split_and_dividend" } });
+    const ordinary = CA.assessPositionMark({ position: { symbol: "XYZ", qty: 2,
+      lastMarkUsd: 100, lastMarkProvenance: { adjustment: "split_and_dividend" } },
+      currentPrice: 61, currentProvenance: { adjustment: "split_and_dividend" } });
+    return split.quarantine && split.shareRatio === 10 && ordinary.quarantine === false;
+  }));
+
+  cases.push(fixture("cash_dividend_ledger_legs_balance", () => {
+    const d = L.cashDividendLegs(12.5, 0.48);
+    return d.amountCents === 600 && L.assertBalanced(d.legs)
+      && d.legs.some((x) => x.account === L.ACCT.CASH && x.amountCents === 600)
+      && d.legs.some((x) => x.account === L.ACCT.DIVIDEND_INCOME && x.amountCents === -600);
+  }));
+
+  cases.push(fixture("chart_all_range_is_not_silently_capped", () => {
+    const H = require("./_investorHistory");
+    const rows = Array.from({ length: 420 }, (_, i) => ({
+      date: new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(0, 10),
+      o: 10, h: 11, l: 9, c: 10.5, v: 1000,
+    }));
+    const api = require("fs").readFileSync(
+      require("path").join(__dirname, "investorApi.js"), "utf8");
+    return H.chartSeries(rows).length === 420
+      && !/series\.slice\(-180\)/.test(api)
+      && (api.match(/ensureDailyHistory\(/g) || []).length >= 2;
+  }));
+
+  cases.push(fixture("daily_evidence_requires_finalization_token", () => {
+    const fs = require("fs"), path = require("path");
+    const shadow = fs.readFileSync(path.join(__dirname, "_investorShadow.js"), "utf8");
+    const feedback = fs.readFileSync(path.join(__dirname, "_investorDecisionFeedback.js"), "utf8");
+    return /session\.dailyFinalized === true/.test(shadow)
+      && /session\.dailyFinalized === true/.test(feedback)
+      && /completePortfolioDay: false,[\s\S]{0,100}provisional: true/.test(shadow)
+      && /old\.dailyFinalized === true/.test(shadow)
+      && /markSetSha256/.test(shadow);
+  }));
+
+  cases.push(fixture("paper_nav_evidence_is_finalized_and_provenance_bound", () => {
+    const fs = require("fs"), path = require("path");
+    const cycle = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
+    const api = fs.readFileSync(path.join(__dirname, "investorApi.js"), "utf8");
+    return /const markSetSha256 = sha256Json\(navMarkSources\)/.test(cycle)
+      && /finalized === true && row\.marksComplete === true/.test(api)
+      && /returnAdmissible/.test(cycle);
+  }));
+
+  cases.push(fixture("final_nav_snapshot_follows_settlement", () => {
+    const fs = require("fs"), path = require("path");
+    const cycle = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
+    const settlementAt = cycle.indexOf("/* ── SETTLEMENT");
+    const finalBookAt = cycle.indexOf("const marked2 = R.markedBook", settlementAt);
+    const finalNavWriteAt = cycle.lastIndexOf("navMarkResult = await writeNavSnapshot({");
+    const checkpointAt = cycle.indexOf("lastDailyFinalizeDate: session.date", finalNavWriteAt);
+    return settlementAt > 0 && finalBookAt > settlementAt
+      && finalNavWriteAt > finalBookAt && checkpointAt > finalNavWriteAt
+      && /session\.dailyFinalized === true && !dailyAlreadyFinalized\s*&& finalBookReadComplete/.test(cycle);
+  }));
+
+  cases.push(fixture("multi_session_nav_jump_is_not_one_daily_return", () => {
+    const stats = R.equityStats([
+      { date: "2026-08-27", navUsd: 100, returnAdmissible: false },
+      { date: "2026-08-28", navUsd: 101, returnAdmissible: true },
+      { date: "2026-08-31", navUsd: 120, returnAdmissible: false },
+      { date: "2026-09-01", navUsd: 121.2, returnAdmissible: true },
+    ]);
+    return stats.returnDays === 2 && stats.winDays === 2
+      && stats.totalReturnPct === 21.2;
+  }));
+
+  /* ── v8.13: immediate, full-capital exploratory paper automation ────── */
+  cases.push(fixture("exploratory_auto_is_explicit_automatic_paper_state", () => {
+    const ST = require("./_investorState");
+    const described = ST.describe({ operatingState: ST.STATES.EXPLORATORY_AUTO });
+    const refused = ST.transition({}, ST.STATES.EXPLORATORY_AUTO,
+      { source: "operator" });
+    const allowed = ST.transition({}, ST.STATES.EXPLORATORY_AUTO,
+      { source: "operator", validEpoch: true });
+    return described.paperLedger && described.exploratoryAuto
+      && described.automaticPaperEntries && !described.manualApproval
+      && refused.ok === false && allowed.ok === true;
+  }));
+
+  cases.push(fixture("exploratory_policy_exposes_full_reconciled_virtual_account", () => {
+    const policy = strategy.exploratoryAuto || {};
+    const pc = policy.portfolioControls || {};
+    const cfg = { ...strategy, portfolioControls: {
+      ...(strategy.portfolioControls || {}), ...pc } };
+    const admission = R.checkAdd({ symbol: "AAPL", sector: "hardware",
+      proposedUsd: 100000, book: { count: 0, grossUsd: 0, grossPct: 0,
+        rows: [], bySectorPct: {}, byClusterPct: {} },
+      navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
+    return policy.startingNavUsd === 100000
+      && pc.maxGrossExposurePct === 100 && pc.minCashPct === 0
+      && pc.maxOpenPositions === 304
+      && policy.autoApproval.unlimitedOrdersPerDay === true
+      && admission.allow === true && admission.headroomUsd === 100000;
+  }));
+
+  cases.push(fixture("exploratory_approval_has_no_daily_or_position_quota", () => {
+    const LD = require("./_investorLadder");
+    const order = { paperLearningOnly: true, qty: 10, refPriceUsd: 100,
+      quality: { grade: "B", tradable: true, researchEligible: true },
+      universeHash: "a".repeat(64), strategyHash: "b".repeat(64),
+      variantsHash: "c".repeat(64),
+      decisionMarketProvenance: { provider: "massive", feed: null,
+        adjustment: "split_adjusted", sourceSha256: "d".repeat(64) },
+      cost: { ratio: 0.5, calibratedNetLowerBoundBps: null },
+      gates: [{ id: "active_cost", blocking: true, pass: true }],
+      decisionContext: { strictVerdict: { pass: false,
+        blockedBy: ["calibration"] } } };
+    const accepted = LD.exploratoryAutoApproval(order, {
+      operatingState: "exploratory_auto", book: { count: 303, grossPct: 99 },
+      navUsd: 100000, cfg: strategy, dayCount: 999999 });
+    const malformed = LD.exploratoryAutoApproval({ ...order,
+      decisionMarketProvenance: { provider: "massive", sourceSha256: "bad" } }, {
+      operatingState: "exploratory_auto", navUsd: 100000, cfg: strategy });
+    const researchOnly = LD.exploratoryAutoApproval({ ...order,
+      quality: { grade: "C", tradable: false, researchEligible: true } }, {
+      operatingState: "exploratory_auto", navUsd: 100000, cfg: strategy });
+    return accepted.approve === true && accepted.unlimitedOrdersPerDay === true
+      && malformed.approve === false && researchOnly.approve === false;
+  }));
+
+  cases.push(fixture("bootstrap_runs_after_hours_and_authorizes_before_enrichment", () => {
+    const K = require("./investorKick");
+    const decision = K.decide({ bootstrapPending: true, enabled: true,
+      paused: false, killSwitch: false, afterHoursCycles: false,
+      cycleSeconds: 300, guardSeconds: 60, guardSecondsClosed: 900,
+      evidenceEverySeconds: 900, lastCycleAt: Date.now(),
+      lastGuardAt: Date.now(), lastEvidenceAt: Date.now() }, {
+      tradingDay: false, open: false, phase: "closed", date: "2026-09-01",
+    }, Date.now());
+    const source = String(B.ensureBootstrapped);
+    const commitAt = source.indexOf("bootstrapVersion: BOOTSTRAP_VERSION");
+    const deferredAt = source.indexOf("if (!enrich)");
+    const earningsAt = source.indexOf("await populateEarnings");
+    return decision.tasks.includes("cycle") && commitAt > 0
+      && deferredAt > commitAt && earningsAt > deferredAt;
+  }));
+
+  cases.push(fixture("active_paper_scans_are_not_silently_row_capped", () => {
+    const fs = require("fs"), path = require("path");
+    const guard = fs.readFileSync(path.join(__dirname, "_investorPositionGuard.js"), "utf8");
+    const cycle = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8");
+    const api = fs.readFileSync(path.join(__dirname, "investorApi.js"), "utf8");
+    const cappedState = /\.where\("(?:status|open)"[\s\S]{0,80}?\.limit\((?:50|100|200)\)/;
+    const cappedOrders = /\.where\("status", "==", "(?:proposed|approved)"\)\.limit\((?:50|100|200)\)/;
+    return !cappedState.test(guard) && !cappedOrders.test(cycle)
+      && !cappedOrders.test(api);
+  }));
+
+  cases.push(fixture("signal_frontier_gets_company_research_priority", () => {
+    const sources = require("./_investorIntelligenceSources");
+    const rows = sources.focusSymbols({ candidates: [
+      { symbol: "MSFT", rank: 0.02 }, { symbol: "AAPL", rank: 0.01 }],
+      researchTier: [{ symbol: "AMD" }], max: 24 });
+    return rows.length === 3 && rows[0].symbol === "AAPL"
+      && rows[1].symbol === "MSFT" && rows[2].symbol === "AMD"
+      && strategy.parameters.intelligenceCompaniesPerSweep === 6
+      && strategy.parameters.intelligenceMaxFocus === 304
+      && sources.MAX_WATCHLIST === 24;
+  }));
+
+  cases.push(fixture("exploratory_policy_is_bound_into_strategy_identity", () => {
+    const original = B.strategyHash(strategy);
+    const changed = B.strategyHash({ ...strategy,
+      exploratoryAuto: { ...strategy.exploratoryAuto,
+        startingNavUsd: 99999 } });
+    return /^[a-f0-9]{64}$/.test(original) && original !== changed;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v8-measurement-admission", count: cases.length, cases });
+  const fixtureHash = digest({ schema: "runtime-fixtures-v10-exploratory-auto", count: cases.length, cases });
   return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }

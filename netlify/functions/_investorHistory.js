@@ -101,6 +101,14 @@ function seriesFromDailyDoc(d = {}) {
   return out;
 }
 
+function timestampMs(value) {
+  if (Number.isFinite(Number(value))) return Number(value);
+  if (value && typeof value.toMillis === "function") return value.toMillis();
+  if (value && typeof value.toDate === "function") return value.toDate().getTime();
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 /** Read the daily series and the market identity that produced its volume.
  * Keeping these together prevents a current feed label from being applied to
  * historical volume captured through a different feed. */
@@ -121,6 +129,13 @@ async function readDailyWithMeta(symbol) {
       fetchedAt: d.marketFetchedAt || null,
       homogeneous: d.volumeProvenanceHomogeneous === true,
     } : null,
+    backfill: {
+      complete: d.backfillComplete === true,
+      truncated: d.backfillTruncated === true,
+      requestedDays: Number(d.backfillRequestedDays) || null,
+      lastAttemptAtMs: timestampMs(d.lastBackfillAttemptAtMs || d.lastBackfillAttemptAt),
+      lastError: d.lastBackfillError || null,
+    },
   };
 }
 
@@ -181,7 +196,7 @@ async function writeDaily(symbol, bars, meta = {}) {
  * the backfill is cheap enough to run inside one background invocation.
  */
 async function fetchDailyWithMeta(symbols, { days = KEEP_DAYS } = {}) {
-  const barsBySymbol = {}, provenanceBySymbol = {};
+  const barsBySymbol = {}, provenanceBySymbol = {}, statusBySymbol = {};
   /* 90 symbols x 1300 daily bars is 117k bars — twelve full 10k pages, fetched
      one after another inside a single invocation. Narrower chunks keep each
      backfill step inside its time budget and let the cursor resume cleanly;
@@ -193,7 +208,22 @@ async function fetchDailyWithMeta(symbols, { days = KEEP_DAYS } = {}) {
     try {
       res = await M.fetchBars(chunk, { timeframe: "1Day", limit: days });
     } catch (e) {
+      for (const sym of chunk) statusBySymbol[sym] = {
+        complete: false, truncated: false, requestedDays: days,
+        error: String(e.code || e.message).slice(0, 160),
+      };
       continue;                       // a failed chunk is retried on the next run
+    }
+    for (const sym of chunk) {
+      const returned = Array.isArray((res.bars || {})[sym]) && (res.bars || {})[sym].length > 0;
+      statusBySymbol[sym] = {
+      complete: res.truncated !== true && returned,
+      truncated: res.truncated === true,
+      requestedDays: days,
+      pages: Number(res.pages) || null,
+      window: res.window || null,
+      ...(returned ? {} : { error: "no_bars_returned" }),
+    };
     }
     for (const [sym, arr] of Object.entries(res.bars || {})) {
       barsBySymbol[sym] = (arr || []).map((b) => ({
@@ -212,11 +242,92 @@ async function fetchDailyWithMeta(symbols, { days = KEEP_DAYS } = {}) {
       };
     }
   }
-  return { barsBySymbol, provenanceBySymbol };
+  return { barsBySymbol, provenanceBySymbol, statusBySymbol };
 }
 
 async function fetchDaily(symbols, opts = {}) {
   return (await fetchDailyWithMeta(symbols, opts)).barsBySymbol;
+}
+
+function mergeDailySeries(prior, incoming) {
+  const byDate = new Map();
+  for (const b of [...(prior || []), ...(incoming || [])]) {
+    if (!b || !/^\d{4}-\d{2}-\d{2}$/.test(String(b.date || ""))) continue;
+    if (!(Number(b.c) > 0)) continue;
+    byDate.set(b.date, b);
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-KEEP_DAYS);
+}
+
+/** Full, validated series for charts. No hidden six-month truncation. */
+function chartSeries(series, { throughDate = null } = {}) {
+  return mergeDailySeries([], series)
+    .filter((b) => !throughDate || b.date <= throughDate)
+    .map((b) => ({ d: b.date, c: Number(b.c),
+      h: Number.isFinite(Number(b.h)) ? Number(b.h) : Number(b.c),
+      l: Number.isFinite(Number(b.l)) ? Number(b.l) : Number(b.c),
+      v: Math.max(0, Number(b.v) || 0) }));
+}
+
+/**
+ * Repair the historic one-row backfill defect on the first company/history
+ * read. A completed provider window is remembered, so recent IPOs with fewer
+ * than KEEP_DAYS observations do not refetch forever. Failed attempts cool
+ * down briefly to stop repeated chart clicks from hammering the provider.
+ * Dependency hooks keep the policy independently testable.
+ */
+async function ensureDailyHistory(symbol, opts = {}) {
+  const sym = String(symbol || "").toUpperCase();
+  if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(sym)) throw new Error("valid symbol required");
+  const targetDays = Math.max(CONTEXT_MIN_DAYS,
+    Math.min(KEEP_DAYS, Number(opts.targetDays) || KEEP_DAYS));
+  const nowMs = Number.isFinite(Number(opts.nowMs)) ? Number(opts.nowMs) : Date.now();
+  const cooldownMs = Math.max(60_000, Number(opts.cooldownMs) || 30 * 60_000);
+  const read = opts.read || readDailyWithMeta;
+  const fetch = opts.fetch || fetchDailyWithMeta;
+  const write = opts.write || writeDaily;
+  const initial = await read(sym);
+  const prior = initial || { series: [], provenance: null, backfill: null };
+  const backfill = prior.backfill || {};
+  const providerCoveredWindow = backfill.complete === true
+    && Number(backfill.requestedDays) >= targetDays;
+  const cooled = Number(backfill.lastAttemptAtMs) > 0
+    && nowMs - Number(backfill.lastAttemptAtMs) < cooldownMs;
+  const needsWindow = !providerCoveredWindow && (prior.series || []).length < targetDays;
+  if (!needsWindow || cooled) {
+    return { symbol: sym, series: mergeDailySeries([], prior.series),
+      provenance: prior.provenance || null, backfill, attempted: false,
+      repaired: false, note: cooled && needsWindow ? "backfill_retry_cooldown" : "stored_window_available" };
+  }
+
+  try {
+    const fetched = await fetch([sym], { days: targetDays });
+    const incoming = (fetched.barsBySymbol && fetched.barsBySymbol[sym]) || [];
+    const provenance = (fetched.provenanceBySymbol && fetched.provenanceBySymbol[sym])
+      || prior.provenance || {};
+    const status = (fetched.statusBySymbol && fetched.statusBySymbol[sym]) || {
+      complete: false, truncated: false, requestedDays: targetDays,
+    };
+    const merged = mergeDailySeries(prior.series, incoming);
+    await write(sym, incoming, {
+      ...provenance,
+      lastBackfillAttemptAtMs: nowMs,
+      backfillComplete: status.complete === true,
+      backfillTruncated: status.truncated === true,
+      backfillRequestedDays: targetDays,
+      lastBackfillError: status.error || null,
+    });
+    return { symbol: sym, series: merged, provenance, attempted: true,
+      repaired: merged.length > (prior.series || []).length,
+      backfill: { ...status, lastAttemptAtMs: nowMs },
+      note: status.error ? "backfill_failed" : (status.complete ? "provider_window_complete" : "provider_window_partial") };
+  } catch (e) {
+    return { symbol: sym, series: mergeDailySeries([], prior.series),
+      provenance: prior.provenance || null, attempted: true, repaired: false,
+      backfill: { ...backfill, complete: false, lastAttemptAtMs: nowMs,
+        lastError: String(e.code || e.message).slice(0, 160) },
+      note: "backfill_failed" };
+  }
 }
 
 /* ── SPLIT DETECTION ───────────────────────────────────────────────────────
@@ -591,6 +702,7 @@ module.exports = {
   REVERSION_SHRINK_K, REVERSION_TRIGGER_SD, REVERSION_HORIZON,
   SIGMA_W_SHORT, BARS_PER_SESSION,
   dailyRef, readDaily, readDailyWithMeta, writeDaily, fetchDaily, fetchDailyWithMeta,
+  ensureDailyHistory, chartSeries, mergeDailySeries,
   expectedShortfallLoss, contextFor, reversionEvents, shrinkReversion, reversionMultiplier,
   blendedSigma, describe,
   _internal: { mean, stdev, sma, pctRets },

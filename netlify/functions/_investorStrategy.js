@@ -19,19 +19,21 @@
 "use strict";
 
 /* ── PAPER LEARNING MODE ───────────────────────────────────────────────────
- * The published parameters are calibrated for money that can be lost. On a
- * virtual account that calibration buys nothing and costs the one thing the
- * desk actually needs early on: outcomes to learn from. This lets an operator
- * loosen it deliberately, in the open, and only where loosening is defensible.
+ * The published parameters are the strict comparison policy. On this virtual
+ * account, applying every strict promotion gate to the paper ledger can cost
+ * the one thing the desk needs early on: labelled outcomes. This lets an
+ * operator loosen it deliberately, in the open, and only where loosening is
+ * defensible.
  *
  * Two rules keep it honest.
  *
- * 1. It cannot apply to real money. Relaxation is refused unless dry run is on.
- *    There is no setting that both takes real positions and relaxes the gates.
+ * 1. This application has no broker integration and every position is paper.
+ *    `dryRun` distinguishes observation-only evaluation from the simulated
+ *    paper ledger; it is not a real-money boundary.
  *
  * 2. The strict verdict is still computed and recorded on every decision, so
  *    the relaxed run never destroys the measurement it is loosening. "Would
- *    this have passed the real gates?" stays answerable for every trade, and
+ *    this have passed the strict gates?" stays answerable for every trade, and
  *    the two populations can be scored separately afterwards.
  *
  * Overrides are CLAMPED, not trusted: a typed-in zero cost margin cannot turn
@@ -42,7 +44,7 @@ const RELAX_LIMITS = {
   minAbsZ:                { min: 1.0,  max: 3,   dflt: 2 },
   entryRank:              { min: 0.05, max: 0.5, dflt: 0.1 },
   exitRank:               { min: 0.2,  max: 0.9, dflt: 0.5 },
-  maxHoldDays:            { min: 0.25, max: 10,  dflt: 10 },
+  maxHoldDays:            { min: 0.25, max: 14,  dflt: 10 },
   sectorCrowdingMultiple: { min: 1.0,  max: 4,   dflt: 1.4 },
   minAdvUsd:              { min: 5e7,  max: 3e8, dflt: 3e8 },
 };
@@ -66,12 +68,17 @@ function paperLearningConfig(base, ctrl = {}) {
   if (req.enabled !== true) {
     return { cfg, active: false, refused: null, applied: {} };
   }
-  /* The one hard refusal. Relaxed gates and live money never coexist. */
-  if (ctrl.dryRun === false) {
-    return { cfg, active: false, applied: {},
-      refused: "paper learning mode is refused while dry run is off — it cannot apply to real orders" };
-  }
   const applied = {};
+  /* The strict policy requires a positive, selection-corrected calibration
+     before it can propose anything. That is appropriate for promotion, but it
+     is circular for an exploratory paper ledger: no observations means no
+     calibration, and no calibration means no observations. Paper learning
+     breaks only that loop. The untouched strict configuration is evaluated and
+     stored alongside every relaxed decision by the cycle worker. */
+  if (cfg.requireCalibratedEdge !== false) {
+    applied.requireCalibratedEdge = { from: cfg.requireCalibratedEdge !== false, to: false };
+    cfg.requireCalibratedEdge = false;
+  }
   for (const key of Object.keys(RELAX_LIMITS)) {
     if (req[key] == null) continue;
     const v = clampRelax(key, req[key]);
@@ -83,16 +90,33 @@ function paperLearningConfig(base, ctrl = {}) {
   if (req.abstainOnMissingInfo === true) {
     cfg.paperAbstainOnMissingInfo = true;
     applied.abstainOnMissingInfo = { from: false, to: true };
+    /* Independent missing-data haircuts can legitimately compound to zero even
+       after every hard gate has passed. A zero-size "pass" produces no outcome,
+       so exploratory paper decisions get a small, explicit floor. Portfolio,
+       cash, loss, duplication and finding-based gates still run afterwards. */
+    cfg.paperObservationSizeFloor = 0.10;
+    applied.paperObservationSizeFloor = { from: 0, to: 0.10 };
+  }
+  /* A paper learner cannot bootstrap a calibrated lower bound before it has
+     generated paper outcomes. Requiring that bound here made the mode
+     circular: no order -> no outcome -> no calibration -> no order. The
+     ordinary expected-edge-versus-friction hurdle remains fully active, and
+     every simulated-ledger result is isolated from validated promotion data. */
+  if (cfg.requireCalibratedEdge !== false) {
+    applied.requireCalibratedEdge = { from: cfg.requireCalibratedEdge, to: false,
+      scope: "paper_learning_only" };
+    cfg.requireCalibratedEdge = false;
   }
   return { cfg, active: true, refused: null, applied };
 }
 
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax,
-  "version": "v6",
-  "supersedes": "v5",
+  "version": "v7",
+  "supersedes": "v6",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
-  "frozenAt": "2026-08-31",
+  "frozenAt": "2026-09-01",
+  "immutable": true,
   "status": "research",
   "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
   "preRegistration": {
@@ -141,9 +165,9 @@ module.exports = {
     "temporalSeasonalityMinTradingDays": 756,
     "_temporalNote": "Scheduled non-earnings events, quote-grounded geographic/commodity exposures, active provenance-bound NWS hazards, recurring cycles and stable rolling drivers enter one deterministic risk-only layer with continuous sizing. Earnings are enforced once by the existing signal blackout. Same-month seasonality remains visible but cannot alter size below eight completed observations. Named five-day drivers require strong company-specific evidence and coherent stable correlation. Missing required earnings, exposure inventory, weather or price provenance still blocks new risk; temporal context cannot increase size or independently liquidate.",
     "intelligenceMaxAgeHours": 6,
-    "intelligenceMaxFocus": 24,
+    "intelligenceMaxFocus": 304,
     "intelligenceLookbackDays": 550,
-    "intelligenceCompaniesPerSweep": 4,
+    "intelligenceCompaniesPerSweep": 6,
     "_intelligenceNote": "New risk requires a fresh point-in-time dossier across company-specific public-source lanes. Discovery indexes never confirm. Documents corroborate only when they share a concrete event subject; unrelated regulator matters remain separate. Syndicated copies count once, adverse sizing is continuous, positive events cannot increase base risk, and missing coverage blocks. A strongly corroborated material downside can request an exit review; no model can directly trade.",
     "_causeNote": "Volume is an abnormal-activity feature, not a retail/institutional classifier. Fundamental causes are not faded; no-cause automation stays locked until externally labelled recall is measured.",
     "decayHaircut": 0.5,
@@ -178,10 +202,10 @@ module.exports = {
     "realMoney": "EXCLUDED. No broker is integrated and no code path can place a live order.",
     "_enforcement": "Every number in this block is enforced in _investorRisk.js and checked in investorCycle-background.js before any order is proposed. This note exists because for a long time it was NOT: the whole block was configuration that no code read, while the comment above called the cluster cap the primary defence. If you add a control here, add its check there in the same change."
   },
-  /* Operator ceiling: how far the system may promote ITSELF on measured
-     evidence. It can climb to this and no further; every rung still requires
-     its gates to pass. Raise it in the control room when you are ready to let
-     it go further. This is the one knob that decides how autonomous it is. */
+  /* Operator ceiling: manual paper approval may be selected after the current
+     build identity is attested; the entry path still rechecks ledger and
+     execution invariants. Shadow and limited-auto remain measured promotions.
+     The system can climb to the selected ceiling and no further. */
   "operatorCeiling": "approval",
   "operatorHold": false,
 
@@ -194,6 +218,52 @@ module.exports = {
     "_note": "Only active at the limited_auto stage. Deliberately tighter than the ordinary position caps, so the operator's approval queue holds the exceptions - unusually large orders, marginal cost ratios, and anything in the no-cause book - rather than every routine trade."
   },
 
+  /* Immediate autonomous PAPER exploration. This is deliberately separate
+     from limited_auto: it gathers labelled outcomes and may lose virtual
+     money, but it never claims the strategy has passed the statistical
+     promotion ladder. The complete strict verdict remains beside every
+     exploratory verdict so these populations can never be pooled silently. */
+  "exploratoryAuto": {
+    "version": "exploratory-auto-v1",
+    "enabled": true,
+    "autoStartAfterSuccessfulBootstrap": true,
+    "startingNavUsd": 100000,
+    "evidenceCohort": "exploratory_auto_unvalidated",
+    "paperLearningDefaults": {
+      "enabled": true,
+      "abstainOnMissingInfo": true,
+      "costMarginMultiple": 0.5,
+      "minAbsZ": 1.5,
+      "entryRank": 0.2,
+      "exitRank": 0.5,
+      "maxHoldDays": 10,
+      "sectorCrowdingMultiple": 4,
+      "minAdvUsd": 50000000
+    },
+    "portfolioControls": {
+      "maxOpenPositions": 304,
+      "maxGrossExposurePct": 100,
+      "minCashPct": 0,
+      "ordinaryPositionPctOfNav": 5,
+      "riskBudgetPerTradePctOfNav": 0.5,
+      "sectorExposurePctOfNav": 100,
+      "correlatedClusterPctOfNav": 100,
+      "dynamicCorrelationExposurePctOfNav": 100,
+      "dynamicCorrelationThreshold": 0.65,
+      "requireDynamicCorrelation": false,
+      "oneDayLossPausePctOfNav": 100,
+      "drawdownFreezePctFromHigh": 100,
+      "instruments": "Long US-listed common shares only; virtual cash only; no leverage or broker route.",
+      "_note": "All available virtual cash may be deployed across independently qualified opportunities. Duplicate-symbol, provenance, cash, lifecycle, reconciliation and executable-clock controls still apply."
+    },
+    "autoApproval": {
+      "unlimitedOrdersPerDay": true,
+      "useFullPortfolioCapacity": true,
+      "minimumOrderUsd": 1,
+      "_note": "No daily or automatic-position quota. Approval continues until there are no qualifying proposals or insufficient free virtual cash."
+    }
+  },
+
   "automationLadder": [
     {
       "stage": "research",
@@ -202,7 +272,7 @@ module.exports = {
     },
     {
       "stage": "approval",
-      "description": "Operator approves every entry and exit."
+      "description": "Operator approves every paper entry; rule-based and protective exits continue automatically."
     },
     {
       "stage": "shadow",

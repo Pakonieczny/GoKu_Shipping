@@ -466,6 +466,16 @@ function dispersionGate(cor3m, cfg) {
   return { pass: true, state: "dispersed", note: `COR3M ${cor3m}`, sizeMult: 1 };
 }
 
+function effectiveDispersionGate(cor3m, cfg = {}) {
+  const raw = dispersionGate(cor3m, cfg);
+  if (cfg.paperAbstainOnMissingInfo === true && raw.state === "unknown") {
+    return { ...raw, pass: true, sizeMult: Math.max(cfg.volScalerFloor ?? 0.35, 0.20),
+      relaxedMissingInformation: true,
+      note: "COR3M unavailable — paper observation admitted at minimum size" };
+  }
+  return raw;
+}
+
 /* ── EARNINGS BLACKOUT ─────────────────────────────────────────────────── */
 /* The research is unambiguous: the fat tail lives almost entirely on ~4
    scheduled dates a year. AMD's 95th-percentile earnings move is +/-21.2% on a
@@ -578,8 +588,13 @@ function costHurdle({ cumResidual, advUsd, grade, wideSpreadWindow, vixNorm, cfg
   const expectedBps = Math.abs(cumResidual) * 1e4 * capture * decay * revMult;
   const marginMult = cfg.costMarginMultiple ?? 2.0;  // demand 2x the frictions
   const required = roundTripBps * marginMult;
-  const calibrated = Number(cfg.calibratedExpectedEdgeBps);
-  const calibrationKnown = Number.isFinite(calibrated);
+  const calibratedRaw = cfg.calibratedExpectedEdgeBps;
+  const calibrated = Number(calibratedRaw);
+  /* Number(null) and Number("") are both zero. Treating either as a measured
+     calibration made the API claim a zero lower bound existed when the field
+     was actually unknown. */
+  const calibrationKnown = calibratedRaw !== null && calibratedRaw !== undefined
+    && calibratedRaw !== "" && Number.isFinite(calibrated);
   const calibratedNetLowerBoundBps = calibrationKnown ? calibrated : null;
   const calibratedPass = cfg.requireCalibratedEdge === false
     ? true : (calibrationKnown && calibrated > 0);
@@ -616,7 +631,7 @@ function evaluateCandidate(input) {
 
   // 0. If we already hold it, this is an exit evaluation, not an entry one.
   if (position && position.open) {
-    const heldDays = (nowMs - Date.parse(position.openedAt)) / 864e5;
+    const heldDays = M.tradingDaysHeld(position.openedAt, nowMs) ?? 0;
     const intelligencePolicy = input.intelligence
       ? I.decisionPolicy({ coverage: input.intelligence.coverage,
         events: input.intelligence.events, temporalContext: input.intelligence.temporalContext,
@@ -646,7 +661,10 @@ function evaluateCandidate(input) {
                    : `market ${session.phase}`);
 
   // 3. Dispersion regime.
-  const disp = dispersionGate(cor3m, cfg);
+  /* Missing COR3M is missing information, not evidence of a crowded market.
+     Exploratory paper learning may therefore observe it at the minimum size.
+     A known stand-down reading remains a hard finding and is never relaxed. */
+  const disp = effectiveDispersionGate(cor3m, cfg);
   add("dispersion", "Dispersion regime", disp.pass, disp.note);
 
   // 4. Earnings blackout.
@@ -656,7 +674,8 @@ function evaluateCandidate(input) {
      Only "no window derivable yet" relaxes, because that is missing data. */
   const blackoutOk = !bo.blocked || (cfg.paperAbstainOnMissingInfo === true && bo.unknown === true);
   add("blackout", "Earnings blackout", blackoutOk,
-      bo.reason + (input.earningsEstimated && !bo.unknown ? " (estimated window, widened)" : ""));
+      bo.reason + (blackoutOk && bo.unknown ? "; paper observation admitted while it is derived" : "")
+        + (input.earningsEstimated && !bo.unknown ? " (estimated window, widened)" : ""));
 
   // 5. Liquidity floor — cost is the binding constraint.
   const minAdv = cfg.minAdvUsd ?? 3e8;
@@ -708,7 +727,7 @@ function evaluateCandidate(input) {
     const trendUnknownOk = cfg.blockDowntrends === false || cfg.paperAbstainOnMissingInfo === true;
     add("trend", "Long-horizon trend", trendUnknownOk,
         (ctx ? `no long-horizon read yet — ${ctx.reason}` : "history not loaded")
-          + (trendUnknownOk ? "; abstaining while the backfill completes" : "; new risk blocked"));
+          + (trendUnknownOk ? "; paper observation admitted while the backfill completes" : "; new risk blocked"));
   }
 
   /* 6d. TURNOVER CONDITIONING — the strongest published conditioning result
@@ -735,7 +754,7 @@ function evaluateCandidate(input) {
   } else {
     add("turnover", "Turnover conditioning", cfg.paperAbstainOnMissingInfo === true,
         "shares outstanding not known — "
-          + (cfg.paperAbstainOnMissingInfo === true ? "abstaining" : "new risk blocked"), true);
+          + (cfg.paperAbstainOnMissingInfo === true ? "paper observation admitted" : "new risk blocked"), true);
   }
 
   // 7. Company intelligence is a required, point-in-time risk gate. It may
@@ -750,12 +769,33 @@ function evaluateCandidate(input) {
     : { monitored: false, fresh: false, complete: false,
         entryAllowed: cfg.requireCompanyIntelligence !== true, sizeMultiplier: cfg.requireCompanyIntelligence === true ? 0 : 1,
         adverseRiskScore: 0, reasons: ["no current company-intelligence dossier"] };
-  /* No dossier at all is missing information. A dossier that EXISTS and reports
-     adverse material still blocks and still sizes down, relaxed or not. */
-  const intelRequired = cfg.requireCompanyIntelligence === true
-    && !(cfg.paperAbstainOnMissingInfo === true && !input.intelligence);
-  add("intelligence", "Company intelligence", !intelRequired || intelPolicy.entryAllowed,
-      `${intelPolicy.reasons.join("; ")}; size ${Math.round(intelPolicy.sizeMultiplier * 100)}%`);
+  /* Missing, stale or incomplete coverage is an absence. A current dossier
+     that found adverse material is evidence. Paper learning may observe the
+     former at reduced size but must never erase the latter. */
+  const intelIncomplete = !input.intelligence || intelPolicy.monitored !== true
+    || intelPolicy.fresh !== true || intelPolicy.complete !== true;
+  const temporalPolicy = intelPolicy.temporalPolicy || {};
+  const intelHasFinding = Number(intelPolicy.adverseRiskScore) > 0
+    || intelPolicy.criticalExit === true || intelPolicy.hardBlock === true
+    || temporalPolicy.hardBlock === true
+    || (temporalPolicy.entryAllowed === false && temporalPolicy.complete === true
+        && temporalPolicy.fresh !== false);
+  const intelRelaxed = cfg.requireCompanyIntelligence === true
+    && cfg.paperAbstainOnMissingInfo === true && intelPolicy.entryAllowed !== true
+    && intelIncomplete && !intelHasFinding;
+  const intelReasons = Array.isArray(intelPolicy.reasons) ? intelPolicy.reasons : [];
+  const rawIntelSize = Number(intelPolicy.sizeMultiplier);
+  const effectiveIntelPolicy = intelRelaxed ? {
+    ...intelPolicy,
+    entryAllowed: true,
+    originalEntryAllowed: intelPolicy.entryAllowed === true,
+    sizeMultiplier: Math.max(Number.isFinite(rawIntelSize) ? rawIntelSize : 0, 0.20),
+    relaxedMissingInformation: true,
+    reasons: [...intelReasons, "incomplete intelligence admitted as a reduced-size paper observation"],
+  } : { ...intelPolicy, reasons: intelReasons };
+  const intelRequired = cfg.requireCompanyIntelligence === true;
+  add("intelligence", "Company intelligence", !intelRequired || effectiveIntelPolicy.entryAllowed,
+      `${effectiveIntelPolicy.reasons.join("; ")}; size ${Math.round(effectiveIntelPolicy.sizeMultiplier * 100)}%`);
 
   // 8. Evidence classification decides direction.
   const dir = directionFromCause(cause, cfg, input.attentionScore, input.coverage);
@@ -772,6 +812,20 @@ function evaluateCandidate(input) {
 
   const blocked = gates.filter((g) => g.blocking && !g.pass);
   const vol = volatilityScaler(vixNorm, cfg);
+  const rawSizing = combineSizeMultipliers({
+    volScaler: vol.scaler, volNote: vol.note,
+    dispersionMult: disp.sizeMult,
+    causeConfidence: dir.confidence,
+    intelligenceMult: effectiveIntelPolicy.sizeMultiplier,
+    rule: cfg.sizeAggregation,
+  });
+  const paperSizeFloor = Math.max(0, Math.min(0.25,
+    Number(cfg.paperObservationSizeFloor) || 0));
+  const sizing = cfg.paperAbstainOnMissingInfo === true && blocked.length === 0
+    && paperSizeFloor > 0 && rawSizing.combined < paperSizeFloor
+    ? { ...rawSizing, combinedBeforePaperFloor: rawSizing.combined,
+        combined: paperSizeFloor, paperObservationFloorApplied: true }
+    : rawSizing;
 
   return {
     symbol, kind: "entry",
@@ -782,7 +836,7 @@ function evaluateCandidate(input) {
     rank, z: zStat ? Number(zStat.z.toFixed(2)) : null,
     cumResidualBps: zStat ? Number((zStat.cumResidual * 1e4).toFixed(1)) : null,
     cause, direction: dir,
-    intelligencePolicy: intelPolicy,
+    intelligencePolicy: effectiveIntelPolicy,
     historyContext: ctx && ctx.ok ? {
       days: ctx.days, vol60Pct: ctx.vol60Pct, atrPct: ctx.atrPct,
       rangePct6m: ctx.rangePct6m, drawdown6mPct: ctx.drawdown6mPct,
@@ -794,13 +848,7 @@ function evaluateCandidate(input) {
     } : null,
     reversion: rev || null,
     cost,
-    sizing: combineSizeMultipliers({
-      volScaler: vol.scaler, volNote: vol.note,
-      dispersionMult: disp.sizeMult,
-      causeConfidence: dir.confidence,
-      intelligenceMult: intelPolicy.sizeMultiplier,
-      rule: cfg.sizeAggregation,
-    }),
+    sizing,
   };
 }
 
@@ -864,7 +912,7 @@ module.exports = {
   sectorOf, setSectorMap, getSectorMap,
   residualPanel, residualZ, crossSectionalRanks,
   entrySignal, exitSignal, ENTRY_RANK, EXIT_RANK, sectorCrowding,
-  volatilityScaler, dispersionGate, earningsBlackout,
+  volatilityScaler, dispersionGate, effectiveDispersionGate, earningsBlackout,
   CAUSE, directionFromCause, costHurdle,
   evaluateCandidate,
 };

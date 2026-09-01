@@ -21,14 +21,16 @@
  *  or a merge on a stable key (candidates keyed by cycle+symbol), so a retry
  *  re-derives the same state rather than duplicating it.
  *
- *  This worker NEVER places a real order. It writes proposals; a human
- *  approves them in the console, or in a later phase a validated book may
- *  auto-approve within its own caps. There is no broker integration.
+ *  This worker NEVER places a real order. It writes virtual proposals; the
+ *  explicit exploratory-auto paper state may approve them immediately, a
+ *  human may approve them, or a validated book may auto-approve within its
+ *  measured caps. There is no broker integration.
  * ---------------------------------------------------------------------------
  */
 
 "use strict";
 
+const crypto = require("crypto");
 const A = require("./_investorAdmin");
 const AUTH = require("./_investorAuth");
 const { verifyWorkerNonce, redact } = AUTH;
@@ -51,11 +53,23 @@ const R = require("./_investorRisk");
 const LD = require("./_investorLadder");
 const C = require("./_investorCalibration");
 const DF = require("./_investorDecisionFeedback");
+const CA = require("./_investorCorporateActions");
 const RS = require("./_investorResearchStats");
+const STATE = require("./_investorState");
+const DM = require("./_investorDecisionManifest");
+const SOAK = require("./_investorSoak");
+
+function sha256Json(value) {
+  return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
 
 const FN_NAME = "investorCycle-background";
 const WORKER_LEASE_TTL_MS = 14 * 60 * 1000;
 const GUARD_LEASE_TTL_MS = 4 * 60 * 1000;
+
+function executionSourceEligible(quality) {
+  return !!quality && quality.tradable === true;
+}
 
 /* ── universe + strategy loading ───────────────────────────────────────── */
 async function loadUniverse(version) {
@@ -104,6 +118,12 @@ async function regime() {
        stale rather than silently disabling the gate. */
     cor3m: corHealthy && Number.isFinite(Number(d.cor3m)) ? Number(d.cor3m) : null,
     asOf: d.asOf || null,
+    rawVix: Number.isFinite(Number(d.vix)) ? Number(d.vix) : null,
+    rawCor3m: Number.isFinite(Number(d.cor3m)) ? Number(d.cor3m) : null,
+    vixFetchedAt: d.vixFetchedAt || null, corFetchedAt: d.corFetchedAt || null,
+    vixSource: d.vixSource || null, corSource: d.corSource || null,
+    vixSourceSha256: d.vixSourceSha256 || d.sourceSha256 || null,
+    corSourceSha256: d.corSourceSha256 || null,
     vixHealthy, corHealthy, vixAgeMs: vixAge, corAgeMs: corAge,
     stale: !vixHealthy || !corHealthy,
   };
@@ -253,18 +273,26 @@ function applyOverfitGuard(alloc, overfitGuard) {
   return alloc;
 }
 
-async function runCycle(jobId) {
+async function runCycle(jobId, { manual = false } = {}) {
   const startedAt = Date.now();
 
   /* Self-bootstrap. First cycle freezes the universe, resolves CIKs from SEC,
      opens the paper account, derives earnings windows and fetches VIX. Every
      cycle after that this is a single read plus the slow-clock refreshes. */
   let bootstrap = null;
-  try { bootstrap = await B.ensureBootstrapped(); }
+  try { bootstrap = await B.ensureBootstrapped({ enrich: false }); }
   catch (e) { bootstrap = { error: String(e.message).slice(0, 160) }; }
 
   const ctrl = await controlDoc();
+  const operating = STATE.describe(ctrl);
   const strategy = await loadStrategy(ctrl.strategyVersion);
+  const exploratoryPolicy = strategy.exploratoryAuto || {};
+  const activePortfolioControls = operating.exploratoryAuto
+    ? { ...(strategy.portfolioControls || {}),
+        ...(exploratoryPolicy.portfolioControls || {}) }
+    : (strategy.portfolioControls || {});
+  const activeRiskStrategy = { ...strategy,
+    portfolioControls: activePortfolioControls };
   const universe = await loadUniverse(ctrl.universeVersion);
   const universeHash = universe.contentHash || B.universeHash(universe);
   const strategyHash = strategy.contentHash || B.strategyHash(strategy);
@@ -302,8 +330,8 @@ async function runCycle(jobId) {
     if (aSnap.exists) {
       const a = aSnap.data();
       /* A variants-file edit invalidates every observation recorded against
-         the old definitions, so a stale hash must not be allowed to steer
-         live money. Fail back to the baseline and say so. */
+         the old definitions, so a stale hash must not be allowed to steer the
+         paper ledger. Fail back to the baseline and say so. */
       const hashOk = !a.variantsHash || a.variantsHash === V.variantsHash();
       allocationRead = {
         leaderId: a.leaderId || null, powered: !!a.powered,
@@ -338,8 +366,8 @@ async function runCycle(jobId) {
 
   /* Paper learning mode. `strictCfg` is kept untouched so the published
      calibration can be scored alongside whatever the operator loosened. */
-  const strictCfg = { ...cfg };
-  const paperLearning = require("./_investorStrategy.js").paperLearningConfig(cfg, ctrl);
+  let strictCfg = { ...cfg };
+  let paperLearning = require("./_investorStrategy.js").paperLearningConfig(cfg, ctrl);
   cfg = paperLearning.cfg;
   if (paperLearning.active) {
     cfgSource += ` · paper learning mode: ${Object.keys(paperLearning.applied).join(", ") || "no change"}`;
@@ -350,6 +378,9 @@ async function runCycle(jobId) {
   const accountId = ctrl.accountId || "paper-1";
   let entryControl = L.controlAllowsEntry(ctrl, policyIdentity);
   const session = M.sessionState(new Date());
+  const dailyFinalization = M.dailyFinalizationState(session);
+  session.dailyFinalized = dailyFinalization.ready === true
+    && ctrl.lastDailyFinalizeDate !== session.date;
   const reg = await regime();
 
   const tradeTier = universe.tradeTier || [];
@@ -502,7 +533,7 @@ async function runCycle(jobId) {
      identity is already part of the shadow experiment hash, so IEX-graded
      observations accumulate under their own experiment and can never be
      blended into consolidated-feed history to satisfy a promotion gate. */
-  const researchObservation = (ctrl.mode || "research") === "research" || ctrl.dryRun !== false;
+  const researchObservation = !operating.paperLedger;
   const admits = (q) => !!q && (q.tradable === true
     || (researchObservation && q.researchEligible === true));
 
@@ -521,13 +552,21 @@ async function runCycle(jobId) {
   } : { provider: fetchMeta.provider || provider.id, feed: fetchMeta.feed || null,
     adjustment: fetchMeta.adjustment || "unknown" };
   const shadowExperiment = SH.experimentIdentity({ universeHash, strategyHash, variantsHash,
+    buildCommit: process.env.COMMIT_REF || process.env.DEPLOY_ID || "local",
+    intelligenceConfig: {
+      watchlist: IS.configuredSymbols(ctrl),
+      profiles: ctrl.intelligenceProfiles || {},
+      sourceRegistry: IS.SOURCE_REGISTRY,
+    },
     marketIdentity });
   if (liveVariant && allocationRead && allocationRead.experimentHash !== shadowExperiment.experimentHash) {
     liveVariant = null;
     /* Re-apply the operator's relaxation after the reset. Without this the
        leader-mismatch branch silently reverted to the published calibration
        and the desk would go quiet again with the mode still showing as on. */
-    cfg = require("./_investorStrategy.js").paperLearningConfig({ ...baseParams }, ctrl).cfg;
+    strictCfg = { ...baseParams };
+    paperLearning = require("./_investorStrategy.js").paperLearningConfig(strictCfg, ctrl);
+    cfg = paperLearning.cfg;
     cfgSource = "baseline — the stored leader belongs to a different market-data experiment"
       + (paperLearning.active ? " · paper learning mode still applied" : "");
   }
@@ -571,12 +610,15 @@ async function runCycle(jobId) {
   /* 4-6. evaluate each symbol ------------------------------------------- */
   const cycleId = `${today}_${new Date().toISOString().slice(11, 16).replace(":", "")}`;
   const candidates = [], decisions = [], exits = [], portfolioBlocks = [], proposalQueue = [];
+  const decisionManifestStats = { total: 0, complete: 0, invalid: 0 };
   let modelCalls = 0;
 
   const causeBySymbol = {};
   const coverageBySymbol = {};
   const attentionBySymbol = {};
   const lastPriceBySymbol = {};
+  const corporateActionQuarantineBySymbol = {};
+  const corporateActionWrites = [];
   const tierBySymbol = Object.fromEntries(tradeTier.map((t) => [t.symbol, t]));
   /* Meta carries MEASURED volume, overriding anything asserted in the file. */
   const metaBySymbol = {};
@@ -612,12 +654,34 @@ async function runCycle(jobId) {
        to execution grade it stays empty on a single-venue feed, and a paper
        desk with no marks records nothing at all — which is the failure this
        release exists to remove. The source hash is still mandatory. */
-    if (b && b.length && admits(quality[sym])
+    if (b && b.length && p && admits(quality[sym])
         && key === dominantIdentityKey
         && /^[a-f0-9]{64}$/.test(String(p.sourceSha256 || ""))) {
-      lastPriceBySymbol[sym] = b[b.length - 1].c;
+      const lastTrustedBar = b[b.length - 1];
+      const currentPrice = lastTrustedBar.c;
+      const markProvenance = { ...p, barOpenAt: lastTrustedBar.t };
+      marketProvenanceBySymbol[sym] = markProvenance;
+      const held = positionBySymbol[sym];
+      const assessment = held && held.open
+        ? CA.assessPositionMark({ position: held, currentPrice,
+          currentProvenance: markProvenance })
+        : { quarantine: false };
+      if (assessment.quarantine) {
+        const pending = { ...assessment, status: "pending_operator_confirmation",
+          detectedAtMs: assessment.detectedAtMs || Date.now(), currentMarkAt: b[b.length - 1].t,
+          currentProvenance: markProvenance };
+        corporateActionQuarantineBySymbol[sym] = pending;
+        corporateActionWrites.push(A.col(A.COL.positions).doc(`${accountId}_${sym}`).set({
+          corporateActionPending: pending,
+          markQuarantinedAt: A.FV.serverTimestamp(),
+          updated_at: A.FV.serverTimestamp(),
+        }, { merge: true }));
+      } else {
+        lastPriceBySymbol[sym] = currentPrice;
+      }
     }
   }
+  if (corporateActionWrites.length) await Promise.allSettled(corporateActionWrites);
 
   /* 1a-ter. TURNOVER PERCENTILES ----------------------------------------
      turnover = dollar volume / price / shares outstanding, ranked across the
@@ -674,14 +738,21 @@ async function runCycle(jobId) {
      idea looks. Exits are deliberately NOT blocked by a halt — being unable to
      sell during a drawdown is how a pause becomes a disaster. */
   const hwm = Math.max(Number(ctrl.highWaterMarkUsd) || 0, navUsd);
-  const startOfDayNav = Number(ctrl.startOfDayNavUsd) || navUsd;
+  /* On the first cycle of a new trading date, today's opening baseline is the
+     current NAV. Reusing yesterday's baseline for this calculation made the
+     first cycle report yesterday's move as today's P/L and could trip the
+     one-day breaker before today's session had moved at all. */
+  const storedStartOfDayNav = Number(ctrl.startOfDayNavUsd);
+  const startOfDayNav = ctrl.startOfDayNavDate === today
+    && Number.isFinite(storedStartOfDayNav) && storedStartOfDayNav > 0
+    ? storedStartOfDayNav : navUsd;
   const riskState = {
     navUsd, hwmUsd: hwm,
     untrustedOpenMarks: marked.untrustedMarks,
     drawdownPct: hwm > 0 ? ((navUsd - hwm) / hwm) * 100 : 0,
     dayPnlPct: startOfDayNav > 0 ? ((navUsd - startOfDayNav) / startOfDayNav) * 100 : 0,
   };
-  const breakers = R.accountBreakers(riskState, strategy);
+  const breakers = R.accountBreakers(riskState, activeRiskStrategy);
 
   /* Symbols with an order already in flight. The duplicate check in the
      portfolio gate looks at POSITIONS, so a proposed-but-unapproved order was
@@ -691,27 +762,84 @@ async function runCycle(jobId) {
   try {
     for (const st of ["proposed", "approved"]) {
       const q = await A.col(A.COL.orders)
-        .where("accountId", "==", accountId).where("status", "==", st).limit(100).get();
+        .where("accountId", "==", accountId).where("status", "==", st).get();
       q.forEach((d) => pendingOrderSymbols.add(d.data().symbol));
     }
   } catch (e) { /* on failure, the recordFill double-fill guard still holds the line */ }
 
-  /* One NAV mark per trading day, which is what every performance number is
-     built from. Without this there is no equity curve, so no drawdown, no
-     volatility, and no way to answer "did this beat just holding the names". */
-  try {
+  /* One NAV mark per trading day is what every performance number is built
+     from. Intraday rows are explicitly provisional. The finalized row is
+     written again only after this cycle's fills and exits settle, otherwise a
+     cycle that opens or closes a position would permanently attest the book
+     that existed before its own transaction. */
+  let navMarkWritten = false, navMarkResult = null;
+  const dailyAlreadyFinalized = ctrl.lastDailyFinalizeDate === today;
+  async function writeNavSnapshot({ positionRows, snapshotNavUsd, snapshotCashUsd,
+    snapshotPositionsUsd, snapshotOpenPositions, snapshotUnrealisedUsd, finalized }) {
+    const navMarkSources = [], missingMarkSymbols = [];
+    const open = (positionRows || [])
+      .filter((p) => p && p.open && Number(p.qty) > 0);
+    for (const position of open) {
+      const price = Number(lastPriceBySymbol[position.symbol]);
+      const provenance = marketProvenanceBySymbol[position.symbol];
+      if (!(price > 0) || !provenance
+          || !/^[a-f0-9]{64}$/.test(String(provenance.sourceSha256 || ""))) {
+        missingMarkSymbols.push(position.symbol); continue;
+      }
+      navMarkSources.push({ symbol: position.symbol, price: Number(price.toFixed(8)),
+        provider: provenance.provider, feed: provenance.feed || null,
+        adjustment: provenance.adjustment || null,
+        barOpenAt: provenance.barOpenAt || null,
+        sourceSha256: provenance.sourceSha256 });
+    }
+    navMarkSources.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    missingMarkSymbols.sort();
+    const marksComplete = missingMarkSymbols.length === 0;
+    const priorCompleteDate = ctrl.lastNavCompleteDate || null;
+    const sessionsSpanned = priorCompleteDate
+      ? M.tradingSessionsBetween(priorCompleteDate, today) : null;
+    const returnAdmissible = marksComplete && Number(sessionsSpanned) === 1;
+    const markSetSha256 = sha256Json(navMarkSources);
     await A.col(A.COL.control).doc("control").collection("navHistory").doc(today).set({
-      date: today, navUsd: Number(navUsd.toFixed(2)),
-      cashUsd: Number(cashUsdNow.toFixed(2)),
-      positionsUsd: Number(book.grossUsd.toFixed(2)),
-      openPositions: book.count,
-      unrealisedUsd: Number(book.unrealisedUsd.toFixed(2)),
+      date: today, navUsd: Number(snapshotNavUsd.toFixed(2)),
+      cashUsd: Number(snapshotCashUsd.toFixed(2)),
+      positionsUsd: Number(snapshotPositionsUsd.toFixed(2)),
+      openPositions: snapshotOpenPositions,
+      unrealisedUsd: Number(snapshotUnrealisedUsd.toFixed(2)),
+      marksComplete,
+      missingMarkSymbols,
+      markSources: navMarkSources,
+      markSetSha256,
+      priorCompleteDate,
+      sessionsSpanned: Number.isFinite(Number(sessionsSpanned))
+        ? Number(sessionsSpanned) : null,
+      returnAdmissible,
+      ...(finalized === true
+        ? { finalized: true, finalizedAt: A.FV.serverTimestamp() }
+        : { finalized: false }),
       updatedAt: A.FV.serverTimestamp(),
     }, { merge: true });
-  } catch (e) { /* a missed NAV mark must not stop the cycle */ }
+    return { written: true, finalized: finalized === true, marksComplete,
+      missingMarkSymbols, markSetSha256, priorCompleteDate,
+      sessionsSpanned: Number.isFinite(Number(sessionsSpanned))
+        ? Number(sessionsSpanned) : null,
+      returnAdmissible };
+  }
+
+  /* A provisional row may be refreshed throughout the session. A final row
+     is immutable once the combined NAV + learning finalization checkpoint is
+     committed in control. */
+  if (session.dailyFinalized !== true && !dailyAlreadyFinalized) {
+    try {
+      navMarkResult = await writeNavSnapshot({ positionRows: allPositions,
+        snapshotNavUsd: navUsd, snapshotCashUsd: cashUsdNow,
+        snapshotPositionsUsd: book.grossUsd, snapshotOpenPositions: book.count,
+        snapshotUnrealisedUsd: book.unrealisedUsd, finalized: false });
+    } catch (e) { /* a missed provisional NAV mark must not stop the cycle */ }
+  }
   await A.col(A.COL.control).doc("control").set({
     highWaterMarkUsd: hwm,
-    startOfDayNavUsd: (ctrl.startOfDayNavDate === today) ? startOfDayNav : navUsd,
+    startOfDayNavUsd: startOfDayNav,
     startOfDayNavDate: today,
   }, { merge: true });
 
@@ -740,7 +868,14 @@ async function runCycle(jobId) {
        the single highest-value use of the 5-minute loop. The research is
        explicit that the exit rule was worth more than any entry refinement. */
     if (position && position.open) {
-      const heldDays = (Date.now() - Date.parse(position.openedAt)) / 864e5;
+      if (corporateActionQuarantineBySymbol[sym] || position.corporateActionPending) {
+        const pending = corporateActionQuarantineBySymbol[sym] || position.corporateActionPending;
+        exits.push({ symbol: sym, kind: "corporate_action_quarantine",
+          blocked: "operator_confirmation_required", reason: pending.reason || null,
+          shareRatio: pending.shareRatio || null });
+        continue;
+      }
+      const heldDays = M.tradingDaysHeld(position.openedAt, Date.now()) ?? 0;
       const markProv = marketProvenanceBySymbol[sym];
       /* markQuality is written alongside, so a mark taken at research grade is
          readable as such forever rather than passing as a consolidated one. */
@@ -954,7 +1089,7 @@ async function runCycle(jobId) {
       turnoverPctile: turnoverPctile[sym] ?? null,
     };
     /* Evaluate TWICE. `evalRes` is the verdict the desk acts on; `strictRes` is
-       what the published, real-money calibration would have said. Recording
+       what the published strict calibration would have said. Recording
        both is what stops paper learning mode from destroying the measurement
        it loosens: every relaxed trade stays labelled with whether it would
        have cleared the real gates, so the two populations can be scored apart
@@ -967,6 +1102,25 @@ async function runCycle(jobId) {
     const frozenDecision = DF.evaluateFrozenPolicies({ baseInput: baseDecisionInput,
       signalContexts: Object.fromEntries(Object.entries(signalContexts).map(([window, value]) =>
         [window, { ranks: value.ranks, zBySymbol: value.zBySymbol }])) });
+    const decisionManifest = DM.build({ decisionId: `${cycleId}_${sym}`,
+      decisionAtMs, symbol: sym, input: baseDecisionInput, rank,
+      zStat: z ? { ...z, lastPrice: last.c } : null,
+      activeResult: evalRes, strictResult: strictRes,
+      marketProvenance: marketProvenanceBySymbol[sym] || null,
+      lastBarAt: last.t, regime: reg, earningsWindow: earningsWindows[sym] || null,
+      meta: metaBySymbol[sym] || {}, betas: rp.betas[sym] || null,
+      dailyProvenance: dailyProvenanceBySymbol[sym] || null,
+      policyIdentity: { ...policyIdentity,
+        variantId: liveVariant ? liveVariant.id : "A" },
+      config: cfg, strictConfig: strictCfg,
+      buildCommit: process.env.COMMIT_REF || process.env.DEPLOY_ID || "local",
+      operatingState: operating.state });
+    const manifestValidation = DM.validate(decisionManifest);
+    decisionManifestStats.total += 1;
+    if (manifestValidation.pass && decisionManifest.coverage.completeIdentity) {
+      decisionManifestStats.complete += 1;
+    }
+    if (!manifestValidation.pass) decisionManifestStats.invalid += 1;
 
     const card = {
       cycleId, symbol: sym, company: meta.company || sym,
@@ -998,6 +1152,10 @@ async function runCycle(jobId) {
                 costRatio: strictRes.cost ? strictRes.cost.ratio : null },
       paperRelaxed: paperLearning.active === true,
       frozenDecision,
+      decisionManifestHash: decisionManifest.manifestHash,
+      manifestCoverage: decisionManifest.coverage,
+      decisionManifestCoverage: decisionManifest.coverage,
+      decisionManifestValid: manifestValidation.pass,
       cost: evalRes.cost, sizing: evalRes.sizing,
       breach: !!breach, unionEvidenceTrigger: !!evidenceTrigger,
       sectorTailFraction: crowd.fractionInTail[S.sectorOf(sym)] ?? 0,
@@ -1010,27 +1168,68 @@ async function runCycle(jobId) {
 
     /* Every outcome is a decision record — the rejections are the dataset. */
     await A.col(A.COL.decisions).doc(`${cycleId}_${sym}`).set({
-      cycleId, symbol: sym, kind: evalRes.pass ? "propose" : "no_trade",
+      cycleId, symbol: sym, kind: evalRes.pass
+        ? (entryControl.pass && manifestValidation.pass
+          ? "entry_eligible" : "eligible_observation")
+        : "no_trade",
       noTradeReasons: evalRes.blockedBy, firstBlock: evalRes.firstBlock,
-      rank, z: evalRes.z, cause, cost: evalRes.cost, sizing: evalRes.sizing,
+      rank, z: evalRes.z, cumResidualBps: evalRes.cumResidualBps,
+      cause, direction: evalRes.direction, cost: evalRes.cost, sizing: evalRes.sizing,
+      gates: evalRes.gates,
+      strict: { pass: strictRes.pass, blockedBy: strictRes.blockedBy,
+        firstBlock: strictRes.firstBlock, gates: strictRes.gates, cost: strictRes.cost,
+        sizing: strictRes.sizing },
+      paperLearning: { active: paperLearning.active === true,
+        applied: paperLearning.applied || {} },
+      operatingState: operating.state,
+      learningCohort: operating.exploratoryAuto
+        ? (exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated")
+        : (paperLearning.active ? "relaxed_operator_paper" : "strict_policy"),
+      inputs: {
+        priceQuality: quality[sym] || null,
+        advUsd: (metaBySymbol[sym] || {}).advUsd || 0,
+        earningsDates: baseDecisionInput.earningsDates,
+        earningsEstimated: baseDecisionInput.earningsEstimated,
+        earningsUncertaintyDays: baseDecisionInput.earningsUncertaintyDays,
+        attentionScore: baseDecisionInput.attentionScore,
+        coverage: baseDecisionInput.coverage,
+        vixNorm: baseDecisionInput.vixNorm,
+        cor3m: baseDecisionInput.cor3m,
+        sectorTailFraction: baseDecisionInput.sectorTailFraction,
+        turnoverPctile: baseDecisionInput.turnoverPctile,
+        session: { date: session.date, phase: session.phase, open: session.open,
+          wideSpreadWindow: session.wideSpreadWindow },
+        marketProvenance: marketProvenanceBySymbol[sym] || null,
+        historyContext: evalRes.historyContext,
+        reversion: evalRes.reversion,
+      },
       intelligenceDossierHash: intelligence && intelligence.dossierHash || null,
       intelligencePolicy: evalRes.intelligencePolicy || null,
       frozenDecision,
+      decisionInputManifest: decisionManifest,
+      decisionManifestHash: decisionManifest.manifestHash,
+      decisionManifestValid: manifestValidation.pass,
       temporalContextHash: intelligence && intelligence.temporalContext
         && intelligence.temporalContext.contextHash || null,
       strategyVersion: strategy.version, decisionAtMs,
       ...A.envelope({ created_by: FN_NAME }),
     }, { merge: true });
 
-    if (evidenceTrigger) {
-      await DF.recordObservation({ experimentHash: shadowExperiment.experimentHash,
-        cycleId, symbol: sym, decisionAtMs, decisionDate: session.date,
-        initialPrice: last.c, marketProvenance: marketProvenanceBySymbol[sym],
-        counterfactuals: frozenDecision, sector: S.sectorOf(sym), regime: reg });
-    }
+    await DF.recordObservation({ experimentHash: shadowExperiment.experimentHash,
+      cycleId, symbol: sym, decisionAtMs, decisionDate: session.date,
+      initialPrice: last.c, marketProvenance: marketProvenanceBySymbol[sym],
+      counterfactuals: frozenDecision, sector: S.sectorOf(sym), regime: reg,
+      decisionManifestHash: decisionManifest.manifestHash,
+      manifestCoverage: decisionManifest.coverage,
+      configurationIdentity: decisionManifest.configuration,
+      cause, activeVerdict: decisionManifest.activeVerdict,
+      strictVerdict: decisionManifest.strictVerdict,
+      operatingState: operating.state,
+      modeledRoundTripBps: evalRes.cost && evalRes.cost.roundTripBps });
 
-    if (evalRes.pass && entryControl.pass) {
-      proposalQueue.push({ sym, last, evalRes, cause, causeDetail, rank, intelligence });
+    if (evalRes.pass && entryControl.pass && manifestValidation.pass) {
+      proposalQueue.push({ sym, last, evalRes, strictRes, cause, causeDetail, rank,
+        intelligence, decisionManifest });
     }
   }
 
@@ -1047,19 +1246,40 @@ async function runCycle(jobId) {
   let proposalCashUsd = cashUsdNow;
   for (let queueIndex = 0; queueIndex < proposalQueue.length; queueIndex += 1) {
     const q = proposalQueue[queueIndex];
-    const { sym, last, evalRes, cause, causeDetail, intelligence } = q;
+    const { sym, last, evalRes, cause, causeDetail, intelligence, decisionManifest } = q;
     if (pendingOrderSymbols.has(sym)) continue;
     try {
+      const decisionAtMs = Date.now();
+      /* Relaxed paper learning may score a research-only series, but a source
+         that cannot satisfy the fill-time execution contract must never create
+         an order or reserve cash. Keep the labelled outcome; refuse only the
+         impossible lifecycle. */
+      if (!executionSourceEligible(quality[sym])) {
+        const reason = "market source is research-only and cannot produce an executable paper fill";
+        await A.col(A.COL.decisions).doc(`${cycleId}_${sym}`).set({
+          finalDecisionKind: "no_trade_execution_source",
+          executionSourceEligible: false, executionSourceReason: reason,
+        }, { merge: true });
+        await A.col(A.COL.decisions).doc(`${cycleId}_${sym}_notrade_execution_source`).set({
+          cycleId, symbol: sym, kind: "no_trade", stage: "execution_source",
+          blockedBy: ["execution_source"], reason, quality: quality[sym] || null,
+          decisionMarketProvenance: marketProvenanceBySymbol[sym] || null,
+          parentDecisionManifestHash: decisionManifest.manifestHash,
+          strategyVersion: strategy.version, ...A.envelope({ created_by: FN_NAME }),
+        }, { merge: true });
+        portfolioBlocks.push({ symbol: sym, blockedBy: ["execution_source"], reason });
+        continue;
+      }
       const hc = historyCtx[sym] || {};
       const sizing = R.positionSizeUsd({ navUsd, atrPct: hc.atrPct,
         expectedShortfall5dPct: hc.expectedShortfall5dPct,
         overnightGapEsPct: hc.overnightGapEsPct,
         signalScaler: evalRes.sizing.combined,
-        cfg: { ...strategy, parameters: cfg } });
+        cfg: { ...activeRiskStrategy, parameters: cfg } });
       const dynamicCorrelations = {};
       for (const held of book.rows) {
         dynamicCorrelations[held.symbol] = T.pairwiseCorrelation(
-          dailySeriesBySymbol[sym] || [], dailySeriesBySymbol[held.symbol] || [], Date.now(), {
+          dailySeriesBySymbol[sym] || [], dailySeriesBySymbol[held.symbol] || [], decisionAtMs, {
             provenanceA: dailyProvenanceBySymbol[sym] || null,
             provenanceB: dailyProvenanceBySymbol[held.symbol] || null,
             requireProvenance: true,
@@ -1067,14 +1287,35 @@ async function runCycle(jobId) {
       }
       const add = R.checkAdd({ symbol: sym, sector: S.sectorOf(sym),
         proposedUsd: sizing.usd, book, navUsd, cashUsd: proposalCashUsd,
-        cfg: { ...strategy, parameters: cfg }, dynamicCorrelations });
+        cfg: { ...activeRiskStrategy, parameters: cfg }, dynamicCorrelations });
+      const portfolioManifest = DM.buildPortfolio({
+        decisionId: `${cycleId}_${sym}_portfolio`, decisionAtMs, symbol: sym,
+        parentManifestHash: decisionManifest.manifestHash, sizing,
+        portfolioCheck: add, book, navUsd, cashUsd: proposalCashUsd,
+        correlations: dynamicCorrelations, policyIdentity: { ...policyIdentity,
+          variantId: liveVariant ? liveVariant.id : "A" },
+        config: activePortfolioControls,
+        buildCommit: process.env.COMMIT_REF || process.env.DEPLOY_ID || "local",
+      });
+      const portfolioManifestValidation = DM.validate(portfolioManifest);
       const permittedUsd = add.allow ? sizing.usd : (add.allowTrimmed ? add.permittedUsd : 0);
-      const qty = Math.max(0, Math.floor(permittedUsd / last.c));
+      const qty = portfolioManifestValidation.pass
+        ? Math.max(0, Math.floor(permittedUsd / last.c)) : 0;
+      await A.col(A.COL.decisions).doc(`${cycleId}_${sym}`).set({
+        portfolioDecisionManifest: portfolioManifest,
+        portfolioDecisionManifestHash: portfolioManifest.manifestHash,
+        portfolioDecisionManifestValid: portfolioManifestValidation.pass,
+        finalDecisionKind: qty > 0 ? "paper_order_candidate" : "no_trade_portfolio",
+      }, { merge: true });
       if (qty <= 0) {
         await A.col(A.COL.decisions).doc(`${cycleId}_${sym}_notrade_portfolio`).set({
           cycleId, symbol: sym, kind: "no_trade", stage: "portfolio",
           blockedBy: add.blockedBy, reason: add.firstBlock || "no feasible risk-sized notional",
           cluster: add.cluster, checks: add.checks, sizing,
+          parentDecisionManifestHash: decisionManifest.manifestHash,
+          portfolioDecisionManifest: portfolioManifest,
+          portfolioDecisionManifestHash: portfolioManifest.manifestHash,
+          portfolioDecisionManifestValid: portfolioManifestValidation.pass,
           bookCount: book.count, bookGrossPct: book.grossPct,
           strategyVersion: strategy.version, ...A.envelope({ created_by: FN_NAME }),
         }, { merge: true });
@@ -1082,7 +1323,6 @@ async function runCycle(jobId) {
         continue;
       }
       const provenance = marketProvenanceBySymbol[sym];
-      const decisionAtMs = Date.now();
       const executionCostContext = M.executionCostContext({
         advUsd: (metaBySymbol[sym] || {}).advUsd || 0,
         grade: quality[sym].grade, wideSpreadWindow: session.wideSpreadWindow,
@@ -1090,6 +1330,15 @@ async function runCycle(jobId) {
       const slip = executionCostContext.slippageBps;
       const o = await L.proposeOrder({
         ...policyIdentity, accountId, symbol: sym, side: "buy",
+        paperLearningOnly: paperLearning.active === true,
+        operatingStateAtDecision: operating.state,
+        learningCohort: operating.exploratoryAuto
+          ? (exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated")
+          : (paperLearning.active ? "relaxed_operator_paper" : "strict_policy"),
+        exploratoryPolicyVersion: operating.exploratoryAuto
+          ? (exploratoryPolicy.version || null) : null,
+        decisionManifestHash: decisionManifest.manifestHash,
+        portfolioDecisionManifestHash: portfolioManifest.manifestHash,
         decisionId: `${cycleId}_${sym}`, qty, refPriceUsd: last.c, slippageBps: slip,
         executionCostContext,
         sizing: { ...sizing, signal: evalRes.sizing }, gates: evalRes.gates, cause,
@@ -1099,6 +1348,21 @@ async function runCycle(jobId) {
           dynamicCorrelationPairs: dynamicCorrelations,
           bookGrossPctBefore: book.grossPct, cashUsdBefore: proposalCashUsd },
         decisionContext: {
+          decisionManifestHash: decisionManifest.manifestHash,
+          decisionManifestVersion: decisionManifest.version,
+          decisionManifestCoverage: decisionManifest.coverage,
+          portfolioDecisionManifestHash: portfolioManifest.manifestHash,
+          portfolioDecisionManifestCoverage: portfolioManifest.coverage,
+          paperLearningOnly: paperLearning.active === true,
+          operatingState: operating.state,
+          learningCohort: operating.exploratoryAuto
+            ? (exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated")
+            : (paperLearning.active ? "relaxed_operator_paper" : "strict_policy"),
+          exploratoryPolicyVersion: operating.exploratoryAuto
+            ? (exploratoryPolicy.version || null) : null,
+          strictVerdict: { pass: q.strictRes ? q.strictRes.pass : false,
+            blockedBy: q.strictRes ? q.strictRes.blockedBy : ["strict_verdict_missing"],
+            firstBlock: q.strictRes ? q.strictRes.firstBlock : "strict verdict missing" },
           crossSectionRank: q.rank,
           queueRank: queueIndex + 1,
           eligibleBatchSize: proposalQueue.length,
@@ -1168,45 +1432,73 @@ async function runCycle(jobId) {
      decide, because in reality that print had already happened. */
   let settled = { filled: [], closed: [], skipped: [], autoApproved: [] };
   try {
-    /* AUTO-APPROVAL. There was no path of any kind: every buy waited on a
-       human click, so the system could sell by itself but never buy by itself.
-       That is not autonomy, it is an elaborate alarm clock.
-
-       Only at limited_auto, only within caps deliberately tighter than the
-       ordinary portfolio limits, and never for a marginal pass or a no-cause
-       trade. The operator's queue then holds the exceptions worth looking at
-       rather than every routine order. */
-    const stageNow = ctrl.mode || "research";
-    if (stageNow === "limited_auto" && ctrl.dryRun === false && !ctrl.killSwitch && entryControl.pass) {
-      const todayAuto = await A.col(A.COL.orders)
-        .where("accountId", "==", accountId)
-        .where("autoApprovedDate", "==", today).limit(50).get();
-      let dayCount = todayAuto.size;
+    /* AUTO-APPROVAL has two explicitly separate populations:
+       - exploratory_auto gathers labelled PAPER outcomes immediately, with no
+         daily order quota and the full frozen exploratory portfolio capacity;
+       - limited_auto remains the statistically earned, tightly capped mode.
+       The state and cohort are persisted on every order so evidence from one
+       can never be presented as validation of the other. */
+    const stageNow = operating.stage;
+    if (operating.automaticPaperEntries && entryControl.pass) {
+      let dayCount = 0;
+      if (!operating.exploratoryAuto) {
+        const todayAuto = await A.col(A.COL.orders)
+          .where("accountId", "==", accountId)
+          .where("autoApprovedDate", "==", today).limit(50).get();
+        dayCount = todayAuto.size;
+      }
 
       const proposedSnap = await A.col(A.COL.orders)
-        .where("accountId", "==", accountId).where("status", "==", "proposed").limit(25).get();
+        .where("accountId", "==", accountId).where("status", "==", "proposed").get();
 
       for (const d of proposedSnap.docs) {
         const o = d.data();
-        const verdict = LD.autoApproval(o, {
-          stage: stageNow, book, navUsd, cfg: strategy, dayCount,
-        });
+        const verdict = operating.exploratoryAuto
+          ? LD.exploratoryAutoApproval(o, {
+            operatingState: operating.state, book, navUsd,
+            cfg: strategy,
+          })
+          : LD.autoApproval(o, {
+            stage: stageNow, book, navUsd, cfg: strategy, dayCount,
+          });
         if (!verdict.approve) {
-          settled.skipped.push({ orderId: o.orderId, why: "left for you: " + verdict.detail });
+          if (operating.exploratoryAuto) {
+            try {
+              const rejected = await L.rejectOrder(o.orderId,
+                `exploratory auto refusal: ${verdict.detail}`, "auto:exploratory");
+              settled.skipped.push({ orderId: o.orderId,
+                why: rejected.noop ? verdict.detail : `rejected automatically: ${verdict.detail}` });
+            } catch (e) {
+              settled.skipped.push({ orderId: o.orderId,
+                why: `automatic refusal could not be persisted: ${String(e.message).slice(0, 100)}` });
+            }
+          } else {
+            settled.skipped.push({ orderId: o.orderId, why: "left for you: " + verdict.detail });
+          }
           continue;
         }
         try {
-          await L.approveOrder(o.orderId, "auto");
+          const approved = await L.approveOrder(o.orderId,
+            operating.exploratoryAuto ? "auto:exploratory" : "auto:validated");
+          if (approved.status !== "approved" || approved.noop || approved.refused) {
+            settled.skipped.push({ orderId: o.orderId,
+              why: approved.refused || "auto approval did not transition the order" });
+            continue;
+          }
           await d.ref.set({ autoApproved: true, autoApprovedDate: today,
-                            autoApprovalDetail: verdict.detail }, { merge: true });
-          dayCount += 1;
-          settled.autoApproved.push({ orderId: o.orderId, symbol: o.symbol, detail: verdict.detail });
+            autoApprovalDetail: verdict.detail,
+            autoApprovalCohort: verdict.cohort || (operating.exploratoryAuto
+              ? "exploratory_auto_unvalidated" : "validated_limited_auto"),
+            autoApprovalOperatingState: operating.state }, { merge: true });
+          if (!operating.exploratoryAuto) dayCount += 1;
+          settled.autoApproved.push({ orderId: o.orderId, symbol: o.symbol,
+            cohort: verdict.cohort || null, detail: verdict.detail });
         } catch (e) { settled.skipped.push({ orderId: o.orderId, why: String(e.message).slice(0, 120) }); }
       }
     }
 
     const approvedSnap = await A.col(A.COL.orders)
-      .where("accountId", "==", accountId).where("status", "==", "approved").limit(50).get();
+      .where("accountId", "==", accountId).where("status", "==", "approved").get();
 
     for (const d of approvedSnap.docs) {
       const o = d.data();
@@ -1249,6 +1541,11 @@ async function runCycle(jobId) {
     for (const p of allPositions) {
       const intent = p.exitIntent;
       if (!p.open || !intent || !intent.decisionAtMs) continue;
+      if (corporateActionQuarantineBySymbol[p.symbol] || p.corporateActionPending) {
+        settled.skipped.push({ symbol: p.symbol,
+          why: "exit pending — corporate-action price basis awaits operator reconciliation" });
+        continue;
+      }
       const xbars = panel[p.symbol] || [];
       if (!xbars.length) { settled.skipped.push({ symbol: p.symbol, why: "exit pending — no bars this cycle" }); continue; }
       const exitProv = marketProvenanceBySymbol[p.symbol];
@@ -1302,7 +1599,7 @@ async function runCycle(jobId) {
     try {
       const cutoffMs = Date.now() - 24 * 3600e3;
       const staleSnap = await A.col(A.COL.orders)
-        .where("accountId", "==", accountId).where("status", "==", "approved").limit(50).get();
+        .where("accountId", "==", accountId).where("status", "==", "approved").get();
       for (const d of staleSnap.docs) {
         const o = d.data();
         if ((o.decisionAtMs || 0) > cutoffMs) continue;
@@ -1325,6 +1622,7 @@ async function runCycle(jobId) {
     const observationFeedback = await DF.updateObservations({
       experimentHash: shadowExperiment.experimentHash, session,
       lastPrice: lastPriceBySymbol, marketProvenanceBySymbol,
+      intelligenceBySymbol,
     });
     const shadowCtx = {
       cycleId, ranks, zBySymbol, quality, meta: metaBySymbol,
@@ -1405,8 +1703,12 @@ async function runCycle(jobId) {
         alloc.note = `${alloc.note} This experiment's confirmation set was already locked to ${holdoutLock.leaderId}; it cannot be reused to select ${alloc.leaderId}.`;
         alloc.leaderId = null;
       } else if (!holdoutLock && dev && dev.pass) {
-        const proposedLock = { experimentHash: shadowExperiment.experimentHash,
-          leaderId: alloc.leaderId, ...dev.confirmation, lockedAtMs: Date.now() };
+        const proposedLock = C.holdoutLockTemplate({
+          experimentHash: shadowExperiment.experimentHash,
+          leaderId: alloc.leaderId, confirmation: dev.confirmation,
+          variantsHash, simulatorVersion: SH.SIMULATOR_VERSION,
+          calibrationOpts,
+        });
         const allocationRef = A.col(A.COL.control).doc("allocation");
         holdoutLock = await A.runTransaction(async (tx) => {
           const snap = await tx.get(allocationRef);
@@ -1425,8 +1727,9 @@ async function runCycle(jobId) {
       if (alloc.leaderId && holdoutLock) {
         const storedCalibration = await C.read(shadowExperiment.experimentHash);
         const reusable = storedCalibration && storedCalibration.holdoutLock
-          && storedCalibration.holdoutLock.leaderId === holdoutLock.leaderId
-          && storedCalibration.holdoutLock.dataThroughDate === holdoutLock.dataThroughDate;
+          && /^[a-f0-9]{64}$/.test(String(holdoutLock.lockHash || ""))
+          && storedCalibration.holdoutLock.lockHash === holdoutLock.lockHash
+          && storedCalibration.evaluatedLeaderId === holdoutLock.leaderId;
         if (reusable) {
           calibration = storedCalibration;
           leaderCalibration = calibration.variants && calibration.variants[alloc.leaderId];
@@ -1584,37 +1887,52 @@ async function runCycle(jobId) {
         safetyEpochValid: freshSafetyEpochValid,
         recallBenchmark: fresh.recallBenchmark ?? null,
       });
+      const freshOperating = STATE.describe(fresh);
       const decision = LD.decideStage({
-        current: fresh.mode || "research", gates,
+        current: freshOperating.stage, gates,
         operatorCeiling: fresh.operatorCeiling || strategy.operatorCeiling || "approval",
         operatorHold: fresh.operatorHold === true,
         promotionStreak: Number(fresh.ladderStreak) || 0,
         killSwitch: !!fresh.killSwitch,
       });
       const patch = { ladderStreak: decision.streak || 0 };
-      if (decision.changed) Object.assign(patch, {
-        mode: decision.stage, stageChangedAt: A.FV.serverTimestamp(),
-        stageChangeReason: decision.reason, stageChangedBy: "ladder",
-      });
+      let appliedStateChange = null;
+      if (decision.changed && !freshOperating.paused && !freshOperating.entriesFrozen) {
+        const stateChange = STATE.transition(fresh, STATE.stateForStage(decision.stage), {
+          source: "ladder", validEpoch: freshSafetyEpochValid,
+          earnedStage: LD.highestEarnedStage(gates), reason: decision.reason,
+        });
+        if (stateChange.ok) {
+          Object.assign(patch, stateChange.patch, {
+            stageChangedAt: A.FV.serverTimestamp(),
+            stageChangeReason: decision.reason, stageChangedBy: "ladder",
+          });
+          appliedStateChange = stateChange;
+        }
+      }
       tx.set(controlRef, patch, { merge: true });
-      return { decision, gates, fresh };
+      return { decision, gates, fresh, freshOperating, appliedStateChange };
     });
-    const { decision, gates, fresh } = applied;
+    const { decision, gates, fresh, freshOperating, appliedStateChange } = applied;
 
-    if (decision.changed) {
+    if (appliedStateChange) {
       await A.col(A.COL.audit).add({
-        action: "stage_change", from: fresh.mode || "research", to: decision.stage,
+        action: "stage_change", from: freshOperating.stage, to: decision.stage,
         direction: decision.direction, reason: decision.reason,
         at: A.FV.serverTimestamp(), ...A.envelope({ created_by: FN_NAME }),
       });
     }
 
     ladder = {
-      stage: decision.stage, previous: fresh.mode || "research",
-      changed: decision.changed, direction: decision.direction, reason: decision.reason,
+      stage: appliedStateChange ? decision.stage : freshOperating.stage,
+      previous: freshOperating.stage,
+      operatingState: appliedStateChange
+        ? appliedStateChange.state.state : freshOperating.state,
+      changed: !!appliedStateChange, direction: decision.direction, reason: decision.reason,
       earned: LD.highestEarnedStage(gates),
       ceiling: fresh.operatorCeiling || strategy.operatorCeiling || "approval",
-      controlDryRun: fresh.dryRun !== false,
+      controlDryRun: appliedStateChange
+        ? !appliedStateChange.state.paperLedger : !freshOperating.paperLedger,
       gates, notes: LD.describe(decision.stage, gates, decision),
     };
   } catch (e) { ladder = { error: String(e.message).slice(0, 200) }; }
@@ -1624,9 +1942,12 @@ async function runCycle(jobId) {
      show the operator a book that predates this cycle's own fills — zero
      positions on the very cycle that opened one. */
   let finalBook = book, finalNav = navUsd, positionCoverage = null;
+  let finalPositionRows = allPositions, finalCashUsd = cashUsdNow;
+  let finalBookReadComplete = false, finalBookReadError = null;
   try {
     const ps = await A.col(A.COL.positions).where("accountId", "==", accountId).get();
     const rows = []; ps.forEach((d) => rows.push(d.data()));
+    finalPositionRows = rows;
     const openRows = rows.filter((r) => r.open);
     const nowMs = Date.now();
     positionCoverage = {
@@ -1644,14 +1965,63 @@ async function runCycle(jobId) {
         .filter((r) => r.waitingMinutes >= 30),
     };
     const b2 = await L.balances(accountId);
+    finalCashUsd = b2.usd[L.ACCT.CASH] || 0;
     const marked2 = R.markedBook(rows, lastPriceBySymbol, S.sectorOf, {
-      cash: b2.usd[L.ACCT.CASH] || 0, reserved: b2.usd[L.ACCT.RESERVED] || 0,
+      cash: finalCashUsd, reserved: b2.usd[L.ACCT.RESERVED] || 0,
     });
     finalNav = Math.max(1, marked2.navUsd);
     finalBook = marked2.book;
     finalBook.navUsd = finalNav;
-  } catch (e) { finalBook = book; finalBook.navUsd = navUsd; }
+    finalBookReadComplete = true;
+  } catch (e) {
+    finalBook = book; finalBook.navUsd = navUsd;
+    finalBookReadError = String(e.message || e).slice(0, 160);
+  }
   if (finalBook.navUsd == null) finalBook.navUsd = navUsd;
+
+  /* Reconcile the exact book that will be displayed. This catches balanced
+     but duplicated lifecycle records, projection drift, reservations that no
+     longer have orders, and NAV marks without source-response hashes. */
+  let finalReconciliation = null;
+  try {
+    const marks = Object.fromEntries(finalPositionRows.filter((p) => p.open).map((p) => {
+      const priceUsd = lastPriceBySymbol[p.symbol] ?? p.lastMarkUsd;
+      const provenance = marketProvenanceBySymbol[p.symbol] || p.lastMarkProvenance;
+      return [p.symbol, { priceUsd, provenance }];
+    }));
+    finalReconciliation = await L.reconcileAccount(accountId, {
+      marks, expectedNavUsd: finalNav, context: "cycle_final",
+    });
+  } catch (e) {
+    finalReconciliation = { pass: false, error: String(e.message || e).slice(0, 200) };
+  }
+  const finalControl = await controlDoc().catch(() => ctrl);
+  const finalOperating = STATE.describe(finalControl);
+
+  /* Only the post-settlement book is admissible as final daily evidence. If
+     the re-read or write fails, leave the checkpoint open so the scheduler
+     retries instead of certifying a stale pre-settlement account value. */
+  if (session.dailyFinalized === true && !dailyAlreadyFinalized
+      && finalBookReadComplete) {
+    try {
+      navMarkResult = await writeNavSnapshot({ positionRows: finalPositionRows,
+        snapshotNavUsd: finalNav, snapshotCashUsd: finalCashUsd,
+        snapshotPositionsUsd: finalBook.grossUsd,
+        snapshotOpenPositions: finalBook.count,
+        snapshotUnrealisedUsd: finalBook.unrealisedUsd,
+        finalized: true });
+      navMarkWritten = navMarkResult.written === true;
+    } catch (e) {
+      navMarkResult = { written: false, finalized: true,
+        error: String(e.message || e).slice(0, 160) };
+    }
+  }
+
+  const dailyFinalizationCommitted = session.dailyFinalized === true
+    && !dailyAlreadyFinalized && navMarkWritten === true
+    && !!shadow && !shadow.error;
+  const dailyFinalizationComplete = dailyAlreadyFinalized
+    || dailyFinalizationCommitted;
 
   const summary = {
     jobId, cycleId,
@@ -1687,6 +2057,7 @@ async function runCycle(jobId) {
     ranked, breaches: candidates.length,
     proposals: decisions.length, exitSignals: exits.length,
     modelCalls,
+    decisionManifests: decisionManifestStats,
     bootstrap,
     earningsKnown: Object.keys(earningsWindows).length,
     /* How much memory the system actually had this cycle. If namesWithContext
@@ -1710,7 +2081,16 @@ async function runCycle(jobId) {
       topClusters: Object.entries(finalBook.byClusterPct).sort((a, b) => b[1] - a[1]).slice(0, 5),
       markCoveragePct: finalBook.markCoveragePct,
       portfolioBlocks: portfolioBlocks.length,
-      notes: R.describe(finalBook, breakers, strategy),
+      notes: R.describe(finalBook, breakers, activeRiskStrategy),
+      reconciliation: finalReconciliation ? {
+        pass: finalReconciliation.pass,
+        discrepancyCount: (finalReconciliation.journal
+          && finalReconciliation.journal.discrepancies || []).length
+          + (finalReconciliation.lifecycle
+            && finalReconciliation.lifecycle.violations || []).length
+          + (finalReconciliation.markViolations || []).length,
+        error: finalReconciliation.error || null,
+      } : null,
     },
     provider: marketIdentity.provider,
     feed: marketIdentity.feed, adjustment: marketIdentity.adjustment,
@@ -1720,11 +2100,43 @@ async function runCycle(jobId) {
     regime: { vixNorm: Number.isFinite(reg.vixNorm) ? Number(reg.vixNorm.toFixed(2)) : null,
       cor3m: reg.cor3m, stale: reg.stale, vixHealthy: reg.vixHealthy, corHealthy: reg.corHealthy },
     session: { phase: session.phase, date: session.date },
-    mode: (ladder && ladder.stage) || ctrl.mode || "research",
-    dryRun: ladder && ladder.controlDryRun != null ? ladder.controlDryRun : ctrl.dryRun !== false,
+    dailyFinalization: {
+      requested: session.dailyFinalized === true,
+      complete: dailyFinalizationComplete,
+      date: session.date,
+      alreadyFinalized: dailyAlreadyFinalized,
+      navFinalized: dailyAlreadyFinalized
+        || (session.dailyFinalized === true && navMarkWritten === true),
+      navMarksComplete: navMarkResult && navMarkResult.marksComplete === true,
+      missingMarkSymbols: navMarkResult && navMarkResult.missingMarkSymbols || [],
+      markSetSha256: navMarkResult && navMarkResult.markSetSha256 || null,
+      postSettlementBookRead: finalBookReadComplete,
+      postSettlementBookError: finalBookReadError,
+      learningFinalized: dailyAlreadyFinalized
+        || (session.dailyFinalized === true && !!shadow && !shadow.error),
+    },
+    operatingState: finalOperating.state,
+    mode: finalOperating.stage,
+    dryRun: !finalOperating.paperLedger,
     ladder,
     elapsedMs: Date.now() - startedAt,
   };
+
+  try {
+    summary.soakRecord = await SOAK.recordCycle({ jobId, accountId,
+      date: session.date, manual, manifestTotal: decisionManifestStats.total,
+      manifestComplete: decisionManifestStats.complete,
+      manifestInvalid: decisionManifestStats.invalid,
+      reconciliation: finalReconciliation, settlement: summary.settlement,
+      dailyFinalization: summary.dailyFinalization });
+  } catch (e) {
+    summary.soakRecord = { recorded: false, error: String(e.message || e).slice(0, 160) };
+  }
+  if (session.dailyFinalized === true) {
+    try { summary.soakStatus = await SOAK.status(accountId); }
+    catch (e) { summary.soakStatus = { operationalSoakPass: false,
+      error: String(e.message || e).slice(0, 160) }; }
+  }
 
   await runRef.set({
     ...summary, finishedAt: A.FV.serverTimestamp(), status: "complete",
@@ -1732,6 +2144,13 @@ async function runCycle(jobId) {
 
   await A.col(A.COL.control).doc("control").set({
     lastCycleSummary: summary, lastCycleFinishedAt: A.FV.serverTimestamp(),
+    ...(summary.soakStatus ? { lastSoakStatus: summary.soakStatus } : {}),
+    ...(dailyFinalizationCommitted ? {
+      lastDailyFinalizeDate: session.date,
+      lastDailyFinalizedAt: A.FV.serverTimestamp(),
+      ...(navMarkResult && navMarkResult.marksComplete === true
+        ? { lastNavCompleteDate: session.date } : {}),
+    } : {}),
   }, { merge: true });
 
   return summary;
@@ -1740,18 +2159,27 @@ async function runCycle(jobId) {
 /* ── evidence sweep (slower clock) ─────────────────────────────────────── */
 async function runEvidence(jobId) {
   const startedAt = Date.now();
+  /* Long-running SEC, earnings, shares and daily-history enrichment belongs to
+     this background lane. Price cycles only attest the frozen identity, so a
+     slow public source can never postpone the next opportunity scan. */
+  const bootstrap = await B.ensureBootstrapped({ enrich: true })
+    .catch((e) => ({ bootstrapped: false, error: String(e.message).slice(0, 160) }));
   const ctrl = await controlDoc();
   const universe = await loadUniverse(ctrl.universeVersion);
   const strategy = await loadStrategy(ctrl.strategyVersion);
   const earningsWindows = await B.readEarnings().catch(() => ({}));
   const accountId = ctrl.accountId || "paper-1";
   const positionSnap = await A.col(A.COL.positions).where("accountId", "==", accountId)
-    .where("open", "==", true).limit(100).get();
+    .where("open", "==", true).get();
   const positions = positionSnap.docs.map((d) => d.data());
   let recentCandidates = [];
   try {
-    const candidateSnap = await A.col(A.COL.candidates).orderBy("updated_at", "desc").limit(120).get();
-    recentCandidates = candidateSnap.docs.map((d) => d.data());
+    const latestCandidateCycle = ctrl.lastCycleSummary && ctrl.lastCycleSummary.cycleId;
+    if (latestCandidateCycle) {
+      const candidateSnap = await A.col(A.COL.candidates)
+        .where("cycleId", "==", latestCandidateCycle).get();
+      recentCandidates = candidateSnap.docs.map((d) => d.data());
+    }
   } catch {}
   const allRows = [...(universe.tradeTier || []), ...(universe.researchTier || [])];
   const bySymbol = Object.fromEntries(allRows.map((row) => [row.symbol, row]));
@@ -1900,7 +2328,8 @@ async function runEvidence(jobId) {
     }
   }
   const nextCursor = focus.length ? (cursor + selected.length) % focus.length : 0;
-  const summary = { jobId, kind: "evidence", focusCount: focus.length,
+  const summary = { jobId, kind: "evidence", bootstrap,
+    focusCount: focus.length,
     selected: selected.map((x) => x.symbol), swept: results.length, nextCursor,
     publicSourceMode: true, results, elapsedMs: Date.now() - startedAt };
   await A.col(A.COL.control).doc("control").set({ intelligenceCursor: nextCursor,
@@ -1976,7 +2405,8 @@ exports.handler = async (event) => {
       tx.set(jobRef, { status: "running", leaseOwner,
         workerLeaseExpiresAt: Date.now() + WORKER_LEASE_TTL_MS,
         startedAt: A.FV.serverTimestamp(), attempts: A.FV.increment(1) }, { merge: true });
-      return { claim: true, accountLease: !!accountCycleLeaseRef };
+      return { claim: true, accountLease: !!accountCycleLeaseRef,
+        manual: j.manual === true };
     });
     if (lease.duplicate) {
       return { statusCode: 200, body: JSON.stringify({ ok: true, duplicate: true, jobId }) };
@@ -1988,7 +2418,7 @@ exports.handler = async (event) => {
 
     const out = task === "evidence" ? await runEvidence(jobId)
       : task === "guard" ? await PG.runGuard(jobId)
-        : await runCycle(jobId);
+        : await runCycle(jobId, { manual: lease.manual });
 
     await A.runTransaction(async (tx) => {
       const current = await tx.get(jobRef);
@@ -2037,6 +2467,7 @@ exports.handler = async (event) => {
 exports.runCycle = runCycle;
 exports.applyOverfitGuard = applyOverfitGuard;
 exports.attentionZ = attentionZ;
+exports.executionSourceEligible = executionSourceEligible;
 /* Exported for deterministic invariant tests. These are pure helpers; the
    worker entry point remains runCycle. */
 exports.advFor = advFor;

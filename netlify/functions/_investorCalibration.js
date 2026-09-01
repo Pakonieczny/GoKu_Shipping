@@ -139,6 +139,32 @@ function calibrateAll(dailyByVariant, opts = {}) {
   return { variants, passCount: Object.values(variants).filter((v) => v.pass).length };
 }
 
+function holdoutLockTemplate({ experimentHash, leaderId, confirmation = {}, variantsHash,
+  simulatorVersion, calibrationOpts = {}, lockedAtMs = Date.now() } = {}) {
+  if (!/^[a-f0-9]{64}$/.test(String(experimentHash || "")) || !leaderId
+      || !/^\d{4}-\d{2}-\d{2}$/.test(String(confirmation.dataThroughDate || ""))) {
+    throw new Error("holdout lock requires experiment, leader, and data-through date");
+  }
+  const calibrationPolicy = {
+    alpha: Number(calibrationOpts.alpha), k: Number(calibrationOpts.k),
+    embargoSessions: Number(calibrationOpts.embargoSessions),
+    minTrain: Number(calibrationOpts.minTrain),
+    minCalibration: Number(calibrationOpts.minCalibration),
+    minHoldout: Number(calibrationOpts.minHoldout),
+  };
+  const identity = { experimentHash, leaderId,
+    startDate: confirmation.startDate || null,
+    endDate: confirmation.endDate || null,
+    sessions: Number(confirmation.sessions) || 0,
+    embargoSessions: Number(confirmation.embargoSessions) || 0,
+    dataThroughDate: confirmation.dataThroughDate,
+    variantsHash: variantsHash || null,
+    simulatorVersion: simulatorVersion || null,
+    calibrationPolicy };
+  return { ...identity, lockHash: crypto.createHash("sha256")
+    .update(JSON.stringify(identity)).digest("hex"), lockedAtMs: Number(lockedAtMs) };
+}
+
 function forwardLockTemplate({ experimentHash, leaderId, dataThroughDate,
   variantsHash, simulatorVersion, lockedAtMs = Date.now(), embargoSessions = 15,
   requiredSessions = 126 } = {}) {
@@ -211,4 +237,4 @@ async function read(experimentHash) {
 }
 
 module.exports = { value, cleanRows, chronologicalSplit, developmentOnly, lowerBound, calibrate,
-  calibrateAll, forwardLockTemplate, evaluateForward, persist, read };
+  calibrateAll, holdoutLockTemplate, forwardLockTemplate, evaluateForward, persist, read };

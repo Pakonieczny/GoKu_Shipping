@@ -15,7 +15,8 @@ const { fetchPublic, normalizedHash } = require("./_investorFetch");
 const { visibleText } = require("./_investorVisibleText");
 
 const DAY_MS = 864e5;
-const MAX_FOCUS = 24;
+const MAX_FOCUS = 304;
+const MAX_WATCHLIST = 24;
 
 const SOURCE_REGISTRY = {
   "gdelt.discovery": {
@@ -846,7 +847,7 @@ function configuredSymbols(ctrl = {}) {
     .split(/[\s,]+/).filter(Boolean);
   const raw = Array.isArray(ctrl.intelligenceSymbols) && ctrl.intelligenceSymbols.length
     ? ctrl.intelligenceSymbols : fromEnv;
-  return uniq(raw.map(cleanSymbol)).slice(0, MAX_FOCUS);
+  return uniq(raw.map(cleanSymbol)).slice(0, MAX_WATCHLIST);
 }
 
 function focusSymbols({ ctrl = {}, positions = [], researchTier = [], candidates = [], max = MAX_FOCUS } = {}) {
@@ -856,18 +857,19 @@ function focusSymbols({ ctrl = {}, positions = [], researchTier = [], candidates
     if (!symbol || seen.has(symbol) || rows.length >= Math.max(1, Math.min(MAX_FOCUS, max))) return;
     seen.add(symbol); rows.push({ symbol, reason });
   };
-  /* Held risk outranks research preference. A full 24-name watchlist must not
-     push an open position out of the monitored intelligence set. */
+  /* Held risk is always first. The live signal frontier is next so a newly
+     actionable company receives a dossier within the next few sweeps instead
+     of waiting behind the standing research roster. */
   positions.filter((x) => x && x.open).forEach((x) => add(x, "open_position"));
-  configuredSymbols(ctrl).forEach((x) => add(x, "operator_watchlist"));
-  researchTier.forEach((x) => add(x, "research_roster"));
   [...candidates].sort((a, b) => Number(a.rank ?? 1) - Number(b.rank ?? 1))
     .forEach((x) => add(x, "signal_frontier"));
+  configuredSymbols(ctrl).forEach((x) => add(x, "operator_watchlist"));
+  researchTier.forEach((x) => add(x, "research_roster"));
   return rows;
 }
 
 module.exports = {
-  DAY_MS, MAX_FOCUS, SOURCE_REGISTRY, SECTOR_PACKS, SIC_PACKS, CORE_SOURCE_IDS,
+  DAY_MS, MAX_FOCUS, MAX_WATCHLIST, SOURCE_REGISTRY, SECTOR_PACKS, SIC_PACKS, CORE_SOURCE_IDS,
   decodeXml, stripTags, parseFeed, profileFor, resolveIdentity, inferOfficialDomains,
   enrichProfile, cleanDomain, sameResolvedDomain, matchesProfile, sourceMeta, clinicalTrialItems,
   pollSource, pollCompany, configuredSymbols, focusSymbols, cleanSymbol,

@@ -51,9 +51,10 @@ const T = require("./_investorTemporal");
 const U_FALLBACK = require("./_investorUniverse.js");
 const S_FALLBACK = require("./_investorStrategy.js");
 const V = require("./_investorVariants");
+const STATE = require("./_investorState");
 
-const BOOTSTRAP_VERSION = 10;
-const DAILY_PROVENANCE_VERSION = 3; // v3 requires exact roster+driver coverage and sufficient depth
+const BOOTSTRAP_VERSION = 11;
+const DAILY_PROVENANCE_VERSION = 4; // v4 separates provider-window completion from issuer age
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -66,51 +67,102 @@ function hashObject(value) { return crypto.createHash("sha256").update(JSON.stri
 function universeHash(u) { return hashObject({ version:u.version, tradeTier:u.tradeTier||[], researchTier:u.researchTier||[],
   excludedTier:u.excludedTier||[], enforcement:u.enforcement||{} }); }
 function strategyHash(s) { return hashObject({ version:s.version, parameters:s.parameters||{},
-  portfolioControls:s.portfolioControls||{}, autoApproval:s.autoApproval||{}, operatorCeiling:s.operatorCeiling||"research" }); }
+  portfolioControls:s.portfolioControls||{}, autoApproval:s.autoApproval||{},
+  exploratoryAuto:s.exploratoryAuto||{}, operatorCeiling:s.operatorCeiling||"research" }); }
 function validateFrozenUniverse(u, version) {
   if (!u || u.version !== version || u.immutable !== true) return { ok:false, reason:"version is not immutable" };
   const actual=universeHash(u); return {ok:actual===u.contentHash,actual,expected:u.contentHash||null};
 }
 
 /* ── 1 + 2. universe freeze and CIK resolution ─────────────────────────── */
+const SEC_RENAMED_TICKERS = Object.freeze({
+  FB: "META", GPS: "GAP", ANTM: "ELV", PKI: "RVTY", RE: "EG", FISV: "FI",
+});
+function canonicalSecTicker(value) {
+  return String(value || "").trim().toUpperCase().replace(/[./]/g, "-");
+}
+function buildSecTickerMap(payload) {
+  const map = new Map(), ambiguous = new Set();
+  for (const value of Object.values(payload || {})) {
+    if (!value || !value.ticker || !/^\d+$/.test(String(value.cik_str || ""))) continue;
+    const key = canonicalSecTicker(value.ticker);
+    const row = { cik: String(value.cik_str), company: String(value.title || "").trim() || null,
+      secTicker: String(value.ticker).toUpperCase() };
+    if (map.has(key) && map.get(key).cik !== row.cik) ambiguous.add(key);
+    else map.set(key, row);
+  }
+  return { map, ambiguous };
+}
+function resolveSecTicker(index, requestedSymbol) {
+  const requested = String(requestedSymbol || "").trim().toUpperCase();
+  const canonical = canonicalSecTicker(requested);
+  if (!canonical) return null;
+  if (index.ambiguous && index.ambiguous.has(canonical)) {
+    return { error: "ambiguous_sec_ticker", requestedSymbol: requested, canonical };
+  }
+  const direct = index.map && index.map.get(canonical);
+  if (direct) return { ...direct, requestedSymbol: requested,
+    resolvedSymbol: requested, canonical, resolutionKind:
+      canonical === requested ? "exact" : "punctuation_alias" };
+  const renamed = SEC_RENAMED_TICKERS[requested];
+  const renamedCanonical = canonicalSecTicker(renamed);
+  if (!renamedCanonical || (index.ambiguous && index.ambiguous.has(renamedCanonical))) return null;
+  const current = index.map && index.map.get(renamedCanonical);
+  return current ? { ...current, requestedSymbol: requested, resolvedSymbol: renamed,
+    canonical: renamedCanonical, resolutionKind: "renamed_ticker" } : null;
+}
+
 async function resolveCiksAndFreeze() {
   const base = require("./_investorUniverse.js");
-  const report = { version: base.version, resolved: 0, missing: [], mismatched: [] };
+  const report = { version: base.version, resolved: 0, missing: [], mismatched: [],
+    aliases: [], renamed: [], ambiguous: [] };
 
-  let map = null;
+  let index = null;
   try {
     const r = await fetchPublic("https://www.sec.gov/files/company_tickers.json", {
       sourceId: "sec.tickers", accept: ["json"], timeoutMs: 25000,
     });
     if (r.json) {
-      map = {};
-      for (const v of Object.values(r.json)) {
-        if (v && v.ticker) map[String(v.ticker).toUpperCase()] = {
-          cik: String(v.cik_str), company: String(v.title || "").trim() || null,
-        };
-      }
+      index = buildSecTickerMap(r.json);
+      report.sourceSha256 = r.sha256 || null;
+      report.sourceId = "sec.tickers";
     }
   } catch (e) {
     report.error = `SEC ticker map unavailable: ${String(e.code || e.message).slice(0, 120)}`;
   }
-  if (!map) throw new Error(report.error || "SEC ticker map unavailable; refusing degraded universe freeze");
+  if (!index) throw new Error(report.error || "SEC ticker map unavailable; refusing degraded universe freeze");
 
   const apply = (row) => {
-    if (!map) return row;
-    const resolved = map[row.symbol];
+    const resolved = resolveSecTicker(index, row.symbol);
+    if (resolved && resolved.error) {
+      report.ambiguous.push(row.symbol); return row;
+    }
     const got = resolved && resolved.cik;
     if (!got) { report.missing.push(row.symbol); return row; }
     if (row.cik && row.cik !== got) report.mismatched.push({ symbol: row.symbol, had: row.cik, sec: got });
+    if (resolved.resolutionKind === "punctuation_alias") {
+      report.aliases.push({ symbol: row.symbol, secTicker: resolved.secTicker });
+    }
+    if (resolved.resolutionKind === "renamed_ticker") {
+      report.renamed.push({ previousSymbol: row.symbol, symbol: resolved.resolvedSymbol });
+    }
     report.resolved += 1;
-    return { ...row, cik: got, company: resolved.company || row.company || null,
+    return { ...row, symbol: resolved.resolvedSymbol, cik: got,
+      ...(resolved.resolutionKind === "renamed_ticker" ? { previousSymbol: row.symbol } : {}),
+      company: resolved.company || row.company || null,
       companySource: "sec_company_tickers", cikSource: "sec_company_tickers" };
   };
 
-  /* Drop anything SEC cannot match. A delisted or renamed ticker otherwise
-     sits in the roster producing stale data forever — exactly what happened
-     with X (delisted) and EA (taken private) until a fixture caught them.
-     Self-correction beats me maintaining a list by hand. */
+  /* Resolve all 304 frozen eligible names. A missing current SEC identity is
+     never silently dropped because that changes the experimental population
+     behind the declared version. The operator must publish a new immutable
+     roster version with an auditable replacement instead. */
   const resolvedTrade = (base.tradeTier || []).map(apply).filter((r) => !!r.cik);
+  const duplicateSymbols = resolvedTrade.map((r) => r.symbol)
+    .filter((symbol, i, rows) => rows.indexOf(symbol) !== i);
+  if (duplicateSymbols.length) {
+    throw new Error(`SEC rename produced duplicate symbol(s): ${[...new Set(duplicateSymbols)].join(", ")}`);
+  }
   const dropped = (base.tradeTier || []).length - resolvedTrade.length;
   if (dropped > 0 || report.missing.length > 0) {
     throw new Error(`SEC entity resolution incomplete: ${report.missing.length} unresolved ticker(s): ${report.missing.slice(0, 20).join(", ")}`);
@@ -223,7 +275,9 @@ async function deriveEarningsWindow(cik) {
     });
   } catch { return null; }
   if (!r.json || !r.json.filings || !r.json.filings.recent) return null;
-  return projectEarningsWindow(r.json.filings.recent);
+  const projected = projectEarningsWindow(r.json.filings.recent);
+  return projected ? { ...projected, source: "sec.submissions",
+    sourceSha256: r.sha256 || null } : null;
 }
 
 async function populateEarnings(universe) {
@@ -283,6 +337,7 @@ async function refreshRegime() {
       out.vixMedian = Number(median(last).toFixed(2));
       out.vixAsOf = new Date(rows[rows.length - 1].t).toISOString().slice(0, 10);
       out.vixSource = "cboe VIX_History.csv";
+      out.vixSourceSha256 = r.sha256 || null;
       out.vixFetchedAt = new Date().toISOString(); out.vixHealthy = true;
     }
   } catch (e) {
@@ -302,6 +357,7 @@ async function refreshRegime() {
       if (rows.length) {
         out.cor3m = Number(rows[rows.length - 1].close.toFixed(2));
         out.corSource = `cboe ${sym}_History.csv`;
+        out.corSourceSha256 = r.sha256 || null;
         out.corAsOf = new Date(rows[rows.length - 1].t).toISOString().slice(0, 10);
         out.corFetchedAt = new Date().toISOString(); out.corHealthy = true;
       }
@@ -393,6 +449,7 @@ async function backfillDailyHistory(universe, { budgetMs = 240000, maxSymbols = 
       if (!bars.length) { failed += 1; continue; }
       try {
         const provenance = got.provenanceBySymbol[sym] || {};
+        const fetchStatus = got.statusBySymbol && got.statusBySymbol[sym] || {};
         const n = await H.writeDaily(sym, bars, {
           source: "bootstrap.backfill",
           provider: provenance.provider || null,
@@ -401,9 +458,17 @@ async function backfillDailyHistory(universe, { budgetMs = 240000, maxSymbols = 
           sourceSha256: provenance.sourceSha256 || null,
           feedVolumeShare: provenance.feedVolumeShare ?? null,
           marketFetchedAt: provenance.fetchedAt || null,
+          lastBackfillAttemptAtMs: Date.now(),
+          backfillComplete: fetchStatus.complete === true,
+          backfillTruncated: fetchStatus.truncated === true,
+          backfillRequestedDays: H.KEEP_DAYS,
+          lastBackfillError: fetchStatus.error || null,
         });
         fetched += 1; days += n;
-        if (n >= T.MIN_SEASONAL_DAYS) doneSet.add(sym);
+        /* Completion describes the requested provider window, not issuer age.
+           A recent IPO cannot acquire three years of history by refetching its
+           lifetime every cycle; each feature still enforces its own minimum. */
+        if (fetchStatus.complete === true) doneSet.add(sym);
         else failed += 1;
       } catch (e) { failed += 1; }
     }
@@ -514,7 +579,7 @@ async function readShares() {
   return snap.exists ? (snap.data().bySymbol || {}) : {};
 }
 
-async function ensureBootstrapped({ force = false } = {}) {
+async function ensureBootstrapped({ force = false, enrich = true } = {}) {
   const ref = A.col(A.COL.control).doc("control");
   const snap = await ref.get();
   const c = snap.exists ? snap.data() : {};
@@ -530,7 +595,7 @@ async function ensureBootstrapped({ force = false } = {}) {
     fixtureHash: fixtures.fixtureHash || null, fixturesCheckedAt: A.FV.serverTimestamp(),
     fixtureFailures: (fixtures.cases || []).filter((x) => !x.pass).slice(0, 10) }, { merge: true });
   if (!fixtures.pass) {
-    await ref.set({ dryRun: true, mode: "research",
+    await ref.set({ ...STATE.legacyPatch(STATE.STATES.ENTRY_FROZEN, c),
       safetyClosedReason: "runtime fixture attestation failed" }, { merge: true });
   }
 
@@ -559,6 +624,117 @@ async function ensureBootstrapped({ force = false } = {}) {
       });
       steps.push({ step: "account", ok: true, accountId, existing: !!r.existing });
     } catch (e) { steps.push({ step: "account", ok: false, error: String(e.message).slice(0, 160) }); }
+
+    try {
+      const accountId = c.accountId || "paper-1";
+      const reconciliation = await L.reconcileAccount(accountId, {
+        context: "bootstrap_exploratory_auto",
+      });
+      steps.push({ step: "ledger", ok: reconciliation.pass === true,
+        reconciliation: { pass: reconciliation.pass === true,
+          discrepancyCount: (reconciliation.lifecycle && reconciliation.lifecycle.violations || []).length
+            + (reconciliation.journal && reconciliation.journal.discrepancies || []).length
+            + (reconciliation.markViolations || []).length } });
+    } catch (e) {
+      steps.push({ step: "ledger", ok: false, error: String(e.message).slice(0, 160) });
+    }
+
+    /* Commit the critical, executable identity BEFORE long best-effort data
+       enrichment. SEC history, earnings projections and multi-year bars can
+       take minutes; none of those jobs should leave a reconciled paper account
+       stuck in observation merely because a background worker reaches its
+       platform time limit. Missing per-company inputs still fail or size down
+       at the actual decision gate. */
+    if (!fixtures.pass) {
+      const failed = (fixtures.cases || []).filter((x) => !x.pass).map((x) => x.name);
+      steps.push({ step: "fixtures", ok: false,
+        error: fixtures.error
+          || (failed.length ? `runtime invariant failed: ${failed.slice(0, 6).join(", ")}` : "runtime invariant failed"),
+        failed, fixtureHash: fixtures.fixtureHash || null });
+    } else {
+      steps.push({ step: "fixtures", ok: true, passed: fixtures.passed, total: fixtures.total,
+        fixtureHash: fixtures.fixtureHash });
+    }
+    const criticalFailed = steps.filter((x) =>
+      !x.ok && ["universe", "strategy", "account", "ledger"].includes(x.step));
+    if (!fixtures.pass) criticalFailed.push({ step: "fixtures", ok: false });
+    if (criticalFailed.length) {
+      await ref.set({
+        bootstrapAttemptedAt: A.FV.serverTimestamp(),
+        bootstrapReport: steps,
+        bootstrapIncomplete: criticalFailed.map((x) => x.step),
+      }, { merge: true });
+      return { bootstrapped: false, retryNext: true, steps,
+        note: `bootstrap incomplete (${criticalFailed.map((x) => x.step).join(", ")} failed) — will retry next cycle rather than freezing a degraded state` };
+    }
+
+    const accountId = c.accountId || "paper-1";
+    const universeVersion = (universe && universe.version)
+      || c.universeVersion || U_FALLBACK.version || "v1";
+    const strategyVersion = S_FALLBACK.version;
+    const universeHashValue = universe && universe.contentHash;
+    const strategyHashValue = frozenStrategy && frozenStrategy.contentHash;
+    const variantsHash = V.variantsHash();
+    const exploratory = S_FALLBACK.exploratoryAuto || {};
+    const autoAuthorized = exploratory.enabled === true
+      && exploratory.autoStartAfterSuccessfulBootstrap === true;
+    const priorOperating = STATE.describe(c);
+    const priorFreeze = priorOperating.entriesFrozen || !!c.reconciliationFailure
+      || !!(c.ledgerReconciliation && c.ledgerReconciliation.pass === false);
+    const mayStart = autoAuthorized && !priorOperating.paused && !priorFreeze;
+    let bootstrapOperating;
+    if (priorOperating.paused) {
+      bootstrapOperating = { ...STATE.legacyPatch(STATE.STATES.PAUSED, c),
+        resumeOperatingState: autoAuthorized
+          ? STATE.STATES.EXPLORATORY_AUTO : STATE.STATES.OBSERVATION };
+    } else if (priorFreeze) {
+      bootstrapOperating = { ...STATE.legacyPatch(STATE.STATES.ENTRY_FROZEN, c),
+        resumeOperatingState: autoAuthorized
+          ? STATE.STATES.EXPLORATORY_AUTO : STATE.STATES.OBSERVATION };
+    } else {
+      bootstrapOperating = STATE.legacyPatch(mayStart
+        ? STATE.STATES.EXPLORATORY_AUTO : STATE.STATES.OBSERVATION, c);
+    }
+    const safetyEpoch = mayStart ? {
+      accountId, strategyVersion, universeVersion,
+      universeHash: universeHashValue, strategyHash: strategyHashValue,
+      variantsHash, commit, activatedAtMs: Date.now(),
+      activatedBy: "bootstrap:exploratory_auto",
+    } : null;
+    steps.push({ step: "exploratoryAuto", ok: true,
+      enabled: autoAuthorized, started: mayStart,
+      state: bootstrapOperating.operatingState,
+      note: mayStart
+        ? "automatic exploratory paper trading activated on the frozen build identity"
+        : (priorOperating.paused || priorFreeze
+          ? "authorization retained but a prior pause/freeze remains authoritative"
+          : "exploratory auto is not enabled by the frozen strategy") });
+    await ref.set({
+      bootstrapVersion: BOOTSTRAP_VERSION,
+      bootstrapIncomplete: null,
+      bootstrappedAt: A.FV.serverTimestamp(),
+      bootstrapReport: steps,
+      accountId,
+      universeVersion,
+      strategyVersion,
+      universeHash: universeHashValue,
+      strategyHash: strategyHashValue,
+      variantsHash,
+      safetyEpoch,
+      autoExploratoryAuthorized: autoAuthorized,
+      exploratoryPolicyVersion: exploratory.version || null,
+      paperLearning: autoAuthorized
+        ? { ...(exploratory.paperLearningDefaults || {}) }
+        : (c.paperLearning || null),
+      operatorCeiling: autoAuthorized ? "approval"
+        : (c.operatorCeiling || S_FALLBACK.operatorCeiling || "approval"),
+      ...bootstrapOperating,
+    }, { merge: true });
+
+    if (!enrich) {
+      return { bootstrapped: true, enrichmentDeferred: true, steps,
+        fixtures: { pass: fixtures.pass, fixtureHash: fixtures.fixtureHash, commit } };
+    }
 
     // 4
     try {
@@ -589,58 +765,33 @@ async function ensureBootstrapped({ force = false } = {}) {
       steps.push({ step: "dailyHistory", ok: r.fetched > 0 || r.complete, ...r });
     } catch (e) { steps.push({ step: "dailyHistory", ok: false, error: String(e.message).slice(0, 160) }); }
 
-    /* DO NOT STAMP SUCCESS OVER FAILURE.
-       This wrote bootstrapVersion unconditionally, so if SEC or Cboe was
-       unreachable on the first cycle the degraded state became permanent:
-       every roster name whose CIK failed to resolve was silently dropped, the
-       truncated universe was frozen, and the only recovery was editing
-       BOOTSTRAP_VERSION and redeploying. A failed critical step now leaves the
-       version unstamped so the next cycle retries. */
-    if (!fixtures.pass) {
-      /* "runtime invariant failed" names nothing and leaves the operator with a
-         red row and no way to act on it. The failing fixture names are already
-         computed — carry them onto the step so the dashboard can say which. */
-      const failed = (fixtures.cases || []).filter((x) => !x.pass).map((x) => x.name);
-      steps.push({ step: "fixtures", ok: false,
-        error: fixtures.error
-          || (failed.length ? `runtime invariant failed: ${failed.slice(0, 6).join(", ")}` : "runtime invariant failed"),
-        failed, fixtureHash: fixtures.fixtureHash || null });
-    }
-    else steps.push({ step: "fixtures", ok: true, passed: fixtures.passed, total: fixtures.total,
-      fixtureHash: fixtures.fixtureHash });
-    const criticalFailed = steps.filter((x) =>
-      !x.ok && ["universe", "strategy", "account"].includes(x.step));
-    if (!fixtures.pass) criticalFailed.push({ step: "fixtures", ok: false });
-    if (criticalFailed.length) {
-      await ref.set({
-        bootstrapAttemptedAt: A.FV.serverTimestamp(),
-        bootstrapReport: steps,
-        bootstrapIncomplete: criticalFailed.map((x) => x.step),
-      }, { merge: true });
-      return { bootstrapped: false, retryNext: true, steps,
-               note: `bootstrap incomplete (${criticalFailed.map((x) => x.step).join(", ")} failed) — will retry next cycle rather than freezing a degraded state` };
-    }
-
-    await ref.set({
-      bootstrapVersion: BOOTSTRAP_VERSION,
-      bootstrapIncomplete: null,
-      bootstrappedAt: A.FV.serverTimestamp(),
-      bootstrapReport: steps,
-      accountId: c.accountId || "paper-1",
-      universeVersion: (universe && universe.version) || c.universeVersion || U_FALLBACK.version || "v1",
-      strategyVersion: S_FALLBACK.version,
-      universeHash: universe && universe.contentHash,
-      strategyHash: frozenStrategy && frozenStrategy.contentHash,
-      variantsHash: V.variantsHash(),
-      dryRun: true,
-      mode: "research",
-    }, { merge: true });
-
+    await ref.set({ bootstrapReport: steps,
+      enrichmentUpdatedAt: A.FV.serverTimestamp() }, { merge: true });
     return { bootstrapped: true, steps, fixtures: { pass: fixtures.pass,
       fixtureHash: fixtures.fixtureHash, commit } };
   }
 
-  /* Already bootstrapped — keep the slow-moving inputs fresh. */
+  /* Price cycles use this fast path. They verify the immutable identity but
+     never wait behind 304-company enrichment; the evidence worker owns those
+     resumable, slower jobs. */
+  if (!enrich) {
+    const [uFast, sFast] = await Promise.all([
+      A.col(A.COL.universe).doc(c.universeVersion || U_FALLBACK.version).get(),
+      A.col(A.COL.strategies).doc(c.strategyVersion || S_FALLBACK.version).get(),
+    ]);
+    if (!uFast.exists || !sFast.exists) throw new Error("frozen policy identity missing after bootstrap");
+    const uvFast = validateFrozenUniverse(uFast.data(), c.universeVersion || U_FALLBACK.version);
+    const shFast = strategyHash(sFast.data());
+    if (!uvFast.ok || shFast !== sFast.data().contentHash) {
+      throw new Error("frozen policy content hash mismatch");
+    }
+    await ref.set({ universeHash: uvFast.actual, strategyHash: shFast,
+      variantsHash: V.variantsHash() }, { merge: true });
+    return { bootstrapped: true, already: true, enrichmentDeferred: true, steps,
+      fixtures: { pass: fixtures.pass, fixtureHash: fixtures.fixtureHash, commit } };
+  }
+
+  /* Evidence workers keep the slow-moving inputs fresh. */
   const now = Date.now();
   const reg = await A.col(A.COL.control).doc("regime").get();
   const regAge = reg.exists && reg.data().asOf ? now - Date.parse(reg.data().asOf) : Infinity;
@@ -716,6 +867,7 @@ module.exports = {
   backfillSharesOutstanding, readShares,
   BOOTSTRAP_VERSION, DAILY_PROVENANCE_VERSION,
   ensureBootstrapped, resolveCiksAndFreeze, freezeStrategy,
+  SEC_RENAMED_TICKERS, canonicalSecTicker, buildSecTickerMap, resolveSecTicker,
   universeHash, strategyHash, validateFrozenUniverse,
   projectEarningsWindow, deriveEarningsWindow, populateEarnings, readEarnings,
   refreshRegime, parseCboeCsv, median,

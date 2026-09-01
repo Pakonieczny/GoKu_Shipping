@@ -119,9 +119,11 @@ function normalizeMarketChoice(rawProvider, rawFeed) {
 function envMarketSettings() {
   const choice = normalizeMarketChoice(process.env.INVESTOR_MARKET_PROVIDER,
                                       process.env.ALPACA_FEED);
+  const sipRealtime = /^(1|true|yes)$/i.test(String(process.env.ALPACA_SIP_REALTIME || ""));
   return {
     provider: choice.provider,
     feed: choice.feed,
+    alpacaSipRealtime: sipRealtime,
     alpacaKeyId: String(process.env.ALPACA_API_KEY_ID || ""),
     alpacaSecretKey: String(process.env.ALPACA_API_SECRET_KEY || ""),
     source: process.env.INVESTOR_MARKET_PROVIDER ? "environment" : "default",
@@ -182,6 +184,8 @@ async function loadMarketSettings({ force = false } = {}) {
       _marketSettings = {
         provider: provider || fallback.provider,
         feed: feed || fallback.feed,
+        alpacaSipRealtime: typeof d.alpacaSipRealtime === "boolean"
+          ? d.alpacaSipRealtime : fallback.alpacaSipRealtime,
         alpacaKeyId: bothPresent ? keyId : fallback.alpacaKeyId,
         alpacaSecretKey: bothPresent ? secretKey : fallback.alpacaSecretKey,
         credentialSource: bothPresent ? "firestore" : fallback.credentialSource,
@@ -201,12 +205,15 @@ async function loadMarketSettings({ force = false } = {}) {
   return _marketSettings;
 }
 
-function providerConfig(provider, feed = null) {
+function providerConfig(provider, feed = null, opts = {}) {
   const id = String(provider || "manual").toLowerCase();
   const base = PROVIDERS[id] || PROVIDERS.manual;
   if (id !== "alpaca") return { ...base };
   const f = String(feed || marketSettings().feed || "iex").toLowerCase();
-  if (f === "sip") return { ...base, feed: f, delayMinutes: 15, maxGrade: "B",
+  const sipRealtime = Object.prototype.hasOwnProperty.call(opts, "sipRealtime")
+    ? opts.sipRealtime === true : marketSettings().alpacaSipRealtime === true;
+  if (f === "sip") return { ...base, feed: f, delayMinutes: sipRealtime ? 0 : 15, maxGrade: "B",
+    sipRealtime,
     consolidated: true, liquidityEligible: true };
   return { ...base, feed: f, delayMinutes: 0, maxGrade: "C",
     consolidated: false, liquidityEligible: false };
@@ -349,6 +356,7 @@ function sessionState(d = new Date()) {
   }
   return {
     date, minutesEt: minutes, weekday, tradingDay, isHalfDay: isHalf, isHoliday,
+    regularOpenMinutesEt: OPEN_MIN, regularCloseMinutesEt: close,
     phase, open: phase === "regular" || phase === "opening_auction_window" || phase === "closing_auction_window",
     calendarVersion: CALENDAR_VERSION,
     // Spreads run 2-5x wider in the first and last 15 minutes. The research is
@@ -356,6 +364,87 @@ function sessionState(d = new Date()) {
     // difference, so the cost model must know about it.
     wideSpreadWindow: phase === "opening_auction_window" || phase === "closing_auction_window",
   };
+}
+
+/**
+ * A daily observation is immutable only after the exchange has closed and a
+ * small delivery buffer has elapsed. The fixed twenty-minute default covers
+ * the Basic SIP embargo plus clock/transport slack while keeping IEX and paid
+ * SIP on the same deterministic research boundary.
+ */
+function dailyFinalizationState(value = new Date(), { bufferMinutes = 20 } = {}) {
+  /* Scheduler retries and deterministic fixtures may carry a serialized or
+     deliberately partial session. Treat those as incomplete information —
+     never try to coerce an arbitrary object into Date, which produces an
+     Invalid Date and used to throw inside Intl. */
+  let state;
+  if (value && typeof value === "object" && !(value instanceof Date) && value.date) {
+    state = value;
+  } else {
+    const candidate = value instanceof Date ? value : new Date(value);
+    state = Number.isFinite(candidate.getTime()) ? sessionState(candidate) : {};
+  }
+  const close = Number(state.regularCloseMinutesEt != null
+    ? state.regularCloseMinutesEt : (state.isHalfDay ? HALF_CLOSE_MIN : CLOSE_MIN));
+  const buffer = Math.max(15, Math.min(120, Number(bufferMinutes) || 20));
+  const eligibleAtMinutesEt = close + buffer;
+  const hasMinute = Number.isFinite(Number(state.minutesEt));
+  const ready = state.tradingDay === true && state.phase === "postmarket"
+    && hasMinute && Number(state.minutesEt) >= eligibleAtMinutesEt;
+  return { ready, date: state.date || null, eligibleAtMinutesEt, bufferMinutes: buffer,
+    reason: ready ? "post_close_buffer_elapsed"
+      : (state.tradingDay
+        ? (hasMinute ? "awaiting_post_close_buffer" : "session_time_missing")
+        : "not_trading_day") };
+}
+
+/* Convert a New York wall-clock minute to UTC without adding a timezone
+   dependency. Iterating the Intl-derived offset handles both sides of DST. */
+function nyWallClockToUtcMs(date, minutes) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return null;
+  const hh = Math.floor(minutes / 60), mm = minutes % 60;
+  const targetNaive = Date.parse(`${date}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00Z`);
+  let guess = targetNaive;
+  for (let i = 0; i < 3; i += 1) {
+    const p = nyParts(new Date(guess));
+    const ph = Math.floor(p.minutes / 60), pm = p.minutes % 60;
+    const actualNaive = Date.parse(`${p.date}T${String(ph).padStart(2, "0")}:${String(pm).padStart(2, "0")}:00Z`);
+    guess += targetNaive - actualNaive;
+  }
+  return guess;
+}
+
+/**
+ * Holding age in exchange sessions. Weekends and holidays contribute zero;
+ * a half day contributes one session when held for that half day's full
+ * regular interval. This replaces mislabeled wall-clock "days" everywhere a
+ * holding horizon is enforced or reported.
+ */
+function tradingDaysHeld(openedAt, asOf = Date.now(), { maxCalendarDays = 8000 } = {}) {
+  const startMs = typeof openedAt === "number" ? openedAt : Date.parse(openedAt);
+  const endMs = typeof asOf === "number" ? asOf : Date.parse(asOf);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  if (endMs <= startMs) return 0;
+  const startDate = nyParts(new Date(startMs)).date;
+  const endDate = nyParts(new Date(endMs)).date;
+  const cursor = new Date(`${startDate}T12:00:00Z`);
+  let sessions = 0, reachedEnd = false;
+  for (let step = 0; step <= maxCalendarDays; step += 1) {
+    const iso = cursor.toISOString().slice(0, 10);
+    if (iso > endDate) { reachedEnd = true; break; }
+    const state = sessionState(cursor);
+    if (state.tradingDay) {
+      const openMs = nyWallClockToUtcMs(iso, OPEN_MIN);
+      const closeMin = state.isHalfDay ? HALF_CLOSE_MIN : CLOSE_MIN;
+      const closeMs = nyWallClockToUtcMs(iso, closeMin);
+      const overlap = Math.max(0, Math.min(endMs, closeMs) - Math.max(startMs, openMs));
+      if (overlap > 0 && closeMs > openMs) sessions += overlap / (closeMs - openMs);
+    }
+    if (iso === endDate) { reachedEnd = true; break; }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  if (!reachedEnd) return null;
+  return Number(sessions.toFixed(8));
 }
 
 /**
@@ -468,9 +557,15 @@ function executionCostContext({ advUsd, grade, wideSpreadWindow, vixNorm, measur
    at the one edge of the series the cycle cares about. Asking for the window
    we are actually entitled to is not a workaround; it is the correct request. */
 const ALPACA_BASIC_EMBARGO_MS = 16 * 60000;   // 15m restriction + a minute of slack
-function alpacaWindow(timeframe, limit, feed) {
-  const nowMs = Date.now();
-  const endMs = String(feed).toLowerCase() === "sip" ? nowMs : nowMs - ALPACA_BASIC_EMBARGO_MS;
+function alpacaWindow(timeframe, limit, feed, opts = {}) {
+  const nowMs = Number.isFinite(Number(opts.nowMs)) ? Number(opts.nowMs) : Date.now();
+  const f = String(feed || "iex").toLowerCase();
+  /* Alpaca Basic's IEX lane is real-time. It is the consolidated SIP lane
+     that is embargoed unless the account explicitly declares a real-time SIP
+     entitlement. Reversing these conditions made the real-time feed stale
+     and sent Basic SIP requests into data the account could not retrieve. */
+  const sipRealtime = opts.sipRealtime === true;
+  const endMs = f === "sip" && !sipRealtime ? nowMs - ALPACA_BASIC_EMBARGO_MS : nowMs;
   let spanMs;
   if (/day/i.test(timeframe)) {
     /* `limit` is in TRADING days; a calendar window has to cover weekends and
@@ -496,10 +591,12 @@ function alpacaPageBudget(limit, symbolCount) {
 async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed } = {}) {
   const out = {}, pageHashes = [];
   let pageToken = null, pages = 0, lastAt = null;
-  const useFeed = feed || marketSettings().feed || "iex";
+  const settings = marketSettings();
+  const useFeed = feed || settings.feed || "iex";
   // per-symbol limit -> total, capped at the endpoint maximum
   const total = Math.min(10000, Math.max(limit, limit * symbols.length));
-  const win = alpacaWindow(timeframe, limit, useFeed);
+  const win = alpacaWindow(timeframe, limit, useFeed,
+    { sipRealtime: settings.alpacaSipRealtime === true });
   /* Pages are 10k bars. A 90-symbol x 1300-day backfill is 117k bars, which
      silently truncated under the old 12-page ceiling. Size the ceiling to the
      request instead of to a constant. */
@@ -793,6 +890,7 @@ async function readRecentBarsWithMeta(symbol, sessions = 3) {
 module.exports = {
   PROVIDERS, providerConfig, activeProvider, FEED_VOLUME_SHARE, feedVolumeShare,
   sessionState, marketCalendar, nyParts, CALENDAR_VERSION, lastRegularOpenMs,
+  dailyFinalizationState, tradingDaysHeld,
   marketSettings, loadMarketSettings, MARKET_SETTINGS_DOC,
   providerCredentials, providerCredentialed,
   tradingSessionsBetween,

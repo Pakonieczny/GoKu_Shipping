@@ -36,6 +36,10 @@ const LD = require("./_investorLadder");
 const O = require("./_investorOpenai");
 const B = require("./_investorBootstrap");
 const C = require("./_investorCalibration");
+const ST = require("./_investorStrategy");
+const CA = require("./_investorCorporateActions");
+const STATE = require("./_investorState");
+const SOAK = require("./_investorSoak");
 
 const MAX_BODY = 64 * 1024;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -55,11 +59,47 @@ async function ctrlDoc() {
   return s.exists ? s.data() : {};
 }
 
+/* Read the exact frozen strategy selected by control. Falling back to the
+   bundled copy keeps a fresh install usable, while a valid stored version is
+   what the cycle and dashboard must both describe. */
+async function activeStrategy(ctrl = {}) {
+  const version = ctrl.strategyVersion || ST.version;
+  try {
+    const s = await A.col(A.COL.strategies).doc(version).get();
+    const value = s.exists ? s.data() : null;
+    if (value && value.parameters) return value;
+  } catch {}
+  return ST;
+}
+
+function isoTime(value) {
+  if (!value) return null;
+  try {
+    const d = value.toDate ? value.toDate() : new Date(value);
+    return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+  } catch { return null; }
+}
+
+function closedTradeForUi(value) {
+  const x = value || {};
+  const numeric = (n) => n !== null && n !== undefined && n !== ""
+    && Number.isFinite(Number(n)) ? Number(n) : null;
+  const cents = (n) => numeric(n) === null ? null : L.fromCents(numeric(n));
+  const entryPriceUsd = numeric(x.entryPriceUsd) ?? numeric(x.entryUsd)
+    ?? numeric(x.entryPrice) ?? numeric(x.fillPriceUsd) ?? cents(x.entryPriceCents);
+  const realisedPnlUsd = numeric(x.realisedPnlUsd) ?? numeric(x.realizedPnlUsd)
+    ?? numeric(x.netPnlUsd) ?? cents(x.netPnlCents);
+  return { ...x, entryPriceUsd, realisedPnlUsd,
+    openedAt: isoTime(x.openedAt || x.entryAt || x.openedAtMs),
+    closedAt: isoTime(x.closedAt || x.exitAt || x.closedAtMs),
+    exitReason: x.exitReason || x.reason || null };
+}
+
 async function closeEntryQueue(accountId, reason, operator) {
   let cancelled = 0, released = 0;
   const failures = [];
   const proposed = await A.col(A.COL.orders)
-    .where("accountId", "==", accountId).where("status", "==", "proposed").limit(200).get();
+    .where("accountId", "==", accountId).where("status", "==", "proposed").get();
   for (const d of proposed.docs) {
     const o = d.data();
     try {
@@ -68,7 +108,7 @@ async function closeEntryQueue(accountId, reason, operator) {
     } catch (e) { failures.push({ orderId: o.orderId, phase: "reject" }); }
   }
   const approved = await A.col(A.COL.orders)
-    .where("accountId", "==", accountId).where("status", "==", "approved").limit(200).get();
+    .where("accountId", "==", accountId).where("status", "==", "approved").get();
   for (const d of approved.docs) {
     const o = d.data();
     try {
@@ -77,6 +117,37 @@ async function closeEntryQueue(accountId, reason, operator) {
     } catch (e) { failures.push({ orderId: o.orderId, phase: "release" }); }
   }
   return { cancelledProposals: cancelled, releasedApproved: released,
+    failures: failures.slice(0, 20) };
+}
+
+/* Disabling the paper learner must also disarm the orders it created.  These
+   queries deliberately use the already-required account/status indexes and
+   filter the paper-only tag in memory, avoiding a new deployment-time index
+   dependency while still draining every active row (not an arbitrary page). */
+async function closePaperLearningQueue(accountId, reason, operator) {
+  let cancelled = 0, released = 0;
+  const failures = [];
+  const proposed = await A.col(A.COL.orders)
+    .where("accountId", "==", accountId).where("status", "==", "proposed").get();
+  for (const d of proposed.docs) {
+    const o = d.data();
+    if (o.paperLearningOnly !== true) continue;
+    try {
+      const result = await L.rejectOrder(o.orderId, reason, operator || "operator");
+      if (!result.noop) cancelled += 1;
+    } catch (e) { failures.push({ orderId: o.orderId, phase: "reject" }); }
+  }
+  const approved = await A.col(A.COL.orders)
+    .where("accountId", "==", accountId).where("status", "==", "approved").get();
+  for (const d of approved.docs) {
+    const o = d.data();
+    if (o.paperLearningOnly !== true) continue;
+    try {
+      const result = await L.releaseOrder(o.orderId, reason);
+      if (!result.noop) released += 1;
+    } catch (e) { failures.push({ orderId: o.orderId, phase: "release" }); }
+  }
+  return { cancelledPaperProposals: cancelled, releasedPaperApproved: released,
     failures: failures.slice(0, 20) };
 }
 
@@ -91,27 +162,34 @@ const ACTIONS = {
   /* The single call the dashboard polls. One round trip, everything on it. */
   async dashboard() {
     const ctrl = await ctrlDoc();
+    const operating = STATE.describe(ctrl);
     const accountId = ctrl.accountId || "paper-1";
     const session = M.sessionState(new Date());
 
     const uMod = require("./_investorUniverse.js");
-    const [candSnap, proposedSnap, approvedSnap, posSnap, regSnap, costSnap, runSnap, universeSnap, intelligenceSnap] = await Promise.all([
+    const [strategy, candSnap, proposedSnap, approvedSnap, posSnap, tradeSnap,
+      regSnap, costSnap, runSnap, universeSnap, intelligenceSnap] = await Promise.all([
+      activeStrategy(ctrl),
       A.col(A.COL.candidates).orderBy("updated_at", "desc").limit(500).get(),
       /* Query active states directly. Filtering an unordered 400-row account
          sample in memory eventually starves new active records behind old
          terminal history, which is a silent control-room failure. The exact
          composite indexes ship with this project. */
       A.col(A.COL.orders).where("accountId", "==", accountId)
-        .where("status", "==", "proposed").limit(200).get(),
+        .where("status", "==", "proposed").get(),
       A.col(A.COL.orders).where("accountId", "==", accountId)
-        .where("status", "==", "approved").limit(200).get(),
+        .where("status", "==", "approved").get(),
       A.col(A.COL.positions).where("accountId", "==", accountId)
-        .where("open", "==", true).limit(200).get(),
+        .where("open", "==", true).get(),
+      /* Completed outcomes live in the append-only trades collection. Position
+         documents are one mutable row per symbol and cannot represent repeat
+         round trips, so using them made the Results page structurally empty. */
+      A.col(A.COL.trades).where("accountId", "==", accountId).get(),
       A.col(A.COL.control).doc("regime").get(),
       A.col(A.COL.costs).doc(`openai_${new Date().toISOString().slice(0, 10)}`).get(),
       A.col(A.COL.runs).orderBy("startedAt", "desc").limit(8).get(),
       A.col(A.COL.universe).doc(ctrl.universeVersion || uMod.version).get(),
-      A.col(A.COL.intelligence).limit(40).get(),
+      A.col(A.COL.intelligence).get(),
     ]);
 
     const candidates = [];
@@ -122,7 +200,17 @@ const ACTIONS = {
     const orders = [];
     proposedSnap.forEach((d) => orders.push(d.data()));
     approvedSnap.forEach((d) => orders.push(d.data()));
-    const positions = []; posSnap.forEach((d) => positions.push(d.data()));
+    const positions = [];
+    posSnap.forEach((d) => {
+      const p = d.data();
+      const openedAt = p.openedAt && typeof p.openedAt.toDate === "function"
+        ? p.openedAt.toDate() : p.openedAt;
+      positions.push({ ...p,
+        heldTradingDays: openedAt ? M.tradingDaysHeld(openedAt, Date.now()) : null });
+    });
+    const closedTrades = []; tradeSnap.forEach((d) => closedTrades.push(closedTradeForUi(d.data())));
+    closedTrades.sort((a, b) => String(b.closedAt || "").localeCompare(String(a.closedAt || "")));
+    const recentClosedTrades = closedTrades.slice(0, 400);
     const runs = []; runSnap.forEach((d) => {
       const r = d.data();
       runs.push({ jobId: r.jobId, kind: r.kind, status: r.status, breaches: r.breaches,
@@ -154,17 +242,28 @@ const ACTIONS = {
     const provider = M.activeProvider();
     const frozenUniverse = universeSnap.exists ? universeSnap.data() : uMod;
     const expectedCandidates = (frozenUniverse.tradeTier || []).length;
+    const paperPreview = ST.paperLearningConfig(strategy.parameters || ST.parameters, ctrl);
     return {
       ok: true,
       now: new Date().toISOString(),
       session,
       control: {
-        enabled: ctrl.enabled !== false,
-        mode: ctrl.mode || "research",
-        dryRun: ctrl.dryRun !== false,
-        killSwitch: !!ctrl.killSwitch,
+        /* These compatibility fields are projections of one authoritative
+           state, so the existing UI cannot display contradictory controls. */
+        operatingState: operating.state,
+        operatingLabel: operating.label,
+        paperLedger: operating.paperLedger,
+        manualApproval: operating.manualApproval,
+        exploratoryAuto: operating.exploratoryAuto,
+        automaticPaperEntries: operating.automaticPaperEntries,
+        autoExploratoryAuthorized: ctrl.autoExploratoryAuthorized === true,
+        exploratoryPolicyVersion: ctrl.exploratoryPolicyVersion || null,
+        enabled: !operating.paused,
+        mode: operating.stage,
+        dryRun: !operating.paperLedger,
+        killSwitch: operating.paused,
         accountId,
-        strategyVersion: ctrl.strategyVersion || require("./_investorStrategy").version,
+        strategyVersion: ctrl.strategyVersion || strategy.version,
         universeVersion: ctrl.universeVersion || null,
         universeHash: ctrl.universeHash || null,
         strategyHash: ctrl.strategyHash || null,
@@ -174,16 +273,13 @@ const ACTIONS = {
         safetyEpochValid: validEpoch(ctrl),
         operatorCeiling: ctrl.operatorCeiling || "approval",
         operatorHold: ctrl.operatorHold === true,
-        entriesFrozen: ctrl.entriesFrozen === true,
+        entriesFrozen: operating.entriesFrozen,
         cycleSeconds: ctrl.cycleSeconds || 300,
-        paperLearning: (() => {
-          const ST = require("./_investorStrategy");
-          const r = ST.paperLearningConfig(ST.parameters, ctrl);
-          return { stored: ctrl.paperLearning || null, active: r.active,
-                   refused: r.refused, applied: r.applied, limits: ST.RELAX_LIMITS,
-                   defaults: Object.fromEntries(Object.entries(ST.RELAX_LIMITS)
-                     .map(([k, v]) => [k, v.dflt])) };
-        })(),
+        paperLearning: { stored: ctrl.paperLearning || null, active: paperPreview.active,
+          refused: paperPreview.refused, applied: paperPreview.applied, limits: ST.RELAX_LIMITS,
+          defaults: Object.fromEntries(Object.entries(ST.RELAX_LIMITS)
+            .map(([k, v]) => [k, v.dflt])) },
+        exploratoryPolicy: strategy.exploratoryAuto || null,
         guardSeconds: ctrl.guardSeconds || 60,
         intelligenceSymbols: IS.configuredSymbols(ctrl),
         intelligenceFocus: ctrl.intelligenceFocus || [],
@@ -194,6 +290,9 @@ const ACTIONS = {
         lastGuardFinishedAt: ctrl.lastGuardFinishedAt && ctrl.lastGuardFinishedAt.toDate
           ? ctrl.lastGuardFinishedAt.toDate().toISOString() : null,
         lastGuardSummary: ctrl.lastGuardSummary || null,
+        ledgerReconciliation: ctrl.ledgerReconciliation || null,
+        reconciliationFailure: ctrl.reconciliationFailure || null,
+        soakStatus: ctrl.lastSoakStatus || null,
       },
       market: {
         provider: provider.id, feed: provider.feed || null,
@@ -205,7 +304,10 @@ const ACTIONS = {
         vix: reg.vixHealthy === true ? (reg.vix || null) : null, vixMedian: reg.vixMedian || null,
         vixNorm: reg.vixHealthy === true && reg.vix && reg.vixMedian ? Number((reg.vix / reg.vixMedian).toFixed(2)) : null,
         cor3m: reg.corHealthy === true ? (reg.cor3m || null) : null,
-        gate: S.dispersionGate(reg.corHealthy === true ? Number(reg.cor3m) : NaN, {}),
+        gate: S.effectiveDispersionGate(reg.corHealthy === true ? Number(reg.cor3m) : NaN,
+          paperPreview.cfg),
+        strictGate: S.dispersionGate(reg.corHealthy === true ? Number(reg.cor3m) : NaN,
+          strategy.parameters || ST.parameters),
         vixHealthy: reg.vixHealthy === true, corHealthy: reg.corHealthy === true,
         asOf: reg.asOf || null,
       },
@@ -220,7 +322,7 @@ const ACTIONS = {
       candidateSetComplete: expectedCandidates > 0 && current.length === expectedCandidates,
       candidates: current.sort((a, b) => (a.rank ?? 1) - (b.rank ?? 1)),
       breaches: current.filter((c) => c.unionEvidenceTrigger || c.breach),
-      orders, positions,
+      orders, positions, closedTrades: recentClosedTrades, closedTradeTotal: closedTrades.length,
       balances, cost,
       openaiToday: { usd: Number((openai.usd || 0).toFixed(4)), calls: openai.calls || 0,
                      ceiling: O.DAILY_USD_CEILING },
@@ -462,12 +564,22 @@ const ACTIONS = {
       }
     } catch {}
 
-    /* The six-month daily series, so the candidate view can show where today's
-       move sits in the name's own longer story rather than only the last hour. */
-    let daily = [], history = null, reversion = null;
+    /* Repair an incomplete store on demand and return the full immutable daily
+       series. The browser derives every shorter range from this one response. */
+    let daily = [], history = null, reversion = null, dailyMeta = null;
     try {
-      const series = await H.readDaily(symbol);
-      daily = series.slice(-180).map((b) => ({ d: b.date, c: b.c, h: b.h, l: b.l, v: b.v }));
+      const ensured = await H.ensureDailyHistory(symbol);
+      const series = ensured.series;
+      daily = H.chartSeries(series, { throughDate: session.date });
+      dailyMeta = {
+        tradingDays: daily.length,
+        firstDate: daily.length ? daily[0].d : null,
+        lastDate: daily.length ? daily[daily.length - 1].d : null,
+        backfillAttempted: ensured.attempted === true,
+        repairedOnRead: ensured.repaired === true,
+        backfillComplete: ensured.backfill && ensured.backfill.complete === true,
+        note: ensured.note || null,
+      };
       const ctx = H.contextFor(series, session.date);
       if (ctx.ok) {
         history = ctx;
@@ -480,7 +592,7 @@ const ACTIONS = {
     } catch {}
 
     return { ok: true, candidate: cSnap.data(), bars, documents: docs,
-             daily, history, reversion,
+             daily, dailyMeta, history, reversion,
              position: pSnap.exists ? pSnap.data() : null };
   },
 
@@ -491,9 +603,19 @@ const ACTIONS = {
     const accountId = ctrl.accountId || "paper-1";
     const navSnap = await A.col(A.COL.control).doc("control")
       .collection("navHistory").orderBy("date", "desc").limit(400).get();
-    const nav = []; navSnap.forEach((d) => nav.push(d.data()));
+    const nav = [], excludedNav = [];
+    navSnap.forEach((d) => {
+      const row = d.data();
+      if (row.finalized === true && row.marksComplete === true
+          && /^[a-f0-9]{64}$/.test(String(row.markSetSha256 || ""))) nav.push(row);
+      else excludedNav.push({ date: row.date || d.id,
+        reason: row.finalized !== true ? "not_finalized"
+          : (row.marksComplete !== true ? "incomplete_marks" : "missing_mark_hash") });
+    });
     nav.reverse();   // fetched newest-first so the window slides; stats want oldest-first
     const equity = R.equityStats(nav);
+    equity.excludedNavMarks = excludedNav.length;
+    equity.excludedNavSample = excludedNav.slice(0, 12);
 
     let bench = { ok: false, reason: "not enough daily history yet" };
     if (equity.ok) {
@@ -541,20 +663,33 @@ const ACTIONS = {
     };
   },
 
-  /* Standalone history read, so the dashboard can show the six-month picture
-     for any roster name even before it has ever become a candidate. */
+  /* Standalone history read for any roster name, including the full stored
+     window needed by the All view and 200-day calculations. */
   async history({ symbol }) {
     symbol = String(symbol || "").toUpperCase();
     if (!SYMBOL.test(symbol)) return { error: "valid symbol required" };
     const session = M.sessionState(new Date());
-    const series = await H.readDaily(symbol);
+    const ensured = await H.ensureDailyHistory(symbol);
+    const series = ensured.series;
     if (!series.length) return { ok: true, symbol, daily: [], history: null,
-      note: "no daily history stored for this name yet — the backfill runs on the next cycle" };
+      dailyMeta: { tradingDays: 0, firstDate: null, lastDate: null,
+        backfillAttempted: ensured.attempted === true,
+        backfillComplete: ensured.backfill && ensured.backfill.complete === true,
+        note: ensured.note || null },
+      note: "no daily history is available from the configured provider" };
     const ctx = H.contextFor(series, session.date);
     const rev = H.reversionEvents(series, session.date);
+    const daily = H.chartSeries(series, { throughDate: session.date });
     return {
       ok: true, symbol,
-      daily: series.slice(-180).map((b) => ({ d: b.date, c: b.c, h: b.h, l: b.l, v: b.v })),
+      daily,
+      dailyMeta: { tradingDays: daily.length,
+        firstDate: daily.length ? daily[0].d : null,
+        lastDate: daily.length ? daily[daily.length - 1].d : null,
+        backfillAttempted: ensured.attempted === true,
+        repairedOnRead: ensured.repaired === true,
+        backfillComplete: ensured.backfill && ensured.backfill.complete === true,
+        note: ensured.note || null },
       history: ctx.ok ? ctx : { ok: false, days: ctx.days, reason: ctx.reason },
       reversion: rev.n ? rev : null,
       notes: H.describe(ctx, null),
@@ -580,7 +715,7 @@ const ACTIONS = {
     const accountId = ctrl.accountId || "paper-1";
     const cutoff = Date.now() - olderThanHours * 3600e3;
     const snap = await A.col(A.COL.orders)
-      .where("accountId", "==", accountId).where("status", "==", "approved").limit(100).get();
+      .where("accountId", "==", accountId).where("status", "==", "approved").get();
     const released = [];
     for (const d of snap.docs) {
       const o = d.data();
@@ -610,16 +745,19 @@ const ACTIONS = {
   async kill({ operator }) {
     const ctrl = await ctrlDoc();
     const accountId = ctrl.accountId || "paper-1";
+    const stateChange = STATE.transition(ctrl, STATE.STATES.PAUSED, {
+      source: "operator", reason: "operator engaged the paper-desk kill switch",
+    });
     await A.col(A.COL.control).doc("control").set({
-      killSwitch: true, enabled: false, killedBy: operator || "operator",
-      killedAt: A.FV.serverTimestamp(), dryRun: true, mode: "research",
+      ...stateChange.patch, killedBy: operator || "operator",
+      killedAt: A.FV.serverTimestamp(),
       safetyEpoch: null, ladderStreak: 0,
     }, { merge: true });
     /* The control document selects one paper account. A kill on that account
        must never cancel another isolated research account sharing the same
        project, so both order scans bind accountId as well as status. */
     const snap = await A.col(A.COL.orders)
-      .where("accountId", "==", accountId).where("status", "==", "proposed").limit(200).get();
+      .where("accountId", "==", accountId).where("status", "==", "proposed").get();
     let cancelled = 0;
     for (const d of snap.docs) {
       try { const r = await L.rejectOrder(d.data().orderId, "kill switch", operator); if (!r.noop) cancelled += 1; }
@@ -632,7 +770,7 @@ const ACTIONS = {
        switch. releaseOrder returns the reserved cash through the ledger. */
     let released = 0;
     const appSnap = await A.col(A.COL.orders)
-      .where("accountId", "==", accountId).where("status", "==", "approved").limit(200).get();
+      .where("accountId", "==", accountId).where("status", "==", "approved").get();
     for (const d of appSnap.docs) {
       try { const r = await L.releaseOrder(d.data().orderId, "kill switch"); if (!r.noop) released += 1; }
       catch (e) { /* an unreleasable order is left for expiry */ }
@@ -645,16 +783,21 @@ const ACTIONS = {
   },
 
   async resume({ operator }) {
+    const ctrl = await ctrlDoc();
+    const stateChange = STATE.transition(ctrl, STATE.STATES.OBSERVATION, {
+      source: "operator", clearPause: true,
+      reason: "operator resumed monitoring in observation-only state",
+    });
     await A.col(A.COL.control).doc("control").set({
-      killSwitch: false, enabled: true, resumedBy: operator || "operator",
-      resumedAt: A.FV.serverTimestamp(), dryRun: true, mode: "research",
+      ...stateChange.patch, resumedBy: operator || "operator",
+      resumedAt: A.FV.serverTimestamp(),
       safetyEpoch: null, ladderStreak: 0,
     }, { merge: true });
-    return { killSwitch: false, enabled: true, dryRun: true, mode: "research",
+    return { ...stateChange.state, killSwitch: false, enabled: true, dryRun: true, mode: "research",
       note: "monitoring resumed; entries remain closed until a new safety epoch is activated" };
   },
 
-  async activateSafety({ operator }) {
+  async activateSafety({ operator, exploratoryAuto = false }) {
     const ctrl = await ctrlDoc();
     if (ctrl.fixturesPass !== true || ctrl.fixturesCommit !== commitId()) {
       return { error: "current-build fixtures are not attested" };
@@ -676,30 +819,65 @@ const ACTIONS = {
       universeVersion: ctrl.universeVersion, universeHash: uv.actual, strategyHash: sh,
       variantsHash: V.variantsHash(), commit: commitId(), activatedAtMs: Date.now(),
       activatedBy: operator || "operator" };
+    const exploratoryPolicy = s.data().exploratoryAuto || {};
+    const startExploratory = exploratoryAuto === true
+      && exploratoryPolicy.enabled === true;
+    if (startExploratory) {
+      const reconciliation = await L.reconcileAccount(ctrl.accountId, {
+        context: "exploratory_auto_activation",
+      });
+      if (!reconciliation.pass) {
+        return { error: "paper ledger did not reconcile; automatic entries remain frozen",
+          reconciliation };
+      }
+    }
+    const target = startExploratory
+      ? STATE.STATES.EXPLORATORY_AUTO : STATE.STATES.OBSERVATION;
+    const selected = STATE.transition(ctrl, target, {
+      source: "operator", validEpoch: true, clearPause: true,
+      reason: startExploratory
+        ? "operator authorized immediate automatic exploratory paper trading"
+        : "operator activated the frozen build identity in observation-only mode",
+    });
+    if (!selected.ok) return { error: selected.reason };
     await A.col(A.COL.control).doc("control").set({ safetyEpoch,
       universeHash: uv.actual, strategyHash: sh, variantsHash: V.variantsHash(),
-      dryRun: true, ladderStreak: 0 }, { merge: true });
+      ...selected.patch, ladderStreak: 0,
+      ...(startExploratory ? {
+        autoExploratoryAuthorized: true,
+        exploratoryPolicyVersion: exploratoryPolicy.version || null,
+        operatorCeiling: "approval",
+        paperLearning: { ...(exploratoryPolicy.paperLearningDefaults || {}) },
+      } : {}) }, { merge: true });
     await A.col(A.COL.audit).add({ action: "activate_safety_epoch", safetyEpoch,
+      requestedOperatingState: target,
       at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
-    return { ok: true, safetyEpoch, dryRun: true,
-      note: "identity activated; dry run remains on until the measured ladder earns a stage and the operator opens it" };
+    return { ok: true, safetyEpoch, operatingState: target,
+      dryRun: !startExploratory, automaticPaperEntries: startExploratory,
+      note: startExploratory
+        ? "identity activated; autonomous exploratory paper entries are enabled immediately without claiming measured limited-auto validation"
+        : "identity activated; observation-only remains on until the operator chooses a paper-ledger state" };
   },
 
   async setControl({ patch, operator }) {
     const ALLOW = ["dryRun", "cycleSeconds", "evidenceEverySeconds",
       "operatorCeiling", "operatorHold", "afterHoursCycles", "entriesFrozen",
-      "guardSeconds"];
+      "guardSeconds", "operatingState"];
     const MODES = ["research", "approval", "shadow", "limited_auto"];
     const clean = {}, refused = {};
     const ctrl = await ctrlDoc();
+    const before = STATE.describe(ctrl);
     for (const k of ALLOW) {
       if (patch && patch[k] !== undefined) {
         if (k === "operatorCeiling" && !MODES.includes(patch[k])) { refused[k] = "invalid stage"; continue; }
         if (k === "operatorCeiling") {
           clean[k] = patch[k]; clean.ladderStreak = 0;
-          if (LD.stageIndex(patch[k]) < LD.stageIndex(ctrl.mode || "research")) {
-            clean.mode = patch[k]; clean.stageChangeReason = "operator lowered automation ceiling";
-            if (patch[k] === "research") clean.dryRun = true;
+          continue;
+        }
+        if (k === "operatingState") {
+          if (![STATE.STATES.OBSERVATION, STATE.STATES.MANUAL_APPROVAL,
+            STATE.STATES.EXPLORATORY_AUTO, STATE.STATES.ENTRY_FROZEN].includes(patch[k])) {
+            refused[k] = "operators may select observation, manual_approval, exploratory_auto, or entry_frozen";
           }
           continue;
         }
@@ -722,10 +900,7 @@ const ACTIONS = {
           continue;
         }
         if (k === "dryRun") {
-          if (patch[k] === false && (!validEpoch(ctrl) || ctrl.killSwitch
-              || (ctrl.mode || "research") === "research")) {
-            refused[k] = "requires a valid current safety epoch, an earned non-research stage, and a cleared kill switch";
-          } else clean[k] = !!patch[k];
+          clean[k] = !!patch[k];
           continue;
         }
         if (k === "afterHoursCycles" || k === "operatorHold" || k === "entriesFrozen") {
@@ -734,23 +909,83 @@ const ACTIONS = {
       }
     }
     for (const k of Object.keys(patch || {})) if (!ALLOW.includes(k)) refused[k] = "not operator-settable";
+
+    /* Resolve every legacy control gesture into one state transition. A ceiling
+       is a cap, not permission to promote. Lowering a ceiling can demote an
+       earned automatic stage, while raising it only changes the future cap. */
+    let target = null;
+    if (patch && patch.operatingState !== undefined && !refused.operatingState) {
+      target = patch.operatingState;
+    }
+    const requestedCeiling = clean.operatorCeiling || ctrl.operatorCeiling || "approval";
+    const base = before.baseState;
+    const baseRank = LD.stageIndex(STATE.STAGE[base] || "research");
+    const ceilingRank = LD.stageIndex(requestedCeiling);
+    if (clean.operatorCeiling === "research") target = STATE.STATES.OBSERVATION;
+    else if (clean.operatorCeiling && ceilingRank < baseRank) {
+      target = STATE.stateForStage(requestedCeiling);
+    }
+    if (patch && patch.dryRun === true) target = STATE.STATES.OBSERVATION;
+    if (patch && patch.dryRun === false) {
+      if (requestedCeiling === "research") {
+        refused.dryRun = "observation-only ceiling cannot open the paper ledger";
+      } else if (before.paused) {
+        refused.dryRun = "resume the desk before opening the paper ledger";
+      } else if (before.entriesFrozen) {
+        refused.dryRun = "unfreeze entries before opening the paper ledger";
+      } else {
+        target = (base === STATE.STATES.SHADOW || base === STATE.STATES.LIMITED_AUTO)
+          ? base : STATE.STATES.MANUAL_APPROVAL;
+      }
+    }
+    if (patch && patch.entriesFrozen === true) target = STATE.STATES.ENTRY_FROZEN;
+    if (patch && patch.entriesFrozen === false && before.entriesFrozen) {
+      if (ctrl.reconciliationFailure) {
+        refused.entriesFrozen = "run a passing ledger reconciliation before unfreezing entries";
+      } else target = STATE.resumeState(ctrl);
+    }
+
+    if (!Object.keys(refused).length && target) {
+      const changed = STATE.transition(ctrl, target, {
+        source: "operator", validEpoch: validEpoch(ctrl),
+        reason: target === STATE.STATES.OBSERVATION
+          ? "operator selected observation-only paper research"
+          : target === STATE.STATES.ENTRY_FROZEN
+            ? "operator froze new paper entries"
+            : "operator selected a validated paper-ledger state",
+      });
+      if (!changed.ok) {
+        const sourceKey = patch && patch.operatingState !== undefined ? "operatingState"
+          : patch && patch.dryRun !== undefined ? "dryRun"
+            : patch && patch.entriesFrozen !== undefined ? "entriesFrozen"
+              : "operatorCeiling";
+        refused[sourceKey] = changed.reason;
+      }
+      else Object.assign(clean, changed.patch, {
+        stageChangeReason: changed.patch.operatingStateReason,
+      });
+    }
+
     let entryCleanup = null;
     if (Object.keys(refused).length === 0 && Object.keys(clean).length) {
       await A.col(A.COL.control).doc("control").set(clean, { merge: true });
       /* Close the gate first, then drain pre-existing entry orders. Approval
          and fill transactions re-read this same control document, so an order
          racing the cleanup fails closed and releases its reservation. */
-      if (clean.entriesFrozen === true) {
+      if (clean.entriesFrozen === true || clean.operatingState === STATE.STATES.OBSERVATION) {
         entryCleanup = await closeEntryQueue(ctrl.accountId || "paper-1",
-          "operator entry freeze", operator);
+          clean.entriesFrozen === true ? "operator entry freeze" : "observation-only state",
+          operator);
       }
       await A.col(A.COL.audit).add({ action: "setControl", patch: clean, entryCleanup,
         operator: operator || "operator", at: A.FV.serverTimestamp(),
         ...A.envelope({ created_by: "investorApi" }) });
     }
     const refusedKeys = Object.keys(refused);
+    const after = refusedKeys.length ? before : STATE.describe({ ...ctrl, ...clean });
     return { ok: refusedKeys.length === 0,
       patched: refusedKeys.length === 0 ? clean : {}, refused, entryCleanup,
+      operating: after,
       error: refusedKeys.length
         ? refusedKeys.map((k) => `${k}: ${refused[k]}`).join("; ")
         : undefined };
@@ -804,7 +1039,7 @@ const ACTIONS = {
     });
     const accountStart = r.startingNavCents != null ? L.fromCents(r.startingNavCents) : nav;
     await A.col(A.COL.control).doc("control").set({ accountId: id,
-      safetyEpoch: null, dryRun: true, mode: "research", ladderStreak: 0,
+      safetyEpoch: null, ...STATE.legacyPatch(STATE.STATES.OBSERVATION, ctrl), ladderStreak: 0,
       highWaterMarkUsd: accountStart, startOfDayNavUsd: accountStart, startOfDayNavDate: null,
       accountChangedAt: A.FV.serverTimestamp() }, { merge: true });
     return { ...r, safetyReset: true, dryRun: true, mode: "research" };
@@ -827,6 +1062,31 @@ const ACTIONS = {
     }
     return { ok: true, accountId: id, rows,
              balances: await L.balances(id), cost: await L.costMeter(id) };
+  },
+
+  async reconcile({ accountId, operator }) {
+    const ctrl = await ctrlDoc();
+    const id = accountId || ctrl.accountId || "paper-1";
+    if (id !== (ctrl.accountId || "paper-1")) {
+      return { error: "only the active paper account can be reconciled from the console" };
+    }
+    const reconciliation = await L.reconcileAccount(id, { context: "operator_diagnostic" });
+    await A.col(A.COL.audit).add({ action: "reconcile_paper_ledger", accountId: id,
+      pass: reconciliation.pass, operator: operator || "operator",
+      at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: reconciliation.pass, reconciliation,
+      note: reconciliation.pass
+        ? "The ledger, lifecycle records, marks and computed NAV agree."
+        : "New entries are frozen; exits and diagnostics remain available." };
+  },
+
+  async soakStatus({ accountId }) {
+    const ctrl = await ctrlDoc();
+    const id = accountId || ctrl.accountId || "paper-1";
+    if (id !== (ctrl.accountId || "paper-1")) {
+      return { error: "only the active paper account can be evaluated" };
+    }
+    return { ok: true, soak: await SOAK.status(id) };
   },
 
   /* No-trade reasons are the most valuable dataset this system produces. */
@@ -882,7 +1142,8 @@ const ACTIONS = {
       const snap = await A.col(A.COL.intelligence).doc(requested).get();
       if (snap.exists) snapshots.push(snap.data());
     } else {
-      const snap = await A.col(A.COL.intelligence).limit(Math.min(Number(limit) || 24, 40)).get();
+      const snap = await A.col(A.COL.intelligence)
+        .limit(Math.min(Number(limit) || 24, IS.MAX_FOCUS)).get();
       snapshots = snap.docs.map((d) => d.data());
     }
     const rows = snapshots.map((x) => ({ ...x,
@@ -901,8 +1162,8 @@ const ACTIONS = {
   async setIntelligenceWatchlist({ symbols, profiles, operator }) {
     if (!Array.isArray(symbols)) return { error: "symbols must be an array" };
     const cleaned = [...new Set(symbols.map((x) => String(x || "").trim().toUpperCase()))];
-    if (!cleaned.length || cleaned.length > IS.MAX_FOCUS || cleaned.some((x) => !SYMBOL.test(x))) {
-      return { error: `watchlist must contain 1-${IS.MAX_FOCUS} valid unique symbols` };
+    if (!cleaned.length || cleaned.length > IS.MAX_WATCHLIST || cleaned.some((x) => !SYMBOL.test(x))) {
+      return { error: `watchlist must contain 1-${IS.MAX_WATCHLIST} valid unique symbols` };
     }
     const ctrl = await ctrlDoc(), uMod = require("./_investorUniverse");
     const uSnap = await A.col(A.COL.universe).doc(ctrl.universeVersion || uMod.version).get();
@@ -922,7 +1183,7 @@ const ACTIONS = {
       "company-intelligence watchlist changed; policy re-attestation required", operator);
     await A.col(A.COL.control).doc("control").set({ intelligenceSymbols: cleaned,
       intelligenceProfiles: nextProfiles, intelligenceCursor: 0,
-      safetyEpoch: null, dryRun: true, mode: "research",
+      safetyEpoch: null, ...STATE.legacyPatch(STATE.STATES.OBSERVATION, ctrl),
       intelligenceWatchlistUpdatedAt: A.FV.serverTimestamp() }, { merge: true });
     await A.col(A.COL.audit).add({ action: "set_intelligence_watchlist", symbols: cleaned,
       verifiedDomainSymbols: cleaned.filter((x) => (nextProfiles[x].officialDomains || []).length),
@@ -951,8 +1212,8 @@ const ACTIONS = {
   async runCycleNow({ operator, task }) {
     const wanted = ["cycle", "guard", "evidence"].includes(task) ? task : "cycle";
     const ctrl = await ctrlDoc();
-    if (ctrl.killSwitch) return { ok: false, refused: "kill switch is on" };
-    if (ctrl.enabled === false) return { ok: false, refused: "the desk is disabled" };
+    const operating = STATE.describe(ctrl);
+    if (operating.paused) return { ok: false, refused: "the paper desk is paused" };
 
     /* One manual run at a time. Without this an impatient click becomes a
        queue of overlapping workers competing for the same job documents. */
@@ -968,8 +1229,8 @@ const ACTIONS = {
     const K = require("./investorKick");
     const session = M.sessionState(new Date());
     const result = await K.dispatch(wanted, {
-      enabled: ctrl.enabled !== false, mode: ctrl.mode || "research",
-      dryRun: ctrl.dryRun !== false, killSwitch: !!ctrl.killSwitch,
+      ...ctrl, enabled: true, mode: operating.stage,
+      dryRun: !operating.paperLedger, killSwitch: false,
       accountId: ctrl.accountId || "paper-1",
       cycleSeconds: Number(ctrl.cycleSeconds) || 300,
       guardSeconds: Number(ctrl.guardSeconds) || 60,
@@ -990,31 +1251,146 @@ const ACTIONS = {
           + "bars and refresh evidence rather than fetch new prices." };
   },
 
+  /* A suspected split is never applied from price shape alone. This explicit,
+     authenticated reconciliation changes share units and per-share prices
+     while preserving the dollar cost basis, then clears any false exit intent
+     that may have been armed before quarantine. */
+  async confirmSplit({ symbol, shareRatio, effectiveDate, sourceRef, operator }) {
+    symbol = String(symbol || "").toUpperCase();
+    if (!SYMBOL.test(symbol)) return { error: "valid symbol required" };
+    const ratio = Number(shareRatio);
+    if (!(ratio > 0.04 && ratio < 25)) return { error: "valid shareRatio required" };
+    if (effectiveDate != null && !ISO_DATE.test(String(effectiveDate))) {
+      return { error: "effectiveDate must be YYYY-MM-DD" };
+    }
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
+    const ref = A.col(A.COL.positions).doc(`${accountId}_${symbol}`);
+    const confirmedAtMs = Date.now();
+    const main = await A.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists || !snap.data().open) return { error: "open paper position not found" };
+      const position = snap.data();
+      const pending = position.corporateActionPending;
+      if (!pending) return { error: "position has no quarantined corporate action" };
+      let patch;
+      try {
+        patch = CA.splitReconciliationPatch(position, pending, ratio, {
+          effectiveDate: effectiveDate || null, operator: operator || "operator",
+          confirmedAtMs, sourceRef: String(sourceRef || "").slice(0, 500) || null,
+        });
+      } catch (e) { return { error: String(e.message).slice(0, 180) }; }
+      if (Number(pending.currentPrice) > 0 && L.validProvenance(pending.currentProvenance)) {
+        patch.lastMarkUsd = Number(pending.currentPrice);
+        patch.lastMarkAt = pending.currentMarkAt || null;
+        patch.lastMarkProvenance = pending.currentProvenance;
+      }
+      patch.updated_at = A.FV.serverTimestamp();
+      tx.set(ref, patch, { merge: true });
+      return { ok: true, priorQty: Number(position.qty), qty: patch.qty,
+        costBasisCents: Number(position.costBasisCents) || null };
+    });
+    if (!main.ok) return main;
+
+    let shadowReconciled = 0;
+    try {
+      const shadows = await A.col(A.COL.shadowOpen).where("symbol", "==", symbol).limit(100).get();
+      for (const doc of shadows.docs) {
+        const row = doc.data(), pending = row.corporateActionPending;
+        if (!pending) continue;
+        try {
+          const patch = CA.splitReconciliationPatch(row, pending, ratio, {
+            effectiveDate: effectiveDate || null, operator: operator || "operator",
+            confirmedAtMs, sourceRef: String(sourceRef || "").slice(0, 500) || null,
+          });
+          if (Number(pending.currentPrice) > 0 && L.validProvenance(pending.currentProvenance)) {
+            patch.lastMarkPrice = Number(pending.currentPrice);
+            patch.lastMarkAt = pending.currentMarkAt || null;
+            patch.lastMarkProvenance = pending.currentProvenance;
+          }
+          patch.updatedAt = A.FV.serverTimestamp();
+          await doc.ref.set(patch, { merge: true });
+          shadowReconciled += 1;
+        } catch {}
+      }
+    } catch {}
+    await A.col(A.COL.audit).add({ action: "confirm_split_reconciliation",
+      accountId, symbol, shareRatio: ratio, effectiveDate: effectiveDate || null,
+      sourceRef: String(sourceRef || "").slice(0, 500) || null,
+      operator: operator || "operator", main, shadowReconciled,
+      at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
+    return { ...main, symbol, shareRatio: ratio, shadowReconciled,
+      note: "share units and per-share fields were rebased; dollar cost basis was preserved" };
+  },
+
+  async confirmCashDividend({ symbol, corporateActionId, positionLifecycleId, eligibleQty,
+    perShareUsd, recordDate, payDate, sourceRef, operator }) {
+    symbol = String(symbol || "").toUpperCase();
+    if (!SYMBOL.test(symbol)) return { error: "valid symbol required" };
+    const ctrl = await ctrlDoc();
+    let result;
+    try {
+      result = await L.recordCashDividend({
+        accountId: ctrl.accountId || "paper-1", symbol,
+        corporateActionId: String(corporateActionId || ""),
+        positionLifecycleId: String(positionLifecycleId || ""),
+        eligibleQty: Number(eligibleQty), perShareUsd: Number(perShareUsd),
+        recordDate: String(recordDate || ""), payDate: String(payDate || ""),
+        sourceRef: String(sourceRef || "").slice(0, 500) || null,
+        operator: operator || "operator",
+      });
+    } catch (e) {
+      return { error: String(e && e.message || e).slice(0, 220) };
+    }
+    await A.col(A.COL.audit).add({ action: "confirm_cash_dividend",
+      accountId: ctrl.accountId || "paper-1", symbol,
+      corporateActionId: String(corporateActionId || ""),
+      positionLifecycleId: String(positionLifecycleId || ""), result,
+      operator: operator || "operator", at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, ...result,
+      note: "cash and dividend income were posted as one balanced, idempotent ledger transaction" };
+  },
+
   /* Paper learning mode. Values are stored as requested and CLAMPED at read
      time by the strategy module, so what the dashboard shows is what the cycle
      will actually use rather than what was typed. */
   async setPaperLearning({ operator, patch }) {
-    const ST = require("./_investorStrategy");
     const p = patch && typeof patch === "object" ? patch : {};
-    const clean = { enabled: p.enabled === true, abstainOnMissingInfo: p.abstainOnMissingInfo === true };
+    const clean = { enabled: p.enabled === true,
+      abstainOnMissingInfo: p.abstainOnMissingInfo === true };
     for (const key of Object.keys(ST.RELAX_LIMITS)) {
       if (p[key] == null) continue;
       const v = ST.clampRelax(key, p[key]);
       if (v != null) clean[key] = v;
     }
+    const before = await ctrlDoc();
+    let statePatch = {};
+    if (!clean.enabled && STATE.describe(before).exploratoryAuto) {
+      const demoted = STATE.transition(before, STATE.STATES.OBSERVATION, {
+        source: "operator",
+        reason: "paper learning disabled; exploratory automatic entries closed",
+      });
+      if (demoted.ok) statePatch = demoted.patch;
+    }
     await A.col(A.COL.control).doc("control")
-      .set({ paperLearning: clean }, { merge: true });
-    await A.col(A.COL.audit).add({ action: "set_paper_learning",
-      operator: operator || "operator", patch: clean, at: A.FV.serverTimestamp(),
-      ...A.envelope({ created_by: "investorApi" }) });
-
+      .set({ paperLearning: clean, ...statePatch }, { merge: true });
     const ctrl = await ctrlDoc();
-    const preview = ST.paperLearningConfig(ST.parameters, ctrl);
-    return { ok: true, stored: clean, active: preview.active,
+    const queue = !clean.enabled
+      ? await closePaperLearningQueue(ctrl.accountId || "paper-1",
+        "paper learning disabled by operator", operator)
+      : null;
+    await A.col(A.COL.audit).add({ action: "set_paper_learning",
+      operator: operator || "operator", patch: clean, queue,
+      at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+    const strategy = await activeStrategy(ctrl);
+    const preview = ST.paperLearningConfig(strategy.parameters || ST.parameters, ctrl);
+    return { ok: true, stored: clean, active: preview.active, queue,
       refused: preview.refused, applied: preview.applied,
       limits: ST.RELAX_LIMITS,
       note: preview.active
-        ? "Relaxed gates apply to paper decisions only. Every decision still records what the strict calibration would have said."
+        ? "Relaxed gates apply to both observation-only and simulated-ledger paper decisions. Every decision still records what the strict calibration would have said."
         : (preview.refused || "Paper learning mode is off — the published calibration is in force.") };
   },
 

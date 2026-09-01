@@ -283,6 +283,70 @@ function autoApproval(order, { stage, book, navUsd, cfg, dayCount }) {
   };
 }
 
+/**
+ * Auto-approval for the INTERNAL exploratory paper learner. This path deliberately
+ * does not require a calibrated lower bound—the observations it creates are
+ * what make later calibration possible. It does require the ordinary
+ * friction hurdle, complete provenance, every active relaxed gate, and a
+ * stored strict counterfactual verdict and an execution-eligible market source.
+ * Ledger control independently proves the authoritative paper-only state at
+ * proposal, approval, and fill.
+ */
+function exploratoryAutoApproval(order, { operatingState = null,
+  book = {}, navUsd = 0, cfg = {} } = {}) {
+  const policy = (cfg && cfg.exploratoryAuto) || {};
+  const auto = policy.autoApproval || {};
+  const reasons = [];
+  if (operatingState !== "exploratory_auto") {
+    reasons.push(`operating state is ${operatingState || "unknown"}, not exploratory_auto`);
+  }
+  if (order.paperLearningOnly !== true) reasons.push("order is not tagged paper-learning-only");
+  if (!(order.quality && order.quality.tradable === true)) {
+    reasons.push("decision market source is not execution-eligible");
+  }
+  if (![order.universeHash, order.strategyHash, order.variantsHash]
+      .every((h) => /^[a-f0-9]{64}$/.test(String(h || "")))) {
+    reasons.push("order is not bound to complete frozen policy hashes");
+  }
+  const mp = order.decisionMarketProvenance || {};
+  if (!mp.provider || mp.adjustment == null
+      || !/^[a-f0-9]{64}$/.test(String(mp.sourceSha256 || ""))) {
+    reasons.push("order lacks immutable market-source provenance");
+  }
+  const strict = order.decisionContext && order.decisionContext.strictVerdict;
+  if (!strict || typeof strict.pass !== "boolean") {
+    reasons.push("strict counterfactual verdict was not persisted");
+  }
+  if (!Array.isArray(order.gates) || order.gates.some((g) => g.blocking && !g.pass)) {
+    reasons.push("one or more persisted paper gates is missing or failed");
+  }
+  /* The active decision gate already enforces the operator-selected paper
+     cost hurdle. Requiring a second stricter ratio here made "Active" mode
+     appear enabled while silently refusing every order it was meant to learn
+     from. The strict ratio remains stored as the counterfactual. */
+  const ratio = Number(order.cost && order.cost.ratio);
+  if (!Number.isFinite(ratio) || ratio < 0) reasons.push("paper cost ratio is invalid");
+  const orderUsd = Math.max(0, Number(order.qty) || 0) * Math.max(0, Number(order.refPriceUsd) || 0);
+  const minimumOrderUsd = Math.max(0.01, Number(auto.minimumOrderUsd) || 1);
+  if (!(orderUsd >= minimumOrderUsd)) {
+    reasons.push(`$${orderUsd.toFixed(2)} is below the $${minimumOrderUsd.toFixed(2)} minimum executable paper order`);
+  }
+  if (!(Number(navUsd) > 0)) reasons.push("reconciled paper NAV is unavailable");
+  return { approve: reasons.length === 0, reasons,
+    detail: reasons.length ? reasons.join("; ")
+      : `exploratory paper auto-approved: $${orderUsd.toFixed(0)}; no daily order quota; `
+        + `${Number(book.grossPct || 0).toFixed(1)}% invested before this order`,
+    cohort: policy.evidenceCohort || "exploratory_auto_unvalidated",
+    unlimitedOrdersPerDay: auto.unlimitedOrdersPerDay === true };
+}
+
+/* Compatibility name retained for existing fixtures and older callers. */
+function paperLearningApproval(order, context = {}) {
+  return exploratoryAutoApproval(order, {
+    operatingState: context.operatingState || "exploratory_auto", ...context,
+  });
+}
+
 function describe(stage, gates, decision) {
   const lines = [];
   const idx = stageIndex(stage);
@@ -302,4 +366,5 @@ function describe(stage, gates, decision) {
   return lines;
 }
 
-module.exports = { STAGES, stageIndex, evaluateGates, highestEarnedStage, decideStage, autoApproval, describe };
+module.exports = { STAGES, stageIndex, evaluateGates, highestEarnedStage, decideStage,
+  autoApproval, exploratoryAutoApproval, paperLearningApproval, describe };

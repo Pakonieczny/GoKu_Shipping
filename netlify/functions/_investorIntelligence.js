@@ -23,6 +23,10 @@ const T = require("./_investorTemporal");
 const DAY_MS = 864e5;
 const LOOKBACK_DAYS = 180;
 const DEFAULT_MAX_AGE_HOURS = 6;
+/* The only preregistered floor challenger is 25.  Letting an arbitrary policy
+   clamp this just below the hard block (69.999) would erase nearly every
+   non-blocking warning while still claiming the hard block was preserved. */
+const MAX_NON_BLOCKING_RISK_FLOOR = 25;
 
 const EVENT_RULES = [
   { type: "labor_operations", direction: -1, severity: 72,
@@ -548,7 +552,8 @@ function decisionPolicy({ coverage, events, temporalContext = null, requireTempo
   temporalMaxAgeHours = maxAgeHours, decisionMatrixPolicy = null } = {}) {
   const matrix = decisionMatrixPolicy && typeof decisionMatrixPolicy === "object"
     ? decisionMatrixPolicy : {};
-  const nonBlockingRiskFloor = clamp(matrix.nonBlockingRiskFloor, 0, 69.999);
+  const nonBlockingRiskFloor = clamp(matrix.nonBlockingRiskFloor,
+    0, MAX_NON_BLOCKING_RISK_FLOOR);
   const intelligenceRiskScale = clamp(matrix.intelligenceRiskScale == null
     ? 1 : matrix.intelligenceRiskScale, 0.5, 2);
   const temporalRiskScale = clamp(matrix.temporalRiskScale == null

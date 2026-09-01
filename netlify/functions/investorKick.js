@@ -31,6 +31,8 @@ const A = require("./_investorAdmin");
 const { mintWorkerNonce, isScheduledInvocation, redact,
         loadAuthSecrets } = require("./_investorAuth");
 const M = require("./_investorMarket");
+const STATE = require("./_investorState");
+const B = require("./_investorBootstrap");
 
 function baseUrl() {
   return process.env.URL || process.env.DEPLOY_PRIME_URL || "http://localhost:8888";
@@ -40,17 +42,25 @@ async function control() {
   const ref = A.col(A.COL.control).doc("control");
   const snap = await ref.get();
   const d = snap.exists ? snap.data() : {};
+  const operating = STATE.describe(d);
   const bounded = (value, fallback, min, max) => {
     const n = Number(value);
     return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
   };
   return {
-    enabled: d.enabled !== false,
-    mode: d.mode || "research",              // research | approval | shadow | limited_auto
-    dryRun: d.dryRun !== false,              // dry run defaults ON
-    killSwitch: !!d.killSwitch,
+    operatingState: operating.state,
+    operatingLabel: operating.label,
+    paused: operating.paused,
+    entriesFrozen: operating.entriesFrozen,
+    paperLedger: operating.paperLedger,
+    enabled: !operating.paused,
+    mode: operating.stage,                    // compatibility projection
+    dryRun: !operating.paperLedger,           // observation-only projection
+    killSwitch: operating.paused,
     accountId: d.accountId || "paper-1",
     strategyVersion: d.strategyVersion || require("./_investorStrategy").version,
+    bootstrapVersion: Number(d.bootstrapVersion) || 0,
+    bootstrapPending: Number(d.bootstrapVersion) !== B.BOOTSTRAP_VERSION,
     cycleSeconds: bounded(d.cycleSeconds, 300, 60, 3600),
     guardSeconds: bounded(d.guardSeconds, 60, 60, 300),
     /* The guard also runs while the exchange is shut, on a slower clock. It
@@ -62,6 +72,7 @@ async function control() {
     lastCycleAt: d.lastCycleAt || null,
     lastGuardAt: d.lastGuardAt || null,
     lastEvidenceAt: d.lastEvidenceAt || null,
+    lastDailyFinalizeDate: d.lastDailyFinalizeDate || null,
   };
 }
 
@@ -75,10 +86,22 @@ function decide(ctrl, session, nowMs) {
   const sinceGuard = ctrl.lastGuardAt ? nowMs - ctrl.lastGuardAt : Infinity;
   const sinceEvidence = ctrl.lastEvidenceAt ? nowMs - ctrl.lastEvidenceAt : Infinity;
 
-  const entriesClosed = ctrl.killSwitch || !ctrl.enabled;
+  const entriesClosed = ctrl.paused || ctrl.killSwitch || !ctrl.enabled;
   const inSession = session.tradingDay && (session.open || session.phase === "premarket");
   const scanAllowed = !entriesClosed && (inSession || ctrl.afterHoursCycles);
-  if (entriesClosed) {
+  const finalization = M.dailyFinalizationState(session);
+  const finalizationDue = finalization.ready
+    && ctrl.lastDailyFinalizeDate !== session.date;
+  /* A fresh release bootstraps immediately, including after hours. Waiting for
+     the next market scan delays frozen identity, account reconciliation and
+     autonomous authorization until the opening session itself. */
+  if (ctrl.bootstrapPending) {
+    tasks.push("cycle");
+    reasons.push("release bootstrap is pending — critical paper identity runs now");
+  } else if (finalizationDue) {
+    tasks.push("cycle");
+    reasons.push(`immutable daily finalization due for ${session.date}`);
+  } else if (entriesClosed) {
     reasons.push(`entries closed (${ctrl.killSwitch ? "kill switch" : "disabled"}) — full scan suppressed`);
   } else if (!scanAllowed) {
     reasons.push(`outside session (${session.phase}) — price cycle suppressed to control cost`);
@@ -144,9 +167,11 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
     if (cur.exists && ["queued", "running", "complete"].includes(cur.data().status)) return false;
     tx.set(jref, {
       jobId, task, slot, accountId: ctrl.accountId, status: "queued",
+      sessionDate: session && session.date || null,
       dispatchedAt: A.FV.serverTimestamp(), leaseExpiresAt: now + 14 * 60 * 1000,
       attempts: cur.exists ? Number(cur.data().attempts || 0) : 0,
       mode: ctrl.mode, dryRun: ctrl.dryRun, manual: !!manual,
+      operatingState: ctrl.operatingState || null,
       ...A.envelope({ created_by: manual ? "investorApi.runCycleNow" : "investorKick" }),
     });
     const stamp = task === "cycle" ? "lastCycleAt"
@@ -198,6 +223,7 @@ exports.handler = async (event) => {
       ok: true, dispatched, reasons,
       session: { phase: session.phase, tradingDay: session.tradingDay, date: session.date },
       mode: ctrl.mode, dryRun: ctrl.dryRun,
+      operatingState: ctrl.operatingState,
       elapsedMs: Date.now() - startedAt,
     };
     console.log("investorKick", JSON.stringify(redact(summary)));

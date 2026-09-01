@@ -18,12 +18,14 @@
 
 "use strict";
 
+const IDENTITY = require("./_investorUniverseIdentity.json");
+
 const DECLARED = {
-  "version": "v5",
+  "version": "v6",
   "name": "Investor_AI point-in-time research roster with executable exclusions",
-  "createdAt": "2026-08-29",
-  "supersedes": "v4",
-  "rationale": "Breadth can reduce the variance of a portfolio-day observation but cannot make independent trading days arrive faster. Membership is declared once; machine-enforced exclusions and dynamic data-quality/liquidity eligibility are separate and auditable.",
+  "createdAt": "2026-09-01",
+  "supersedes": "v5",
+  "rationale": "The 304-name eligible roster is re-frozen after replacing seven acquired or delisted issuers that no longer resolve in the current SEC ticker map. Breadth can reduce the variance of a portfolio-day observation but cannot make independent trading days arrive faster. Membership is declared once; machine-enforced exclusions and dynamic data-quality/liquidity eligibility are separate and auditable.",
   "exclusions": {
     "binary_biopharma": "Unscheduled FDA/Phase 3 readouts gap 40%+ and no blackout calendar or stop can protect against them. Structurally incompatible with hundreds of position-exposures a year on an edge of tens of basis points.",
     "commodity_beta": "OXY DVN FANG SLB HAL FCX NUE AA CLF - track WTI/copper/steel. Systematic risk wearing a company name; no company-specific event for the evidence engine to find.",
@@ -43,7 +45,14 @@ const DECLARED = {
     "WRK": "WestRock \u2014 merged into Smurfit Westrock (SW), 2024",
     "FISV": "Fiserv \u2014 ticker changed to FI",
     "SWN": "Southwestern \u2014 merged into Expand Energy (EXE), 2024",
-    "GPS": "Gap \u2014 ticker changed to GAP"
+    "GPS": "Gap \u2014 ticker changed to GAP",
+    "PSTG": "Removed from v6 after the symbol disappeared from the 2026-09-01 SEC ticker map; replaced by FFIV.",
+    "JNPR": "Removed from v6 after the symbol disappeared from the 2026-09-01 SEC ticker map; replaced by LITE.",
+    "ANSS": "Removed from v6 after the symbol disappeared from the 2026-09-01 SEC ticker map; replaced by BSY.",
+    "DFS": "Removed from v6 after the symbol disappeared from the 2026-09-01 SEC ticker map; replaced by IBKR.",
+    "HES": "Removed from v6 after the symbol disappeared from the 2026-09-01 SEC ticker map; replaced by EXE.",
+    "CTRA": "Removed from v6 after the symbol disappeared from the 2026-09-01 SEC ticker map; replaced by EQT.",
+    "SKX": "Removed from v6 after the symbol disappeared from the 2026-09-01 SEC ticker map; replaced by TPR."
   },
   "liquidityNote": "advUsd is computed per cycle from measured price x volume. The gate blocks anything under the floor in _investorStrategy.js. No volume figure is asserted in this file.",
   "tradeTier": [
@@ -347,7 +356,7 @@ const DECLARED = {
       "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "PSTG",
+      "symbol": "FFIV",
       "sector": "hw",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
@@ -368,7 +377,7 @@ const DECLARED = {
       "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "JNPR",
+      "symbol": "LITE",
       "sector": "hw",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
@@ -610,7 +619,7 @@ const DECLARED = {
       "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "ANSS",
+      "symbol": "BSY",
       "sector": "sw",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
@@ -1012,7 +1021,7 @@ const DECLARED = {
       "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "DFS",
+      "symbol": "IBKR",
       "sector": "fin",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
@@ -1845,7 +1854,7 @@ const DECLARED = {
       "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "HES",
+      "symbol": "EXE",
       "sector": "energy",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
@@ -1922,7 +1931,7 @@ const DECLARED = {
       "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "CTRA",
+      "symbol": "EQT",
       "sector": "energy",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
@@ -2272,7 +2281,7 @@ const DECLARED = {
       "advUsdSource": "measured_at_runtime"
     },
     {
-      "symbol": "SKX",
+      "symbol": "TPR",
       "sector": "cons",
       "cik": null,
       "cikSource": "unresolved_pending_sec_map",
@@ -2569,7 +2578,16 @@ const EXCLUDED = {
 };
 const declaredTradeTier = DECLARED.tradeTier;
 const excludedTier = declaredTradeTier.filter((r)=>EXCLUDED[r.symbol]).map((r)=>({...r,exclusionReason:EXCLUDED[r.symbol]}));
-const tradeTier = declaredTradeTier.filter((r)=>!EXCLUDED[r.symbol]);
+function attachIdentity(row) {
+  const identity = IDENTITY.companies && IDENTITY.companies[row.symbol];
+  return identity ? { ...row, cik: identity.cik, company: identity.company,
+    cikSource: "sec_company_tickers", companySource: "sec_company_tickers" } : { ...row };
+}
+const tradeTier = declaredTradeTier.filter((r)=>!EXCLUDED[r.symbol]).map(attachIdentity);
+const researchTier = DECLARED.researchTier.map(attachIdentity);
 module.exports = {...DECLARED,immutable:true,declaredTradeTierCount:declaredTradeTier.length,
-  tradeTier,excludedTier,enforcement:{eligibleCount:tradeTier.length,excludedCount:excludedTier.length,
+  tradeTier,researchTier,excludedTier,
+  identitySnapshot:{schema:IDENTITY.schema,source:IDENTITY.source,count:IDENTITY.count,
+    snapshotSha256:IDENTITY.snapshotSha256},
+  enforcement:{eligibleCount:tradeTier.length,excludedCount:excludedTier.length,
     exclusionPolicyVersion:"material-exclusions-v1"}};
