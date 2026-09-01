@@ -19,6 +19,27 @@ const CA = require("./_investorCorporateActions");
 
 const SHA256 = /^[a-f0-9]{64}$/;
 
+async function guardProgress(runRef, { phase, label, detail = null, pct = 0,
+  completed = null, total = null, currentItem = null } = {}) {
+  const nowMs = Date.now();
+  const safeTotal = Number.isFinite(Number(total)) ? Math.max(0, Number(total)) : null;
+  const safeCompleted = Number.isFinite(Number(completed))
+    ? Math.max(0, Math.min(safeTotal == null ? Infinity : safeTotal, Number(completed))) : null;
+  try {
+    await runRef.set({ status: "running", updatedAtMs: nowMs,
+      updatedAt: A.FV.serverTimestamp(), progress: {
+        phase: String(phase || "protect_positions"), label: String(label || "Protecting holdings"),
+        detail: detail == null ? null : String(detail).slice(0, 240),
+        pct: Math.max(0, Math.min(100, Math.round(Number(pct) || 0))),
+        completed: safeCompleted, total: safeTotal,
+        remaining: safeTotal != null && safeCompleted != null
+          ? Math.max(0, safeTotal - safeCompleted) : null,
+        currentItem: currentItem == null ? null : String(currentItem).slice(0, 80),
+        updatedAtMs: nowMs,
+      } }, { merge: true });
+  } catch {}
+}
+
 function trustedDecisionSource(provenance, quality) {
   if (!provenance || !provenance.provider
       || !SHA256.test(String(provenance.sourceSha256 || ""))) {
@@ -146,14 +167,22 @@ async function runGuard(jobId) {
   const cfg = { ...(strategy.parameters || {}) };
   const session = M.sessionState(new Date());
   const runRef = A.col(A.COL.runs).doc(jobId);
-  await runRef.set({ jobId, kind: "guard", startedAt: A.FV.serverTimestamp(),
+  await runRef.set({ jobId, kind: "guard", status: "running",
+    startedAt: A.FV.serverTimestamp(), startedAtMs: startedAt,
     accountId, session, ...A.envelope({ created_by: "positionGuard" }) },
   { merge: true });
+  await guardProgress(runRef, { phase: "load_positions",
+    label: "Loading open positions and protective rules", pct: 8,
+    detail: "This fast guard checks exits only; it never opens a new position." });
 
   const positionSnap = await A.col(A.COL.positions)
     .where("accountId", "==", accountId).where("open", "==", true).get();
   const positions = positionSnap.docs.map((d) => d.data());
   const symbols = [...new Set(positions.map((p) => p.symbol).filter(Boolean))];
+  await guardProgress(runRef, { phase: "price_holdings",
+    label: "Refreshing prices for open positions", pct: 22,
+    completed: 0, total: symbols.length,
+    detail: `${symbols.length} open holdings require a mark and exit-rule check.` });
   const intelligenceBySymbol = {};
   await Promise.all(symbols.map(async (symbol) => {
     try {
@@ -231,6 +260,10 @@ async function runGuard(jobId) {
       }
     }
   }
+  await guardProgress(runRef, { phase: "evaluate_exits",
+    label: "Checking stops and exit rules", pct: 52,
+    completed: 0, total: positions.length,
+    detail: "Checking price stops, time limits, earnings risk, rank recovery and critical company findings." });
 
   const [earnings, vixNorm] = await Promise.all([
     readEarnings().catch(() => ({})), readVixNorm().catch(() => 1),
@@ -243,8 +276,17 @@ async function runGuard(jobId) {
      fill it until a bar exists that opened after the decision, so arming
      outside the session cannot execute at a price nobody could have got. */
   {
-    for (const position of positions) {
+    const guardProgressStride = Math.max(1, Math.ceil(positions.length / 5));
+    for (let positionIndex = 0; positionIndex < positions.length; positionIndex += 1) {
+      const position = positions[positionIndex];
       const symbol = position.symbol;
+      if (positionIndex === 0 || positionIndex % guardProgressStride === 0) {
+        await guardProgress(runRef, { phase: "evaluate_exits",
+          label: "Checking stops and exit rules",
+          pct: 52 + Math.round(23 * positionIndex / Math.max(1, positions.length)),
+          completed: positionIndex, total: positions.length, currentItem: symbol,
+          detail: `Evaluating every protective exit condition for ${symbol}.` });
+      }
       const bars = panel[symbol] || [];
       const last = bars[bars.length - 1];
       if (!last) { unpriced.push(symbol); continue; }
@@ -323,6 +365,10 @@ async function runGuard(jobId) {
     }
 
   }
+  await guardProgress(runRef, { phase: "settle_exits",
+    label: "Settling eligible exits", pct: 78,
+    completed: positions.length, total: positions.length,
+    detail: `${exitSignals.length} exit signals are armed or awaiting an eligible post-decision market bar.` });
 
   /* EXECUTE — regular session only. Pre- and post-market bars are not priced
      under regular-session spread assumptions, so nothing fills here. */
@@ -381,6 +427,9 @@ async function runGuard(jobId) {
         why: String(e.message).slice(0, 140) }); }
     }
   }
+  await guardProgress(runRef, { phase: "audit_protection",
+    label: "Auditing the protected paper book", pct: 92,
+    detail: `${settled.closed.length} positions closed in this guard pass; verifying ledger and execution records.` });
 
   let audits = { ledger: null, execution: null };
   try {
@@ -416,7 +465,14 @@ async function runGuard(jobId) {
       skipped: settled.skipped.length, detail: settled,
     }, audits, providerNote, elapsedMs: Date.now() - startedAt };
   await runRef.set({ ...summary, status: "complete",
-    finishedAt: A.FV.serverTimestamp() }, { merge: true });
+    finishedAt: A.FV.serverTimestamp(), updatedAt: A.FV.serverTimestamp(),
+    updatedAtMs: Date.now(), progress: {
+      phase: "complete", label: "Holding protection check complete",
+      detail: `${coverage.evaluated} of ${coverage.open} open positions evaluated; ${settled.closed.length} closed.`,
+      pct: 100, completed: coverage.evaluated, total: coverage.open,
+      remaining: Math.max(0, coverage.open - coverage.evaluated), currentItem: null,
+      updatedAtMs: Date.now(),
+    } }, { merge: true });
   await A.col(A.COL.control).doc("control").set({
     lastGuardSummary: summary, lastGuardFinishedAt: A.FV.serverTimestamp(),
   }, { merge: true });

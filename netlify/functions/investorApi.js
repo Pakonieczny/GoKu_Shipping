@@ -156,6 +156,25 @@ function latestCycleId(rows) {
   return ids[ids.length - 1] || null;
 }
 
+function progressForUi(value) {
+  if (!value || typeof value !== "object") return null;
+  const numberOrNull = (x) => x == null || x === ""
+    ? null : (Number.isFinite(Number(x)) ? Number(x) : null);
+  const total = numberOrNull(value.total);
+  const completed = numberOrNull(value.completed);
+  return {
+    phase: String(value.phase || "working"),
+    label: String(value.label || "Working"),
+    detail: value.detail == null ? null : String(value.detail).slice(0, 240),
+    pct: Math.max(0, Math.min(100, numberOrNull(value.pct) ?? 0)),
+    completed, total,
+    remaining: numberOrNull(value.remaining) ?? (total != null && completed != null
+      ? Math.max(0, total - completed) : null),
+    currentItem: value.currentItem == null ? null : String(value.currentItem).slice(0, 80),
+    updatedAtMs: numberOrNull(value.updatedAtMs),
+  };
+}
+
 /* ── actions ───────────────────────────────────────────────────────────── */
 const ACTIONS = {
 
@@ -168,7 +187,7 @@ const ACTIONS = {
 
     const uMod = require("./_investorUniverse.js");
     const [strategy, candSnap, proposedSnap, approvedSnap, posSnap, tradeSnap,
-      regSnap, costSnap, runSnap, universeSnap, intelligenceSnap] = await Promise.all([
+      regSnap, costSnap, runSnap, jobSnap, universeSnap, intelligenceSnap] = await Promise.all([
       activeStrategy(ctrl),
       A.col(A.COL.candidates).orderBy("updated_at", "desc").limit(500).get(),
       /* Query active states directly. Filtering an unordered 400-row account
@@ -188,6 +207,7 @@ const ACTIONS = {
       A.col(A.COL.control).doc("regime").get(),
       A.col(A.COL.costs).doc(`openai_${new Date().toISOString().slice(0, 10)}`).get(),
       A.col(A.COL.runs).orderBy("startedAt", "desc").limit(8).get(),
+      A.col(A.COL.jobs).orderBy("dispatchedAt", "desc").limit(12).get(),
       A.col(A.COL.universe).doc(ctrl.universeVersion || uMod.version).get(),
       A.col(A.COL.intelligence).get(),
     ]);
@@ -213,9 +233,32 @@ const ACTIONS = {
     const recentClosedTrades = closedTrades.slice(0, 400);
     const runs = []; runSnap.forEach((d) => {
       const r = d.data();
-      runs.push({ jobId: r.jobId, kind: r.kind, status: r.status, breaches: r.breaches,
-                  proposals: r.proposals, modelCalls: r.modelCalls, elapsedMs: r.elapsedMs,
-                  startedAt: r.startedAt && r.startedAt.toDate ? r.startedAt.toDate().toISOString() : null });
+      const startedAt = isoTime(r.startedAt);
+      const finishedAt = isoTime(r.finishedAt);
+      runs.push({ jobId: r.jobId || d.id, kind: r.kind,
+        status: r.status || (finishedAt ? "complete" : "running"),
+        breaches: r.breaches, ranked: r.ranked, symbols: r.symbols || r.symbolCount,
+        proposals: r.proposals, modelCalls: r.modelCalls, elapsedMs: r.elapsedMs,
+        selected: r.selected || [], swept: r.swept,
+        settlement: r.settlement || null, positionCoverage: r.positionCoverage || null,
+        error: r.error || null, progress: progressForUi(r.progress),
+        startedAt, finishedAt,
+        startedAtMs: Number(r.startedAtMs) || (startedAt ? Date.parse(startedAt) : null),
+        updatedAtMs: Number(r.updatedAtMs) || null });
+    });
+    const jobs = []; jobSnap.forEach((d) => {
+      const j = d.data();
+      if (!["cycle", "guard", "evidence"].includes(j.task)) return;
+      const dispatchedAt = isoTime(j.dispatchedAt);
+      const startedAt = isoTime(j.startedAt);
+      const finishedAt = isoTime(j.finishedAt);
+      jobs.push({ jobId: j.jobId || d.id, kind: j.task, status: j.status || "queued",
+        manual: j.manual === true, attempts: Number(j.attempts) || 0,
+        upstream: j.upstream ?? null, error: j.error || null,
+        workerLeaseExpiresAt: Number(j.workerLeaseExpiresAt) || Number(j.leaseExpiresAt) || null,
+        dispatchedAt, startedAt, finishedAt,
+        dispatchedAtMs: dispatchedAt ? Date.parse(dispatchedAt) : null,
+        startedAtMs: startedAt ? Date.parse(startedAt) : null });
     });
     const intelligence = intelligenceSnap.docs.map((d) => {
       const x = d.data();
@@ -243,6 +286,80 @@ const ACTIONS = {
     const frozenUniverse = universeSnap.exists ? universeSnap.data() : uMod;
     const expectedCandidates = (frozenUniverse.tradeTier || []).length;
     const paperPreview = ST.paperLearningConfig(strategy.parameters || ST.parameters, ctrl);
+    const nowMs = Date.now();
+    const jobById = Object.fromEntries(jobs.map((j) => [j.jobId, j]));
+    const activeCutoffMs = nowMs - 20 * 60 * 1000;
+    const terminalStatuses = new Set(["complete", "dead", "dispatch_failed", "cancelled"]);
+    const activeWork = [];
+    for (const run of runs) {
+      const matchingJob = jobById[run.jobId];
+      const lastSeenMs = run.updatedAtMs || run.startedAtMs || 0;
+      const effectiveStatus = matchingJob && terminalStatuses.has(matchingJob.status)
+        ? matchingJob.status : run.status;
+      if (!["queued", "running"].includes(effectiveStatus) || lastSeenMs < activeCutoffMs) continue;
+      activeWork.push({ ...run, status: effectiveStatus,
+        dispatchedAt: matchingJob && matchingJob.dispatchedAt || null,
+        progress: run.progress || {
+          phase: "starting", label: `Starting ${run.kind || "background"} work`,
+          detail: "The worker has claimed the job and is loading its first inputs.",
+          pct: 2, completed: null, total: null, remaining: null,
+          currentItem: null, updatedAtMs: lastSeenMs,
+        } });
+    }
+    for (const job of jobs) {
+      if (!["queued", "running"].includes(job.status)) continue;
+      if (runs.some((r) => r.jobId === job.jobId)) continue;
+      const lastSeenMs = job.startedAtMs || job.dispatchedAtMs || 0;
+      if (lastSeenMs < activeCutoffMs) continue;
+      activeWork.push({ ...job, progress: {
+        phase: job.status === "queued" ? "queued" : "starting",
+        label: job.status === "queued"
+          ? `Queued ${job.kind} work` : `Starting ${job.kind} work`,
+        detail: job.status === "queued"
+          ? "Netlify accepted the job; it is waiting for the background worker to claim it."
+          : "The background worker has claimed the job and is loading its first inputs.",
+        pct: job.status === "queued" ? 0 : 2,
+        completed: null, total: null, remaining: null,
+        currentItem: null, updatedAtMs: lastSeenMs,
+      } });
+    }
+    const kindPriority = { cycle: 30, evidence: 20, guard: 10 };
+    activeWork.sort((a, b) => (kindPriority[b.kind] || 0) - (kindPriority[a.kind] || 0)
+      || (b.startedAtMs || b.dispatchedAtMs || 0) - (a.startedAtMs || a.dispatchedAtMs || 0));
+
+    const lastIntelligence = ctrl.lastIntelligenceSummary || {};
+    const learningTarget = Math.max(1,
+      Number(strategy.preRegistration && strategy.preRegistration.minimumEvents) || 200);
+    const readyDossiers = intelligence.filter((x) => x.policy
+      && x.policy.fresh === true && x.policy.complete === true).length;
+    const lastCycleDispatchAtMs = Number(ctrl.lastCycleAt) || null;
+    const cycleSeconds = Number(ctrl.cycleSeconds) || 300;
+    const scanEligible = !operating.paused && session.tradingDay === true
+      && (session.open === true || session.phase === "premarket");
+    const operations = {
+      state: activeWork.length ? "working"
+        : operating.paused ? "paused"
+          : operating.entriesFrozen ? "entry_frozen" : "waiting",
+      active: activeWork[0] || null,
+      activeAll: activeWork,
+      jobs,
+      scan: { cycleId, completed: current.length, total: expectedCandidates,
+        remaining: Math.max(0, expectedCandidates - current.length),
+        pct: expectedCandidates ? Math.min(100, 100 * current.length / expectedCandidates) : 0,
+        complete: expectedCandidates > 0 && current.length === expectedCandidates },
+      research: { focusCount: (ctrl.intelligenceFocus || []).length,
+        selected: lastIntelligence.selected || [],
+        swept: Number(lastIntelligence.swept) || 0,
+        latestResults: (lastIntelligence.results || []).slice(0, 8),
+        dossierCount: intelligence.length, readyDossiers },
+      learning: { completed: closedTrades.length, target: learningTarget,
+        remaining: Math.max(0, learningTarget - closedTrades.length),
+        pct: Math.min(100, 100 * closedTrades.length / learningTarget) },
+      cadence: { cycleSeconds, lastCycleDispatchAtMs,
+        nextCycleDueAtMs: lastCycleDispatchAtMs
+          ? lastCycleDispatchAtMs + cycleSeconds * 1000 : nowMs,
+        scanEligible, sessionPhase: session.phase },
+    };
     return {
       ok: true,
       now: new Date().toISOString(),
@@ -328,6 +445,7 @@ const ACTIONS = {
                      ceiling: O.DAILY_USD_CEILING },
       intelligence,
       runs,
+      operations,
     };
   },
 

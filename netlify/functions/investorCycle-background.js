@@ -67,6 +67,35 @@ const FN_NAME = "investorCycle-background";
 const WORKER_LEASE_TTL_MS = 14 * 60 * 1000;
 const GUARD_LEASE_TTL_MS = 4 * 60 * 1000;
 
+/* Progress is operational evidence, not decoration. Each update names the
+   actual phase the worker has reached and, when the work is countable, records
+   completed and remaining units. A telemetry write is deliberately
+   non-blocking: losing a progress update must never lose a fill, exit or
+   decision record. */
+async function reportRunProgress(runRef, { phase, label, detail = null,
+  pct = 0, completed = null, total = null, currentItem = null } = {}) {
+  const nowMs = Date.now();
+  const safePct = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  const safeTotal = Number.isFinite(Number(total)) ? Math.max(0, Number(total)) : null;
+  const safeCompleted = Number.isFinite(Number(completed))
+    ? Math.max(0, Math.min(safeTotal == null ? Infinity : safeTotal, Number(completed)))
+    : null;
+  const remaining = safeTotal != null && safeCompleted != null
+    ? Math.max(0, safeTotal - safeCompleted) : null;
+  try {
+    await runRef.set({ status: "running", updatedAtMs: nowMs,
+      updatedAt: A.FV.serverTimestamp(), progress: {
+        phase: String(phase || "working"), label: String(label || "Working"),
+        detail: detail == null ? null : String(detail).slice(0, 240),
+        pct: safePct, completed: safeCompleted, total: safeTotal, remaining,
+        currentItem: currentItem == null ? null : String(currentItem).slice(0, 80),
+        updatedAtMs: nowMs,
+      } }, { merge: true });
+  } catch (e) {
+    console.warn("run progress write failed", redact({ phase, error: e.message }));
+  }
+}
+
 function executionSourceEligible(quality) {
   return !!quality && quality.tradable === true;
 }
@@ -275,6 +304,13 @@ function applyOverfitGuard(alloc, overfitGuard) {
 
 async function runCycle(jobId, { manual = false } = {}) {
   const startedAt = Date.now();
+  const runRef = A.col(A.COL.runs).doc(jobId);
+  await runRef.set({ jobId, kind: "cycle", status: "running",
+    startedAt: A.FV.serverTimestamp(), startedAtMs: startedAt,
+    ...A.envelope({ created_by: FN_NAME }) }, { merge: true });
+  await reportRunProgress(runRef, { phase: "bootstrap",
+    label: "Checking the frozen build and paper account", pct: 2,
+    detail: "Validating the universe, strategy identity and ledger before any market decision." });
 
   /* Self-bootstrap. First cycle freezes the universe, resolves CIKs from SEC,
      opens the paper account, derives earnings windows and fetches VIX. Every
@@ -282,6 +318,9 @@ async function runCycle(jobId, { manual = false } = {}) {
   let bootstrap = null;
   try { bootstrap = await B.ensureBootstrapped({ enrich: false }); }
   catch (e) { bootstrap = { error: String(e.message).slice(0, 160) }; }
+  await reportRunProgress(runRef, { phase: "load_policy",
+    label: "Loading the active policy and account state", pct: 6,
+    detail: "The frozen definitions are available; loading positions, controls and research snapshots." });
 
   const ctrl = await controlDoc();
   const operating = STATE.describe(ctrl);
@@ -411,14 +450,14 @@ async function runCycle(jobId, { manual = false } = {}) {
   for (const p of allPositions) if (p && p.symbol && !sectorMap[p.symbol]) sectorMap[p.symbol] = p.sector || "other";
   S.setSectorMap(sectorMap);
 
-  const runRef = A.col(A.COL.runs).doc(jobId);
   await runRef.set({
-    jobId, kind: "cycle", startedAt: A.FV.serverTimestamp(),
     strategyVersion: strategy.version, universeVersion: universe.version,
     strategyHash, universeHash, variantsHash, frozenIdentityValid,
     session, regime: reg, symbolCount: symbols.length,
-    ...A.envelope({ created_by: FN_NAME }),
   }, { merge: true });
+  await reportRunProgress(runRef, { phase: "market_data",
+    label: "Fetching current prices", pct: 10, completed: 0, total: symbols.length,
+    detail: `Requesting current bars and source identity for ${symbols.length} managed companies.` });
 
   /* 1. bars ------------------------------------------------------------- */
   const provider = M.activeProvider();
@@ -442,6 +481,10 @@ async function runCycle(jobId, { manual = false } = {}) {
     fetchMeta = { provider: provider.id, feed: provider.feed || null,
       adjustment: null, error: String(e.code || e.message).slice(0, 160) };
   }
+  await reportRunProgress(runRef, { phase: "market_data",
+    label: "Validating current prices", pct: 18, completed: symbols.length,
+    total: symbols.length,
+    detail: "The market response arrived; validating freshness, feed identity and provenance hashes." });
 
   // Fall back to stored bars for any symbol the provider did not return.
   for (const sym of symbols) {
@@ -478,6 +521,10 @@ async function runCycle(jobId, { manual = false } = {}) {
       } catch (e) { /* storage failure must not kill the cycle */ }
     }
   }));
+  await reportRunProgress(runRef, { phase: "historical_context",
+    label: "Loading each company's prior price context", pct: 25,
+    completed: 0, total: symbols.length,
+    detail: "Current prices are stored; loading completed-session history without using today's future marks." });
 
   /* 1b. THE LONG MEMORY --------------------------------------------------
      Load each name's daily history and reduce it to the handful of numbers the
@@ -508,6 +555,10 @@ async function runCycle(jobId, { manual = false } = {}) {
       revRaw[sym] = H.reversionEvents(series, today);
     } catch (e) { /* a name without history simply gets no long-horizon read */ }
   }));
+  await reportRunProgress(runRef, { phase: "rank_companies",
+    label: "Separating company moves from market and sector moves", pct: 35,
+    completed: historyNames, total: symbols.length,
+    detail: `${historyNames} of ${symbols.length} companies have usable long-horizon context.` });
 
   /* Shrink every name's own bounce-back record toward the roster-wide average.
      Ten events is not a track record; the shrinkage says so arithmetically. */
@@ -606,6 +657,10 @@ async function runCycle(jobId, { manual = false } = {}) {
   const ranks = liveSignalContext.ranks;
   const ranked = liveSignalContext.n;
   const crowd = S.sectorCrowding(ranks, S.sectorOf, cfg.entryRank ?? S.ENTRY_RANK);
+  await reportRunProgress(runRef, { phase: "evaluate_companies",
+    label: "Evaluating companies and existing holdings", pct: 46,
+    completed: 0, total: ranked,
+    detail: `${ranked} companies were ranked; exits are checked before new-entry gates.` });
 
   /* 4-6. evaluate each symbol ------------------------------------------- */
   const cycleId = `${today}_${new Date().toISOString().slice(11, 16).replace(":", "")}`;
@@ -849,8 +904,17 @@ async function runCycle(jobId, { manual = false } = {}) {
   const orphanSymbols = allPositions
     .filter((p) => p && p.open && p.symbol && !tradeSymbols.includes(p.symbol))
     .map((p) => p.symbol);
-  for (const work of managementWorkset) {
+  const evaluationProgressStride = Math.max(10, Math.ceil(managementWorkset.length / 8));
+  for (let workIndex = 0; workIndex < managementWorkset.length; workIndex += 1) {
+    const work = managementWorkset[workIndex];
     const sym = work.symbol;
+    if (workIndex === 0 || workIndex % evaluationProgressStride === 0) {
+      await reportRunProgress(runRef, { phase: "evaluate_companies",
+        label: "Evaluating companies and existing holdings",
+        pct: 46 + Math.round(26 * workIndex / Math.max(1, managementWorkset.length)),
+        completed: workIndex, total: managementWorkset.length, currentItem: sym,
+        detail: `Checking ${sym}: held-position exits first, then data, evidence, cost and portfolio gates.` });
+    }
     const meta = tierBySymbol[sym] || {};
     const bars = panel[sym] || [];
     const last = bars[bars.length - 1];
@@ -1232,6 +1296,10 @@ async function runCycle(jobId, { manual = false } = {}) {
         intelligence, decisionManifest });
     }
   }
+  await reportRunProgress(runRef, { phase: "portfolio_selection",
+    label: "Choosing among qualifying opportunities", pct: 73,
+    completed: managementWorkset.length, total: managementWorkset.length,
+    detail: `${proposalQueue.length} candidates cleared the company-level gates; applying cash and portfolio constraints.` });
 
   /* Portfolio decisions are a batch problem. Rank all passing ideas by their
      conservative net utility, then admit them one by one against the evolving
@@ -1416,6 +1484,10 @@ async function runCycle(jobId, { manual = false } = {}) {
       console.error("propose failed", redact({ symbol: sym, error: e.message }));
     }
   }
+  await reportRunProgress(runRef, { phase: "settlement",
+    label: "Approving and settling eligible paper orders", pct: 82,
+    completed: decisions.length, total: proposalQueue.length,
+    detail: `${decisions.length} paper order proposals were created; rechecking execution timing, cash and provenance.` });
 
   /* ── SETTLEMENT ───────────────────────────────────────────────────────
      Approved orders become fills, and exit signals become closes.
@@ -1612,6 +1684,9 @@ async function runCycle(jobId, { manual = false } = {}) {
   } catch (e) {
     settled.error = String(e.message).slice(0, 200);
   }
+  await reportRunProgress(runRef, { phase: "learning",
+    label: "Recording outcomes and comparing frozen policies", pct: 89,
+    detail: `${settled.filled.length} entries filled and ${settled.closed.length} positions closed in this settlement pass.` });
 
   /* ── SHADOW HARNESS ──────────────────────────────────────────────────
      Each frozen arm runs a complete feasible paper portfolio on the union of
@@ -1829,6 +1904,9 @@ async function runCycle(jobId, { manual = false } = {}) {
   } catch (e) {
     shadow = { error: String(e.message).slice(0, 200) };
   }
+  await reportRunProgress(runRef, { phase: "safety_review",
+    label: "Checking promotion gates and account safeguards", pct: 94,
+    detail: "Outcome records are updated; reviewing ledger, data coverage and automation-stage evidence." });
 
   /* ── THE LADDER ───────────────────────────────────────────────────────
      Measure every promotion gate against recorded state and move the system to
@@ -1936,6 +2014,9 @@ async function runCycle(jobId, { manual = false } = {}) {
       gates, notes: LD.describe(decision.stage, gates, decision),
     };
   } catch (e) { ladder = { error: String(e.message).slice(0, 200) }; }
+  await reportRunProgress(runRef, { phase: "reconcile",
+    label: "Reconciling cash, positions, trades and displayed NAV", pct: 97,
+    detail: "Reading the post-settlement book and verifying that every displayed account total agrees." });
 
   /* Re-read the book AFTER settlement. The snapshot taken at the top of the
      cycle is what the entry gate must reason about, but reporting it would
@@ -2140,6 +2221,12 @@ async function runCycle(jobId, { manual = false } = {}) {
 
   await runRef.set({
     ...summary, finishedAt: A.FV.serverTimestamp(), status: "complete",
+    updatedAt: A.FV.serverTimestamp(), updatedAtMs: Date.now(),
+    progress: { phase: "complete", label: "Opportunity cycle complete",
+      detail: `${ranked} ranked, ${candidates.length} signal breaches, ${decisions.length} proposals, `
+        + `${settled.filled.length} fills and ${settled.closed.length} closes.`,
+      pct: 100, completed: symbols.length, total: symbols.length, remaining: 0,
+      currentItem: null, updatedAtMs: Date.now() },
   }, { merge: true });
 
   await A.col(A.COL.control).doc("control").set({
@@ -2159,11 +2246,21 @@ async function runCycle(jobId, { manual = false } = {}) {
 /* ── evidence sweep (slower clock) ─────────────────────────────────────── */
 async function runEvidence(jobId) {
   const startedAt = Date.now();
+  const runRef = A.col(A.COL.runs).doc(jobId);
+  await runRef.set({ jobId, kind: "evidence", status: "running",
+    startedAt: A.FV.serverTimestamp(), startedAtMs: startedAt,
+    ...A.envelope({ created_by: FN_NAME }) }, { merge: true });
+  await reportRunProgress(runRef, { phase: "refresh_sources",
+    label: "Refreshing shared company-research inputs", pct: 3,
+    detail: "Refreshing SEC identity, earnings, shares, market regime and daily-history inputs used by every dossier." });
   /* Long-running SEC, earnings, shares and daily-history enrichment belongs to
      this background lane. Price cycles only attest the frozen identity, so a
      slow public source can never postpone the next opportunity scan. */
   const bootstrap = await B.ensureBootstrapped({ enrich: true })
     .catch((e) => ({ bootstrapped: false, error: String(e.message).slice(0, 160) }));
+  await reportRunProgress(runRef, { phase: "choose_research",
+    label: "Choosing which companies to research next", pct: 15,
+    detail: "Shared inputs are refreshed; prioritizing holdings, leading candidates and stale dossiers." });
   const ctrl = await controlDoc();
   const universe = await loadUniverse(ctrl.universeVersion);
   const strategy = await loadStrategy(ctrl.strategyVersion);
@@ -2192,9 +2289,20 @@ async function runEvidence(jobId) {
   const selected = [];
   for (let i = 0; i < Math.min(perSweep, focus.length); i += 1) selected.push(focus[(cursor + i) % focus.length]);
   const results = [];
-  for (const focusRow of selected) {
+  await reportRunProgress(runRef, { phase: "research_companies",
+    label: "Researching selected companies", pct: 20, completed: 0,
+    total: selected.length,
+    detail: selected.length
+      ? `${selected.length} companies selected from a rotating priority queue of ${focus.length}.`
+      : "No company currently qualifies for this research sweep." });
+  for (let selectedIndex = 0; selectedIndex < selected.length; selectedIndex += 1) {
+    const focusRow = selected[selectedIndex];
     const t = bySymbol[focusRow.symbol] || { symbol: focusRow.symbol };
     const asOfMs = Date.now();
+    await reportRunProgress(runRef, { phase: "research_companies",
+      label: `Researching ${t.symbol}`, pct: 20 + Math.round(68 * selectedIndex / Math.max(1, selected.length)),
+      completed: selectedIndex, total: selected.length, currentItem: t.symbol,
+      detail: `Checking identity, SEC filings, official sources, relationships, events and cited adverse findings for ${t.symbol}.` });
     try {
       const prior = await I.readSnapshot(t.symbol).catch(() => null);
       const configuredProfile = ctrl.intelligenceProfiles && ctrl.intelligenceProfiles[t.symbol] || {};
@@ -2326,7 +2434,16 @@ async function runEvidence(jobId) {
     } catch (e) {
       results.push({ symbol: t.symbol, error: String(e.code || e.message).slice(0, 120) });
     }
+    await reportRunProgress(runRef, { phase: "research_companies",
+      label: "Researching selected companies",
+      pct: 20 + Math.round(68 * (selectedIndex + 1) / Math.max(1, selected.length)),
+      completed: selectedIndex + 1, total: selected.length,
+      detail: `${selectedIndex + 1} of ${selected.length} company dossiers completed in this sweep.` });
   }
+  await reportRunProgress(runRef, { phase: "publish_research",
+    label: "Publishing research results for the decision engine", pct: 92,
+    completed: results.length, total: selected.length,
+    detail: "Saving the new focus cursor and making completed dossiers available to the next opportunity cycle." });
   const nextCursor = focus.length ? (cursor + selected.length) % focus.length : 0;
   const summary = { jobId, kind: "evidence", bootstrap,
     focusCount: focus.length,
@@ -2335,9 +2452,14 @@ async function runEvidence(jobId) {
   await A.col(A.COL.control).doc("control").set({ intelligenceCursor: nextCursor,
     intelligenceFocus: focus.map((x) => x.symbol), lastIntelligenceSummary: summary,
     lastIntelligenceAt: A.FV.serverTimestamp() }, { merge: true });
-  await A.col(A.COL.runs).doc(jobId).set({
+  await runRef.set({
     ...summary, finishedAt: A.FV.serverTimestamp(), status: "complete",
-    ...A.envelope({ created_by: FN_NAME }),
+    updatedAt: A.FV.serverTimestamp(), updatedAtMs: Date.now(),
+    progress: { phase: "complete", label: "Company-research sweep complete",
+      detail: `${results.length} of ${selected.length} selected company dossiers completed.`,
+      pct: 100, completed: results.length, total: selected.length,
+      remaining: Math.max(0, selected.length - results.length), currentItem: null,
+      updatedAtMs: Date.now() },
   }, { merge: true });
   return summary;
 }
