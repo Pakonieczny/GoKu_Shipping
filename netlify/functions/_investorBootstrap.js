@@ -69,6 +69,37 @@ function universeHash(u) { return hashObject({ version:u.version, tradeTier:u.tr
 function strategyHash(s) { return hashObject({ version:s.version, parameters:s.parameters||{},
   portfolioControls:s.portfolioControls||{}, autoApproval:s.autoApproval||{},
   exploratoryAuto:s.exploratoryAuto||{}, operatorCeiling:s.operatorCeiling||"research" }); }
+
+/* _investorStrategy is both a runtime module and a frozen configuration: it
+   exports helper functions used by the cycle as well as the data that belongs
+   in Firestore. Real Firestore rejects JavaScript functions. The old in-memory
+   store silently discarded them, allowing an impossible write to pass every
+   local lifecycle test. Persist only the configuration portion, and reject a
+   future nested function/cycle before a transaction is attempted. */
+function unsupportedStoragePath(value, path = "strategy", ancestors = new Set()) {
+  if (typeof value === "function" || typeof value === "symbol") return path;
+  if (!value || typeof value !== "object") return null;
+  if (ancestors.has(value)) return path;
+  ancestors.add(value);
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => [String(index), item]) : Object.entries(value);
+  for (const [key, item] of entries) {
+    const bad = unsupportedStoragePath(item, `${path}.${key}`, ancestors);
+    if (bad) { ancestors.delete(value); return bad; }
+  }
+  ancestors.delete(value);
+  return null;
+}
+function strategyDocument(runtimeModule) {
+  const document = Object.fromEntries(Object.entries(runtimeModule || {})
+    .filter(([, value]) => typeof value !== "function" && value !== undefined));
+  if (!document.version || !document.parameters || !document.exploratoryAuto) {
+    throw new Error("strategy configuration export is incomplete");
+  }
+  const bad = unsupportedStoragePath(document);
+  if (bad) throw new Error(`strategy configuration is not Firestore-serializable at ${bad}`);
+  return document;
+}
 function validateFrozenUniverse(u, version) {
   if (!u || u.version !== version || u.immutable !== true) return { ok:false, reason:"version is not immutable" };
   const actual=universeHash(u); return {ok:actual===u.contentHash,actual,expected:u.contentHash||null};
@@ -254,7 +285,7 @@ async function resolveCiksAndFreeze() {
 }
 
 async function freezeStrategy() {
-  const s=require("./_investorStrategy.js"),contentHash=strategyHash(s),ref=A.col(A.COL.strategies).doc(s.version);
+  const s=strategyDocument(require("./_investorStrategy.js")),contentHash=strategyHash(s),ref=A.col(A.COL.strategies).doc(s.version);
   await A.runTransaction(async(tx)=>{const cur=await tx.get(ref);
     if(cur.exists){if(cur.data().contentHash!==contentHash)throw new Error(`strategy ${s.version} immutable content mismatch`);return;}
     tx.set(ref,{...s,immutable:true,contentHash,frozenAt:A.FV.serverTimestamp(),
@@ -931,7 +962,7 @@ module.exports = {
   ensureBootstrapped, resolveCiksAndFreeze, freezeBundledUniverse,
   validateBundledUniverseSnapshot, freezeStrategy,
   SEC_RENAMED_TICKERS, canonicalSecTicker, buildSecTickerMap, resolveSecTicker,
-  universeHash, strategyHash, validateFrozenUniverse,
+  universeHash, strategyHash, strategyDocument, validateFrozenUniverse,
   projectEarningsWindow, deriveEarningsWindow, populateEarnings, readEarnings,
   refreshRegime, parseCboeCsv, median,
 };
