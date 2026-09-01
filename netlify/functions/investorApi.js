@@ -214,7 +214,13 @@ const ACTIONS = {
 
     const candidates = [];
     candSnap.forEach((d) => candidates.push(d.data()));
-    const cycleId = latestCycleId(candidates);
+    /* A completed cycle can legitimately rank zero companies and therefore
+       write no candidate documents. Deriving "latest" only from candidate
+       rows leaves the dashboard pinned to an older non-empty cycle forever.
+       Control is the authoritative completion record; candidate timestamps
+       are only a compatibility fallback for pre-summary deployments. */
+    const completedCycleId = ctrl.lastCycleSummary && ctrl.lastCycleSummary.cycleId;
+    const cycleId = completedCycleId || latestCycleId(candidates);
     const current = candidates.filter((c) => c.cycleId === cycleId);
 
     const orders = [];
@@ -285,6 +291,18 @@ const ACTIONS = {
     const provider = M.activeProvider();
     const frozenUniverse = universeSnap.exists ? universeSnap.data() : uMod;
     const expectedCandidates = (frozenUniverse.tradeTier || []).length;
+    const latestSummary = ctrl.lastCycleSummary || {};
+    const summaryMatchesCycle = !!cycleId && latestSummary.cycleId === cycleId;
+    const rosterChecked = summaryMatchesCycle
+      ? Math.max(0, Number(latestSummary.rosterSymbols ?? latestSummary.symbols) || 0)
+      : current.length;
+    const rankedInCycle = summaryMatchesCycle
+      ? Math.max(0, Number(latestSummary.ranked) || 0)
+      : current.length;
+    const scanComplete = summaryMatchesCycle && expectedCandidates > 0
+      && rosterChecked >= expectedCandidates;
+    const decisionSetComplete = summaryMatchesCycle
+      ? current.length === rankedInCycle : current.length > 0;
     const paperPreview = ST.paperLearningConfig(strategy.parameters || ST.parameters, ctrl);
     const nowMs = Date.now();
     const jobById = Object.fromEntries(jobs.map((j) => [j.jobId, j]));
@@ -343,10 +361,15 @@ const ACTIONS = {
       active: activeWork[0] || null,
       activeAll: activeWork,
       jobs,
-      scan: { cycleId, completed: current.length, total: expectedCandidates,
-        remaining: Math.max(0, expectedCandidates - current.length),
-        pct: expectedCandidates ? Math.min(100, 100 * current.length / expectedCandidates) : 0,
-        complete: expectedCandidates > 0 && current.length === expectedCandidates },
+      scan: { cycleId, completed: Math.min(rosterChecked, expectedCandidates),
+        checked: rosterChecked, total: expectedCandidates,
+        remaining: Math.max(0, expectedCandidates - rosterChecked),
+        pct: expectedCandidates ? Math.min(100, 100 * rosterChecked / expectedCandidates) : 0,
+        complete: scanComplete,
+        ranked: rankedInCycle, recorded: current.length,
+        excludedFromRanking: Math.max(0, expectedCandidates - rankedInCycle),
+        decisionSetComplete,
+        rankingDiagnostics: latestSummary.rankingDiagnostics || null },
       research: { focusCount: (ctrl.intelligenceFocus || []).length,
         selected: lastIntelligence.selected || [],
         swept: Number(lastIntelligence.swept) || 0,
@@ -436,7 +459,8 @@ const ACTIONS = {
       cycleId,
       candidateTotal: current.length,
       candidateExpected: expectedCandidates,
-      candidateSetComplete: expectedCandidates > 0 && current.length === expectedCandidates,
+      candidateRankedExpected: rankedInCycle,
+      candidateSetComplete: decisionSetComplete,
       candidates: current.sort((a, b) => (a.rank ?? 1) - (b.rank ?? 1)),
       breaches: current.filter((c) => c.unionEvidenceTrigger || c.breach),
       orders, positions, closedTrades: recentClosedTrades, closedTradeTotal: closedTrades.length,

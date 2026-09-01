@@ -572,21 +572,25 @@ async function runCycle(jobId, { manual = false } = {}) {
   }
 
   /* 2 + 3. residuals and ranks ------------------------------------------ */
-  /* A desk that writes no orders is measuring, not trading, and the admission
-     test should say so. While the stage is research or dry run is on, a valid
-     single-venue series is admitted to the cross-section: the desk ranks, marks
-     and records from day one instead of staring at an empty panel until a data
-     plan is bought. Nothing here relaxes execution — `_investorWorkset` and
-     `_investorPositionGuard` still refuse anything that is not `tradable`, so
-     the strongest outcome this unlocks is a written observation.
+  /* Ranking is measurement, not execution. A valid single-venue series stays
+     in the cross-section in every operating state: switching the paper ledger
+     on must not make the same market observations disappear. The old coupling
+     (`!operating.paperLedger`) did exactly that, so an Alpaca-IEX panel ranked
+     normally in observation mode and fell to zero names as soon as automatic
+     paper mode was enabled.
+
+     Nothing here relaxes execution — `_investorWorkset`, the proposal source
+     check and `_investorPositionGuard` still refuse anything that is not
+     `tradable`. Research-grade input can therefore produce a labelled rating,
+     never an executable paper fill.
 
      The record stays honest by construction rather than by promise: the market
      identity is already part of the shadow experiment hash, so IEX-graded
      observations accumulate under their own experiment and can never be
      blended into consolidated-feed history to satisfy a promotion gate. */
-  const researchObservation = !operating.paperLedger;
+  const allowResearchGrade = true;
   const admits = (q) => !!q && (q.tradable === true
-    || (researchObservation && q.researchEligible === true));
+    || (allowResearchGrade && q.researchEligible === true));
 
   const identityCounts = new Map();
   for (const sym of symbols) {
@@ -621,12 +625,26 @@ async function runCycle(jobId, { manual = false } = {}) {
     cfgSource = "baseline — the stored leader belongs to a different market-data experiment"
       + (paperLearning.active ? " · paper learning mode still applied" : "");
   }
-  const tradable = {};
+  const measurementPanel = {};
+  const rankingInputExclusions = {
+    tooFewBars: 0, unusableQuality: 0, marketIdentityMismatch: 0,
+  };
   for (const sym of tradeSymbols) {
     const p = marketProvenanceBySymbol[sym];
     const key = p ? JSON.stringify([p.provider, p.feed || null, p.adjustment || null]) : null;
-    if ((panel[sym] || []).length >= 24 && admits(quality[sym])
-        && key === dominantIdentityKey) tradable[sym] = panel[sym];
+    if ((panel[sym] || []).length < 24) {
+      rankingInputExclusions.tooFewBars += 1;
+      continue;
+    }
+    if (!admits(quality[sym])) {
+      rankingInputExclusions.unusableQuality += 1;
+      continue;
+    }
+    if (!dominantIdentityKey || key !== dominantIdentityKey) {
+      rankingInputExclusions.marketIdentityMismatch += 1;
+      continue;
+    }
+    measurementPanel[sym] = panel[sym];
   }
   /* Build every preregistered formation horizon from the same point-in-time
      panel. A 6-bar or 24-bar challenger must own its residual fit, z-score and
@@ -636,10 +654,10 @@ async function runCycle(jobId, { manual = false } = {}) {
     ...V.VARIANTS.map((v) => V.configFor(v.id).signalWindow || 12)])].sort((a, b) => a - b);
   const signalContexts = {};
   for (const signalWindow of signalWindows) {
-    const panelResult = S.residualPanel(tradable, {
+    const panelResult = S.residualPanel(measurementPanel, {
       signalWindow, minCoverageRatio: 0.65, minSymbolCoverageRatio: 0.80,
       intervalMs: barTimeframeMs(cfg.barTimeframe || "5Min"), quality,
-      allowResearchGrade: researchObservation,
+      allowResearchGrade,
     });
     const windowZ = {};
     for (const sym of managedSymbolUnion(panelResult.symbols, allPositions)) {
@@ -656,6 +674,23 @@ async function runCycle(jobId, { manual = false } = {}) {
   const zBySymbol = liveSignalContext.zBySymbol;
   const ranks = liveSignalContext.ranks;
   const ranked = liveSignalContext.n;
+  const rankingDiagnostics = {
+    rosterChecked: tradeSymbols.length,
+    barsReceived: tradeSymbols.filter((sym) => (panel[sym] || []).length > 0).length,
+    researchEligible: tradeSymbols.filter((sym) => quality[sym]
+      && quality[sym].researchEligible === true).length,
+    executionEligible: tradeSymbols.filter((sym) => quality[sym]
+      && quality[sym].tradable === true).length,
+    admittedToPanel: Object.keys(measurementPanel).length,
+    retainedAfterSynchronousCoverage: (rp.symbols || []).length,
+    ranked,
+    excludedBeforePanel: rankingInputExclusions,
+    excludedForSynchronousCoverage: Math.max(0,
+      Object.keys(measurementPanel).length - (rp.symbols || []).length),
+    excludedForSignalHistory: Math.max(0, (rp.symbols || []).length - ranked),
+    panelNote: rp.note || null,
+    dominantMarketIdentity: marketIdentity,
+  };
   const crowd = S.sectorCrowding(ranks, S.sectorOf, cfg.entryRank ?? S.ENTRY_RANK);
   await reportRunProgress(runRef, { phase: "evaluate_companies",
     label: "Evaluating companies and existing holdings", pct: 46,
@@ -2135,6 +2170,7 @@ async function runCycle(jobId, { manual = false } = {}) {
       maxWindowSpanMultiple: rp.maxWindowSpanMultiple != null
         ? rp.maxWindowSpanMultiple : null,
     },
+    rankingDiagnostics,
     ranked, breaches: candidates.length,
     proposals: decisions.length, exitSignals: exits.length,
     modelCalls,
