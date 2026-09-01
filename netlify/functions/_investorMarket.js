@@ -82,9 +82,10 @@ const PROVIDERS = {
  * against its 4KB environment budget. They live in
  * InvestorAI_Control/marketConfig instead.
  *
- * Resolution order is Firestore -> environment -> "manual"/"iex". The
- * environment path is kept so tests, local runs and an unreachable Firestore
- * all behave exactly as before. An unrecognised provider or feed resolves to
+ * Resolution order is Firestore -> environment -> a complete Alpaca
+ * credential pair on delayed_sip -> "manual"/"iex". The environment path is
+ * kept so tests, local runs and an unreachable Firestore remain deterministic.
+ * An unrecognised provider or feed resolves to
  * the same place an unset one does: manual, grade C, not tradable. There is
  * no value of this document that can turn an untrusted feed into a tradable
  * one — gradeSeries still decides that.
@@ -94,7 +95,7 @@ const PROVIDERS = {
  * entry; the TTL bounds how long a warm container can hold a stale choice. */
 const MARKET_SETTINGS_DOC = "marketConfig";
 const MARKET_SETTINGS_TTL_MS = 60000;
-const FEEDS = new Set(["iex", "sip", "otc"]);
+const FEEDS = new Set(["iex", "delayed_sip", "sip", "otc"]);
 let _marketSettings = null;
 let _marketSettingsAtMs = 0;
 
@@ -117,17 +118,26 @@ function normalizeMarketChoice(rawProvider, rawFeed) {
 }
 
 function envMarketSettings() {
-  const choice = normalizeMarketChoice(process.env.INVESTOR_MARKET_PROVIDER,
-                                      process.env.ALPACA_FEED);
+  const alpacaKeyId = String(process.env.ALPACA_API_KEY_ID || "");
+  const alpacaSecretKey = String(process.env.ALPACA_API_SECRET_KEY || "");
+  const completeAlpacaPair = !!(alpacaKeyId && alpacaSecretKey);
+  /* A complete pair is an unambiguous, paper-only capability. If no explicit
+     provider choice exists, use Alpaca's Basic-plan-safe delayed SIP lane
+     instead of silently parking those credentials behind the manual provider. */
+  const choice = normalizeMarketChoice(
+    process.env.INVESTOR_MARKET_PROVIDER || (completeAlpacaPair ? "alpaca" : undefined),
+    process.env.ALPACA_FEED || (completeAlpacaPair ? "delayed_sip" : undefined));
   const sipRealtime = /^(1|true|yes)$/i.test(String(process.env.ALPACA_SIP_REALTIME || ""));
   return {
     provider: choice.provider,
-    feed: choice.feed,
+    feed: choice.provider === "alpaca" && choice.feed === "sip" && !sipRealtime
+      ? "delayed_sip" : choice.feed,
     alpacaSipRealtime: sipRealtime,
-    alpacaKeyId: String(process.env.ALPACA_API_KEY_ID || ""),
-    alpacaSecretKey: String(process.env.ALPACA_API_SECRET_KEY || ""),
-    source: process.env.INVESTOR_MARKET_PROVIDER ? "environment" : "default",
-    credentialSource: process.env.ALPACA_API_KEY_ID ? "environment" : "unset",
+    alpacaKeyId,
+    alpacaSecretKey,
+    source: process.env.INVESTOR_MARKET_PROVIDER ? "environment"
+      : (completeAlpacaPair ? "credential_default" : "default"),
+    credentialSource: completeAlpacaPair ? "environment" : "unset",
   };
 }
 
@@ -195,6 +205,11 @@ async function loadMarketSettings({ force = false } = {}) {
         ...(rawFeed && !feed
           ? { feedNote: `unrecognised feed "${rawFeed.slice(0, 24)}" ignored` } : {}),
       };
+      if (_marketSettings.provider === "alpaca" && _marketSettings.feed === "sip"
+          && _marketSettings.alpacaSipRealtime !== true) {
+        _marketSettings.feed = "delayed_sip";
+        _marketSettings.feedNote = "Basic-plan SIP selection migrated to explicit delayed_sip";
+      }
     }
   } catch (e) {
     /* Fail to the environment, then to manual. A market-config read failure
@@ -212,6 +227,12 @@ function providerConfig(provider, feed = null, opts = {}) {
   const f = String(feed || marketSettings().feed || "iex").toLowerCase();
   const sipRealtime = Object.prototype.hasOwnProperty.call(opts, "sipRealtime")
     ? opts.sipRealtime === true : marketSettings().alpacaSipRealtime === true;
+  /* Alpaca exposes delayed_sip as its explicit 15-minute-delayed,
+     consolidated tape. Treating Basic-plan SIP as "sip with an end-time
+     haircut" was brittle: entitlement errors degraded the entire scan to
+     manual data, so hundreds of companies disappeared before ranking. */
+  if (f === "delayed_sip") return { ...base, feed: f, delayMinutes: 15, maxGrade: "B",
+    sipRealtime: false, consolidated: true, liquidityEligible: true };
   if (f === "sip") return { ...base, feed: f, delayMinutes: sipRealtime ? 0 : 15, maxGrade: "B",
     sipRealtime,
     consolidated: true, liquidityEligible: true };
@@ -224,7 +245,7 @@ function providerConfig(provider, feed = null, opts = {}) {
    treating it as the whole tape corrupts liquidity and cost estimates. The
    environment override is deliberately narrow so an operator cannot turn a
    single-venue feed into an asserted consolidated one. */
-const FEED_VOLUME_SHARE = Object.freeze({ sip: 1, iex: 0.025, otc: 1, unknown: 1 });
+const FEED_VOLUME_SHARE = Object.freeze({ delayed_sip: 1, sip: 1, iex: 0.025, otc: 1, unknown: 1 });
 function feedVolumeShare(provider, feed = null) {
   const cfg = providerConfig(provider, feed);
   if (cfg.consolidated) return 1;
@@ -565,6 +586,9 @@ function alpacaWindow(timeframe, limit, feed, opts = {}) {
      entitlement. Reversing these conditions made the real-time feed stale
      and sent Basic SIP requests into data the account could not retrieve. */
   const sipRealtime = opts.sipRealtime === true;
+  /* delayed_sip is a distinct server-side feed: requesting it at "now" still
+     returns only data whose 15-minute embargo has elapsed. The legacy sip lane
+     keeps the explicit end haircut for Basic accounts. */
   const endMs = f === "sip" && !sipRealtime ? nowMs - ALPACA_BASIC_EMBARGO_MS : nowMs;
   let spanMs;
   if (/day/i.test(timeframe)) {
