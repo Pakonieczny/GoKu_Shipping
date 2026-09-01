@@ -520,6 +520,8 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
               <option value="all">All companies</option>
               <option value="held">Held right now</option>
               <option value="ranked">Ranked this cycle</option>
+              <option value="priced">Priced today</option>
+              <option value="excluded">Not ranked this cycle</option>
               <option value="research">Research only</option>
             </select>
             <span class="kv" id="coCount">—</span>
@@ -958,6 +960,36 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           </div>
         </div>
 
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h"><h3>Market data</h3><span class="sub">current-session coverage</span></div>
+          <div class="note">For the free Alpaca Basic lane, choose <b>15-minute delayed SIP</b>.
+            It is the consolidated feed used for current-day candidate prices and paper fills.
+            Credentials are sent once to the protected backend and are never read back into this page.</div>
+          <div class="ctrlrow">
+            <span class="lab">Provider / feed</span>
+            <select class="inp" id="mktProvider" style="max-width:150px">
+              <option value="alpaca">Alpaca</option>
+              <option value="manual">Manual import</option>
+              <option value="massive">Massive</option>
+            </select>
+            <select class="inp" id="mktFeed" style="max-width:210px">
+              <option value="delayed_sip">15-minute delayed SIP</option>
+              <option value="iex">IEX real-time (research only)</option>
+              <option value="sip">SIP entitlement</option>
+              <option value="otc">OTC</option>
+            </select>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Alpaca credentials</span>
+            <input class="inp mono" id="mktKeyId" type="password" autocomplete="off"
+              placeholder="API key ID" style="max-width:250px">
+            <input class="inp mono" id="mktSecret" type="password" autocomplete="off"
+              placeholder="API secret" style="max-width:250px">
+            <button class="btn sm" id="btnMarket">Save &amp; rebuild coverage</button>
+          </div>
+          <div class="hint" id="mktCredentialState">Credential status loads from the backend.</div>
+        </div>
+
         <div class="card pad">
           <div class="card__h"><h3>Environment</h3></div>
           <div id="healthBox"></div>
@@ -992,6 +1024,13 @@ function ageText(v){ var ms=Date.now()-Date.parse(v||""); if(!Number.isFinite(ms
   if(ms<60000) return Math.max(0,Math.round(ms/1000))+"s old";
   if(ms<3600000) return Math.round(ms/60000)+"m old";
   return Math.round(ms/3600000)+"h old"; }
+function quoteLabel(x){
+  if(!x||x.lastPrice==null||!x.lastBarAt) return "no current price";
+  var delay=x.priceDelayMinutes!=null?x.priceDelayMinutes:x.feedDelayMinutes;
+  var day=x.currentTradingDay?"today":(x.quoteSessionDate||"prior session");
+  var clock=new Date(x.lastBarAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+  return (delay!=null?delay+"m delayed · ":"")+day+" "+clock;
+}
 function durationText(seconds){
   var s=Math.max(0,Math.round(Number(seconds)||0));
   if(s<60) return s+" sec";
@@ -1188,9 +1227,13 @@ function render(){
 
   $("#cycleLab").textContent = DASH.cycleId||"—";
   var scanState=(DASH.operations||{}).scan||{};
+  var pricedNow=((DASH.quoteCoverage||[]).filter(function(row){
+    return row.currentTradingDay&&row.lastPrice!=null;
+  })).length;
   $("#candCoverage").textContent = scanState.complete
     ? ("Roster checked: "+(scanState.checked!=null?scanState.checked:scanState.completed)+" of "+scanState.total
-      +". Decision cards recorded for "+DASH.candidateTotal+" of "+(scanState.ranked||0)+" rankable names.")
+      +". "+pricedNow+" have a current-trading-day delayed price; decision cards recorded for "
+      +DASH.candidateTotal+" of "+(scanState.ranked||0)+" rankable names.")
     : ("CURRENT CHECK INCOMPLETE: "+(scanState.completed||0)+" of "+(scanState.total||DASH.candidateExpected||"?")
       +" frozen eligible names processed; absence is not evidence.");
   $("#modeState").textContent = c.operatingState||c.mode||"research";
@@ -1687,6 +1730,8 @@ function renderCandidates(cands){
       '<div class="draft__top">'+
         '<span class="sym">'+esc(c.symbol)+'</span>'+
         '<span class="co">'+esc(c.company||"")+'</span>'+
+        '<span class="badge2 '+(c.currentTradingDay?"b-on":"b-warn")+'" title="'+esc(quoteLabel(c))+'">'+
+          usd(c.lastPrice)+' · '+esc(c.currentTradingDay?"today":"prior session")+'</span>'+
         causeTag(c.cause)+
         '<span class="badge2 '+((c.z||0)<-2?"b-bad":"b-info")+'">z '+num(c.z,2)+'</span>'+
         '<span class="badge2 b-info">rank '+num(c.rank,3)+'</span>'+
@@ -2143,7 +2188,18 @@ function loadSources(){
 
 function loadHealth(){
   api("health").then(function(r){
-    var e=r.env||{}, p=r.provider||{};
+    var e=r.env||{}, p=r.provider||{}, cfg=r.marketConfig||{}, sec=r.secrets||{};
+    if($("#mktProvider")&&!$("#mktProvider").matches(":focus")){
+      $("#mktProvider").value=cfg.provider||p.id||"alpaca";
+    }
+    if($("#mktFeed")&&!$("#mktFeed").matches(":focus")){
+      $("#mktFeed").value=cfg.feed||p.feed||"delayed_sip";
+    }
+    if($("#mktCredentialState")){
+      $("#mktCredentialState").textContent=sec.alpacaCredentials
+        ? "Alpaca credential pair is configured; leave both fields blank to keep it."
+        : "Alpaca credential pair is missing. Both fields are required before delayed prices can run.";
+    }
     $("#healthBox").innerHTML =
       Object.keys(e).map(function(k){
         var v=e[k], good = v===true || (typeof v==="string" && v.indexOf("unset")<0);
@@ -2151,14 +2207,30 @@ function loadHealth(){
           '<span class="badge2 '+(good?"b-on":"b-bad")+'">'+esc(typeof v==="boolean"?(v?"configured":"MISSING"):v)+'</span></div>';
       }).join("")+
       '<div class="ctrlrow" style="padding:7px 0"><span class="lab" style="min-width:190px">Market provider</span>'+
-        '<span class="badge2 b-info">'+esc(p.id)+'</span>'+
+        '<span class="badge2 '+(p.exactFifteenMinuteDelay?"b-on":"b-info")+'">'+esc(p.id)+'</span>'+
         '<span class="kv">'+esc(p.feed||"feed unknown")+' · '+p.delayMinutes+'m delay · max grade '+esc(p.maxGrade)+' · '+(p.consolidated?'consolidated':'non-consolidated')+'</span></div>'+
+      (p.exactFifteenMinuteDelay?'<div class="note"><b>Current-day pricing ready.</b> Alpaca delayed SIP is the exact 15-minute consolidated lane.</div>':'')+
       (p.degradedFrom? '<div class="note warn">Degraded from <b>'+esc(p.degradedFrom)+'</b>: '+esc(p.reason)+'</div>':'')+
       '<div class="note">OpenAI daily ceiling $'+num(r.openaiCeilingUsd,2)+'. Model calls are reserved for ambiguous evidence after deterministic coverage and change-detection gates; malformed paid responses are still charged to the budget.</div>';
   }).catch(function(e){toast(e.message);});
 }
 
 /* ── control actions ── */
+$("#btnMarket").addEventListener("click",function(){
+  var provider=$("#mktProvider").value, feed=$("#mktFeed").value;
+  var keyId=$("#mktKeyId").value.trim(), secret=$("#mktSecret").value.trim();
+  if((keyId&&!secret)||(!keyId&&secret)){ toast("Provide both Alpaca credential fields."); return; }
+  runButton(this,"setMarketConfig",{
+    provider:provider,feed:feed,alpacaKeyId:keyId,alpacaSecretKey:secret
+  },function(r){
+    $("#mktKeyId").value=""; $("#mktSecret").value="";
+    toast(r.note||"Market data saved");
+    loadHealth(); refresh(false);
+    api("runCycleNow",{operator:"market-config"}).then(function(){
+      toast("Coverage rebuild started");
+    }).catch(function(e){ toast("Saved, but cycle start failed: "+e.message); });
+  });
+});
 $("#btnIntelWatch").addEventListener("click",function(){
   var symbols=$("#intelWatch").value.split(/[\s,]+/).map(function(x){return x.trim().toUpperCase();}).filter(Boolean);
   var profiles={};
@@ -2425,9 +2497,15 @@ function renderOperationsConsole(){
     scan.complete?("Latest cycle checked "+(scan.checked!=null?scan.checked:scan.total)+" companies, but ranked 0. "
       +(exclusionText||"The backend did not receive a sufficiently broad, synchronized and provenance-valid panel.")):
     "No company decision set has completed yet; the console will replace this sentence with measured counts.";
-  var market=DASH.market||{};
-  if(market.consolidated!==true||market.liquidityEligible===false) fact += " The current "
-    +(market.provider||"market")+(market.feed?" "+market.feed:"")+" feed is research-only: it can support ratings, but the execution-source gate will not create paper fills from it.";
+  var market=DASH.market||{},diag=scan.rankingDiagnostics||{};
+  if(diag.currentSessionPrices!=null) fact += " Current-session delayed prices were recorded for "
+    +diag.currentSessionPrices+" of "+(scan.total||0)+" companies.";
+  if(market.exactFifteenMinuteDelay===true) {
+    fact += " The active Alpaca delayed SIP lane is consolidated and exactly 15 minutes delayed.";
+  } else if(market.consolidated!==true||market.liquidityEligible===false) {
+    fact += " The current "+(market.provider||"market")+(market.feed?" "+market.feed:"")
+      +" feed is research-only: it can support ratings, but the execution-source gate will not create paper fills from it. Configure Alpaca delayed_sip in Settings.";
+  }
 
   host.innerHTML='<div class="opshead"><div class="opshead__copy"><h2>Live desk console</h2>'
     +'<p>Backend truth only: scheduled jobs, company counts, order/fill work, research and learning progress.</p></div>'
@@ -2611,9 +2689,10 @@ function renderTodayWatch(){
   if(!c.length){ $("#todayWatch").innerHTML='<div class="empty">Nothing ranked yet this cycle.</div>'; return; }
   $("#todayWatch").innerHTML = c.map(function(x){
     return coBtn(x.symbol, secName(x.sector),
-      x.pass ? 'Passed every check' : ('Stopped — '+esc(plainGate(x.firstBlock))),
-      (x.cumResidualBps!=null?('<span style="color:var(--clay)">'+num(x.cumResidualBps,0)+' bp</span>'):'—'),
-      'below where it should be');
+      (x.pass ? 'Passed every check' : ('Stopped — '+esc(plainGate(x.firstBlock))))
+        +(x.cumResidualBps!=null?(' · <span style="color:var(--clay)">'+num(x.cumResidualBps,0)+' bp</span>'):''),
+      x.lastPrice!=null?usd(x.lastPrice):'—',
+      esc(quoteLabel(x)));
   }).join("");
   wireCoRows("#todayWatch");
 }
@@ -2667,11 +2746,15 @@ function renderCompanies(){
   var f=$("#coFilter").value;
   var held={}; (DASH.positions||[]).forEach(function(p){ if(p.open) held[p.symbol]=p; });
   var ranked={}; (DASH.candidates||[]).forEach(function(c){ ranked[c.symbol]=c; });
+  var coverage={}; (DASH.quoteCoverage||[]).forEach(function(c){ coverage[c.symbol]=c; });
   var res={}; (UNIVERSE.researchTier||[]).forEach(function(r){ res[r.symbol]=1; });
 
   var rows=(UNIVERSE.tradeTier||[]).filter(function(r){
     if(f==="held" && !held[r.symbol]) return false;
     if(f==="ranked" && !ranked[r.symbol]) return false;
+    if(f==="priced" && !(coverage[r.symbol]&&coverage[r.symbol].currentTradingDay
+        && coverage[r.symbol].lastPrice!=null)) return false;
+    if(f==="excluded" && (!coverage[r.symbol]||coverage[r.symbol].ranked)) return false;
     if(f==="research" && !res[r.symbol]) return false;
     if(q && r.symbol.indexOf(q)!==0 && String(r.sector||"").toUpperCase().indexOf(q)<0) return false;
     return true;
@@ -2684,18 +2767,21 @@ function renderCompanies(){
       return secName(a).localeCompare(secName(b)); }).map(function(sec){
     return '<div class="sectorhead">'+esc(secName(sec))+' · '+bySec[sec].length+'</div>'
       + bySec[sec].map(function(r){
-        var h=held[r.symbol], k=ranked[r.symbol];
+        var h=held[r.symbol], k=ranked[r.symbol], qc=coverage[r.symbol]||null;
         var pl = h && h.entryPriceUsd>0 && h.lastMarkUsd!=null
           ? ((h.lastMarkUsd-h.entryPriceUsd)/h.entryPriceUsd)*100 : null;
         var mid = h ? '<b>Owned</b> — bought at '+money(h.entryPriceUsd,2)
           : k ? (k.pass?'Passed every check today':'Stopped — '+esc(plainGate(k.firstBlock)))
-          : '<span style="color:var(--ink-45)">Watched. Nothing to report today.</span>';
+          : qc ? '<span style="color:var(--ink-45)">Not ranked — '+esc(qc.exclusionReason||qc.status||"data unavailable")+'</span>'
+          : '<span style="color:var(--ink-45)">Awaiting this cycle.</span>';
         var right = pl!=null
           ? '<span style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl>=0?'+':'')+num(pl,2)+'%</span>'
           : (h && h.lastMarkUsd!=null ? money(h.lastMarkUsd,2)
-            : (k && k.lastPrice!=null ? money(k.lastPrice,2) : '—'));
+            : (k && k.lastPrice!=null ? money(k.lastPrice,2)
+              : (qc && qc.lastPrice!=null ? money(qc.lastPrice,2) : '—')));
         var sub = h && h.lastMarkUsd!=null ? ('now '+money(h.lastMarkUsd,2))
-          : (k&&k.z!=null?('z '+num(k.z,2)):'');
+          : (k ? quoteLabel(k)+(k.z!=null?(' · z '+num(k.z,2)):'')
+            : (qc?quoteLabel(qc):''));
         /* The research-only note is a chip, not a name — as prose it wrapped
            down the narrow first column and read like part of the ticker. */
         return coBtn(r.symbol, res[r.symbol]?'<span class="badge2 b-info" style="font-size:9.5px">research</span>':"",

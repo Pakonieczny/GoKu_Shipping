@@ -486,17 +486,36 @@ async function runCycle(jobId, { manual = false } = {}) {
     total: symbols.length,
     detail: "The market response arrived; validating freshness, feed identity and provenance hashes." });
 
-  // Fall back to stored bars for any symbol the provider did not return.
+  /* Fill short responses from storage without throwing away the newest
+     current-session quote. The old replacement branch did exactly that during
+     the first ~100 minutes of the session: a response with fewer than 20 fresh
+     bars was replaced wholesale by yesterday's stored panel. Candidate cards
+     therefore showed yesterday even though the provider had supplied today. */
   for (const sym of symbols) {
-    if (!panel[sym] || panel[sym].length < 20) {
-      try {
-        const stored = await M.readRecentBarsWithMeta(sym, 2);
-        if (stored.bars.length && stored.provenance) {
-          panel[sym] = stored.bars;
-          marketProvenanceBySymbol[sym] = stored.provenance;
-        }
-      } catch {}
-    }
+    const fetchedBars = panel[sym] || [];
+    if (fetchedBars.length >= 20) continue;
+    try {
+      const stored = await M.readRecentBarsWithMeta(sym, 2);
+      if (!stored.bars.length || !stored.provenance) continue;
+      const fresh = marketProvenanceBySymbol[sym] || null;
+      if (!fetchedBars.length) {
+        panel[sym] = stored.bars;
+        marketProvenanceBySymbol[sym] = stored.provenance;
+        continue;
+      }
+      const sameIdentity = fresh
+        && fresh.provider === stored.provenance.provider
+        && (fresh.feed || null) === (stored.provenance.feed || null)
+        && (fresh.adjustment || null) === (stored.provenance.adjustment || null);
+      if (!sameIdentity) continue;
+      panel[sym] = M.normalizeBars([...stored.bars, ...fetchedBars]);
+      const hashes = [stored.provenance.sourceSha256, fresh.sourceSha256]
+        .filter((h) => /^[a-f0-9]{64}$/.test(String(h))).sort();
+      marketProvenanceBySymbol[sym] = {
+        ...fresh,
+        sourceSha256: hashes.length ? sha256Json(hashes) : null,
+      };
+    } catch {}
   }
 
   // Persist bars (one doc per symbol per day, bar array inside).
@@ -674,13 +693,58 @@ async function runCycle(jobId, { manual = false } = {}) {
   const zBySymbol = liveSignalContext.zBySymbol;
   const ranks = liveSignalContext.ranks;
   const ranked = liveSignalContext.n;
+  /* Keep one compact market-coverage row for every frozen trade-tier name.
+     Ranked candidate documents remain reserved for actual scores, while this
+     roster makes an exclusion visible instead of making the company vanish. */
+  const residualSymbolSet = new Set(rp.symbols || []);
+  const rosterBySymbol = Object.fromEntries(tradeTier.map((row) => [row.symbol, row]));
+  const quoteCoverage = tradeSymbols.map((sym) => {
+    const bars = panel[sym] || [], last = bars.at(-1) || null;
+    const q = quality[sym] || {};
+    const p = marketProvenanceBySymbol[sym] || {};
+    const identityKey = p.provider
+      ? JSON.stringify([p.provider, p.feed || null, p.adjustment || null]) : null;
+    let status = "ranked", exclusionReason = null;
+    if ((bars || []).length < 24) {
+      status = "too_few_bars";
+      exclusionReason = bars.length ? `only ${bars.length} usable bars; 24 required` : "no bars returned";
+    } else if (!admits(q)) {
+      status = "unusable_quality";
+      exclusionReason = (q.reasons || []).join(", ") || "price freshness or provenance failed";
+    } else if (!dominantIdentityKey || identityKey !== dominantIdentityKey) {
+      status = "market_identity_mismatch";
+      exclusionReason = "provider/feed/adjustment differs from the dominant cross-section";
+    } else if (!residualSymbolSet.has(sym)) {
+      status = "synchronous_coverage";
+      exclusionReason = "not enough timestamps overlap the rest of the roster";
+    } else if (!Object.prototype.hasOwnProperty.call(ranks, sym)) {
+      status = "signal_history";
+      exclusionReason = "not enough residual history to calculate a z-score";
+    }
+    const quoteSessionDate = last ? M.nyParts(new Date(last.t)).date : null;
+    const row = rosterBySymbol[sym] || {};
+    return {
+      symbol: sym, company: row.company || sym, sector: row.sector || "other",
+      status, exclusionReason, ranked: status === "ranked",
+      lastPrice: last && Number.isFinite(Number(last.c)) ? Number(last.c) : null,
+      lastBarAt: last ? last.t : null, quoteSessionDate,
+      currentTradingDay: quoteSessionDate === session.date,
+      barCount: bars.length, grade: q.grade || "F",
+      qualityReasons: q.reasons || [],
+      researchEligible: q.researchEligible === true,
+      executionEligible: q.tradable === true,
+      provider: p.provider || q.provider || fetchMeta.provider || provider.id,
+      feed: p.feed || q.feed || fetchMeta.feed || null,
+      feedDelayMinutes: q.feedDelayMinutes ?? provider.delayMinutes ?? null,
+    };
+  });
   const rankingDiagnostics = {
     rosterChecked: tradeSymbols.length,
-    barsReceived: tradeSymbols.filter((sym) => (panel[sym] || []).length > 0).length,
-    researchEligible: tradeSymbols.filter((sym) => quality[sym]
-      && quality[sym].researchEligible === true).length,
-    executionEligible: tradeSymbols.filter((sym) => quality[sym]
-      && quality[sym].tradable === true).length,
+    barsReceived: quoteCoverage.filter((row) => row.barCount > 0).length,
+    currentSessionPrices: quoteCoverage.filter((row) => row.currentTradingDay
+      && row.lastPrice != null).length,
+    researchEligible: quoteCoverage.filter((row) => row.researchEligible).length,
+    executionEligible: quoteCoverage.filter((row) => row.executionEligible).length,
     admittedToPanel: Object.keys(measurementPanel).length,
     retainedAfterSynchronousCoverage: (rp.symbols || []).length,
     ranked,
@@ -1225,6 +1289,11 @@ async function runCycle(jobId, { manual = false } = {}) {
       cycleId, symbol: sym, company: meta.company || sym,
       sector: S.sectorOf(sym), tier: meta.tier || "trade",
       lastPrice: last.c, lastBarAt: last.t,
+      quoteSessionDate: M.nyParts(new Date(last.t)).date,
+      currentTradingDay: M.nyParts(new Date(last.t)).date === session.date,
+      priceDelayMinutes: quality[sym] && quality[sym].feedDelayMinutes,
+      marketProvider: (marketProvenanceBySymbol[sym] || {}).provider || null,
+      marketFeed: (marketProvenanceBySymbol[sym] || {}).feed || null,
       rank, z: evalRes.z, cumResidualBps: evalRes.cumResidualBps,
       betas: rp.betas[sym] || null,
       quality: quality[sym],
@@ -2171,6 +2240,7 @@ async function runCycle(jobId, { manual = false } = {}) {
         ? rp.maxWindowSpanMultiple : null,
     },
     rankingDiagnostics,
+    quoteCoverage,
     ranked, breaches: candidates.length,
     proposals: decisions.length, exitSignals: exits.length,
     modelCalls,

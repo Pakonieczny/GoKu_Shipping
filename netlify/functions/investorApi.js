@@ -438,6 +438,8 @@ const ACTIONS = {
         provider: provider.id, feed: provider.feed || null,
         consolidated: !!provider.consolidated,
         liquidityEligible: provider.liquidityEligible !== false,
+        exactFifteenMinuteDelay: provider.id === "alpaca"
+          && provider.feed === "delayed_sip" && provider.delayMinutes === 15,
         feedDelayMinutes: provider.delayMinutes, maxGrade: provider.maxGrade,
       },
       regime: {
@@ -462,6 +464,8 @@ const ACTIONS = {
       candidateRankedExpected: rankedInCycle,
       candidateSetComplete: decisionSetComplete,
       candidates: current.sort((a, b) => (a.rank ?? 1) - (b.rank ?? 1)),
+      quoteCoverage: summaryMatchesCycle && Array.isArray(latestSummary.quoteCoverage)
+        ? latestSummary.quoteCoverage : [],
       breaches: current.filter((c) => c.unionEvidenceTrigger || c.breach),
       orders, positions, closedTrades: recentClosedTrades, closedTradeTotal: closedTrades.length,
       balances, cost,
@@ -1592,6 +1596,74 @@ const ACTIONS = {
         : (preview.refused || "Paper learning mode is off — the published calibration is in force.") };
   },
 
+  /* Configure the market lane without exposing credentials back to the
+     browser. delayed_sip is Alpaca's explicit consolidated 15-minute feed and
+     is the recommended paper-execution source for Basic accounts. */
+  async setMarketConfig({ operator, provider, feed, alpacaKeyId, alpacaSecretKey }) {
+    /* Resolve a previously stored credential pair before deciding whether blank
+       form fields mean "keep it" or "missing". */
+    await M.loadMarketSettings({ force: true });
+    const requestedProvider = String(provider || "").trim().toLowerCase();
+    const requestedFeed = String(feed || (requestedProvider === "alpaca"
+      ? "delayed_sip" : "iex")).trim().toLowerCase();
+    const choice = M.normalizeMarketChoice(requestedProvider, requestedFeed);
+    if (!choice.providerRecognised) {
+      return { ok: false, error: "provider must be alpaca, massive, or manual" };
+    }
+    if (!choice.feedRecognised) {
+      return { ok: false, error: "feed must be delayed_sip, iex, sip, or otc" };
+    }
+    if (requestedProvider === "alpaca"
+        && !["delayed_sip", "iex", "sip"].includes(requestedFeed)) {
+      return { ok: false, error: "the selected Alpaca feed is not supported" };
+    }
+
+    const keyId = typeof alpacaKeyId === "string" ? alpacaKeyId.trim() : "";
+    const secretKey = typeof alpacaSecretKey === "string" ? alpacaSecretKey.trim() : "";
+    if (!!keyId !== !!secretKey) {
+      return { ok: false, error: "provide both Alpaca API key ID and secret, or leave both blank" };
+    }
+    const updatingCredentials = !!(keyId && secretKey);
+    if (requestedProvider === "alpaca" && !updatingCredentials
+        && !M.providerCredentialed("alpaca")) {
+      return { ok: false,
+        error: "Alpaca credentials are required for current-session delayed SIP prices" };
+    }
+
+    const patch = {
+      provider: requestedProvider,
+      feed: requestedFeed,
+      /* Realtime SIP must be enabled only by an explicit entitlement outside
+         this form; the Basic-plan-safe default remains false. */
+      alpacaSipRealtime: false,
+      ...(updatingCredentials
+        ? { alpacaKeyId: keyId, alpacaSecretKey: secretKey } : {}),
+      updatedAt: A.FV.serverTimestamp(),
+      updatedBy: operator || "operator",
+    };
+    await A.col(A.COL.control).doc(M.MARKET_SETTINGS_DOC).set(patch, { merge: true });
+    const settings = await M.loadMarketSettings({ force: true });
+    const active = M.activeProvider();
+    await A.col(A.COL.audit).add({
+      action: "set_market_config", operator: operator || "operator",
+      provider: requestedProvider, feed: requestedFeed,
+      credentialPairUpdated: updatingCredentials,
+      at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }),
+    });
+    return {
+      ok: true,
+      configured: { provider: settings.provider, feed: settings.feed },
+      active: { provider: active.id, feed: active.feed || null,
+        delayMinutes: active.delayMinutes, consolidated: !!active.consolidated,
+        liquidityEligible: active.liquidityEligible !== false,
+        degradedFrom: active.degradedFrom || null, reason: active.reason || null },
+      credentialsPresent: M.providerCredentialed("alpaca"),
+      note: active.id === "alpaca" && active.feed === "delayed_sip"
+        ? "Exact 15-minute delayed consolidated prices are active. Run a cycle to rebuild coverage."
+        : "Market configuration saved.",
+    };
+  },
+
   /* Freeze a universe version so additions can never be backdated. */
   async freezeUniverse({ operator }) {
     const { frozen, report } = await B.resolveCiksAndFreeze();
@@ -1620,6 +1692,8 @@ const ACTIONS = {
       ok: true,
       provider: { id: p.id, feed: p.feed || null, consolidated: !!p.consolidated,
                   liquidityEligible: p.liquidityEligible !== false,
+                  exactFifteenMinuteDelay: p.id === "alpaca"
+                    && p.feed === "delayed_sip" && p.delayMinutes === 15,
                   delayMinutes: p.delayMinutes, maxGrade: p.maxGrade,
                   degradedFrom: p.degradedFrom || null, reason: p.reason || null },
       env: {

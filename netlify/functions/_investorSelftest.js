@@ -516,6 +516,22 @@ function runFixtures() {
     return cfg.liquidityEligible !== true && cfg.maxGrade !== "A";
   }));
 
+  cases.push(fixture("alpaca_delayed_sip_is_exactly_15m_and_execution_grade", () => {
+    const now = Date.parse("2026-08-28T15:30:00Z");
+    const choice = M.normalizeMarketChoice("ALPACA", "DELAYED_SIP");
+    const cfg = M.providerConfig("alpaca", "delayed_sip", { sipRealtime: false });
+    const win = M.alpacaWindow("5Min", 120, "delayed_sip",
+      { nowMs: now, sipRealtime: false });
+    const q = M.gradeSeries([{
+      t: "2026-08-28T15:15:00Z", o: 10, h: 10.2, l: 9.9, c: 10.1, v: 1000,
+    }], { provider: "alpaca", feed: "delayed_sip",
+      sourceSha256: "a".repeat(64), nowMs: now });
+    return choice.provider === "alpaca" && choice.feed === "delayed_sip"
+      && cfg.delayMinutes === 15 && cfg.consolidated === true
+      && cfg.liquidityEligible === true && Date.parse(win.end) === now
+      && q.grade === "B" && q.tradable === true && q.researchEligible === true;
+  }));
+
   cases.push(fixture("secret_pair_gate_refuses_every_unusable_shape", () => {
     /* Operator secrets moved from the Lambda environment to
        InvestorAI_Control. usableSecretPair is the gate that decides whether a
@@ -820,7 +836,7 @@ function runFixtures() {
 
   cases.push(fixture("paper_learning_never_overrides_the_authoritative_ledger_state", () => {
     const ST = require("./_investorStrategy");
-    const id = { accountId: "paper-1", strategyVersion: "v7", universeVersion: "v1",
+    const id = { accountId: "paper-1", strategyVersion: "v8", universeVersion: "v1",
       strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64) };
     const commit = process.env.COMMIT_REF || process.env.DEPLOY_ID || "local";
     const ctrl = { enabled: true, dryRun: true, mode: "research",
@@ -967,7 +983,11 @@ function runFixtures() {
       proposedUsd: 100000, book: { count: 0, grossUsd: 0, grossPct: 0,
         rows: [], bySectorPct: {}, byClusterPct: {} },
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
+    const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
+      && policy.version === "exploratory-auto-v2"
+      && learn.minAbsZ === 1.0 && learn.entryRank === 0.3
+      && learn.exitRank === 0.4 && learn.maxHoldDays === 3
       && pc.maxGrossExposurePct === 100 && pc.minCashPct === 0
       && pc.maxOpenPositions === 304
       && policy.autoApproval.unlimitedOrdersPerDay === true
@@ -1051,7 +1071,7 @@ function runFixtures() {
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v10-exploratory-auto", count: cases.length, cases });
+  const fixtureHash = digest({ schema: "runtime-fixtures-v11-market-coverage", count: cases.length, cases });
   return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }
