@@ -89,7 +89,7 @@
 .opsmeta{display:flex;gap:8px 18px;flex-wrap:wrap;margin-top:9px;color:var(--ink-45);font-family:var(--mono);font-size:11px}
 .opsmeta b{color:var(--ink-70);font-weight:600}
 .opscadence{font-size:12px;color:var(--ink-70);line-height:1.5;margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2)}
-.opsstreams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.opsstreams{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:16px}
 .opsstream{border:1px solid var(--line);border-radius:11px;padding:12px 13px;background:var(--card)}
 .opsstream__top{display:flex;gap:8px;align-items:center}
 .opsstream__name{font-size:12.5px;font-weight:650;flex:1}
@@ -324,6 +324,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
 .ctrlrow .hint{font-size:11.5px;color:var(--ink-45);flex-basis:100%}
 .note{background:var(--slate-soft);border:1px solid #cddde2;border-radius:10px;padding:11px 13px;font-size:12.5px;line-height:1.55;color:#2c4a55;margin:12px 0}
 .note.warn{background:var(--gold-soft);border-color:var(--gold-line);color:#6c4f19}
+.note.bad{background:var(--clay-soft);border-color:#e3c1b6;color:#6e2f1f}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--velvet);color:#f0ebe0;padding:11px 18px;border-radius:10px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:400;opacity:0;pointer-events:none;transition:opacity .2s}
 .toast.on{opacity:1}
 .navburger{display:none}
@@ -593,6 +594,8 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <div id="bootBox"></div>
             <div class="card__h" style="margin-top:18px"><h3>What it is running</h3><span class="sub" id="liveCfgAsOf">—</span></div>
             <div id="liveCfgBox"></div>
+            <div class="card__h" style="margin-top:18px"><h3>Exploratory learning</h3><span class="sub" id="exploreAsOf">—</span></div>
+            <div id="exploreBox"></div>
             <div class="card__h" style="margin-top:18px"><h3>Automation stage</h3><span class="sub" id="ladderAsOf">—</span></div>
             <div id="ladderBox"></div>
             <div class="card__h" style="margin-top:18px"><h3>Risk &amp; the book</h3><span class="sub" id="riskAsOf">—</span></div>
@@ -1217,6 +1220,7 @@ function render(){
   renderMemory(sum.history||null, sum.symbols||0);
   renderRisk(sum.risk||null, guardSum.positionCoverage||sum.positionCoverage||null);
   renderLiveConfig(sum.liveConfig||null);
+  renderExploration(sum.exploration||null, sum.entryControl||null);
   renderLadder(sum.ladder||null);
   renderRegime(DASH.regime||{});
   renderRuns(DASH.runs||[]);
@@ -1359,6 +1363,61 @@ function renderLiveConfig(lc){
       '<span class="badge2">sells at rank '+num(lc.exitRank,2)+'</span>'+
       '<span class="badge2">max hold '+num(lc.maxHoldDays,0)+'d</span>'+
     '</div></div>';
+}
+
+/* Why the paper ledger could not be written, in words an operator can act
+   on. The backend reason strings are precise but terse. */
+function entryControlText(reason){
+  var r=String(reason||"");
+  if(/commit mismatch/.test(r)) return "A new build was deployed and the safety attestation still names the previous build. The next bootstrap re-attests automatically when the frozen policy is unchanged; if this stays red for more than two scans, press Start desk once.";
+  if(/fixtures not attested/.test(r)) return "This build's runtime self-checks have not been attested yet. The next scan runs them; if it stays red, a self-check is failing and the build must be fixed.";
+  if(/safety epoch mismatch/.test(r)) return "The frozen policy identity changed ("+r.replace(/^safety epoch mismatch:\s*/,"")+"). Press Start desk to re-activate on the new identity.";
+  if(/observation-only/.test(r)) return "The desk is in watching-only mode. Press Start desk and choose automatic paper trading.";
+  if(/frozen by operator/.test(r)) return "New entries are frozen. Exits still run.";
+  if(/reconciliation/.test(r)) return "The paper ledger did not reconcile. Open Ledger and run a reconcile before any new entry.";
+  if(/entry controls closed/.test(r)) return "The desk is paused.";
+  return r||"unknown reason";
+}
+
+/* EXPLORATORY LEARNING. The fast lane: what the desk did this scan, and the
+   per-policy scoreboard built from closed exploratory paper trades. Nothing
+   here is validation; it steers only exploratory ordering and pacing. */
+function renderExploration(x, entryControl){
+  var box=$("#exploreBox"); if(!box) return;
+  var html="";
+  if(entryControl&&entryControl.pass===false){
+    html+='<div class="note bad" style="margin-bottom:10px"><b>Paper entries are blocked.</b> '+esc(entryControlText(entryControl.reason))+
+      '<div style="margin-top:4px;color:var(--ink-45);font-family:var(--mono);font-size:11px">'+esc(entryControl.reason||"")+'</div></div>';
+  }
+  if(!x){
+    $("#exploreAsOf").textContent="—";
+    box.innerHTML=html+'<div class="empty" style="padding:14px">Exploratory paper mode is not active, or no scan has completed since it started.</div>';
+    return;
+  }
+  var a=x.activity||{}, sb=x.scoreboard||{}, st=x.settings||{}, cc=st.controlCohort||{};
+  $("#exploreAsOf").textContent=(x.policyVersion||"exploratory");
+  html+='<div class="note"><b>Last scan:</b> '+(a.signalQualified||0)+' companies cleared every exploratory gate; '+
+    (a.signalProposed||0)+' signal entries were proposed'+(a.perCycleCap?' (cap '+a.perCycleCap+' per scan'+(a.signalPacedOut?', '+a.signalPacedOut+' paced to later scans':'')+')':'')+
+    '; '+(a.controlProposed||0)+' control entries from '+(a.controlEligible||0)+' hazard-clean names ('+(a.controlOpenAfter||0)+' of '+(cc.maxOpenPositions||0)+' control positions open).'+
+    (a.minimumShareFloorApplied?' '+a.minimumShareFloorApplied+' order(s) took the one-share floor.':'')+
+    '</div>';
+  var pols=sb.policies||{}, ids=Object.keys(pols).sort(function(p,q){return (pols[q].posteriorMeanBps||0)-(pols[p].posteriorMeanBps||0);});
+  var closed=sb.closedExploratoryTrades||0;
+  var coh=sb.cohorts||{}, sig=coh.signal||{}, con=coh.control||{}, svc=sb.signalVsControl||null;
+  html+='<div style="margin-top:9px;font-size:12.5px;color:var(--ink-70)"><b>'+closed+'</b> closed exploratory paper trades scored. '+
+    (closed?('Signal cohort: n='+(sig.n||0)+', mean '+num(sig.meanNetBps,1)+' bp net, hit rate '+num(100*(sig.hitRate||0),0)+'%. '+
+      'Control cohort: n='+(con.n||0)+(con.n?', mean '+num(con.meanNetBps,1)+' bp net':'')+'. '+
+      (svc?('Signal minus control: '+(svc.differenceBps>=0?'+':'')+num(svc.differenceBps,1)+' bp \u00b1 '+num(svc.standardErrorBps,1)+' (t '+num(svc.t,2)+', observational).'):'')):
+      'Until trades close, every policy carries the prior ('+num((sb.prior||{}).meanBps||0,0)+' \u00b1 '+num((sb.prior||{}).sdBps||0,0)+' bp) and selection is deliberately diverse.')+
+    '</div>';
+  if(ids.length){
+    html+='<div class="tbl" style="margin-top:9px"><table><thead><tr><th>Policy</th><th class="num">Closed</th><th class="num">Mean net bp</th><th class="num">Hit</th><th class="num">Posterior bp</th><th class="num">\u00b1</th></tr></thead><tbody>'+
+      ids.map(function(id){var p=pols[id]||{};
+        return '<tr'+(id===sb.leadingPolicyId?' style="font-weight:600"':'')+'><td>'+esc(id)+'</td><td class="num">'+(p.n||0)+'</td><td class="num">'+(p.n?num(p.meanNetBps,1):'\u2014')+'</td><td class="num">'+(p.n?num(100*(p.hitRate||0),0)+'%':'\u2014')+'</td><td class="num">'+num(p.posteriorMeanBps,1)+'</td><td class="num">'+num(p.posteriorSdBps,0)+'</td></tr>';}).join("")+
+      '</tbody></table></div>';
+  }
+  html+='<div class="hint" style="margin-top:8px">Thompson sampling over the frozen policy family orders which qualified candidates are taken first; the control cohort is the unconditional baseline. Strict verdicts are stored beside every exploratory order and are never pooled with this table.</div>';
+  box.innerHTML=html;
 }
 
 /* THE LADDER. Each rung shows what it still needs, measured rather than
@@ -2481,12 +2540,17 @@ function renderOperationsConsole(){
       +(scan.excludedFromRanking||0)+" were excluded before or during ranking"
       +(exclusionText?" ("+exclusionText+").":"."))
     : scanRemaining+" frozen eligible companies remain to be checked in this cycle.";
+  var sumX=(ctl().lastCycleSummary||{}), xa=(sumX.exploration&&sumX.exploration.activity)||null, xec=sumX.entryControl||null;
   var streams=operationStream("Latest roster check",scan.completed,scan.total,scan.pct||0,scanDesc)
     +operationStream(researchActive?"Current research sweep":"Latest research sweep",researchDone,researchTotal,researchPct,
       researchActive?Math.max(0,(rp.remaining||0))+" selected dossiers remain in this sweep.":
         (research.dossierCount||0)+" dossiers stored; "+(research.readyDossiers||0)+" are fresh and complete. The focus queue rotates continuously.")
     +operationStream("Closed outcome sample",learning.completed,learning.target,learning.pct||0,
-      learningRemaining+" more natural closed observations remain before the preregistered minimum is reached.");
+      learningRemaining+" more natural closed observations remain before the preregistered minimum is reached.")
+    +(xa?operationStream("Exploratory entries this scan",(xa.signalProposed||0)+(xa.controlProposed||0),
+        (xa.perCycleCap||0)+(xa.controlRoom||0),
+        ((xa.perCycleCap||0)+(xa.controlRoom||0))?100*((xa.signalProposed||0)+(xa.controlProposed||0))/((xa.perCycleCap||0)+(xa.controlRoom||0)):0,
+        (xa.signalQualified||0)+" qualified; "+(xa.signalProposed||0)+" signal + "+(xa.controlProposed||0)+" control proposed"+(xa.signalPacedOut?"; "+xa.signalPacedOut+" paced to later scans":"")+"."):"");
 
   var cands=DASH.candidates||[],passed=cands.filter(function(x){return x.pass;}).length,tally={};
   cands.forEach(function(x){if(x.firstBlock)tally[x.firstBlock]=(tally[x.firstBlock]||0)+1;});
@@ -2507,10 +2571,12 @@ function renderOperationsConsole(){
       +" feed is research-only: it can support ratings, but the execution-source gate will not create paper fills from it. Configure Alpaca delayed_sip in Settings.";
   }
 
+  var entryBanner=(xec&&xec.pass===false)
+    ?'<div class="note bad" style="margin:0 0 14px"><b>Paper entries are blocked:</b> '+esc(entryControlText(xec.reason))+'</div>':'';
   host.innerHTML='<div class="opshead"><div class="opshead__copy"><h2>Live desk console</h2>'
     +'<p>Backend truth only: scheduled jobs, company counts, order/fill work, research and learning progress.</p></div>'
     +'<span class="opsstate '+statusClass+'">'+esc(statusText)+'</span></div>'
-    +'<div class="opsbody">'+nowHtml+'<div class="opscadence" style="margin:0 0 14px;padding:0 0 12px"><b>Schedule:</b> '+esc(nextText)+'</div>'
+    +'<div class="opsbody">'+entryBanner+nowHtml+'<div class="opscadence" style="margin:0 0 14px;padding:0 0 12px"><b>Schedule:</b> '+esc(nextText)+'</div>'
     +'<div class="opsstreams">'+streams+'</div><div class="opslower">'
     +'<div class="opssection"><h3>Recent backend activity</h3><div class="opsfeed">'+operationFeed(ops)+'</div></div>'
     +'<div class="opssection"><h3>How companies are evaluated</h3><ol class="opssteps">'
