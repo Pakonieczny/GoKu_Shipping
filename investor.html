@@ -1069,7 +1069,15 @@ function api(action, extra){
   else if (window.__pc) headers["X-Investor-Passcode"] = window.__pc;
   return fetch(API,{method:"POST",headers:headers,body:JSON.stringify(body)})
     .then(function(r){ return r.json().then(function(j){
-      if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+      if(!r.ok){
+        var msg=j.error||("HTTP "+r.status);
+        // Name the failing self-checks so a red "attestation failed" is
+        // diagnosable from the desk instead of from the function logs.
+        if(Array.isArray(j.fixtureFailures)&&j.fixtureFailures.length)
+          msg+=" — "+j.fixtureFailures.map(function(f){return f.name||"?";}).join(", ");
+        if(j.fixtureError) msg+=" ("+j.fixtureError+")";
+        throw new Error(msg);
+      }
       // Only a STRING is a bearer token. The dashboard payload also has a
       // "session" key holding market-session state, and accepting that here
       // is what previously clobbered the token and caused a 401 loop.
