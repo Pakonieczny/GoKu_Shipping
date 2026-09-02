@@ -526,6 +526,7 @@ async function runCycle(jobId, { manual = false } = {}) {
       failureCount: got.failureCount || 0,
       chunks: got.chunks || null,
       failedSymbols: got.failedSymbols || [],
+      feedRequested: got.feedRequested || null, feedFallback: got.feedFallback || null,
       /* Names the provider answered for the chunk but omitted: delisted,
          renamed, or not on this feed. Surfaced, never silently dropped. */
       missingSymbols: got.missingSymbols || [] };
@@ -816,6 +817,7 @@ async function runCycle(jobId, { manual = false } = {}) {
        both numbers so "ranked 59" and "39 candidates" are not read as a
        discrepancy. */
     fetch: { chunks: fetchMeta.chunks || null, failedSymbols: (fetchMeta.failedSymbols || []).slice(0, 40),
+      feedRequested: fetchMeta.feedRequested || null, feedFallback: fetchMeta.feedFallback || null,
       failedSymbolCount: (fetchMeta.failedSymbols || []).length,
       missingSymbols: (fetchMeta.missingSymbols || []).slice(0, 40),
       missingSymbolCount: (fetchMeta.missingSymbols || []).length, error: fetchMeta.error || null },

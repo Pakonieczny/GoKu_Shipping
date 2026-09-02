@@ -288,7 +288,13 @@ async function fetchPublic(url, opts = {}) {
              elapsedMs: Date.now() - startedAt };
   }
   if (!res.ok) {
-    throw fail("http_" + res.status, `${sourceId}: HTTP ${res.status} from ${u.hostname}`);
+    /* Keep the first few hundred characters of the provider's own message:
+       "HTTP 400" alone cost a day of guessing what Alpaca objected to. */
+    let detail = "";
+    try { detail = String(await res.text()).replace(/\s+/g, " ").slice(0, 300); } catch { /* body unreadable */ }
+    const e = fail("http_" + res.status, `${sourceId}: HTTP ${res.status} from ${u.hostname}${detail ? ` — ${detail}` : ""}`);
+    e.status = res.status; e.detail = detail || null;
+    throw e;
   }
 
   const contentType = res.headers.get("content-type") || "";

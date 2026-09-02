@@ -713,18 +713,38 @@ async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed 
      request instead of to a constant. */
   const maxPages = alpacaPageBudget(limit, symbols.length);
 
-  do {
+  /* delayed_sip is requested by name first. If the endpoint rejects the
+     feed value (HTTP 400/422 on some accounts and API revisions), the same
+     data is fetched as `sip` with the Basic-plan embargo haircut: consolidated
+     SIP bars at least 16 minutes old — exactly the delayed lane. The result
+     stays labelled delayed_sip because that is what the bars are; the request
+     actually used is recorded in `feedRequested`. */
+  let requestFeed = useFeed, requestWin = win, feedFallback = null;
+  const alpacaRequest = async (feedValue, windowValue) => {
     const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${encodeURIComponent(symbols.join(","))}`
-              + `&timeframe=${timeframe}&limit=${total}&adjustment=all&feed=${encodeURIComponent(useFeed)}&sort=asc`
-              + `&start=${encodeURIComponent(win.start)}&end=${encodeURIComponent(win.end)}`
+              + `&timeframe=${timeframe}&limit=${total}&adjustment=all&feed=${encodeURIComponent(feedValue)}&sort=asc`
+              + `&start=${encodeURIComponent(windowValue.start)}&end=${encodeURIComponent(windowValue.end)}`
               + (pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : "");
-    const r = await fetchPublic(url, {
+    return fetchPublic(url, {
       sourceId: "alpaca.bars", accept: ["json"], timeoutMs: 20000,
       headers: {
         "APCA-API-KEY-ID": providerCredentials("alpaca").keyId,
         "APCA-API-SECRET-KEY": providerCredentials("alpaca").secretKey,
       },
     });
+  };
+  do {
+    let r;
+    try {
+      r = await alpacaRequest(requestFeed, requestWin);
+    } catch (e) {
+      const rejected = [400, 422].includes(Number(e.status));
+      if (!(rejected && requestFeed === "delayed_sip" && pages === 0)) throw e;
+      requestFeed = "sip";
+      requestWin = alpacaWindow(timeframe, limit, "sip", { sipRealtime: false });
+      feedFallback = { from: "delayed_sip", to: "sip_embargoed", reason: String(e.message || e).slice(0, 200) };
+      r = await alpacaRequest(requestFeed, requestWin);
+    }
     const bars = (r.json && r.json.bars) || {};
     for (const [sym, arr] of Object.entries(bars)) {
       const mapped = (arr || []).map((b) => ({
@@ -742,7 +762,8 @@ async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed 
   return { bars: out, provider: "alpaca", sha256: manifestSha256, manifestSha256,
            symbolSha256: Object.fromEntries(Object.keys(out).map((s) => [s, manifestSha256])),
            fetchedAt: lastAt, pages, truncated: !!pageToken, feed: useFeed,
-           window: win };
+           feedRequested: requestFeed, ...(feedFallback ? { feedFallback } : {}),
+           window: requestWin };
 }
 
 async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
@@ -841,7 +862,7 @@ function mergeChunkResults(list, chunks, results, providerId) {
   results.forEach((got, ci) => {
     if (!got || got.error) {
       out.chunks.failed.push({ index: ci, symbols: chunks[ci].length,
-        error: String(got && got.error || "unknown").slice(0, 120) });
+        error: String(got && got.error || "unknown").slice(0, 300) });
       return;
     }
     out.chunks.retried += Number(got.retried) || 0;
@@ -857,6 +878,8 @@ function mergeChunkResults(list, chunks, results, providerId) {
     }
     out.provider = out.provider || got.provider;
     out.feed = out.feed || got.feed || null;
+    if (got.feedFallback && !out.feedFallback) out.feedFallback = got.feedFallback;
+    if (got.feedRequested) out.feedRequested = got.feedRequested;
     out.adjustment = out.adjustment || got.adjustment || null;
     out.fetchedAt = got.fetchedAt || out.fetchedAt;
     out.pages += Number(got.pages) || 0;
@@ -887,7 +910,7 @@ async function fetchBarsChunked(symbols, opts = {}, { chunkSize = 60, retries = 
       catch (e) { lastError = e; if (attempt < retries) retried += 1; }
     }
     results.push(got ? { ...got, retried }
-      : { error: String(lastError && (lastError.code || lastError.message) || "unknown") });
+      : { error: String(lastError && (lastError.message || lastError.code) || "unknown") });
   }
   return mergeChunkResults(list, chunks, results, activeProvider().id);
 }
