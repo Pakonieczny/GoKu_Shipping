@@ -443,6 +443,15 @@ const ACTIONS = {
         operatorHold: ctrl.operatorHold === true,
         entriesFrozen: operating.entriesFrozen,
         operatingStateChangedAtMs: Number(ctrl.operatingStateChangedAtMs) || null,
+        /* WHY the desk is in this state. Every automatic transition (ladder
+           rollback, reconciliation freeze, bootstrap, fixture failure) records
+           its reason; the console used to show only the state, so an operator
+           who pressed Start and found the desk off minutes later had nothing
+           to read. */
+        operatingStateReason: ctrl.operatingStateReason || null,
+        operatingStateSource: ctrl.operatingStateSource || null,
+        stageChangeReason: ctrl.stageChangeReason || null,
+        safetyClosedReason: ctrl.safetyClosedReason || null,
         cycleSeconds: ctrl.cycleSeconds || 300,
         paperLearning: { stored: ctrl.paperLearning || null, active: paperPreview.active,
           refused: paperPreview.refused, applied: paperPreview.applied, limits: ST.RELAX_LIMITS,
@@ -1060,6 +1069,28 @@ const ACTIONS = {
       if (!reconciliation.pass) {
         return { error: "paper ledger did not reconcile; automatic entries remain frozen",
           reconciliation };
+      }
+    }
+    /* The ladder re-measures the approval rung at the end of every cycle
+       (ledger audit, execution-provenance audit, fixtures, epoch) and rolls
+       an unearned stage back to research. Starting a state that the next
+       cycle will undo is worse than refusing: the operator sees "started",
+       then finds the desk off with no visible cause. Measure the same two
+       audits here and refuse with their findings instead. */
+    if (startExploratory) {
+      const [ledgerAudit, executionAudit] = await Promise.all([
+        L.auditLedger(ctrl.accountId).catch((e) => ({ pass: false, error: String(e.message).slice(0, 160) })),
+        L.executionAudit(ctrl.accountId).catch((e) => ({ pass: false, error: String(e.message).slice(0, 160) })),
+      ]);
+      if (!ledgerAudit.pass) {
+        return { error: "paper-ledger audit failed; the promotion ladder would roll this start back on the next scan",
+          ledgerAudit: { pass: false, error: ledgerAudit.error || null,
+            discrepancies: (ledgerAudit.discrepancies || []).slice(0, 10) } };
+      }
+      if (!executionAudit.pass) {
+        return { error: "execution-provenance audit failed on stored fills/trades; the ladder would roll this start back on the next scan — open a fresh paper account to leave the legacy records behind",
+          executionAudit: { pass: false, error: executionAudit.error || null,
+            violations: (executionAudit.violations || []).slice(0, 10) } };
       }
     }
     const target = startExploratory
