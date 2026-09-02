@@ -2326,6 +2326,24 @@ function loadSources(){
   }).catch(function(e){toast(e.message);});
 }
 
+/* Self-check attestation, from both places it runs: this API process (live,
+   idle) and the worker cycle (stored by the bootstrap). Different fixture
+   hashes mean the two deployed bundles are not the same code — a mixed upload
+   — which is otherwise invisible from the desk. */
+function healthAttestationRows(r){
+  var f=r.fixtures||{}, a=r.attestation||{};
+  var short=function(h){return h?String(h).slice(0,12):"—";};
+  var mixed=f.fixtureHash&&a.fixtureHash&&f.fixtureHash!==a.fixtureHash;
+  var row=function(lab,badge,good,kv){return '<div class="ctrlrow" style="padding:7px 0"><span class="lab" style="min-width:190px">'+esc(lab)+'</span>'
+    +'<span class="badge2 '+(good?"b-on":"b-bad")+'">'+esc(badge)+'</span>'+(kv?'<span class="kv">'+esc(kv)+'</span>':'')+'</div>';};
+  return row("Self-checks (this request)", f.pass?(f.passed+"/"+f.total+" pass"):"FAILING", !!f.pass,
+      (f.schema||"schema unknown")+" · hash "+short(f.fixtureHash)+(f.failed&&f.failed.length?" · failed: "+f.failed.join(", "):"")+(f.error?" · "+f.error:""))
+    + row("Self-checks (worker cycle)", a.fixturesPass?"attested":"FAILING", !!a.fixturesPass,
+      "hash "+short(a.fixtureHash)+" · commit "+short(a.fixturesCommit)+" · bootstrap "+(a.bootstrapVersion||"—")+(a.checkedAt?" · "+new Date(a.checkedAt).toLocaleString():"")
+      +(a.fixtureFailures&&a.fixtureFailures.length?" · failed: "+a.fixtureFailures.join(", "):""))
+    + row("Deployed commit", short(a.commit), a.fixturesCommit===a.commit, a.fixturesCommit===a.commit?"worker attested this commit":"worker last attested a DIFFERENT commit — wait one scan, or the worker bundle is stale")
+    + (mixed?'<div class="note bad"><b>Mixed deploy.</b> The API and the worker are running different self-check code (hashes differ). One or more files under netlify/functions did not update — re-upload every file from the zip.</div>':'');
+}
 function loadHealth(){
   api("health").then(function(r){
     var e=r.env||{}, p=r.provider||{}, cfg=r.marketConfig||{}, sec=r.secrets||{};
@@ -2351,6 +2369,8 @@ function loadHealth(){
         '<span class="kv">'+esc(p.feed||"feed unknown")+' · '+p.delayMinutes+'m delay · max grade '+esc(p.maxGrade)+' · '+(p.consolidated?'consolidated':'non-consolidated')+'</span></div>'+
       (p.exactFifteenMinuteDelay?'<div class="note"><b>Current-day pricing ready.</b> Alpaca delayed SIP is the exact 15-minute consolidated lane.</div>':'')+
       (p.degradedFrom? '<div class="note warn">Degraded from <b>'+esc(p.degradedFrom)+'</b>: '+esc(p.reason)+'</div>':'')+
+      (!p.exactFifteenMinuteDelay?'<div class="note bad"><b>No execution feed.</b> The desk cannot rank on current-session prices or create paper fills until an Alpaca key ID and secret are saved in the Market data form below (provider alpaca, feed delayed_sip). Until then every scan will choose nothing.</div>':'')+
+      healthAttestationRows(r)+
       '<div class="note">OpenAI daily ceiling $'+num(r.openaiCeilingUsd,2)+'. Model calls are reserved for ambiguous evidence after deterministic coverage and change-detection gates; malformed paid responses are still charged to the budget.</div>';
   }).catch(function(e){toast(e.message);});
 }
