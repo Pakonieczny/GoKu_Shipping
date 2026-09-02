@@ -33,6 +33,26 @@ function exitSignal(rank, heldDays, cfg, opts = {}) {
       }
     }
 
+    // 3a. STRUCTURAL PULLBACK EXITS (policy Q). The leg recorded at entry
+    //     defines both ends of the trade: the prior swing high is the target
+    //     ("if it continues to here, great"), and giving back more than the
+    //     declared share of the leg means the level failed ("if not, it most
+    //     likely reverses"). Only a variant that declares pullbackExit and a
+    //     position that recorded its leg reach this branch.
+    const pe = cfg.pullbackExit, leg = opts.pullbackLeg;
+    if (pe && leg && Number(leg.legHigh) > Number(leg.legLow)) {
+      if (mark >= Number(leg.legHigh)) {
+        return { exit: true, urgent: false, reason: `reached the prior swing high ${Number(leg.legHigh).toFixed(2)} — pullback target`,
+                 kind: "pullback_target", pnlPct: Number(pnlPct.toFixed(2)) };
+      }
+      const retr = (Number(leg.legHigh) - mark) / (Number(leg.legHigh) - Number(leg.legLow));
+      const failAt = Number(pe.failRetracement) || 0.786;
+      if (retr >= failAt) {
+        return { exit: true, urgent: true, reason: `gave back ${Math.round(retr * 100)}% of the up-leg (limit ${Math.round(failAt * 100)}%) — the level failed`,
+                 kind: "pullback_failed", pnlPct: Number(pnlPct.toFixed(2)) };
+      }
+    }
+
     // 3. PROFIT TARGET. The research expects partial reversion, not full.
     const takePct = cfg.takeProfitPct ?? null;
     if (takePct != null && pnlPct >= takePct) {

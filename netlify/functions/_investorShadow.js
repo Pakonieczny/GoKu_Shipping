@@ -18,7 +18,7 @@ const OPEN = A.COL.shadowOpen;
 const CLOSED = A.COL.shadowClosed;
 const STATS = A.COL.shadowDays;
 const ACCOUNTS = A.COL.shadowAccounts;
-const SIMULATOR_VERSION = "self-financing-counterfactual-v11-pending-exposure-whole-shares";
+const SIMULATOR_VERSION = "self-financing-counterfactual-v12-whole-shares-structural-pullback-exits";
 const DISCOUNT_GAMMA = 0.988; // trading-session weighting; asymptotic ESS ~= 166
 const PH_DELTA_FRAC = 0.25;
 const PH_LAMBDA_SD = 12;
@@ -268,6 +268,7 @@ async function evaluateEntries(ctx) {
         sectorTailFraction: variantCrowd && variantCrowd.fractionInTail
           ? (variantCrowd.fractionInTail[S.sectorOf(symbol)] ?? 0) : 0,
         session: ctx.session, cfg: params, position: null,
+        price: Number(ctx.lastPrice && ctx.lastPrice[symbol]) || null,
         intelligence: ctx.intelligenceBySymbol && ctx.intelligenceBySymbol[symbol],
         historyContext: (ctx.historyCtx && ctx.historyCtx[symbol]) || null,
         reversion: (ctx.reversion && ctx.reversion[symbol]) || null,
@@ -343,6 +344,10 @@ async function evaluateEntries(ctx) {
         experimentHash: exp.experimentHash, experimentIdentity: exp.identity,
         simulatorVersion: SIMULATOR_VERSION, variantId: variant.id, symbol: c.symbol,
         cycleId: ctx.cycleId, pendingEntry: true, decisionAtMs: nowMs,
+        /* The up-leg this arm is trading, frozen at the decision so the exit
+           rules judge the same structure the entry saw. */
+        pullbackLeg: params.pullbackExit && c.result.signalDetail && c.result.signalDetail.pullback
+          ? c.result.signalDetail.pullback : null,
         decisionMarketProvenance: c.provenance,
         signalPrice: c.price, openedAt: new Date(nowMs).toISOString(),
         openedDate: ctx.session.date, entryPrice: null,
@@ -729,7 +734,7 @@ async function evaluateExits(ctx) {
         temporalMaxAgeHours: params.temporalMaxAgeHours }) : null;
       const signal = S.exitSignal(rank, heldDays, params, {
         mark: px, entry: p.entryPrice, peak, earningsInDays: soon == null ? null : soon,
-        intelligencePolicy,
+        intelligencePolicy, pullbackLeg: p.pullbackLeg || null,
       });
       if (!signal.exit) continue;
       if (!validProvenance(provenance)) continue;

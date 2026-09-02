@@ -59,6 +59,46 @@ function stdev(a) {
   const m = mean(a);
   return Math.sqrt(a.reduce((s, x) => s + (x - m) * (x - m), 0) / (a.length - 1));
 }
+/* ── THE LAST UP-LEG, AND HOW MUCH OF IT HAS BEEN GIVEN BACK ──────────────
+ * Policy Q ("Pullback in trend") needs one structural fact the statistical
+ * layer does not carry: where the current price sits inside the most recent
+ * swing. The leg is the lowest close in the lookback window to the highest
+ * close AFTER it; the retracement is the share of that leg surrendered by the
+ * latest close. It is computed from the same split-repaired, as-of-cut series
+ * as everything else here, so it cannot see the future either.
+ *
+ * Nothing is fitted: the lookback and the minimum leg size are declared by the
+ * variant that consumes them, and the scoreboard says whether they matter. */
+function pullbackLeg(closes, opts = {}) {
+  const lookback = Math.max(20, Math.round(Number(opts.lookbackDays) || 60));
+  const win = (closes || []).filter((c) => Number.isFinite(c) && c > 0).slice(-lookback);
+  if (win.length < 20) return null;
+  let i0 = 0;
+  for (let i = 1; i < win.length; i++) if (win[i] < win[i0]) i0 = i;
+  if (i0 >= win.length - 2) return null;            // the low is (almost) now: no leg yet
+  let i1 = i0 + 1;
+  for (let i = i0 + 1; i < win.length; i++) if (win[i] > win[i1]) i1 = i;
+  const legLow = win[i0], legHigh = win[i1];
+  if (!(legHigh > legLow)) return null;
+  const last = win[win.length - 1];
+  const retracement = (legHigh - last) / (legHigh - legLow);
+  return {
+    lookbackDays: lookback,
+    legLow: Number(legLow.toFixed(4)), legHigh: Number(legHigh.toFixed(4)),
+    legPct: Number(((legHigh / legLow - 1) * 100).toFixed(2)),
+    legDays: i1 - i0,
+    daysSinceHigh: win.length - 1 - i1,
+    level50: Number((legHigh - 0.5 * (legHigh - legLow)).toFixed(4)),
+    retracementPct: Number((retracement * 100).toFixed(1)),   // of the latest CLOSE
+  };
+}
+
+/** Retracement of a leg at an arbitrary price (the live intraday mark). */
+function retracementAt(leg, price) {
+  if (!leg || !(leg.legHigh > leg.legLow) || !(Number(price) > 0)) return null;
+  return (leg.legHigh - Number(price)) / (leg.legHigh - leg.legLow);
+}
+
 function sma(arr, n) {
   if (!arr || arr.length < n) return null;
   return mean(arr.slice(-n));
@@ -214,21 +254,16 @@ async function fetchDailyWithMeta(symbols, { days = KEEP_DAYS } = {}) {
       };
       continue;                       // a failed chunk is retried on the next run
     }
-    const failedSymbols = new Set(res.failedSymbols || []);
-    const truncatedSymbols = new Set(res.truncatedSymbols || []);
     for (const sym of chunk) {
       const returned = Array.isArray((res.bars || {})[sym]) && (res.bars || {})[sym].length > 0;
-      const failed = failedSymbols.has(sym);
-      const truncated = truncatedSymbols.has(sym);
       statusBySymbol[sym] = {
-        complete: !failed && !truncated && returned,
-        truncated,
-        requestedDays: days,
-        pages: Number(res.pages) || null,
-        window: res.window || null,
-        ...(!returned || failed
-          ? { error: (res.errors && res.errors[sym]) || "no_bars_returned" } : {}),
-      };
+      complete: res.truncated !== true && returned,
+      truncated: res.truncated === true,
+      requestedDays: days,
+      pages: Number(res.pages) || null,
+      window: res.window || null,
+      ...(returned ? {} : { error: "no_bars_returned" }),
+    };
     }
     for (const [sym, arr] of Object.entries(res.bars || {})) {
       barsBySymbol[sym] = (arr || []).map((b) => ({
@@ -497,6 +532,8 @@ function contextFor(series, asOf) {
     sma50Slope != null && sma50Slope < -0.02,
   ].filter(Boolean).length;
   const downtrend = downtrendFlags >= 3;
+  const sma50Rising = sma50Slope != null ? sma50Slope > 0 : null;
+  const pullback = pullbackLeg(closes, { lookbackDays: 60 });
 
   /* ── liquidity, measured rather than assumed ─────────────────────────── */
   let advUsd20 = null;
@@ -548,7 +585,8 @@ function contextFor(series, asOf) {
     sma200: sma200 != null ? Number(sma200.toFixed(4)) : null,
     aboveSma50, aboveSma200,
     sma50SlopePct: sma50Slope != null ? Number((sma50Slope * 100).toFixed(2)) : null,
-    downtrend, downtrendFlags,
+    downtrend, downtrendFlags, sma50Rising,
+    pullback,
     advUsd20: advUsd20 != null ? Math.round(advUsd20) : null,
     gapFreqPct: gapFreq != null ? Number((gapFreq * 100).toFixed(1)) : null,
     expectedShortfall5dPct: es5d != null ? Number((es5d * 100).toFixed(3)) : null,
@@ -708,7 +746,7 @@ module.exports = {
   SIGMA_W_SHORT, BARS_PER_SESSION,
   dailyRef, readDaily, readDailyWithMeta, writeDaily, fetchDaily, fetchDailyWithMeta,
   ensureDailyHistory, chartSeries, mergeDailySeries,
-  expectedShortfallLoss, contextFor, reversionEvents, shrinkReversion, reversionMultiplier,
+  expectedShortfallLoss, contextFor, pullbackLeg, retracementAt, reversionEvents, shrinkReversion, reversionMultiplier,
   blendedSigma, describe,
   _internal: { mean, stdev, sma, pctRets },
 };

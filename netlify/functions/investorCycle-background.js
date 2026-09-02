@@ -1256,12 +1256,12 @@ async function runCycle(jobId, { manual = false } = {}) {
     /* --- entries: only threshold breaches proceed past this line --------- */
     const z = zBySymbol[sym];
     const rank = ranks[sym];
-    const breach = !!(z && S.entrySignal(rank, z.z, cfg, historyCtx[sym]).fire);
+    const breach = !!(z && S.entrySignal(rank, z.z, cfg, historyCtx[sym], { price: lastPriceBySymbol[sym] }).fire);
     const firingPolicies = V.VARIANTS.map((v) => {
       const policy = V.configFor(v.id);
       const sc = signalContexts[policy.signalWindow || 12] || liveSignalContext;
       const policyZ = sc.zBySymbol[sym], policyRank = sc.ranks[sym];
-      return policyZ && S.entrySignal(policyRank, policyZ.z, policy, historyCtx[sym]).fire
+      return policyZ && S.entrySignal(policyRank, policyZ.z, policy, historyCtx[sym], { price: lastPriceBySymbol[sym] }).fire
         ? { variantId: v.id, policy, sc, z: policyZ, rank: policyRank } : null;
     }).filter(Boolean);
     const evidenceTrigger = firingPolicies.length > 0;
@@ -1344,6 +1344,7 @@ async function runCycle(jobId, { manual = false } = {}) {
       vixNorm: reg.vixNorm, cor3m: reg.cor3m,
       sectorTailFraction: crowd.fractionInTail[S.sectorOf(sym)] ?? 0,
       session, position: null,
+      price: lastPriceBySymbol[sym] ?? null,
       intelligence,
       historyContext: historyCtx[sym] || null,
       reversion: reversionBySymbol[sym] || null,

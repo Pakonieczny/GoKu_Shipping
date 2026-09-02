@@ -345,7 +345,7 @@ function runFixtures() {
   cases.push(fixture("frozen_family_tests_horizons_and_matrix_components", () => {
     const windows = new Set(V.VARIANTS.map((v) => V.configFor(v.id).signalWindow));
     const holds = new Set(V.VARIANTS.map((v) => V.configFor(v.id).maxHoldDays));
-    return V.VARIANTS.length === 14 && [6, 12, 24].every((x) => windows.has(x))
+    return V.VARIANTS.length === 15 && [6, 12, 24].every((x) => windows.has(x))
       && [6, 10, 14].every((x) => holds.has(x))
       && V.configFor("K").decisionMatrixPolicy.temporalRiskScale === 1.25
       && V.configFor("L").decisionMatrixPolicy.intelligenceRiskScale === 1.25
@@ -390,7 +390,7 @@ function runFixtures() {
   cases.push(fixture("deflated_sharpe_counts_full_trial_family", () => {
     const values = Array.from({ length: 240 }, (_, i) => 4 + Math.sin(i / 3) * 2);
     const d = RS.deflatedSharpe(values, { trials: V.VARIANTS.length });
-    return d.trials === 14 && d.pass && d.probability >= 0.95;
+    return d.trials === 15 && d.pass && d.probability >= 0.95;
   }));
 
   /* ── v8.6.1 ──────────────────────────────────────────────────────────
@@ -1278,7 +1278,7 @@ function runFixtures() {
     /* Whole shares: the entry path floors, and the simulator version names it. */
     const src = sourceOf(SH.evaluateEntries);
     return /Math\.floor\(permittedNotionalUsd \/ c\.price\)/.test(src)
-      && /whole-shares/.test(SH.SIMULATOR_VERSION)
+      && /whole-shares|structural-pullback-exits/.test(SH.SIMULATOR_VERSION)
       && /tradingDaysHeld\(p\.filledAt \|\| p\.openedAt/.test(sourceOf(SH.evaluateExits));
   }));
 
@@ -1495,10 +1495,79 @@ function runFixtures() {
     return Math.abs(add.headroomUsd * 100 - cents) < 1e-6 && add.headroomUsd <= 33333.33 * 0.6 && add.permittedUsd === add.headroomUsd;
   }));
 
+  /* ── Policy Q: pullback in trend ─────────────────────────────────────── */
+  const qSeries = (() => {
+    const bars = []; let px = 60; const d0 = Date.UTC(2025, 8, 1);
+    for (let i = 0; i < 260; i++) {
+      const date = new Date(d0 + i * 864e5).toISOString().slice(0, 10);
+      if (i < 200) px += 0.2; else if (i < 230) px = 100 + (i - 200); else px = 130 - (i - 230) * 0.5;
+      bars.push({ date, o: px, h: px * 1.005, l: px * 0.995, c: px, v: 1e6 });
+    }
+    return bars;
+  })();
+
+  cases.push(fixture("pullback_leg_is_measured_from_history_without_look_ahead", () => {
+    const H = require("./_investorHistory");
+    const ctx = H.contextFor(qSeries, null);
+    if (!ctx.ok || !ctx.pullback) return false;
+    const leg = ctx.pullback;
+    if (!(leg.legLow === 100 && leg.legHigh === 130 && leg.legPct === 30 && leg.level50 === 115)) return false;
+    if (!(Math.abs(leg.retracementPct - 48.3) < 0.2)) return false;
+    if (ctx.sma50Rising !== true || ctx.aboveSma200 !== true || ctx.downtrend) return false;
+    /* Cut the series before the leg's high existed: the leg must not know it. */
+    const early = H.contextFor(qSeries, qSeries[215].date);
+    if (!early.ok || !early.pullback || early.pullback.legHigh >= 130) return false;
+    if (Math.abs(H.retracementAt(leg, 115) - 0.5) > 1e-9) return false;
+    /* Too little of a window, or a low that is the latest close, yields no leg. */
+    return H.pullbackLeg([1, 2, 3]) === null
+      && H.pullbackLeg(Array.from({ length: 40 }, (_, i) => 100 - i)) === null;
+  }));
+
+  cases.push(fixture("policy_q_fires_only_inside_the_retracement_window_of_a_rising_trend", () => {
+    const H = require("./_investorHistory");
+    const ctx = H.contextFor(qSeries, null);
+    const Q = V.configFor("Q");
+    if (!Q.requirePullback || !Q.pullbackExit || Q.exitRank !== 0.9 || Q.maxHoldDays !== 14) return false;
+    const inWindow = S.entrySignal(0.05, -2.5, Q, ctx, { price: 115 });
+    if (inWindow.fire !== true || !inWindow.pullback || inWindow.pullback.legHigh !== 130) return false;
+    if (S.entrySignal(0.05, -2.5, Q, ctx, { price: 128 }).fire !== false) return false;   // too shallow
+    if (S.entrySignal(0.05, -2.5, Q, ctx, { price: 105 }).fire !== false) return false;   // level failed
+    if (S.entrySignal(0.05, -2.5, Q, { ok: false }, { price: 115 }).fire !== false) return false;   // no history: declines
+    if (S.entrySignal(0.05, -2.5, Q, { ...ctx, sma50Rising: false }, { price: 115 }).fire !== false) return false;
+    if (S.entrySignal(0.05, -2.5, Q, { ...ctx, pullback: { ...ctx.pullback, legPct: 5 } }, { price: 115 }).fire !== false) return false;
+    /* Without a live price the last close stands in (48% retrace → fires). */
+    if (S.entrySignal(0.05, -2.5, Q, ctx).fire !== true) return false;
+    /* Every other arm is untouched by the new conditions. */
+    return V.VARIANTS.filter((v) => v.id !== "Q").every((v) =>
+      S.entrySignal(0.05, -2.5, { ...V.configFor(v.id), requireAboveSma200: false, requireDrawdownPct: null }, ctx, { price: 105 }).fire === true)
+      && V.VARIANTS.length === 15 && V.byId("Q").name === "Pullback in trend";
+  }));
+
+  cases.push(fixture("policy_q_exits_at_the_leg_high_or_when_the_level_fails_and_holds_through_rank_recovery", () => {
+    const Q = V.configFor("Q"), A = V.configFor("A");
+    const leg = { legHigh: 130, legLow: 100 };
+    const target = S.exitSignal(0.3, 2, Q, { mark: 130.5, entry: 115, peak: 130.5, pullbackLeg: leg });
+    const failed = S.exitSignal(0.3, 2, Q, { mark: 106, entry: 115, peak: 116, pullbackLeg: leg });
+    const held = S.exitSignal(0.7, 2, Q, { mark: 120, entry: 115, peak: 121, pullbackLeg: leg });
+    const hardStop = S.exitSignal(0.3, 2, Q, { mark: 105, entry: 115, peak: 116, pullbackLeg: leg });
+    if (!(target.exit && target.kind === "pullback_target")) return false;
+    if (!(failed.exit && failed.kind === "pullback_failed" && failed.urgent === true)) return false;
+    if (held.exit !== false) return false;                                   // rank 0.7 < 0.9: continuation kept
+    if (!(hardStop.exit && hardStop.kind === "stop_loss")) return false;      // the floor still comes first
+    /* A leg without the declaring variant, or the variant without a leg, changes nothing. */
+    if (S.exitSignal(0.7, 2, A, { mark: 120, entry: 115, peak: 121, pullbackLeg: leg }).kind !== "signal") return false;
+    if (S.exitSignal(0.7, 2, Q, { mark: 120, entry: 115, peak: 121 }).exit !== false) return false;
+    /* The shadow simulator freezes the leg at entry and judges the exit against it. */
+    const entries = sourceOf(SH.evaluateEntries), exits = sourceOf(SH.evaluateExits);
+    return /pullbackLeg:\s*params\.pullbackExit\s*&&/.test(entries)
+      && /pullbackLeg:\s*p\.pullbackLeg\s*\|\|\s*null/.test(exits)
+      && /structural-pullback-exits/.test(SH.SIMULATOR_VERSION);
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v17-strategy-v10", count: cases.length, cases });
+  const fixtureHash = digest({ schema: "runtime-fixtures-v18-strategy-v10-variants-q", count: cases.length, cases });
   return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }

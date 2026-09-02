@@ -406,7 +406,7 @@ const EXIT_RANK  = 0.50;   // the buy/hold spread: hold until the median
    stale or incomplete dossier into a refusal. */
 const INTEL_FINDING_RISK_FLOOR = 25;
 
-function entrySignal(rank, z, cfg, ctx) {
+function entrySignal(rank, z, cfg, ctx, opts = {}) {
   const entryRank = cfg.entryRank ?? ENTRY_RANK;
   const minZ = cfg.minAbsZ ?? 2.0;
   if (rank > entryRank) return { fire: false, reason: `rank ${rank.toFixed(3)} above entry ${entryRank}` };
@@ -425,6 +425,34 @@ function entrySignal(rank, z, cfg, ctx) {
     if (!(ctx.drawdown6mPct <= cfg.requireDrawdownPct)) {
       return { fire: false, reason: `only ${ctx.drawdown6mPct}% off its 6-month high — this variant wants at least ${cfg.requireDrawdownPct}%` };
     }
+  }
+
+  /* Policy Q — "Pullback in trend". The dip must land inside a measured
+     retracement of the last up-leg of a name whose intermediate trend is still
+     rising. Both conditions are structural, not statistical, and both decline
+     on missing history for the same reason G and H do. The live price is used
+     when the caller has one (the dip IS the pullback); otherwise the last
+     daily close stands in. */
+  if (cfg.requireSma50Rising) {
+    if (!ctx || !ctx.ok) return { fire: false, reason: "needs 6-month history to read the 50-day slope; none yet" };
+    if (ctx.sma50Rising !== true) {
+      return { fire: false, reason: `50-day line ${ctx.sma50SlopePct == null ? "unknown" : (ctx.sma50SlopePct + "% over the last month")} — this variant only trades with a rising intermediate trend` };
+    }
+  }
+  if (cfg.requirePullback) {
+    const pb = cfg.requirePullback;
+    if (!ctx || !ctx.ok) return { fire: false, reason: "needs 6-month history to measure the last up-leg; none yet" };
+    const leg = ctx.pullback;
+    if (!leg) return { fire: false, reason: "no completed up-leg in the lookback window to retrace" };
+    const minLeg = Number(pb.minLegPct) || 8;
+    if (!(leg.legPct >= minLeg)) return { fire: false, reason: `last up-leg only ${leg.legPct}% — this variant wants a leg of at least ${minLeg}%` };
+    const price = Number(opts && opts.price) > 0 ? Number(opts.price) : ctx.lastClose;
+    const retr = (leg.legHigh - price) / (leg.legHigh - leg.legLow);
+    const lo = Number(pb.minRetracement) || 0.38, hi = Number(pb.maxRetracement) || 0.62;
+    if (!(retr >= lo)) return { fire: false, reason: `retraced ${Math.round(retr * 100)}% of the ${leg.legPct}% leg — this variant waits for ${Math.round(lo * 100)}–${Math.round(hi * 100)}%` };
+    if (!(retr <= hi)) return { fire: false, reason: `retraced ${Math.round(retr * 100)}% of the ${leg.legPct}% leg — beyond ${Math.round(hi * 100)}%, the level has failed` };
+    return { fire: true, reason: `rank ${rank.toFixed(3)} <= ${entryRank}, z ${z.toFixed(2)} <= -${minZ}, and ${Math.round(retr * 100)}% retrace of a ${leg.legPct}% up-leg with the 50-day rising`,
+      pullback: { legHigh: leg.legHigh, legLow: leg.legLow, legPct: leg.legPct, retracementPct: Number((retr * 100).toFixed(1)) } };
   }
 
   return { fire: true, reason: `rank ${rank.toFixed(3)} <= ${entryRank} and z ${z.toFixed(2)} <= -${minZ}` };
@@ -688,7 +716,7 @@ function evaluateCandidate(input) {
       `$${(advUsd / 1e6).toFixed(0)}M/day vs $${(minAdv / 1e6).toFixed(0)}M floor`);
 
   // 6. The signal itself.
-  const sig = zStat ? entrySignal(rank, zStat.z, cfg, ctx) : { fire: false, reason: "no z statistic" };
+  const sig = zStat ? entrySignal(rank, zStat.z, cfg, ctx, { price: input.price }) : { fire: false, reason: "no z statistic" };
   add("signal", "Residual signal", sig.fire, sig.reason);
 
   // 6b. Sector crowding — is this one idea, or one sector falling together?
@@ -867,6 +895,9 @@ function evaluateCandidate(input) {
     rank, z: zStat ? Number(zStat.z.toFixed(2)) : null,
     cumResidualBps: zStat ? Number((zStat.cumResidual * 1e4).toFixed(1)) : null,
     cause, direction: dir,
+    /* What the entry rule itself saw — carries the structural leg for arms
+       that trade one (policy Q) so the position can be judged against it. */
+    signalDetail: { fire: sig.fire, reason: sig.reason, pullback: sig.pullback || null },
     intelligencePolicy: effectiveIntelPolicy,
     historyContext: ctx && ctx.ok ? {
       days: ctx.days, vol60Pct: ctx.vol60Pct, atrPct: ctx.atrPct,

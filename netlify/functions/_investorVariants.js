@@ -137,6 +137,26 @@ const VARIANTS = [
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10,
       noCauseConfidence: 0.5, decisionMatrixPolicy: { nonBlockingRiskFloor: 25 } },
   },
+  /* Q tests the oldest piece of trend-trading advice against this desk's own
+     data: do not buy the bottom of a slide; buy the pullback in a name whose
+     intermediate trend is already up, and take only the continuation leg.
+     It is the baseline dip signal with two structural conditions on top — a
+     rising 50-day line above the 200-day, and a price that has given back
+     roughly half of the last completed up-leg — and, unlike every other arm,
+     its own exits: the prior swing high is the target and surrendering 78.6%
+     of the leg is the failure. The rank exit is pushed to the edge of its
+     range so the continuation is not cut off by a recovered residual. The
+     retracement window (38–62%) is a declared convention, not a fitted
+     number; the scoreboard will say whether it earns its keep. */
+  {
+    id: "Q",
+    name: "Pullback in trend",
+    plain: "Only buys the dip when the stock is already in a rising trend and has pulled back about halfway through its last upswing. Aims for the previous high and gives up if most of the upswing is lost. Tests whether trading with the trend beats catching bottoms.",
+    params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.90, maxHoldDays: 14, noCauseConfidence: 0.5,
+              requireAboveSma200: true, blockDowntrends: true, requireSma50Rising: true,
+              requirePullback: { lookbackDays: 60, minLegPct: 8, minRetracement: 0.38, maxRetracement: 0.62 },
+              pullbackExit: { failRetracement: 0.786, targetAtLegHigh: true } },
+  },
 ];
 
 /* A hash over the parameters. If it changes, the variants were edited and
