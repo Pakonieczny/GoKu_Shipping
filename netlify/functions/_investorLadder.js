@@ -34,6 +34,8 @@
 
 "use strict";
 
+const XP = require("./_investorExplore");
+
 const STAGES = ["research", "approval", "shadow", "limited_auto"];
 
 function stageIndex(s) { const i = STAGES.indexOf(String(s || "research")); return i < 0 ? 0 : i; }
@@ -296,6 +298,7 @@ function exploratoryAutoApproval(order, { operatingState = null,
   book = {}, navUsd = 0, cfg = {} } = {}) {
   const policy = (cfg && cfg.exploratoryAuto) || {};
   const auto = policy.autoApproval || {};
+  const activity = XP.activityPolicy(cfg || {});
   const reasons = [];
   if (operatingState !== "exploratory_auto") {
     reasons.push(`operating state is ${operatingState || "unknown"}, not exploratory_auto`);
@@ -317,8 +320,21 @@ function exploratoryAutoApproval(order, { operatingState = null,
   if (!strict || typeof strict.pass !== "boolean") {
     reasons.push("strict counterfactual verdict was not persisted");
   }
-  if (!Array.isArray(order.gates) || order.gates.some((g) => g.blocking && !g.pass)) {
-    reasons.push("one or more persisted paper gates is missing or failed");
+  /* A CONTROL order is the unconditional baseline cohort: it is expected to
+     fail the signal-type gates (signal, cost, crowding, turnover) and must
+     still pass every hazard gate. Any other cohort must pass every gate. */
+  const control = XP.isControlOrder(order);
+  const controlAllowed = control && activity.enabled !== false
+    && activity.controlCohort && activity.controlCohort.enabled !== false;
+  if (control && !controlAllowed) {
+    reasons.push("control cohort is not enabled by the frozen exploratory policy");
+  }
+  if (!Array.isArray(order.gates)
+      || (controlAllowed ? !XP.controlOrderGatesAcceptable(order)
+        : order.gates.some((g) => g.blocking && !g.pass))) {
+    reasons.push(control
+      ? "control order failed a hazard gate or its persisted gates are missing"
+      : "one or more persisted paper gates is missing or failed");
   }
   /* The active decision gate already enforces the operator-selected paper
      cost hurdle. Requiring a second stricter ratio here made "Active" mode
@@ -336,7 +352,10 @@ function exploratoryAutoApproval(order, { operatingState = null,
     detail: reasons.length ? reasons.join("; ")
       : `exploratory paper auto-approved: $${orderUsd.toFixed(0)}; no daily order quota; `
         + `${Number(book.grossPct || 0).toFixed(1)}% invested before this order`,
-    cohort: policy.evidenceCohort || "exploratory_auto_unvalidated",
+    cohort: control
+      ? ((activity.controlCohort && activity.controlCohort.evidenceCohort) || XP.COHORT_CONTROL)
+      : (policy.evidenceCohort || "exploratory_auto_unvalidated"),
+    cohortRole: control ? "control" : "signal",
     unlimitedOrdersPerDay: auto.unlimitedOrdersPerDay === true };
 }
 

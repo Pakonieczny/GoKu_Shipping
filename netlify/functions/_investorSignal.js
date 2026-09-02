@@ -400,6 +400,11 @@ function sectorCrowding(ranks, sectorFor, threshold = 0.25) {
 
 const ENTRY_RANK = 0.10;   // bottom decile of residual return = oversold
 const EXIT_RANK  = 0.50;   // the buy/hold spread: hold until the median
+/* Adverse intelligence at or above this score is a FINDING for the purpose of
+   paper relaxation (it matches the intelligence policy's own non-blocking
+   ceiling). Below it, an adverse score still haircuts size; it does not turn a
+   stale or incomplete dossier into a refusal. */
+const INTEL_FINDING_RISK_FLOOR = 25;
 
 function entrySignal(rank, z, cfg, ctx) {
   const entryRank = cfg.entryRank ?? ENTRY_RANK;
@@ -771,15 +776,41 @@ function evaluateCandidate(input) {
         adverseRiskScore: 0, reasons: ["no current company-intelligence dossier"] };
   /* Missing, stale or incomplete coverage is an absence. A current dossier
      that found adverse material is evidence. Paper learning may observe the
-     former at reduced size but must never erase the latter. */
-  const intelIncomplete = !input.intelligence || intelPolicy.monitored !== true
-    || intelPolicy.fresh !== true || intelPolicy.complete !== true;
+     former at reduced size but must never erase the latter.
+
+     Two corrections to what counts as which:
+     - The TEMPORAL layer is part of the required coverage when
+       requireTemporalContext is on. A name whose dossier is fresh and
+       complete but whose temporal inventory is still warming (three years
+       of daily history, a driver with 126 aligned days, an exposure
+       synthesis that has not run) used to be HARD-blocked while a name with
+       no dossier at all was admitted at 20% size. Temporal incompleteness
+       is an absence and relaxes the same way; a temporal FINDING (a hard
+       block, or a complete, fresh temporal read that refuses entry) still
+       does not.
+     - "Any adverse score above zero" is not a finding. A stale dossier
+       carrying a 3/100 regulatory mention blocked the name outright because
+       staleness disqualified it from the relaxation. A finding is a
+       MATERIAL adverse score (the 25-point floor the intelligence policy
+       itself treats as the non-blocking ceiling), a critical exit, a hard
+       block, or an unresolved adverse discovery lead. Below that the
+       adverse score still haircuts the size through the ordinary
+       intelligence multiplier; it just no longer converts an absence into a
+       refusal. */
   const temporalPolicy = intelPolicy.temporalPolicy || {};
-  const intelHasFinding = Number(intelPolicy.adverseRiskScore) > 0
-    || intelPolicy.criticalExit === true || intelPolicy.hardBlock === true
-    || temporalPolicy.hardBlock === true
+  const temporalRequired = cfg.requireTemporalContext === true;
+  const temporalIncomplete = temporalRequired && (temporalPolicy.monitored !== true
+    || temporalPolicy.fresh !== true || temporalPolicy.complete !== true);
+  const intelIncomplete = !input.intelligence || intelPolicy.monitored !== true
+    || intelPolicy.fresh !== true || intelPolicy.complete !== true || temporalIncomplete;
+  const materialAdverse = Number(intelPolicy.adverseRiskScore) >= INTEL_FINDING_RISK_FLOOR;
+  const temporalFinding = temporalPolicy.hardBlock === true
     || (temporalPolicy.entryAllowed === false && temporalPolicy.complete === true
-        && temporalPolicy.fresh !== false);
+        && temporalPolicy.fresh === true && temporalPolicy.monitored === true);
+  const intelHasFinding = materialAdverse
+    || intelPolicy.criticalExit === true || intelPolicy.hardBlock === true
+    || intelPolicy.pendingAdverseLead === true
+    || temporalFinding;
   const intelRelaxed = cfg.requireCompanyIntelligence === true
     && cfg.paperAbstainOnMissingInfo === true && intelPolicy.entryAllowed !== true
     && intelIncomplete && !intelHasFinding;
@@ -911,7 +942,7 @@ module.exports = {
   mean, stdev, pctReturns, timestampReturns, ols, jointOls,
   sectorOf, setSectorMap, getSectorMap,
   residualPanel, residualZ, crossSectionalRanks,
-  entrySignal, exitSignal, ENTRY_RANK, EXIT_RANK, sectorCrowding,
+  entrySignal, exitSignal, ENTRY_RANK, EXIT_RANK, INTEL_FINDING_RISK_FLOOR, sectorCrowding,
   volatilityScaler, dispersionGate, effectiveDispersionGate, earningsBlackout,
   CAUSE, directionFromCause, costHurdle,
   evaluateCandidate,

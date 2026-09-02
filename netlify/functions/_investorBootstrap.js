@@ -53,7 +53,7 @@ const S_FALLBACK = require("./_investorStrategy.js");
 const V = require("./_investorVariants");
 const STATE = require("./_investorState");
 
-const BOOTSTRAP_VERSION = 12;
+const BOOTSTRAP_VERSION = 13;
 const DAILY_PROVENANCE_VERSION = 5; // v5 re-attests complete windows to the selected 15-minute SIP identity
 
 function stable(value) {
@@ -672,6 +672,31 @@ async function readShares() {
   return snap.exists ? (snap.data().bySymbol || {}) : {};
 }
 
+/** PURE. May the safety epoch's commit be rolled to the running build?
+ *  Only when every identity the epoch attests is byte-identical to the stored
+ *  and the code-side frozen identity, and the account was already authorised
+ *  for automatic exploratory paper trading. Anything else needs a real
+ *  re-bootstrap. Exported so a runtime fixture can attest it. */
+function epochRolloverEligible(control, { commit, codeStrategy, variantsHash }) {
+  const c = control || {}, epoch = c.safetyEpoch || null;
+  const fail = (reason) => ({ eligible: false, reason });
+  if (!epoch || !epoch.commit) return fail("no safety epoch");
+  if (epoch.commit === commit) return fail("epoch already on this commit");
+  const operating = STATE.describe(c);
+  if (c.autoExploratoryAuthorized !== true) return fail("exploratory auto not authorised");
+  if (operating.exploratoryAuto !== true) return fail(`operating state is ${operating.state}`);
+  if (epoch.accountId !== (c.accountId || "paper-1")) return fail("accountId");
+  if (!c.strategyVersion || epoch.strategyVersion !== c.strategyVersion) return fail("strategyVersion");
+  if (!codeStrategy || codeStrategy.version !== c.strategyVersion) return fail("code strategy version");
+  if (!c.strategyHash || epoch.strategyHash !== c.strategyHash) return fail("strategyHash");
+  if (strategyHash(codeStrategy) !== c.strategyHash) return fail("code strategy hash");
+  if (!c.universeVersion || epoch.universeVersion !== c.universeVersion) return fail("universeVersion");
+  if (!c.universeHash || epoch.universeHash !== c.universeHash) return fail("universeHash");
+  if (!c.variantsHash || epoch.variantsHash !== c.variantsHash) return fail("variantsHash");
+  if (variantsHash !== c.variantsHash) return fail("code variants hash");
+  return { eligible: true, reason: "identity unchanged" };
+}
+
 async function ensureBootstrapped({ force = false, enrich = true } = {}) {
   const ref = A.col(A.COL.control).doc("control");
   const snap = await ref.get();
@@ -692,7 +717,48 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
       safetyClosedReason: "runtime fixture attestation failed" }, { merge: true });
   }
 
+  /* DEPLOY ROLLOVER. The safety epoch binds every entry to the commit that
+     was attested when the operator (or the bootstrap) activated it. A deploy
+     that does not bump BOOTSTRAP_VERSION used to leave that binding pointing
+     at the previous commit, so controlAllowsEntry refused every order with
+     "safety epoch commit mismatch" and nothing on the desk said why — the
+     console showed "working now" while no order could ever be written.
+
+     The rollover re-stamps ONLY the commit, and only when everything the
+     epoch actually attests is unchanged: fixtures pass on this build, the
+     frozen strategy/universe/variants identities are byte-identical to what
+     the epoch names, and the account was already authorised for automatic
+     exploratory paper trading. Any identity change still requires a real
+     re-bootstrap (a BOOTSTRAP_VERSION bump), exactly as before. The event is
+     audited so the evidence record shows which build each entry ran on. */
+  let epochRollover = null;
+  try {
+    const epoch = c.safetyEpoch || null;
+    if (done && !force && fixtures.pass && epoch && epoch.commit && epoch.commit !== commit) {
+      const operatingNow = STATE.describe(c);
+      const verdict = epochRolloverEligible(c, { commit,
+        codeStrategy: strategyDocument(S_FALLBACK), variantsHash: V.variantsHash() });
+      if (verdict.eligible) {
+        const rolled = { ...epoch, commit, previousCommit: epoch.commit,
+          rolledOverAtMs: Date.now(), rolledOverBy: "bootstrap:deploy_rollover" };
+        await ref.set({ safetyEpoch: rolled }, { merge: true });
+        await A.col(A.COL.audit).add({ action: "safety_epoch_deploy_rollover",
+          previousCommit: epoch.commit, commit, fixtureHash: fixtures.fixtureHash || null,
+          operatingState: operatingNow.state, atMs: Date.now(),
+          ...A.envelope({ created_by: "investorBootstrap" }) });
+        c.safetyEpoch = rolled;
+        epochRollover = { rolled: true, previousCommit: epoch.commit, commit };
+      } else {
+        epochRollover = { rolled: false, previousCommit: epoch.commit, commit,
+          reason: `frozen identity or authorisation changed (${verdict.reason}) — a full re-bootstrap is required` };
+      }
+    }
+  } catch (e) {
+    epochRollover = { rolled: false, error: String(e.message).slice(0, 160) };
+  }
+
   const steps = [];
+  if (epochRollover) steps.push({ step: "safetyEpochRollover", ok: epochRollover.rolled === true, ...epochRollover });
   let universe = null;
 
   if (!done || force) {
@@ -956,6 +1022,7 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
 }
 
 module.exports = {
+  epochRolloverEligible,
   expectedHistorySymbols, historyCursorNeedsReconcile, backfillDailyHistory, topUpDailyHistory,
   backfillSharesOutstanding, readShares,
   BOOTSTRAP_VERSION, DAILY_PROVENANCE_VERSION,

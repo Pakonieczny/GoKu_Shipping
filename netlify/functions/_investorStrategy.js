@@ -112,10 +112,11 @@ function paperLearningConfig(base, ctrl = {}) {
 
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax,
-  "version": "v8",
-  "supersedes": "v7",
+  "version": "v9",
+  "supersedes": "v8",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
   "frozenAt": "2026-09-01",
+  "_versionNote": "v9 carries the v8 strict hypothesis and strict parameters UNCHANGED. It differs only in the labelled exploratory paper cohort (exploratory-auto-v3: wider entry lane, per-cycle pacing, a small unconditional control cohort, and Thompson selection among the frozen policies for exploratory entries). The strict comparison policy, its promotion gates and the shadow experiment are untouched; the version is bumped because the exploratory policy is bound into the frozen strategy identity.",
   "immutable": true,
   "status": "research",
   "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
@@ -224,13 +225,21 @@ module.exports = {
      promotion ladder. The complete strict verdict remains beside every
      exploratory verdict so these populations can never be pooled silently.
 
-     v2 widens only this labelled paper-learning cohort: approximately the
-     bottom 30% may be examined once the residual is at least 1 standard
-     deviation unusual, rank recovery exits at 40%, and a three-session time
-     stop turns observations over. Strict v8 remains at rank 10% / |z| 2 /
-     ten sessions, so increased paper activity cannot masquerade as validation. */
+     v3 widens only this labelled paper-learning cohort and makes it
+     CONTINUOUSLY ACTIVE: the bottom half of the cross-section may be
+     examined once the residual is at least 1 standard deviation unusual, the
+     cost margin is the clamp floor, rank recovery exits once the name is
+     back ABOVE the median (60%; with entries admitted up to the median an
+     exit at 40% closed most positions on the very next scan, which measures
+     noise, not reversion), and a three-session time stop turns
+     observations over. Entries are paced per
+     cycle, a small unconditional control cohort runs beside the signal
+     cohort, and Thompson sampling over the frozen policy family orders
+     which qualified candidates are taken first. Strict v9 remains at rank
+     10% / |z| 2 / ten sessions, so increased paper activity cannot
+     masquerade as validation. */
   "exploratoryAuto": {
-    "version": "exploratory-auto-v2",
+    "version": "exploratory-auto-v3",
     "enabled": true,
     "autoStartAfterSuccessfulBootstrap": true,
     "startingNavUsd": 100000,
@@ -238,13 +247,55 @@ module.exports = {
     "paperLearningDefaults": {
       "enabled": true,
       "abstainOnMissingInfo": true,
-      "costMarginMultiple": 0.5,
+      "costMarginMultiple": 0.25,
       "minAbsZ": 1.0,
-      "entryRank": 0.3,
-      "exitRank": 0.4,
+      "entryRank": 0.5,
+      "exitRank": 0.6,
       "maxHoldDays": 3,
       "sectorCrowdingMultiple": 4,
       "minAdvUsd": 50000000
+    },
+    /* The activity layer (_investorExplore.js). Every knob is clamped there.
+       - maxNewEntriesPerCycle: new signal entries one cycle may open, so
+         activity is spread across the session rather than one 09:45 burst.
+       - minimumShareFloor: a sized order that rounds to zero shares because
+         the stock price exceeds its risk-sized notional may take ONE share,
+         provided one share is inside the ordinary position cap. Paper money;
+         the outcome in basis points is what is being learned.
+       - controlCohort: names that pass every HAZARD gate but not the signal
+         gates, taken unconditionally and at random, at reduced size. They
+         are the baseline the signal cohort is measured against.
+       - reservationHeadroomBps: cash reserved above gross + modelled
+         friction so a fill half an hour later is not refused because the
+         price rose 0.3%. Refusing those fills selected the recorded sample
+         toward names that kept falling. Unspent headroom returns at fill.
+       - expireUnfilledEntriesAtSessionClose: an exploratory entry that did
+         not fill in its own session is released, never carried to the next
+         open — a mean-reversion signal is stale by then.
+       - policySelection: Thompson sampling over the frozen policies whose
+         entry rule fired for each candidate; "utility" restores the plain
+         expected-edge ordering. */
+    "activity": {
+      "enabled": true,
+      "maxNewEntriesPerCycle": 6,
+      "minimumShareFloor": 1,
+      "reservationHeadroomBps": 150,
+      "expireUnfilledEntriesAtSessionClose": true,
+      "controlCohort": {
+        "enabled": true,
+        "maxOpenPositions": 6,
+        "maxNewPerSession": 3,
+        "sizeMultiplier": 0.5,
+        "evidenceCohort": "exploratory_control_unconditional"
+      },
+      "policySelection": {
+        "method": "thompson",
+        "priorMeanBps": 0,
+        "priorSdBps": 150,
+        "tradeSdBps": 250,
+        "minClosedForObservedSd": 8
+      },
+      "scoreboardLookbackTrades": 1000
     },
     "portfolioControls": {
       "maxOpenPositions": 304,

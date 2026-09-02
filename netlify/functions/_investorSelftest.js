@@ -985,9 +985,10 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v2"
-      && learn.minAbsZ === 1.0 && learn.entryRank === 0.3
-      && learn.exitRank === 0.4 && learn.maxHoldDays === 3
+      && policy.version === "exploratory-auto-v3"
+      && learn.minAbsZ === 1.0 && learn.entryRank === 0.5
+      && learn.costMarginMultiple === 0.25
+      && learn.exitRank === 0.6 && learn.maxHoldDays === 3
       && pc.maxGrossExposurePct === 100 && pc.minCashPct === 0
       && pc.maxOpenPositions === 304
       && policy.autoApproval.unlimitedOrdersPerDay === true
@@ -1068,10 +1069,180 @@ function runFixtures() {
     return /^[a-f0-9]{64}$/.test(original) && original !== changed;
   }));
 
+  /* ── exploratory activity layer (v9 / exploratory-auto-v3) ──────────── */
+  const XP = require("./_investorExplore");
+
+  /* A shared, gate-clean entry input. Every fixture below flips ONE thing. */
+  const exploreNow = Date.parse("2026-09-01T15:00:00Z");   // 11:00 ET, regular session
+  const exploreBase = () => ({
+    symbol: "AAA", rank: 0.2, nowMs: exploreNow,
+    zStat: { z: -1.6, cumResidual: -0.012, window: 12 },
+    quality: { grade: "B", tradable: true, researchEligible: true, reasons: [] },
+    advUsd: 2e9, earningsDates: ["2026-11-20"], earningsEstimated: false,
+    cause: S.CAUSE.NONE, vixNorm: 1, cor3m: 20,
+    sectorTailFraction: 0.1, turnoverPctile: 0.4,
+    session: { open: true, wideSpreadWindow: false, phase: "regular" },
+    position: null, historyContext: null, reversion: null,
+  });
+  const exploreRelaxed = { ...strategy.parameters, ...strategy.exploratoryAuto.paperLearningDefaults,
+    paperAbstainOnMissingInfo: true, paperObservationSizeFloor: 0.1, requireCalibratedEdge: false };
+  const gateOf = (res, id) => (res.gates || []).find((g) => g.id === id) || {};
+  const intelWith = ({ asOfMs, events = [], temporalMissing = [] }) => ({
+    coverage: { monitored: true, complete: true, asOfMs },
+    events,
+    temporalContext: { asOfMs, coverage: { requiredMissing: temporalMissing },
+      schedule: { nearest: null }, hazards: { active: [], riskScore: 0 },
+      seasonality: { status: temporalMissing.length ? "warming" : "ready", riskScore: 0 },
+      drivers: { drivers: [] } },
+  });
+
+  cases.push(fixture("temporal_absence_relaxes_in_paper_mode_but_never_a_material_finding", () => {
+    /* Fresh, complete dossier; temporal layer still warming = an ABSENCE. */
+    const warming = intelWith({ asOfMs: exploreNow - 3600e3, temporalMissing: ["seasonality_warming"] });
+    const relaxed = S.evaluateCandidate({ ...exploreBase(), intelligence: warming, cfg: exploreRelaxed });
+    if (gateOf(relaxed, "intelligence").pass !== true) return false;
+    if (relaxed.intelligencePolicy.relaxedMissingInformation !== true) return false;
+    if (!(relaxed.intelligencePolicy.sizeMultiplier >= 0.2)) return false;
+    /* The strict policy still refuses the same absence. */
+    const strict = S.evaluateCandidate({ ...exploreBase(), intelligence: warming, cfg: strategy.parameters });
+    if (gateOf(strict, "intelligence").pass !== false) return false;
+    /* A stale dossier with a trivial adverse mention is an absence too. */
+    const trivial = intelWith({ asOfMs: exploreNow - 10 * 3600e3,
+      events: [{ direction: -1, evidenceEligible: true, adverseRiskScore: 5, impactScore: 5,
+        probabilityTrue: 0.5, probabilityMaterial: 0.2, corroboration: { independentGroups: 1 } }] });
+    const trivialRes = S.evaluateCandidate({ ...exploreBase(), intelligence: trivial, cfg: exploreRelaxed });
+    if (gateOf(trivialRes, "intelligence").pass !== true) return false;
+    /* A stale dossier with a MATERIAL adverse score is a finding: never relaxed. */
+    const material = intelWith({ asOfMs: exploreNow - 10 * 3600e3,
+      events: [{ direction: -1, evidenceEligible: true, adverseRiskScore: 40, impactScore: 40,
+        probabilityTrue: 0.8, probabilityMaterial: 0.7, corroboration: { independentGroups: 2 } }] });
+    const materialRes = S.evaluateCandidate({ ...exploreBase(), intelligence: material, cfg: exploreRelaxed });
+    if (gateOf(materialRes, "intelligence").pass !== false) return false;
+    /* A fresh, complete temporal read that refuses entry (risk >= 70) is a finding. */
+    const hot = intelWith({ asOfMs: exploreNow - 3600e3 });
+    hot.temporalContext.recurring = { riskScore: 90, active: [{ name: "x" }],
+      calendarMonth: new Date(exploreNow).getUTCMonth() + 1 };
+    const hotPolicy = T.temporalPolicy(hot.temporalContext, { asOfMs: exploreNow });
+    if (hotPolicy.entryAllowed !== false || hotPolicy.complete !== true || hotPolicy.fresh !== true) return false;
+    const hotRes = S.evaluateCandidate({ ...exploreBase(), intelligence: hot, cfg: exploreRelaxed });
+    return gateOf(hotRes, "intelligence").pass === false
+      && S.INTEL_FINDING_RISK_FLOOR === 25;
+  }));
+
+  cases.push(fixture("control_cohort_may_fail_only_signal_gates", () => {
+    /* No signal: rank in the middle, z mild. Every hazard gate clean. */
+    const quiet = S.evaluateCandidate({ ...exploreBase(), rank: 0.8,
+      zStat: { z: 0.2, cumResidual: 0.001, window: 12 }, cfg: exploreRelaxed });
+    if (quiet.pass !== false || !XP.controlEligible(quiet)) return false;
+    if (!quiet.blockedBy.every((id) => XP.CONTROL_MAY_FAIL.includes(id))) return false;
+    /* A dated earnings window is a hazard: not control-eligible. */
+    const hazard = S.evaluateCandidate({ ...exploreBase(), rank: 0.8,
+      zStat: { z: 0.2, cumResidual: 0.001, window: 12 },
+      earningsDates: ["2026-09-02"], cfg: exploreRelaxed });
+    if (XP.controlEligible(hazard)) return false;
+    /* A passing signal candidate is not a control candidate. */
+    const signal = S.evaluateCandidate({ ...exploreBase(), cfg: exploreRelaxed });
+    if (signal.pass !== true || XP.controlEligible(signal)) return false;
+    /* The ladder approves a control order that failed only signal gates and
+       refuses one that failed a hazard gate; a non-control order with a
+       failed gate is refused as before. */
+    const base = { paperLearningOnly: true, qty: 1, refPriceUsd: 100,
+      quality: { grade: "B", tradable: true, researchEligible: true },
+      universeHash: "a".repeat(64), strategyHash: "b".repeat(64), variantsHash: "c".repeat(64),
+      decisionMarketProvenance: { provider: "alpaca", feed: "delayed_sip",
+        adjustment: "split_and_dividend", sourceSha256: "d".repeat(64) },
+      cost: { ratio: 0.1, calibratedNetLowerBoundBps: null },
+      decisionContext: { strictVerdict: { pass: false, blockedBy: ["signal"] } } };
+    const ctx = { operatingState: "exploratory_auto", book: { count: 3, grossPct: 2 },
+      navUsd: 100000, cfg: strategy };
+    const controlOk = LD.exploratoryAutoApproval({ ...base,
+      learningCohort: XP.COHORT_CONTROL,
+      decisionContext: { ...base.decisionContext, cohortRole: "control" },
+      gates: quiet.gates }, ctx);
+    const controlBad = LD.exploratoryAutoApproval({ ...base,
+      learningCohort: XP.COHORT_CONTROL,
+      decisionContext: { ...base.decisionContext, cohortRole: "control" },
+      gates: hazard.gates }, ctx);
+    const signalBad = LD.exploratoryAutoApproval({ ...base, gates: quiet.gates }, ctx);
+    return controlOk.approve === true && controlOk.cohortRole === "control"
+      && controlOk.cohort === XP.COHORT_CONTROL
+      && controlBad.approve === false && signalBad.approve === false;
+  }));
+
+  cases.push(fixture("exploratory_scoreboard_shrinks_toward_prior_and_selection_is_deterministic", () => {
+    const sel = XP.activityPolicy(strategy).policySelection;
+    const empty = XP.buildScoreboard([], { policySelection: sel, policyIds: ["A", "B"] });
+    if (empty.closedExploratoryTrades !== 0) return false;
+    if (empty.policies.A.n !== 0 || empty.policies.A.posteriorMeanBps !== sel.priorMeanBps) return false;
+    const trade = (net, ids, role = "signal") => ({ paperLearningOnly: true,
+      learningCohort: role === "control" ? XP.COHORT_CONTROL : XP.COHORT_SIGNAL,
+      netBps: net, decisionContext: { explorationPolicyIds: ids, cohortRole: role } });
+    const trades = [];
+    for (let i = 0; i < 20; i += 1) trades.push(trade(50, ["A"]));
+    for (let i = 0; i < 20; i += 1) trades.push(trade(-40, ["B"]));
+    for (let i = 0; i < 10; i += 1) trades.push(trade(0, [], "control"));
+    /* A strict-only trade is never counted. */
+    trades.push({ paperLearningOnly: false, learningCohort: "strict_policy", netBps: 9999, variantId: "A" });
+    const sb = XP.buildScoreboard(trades, { policySelection: sel, policyIds: ["A", "B"] });
+    if (sb.closedExploratoryTrades !== 50) return false;
+    const a = sb.policies.A, b = sb.policies.B;
+    if (!(a.n === 20 && a.meanNetBps === 50 && a.posteriorMeanBps > 0 && a.posteriorMeanBps < 50)) return false;
+    if (!(b.n === 20 && b.posteriorMeanBps < 0 && b.posteriorMeanBps > -40)) return false;
+    if (!(a.posteriorSdBps < sel.priorSdBps)) return false;
+    if (sb.cohorts.control.n !== 10 || sb.cohorts.signal.n !== 40) return false;
+    if (!sb.signalVsControl || typeof sb.signalVsControl.differenceBps !== "number") return false;
+    if (sb.leadingPolicyId !== "A") return false;
+    /* Same seed, same order; the ordering is a function of the evidence. */
+    const cands = [{ sym: "X", policyIds: ["B"], utilityBps: 5 }, { sym: "Y", policyIds: ["A"], utilityBps: 5 },
+      { sym: "Z", policyIds: ["A", "B"], utilityBps: 1 }];
+    const r1 = XP.rankCandidates(cands, sb, { seed: "cycle-1", policySelection: sel });
+    const r2 = XP.rankCandidates(cands, sb, { seed: "cycle-1", policySelection: sel });
+    if (r1.map((r) => r.sym).join() !== r2.map((r) => r.sym).join()) return false;
+    /* With this much evidence A's draw beats B's in the overwhelming majority
+       of seeds; assert it over a small seed family rather than one draw. */
+    let aFirst = 0;
+    for (let k = 0; k < 40; k += 1) {
+      const r = XP.rankCandidates(cands, sb, { seed: `s${k}`, policySelection: sel });
+      if (r[0].sym !== "X") aFirst += 1;
+    }
+    if (aFirst < 30) return false;
+    /* Control selection is deterministic per seed and bounded by limit. */
+    const pool = ["P", "Q", "R", "S"].map((sym) => ({ sym }));
+    const c1 = XP.selectControl(pool, { seed: "cycle-1", limit: 2 });
+    const c2 = XP.selectControl(pool, { seed: "cycle-1", limit: 2 });
+    return c1.length === 2 && c1.map((x) => x.sym).join() === c2.map((x) => x.sym).join()
+      && XP.selectControl(pool, { seed: "cycle-1", limit: 0 }).length === 0;
+  }));
+
+  cases.push(fixture("deploy_rollover_requires_unchanged_frozen_identity", () => {
+    const codeStrategy = B.strategyDocument
+      ? B.strategyDocument(strategy)
+      : Object.fromEntries(Object.entries(strategy).filter(([, v]) => typeof v !== "function"));
+    const sHash = B.strategyHash(codeStrategy), vHash = V.variantsHash();
+    const control = { accountId: "paper-1", strategyVersion: strategy.version, strategyHash: sHash,
+      universeVersion: "u1", universeHash: "u".repeat(64), variantsHash: vHash,
+      autoExploratoryAuthorized: true, operatingState: "exploratory_auto",
+      safetyEpoch: { accountId: "paper-1", strategyVersion: strategy.version, strategyHash: sHash,
+        universeVersion: "u1", universeHash: "u".repeat(64), variantsHash: vHash, commit: "old" } };
+    const ok = B.epochRolloverEligible(control, { commit: "new", codeStrategy, variantsHash: vHash });
+    if (ok.eligible !== true) return false;
+    const same = B.epochRolloverEligible(control, { commit: "old", codeStrategy, variantsHash: vHash });
+    if (same.eligible !== false) return false;
+    const variantsChanged = B.epochRolloverEligible(control, { commit: "new", codeStrategy, variantsHash: "x".repeat(64) });
+    const strategyChanged = B.epochRolloverEligible(control, { commit: "new",
+      codeStrategy: { ...codeStrategy, parameters: { ...codeStrategy.parameters, entryRank: 0.11 } }, variantsHash: vHash });
+    const notAuthorised = B.epochRolloverEligible({ ...control, autoExploratoryAuthorized: false },
+      { commit: "new", codeStrategy, variantsHash: vHash });
+    const paused = B.epochRolloverEligible({ ...control, killSwitch: true },
+      { commit: "new", codeStrategy, variantsHash: vHash });
+    return variantsChanged.eligible === false && strategyChanged.eligible === false
+      && notAuthorised.eligible === false && paused.eligible === false;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v11-market-coverage", count: cases.length, cases });
+  const fixtureHash = digest({ schema: "runtime-fixtures-v12-exploratory-activity", count: cases.length, cases });
   return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }

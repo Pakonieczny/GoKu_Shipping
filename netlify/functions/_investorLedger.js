@@ -304,7 +304,8 @@ async function reconcileAccount(accountId, { marks = null, expectedNavUsd = null
     const approved = orders.filter((o) => o.status === "approved");
     const openCostCents = open.reduce((sum, p) => sum + (Number(p.costBasisCents) || 0), 0);
     const reservedOrdersCents = approved.reduce((sum, o) => sum
-      + (Number(o.grossCents) || 0) + (Number(o.frictionCents) || 0), 0);
+      + (Number(o.grossCents) || 0) + (Number(o.frictionCents) || 0)
+      + (Number(o.reservationHeadroomCents) || 0), 0);
     const capitalCents = -(Number(b[ACCT.CONTRIB]) || 0);
     const realizedCents = -(Number(b[ACCT.REALIZED_PL]) || 0);
     const dividendCents = -(Number(b[ACCT.DIVIDEND_INCOME]) || 0);
@@ -346,10 +347,20 @@ async function reconcileAccount(accountId, { marks = null, expectedNavUsd = null
     const liquidCashCents = (Number(b[ACCT.CASH]) || 0) + (Number(b[ACCT.RESERVED]) || 0);
     const computedNavCents = liquidCashCents + marketValueCents;
     const displayedNavCents = expectedNavUsd == null ? null : toCents(expectedNavUsd);
+    /* The displayed NAV is a floating-point sum of qty x price over the book,
+       rounded once; this side rounds each position to cents first. Those two
+       orders of rounding legitimately differ by up to one cent per open
+       position. A one-cent tolerance passed for as long as the book was
+       empty and froze new entries the first afternoon it held thirteen
+       names — a transient two-cent difference became a permanent
+       ENTRY_FROZEN. The tolerance is one cent per open position plus one. */
+    const navToleranceCents = 1 + open.length;
     const nav = { liquidCashCents, marketValueCents, computedNavCents,
       displayedNavCents, marksComplete: markViolations.length === 0,
+      toleranceCents: navToleranceCents,
       pass: markViolations.length === 0
-        && (displayedNavCents == null || Math.abs(displayedNavCents - computedNavCents) <= 1) };
+        && (displayedNavCents == null
+          || Math.abs(displayedNavCents - computedNavCents) <= navToleranceCents) };
     const equationPass = Object.values(equations).every((x) => x.pass);
     result = { accountId, context, checkedAtMs, journal, lifecycle, equations,
       markViolations, nav, pass: journal.pass && lifecycle.pass && equationPass && nav.pass };
@@ -380,6 +391,26 @@ async function reconcileAccount(accountId, { marks = null, expectedNavUsd = null
         operatingStateReason: "automatic paper-ledger reconciliation failed",
         operatingStateSource: "reconciliation",
       });
+    }
+    /* SELF-HEALING. A freeze that THIS check imposed is lifted by this check
+       passing again, restoring the state the account was in before. An
+       operator's freeze (any other source) is never touched: the operator
+       lifts that. Without this, one transient discrepancy left the desk
+       "frozen — exits still monitored" until a human noticed. */
+    const describedNow = STATE.describe(ctrl);
+    if (result.pass && describedNow.entriesFrozen
+        && ctrl.operatingStateSource === "reconciliation"
+        && STATE.active(ctrl.resumeOperatingState)) {
+      Object.assign(patch, STATE.legacyPatch(ctrl.resumeOperatingState, ctrl), {
+        operatingStateReason: "paper-ledger reconciliation passed again; automatic freeze lifted",
+        operatingStateSource: "reconciliation",
+        reconciliationFreezeLiftedAtMs: Date.now(),
+      });
+      try {
+        await A.col(A.COL.audit).add({ action: "reconciliation_freeze_lifted", accountId,
+          context, resumedState: ctrl.resumeOperatingState, atMs: Date.now(),
+          ...A.envelope({ created_by: "ledger.reconcileAccount" }) });
+      } catch { /* audit is best-effort */ }
     }
     await controlRef.set(patch, { merge: true });
   }
@@ -438,7 +469,8 @@ async function proposeOrder(input) {
     decisionMarketProvenance = null, executionCostContext = null,
     paperLearningOnly = false,
     operatingStateAtDecision = null, learningCohort = null,
-    exploratoryPolicyVersion = null,
+    exploratoryPolicyVersion = null, cohortRole = null, decisionSessionDate = null,
+    reservationHeadroomBps = 0,
     executionLatencyMs = 60000 } = input;
   if (![universeHash, strategyHash, variantsHash].every((h) => /^[a-f0-9]{64}$/.test(String(h || "")))) {
     throw new Error("proposeOrder: complete policy hashes are required");
@@ -459,6 +491,15 @@ async function proposeOrder(input) {
   const controlRef = A.col(A.COL.control).doc("control");
   const priceInt = toPrice(refPriceUsd), grossCents = notionalCents(qty, priceInt);
   const frictionCents = Math.max(1, Math.round(grossCents * Number(slippageBps) / 10000));
+  /* RESERVATION HEADROOM. The fill happens on a bar that opens at least the
+     feed delay plus execution latency after approval — half an hour on a
+     15-minute-delayed feed. A reservation of exactly gross + modelled friction
+     could only fill if the price had NOT risen in that half hour, so the fill
+     sample was silently selected toward names that kept falling. Headroom is
+     reserved up front and every unspent cent is returned at fill time; the
+     recorded friction is still the measured shortfall, not the headroom. */
+  const headroomBps = Math.max(0, Math.min(1000, Number(reservationHeadroomBps) || 0));
+  const reservationHeadroomCents = Math.round(grossCents * headroomBps / 10000);
   return A.runTransaction(async (tx) => {
     const [cur, lock, controlSnap] = await Promise.all([tx.get(ref), tx.get(lockRef), tx.get(controlRef)]);
     if (cur.exists) {
@@ -476,6 +517,7 @@ async function proposeOrder(input) {
     const row = { orderId, lifecycleId, accountId, symbol, side, decisionId, strategyVersion, universeVersion,
       universeHash, strategyHash, variantsHash, qty, refPriceInt: priceInt,
       refPriceUsd: fromPrice(priceInt), grossCents, frictionCents, slippageBps,
+      reservationHeadroomCents, reservationHeadroomBps: headroomBps,
       sizing, gates, cause, evidenceRefs, variantId, portfolioRisk, decisionContext,
       decisionManifestHash, portfolioDecisionManifestHash,
       decisionMarketProvenance, executionCostContext,
@@ -485,6 +527,7 @@ async function proposeOrder(input) {
       quality, paperLearningOnly: paperLearningOnly === true,
       operatingStateAtDecision, learningCohort,
       exploratoryPolicyVersion,
+      cohortRole: cohortRole || "signal", decisionSessionDate: decisionSessionDate || null,
       status: "proposed", decisionAtMs: Number(decisionAtMs),
       executionLatencyMs: Math.max(0, Number(executionLatencyMs) || 60000),
       order_committed_at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "ledger.proposeOrder" }) };
@@ -516,7 +559,7 @@ async function approveOrder(orderId, operator) {
       return { orderId, status: "proposed", noop: true,
         refused: `entry controls changed before approval: ${permission.reason}` };
     }
-    const amount = o.grossCents + o.frictionCents;
+    const amount = o.grossCents + o.frictionCents + (Number(o.reservationHeadroomCents) || 0);
     if (!a.exists || ((a.data().balanceCents || {})[ACCT.CASH] || 0) < amount) {
       return { orderId, status: "proposed", noop: true, refused: "insufficient free cash" };
     }
@@ -545,7 +588,7 @@ async function releaseOrder(orderId, reason) {
   return A.runTransaction(async (tx) => {
     const s = await tx.get(ref); if (!s.exists) return { orderId, noop: true, reason: "not found" };
     const o = s.data(); if (o.status !== "approved") return { orderId, noop: true, status: o.status };
-    const amount = o.grossCents + o.frictionCents, aref = accountRef(o.accountId);
+    const amount = o.grossCents + o.frictionCents + (Number(o.reservationHeadroomCents) || 0), aref = accountRef(o.accountId);
     const lid = txnId([o.accountId,"release",orderId,"release"]), lref = A.col(A.COL.ledger).doc(lid);
     const lr = orderLockRef(o.accountId,o.symbol), [a, l, lock] = await Promise.all([tx.get(aref), tx.get(lref), tx.get(lr)]);
     if (l.exists) throw new Error(`releaseOrder ${orderId}: journal/state mismatch`);
@@ -613,7 +656,7 @@ async function recordFill({ orderId, bar, barProvenance }) {
       eligibleAfterMs: o.fillEligibleAfterMs, barOpenAt: bar.t }, `recordFill ${orderId}`);
     const openInt = toPrice(bar.o), adverse = o.side === "buy" ? 1 : -1;
     const fillInt = openInt + adverse * Math.round(openInt * o.slippageBps / 10000);
-    const reservedCents = o.grossCents + o.frictionCents;
+    const reservedCents = o.grossCents + o.frictionCents + (Number(o.reservationHeadroomCents) || 0);
     const amounts = fillAmounts(o.qty, openInt, fillInt, reservedCents);
     const fillId = txnId([orderId,"fill",bar.t]), lid = txnId([o.accountId,"fill",orderId,"fill",bar.t]);
     const releaseId = txnId([o.accountId,"release",orderId,"fill_abort"]);
@@ -694,6 +737,7 @@ async function recordFill({ orderId, bar, barProvenance }) {
       operatingStateAtDecision:o.operatingStateAtDecision||null,
       learningCohort:o.learningCohort||null,
       exploratoryPolicyVersion:o.exploratoryPolicyVersion||null,
+      cohortRole:o.cohortRole||"signal",decisionSessionDate:o.decisionSessionDate||null,
       variantId:o.variantId||"baseline",strategyVersion:o.strategyVersion,universeVersion:o.universeVersion,
       strategyHash:o.strategyHash,universeHash:o.universeHash,variantsHash:o.variantsHash,
       updated_at:A.FV.serverTimestamp()});
@@ -792,6 +836,7 @@ async function closePosition({accountId,symbol,bar,slippageBps,reason,barProvena
       operatingStateAtDecision:p.operatingStateAtDecision||null,
       learningCohort:p.learningCohort||null,
       exploratoryPolicyVersion:p.exploratoryPolicyVersion||null,
+      cohortRole:p.cohortRole||"signal",decisionSessionDate:p.decisionSessionDate||null,
       variantId:p.variantId||"baseline",strategyVersion:p.strategyVersion||null,universeVersion:p.universeVersion||null,
       strategyHash:p.strategyHash||null,universeHash:p.universeHash||null,variantsHash:p.variantsHash||null,
       ...A.envelope({created_by:"ledger.closePosition"})};

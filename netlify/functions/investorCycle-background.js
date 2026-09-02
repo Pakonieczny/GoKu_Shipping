@@ -58,6 +58,7 @@ const RS = require("./_investorResearchStats");
 const STATE = require("./_investorState");
 const DM = require("./_investorDecisionManifest");
 const SOAK = require("./_investorSoak");
+const XP = require("./_investorExplore");
 
 function sha256Json(value) {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -326,6 +327,11 @@ async function runCycle(jobId, { manual = false } = {}) {
   const operating = STATE.describe(ctrl);
   const strategy = await loadStrategy(ctrl.strategyVersion);
   const exploratoryPolicy = strategy.exploratoryAuto || {};
+  /* The exploratory ACTIVITY layer: pacing, Thompson selection among frozen
+     policies, the control cohort. Clamped in _investorExplore. It steers
+     order and pace among candidates the exploratory gates admitted; it
+     cannot admit one they refused. */
+  const activity = XP.activityPolicy(strategy);
   const activePortfolioControls = operating.exploratoryAuto
     ? { ...(strategy.portfolioControls || {}),
         ...(exploratoryPolicy.portfolioControls || {}) }
@@ -764,6 +770,7 @@ async function runCycle(jobId, { manual = false } = {}) {
   /* 4-6. evaluate each symbol ------------------------------------------- */
   const cycleId = `${today}_${new Date().toISOString().slice(11, 16).replace(":", "")}`;
   const candidates = [], decisions = [], exits = [], portfolioBlocks = [], proposalQueue = [];
+  const controlPool = [];
   const decisionManifestStats = { total: 0, complete: 0, invalid: 0 };
   let modelCalls = 0;
 
@@ -920,6 +927,31 @@ async function runCycle(jobId, { manual = false } = {}) {
       q.forEach((d) => pendingOrderSymbols.add(d.data().symbol));
     }
   } catch (e) { /* on failure, the recordFill double-fill guard still holds the line */ }
+
+  /* ── EXPLORATORY SCOREBOARD ───────────────────────────────────────────
+     Closed exploratory paper trades, attributed to the frozen policies whose
+     entry rule fired for them, become a shrunk posterior per policy. It is
+     read here, before any candidate is evaluated, and it steers only the
+     ORDER and PACE of exploratory entries this cycle. */
+  let scoreboard = null, controlOpen = 0, controlNewThisSession = 0;
+  if (operating.exploratoryAuto && activity.enabled) {
+    try {
+      const tradeSnap = await A.col(A.COL.trades).where("accountId", "==", accountId)
+        .limit(activity.scoreboardLookbackTrades).get();
+      const closedTrades = [];
+      tradeSnap.forEach((d) => closedTrades.push(d.data()));
+      scoreboard = XP.buildScoreboard(closedTrades, { policySelection: activity.policySelection,
+        policyIds: V.VARIANTS.map((v) => v.id) });
+    } catch (e) {
+      scoreboard = { error: String(e.message).slice(0, 120), policies: {}, cohorts: {} };
+    }
+    controlOpen = allPositions.filter((p) => p.open && XP.isControlOrder(p)).length;
+    try {
+      const controlToday = await A.col(A.COL.orders).where("accountId", "==", accountId)
+        .where("cohortRole", "==", "control").where("decisionSessionDate", "==", today).get();
+      controlNewThisSession = controlToday.size;
+    } catch (e) { controlNewThisSession = activity.controlCohort.maxNewPerSession; }
+  }
 
   /* One NAV mark per trading day is what every performance number is built
      from. Intraday rows are explicitly provisional. The finalized row is
@@ -1395,9 +1427,20 @@ async function runCycle(jobId, { manual = false } = {}) {
       operatingState: operating.state,
       modeledRoundTripBps: evalRes.cost && evalRes.cost.roundTripBps });
 
+    const explorationPolicyIds = firingPolicies.map((f) => f.variantId);
     if (evalRes.pass && entryControl.pass && manifestValidation.pass) {
       proposalQueue.push({ sym, last, evalRes, strictRes, cause, causeDetail, rank,
-        intelligence, decisionManifest });
+        intelligence, decisionManifest, cohortRole: "signal",
+        policyIds: explorationPolicyIds.length ? explorationPolicyIds : ["A"],
+        utilityBps: Number(evalRes.cost.calibratedNetLowerBoundBps
+          ?? (Number(evalRes.cost.expectedGrossBps) - Number(evalRes.cost.requiredBps))) });
+    } else if (operating.exploratoryAuto && activity.enabled && activity.controlCohort.enabled
+        && entryControl.pass && manifestValidation.pass && XP.controlEligible(evalRes)) {
+      /* Passed every hazard gate, failed only signal-type gates: a control
+         candidate. Chosen at random later, at reduced size, and labelled. */
+      controlPool.push({ sym, last, evalRes, strictRes, cause, causeDetail, rank,
+        intelligence, decisionManifest, cohortRole: "control",
+        policyIds: [], utilityBps: 0 });
     }
   }
   await reportRunProgress(runRef, { phase: "portfolio_selection",
@@ -1407,19 +1450,50 @@ async function runCycle(jobId, { manual = false } = {}) {
 
   /* Portfolio decisions are a batch problem. Rank all passing ideas by their
      conservative net utility, then admit them one by one against the evolving
-     book. Iterating ticker order would make the alphabet an allocation model. */
-  proposalQueue.sort((a, b) =>
-    Number(b.evalRes.cost.calibratedNetLowerBoundBps || -Infinity)
-      - Number(a.evalRes.cost.calibratedNetLowerBoundBps || -Infinity)
-    || (Number(b.evalRes.cost.expectedGrossBps) - Number(b.evalRes.cost.requiredBps))
-      - (Number(a.evalRes.cost.expectedGrossBps) - Number(a.evalRes.cost.requiredBps))
-    || a.rank - b.rank || a.sym.localeCompare(b.sym));
+     book. Iterating ticker order would make the alphabet an allocation model.
+
+     In exploratory paper mode the ORDER comes from Thompson sampling over the
+     frozen policies whose entry rule fired for each candidate (plus the
+     candidate's own expected edge), and the PACE is capped per cycle so
+     activity spreads across the session. Neither changes which candidates
+     qualified — that is the gate stack's verdict, recorded above. */
+  const exploratorySelection = operating.exploratoryAuto && activity.enabled;
+  let selectionRows = null;
+  if (exploratorySelection) {
+    selectionRows = XP.rankCandidates(proposalQueue.map((q) => ({ sym: q.sym,
+      policyIds: q.policyIds, utilityBps: q.utilityBps })), scoreboard,
+      { seed: `${cycleId}|${shadowExperiment.experimentHash}`, policySelection: activity.policySelection });
+    const orderIndex = new Map(selectionRows.map((r, i) => [r.sym, i]));
+    proposalQueue.sort((a, b) => orderIndex.get(a.sym) - orderIndex.get(b.sym));
+  } else {
+    proposalQueue.sort((a, b) =>
+      Number(b.evalRes.cost.calibratedNetLowerBoundBps || -Infinity)
+        - Number(a.evalRes.cost.calibratedNetLowerBoundBps || -Infinity)
+      || (Number(b.evalRes.cost.expectedGrossBps) - Number(b.evalRes.cost.requiredBps))
+        - (Number(a.evalRes.cost.expectedGrossBps) - Number(a.evalRes.cost.requiredBps))
+      || a.rank - b.rank || a.sym.localeCompare(b.sym));
+  }
+  const selectionBySym = new Map((selectionRows || []).map((r) => [r.sym, r]));
 
   let proposalCashUsd = cashUsdNow;
-  for (let queueIndex = 0; queueIndex < proposalQueue.length; queueIndex += 1) {
-    const q = proposalQueue[queueIndex];
+  const activityLog = { signalQualified: proposalQueue.length, signalProposed: 0,
+    signalPacedOut: 0, controlEligible: controlPool.length, controlProposed: 0,
+    controlOpenBefore: controlOpen, controlNewThisSessionBefore: controlNewThisSession,
+    minimumShareFloorApplied: 0, perCycleCap: exploratorySelection ? activity.maxNewEntriesPerCycle : null };
+  const ordinaryCapUsd = navUsd * (Number(activePortfolioControls.ordinaryPositionPctOfNav) || 3) / 100;
+
+  /* One proposal path for both cohorts. Returns true when an order was
+     written. Everything it reads is this cycle's own evidence. */
+  const proposeEntry = async (q, { queueIndex, batchSize }) => {
     const { sym, last, evalRes, cause, causeDetail, intelligence, decisionManifest } = q;
-    if (pendingOrderSymbols.has(sym)) continue;
+    const control = q.cohortRole === "control";
+    const cohortLabel = control
+      ? ((activity.controlCohort && activity.controlCohort.evidenceCohort) || XP.COHORT_CONTROL)
+      : (operating.exploratoryAuto
+        ? (exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated")
+        : (paperLearning.active ? "relaxed_operator_paper" : "strict_policy"));
+    const selected = selectionBySym.get(sym) || null;
+    if (pendingOrderSymbols.has(sym)) return false;
     try {
       const decisionAtMs = Date.now();
       /* Relaxed paper learning may score a research-only series, but a source
@@ -1440,13 +1514,21 @@ async function runCycle(jobId, { manual = false } = {}) {
           strategyVersion: strategy.version, ...A.envelope({ created_by: FN_NAME }),
         }, { merge: true });
         portfolioBlocks.push({ symbol: sym, blockedBy: ["execution_source"], reason });
-        continue;
+        return false;
       }
       const hc = historyCtx[sym] || {};
+      /* A control entry is sized like a signal entry whose size haircuts all
+         landed at the paper floor, then reduced again by the control
+         multiplier. It is a baseline, not a bet. */
+      const signalScaler = control
+        ? Math.max(Number(evalRes.sizing && evalRes.sizing.combined) || 0,
+            Math.max(0, Math.min(0.25, Number(cfg.paperObservationSizeFloor) || 0)))
+          * activity.controlCohort.sizeMultiplier
+        : evalRes.sizing.combined;
       const sizing = R.positionSizeUsd({ navUsd, atrPct: hc.atrPct,
         expectedShortfall5dPct: hc.expectedShortfall5dPct,
         overnightGapEsPct: hc.overnightGapEsPct,
-        signalScaler: evalRes.sizing.combined,
+        signalScaler,
         cfg: { ...activeRiskStrategy, parameters: cfg } });
       const dynamicCorrelations = {};
       for (const held of book.rows) {
@@ -1471,13 +1553,29 @@ async function runCycle(jobId, { manual = false } = {}) {
       });
       const portfolioManifestValidation = DM.validate(portfolioManifest);
       const permittedUsd = add.allow ? sizing.usd : (add.allowTrimmed ? add.permittedUsd : 0);
-      const qty = portfolioManifestValidation.pass
+      let qty = portfolioManifestValidation.pass
         ? Math.max(0, Math.floor(permittedUsd / last.c)) : 0;
+      /* MINIMUM SHARE FLOOR. A $500 risk-sized paper order in a $620 stock is
+         zero shares, and zero shares was silently "no feasible notional" —
+         every high-priced name in the roster was unlearnable. One share is
+         admitted when it is inside the ordinary position cap and the
+         portfolio check permitted a positive notional. The outcome is
+         measured in basis points; the dollar size is not what is learned. */
+      let minimumShareFloorApplied = false;
+      if (qty <= 0 && portfolioManifestValidation.pass && operating.exploratoryAuto
+          && activity.enabled && activity.minimumShareFloor >= 1
+          && permittedUsd > 0 && last.c > 0 && last.c <= ordinaryCapUsd
+          && last.c <= proposalCashUsd) {
+        qty = 1; minimumShareFloorApplied = true;
+        activityLog.minimumShareFloorApplied += 1;
+      }
       await A.col(A.COL.decisions).doc(`${cycleId}_${sym}`).set({
         portfolioDecisionManifest: portfolioManifest,
         portfolioDecisionManifestHash: portfolioManifest.manifestHash,
         portfolioDecisionManifestValid: portfolioManifestValidation.pass,
         finalDecisionKind: qty > 0 ? "paper_order_candidate" : "no_trade_portfolio",
+        cohortRole: q.cohortRole,
+        ...(minimumShareFloorApplied ? { minimumShareFloorApplied: true } : {}),
       }, { merge: true });
       if (qty <= 0) {
         await A.col(A.COL.decisions).doc(`${cycleId}_${sym}_notrade_portfolio`).set({
@@ -1489,10 +1587,11 @@ async function runCycle(jobId, { manual = false } = {}) {
           portfolioDecisionManifestHash: portfolioManifest.manifestHash,
           portfolioDecisionManifestValid: portfolioManifestValidation.pass,
           bookCount: book.count, bookGrossPct: book.grossPct,
+          cohortRole: q.cohortRole,
           strategyVersion: strategy.version, ...A.envelope({ created_by: FN_NAME }),
         }, { merge: true });
         portfolioBlocks.push({ symbol: sym, blockedBy: add.blockedBy, reason: add.firstBlock });
-        continue;
+        return false;
       }
       const provenance = marketProvenanceBySymbol[sym];
       const executionCostContext = M.executionCostContext({
@@ -1504,16 +1603,19 @@ async function runCycle(jobId, { manual = false } = {}) {
         ...policyIdentity, accountId, symbol: sym, side: "buy",
         paperLearningOnly: paperLearning.active === true,
         operatingStateAtDecision: operating.state,
-        learningCohort: operating.exploratoryAuto
-          ? (exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated")
-          : (paperLearning.active ? "relaxed_operator_paper" : "strict_policy"),
+        learningCohort: cohortLabel,
+        cohortRole: q.cohortRole,
+        decisionSessionDate: session.date,
         exploratoryPolicyVersion: operating.exploratoryAuto
           ? (exploratoryPolicy.version || null) : null,
         decisionManifestHash: decisionManifest.manifestHash,
         portfolioDecisionManifestHash: portfolioManifest.manifestHash,
         decisionId: `${cycleId}_${sym}`, qty, refPriceUsd: last.c, slippageBps: slip,
         executionCostContext,
-        sizing: { ...sizing, signal: evalRes.sizing }, gates: evalRes.gates, cause,
+        sizing: { ...sizing, signal: evalRes.sizing,
+          ...(control ? { controlSizeMultiplier: activity.controlCohort.sizeMultiplier } : {}),
+          ...(minimumShareFloorApplied ? { minimumShareFloorApplied: true } : {}) },
+        gates: evalRes.gates, cause,
         variantId: liveVariant ? liveVariant.id : "A", cost: evalRes.cost,
         portfolioRisk: { cluster: add.cluster, checks: add.checks,
           dynamicCorrelation: add.dynamicCorrelation,
@@ -1527,17 +1629,23 @@ async function runCycle(jobId, { manual = false } = {}) {
           portfolioDecisionManifestCoverage: portfolioManifest.coverage,
           paperLearningOnly: paperLearning.active === true,
           operatingState: operating.state,
-          learningCohort: operating.exploratoryAuto
-            ? (exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated")
-            : (paperLearning.active ? "relaxed_operator_paper" : "strict_policy"),
+          learningCohort: cohortLabel,
+          cohortRole: q.cohortRole,
+          explorationPolicyIds: q.policyIds || [],
           exploratoryPolicyVersion: operating.exploratoryAuto
             ? (exploratoryPolicy.version || null) : null,
+          exploratorySelection: selected ? { method: activity.policySelection.method,
+            sampledPolicyId: selected.sampledPolicyId, sampledBps: selected.sampledBps,
+            score: selected.score, scoreboardClosed: scoreboard ? scoreboard.closedExploratoryTrades : null }
+            : (control ? { method: "control_random", seed: cycleId } : null),
           strictVerdict: { pass: q.strictRes ? q.strictRes.pass : false,
             blockedBy: q.strictRes ? q.strictRes.blockedBy : ["strict_verdict_missing"],
             firstBlock: q.strictRes ? q.strictRes.firstBlock : "strict verdict missing" },
+          activeVerdict: { pass: evalRes.pass === true, blockedBy: evalRes.blockedBy || [],
+            firstBlock: evalRes.firstBlock || null },
           crossSectionRank: q.rank,
           queueRank: queueIndex + 1,
-          eligibleBatchSize: proposalQueue.length,
+          eligibleBatchSize: batchSize,
           conservativeUtilityBps: Number(evalRes.cost.calibratedNetLowerBoundBps
             ?? (Number(evalRes.cost.expectedGrossBps) - Number(evalRes.cost.requiredBps))),
           topAlternatives: proposalQueue.slice(0, 5).map((x) => ({
@@ -1570,11 +1678,14 @@ async function runCycle(jobId, { manual = false } = {}) {
         ].slice(0, 40),
         decisionAtMs, quality: quality[sym], decisionMarketProvenance: provenance,
         executionLatencyMs: cfg.executionLatencyMs || 60000,
+        reservationHeadroomBps: operating.exploratoryAuto && activity.enabled
+          ? activity.reservationHeadroomBps : 0,
       });
-      if (o.blocked) { portfolioBlocks.push({ symbol: sym, reason: o.blocked }); continue; }
+      if (o.blocked) { portfolioBlocks.push({ symbol: sym, reason: o.blocked }); return false; }
       pendingOrderSymbols.add(sym);
       decisions.push({ symbol: sym, orderId: o.orderId, qty, refPriceUsd: o.refPriceUsd,
-        trimmed: !add.allow, cluster: add.cluster, variantId: liveVariant ? liveVariant.id : "A" });
+        trimmed: !add.allow, cluster: add.cluster, variantId: liveVariant ? liveVariant.id : "A",
+        cohortRole: q.cohortRole, policyIds: q.policyIds || [] });
       const takenUsd = qty * last.c;
       proposalCashUsd -= takenUsd;
       book.count += 1; book.grossUsd += takenUsd;
@@ -1584,10 +1695,41 @@ async function runCycle(jobId, { manual = false } = {}) {
       book.byClusterPct[add.cluster] = (book.byClusterPct[add.cluster] || 0) + pct;
       book.rows.push({ symbol: sym, qty, entry: last.c, mark: last.c,
         valueUsd: takenUsd, sector: sec, cluster: add.cluster, pnlPct: 0, marked: true });
+      return true;
     } catch (e) {
       console.error("propose failed", redact({ symbol: sym, error: e.message }));
+      return false;
     }
+  };
+
+  /* Signal cohort, paced. */
+  for (let queueIndex = 0; queueIndex < proposalQueue.length; queueIndex += 1) {
+    if (exploratorySelection && activityLog.signalProposed >= activity.maxNewEntriesPerCycle) {
+      activityLog.signalPacedOut = proposalQueue.length - queueIndex;
+      break;
+    }
+    const wrote = await proposeEntry(proposalQueue[queueIndex],
+      { queueIndex, batchSize: proposalQueue.length });
+    if (wrote) activityLog.signalProposed += 1;
   }
+
+  /* Control cohort: unconditional, random, reduced size, capped per session
+     and by open control positions. Only in explicit exploratory paper mode
+     and only while the session is one a signal entry could also use. */
+  if (exploratorySelection && activity.controlCohort.enabled && controlPool.length
+      && session.open && !session.wideSpreadWindow && !breakers.halted) {
+    const room = Math.min(
+      Math.max(0, activity.controlCohort.maxOpenPositions - controlOpen),
+      Math.max(0, activity.controlCohort.maxNewPerSession - controlNewThisSession));
+    const picks = XP.selectControl(controlPool.filter((c) => !pendingOrderSymbols.has(c.sym)),
+      { seed: `${cycleId}|${shadowExperiment.experimentHash}`, limit: room });
+    for (let i = 0; i < picks.length; i += 1) {
+      const wrote = await proposeEntry(picks[i], { queueIndex: i, batchSize: picks.length });
+      if (wrote) activityLog.controlProposed += 1;
+    }
+    activityLog.controlRoom = room;
+  }
+
   await reportRunProgress(runRef, { phase: "settlement",
     label: "Approving and settling eligible paper orders", pct: 82,
     completed: decisions.length, total: proposalQueue.length,
@@ -1676,10 +1818,27 @@ async function runCycle(jobId, { manual = false } = {}) {
     const approvedSnap = await A.col(A.COL.orders)
       .where("accountId", "==", accountId).where("status", "==", "approved").get();
 
+    settled.expiredAtSessionClose = [];
     for (const d of approvedSnap.docs) {
       const o = d.data();
       if (!entryControl.pass) {
         settled.skipped.push({ orderId: o.orderId, why: `entry safety closed: ${entryControl.reason}` });
+        continue;
+      }
+      /* An exploratory entry that did not fill in its own session is not
+         carried to the next open: a residual dip measured at 14:50 says
+         nothing about the price at 09:46 tomorrow, and a fill there would
+         be attributed to a signal that no longer exists. Release the cash. */
+      if (activity.expireUnfilledEntriesAtSessionClose && o.paperLearningOnly === true
+          && /^exploratory/.test(String(o.learningCohort || ""))
+          && o.decisionSessionDate && o.decisionSessionDate !== session.date) {
+        try {
+          const released = await L.releaseOrder(o.orderId,
+            `expired — exploratory entry from ${o.decisionSessionDate} is not carried into ${session.date}`);
+          if (!released.noop) settled.expiredAtSessionClose.push({ orderId: o.orderId, symbol: o.symbol });
+        } catch (e) {
+          settled.skipped.push({ orderId: o.orderId, why: `could not release stale exploratory entry: ${String(e.message).slice(0, 80)}` });
+        }
         continue;
       }
       const obars = panel[o.symbol] || [];
@@ -2222,7 +2381,31 @@ async function runCycle(jobId, { manual = false } = {}) {
     },
     settlement: { filled: settled.filled.length, closed: settled.closed.length,
                   autoApproved: settled.autoApproved.length,
-                  skipped: settled.skipped.length, error: settled.error || null },
+                  skipped: settled.skipped.length, error: settled.error || null,
+                  expiredAtSessionClose: (settled.expiredAtSessionClose || []).length },
+    /* Whether this cycle was permitted to write the paper ledger at all, and
+       why not when it was not. This was the single most common silent
+       failure: "working now" on the console while every order was refused. */
+    entryControl: { pass: entryControl.pass === true, reason: entryControl.pass ? null : (entryControl.reason || null) },
+    exploration: operating.exploratoryAuto ? {
+      policyVersion: exploratoryPolicy.version || null,
+      activity: { ...activityLog, controlOpenAfter: controlOpen + activityLog.controlProposed },
+      scoreboard: scoreboard ? {
+        closedExploratoryTrades: scoreboard.closedExploratoryTrades ?? null,
+        leadingPolicyId: scoreboard.leadingPolicyId || null,
+        cohorts: scoreboard.cohorts || null,
+        signalVsControl: scoreboard.signalVsControl || null,
+        policies: scoreboard.policies || null,
+        prior: scoreboard.prior || null,
+        affectsDecision: scoreboard.affectsDecision || null,
+        error: scoreboard.error || null,
+      } : null,
+      settings: { maxNewEntriesPerCycle: activity.maxNewEntriesPerCycle,
+        reservationHeadroomBps: activity.reservationHeadroomBps,
+        controlCohort: activity.controlCohort, policySelection: activity.policySelection,
+        expireUnfilledEntriesAtSessionClose: activity.expireUnfilledEntriesAtSessionClose,
+        minimumShareFloor: activity.minimumShareFloor },
+    } : null,
     symbols: symbols.length, rosterSymbols: tradeSymbols.length,
     orphanSymbols, positionCoverage,
     liquidity: {

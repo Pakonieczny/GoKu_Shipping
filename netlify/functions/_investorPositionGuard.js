@@ -164,7 +164,11 @@ async function runGuard(jobId) {
   const ctrl = await readControl();
   const accountId = ctrl.accountId || "paper-1";
   const strategy = await readStrategy(ctrl.strategyVersion);
-  const cfg = { ...(strategy.parameters || {}) };
+  /* The same relaxed exit parameters the cycle applies (maxHoldDays,
+     exitRank) — a guard that timed positions out on the strict ten sessions
+     while the cycle used three was two different books. */
+  const cfg = require("./_investorStrategy.js")
+    .paperLearningConfig({ ...(strategy.parameters || {}) }, ctrl).cfg;
   const session = M.sessionState(new Date());
   const runRef = A.col(A.COL.runs).doc(jobId);
   await runRef.set({ jobId, kind: "guard", status: "running",
