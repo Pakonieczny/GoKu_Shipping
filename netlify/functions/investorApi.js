@@ -337,7 +337,7 @@ const ACTIONS = {
     const nowMs = Date.now();
     const jobById = Object.fromEntries(jobs.map((j) => [j.jobId, j]));
     const activeCutoffMs = nowMs - 20 * 60 * 1000;
-    const terminalStatuses = new Set(["complete", "dead", "dispatch_failed", "cancelled"]);
+    const terminalStatuses = new Set(["complete", "dead", "dispatch_failed", "cancelled", "yielded"]);
     const activeWork = [];
     for (const run of runs) {
       const matchingJob = jobById[run.jobId];
@@ -359,6 +359,10 @@ const ACTIONS = {
       if (runs.some((r) => r.jobId === job.jobId)) continue;
       const lastSeenMs = job.startedAtMs || job.dispatchedAtMs || 0;
       if (lastSeenMs < activeCutoffMs) continue;
+      /* A queued job older than three minutes while another job of the same
+         kind is running is a refused duplicate, not pending work. */
+      if (job.status === "queued" && nowMs - lastSeenMs > 3 * 60000
+          && activeWork.some((w) => w.kind === job.kind && w.status === "running")) continue;
       activeWork.push({ ...job, progress: {
         phase: job.status === "queued" ? "queued" : "starting",
         label: job.status === "queued"

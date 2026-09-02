@@ -3168,6 +3168,16 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: JSON.stringify({ ok: true, duplicate: true, jobId }) };
     }
     if (!lease.claim) {
+      /* A dispatch refused because the account's previous scan is still
+         running used to stay "queued" forever, and the console showed it as
+         live work at 0% for twenty minutes. Mark it so the desk can say what
+         it is: a duplicate slot that yielded to the scan in flight. */
+      if (lease.inFlight && lease.reason === "account_cycle_in_flight") {
+        try {
+          await jobRef.set({ status: "yielded", yieldedAt: A.FV.serverTimestamp(),
+            yieldReason: "a scan for this account was already running" }, { merge: true });
+        } catch { /* best effort */ }
+      }
       return { statusCode: lease.inFlight ? 202 : 409,
         body: JSON.stringify({ ok: false, jobId, reason: lease.reason || "already running" }) };
     }
