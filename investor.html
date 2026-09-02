@@ -149,6 +149,21 @@
 .corow .cmid{font-size:12.5px;color:var(--ink-70);line-height:1.5}
 .corow .cright{text-align:right;font-family:var(--mono);font-size:14px;white-space:nowrap}
 .corow .cright .sm{font-size:11.5px;color:var(--ink-45);margin-top:3px}
+/* ── trade cards (pending orders + holdings) ── */
+.trade{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px;margin-bottom:8px;cursor:pointer;font:inherit;color:inherit;transition:border-color .15s,transform .15s}
+.trade:hover{border-color:var(--gold-line);transform:translateY(-1px)}
+.trade__top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.trade__sym{font-family:var(--mono);font-size:16px;font-weight:700}
+.trade__sec{font-size:12px;color:var(--ink-45);text-transform:capitalize}
+.trade__size{font-family:var(--mono);font-size:13px;color:var(--ink-70);margin-left:auto;white-space:nowrap}
+.trade__pl{font-family:var(--mono);font-size:15px;font-weight:600;white-space:nowrap}
+.trade__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 18px;margin-top:9px}
+.trade__k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-45)}
+.trade__v{font-family:var(--mono);font-size:12.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trade__why{margin-top:9px;font-size:12.5px;line-height:1.5;color:var(--ink-70)}
+.trade__why b{color:var(--ink)}
+.trade__plan{margin-top:5px;font-size:11.5px;color:var(--ink-45);font-family:var(--mono)}
+.trade .badge2{vertical-align:middle}
 .sectorhead{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-45);
   margin:18px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--line-2)}
 .sectorhead:first-child{margin-top:0}
@@ -518,6 +533,15 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <span class="sub" id="todayHeldSub">nothing yet</span>
           </div>
           <div id="todayHeld"></div>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px" id="todayPendingCard" hidden>
+          <div class="card__h">
+            <h3>Orders waiting to fill</h3>
+            <span class="sub" id="todayPendingSub"></span>
+          </div>
+          <div class="note" style="margin-bottom:12px" id="todayPendingNote"></div>
+          <div id="todayPending"></div>
         </div>
 
         <div class="card pad" style="margin-bottom:16px">
@@ -2955,7 +2979,7 @@ function renderToday(){
       .finally(function(){b.disabled=false;});
   };
 
-  renderOperationsConsole(); renderTodayStats(); renderTodayHeld(); renderTodayWatch(); renderTodayBlocks();
+  renderOperationsConsole(); renderTodayStats(); renderTodayHeld(); renderTodayPending(); renderTodayWatch(); renderTodayBlocks();
 }
 
 function renderTodayStats(){
@@ -2976,7 +3000,8 @@ function renderTodayStats(){
   var ranked=scan.ranked!=null?scan.ranked:(DASH.candidateTotal||0);
   $("#todayStats").innerHTML=[
     ['Account value', money(nav,2), 'virtual money', ''],
-    ['Owned now', String(open.length), open.length===1?'company':'companies', ''],
+    ['Owned now', String(open.length), (function(){ var pend=(DASH.orders||[]).filter(function(o){return o.status==="approved"||o.status==="proposed";}).length;
+        return (open.length===1?'company':'companies')+(pend?' · '+pend+' order'+(pend===1?'':'s')+' waiting to fill':''); })(), ''],
     ['Made or lost', (net>0?'+':'')+money(net,2), 'on closed trades', net>0?'good':(net<0?'bad':'')],
     ['Ranked today', String(ranked), 'after checking '+(scan.checked!=null?scan.checked:(DASH.candidateExpected||0))+' companies', '']
   ].map(function(r){
@@ -2991,20 +3016,95 @@ function coBtn(sym, name, mid, right, sub){
     + '<div class="cright">'+right+(sub?'<div class="sm">'+sub+'</div>':'')+'</div></button>';
 }
 
+/* ── trade cards: one layout for pending orders and holdings ──────────────
+   Three parts a person actually wants: what the trade is (company, size,
+   money), why the desk chose it (the move, the edge versus cost, what it knew),
+   and what the plan is (when it fills, when it leaves). */
+function candFor(sym){ return (DASH.candidates||[]).filter(function(c){return c.symbol===sym;})[0]||null; }
+function causeText(c){
+  var m={cause_detected_fundamental:"news-driven (fundamental cause found)",
+    abnormal_activity_without_covered_fundamental_event:"unusual activity, no covered cause",
+    no_cause_detected_in_covered_sources:"no cause found in covered sources",
+    evidence_pending:"research pending"};
+  return m[c]||(c?String(c).replace(/_/g," "):"—");
+}
+function exitPlanText(){
+  var st=plNow(), rank=st.exitRank!=null?st.exitRank:0.6, days=st.maxHoldDays!=null?st.maxHoldDays:3;
+  return "sells when rank recovers past "+num(rank,2)+", on a −8% stop, a trailing stop after +3%, an earnings window, or after "+days+" session"+(days===1?"":"s");
+}
+function tradeWhy(sym, order){
+  var k=candFor(sym), ctx=(order&&order.decisionContext)||{}, cost=(order&&order.cost)||(k&&k.cost)||{};
+  var bits=[];
+  var cum=k&&k.cumResidualBps!=null?k.cumResidualBps:null, z=k&&k.z!=null?k.z:null, rank=ctx.crossSectionRank!=null?ctx.crossSectionRank:(k?k.rank:null);
+  if(cum!=null) bits.push("Fell <b>"+num(Math.abs(cum),0)+" bp</b> more than the market and its sector explain"+(z!=null?" (z "+num(z,2)+")":"")+(rank!=null?", rank "+num(rank,3)+" of the cross-section":""));
+  if(cost.expectedGrossBps!=null) bits.push("expected bounce <b>"+num(cost.expectedGrossBps,0)+" bp</b> against a round-trip cost of "+num(cost.roundTripBps!=null?cost.roundTripBps:cost.requiredBps,0)+" bp");
+  var cause=order&&order.cause||(k&&k.cause); if(cause) bits.push("cause: "+causeText(cause));
+  var ds=ctx.dataSufficiency||(k&&k.dataSufficiency); if(ds&&ds.score!=null) bits.push("data coverage "+ds.score+"/100 ("+(ds.bucket||"")+")"+(ds.missing&&ds.missing.length?" — missing "+ds.missing.slice(0,3).join(", "):""));
+  var pol=ctx.explorationPolicyIds||(order&&order.policyIds)||[]; if(pol.length) bits.push("fires policies "+pol.join(", "));
+  if(order&&order.cohortRole==="control") bits.push("<b>control cohort</b>: taken without a signal, at half size, as the baseline the signal is measured against");
+  return bits.length?bits.join(" · ")+".":"Decision inputs are on the company page.";
+}
+function tradeCard(o){
+  var sym=o.symbol, qty=Number(o.qty)||0, px=Number(o.entryPriceUsd!=null?o.entryPriceUsd:o.refPriceUsd)||0;
+  var isPos=o.open===true, now=Date.now();
+  var gross=isPos?qty*px:((Number(o.grossCents)||qty*px*100)/100);
+  var head='<div class="trade__top"><span class="trade__sym">'+esc(sym)+'</span><span class="trade__sec">'+esc(S_SECTOR(sym)||"")+'</span>'
+    +(o.cohortRole==="control"?'<span class="badge2 b-info">control</span>':'')
+    +'<span class="trade__size">'+qty+' sh × '+money(px,2)+' = '+money(gross,2)+'</span></div>';
+  var grid;
+  if(isPos){
+    var last=o.lastMarkUsd!=null?Number(o.lastMarkUsd):px, pl=px>0?((last-px)/px)*100:null, plUsd=(last-px)*qty;
+    var held=Number.isFinite(Number(o.heldTradingDays))?Number(o.heldTradingDays):null, k=candFor(sym);
+    grid='<div class="trade__grid">'
+      +'<div><div class="trade__k">Bought</div><div class="trade__v">'+money(px,2)+(o.openedAt?' · '+new Date(o.openedAt).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):'')+'</div></div>'
+      +'<div><div class="trade__k">Now</div><div class="trade__v">'+money(last,2)+(o.lastMarkAt?' · '+new Date(o.lastMarkAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):'')+'</div></div>'
+      +'<div><div class="trade__k">Up or down</div><div class="trade__v trade__pl" style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl!=null?((pl>=0?'+':'')+num(pl,2)+'% · '+(plUsd>=0?'+':'')+money(plUsd,2)):'—')+'</div></div>'
+      +'<div><div class="trade__k">Rank now</div><div class="trade__v">'+(k&&k.rank!=null?num(k.rank,3)+' (exit past '+num((plNow().exitRank!=null?plNow().exitRank:0.6),2)+')':'—')+'</div></div>'
+      +'<div><div class="trade__k">Held</div><div class="trade__v">'+(held!=null?num(held,1)+' of '+(plNow().maxHoldDays!=null?plNow().maxHoldDays:3)+' sessions':'—')+'</div></div>'
+      +'</div>';
+  } else {
+    var elig=Number(o.fillEligibleAfterMs)||null, exp=Number(o.expiresAtMs)||null, reserved=((Number(o.grossCents)||0)+(Number(o.frictionCents)||0)+(Number(o.reservationHeadroomCents)||0))/100;
+    var when=o.status==="approved"?(elig?(elig>now?new Date(elig).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})+' (in '+durationText((elig-now)/1000)+')':'now — next 5-min bar'):'approved'):'awaiting approval';
+    grid='<div class="trade__grid">'
+      +'<div><div class="trade__k">Status</div><div class="trade__v"><span class="badge2 '+(o.status==="approved"?"b-on":"b-warn")+'">'+esc(o.status)+'</span></div></div>'
+      +'<div><div class="trade__k">Reserved</div><div class="trade__v">'+(o.status==="approved"?money(reserved,2):'—')+'</div></div>'
+      +'<div><div class="trade__k">Fillable</div><div class="trade__v">'+esc(when)+'</div></div>'
+      +'<div><div class="trade__k">Expires</div><div class="trade__v">'+(exp?new Date(exp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):'—')+'</div></div>'
+      +'<div><div class="trade__k">Decided</div><div class="trade__v">'+(o.decisionAtMs?new Date(Number(o.decisionAtMs)).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):'—')+'</div></div>'
+      +'</div>';
+  }
+  return '<button class="trade" data-sym="'+esc(sym)+'">'+head+grid
+    +'<div class="trade__why">'+tradeWhy(sym,o)+'</div>'
+    +'<div class="trade__plan">Plan: '+(isPos?'':'fills on the first 5-minute bar after it is fillable; then ')+esc(exitPlanText())+'.</div></button>';
+}
+
+/* Approved and proposed paper orders. Before this card existed, an approved
+   order reserved cash and then vanished from the main page for the ~30
+   minutes until its fill — "cash went down, nothing was bought, nothing is
+   shown" — which is indistinguishable from a bug. */
+function renderTodayPending(){
+  var card=$("#todayPendingCard"); if(!card) return;
+  var ords=(DASH.orders||[]).filter(function(o){return o.status==="approved"||o.status==="proposed";});
+  if(!ords.length){ card.hidden=true; return; }
+  card.hidden=false;
+  var now=Date.now(), reservedUsd=0, approved=0;
+  ords.forEach(function(o){ if(o.status==="approved"){ approved+=1; reservedUsd+=((Number(o.grossCents)||0)+(Number(o.frictionCents)||0)+(Number(o.reservationHeadroomCents)||0))/100; } });
+  $("#todayPendingSub").textContent=ords.length+" order"+(ords.length===1?"":"s")+(approved?" · "+money(reservedUsd,0)+" reserved":"");
+  var delay=(DASH.market&&DASH.market.feedDelayMinutes)||15;
+  $("#todayPendingNote").innerHTML='An approved order becomes a holding on the first 5-minute bar that opens after it is fillable. With a '+delay+'-minute delayed feed that bar reaches the desk roughly '+(delay+5)+'–'+(delay+20)+' minutes after approval, so cash is reserved now and the company appears under <b>What it owns</b> once the fill lands. Unfilled orders are released at their expiry.';
+  ords.sort(function(a,b){return (Number(b.approvedAtMs)||Number(b.decisionAtMs)||0)-(Number(a.approvedAtMs)||Number(a.decisionAtMs)||0);});
+  $("#todayPending").innerHTML=ords.map(tradeCard).join("");
+  $$("#todayPending .trade").forEach(function(b){ b.onclick=function(){ openCompany(b.dataset.sym); }; });
+}
+
 function renderTodayHeld(){
   var pos=(DASH.positions||[]).filter(function(p){return p.open;});
   $("#todayHeldSub").textContent = pos.length ? pos.length+" open" : "nothing yet";
   if(!pos.length){ $("#todayHeld").innerHTML='<div class="empty">It has not bought anything. When it does, each company appears here with what it paid and what it is worth now.</div>'; return; }
-  $("#todayHeld").innerHTML = pos.map(function(p){
-    var last=p.lastMarkUsd!=null?p.lastMarkUsd:p.entryPriceUsd;
-    var pl = (p.entryPriceUsd>0 && last!=null) ? ((last-p.entryPriceUsd)/p.entryPriceUsd)*100 : null;
-    var held = Number.isFinite(Number(p.heldTradingDays)) ? Number(p.heldTradingDays) : null;
-    return coBtn(p.symbol, S_SECTOR(p.symbol),
-      'Bought at '+money(p.entryPriceUsd,2)+(held!=null?(' · held '+num(held,0)+' sessions'):''),
-      (pl!=null?'<span style="color:'+(pl>=0?'var(--sage)':'var(--clay)')+'">'+(pl>=0?'+':'')+num(pl,2)+'%</span>':'—'),
-      last!=null?('now '+money(last,2)):'');
-  }).join("");
-  wireCoRows("#todayHeld");
+  var totalPl=0; pos.forEach(function(p){ var last=p.lastMarkUsd!=null?Number(p.lastMarkUsd):Number(p.entryPriceUsd); totalPl+=(last-Number(p.entryPriceUsd))*(Number(p.qty)||0); });
+  $("#todayHeldSub").innerHTML=pos.length+" open · <span style=\"color:"+(totalPl>=0?'var(--sage)':'var(--clay)')+"\">"+(totalPl>=0?'+':'')+money(totalPl,2)+" unrealised</span>";
+  $("#todayHeld").innerHTML = pos.map(tradeCard).join("");
+  $$("#todayHeld .trade").forEach(function(b){ b.onclick=function(){ openCompany(b.dataset.sym); }; });
 }
 
 function renderTodayWatch(){
