@@ -346,11 +346,23 @@ async function runGuard(jobId) {
         requireTemporalContext: false, asOfMs: nowMs,
         maxAgeHours: cfg.intelligenceMaxAgeHours,
         temporalMaxAgeHours: cfg.temporalMaxAgeHours }) : null;
-      const exit = S.exitSignal(undefined, heldDays, cfg, {
-        mark: last.c, entry, peak,
-        earningsInDays: earningsDistance(earnings[symbol], nowMs),
-        intelligencePolicy,
-      });
+      /* An operator can ask to sell a holding by hand from the console. The
+         request is only ever an INTENT: it enters here, at the same place a
+         rule-driven exit enters, so it inherits the identical decision clock,
+         provenance requirement and first-eligible-bar fill. Nothing about a
+         manual sell can execute at a price the desk already knew. */
+      const manualReq = position.manualExitRequest;
+      const manualPending = !!(manualReq && manualReq.status === "requested");
+      const pnlPctNow = entry > 0 && Number.isFinite(last.c)
+        ? Number((((last.c - entry) / entry) * 100).toFixed(2)) : null;
+      const exit = manualPending
+        ? { exit: true, urgent: true, kind: "manual", pnlPct: pnlPctNow,
+            reason: "manual_operator_sell" }
+        : S.exitSignal(undefined, heldDays, cfg, {
+          mark: last.c, entry, peak,
+          earningsInDays: earningsDistance(earnings[symbol], nowMs),
+          intelligencePolicy,
+        });
       evaluated.add(symbol);
       if (!exit.exit) continue;
 
@@ -377,7 +389,23 @@ async function runGuard(jobId) {
           intelligenceEventId: exit.intelligenceEventId || null },
       });
       exitSignals.push({ symbol, kind: exit.kind, urgent: !!exit.urgent,
-        armed: result.armed, blocked: result.blocked || null });
+        armed: result.armed, blocked: result.blocked || null,
+        manual: manualPending || undefined });
+      /* Record what became of the operator's request so the console can stop
+         saying "requested" once the exit is actually armed (or say why not). */
+      if (manualPending) {
+        const armedNow = result.armed === true
+          || (result.noop === true && !!result.existing);
+        await A.col(A.COL.positions).doc(`${accountId}_${symbol}`).set({
+          manualExitRequest: { ...manualReq,
+            status: armedNow ? "armed" : "blocked",
+            armedAtMs: armedNow ? decisionAtMs : null,
+            eligibleAfterMs: armedNow ? eligibleAfterMs : null,
+            blockedReason: armedNow ? null
+              : (result.blocked || result.reason || "not_armed"),
+            attemptedAtMs: Date.now() },
+          updated_at: A.FV.serverTimestamp() }, { merge: true });
+      }
     }
 
   }

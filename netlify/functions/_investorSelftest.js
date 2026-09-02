@@ -1600,10 +1600,89 @@ function runFixtures() {
       && !recent.tasks.includes("archive") && !early.tasks.includes("archive");
   }));
 
+  /* ── manual sell ──────────────────────────────────────────────────────
+     The operator's Sell button is the one place a human decision enters the
+     execution path. Three things must hold or it becomes a way to trade on a
+     price already visible on the screen, which would invalidate every number
+     this desk reports about itself. */
+  cases.push(fixture("manual_sell_records_an_intent_and_never_fills", () => {
+    const API = require("./investorApi");
+    if (typeof API.ACTIONS.requestSell !== "function") return false;
+    if (typeof API.ACTIONS.cancelSell !== "function") return false;
+    const body = sourceOf(API.ACTIONS.requestSell);
+    /* It writes a REQUEST on the position and touches nothing that executes. */
+    if (!/manualExitRequest/.test(body)) return false;
+    if (!/status:\s*"requested"/.test(body)) return false;
+    if (/closePosition|applyLegs|firstEligibleBar|armExitIntent/.test(body)) return false;
+    /* It refuses a symbol that is not open, and a quarantined price basis. */
+    if (!/open !== true/.test(body)) return false;
+    if (!/corporateActionPending/.test(body)) return false;
+    /* An armed exit's clock is already running and cannot be withdrawn — that
+       would let an operator cancel after seeing the price it would have got. */
+    const cancel = sourceOf(API.ACTIONS.cancelSell);
+    return /exitIntent[\s\S]{0,80}decisionAtMs/.test(cancel)
+      && /return \{ ok: false, refused/.test(cancel);
+  }));
+
+  cases.push(fixture("manual_sell_enters_the_same_exit_clock_as_every_rule", () => {
+    const G = require("./_investorPositionGuard");
+    const src = sourceOf(G.runGuard);
+    /* The request is turned into an exit at the SAME point a rule exit is, so
+       it inherits armExitIntent, the feed delay and firstEligibleBar. A branch
+       that armed or closed anywhere else would bypass all three. */
+    if (!/manualExitRequest/.test(src)) return false;
+    if (!/kind:\s*"manual"/.test(src)) return false;
+    if (!/reason:\s*"manual_operator_sell"/.test(src)) return false;
+    const armAt = src.indexOf("armExitIntent(");
+    const manualAt = src.indexOf("manualPending");
+    if (!(manualAt > 0 && armAt > manualAt)) return false;
+    /* And the decision clock it inherits is still delay + latency. esbuild
+       reprints numeric literals (60000 -> 6e4), so match the shape, not the
+       spelling — a source assertion that only holds before bundling is the
+       one kind of self-check that fails exclusively in production. */
+    return /eligibleAfterMs\s*=\s*decisionAtMs\s*\+\s*feedCfg\.delayMinutes\s*\*\s*(?:60000|6e4)/.test(src)
+      && /executionLatencyMs/.test(src);
+  }));
+
+  cases.push(fixture("hand_sold_trades_are_excluded_from_the_promotion_sample", () => {
+    const LD = require("./_investorLadder");
+    const identity = { strategyHash: "s", universeHash: "u", variantsHash: "v" };
+    const base = { ...identity, variantId: "A", cohortRole: "signal",
+      learningCohort: "strict_policy", openedAt: "2026-08-01T14:00:00.000Z" };
+    if (!LD.strictTradeAdmissible({ ...base }, identity)) return false;
+    if (LD.strictTradeAdmissible({ ...base, manualClose: true }, identity)) return false;
+    if (LD.strictTradeAdmissible({ ...base, exitKind: "manual" }, identity)) return false;
+    if (LD.strictTradeAdmissible({ ...base, closeReason: "manual_operator_sell" }, identity)) return false;
+    /* The ledger has to carry the marker, or the exclusion above is unreachable. */
+    const L = require("./_investorLedger");
+    const close = sourceOf(L.closePosition);
+    return /exitKind:\s*intent\.kind/.test(close) && /manualClose:/.test(close);
+  }));
+
+  /* The console's closed-trade rows drive the operator's whole history view.
+     Reading only the legacy aliases left every row with a blank P&L and no
+     sell price against a ledger that writes netRealizedCents / exitFillUsd. */
+  cases.push(fixture("closed_trade_view_reads_the_fields_the_ledger_actually_writes", () => {
+    const API = require("./investorApi");
+    if (typeof API.closedTradeForUi !== "function") return false;
+    /* Exactly the shape _investorLedger.closePosition writes. */
+    const row = API.closedTradeForUi({ symbol: "AAA", qty: 4,
+      entryFillUsd: 10, exitFillUsd: 9.5, netRealizedCents: -215,
+      openedAt: "2026-08-20T14:00:00.000Z", closedAt: "2026-08-24T14:00:00.000Z",
+      closeReason: "rank 0.612 crossed exit 0.6", exitKind: "signal" });
+    if (row.entryPriceUsd !== 10 || row.exitPriceUsd !== 9.5) return false;
+    if (Math.abs(row.realisedPnlUsd + 2.15) > 1e-9) return false;
+    if (row.exitReason !== "rank 0.612 crossed exit 0.6") return false;
+    if (row.exitKind !== "signal" || row.manualClose !== false) return false;
+    const hand = API.closedTradeForUi({ symbol: "BBB", qty: 1,
+      closeReason: "manual_operator_sell", exitKind: "manual" });
+    return hand.manualClose === true;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v20-strategy-v10-variants-q";
+  const SCHEMA = "runtime-fixtures-v21-strategy-v10-manual-exit";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

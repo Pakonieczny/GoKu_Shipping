@@ -85,14 +85,24 @@ function closedTradeForUi(value) {
   const numeric = (n) => n !== null && n !== undefined && n !== ""
     && Number.isFinite(Number(n)) ? Number(n) : null;
   const cents = (n) => numeric(n) === null ? null : L.fromCents(numeric(n));
-  const entryPriceUsd = numeric(x.entryPriceUsd) ?? numeric(x.entryUsd)
-    ?? numeric(x.entryPrice) ?? numeric(x.fillPriceUsd) ?? cents(x.entryPriceCents);
+  const entryPriceUsd = numeric(x.entryPriceUsd) ?? numeric(x.entryFillUsd)
+    ?? numeric(x.entryUsd) ?? numeric(x.entryPrice) ?? numeric(x.fillPriceUsd)
+    ?? cents(x.entryPriceCents) ?? numeric(x.entryBarOpenUsd);
+  /* The ledger writes netRealizedCents / exitFillUsd. Reading only the older
+     aliases left every closed trade in the console with a blank P&L and no
+     sell price, which is exactly the history the operator asked to see. */
   const realisedPnlUsd = numeric(x.realisedPnlUsd) ?? numeric(x.realizedPnlUsd)
-    ?? numeric(x.netPnlUsd) ?? cents(x.netPnlCents);
-  return { ...x, entryPriceUsd, realisedPnlUsd,
+    ?? numeric(x.netPnlUsd) ?? cents(x.netPnlCents) ?? cents(x.netRealizedCents);
+  const exitPriceUsd = numeric(x.exitPriceUsd) ?? numeric(x.exitFillUsd)
+    ?? numeric(x.exitUsd) ?? cents(x.exitPriceCents);
+  return { ...x, entryPriceUsd, realisedPnlUsd, exitPriceUsd,
+    qty: numeric(x.qty),
     openedAt: isoTime(x.openedAt || x.entryAt || x.openedAtMs),
     closedAt: isoTime(x.closedAt || x.exitAt || x.closedAtMs),
-    exitReason: x.exitReason || x.reason || null };
+    exitKind: x.exitKind || null,
+    manualClose: x.manualClose === true || x.exitKind === "manual"
+      || x.closeReason === "manual_operator_sell",
+    exitReason: x.exitReason || x.closeReason || x.reason || null };
 }
 
 async function closeEntryQueue(accountId, reason, operator) {
@@ -1605,6 +1615,129 @@ const ACTIONS = {
     return { ok: true, universe: require("./_investorUniverse.js"), source: "repo" };
   },
 
+  /* ── Manual sell ───────────────────────────────────────────────────────
+     The operator can decide, by hand, that a holding should go. That decision
+     is honoured — but it is honoured the same way every other exit is, and
+     that distinction is the whole point of this action.
+
+     What this does NOT do is sell. It records an INTENT on the position. The
+     position guard picks it up on its next pass, stamps the decision clock,
+     attaches the market provenance in force at that moment, and lets
+     M.firstEligibleBar choose the fill — the first bar that OPENS after the
+     decision plus the feed delay. So a manual sell fills at a price nobody,
+     including the operator clicking the button, could have known when they
+     clicked it. Allowing an instant fill at the last displayed price would let
+     a human trade on a 15-minute-old quote as if it were live and would make
+     every number this desk reports about itself a lie.
+
+     A manually closed trade is a real ledger fact and appears in the history,
+     but _investorLadder.strictTradeAdmissible excludes it: it is the
+     operator's judgement, not evidence about the strategy. */
+  async requestSell({ symbol, note, operator }) {
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
+    const sym = String(symbol || "").trim().toUpperCase();
+    if (!/^[A-Z][A-Z.\-]{0,9}$/.test(sym)) {
+      return { ok: false, refused: "not a symbol this desk can act on" };
+    }
+    const ref = A.col(A.COL.positions).doc(`${accountId}_${sym}`);
+    const snap = await ref.get();
+    if (!snap.exists || snap.data().open !== true) {
+      return { ok: false, refused: `nothing open in ${sym}` };
+    }
+    const p = snap.data();
+    if (p.corporateActionPending) {
+      return { ok: false, refused: `${sym} is held for corporate-action reconciliation`
+        + " — its price basis is not trustworthy until that is resolved" };
+    }
+    const existingIntent = p.exitIntent && Number(p.exitIntent.decisionAtMs) > 0
+      ? p.exitIntent : null;
+    const already = p.manualExitRequest && p.manualExitRequest.status === "requested";
+    const request = already ? p.manualExitRequest : {
+      status: "requested", requestedAtMs: Date.now(),
+      requestedAt: new Date().toISOString(),
+      operator: operator || "operator",
+      note: note ? String(note).slice(0, 200) : null,
+      markAtRequestUsd: Number(p.lastMarkUsd) || null,
+      entryPriceUsd: Number(p.entryPriceUsd != null ? p.entryPriceUsd : p.avgPrice) || null,
+      qty: Number(p.qty) || null,
+      armedAtMs: null, eligibleAfterMs: null, blockedReason: null };
+    if (!already) {
+      await ref.set({ manualExitRequest: request,
+        updated_at: A.FV.serverTimestamp() }, { merge: true });
+      await A.col(A.COL.audit).add({ action: "manual_sell_requested", symbol: sym,
+        accountId, operator: operator || "operator",
+        note: request.note, markUsd: request.markAtRequestUsd,
+        at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
+    }
+
+    /* Nudge the guard so the request is acted on in seconds rather than
+       waiting out the cadence. Best effort — the scheduled guard is the
+       guarantee, this is only the courtesy. */
+    let nudged = false;
+    try {
+      const operating = STATE.describe(ctrl);
+      if (!operating.paused) {
+        const K = require("./investorKick");
+        const session = M.sessionState(new Date());
+        const r = await K.dispatch("guard", { ...ctrl, enabled: true,
+          mode: operating.stage, dryRun: !operating.paperLedger, killSwitch: false,
+          accountId, cycleSeconds: Number(ctrl.cycleSeconds) || 300,
+          guardSeconds: Number(ctrl.guardSeconds) || 60,
+          guardSecondsClosed: Number(ctrl.guardSecondsClosed) || 900,
+          evidenceEverySeconds: Number(ctrl.evidenceEverySeconds) || 900,
+        }, session, { manual: true });
+        nudged = !!(r && r.jobId);
+      }
+    } catch { /* the scheduled guard will pick it up */ }
+
+    const session = M.sessionState(new Date());
+    const delay = M.providerConfig(M.activeProvider().id).delayMinutes;
+    return { ok: true, symbol: sym, request,
+      alreadyRequested: already, nudged,
+      existingExitArmed: !!existingIntent,
+      existingExitReason: existingIntent ? existingIntent.reason || null : null,
+      marketOpen: session.open === true,
+      note: existingIntent
+        ? `${sym} was already on its way out (${existingIntent.reason || "exit armed"}).`
+          + " Your request is recorded; the armed exit fills first."
+        : session.open === true
+          ? `Sell recorded for ${sym}. The desk arms the exit on its next protection`
+            + ` pass and fills it on the first price bar that opens after that —`
+            + ` about ${delay + 5}–${delay + 20} minutes on this ${delay}-minute feed.`
+            + " A paper fill is never taken at a price already on your screen."
+          : `Sell recorded for ${sym}. The exchange is shut, so it arms now and`
+            + " fills on the first eligible bar after the next open." };
+  },
+
+  /* Withdraw a manual sell that has not yet been armed. Once the guard has
+     armed the exit the decision clock is running and the intent is immutable —
+     un-arming it would let an operator cancel a decision after seeing the
+     price it would have filled at, which is the same look-ahead the fill rule
+     exists to prevent. */
+  async cancelSell({ symbol, operator }) {
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
+    const sym = String(symbol || "").trim().toUpperCase();
+    const ref = A.col(A.COL.positions).doc(`${accountId}_${sym}`);
+    const snap = await ref.get();
+    if (!snap.exists) return { ok: false, refused: `nothing open in ${sym}` };
+    const p = snap.data();
+    if (p.exitIntent && Number(p.exitIntent.decisionAtMs) > 0) {
+      return { ok: false, refused: `the exit for ${sym} is already armed and its`
+        + " decision clock is running — it cannot be withdrawn" };
+    }
+    if (!p.manualExitRequest || p.manualExitRequest.status !== "requested") {
+      return { ok: true, noop: true, symbol: sym, note: `no pending sell request for ${sym}` };
+    }
+    await ref.set({ manualExitRequest: A.FV.delete(),
+      updated_at: A.FV.serverTimestamp() }, { merge: true });
+    await A.col(A.COL.audit).add({ action: "manual_sell_cancelled", symbol: sym,
+      accountId, operator: operator || "operator", at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, symbol: sym, note: `Sell request for ${sym} withdrawn.` };
+  },
+
   /* Start a cycle now.
      A scheduled Netlify function cannot be reached over HTTP, so without this
      the only way to start a cycle is to wait for cron — and if the schedule is
@@ -1994,6 +2127,9 @@ exports.handler = async (event) => {
 };
 
 exports.ACTIONS = ACTIONS;
+/* Exported for the runtime fixtures: the console's whole history view is
+   this projection, so it is tested against real ledger field names. */
+exports.closedTradeForUi = closedTradeForUi;
 /* Not an HTTP action. Exposed only so the deployed runtime attestation can
    inspect the exact queue-draining implementation after esbuild bundling,
    without assuming the original source file still exists on disk. */

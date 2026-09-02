@@ -167,6 +167,47 @@
 .live.off i{background:var(--ink-25);animation:none}
 @keyframes livepulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media(max-width:1000px){.hero{grid-template-columns:1fr 1fr}.hero__main{grid-column:1/-1}}
+/* ── hero focus: a heading is a filter ── */
+.hero__tile,.hero__main{position:relative}
+button.hero__tile,button.hero__main{font:inherit;text-align:left;width:100%;cursor:pointer;
+  border:1px solid var(--line);transition:border-color .12s ease,transform .12s ease,box-shadow .12s ease}
+button.hero__main{border-color:transparent}
+button.hero__tile:hover{border-color:var(--gold-line);transform:translateY(-1px)}
+button.hero__main:hover{transform:translateY(-1px)}
+button.hero__tile:focus-visible,button.hero__main:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+button.hero__tile.sel{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold-soft,rgba(176,141,63,.18))}
+button.hero__main.sel{box-shadow:0 0 0 2px var(--gold)}
+.hero__f{position:absolute;top:10px;right:12px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-25);font-family:var(--mono)}
+button.hero__tile:hover .hero__f,button.hero__tile.sel .hero__f{color:var(--gold)}
+button.hero__main .hero__f{color:rgba(240,235,225,.4)}
+.focusbar[hidden],.subchips[hidden]{display:none!important}
+.focusbar{display:flex;align-items:center;gap:12px;background:var(--paper-2);border:1px solid var(--gold-line);
+  border-radius:var(--r);padding:9px 14px;margin-bottom:16px}
+.focusbar__t{font-size:13px;color:var(--ink-70);flex:1}
+.focusbar__t b{color:var(--ink)}
+.focusbar__x{font:inherit;font-size:12px;background:none;border:1px solid var(--line);border-radius:999px;
+  padding:4px 12px;cursor:pointer;color:var(--ink-70)}
+.focusbar__x:hover{border-color:var(--gold-line);color:var(--ink)}
+.subchips{display:flex;gap:6px;margin:0 0 12px}
+.subchips button{font:inherit;font-size:11.5px;background:none;border:1px solid var(--line);border-radius:999px;
+  padding:4px 12px;cursor:pointer;color:var(--ink-45)}
+.subchips button:hover{border-color:var(--gold-line);color:var(--ink-70)}
+.subchips button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+/* ── sell control on a held row ── */
+.sellbtn{font:inherit;font-size:11.5px;font-family:var(--sans);background:none;border:1px solid var(--line);
+  border-radius:999px;padding:4px 13px;cursor:pointer;color:var(--ink-70);white-space:nowrap}
+.sellbtn:hover{border-color:var(--clay);color:var(--clay);background:var(--paper-2)}
+.sellbtn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.sellbtn[disabled]{opacity:.5;cursor:default}
+.sellbtn.armed{border-color:var(--gold-line);color:var(--gold);cursor:default}
+.sellstate{font-family:var(--sans);font-size:11px;color:var(--ink-45);display:block;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;margin-left:auto}
+.ptable td.act{text-align:right;font-family:var(--sans)}
+.ptable td.whyx{font-family:var(--sans);font-size:12px;color:var(--ink-70);white-space:normal;text-align:left;line-height:1.45;min-width:230px}
+.whyx .kd{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  border:1px solid var(--line);border-radius:4px;padding:1px 6px;margin-right:7px;color:var(--ink-45)}
+.whyx .kd.bad{border-color:var(--clay);color:var(--clay)}
+.whyx .kd.good{border-color:var(--sage);color:var(--sage)}
 /* ── positions / orders tables ── */
 .ptable{width:100%;border-collapse:collapse;font-size:13px}
 .ptable th{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-45);font-weight:600;text-align:right;padding:6px 10px;border-bottom:1px solid var(--line)}
@@ -552,10 +593,20 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <section class="view on" id="v-today">
         <div class="hero" id="hero"></div>
 
-        <div class="card pad" style="margin-bottom:16px">
+        <div class="focusbar" id="focusBar" hidden>
+          <span class="focusbar__t" id="focusBarText"></span>
+          <button class="focusbar__x" id="focusClear" type="button">Show everything</button>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px" id="todayHeldCard">
           <div class="card__h">
             <h3>What you own</h3>
             <span class="sub" id="todayHeldSub">nothing yet</span>
+          </div>
+          <div class="subchips" id="heldChips" hidden>
+            <button data-sub="all" class="on" type="button">All</button>
+            <button data-sub="win" type="button">Winning</button>
+            <button data-sub="lose" type="button">Losing</button>
           </div>
           <div id="todayHeld"></div>
         </div>
@@ -568,6 +619,22 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           <div id="todayPending"></div>
           <details class="fine" id="todayPendingWhy"><summary>Why is there a wait?</summary>
             <div id="todayPendingNote"></div></details>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px" id="todayHistoryCard">
+          <div class="card__h">
+            <h3>What was bought and sold</h3>
+            <span class="sub" id="todayHistSub"></span>
+          </div>
+          <div class="subchips" id="histChips">
+            <button data-sub="all" class="on" type="button">All</button>
+            <button data-sub="win" type="button">Made money</button>
+            <button data-sub="lose" type="button">Lost money</button>
+            <button data-sub="manual" type="button">Sold by hand</button>
+          </div>
+          <div id="todayHistory"></div>
+          <details class="fine" id="todayHistWhy"><summary>Why does it often sell below what it paid?</summary>
+            <div id="todayHistNote"></div></details>
         </div>
 
         <div class="chartbox" style="margin-bottom:16px" id="navCard">
@@ -605,7 +672,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
 
         <div class="simplegrid" id="todayStats" hidden></div>
 
-        <div class="card pad" style="margin-bottom:16px">
+        <div class="card pad" style="margin-bottom:16px" id="todayWatchCard">
           <div class="card__h">
             <h3>What it is looking at</h3>
             <span class="sub" id="todayWatchSub">this cycle</span>
@@ -618,7 +685,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           <div id="todayWatch"></div>
         </div>
 
-        <div class="card pad">
+        <div class="card pad" id="todayBlocksCard">
           <div class="card__h"><h3>Why nothing was bought</h3><span class="sub">plain reasons</span></div>
           <div id="todayBlocks"></div>
         </div>
@@ -3052,7 +3119,8 @@ function renderToday(){
       .finally(function(){b.disabled=false;});
   };
 
-  renderOperationsConsole(); renderHero(); renderTodayHeld(); renderTodayPending(); renderTodayWatch(); renderTodayBlocks(); loadNavSeries(false);
+  renderOperationsConsole(); renderHero(); renderTodayHeld(); renderTodayPending();
+  renderTodayHistory(); applyFocus(); renderTodayWatch(); renderTodayBlocks(); loadNavSeries(false);
   if(!LIVEQ.timer) pollQuotes();
 }
 
@@ -3281,7 +3349,7 @@ function pollQuotes(){
     api("quotes",{symbols:syms}).then(function(r){
       if(r&&r.ok){ Object.assign(LIVEQ.quotes,r.quotes||{}); LIVEQ.asOf=r.asOf||new Date().toISOString(); LIVEQ.feed=r.feed; LIVEQ.error=null; }
       else LIVEQ.error=(r&&r.error)||"quote feed unavailable";
-      renderHero(); renderTodayHeld(); renderTodayPending(); if(NAVC.series) drawNavChart();
+      renderHero(); renderTodayHeld(); renderTodayPending(); if(NAVC.series&&!FOCUS) drawNavChart();
     }).catch(function(e){ LIVEQ.error=e.message; }).finally(function(){ LIVEQ.timer=setTimeout(pollQuotes,5000); });
   } else LIVEQ.timer=setTimeout(pollQuotes,15000);
 }
@@ -3311,6 +3379,54 @@ function bookNow(){
   return {rows:rows,cash:cash,reserved:reserved,invested:invested,cost:cost,unr:unr,win:win,los:los,nav:nav,start:start,realised:realised,anyLive:anyLive,dayStart:dayStart,
     pending:(DASH.orders||[]).filter(function(o){return o.status==="approved"||o.status==="proposed";})};
 }
+/* ── focus: a hero heading is a filter over everything below it ──────────
+   The operator asked to click a number and see only what produced it. Each
+   focus names the cards that belong to that number; nothing else is a
+   different page, it is the same page with the irrelevant parts folded away. */
+var FOCUS=null, HELDSUB="all", HISTSUB="all";
+var FOCUS_DEF={
+  today:{cards:["held","pending","hist"], histToday:true,
+    t:'<b>Today</b> — everything that moved your account value today: what you own, what is on the way, and anything sold today.'},
+  since:{cards:["held","hist"],
+    t:'<b>Since you started</b> — every position you hold now plus every trade already bought and sold.'},
+  open:{cards:["held"],
+    t:'<b>Open gain / loss</b> — only the companies you own right now. These numbers move while the market is open.'},
+  closed:{cards:["hist"],
+    t:'<b>Closed gain / loss</b> — only trades that are finished: bought, sold, and settled. This money is banked.'},
+  cash:{cards:["pending"],
+    t:'<b>Cash</b> — money not in the market. Anything reserved is held against the orders below until they fill or expire.'}
+};
+function focusHas(card){ var d=FOCUS?FOCUS_DEF[FOCUS]:null; return !d || d.cards.indexOf(card)>=0; }
+function setFocus(k){
+  FOCUS = (FOCUS===k) ? null : k;
+  if(FOCUS!=="open") HELDSUB="all";
+  if(FOCUS!=="closed"&&FOCUS!=="since") HISTSUB="all";
+  renderHero(); applyFocus();
+  var host=$(FOCUS==="cash"?"#todayPendingCard":FOCUS==="closed"?"#todayHistoryCard":"#todayHeldCard");
+  if(FOCUS&&host&&host.scrollIntoView) host.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+function applyFocus(){
+  var d=FOCUS?FOCUS_DEF[FOCUS]:null, bar=$("#focusBar");
+  if(bar){ bar.hidden=!d; if(d) $("#focusBarText").innerHTML=d.t; }
+  var show=function(id,on){ var e=$(id); if(e) e.hidden=!on; };
+  show("#todayHeldCard", focusHas("held"));
+  show("#todayHistoryCard", focusHas("hist"));
+  show("#navCard", !d);
+  /* Research cards describe the scan, not any one hero number — a focus is a
+     promise that only related things are on screen, so they fold away. */
+  show("#todayWatchCard", !d);
+  show("#todayBlocksCard", !d);
+  show("#heldChips", FOCUS==="open");
+  renderTodayHeld(); renderTodayPending(); renderTodayHistory();
+}
+function bindSubChips(sel, get, set){
+  $$(sel+" button").forEach(function(b){
+    b.classList.toggle("on", get()===b.dataset.sub);
+    b.onclick=function(){ set(b.dataset.sub); $$(sel+" button").forEach(function(x){
+      x.classList.toggle("on", x===b); }); };
+  });
+}
+
 function sgnMoney(x){ return (x>0?'+':(x<0?'−':''))+money(Math.abs(x),2); }
 function sgnPct(x){ return (x>0?'+':(x<0?'−':''))+num(Math.abs(x),2)+'%'; }
 function renderHero(){
@@ -3321,27 +3437,47 @@ function renderHero(){
   var open=marketOpenNow();
   var asOf=k.anyLive&&LIVEQ.asOf?new Date(LIVEQ.asOf).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}):(DASH.navLive&&DASH.navLive.lastMarkAt?new Date(DASH.navLive.lastMarkAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"—");
   var liveTag='<span class="live'+(k.anyLive?'':' off')+'"><i></i>'+(k.anyLive?'live · '+esc(asOf):(open?'delayed marks · '+esc(asOf):'market closed · last '+esc(asOf)))+'</span>';
+  var sel=function(f){ return FOCUS===f?' sel':''; };
+  var hist=closedRows();
   host.innerHTML=
-    '<div class="hero__main"><div><div class="hero__k">Account worth now</div><div class="hero__v">'+money(k.nav,2)+'</div>'
+    '<button type="button" class="hero__main'+sel("today")+'" data-focus="today"><div><div class="hero__k">Account worth now</div><div class="hero__v">'+money(k.nav,2)+'</div>'
     +(today!=null?'<div class="hero__chg '+(today>=0?'up':'down')+'">'+sgnMoney(today)+' ('+sgnPct(todayPct)+') today</div>':'<div class="hero__chg">first session — no day baseline yet</div>')
-    +'</div><div class="hero__sub">'+liveTag+(k.start!=null?' · started with '+money(k.start,0):'')+'</div></div>'
-    +'<div class="hero__tile '+(since>0?'up':since<0?'down':'')+'"><div class="k">Since start</div><div class="v">'+(since!=null?sgnMoney(since):'—')+'</div><div class="d">'+(sincePct!=null?sgnPct(sincePct)+' on '+money(k.start,0):'')+'</div></div>'
-    +'<div class="hero__tile '+(k.unr>0?'up':k.unr<0?'down':'')+'"><div class="k">Open gain / loss</div><div class="v">'+sgnMoney(k.unr)+'</div><div class="d">'+k.rows.length+' position'+(k.rows.length===1?'':'s')+' · '+sgnMoney(k.win)+' winning, '+sgnMoney(k.los)+' losing</div></div>'
-    +'<div class="hero__tile '+(k.realised>0?'up':k.realised<0?'down':'')+'"><div class="k">Closed gain / loss</div><div class="v">'+sgnMoney(k.realised)+'</div><div class="d">after trading costs</div></div>'
-    +'<div class="hero__tile"><div class="k">Cash</div><div class="v">'+money(k.cash,0)+'</div><div class="d">'+money(k.invested,0)+' invested'+(k.reserved?' · '+money(k.reserved,0)+' reserved for '+k.pending.length+' order'+(k.pending.length===1?'':'s'):'')+'</div></div>';
+    +'</div><div class="hero__sub">'+liveTag+(k.start!=null?' · started with '+money(k.start,0):'')+'</div><span class="hero__f">'+(FOCUS==="today"?'showing':'filter')+'</span></button>'
+    +'<button type="button" class="hero__tile '+(since>0?'up':since<0?'down':'')+sel("since")+'" data-focus="since"><div class="k">Since start</div><div class="v">'+(since!=null?sgnMoney(since):'—')+'</div><div class="d">'+(sincePct!=null?sgnPct(sincePct)+' on '+money(k.start,0):'')+'</div><span class="hero__f">'+(FOCUS==="since"?'showing':'filter')+'</span></button>'
+    +'<button type="button" class="hero__tile '+(k.unr>0?'up':k.unr<0?'down':'')+sel("open")+'" data-focus="open"><div class="k">Open gain / loss</div><div class="v">'+sgnMoney(k.unr)+'</div><div class="d">'+k.rows.length+' position'+(k.rows.length===1?'':'s')+' · '+sgnMoney(k.win)+' winning, '+sgnMoney(k.los)+' losing</div><span class="hero__f">'+(FOCUS==="open"?'showing':'filter')+'</span></button>'
+    +'<button type="button" class="hero__tile '+(k.realised>0?'up':k.realised<0?'down':'')+sel("closed")+'" data-focus="closed"><div class="k">Closed gain / loss</div><div class="v">'+sgnMoney(k.realised)+'</div><div class="d">'+(hist.length?plural(hist.length,"finished trade")+' · after costs':'after trading costs')+'</div><span class="hero__f">'+(FOCUS==="closed"?'showing':'filter')+'</span></button>'
+    +'<button type="button" class="hero__tile'+sel("cash")+'" data-focus="cash"><div class="k">Cash</div><div class="v">'+money(k.cash,0)+'</div><div class="d">'+money(k.invested,0)+' invested'+(k.reserved?' · '+money(k.reserved,0)+' reserved for '+k.pending.length+' order'+(k.pending.length===1?'':'s'):'')+'</div><span class="hero__f">'+(FOCUS==="cash"?'showing':'filter')+'</span></button>';
+  $$("#hero [data-focus]").forEach(function(b){ b.onclick=function(){ setFocus(b.dataset.focus); }; });
+  var clear=$("#focusClear"); if(clear) clear.onclick=function(){ FOCUS=null; renderHero(); applyFocus(); };
 }
+
 function renderTodayPending(){
   var card=$("#todayPendingCard"); if(!card) return;
   var ords=bookNow().pending;
-  if(!ords.length){ card.hidden=true; return; }
+  if(!focusHas("pending")){ card.hidden=true; return; }
+  var forced=FOCUS==="cash";
+  if(!ords.length&&!forced){ card.hidden=true; return; }
   card.hidden=false;
   var now=Date.now(), reservedUsd=0, approved=0;
   ords.forEach(function(o){ if(o.status==="approved"){ approved+=1; reservedUsd+=((Number(o.grossCents)||0)+(Number(o.frictionCents)||0)+(Number(o.reservationHeadroomCents)||0))/100; } });
   $("#todayPendingSub").textContent=ords.length+" order"+(ords.length===1?"":"s")+(approved?" · "+money(reservedUsd,0)+" reserved":"");
   var delay=(DASH.market&&DASH.market.feedDelayMinutes)||15;
   $("#todayPendingNote").innerHTML='A paper order is filled at a price the desk could not have known when it decided — the first 5-minute bar that opens after the order becomes fillable. Prices arrive '+delay+' minutes late on this feed, so a fill lands about '+(delay+5)+'–'+(delay+20)+' minutes after approval. Cash is reserved meanwhile; the company moves to <b>What you own</b> when the fill lands, and an order that never fills is released at its expiry. A real-time consolidated feed would cut the wait to a few minutes.';
+  var cashHead="";
+  if(FOCUS==="cash"){
+    var b=bookNow();
+    cashHead='<table class="ptable" style="margin-bottom:16px"><tbody>'
+      +'<tr><td>Free to spend</td><td>'+money(b.cash-b.reserved,2)+'</td></tr>'
+      +'<tr><td>Reserved for the orders below</td><td>'+money(b.reserved,2)+'</td></tr>'
+      +'<tr><td>Invested in '+plural(b.rows.length,"company","companies")+'</td><td>'+money(b.invested,2)+'</td></tr>'
+      +'<tr class="total"><td>Account worth</td><td>'+money(b.nav,2)+'</td></tr></tbody></table>';
+  }
+  if(!ords.length){
+    $("#todayPending").innerHTML=cashHead+'<div class="empty">No orders are waiting. All of your cash is either invested or free to spend.</div>';
+    return;
+  }
   ords.sort(function(a,b){return (Number(b.approvedAtMs)||Number(b.decisionAtMs)||0)-(Number(a.approvedAtMs)||Number(a.decisionAtMs)||0);});
-  $("#todayPending").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Price</th><th>Amount</th><th class="hide-sm">Now</th><th>Status</th></tr></thead><tbody>'
+  $("#todayPending").innerHTML=cashHead+'<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Price</th><th>Amount</th><th class="hide-sm">Now</th><th>Status</th></tr></thead><tbody>'
     +ords.map(function(o){
       var qty=Number(o.qty)||0, px=Number(o.refPriceUsd)||0, amt=(Number(o.grossCents)||qty*px*100)/100;
       var elig=Number(o.fillEligibleAfterMs)||null, pn=priceNow(o.symbol,null);
@@ -3353,19 +3489,208 @@ function renderTodayPending(){
   $$("#todayPending tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
 }
 
+/* ── selling by hand ────────────────────────────────────────────────────
+   The button records an intent. It never fills anything, because a fill has
+   to happen at a price that was not on the screen when the button was
+   pressed — the same rule the automatic exits obey. */
+var SELLING={};
+function sellState(p){
+  var intent=p.exitIntent&&Number(p.exitIntent.decisionAtMs)>0?p.exitIntent:null;
+  var req=p.manualExitRequest||null;
+  if(intent) return {kind:"armed", manual:intent.kind==="manual"||intent.reason==="manual_operator_sell",
+    reason:intent.reason||null, eligible:Number(intent.eligibleAfterMs)||null};
+  if(req&&req.status==="requested") return {kind:"requested", at:Number(req.requestedAtMs)||null};
+  if(req&&req.status==="blocked") return {kind:"blocked", why:req.blockedReason||null};
+  if(p.corporateActionPending) return {kind:"held", why:"corporate action under review"};
+  return {kind:"idle"};
+}
+function sellCell(r){
+  var st=sellState(r.pos), sym=r.sym, busy=SELLING[sym];
+  if(st.kind==="armed"){
+    var when=st.eligible&&st.eligible>Date.now()?'fills in ~'+durationText((st.eligible-Date.now())/1000+5*60):'fills on the next bar';
+    return '<button class="sellbtn armed" disabled>Exiting</button>'
+      +'<span class="sellstate">'+esc(st.manual?"you sold this":exitShort(exitKindOfReason(st.reason))||"exit armed")+' · '+esc(when)+'</span>';
+  }
+  if(st.kind==="requested"){
+    return '<button class="sellbtn armed" disabled>Requested</button>'
+      +'<span class="sellstate">arming on the next check · <a href="#" data-undo="'+esc(sym)+'">undo</a></span>';
+  }
+  if(st.kind==="held"){
+    return '<button class="sellbtn" disabled>Sell</button><span class="sellstate">'+esc(st.why)+'</span>';
+  }
+  return '<button class="sellbtn" data-sell="'+esc(sym)+'"'+(busy?' disabled':'')+'>'+(busy?'…':'Sell')+'</button>'
+    +(st.kind==="blocked"?'<span class="sellstate" title="'+esc(plainBlock(st.why))+'">retrying — '+esc(plainBlock(st.why))+'</span>':'');
+}
+function plainBlock(w){
+  var M={ decision_source_not_tradable:"the price feed was not good enough to sell on — it retries",
+    missing_market_provenance:"no verified price source yet — it retries",
+    missing_adjustment_identity:"the price basis was unverified — it retries",
+    position_not_open:"the position was already closed", invalid_exit_clock:"internal clock error" };
+  return M[w]||w||"not armed yet";
+}
+function doSell(sym){
+  var r=bookNow().rows.filter(function(x){return x.sym===sym;})[0];
+  var line=r?(sym+" — "+r.qty+" share"+(r.qty===1?"":"s")+" worth "+money(r.value,2)+", currently "+sgnMoney(r.gain)+" ("+sgnPct(r.pct)+")"):sym;
+  if(!window.confirm("Sell "+line+"?\n\nThis records your decision now. The desk fills it at the first price bar that opens after this moment — it cannot fill at the price on your screen, which is already "+((DASH.market&&DASH.market.feedDelayMinutes)||15)+" minutes old.\n\nA hand-sold trade is kept out of the strategy's scorecard, because it is your judgement rather than the strategy's.")) return;
+  SELLING[sym]=true; renderTodayHeld();
+  api("requestSell",{symbol:sym}).then(function(res){
+    if(!res||res.ok===false){ toast(res&&res.refused?res.refused:"could not record the sell"); }
+    else toast(res.note||("Sell recorded for "+sym));
+  }).catch(function(e){ toast(String(e.message||e).slice(0,120)); })
+    .finally(function(){ delete SELLING[sym]; refresh(false); });
+}
+function undoSell(sym){
+  SELLING[sym]=true; renderTodayHeld();
+  api("cancelSell",{symbol:sym}).then(function(res){ toast(res&&res.note?res.note:"withdrawn"); })
+    .catch(function(e){ toast(String(e.message||e).slice(0,120)); })
+    .finally(function(){ delete SELLING[sym]; refresh(false); });
+}
+
 function renderTodayHeld(){
-  var k=bookNow(), rows=k.rows.slice().sort(function(a,b){return b.gain-a.gain;});
-  if(!rows.length){ $("#todayHeldSub").textContent="nothing yet"; $("#todayHeld").innerHTML='<div class="empty">Nothing is owned yet. When an order fills, the company appears here with what was paid, what it is worth now, and whether it is up or down.</div>'; return; }
-  $("#todayHeldSub").innerHTML=rows.length+" position"+(rows.length===1?"":"s")+' · <span style="color:'+(k.unr>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(k.unr)+' ('+sgnPct(k.cost?100*k.unr/k.cost:0)+')</span>'+(k.anyLive?' · <span class="live"><i></i>live</span>':'');
+  if(!focusHas("held")) return;
+  var k=bookNow(), all=k.rows.slice().sort(function(a,b){return b.gain-a.gain;});
+  var rows=all;
+  if(FOCUS==="open"&&HELDSUB==="win") rows=all.filter(function(r){return r.gain>=0;});
+  if(FOCUS==="open"&&HELDSUB==="lose") rows=all.filter(function(r){return r.gain<0;});
+  bindSubChips("#heldChips",function(){return HELDSUB;},function(v){ HELDSUB=v; renderTodayHeld(); });
+  if(!all.length){ $("#todayHeldSub").textContent="nothing yet"; $("#todayHeld").innerHTML='<div class="empty">Nothing is owned yet. When an order fills, the company appears here with what was paid, what it is worth now, and whether it is up or down.</div>'; return; }
+  var sub=rows.reduce(function(a,r){return a+r.gain;},0), subCost=rows.reduce(function(a,r){return a+r.cost;},0);
+  var subInv=rows.reduce(function(a,r){return a+r.value;},0);
+  $("#todayHeldSub").innerHTML=rows.length+(rows.length!==all.length?" of "+all.length:"")+" position"+(rows.length===1?"":"s")+' · <span style="color:'+(sub>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(sub)+' ('+sgnPct(subCost?100*sub/subCost:0)+')</span>'+(k.anyLive?' · <span class="live"><i></i>live</span>':'');
+  if(!rows.length){ $("#todayHeld").innerHTML='<div class="empty">Nothing in this group right now.</div>'; return; }
   var tr=rows.map(function(r){
     var up=r.gain>=0;
     return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+'</div></td>'
       +'<td>'+r.qty+'</td><td class="hide-sm">'+money(r.paid,2)+'</td><td>'+money(r.now,2)+(r.live?'':' <span class="muted" title="ledger mark, delayed feed">·</span>')+'</td><td class="hide-sm">'+money(r.value,2)+'</td>'
-      +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+sgnMoney(r.gain)+'<span class="pct">'+sgnPct(r.pct)+'</span></td></tr>';
+      +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+sgnMoney(r.gain)+'<span class="pct">'+sgnPct(r.pct)+'</span></td>'
+      +'<td class="act">'+sellCell(r)+'</td></tr>';
   }).join("");
-  $("#todayHeld").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th class="hide-sm">Paid</th><th>Now</th><th class="hide-sm">Value</th><th>Gain / loss</th></tr></thead><tbody>'+tr
-    +'<tr class="total"><td>Total</td><td>'+rows.reduce(function(a,r){return a+r.qty;},0)+'</td><td class="hide-sm">'+money(k.cost,2)+'</td><td></td><td class="hide-sm">'+money(k.invested,2)+'</td><td class="gain '+(k.unr>=0?'up':'down')+'"><span class="arrow">'+(k.unr>=0?'▲':'▼')+'</span>'+sgnMoney(k.unr)+'<span class="pct">'+sgnPct(k.cost?100*k.unr/k.cost:0)+'</span></td></tr></tbody></table>';
-  $$("#todayHeld tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
+  $("#todayHeld").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th class="hide-sm">Paid</th><th>Now</th><th class="hide-sm">Value</th><th>Gain / loss</th><th></th></tr></thead><tbody>'+tr
+    +'<tr class="total"><td>Total</td><td>'+rows.reduce(function(a,r){return a+r.qty;},0)+'</td><td class="hide-sm">'+money(subCost,2)+'</td><td></td><td class="hide-sm">'+money(subInv,2)+'</td><td class="gain '+(sub>=0?'up':'down')+'"><span class="arrow">'+(sub>=0?'▲':'▼')+'</span>'+sgnMoney(sub)+'<span class="pct">'+sgnPct(subCost?100*sub/subCost:0)+'</span></td><td></td></tr></tbody></table>';
+  $$("#todayHeld tr.row").forEach(function(r){ r.onclick=function(e){
+    if(e.target.closest("button,a")) return; openCompany(r.dataset.sym); }; });
+  $$("#todayHeld [data-sell]").forEach(function(b){ b.onclick=function(e){ e.stopPropagation(); doSell(b.dataset.sell); }; });
+  $$("#todayHeld [data-undo]").forEach(function(a){ a.onclick=function(e){ e.preventDefault(); e.stopPropagation(); undoSell(a.dataset.undo); }; });
+}
+
+/* ── history: what was bought and sold, and why ─────────────────────────
+   The operator's question — "why is so much sold below what we paid?" — is
+   answered by naming the rule that fired on every single row, and by the
+   tally in the explainer underneath. */
+var EXIT_PLAIN={
+  stop_loss:["Hard stop","bad","It fell far enough below what was paid that the desk cuts the loss rather than hoping. This is the floor under every position and it fires by definition at a loss."],
+  trailing_stop:["Trailing stop","good","It had gained, then gave back too much from its best price. Selling here banks part of a win instead of letting it round-trip to nothing — it can still land below the purchase price if the gain was small."],
+  take_profit:["Profit target","good","It reached the gain the strategy was aiming for."],
+  pullback_target:["Reached target","good","It climbed back to the prior swing high the trade was aiming at."],
+  pullback_failed:["Level failed","bad","It gave back more of the up-leg than the setup allows, so the level it was leaning on failed."],
+  earnings_exit:["Before earnings","","Results were due. Prices jump unpredictably around a print, so the desk steps aside rather than gamble — whatever the position is worth at that moment."],
+  intelligence_critical:["Company news","bad","A corroborated material event about the company itself."],
+  signal:["Reason gone","","The reason it was bought no longer applies. This desk does not buy companies it expects to rise; it buys one that has fallen further than its sector and the market can explain, and sells when that gap closes <i>relative to everything else</i>. The gap can close because the company recovered — or because everything else fell too. In the second case there is nothing left to collect even though the price is below what was paid, and holding on is no longer the strategy, it is hoping."],
+  time:["Time is up","","The trade was given a fixed number of sessions to work. It did not, so the money is released for a better idea instead of being tied up indefinitely."],
+  manual:["You sold it","","You asked the desk to sell this holding. It is kept out of the strategy's scorecard, because it is your judgement rather than the strategy's."]
+};
+function exitKindOfReason(r){
+  var t=String(r||"");
+  if(!t) return null;
+  if(/manual/i.test(t)) return "manual";
+  if(/hard stop/i.test(t)) return "stop_loss";
+  if(/trailing stop/i.test(t)) return "trailing_stop";
+  if(/profit target/i.test(t)) return "take_profit";
+  if(/swing high|pullback target/i.test(t)) return "pullback_target";
+  if(/level failed|gave back/i.test(t)) return "pullback_failed";
+  if(/earnings/i.test(t)) return "earnings_exit";
+  if(/adverse|material/i.test(t)) return "intelligence_critical";
+  if(/crossed exit|^rank /i.test(t)) return "signal";
+  if(/max hold/i.test(t)) return "time";
+  return null;
+}
+function exitKindOf(t){ return t.exitKind || exitKindOfReason(t.exitReason||t.closeReason); }
+function exitShort(kind){ return EXIT_PLAIN[kind]?EXIT_PLAIN[kind][0]:null; }
+function closedRows(){
+  return (DASH.closedTrades||[]).filter(function(t){return t&&t.closedAt;}).map(function(t){
+    var qty=Number(t.qty)||0;
+    var buy=Number(t.entryPriceUsd!=null?t.entryPriceUsd:t.entryFillUsd)||0;
+    var sell=Number(t.exitPriceUsd!=null?t.exitPriceUsd:t.exitFillUsd)||0;
+    var pl=t.realisedPnlUsd!=null?Number(t.realisedPnlUsd):(qty&&buy&&sell?qty*(sell-buy):null);
+    var kind=exitKindOf(t);
+    return {sym:t.symbol, qty:qty, buy:buy, sell:sell, pl:pl,
+      pct:buy>0&&sell>0?100*(sell-buy)/buy:null,
+      opened:t.openedAt||null, closed:t.closedAt||null,
+      held:t.heldDays!=null?Number(t.heldDays):null,
+      kind:kind, reason:t.exitReason||t.closeReason||null,
+      manual:t.manualClose===true||kind==="manual",
+      control:t.cohortRole==="control", t:t};
+  }).sort(function(a,b){ return String(b.closed).localeCompare(String(a.closed)); });
+}
+function renderTodayHistory(){
+  var card=$("#todayHistoryCard"); if(!card) return;
+  if(!focusHas("hist")){ card.hidden=true; return; }
+  card.hidden=false;
+  var all=closedRows();
+  if(FOCUS&&FOCUS_DEF[FOCUS]&&FOCUS_DEF[FOCUS].histToday){
+    var d=new Date().toISOString().slice(0,10);
+    all=all.filter(function(r){ return String(r.closed).slice(0,10)===d; });
+  }
+  bindSubChips("#histChips",function(){return HISTSUB;},function(v){ HISTSUB=v; renderTodayHistory(); });
+  var rows=all;
+  if(HISTSUB==="win") rows=all.filter(function(r){return (r.pl||0)>0;});
+  if(HISTSUB==="lose") rows=all.filter(function(r){return (r.pl||0)<0;});
+  if(HISTSUB==="manual") rows=all.filter(function(r){return r.manual;});
+  var net=all.reduce(function(a,r){return a+(r.pl||0);},0);
+  var wins=all.filter(function(r){return (r.pl||0)>0;}).length;
+  $("#todayHistSub").innerHTML = all.length
+    ? plural(all.length,"finished trade")+' · '+wins+' up, '+(all.length-wins)+' down · <span style="color:'+(net>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(net)+'</span> across these rows'
+    : "nothing sold yet";
+  writeHistWhy(all);
+  if(!all.length){ $("#todayHistory").innerHTML='<div class="empty">Nothing has been bought and sold yet. Every completed round trip will be listed here with what was paid, what it sold for, and which rule closed it.</div>'; return; }
+  if(!rows.length){ $("#todayHistory").innerHTML='<div class="empty">No finished trades in this group.</div>'; return; }
+  var shown=rows.slice(0,60);
+  $("#todayHistory").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Bought</th><th>Sold</th><th class="hide-sm">Held</th><th>Result</th><th>Why it sold</th></tr></thead><tbody>'
+    +shown.map(function(r){
+      var up=(r.pl||0)>=0, p=EXIT_PLAIN[r.kind];
+      return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+(r.manual?' <span class="badge2 b-info">by hand</span>':(r.control?' <span class="badge2 b-info">control</span>':''))+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+'</div></td>'
+        +'<td>'+(r.qty||'—')+'</td>'
+        +'<td>'+(r.buy?money(r.buy,2):'—')+'<span class="pct">'+esc(shortDate(r.opened))+'</span></td>'
+        +'<td>'+(r.sell?money(r.sell,2):'—')+'<span class="pct">'+esc(shortDate(r.closed))+'</span></td>'
+        +'<td class="hide-sm">'+(r.held!=null?num(r.held,1)+'d':'—')+'</td>'
+        +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+(r.pl!=null?sgnMoney(r.pl):'—')+(r.pct!=null?'<span class="pct">'+sgnPct(r.pct)+'</span>':'')+'</td>'
+        +'<td class="whyx"><span class="kd '+(p?p[1]:'')+'">'+esc(p?p[0]:"closed")+'</span>'+esc(reasonText(r))+'</td></tr>';
+    }).join("")+'</tbody></table>'
+    +(rows.length>shown.length?'<div class="hint" style="margin-top:10px">Showing the '+shown.length+' most recent of '+rows.length+'. The full record is on the Results page.</div>':'');
+  $$("#todayHistory tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
+}
+/* The stored reason is a machine token for a hand sale and an already-plain
+   sentence for every rule. Only the token needs translating. */
+function reasonText(r){
+  if(r.manual||r.kind==="manual") return "you asked the desk to sell this";
+  return r.reason||"";
+}
+function shortDate(iso){
+  if(!iso) return "";
+  var d=new Date(iso); if(isNaN(d)) return "";
+  return d.toLocaleDateString([],{month:"short",day:"numeric"});
+}
+/* The explainer is written from the operator's OWN trades, not from theory:
+   it counts how many sales landed below cost and names the rule behind each. */
+function writeHistWhy(rows){
+  var host=$("#todayHistNote"); if(!host) return;
+  var down=rows.filter(function(r){return (r.pl||0)<0;});
+  var tally={}; down.forEach(function(r){ var k=r.kind||"other"; tally[k]=(tally[k]||0)+1; });
+  var order=Object.keys(tally).sort(function(a,b){return tally[b]-tally[a];});
+  var head = rows.length
+    ? '<p><b>'+down.length+' of '+rows.length+'</b> finished trades sold below what they cost. That is expected, and here is exactly why each of them did.</p>'
+    : '<p>Nothing has been sold yet. When it is, this will name the rule behind every sale.</p>';
+  var body = order.length
+    ? '<ul style="margin:10px 0 0;padding-left:18px">'+order.map(function(k){
+        var p=EXIT_PLAIN[k];
+        return '<li style="margin-bottom:9px"><b>'+esc(p?p[0]:"Other")+'</b> — '+plural(tally[k],"trade")+'. '+(p?p[2]:"")+'</li>';
+      }).join("")+'</ul>'
+    : "";
+  var tail = '<p style="margin-top:12px">Two things follow from the design, and both are deliberate. '
+    + 'First, <b>no exit rule requires a profit.</b> A stop is a loss by definition, a time stop pays no attention to price at all, and the main signal exit asks only whether the gap it was trading has closed — not whether the position is up. '
+    + 'Second, <b>the strategy is not trying to win most trades.</b> It is trying to keep every loss small and bounded while letting the winners run to their target, so a majority of small red rows alongside a smaller number of larger green ones is the shape it is aiming for. Judge it on the total at the top of this card, not on the count.</p>'
+    + '<p style="margin-top:10px">If a specific sale looks wrong to you, that is worth acting on: you can sell anything you own by hand from the <b>What you own</b> table above. Trades you close yourself are excluded from the strategy’s scorecard, so your judgement never contaminates its measured record.</p>';
+  host.innerHTML = head + body + tail;
 }
 
 function renderTodayWatch(){
