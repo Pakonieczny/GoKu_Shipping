@@ -814,6 +814,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <span class="badge2 b-info" id="modeState">—</span>
             <span class="hint">Manual paper approval can be selected after build attestation. Shadow and limited-auto stages still come only from measured gates.</span>
           </div>
+          <div class="note bad" id="modeWhy" hidden style="margin:0 0 10px"></div>
           <div class="ctrlrow">
             <span class="lab">Operator ceiling</span>
             <select class="inp" id="ceilSel" style="max-width:220px">
@@ -1250,6 +1251,8 @@ function render(){
       +" frozen eligible names processed; absence is not evidence.");
   $("#modeState").textContent = c.operatingState||c.mode||"research";
   $("#modeState").className = "badge2 "+((c.mode||"research")==="research"?"b-warn":"b-on");
+  var whyEl=$("#modeWhy");
+  if(whyEl){ var why=stateReasonText(c); whyEl.innerHTML=why?'<b>Why:</b> '+esc(why):""; whyEl.hidden=!why; }
   $("#ceilSel").value = c.operatorCeiling||"approval";
   $("#holdState").textContent = c.operatorHold?"HELD":"open";
   $("#holdState").className = "badge2 "+(c.operatorHold?"b-warn":"b-on");
@@ -1379,6 +1382,17 @@ function renderLiveConfig(lc){
    changes the desk state (Start, unfreeze) that verdict is stale until a scan
    runs — overnight, scheduled scans wait for market hours — so say so instead
    of showing a block the current state no longer imposes. */
+/* The reason recorded by whatever moved the desk into its current state.
+   Operator actions are not surprises and get no banner; automatic sources
+   (ladder rollback, reconciliation freeze, bootstrap, fixture failure) are. */
+function stateReasonText(c){
+  var src=c.operatingStateSource||"", when=c.operatingStateChangedAtMs?new Date(c.operatingStateChangedAtMs).toLocaleTimeString():"";
+  var bits=[];
+  if(src&&src!=="operator"&&c.operatingStateReason) bits.push(c.operatingStateReason+(when?" (at "+when+", source: "+src+")":""));
+  if(c.safetyClosedReason&&!/attestation/.test(c.operatingStateReason||"")) bits.push("Safety closed: "+c.safetyClosedReason);
+  if(c.reconciliationFailure&&c.reconciliationFailure.pass===false) bits.push("Ledger reconciliation failed"+(c.reconciliationFailure.error?": "+c.reconciliationFailure.error:"")+(c.reconciliationFailure.discrepancyCount?" ("+c.reconciliationFailure.discrepancyCount+" discrepancies)":""));
+  return bits.join(" · ");
+}
 function entryVerdictStale(){
   var c=ctl(), changed=Number(c.operatingStateChangedAtMs)||0,
       last=c.lastCycleFinishedAt?Date.parse(c.lastCycleFinishedAt):0;
@@ -2679,6 +2693,7 @@ function renderToday(){
     : auto ? "The desk is running validated paper trades automatically"
     : approvals ? "The desk is working, and will ask before it buys"
     : "The desk is watching";
+  var why=stateReasonText(c);
   var body = frozen ? "It is still ranking companies and watching holdings, but it cannot open a new paper position until the freeze is cleared. Exits still work."
     : !running ? "It is not looking for anything to buy. Existing holdings are still being watched and can still be sold."
     : exploratory ? "It can use the full virtual account across qualifying opportunities, with no daily order quota. Every decision and outcome remains labelled exploratory and linked to the variables that produced it."
@@ -2693,7 +2708,8 @@ function renderToday(){
     '<div class="desk">'
     + '<div class="desk__top"><div class="desk__txt">'
     +   '<span class="pill '+(running?"info":"dry")+'"><span class="d"></span>'+(running?(exploratory?"Exploratory auto paper":(auto?"Validated auto paper":(approvals?"Asking before buying":"Watching only"))):"Paused")+'</span>'
-    +   '<h2>'+esc(head)+'</h2><p>'+esc(body)+'</p></div>'
+    +   '<h2>'+esc(head)+'</h2><p>'+esc(body)+'</p>'
+    +   (why&&!running?'<p class="note bad" style="margin-top:8px"><b>Why it stopped:</b> '+esc(why)+'</p>':'')+'</div>'
     + '<button class="btn '+(running?"":"gold")+' bigbtn" id="tdBig">'+(running?"Pause the desk":"Start the desk")+'</button>'
     + '</div>'
     + '<div class="desk__opts">'
