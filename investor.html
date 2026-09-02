@@ -2576,6 +2576,7 @@ function operationStream(name,completed,total,pct,desc){
 function rankingExclusionSummary(scan){
   var d=scan.rankingDiagnostics||{},x=d.excludedBeforePanel||{},parts=[];
   var f=d.fetch||{}, fc=(f.chunks&&f.chunks.failed)||[];
+  if(f.feedFallback) parts.push("the provider rejected feed "+f.feedFallback.from+"; bars were fetched as consolidated SIP with the 16-minute embargo instead ("+String(f.feedFallback.reason||"").slice(0,80)+")");
   if(d.rosterChecked!=null&&d.barsReceived!=null&&d.barsReceived<d.rosterChecked)
     parts.push("the provider returned bars for only "+d.barsReceived+" of "+d.rosterChecked
       +(fc.length?" — "+fc.length+" of "+(f.chunks.total||"?")+" requests failed: "+String(fc[0].error||"").slice(0,90):""));
