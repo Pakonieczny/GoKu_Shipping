@@ -88,6 +88,27 @@
 .opsfill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--gold),var(--sage));transition:width .45s ease}
 .opsmeta{display:flex;gap:8px 18px;flex-wrap:wrap;margin-top:9px;color:var(--ink-45);font-family:var(--mono);font-size:11px}
 .opsmeta b{color:var(--ink-70);font-weight:600}
+/* ── live pipeline ── */
+.pipe{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}
+.pipe__stages{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.pipe__st{border:1px solid var(--line);border-radius:10px;padding:8px 8px 7px;background:var(--card);position:relative;transition:border-color .3s,box-shadow .3s}
+.pipe__st .n{font-family:var(--mono);font-size:18px;line-height:1.1;transition:transform .25s}
+.pipe__st .l{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pipe__st.active{border-color:var(--gold);box-shadow:0 0 0 3px rgba(169,130,63,.14);animation:pipepulse 1.6s ease-in-out infinite}
+.pipe__st.bumped .n{transform:scale(1.18)}
+.pipe__st.good{border-color:var(--sage)}
+@keyframes pipepulse{0%,100%{box-shadow:0 0 0 3px rgba(169,130,63,.14)}50%{box-shadow:0 0 0 6px rgba(169,130,63,.04)}}
+.pipe__arrow{display:none}
+.pipe__feed{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;min-height:26px}
+.chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 9px;font-family:var(--mono);font-size:11px;border:1px solid var(--line);background:var(--card);animation:chipin .35s ease-out;white-space:nowrap}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--ink-25);flex:none}
+.chip.c-signal i{background:var(--gold)}.chip.c-passed i,.chip.c-proposed i,.chip.c-approved i{background:var(--sage)}
+.chip.c-filled i,.chip.c-closed i{background:var(--ink)}.chip.c-blocked i{background:var(--clay)}
+.chip.c-exit i{background:var(--slate)}.chip .why{color:var(--ink-45)}
+.chip.c-proposed,.chip.c-approved,.chip.c-filled{border-color:var(--sage);font-weight:600}
+@keyframes chipin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.pipe__blocked{margin-top:8px;color:var(--ink-45);font-family:var(--mono);font-size:11px}
+@media (max-width:900px){.pipe__stages{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .opscadence{font-size:12px;color:var(--ink-70);line-height:1.5;margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2)}
 .opsstreams{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:16px}
 .opsstream{border:1px solid var(--line);border-radius:11px;padding:12px 13px;background:var(--card)}
@@ -1159,7 +1180,7 @@ function scheduleNextPoll(){
   var active=DASH&&DASH.operations&&DASH.operations.active;
   /* Poll quickly only while visible work is running. Idle polling stays light
      on Firestore while still detecting the one-minute scheduler promptly. */
-  TIMER=setTimeout(function(){ refresh(false); },active?5000:30000);
+  TIMER=setTimeout(function(){ refresh(false); },active?2500:30000);
 }
 function refresh(loud){
   if(TIMER){clearTimeout(TIMER);TIMER=null;}
@@ -1262,6 +1283,16 @@ function render(){
   $("#holdState").className = "badge2 "+(c.operatorHold?"b-warn":"b-on");
   $("#freezeState").textContent = c.entriesFrozen?"FROZEN":"open";
   $("#freezeState").className = "badge2 "+(c.entriesFrozen?"b-warn":"b-on");
+  /* The pair is a two-position switch: the button for the CURRENT state is
+     the pressed one and disabled, so "Unfreeze" while already open cannot
+     look like a click that did nothing. */
+  var fz=$("#btnFreezeEntries"), uf=$("#btnUnfreezeEntries");
+  if(fz&&uf){
+    fz.disabled=!!c.entriesFrozen; uf.disabled=!c.entriesFrozen;
+    fz.className="btn sm"+(c.entriesFrozen?" gold":" ghost"); uf.className="btn sm"+(c.entriesFrozen?" ghost":" gold");
+    fz.title=c.entriesFrozen?"Entries are already frozen":"Freeze new entries";
+    uf.title=c.entriesFrozen?"Lift the freeze":"Entries are already open";
+  }
   $("#safetyState").textContent = c.safetyEpochValid?"current":"not active";
   $("#safetyState").className = "badge2 "+(c.safetyEpochValid?"b-on":"b-bad");
   $("#dryState").textContent = c.dryRun?"ON":"OFF";
@@ -2440,13 +2471,16 @@ $("#btnSafety").addEventListener("click",function(){
   runButton(this,"activateSafety",{},function(r){
     toast("Current build identity activated; dry run remains ON"); refresh(false); }); });
 $("#btnFreezeEntries").addEventListener("click",function(){
+  if((DASH.control||{}).entriesFrozen){ toast("Entries are already frozen."); return; }
   runButton(this,"setControl",{patch:{entriesFrozen:true}},function(r){
     var c=r.entryCleanup||{};
     toast("Entries frozen · "+(c.cancelledProposals||0)+" proposals cancelled · "+(c.releasedApproved||0)+" reservations returned");
     refresh(false); }); });
 $("#btnUnfreezeEntries").addEventListener("click",function(){
-  runButton(this,"setControl",{patch:{entriesFrozen:false}},function(){
-    toast("Entry freeze lifted"); refresh(false); }); });
+  if(!(DASH.control||{}).entriesFrozen){ toast("Entries are already open — nothing to lift."); return; }
+  runButton(this,"setControl",{patch:{entriesFrozen:false}},function(r){
+    var refused=r&&r.refused&&r.refused.entriesFrozen;
+    toast(refused?("Could not unfreeze: "+refused):"Entry freeze lifted"); refresh(false); }); });
 $("#btnKill").addEventListener("click",function(){
   if(!confirm("Engage the kill switch? Proposed orders are cancelled and new decisions stop. Evidence and the ledger are untouched.")) return;
   runButton(this,"kill",{},function(r){toast("Killed · "+(r.cancelledProposals||0)+" proposed cancelled · "+(r.releasedApproved||0)+" approved released");refresh(false);}); });
@@ -2586,6 +2620,71 @@ function operationFeed(ops){
     +'<span>'+esc(x.text)+'</span><time>'+esc(timeAgo(x.at))+'</time></div>';}).join("");
 }
 
+/* Live pipeline: seven stages with running counts, the active stage pulsing,
+   and a feed of the latest per-company outcomes as chips. Counts come from
+   the worker's live feed on the run document (flushed every ~2 s), so this
+   is what the scan is doing, not an animation of what it might be doing. */
+var PIPE_PREV={};
+function stageOfEvent(ev){
+  var s=ev.s;
+  if(s==="no_signal"||s==="unpriced"||s==="held") return "ranked";
+  if(s==="blocked") return "signal";
+  if(s==="passed"||s==="paced_out") return "checks";
+  if(s==="proposed"||s==="control_proposed") return "proposed";
+  if(s==="approved") return "approved";
+  if(s==="filled") return "filled";
+  if(s==="exit_armed"||s==="exit_blocked"||s==="closed") return "exits";
+  return "ranked";
+}
+function chipFor(ev){
+  var s=ev.s, cls="c-other", text="";
+  if(s==="no_signal"){cls="c-none";text="no signal";}
+  else if(s==="blocked"){cls="c-blocked";text="stopped: "+plainGateShort(ev.n);}
+  else if(s==="passed"){cls="c-passed";text="cleared gates";}
+  else if(s==="paced_out"){cls="c-none";text="paced out";}
+  else if(s==="proposed"){cls="c-proposed";text="proposed "+(ev.n||"");}
+  else if(s==="control_proposed"){cls="c-proposed";text="control "+(ev.n||"");}
+  else if(s==="approved"){cls="c-approved";text="approved";}
+  else if(s==="filled"){cls="c-filled";text="FILLED";}
+  else if(s==="closed"){cls="c-closed";text="sold: "+(ev.n||"");}
+  else if(s==="exit_armed"){cls="c-exit";text="exit armed: "+(ev.n||"");}
+  else if(s==="exit_blocked"){cls="c-exit";text="exit waiting: "+(ev.n||"");}
+  else if(s==="held"){cls="c-none";text="holding";}
+  else if(s==="unpriced"){cls="c-none";text="no bars";}
+  else {text=s;}
+  return '<span class="chip '+cls+'"><i></i><b>'+esc(ev.sym||"")+'</b><span class="why">'+esc(text)+'</span></span>';
+}
+function plainGateShort(id){
+  var m={trend:"downtrend",liquidity:"too thinly traded",blackout:"earnings window",session:"session",dispersion:"dispersion",
+    signal:"no signal",crowding:"sector crowded",turnover:"turnover",intelligence:"adverse news",evidence:"evidence",cost:"costs > edge",
+    quality:"data quality",manifest:"manifest",entry_control:"entries closed"};
+  if(!id) return "gate"; var k=String(id).split(":")[0]; return m[k]||String(id).replace(/_/g," ");
+}
+function renderPipeline(live, phase){
+  if(!live) return "";
+  var c=live.counters||{}, evaluated=(c.no_signal||0)+(c.blocked||0)+(c.passed||0)+(c.held||0)+(c.unpriced||0)+(c.exit_armed||0)+(c.exit_blocked||0);
+  var signal=(c.blocked||0)+(c.passed||0)+(c.paced_out||0);
+  var stages=[
+    ["ranked","Evaluated",evaluated],
+    ["signal","Signal",signal],
+    ["checks","Cleared gates",(c.passed||0)],
+    ["proposed","Proposed",(c.proposed||0)+(c.control_proposed||0)],
+    ["approved","Approved",(c.approved||0)],
+    ["filled","Filled",(c.filled||0)],
+    ["exits","Exits / sold",(c.exit_armed||0)+(c.closed||0)]];
+  var activeStage=phase==="evaluate_companies"?"ranked":phase==="portfolio_selection"?"proposed":phase==="settlement"?"filled":null;
+  var recent=(live.recent||[]).slice(-40);
+  if(recent.length&&!activeStage) activeStage=stageOfEvent(recent[recent.length-1]);
+  var html='<div class="pipe"><div class="pipe__stages">'+stages.map(function(st){
+    var bumped=PIPE_PREV[st[0]]!=null&&PIPE_PREV[st[0]]!==st[2]; PIPE_PREV[st[0]]=st[2];
+    return '<div class="pipe__st'+(activeStage===st[0]?' active':'')+(bumped?' bumped':'')+(st[2]>0&&st[0]!=="ranked"&&st[0]!=="signal"?' good':'')+'"><div class="n">'+st[2]+'</div><div class="l">'+esc(st[1])+'</div></div>';
+  }).join("")+'</div>';
+  var feed=recent.slice(-14).reverse();
+  html+='<div class="pipe__feed">'+(feed.length?feed.map(chipFor).join(""):'<span class="chip c-none"><i></i><span class="why">waiting for the first company…</span></span>')+'</div>';
+  var bb=Object.entries(live.blockedBy||{}).sort(function(a,b){return b[1]-a[1];}).slice(0,6);
+  if(bb.length) html+='<div class="pipe__blocked">Stopped by: '+bb.map(function(x){return esc(plainGateShort(x[0]))+" "+x[1];}).join(" · ")+'</div>';
+  return html+'</div>';
+}
 function renderOperationsConsole(){
   var host=$("#opsConsole");if(!host||!DASH)return;
   var ops=DASH.operations||{},active=ops.active||null,c=ctl(),session=DASH.session||{};
@@ -2616,7 +2715,8 @@ function renderOperationsConsole(){
       +(p.currentItem?' <b>Current company: '+esc(p.currentItem)+'.</b>':'')+'</div></div>'
       +'<div class="opsnow__pct">'+Math.round(pct)+'%</div></div>'
       +operationBar(pct,p.label||opKind(active.kind))
-      +'<div class="opsmeta"><span>'+count+'</span><span>'+esc(timing)+'</span><span>'+esc(updated)+'</span></div>';
+      +'<div class="opsmeta"><span>'+count+'</span><span>'+esc(timing)+'</span><span>'+esc(updated)+'</span></div>'
+      +(active.kind==="cycle"||/cycle/.test(String(active.jobId||""))?renderPipeline(active.live||null,p.phase):'');
     if((ops.activeAll||[]).length>1){
       nowHtml+='<div class="opscadence"><b>Also active:</b> '+(ops.activeAll||[]).slice(1)
         .map(function(x){return opKind(x.kind)+" — "+((x.progress||{}).label||x.status);}).map(esc).join(" · ")+'</div>';
@@ -2635,7 +2735,9 @@ function renderOperationsConsole(){
     }else{
       title="Waiting for the next eligible market session";detail="New-price opportunity scans wait for premarket or the regular session. Company research and holding protection can still run separately.";
     }
-    nowHtml='<div class="opsnow"><div class="opsnow__title">'+esc(title)+'</div><div class="opsnow__detail">'+esc(detail)+'</div></div>';
+    var lastCycle=(runs||[]).filter(function(r){return r.kind==="cycle"&&r.live;})[0];
+    nowHtml='<div class="opsnow"><div class="opsnow__title">'+esc(title)+'</div><div class="opsnow__detail">'+esc(detail)+'</div>'
+      +(lastCycle?'<div class="opsmeta" style="margin-top:10px"><b>Last scan</b><span>'+esc(timeAgo(lastCycle.updatedAtMs||lastCycle.startedAtMs))+'</span></div>'+renderPipeline(lastCycle.live,null):'')+'</div>';
   }
   var nextText;
   if(ops.state==="paused") nextText="Automatic new-entry scans remain paused until you start the desk.";
