@@ -442,6 +442,7 @@ const ACTIONS = {
         operatorCeiling: ctrl.operatorCeiling || "approval",
         operatorHold: ctrl.operatorHold === true,
         entriesFrozen: operating.entriesFrozen,
+        operatingStateChangedAtMs: Number(ctrl.operatingStateChangedAtMs) || null,
         cycleSeconds: ctrl.cycleSeconds || 300,
         paperLearning: { stored: ctrl.paperLearning || null, active: paperPreview.active,
           refused: paperPreview.refused, applied: paperPreview.applied, limits: ST.RELAX_LIMITS,
