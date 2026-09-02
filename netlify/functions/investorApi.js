@@ -259,6 +259,15 @@ const ACTIONS = {
         proposals: r.proposals, modelCalls: r.modelCalls, elapsedMs: r.elapsedMs,
         selected: r.selected || [], swept: r.swept,
         settlement: r.settlement || null, positionCoverage: r.positionCoverage || null,
+        diagnostics: r.rankingDiagnostics ? (() => {
+          const d = r.rankingDiagnostics, f = d.fetch || {}, failed = (f.chunks && f.chunks.failed) || [];
+          return { rosterChecked: d.rosterChecked ?? null, barsReceived: d.barsReceived ?? null,
+            researchEligible: d.researchEligible ?? null, admittedToPanel: d.admittedToPanel ?? null,
+            tooFewBars: d.excludedBeforePanel && d.excludedBeforePanel.tooFewBars || 0,
+            unusableQuality: d.excludedBeforePanel && d.excludedBeforePanel.unusableQuality || 0,
+            fetchFailed: failed.length, fetchTotal: f.chunks && f.chunks.total || null,
+            fetchError: failed.length ? String(failed[0].error || "").slice(0, 120) : null };
+        })() : null,
         error: r.error || null, progress: progressForUi(r.progress),
         live: r.live && typeof r.live === "object" ? {
           counters: r.live.counters || {}, blockedBy: r.live.blockedBy || {},
