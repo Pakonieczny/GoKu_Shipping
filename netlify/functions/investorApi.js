@@ -300,6 +300,11 @@ const ACTIONS = {
     const reg = regSnap.exists ? regSnap.data() : {};
     const openai = costSnap.exists ? costSnap.data() : { usd: 0, calls: 0 };
 
+    /* The dashboard used to read the provider WITHOUT loading the Firestore
+       market settings first, so a fresh API process reported the environment
+       fallback ("manual · 1440m delay") while the worker was actually on
+       Alpaca. The Today card, footer and Health card all quoted that. */
+    await M.loadMarketSettings();
     const provider = M.activeProvider();
     const frozenUniverse = universeSnap.exists ? universeSnap.data() : uMod;
     const expectedCandidates = (frozenUniverse.tradeTier || []).length;
@@ -878,6 +883,76 @@ const ACTIONS = {
       reversion: rev.n ? rev : null,
       notes: H.describe(ctx, null),
     };
+  },
+
+  /* Intraday 5-minute bars for the company chart: the last N sessions from
+     the stored per-session documents the cycle writes, topped up from the
+     configured provider when a session is missing or today's document lags
+     the delayed edge. Read-only for the desk's decisions: nothing here feeds
+     a decision, so a display fetch can never change what the desk does. */
+  async intraday({ symbol, sessions }) {
+    symbol = String(symbol || "").toUpperCase();
+    if (!SYMBOL.test(symbol)) return { error: "valid symbol required" };
+    const want = Math.max(1, Math.min(14, Math.round(Number(sessions) || 1)));
+    await M.loadMarketSettings();
+    const provider = M.activeProvider();
+    const nowMs = Date.now();
+    /* Trailing trading sessions, oldest first (today included when it is a
+       trading day — before the open it simply has no bars yet). */
+    const dates = [];
+    const cursor = new Date(nowMs);
+    let guard = 0;
+    while (dates.length < want && guard < 40) {
+      const st = M.sessionState(cursor);
+      if (st.tradingDay) dates.push(st.date);
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+      guard += 1;
+    }
+    dates.reverse();
+    const readSession = async (date) => {
+      const snap = await A.col(A.COL.marketLatest).doc(M.barDocId(symbol, date)).get();
+      return snap.exists ? snap.data() : null;
+    };
+    let docs = await Promise.all(dates.map(readSession));
+    const delayMs = (Number(provider.delayMinutes) || 0) * 60000;
+    const todaySt = M.sessionState(new Date(nowMs));
+    const lastDate = dates[dates.length - 1];
+    const lastDoc = docs[docs.length - 1];
+    const lastBarMs = lastDoc && (lastDoc.bars || []).length
+      ? Date.parse(lastDoc.bars[lastDoc.bars.length - 1].t) : 0;
+    const delayedEdgeMs = nowMs - delayMs;
+    const todayLagging = lastDate === todaySt.date && todaySt.open
+      && delayedEdgeMs - lastBarMs > 12 * 60000;
+    const missing = dates.filter((d, i) => !docs[i] || !(docs[i].bars || []).length);
+    let fetched = null;
+    if ((missing.length || todayLagging) && provider.id !== "manual") {
+      try {
+        const limit = Math.min(9000, want * 80);
+        const got = await M.fetchBars([symbol], { timeframe: "5Min", limit });
+        const bars = (got.bars && got.bars[symbol]) || [];
+        fetched = { provider: got.provider, feed: got.feed || null, bars: bars.length };
+        if (bars.length) {
+          try {
+            await M.writeBars(symbol, todaySt.date, bars, {
+              provider: got.provider, feed: got.feed || null,
+              adjustment: got.adjustment || null, sourceSha256: got.sha256 || null,
+              grade: null, gradeReasons: ["chart_backfill"], feedDelayMinutes: provider.delayMinutes,
+            });
+          } catch (e) { fetched.writeError = String(e.message).slice(0, 120); }
+          docs = await Promise.all(dates.map(readSession));
+        }
+      } catch (e) { fetched = { error: String(e.message).slice(0, 160) }; }
+    }
+    const out = dates.map((date, i) => {
+      const d = docs[i];
+      const bars = (d && d.bars || []).map((b) => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
+      return { date, bars, provider: d && d.provider || null, feed: d && d.feed || null };
+    });
+    return { ok: true, symbol, sessions: out, requested: want,
+      delayMinutes: provider.delayMinutes, provider: provider.id, feed: provider.feed || null,
+      consolidated: !!provider.consolidated, asOf: new Date(nowMs).toISOString(),
+      session: { date: todaySt.date, open: !!todaySt.open, phase: todaySt.phase, tradingDay: !!todaySt.tradingDay },
+      fetched };
   },
 
   async approve({ orderId, operator }) {
@@ -1797,6 +1872,10 @@ const ACTIONS = {
          not environment variables; `source` says which layer answered. */
       marketConfig: { provider: settings.provider, feed: settings.feed,
         source: settings.source, document: `${A.COL.control}/${M.MARKET_SETTINGS_DOC}`,
+        credentialSource: settings.credentialSource || "unset",
+        credentialNames: settings.credentialNames || null,
+        credentialLookup: settings.credentialLookup || null,
+        ...(settings.providerNote ? { providerNote: settings.providerNote } : {}),
         ...(settings.note ? { note: settings.note } : {}),
         ...(settings.feedNote ? { feedNote: settings.feedNote } : {}) },
       session: M.sessionState(new Date()),

@@ -117,9 +117,45 @@ function normalizeMarketChoice(rawProvider, rawFeed) {
   };
 }
 
+/* Every name an operator plausibly used for the Alpaca pair. The canonical
+   names are first; Alpaca's own SDK convention (APCA_*) and the short forms
+   follow. A pair is taken from ONE row only — a key id from one convention is
+   never paired with a secret from another. */
+const ALPACA_ENV_PAIRS = Object.freeze([
+  ["ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY"],
+  ["APCA_API_KEY_ID", "APCA_API_SECRET_KEY"],
+  ["ALPACA_KEY_ID", "ALPACA_SECRET_KEY"],
+  ["ALPACA_KEY", "ALPACA_SECRET"],
+  ["ALPACA_API_KEY", "ALPACA_API_SECRET"],
+]);
+const ALPACA_DOC_PAIRS = Object.freeze([
+  ["alpacaKeyId", "alpacaSecretKey"],
+  ["alpacaApiKeyId", "alpacaApiSecretKey"],
+  ["keyId", "secretKey"],
+  ["apiKeyId", "apiSecretKey"],
+  ["alpacaKey", "alpacaSecret"],
+  ["ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY"],
+  ["APCA_API_KEY_ID", "APCA_API_SECRET_KEY"],
+]);
+/* Firestore documents under the control collection that may carry the pair.
+   marketConfig is canonical; authConfig is where the other operator secrets
+   live and where an earlier setup may have put these too. */
+const ALPACA_DOC_CANDIDATES = Object.freeze(["marketConfig", "authConfig", "secrets", "credentials"]);
+
+function pairFrom(obj, pairs) {
+  for (const [k, sK] of pairs) {
+    const keyId = typeof obj[k] === "string" ? obj[k].trim() : "";
+    const secretKey = typeof obj[sK] === "string" ? obj[sK].trim() : "";
+    if (keyId && secretKey) return { keyId, secretKey, names: `${k}/${sK}` };
+  }
+  return null;
+}
+function envAlpacaPair() { return pairFrom(process.env, ALPACA_ENV_PAIRS); }
+
 function envMarketSettings() {
-  const alpacaKeyId = String(process.env.ALPACA_API_KEY_ID || "");
-  const alpacaSecretKey = String(process.env.ALPACA_API_SECRET_KEY || "");
+  const envPair = envAlpacaPair();
+  const alpacaKeyId = envPair ? envPair.keyId : "";
+  const alpacaSecretKey = envPair ? envPair.secretKey : "";
   const completeAlpacaPair = !!(alpacaKeyId && alpacaSecretKey);
   /* A complete pair is an unambiguous, paper-only capability. If no explicit
      provider choice exists, use Alpaca's Basic-plan-safe delayed SIP lane
@@ -138,6 +174,7 @@ function envMarketSettings() {
     source: process.env.INVESTOR_MARKET_PROVIDER ? "environment"
       : (completeAlpacaPair ? "credential_default" : "default"),
     credentialSource: completeAlpacaPair ? "environment" : "unset",
+    credentialNames: envPair ? envPair.names : null,
   };
 }
 
@@ -177,10 +214,31 @@ async function loadMarketSettings({ force = false } = {}) {
   const fallback = envMarketSettings();
   try {
     const snap = await A.col(A.COL.control).doc(MARKET_SETTINGS_DOC).get();
-    if (!snap.exists) {
-      _marketSettings = { ...fallback, note: "InvestorAI_Control/marketConfig not found" };
+    /* Where the pair was looked for, in order, and what was found — so the
+       Health card can say "looked in X, Y, Z; found in Y" instead of the
+       operator and the desk disagreeing about whether keys exist. */
+    const lookup = [];
+    let docPair = null;
+    const d = snap.exists ? (snap.data() || {}) : {};
+    docPair = pairFrom(d, ALPACA_DOC_PAIRS);
+    lookup.push({ place: `${A.COL.control}/${MARKET_SETTINGS_DOC}`, exists: snap.exists,
+      found: !!docPair, names: docPair ? docPair.names : null });
+    if (!docPair) {
+      for (const docId of ALPACA_DOC_CANDIDATES.filter((x) => x !== MARKET_SETTINGS_DOC)) {
+        try {
+          const other = await A.col(A.COL.control).doc(docId).get();
+          const p = other.exists ? pairFrom(other.data() || {}, ALPACA_DOC_PAIRS) : null;
+          lookup.push({ place: `${A.COL.control}/${docId}`, exists: other.exists, found: !!p, names: p ? p.names : null });
+          if (p) { docPair = { ...p, names: `${docId}:${p.names}` }; break; }
+        } catch (e) {
+          lookup.push({ place: `${A.COL.control}/${docId}`, error: String(e.message).slice(0, 80) });
+        }
+      }
+    }
+    lookup.push({ place: "environment", found: !!fallback.alpacaKeyId, names: fallback.credentialNames });
+    if (!snap.exists && !docPair) {
+      _marketSettings = { ...fallback, credentialLookup: lookup, note: "InvestorAI_Control/marketConfig not found" };
     } else {
-      const d = snap.data() || {};
       const rawProvider = String(d.provider || "").toLowerCase();
       const rawFeed = String(d.feed || "").toLowerCase();
       const choice = normalizeMarketChoice(rawProvider, rawFeed);
@@ -188,9 +246,14 @@ async function loadMarketSettings({ force = false } = {}) {
       const feed = choice.feedRecognised ? choice.feed : null;
       /* Credentials are taken as a PAIR or not at all. A document carrying
          only a key id must not silently pair it with an environment secret. */
-      const keyId = typeof d.alpacaKeyId === "string" ? d.alpacaKeyId.trim() : "";
-      const secretKey = typeof d.alpacaSecretKey === "string" ? d.alpacaSecretKey.trim() : "";
-      const bothPresent = keyId.length > 0 && secretKey.length > 0;
+      const bothPresent = !!docPair;
+      const keyId = bothPresent ? docPair.keyId : "";
+      const secretKey = bothPresent ? docPair.secretKey : "";
+      const anyPair = bothPresent || !!(fallback.alpacaKeyId && fallback.alpacaSecretKey);
+      /* A stored provider of "manual" beside a complete Alpaca pair is almost
+         always a leftover from before the pair existed, not a choice: the
+         manual provider cannot rank or fill at all. Honour it, but say so. */
+      const manualWithKeys = provider === "manual" && anyPair;
       _marketSettings = {
         provider: provider || fallback.provider,
         feed: feed || fallback.feed,
@@ -199,6 +262,9 @@ async function loadMarketSettings({ force = false } = {}) {
         alpacaKeyId: bothPresent ? keyId : fallback.alpacaKeyId,
         alpacaSecretKey: bothPresent ? secretKey : fallback.alpacaSecretKey,
         credentialSource: bothPresent ? "firestore" : fallback.credentialSource,
+        credentialNames: bothPresent ? docPair.names : fallback.credentialNames,
+        credentialLookup: lookup,
+        ...(manualWithKeys ? { providerNote: "Alpaca credentials are present but the stored provider is \"manual\" — select alpaca / delayed_sip in the Market data form and Save (leave the key fields blank to keep the stored pair)." } : {}),
         source: provider ? "firestore" : fallback.source,
         ...(rawProvider && !provider
           ? { note: `unrecognised provider "${rawProvider.slice(0, 24)}" ignored` } : {}),
@@ -209,6 +275,17 @@ async function loadMarketSettings({ force = false } = {}) {
           && _marketSettings.alpacaSipRealtime !== true) {
         _marketSettings.feed = "delayed_sip";
         _marketSettings.feedNote = "Basic-plan SIP selection migrated to explicit delayed_sip";
+      }
+      /* A stored Alpaca feed of "iex" is the single-venue real-time lane: it
+         is non-consolidated, so the execution-source gate refuses every paper
+         fill from it and the desk ranks nothing tradable. It was the old
+         form's default, not a choice anyone made on purpose. delayed_sip is
+         consolidated and included in every Alpaca plan, so resolve to it —
+         an operator who really wants IEX sets allowIex: true on the document. */
+      if (_marketSettings.provider === "alpaca" && _marketSettings.feed === "iex"
+          && d.allowIex !== true) {
+        _marketSettings.feed = "delayed_sip";
+        _marketSettings.feedNote = "stored feed \"iex\" cannot pass the execution-source gate (single venue, non-consolidated); resolved to delayed_sip — set allowIex: true on marketConfig to keep IEX";
       }
     }
   } catch (e) {
