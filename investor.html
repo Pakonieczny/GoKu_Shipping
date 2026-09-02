@@ -149,6 +149,40 @@
 .corow .cmid{font-size:12.5px;color:var(--ink-70);line-height:1.5}
 .corow .cright{text-align:right;font-family:var(--mono);font-size:14px;white-space:nowrap}
 .corow .cright .sm{font-size:11.5px;color:var(--ink-45);margin-top:3px}
+/* ── hero: the account at a glance ── */
+.hero{display:grid;grid-template-columns:minmax(260px,1.4fr) repeat(4,minmax(120px,1fr));gap:12px;margin-bottom:16px}
+.hero__main{background:var(--velvet);color:#f0ebe1;border-radius:var(--r);padding:18px 20px;display:flex;flex-direction:column;justify-content:space-between;min-height:126px}
+.hero__k{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;opacity:.65}
+.hero__v{font-family:var(--mono);font-size:34px;line-height:1.05;margin-top:6px;font-weight:600}
+.hero__chg{font-family:var(--mono);font-size:16px;margin-top:8px;font-weight:600}
+.hero__chg.up{color:#a9c69b}.hero__chg.down{color:#e5a48c}
+.hero__sub{font-size:11.5px;opacity:.7;margin-top:6px;font-family:var(--mono)}
+.hero__tile{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;box-shadow:var(--sh)}
+.hero__tile .k{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-45)}
+.hero__tile .v{font-family:var(--mono);font-size:21px;margin-top:6px;font-weight:600}
+.hero__tile .d{font-size:11.5px;color:var(--ink-45);margin-top:5px}
+.hero__tile.up .v{color:var(--sage)}.hero__tile.down .v{color:var(--clay)}
+.live{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--sage);animation:livepulse 1.4s ease-in-out infinite}
+.live.off i{background:var(--ink-25);animation:none}
+@keyframes livepulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media(max-width:1000px){.hero{grid-template-columns:1fr 1fr}.hero__main{grid-column:1/-1}}
+/* ── positions / orders tables ── */
+.ptable{width:100%;border-collapse:collapse;font-size:13px}
+.ptable th{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-45);font-weight:600;text-align:right;padding:6px 10px;border-bottom:1px solid var(--line)}
+.ptable th:first-child,.ptable td:first-child{text-align:left}
+.ptable td{padding:10px 10px;border-bottom:1px solid var(--line-2);text-align:right;font-family:var(--mono);white-space:nowrap}
+.ptable tr.row{cursor:pointer}.ptable tr.row:hover td{background:var(--paper-2)}
+.ptable .sym{font-weight:700;font-size:14px;font-family:var(--mono)}.ptable .sec{font-family:var(--sans);font-size:11.5px;color:var(--ink-45);text-transform:capitalize;margin-top:2px}
+.ptable .gain{font-weight:700}.ptable .gain.up{color:var(--sage)}.ptable .gain.down{color:var(--clay)}
+.ptable .pct{font-size:11.5px;color:var(--ink-45);display:block}
+.ptable tr.total td{border-top:2px solid var(--line);border-bottom:0;font-weight:700;background:var(--paper-2)}
+.ptable .muted{color:var(--ink-45)}
+.ptable .arrow{display:inline-block;width:16px;font-size:10px}
+@media(max-width:820px){.ptable .hide-sm{display:none}}
+.fine{margin-top:10px;font-size:12.5px;color:var(--ink-70)}
+.fine summary{cursor:pointer;color:var(--ink-45);font-size:12px}
+.fine div{margin-top:6px;line-height:1.55}
 /* ── trade cards (pending orders + holdings) ── */
 .trade{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px;margin-bottom:8px;cursor:pointer;font:inherit;color:inherit;transition:border-color .15s,transform .15s}
 .trade:hover{border-color:var(--gold-line);transform:translateY(-1px)}
@@ -516,6 +550,50 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <!-- ─── BRIEFING ─── -->
       <!-- ═══ TODAY — the only page most people need ═══ -->
       <section class="view on" id="v-today">
+        <div class="hero" id="hero"></div>
+
+        <div class="card pad" style="margin-bottom:16px">
+          <div class="card__h">
+            <h3>What you own</h3>
+            <span class="sub" id="todayHeldSub">nothing yet</span>
+          </div>
+          <div id="todayHeld"></div>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px" id="todayPendingCard" hidden>
+          <div class="card__h">
+            <h3>Orders on the way</h3>
+            <span class="sub" id="todayPendingSub"></span>
+          </div>
+          <div id="todayPending"></div>
+          <details class="fine" id="todayPendingWhy"><summary>Why is there a wait?</summary>
+            <div id="todayPendingNote"></div></details>
+        </div>
+
+        <div class="chartbox" style="margin-bottom:16px" id="navCard">
+          <div class="chartbox__h">
+            <div>
+              <div style="font-weight:650;font-size:15px">Account value</div>
+              <div class="hint" id="navHeadline" style="margin-top:2px">loading…</div>
+            </div>
+            <div class="rangebtns" id="navRange">
+              <button data-r="today" class="on">Today</button>
+              <button data-r="yesterday">Yesterday</button>
+              <button data-r="7">7D</button>
+              <button data-r="14">14D</button>
+              <button data-r="30">30D</button>
+              <button data-r="60">60D</button>
+              <button data-r="90">90D</button>
+            </div>
+          </div>
+          <div class="chartwrap">
+            <canvas id="navChart" height="260"></canvas>
+            <div class="crosshair" id="navHair" hidden></div>
+            <div class="readout" id="navRead" hidden></div>
+          </div>
+          <div class="chartlegend" id="navLegend"></div>
+        </div>
+
         <div id="todayDesk"></div>
 
         <section class="card opsconsole" id="opsConsole" aria-live="polite" aria-label="Live system activity">
@@ -525,24 +603,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           </div>
         </section>
 
-        <div class="simplegrid" id="todayStats"></div>
-
-        <div class="card pad" style="margin-bottom:16px">
-          <div class="card__h">
-            <h3>What it owns right now</h3>
-            <span class="sub" id="todayHeldSub">nothing yet</span>
-          </div>
-          <div id="todayHeld"></div>
-        </div>
-
-        <div class="card pad" style="margin-bottom:16px" id="todayPendingCard" hidden>
-          <div class="card__h">
-            <h3>Orders waiting to fill</h3>
-            <span class="sub" id="todayPendingSub"></span>
-          </div>
-          <div class="note" style="margin-bottom:12px" id="todayPendingNote"></div>
-          <div id="todayPending"></div>
-        </div>
+        <div class="simplegrid" id="todayStats" hidden></div>
 
         <div class="card pad" style="margin-bottom:16px">
           <div class="card__h">
@@ -2581,6 +2642,10 @@ function eagerNow(){
   var st=plNow(); if(st.enabled!==true) return "careful";
   return nearest(EAGER,"costMarginMultiple", st.costMarginMultiple!=null?st.costMarginMultiple:2);
 }
+var SIZE={small:{t:"Small",positionScale:1,c:"Positions of a few hundred dollars. Outcomes are measured in basis points; dollars are noise at this size."},
+  medium:{t:"Medium",positionScale:3,c:"About three times the small size, still under the 5% per-position cap."},
+  large:{t:"Large",positionScale:5,c:"Up to the 5% per-position cap on most names. The book can reach full investment in about 20 positions."}};
+function sizeNow(){ var st=plNow(); return nearest(SIZE,"positionScale", st.positionScale!=null?st.positionScale:1); }
 function holdNow(){
   var st=plNow(); return nearest(HOLD,"maxHoldDays", st.maxHoldDays!=null?st.maxHoldDays:10);
 }
@@ -2897,7 +2962,7 @@ function renderToday(){
   if(exploratory&&!executionFeedReady) body += " The current "+(market.provider||"market")
     +(market.feed?" "+market.feed:"")+" feed is research-only: ratings continue, but paper fills remain blocked until an execution-grade consolidated feed is selected.";
 
-  var eg=eagerNow(), hd=holdNow();
+  var eg=eagerNow(), hd=holdNow(), sz=sizeNow();
   host.innerHTML =
     '<div class="desk">'
     + '<div class="desk__top"><div class="desk__txt">'
@@ -2917,6 +2982,11 @@ function renderToday(){
     +    '<div class="segs" id="tdHold">'
     +      Object.keys(HOLD).map(function(k){return '<button data-k="'+k+'"'+(k===hd?' class="on"':'')+'>'+esc(HOLD[k].t)+'</button>';}).join("")
     +    '</div><div class="oc">'+esc(HOLD[hd].c)+'</div></div>'
+    +  '<div class="opt"><div class="oh">How much per trade?</div>'
+    +    '<div class="od">How much of the account one position may use. The 5% cap and the one-share minimum always apply.</div>'
+    +    '<div class="segs" id="tdSize">'
+    +      Object.keys(SIZE).map(function(k){return '<button data-k="'+k+'"'+(k===sz?' class="on"':'')+'>'+esc(SIZE[k].t)+'</button>';}).join("")
+    +    '</div><div class="oc">'+esc(SIZE[sz].c)+'</div></div>'
     +  '<div class="opt"><div class="oh">Who approves a purchase?</div>'
     +    '<div class="od">Whether it can act alone, or must come to you first.</div>'
     +    '<div class="segs" id="tdWho">'
@@ -2944,6 +3014,9 @@ function renderToday(){
     var k=b.dataset.k, v=EAGER[k];
     plSet({enabled:true,abstainOnMissingInfo:true,costMarginMultiple:v.costMarginMultiple,
            minAbsZ:v.minAbsZ,entryRank:v.entryRank}, b); };});
+  $$("#tdSize button").forEach(function(b){ b.onclick=function(){
+    var k=b.dataset.k, v=SIZE[k];
+    plSet({enabled:true,abstainOnMissingInfo:true,positionScale:v.positionScale}, b); };});
   $$("#tdHold button").forEach(function(b){ b.onclick=function(){
     var k=b.dataset.k, v=HOLD[k];
     plSet({enabled:true,abstainOnMissingInfo:true,maxHoldDays:v.maxHoldDays,exitRank:v.exitRank}, b); };});
@@ -2979,7 +3052,8 @@ function renderToday(){
       .finally(function(){b.disabled=false;});
   };
 
-  renderOperationsConsole(); renderTodayStats(); renderTodayHeld(); renderTodayPending(); renderTodayWatch(); renderTodayBlocks();
+  renderOperationsConsole(); renderHero(); renderTodayHeld(); renderTodayPending(); renderTodayWatch(); renderTodayBlocks(); loadNavSeries(false);
+  if(!LIVEQ.timer) pollQuotes();
 }
 
 function renderTodayStats(){
@@ -2993,21 +3067,129 @@ function renderTodayStats(){
     var price=Number(p.lastMarkUsd!=null?p.lastMarkUsd:p.entryPriceUsd),qty=Number(p.qty);
     return total+(price>0&&qty>0?price*qty:0);
   },0);
-  var risk=((ctl().lastCycleSummary||{}).risk)||{};
-  var nav=risk.navUsd!=null?Number(risk.navUsd):(cash+reserved+marked);
-  var net=cost.netRealizedUsd!=null?Number(cost.netRealizedUsd):0;
+  /* Live valuation from the API: ledger balances plus the latest position
+     marks, computed on every request — not the stale end-of-scan figure. */
+  var live=DASH.navLive&&!DASH.navLive.error?DASH.navLive:null;
+  var nav=live?Number(live.navUsd):(cash+reserved+marked);
+  var start=live&&live.startingNavUsd!=null?Number(live.startingNavUsd):null;
+  var net=live?Number(live.realisedUsd):(cost.netRealizedUsd!=null?Number(cost.netRealizedUsd):0);
+  var unr=live?Number(live.unrealisedUsd):0, win=live?Number(live.winnersUsd):0, los=live?Number(live.losersUsd):0;
+  var total=start!=null?nav-start:null, totalPct=start?100*total/start:null;
   var scan=(DASH.operations||{}).scan||{};
   var ranked=scan.ranked!=null?scan.ranked:(DASH.candidateTotal||0);
+  var pend=(DASH.orders||[]).filter(function(o){return o.status==="approved"||o.status==="proposed";}).length;
+  var sgn=function(x){return (x>0?'+':'')+money(x,2);};
   $("#todayStats").innerHTML=[
-    ['Account value', money(nav,2), 'virtual money', ''],
-    ['Owned now', String(open.length), (function(){ var pend=(DASH.orders||[]).filter(function(o){return o.status==="approved"||o.status==="proposed";}).length;
-        return (open.length===1?'company':'companies')+(pend?' · '+pend+' order'+(pend===1?'':'s')+' waiting to fill':''); })(), ''],
-    ['Made or lost', (net>0?'+':'')+money(net,2), 'on closed trades', net>0?'good':(net<0?'bad':'')],
+    ['Started with', start!=null?money(start,2):'—', 'virtual money', ''],
+    ['Worth now', money(nav,2), total!=null?(sgn(total)+' ('+(totalPct>=0?'+':'')+num(totalPct,2)+'%) since start'):'virtual money', total>0?'good':(total<0?'bad':'')],
+    ['Open positions', sgn(unr), open.length+' held · winners '+sgn(win)+' · losers '+sgn(los)+(pend?' · '+pend+' waiting to fill':''), unr>0?'good':(unr<0?'bad':'')],
+    ['Closed trades', sgn(net), 'realised after costs'+(live&&live.frictionUsd?' · '+money(live.frictionUsd,2)+' friction paid':''), net>0?'good':(net<0?'bad':'')],
     ['Ranked today', String(ranked), 'after checking '+(scan.checked!=null?scan.checked:(DASH.candidateExpected||0))+' companies', '']
   ].map(function(r){
     return '<div class="stat '+r[3]+'"><div class="l">'+esc(r[0])+'</div><div class="v">'+esc(r[1])+'</div><div class="d">'+esc(r[2])+'</div></div>';
   }).join("");
+  if(live&&live.lastMarkAt){ var h=$("#navHeadline"); if(h&&NAVC.series==null) h.textContent="marks as of "+new Date(live.lastMarkAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}); }
 }
+
+/* ══ ACCOUNT VALUE CHART ═══════════════════════════════════════════════════
+   The account's value over a range, drawn from the minute-level marks the
+   guard records; coloured by whether the range is up or down; hover gives
+   the full breakdown at that instant. Refreshed on every dashboard poll,
+   with the series re-fetched at most once a minute. */
+var NAVC={range:"today",series:null,fetchedAt:0,inflight:false};
+function navRangeLabel(r){ return {today:"today",yesterday:"yesterday","7":"the last 7 sessions","14":"the last 14 sessions","30":"the last 30 sessions","60":"the last 60 sessions","90":"the last 90 sessions"}[r]||r; }
+function loadNavSeries(force){
+  if(!$("#navChart")) return;
+  if(NAVC.inflight) return;
+  if(!force&&Date.now()-NAVC.fetchedAt<60000&&NAVC.series&&NAVC.series.range===NAVC.range){ drawNavChart(); return; }
+  NAVC.inflight=true;
+  api("navSeries",{range:NAVC.range}).then(function(r){ NAVC.inflight=false; NAVC.fetchedAt=Date.now(); NAVC.series=r; drawNavChart(); })
+    .catch(function(e){ NAVC.inflight=false; var h=$("#navHeadline"); if(h) h.textContent="could not load account history: "+e.message; });
+}
+$$("#navRange button").forEach(function(b){ b.onclick=function(){
+  $$("#navRange button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on");
+  NAVC.range=b.dataset.r; loadNavSeries(true); };});
+function drawNavChart(){
+  var cv=$("#navChart"); if(!cv) return;
+  var S=NAVC.series; var wrap=cv.parentElement, W=wrap.clientWidth||760, H=260, dpr=window.devicePixelRatio||1;
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.height=H+"px";
+  var g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  var pts=(S&&S.points)||[];
+  /* Append the live value so the line ends at "now", not at the last guard. */
+  var live=DASH&&DASH.navLive&&!DASH.navLive.error?DASH.navLive:null;
+  if(live&&S&&(NAVC.range==="today"||Number(NAVC.range)>0)){
+    var kb=bookNow(), tNow=Date.now();
+    if(!pts.length||tNow>pts[pts.length-1].t+15000)
+      pts=pts.concat([{t:tNow,nav:kb.nav,cash:kb.cash,res:kb.reserved,inv:kb.invested,unr:kb.unr,rl:kb.realised,open:kb.rows.length,win:kb.win,los:kb.los,s:kb.anyLive?"live":"mark",date:S.todayDate}]);
+  }
+  var head=$("#navHeadline");
+  if(!pts.length){ g.fillStyle=getVar("--ink-45"); g.font="13px "+getVar("--sans"); g.textAlign="center";
+    g.fillText("No account-value marks for "+navRangeLabel(NAVC.range)+" yet — they are recorded every minute while the desk runs.",W/2,H/2);
+    if(head) head.textContent=""; $("#navLegend").innerHTML=""; NAVC._geom=null; return; }
+  var base=S.rangeStartNav!=null?S.rangeStartNav:pts[0].nav;
+  if(NAVC.range==="today"&&S.dayStartNav!=null) base=S.dayStartNav;
+  var start=S.startingNavUsd;
+  var last=pts[pts.length-1], chg=last.nav-base, chgPct=base?100*chg/base:0, up=chg>=0;
+  var col=up?getVar("--sage"):getVar("--clay");
+  if(head) head.innerHTML='<b style="color:'+col+'">'+(up?'+':'')+money(chg,2)+' ('+(up?'+':'')+num(chgPct,2)+'%)</b> '+esc(navRangeLabel(NAVC.range))
+    +' · now '+money(last.nav,2)+(start!=null?' · '+((last.nav-start)>=0?'+':'')+money(last.nav-start,2)+' since start':'')
+    +' · <span style="color:var(--ink-45)">'+esc(new Date(last.t).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}))+(last.s==="live"?' live':'')+'</span>';
+  var padL=8,padR=74,padT=14,padB=26, plotW=W-padL-padR, plotH=H-padT-padB;
+  var lo=Math.min.apply(null,pts.map(function(p){return p.nav;})), hi=Math.max.apply(null,pts.map(function(p){return p.nav;}));
+  lo=Math.min(lo,base); hi=Math.max(hi,base); if(start!=null){ lo=Math.min(lo,start); hi=Math.max(hi,start); }
+  var span=(hi-lo)||Math.max(1,base*0.001); lo-=span*0.12; hi+=span*0.12; span=hi-lo;
+  var t0=pts[0].t, t1=last.t, tspan=Math.max(1,t1-t0);
+  var X=function(t){ return padL+((t-t0)/tspan)*plotW; }, Y=function(v){ return padT+plotH-((v-lo)/span)*plotH; };
+  g.font="10px "+getVar("--mono"); g.textAlign="left";
+  for(var i=0;i<=4;i++){ var yv=lo+span*i/4, y=Y(yv); g.strokeStyle=getVar("--line-2"); g.lineWidth=1; g.beginPath(); g.moveTo(padL,y+.5); g.lineTo(padL+plotW,y+.5); g.stroke(); g.fillStyle=getVar("--ink-45"); g.fillText(money(yv,0),padL+plotW+7,y+3); }
+  /* baseline for the range (day start / range start) and the starting amount */
+  g.setLineDash([4,3]); g.strokeStyle=getVar("--ink-45"); g.beginPath(); g.moveTo(padL,Y(base)+.5); g.lineTo(padL+plotW,Y(base)+.5); g.stroke();
+  if(start!=null&&Math.abs(start-base)>0.005){ g.strokeStyle=getVar("--gold"); g.beginPath(); g.moveTo(padL,Y(start)+.5); g.lineTo(padL+plotW,Y(start)+.5); g.stroke(); }
+  g.setLineDash([]);
+  /* session separators for multi-day ranges */
+  if(pts.length>1&&(S.dates||[]).length>1){ for(var k=1;k<pts.length;k++){ if(pts[k].date!==pts[k-1].date){ var sx=Math.round(X(pts[k].t))+.5; g.strokeStyle=getVar("--line-2"); g.setLineDash([2,4]); g.beginPath(); g.moveTo(sx,padT); g.lineTo(sx,padT+plotH); g.stroke(); g.setLineDash([]); } } }
+  /* area vs baseline, coloured by side */
+  var rgba=up?"rgba(107,127,95,":"rgba(165,94,72,";
+  g.beginPath(); g.moveTo(X(pts[0].t),Y(base));
+  pts.forEach(function(p){ g.lineTo(X(p.t),Y(p.nav)); }); g.lineTo(X(last.t),Y(base)); g.closePath();
+  var grad=g.createLinearGradient(0,Math.min(Y(hi),Y(base)),0,Math.max(Y(lo),Y(base))); grad.addColorStop(0,rgba+".22)"); grad.addColorStop(1,rgba+"0)"); g.fillStyle=grad; g.fill();
+  g.strokeStyle=col; g.lineWidth=1.8; g.lineJoin="round"; g.beginPath(); pts.forEach(function(p,i){ if(i) g.lineTo(X(p.t),Y(p.nav)); else g.moveTo(X(p.t),Y(p.nav)); }); g.stroke();
+  g.fillStyle=col; g.beginPath(); g.arc(X(last.t),Y(last.nav),3.5,0,Math.PI*2); g.fill();
+  /* time axis */
+  g.fillStyle=getVar("--ink-45"); g.font="10px "+getVar("--mono"); g.textAlign="center";
+  var multi=(S.dates||[]).length>1, ticks=Math.min(6,pts.length);
+  for(var q=0;q<ticks;q++){ var ii=Math.round(q*(pts.length-1)/(ticks-1||1)); var d=new Date(pts[ii].t);
+    var lab=multi?(d.toLocaleDateString([],{month:"short",day:"numeric"})+(Number(NAVC.range)<=14?" "+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"")):d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+    g.fillText(lab, Math.min(padL+plotW-30,Math.max(padL+30,X(pts[ii].t))), H-8); }
+  $("#navLegend").innerHTML='<span><i style="background:'+col+'"></i>Account value</span>'
+    +'<span><i style="background:'+getVar("--ink-45")+'"></i>'+(NAVC.range==="today"?"Start of today":"Start of range")+' '+money(base,2)+'</span>'
+    +(start!=null?'<span><i style="background:'+getVar("--gold")+'"></i>Starting amount '+money(start,2)+'</span>':'')
+    +'<span>'+pts.length+' marks · '+(S.rawCount||pts.length)+' recorded'+(live?' · end point live':'')+'</span>';
+  NAVC._geom={pts:pts,X:X,Y:Y,base:base,start:start,padL:padL,plotW:plotW,W:W,H:H};
+}
+function bindNavChartHover(){
+  var cv=$("#navChart"); if(!cv||cv._navBound) return; cv._navBound=true;
+  function at(e){
+    var G=NAVC._geom; if(!G) return;
+    var r=cv.getBoundingClientRect(), x=e.clientX-r.left, pts=G.pts;
+    /* nearest point in time */
+    var t=pts[0].t+((x-G.padL)/G.plotW)*(pts[pts.length-1].t-pts[0].t), best=0, bd=Infinity;
+    for(var i=0;i<pts.length;i++){ var d=Math.abs(pts[i].t-t); if(d<bd){bd=d;best=i;} }
+    var p=pts[best], hair=$("#navHair"), out=$("#navRead"); hair.hidden=false; out.hidden=false; hair.style.left=G.X(p.t)+"px";
+    var vsBase=p.nav-G.base, vsStart=G.start!=null?p.nav-G.start:null, sgn=function(v){return (v>=0?'+':'')+money(v,2);};
+    out.innerHTML='<b>'+esc(new Date(p.t).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}))+'</b>'
+      +'<br>value '+money(p.nav,2)+' · '+sgn(vsBase)+' vs '+(NAVC.range==="today"?'day start':'range start')
+      +(vsStart!=null?'<br>'+sgn(vsStart)+' since starting amount':'')
+      +'<br>cash '+money(p.cash,2)+(p.res?' · reserved '+money(p.res,2):'')+' · invested '+money(p.inv,2)
+      +'<br>open '+(p.open||0)+' · unrealised '+sgn(p.unr||0)+(p.win!=null?' (winners '+sgn(p.win)+', losers '+sgn(p.los||0)+')':'')
+      +(p.rl!=null?'<br>realised '+sgn(p.rl):'')+(p.s==="live"?'<br><span style="opacity:.7">live quotes (display)</span>':p.s==="mark"?'<br><span style="opacity:.7">latest ledger marks</span>':p.s==="daily"?'<br><span style="opacity:.7">daily close record</span>':'');
+    var ow=out.offsetWidth||180; out.style.left=Math.min(G.W-ow-6,Math.max(4,G.X(p.t)+12))+"px"; out.style.top="10px";
+  }
+  cv.addEventListener("mousemove",at); cv.addEventListener("touchmove",function(e){ if(e.touches[0]) at(e.touches[0]); },{passive:true});
+  cv.addEventListener("mouseleave",function(){ $("#navHair").hidden=true; $("#navRead").hidden=true; });
+  window.addEventListener("resize",function(){ if(NAVC.series) drawNavChart(); });
+}
+bindNavChartHover();
 
 function coBtn(sym, name, mid, right, sub){
   return '<button class="corow" data-sym="'+esc(sym)+'">'
@@ -3078,33 +3260,112 @@ function tradeCard(o){
     +'<div class="trade__plan">Plan: '+(isPos?'':'fills on the first 5-minute bar after it is fillable; then ')+esc(exitPlanText())+'.</div></button>';
 }
 
-/* Approved and proposed paper orders. Before this card existed, an approved
-   order reserved cash and then vanished from the main page for the ~30
-   minutes until its fill — "cash went down, nothing was bought, nothing is
-   shown" — which is indistinguishable from a bug. */
+/* ══ LIVE QUOTES (display only) ═════════════════════════════════════════════
+   Alpaca's IEX lane is real-time on every plan. The console polls it every
+   5 seconds while the market is open and the tab is visible, for the symbols
+   on screen, and uses it ONLY to move the numbers a person is looking at.
+   Every ledger mark, fill and decision still uses the consolidated delayed
+   tape, and the hero says which price it is showing. */
+var LIVEQ={quotes:{},asOf:null,timer:null,feed:null,error:null};
+function liveSymbols(){
+  var syms=(DASH.positions||[]).filter(function(p){return p.open;}).map(function(p){return p.symbol;});
+  (DASH.orders||[]).forEach(function(o){ if(o.status==="approved"||o.status==="proposed") syms.push(o.symbol); });
+  return syms.filter(function(x,i,a){return a.indexOf(x)===i;});
+}
+function marketOpenNow(){ var ss=DASH&&DASH.session; return !!(ss&&ss.open); }
+function pollQuotes(){
+  if(LIVEQ.timer){ clearTimeout(LIVEQ.timer); LIVEQ.timer=null; }
+  var syms=liveSymbols();
+  var due=marketOpenNow()&&!document.hidden&&syms.length&&SESSION;
+  if(due){
+    api("quotes",{symbols:syms}).then(function(r){
+      if(r&&r.ok){ Object.assign(LIVEQ.quotes,r.quotes||{}); LIVEQ.asOf=r.asOf||new Date().toISOString(); LIVEQ.feed=r.feed; LIVEQ.error=null; }
+      else LIVEQ.error=(r&&r.error)||"quote feed unavailable";
+      renderHero(); renderTodayHeld(); renderTodayPending(); if(NAVC.series) drawNavChart();
+    }).catch(function(e){ LIVEQ.error=e.message; }).finally(function(){ LIVEQ.timer=setTimeout(pollQuotes,5000); });
+  } else LIVEQ.timer=setTimeout(pollQuotes,15000);
+}
+document.addEventListener("visibilitychange",function(){ if(!document.hidden) pollQuotes(); });
+/* Price to display for a symbol: live quote when fresh, else the ledger mark. */
+function priceNow(sym, fallback){
+  var q=LIVEQ.quotes[sym]; if(q&&q.p>0&&marketOpenNow()) return {p:q.p,live:true,t:q.t};
+  return {p:fallback,live:false,t:null};
+}
+/* Everything the hero and tables need, valued once. */
+function bookNow(){
+  var pos=(DASH.positions||[]).filter(function(p){return p.open;});
+  var live=DASH.navLive&&!DASH.navLive.error?DASH.navLive:null;
+  var b=DASH.balances||{}, cash=Number(b.usd&&b.usd.cash)||0, reserved=Number(b.usd&&b.usd.reserved)||0;
+  var rows=pos.map(function(p){
+    var qty=Number(p.qty)||0, paid=Number(p.entryPriceUsd!=null?p.entryPriceUsd:p.avgPrice)||0;
+    var pn=priceNow(p.symbol, Number(p.lastMarkUsd)>0?Number(p.lastMarkUsd):paid);
+    var value=qty*pn.p, cost=qty*paid, gain=value-cost;
+    return {sym:p.symbol,qty:qty,paid:paid,now:pn.p,live:pn.live,value:value,cost:cost,gain:gain,pct:cost>0?100*gain/cost:0,pos:p};
+  });
+  var invested=rows.reduce(function(a,r){return a+r.value;},0), cost=rows.reduce(function(a,r){return a+r.cost;},0);
+  var unr=invested-cost, win=rows.filter(function(r){return r.gain>=0;}).reduce(function(a,r){return a+r.gain;},0), los=unr-win;
+  var nav=cash+reserved+invested, start=live&&live.startingNavUsd!=null?Number(live.startingNavUsd):null;
+  var realised=live?Number(live.realisedUsd):(DASH.cost&&DASH.cost.netRealizedUsd!=null?Number(DASH.cost.netRealizedUsd):0);
+  var anyLive=rows.some(function(r){return r.live;});
+  var dayStart=NAVC.series&&NAVC.series.dayStartNav!=null?Number(NAVC.series.dayStartNav):null;
+  return {rows:rows,cash:cash,reserved:reserved,invested:invested,cost:cost,unr:unr,win:win,los:los,nav:nav,start:start,realised:realised,anyLive:anyLive,dayStart:dayStart,
+    pending:(DASH.orders||[]).filter(function(o){return o.status==="approved"||o.status==="proposed";})};
+}
+function sgnMoney(x){ return (x>0?'+':(x<0?'−':''))+money(Math.abs(x),2); }
+function sgnPct(x){ return (x>0?'+':(x<0?'−':''))+num(Math.abs(x),2)+'%'; }
+function renderHero(){
+  var host=$("#hero"); if(!host) return;
+  var k=bookNow();
+  var since=k.start!=null?k.nav-k.start:null, sincePct=k.start?100*since/k.start:null;
+  var today=k.dayStart!=null?k.nav-k.dayStart:null, todayPct=k.dayStart?100*today/k.dayStart:null;
+  var open=marketOpenNow();
+  var asOf=k.anyLive&&LIVEQ.asOf?new Date(LIVEQ.asOf).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}):(DASH.navLive&&DASH.navLive.lastMarkAt?new Date(DASH.navLive.lastMarkAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"—");
+  var liveTag='<span class="live'+(k.anyLive?'':' off')+'"><i></i>'+(k.anyLive?'live · '+esc(asOf):(open?'delayed marks · '+esc(asOf):'market closed · last '+esc(asOf)))+'</span>';
+  host.innerHTML=
+    '<div class="hero__main"><div><div class="hero__k">Account worth now</div><div class="hero__v">'+money(k.nav,2)+'</div>'
+    +(today!=null?'<div class="hero__chg '+(today>=0?'up':'down')+'">'+sgnMoney(today)+' ('+sgnPct(todayPct)+') today</div>':'<div class="hero__chg">first session — no day baseline yet</div>')
+    +'</div><div class="hero__sub">'+liveTag+(k.start!=null?' · started with '+money(k.start,0):'')+'</div></div>'
+    +'<div class="hero__tile '+(since>0?'up':since<0?'down':'')+'"><div class="k">Since start</div><div class="v">'+(since!=null?sgnMoney(since):'—')+'</div><div class="d">'+(sincePct!=null?sgnPct(sincePct)+' on '+money(k.start,0):'')+'</div></div>'
+    +'<div class="hero__tile '+(k.unr>0?'up':k.unr<0?'down':'')+'"><div class="k">Open gain / loss</div><div class="v">'+sgnMoney(k.unr)+'</div><div class="d">'+k.rows.length+' position'+(k.rows.length===1?'':'s')+' · '+sgnMoney(k.win)+' winning, '+sgnMoney(k.los)+' losing</div></div>'
+    +'<div class="hero__tile '+(k.realised>0?'up':k.realised<0?'down':'')+'"><div class="k">Closed gain / loss</div><div class="v">'+sgnMoney(k.realised)+'</div><div class="d">after trading costs</div></div>'
+    +'<div class="hero__tile"><div class="k">Cash</div><div class="v">'+money(k.cash,0)+'</div><div class="d">'+money(k.invested,0)+' invested'+(k.reserved?' · '+money(k.reserved,0)+' reserved for '+k.pending.length+' order'+(k.pending.length===1?'':'s'):'')+'</div></div>';
+}
 function renderTodayPending(){
   var card=$("#todayPendingCard"); if(!card) return;
-  var ords=(DASH.orders||[]).filter(function(o){return o.status==="approved"||o.status==="proposed";});
+  var ords=bookNow().pending;
   if(!ords.length){ card.hidden=true; return; }
   card.hidden=false;
   var now=Date.now(), reservedUsd=0, approved=0;
   ords.forEach(function(o){ if(o.status==="approved"){ approved+=1; reservedUsd+=((Number(o.grossCents)||0)+(Number(o.frictionCents)||0)+(Number(o.reservationHeadroomCents)||0))/100; } });
   $("#todayPendingSub").textContent=ords.length+" order"+(ords.length===1?"":"s")+(approved?" · "+money(reservedUsd,0)+" reserved":"");
   var delay=(DASH.market&&DASH.market.feedDelayMinutes)||15;
-  $("#todayPendingNote").innerHTML='An approved order becomes a holding on the first 5-minute bar that opens after it is fillable. With a '+delay+'-minute delayed feed that bar reaches the desk roughly '+(delay+5)+'–'+(delay+20)+' minutes after approval, so cash is reserved now and the company appears under <b>What it owns</b> once the fill lands. Unfilled orders are released at their expiry.';
+  $("#todayPendingNote").innerHTML='A paper order is filled at a price the desk could not have known when it decided — the first 5-minute bar that opens after the order becomes fillable. Prices arrive '+delay+' minutes late on this feed, so a fill lands about '+(delay+5)+'–'+(delay+20)+' minutes after approval. Cash is reserved meanwhile; the company moves to <b>What you own</b> when the fill lands, and an order that never fills is released at its expiry. A real-time consolidated feed would cut the wait to a few minutes.';
   ords.sort(function(a,b){return (Number(b.approvedAtMs)||Number(b.decisionAtMs)||0)-(Number(a.approvedAtMs)||Number(a.decisionAtMs)||0);});
-  $("#todayPending").innerHTML=ords.map(tradeCard).join("");
-  $$("#todayPending .trade").forEach(function(b){ b.onclick=function(){ openCompany(b.dataset.sym); }; });
+  $("#todayPending").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Price</th><th>Amount</th><th class="hide-sm">Now</th><th>Status</th></tr></thead><tbody>'
+    +ords.map(function(o){
+      var qty=Number(o.qty)||0, px=Number(o.refPriceUsd)||0, amt=(Number(o.grossCents)||qty*px*100)/100;
+      var elig=Number(o.fillEligibleAfterMs)||null, pn=priceNow(o.symbol,null);
+      var st=o.status==="approved"?(elig?(elig>now?'fills in ~'+durationText((elig-now)/1000+5*60):'fills on the next bar'):'approved'):'awaiting approval';
+      return '<tr class="row" data-sym="'+esc(o.symbol)+'"><td><div class="sym">'+esc(o.symbol)+(o.cohortRole==="control"?' <span class="badge2 b-info">control</span>':'')+'</div><div class="sec">'+esc(S_SECTOR(o.symbol)||"")+'</div></td>'
+        +'<td>'+qty+'</td><td>'+money(px,2)+'</td><td>'+money(amt,2)+'</td><td class="hide-sm">'+(pn.p?money(pn.p,2):'<span class="muted">—</span>')+'</td>'
+        +'<td><span class="badge2 '+(o.status==="approved"?"b-on":"b-warn")+'">'+esc(st)+'</span></td></tr>';
+    }).join("")+'</tbody></table>';
+  $$("#todayPending tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
 }
 
 function renderTodayHeld(){
-  var pos=(DASH.positions||[]).filter(function(p){return p.open;});
-  $("#todayHeldSub").textContent = pos.length ? pos.length+" open" : "nothing yet";
-  if(!pos.length){ $("#todayHeld").innerHTML='<div class="empty">It has not bought anything. When it does, each company appears here with what it paid and what it is worth now.</div>'; return; }
-  var totalPl=0; pos.forEach(function(p){ var last=p.lastMarkUsd!=null?Number(p.lastMarkUsd):Number(p.entryPriceUsd); totalPl+=(last-Number(p.entryPriceUsd))*(Number(p.qty)||0); });
-  $("#todayHeldSub").innerHTML=pos.length+" open · <span style=\"color:"+(totalPl>=0?'var(--sage)':'var(--clay)')+"\">"+(totalPl>=0?'+':'')+money(totalPl,2)+" unrealised</span>";
-  $("#todayHeld").innerHTML = pos.map(tradeCard).join("");
-  $$("#todayHeld .trade").forEach(function(b){ b.onclick=function(){ openCompany(b.dataset.sym); }; });
+  var k=bookNow(), rows=k.rows.slice().sort(function(a,b){return b.gain-a.gain;});
+  if(!rows.length){ $("#todayHeldSub").textContent="nothing yet"; $("#todayHeld").innerHTML='<div class="empty">Nothing is owned yet. When an order fills, the company appears here with what was paid, what it is worth now, and whether it is up or down.</div>'; return; }
+  $("#todayHeldSub").innerHTML=rows.length+" position"+(rows.length===1?"":"s")+' · <span style="color:'+(k.unr>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(k.unr)+' ('+sgnPct(k.cost?100*k.unr/k.cost:0)+')</span>'+(k.anyLive?' · <span class="live"><i></i>live</span>':'');
+  var tr=rows.map(function(r){
+    var up=r.gain>=0;
+    return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+'</div></td>'
+      +'<td>'+r.qty+'</td><td class="hide-sm">'+money(r.paid,2)+'</td><td>'+money(r.now,2)+(r.live?'':' <span class="muted" title="ledger mark, delayed feed">·</span>')+'</td><td class="hide-sm">'+money(r.value,2)+'</td>'
+      +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+sgnMoney(r.gain)+'<span class="pct">'+sgnPct(r.pct)+'</span></td></tr>';
+  }).join("");
+  $("#todayHeld").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th class="hide-sm">Paid</th><th>Now</th><th class="hide-sm">Value</th><th>Gain / loss</th></tr></thead><tbody>'+tr
+    +'<tr class="total"><td>Total</td><td>'+rows.reduce(function(a,r){return a+r.qty;},0)+'</td><td class="hide-sm">'+money(k.cost,2)+'</td><td></td><td class="hide-sm">'+money(k.invested,2)+'</td><td class="gain '+(k.unr>=0?'up':'down')+'"><span class="arrow">'+(k.unr>=0?'▲':'▼')+'</span>'+sgnMoney(k.unr)+'<span class="pct">'+sgnPct(k.cost?100*k.unr/k.cost:0)+'</span></td></tr></tbody></table>';
+  $$("#todayHeld tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
 }
 
 function renderTodayWatch(){
