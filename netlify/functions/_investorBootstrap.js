@@ -53,7 +53,7 @@ const S_FALLBACK = require("./_investorStrategy.js");
 const V = require("./_investorVariants");
 const STATE = require("./_investorState");
 
-const BOOTSTRAP_VERSION = 14;
+const BOOTSTRAP_VERSION = 15;
 const DAILY_PROVENANCE_VERSION = 5; // v5 re-attests complete windows to the selected 15-minute SIP identity
 
 function stable(value) {

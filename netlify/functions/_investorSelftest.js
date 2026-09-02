@@ -1306,7 +1306,11 @@ function runFixtures() {
     if (LD.strictTradeAdmissible(bTrade, id, { leaderId: null }) !== false) return false;   // no leader → baseline only
     /* And the cycle feeds the ladder through that filter, not the raw count. */
     const cycle = sourceOf(require("./investorCycle-background").runCycle);
-    return /LD\.strictTradeAdmissible\(t, \{ strategyHash, universeHash, variantsHash \},\s*\{ leaderId: evidenceLeaderId, sinceMs: evidenceSinceMs \}\)/.test(cycle)
+    /* Source assertions are whitespace-tolerant: Netlify's esbuild reprints
+       multi-line calls and objects, so the deployed bundle's text differs
+       from the file on disk (v16 shipped three exact-text checks that passed
+       on disk and failed inside the bundle, freezing every entry). */
+    return /LD\.strictTradeAdmissible\(\s*t,\s*\{\s*strategyHash,\s*universeHash,\s*variantsHash\s*\},\s*\{\s*leaderId:\s*evidenceLeaderId,\s*sinceMs:\s*evidenceSinceMs\s*\}\s*\)/.test(cycle)
       && /cohortCostMeter\(accountId, \{ admit: strictTradeAdmit \}\)/.test(cycle)
       && /closedRealTrades: closedReal\.size/.test(cycle)
       && /if \(strictTradeAdmit\(d\.data\(\)\)\) closedStrict \+= 1/.test(cycle);
@@ -1317,7 +1321,7 @@ function runFixtures() {
     const LEASE = require("./_investorLease");
     if (!(Number(CYC.WORKER_LEASE_TTL_MS) > 15 * 60 * 1000)) return false;
     const handler = sourceOf(CYC.handler), guard = sourceOf(require("./_investorPositionGuard").runGuard);
-    return /LEASE\.setActive\(\{ jobRef, accountLeaseRef: accountCycleLeaseRef, leaseOwner/.test(handler)
+    return /LEASE\.setActive\(\s*\{\s*jobRef,\s*accountLeaseRef:\s*accountCycleLeaseRef,\s*leaseOwner/.test(handler)
       && /LEASE\.clear\(\)/.test(handler)
       && /await LEASE\.heartbeat\(nowMs\);/.test(sourceOf(CYC.reportRunProgress))
       && /heartbeat\(Date\.now\(\)\)/.test(sourceOf(require("./_investorPositionGuard").guardProgress))
@@ -1389,7 +1393,9 @@ function runFixtures() {
     const src = sourceOf(require("./investorKick").dispatch);
     return /res = \{ ok: false, status: 0, thrown:/.test(src)
       && /if \(stored === now\) tx\.set\(cref, \{ \[stamp\]: previousStamp \}, \{ merge: true \}\)/.test(src)
-      && /A\.runTransaction\(async \(tx\) => \{\s*const cur = await tx\.get\(cref\)/.test(src);
+      /* The module alias may be renamed by the bundler (A → A2); the
+         transaction shape is what matters. */
+      && /\w+\.runTransaction\(async \(tx\) => \{\s*const cur = await tx\.get\(cref\)/.test(src);
   }));
 
   cases.push(fixture("data_sufficiency_scores_sizes_and_orders_thin_data_without_refusing_it", () => {
@@ -1492,7 +1498,7 @@ function runFixtures() {
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v16-strategy-v10", count: cases.length, cases });
+  const fixtureHash = digest({ schema: "runtime-fixtures-v17-strategy-v10", count: cases.length, cases });
   return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }
