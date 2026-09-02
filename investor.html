@@ -1375,6 +1375,21 @@ function renderLiveConfig(lc){
 
 /* Why the paper ledger could not be written, in words an operator can act
    on. The backend reason strings are precise but terse. */
+/* The console banner quotes the LAST SCAN's entry verdict. After the operator
+   changes the desk state (Start, unfreeze) that verdict is stale until a scan
+   runs — overnight, scheduled scans wait for market hours — so say so instead
+   of showing a block the current state no longer imposes. */
+function entryVerdictStale(){
+  var c=ctl(), changed=Number(c.operatingStateChangedAtMs)||0,
+      last=c.lastCycleFinishedAt?Date.parse(c.lastCycleFinishedAt):0;
+  var entriesOpenNow=!c.entriesFrozen&&!c.killSwitch&&c.dryRun===false;
+  return entriesOpenNow&&changed>0&&(!last||changed>last);
+}
+function staleVerdictNote(){
+  var c=ctl(), when=c.lastCycleFinishedAt?new Date(c.lastCycleFinishedAt).toLocaleTimeString():"earlier";
+  return '<div class="note" style="margin:0 0 14px"><b>Entries are open; waiting for the next scan.</b> The last scan ('+esc(when)
+    +') ran before the desk state changed, so its entry verdict is out of date. Scheduled scans run during market hours (or press "Check for opportunities now").</div>';
+}
 function entryControlText(reason){
   var r=String(reason||"");
   if(/commit mismatch/.test(r)) return "A new build was deployed and the safety attestation still names the previous build. The next bootstrap re-attests automatically when the frozen policy is unchanged; if this stays red for more than two scans, press Start desk once.";
@@ -1393,7 +1408,9 @@ function entryControlText(reason){
 function renderExploration(x, entryControl){
   var box=$("#exploreBox"); if(!box) return;
   var html="";
-  if(entryControl&&entryControl.pass===false){
+  if(entryControl&&entryControl.pass===false&&entryVerdictStale()){
+    html+=staleVerdictNote();
+  } else if(entryControl&&entryControl.pass===false){
     html+='<div class="note bad" style="margin-bottom:10px"><b>Paper entries are blocked.</b> '+esc(entryControlText(entryControl.reason))+
       '<div style="margin-top:4px;color:var(--ink-45);font-family:var(--mono);font-size:11px">'+esc(entryControl.reason||"")+'</div></div>';
   }
@@ -2625,7 +2642,8 @@ function renderOperationsConsole(){
   }
 
   var entryBanner=(xec&&xec.pass===false)
-    ?'<div class="note bad" style="margin:0 0 14px"><b>Paper entries are blocked:</b> '+esc(entryControlText(xec.reason))+'</div>':'';
+    ?(entryVerdictStale()?staleVerdictNote()
+      :'<div class="note bad" style="margin:0 0 14px"><b>Paper entries are blocked:</b> '+esc(entryControlText(xec.reason))+'</div>'):'';
   host.innerHTML='<div class="opshead"><div class="opshead__copy"><h2>Live desk console</h2>'
     +'<p>Backend truth only: scheduled jobs, company counts, order/fill work, research and learning progress.</p></div>'
     +'<span class="opsstate '+statusClass+'">'+esc(statusText)+'</span></div>'
