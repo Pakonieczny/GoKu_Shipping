@@ -489,6 +489,15 @@ async function runGuard(jobId) {
       remaining: Math.max(0, coverage.open - coverage.evaluated), currentItem: null,
       updatedAtMs: Date.now(),
     } }, { merge: true });
+  /* Account value, marked to the prices this run just refreshed. Display
+     only; a failure here never fails the guard. */
+  try {
+    const NAV = require("./_investorNav");
+    const snap = await NAV.snapshot(accountId);
+    await NAV.record(accountId, snap, { source: "guard" });
+    summary.nav = { navUsd: snap.navUsd, unrealisedUsd: snap.unrealisedUsd, open: snap.openPositions };
+    await A.col(A.COL.control).doc("control").set({ navLive: snap }, { merge: true });
+  } catch (e) { summary.navError = String(e.message || e).slice(0, 120); }
   await A.col(A.COL.control).doc("control").set({
     lastGuardSummary: summary, lastGuardFinishedAt: A.FV.serverTimestamp(),
   }, { merge: true });

@@ -1126,7 +1126,7 @@ async function readRecentBarsWithMeta(symbol, sessions = 3) {
 
 module.exports = {
   PROVIDERS, providerConfig, activeProvider, FEED_VOLUME_SHARE, feedVolumeShare,
-  sessionState, marketCalendar, nyParts, CALENDAR_VERSION, lastRegularOpenMs,
+  sessionState, marketCalendar, nyParts, nyWallClockToUtcMs, CALENDAR_VERSION, lastRegularOpenMs,
   dailyFinalizationState, tradingDaysHeld,
   marketSettings, loadMarketSettings, MARKET_SETTINGS_DOC,
   providerCredentials, providerCredentialed,

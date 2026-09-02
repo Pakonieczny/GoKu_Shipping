@@ -47,6 +47,10 @@ const RELAX_LIMITS = {
   maxHoldDays:            { min: 0.25, max: 14,  dflt: 10 },
   sectorCrowdingMultiple: { min: 1.0,  max: 4,   dflt: 1.4 },
   minAdvUsd:              { min: 5e7,  max: 3e8, dflt: 3e8 },
+  /* Operator sizing dial for the exploratory paper lane. Multiplies the
+     signal/coverage size scaler before the ordinary per-position cap; the
+     cap, the per-trade risk budget and the one-share floor all still apply. */
+  positionScale:          { min: 1,    max: 5,   dflt: 1 },
 };
 
 function clampRelax(key, value) {

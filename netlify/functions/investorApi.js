@@ -176,6 +176,9 @@ function progressForUi(value) {
 }
 
 /* ── actions ───────────────────────────────────────────────────────────── */
+let quotesCache = { at: 0, quotes: {}, asOf: null };
+const F = require("./_investorFetch");
+
 const ACTIONS = {
 
   /* The single call the dashboard polls. One round trip, everything on it. */
@@ -524,6 +527,8 @@ const ACTIONS = {
       candidateExpected: expectedCandidates,
       candidateRankedExpected: rankedInCycle,
       candidateSetComplete: decisionSetComplete,
+      navLive: await require("./_investorNav").snapshot(accountId, { positions, balances, cost })
+        .catch((e) => ({ error: String(e.message || e).slice(0, 120) })),
       candidates: current.sort((a, b) => (a.rank ?? 1) - (b.rank ?? 1)),
       quoteCoverage: summaryMatchesCycle && Array.isArray(latestSummary.quoteCoverage)
         ? latestSummary.quoteCoverage : [],
@@ -908,6 +913,50 @@ const ACTIONS = {
      configured provider when a session is missing or today's document lags
      the delayed edge. Read-only for the desk's decisions: nothing here feeds
      a decision, so a display fetch can never change what the desk does. */
+  /* Latest trade prices for the symbols on screen. DISPLAY ONLY: Alpaca's
+     IEX lane is real-time on every plan, so the console can show holdings
+     moving second by second, while every ledger mark, fill and decision keeps
+     using the consolidated delayed tape. The response says which it is. */
+  async quotes({ symbols }) {
+    const list = [...new Set((Array.isArray(symbols) ? symbols : String(symbols || "").split(","))
+      .map((x) => String(x || "").trim().toUpperCase()).filter((x) => SYMBOL.test(x)))].slice(0, 120);
+    if (!list.length) return { ok: true, quotes: {}, feed: null };
+    await M.loadMarketSettings();
+    if (!M.providerCredentialed("alpaca")) return { ok: false, error: "no Alpaca credentials", quotes: {} };
+    const nowMs = Date.now();
+    if (quotesCache.at && nowMs - quotesCache.at < 3000 && list.every((x) => quotesCache.quotes[x])) {
+      return { ok: true, quotes: Object.fromEntries(list.map((x) => [x, quotesCache.quotes[x]])),
+        feed: "iex", displayOnly: true, cached: true, asOf: quotesCache.asOf };
+    }
+    const creds = M.providerCredentials("alpaca");
+    const url = `https://data.alpaca.markets/v2/stocks/trades/latest?symbols=${encodeURIComponent(list.join(","))}&feed=iex`;
+    let r;
+    try {
+      r = await F.fetchPublic(url, { sourceId: "alpaca.trades.latest", accept: ["json"], timeoutMs: 8000,
+        headers: { "APCA-API-KEY-ID": creds.keyId, "APCA-API-SECRET-KEY": creds.secretKey } });
+    } catch (e) { return { ok: false, error: String(e.message || e).slice(0, 160), quotes: {} }; }
+    const trades = (r.json && r.json.trades) || {};
+    const quotes = {};
+    for (const [sym, t] of Object.entries(trades)) {
+      if (t && Number(t.p) > 0) quotes[sym] = { p: Number(t.p), t: t.t || null, s: Number(t.s) || null };
+    }
+    quotesCache = { at: nowMs, quotes: { ...quotesCache.quotes, ...quotes }, asOf: new Date(nowMs).toISOString() };
+    return { ok: true, quotes, feed: "iex", displayOnly: true, asOf: quotesCache.asOf,
+      missing: list.filter((x) => !quotes[x]) };
+  },
+
+  /* Account value over time for the console chart. Display only. */
+  async navSeries({ range }) {
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
+    const NAV = require("./_investorNav");
+    const key = Object.prototype.hasOwnProperty.call(NAV.RANGES, String(range)) ? String(range) : "today";
+    const out = await NAV.series(accountId, key);
+    const live = await NAV.snapshot(accountId).catch(() => null);
+    return { ok: true, accountId, ...out, live,
+      session: (() => { const st = M.sessionState(new Date()); return { date: st.date, open: !!st.open, phase: st.phase }; })() };
+  },
+
   async intraday({ symbol, sessions }) {
     symbol = String(symbol || "").toUpperCase();
     if (!SYMBOL.test(symbol)) return { error: "valid symbol required" };

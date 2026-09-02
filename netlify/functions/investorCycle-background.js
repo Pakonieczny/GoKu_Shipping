@@ -1684,11 +1684,16 @@ async function runCycle(jobId, { manual = false } = {}) {
          multiplier. It is a baseline, not a bet. */
       const sufficiencyMult = operating.exploratoryAuto && q.dataSufficiency
         ? Number(q.dataSufficiency.sizeMultiplier) || 1 : 1;
-      const signalScaler = (control
+      /* positionScale is the operator's "how much per trade" dial: it lifts
+         the haircut-reduced scaler toward 1 (never past it), so the ordinary
+         cap and the risk budget remain the ceiling. */
+      const positionScale = operating.exploratoryAuto
+        ? Math.max(1, Math.min(5, Number(cfg.positionScale) || 1)) : 1;
+      const signalScaler = Math.min(1, (control
         ? Math.max(Number(evalRes.sizing && evalRes.sizing.combined) || 0,
             Math.max(0, Math.min(0.25, Number(cfg.paperObservationSizeFloor) || 0)))
           * activity.controlCohort.sizeMultiplier
-        : evalRes.sizing.combined) * sufficiencyMult;
+        : evalRes.sizing.combined) * sufficiencyMult * positionScale);
       const sizing = R.positionSizeUsd({ navUsd, atrPct: hc.atrPct,
         expectedShortfall5dPct: hc.expectedShortfall5dPct,
         overnightGapEsPct: hc.overnightGapEsPct,
@@ -1777,7 +1782,7 @@ async function runCycle(jobId, { manual = false } = {}) {
         portfolioDecisionManifestHash: portfolioManifest.manifestHash,
         decisionId: `${cycleId}_${sym}`, qty, refPriceUsd: last.c, slippageBps: slip,
         executionCostContext,
-        sizing: { ...sizing, signal: evalRes.sizing, dataSufficiencyMultiplier: sufficiencyMult,
+        sizing: { ...sizing, signal: evalRes.sizing, dataSufficiencyMultiplier: sufficiencyMult, positionScale,
           ...(control ? { controlSizeMultiplier: activity.controlCohort.sizeMultiplier } : {}),
           ...(minimumShareFloorApplied ? { minimumShareFloorApplied: true } : {}) },
         gates: evalRes.gates, cause,
@@ -2792,6 +2797,14 @@ async function runCycle(jobId, { manual = false } = {}) {
       ...A.envelope({ created_by: FN_NAME }),
     });
   } catch (e) { summary.snapshotError = String(e.message || e).slice(0, 160); }
+
+  try {
+    const NAV = require("./_investorNav");
+    const snap = await NAV.snapshot(accountId);
+    await NAV.record(accountId, snap, { source: "cycle" });
+    summary.navLive = { navUsd: snap.navUsd, unrealisedUsd: snap.unrealisedUsd, open: snap.openPositions };
+    await A.col(A.COL.control).doc("control").set({ navLive: snap }, { merge: true });
+  } catch (e) { summary.navError = String(e.message || e).slice(0, 120); }
 
   await A.col(A.COL.control).doc("control").set({
     lastCycleSummary: summary, lastCycleFinishedAt: A.FV.serverTimestamp(),

@@ -143,6 +143,7 @@ const COL = {
   soakCycles: COL_PREFIX + "SoakCycles",    // idempotent production-paper evidence
   scanSnapshots:COL_PREFIX+ "ScanSnapshots", // per-scan signal panel + scoreboard, replayable
   archiveRuns: COL_PREFIX + "ArchiveRuns",   // nightly intraday archive manifests
+  navMarks:   COL_PREFIX + "NavMarks",       // one doc per account-day: minute-level account value
 };
 
 /* ── provenance envelope required on every generated record ────────────── */
