@@ -856,7 +856,7 @@ function runFixtures() {
       paperLearning: { enabled: true, ledgerEnabled: false } });
     const api = sourceOf(API.ACTIONS.setControl)
       + sourceOf(API._closeEntryQueueForAttestation);
-    return config.active === true && /STATE\.transition/.test(api)
+    return config.active === true && /\w+\.transition\(/.test(api)
       && /closeEntryQueue/.test(api);
   }));
 
@@ -934,7 +934,7 @@ function runFixtures() {
   cases.push(fixture("paper_nav_evidence_is_finalized_and_provenance_bound", () => {
     const cycle = sourceOf(require("./investorCycle-background").runCycle);
     const api = sourceOf(require("./investorApi").ACTIONS.performance);
-    return /const markSetSha256 = sha256Json\(navMarkSources\)/.test(cycle)
+    return /const markSetSha256 = sha256Json\d*\(navMarkSources\)/.test(cycle)
       && /finalized === true && row\.marksComplete === true/.test(api)
       && /returnAdmissible/.test(cycle);
   }));
@@ -1310,7 +1310,7 @@ function runFixtures() {
        multi-line calls and objects, so the deployed bundle's text differs
        from the file on disk (v16 shipped three exact-text checks that passed
        on disk and failed inside the bundle, freezing every entry). */
-    return /LD\.strictTradeAdmissible\(\s*t,\s*\{\s*strategyHash,\s*universeHash,\s*variantsHash\s*\},\s*\{\s*leaderId:\s*evidenceLeaderId,\s*sinceMs:\s*evidenceSinceMs\s*\}\s*\)/.test(cycle)
+    return /\w+\.strictTradeAdmissible\(\s*t,\s*\{\s*strategyHash,\s*universeHash,\s*variantsHash\s*\},\s*\{\s*leaderId:\s*evidenceLeaderId,\s*sinceMs:\s*evidenceSinceMs\s*\}\s*\)/.test(cycle)
       && /cohortCostMeter\(accountId, \{ admit: strictTradeAdmit \}\)/.test(cycle)
       && /closedRealTrades: closedReal\.size/.test(cycle)
       && /if \(strictTradeAdmit\(d\.data\(\)\)\) closedStrict \+= 1/.test(cycle);
@@ -1321,11 +1321,14 @@ function runFixtures() {
     const LEASE = require("./_investorLease");
     if (!(Number(CYC.WORKER_LEASE_TTL_MS) > 15 * 60 * 1000)) return false;
     const handler = sourceOf(CYC.handler), guard = sourceOf(require("./_investorPositionGuard").runGuard);
-    return /LEASE\.setActive\(\s*\{\s*jobRef,\s*accountLeaseRef:\s*accountCycleLeaseRef,\s*leaseOwner/.test(handler)
-      && /LEASE\.clear\(\)/.test(handler)
-      && /await LEASE\.heartbeat\(nowMs\);/.test(sourceOf(CYC.reportRunProgress))
+    return /\w+\.setActive\(\s*\{\s*jobRef,\s*accountLeaseRef:\s*accountCycleLeaseRef,\s*leaseOwner/.test(handler)
+      && /\w+\.clear\(\)/.test(handler)
+      && /await \w+\.heartbeat\(nowMs\);/.test(sourceOf(CYC.reportRunProgress))
       && /heartbeat\(Date\.now\(\)\)/.test(sourceOf(require("./_investorPositionGuard").guardProgress))
-      && typeof LEASE.heartbeat === "function" && LEASE.active() === null && guard.length > 0;
+      /* The lease is a live singleton: when the cycle re-attests fixtures
+         mid-run it IS active, so its state is never asserted here (v17 did,
+         and froze the desk on the first scan after every Start). */
+      && typeof LEASE.heartbeat === "function" && typeof LEASE.active === "function" && guard.length > 0;
   }));
 
   /* ── round 3: order lifetime, fail-closed exposure, chunked fetch ────── */
@@ -1564,10 +1567,19 @@ function runFixtures() {
       && /structural-pullback-exits/.test(SH.SIMULATOR_VERSION);
   }));
 
+  cases.push(fixture("attestation_freeze_names_itself_and_self_heals_when_fixtures_pass_again", () => {
+    const src = sourceOf(B.ensureBootstrapped);
+    const LGR = sourceOf(L.controlAllowsEntry);
+    return /operatingStateSource:\s*"bootstrap:fixtures"/.test(src)
+      && /fixture_freeze_lifted/.test(src)
+      && /c\.operatingStateSource === "bootstrap:fixtures"/.test(src)
+      && /frozen automatically/.test(LGR);
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v18-strategy-v10-variants-q", count: cases.length, cases });
+  const fixtureHash = digest({ schema: "runtime-fixtures-v19-strategy-v10-variants-q", count: cases.length, cases });
   return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }

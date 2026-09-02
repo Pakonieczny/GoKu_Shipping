@@ -449,7 +449,12 @@ function controlAllowsEntry(control, identity) {
     return fail("paper-ledger reconciliation is unresolved");
   }
   if (!operating.entriesAllowed) {
-    return fail(operating.entriesFrozen ? "new entries frozen by operator"
+    /* Name who froze it: an automatic freeze (bootstrap attestation, ledger
+       reconciliation) used to read "frozen by operator" on every card. */
+    const src = String(c.operatingStateSource || "operator");
+    return fail(operating.entriesFrozen
+      ? (src === "operator" ? "new entries frozen by operator"
+        : `new entries frozen automatically (${src}): ${c.operatingStateReason || c.safetyClosedReason || "see the control room"}`)
       : (operating.paused ? "entry controls closed" : "observation-only mode cannot write the paper ledger"));
   }
   if (c.fixturesPass !== true || c.fixturesCommit !== commit) return fail("current build fixtures not attested");

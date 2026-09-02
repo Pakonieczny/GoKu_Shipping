@@ -53,7 +53,7 @@ const S_FALLBACK = require("./_investorStrategy.js");
 const V = require("./_investorVariants");
 const STATE = require("./_investorState");
 
-const BOOTSTRAP_VERSION = 16;
+const BOOTSTRAP_VERSION = 17;
 const DAILY_PROVENANCE_VERSION = 5; // v5 re-attests complete windows to the selected 15-minute SIP identity
 
 function stable(value) {
@@ -713,8 +713,33 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
     fixtureHash: fixtures.fixtureHash || null, fixturesCheckedAt: A.FV.serverTimestamp(),
     fixtureFailures: (fixtures.cases || []).filter((x) => !x.pass).slice(0, 10) }, { merge: true });
   if (!fixtures.pass) {
-    await ref.set({ ...STATE.legacyPatch(STATE.STATES.ENTRY_FROZEN, c),
-      safetyClosedReason: "runtime fixture attestation failed" }, { merge: true });
+    const failedNames = (fixtures.cases || []).filter((x) => !x.pass).map((x) => x.name).slice(0, 5);
+    const freeze = { ...STATE.legacyPatch(STATE.STATES.ENTRY_FROZEN, c),
+      safetyClosedReason: "runtime fixture attestation failed"
+        + (failedNames.length ? `: ${failedNames.join(", ")}` : ""),
+      operatingStateReason: "runtime fixture attestation failed on this build"
+        + (failedNames.length ? ` (${failedNames.join(", ")})` : ""),
+      operatingStateSource: "bootstrap:fixtures",
+      operatingStateChangedAtMs: Date.now() };
+    await ref.set(freeze, { merge: true });
+    Object.assign(c, freeze);
+  } else if (STATE.describe(c).entriesFrozen && c.operatingStateSource === "bootstrap:fixtures"
+      && STATE.active(c.resumeOperatingState)) {
+    /* SELF-HEALING, as the reconciliation freeze already does: a freeze that
+       THIS attestation imposed is lifted by this attestation passing again on
+       a later build. An operator's freeze is never touched. */
+    const lift = { ...STATE.legacyPatch(c.resumeOperatingState, c),
+      safetyClosedReason: null,
+      operatingStateReason: "runtime fixtures pass on this build; the attestation freeze is lifted",
+      operatingStateSource: "bootstrap:fixtures",
+      operatingStateChangedAtMs: Date.now() };
+    await ref.set(lift, { merge: true });
+    Object.assign(c, lift);
+    try {
+      await A.col(A.COL.audit).add({ action: "fixture_freeze_lifted", commit,
+        fixtureHash: fixtures.fixtureHash || null, resumedState: c.operatingState, atMs: Date.now(),
+        ...A.envelope({ created_by: "investorBootstrap" }) });
+    } catch { /* audit is best-effort */ }
   }
 
   /* DEPLOY ROLLOVER. The safety epoch binds every entry to the commit that
