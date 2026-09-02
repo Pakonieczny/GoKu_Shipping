@@ -2575,6 +2575,10 @@ function operationStream(name,completed,total,pct,desc){
 }
 function rankingExclusionSummary(scan){
   var d=scan.rankingDiagnostics||{},x=d.excludedBeforePanel||{},parts=[];
+  var f=d.fetch||{}, fc=(f.chunks&&f.chunks.failed)||[];
+  if(d.rosterChecked!=null&&d.barsReceived!=null&&d.barsReceived<d.rosterChecked)
+    parts.push("the provider returned bars for only "+d.barsReceived+" of "+d.rosterChecked
+      +(fc.length?" — "+fc.length+" of "+(f.chunks.total||"?")+" requests failed: "+String(fc[0].error||"").slice(0,90):""));
   if(Number(x.tooFewBars)>0) parts.push(x.tooFewBars+" lacked 24 usable bars");
   if(Number(x.unusableQuality)>0) parts.push(x.unusableQuality+" failed freshness or provenance quality");
   if(Number(x.marketIdentityMismatch)>0) parts.push(x.marketIdentityMismatch+" used a different market-source identity");
@@ -2615,6 +2619,12 @@ function operationFeed(ops){
       text="Opportunity scan finished: "+(r.ranked!=null?r.ranked:(r.symbols||0))+" ranked, "
         +(r.breaches||0)+" signal breaches, "+(r.proposals||0)+" proposals, "
         +(st.filled||0)+" fills and "+(st.closed||0)+" closes.";
+      if(!(r.ranked>0)&&r.diagnostics){ var dg=r.diagnostics;
+        text+=" Nothing ranked: bars for "+(dg.barsReceived||0)+" of "+(dg.rosterChecked||0)+" companies"
+          +(dg.fetchFailed?"; "+dg.fetchFailed+" provider request(s) failed"+(dg.fetchError?" — "+dg.fetchError:""):"")
+          +(dg.tooFewBars?"; "+dg.tooFewBars+" lacked 24 usable bars":"")
+          +(dg.unusableQuality?"; "+dg.unusableQuality+" failed freshness/provenance":"")+".";
+        cls="bad"; }
     }else if(r.kind==="evidence"){
       text="Company research finished: "+(r.swept||0)+" dossiers"
         +(r.selected&&r.selected.length?" ("+r.selected.slice(0,4).join(", ")+")":"")+".";
