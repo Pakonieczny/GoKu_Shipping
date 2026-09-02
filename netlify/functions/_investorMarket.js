@@ -1012,11 +1012,30 @@ async function writeBars(symbol, dateStr, bars, meta) {
   for (const [sessionDate, sessionBars] of Object.entries(partitionBarsBySession(bars))) {
     const ref = A.col(A.COL.marketLatest).doc(barDocId(symbol, sessionDate));
     const prior = await ref.get();
-    const existing = prior.exists ? prior.data() : {};
+    let existing = prior.exists ? prior.data() : {};
+    let superseded = null;
     if (existing.provider && meta && (existing.provider !== meta.provider
         || existing.feed !== (meta.feed || null)
         || existing.adjustment !== (meta.adjustment || null))) {
-      throw new Error(`writeBars ${symbol}/${sessionDate}: provider/feed/adjustment mismatch`);
+      /* FEED MIGRATION. A session document written under a previous market
+         identity (e.g. alpaca/iex before the switch to delayed_sip) must not
+         be merged with bars from the new one — but refusing the write left
+         every stored session on the old identity for good: the morning
+         fallback then found no same-identity bars, names lacked their 24
+         usable bars until ~two hours into the session, and the nightly
+         archive could never repair the day. When the incoming bars carry the
+         ACTIVE identity, they replace the document; the old identity is
+         recorded, not blended. Any other mismatch is still refused. */
+      const active = activeProvider();
+      const incomingIsActive = meta.provider === active.id
+        && (meta.feed || null) === (active.feed || null);
+      if (!incomingIsActive) {
+        throw new Error(`writeBars ${symbol}/${sessionDate}: provider/feed/adjustment mismatch`);
+      }
+      superseded = { provider: existing.provider, feed: existing.feed || null,
+        adjustment: existing.adjustment || null, barCount: (existing.bars || []).length,
+        replacedAtMs: Date.now() };
+      existing = {};
     }
     const merged = normalizeBars([...(existing.bars || []), ...sessionBars]).slice(-400);
     const sourceHashes = [...new Set([...(existing.sourceHashes || []), meta && meta.sourceSha256]
@@ -1027,8 +1046,9 @@ async function writeBars(symbol, dateStr, bars, meta) {
       symbol, date: sessionDate, bars: merged, barCount: merged.length,
       ...meta,
       ...(sourceSha256 ? { sourceHashes, sourceSha256 } : {}),
+      ...(superseded ? { supersededIdentity: superseded } : {}),
       updated_at: A.FV.serverTimestamp(),
-    }, { merge: true });
+    }, { merge: !superseded });
     ids.push(ref.id);
   }
   return ids;
@@ -1057,20 +1077,28 @@ async function readRecentBarsWithMeta(symbol, sessions = 3) {
   dates.reverse();
   const snaps = await Promise.all(dates.map((dt) =>
     A.col(A.COL.marketLatest).doc(barDocId(symbol, dt)).get()));
-  const out = [], docs = [];
-  for (const s of snaps) if (s.exists) {
-    const d = s.data(); docs.push(d); out.push(...(d.bars || []));
+  let docs = [];
+  for (const s of snaps) if (s.exists) docs.push(s.data());
+  const identityOf = (d) => JSON.stringify([d.provider || "manual", d.feed || null, d.adjustment || null]);
+  const identities = [...new Set(docs.map(identityOf))];
+  let mixedNote = null;
+  if (identities.length > 1) {
+    /* Sessions written under different market identities are never blended.
+       Keep the LATEST session's identity and drop the rest (a feed migration
+       leaves older sessions on the old identity); the caller sees fewer bars,
+       not a silent mixture, and the note says why. */
+    const keep = identityOf(docs[docs.length - 1]);
+    const dropped = docs.filter((d) => identityOf(d) !== keep).length;
+    docs = docs.filter((d) => identityOf(d) === keep);
+    mixedNote = `dropped ${dropped} session(s) on a previous market identity`;
   }
-  const identities = [...new Set(docs.map((d) => JSON.stringify([
-    d.provider || "manual", d.feed || null, d.adjustment || null,
-  ])))];
-  if (identities.length > 1) return { bars: [], provenance: null,
-    reason: "mixed_provider_feed_or_adjustment" };
+  const out = [];
+  for (const d of docs) out.push(...(d.bars || []));
   const latest = docs.at(-1) || {};
   return { bars: normalizeBars(out), provenance: docs.length ? {
     provider: latest.provider || "manual", feed: latest.feed || null,
     adjustment: latest.adjustment || null, sourceSha256: latest.sourceSha256 || null,
-  } : null, reason: docs.length ? "ok" : "missing" };
+  } : null, reason: docs.length ? "ok" : "missing", ...(mixedNote ? { note: mixedNote } : {}) };
 }
 
 module.exports = {

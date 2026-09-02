@@ -260,6 +260,10 @@ const ACTIONS = {
         selected: r.selected || [], swept: r.swept,
         settlement: r.settlement || null, positionCoverage: r.positionCoverage || null,
         error: r.error || null, progress: progressForUi(r.progress),
+        live: r.live && typeof r.live === "object" ? {
+          counters: r.live.counters || {}, blockedBy: r.live.blockedBy || {},
+          recent: Array.isArray(r.live.recent) ? r.live.recent.slice(-40) : [],
+          updatedAtMs: Number(r.live.updatedAtMs) || null } : null,
         startedAt, finishedAt,
         startedAtMs: Number(r.startedAtMs) || (startedAt ? Date.parse(startedAt) : null),
         updatedAtMs: Number(r.updatedAtMs) || null });
@@ -1547,7 +1551,7 @@ const ACTIONS = {
      mints. Every safety decision still belongs to the worker, which re-reads
      the control document after this returns. */
   async runCycleNow({ operator, task }) {
-    const wanted = ["cycle", "guard", "evidence"].includes(task) ? task : "cycle";
+    const wanted = ["cycle", "guard", "evidence", "archive"].includes(task) ? task : "cycle";
     const ctrl = await ctrlDoc();
     const operating = STATE.describe(ctrl);
     if (operating.paused) return { ok: false, refused: "the paper desk is paused" };

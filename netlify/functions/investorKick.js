@@ -72,6 +72,8 @@ async function control() {
     lastCycleAt: d.lastCycleAt || null,
     lastGuardAt: d.lastGuardAt || null,
     lastEvidenceAt: d.lastEvidenceAt || null,
+    lastArchiveAt: d.lastArchiveAt || null,
+    lastArchiveDate: d.lastArchiveDate || null,
     lastDailyFinalizeDate: d.lastDailyFinalizeDate || null,
   };
 }
@@ -138,6 +140,17 @@ function decide(ctrl, session, nowMs) {
     }
   }
 
+  /* Nightly intraday archive: once per trading day, after the close buffer,
+     regardless of pause/freeze (it reads and stores prices; it decides
+     nothing). Re-dispatch is suppressed for 30 minutes so a dead worker does
+     not fan out a retry every tick. */
+  const sinceArchive = ctrl.lastArchiveAt ? nowMs - ctrl.lastArchiveAt : Infinity;
+  if (session.tradingDay && finalization.ready && ctrl.lastArchiveDate !== session.date
+      && sinceArchive > 30 * 60000) {
+    tasks.push("archive");
+    reasons.push(`nightly intraday archive due for ${session.date}`);
+  }
+
   return { tasks, reasons };
 }
 
@@ -149,12 +162,18 @@ function decide(ctrl, session, nowMs) {
    the audit trail says an operator asked. It grants nothing — the worker still
    re-reads the control document and still refuses on kill switch or disabled,
    and the nonce is minted the same way for both paths. */
+function stampField(task) {
+  return task === "cycle" ? "lastCycleAt" : task === "guard" ? "lastGuardAt"
+    : task === "archive" ? "lastArchiveAt" : "lastEvidenceAt";
+}
+
 async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
   const now = Date.now();
   const guardSeconds = session && session.open === false
     ? ctrl.guardSecondsClosed : ctrl.guardSeconds;
   const seconds = task === "cycle" ? ctrl.cycleSeconds
-    : task === "guard" ? guardSeconds : ctrl.evidenceEverySeconds;
+    : task === "guard" ? guardSeconds
+    : task === "archive" ? 1800 : ctrl.evidenceEverySeconds;
   const slot = Math.floor(now / (Math.max(60, Number(seconds) || 300) * 1000));
   const account = String(ctrl.accountId || "paper-1").replace(/[^a-zA-Z0-9_-]/g, "_");
   const jobId = manual ? `${task}_${account}_manual_${now}` : `${task}_${account}_${slot}`;
@@ -166,8 +185,7 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
   const claimed = await A.runTransaction(async (tx) => {
     const [cur, control] = await Promise.all([tx.get(jref), tx.get(cref)]);
     if (cur.exists && ["queued", "running", "complete"].includes(cur.data().status)) return false;
-    previousStamp = control.exists ? (control.data()[task === "cycle" ? "lastCycleAt"
-      : task === "guard" ? "lastGuardAt" : "lastEvidenceAt"] ?? null) : null;
+    previousStamp = control.exists ? (control.data()[stampField(task)] ?? null) : null;
     tx.set(jref, {
       jobId, task, slot, accountId: ctrl.accountId, status: "queued",
       sessionDate: session && session.date || null,
@@ -177,8 +195,7 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
       operatingState: ctrl.operatingState || null,
       ...A.envelope({ created_by: manual ? "investorApi.runCycleNow" : "investorKick" }),
     });
-    const stamp = task === "cycle" ? "lastCycleAt"
-      : task === "guard" ? "lastGuardAt" : "lastEvidenceAt";
+    const stamp = stampField(task);
     tx.set(cref, { [stamp]: now }, { merge: true });
     return true;
   });
@@ -204,8 +221,7 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
        must not consume the slot: restore the previous stamp so the next tick
        retries instead of waiting a full cadence; a "dispatch_failed" job row
        is not a claimed status, so the same slot can be dispatched again. */
-    const stamp = task === "cycle" ? "lastCycleAt"
-      : task === "guard" ? "lastGuardAt" : "lastEvidenceAt";
+    const stamp = stampField(task);
     await jref.set({ status: "dispatch_failed", dispatchStatus: res.status,
       dispatchError: res.thrown || null,
       dispatchFailedAt: A.FV.serverTimestamp() }, { merge: true });

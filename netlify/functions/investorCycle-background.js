@@ -93,7 +93,9 @@ async function reportRunProgress(runRef, { phase, label, detail = null,
     ? Math.max(0, safeTotal - safeCompleted) : null;
   try {
     await runRef.set({ status: "running", updatedAtMs: nowMs,
-      updatedAt: A.FV.serverTimestamp(), progress: {
+      updatedAt: A.FV.serverTimestamp(),
+      ...(LIVE.runRef === runRef ? { live: liveSnapshot() } : {}),
+      progress: {
         phase: String(phase || "working"), label: String(label || "Working"),
         detail: detail == null ? null : String(detail).slice(0, 240),
         pct: safePct, completed: safeCompleted, total: safeTotal, remaining,
@@ -104,6 +106,40 @@ async function reportRunProgress(runRef, { phase, label, detail = null,
     console.warn("run progress write failed", redact({ phase, error: e.message }));
   }
   await LEASE.heartbeat(nowMs);
+}
+
+/* ── LIVE FEED: what the scan is doing, company by company ──────────────
+   The progress bar says how far along the scan is; this says what happened
+   to each name as it went through — priced, ranked, signal or not, which
+   gate stopped it, proposed, approved — so the console can animate the
+   pipeline instead of showing a bar that moves and a list that appears at
+   the end. Flushed to the run document at most every 2 seconds. */
+const LIVE_RECENT = 40, LIVE_FLUSH_MS = 2000;
+const LIVE = { runRef: null, counters: {}, blockedBy: {}, recent: [], lastFlushMs: 0, pending: false };
+function liveReset(runRef) {
+  LIVE.runRef = runRef; LIVE.counters = {}; LIVE.blockedBy = {}; LIVE.recent = [];
+  LIVE.lastFlushMs = 0; LIVE.pending = false;
+}
+function liveSnapshot() {
+  return { counters: { ...LIVE.counters }, blockedBy: { ...LIVE.blockedBy },
+    recent: LIVE.recent.slice(-LIVE_RECENT), updatedAtMs: Date.now() };
+}
+async function liveFlush(force = false) {
+  if (!LIVE.runRef || (!LIVE.pending && !force)) return;
+  const nowMs = Date.now();
+  if (!force && nowMs - LIVE.lastFlushMs < LIVE_FLUSH_MS) return;
+  LIVE.lastFlushMs = nowMs; LIVE.pending = false;
+  try { await LIVE.runRef.set({ live: liveSnapshot(), updatedAtMs: nowMs }, { merge: true }); }
+  catch (e) { /* the live feed is display only */ }
+}
+/** Record one event: `stage` is a short token the console maps to a column. */
+function liveEvent(stage, symbol, note = null, { count = true } = {}) {
+  if (count) LIVE.counters[stage] = (LIVE.counters[stage] || 0) + 1;
+  if (stage === "blocked" && note) LIVE.blockedBy[note] = (LIVE.blockedBy[note] || 0) + 1;
+  LIVE.recent.push({ s: stage, sym: symbol || null, n: note == null ? null : String(note).slice(0, 60), t: Date.now() });
+  if (LIVE.recent.length > LIVE_RECENT * 2) LIVE.recent = LIVE.recent.slice(-LIVE_RECENT);
+  LIVE.pending = true;
+  return liveFlush(false);
 }
 
 function executionSourceEligible(quality) {
@@ -315,6 +351,7 @@ function applyOverfitGuard(alloc, overfitGuard) {
 async function runCycle(jobId, { manual = false } = {}) {
   const startedAt = Date.now();
   const runRef = A.col(A.COL.runs).doc(jobId);
+  liveReset(runRef);
   await runRef.set({ jobId, kind: "cycle", status: "running",
     startedAt: A.FV.serverTimestamp(), startedAtMs: startedAt,
     ...A.envelope({ created_by: FN_NAME }) }, { merge: true });
@@ -1101,11 +1138,12 @@ async function runCycle(jobId, { manual = false } = {}) {
   const orphanSymbols = allPositions
     .filter((p) => p && p.open && p.symbol && !tradeSymbols.includes(p.symbol))
     .map((p) => p.symbol);
-  const evaluationProgressStride = Math.max(10, Math.ceil(managementWorkset.length / 8));
+  let lastEvaluationReportMs = 0;
   for (let workIndex = 0; workIndex < managementWorkset.length; workIndex += 1) {
     const work = managementWorkset[workIndex];
     const sym = work.symbol;
-    if (workIndex === 0 || workIndex % evaluationProgressStride === 0) {
+    if (workIndex === 0 || Date.now() - lastEvaluationReportMs >= LIVE_FLUSH_MS) {
+      lastEvaluationReportMs = Date.now();
       await reportRunProgress(runRef, { phase: "evaluate_companies",
         label: "Evaluating companies and existing holdings",
         pct: 46 + Math.round(26 * workIndex / Math.max(1, managementWorkset.length)),
@@ -1117,6 +1155,7 @@ async function runCycle(jobId, { manual = false } = {}) {
     const last = bars[bars.length - 1];
     const position = work.position || positionBySymbol[sym] || null;
     if (!last) {
+      await liveEvent("unpriced", sym, position && position.open ? "held, no bars this scan" : "no bars this scan");
       if (position && position.open) {
         unpricedHoldings.push(sym);
         exits.push({ symbol: sym, kind: "unpriced", blocked: "no_bars_this_cycle",
@@ -1233,16 +1272,19 @@ async function runCycle(jobId, { manual = false } = {}) {
               universeHash, strategyHash, variantsHash },
           });
           if (armed.blocked) {
+            await liveEvent("exit_blocked", sym, armed.blocked);
             exits.push({ symbol: sym, reason: ex.reason, kind: ex.kind,
               urgent: !!ex.urgent, blocked: armed.blocked });
             continue;
           }
         }
+        await liveEvent("exit_armed", sym, ex.kind || ex.reason);
         exits.push({
           symbol: sym, reason: ex.reason, kind: ex.kind, urgent: !!ex.urgent,
           pnlPct: ex.pnlPct, rank: ranks[sym], heldDays: Number(heldDays.toFixed(2)),
         });
       }
+      if (!(exits.length && exits[exits.length - 1].symbol === sym)) await liveEvent("held", sym, "holding, no exit");
       continue;   // never propose an entry in a name we already hold
     }
 
@@ -1541,6 +1583,11 @@ async function runCycle(jobId, { manual = false } = {}) {
         intelligence, decisionManifest, cohortRole: "control", dataSufficiency,
         policyIds: [], utilityBps: 0 });
     }
+    /* One live outcome per name, in pipeline order: ranked → signal → gates. */
+    if (evalRes.pass && entryControl.pass && manifestValidation.pass) await liveEvent("passed", sym, "cleared every gate");
+    else if (!evidenceTrigger) await liveEvent("no_signal", sym, `rank ${Number(rank).toFixed(2)}`);
+    else if (evalRes.pass) await liveEvent("blocked", sym, entryControl.pass ? "manifest" : "entry_control");
+    else await liveEvent("blocked", sym, evalRes.blockedBy[0] || evalRes.firstBlock || "gate");
   }
   await reportRunProgress(runRef, { phase: "portfolio_selection",
     label: "Choosing among qualifying opportunities", pct: 73,
@@ -1803,8 +1850,9 @@ async function runCycle(jobId, { manual = false } = {}) {
         expiresAtMs: Math.min(decisionAtMs + signalLifetimeMs,
           Number.isFinite(sessionCloseMs) ? sessionCloseMs : Infinity),
       });
-      if (o.blocked) { portfolioBlocks.push({ symbol: sym, reason: o.blocked }); return false; }
+      if (o.blocked) { await liveEvent("blocked", sym, `portfolio:${String(o.blocked).slice(0, 30)}`); portfolioBlocks.push({ symbol: sym, reason: o.blocked }); return false; }
       pendingOrderSymbols.add(sym);
+      await liveEvent(control ? "control_proposed" : "proposed", sym, `${qty} sh @ $${Number(last.c).toFixed(2)}`);
       decisions.push({ symbol: sym, orderId: o.orderId, qty, refPriceUsd: o.refPriceUsd,
         trimmed: !add.allow, cluster: add.cluster, variantId: liveVariant ? liveVariant.id : "A",
         cohortRole: q.cohortRole, policyIds: q.policyIds || [] });
@@ -1828,6 +1876,7 @@ async function runCycle(jobId, { manual = false } = {}) {
   for (let queueIndex = 0; queueIndex < proposalQueue.length; queueIndex += 1) {
     if (exploratorySelection && activityLog.signalProposed >= activity.maxNewEntriesPerCycle) {
       activityLog.signalPacedOut = proposalQueue.length - queueIndex;
+      for (const q of proposalQueue.slice(queueIndex)) await liveEvent("paced_out", q.sym, "waits for a later scan");
       break;
     }
     const wrote = await proposeEntry(proposalQueue[queueIndex],
@@ -1932,6 +1981,7 @@ async function runCycle(jobId, { manual = false } = {}) {
               ? "exploratory_auto_unvalidated" : "validated_limited_auto"),
             autoApprovalOperatingState: operating.state }, { merge: true });
           if (!operating.exploratoryAuto) dayCount += 1;
+          await liveEvent("approved", o.symbol, "auto-approved");
           settled.autoApproved.push({ orderId: o.orderId, symbol: o.symbol,
             cohort: verdict.cohort || null, detail: verdict.detail });
         } catch (e) { settled.skipped.push({ orderId: o.orderId, why: String(e.message).slice(0, 120) }); }
@@ -1997,7 +2047,7 @@ async function runCycle(jobId, { manual = false } = {}) {
           orderId: o.orderId, bar: elig.bar,
           barProvenance: { ...currentProv, barOpenAt: elig.barOpenAt },
         });
-        if (!f.duplicate) settled.filled.push({ orderId: o.orderId, symbol: o.symbol, at: elig.barOpenAt });
+        if (!f.duplicate) { await liveEvent("filled", o.symbol, `filled on the ${String(elig.barOpenAt).slice(11, 16)}Z bar`); settled.filled.push({ orderId: o.orderId, symbol: o.symbol, at: elig.barOpenAt }); }
       } catch (e) { settled.skipped.push({ orderId: o.orderId, why: String(e.message).slice(0, 120) }); }
     }
 
@@ -2057,6 +2107,7 @@ async function runCycle(jobId, { manual = false } = {}) {
           closedBy: "full_cycle",
         });
         if (!c.noop) {
+          await liveEvent("closed", p.symbol, intent.kind || intent.reason);
           settled.closed.push({ symbol: p.symbol, reason: intent.reason, kind: intent.kind,
                                 netBps: c.netBps, variantId: c.variantId });
         }
@@ -2687,6 +2738,7 @@ async function runCycle(jobId, { manual = false } = {}) {
       error: String(e.message || e).slice(0, 160) }; }
   }
 
+  await liveFlush(true);
   await runRef.set({
     ...summary, finishedAt: A.FV.serverTimestamp(), status: "complete",
     updatedAt: A.FV.serverTimestamp(), updatedAtMs: Date.now(),
@@ -2696,6 +2748,39 @@ async function runCycle(jobId, { manual = false } = {}) {
       pct: 100, completed: symbols.length, total: symbols.length, remaining: 0,
       currentItem: null, updatedAtMs: Date.now() },
   }, { merge: true });
+
+  /* SCAN SNAPSHOT. What the desk SAW this scan, not only what it chose: the
+     z-score, rank and cumulative residual for every ranked name (all signal
+     windows), the identity-filtered scoreboard that ordered the candidates,
+     the exploration counters and the frozen identity. Candidates/Decisions
+     record the names that reached the gate stack; this records the whole
+     cross-section so a decision can be replayed against its peers later. */
+  try {
+    const panelOut = {};
+    for (const [win, sc] of Object.entries(signalContexts)) {
+      const rows = {};
+      for (const [sym, zz] of Object.entries(sc.zBySymbol || {})) {
+        rows[sym] = { z: Number(zz.z.toFixed(3)), r: Number((sc.ranks[sym] ?? NaN).toFixed(4)),
+          cum: Number(((zz.cumResidual || 0) * 1e4).toFixed(1)) };
+      }
+      panelOut[win] = { n: sc.n || 0, symbols: rows };
+    }
+    await A.col(A.COL.scanSnapshots).doc(cycleId).set({
+      cycleId, jobId, sessionDate: session.date, decisionAtMs: Date.now(),
+      sessionPhase: session.phase, provider: marketIdentity.provider, feed: marketIdentity.feed || null,
+      strategyVersion: strategy.version, strategyHash, universeHash, variantsHash,
+      exploratoryPolicyVersion: (strategy.exploratoryAuto || {}).version || null,
+      liveSignalWindow: cfg.signalWindow || 12,
+      panel: panelOut,
+      betas: rp && rp.betas ? rp.betas : null,
+      scoreboard: scoreboard || null,
+      exploration: summary.exploration || null,
+      entryControl: summary.entryControl || null,
+      counts: { symbols: symbols.length, ranked, candidates: candidates.length,
+        proposals: decisions.length, fills: settled.filled.length, closes: settled.closed.length },
+      ...A.envelope({ created_by: FN_NAME }),
+    });
+  } catch (e) { summary.snapshotError = String(e.message || e).slice(0, 160); }
 
   await A.col(A.COL.control).doc("control").set({
     lastCycleSummary: summary, lastCycleFinishedAt: A.FV.serverTimestamp(),
@@ -2712,6 +2797,76 @@ async function runCycle(jobId, { manual = false } = {}) {
 }
 
 /* ── evidence sweep (slower clock) ─────────────────────────────────────── */
+/* NIGHTLY INTRADAY ARCHIVE. The scan stores the bars it fetched for the names
+   the provider returned; a name the provider omitted, or a session where the
+   scan did not run, leaves a hole. After the close this walks every frozen
+   trade-tier name, finds session documents short of a full day's bars, and
+   fills them from the provider, so the intraday record is complete
+   regardless of which names were ranked or viewed. Display/archive only:
+   it feeds no decision. */
+const FULL_SESSION_BARS = 78, HALF_SESSION_BARS = 42;
+async function runArchive(jobId) {
+  const startedMs = Date.now();
+  const runRef = A.col(A.COL.archiveRuns).doc(jobId);
+  const session = M.sessionState(new Date());
+  const provider = M.activeProvider();
+  const ctrlSnap = await A.col(A.COL.control).doc("control").get();
+  const ctrl = ctrlSnap.exists ? ctrlSnap.data() : {};
+  const universe = await loadUniverse(ctrl.universeVersion);
+  const symbols = (universe.tradeTier || []).map((t) => t.symbol);
+  const expected = session.isHalfDay ? HALF_SESSION_BARS : FULL_SESSION_BARS;
+  const summary = { jobId, kind: "archive", sessionDate: session.date, provider: provider.id,
+    feed: provider.feed || null, symbols: symbols.length, expectedBars: expected,
+    short: 0, fetched: 0, completed: 0, stillShort: [], chunks: null, error: null };
+  await runRef.set({ ...summary, startedAt: A.FV.serverTimestamp(), status: "running",
+    ...A.envelope({ created_by: FN_NAME }) }, { merge: true });
+  try {
+    if (!session.tradingDay) {
+      summary.note = "not a trading day";
+    } else if (provider.id === "manual") {
+      summary.note = "manual provider: nothing to fetch";
+    } else {
+      const counts = {};
+      const snaps = await Promise.all(symbols.map((sym) =>
+        A.col(A.COL.marketLatest).doc(M.barDocId(sym, session.date)).get()));
+      snaps.forEach((d, i) => { counts[symbols[i]] = d.exists ? Number(d.data().barCount || (d.data().bars || []).length) : 0; });
+      const short = symbols.filter((sym) => counts[sym] < expected - 2);
+      summary.short = short.length;
+      if (short.length) {
+        const got = await M.fetchBarsChunked(short, { timeframe: "5Min", limit: 90 },
+          { chunkSize: 60, retries: 1 });
+        summary.chunks = got.chunks || null;
+        const bars = got.bars || {};
+        for (const sym of short) {
+          const b = bars[sym] || [];
+          if (!b.length) continue;
+          summary.fetched += 1;
+          try {
+            await M.writeBars(sym, session.date, b, { provider: got.provider, feed: got.feed || null,
+              adjustment: got.adjustment || null,
+              sourceSha256: (got.symbolSha256 && got.symbolSha256[sym]) || got.sha256 || null,
+              grade: null, gradeReasons: ["nightly_archive"], feedDelayMinutes: provider.delayMinutes });
+          } catch (e) { summary.writeErrors = (summary.writeErrors || 0) + 1; }
+        }
+        const after = await Promise.all(short.map((sym) =>
+          A.col(A.COL.marketLatest).doc(M.barDocId(sym, session.date)).get()));
+        after.forEach((d, i) => {
+          const n = d.exists ? Number(d.data().barCount || (d.data().bars || []).length) : 0;
+          if (n >= expected - 2) summary.completed += 1; else summary.stillShort.push(`${short[i]}:${n}`);
+        });
+        summary.stillShort = summary.stillShort.slice(0, 40);
+      }
+    }
+  } catch (e) { summary.error = String(e.message || e).slice(0, 200); }
+  summary.elapsedMs = Date.now() - startedMs;
+  await runRef.set({ ...summary, status: summary.error ? "dead" : "complete",
+    finishedAt: A.FV.serverTimestamp() }, { merge: true });
+  await A.col(A.COL.control).doc("control").set({
+    lastArchiveDate: session.date, lastArchiveSummary: summary,
+    lastArchiveFinishedAt: A.FV.serverTimestamp() }, { merge: true });
+  return summary;
+}
+
 async function runEvidence(jobId) {
   const startedAt = Date.now();
   const runRef = A.col(A.COL.runs).doc(jobId);
@@ -2951,7 +3106,7 @@ exports.handler = async (event) => {
     return { statusCode: 403, body: JSON.stringify({ error: "invalid or missing worker nonce" }) };
   }
 
-  if (!jobId || !["cycle", "guard", "evidence"].includes(task)) {
+  if (!jobId || !["cycle", "guard", "evidence", "archive"].includes(task)) {
     return { statusCode: 400, body: JSON.stringify({ error: "invalid job shape" }) };
   }
   /* Resolve provider/feed before any market call. A failed read falls back to
@@ -3009,6 +3164,7 @@ exports.handler = async (event) => {
       ttlMs: task === "guard" ? GUARD_LEASE_TTL_MS : WORKER_LEASE_TTL_MS });
 
     const out = task === "evidence" ? await runEvidence(jobId)
+      : task === "archive" ? await runArchive(jobId)
       : task === "guard" ? await PG.runGuard(jobId)
         : await runCycle(jobId, { manual: lease.manual });
 
@@ -3059,6 +3215,7 @@ exports.handler = async (event) => {
 };
 
 exports.runCycle = runCycle;
+exports.runArchive = runArchive;
 exports.reportRunProgress = reportRunProgress;
 exports.WORKER_LEASE_TTL_MS = WORKER_LEASE_TTL_MS;
 exports.applyOverfitGuard = applyOverfitGuard;

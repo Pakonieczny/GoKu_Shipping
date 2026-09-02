@@ -141,6 +141,8 @@ const COL = {
   calibration:COL_PREFIX + "Calibration",
   invariants: COL_PREFIX + "Invariants",
   soakCycles: COL_PREFIX + "SoakCycles",    // idempotent production-paper evidence
+  scanSnapshots:COL_PREFIX+ "ScanSnapshots", // per-scan signal panel + scoreboard, replayable
+  archiveRuns: COL_PREFIX + "ArchiveRuns",   // nightly intraday archive manifests
 };
 
 /* ── provenance envelope required on every generated record ────────────── */

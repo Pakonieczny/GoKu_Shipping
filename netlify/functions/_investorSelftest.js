@@ -1576,10 +1576,34 @@ function runFixtures() {
       && /frozen automatically/.test(LGR);
   }));
 
+  cases.push(fixture("scan_snapshot_and_nightly_archive_record_what_the_desk_saw", () => {
+    const K = require("./investorKick");
+    const CYCLE = require("./investorCycle-background");
+    const cycleSrc = sourceOf(CYCLE.runCycle);
+    if (!/\w+\.col\(\w+\.COL\.scanSnapshots\)\.doc\(cycleId\)/.test(cycleSrc)) return false;
+    if (!/panel:\s*panelOut/.test(cycleSrc) || !/scoreboard:\s*scoreboard \|\| null/.test(cycleSrc)) return false;
+    if (typeof CYCLE.runArchive !== "function") return false;
+    /* The archive is due once per trading day after the close buffer, and is
+       not re-dispatched within 30 minutes; it is never due before the buffer
+       or twice for the same date. */
+    const base = { paused: false, killSwitch: false, enabled: true, cycleSeconds: 300, guardSeconds: 60,
+      guardSecondsClosed: 900, evidenceEverySeconds: 900, lastCycleAt: Date.now(), lastGuardAt: Date.now(),
+      lastEvidenceAt: Date.now(), bootstrapPending: false, lastDailyFinalizeDate: "2026-09-01" };
+    const closed = { date: "2026-09-01", tradingDay: true, open: false, phase: "postmarket",
+      regularCloseMinutesEt: 16 * 60, minutesEt: 17 * 60, isHalfDay: false };
+    const due = K.decide({ ...base, lastArchiveDate: null, lastArchiveAt: null }, closed, Date.now());
+    const done = K.decide({ ...base, lastArchiveDate: "2026-09-01", lastArchiveAt: null }, closed, Date.now());
+    const recent = K.decide({ ...base, lastArchiveDate: null, lastArchiveAt: Date.now() - 5 * 60000 }, closed, Date.now());
+    const early = K.decide({ ...base, lastArchiveDate: null, lastArchiveAt: null },
+      { ...closed, open: true, phase: "regular", minutesEt: 12 * 60 }, Date.now());
+    return due.tasks.includes("archive") && !done.tasks.includes("archive")
+      && !recent.tasks.includes("archive") && !early.tasks.includes("archive");
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v19-strategy-v10-variants-q";
+  const SCHEMA = "runtime-fixtures-v20-strategy-v10-variants-q";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
