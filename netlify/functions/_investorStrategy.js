@@ -112,11 +112,11 @@ function paperLearningConfig(base, ctrl = {}) {
 
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax,
-  "version": "v9",
-  "supersedes": "v8",
+  "version": "v10",
+  "supersedes": "v9",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
   "frozenAt": "2026-09-01",
-  "_versionNote": "v9 carries the v8 strict hypothesis and strict parameters UNCHANGED. It differs only in the labelled exploratory paper cohort (exploratory-auto-v3: wider entry lane, per-cycle pacing, a small unconditional control cohort, and Thompson selection among the frozen policies for exploratory entries). The strict comparison policy, its promotion gates and the shadow experiment are untouched; the version is bumped because the exploratory policy is bound into the frozen strategy identity.",
+  "_versionNote": "v10 carries the v8/v9 strict hypothesis and strict parameters UNCHANGED. It differs from v9 only in the labelled exploratory paper cohort (exploratory-auto-v4: frozen data-sufficiency policy, signal lifetime, identity-bound scoreboard, pacing 10/scan, control 5/session, exit rank 0.6). v9 remains in the StrategyVersions record; a frozen identity is never edited in place, so the exploratory changes are a new version rather than a mutation of v9.",
   "immutable": true,
   "status": "research",
   "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
@@ -225,8 +225,9 @@ module.exports = {
      promotion ladder. The complete strict verdict remains beside every
      exploratory verdict so these populations can never be pooled silently.
 
-     v3 widens only this labelled paper-learning cohort and makes it
-     CONTINUOUSLY ACTIVE: the bottom half of the cross-section may be
+     v4 (v3 plus a frozen sufficiency policy, signal lifetime and an
+     identity-bound scoreboard) widens only this labelled paper-learning
+     cohort and makes it CONTINUOUSLY ACTIVE: the bottom half of the cross-section may be
      examined once the residual is at least 1 standard deviation unusual, the
      cost margin is the clamp floor, rank recovery exits once the name is
      back ABOVE the median (60%; with entries admitted up to the median an
@@ -235,11 +236,11 @@ module.exports = {
      observations over. Entries are paced per
      cycle, a small unconditional control cohort runs beside the signal
      cohort, and Thompson sampling over the frozen policy family orders
-     which qualified candidates are taken first. Strict v9 remains at rank
+     which qualified candidates are taken first. Strict v10 remains at rank
      10% / |z| 2 / ten sessions, so increased paper activity cannot
      masquerade as validation. */
   "exploratoryAuto": {
-    "version": "exploratory-auto-v3",
+    "version": "exploratory-auto-v4",
     "enabled": true,
     "autoStartAfterSuccessfulBootstrap": true,
     "startingNavUsd": 100000,
@@ -277,14 +278,14 @@ module.exports = {
          expected-edge ordering. */
     "activity": {
       "enabled": true,
-      "maxNewEntriesPerCycle": 6,
+      "maxNewEntriesPerCycle": 10,
       "minimumShareFloor": 1,
       "reservationHeadroomBps": 150,
       "expireUnfilledEntriesAtSessionClose": true,
       "controlCohort": {
         "enabled": true,
-        "maxOpenPositions": 6,
-        "maxNewPerSession": 3,
+        "maxOpenPositions": 10,
+        "maxNewPerSession": 5,
         "sizeMultiplier": 0.5,
         "evidenceCohort": "exploratory_control_unconditional"
       },
@@ -295,7 +296,30 @@ module.exports = {
         "tradeSdBps": 250,
         "minClosedForObservedSd": 8
       },
-      "scoreboardLookbackTrades": 1000
+      "scoreboardLookbackTrades": 1000,
+      /* A proposal is an opinion about a price at an instant. It stays
+         approvable for this long, and never past the session close. */
+      "signalLifetimeMinutes": 120,
+      /* DATA SUFFICIENCY (_investorSufficiency.js). A heuristic coverage
+         score of what the desk knew at decision time. It never refuses a
+         candidate; in the exploratory lane it scales size (never below the
+         floor) and adds a mild ordering penalty, and the scoreboard splits
+         outcomes by it. Everything here is part of the frozen identity so a
+         change is a new experiment, not a silent drift. The floor is
+         deliberately generous for the kick-start phase: thin-data names are
+         taken at 60% size, not refused, because the desk has to learn
+         whether thin data matters before it can justify a stricter floor. */
+      "sufficiency": {
+        "version": "data-sufficiency-v2",
+        "weights": { "intradayBars": 20, "dailyHistory": 20, "earningsWindow": 15,
+          "intelligence": 15, "correlationRegime": 10, "liquidity": 10, "priceQuality": 10 },
+        "buckets": { "high": 75, "medium": 45 },
+        "sizeFloor": 0.6,
+        "orderingPenaltyBpsPerPoint": 0.2,
+        "barsForFullCredit": 60,
+        "barsMinimum": 24,
+        "historyDaysForFullCredit": 252
+      }
     },
     "portfolioControls": {
       "maxOpenPositions": 304,

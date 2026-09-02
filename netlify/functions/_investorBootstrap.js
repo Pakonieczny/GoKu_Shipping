@@ -53,7 +53,7 @@ const S_FALLBACK = require("./_investorStrategy.js");
 const V = require("./_investorVariants");
 const STATE = require("./_investorState");
 
-const BOOTSTRAP_VERSION = 13;
+const BOOTSTRAP_VERSION = 14;
 const DAILY_PROVENANCE_VERSION = 5; // v5 re-attests complete windows to the selected 15-minute SIP identity
 
 function stable(value) {
@@ -759,6 +759,32 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
 
   const steps = [];
   if (epochRollover) steps.push({ step: "safetyEpochRollover", ok: epochRollover.rolled === true, ...epochRollover });
+
+  /* MIGRATION. Proposals written before expiries existed are ageless and,
+     under manual approval, were approvable forever. On every bootstrap pass
+     any proposed order without an expiry is rejected (nothing is reserved
+     for a proposal, so nothing is released) and the event is audited. */
+  try {
+    const accountForMigration = c.accountId || "paper-1";
+    const legacy = await A.col(A.COL.orders).where("accountId", "==", accountForMigration)
+      .where("status", "==", "proposed").get();
+    let rejected = 0;
+    for (const d of legacy.docs) {
+      const o = d.data();
+      if (Number.isFinite(Number(o.expiresAtMs))) continue;
+      try {
+        const r = await L.rejectOrder(o.orderId, "legacy proposal without an expiry rejected at bootstrap", "bootstrap:migration");
+        if (!r.noop) rejected += 1;
+      } catch { /* one stuck row must not block the bootstrap */ }
+    }
+    if (rejected) {
+      steps.push({ step: "legacyProposalMigration", ok: true, rejected });
+      await A.col(A.COL.audit).add({ action: "legacy_proposals_rejected", rejected, commit,
+        atMs: Date.now(), ...A.envelope({ created_by: "investorBootstrap" }) });
+    }
+  } catch (e) {
+    steps.push({ step: "legacyProposalMigration", ok: false, error: String(e.message).slice(0, 120) });
+  }
   let universe = null;
 
   if (!done || force) {

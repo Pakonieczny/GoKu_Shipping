@@ -37,6 +37,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const DS = require("./_investorSufficiency");
 
 /* Gates a CONTROL entry may fail. Everything else is a hazard finding and
    still blocks a control entry exactly as it blocks a signal entry. */
@@ -189,6 +190,7 @@ function buildScoreboard(trades, { policySelection = DEFAULTS.policySelection,
   const byPolicy = {};
   for (const id of policyIds) byPolicy[String(id)] = blank();
   const byCohort = { signal: blank(), control: blank() };
+  const bySufficiency = { high: blank(), medium: blank(), low: blank(), unknown: blank() };
   let closed = 0, skipped = 0;
   for (const t of Array.isArray(trades) ? trades : []) {
     if (!isExploratoryTrade(t)) continue;
@@ -199,6 +201,9 @@ function buildScoreboard(trades, { policySelection = DEFAULTS.policySelection,
     const c = byCohort[role];
     c.n += 1; c.sum += net; c.sumSq += net * net; if (net > 0) c.wins += 1;
     if (role !== "signal") continue;
+    const suff = DS.ofRecord(t);
+    const sb = bySufficiency[suff ? suff.bucket : "unknown"] || bySufficiency.unknown;
+    sb.n += 1; sb.sum += net; sb.sumSq += net * net; if (net > 0) sb.wins += 1;
     for (const id of tradePolicies(t)) {
       if (!byPolicy[id]) byPolicy[id] = blank();
       const s = byPolicy[id];
@@ -219,13 +224,56 @@ function buildScoreboard(trades, { policySelection = DEFAULTS.policySelection,
     signalVsControl = { differenceBps: Number(diff.toFixed(2)), standardErrorBps: Number(se.toFixed(2)),
       t: se > 0 ? Number((diff / se).toFixed(2)) : null, mode: "observational_not_causal" };
   }
+  const sufficiency = Object.fromEntries(Object.entries(bySufficiency)
+    .map(([k, v]) => [k, summarize(v, sel)]));
   const leader = Object.entries(policies).filter(([, v]) => v.n > 0)
     .sort((a, b) => b[1].posteriorMeanBps - a[1].posteriorMeanBps)[0];
   return { asOfMs, closedExploratoryTrades: closed, skippedUnscored: skipped,
-    policies, cohorts, signalVsControl,
+    policies, cohorts, signalVsControl, sufficiency,
     leadingPolicyId: leader ? leader[0] : null,
     affectsDecision: "exploratory_selection_and_pacing_only",
     prior: { meanBps: sel.priorMeanBps, sdBps: sel.priorSdBps, tradeSdBps: sel.tradeSdBps } };
+}
+
+/** Admit only outcomes from THIS experiment to the exploratory scoreboard:
+ *  same frozen identity, same exploratory policy version, and (when the
+ *  trade recorded one) the same sufficiency policy version. Newest first,
+ *  bounded by lookback, with a hash of the admitted trade ids so the sample
+ *  that steered a cycle is reproducible from the record. */
+function admitScoreboardTrades(trades, { strategyHash, universeHash, variantsHash,
+  exploratoryPolicyVersion = null, sufficiencyVersion = null, lookback = 1000 } = {}) {
+  const excluded = { notExploratory: 0, identity: 0, policyVersion: 0, sufficiencyVersion: 0, lookback: 0 };
+  const rows = [];
+  const identityComplete = [strategyHash, universeHash, variantsHash].every((h) => /^[a-f0-9]{64}$/.test(String(h || "")))
+    && !!exploratoryPolicyVersion && !!sufficiencyVersion;
+  if (!identityComplete) {
+    /* No complete current identity → no trade can match it → empty sample. */
+    return { trades: [], excluded: { ...excluded, identity: (trades || []).length }, count: 0,
+      sampleHash: crypto.createHash("sha256").update("").digest("hex"), incompleteIdentity: true };
+  }
+  for (const t of Array.isArray(trades) ? trades : []) {
+    if (!isExploratoryTrade(t)) { excluded.notExploratory += 1; continue; }
+    if (t.strategyHash !== strategyHash || t.universeHash !== universeHash
+        || t.variantsHash !== variantsHash) { excluded.identity += 1; continue; }
+    /* EXACT versions, and a missing version is a mismatch: a trade that
+       cannot say which exploratory or sufficiency policy produced it must
+       not steer the current one. */
+    if (!t.exploratoryPolicyVersion || t.exploratoryPolicyVersion !== exploratoryPolicyVersion) {
+      excluded.policyVersion += 1; continue;
+    }
+    const ds = t.decisionContext && t.decisionContext.dataSufficiency;
+    if (!ds || !ds.version || ds.version !== sufficiencyVersion) {
+      excluded.sufficiencyVersion += 1; continue;
+    }
+    rows.push(t);
+  }
+  rows.sort((a, b) => String(b.closedAt || "").localeCompare(String(a.closedAt || ""))
+    || String(a.tradeId || "").localeCompare(String(b.tradeId || "")));
+  const cap = Math.max(1, Number(lookback) || 1000);
+  if (rows.length > cap) { excluded.lookback = rows.length - cap; rows.length = cap; }
+  const ids = rows.map((t) => String(t.tradeId || `${t.symbol}|${t.closedAt}`)).sort();
+  const sampleHash = crypto.createHash("sha256").update(ids.join("|")).digest("hex");
+  return { trades: rows, excluded, sampleHash, count: rows.length };
 }
 
 /* ── Thompson selection ──────────────────────────────────────────────────── */
@@ -241,7 +289,8 @@ function rankCandidates(candidates, scoreboard, { seed = "seed",
   const sel = { ...DEFAULTS.policySelection, ...(policySelection || {}) };
   const rows = (candidates || []).map((c) => ({ ...c, utilityBps: Number(c.utilityBps) || 0 }));
   if (sel.method === "utility") {
-    return rows.map((r) => ({ ...r, score: r.utilityBps, sampledPolicyId: null, sampledBps: null }))
+    return rows.map((r) => ({ ...r, score: r.utilityBps - Math.max(0, Number(r.penaltyBps) || 0),
+      sampledPolicyId: null, sampledBps: null }))
       .sort((a, b) => b.score - a.score || String(a.sym).localeCompare(String(b.sym)));
   }
   const rng = seededRandom(seed);
@@ -268,8 +317,9 @@ function rankCandidates(candidates, scoreboard, { seed = "seed",
       const v = drawFor(id);
       if (!best || v > best.v) best = { id, v };
     }
-    return { ...r, sampledPolicyId: best.id, sampledBps: Number(best.v.toFixed(2)),
-      score: Number((best.v + r.utilityBps + jitter(r.sym)).toFixed(4)) };
+    const penalty = Math.max(0, Number(r.penaltyBps) || 0);
+    return { ...r, sampledPolicyId: best.id, sampledBps: Number(best.v.toFixed(2)), penaltyBps: penalty,
+      score: Number((best.v + r.utilityBps - penalty + jitter(r.sym)).toFixed(4)) };
   }).sort((a, b) => b.score - a.score || String(a.sym).localeCompare(String(b.sym)));
 }
 
@@ -309,7 +359,7 @@ function isControlOrder(order) {
 module.exports = {
   DEFAULTS, CONTROL_MAY_FAIL, COHORT_SIGNAL, COHORT_CONTROL,
   activityPolicy, seededRandom, gaussian,
-  buildScoreboard, rankCandidates,
+  buildScoreboard, rankCandidates, admitScoreboardTrades,
   controlEligible, selectControl, controlOrderGatesAcceptable, isControlOrder,
   isExploratoryTrade, tradePolicies, tradeCohortRole,
 };

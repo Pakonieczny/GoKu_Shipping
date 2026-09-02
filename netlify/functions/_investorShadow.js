@@ -18,7 +18,7 @@ const OPEN = A.COL.shadowOpen;
 const CLOSED = A.COL.shadowClosed;
 const STATS = A.COL.shadowDays;
 const ACCOUNTS = A.COL.shadowAccounts;
-const SIMULATOR_VERSION = "self-financing-counterfactual-v10-finalized-intelligence-bound";
+const SIMULATOR_VERSION = "self-financing-counterfactual-v11-pending-exposure-whole-shares";
 const DISCOUNT_GAMMA = 0.988; // trading-session weighting; asymptotic ESS ~= 166
 const PH_DELTA_FRAC = 0.25;
 const PH_LAMBDA_SD = 12;
@@ -125,11 +125,11 @@ async function fillPendingAtomic(doc, pending, eligible, provenance, date) {
     const price = Number(eligible.bar && eligible.bar.o);
     const slipBps = Math.max(0, Number(pending.entrySlippageBps) || 0);
     const unitDebit = price * (1 + slipBps / 1e4);
-    const requestedQty = Math.max(0, Number(pending.qty) || 0);
+    const requestedQty = Math.max(0, Math.floor(Number(pending.qty) || 0));
     const qty = unitDebit > 0
-      ? Math.min(requestedQty, Math.max(0, Number(account.cashUsd) || 0) / unitDebit) : 0;
+      ? Math.min(requestedQty, Math.floor(Math.max(0, Number(account.cashUsd) || 0) / unitDebit)) : 0;
     const notionalUsd = qty * price;
-    if (!(notionalUsd >= 100)) {
+    if (!(notionalUsd >= 100) || qty < 1) {
       tx.delete(doc.ref);
       if (!accountSnap.exists) tx.set(accountRef, account);
       return { cancelled: true, reason: "insufficient self-financing cash at eligible fill" };
@@ -142,7 +142,7 @@ async function fillPendingAtomic(doc, pending, eligible, provenance, date) {
       entryMarketProvenance: provenance, entryEligibleAfterMs: eligible.availableFromMs,
       markDate: date, dayStartPrice: price, lastMarkPrice: price,
       lastMarkAt: eligible.barOpenAt, lastMarkProvenance: provenance,
-      qty: Number(qty.toFixed(8)), notionalUsd: Number(notionalUsd.toFixed(2)),
+      qty, notionalUsd: Number(notionalUsd.toFixed(2)),
       entryCostUsd: Number(entryCostUsd.toFixed(6)),
       entryCashDebitUsd: Number(cashDebitUsd.toFixed(6)),
       equityBeforeFillUsd: Number(equityBeforeFillUsd.toFixed(6)),
@@ -170,10 +170,16 @@ function riskConfig(params, ctx) {
     portfolioControls: ctx.portfolioControls || STRATEGY.portfolioControls,
   };
 }
+/* Pending shadow entries are exposure the arm is committed to; they used to
+   reduce cash but vanish from position count, sector, cluster and correlation
+   when the next cycle rebuilt the book — the same cross-cycle cap leak the
+   executable ledger had. A pending row enters the book at its requested
+   whole-share quantity and signal price until the eligible fill replaces it. */
 function positionRows(openRows) {
-  return openRows.filter((p) => !p.pendingEntry && Number(p.qty) > 0).map((p) => ({
+  return openRows.filter((p) => Number(p.qty) > 0).map((p) => ({
     open: true, symbol: p.symbol, qty: Number(p.qty),
-    entryPriceUsd: Number(p.entryPrice), sector: p.sector,
+    entryPriceUsd: Number(p.pendingEntry ? p.signalPrice : p.entryPrice), sector: p.sector,
+    pending: p.pendingEntry === true,
   }));
 }
 function updateBook(book, { symbol, sector, usd, price, cluster }) {
@@ -299,10 +305,13 @@ async function evaluateEntries(ctx) {
         ctx.dailyProvenanceBySymbol, nowMs);
       const add = R.checkAdd({ symbol: c.symbol, sector: c.sector,
         proposedUsd: c.sizing.usd, book, navUsd, cashUsd, cfg: rcfg, dynamicCorrelations });
-      const notionalUsd = add.allow ? c.sizing.usd : (add.allowTrimmed ? add.permittedUsd : 0);
-      if (!(notionalUsd >= 100)) {
+      const permittedNotionalUsd = add.allow ? c.sizing.usd : (add.allowTrimmed ? add.permittedUsd : 0);
+      const wholeQty = c.price > 0 ? Math.floor(permittedNotionalUsd / c.price) : 0;
+      const wholeNotionalUsd = wholeQty * c.price;
+      const notionalUsd = wholeNotionalUsd;
+      if (!(notionalUsd >= 100) || wholeQty < 1) {
         byVariant[variant.id].feasibleRejected += 1;
-        const why = add.blockedBy[0] || "minimum_notional";
+        const why = add.blockedBy[0] || (wholeQty < 1 ? "zero_whole_shares" : "minimum_notional");
         byVariant[variant.id].blocked[why] = (byVariant[variant.id].blocked[why] || 0) + 1;
         continue;
       }
@@ -337,8 +346,10 @@ async function evaluateEntries(ctx) {
         decisionMarketProvenance: c.provenance,
         signalPrice: c.price, openedAt: new Date(nowMs).toISOString(),
         openedDate: ctx.session.date, entryPrice: null,
-        qty: Number((notionalUsd / c.price).toFixed(8)), notionalUsd: Number(notionalUsd.toFixed(2)),
-        weightAtEntry: notionalUsd / navUsd, entrySlippageBps: slip,
+        /* Whole shares, like the executable ledger. A fractional shadow share
+           made the counterfactual book cheaper to enter than the real one. */
+        qty: wholeQty, notionalUsd: Number(wholeNotionalUsd.toFixed(2)),
+        weightAtEntry: wholeNotionalUsd / navUsd, entrySlippageBps: slip,
         rank: c.result.rank, z: c.result.z, cumResidualBps: c.result.cumResidualBps,
         cause: (ctx.causeBySymbol && ctx.causeBySymbol[c.symbol]) || S.CAUSE.PENDING,
         intelligenceDossierHash: ctx.intelligenceBySymbol && ctx.intelligenceBySymbol[c.symbol]
@@ -609,7 +620,10 @@ async function evaluateExits(ctx) {
       ? exitSignalContext.ranks[p.symbol]
       : ctx.ranks && ctx.ranks[p.symbol];
     const px = Number(ctx.lastPrice && ctx.lastPrice[p.symbol]);
-    const heldDays = M.tradingDaysHeld(p.openedAt, nowMs) ?? 0;
+    /* Holding age runs from the FILL bar, as it does in the executable
+       ledger; counting from the decision instant aged a shadow position by
+       the feed delay before it existed. */
+    const heldDays = M.tradingDaysHeld(p.filledAt || p.openedAt, nowMs) ?? 0;
     const provenance = provenanceFor(ctx, p.symbol);
     const bars = (ctx.panel && ctx.panel[p.symbol]) || [];
 
@@ -961,5 +975,5 @@ module.exports = {
   stable, experimentIdentity, assertExperiment, dynamicCorrelationMap, discountEffectiveN, pageHinkley,
   initialAccount, ensureAccount, accountDocId, markAccounts,
   evaluateEntries, evaluateExits, accumulate, aggregateDays, effectiveSampleSize,
-  measurementDiagnostics, rollUpStats, variantStats, openCount,
+  measurementDiagnostics, rollUpStats, variantStats, openCount, positionRows,
 };

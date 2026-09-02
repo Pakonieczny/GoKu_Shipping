@@ -38,6 +38,48 @@ const XP = require("./_investorExplore");
 
 const STAGES = ["research", "approval", "shadow", "limited_auto"];
 
+/** Is a closed trade admissible as STRICT promotion evidence? Only a trade
+ *  taken under the strict policy — not paper-learning-relaxed, not
+ *  exploratory, not control — and bound to the current frozen identity. */
+function strictTradeAdmissible(t, identity = {}, { leaderId = null, sinceMs = null } = {}) {
+  if (!t || t.paperLearningOnly === true) return false;
+  if (t.learningCohort != null && t.learningCohort !== "strict_policy") return false;
+  if (t.cohortRole != null && t.cohortRole !== "signal") return false;
+  for (const k of ["strategyHash", "universeHash", "variantsHash"]) {
+    if (!identity[k] || t[k] !== identity[k]) return false;
+  }
+  /* The evidence must belong to the policy being promoted. Before a leader
+     exists the only permissible live policy is the baseline, so "A" is the
+     bound; once a leader is named, only that leader's trades count, and only
+     those opened after its forward lock began. A baseline trade can never
+     satisfy the paper sample for a promoted challenger. */
+  const bound = leaderId || "A";
+  const variant = t.variantId == null || t.variantId === "baseline" ? "A" : String(t.variantId);
+  if (variant !== bound) return false;
+  if (Number.isFinite(Number(sinceMs)) && Number(sinceMs) > 0) {
+    const opened = Date.parse(t.openedAt || "");
+    if (!Number.isFinite(opened) || opened < Number(sinceMs)) return false;
+  }
+  return true;
+}
+
+/** Proposal age policy shared by every automatic approval path. */
+const DEFAULT_SIGNAL_LIFETIME_MS = 2 * 3600e3;
+function proposalFreshness(order, { nowMs = Date.now(), sessionDate = null,
+  maxAgeMs = DEFAULT_SIGNAL_LIFETIME_MS } = {}) {
+  const reasons = [];
+  const decisionAt = Number(order && order.decisionAtMs);
+  if (!Number.isFinite(decisionAt)) reasons.push("proposal has no decision time");
+  const ageMs = Number.isFinite(decisionAt) ? nowMs - decisionAt : Infinity;
+  const expiresAt = Number(order && order.expiresAtMs);
+  if (Number.isFinite(expiresAt) && nowMs > expiresAt) reasons.push(`proposal expired ${Math.round((nowMs - expiresAt) / 60000)} min ago`);
+  if (ageMs > maxAgeMs) reasons.push(`decision is ${Math.round(ageMs / 60000)} min old, beyond the ${Math.round(maxAgeMs / 60000)} min signal lifetime`);
+  if (sessionDate && order && order.decisionSessionDate && order.decisionSessionDate !== sessionDate) {
+    reasons.push(`decision belongs to session ${order.decisionSessionDate}, not ${sessionDate}`);
+  }
+  return { fresh: reasons.length === 0, ageMs: Number.isFinite(ageMs) ? ageMs : null, reasons };
+}
+
 function stageIndex(s) { const i = STAGES.indexOf(String(s || "research")); return i < 0 ? 0 : i; }
 
 /**
@@ -233,12 +275,17 @@ function decideStage({ current, gates, operatorCeiling, operatorHold, killSwitch
  * stack passed only marginally. Anything outside those bounds still goes to
  * the operator, so the queue holds the exceptions rather than everything.
  */
-function autoApproval(order, { stage, book, navUsd, cfg, dayCount }) {
+function autoApproval(order, { stage, book, navUsd, cfg, dayCount, nowMs = Date.now(), sessionDate = null }) {
   const pc = (cfg && cfg.portfolioControls) || {};
   const auto = (cfg && cfg.autoApproval) || {};
   const reasons = [];
 
   if (stage !== "limited_auto") reasons.push(`stage is ${stage}, auto-approval only runs at limited_auto`);
+  /* A validated book must never be handed a stale queue: the first limited-
+     auto cycle used to approve every proposal still marked "proposed",
+     however old. Same session, inside the signal lifetime, unexpired. */
+  const freshness = proposalFreshness(order, { nowMs, sessionDate });
+  if (!freshness.fresh) reasons.push(...freshness.reasons);
   if (auto.enabled === false) reasons.push("auto-approval is switched off");
   if (![order.universeHash, order.strategyHash, order.variantsHash]
       .every((h) => /^[a-f0-9]{64}$/.test(String(h || "")))) {
@@ -295,11 +342,13 @@ function autoApproval(order, { stage, book, navUsd, cfg, dayCount }) {
  * proposal, approval, and fill.
  */
 function exploratoryAutoApproval(order, { operatingState = null,
-  book = {}, navUsd = 0, cfg = {} } = {}) {
+  book = {}, navUsd = 0, cfg = {}, nowMs = Date.now(), sessionDate = null } = {}) {
   const policy = (cfg && cfg.exploratoryAuto) || {};
   const auto = policy.autoApproval || {};
   const activity = XP.activityPolicy(cfg || {});
   const reasons = [];
+  const freshness = proposalFreshness(order, { nowMs, sessionDate });
+  if (!freshness.fresh) reasons.push(...freshness.reasons);
   if (operatingState !== "exploratory_auto") {
     reasons.push(`operating state is ${operatingState || "unknown"}, not exploratory_auto`);
   }
@@ -385,5 +434,5 @@ function describe(stage, gates, decision) {
   return lines;
 }
 
-module.exports = { STAGES, stageIndex, evaluateGates, highestEarnedStage, decideStage,
+module.exports = { proposalFreshness, DEFAULT_SIGNAL_LIFETIME_MS, strictTradeAdmissible, STAGES, stageIndex, evaluateGates, highestEarnedStage, decideStage,
   autoApproval, exploratoryAutoApproval, paperLearningApproval, describe };

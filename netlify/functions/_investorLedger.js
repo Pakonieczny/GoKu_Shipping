@@ -470,7 +470,7 @@ async function proposeOrder(input) {
     paperLearningOnly = false,
     operatingStateAtDecision = null, learningCohort = null,
     exploratoryPolicyVersion = null, cohortRole = null, decisionSessionDate = null,
-    reservationHeadroomBps = 0,
+    reservationHeadroomBps = 0, expiresAtMs = null,
     executionLatencyMs = 60000 } = input;
   if (![universeHash, strategyHash, variantsHash].every((h) => /^[a-f0-9]{64}$/.test(String(h || "")))) {
     throw new Error("proposeOrder: complete policy hashes are required");
@@ -500,6 +500,15 @@ async function proposeOrder(input) {
      recorded friction is still the measured shortfall, not the headroom. */
   const headroomBps = Math.max(0, Math.min(1000, Number(reservationHeadroomBps) || 0));
   const reservationHeadroomCents = Math.round(grossCents * headroomBps / 10000);
+  /* SIGNAL LIFETIME. A proposal is an opinion about a price at an instant; it
+     is not valid a day later, let alone years later, yet nothing refused an
+     old proposal at approval. Every proposal now carries an immutable expiry
+     (the caller passes the signal lifetime; the default is two hours) and
+     approval — manual or automatic — refuses past it. */
+  const DEFAULT_LIFETIME_MS = 2 * 3600e3;
+  const decisionMs = Number(decisionAtMs);
+  const expiryMs = Number.isFinite(Number(expiresAtMs)) && Number(expiresAtMs) > decisionMs
+    ? Number(expiresAtMs) : decisionMs + DEFAULT_LIFETIME_MS;
   return A.runTransaction(async (tx) => {
     const [cur, lock, controlSnap] = await Promise.all([tx.get(ref), tx.get(lockRef), tx.get(controlRef)]);
     if (cur.exists) {
@@ -518,6 +527,7 @@ async function proposeOrder(input) {
       universeHash, strategyHash, variantsHash, qty, refPriceInt: priceInt,
       refPriceUsd: fromPrice(priceInt), grossCents, frictionCents, slippageBps,
       reservationHeadroomCents, reservationHeadroomBps: headroomBps,
+      expiresAtMs: expiryMs,
       sizing, gates, cause, evidenceRefs, variantId, portfolioRisk, decisionContext,
       decisionManifestHash, portfolioDecisionManifestHash,
       decisionMarketProvenance, executionCostContext,
@@ -551,6 +561,25 @@ async function approveOrder(orderId, operator) {
     if (o.status !== "proposed") return { orderId,
       lifecycleId: o.lifecycleId || null, status: o.status,
       approvedAtMs: o.approvedAtMs || null, duplicate: o.status === "approved", noop: true };
+    /* Expired proposals are refused by EVERY approval path and closed out
+       here so they cannot be retried later. No cash was reserved yet. */
+    /* A legacy proposal without an expiry is bounded by the default signal
+       lifetime from its decision time; a proposal without a decision time is
+       not approvable at all. Nothing in the queue is ageless. */
+    const DEFAULT_LIFETIME_MS = 2 * 3600e3;
+    const decisionAt = Number(o.decisionAtMs);
+    const expiresAt = Number.isFinite(Number(o.expiresAtMs)) ? Number(o.expiresAtMs)
+      : (Number.isFinite(decisionAt) ? decisionAt + DEFAULT_LIFETIME_MS : -Infinity);
+    if (Date.now() > expiresAt) {
+      const ageMin = Number.isFinite(decisionAt) ? Math.round((Date.now() - decisionAt) / 60000) : null;
+      const lr = orderLockRef(o.accountId, o.symbol), lock = await tx.get(lr);
+      const why = ageMin == null ? "proposal has no decision time and cannot be approved"
+        : `proposal expired before approval (decision ${ageMin} min old${Number.isFinite(Number(o.expiresAtMs)) ? "" : ", legacy proposal without expiry"})`;
+      tx.set(ref, { status: "rejected", rejectReason: why,
+        rejectedBy: "ledger:expiry", rejected_at: A.FV.serverTimestamp() }, { merge: true });
+      if (lock.exists && lock.data().orderId === orderId) tx.delete(lr);
+      return { orderId, status: "rejected", noop: true, refused: why };
+    }
     const permission = controlAllowsEntry(controlSnap.exists ? controlSnap.data() : {}, {
       accountId: o.accountId, strategyVersion: o.strategyVersion, universeVersion: o.universeVersion,
       universeHash: o.universeHash, strategyHash: o.strategyHash, variantsHash: o.variantsHash,
@@ -871,6 +900,31 @@ async function costMeter(accountId){
     verdict:grossCents>frictionCents?"gross edge exceeds frictions":grossCents>0?"positive gross, frictions dominate":"no gross edge"};
 }
 
+/** Cost meter restricted to a cohort and policy identity. The account-wide
+ *  meter above pools every closed trade — exploratory and control trades
+ *  included — so it cannot serve as promotion evidence for the strict policy.
+ *  This one sums gross realized P&L and entry+exit friction over the trades
+ *  the filter admits, from the immutable trade records themselves. */
+async function cohortCostMeter(accountId, { admit = () => true } = {}) {
+  const snap = await A.col(A.COL.trades).where("accountId", "==", accountId).get();
+  let grossCents = 0, frictionCents = 0, n = 0;
+  snap.forEach((d) => {
+    const t = d.data();
+    if (!admit(t)) return;
+    n += 1;
+    grossCents += Number(t.grossRealizedCents) || 0;
+    frictionCents += (Number(t.entryFrictionCents) || 0) + (Number(t.exitFrictionCents) || 0);
+  });
+  const netCents = grossCents - frictionCents;
+  return { accountId, trades: n, scope: "cohort_filtered",
+    frictionUsd: fromCents(frictionCents), grossEdgeUsd: fromCents(grossCents),
+    netEdgeUsd: fromCents(netCents), netRealizedUsd: fromCents(netCents),
+    coverageRatio: frictionCents > 0 ? Number((grossCents / frictionCents).toFixed(2)) : null,
+    verdict: n === 0 ? "no admissible closed trades"
+      : grossCents > frictionCents ? "gross edge exceeds frictions"
+      : grossCents > 0 ? "positive gross, frictions dominate" : "no gross edge" };
+}
+
 async function executionAudit(accountId){
   const [fills,ordersSnap,trades]=await Promise.all([
     A.col(A.COL.fills).where("accountId","==",accountId).get(),A.col(A.COL.orders).where("accountId","==",accountId).get(),
@@ -888,4 +942,4 @@ module.exports={ACCT,CENTS,PRICE_SCALE,toCents,fromCents,toPrice,fromPrice,notio
   fillAmounts,executionClockCheck,assertExecutionClock,assertBar,controlAllowsEntry,orderLockRef,
   openAccount,post,cashDividendLegs,recordCashDividend,balances,rebuildBalances,auditLedger,
   lifecycleAudit,reconcileAccount,validLifecycleId,validProvenance,executionAudit,
-  proposeOrder,approveOrder,releaseOrder,rejectOrder,recordFill,closePosition,costMeter};
+  proposeOrder,approveOrder,releaseOrder,rejectOrder,recordFill,closePosition,costMeter,cohortCostMeter};

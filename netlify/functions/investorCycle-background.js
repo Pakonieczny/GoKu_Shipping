@@ -59,14 +59,22 @@ const STATE = require("./_investorState");
 const DM = require("./_investorDecisionManifest");
 const SOAK = require("./_investorSoak");
 const XP = require("./_investorExplore");
+const DS = require("./_investorSufficiency");
 
 function sha256Json(value) {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 const FN_NAME = "investorCycle-background";
-const WORKER_LEASE_TTL_MS = 14 * 60 * 1000;
+/* The platform ceiling for a background function is 15 minutes. A lease that
+   expired at 14 let a slow cycle overlap its successor for its final minute,
+   and nothing renewed it while the worker was alive. The lease now exceeds
+   the ceiling (the worker is killed before the lease lapses, so overlap is
+   impossible) and is renewed on every progress report, so the job document
+   also shows a live heartbeat an operator can distinguish from a dead run. */
+const WORKER_LEASE_TTL_MS = 16 * 60 * 1000;
 const GUARD_LEASE_TTL_MS = 4 * 60 * 1000;
+const LEASE = require("./_investorLease");
 
 /* Progress is operational evidence, not decoration. Each update names the
    actual phase the worker has reached and, when the work is countable, records
@@ -95,6 +103,7 @@ async function reportRunProgress(runRef, { phase, label, detail = null,
   } catch (e) {
     console.warn("run progress write failed", redact({ phase, error: e.message }));
   }
+  await LEASE.heartbeat(nowMs);
 }
 
 function executionSourceEligible(quality) {
@@ -332,6 +341,7 @@ async function runCycle(jobId, { manual = false } = {}) {
      order and pace among candidates the exploratory gates admitted; it
      cannot admit one they refused. */
   const activity = XP.activityPolicy(strategy);
+  const sufficiencyPolicy = DS.policyFrom(strategy);
   const activePortfolioControls = operating.exploratoryAuto
     ? { ...(strategy.portfolioControls || {}),
         ...(exploratoryPolicy.portfolioControls || {}) }
@@ -469,13 +479,19 @@ async function runCycle(jobId, { manual = false } = {}) {
   const provider = M.activeProvider();
   let panel = {}, fetchMeta = {}, marketProvenanceBySymbol = {};
   try {
-    const got = await M.fetchBars(symbols, { timeframe: cfg.barTimeframe || "5Min", limit: 120 });
+    const got = await M.fetchBarsChunked(symbols, { timeframe: cfg.barTimeframe || "5Min", limit: 120 },
+      { chunkSize: 60, retries: 1 });
     panel = got.bars || {};
     fetchMeta = { provider: got.provider, feed: got.feed || null,
       adjustment: got.adjustment || null, fetchedAt: got.fetchedAt,
       manifestSha256: got.manifestSha256 || got.sha256 || null,
       symbolSha256: got.symbolSha256 || {}, note: got.note || null,
-      failureCount: got.failureCount || 0 };
+      failureCount: got.failureCount || 0,
+      chunks: got.chunks || null,
+      failedSymbols: got.failedSymbols || [],
+      /* Names the provider answered for the chunk but omitted: delisted,
+         renamed, or not on this feed. Surfaced, never silently dropped. */
+      missingSymbols: got.missingSymbols || [] };
     for (const sym of symbols) {
       const sourceSha256 = fetchMeta.symbolSha256[sym] || fetchMeta.manifestSha256;
       if (panel[sym] && sourceSha256) marketProvenanceBySymbol[sym] = {
@@ -758,6 +774,17 @@ async function runCycle(jobId, { manual = false } = {}) {
     excludedForSynchronousCoverage: Math.max(0,
       Object.keys(measurementPanel).length - (rp.symbols || []).length),
     excludedForSignalHistory: Math.max(0, (rp.symbols || []).length - ranked),
+    /* `ranked` counts the whole cross-section, held names included; held
+       names are evaluated for EXIT and get no entry card. The console shows
+       both numbers so "ranked 59" and "39 candidates" are not read as a
+       discrepancy. */
+    fetch: { chunks: fetchMeta.chunks || null, failedSymbols: (fetchMeta.failedSymbols || []).slice(0, 40),
+      failedSymbolCount: (fetchMeta.failedSymbols || []).length,
+      missingSymbols: (fetchMeta.missingSymbols || []).slice(0, 40),
+      missingSymbolCount: (fetchMeta.missingSymbols || []).length, error: fetchMeta.error || null },
+    heldRanked: Object.keys(ranks).filter((sym) => positionBySymbol[sym] && positionBySymbol[sym].open).length,
+    entryCandidates: Math.max(0, ranked - Object.keys(ranks)
+      .filter((sym) => positionBySymbol[sym] && positionBySymbol[sym].open).length),
     panelNote: rp.note || null,
     dominantMarketIdentity: marketIdentity,
   };
@@ -920,13 +947,38 @@ async function runCycle(jobId, { manual = false } = {}) {
      invisible to it and the same dip re-proposed the same symbol every five
      minutes — twelve stacked orders an hour for one name, each approvable. */
   const pendingOrderSymbols = new Set();
+  const pendingOrders = [];
+  let pendingExposureUnavailable = null;
   try {
     for (const st of ["proposed", "approved"]) {
       const q = await A.col(A.COL.orders)
         .where("accountId", "==", accountId).where("status", "==", st).get();
-      q.forEach((d) => pendingOrderSymbols.add(d.data().symbol));
+      q.forEach((d) => { pendingOrderSymbols.add(d.data().symbol); pendingOrders.push(d.data()); });
     }
-  } catch (e) { /* on failure, the recordFill double-fill guard still holds the line */ }
+  } catch (e) {
+    /* FAIL CLOSED. If the committed exposure cannot be read, this cycle does
+       not know what the book is committed to, so it must not add to it. The
+       fills and exits below still run; only new entries are refused, and the
+       console says why. */
+    pendingExposureUnavailable = String(e.message || e).slice(0, 120);
+    entryControl = { pass: false, reason: `pending_exposure_unavailable: ${pendingExposureUnavailable}` };
+  }
+
+  /* ── PENDING EXPOSURE IS EXPOSURE ──────────────────────────────────────
+     An order proposed or approved in an earlier cycle is a position the book
+     is committed to; on a 15-minute-delayed feed it stays pending for half an
+     hour, i.e. across several cycles. It used to survive only as a duplicate
+     guard, so each cycle's portfolio checks were run against the FILLED book
+     alone and several individually-valid manifests could sum to a book above
+     every declared cap once they filled. Every pending order is folded into
+     the starting book here at its requested notional (qty x reference price),
+     against whichever cap set is active, and its cash is treated as spent:
+     reserved cash for approved orders is already outside CASH, and a
+     proposed-but-unapproved order's notional is deducted below. The
+     reservation is recorded on the run so the audit can reconcile it. */
+  const pendingFold = R.foldPendingOrders(book, pendingOrders, navUsd, S.sectorOf);
+  const pendingExposure = { orders: pendingFold.orders, usd: pendingFold.usd, symbols: pendingFold.symbols };
+  const proposedUnreservedUsd = pendingFold.proposedUnreservedUsd;
 
   /* ── EXPLORATORY SCOREBOARD ───────────────────────────────────────────
      Closed exploratory paper trades, attributed to the frozen policies whose
@@ -936,16 +988,30 @@ async function runCycle(jobId, { manual = false } = {}) {
   let scoreboard = null, controlOpen = 0, controlNewThisSession = 0;
   if (operating.exploratoryAuto && activity.enabled) {
     try {
-      const tradeSnap = await A.col(A.COL.trades).where("accountId", "==", accountId)
-        .limit(activity.scoreboardLookbackTrades).get();
-      const closedTrades = [];
-      tradeSnap.forEach((d) => closedTrades.push(d.data()));
-      scoreboard = XP.buildScoreboard(closedTrades, { policySelection: activity.policySelection,
+      /* Only outcomes from THIS experiment steer this experiment: same frozen
+         strategy/universe/variants identity and the same exploratory policy
+         version, newest first, bounded by the lookback. The admitted sample
+         is hashed so the selection is reproducible from the record. */
+      const tradeSnap = await A.col(A.COL.trades).where("accountId", "==", accountId).get();
+      const allTrades = [];
+      tradeSnap.forEach((d) => allTrades.push(d.data()));
+      const admitted = XP.admitScoreboardTrades(allTrades, {
+        strategyHash, universeHash, variantsHash,
+        exploratoryPolicyVersion: exploratoryPolicy.version || null,
+        sufficiencyVersion: sufficiencyPolicy.version,
+        lookback: activity.scoreboardLookbackTrades });
+      scoreboard = XP.buildScoreboard(admitted.trades, { policySelection: activity.policySelection,
         policyIds: V.VARIANTS.map((v) => v.id) });
+      scoreboard.sample = { admitted: admitted.trades.length, considered: allTrades.length,
+        excluded: admitted.excluded, sampleHash: admitted.sampleHash,
+        identity: { strategyHash, universeHash, variantsHash,
+          exploratoryPolicyVersion: exploratoryPolicy.version || null,
+          sufficiencyVersion: sufficiencyPolicy.version } };
     } catch (e) {
       scoreboard = { error: String(e.message).slice(0, 120), policies: {}, cohorts: {} };
     }
-    controlOpen = allPositions.filter((p) => p.open && XP.isControlOrder(p)).length;
+    controlOpen = allPositions.filter((p) => p.open && XP.isControlOrder(p)).length
+      + pendingOrders.filter((o) => XP.isControlOrder(o)).length;
     try {
       const controlToday = await A.col(A.COL.orders).where("accountId", "==", accountId)
         .where("cohortRole", "==", "control").where("decisionSessionDate", "==", today).get();
@@ -1294,6 +1360,31 @@ async function runCycle(jobId, { manual = false } = {}) {
     const strictRes = paperLearning.active
       ? S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z, cfg: strictCfg })
       : evalRes;
+    /* The strict verdict is structurally "no" until a calibrated lower bound
+       exists (requireCalibratedEdge), so on its own it cannot tell an
+       operator whether a relaxed trade would have cleared the strict SIGNAL,
+       hazard and cost gates. This second counterfactual answers that: the
+       strict policy with only the calibration requirement lifted. It is a
+       record, not a permission. */
+    const strictUncalibratedRes = paperLearning.active
+      ? S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z,
+          cfg: { ...strictCfg, requireCalibratedEdge: false } })
+      : evalRes;
+    /* How much the desk knew when it decided. Recorded everywhere the
+       decision travels; sizes and orders exploratory entries; split on the
+       scoreboard so thin-data outcomes are measured rather than assumed. */
+    const dataSufficiency = DS.score({
+      sessionBarCount: bars.filter((b) => M.nyParts(new Date(b.t)).date === session.date).length,
+      barCount: bars.length,
+      historyDays: historyCtx[sym] ? historyCtx[sym].days : null,
+      historyOk: !!(historyCtx[sym] && historyCtx[sym].ok),
+      earningsKnown: baseDecisionInput.earningsKnown,
+      intelligenceState: intelligencePolicy && intelligencePolicy.fresh && intelligencePolicy.complete
+        ? "fresh_complete" : (intelligence ? "present" : "none"),
+      cor3mKnown: Number.isFinite(Number(reg.cor3m)),
+      advMeasured: !!(metaBySymbol[sym] && !metaBySymbol[sym].advProvisional && metaBySymbol[sym].advUsd > 0),
+      grade: quality[sym] && quality[sym].grade,
+    }, sufficiencyPolicy);
     const frozenDecision = DF.evaluateFrozenPolicies({ baseInput: baseDecisionInput,
       signalContexts: Object.fromEntries(Object.entries(signalContexts).map(([window, value]) =>
         [window, { ranks: value.ranks, zBySymbol: value.zBySymbol }])) });
@@ -1350,6 +1441,10 @@ async function runCycle(jobId, { manual = false } = {}) {
       strict: { pass: strictRes.pass, blockedBy: strictRes.blockedBy,
                 firstBlock: strictRes.firstBlock,
                 costRatio: strictRes.cost ? strictRes.cost.ratio : null },
+      strictUncalibrated: { pass: strictUncalibratedRes.pass,
+        firstBlock: strictUncalibratedRes.firstBlock },
+      dataSufficiency: { score: dataSufficiency.score, bucket: dataSufficiency.bucket,
+        missing: dataSufficiency.missing, version: dataSufficiency.version, kind: dataSufficiency.kind },
       paperRelaxed: paperLearning.active === true,
       frozenDecision,
       decisionManifestHash: decisionManifest.manifestHash,
@@ -1379,6 +1474,9 @@ async function runCycle(jobId, { manual = false } = {}) {
       strict: { pass: strictRes.pass, blockedBy: strictRes.blockedBy,
         firstBlock: strictRes.firstBlock, gates: strictRes.gates, cost: strictRes.cost,
         sizing: strictRes.sizing },
+      strictUncalibrated: { pass: strictUncalibratedRes.pass,
+        blockedBy: strictUncalibratedRes.blockedBy, firstBlock: strictUncalibratedRes.firstBlock },
+      dataSufficiency,
       paperLearning: { active: paperLearning.active === true,
         applied: paperLearning.applied || {} },
       operatingState: operating.state,
@@ -1429,8 +1527,8 @@ async function runCycle(jobId, { manual = false } = {}) {
 
     const explorationPolicyIds = firingPolicies.map((f) => f.variantId);
     if (evalRes.pass && entryControl.pass && manifestValidation.pass) {
-      proposalQueue.push({ sym, last, evalRes, strictRes, cause, causeDetail, rank,
-        intelligence, decisionManifest, cohortRole: "signal",
+      proposalQueue.push({ sym, last, evalRes, strictRes, strictUncalibratedRes, cause, causeDetail, rank,
+        intelligence, decisionManifest, cohortRole: "signal", dataSufficiency,
         policyIds: explorationPolicyIds.length ? explorationPolicyIds : ["A"],
         utilityBps: Number(evalRes.cost.calibratedNetLowerBoundBps
           ?? (Number(evalRes.cost.expectedGrossBps) - Number(evalRes.cost.requiredBps))) });
@@ -1438,8 +1536,8 @@ async function runCycle(jobId, { manual = false } = {}) {
         && entryControl.pass && manifestValidation.pass && XP.controlEligible(evalRes)) {
       /* Passed every hazard gate, failed only signal-type gates: a control
          candidate. Chosen at random later, at reduced size, and labelled. */
-      controlPool.push({ sym, last, evalRes, strictRes, cause, causeDetail, rank,
-        intelligence, decisionManifest, cohortRole: "control",
+      controlPool.push({ sym, last, evalRes, strictRes, strictUncalibratedRes, cause, causeDetail, rank,
+        intelligence, decisionManifest, cohortRole: "control", dataSufficiency,
         policyIds: [], utilityBps: 0 });
     }
   }
@@ -1461,7 +1559,8 @@ async function runCycle(jobId, { manual = false } = {}) {
   let selectionRows = null;
   if (exploratorySelection) {
     selectionRows = XP.rankCandidates(proposalQueue.map((q) => ({ sym: q.sym,
-      policyIds: q.policyIds, utilityBps: q.utilityBps })), scoreboard,
+      policyIds: q.policyIds, utilityBps: q.utilityBps,
+      penaltyBps: q.dataSufficiency ? q.dataSufficiency.orderingPenaltyBps : 0 })), scoreboard,
       { seed: `${cycleId}|${shadowExperiment.experimentHash}`, policySelection: activity.policySelection });
     const orderIndex = new Map(selectionRows.map((r, i) => [r.sym, i]));
     proposalQueue.sort((a, b) => orderIndex.get(a.sym) - orderIndex.get(b.sym));
@@ -1475,7 +1574,15 @@ async function runCycle(jobId, { manual = false } = {}) {
   }
   const selectionBySym = new Map((selectionRows || []).map((r) => [r.sym, r]));
 
-  let proposalCashUsd = cashUsdNow;
+  let proposalCashUsd = Math.max(0, cashUsdNow - proposedUnreservedUsd);
+  const signalLifetimeMs = Math.max(15 * 60e3, Math.min(6.5 * 3600e3,
+    (Number(cfg.signalLifetimeMinutes) || activity.signalLifetimeMinutes || 120) * 60e3));
+  const sessionCloseMs = (() => {
+    try {
+      const close = M.sessionCloseMs ? M.sessionCloseMs(new Date()) : null;
+      return Number.isFinite(Number(close)) ? Number(close) : NaN;
+    } catch { return NaN; }
+  })();
   const activityLog = { signalQualified: proposalQueue.length, signalProposed: 0,
     signalPacedOut: 0, controlEligible: controlPool.length, controlProposed: 0,
     controlOpenBefore: controlOpen, controlNewThisSessionBefore: controlNewThisSession,
@@ -1520,11 +1627,13 @@ async function runCycle(jobId, { manual = false } = {}) {
       /* A control entry is sized like a signal entry whose size haircuts all
          landed at the paper floor, then reduced again by the control
          multiplier. It is a baseline, not a bet. */
-      const signalScaler = control
+      const sufficiencyMult = operating.exploratoryAuto && q.dataSufficiency
+        ? Number(q.dataSufficiency.sizeMultiplier) || 1 : 1;
+      const signalScaler = (control
         ? Math.max(Number(evalRes.sizing && evalRes.sizing.combined) || 0,
             Math.max(0, Math.min(0.25, Number(cfg.paperObservationSizeFloor) || 0)))
           * activity.controlCohort.sizeMultiplier
-        : evalRes.sizing.combined;
+        : evalRes.sizing.combined) * sufficiencyMult;
       const sizing = R.positionSizeUsd({ navUsd, atrPct: hc.atrPct,
         expectedShortfall5dPct: hc.expectedShortfall5dPct,
         overnightGapEsPct: hc.overnightGapEsPct,
@@ -1612,7 +1721,7 @@ async function runCycle(jobId, { manual = false } = {}) {
         portfolioDecisionManifestHash: portfolioManifest.manifestHash,
         decisionId: `${cycleId}_${sym}`, qty, refPriceUsd: last.c, slippageBps: slip,
         executionCostContext,
-        sizing: { ...sizing, signal: evalRes.sizing,
+        sizing: { ...sizing, signal: evalRes.sizing, dataSufficiencyMultiplier: sufficiencyMult,
           ...(control ? { controlSizeMultiplier: activity.controlCohort.sizeMultiplier } : {}),
           ...(minimumShareFloorApplied ? { minimumShareFloorApplied: true } : {}) },
         gates: evalRes.gates, cause,
@@ -1636,13 +1745,21 @@ async function runCycle(jobId, { manual = false } = {}) {
             ? (exploratoryPolicy.version || null) : null,
           exploratorySelection: selected ? { method: activity.policySelection.method,
             sampledPolicyId: selected.sampledPolicyId, sampledBps: selected.sampledBps,
-            score: selected.score, scoreboardClosed: scoreboard ? scoreboard.closedExploratoryTrades : null }
+            score: selected.score, scoreboardClosed: scoreboard ? scoreboard.closedExploratoryTrades : null,
+            scoreboardSampleHash: scoreboard && scoreboard.sample ? scoreboard.sample.sampleHash : null }
             : (control ? { method: "control_random", seed: cycleId } : null),
           strictVerdict: { pass: q.strictRes ? q.strictRes.pass : false,
             blockedBy: q.strictRes ? q.strictRes.blockedBy : ["strict_verdict_missing"],
             firstBlock: q.strictRes ? q.strictRes.firstBlock : "strict verdict missing" },
           activeVerdict: { pass: evalRes.pass === true, blockedBy: evalRes.blockedBy || [],
             firstBlock: evalRes.firstBlock || null },
+          dataSufficiency: q.dataSufficiency ? { score: q.dataSufficiency.score, bucket: q.dataSufficiency.bucket,
+            missing: q.dataSufficiency.missing, sizeMultiplier: q.dataSufficiency.sizeMultiplier,
+            orderingPenaltyBps: q.dataSufficiency.orderingPenaltyBps,
+            version: q.dataSufficiency.version, kind: q.dataSufficiency.kind } : null,
+          decisionAgeMinutesAtProposal: 0,
+          strictUncalibratedVerdict: q.strictUncalibratedRes ? { pass: q.strictUncalibratedRes.pass === true,
+            blockedBy: q.strictUncalibratedRes.blockedBy || [], firstBlock: q.strictUncalibratedRes.firstBlock || null } : null,
           crossSectionRank: q.rank,
           queueRank: queueIndex + 1,
           eligibleBatchSize: batchSize,
@@ -1680,6 +1797,10 @@ async function runCycle(jobId, { manual = false } = {}) {
         executionLatencyMs: cfg.executionLatencyMs || 60000,
         reservationHeadroomBps: operating.exploratoryAuto && activity.enabled
           ? activity.reservationHeadroomBps : 0,
+        /* Signal lifetime: the proposal dies at the earlier of the configured
+           lifetime and the end of this regular session. */
+        expiresAtMs: Math.min(decisionAtMs + signalLifetimeMs,
+          Number.isFinite(sessionCloseMs) ? sessionCloseMs : Infinity),
       });
       if (o.blocked) { portfolioBlocks.push({ symbol: sym, reason: o.blocked }); return false; }
       pendingOrderSymbols.add(sym);
@@ -1774,10 +1895,11 @@ async function runCycle(jobId, { manual = false } = {}) {
         const verdict = operating.exploratoryAuto
           ? LD.exploratoryAutoApproval(o, {
             operatingState: operating.state, book, navUsd,
-            cfg: strategy,
+            cfg: strategy, nowMs: Date.now(), sessionDate: session.date,
           })
           : LD.autoApproval(o, {
             stage: stageNow, book, navUsd, cfg: strategy, dayCount,
+            nowMs: Date.now(), sessionDate: session.date,
           });
         if (!verdict.approve) {
           if (operating.exploratoryAuto) {
@@ -1823,6 +1945,18 @@ async function runCycle(jobId, { manual = false } = {}) {
       const o = d.data();
       if (!entryControl.pass) {
         settled.skipped.push({ orderId: o.orderId, why: `entry safety closed: ${entryControl.reason}` });
+        continue;
+      }
+      /* Past its signal lifetime, an approved order is released whatever its
+         cohort — the price it was an opinion about is gone. */
+      if (Number.isFinite(Number(o.expiresAtMs)) && Date.now() > Number(o.expiresAtMs)) {
+        try {
+          const released = await L.releaseOrder(o.orderId,
+            `expired — signal lifetime elapsed before an eligible fill (decision ${Math.round((Date.now() - Number(o.decisionAtMs)) / 60000)} min old)`);
+          if (!released.noop) settled.expiredAtSessionClose.push({ orderId: o.orderId, symbol: o.symbol, why: "lifetime" });
+        } catch (e) {
+          settled.skipped.push({ orderId: o.orderId, why: `could not release expired entry: ${String(e.message).slice(0, 80)}` });
+        }
         continue;
       }
       /* An exploratory entry that did not fill in its own session is not
@@ -2188,8 +2322,30 @@ async function runCycle(jobId, { manual = false } = {}) {
     let runs = 0, bad = 0;
     runsSnap.forEach((d) => { runs += 1; if (d.data().status === "dead" || d.data().error) bad += 1; });
 
-    const closedReal = await A.col(A.COL.trades)
+    /* PROMOTION EVIDENCE IS STRICT-COHORT ONLY. paper_sample and
+       edge_beats_cost used to count every closed trade in the account, which
+       after exploratory auto (and the control cohort) means unvalidated
+       trades were being presented to the ladder as strict evidence. A trade
+       is admissible only when it was taken under the strict policy (not
+       paper-learning-relaxed, not exploratory, not control) and is bound to
+       the CURRENT frozen strategy/universe/variants identity. */
+    /* Bind to the allocation THIS cycle just computed (and the forward lock
+       it just wrote), not the one read at the start of the cycle. On the
+       cycle that first names a leader, the start-of-cycle read still says
+       "no leader" and baseline trades would have satisfied the challenger's
+       sample for one check. */
+    const freshAllocation = (typeof allocation !== "undefined" && allocation) || allocationRead || null;
+    const freshLock = (typeof forwardLock !== "undefined" && forwardLock)
+      || (freshAllocation && freshAllocation.forwardLock) || null;
+    const evidenceLeaderId = freshAllocation && freshAllocation.leaderId || null;
+    const evidenceSinceMs = freshLock && Number(freshLock.lockedAtMs) > 0 ? Number(freshLock.lockedAtMs) : null;
+    const strictTradeAdmit = (t) => LD.strictTradeAdmissible(t, { strategyHash, universeHash, variantsHash },
+      { leaderId: evidenceLeaderId, sinceMs: evidenceSinceMs });
+    const closedAllSnap = await A.col(A.COL.trades)
       .where("accountId", "==", accountId).get();
+    let closedStrict = 0, closedAll = 0;
+    closedAllSnap.forEach((d) => { closedAll += 1; if (strictTradeAdmit(d.data())) closedStrict += 1; });
+    const closedReal = { size: closedStrict, all: closedAll };
     const commit = process.env.COMMIT_REF || process.env.DEPLOY_ID || "local";
     const feedCfg = M.providerConfig(marketIdentity.provider, marketIdentity.feed);
     const marketDataEligible = feedCfg.consolidated === true && feedCfg.liquidityEligible !== false
@@ -2206,9 +2362,13 @@ async function runCycle(jobId, { manual = false } = {}) {
       shadowDays: shadow && Number.isFinite(shadow.completeDays) ? shadow.completeDays : 0,
       shadowUnavailable: !!(shadow && shadow.error),
       closedRealTrades: closedReal.size,
+      closedTradesAllCohorts: closedReal.all,
+      evidenceBinding: { leaderId: evidenceLeaderId || "A", sinceMs: evidenceSinceMs,
+        strategyHash, universeHash, variantsHash },
       allocation: allocation || {},
       calibration: leaderCalibration || { calibrated: calibration != null, pass: false },
-      costMeter: await L.costMeter(accountId).catch(() => ({})),
+      costMeter: await L.cohortCostMeter(accountId, { admit: strictTradeAdmit }).catch(() => ({})),
+      accountCostMeter: await L.costMeter(accountId).catch(() => ({})),
     };
 
     /* Re-read and mutate control in ONE transaction. A kill, hold, ceiling or
@@ -2395,6 +2555,8 @@ async function runCycle(jobId, { manual = false } = {}) {
         leadingPolicyId: scoreboard.leadingPolicyId || null,
         cohorts: scoreboard.cohorts || null,
         signalVsControl: scoreboard.signalVsControl || null,
+        sufficiency: scoreboard.sufficiency || null,
+        sample: scoreboard.sample || null,
         policies: scoreboard.policies || null,
         prior: scoreboard.prior || null,
         affectsDecision: scoreboard.affectsDecision || null,
@@ -2442,6 +2604,22 @@ async function runCycle(jobId, { manual = false } = {}) {
     risk: {
       navUsd: Number(finalBook.navUsd.toFixed(2)),
       openPositions: finalBook.count,
+      pendingExposure: { orders: pendingExposure.orders, usd: Number(pendingExposure.usd.toFixed(2)),
+        pctOfNav: navUsd > 0 ? Number((100 * pendingExposure.usd / navUsd).toFixed(2)) : 0,
+        countedAgainstCaps: true, unavailable: pendingExposureUnavailable || null },
+      /* The limits the backend actually enforced this cycle. The console must
+         render THESE, not a hardcoded copy of the strict block. */
+      limits: {
+        capSet: operating.exploratoryAuto ? "exploratory" : "strict",
+        maxOpenPositions: activePortfolioControls.maxOpenPositions ?? 12,
+        maxGrossExposurePct: activePortfolioControls.maxGrossExposurePct ?? 60,
+        minCashPct: activePortfolioControls.minCashPct ?? 40,
+        sectorExposurePctOfNav: activePortfolioControls.sectorExposurePctOfNav ?? 20,
+        correlatedClusterPctOfNav: activePortfolioControls.correlatedClusterPctOfNav ?? 10,
+        oneDayLossPausePctOfNav: activePortfolioControls.oneDayLossPausePctOfNav ?? 1,
+        drawdownFreezePctFromHigh: activePortfolioControls.drawdownFreezePctFromHigh ?? 6,
+        ordinaryPositionPctOfNav: activePortfolioControls.ordinaryPositionPctOfNav ?? 3,
+      },
       grossPct: finalBook.grossPct,
       unrealisedPct: finalBook.unrealisedPct,
       drawdownPct: Number(riskState.drawdownPct.toFixed(2)),
@@ -2826,6 +3004,8 @@ exports.handler = async (event) => {
       return { statusCode: lease.inFlight ? 202 : 409,
         body: JSON.stringify({ ok: false, jobId, reason: lease.reason || "already running" }) };
     }
+    LEASE.setActive({ jobRef, accountLeaseRef: accountCycleLeaseRef, leaseOwner,
+      ttlMs: task === "guard" ? GUARD_LEASE_TTL_MS : WORKER_LEASE_TTL_MS });
 
     const out = task === "evidence" ? await runEvidence(jobId)
       : task === "guard" ? await PG.runGuard(jobId)
@@ -2845,9 +3025,11 @@ exports.handler = async (event) => {
       if (accountCycleLeaseRef) tx.set(accountCycleLeaseRef, { leaseExpiresAt: 0,
         releasedAt: A.FV.serverTimestamp(), lastJobId: jobId }, { merge: true });
     });
+    LEASE.clear();
     console.log("investorCycle done", JSON.stringify(redact(out)));
     return { statusCode: 200, body: JSON.stringify({ ok: true, ...out }) };
   } catch (e) {
+    LEASE.clear();
     console.error("investorCycle failed", redact({ jobId, task, error: e.message, stack: (e.stack || "").slice(0, 400) }));
     try {
       await A.runTransaction(async (tx) => {
@@ -2876,6 +3058,8 @@ exports.handler = async (event) => {
 };
 
 exports.runCycle = runCycle;
+exports.reportRunProgress = reportRunProgress;
+exports.WORKER_LEASE_TTL_MS = WORKER_LEASE_TTL_MS;
 exports.applyOverfitGuard = applyOverfitGuard;
 exports.attentionZ = attentionZ;
 exports.executionSourceEligible = executionSourceEligible;

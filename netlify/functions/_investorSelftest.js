@@ -985,7 +985,7 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v3"
+      && policy.version === "exploratory-auto-v4"
       && learn.minAbsZ === 1.0 && learn.entryRank === 0.5
       && learn.costMarginMultiple === 0.25
       && learn.exitRank === 0.6 && learn.maxHoldDays === 3
@@ -998,6 +998,7 @@ function runFixtures() {
   cases.push(fixture("exploratory_approval_has_no_daily_or_position_quota", () => {
     const LD = require("./_investorLadder");
     const order = { paperLearningOnly: true, qty: 10, refPriceUsd: 100,
+      decisionAtMs: Date.now() - 60e3,
       quality: { grade: "B", tradable: true, researchEligible: true },
       universeHash: "a".repeat(64), strategyHash: "b".repeat(64),
       variantsHash: "c".repeat(64),
@@ -1146,7 +1147,7 @@ function runFixtures() {
     /* The ladder approves a control order that failed only signal gates and
        refuses one that failed a hazard gate; a non-control order with a
        failed gate is refused as before. */
-    const base = { paperLearningOnly: true, qty: 1, refPriceUsd: 100,
+    const base = { paperLearningOnly: true, qty: 1, refPriceUsd: 100, decisionAtMs: Date.now() - 60e3,
       quality: { grade: "B", tradable: true, researchEligible: true },
       universeHash: "a".repeat(64), strategyHash: "b".repeat(64), variantsHash: "c".repeat(64),
       decisionMarketProvenance: { provider: "alpaca", feed: "delayed_sip",
@@ -1239,10 +1240,259 @@ function runFixtures() {
       && notAuthorised.eligible === false && paused.eligible === false;
   }));
 
+  /* ── cross-cycle exposure, shadow parity, strict evidence isolation ──── */
+  cases.push(fixture("pending_orders_count_against_every_portfolio_cap", () => {
+    const sectorOf = () => "semi";
+    const book = { count: 0, grossUsd: 0, grossPct: 0, bySectorPct: {}, byClusterPct: {}, rows: [] };
+    const pending = [
+      { symbol: "AAA", status: "approved", qty: 10, refPriceUsd: 100, orderId: "o1" },
+      { symbol: "BBB", status: "proposed", qty: 20, refPriceUsd: 50, orderId: "o2" },
+      { symbol: "CCC", status: "filled", qty: 5, refPriceUsd: 10 },          // not pending
+      { symbol: "AAA", status: "proposed", qty: 1, refPriceUsd: 100 },       // duplicate symbol
+    ];
+    const fold = R.foldPendingOrders(book, pending, 100000, sectorOf);
+    if (fold.orders !== 2 || fold.usd !== 2000 || fold.proposedUnreservedUsd !== 1000) return false;
+    if (book.count !== 2 || book.grossUsd !== 2000 || Math.abs(book.bySectorPct.semi - 2) > 1e-9) return false;
+    /* The caps now bind on the committed book: a third name is refused by the
+       position count, and a duplicate of a pending name is refused. */
+    const cfg = { ...strategy, portfolioControls: { ...strategy.portfolioControls,
+      maxOpenPositions: 2, requireDynamicCorrelation: false } };
+    const third = R.checkAdd({ symbol: "DDD", sector: "semi", proposedUsd: 1000, book,
+      navUsd: 100000, cashUsd: 97000, cfg, dynamicCorrelations: {} });
+    const dup = R.checkAdd({ symbol: "BBB", sector: "semi", proposedUsd: 1000, book,
+      navUsd: 100000, cashUsd: 97000, cfg: strategy, dynamicCorrelations: {} });
+    return third.allow === false && third.blockedBy.includes("max_positions")
+      && dup.allow === false && dup.blockedBy.includes("duplicate");
+  }));
+
+  cases.push(fixture("shadow_book_includes_pending_entries_at_whole_shares", () => {
+    const rows = SH.positionRows([
+      { symbol: "AAA", pendingEntry: true, qty: 3, signalPrice: 100, entryPrice: null, sector: "semi" },
+      { symbol: "BBB", pendingEntry: false, qty: 2, signalPrice: 50, entryPrice: 51, sector: "semi" },
+      { symbol: "CCC", pendingEntry: true, qty: 0, signalPrice: 10, sector: "semi" },
+    ]);
+    if (rows.length !== 2) return false;
+    const a = rows.find((r) => r.symbol === "AAA"), b = rows.find((r) => r.symbol === "BBB");
+    if (!(a && a.pending === true && a.entryPriceUsd === 100 && a.qty === 3)) return false;
+    if (!(b && b.pending === false && b.entryPriceUsd === 51)) return false;
+    /* Whole shares: the entry path floors, and the simulator version names it. */
+    const src = sourceOf(SH.evaluateEntries);
+    return /Math\.floor\(permittedNotionalUsd \/ c\.price\)/.test(src)
+      && /whole-shares/.test(SH.SIMULATOR_VERSION)
+      && /tradingDaysHeld\(p\.filledAt \|\| p\.openedAt/.test(sourceOf(SH.evaluateExits));
+  }));
+
+  cases.push(fixture("promotion_evidence_admits_only_strict_current_identity_trades", () => {
+    const id = { strategyHash: "s".repeat(64), universeHash: "u".repeat(64), variantsHash: "v".repeat(64) };
+    const base = { ...id, paperLearningOnly: false, learningCohort: "strict_policy", cohortRole: "signal", netBps: 10 };
+    if (LD.strictTradeAdmissible(base, id) !== true) return false;
+    if (LD.strictTradeAdmissible({ ...base, learningCohort: null, cohortRole: null }, id) !== true) return false; // legacy rows
+    const refused = [
+      { ...base, paperLearningOnly: true },
+      { ...base, learningCohort: "exploratory_auto_unvalidated" },
+      { ...base, learningCohort: "relaxed_operator_paper" },
+      { ...base, cohortRole: "control" },
+      { ...base, strategyHash: "x".repeat(64) },
+      { ...base, variantsHash: "x".repeat(64) },
+    ];
+    if (!refused.every((t) => LD.strictTradeAdmissible(t, id) === false)) return false;
+    /* Bound to the policy being promoted: a baseline trade never counts for a
+       promoted challenger, and only trades opened after the forward lock do. */
+    const aTrade = { ...base, variantId: "A", openedAt: "2026-09-01T15:00:00Z" };
+    const bTrade = { ...base, variantId: "B", openedAt: "2026-09-01T15:00:00Z" };
+    if (LD.strictTradeAdmissible(aTrade, id, { leaderId: "B" }) !== false) return false;
+    if (LD.strictTradeAdmissible(bTrade, id, { leaderId: "B" }) !== true) return false;
+    if (LD.strictTradeAdmissible(bTrade, id, { leaderId: "B", sinceMs: Date.parse("2026-09-02T00:00:00Z") }) !== false) return false;
+    if (LD.strictTradeAdmissible(bTrade, id, { leaderId: null }) !== false) return false;   // no leader → baseline only
+    /* And the cycle feeds the ladder through that filter, not the raw count. */
+    const cycle = sourceOf(require("./investorCycle-background").runCycle);
+    return /LD\.strictTradeAdmissible\(t, \{ strategyHash, universeHash, variantsHash \},\s*\{ leaderId: evidenceLeaderId, sinceMs: evidenceSinceMs \}\)/.test(cycle)
+      && /cohortCostMeter\(accountId, \{ admit: strictTradeAdmit \}\)/.test(cycle)
+      && /closedRealTrades: closedReal\.size/.test(cycle)
+      && /if \(strictTradeAdmit\(d\.data\(\)\)\) closedStrict \+= 1/.test(cycle);
+  }));
+
+  cases.push(fixture("worker_lease_exceeds_platform_ceiling_and_heartbeats", () => {
+    const CYC = require("./investorCycle-background");
+    const LEASE = require("./_investorLease");
+    if (!(Number(CYC.WORKER_LEASE_TTL_MS) > 15 * 60 * 1000)) return false;
+    const handler = sourceOf(CYC.handler), guard = sourceOf(require("./_investorPositionGuard").runGuard);
+    return /LEASE\.setActive\(\{ jobRef, accountLeaseRef: accountCycleLeaseRef, leaseOwner/.test(handler)
+      && /LEASE\.clear\(\)/.test(handler)
+      && /await LEASE\.heartbeat\(nowMs\);/.test(sourceOf(CYC.reportRunProgress))
+      && /heartbeat\(Date\.now\(\)\)/.test(sourceOf(require("./_investorPositionGuard").guardProgress))
+      && typeof LEASE.heartbeat === "function" && LEASE.active() === null && guard.length > 0;
+  }));
+
+  /* ── round 3: order lifetime, fail-closed exposure, chunked fetch ────── */
+  cases.push(fixture("stale_proposals_are_refused_by_every_automatic_approval_path", () => {
+    const now = Date.parse("2026-09-01T15:00:00Z");
+    const fresh = LD.proposalFreshness({ decisionAtMs: now - 5 * 60e3, expiresAtMs: now + 3600e3,
+      decisionSessionDate: "2026-09-01" }, { nowMs: now, sessionDate: "2026-09-01" });
+    if (fresh.fresh !== true) return false;
+    const ancient = LD.proposalFreshness({ decisionAtMs: now - 2435 * 864e5, decisionSessionDate: "2019-12-31" },
+      { nowMs: now, sessionDate: "2026-09-01" });
+    if (ancient.fresh !== false || ancient.reasons.length < 2) return false;
+    const expired = LD.proposalFreshness({ decisionAtMs: now - 10 * 60e3, expiresAtMs: now - 60e3,
+      decisionSessionDate: "2026-09-01" }, { nowMs: now, sessionDate: "2026-09-01" });
+    if (expired.fresh !== false) return false;
+    const yesterday = LD.proposalFreshness({ decisionAtMs: now - 30 * 60e3, decisionSessionDate: "2026-08-31" },
+      { nowMs: now, sessionDate: "2026-09-01" });
+    if (yesterday.fresh !== false) return false;
+    /* Both automatic approval paths refuse the ancient proposal. */
+    const order = { paperLearningOnly: true, qty: 10, refPriceUsd: 100, decisionAtMs: now - 2435 * 864e5,
+      decisionSessionDate: "2019-12-31",
+      quality: { grade: "B", tradable: true, researchEligible: true },
+      universeHash: "a".repeat(64), strategyHash: "b".repeat(64), variantsHash: "c".repeat(64),
+      decisionMarketProvenance: { provider: "alpaca", feed: "delayed_sip", adjustment: "split_and_dividend", sourceSha256: "d".repeat(64) },
+      cost: { ratio: 2, calibratedNetLowerBoundBps: 5 },
+      gates: [{ id: "signal", blocking: true, pass: true }],
+      cause: S.CAUSE.ABNORMAL_ACTIVITY,
+      decisionContext: { strictVerdict: { pass: true, blockedBy: [] } } };
+    const limited = LD.autoApproval(order, { stage: "limited_auto", book: { count: 0, grossPct: 0 },
+      navUsd: 100000, cfg: strategy, dayCount: 0, nowMs: now, sessionDate: "2026-09-01" });
+    const exploratory = LD.exploratoryAutoApproval(order, { operatingState: "exploratory_auto",
+      book: { count: 0, grossPct: 0 }, navUsd: 100000, cfg: strategy, nowMs: now, sessionDate: "2026-09-01" });
+    if (limited.approve !== false || !/old|expired|session/.test(limited.detail)) return false;
+    if (exploratory.approve !== false || !/old|expired|session/.test(exploratory.detail)) return false;
+    /* And the ledger refuses an expired proposal at approval, in source. */
+    const ledgerSrc = sourceOf(L.approveOrder);
+    return /proposal expired before approval/.test(ledgerSrc)
+      && /expiresAtMs: expiryMs/.test(sourceOf(L.proposeOrder));
+  }));
+
+  cases.push(fixture("pending_exposure_read_failure_closes_new_entries", () => {
+    const cycle = sourceOf(require("./investorCycle-background").runCycle);
+    if (!/freshAllocation && freshAllocation\.leaderId/.test(cycle)) return false;   // ladder bound to the fresh allocation
+    return /pendingExposureUnavailable = String\(e\.message \|\| e\)/.test(cycle)
+      && /entryControl = \{ pass: false, reason: `pending_exposure_unavailable/.test(cycle)
+      && !/on failure, the recordFill double-fill guard still holds the line/.test(cycle);
+  }));
+
+  cases.push(fixture("roster_fetch_is_chunked_retried_and_reports_missing_symbols", () => {
+    const src = sourceOf(M.fetchBarsChunked);
+    if (!/for \(let attempt = 0; attempt <= retries; attempt \+= 1\)/.test(src)) return false;
+    const list = ["AAA", "BBB", "CCC", "DDD"], chunks = [["AAA", "BBB"], ["CCC", "DDD"]];
+    const ok = { provider: "alpaca", feed: "delayed_sip", adjustment: "split_and_dividend", pages: 1,
+      manifestSha256: "1".repeat(64), bars: { AAA: [{ t: "x" }] }, fetchedAt: "2026-09-01T15:00:00Z" };
+    const merged = M.mergeChunkResults(list, chunks, [ok, { error: "ECONNRESET" }], "alpaca");
+    if (merged.chunks.failed.length !== 1 || merged.failedSymbols.join() !== "CCC,DDD") return false;
+    if (merged.missingSymbols.join() !== "BBB") return false;          // answered chunk, omitted symbol
+    if (merged.symbolSha256.AAA !== "1".repeat(64)) return false;     // provenance is its own chunk's hash
+    if (!/^[a-f0-9]{64}$/.test(merged.manifestSha256)) return false;
+    const twoOk = M.mergeChunkResults(list, chunks, [ok, { ...ok, manifestSha256: "2".repeat(64), bars: { CCC: [{ t: "y" }] } }], "alpaca");
+    return twoOk.chunks.failed.length === 0 && twoOk.missingSymbols.join() === "BBB,DDD"
+      && twoOk.symbolSha256.CCC === "2".repeat(64) && twoOk.manifestSha256 !== merged.manifestSha256;
+  }));
+
+  cases.push(fixture("dispatch_failure_restores_cadence_stamp_by_compare_and_set", () => {
+    const src = sourceOf(require("./investorKick").dispatch);
+    return /res = \{ ok: false, status: 0, thrown:/.test(src)
+      && /if \(stored === now\) tx\.set\(cref, \{ \[stamp\]: previousStamp \}, \{ merge: true \}\)/.test(src)
+      && /A\.runTransaction\(async \(tx\) => \{\s*const cur = await tx\.get\(cref\)/.test(src);
+  }));
+
+  cases.push(fixture("data_sufficiency_scores_sizes_and_orders_thin_data_without_refusing_it", () => {
+    const DS = require("./_investorSufficiency");
+    const full = DS.score({ sessionBarCount: 78, historyDays: 300, historyOk: true, earningsKnown: true,
+      intelligenceState: "fresh_complete", cor3mKnown: true, advMeasured: true, grade: "B" });
+    const thin = DS.score({ sessionBarCount: 26, historyDays: 0, historyOk: false, earningsKnown: false,
+      intelligenceState: "none", cor3mKnown: false, advMeasured: false, grade: "B" });
+    if (full.score !== 100 || full.bucket !== "high" || full.sizeMultiplier !== 1) return false;
+    if (!(thin.score < 45 && thin.bucket === "low")) return false;
+    if (!(thin.sizeMultiplier >= DS.SIZE_FLOOR && thin.sizeMultiplier < 0.75)) return false;   // smaller, never zero
+    if (!(thin.orderingPenaltyBps > full.orderingPenaltyBps && thin.orderingPenaltyBps <= 20)) return false;
+    if (!thin.missing.includes("earningsWindow") || !thin.missing.includes("intelligence")) return false;
+    /* Ordering: with identical draws, the fully-known name is taken first. */
+    const rows = XP.rankCandidates([
+      { sym: "THIN", policyIds: ["A"], utilityBps: 5, penaltyBps: thin.orderingPenaltyBps },
+      { sym: "FULL", policyIds: ["A"], utilityBps: 5, penaltyBps: full.orderingPenaltyBps }],
+      null, { seed: "s", policySelection: { ...XP.DEFAULTS.policySelection, method: "utility" } });
+    if (rows[0].sym !== "FULL") return false;
+    /* Scoreboard splits signal trades by the sufficiency they were taken with. */
+    const trade = (net, bucket) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: net,
+      decisionContext: { explorationPolicyIds: ["A"], cohortRole: "signal",
+        dataSufficiency: { score: bucket === "high" ? 90 : 30, bucket } } });
+    const sb = XP.buildScoreboard([trade(10, "high"), trade(20, "high"), trade(-30, "low")], { policyIds: ["A"] });
+    return sb.sufficiency.high.n === 2 && sb.sufficiency.low.n === 1 && sb.sufficiency.low.meanNetBps === -30
+      && DS.ofRecord({ decisionContext: { dataSufficiency: { score: 80 } } }).bucket === "high";
+  }));
+
+  /* ── round 4: frozen sufficiency policy, scoreboard identity, legacy expiry, rounding ── */
+  cases.push(fixture("sufficiency_policy_is_frozen_versioned_and_counts_same_session_bars", () => {
+    const DS = require("./_investorSufficiency");
+    const pol = DS.policyFrom(strategy);
+    const declared = strategy.exploratoryAuto.activity.sufficiency;
+    if (!declared || pol.version !== declared.version || pol.sizeFloor !== declared.sizeFloor) return false;
+    /* Hash-bound: changing a weight changes the frozen strategy identity. */
+    const h0 = B.strategyHash(strategy);
+    const changed = JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(strategy).filter(([, v]) => typeof v !== "function"))));
+    changed.exploratoryAuto.activity.sufficiency.weights.intradayBars += 1;
+    if (B.strategyHash(changed) === h0) return false;
+    /* Same-session bars only: 4 current bars with a full prior day stored
+       must score as 4 bars, not 82. */
+    const thin = DS.score({ sessionBarCount: 4, barCount: 82, historyDays: 300, historyOk: true, earningsKnown: true,
+      intelligenceState: "fresh_complete", cor3mKnown: true, advMeasured: true, grade: "B" }, pol);
+    const full = DS.score({ sessionBarCount: 82, barCount: 82, historyDays: 300, historyOk: true, earningsKnown: true,
+      intelligenceState: "fresh_complete", cor3mKnown: true, advMeasured: true, grade: "B" }, pol);
+    if (!(thin.score < full.score && full.score === 100)) return false;
+    if (thin.version !== declared.version || thin.kind !== "heuristic_coverage_score") return false;
+    /* Kick-start floor: the thinnest name is still taken at >= 60% size. */
+    const nothing = DS.score({ sessionBarCount: 0, historyDays: 0, historyOk: false, earningsKnown: false,
+      intelligenceState: "none", cor3mKnown: false, advMeasured: false, grade: "C" }, pol);
+    return nothing.sizeMultiplier >= 0.6 && nothing.sizeMultiplier > 0 && nothing.orderingPenaltyBps <= 20;
+  }));
+
+  cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
+    const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
+      exploratoryPolicyVersion: "exploratory-auto-v4", sufficiencyVersion: "data-sufficiency-v2" };
+    const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
+      strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
+      exploratoryPolicyVersion: "exploratory-auto-v4", closedAt: "2026-09-01T15:00:00Z",
+      decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
+    const trades = [
+      mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
+      mk({ tradeId: "b", closedAt: "2026-09-02T15:00:00Z" }),
+      mk({ tradeId: "c", strategyHash: "x".repeat(64) }),                       // other identity
+      mk({ tradeId: "d", exploratoryPolicyVersion: "exploratory-auto-v3" }),  // older policy
+      mk({ tradeId: "e", decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v1" } } }),
+      mk({ tradeId: "f", paperLearningOnly: false, learningCohort: "strict_policy" }),
+    ];
+    trades.push(mk({ tradeId: "g", exploratoryPolicyVersion: undefined }));                       // missing policy version
+    trades.push(mk({ tradeId: "h", decisionContext: { dataSufficiency: { score: 50 } } }));         // missing sufficiency version
+    const r = XP.admitScoreboardTrades(trades, { ...id, lookback: 1 });
+    if (r.count !== 1 || r.trades[0].tradeId !== "b") return false;             // newest first, lookback applied
+    if (r.excluded.identity !== 1 || r.excluded.policyVersion !== 2 || r.excluded.sufficiencyVersion !== 2
+        || r.excluded.notExploratory !== 1 || r.excluded.lookback !== 1) return false;
+    /* An incomplete current identity admits nothing. */
+    if (XP.admitScoreboardTrades(trades, { ...id, sufficiencyVersion: null }).count !== 0) return false;
+    const r2 = XP.admitScoreboardTrades(trades, { ...id, lookback: 10 });
+    const r3 = XP.admitScoreboardTrades(trades, { ...id, lookback: 10 });
+    return r2.count === 2 && r2.sampleHash === r3.sampleHash && r2.sampleHash !== r.sampleHash
+      && /^[a-f0-9]{64}$/.test(r2.sampleHash);
+  }));
+
+  cases.push(fixture("legacy_proposals_without_expiry_are_bounded_by_the_default_lifetime", () => {
+    const src = sourceOf(L.approveOrder);
+    return /legacy proposal without expiry/.test(src)
+      && /decisionAt \+ DEFAULT_LIFETIME_MS/.test(src)
+      && /proposal has no decision time and cannot be approved/.test(src)
+      && /legacy proposal without an expiry rejected at bootstrap/.test(sourceOf(B.ensureBootstrapped));
+  }));
+
+  cases.push(fixture("portfolio_headroom_is_rounded_down_to_the_cent", () => {
+    const book = { count: 0, grossUsd: 0, grossPct: 0, bySectorPct: {}, byClusterPct: {}, rows: [] };
+    const cfg = { ...strategy, portfolioControls: { ...strategy.portfolioControls, requireDynamicCorrelation: false,
+      maxGrossExposurePct: 60, minCashPct: 40 } };
+    const add = R.checkAdd({ symbol: "AAA", sector: "semi", proposedUsd: 1e9, book, navUsd: 33333.33, cashUsd: 33333.33, cfg, dynamicCorrelations: {} });
+    const cents = Math.round(add.headroomUsd * 100);
+    return Math.abs(add.headroomUsd * 100 - cents) < 1e-6 && add.headroomUsd <= 33333.33 * 0.6 && add.permittedUsd === add.headroomUsd;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v12-exploratory-activity", count: cases.length, cases });
+  const fixtureHash = digest({ schema: "runtime-fixtures-v16-strategy-v10", count: cases.length, cases });
   return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }

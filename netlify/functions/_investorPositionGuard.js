@@ -38,6 +38,7 @@ async function guardProgress(runRef, { phase, label, detail = null, pct = 0,
         updatedAtMs: nowMs,
       } }, { merge: true });
   } catch {}
+  await require("./_investorLease").heartbeat(Date.now());
 }
 
 function trustedDecisionSource(provenance, quality) {
@@ -494,4 +495,4 @@ async function runGuard(jobId) {
   return summary;
 }
 
-module.exports = { runGuard, armExitIntent, trustedDecisionSource };
+module.exports = { guardProgress, runGuard, armExitIntent, trustedDecisionSource };

@@ -214,6 +214,18 @@ const ACTIONS = {
 
     const candidates = [];
     candSnap.forEach((d) => candidates.push(d.data()));
+    /* The evidence binding the ladder applies (leader + forward-lock start),
+       read once so the strict sample counter agrees with the ladder. */
+    let allocationLeaderId = null, allocationSinceMs = null;
+    try {
+      const allocForEvidence = await A.col(A.COL.control).doc("allocation").get();
+      if (allocForEvidence.exists) {
+        const a = allocForEvidence.data();
+        allocationLeaderId = a.leaderId || null;
+        allocationSinceMs = a.forwardLock && Number(a.forwardLock.lockedAtMs) > 0
+          ? Number(a.forwardLock.lockedAtMs) : null;
+      }
+    } catch { /* evidence binding falls back to the baseline */ }
     /* A completed cycle can legitimately rank zero companies and therefore
        write no candidate documents. Deriving "latest" only from candidate
        rows leaves the dashboard pinned to an older non-empty cycle forever.
@@ -375,9 +387,25 @@ const ACTIONS = {
         swept: Number(lastIntelligence.swept) || 0,
         latestResults: (lastIntelligence.results || []).slice(0, 8),
         dossierCount: intelligence.length, readyDossiers },
-      learning: { completed: closedTrades.length, target: learningTarget,
-        remaining: Math.max(0, learningTarget - closedTrades.length),
-        pct: Math.min(100, 100 * closedTrades.length / learningTarget) },
+      /* The preregistered minimum counts STRICT-policy closes only. Exploratory
+         and control closes are reported beside it, never inside it. */
+      learning: (() => {
+        /* Same admission rule the promotion ladder uses: strict cohort, current
+           frozen identity, bound to the leader (or the baseline before one
+           exists), so the console cannot run ahead of the ladder. */
+        const identity = { strategyHash: ctrl.strategyHash, universeHash: ctrl.universeHash,
+          variantsHash: ctrl.variantsHash };
+        const strictClosed = closedTrades.filter((t) => LD.strictTradeAdmissible(t, identity,
+          { leaderId: allocationLeaderId, sinceMs: allocationSinceMs })).length;
+        const exploratoryClosed = closedTrades.filter((t) => t.paperLearningOnly === true
+          && /^exploratory/.test(String(t.learningCohort || "")) && t.cohortRole !== "control").length;
+        const controlClosed = closedTrades.filter((t) => t.cohortRole === "control").length;
+        return { completed: strictClosed, target: learningTarget,
+          remaining: Math.max(0, learningTarget - strictClosed),
+          pct: Math.min(100, 100 * strictClosed / learningTarget),
+          exploratoryClosed, controlClosed, allClosed: closedTrades.length,
+          countsOnlyStrictCohort: true };
+      })(),
       cadence: { cycleSeconds, lastCycleDispatchAtMs,
         nextCycleDueAtMs: lastCycleDispatchAtMs
           ? lastCycleDispatchAtMs + cycleSeconds * 1000 : nowMs,

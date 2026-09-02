@@ -169,6 +169,32 @@ function markedBook(positions, marks, sectorOf, balancesUsd = {}) {
     book: summarise(open, marks, sectorOf, navUsd) };
 }
 
+/** Fold proposed/approved orders into a book at their requested notional so
+ *  every cap check sees the exposure the account is already committed to.
+ *  Mutates `book`. Returns the exposure added and the notional of orders whose
+ *  cash is not yet reserved (proposed, unapproved). */
+function foldPendingOrders(book, pendingOrders, navUsd, sectorOf) {
+  const nav = Math.max(0, Number(navUsd) || 0);
+  const out = { orders: 0, usd: 0, symbols: [], proposedUnreservedUsd: 0 };
+  for (const o of Array.isArray(pendingOrders) ? pendingOrders : []) {
+    if (!o || !["proposed", "approved"].includes(o.status)) continue;
+    const usd = Math.max(0, Number(o.qty) || 0) * Math.max(0, Number(o.refPriceUsd) || 0);
+    if (!(usd > 0) || book.rows.some((r) => r.symbol === o.symbol)) continue;
+    const sec = sectorOf(o.symbol), cl = clusterOf(o.symbol, sec);
+    const pctOfNav = nav > 0 ? 100 * usd / nav : 0;
+    book.count += 1; book.grossUsd += usd;
+    book.grossPct = nav > 0 ? 100 * book.grossUsd / nav : 0;
+    book.bySectorPct[sec] = (book.bySectorPct[sec] || 0) + pctOfNav;
+    book.byClusterPct[cl] = (book.byClusterPct[cl] || 0) + pctOfNav;
+    book.rows.push({ symbol: o.symbol, qty: Number(o.qty) || 0, entry: Number(o.refPriceUsd) || 0,
+      mark: Number(o.refPriceUsd) || 0, valueUsd: usd, sector: sec, cluster: cl, pnlPct: 0,
+      marked: true, pending: true, orderStatus: o.status, orderId: o.orderId || null });
+    if (o.status === "proposed") out.proposedUnreservedUsd += usd;
+    out.orders += 1; out.usd += usd; out.symbols.push(o.symbol);
+  }
+  return out;
+}
+
 function positionSizeUsd({ navUsd, atrPct, expectedShortfall5dPct, overnightGapEsPct,
                            signalScaler = 1, cfg }) {
   const pc = (cfg && cfg.portfolioControls) || {};
@@ -306,13 +332,15 @@ function checkAdd({ symbol, sector, proposedUsd, book, navUsd, cashUsd, cfg, dyn
      merely too BIG is trimmed rather than dropped — but one that breaches a
      count or duplicate rule is refused outright, since no size fixes those. */
   const dynamicHeadroom = nav * (dynamicCap / 100) - dynamicHeldUsd;
-  const headroomUsd = Math.max(0, Math.min(
+  /* Rounded DOWN to the cent: a headroom that lands on a floating-point
+     boundary must never permit one cent above a cap. */
+  const headroomUsd = Math.floor(100 * Math.max(0, Math.min(
     nav * (maxGross / 100) - book.grossUsd,
     (Number(cashUsd) || 0) - nav * (minCash / 100),
     nav * (maxSector / 100) - (book.bySectorPct[sector] || 0) * nav / 100,
     nav * (maxCluster / 100) - (book.byClusterPct[cl] || 0) * nav / 100,
     dynamicHeadroom,
-  ));
+  ))) / 100;
   const hardBlock = denied.some((d) => d.id === "max_positions" || d.id === "duplicate"
     || d.id === "dynamic_correlation_unknown");
 
@@ -451,6 +479,6 @@ function attribution(equity, bench) {
 }
 
 module.exports = {
-  CLUSTERS, clusterOf, summarise, markedBook, positionSizeUsd, accountBreakers, checkAdd, describe,
+  CLUSTERS, clusterOf, summarise, markedBook, foldPendingOrders, positionSizeUsd, accountBreakers, checkAdd, describe,
   equityStats, benchmarkReturn, attribution,
 };

@@ -214,16 +214,21 @@ async function fetchDailyWithMeta(symbols, { days = KEEP_DAYS } = {}) {
       };
       continue;                       // a failed chunk is retried on the next run
     }
+    const failedSymbols = new Set(res.failedSymbols || []);
+    const truncatedSymbols = new Set(res.truncatedSymbols || []);
     for (const sym of chunk) {
       const returned = Array.isArray((res.bars || {})[sym]) && (res.bars || {})[sym].length > 0;
+      const failed = failedSymbols.has(sym);
+      const truncated = truncatedSymbols.has(sym);
       statusBySymbol[sym] = {
-      complete: res.truncated !== true && returned,
-      truncated: res.truncated === true,
-      requestedDays: days,
-      pages: Number(res.pages) || null,
-      window: res.window || null,
-      ...(returned ? {} : { error: "no_bars_returned" }),
-    };
+        complete: !failed && !truncated && returned,
+        truncated,
+        requestedDays: days,
+        pages: Number(res.pages) || null,
+        window: res.window || null,
+        ...(!returned || failed
+          ? { error: (res.errors && res.errors[sym]) || "no_bars_returned" } : {}),
+      };
     }
     for (const [sym, arr] of Object.entries(res.bars || {})) {
       barsBySymbol[sym] = (arr || []).map((b) => ({

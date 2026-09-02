@@ -387,6 +387,16 @@ function sessionState(d = new Date()) {
   };
 }
 
+/** Epoch ms of today's regular close (16:00 ET, 13:00 on half days), for
+ *  the instant `d`. Derived from the same wall-clock parts as sessionState,
+ *  so it agrees with the phase logic across DST. Null on non-trading days. */
+function sessionCloseMs(d = new Date()) {
+  const st = sessionState(d);
+  if (!st.tradingDay) return null;
+  const minutesToClose = st.regularCloseMinutesEt - st.minutesEt;
+  return d.getTime() + minutesToClose * 60000 - (d.getTime() % 60000);
+}
+
 /**
  * A daily observation is immutable only after the exchange has closed and a
  * small delivery buffer has elapsed. The fixed twenty-minute default covers
@@ -730,6 +740,81 @@ async function fetchBars(symbols, opts = {}) {
            note: p.degradedFrom ? `degraded from ${p.degradedFrom}: ${p.reason}` : "manual import only" };
 }
 
+/**
+ * Chunked, retrying bar fetch for the whole roster.
+ *
+ * One request for 300 symbols is one point of failure: a transport error, a
+ * page budget or an entitlement hiccup lost every name in the cycle, and the
+ * cycle then fell back to yesterday's stored bars for all of them. Chunks
+ * fail independently, a failed chunk is retried once, and every symbol's
+ * provenance hash is the hash of the response that actually contained it.
+ * The combined manifest is the hash of the chunk manifests, so the cycle-level
+ * identity is still one immutable value. Symbols the provider omitted are
+ * listed so a delisted or renamed ticker is visible instead of silently
+ * "lacking bars".
+ */
+/** PURE. Merge per-chunk results into one roster response. `results[i]` is
+ *  the successful response for `chunks[i]`, or `{ error }` when the chunk
+ *  failed after retries. Exported so a runtime fixture can attest it. */
+function mergeChunkResults(list, chunks, results, providerId) {
+  const out = { bars: {}, symbolSha256: {}, provider: null, feed: null, adjustment: null,
+    fetchedAt: null, pages: 0, truncated: false,
+    chunks: { total: chunks.length, failed: [], retried: 0 }, missingSymbols: [], note: null };
+  const chunkHashes = [];
+  results.forEach((got, ci) => {
+    if (!got || got.error) {
+      out.chunks.failed.push({ index: ci, symbols: chunks[ci].length,
+        error: String(got && got.error || "unknown").slice(0, 120) });
+      return;
+    }
+    out.chunks.retried += Number(got.retried) || 0;
+    if (got.provider === "manual" && !Object.keys(got.bars || {}).length) {
+      out.provider = out.provider || got.provider; out.note = got.note || out.note;
+      return;
+    }
+    const chunkHash = got.manifestSha256 || got.sha256 || null;
+    if (chunkHash) chunkHashes.push(chunkHash);
+    for (const [sym, arr] of Object.entries(got.bars || {})) {
+      out.bars[sym] = arr;
+      out.symbolSha256[sym] = (got.symbolSha256 && got.symbolSha256[sym]) || chunkHash;
+    }
+    out.provider = out.provider || got.provider;
+    out.feed = out.feed || got.feed || null;
+    out.adjustment = out.adjustment || got.adjustment || null;
+    out.fetchedAt = got.fetchedAt || out.fetchedAt;
+    out.pages += Number(got.pages) || 0;
+    out.truncated = out.truncated || got.truncated === true;
+    if (got.note && !out.note) out.note = got.note;
+  });
+  out.provider = out.provider || providerId || "manual";
+  out.manifestSha256 = chunkHashes.length
+    ? crypto.createHash("sha256").update(chunkHashes.join("|")).digest("hex") : null;
+  out.sha256 = out.manifestSha256;
+  const failedSymbols = new Set(out.chunks.failed.flatMap((f) => chunks[f.index]));
+  out.missingSymbols = list.filter((sym) => !out.bars[sym] && !failedSymbols.has(sym));
+  out.failedSymbols = [...failedSymbols];
+  out.failureCount = out.failedSymbols.length;
+  return out;
+}
+
+async function fetchBarsChunked(symbols, opts = {}, { chunkSize = 60, retries = 1 } = {}) {
+  const list = [...new Set((symbols || []).filter(Boolean))];
+  const size = Math.max(5, Math.min(200, Number(chunkSize) || 60));
+  const chunks = [];
+  for (let i = 0; i < list.length; i += size) chunks.push(list.slice(i, i + size));
+  const results = [];
+  for (const chunk of chunks) {
+    let got = null, lastError = null, retried = 0;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try { got = await fetchBars(chunk, opts); lastError = null; break; }
+      catch (e) { lastError = e; if (attempt < retries) retried += 1; }
+    }
+    results.push(got ? { ...got, retried }
+      : { error: String(lastError && (lastError.code || lastError.message) || "unknown") });
+  }
+  return mergeChunkResults(list, chunks, results, activeProvider().id);
+}
+
 /* ── validation + grading ──────────────────────────────────────────────── */
 function validateBar(b) {
   const errs = [];
@@ -919,7 +1004,7 @@ module.exports = {
   providerCredentials, providerCredentialed,
   tradingSessionsBetween,
   slippageBps, executionCostContext,
-  fetchBars, mapMassiveResults, validateBar, normalizeBars, partitionBarsBySession, gradeSeries, firstEligibleBar,
+  sessionCloseMs, fetchBars, fetchBarsChunked, mergeChunkResults, mapMassiveResults, validateBar, normalizeBars, partitionBarsBySession, gradeSeries, firstEligibleBar,
   alpacaWindow, alpacaPageBudget, normalizeMarketChoice,
   writeBars, readBars, readRecentBars, readRecentBarsWithMeta, barDocId,
 };

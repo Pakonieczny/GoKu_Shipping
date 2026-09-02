@@ -162,9 +162,12 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
   const nonce = mintWorkerNonce(jobId, fn);
   const jref = A.col(A.COL.jobs).doc(jobId);
   const cref = A.col(A.COL.control).doc("control");
+  let previousStamp = null;
   const claimed = await A.runTransaction(async (tx) => {
-    const cur = await tx.get(jref);
+    const [cur, control] = await Promise.all([tx.get(jref), tx.get(cref)]);
     if (cur.exists && ["queued", "running", "complete"].includes(cur.data().status)) return false;
+    previousStamp = control.exists ? (control.data()[task === "cycle" ? "lastCycleAt"
+      : task === "guard" ? "lastGuardAt" : "lastEvidenceAt"] ?? null) : null;
     tx.set(jref, {
       jobId, task, slot, accountId: ctrl.accountId, status: "queued",
       sessionDate: session && session.date || null,
@@ -183,14 +186,37 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
 
   // Payload stays tiny: Netlify caps background request bodies at 256KB and
   // the worker must load its own inputs through Firestore pointers anyway.
-  const res = await fetch(`${baseUrl()}/.netlify/functions/${fn}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId, task, nonce }),
-  });
+  let res;
+  try {
+    res = await fetch(`${baseUrl()}/.netlify/functions/${fn}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, task, nonce }),
+    });
+  } catch (e) {
+    /* A thrown fetch (socket reset, DNS, timeout) is a dispatch that never
+       happened, exactly like a non-2xx response: same rollback. */
+    res = { ok: false, status: 0, thrown: String(e && e.message || e).slice(0, 120) };
+  }
   if (!res.ok) {
+    /* The cadence stamp was advanced inside the claim so two concurrent ticks
+       cannot both dispatch the slot. A dispatch that never reached the worker
+       must not consume the slot: restore the previous stamp so the next tick
+       retries instead of waiting a full cadence; a "dispatch_failed" job row
+       is not a claimed status, so the same slot can be dispatched again. */
+    const stamp = task === "cycle" ? "lastCycleAt"
+      : task === "guard" ? "lastGuardAt" : "lastEvidenceAt";
     await jref.set({ status: "dispatch_failed", dispatchStatus: res.status,
+      dispatchError: res.thrown || null,
       dispatchFailedAt: A.FV.serverTimestamp() }, { merge: true });
+    /* Compare-and-set: restore the previous stamp only if the stamp is still
+       the one THIS dispatch wrote. If a later dispatch advanced it, that
+       later success must not be erased by this failure's rollback. */
+    await A.runTransaction(async (tx) => {
+      const cur = await tx.get(cref);
+      const stored = cur.exists ? cur.data()[stamp] : null;
+      if (stored === now) tx.set(cref, { [stamp]: previousStamp }, { merge: true });
+    });
   }
   return { jobId, task, upstream: res.status };
 }
