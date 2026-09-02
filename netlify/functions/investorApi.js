@@ -244,6 +244,7 @@ const ACTIONS = {
       const openedAt = p.openedAt && typeof p.openedAt.toDate === "function"
         ? p.openedAt.toDate() : p.openedAt;
       positions.push({ ...p,
+        openedAt: openedAt instanceof Date ? openedAt.toISOString() : (openedAt || null),
         heldTradingDays: openedAt ? M.tradingDaysHeld(openedAt, Date.now()) : null });
     });
     const closedTrades = []; tradeSnap.forEach((d) => closedTrades.push(closedTradeForUi(d.data())));
