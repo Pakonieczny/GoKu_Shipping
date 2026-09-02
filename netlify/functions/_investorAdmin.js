@@ -144,6 +144,7 @@ const COL = {
   scanSnapshots:COL_PREFIX+ "ScanSnapshots", // per-scan signal panel + scoreboard, replayable
   archiveRuns: COL_PREFIX + "ArchiveRuns",   // nightly intraday archive manifests
   navMarks:   COL_PREFIX + "NavMarks",       // one doc per account-day: minute-level account value
+  plans:      COL_PREFIX + "EntryPlans",     // armed entry levels written by the deep scan, struck by the guard
 };
 
 /* ── provenance envelope required on every generated record ────────────── */

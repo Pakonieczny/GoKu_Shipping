@@ -366,6 +366,53 @@ function residualZ(residSeries, window = 12, ctx = null) {
   };
 }
 
+/* ── 1b. SAME-CLOCK ATTENTION ──────────────────────────────────────────── */
+/* Volume in the move window against the same intraday slots on prior
+   sessions, as a z-score. Used by the evidence pre-classifier to separate
+   crowd-flow moves from quiet drifts. Returns 0 (neutral) whenever the
+   history is too thin to define a benchmark. */
+function attentionZ(bars, window = 12) {
+  const series = M.normalizeBars(bars).filter((b) => M.validateBar(b).length === 0);
+  if (series.length < window + 24) return 0;
+
+  const tagged = series.map((b) => ({
+    clock: M.nyParts(new Date(b.t)),
+    logVolume: Math.log1p(Math.max(0, Number(b.v) || 0)),
+  }));
+  const latestDate = tagged[tagged.length - 1].clock.date;
+  const recent = tagged.filter((x) => x.clock.date === latestDate).slice(-window);
+  if (recent.length < Math.min(window, 6)) return 0;
+
+  const priorBySlot = new Map();
+  for (const x of tagged) {
+    if (x.clock.date === latestDate) continue;
+    const key = x.clock.minutes;
+    if (!priorBySlot.has(key)) priorBySlot.set(key, []);
+    priorBySlot.get(key).push(x.logVolume);
+  }
+
+  /* Requiring three prior sessions per slot prevents a single print from
+     defining its own benchmark; 18 pooled residuals keep a partial cache
+     neutral. The pooled scale stabilizes sparse per-slot estimates. */
+  const slotMeans = new Map(), baselineResiduals = [];
+  for (const [slot, values] of priorBySlot.entries()) {
+    if (values.length < 3) continue;
+    const mu = S.mean(values);
+    slotMeans.set(slot, mu);
+    for (const value of values) baselineResiduals.push(value - mu);
+  }
+  if (baselineResiduals.length < 18) return 0;
+  const sd = S.stdev(baselineResiduals);
+  if (!(sd > 1e-6)) return 0;
+
+  const residuals = recent
+    .filter((x) => slotMeans.has(x.clock.minutes))
+    .map((x) => x.logVolume - slotMeans.get(x.clock.minutes));
+  if (residuals.length < Math.min(recent.length, 6)) return 0;
+  return Math.max(-8, Math.min(8, S.mean(residuals) / sd));
+}
+
+
 /* ── 2. RANK + BUY/HOLD SPREAD ─────────────────────────────────────────── */
 /** Cross-sectional rank of each symbol's residual z, 0 = most negative. */
 function crossSectionalRanks(zBySymbol) {
@@ -972,7 +1019,7 @@ module.exports = {
   combineSizeMultipliers,
   mean, stdev, pctReturns, timestampReturns, ols, jointOls,
   sectorOf, setSectorMap, getSectorMap,
-  residualPanel, residualZ, crossSectionalRanks,
+  residualPanel, residualZ, crossSectionalRanks, attentionZ,
   entrySignal, exitSignal, ENTRY_RANK, EXIT_RANK, INTEL_FINDING_RISK_FLOOR, sectorCrowding,
   volatilityScaler, dispersionGate, effectiveDispersionGate, earningsBlackout,
   CAUSE, directionFromCause, costHurdle,

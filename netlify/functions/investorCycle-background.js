@@ -60,6 +60,8 @@ const DM = require("./_investorDecisionManifest");
 const SOAK = require("./_investorSoak");
 const XP = require("./_investorExplore");
 const DS = require("./_investorSufficiency");
+const ST = require("./_investorStrike");
+const EXITS = require("./_investorExitPolicy");
 
 function sha256Json(value) {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -215,46 +217,9 @@ async function regime() {
    not divide by sqrt(window): adjacent intraday volumes are dependent and that
    nominal precision would be anti-conservative. Named honestly so nobody
    mistakes this for Robinhood-style holdings or classified investor flow. */
-function attentionZ(bars, window = 12) {
-  const series = M.normalizeBars(bars).filter((b) => M.validateBar(b).length === 0);
-  if (series.length < window + 24) return 0;
-
-  const tagged = series.map((b) => ({
-    clock: M.nyParts(new Date(b.t)),
-    logVolume: Math.log1p(Math.max(0, Number(b.v) || 0)),
-  }));
-  const latestDate = tagged[tagged.length - 1].clock.date;
-  const recent = tagged.filter((x) => x.clock.date === latestDate).slice(-window);
-  if (recent.length < Math.min(window, 6)) return 0;
-
-  const priorBySlot = new Map();
-  for (const x of tagged) {
-    if (x.clock.date === latestDate) continue;
-    const key = x.clock.minutes;
-    if (!priorBySlot.has(key)) priorBySlot.set(key, []);
-    priorBySlot.get(key).push(x.logVolume);
-  }
-
-  /* Requiring three prior sessions per slot prevents a single print from
-     defining its own benchmark; 18 pooled residuals keep a partial cache
-     neutral. The pooled scale stabilizes sparse per-slot estimates. */
-  const slotMeans = new Map(), baselineResiduals = [];
-  for (const [slot, values] of priorBySlot.entries()) {
-    if (values.length < 3) continue;
-    const mu = S.mean(values);
-    slotMeans.set(slot, mu);
-    for (const value of values) baselineResiduals.push(value - mu);
-  }
-  if (baselineResiduals.length < 18) return 0;
-  const sd = S.stdev(baselineResiduals);
-  if (!(sd > 1e-6)) return 0;
-
-  const residuals = recent
-    .filter((x) => slotMeans.has(x.clock.minutes))
-    .map((x) => x.logVolume - slotMeans.get(x.clock.minutes));
-  if (residuals.length < Math.min(recent.length, 6)) return 0;
-  return Math.max(-8, Math.min(8, S.mean(residuals) / sd));
-}
+/* attentionZ lives in _investorSignal so the strike pass can reuse it
+   without importing this worker. Re-exported below for existing callers. */
+const attentionZ = S.attentionZ;
 
 function barTimeframeMs(timeframe) {
   const match = String(timeframe || "5Min").match(/^(\d+)\s*(Min|Hour|Day)$/i);
@@ -837,6 +802,14 @@ async function runCycle(jobId, { manual = false } = {}) {
   const cycleId = `${today}_${new Date().toISOString().slice(11, 16).replace(":", "")}`;
   const candidates = [], decisions = [], exits = [], portfolioBlocks = [], proposalQueue = [];
   const controlPool = [];
+  /* Near-miss names for the strike tier: every hazard gate passed, only the
+     signal (and the signal-dependent cost) still short. Collected here,
+     selected and written after portfolio selection. */
+  const planCandidates = [];
+  const planSessionCloseMs = (() => {
+    try { const c = M.sessionCloseMs ? M.sessionCloseMs(new Date()) : null; return Number.isFinite(Number(c)) ? Number(c) : null; }
+    catch { return null; }
+  })();
   const decisionManifestStats = { total: 0, complete: 0, invalid: 0 };
   let modelCalls = 0;
 
@@ -1233,6 +1206,12 @@ async function runCycle(jobId, { manual = false } = {}) {
         mark: last.c, entry: entryUsd, peak, earningsInDays, intelligencePolicy,
       });
       evaluatedHoldingSymbols.add(sym);
+      /* Preset exit levels in dollars, for the console and the strike pass. */
+      try {
+        await A.col(A.COL.positions).doc(`${accountId}_${sym}`).set({
+          exitLevels: EXITS.exitLevels(cfg, { entry: entryUsd, peak, heldDays, earningsInDays }),
+          exitLevelsTimeframe: cfg.barTimeframe || "5Min" }, { merge: true });
+      } catch {}
       if (ex.exit) {
         /* THE EXIT INTENT. The execution clock only fills on a bar printed
            after the decision, and with a 15-minute-delayed feed no such bar
@@ -1571,6 +1550,33 @@ async function runCycle(jobId, { manual = false } = {}) {
       modeledRoundTripBps: evalRes.cost && evalRes.cost.roundTripBps });
 
     const explorationPolicyIds = firingPolicies.map((f) => f.variantId);
+    /* THE STRIKE TIER'S INPUT. A name that cleared every hazard gate but
+       has not yet fallen to the entry threshold gets an armed level rather
+       than nothing: the price at which its residual would breach -minAbsZ
+       with market and sector flat, provided the cost hurdle clears there
+       too. The one-minute strike pass buys at that level; this scan does
+       not have to be running when it is reached. Exploratory paper only. */
+    if (operating.exploratoryAuto && activity.enabled && activity.strike && activity.strike.enabled
+        && !evalRes.pass && entryControl.pass && manifestValidation.pass && !pendingOrderSymbols.has(sym)) {
+      try {
+        const moveStartedAtMs = z ? Date.parse((liveSignalContext.rp.residualTimestamps[sym] || [])
+          .slice(-(z.window || cfg.signalWindow || 12))[0] || "") : NaN;
+        const candidate = ST.planCandidate({ symbol: sym, evalRes, strictRes, strictUncalibratedRes, z, rank, last, cfg,
+          policy: activity.strike, quality: quality[sym], advUsd: (metaBySymbol[sym] || {}).advUsd || 0,
+          sector: S.sectorOf(sym), historyContext: historyCtx[sym] || null, reversion: reversionBySymbol[sym] || null,
+          dataSufficiency, intelligence, cause, coverage, decisionManifest,
+          marketProvenance: marketProvenanceBySymbol[sym] || null, sessionCloseMs: planSessionCloseMs,
+          vixNorm: reg.vixNorm, session, policyIdentity, variantId: liveVariant ? liveVariant.id : "A",
+          exploratoryPolicyVersion: exploratoryPolicy.version || null,
+          cohortLabel: exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated",
+          paperLearningOnly: paperLearning.active === true,
+          activePortfolioControls, activity, cycleId, strategyVersion: strategy.version,
+          operatingState: operating.state, moveStartedAtMs,
+          positionScale: Math.max(1, Math.min(5, Number(cfg.positionScale) || 1)) });
+        planCandidates.push({ ...candidate, symbol: sym });
+        if (candidate.ok) await liveEvent("armed", sym, `level ${candidate.plan.armBelowUsd} (${candidate.dropPct}% below)`);
+      } catch (e) { planCandidates.push({ ok: false, symbol: sym, reason: `error:${String(e.message || e).slice(0, 60)}` }); }
+    }
     if (evalRes.pass && entryControl.pass && manifestValidation.pass) {
       proposalQueue.push({ sym, last, evalRes, strictRes, strictUncalibratedRes, cause, causeDetail, rank,
         intelligence, decisionManifest, cohortRole: "signal", dataSufficiency,
@@ -1917,6 +1923,23 @@ async function runCycle(jobId, { manual = false } = {}) {
     activityLog.controlRoom = room;
   }
 
+  /* ── ARM THE LEVELS ──────────────────────────────────────────────────
+     Written after the proposals so a name proposed this scan is never also
+     armed. Closest levels first, capped by the frozen policy; levels this
+     scan did not re-select are superseded. */
+  let strikePlans = null;
+  if (operating.exploratoryAuto && activity.enabled && activity.strike && activity.strike.enabled) {
+    try {
+      strikePlans = await ST.writePlans({ accountId, sessionDate: session.date, cycleId,
+        candidates: planCandidates, policy: activity.strike,
+        heldSymbols: allPositions.filter((p) => p && p.open).map((p) => p.symbol),
+        pendingSymbols: [...pendingOrderSymbols] });
+      strikePlans.policy = activity.strike;
+    } catch (e) { strikePlans = { error: String(e.message || e).slice(0, 160), considered: planCandidates.length }; }
+  } else {
+    strikePlans = { disabled: true, considered: planCandidates.length,
+      reason: operating.exploratoryAuto ? "strike tier disabled by the frozen policy" : "armed levels are an exploratory paper feature" };
+  }
   await reportRunProgress(runRef, { phase: "settlement",
     label: "Approving and settling eligible paper orders", pct: 82,
     completed: decisions.length, total: proposalQueue.length,
@@ -2655,7 +2678,7 @@ async function runCycle(jobId, { manual = false } = {}) {
     rankingDiagnostics,
     quoteCoverage,
     ranked, breaches: candidates.length,
-    proposals: decisions.length, exitSignals: exits.length,
+    proposals: decisions.length, strikePlans, exitSignals: exits.length,
     modelCalls,
     decisionManifests: decisionManifestStats,
     bootstrap,

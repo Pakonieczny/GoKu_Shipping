@@ -1,10 +1,19 @@
-/* Investor_AI — held-position guard.
+/* Investor_AI — the STRIKE PASS (held-position guard + armed-level strikes).
  *
- * This path deliberately reads only open positions, their bars, and the
+ * This is the fast tier. It runs every minute while the exchange is open and
+ * reads only the held, planned and pending symbols, their bars, and the
  * already-stored deterministic intelligence snapshot. It never fetches a
- * source, scans the opportunity roster, calls a model, opens positions,
- * advances the learner, or changes the automation ladder. Its writes either
- * reduce risk or report why risk could not be evaluated.
+ * source, never scans the opportunity roster, never calls a model, and never
+ * advances the learner or the automation ladder. What it does, in order:
+ *   1. marks every holding and writes its preset exit levels;
+ *   2. arms rule exits (stop, trailing stop, target, earnings, time) and
+ *      operator sell requests — the same decision clock every exit obeys;
+ *   3. STRIKES armed entry levels written by the deep scan (_investorStrike);
+ *   4. auto-approves fresh exploratory proposals and fills approved orders on
+ *      their first eligible bar, so a buy no longer waits for the next scan;
+ *   5. settles armed exits on their first eligible bar.
+ * Strikes and fills go through the same ledger paths as the deep scan and are
+ * idempotent, so the two tiers may overlap safely.
  */
 
 "use strict";
@@ -16,6 +25,19 @@ const I = require("./_investorIntelligence");
 const L = require("./_investorLedger");
 const W = require("./_investorWorkset");
 const CA = require("./_investorCorporateActions");
+const XP = require("./_investorExplore");
+const STATE = require("./_investorState");
+const ST = require("./_investorStrike");
+const EXITS = require("./_investorExitPolicy");
+
+async function loadPendingOrders(accountId) {
+  const out = [];
+  for (const st of ["proposed", "approved"]) {
+    const q = await A.col(A.COL.orders).where("accountId", "==", accountId).where("status", "==", st).get();
+    q.forEach((d) => out.push(d.data()));
+  }
+  return out;
+}
 
 const SHA256 = /^[a-f0-9]{64}$/;
 
@@ -168,26 +190,51 @@ async function runGuard(jobId) {
   /* The same relaxed exit parameters the cycle applies (maxHoldDays,
      exitRank) — a guard that timed positions out on the strict ten sessions
      while the cycle used three was two different books. */
-  const cfg = require("./_investorStrategy.js")
-    .paperLearningConfig({ ...(strategy.parameters || {}) }, ctrl).cfg;
+  const paperLearning = require("./_investorStrategy.js")
+    .paperLearningConfig({ ...(strategy.parameters || {}) }, ctrl);
+  const cfg = paperLearning.cfg;
+  const operating = STATE.describe(ctrl);
+  const activity = XP.activityPolicy(strategy);
+  const exploratoryPolicy = strategy.exploratoryAuto || {};
+  const activePortfolioControls = operating.exploratoryAuto
+    ? { ...(strategy.portfolioControls || {}), ...(exploratoryPolicy.portfolioControls || {}) }
+    : (strategy.portfolioControls || {});
+  const policyIdentity = { accountId, strategyVersion: ctrl.strategyVersion || strategy.version,
+    universeVersion: ctrl.universeVersion || null, strategyHash: ctrl.strategyHash || null,
+    universeHash: ctrl.universeHash || null, variantsHash: ctrl.variantsHash || null };
+  /* The strike pass prices on finer bars than the signal is measured on
+     (1Min by default; control.strikeBarTimeframe). Stops react on the
+     minute, fills land on the first eligible minute bar instead of the first
+     five-minute one. Bars are persisted to the day store ONLY when they are
+     the strategy's own timeframe, so the 5-minute record the deep scan and
+     the nightly archive build on is never mixed with minute bars. */
+  const strikeTimeframe = /^(1|5)Min$/.test(String(ctrl.strikeBarTimeframe || "")) ? ctrl.strikeBarTimeframe : "1Min";
+  const persistBars = strikeTimeframe === (cfg.barTimeframe || "5Min");
   const session = M.sessionState(new Date());
   const runRef = A.col(A.COL.runs).doc(jobId);
   await runRef.set({ jobId, kind: "guard", status: "running",
     startedAt: A.FV.serverTimestamp(), startedAtMs: startedAt,
-    accountId, session, ...A.envelope({ created_by: "positionGuard" }) },
+    accountId, session, strikeBarTimeframe: strikeTimeframe,
+    ...A.envelope({ created_by: "positionGuard" }) },
   { merge: true });
   await guardProgress(runRef, { phase: "load_positions",
-    label: "Loading open positions and protective rules", pct: 8,
-    detail: "This fast guard checks exits only; it never opens a new position." });
+    label: "Loading holdings, armed levels and pending orders", pct: 8,
+    detail: "The strike pass protects holdings, strikes armed entry levels and fills approved orders; it never ranks the roster." });
 
   const positionSnap = await A.col(A.COL.positions)
     .where("accountId", "==", accountId).where("open", "==", true).get();
   const positions = positionSnap.docs.map((d) => d.data());
-  const symbols = [...new Set(positions.map((p) => p.symbol).filter(Boolean))];
+  let plans = [], pendingOrders = [];
+  try { plans = await ST.loadPlans(accountId, session.date); } catch (e) { plans = []; }
+  try { pendingOrders = await loadPendingOrders(accountId); } catch (e) { pendingOrders = []; }
+  /* Outside the session nothing strikes or fills; price only the holdings. */
+  const strikeSymbols = session.open
+    ? [...plans.map((p) => p.symbol), ...pendingOrders.map((o) => o.symbol)] : [];
+  const symbols = [...new Set([...positions.map((p) => p.symbol), ...strikeSymbols].filter(Boolean))];
   await guardProgress(runRef, { phase: "price_holdings",
-    label: "Refreshing prices for open positions", pct: 22,
+    label: "Refreshing prices for holdings, armed levels and pending orders", pct: 22,
     completed: 0, total: symbols.length,
-    detail: `${symbols.length} open holdings require a mark and exit-rule check.` });
+    detail: `${positions.length} holdings, ${plans.length} armed levels and ${pendingOrders.length} pending orders need a ${strikeTimeframe} mark.` });
   const intelligenceBySymbol = {};
   await Promise.all(symbols.map(async (symbol) => {
     try {
@@ -227,7 +274,7 @@ async function runGuard(jobId) {
     const provider = M.activeProvider();
     try {
       const fetched = await M.fetchBars(symbols,
-        { timeframe: cfg.barTimeframe || "5Min", limit: 120 });
+        { timeframe: strikeTimeframe, limit: 120 });
       panel = fetched.bars || {};
       providerNote = fetched.note || null;
       for (const symbol of symbols) {
@@ -265,7 +312,7 @@ async function runGuard(jobId) {
       const p = provenance[symbol] || { provider: provider.id,
         feed: provider.feed || null, adjustment: null, sourceSha256: null };
       quality[symbol] = M.gradeSeries(panel[symbol] || [], { ...p, nowMs: marketNowMs });
-      if ((panel[symbol] || []).length) {
+      if (persistBars && (panel[symbol] || []).length) {
         try {
           await M.writeBars(symbol, session.date, panel[symbol], {
             ...p, grade: quality[symbol].grade,
@@ -330,16 +377,21 @@ async function runGuard(jobId) {
         grade: quality[symbol].grade,
         wideSpreadWindow: session.wideSpreadWindow, vixNorm,
       });
+      const heldDays = M.tradingDaysHeld(position.openedAt, nowMs) ?? 0;
+      const entry = Number(position.entryPriceUsd != null
+        ? position.entryPriceUsd : position.avgPrice);
+      const earningsInDays = earningsDistance(earnings[symbol], nowMs);
+      /* The preset levels — stop, trailing arm, target, sessions left — are
+         written beside the mark so the console shows exactly what this pass
+         is watching for. exitSignal below stays the authority. */
+      const exitLevels = EXITS.exitLevels(cfg, { entry, peak, heldDays, earningsInDays });
       await A.col(A.COL.positions).doc(`${accountId}_${symbol}`).set({
         peakPriceUsd: peak, lastMarkUsd: last.c, lastMarkAt: last.t,
         lastMarkProvenance: { ...provenance[symbol], barOpenAt: last.t },
         markQuality: quality[symbol], updated_at: A.FV.serverTimestamp(),
         lastExecutionCostContext: currentExecutionCostContext,
+        exitLevels, exitLevelsTimeframe: strikeTimeframe,
       }, { merge: true });
-
-      const heldDays = M.tradingDaysHeld(position.openedAt, nowMs) ?? 0;
-      const entry = Number(position.entryPriceUsd != null
-        ? position.entryPriceUsd : position.avgPrice);
       const intelligence = intelligenceBySymbol[symbol] || null;
       const intelligencePolicy = intelligence ? I.decisionPolicy({ coverage: intelligence.coverage,
         events: intelligence.events, temporalContext: intelligence.temporalContext,
@@ -359,8 +411,7 @@ async function runGuard(jobId) {
         ? { exit: true, urgent: true, kind: "manual", pnlPct: pnlPctNow,
             reason: "manual_operator_sell" }
         : S.exitSignal(undefined, heldDays, cfg, {
-          mark: last.c, entry, peak,
-          earningsInDays: earningsDistance(earnings[symbol], nowMs),
+          mark: last.c, entry, peak, earningsInDays,
           intelligencePolicy,
         });
       evaluated.add(symbol);
@@ -408,6 +459,40 @@ async function runGuard(jobId) {
       }
     }
 
+  }
+  /* ── THE STRIKE TIER ─────────────────────────────────────────────────
+     Armed levels first, then the entry settlement that the deep scan used
+     to own: fresh proposals (a strike's or the scan's) are auto-approved in
+     the exploratory paper state, and approved orders fill on their first
+     eligible bar of THIS pass. Everything here is idempotent against a deep
+     scan running at the same moment. */
+  let strikes = null, entries = null;
+  if (session.open) {
+    await guardProgress(runRef, { phase: "strike_levels",
+      label: "Checking armed entry levels and pending orders", pct: 66,
+      completed: 0, total: plans.length + pendingOrders.length,
+      detail: `${plans.length} armed levels against ${strikeTimeframe} prices; ${pendingOrders.length} orders awaiting approval or an eligible bar.` });
+    try {
+      strikes = await ST.evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cfg, activity,
+        activePortfolioControls, session, plans, panel, provenance, quality, positions, pendingOrders,
+        earnings, vixNorm, paperLearningActive: paperLearning.active === true, exploratoryPolicy, policyIdentity });
+    } catch (e) { strikes = { error: String(e.message || e).slice(0, 160) }; }
+    try {
+      /* Re-read: strikes above may have created and approved orders whose
+         first eligible bar could already be in this pass's panel. */
+      const fresh = await loadPendingOrders(accountId);
+      entries = await ST.settleEntries({ accountId, operating, strategy, cfg, activity, session, panel,
+        provenance, quality, pendingOrders: fresh, positions, ctrl, policyIdentity });
+    } catch (e) { entries = { error: String(e.message || e).slice(0, 160) }; }
+  } else if (plans.length) {
+    /* Nothing strikes while the exchange is shut; levels past their window
+       are retired so tomorrow's scan starts clean. */
+    const nowMs2 = Date.now();
+    for (const plan of plans) {
+      if (Number.isFinite(Number(plan.expiresAtMs)) && nowMs2 > Number(plan.expiresAtMs)) {
+        try { await ST.markPlan(plan, { status: "expired", expiredAtMs: nowMs2, expiryReason: "session_closed" }); } catch {}
+      }
+    }
   }
   await guardProgress(runRef, { phase: "settle_exits",
     label: "Settling eligible exits", pct: 78,
@@ -503,6 +588,16 @@ async function runGuard(jobId) {
     session: { date: session.date, phase: session.phase, open: session.open },
     marketDeferred: !session.open, executionDeferred: !session.open,
     marketAsOf: new Date(marketNowMs).toISOString(), symbols: symbols.length,
+    strikeBarTimeframe: strikeTimeframe, barsPersisted: persistBars,
+    plans: { armed: plans.length,
+      struck: strikes && strikes.struck ? strikes.struck.length : 0,
+      waiting: strikes && strikes.waiting ? strikes.waiting.length : 0,
+      skipped: strikes && strikes.skipped ? strikes.skipped.length : 0,
+      blocked: strikes && strikes.blocked ? strikes.blocked.length : 0,
+      detail: strikes },
+    entries: entries ? { autoApproved: (entries.autoApproved || []).length,
+      filled: (entries.filled || []).length, released: (entries.released || []).length,
+      skipped: (entries.skipped || []).length, detail: entries } : null,
     exitSignals, positionCoverage: coverage, settlement: {
       closed: settled.closed.length, releasedEntries: settled.releasedEntries.length,
       rejectedEntries: settled.rejectedEntries.length,
@@ -511,8 +606,10 @@ async function runGuard(jobId) {
   await runRef.set({ ...summary, status: "complete",
     finishedAt: A.FV.serverTimestamp(), updatedAt: A.FV.serverTimestamp(),
     updatedAtMs: Date.now(), progress: {
-      phase: "complete", label: "Holding protection check complete",
-      detail: `${coverage.evaluated} of ${coverage.open} open positions evaluated; ${settled.closed.length} closed.`,
+      phase: "complete", label: "Strike pass complete",
+      detail: `${coverage.evaluated} of ${coverage.open} open positions evaluated; ${settled.closed.length} closed`
+        + `${strikes && strikes.struck && strikes.struck.length ? `; ${strikes.struck.length} level${strikes.struck.length === 1 ? "" : "s"} struck` : ""}`
+        + `${entries && entries.filled && entries.filled.length ? `; ${entries.filled.length} entr${entries.filled.length === 1 ? "y" : "ies"} filled` : ""}.`,
       pct: 100, completed: coverage.evaluated, total: coverage.open,
       remaining: Math.max(0, coverage.open - coverage.evaluated), currentItem: null,
       updatedAtMs: Date.now(),

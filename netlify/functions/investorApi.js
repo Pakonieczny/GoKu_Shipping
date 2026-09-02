@@ -402,6 +402,35 @@ const ACTIONS = {
     const cycleSeconds = Number(ctrl.cycleSeconds) || 300;
     const scanEligible = !operating.paused && session.tradingDay === true
       && (session.open === true || session.phase === "premarket");
+    /* Two-tier cadence as the scheduler itself sees it, so the console never
+       describes a clock the dispatcher is not actually running. */
+    const K = require("./investorKick");
+    const planMode = ctrl.planMode === "interval" ? "interval" : "scheduled";
+    const planTimesEt = K.normalizePlanTimes(ctrl.planTimesEt) || [...K.DEFAULT_PLAN_TIMES_ET];
+    const kickCtrl = { planMode, planTimesEt, lastPlanKey: ctrl.lastPlanKey || null };
+    const guardSeconds = Math.min(600, Math.max(60, Number(ctrl.guardSeconds) || 60));
+    const guardSecondsClosed = Math.min(3600, Math.max(300, Number(ctrl.guardSecondsClosed) || 900));
+    const lastGuardAtMs = Number(ctrl.lastGuardAt) || null;
+    const strikeBarTimeframe = /^(1|5)Min$/.test(String(ctrl.strikeBarTimeframe || "")) ? ctrl.strikeBarTimeframe : "1Min";
+    let plansToday = [];
+    try {
+      const planSnap = await A.col(A.COL.plans).where("accountId", "==", accountId)
+        .where("sessionDate", "==", session.date).get();
+      planSnap.forEach((d) => {
+        const p = d.data();
+        plansToday.push({ planId: p.planId, symbol: p.symbol, sector: p.sector, status: p.status,
+          armBelowUsd: p.armBelowUsd, floorUsd: p.floorUsd, refPriceUsd: p.refPriceUsd,
+          requiredDropPct: p.requiredDropPct, zAtPlan: p.zAtPlan, rankAtPlan: p.rankAtPlan,
+          lastSeenUsd: p.lastSeenUsd ?? null, lastSeenAt: p.lastSeenAt || null, distancePct: p.distancePct ?? null,
+          armedAtMs: p.armedAtMs || null, refreshedAtMs: p.refreshedAtMs || null, expiresAtMs: p.expiresAtMs || null,
+          cycleId: p.cycleId, costAtLevel: p.costAtLevel || null, causeAtPlan: p.causeAtPlan || null,
+          lastBlock: p.lastBlock || null, skipReason: p.skipReason || null, skipDetail: p.skipDetail || null,
+          struckAtMs: p.struckAtMs || null, strikePriceUsd: p.strikePriceUsd ?? null, orderId: p.orderId || null,
+          qty: p.qty ?? null, approval: p.approval || null, dataSufficiency: p.dataSufficiency || null });
+      });
+      plansToday.sort((a, b) => (a.status === "armed" ? 0 : 1) - (b.status === "armed" ? 0 : 1)
+        || (a.requiredDropPct || 0) - (b.requiredDropPct || 0));
+    } catch (e) { plansToday = []; }
     const operations = {
       state: activeWork.length ? "working"
         : operating.paused ? "paused"
@@ -443,9 +472,20 @@ const ACTIONS = {
           countsOnlyStrictCohort: true };
       })(),
       cadence: { cycleSeconds, lastCycleDispatchAtMs,
-        nextCycleDueAtMs: lastCycleDispatchAtMs
-          ? lastCycleDispatchAtMs + cycleSeconds * 1000 : nowMs,
+        nextCycleDueAtMs: planMode === "scheduled"
+          ? K.nextPlanAtMs(kickCtrl, nowMs)
+          : (lastCycleDispatchAtMs ? lastCycleDispatchAtMs + cycleSeconds * 1000 : nowMs),
+        planMode, planTimesEt, lastPlanKey: ctrl.lastPlanKey || null,
+        duePlanSlot: K.duePlanSlot(kickCtrl, session),
+        nextPlanAtMs: K.nextPlanAtMs(kickCtrl, nowMs),
+        strikeSeconds: guardSeconds, strikeSecondsClosed: guardSecondsClosed,
+        strikeBarTimeframe, lastGuardAtMs,
+        nextGuardDueAtMs: lastGuardAtMs
+          ? lastGuardAtMs + (session.open ? guardSeconds : guardSecondsClosed) * 1000 : nowMs,
         scanEligible, sessionPhase: session.phase },
+      plans: { armed: plansToday.filter((p) => p.status === "armed").length,
+        struck: plansToday.filter((p) => p.status === "struck").length,
+        today: plansToday },
     };
     return {
       ok: true,
@@ -489,12 +529,14 @@ const ACTIONS = {
         stageChangeReason: ctrl.stageChangeReason || null,
         safetyClosedReason: ctrl.safetyClosedReason || null,
         cycleSeconds: ctrl.cycleSeconds || 300,
+        planMode, planTimesEt, strikeBarTimeframe, lastPlanKey: ctrl.lastPlanKey || null,
+        guardSecondsClosed,
         paperLearning: { stored: ctrl.paperLearning || null, active: paperPreview.active,
           refused: paperPreview.refused, applied: paperPreview.applied, limits: ST.RELAX_LIMITS,
           defaults: Object.fromEntries(Object.entries(ST.RELAX_LIMITS)
             .map(([k, v]) => [k, v.dflt])) },
         exploratoryPolicy: strategy.exploratoryAuto || null,
-        guardSeconds: ctrl.guardSeconds || 60,
+        guardSeconds,
         intelligenceSymbols: IS.configuredSymbols(ctrl),
         intelligenceFocus: ctrl.intelligenceFocus || [],
         lastIntelligenceSummary: ctrl.lastIntelligenceSummary || null,
@@ -1276,7 +1318,9 @@ const ACTIONS = {
   async setControl({ patch, operator }) {
     const ALLOW = ["dryRun", "cycleSeconds", "evidenceEverySeconds",
       "operatorCeiling", "operatorHold", "afterHoursCycles", "entriesFrozen",
-      "guardSeconds", "operatingState"];
+      "guardSeconds", "operatingState",
+      /* Two-tier cadence: the deep-scan schedule and the strike pass. */
+      "planMode", "planTimesEt", "strikeBarTimeframe"];
     const MODES = ["research", "approval", "shadow", "limited_auto"];
     const clean = {}, refused = {};
     const ctrl = await ctrlDoc();
@@ -1297,14 +1341,31 @@ const ACTIONS = {
         }
         if (k === "cycleSeconds") {
           const n = Number(patch[k]);
-          if (Number.isFinite(n) && n >= 60 && n <= 3600) clean[k] = n;
-          else refused[k] = "must be between 60 and 3600 seconds";
+          if (Number.isFinite(n) && n >= 60 && n <= 86400) clean[k] = n;
+          else refused[k] = "must be between 60 and 86400 seconds";
           continue;
         }
         if (k === "guardSeconds") {
           const n = Number(patch[k]);
-          if (Number.isFinite(n) && n >= 60 && n <= 300) clean[k] = n;
-          else refused[k] = "must be between 60 and 300 seconds";
+          if (Number.isFinite(n) && n >= 60 && n <= 600) clean[k] = n;
+          else refused[k] = "must be between 60 and 600 seconds";
+          continue;
+        }
+        if (k === "planMode") {
+          if (patch[k] === "scheduled" || patch[k] === "interval") clean[k] = patch[k];
+          else refused[k] = "must be 'scheduled' (deep scans at set New York times) or 'interval' (every cycleSeconds)";
+          continue;
+        }
+        if (k === "planTimesEt") {
+          const K = require("./investorKick");
+          const times = K.normalizePlanTimes(patch[k]);
+          if (times) { clean[k] = times; if (patch.planMode === undefined) clean.planMode = "scheduled"; }
+          else refused[k] = "give one to six HH:MM New York times between 09:45 and 15:30";
+          continue;
+        }
+        if (k === "strikeBarTimeframe") {
+          if (patch[k] === "1Min" || patch[k] === "5Min") clean[k] = patch[k];
+          else refused[k] = "must be 1Min or 5Min";
           continue;
         }
         if (k === "evidenceEverySeconds") {
@@ -1736,6 +1797,32 @@ const ACTIONS = {
       accountId, operator: operator || "operator", at: A.FV.serverTimestamp(),
       ...A.envelope({ created_by: "investorApi" }) });
     return { ok: true, symbol: sym, note: `Sell request for ${sym} withdrawn.` };
+  },
+
+  /* Withdraw an armed entry level. The level is a plan, not an order — no
+     cash is reserved and nothing has been decided — so cancelling it costs
+     nothing and is recorded so the next deep scan does not re-arm the name
+     today. A level already struck has become an order and is handled there. */
+  async cancelPlan({ symbol, operator }) {
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
+    const sym = String(symbol || "").trim().toUpperCase();
+    if (!SYMBOL.test(sym)) return { ok: false, refused: "not a symbol this desk can act on" };
+    const session = M.sessionState(new Date());
+    const ST = require("./_investorStrike");
+    const ref = A.col(A.COL.plans).doc(ST.planId(accountId, session.date, sym));
+    const snap = await ref.get();
+    if (!snap.exists) return { ok: false, refused: `no armed level for ${sym} today` };
+    const p = snap.data();
+    if (p.status !== "armed") return { ok: true, noop: true, symbol: sym, status: p.status,
+      note: `the level for ${sym} is already ${p.status}` };
+    await ref.set({ status: "cancelled", cancelledAtMs: Date.now(), cancelledBy: operator || "operator",
+      updated_at: A.FV.serverTimestamp() }, { merge: true });
+    await A.col(A.COL.audit).add({ action: "entry_plan_cancelled", symbol: sym, accountId,
+      operator: operator || "operator", armBelowUsd: p.armBelowUsd, at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, symbol: sym, status: "cancelled",
+      note: `Armed level for ${sym} withdrawn. It will not be re-armed today.` };
   },
 
   /* Start a cycle now.
