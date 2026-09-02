@@ -1656,7 +1656,12 @@ async function runCycle(jobId, { manual = false } = {}) {
          an order or reserve cash. Keep the labelled outcome; refuse only the
          impossible lifecycle. */
       if (!executionSourceEligible(quality[sym])) {
+        const q0 = quality[sym] || {};
         const reason = "market source is research-only and cannot produce an executable paper fill";
+        activityLog.executionSourceRefused = (activityLog.executionSourceRefused || 0) + 1;
+        activityLog.executionSourceReason = `${q0.provider || "?"}${q0.feed ? "/" + q0.feed : ""} grade ${q0.grade || "?"}`
+          + (q0.consolidated === false ? " (non-consolidated feed)" : "") + ((q0.reasons || []).length ? ` ${q0.reasons.join(",")}` : "");
+        await liveEvent("blocked", sym, `execution_source:${q0.provider || "?"}${q0.feed ? "/" + q0.feed : ""}${q0.consolidated === false ? " non-consolidated" : ""}`);
         await A.col(A.COL.decisions).doc(`${cycleId}_${sym}`).set({
           finalDecisionKind: "no_trade_execution_source",
           executionSourceEligible: false, executionSourceReason: reason,
@@ -1748,6 +1753,7 @@ async function runCycle(jobId, { manual = false } = {}) {
           strategyVersion: strategy.version, ...A.envelope({ created_by: FN_NAME }),
         }, { merge: true });
         portfolioBlocks.push({ symbol: sym, blockedBy: add.blockedBy, reason: add.firstBlock });
+        await liveEvent("blocked", sym, `portfolio:${add.firstBlock || (permittedUsd > 0 ? "zero_whole_shares" : "no_notional")}`);
         return false;
       }
       const provenance = marketProvenanceBySymbol[sym];
@@ -1868,6 +1874,9 @@ async function runCycle(jobId, { manual = false } = {}) {
       return true;
     } catch (e) {
       console.error("propose failed", redact({ symbol: sym, error: e.message }));
+      activityLog.proposeErrors = (activityLog.proposeErrors || 0) + 1;
+      activityLog.lastProposeError = String(e.message || e).slice(0, 160);
+      await liveEvent("blocked", sym, `error:${String(e.message || e).slice(0, 40)}`);
       return false;
     }
   };
