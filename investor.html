@@ -1410,7 +1410,8 @@ function entryControlText(reason){
   if(/fixtures not attested/.test(r)) return "This build's runtime self-checks have not been attested yet. The next scan runs them; if it stays red, a self-check is failing and the build must be fixed.";
   if(/safety epoch mismatch/.test(r)) return "The frozen policy identity changed ("+r.replace(/^safety epoch mismatch:\s*/,"")+"). Press Start desk to re-activate on the new identity.";
   if(/observation-only/.test(r)) return "The desk is in watching-only mode. Press Start desk and choose automatic paper trading.";
-  if(/frozen by operator/.test(r)) return "New entries are frozen. Exits still run.";
+  if(/frozen by operator/.test(r)) return "New entries are frozen by you (Control room → Entry freeze → Unfreeze, or Start the desk). Exits still run.";
+  if(/frozen automatically/.test(r)) return "New entries were frozen automatically — "+r.replace(/^new entries frozen automatically \([^)]*\):\s*/,"")+". Exits still run.";
   if(/reconciliation/.test(r)) return "The paper ledger did not reconcile. Open Ledger and run a reconcile before any new entry.";
   if(/entry controls closed/.test(r)) return "The desk is paused.";
   return r||"unknown reason";
