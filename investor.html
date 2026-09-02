@@ -91,24 +91,30 @@
 /* ── live pipeline ── */
 .pipe{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}
 .pipe__stages{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
-.pipe__st{border:1px solid var(--line);border-radius:10px;padding:8px 8px 7px;background:var(--card);position:relative;transition:border-color .3s,box-shadow .3s}
-.pipe__st .n{font-family:var(--mono);font-size:18px;line-height:1.1;transition:transform .25s}
-.pipe__st .l{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pipe__st.active{border-color:var(--gold);box-shadow:0 0 0 3px rgba(169,130,63,.14);animation:pipepulse 1.6s ease-in-out infinite}
-.pipe__st.bumped .n{transform:scale(1.18)}
-.pipe__st.good{border-color:var(--sage)}
-@keyframes pipepulse{0%,100%{box-shadow:0 0 0 3px rgba(169,130,63,.14)}50%{box-shadow:0 0 0 6px rgba(169,130,63,.04)}}
-.pipe__arrow{display:none}
-.pipe__feed{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;min-height:26px}
-.chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 9px;font-family:var(--mono);font-size:11px;border:1px solid var(--line);background:var(--card);animation:chipin .35s ease-out;white-space:nowrap}
-.chip i{width:7px;height:7px;border-radius:50%;background:var(--ink-25);flex:none}
-.chip.c-signal i{background:var(--gold)}.chip.c-passed i,.chip.c-proposed i,.chip.c-approved i{background:var(--sage)}
-.chip.c-filled i,.chip.c-closed i{background:var(--ink)}.chip.c-blocked i{background:var(--clay)}
-.chip.c-exit i{background:var(--slate)}.chip .why{color:var(--ink-45)}
-.chip.c-proposed,.chip.c-approved,.chip.c-filled{border-color:var(--sage);font-weight:600}
-@keyframes chipin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.pipe__st{border:1px solid var(--line);border-radius:10px;padding:9px 10px 8px;background:var(--card);overflow:hidden;min-width:0;transition:border-color .3s,box-shadow .3s}
+.pipe__n{font-family:var(--mono);font-size:19px;line-height:1;display:inline-block;transform-origin:left center;transition:transform .22s ease,color .22s}
+.pipe__l{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-45);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pipe__st.active{border-color:var(--gold);animation:pipepulse 1.6s ease-in-out infinite}
+.pipe__st.bumped .pipe__n{transform:scale(1.15);color:var(--gold)}
+.pipe__st.good{border-color:var(--sage-line,var(--sage))}
+.pipe__st.good .pipe__n{color:var(--sage)}
+@keyframes pipepulse{0%,100%{box-shadow:0 0 0 2px rgba(169,130,63,.18)}50%{box-shadow:0 0 0 5px rgba(169,130,63,.04)}}
+.pipe__feed{display:flex;flex-wrap:wrap;gap:5px 6px;margin-top:10px;min-height:22px}
+.pchip{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:3px 8px 3px 7px;font-family:var(--mono);font-size:11px;line-height:1.3;border:1px solid var(--line);background:var(--card);animation:pchipin .3s ease-out;white-space:nowrap;max-width:100%}
+.pchip i{width:6px;height:6px;border-radius:50%;background:var(--ink-25);flex:none}
+.pchip b{font-weight:700;color:var(--ink)}
+.pchip em{font-style:normal;color:var(--ink-45);overflow:hidden;text-overflow:ellipsis}
+.pchip.k-signal i{background:var(--gold)}
+.pchip.k-blocked i{background:var(--clay)}.pchip.k-blocked em{color:var(--clay)}
+.pchip.k-passed i,.pchip.k-proposed i,.pchip.k-approved i{background:var(--sage)}
+.pchip.k-passed em,.pchip.k-proposed em,.pchip.k-approved em{color:var(--sage)}
+.pchip.k-proposed,.pchip.k-approved,.pchip.k-filled{border-color:var(--sage)}
+.pchip.k-filled i,.pchip.k-closed i{background:var(--ink)}.pchip.k-filled em,.pchip.k-closed em{color:var(--ink);font-weight:600}
+.pchip.k-exit i{background:var(--slate)}
+@keyframes pchipin{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 .pipe__blocked{margin-top:8px;color:var(--ink-45);font-family:var(--mono);font-size:11px}
-@media (max-width:900px){.pipe__stages{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:1100px){.pipe__stages{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:600px){.pipe__stages{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .opscadence{font-size:12px;color:var(--ink-70);line-height:1.5;margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2)}
 .opsstreams{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:16px}
 .opsstream{border:1px solid var(--line);border-radius:11px;padding:12px 13px;background:var(--card)}
@@ -1428,6 +1434,16 @@ function stateReasonText(c){
   if(c.reconciliationFailure&&c.reconciliationFailure.pass===false) bits.push("Ledger reconciliation failed"+(c.reconciliationFailure.error?": "+c.reconciliationFailure.error:"")+(c.reconciliationFailure.discrepancyCount?" ("+c.reconciliationFailure.discrepancyCount+" discrepancies)":""));
   return bits.join(" · ");
 }
+/* Qualified but nothing proposed: name the step that refused, in plain words. */
+function unproposedReason(a){
+  if(!a) return "";
+  var q=a.signalQualified||0, p=a.signalProposed||0;
+  if(!(q>0&&p===0)) return "";
+  if(a.executionSourceRefused) return "All "+q+" were refused at the order step because the price feed is not execution-grade ("+(a.executionSourceReason||"non-consolidated")+"). Decisions can be measured on it, but no paper fill may be priced against it. Fix: Control room → Market data → provider alpaca, feed delayed_sip, Save.";
+  if(a.proposeErrors) return "All "+q+" failed at the order step with an error: "+(a.lastProposeError||"unknown")+". This is a defect, not a market condition.";
+  if(a.signalPacedOut>=q) return q+" qualified but the per-scan cap ("+(a.perCycleCap||0)+") was already used.";
+  return q+" qualified but none could be sized — the portfolio or cash check refused every one (see the No-trade log).";
+}
 function entryVerdictStale(){
   var c=ctl(), changed=Number(c.operatingStateChangedAtMs)||0,
       last=c.lastCycleFinishedAt?Date.parse(c.lastCycleFinishedAt):0;
@@ -1475,7 +1491,7 @@ function renderExploration(x, entryControl){
     (a.signalProposed||0)+' signal entries were proposed'+(a.perCycleCap?' (cap '+a.perCycleCap+' per scan'+(a.signalPacedOut?', '+a.signalPacedOut+' paced to later scans':'')+')':'')+
     '; '+(a.controlProposed||0)+' control entries from '+(a.controlEligible||0)+' hazard-clean names ('+(a.controlOpenAfter||0)+' of '+(cc.maxOpenPositions||0)+' control positions open).'+
     (a.minimumShareFloorApplied?' '+a.minimumShareFloorApplied+' order(s) took the one-share floor.':'')+
-    '</div>';
+    '</div>'+(unproposedReason(a)?'<div class="note bad"><b>Nothing was proposed.</b> '+esc(unproposedReason(a))+'</div>':'');
   var pols=sb.policies||{}, ids=Object.keys(pols).sort(function(p,q){return (pols[q].posteriorMeanBps||0)-(pols[p].posteriorMeanBps||0);});
   var closed=sb.closedExploratoryTrades||0;
   var coh=sb.cohorts||{}, sig=coh.signal||{}, con=coh.control||{}, svc=sb.signalVsControl||null;
@@ -2652,7 +2668,7 @@ function chipFor(ev){
   else if(s==="held"){cls="c-none";text="holding";}
   else if(s==="unpriced"){cls="c-none";text="no bars";}
   else {text=s;}
-  return '<span class="chip '+cls+'"><i></i><b>'+esc(ev.sym||"")+'</b><span class="why">'+esc(text)+'</span></span>';
+  return '<span class="pchip '+cls.replace(/^c-/,"k-")+'"><i></i><b>'+esc(ev.sym||"")+'</b><em>'+esc(text)+'</em></span>';
 }
 function plainGateShort(id){
   var m={trend:"downtrend",liquidity:"too thinly traded",blackout:"earnings window",session:"session",dispersion:"dispersion",
@@ -2677,10 +2693,10 @@ function renderPipeline(live, phase){
   if(recent.length&&!activeStage) activeStage=stageOfEvent(recent[recent.length-1]);
   var html='<div class="pipe"><div class="pipe__stages">'+stages.map(function(st){
     var bumped=PIPE_PREV[st[0]]!=null&&PIPE_PREV[st[0]]!==st[2]; PIPE_PREV[st[0]]=st[2];
-    return '<div class="pipe__st'+(activeStage===st[0]?' active':'')+(bumped?' bumped':'')+(st[2]>0&&st[0]!=="ranked"&&st[0]!=="signal"?' good':'')+'"><div class="n">'+st[2]+'</div><div class="l">'+esc(st[1])+'</div></div>';
+    return '<div class="pipe__st'+(activeStage===st[0]?' active':'')+(bumped?' bumped':'')+(st[2]>0&&st[0]!=="ranked"&&st[0]!=="signal"?' good':'')+'"><span class="pipe__n">'+st[2]+'</span><div class="pipe__l">'+esc(st[1])+'</div></div>';
   }).join("")+'</div>';
   var feed=recent.slice(-14).reverse();
-  html+='<div class="pipe__feed">'+(feed.length?feed.map(chipFor).join(""):'<span class="chip c-none"><i></i><span class="why">waiting for the first company…</span></span>')+'</div>';
+  html+='<div class="pipe__feed">'+(feed.length?feed.map(chipFor).join(""):'<span class="pchip"><i></i><em>waiting for the first company…</em></span>')+'</div>';
   var bb=Object.entries(live.blockedBy||{}).sort(function(a,b){return b[1]-a[1];}).slice(0,6);
   if(bb.length) html+='<div class="pipe__blocked">Stopped by: '+bb.map(function(x){return esc(plainGateShort(x[0]))+" "+x[1];}).join(" · ")+'</div>';
   return html+'</div>';
@@ -2773,7 +2789,7 @@ function renderOperationsConsole(){
     +(xa?operationStream("Exploratory entries this scan",(xa.signalProposed||0)+(xa.controlProposed||0),
         (xa.perCycleCap||0)+(xa.controlRoom||0),
         ((xa.perCycleCap||0)+(xa.controlRoom||0))?100*((xa.signalProposed||0)+(xa.controlProposed||0))/((xa.perCycleCap||0)+(xa.controlRoom||0)):0,
-        (xa.signalQualified||0)+" qualified; "+(xa.signalProposed||0)+" signal + "+(xa.controlProposed||0)+" control proposed"+(xa.signalPacedOut?"; "+xa.signalPacedOut+" paced to later scans":"")+"."):"");
+        (xa.signalQualified||0)+" qualified; "+(xa.signalProposed||0)+" signal + "+(xa.controlProposed||0)+" control proposed"+(xa.signalPacedOut?"; "+xa.signalPacedOut+" paced to later scans":"")+"."+(unproposedReason(xa)?" "+unproposedReason(xa):"")):"");
 
   var cands=DASH.candidates||[],passed=cands.filter(function(x){return x.pass;}).length,tally={};
   cands.forEach(function(x){if(x.firstBlock)tally[x.firstBlock]=(tally[x.firstBlock]||0)+1;});
@@ -2799,7 +2815,8 @@ function renderOperationsConsole(){
 
   var entryBanner=(xec&&xec.pass===false)
     ?(entryVerdictStale()?staleVerdictNote()
-      :'<div class="note bad" style="margin:0 0 14px"><b>Paper entries are blocked:</b> '+esc(entryControlText(xec.reason))+'</div>'):'';
+      :'<div class="note bad" style="margin:0 0 14px"><b>Paper entries are blocked:</b> '+esc(entryControlText(xec.reason))+'</div>')
+    :(unproposedReason(xa)?'<div class="note bad" style="margin:0 0 14px"><b>Qualified but not proposed.</b> '+esc(unproposedReason(xa))+'</div>':'');
   host.innerHTML='<div class="opshead"><div class="opshead__copy"><h2>Live desk console</h2>'
     +'<p>Backend truth only: scheduled jobs, company counts, order/fill work, research and learning progress.</p></div>'
     +'<span class="opsstate '+statusClass+'">'+esc(statusText)+'</span></div>'
