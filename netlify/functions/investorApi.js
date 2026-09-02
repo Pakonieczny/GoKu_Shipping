@@ -1766,9 +1766,23 @@ const ACTIONS = {
         try {
           const r = require("./_investorSelftest").runFixtures();
           return { pass: r.pass, passed: r.passed, total: r.total,
-            fixtureHash: r.fixtureHash,
+            fixtureHash: r.fixtureHash, schema: r.schema || null,
             failed: r.cases.filter((c) => !c.pass).map((c) => c.name) };
         } catch (e) { return { pass: false, error: String(e.message).slice(0, 200) }; }
+      })(),
+      /* What the CYCLE attested (written by the bootstrap from inside the
+         worker) beside what this API process just ran. A different hash means
+         the two deployed bundles are not the same code — a mixed upload. */
+      attestation: await (async () => {
+        try {
+          const c = await ctrlDoc();
+          return { commit: commitId(), fixturesPass: c.fixturesPass === true,
+            fixturesCommit: c.fixturesCommit || null, fixtureHash: c.fixtureHash || null,
+            bootstrapVersion: c.bootstrapVersion || null,
+            fixtureFailures: (c.fixtureFailures || []).map((f) => f.name || f),
+            checkedAt: c.fixturesCheckedAt && c.fixturesCheckedAt.toDate
+              ? c.fixturesCheckedAt.toDate().toISOString() : null };
+        } catch (e) { return { error: String(e.message).slice(0, 200) }; }
       })(),
       /* Presence and origin only. No secret value is ever returned here. */
       secrets: {

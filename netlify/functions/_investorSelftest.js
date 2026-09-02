@@ -1579,8 +1579,9 @@ function runFixtures() {
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const fixtureHash = digest({ schema: "runtime-fixtures-v19-strategy-v10-variants-q", count: cases.length, cases });
-  return { pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
+  const SCHEMA = "runtime-fixtures-v19-strategy-v10-variants-q";
+  const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
+  return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
 }
 

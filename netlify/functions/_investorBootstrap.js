@@ -723,8 +723,17 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
       operatingStateChangedAtMs: Date.now() };
     await ref.set(freeze, { merge: true });
     Object.assign(c, freeze);
-  } else if (STATE.describe(c).entriesFrozen && c.operatingStateSource === "bootstrap:fixtures"
-      && STATE.active(c.resumeOperatingState)) {
+  } else if (/fixture attestation failed/.test(String(c.safetyClosedReason || ""))
+      && !STATE.describe(c).entriesFrozen) {
+    /* A stale "safety closed" note from a build whose checks failed, on a
+       desk the operator has since restarted: clear it so the console does
+       not keep reporting a failure this build does not have. */
+    await ref.set({ safetyClosedReason: null }, { merge: true });
+    c.safetyClosedReason = null;
+  } else if (STATE.describe(c).entriesFrozen && STATE.active(c.resumeOperatingState)
+      && (c.operatingStateSource === "bootstrap:fixtures"
+        || (c.operatingStateSource !== "operator"
+          && /fixture attestation failed/.test(String(c.safetyClosedReason || ""))))) {
     /* SELF-HEALING, as the reconciliation freeze already does: a freeze that
        THIS attestation imposed is lifted by this attestation passing again on
        a later build. An operator's freeze is never touched. */
