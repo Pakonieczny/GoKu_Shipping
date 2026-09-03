@@ -890,29 +890,63 @@ function mergeChunkResults(list, chunks, results, providerId) {
   out.manifestSha256 = chunkHashes.length
     ? crypto.createHash("sha256").update(chunkHashes.join("|")).digest("hex") : null;
   out.sha256 = out.manifestSha256;
-  const failedSymbols = new Set(out.chunks.failed.flatMap((f) => chunks[f.index]));
+  /* A symbol recovered by a later, smaller request is NOT a failure. Counting
+     it as one is how a rescued chunk still reported sixty missing companies. */
+  const failedSymbols = new Set(out.chunks.failed
+    .flatMap((f) => chunks[f.index])
+    .filter((sym) => !out.bars[sym]));
   out.missingSymbols = list.filter((sym) => !out.bars[sym] && !failedSymbols.has(sym));
   out.failedSymbols = [...failedSymbols];
   out.failureCount = out.failedSymbols.length;
   return out;
 }
 
-async function fetchBarsChunked(symbols, opts = {}, { chunkSize = 60, retries = 1 } = {}) {
+async function fetchBarsChunked(symbols, opts = {},
+  { chunkSize = 60, retries = 1, rescueSize = 12 } = {}) {
   const list = [...new Set((symbols || []).filter(Boolean))];
   const size = Math.max(5, Math.min(200, Number(chunkSize) || 60));
   const chunks = [];
   for (let i = 0; i < list.length; i += size) chunks.push(list.slice(i, i + size));
   const results = [];
-  for (const chunk of chunks) {
+  const attemptChunk = async (chunk) => {
     let got = null, lastError = null, retried = 0;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try { got = await fetchBars(chunk, opts); lastError = null; break; }
       catch (e) { lastError = e; if (attempt < retries) retried += 1; }
     }
-    results.push(got ? { ...got, retried }
-      : { error: String(lastError && (lastError.message || lastError.code) || "unknown") });
+    return got ? { ...got, retried }
+      : { error: String(lastError && (lastError.message || lastError.code) || "unknown") };
+  };
+  for (const chunk of chunks) results.push(await attemptChunk(chunk));
+
+  /* SPLIT AND RETRY. A chunk is sixty companies, so one failed request used to
+     delete sixty names from the scan in a single stroke — which is exactly how
+     a 277-company roster kept reporting 97 or 104 evaluated. Whatever the
+     cause (a transport timeout, a rate limit, one bad ticker poisoning the
+     multi-symbol request), a smaller request usually succeeds, and when it
+     does not the loss is a handful of names instead of a fifth of the roster.
+     Recovered chunks are appended so the merge counts them as delivered. */
+  const rescue = { attemptedChunks: 0, requests: 0, recoveredSymbols: 0, reasons: [] };
+  const firstPassFailures = results
+    .map((r, i) => (r && r.error ? i : -1)).filter((i) => i >= 0);
+  for (const i of firstPassFailures) {
+    rescue.attemptedChunks += 1;
+    if (rescue.reasons.length < 5) rescue.reasons.push(String(results[i].error).slice(0, 200));
+    const sub = [];
+    for (let j = 0; j < chunks[i].length; j += rescueSize) {
+      sub.push(chunks[i].slice(j, j + rescueSize));
+    }
+    for (const piece of sub) {
+      const got = await attemptChunk(piece);
+      rescue.requests += 1;
+      chunks.push(piece);
+      results.push(got);
+      if (!got.error) rescue.recoveredSymbols += Object.keys(got.bars || {}).length;
+    }
   }
-  return mergeChunkResults(list, chunks, results, activeProvider().id);
+  const merged = mergeChunkResults(list, chunks, results, activeProvider().id);
+  merged.rescue = rescue;
+  return merged;
 }
 
 /* ── validation + grading ──────────────────────────────────────────────── */
