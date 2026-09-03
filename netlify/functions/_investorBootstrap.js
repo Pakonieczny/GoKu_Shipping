@@ -53,7 +53,15 @@ const S_FALLBACK = require("./_investorStrategy.js");
 const V = require("./_investorVariants");
 const STATE = require("./_investorState");
 
-const BOOTSTRAP_VERSION = 19; // v19: strategy v12 (higher entry bar, concentrated and deployed book)
+/* A frozen strategy version is only adopted by a re-bootstrap: control's
+   `strategyVersion` and the safety epoch are written inside the full
+   bootstrap block, which is SKIPPED while the stored bootstrapVersion still
+   matches. So shipping a new strategy without bumping this leaves the desk
+   running the previous version out of Firestore and the new policy inert —
+   silently, because every hash still agrees with itself. The fixture
+   `strategy_version_change_forces_a_rebootstrap` pins the pair below. */
+const BOOTSTRAP_VERSION = 20; // v20: strategy v13 (patience sleeve)
+const BOOTSTRAP_STRATEGY_VERSION = "v13";
 const DAILY_PROVENANCE_VERSION = 5; // v5 re-attests complete windows to the selected 15-minute SIP identity
 
 function stable(value) {
@@ -1085,7 +1093,7 @@ module.exports = {
   epochRolloverEligible,
   expectedHistorySymbols, historyCursorNeedsReconcile, backfillDailyHistory, topUpDailyHistory,
   backfillSharesOutstanding, readShares,
-  BOOTSTRAP_VERSION, DAILY_PROVENANCE_VERSION,
+  BOOTSTRAP_VERSION, BOOTSTRAP_STRATEGY_VERSION, DAILY_PROVENANCE_VERSION,
   ensureBootstrapped, resolveCiksAndFreeze, freezeBundledUniverse,
   validateBundledUniverseSnapshot, freezeStrategy,
   SEC_RENAMED_TICKERS, canonicalSecTicker, buildSecTickerMap, resolveSecTicker,

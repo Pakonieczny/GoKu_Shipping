@@ -243,22 +243,46 @@ async function writePlans({ accountId, sessionDate, cycleId, candidates, policy,
   }
   const { selected, passedOver } = selectPlans(candidates, policy, { exclude });
   const now = Date.now();
-  const armed = [];
-  const batch = A.batch();
+  const armed = [], refused = [];
+  /* ONE TRANSACTION PER PLAN, not a batch of merge:false writes.
+     The read above and the write below are separated by two Firestore round
+     trips, and the one-minute strike pass is writing these same documents
+     throughout. A blind merge:false could overwrite a plan the guard had just
+     marked "struck" back to "armed", erasing struckAtMs, orderId and the
+     approval record — the order itself survives (exclusion comes from the
+     live order and position collections, not from plan.status), but the audit
+     trail would then contradict the ledger. Each write re-reads inside a
+     transaction and refuses to re-arm a plan that has since been struck or
+     cancelled. */
   for (const c of selected) {
-    const prev = existing[c.symbol] || null;
-    const doc = { ...c.plan, planId: planId(accountId, sessionDate, c.symbol), status: "armed",
-      armedAtMs: prev && prev.status === "armed" && prev.armedAtMs ? prev.armedAtMs : now,
-      refreshedAtMs: now, refreshedByCycleId: cycleId,
-      refreshCount: prev ? (Number(prev.refreshCount) || 0) + 1 : 0,
-      lastSeenUsd: prev && prev.lastSeenUsd != null ? prev.lastSeenUsd : c.plan.refPriceUsd,
-      lastSeenAt: prev && prev.lastSeenAt || c.plan.refBarAt,
-      lastBlock: null,
-      updated_at: A.FV.serverTimestamp(),
-      ...(prev ? {} : A.envelope({ created_by: "investorCycle.plans" })) };
-    batch.set(A.col(A.COL.plans).doc(doc.planId), doc, { merge: false });
-    armed.push({ symbol: c.symbol, armBelowUsd: c.plan.armBelowUsd, refPriceUsd: c.plan.refPriceUsd,
-      dropPct: c.dropPct, refreshed: !!prev });
+    const ref = A.col(A.COL.plans).doc(planId(accountId, sessionDate, c.symbol));
+    try {
+      const outcome = await A.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const prev = snap.exists ? snap.data() : null;
+        if (prev && ["struck", "cancelled"].includes(prev.status)) {
+          return { applied: false, reason: prev.status };
+        }
+        tx.set(ref, { ...c.plan, planId: ref.id, status: "armed",
+          armedAtMs: prev && prev.status === "armed" && prev.armedAtMs ? prev.armedAtMs : now,
+          refreshedAtMs: now, refreshedByCycleId: cycleId,
+          refreshCount: prev ? (Number(prev.refreshCount) || 0) + 1 : 0,
+          lastSeenUsd: prev && prev.lastSeenUsd != null ? prev.lastSeenUsd : c.plan.refPriceUsd,
+          lastSeenAt: (prev && prev.lastSeenAt) || c.plan.refBarAt,
+          lastBlock: null,
+          updated_at: A.FV.serverTimestamp(),
+          ...(prev ? {} : A.envelope({ created_by: "investorCycle.plans" })) }, { merge: false });
+        return { applied: true, refreshed: !!prev };
+      });
+      if (outcome.applied) {
+        armed.push({ symbol: c.symbol, armBelowUsd: c.plan.armBelowUsd, refPriceUsd: c.plan.refPriceUsd,
+          dropPct: c.dropPct, refreshed: !!outcome.refreshed });
+      } else {
+        refused.push({ symbol: c.symbol, reason: outcome.reason });
+      }
+    } catch (e) {
+      refused.push({ symbol: c.symbol, reason: String(e.message || e).slice(0, 120) });
+    }
   }
   /* An armed plan this scan did not re-select is superseded: the name no
      longer qualifies, is held or pending, or sits behind closer levels. */
@@ -266,13 +290,12 @@ async function writePlans({ accountId, sessionDate, cycleId, candidates, policy,
   const keep = new Set(selected.map((c) => c.symbol));
   for (const [sym, p] of Object.entries(existing)) {
     if (p.status !== "armed" || keep.has(sym)) continue;
-    batch.set(A.col(A.COL.plans).doc(p.planId || planId(accountId, sessionDate, sym)), {
-      status: "superseded", supersededAtMs: now, supersededByCycleId: cycleId,
-      updated_at: A.FV.serverTimestamp() }, { merge: true });
-    superseded.push(sym);
+    /* Same compare-and-set: a plan struck since the read must stay struck. */
+    const applied = await markPlan({ planId: p.planId || planId(accountId, sessionDate, sym) },
+      { status: "superseded", supersededAtMs: now, supersededByCycleId: cycleId });
+    if (applied.applied) superseded.push(sym);
   }
-  if (selected.length || superseded.length) await batch.commit();
-  return { armed, superseded, passedOver,
+  return { armed, superseded, passedOver, refused,
     considered: (candidates || []).length,
     rejected: (candidates || []).filter((c) => c && !c.ok).reduce((acc, c) => {
       acc[c.reason || "unknown"] = (acc[c.reason || "unknown"] || 0) + 1; return acc; }, {}) };
@@ -286,8 +309,29 @@ async function loadPlans(accountId, sessionDate, { statuses = ["armed"] } = {}) 
   return out.sort((a, b) => (a.requiredDropPct || 0) - (b.requiredDropPct || 0));
 }
 
-async function markPlan(plan, patch) {
-  await A.col(A.COL.plans).doc(plan.planId).set({ ...patch, updated_at: A.FV.serverTimestamp() }, { merge: true });
+/* Benign field updates (last seen price, a block note) merge freely. A STATUS
+   transition is compare-and-set: only a plan still "armed" may move, so two
+   writers cannot both claim the same plan and the later one cannot undo the
+   earlier. Returns whether the patch was applied. */
+async function markPlan(plan, patch, { expect = "armed" } = {}) {
+  const ref = A.col(A.COL.plans).doc(plan.planId);
+  const body = { ...patch, updated_at: A.FV.serverTimestamp() };
+  if (patch.status === undefined) {
+    await ref.set(body, { merge: true });
+    return { applied: true };
+  }
+  try {
+    return await A.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return { applied: false, reason: "plan_missing" };
+      const current = snap.data().status;
+      if (expect && current !== expect) return { applied: false, reason: current };
+      tx.set(ref, body, { merge: true });
+      return { applied: true, from: current };
+    });
+  } catch (e) {
+    return { applied: false, reason: String(e.message || e).slice(0, 120) };
+  }
 }
 
 function trustedSource(provenance, quality) {
@@ -612,8 +656,17 @@ async function evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cf
         strategyVersion: plan.strategyVersion || strategy.version, decisionAtMs, sessionDate: session.date,
         marketProvenance: provenance[sym], ...A.envelope({ created_by: "positionGuard.strike" }),
       }, { merge: true });
-      await markPlan(plan, { ...seen, status: "struck", struckAtMs: decisionAtMs, strikePriceUsd: Number(last.c),
-        strikeJobId: jobId, orderId: o.orderId, qty, cause, approval, lastBlock: null });
+      const claimed = await markPlan(plan, { ...seen, status: "struck", struckAtMs: decisionAtMs,
+        strikePriceUsd: Number(last.c), strikeJobId: jobId, orderId: o.orderId, qty, cause,
+        approval, lastBlock: null });
+      if (!claimed.applied) {
+        /* Another writer moved this plan between the strike decision and here.
+           The ORDER is already created and is the source of truth — the
+           per-symbol order lock in proposeOrder guarantees there is only one —
+           so the trade stands; only the plan's audit row lost the race. */
+        out.blocked.push({ symbol: sym, reason: "plan_status_race",
+          detail: `order ${o.orderId} stands; the plan document had already moved to ${claimed.reason}` });
+      }
       /* The book now carries this exposure for the next plan in the loop. */
       const takenUsd = qty * last.c;
       bookState.book.count += 1; bookState.book.grossUsd += takenUsd;

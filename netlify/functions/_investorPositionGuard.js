@@ -299,12 +299,24 @@ async function runGuard(jobId) {
             if (!fetchedBars.length) {
               panel[symbol] = stored.bars;
               provenance[symbol] = stored.provenance;
-            } else if (fresh
+            } else if (persistBars && fresh
                 && fresh.provider === stored.provenance.provider
                 && (fresh.feed || null) === (stored.provenance.feed || null)
                 && (fresh.adjustment || null) === (stored.provenance.adjustment || null)) {
               /* Preserve the newest in-session observation while adding enough
-                 same-feed history for stops and ranks. */
+                 same-feed history for stops and ranks.
+
+                 ONLY WHEN THE TIMEFRAMES AGREE. The day store holds the
+                 strategy's own 5-minute bars; this pass may be fetching
+                 1-minute ones. Concatenating them produced a single array of
+                 mixed bar spacing — routine in the first twenty minutes of a
+                 session, when fewer than 20 one-minute bars exist — and
+                 S.attentionZ compares a recent window against a per-slot
+                 historical baseline, so inconsistent spacing silently biases
+                 the volume statistic that gates a strike. Identical
+                 provider/feed/adjustment is not enough; the interval has to
+                 match too. When it does not, the wholesale replacement above
+                 still applies and yields a homogeneous (coarser) series. */
               panel[symbol] = M.normalizeBars([...stored.bars, ...fetchedBars]);
             }
           }
@@ -470,24 +482,41 @@ async function runGuard(jobId) {
      the exploratory paper state, and approved orders fill on their first
      eligible bar of THIS pass. Everything here is idempotent against a deep
      scan running at the same moment. */
-  let strikes = null, entries = null;
+  let strikes = null, entries = null, entryLock = { acquired: false };
   if (session.open) {
+    /* The same mutex the deep scan takes. Losing it costs this pass its
+       strikes and its approvals; both retry on the next minute. Exits above
+       have already run and are never gated on it. */
+    const lockOwner = `guard:${jobId}:${Math.random().toString(36).slice(2, 8)}`;
+    entryLock = await require("./_investorLease").acquireEntryLock(accountId, lockOwner);
+    entryLock.owner = lockOwner;
     await guardProgress(runRef, { phase: "strike_levels",
-      label: "Checking armed entry levels and pending orders", pct: 66,
+      label: entryLock.acquired ? "Checking armed entry levels and pending orders"
+        : "Waiting for the deep scan to finish creating entries", pct: 66,
       completed: 0, total: plans.length + pendingOrders.length,
-      detail: `${plans.length} armed levels against ${strikeTimeframe} prices; ${pendingOrders.length} orders awaiting approval or an eligible bar.` });
-    try {
-      strikes = await ST.evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cfg, activity,
-        activePortfolioControls, session, plans, panel, provenance, quality, positions, pendingOrders,
-        earnings, vixNorm, paperLearningActive: paperLearning.active === true, exploratoryPolicy, policyIdentity });
-    } catch (e) { strikes = { error: String(e.message || e).slice(0, 160) }; }
-    try {
-      /* Re-read: strikes above may have created and approved orders whose
-         first eligible bar could already be in this pass's panel. */
-      const fresh = await loadPendingOrders(accountId);
-      entries = await ST.settleEntries({ accountId, operating, strategy, cfg, activity, session, panel,
-        provenance, quality, pendingOrders: fresh, positions, ctrl, policyIdentity });
-    } catch (e) { entries = { error: String(e.message || e).slice(0, 160) }; }
+      detail: entryLock.acquired
+        ? `${plans.length} armed levels against ${strikeTimeframe} prices; ${pendingOrders.length} orders awaiting approval or an eligible bar.`
+        : "A scan is creating entries right now. Striking waits a minute so the two cannot both take the last free slot in the book." });
+    if (entryLock.acquired) {
+      try {
+        strikes = await ST.evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cfg, activity,
+          activePortfolioControls, session, plans, panel, provenance, quality, positions, pendingOrders,
+          earnings, vixNorm, paperLearningActive: paperLearning.active === true, exploratoryPolicy, policyIdentity });
+      } catch (e) { strikes = { error: String(e.message || e).slice(0, 160) }; }
+      try {
+        /* Re-read: strikes above may have created and approved orders whose
+           first eligible bar could already be in this pass's panel. */
+        const fresh = await loadPendingOrders(accountId);
+        entries = await ST.settleEntries({ accountId, operating, strategy, cfg, activity, session, panel,
+          provenance, quality, pendingOrders: fresh, positions, ctrl, policyIdentity });
+      } catch (e) { entries = { error: String(e.message || e).slice(0, 160) }; }
+      finally {
+        try { await require("./_investorLease").releaseEntryLock(accountId, entryLock.owner); } catch {}
+      }
+    } else {
+      strikes = { skipped: [], struck: [], waiting: [], blocked: [], expired: [],
+        deferred: "entry creation is locked by a running scan" };
+    }
   } else if (plans.length) {
     /* Nothing strikes while the exchange is shut; levels past their window
        are retired so tomorrow's scan starts clean. */
@@ -593,6 +622,7 @@ async function runGuard(jobId) {
     marketDeferred: !session.open, executionDeferred: !session.open,
     marketAsOf: new Date(marketNowMs).toISOString(), symbols: symbols.length,
     strikeBarTimeframe: strikeTimeframe, barsPersisted: persistBars,
+    entryLock: { acquired: entryLock.acquired === true, heldBy: entryLock.heldBy || null },
     plans: { armed: plans.length,
       struck: strikes && strikes.struck ? strikes.struck.length : 0,
       waiting: strikes && strikes.waiting ? strikes.waiting.length : 0,

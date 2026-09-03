@@ -1848,8 +1848,19 @@ const ACTIONS = {
     const p = snap.data();
     if (p.status !== "armed") return { ok: true, noop: true, symbol: sym, status: p.status,
       note: `the level for ${sym} is already ${p.status}` };
-    await ref.set({ status: "cancelled", cancelledAtMs: Date.now(), cancelledBy: operator || "operator",
-      updated_at: A.FV.serverTimestamp() }, { merge: true });
+    /* Compare-and-set. Between the read above and this write, the one-minute
+       strike pass may have struck this level; cancelling it then would erase a
+       live order's audit row and tell the operator the level was withdrawn
+       when it had in fact been bought. */
+    const ST2 = require("./_investorStrike");
+    const applied = await ST2.markPlan({ planId: ref.id },
+      { status: "cancelled", cancelledAtMs: Date.now(), cancelledBy: operator || "operator" });
+    if (!applied.applied) {
+      return { ok: false, symbol: sym, status: applied.reason,
+        refused: applied.reason === "struck"
+          ? `${sym} was bought moments ago — the level is no longer pending. Sell it from What you own if you want out.`
+          : `the level for ${sym} moved to ${applied.reason} before this could be withdrawn` };
+    }
     await A.col(A.COL.audit).add({ action: "entry_plan_cancelled", symbol: sym, accountId,
       operator: operator || "operator", armBelowUsd: p.armBelowUsd, at: A.FV.serverTimestamp(),
       ...A.envelope({ created_by: "investorApi" }) });

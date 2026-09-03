@@ -1950,10 +1950,129 @@ function runFixtures() {
     return true;
   }));
 
+  cases.push(fixture("strategy_version_change_forces_a_rebootstrap", () => {
+    /* control.strategyVersion and the safety epoch are only written by the
+       FULL bootstrap block, which ensureBootstrapped skips while the stored
+       bootstrapVersion still matches BOOTSTRAP_VERSION. A new frozen strategy
+       shipped without bumping it therefore never gets adopted: the cycle
+       calls loadStrategy(ctrl.strategyVersion) and keeps reading the previous
+       version out of Firestore, so the new policy is inert and nothing
+       reports an error because every hash still agrees with itself. */
+    if (B.BOOTSTRAP_STRATEGY_VERSION !== strategy.version) return false;
+    const src = sourceOf(B.ensureBootstrapped);
+    /* The skip this invariant protects against must still be the shape we
+       think it is. */
+    if (!/const done = c\.bootstrapVersion === BOOTSTRAP_VERSION/.test(src)) return false;
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    if (!/loadStrategy\(ctrl\.strategyVersion\)/.test(cycleSrc)) return false;
+    return true;
+  }));
+
+  cases.push(fixture("entry_creation_is_serialized_between_the_two_tiers", () => {
+    /* R.checkAdd is pure over a book snapshot its caller built, and the
+       approval transaction re-checks only cash — never maxOpenPositions or
+       the gross/sector ceilings. Two writers that both see "5 of 6 used"
+       would both admit one. Entry creation is therefore serialized on one
+       account-wide lock; exits, marks and fills must stay outside it. */
+    const LEASE = require("./_investorLease");
+    if (typeof LEASE.acquireEntryLock !== "function"
+      || typeof LEASE.releaseEntryLock !== "function") return false;
+    const acq = sourceOf(LEASE.acquireEntryLock);
+    /* Held by someone else and unexpired => refused; an unreadable lock must
+       also refuse, never silently permit two writers. */
+    if (!/expiresAtMs\) > nowMs && cur\.owner && cur\.owner !== owner/.test(acq)) return false;
+    if (!/return \{ acquired: false, error:/.test(acq)) return false;
+    if (!/\w+\.runTransaction/.test(acq)) return false;
+    const rel = sourceOf(LEASE.releaseEntryLock);
+    if (!/owner !== owner\) return \{ released: false, reason: "not_owner" \}/.test(rel)) return false;
+
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    /* The deep scan gates BOTH proposal loops on the lock and releases it
+       before fills, in a finally so a throw cannot freeze entries. */
+    if (!/acquireEntryLock\(accountId, entryLockOwner\)/.test(cycleSrc)) return false;
+    if (!/entryLock\.acquired && queueIndex < proposalQueue\.length/.test(cycleSrc)) return false;
+    if (!/entryLock\.acquired && exploratorySelection/.test(cycleSrc)) return false;
+    if (!/\} finally \{[\s\S]{0,400}releaseEntryLock\(accountId, entryLockOwner\)/.test(cycleSrc)) return false;
+
+    const guardSrc = sourceOf(require("./_investorPositionGuard").runGuard);
+    if (!/acquireEntryLock\(accountId, lockOwner\)/.test(guardSrc)) return false;
+    if (!/if \(entryLock\.acquired\) \{[\s\S]{0,600}evaluateStrikes/.test(guardSrc)) return false;
+    /* Exits are evaluated and armed BEFORE the lock is taken, so a locked
+       account can still protect its holdings. */
+    if (guardSrc.indexOf("evaluate_exits") > guardSrc.indexOf("acquireEntryLock")) return false;
+    return true;
+  }));
+
+  cases.push(fixture("plan_status_transitions_are_compare_and_set", () => {
+    /* writePlans read-then-wrote with merge:false while the one-minute pass
+       was writing the same documents, so a struck plan could be reverted to
+       "armed" and lose its orderId and approval record. Every status move is
+       now a transaction that only advances a plan still "armed". */
+    const STK = require("./_investorStrike");
+    const mark = sourceOf(STK.markPlan);
+    if (!/patch\.status === undefined/.test(mark)) return false;           // benign merges stay cheap
+    if (!/\w+\.runTransaction/.test(mark)) return false;
+    if (!/if \(expect && current !== expect\) return \{ applied: false, reason: current \}/.test(mark)) return false;
+    const write = sourceOf(STK.writePlans);
+    if (/\w+\.batch\(\)/.test(write)) return false;                       // the blind batch is gone
+    if (!/\["struck", "cancelled"\]\.includes\(prev\.status\)/.test(write)) return false;
+    if (!/\w+\.runTransaction/.test(write)) return false;
+    /* A lost race must not lose the trade: the order stands, only the audit
+       row moved, and the strike says so rather than failing silently. */
+    const strike = sourceOf(STK.evaluateStrikes);
+    if (!/if \(!claimed\.applied\)/.test(strike)) return false;
+    if (!/plan_status_race/.test(strike)) return false;
+    const api = sourceOf(require("./investorApi").ACTIONS.cancelPlan);
+    if (!/ST2\.markPlan/.test(api)) return false;
+    return true;
+  }));
+
+  cases.push(fixture("a_dead_deep_scan_leaves_its_scheduled_slot_retryable", () => {
+    /* lastPlanKey used to be stamped inside the dispatch transaction, so a
+       worker that returned 202 and then died left the slot marked satisfied.
+       With two slots a day that costs a whole scan, or the day. The kick now
+       stamps only its cadence clock; the worker stamps the slot when it has
+       actually finished, and the per-slot job document is what prevents a
+       double dispatch. */
+    const K = require("./investorKick");
+    const dispatch = sourceOf(K.dispatch);
+    if (/lastPlanKey: planSlot\.key/.test(dispatch)) return false;
+    if (!/tx\.set\(cref, \{ \[stamp\]: now \}, \{ merge: true \}\)/.test(dispatch)) return false;
+    /* The job-document guard that replaces it must still be present. */
+    if (!/\["queued", "running", "complete"\]\.includes\(cur\.data\(\)\.status\)/.test(dispatch)) return false;
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    if (!/planSlotKey \? \{ lastPlanKey: planSlotKey \}/.test(cycleSrc)) return false;
+    if (!/jobSnap\.data\(\)\.planSlot/.test(cycleSrc)) return false;
+    /* And a slot never yet satisfied is still due, so the retry is real. */
+    const at = (min) => ({ date: "2026-09-02", tradingDay: true, open: true, phase: "regular",
+      minutesEt: min, regularCloseMinutesEt: 960 });
+    const ctrl = { planMode: "scheduled", planTimesEt: ["09:50", "13:00"], lastPlanKey: null };
+    return !!K.duePlanSlot(ctrl, at(10 * 60));
+  }));
+
+  cases.push(fixture("one_minute_bars_never_merge_into_the_five_minute_series", () => {
+    /* The guard backfills from the day store when a fetch is short, which is
+       routine in the first twenty minutes of a session. The store holds the
+       strategy's 5-minute bars; the strike pass fetches 1-minute ones.
+       Concatenating them produced one array of mixed spacing, and
+       S.attentionZ compares a recent window against a per-slot historical
+       baseline — inconsistent spacing biases the volume statistic that gates
+       a strike. Identical provider/feed/adjustment is not enough. */
+    const guardSrc = sourceOf(require("./_investorPositionGuard").runGuard);
+    if (!/\} else if \(persistBars && fresh/.test(guardSrc)) return false;
+    /* persistBars is exactly "the timeframes agree", and it also still gates
+       the write path so minute bars cannot reach the day store. */
+    if (!/persistBars = strikeTimeframe === \(cfg\.barTimeframe \|\| "5Min"\)/.test(guardSrc)) return false;
+    if (!/if \(persistBars && \(panel\[symbol\] \|\| \[\]\)\.length\)/.test(guardSrc)) return false;
+    /* Wholesale replacement stays allowed: it yields a homogeneous series. */
+    if (!/if \(!fetchedBars\.length\) \{/.test(guardSrc)) return false;
+    return true;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v25-strategy-v13-patience";
+  const SCHEMA = "runtime-fixtures-v27-strategy-v13-concurrency";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

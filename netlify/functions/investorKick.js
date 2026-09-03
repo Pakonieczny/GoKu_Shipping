@@ -320,12 +320,11 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
   const nonce = mintWorkerNonce(jobId, fn);
   const jref = A.col(A.COL.jobs).doc(jobId);
   const cref = A.col(A.COL.control).doc("control");
-  let previousStamp = null, previousPlanKey = null;
+  let previousStamp = null;
   const claimed = await A.runTransaction(async (tx) => {
     const [cur, control] = await Promise.all([tx.get(jref), tx.get(cref)]);
     if (cur.exists && ["queued", "running", "complete"].includes(cur.data().status)) return false;
     previousStamp = control.exists ? (control.data()[stampField(task)] ?? null) : null;
-    previousPlanKey = control.exists ? (control.data().lastPlanKey ?? null) : null;
     tx.set(jref, {
       jobId, task, slot: cadenceSlot, accountId: ctrl.accountId, status: "queued",
       sessionDate: session && session.date || null,
@@ -337,7 +336,16 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
       ...A.envelope({ created_by: manual ? "investorApi.runCycleNow" : "investorKick" }),
     });
     const stamp = stampField(task);
-    tx.set(cref, { [stamp]: now, ...(planSlot ? { lastPlanKey: planSlot.key } : {}) }, { merge: true });
+    /* `lastPlanKey` is NOT stamped here. A worker that returns 202 and then
+       dies (uncaught throw, OOM, background time limit) would otherwise leave
+       the slot marked as satisfied, and duePlanSlot would treat that slot and
+       every earlier one as done for the rest of the session — with only two
+       slots a day, one such death costs a whole scan and two cost the day,
+       with no retry. The per-slot JOB DOC above is what prevents a double
+       dispatch, and a dead job's status is not in the claimed set, so the
+       next kick re-claims the same slot. The worker stamps lastPlanKey once
+       it has actually finished. */
+    tx.set(cref, { [stamp]: now }, { merge: true });
     return true;
   });
   if (!claimed) return { jobId, task, duplicateSlot: true, upstream: null };
@@ -373,9 +381,6 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
       const cur = await tx.get(cref);
       const stored = cur.exists ? cur.data()[stamp] : null;
       if (stored === now) tx.set(cref, { [stamp]: previousStamp }, { merge: true });
-      if (planSlot && cur.exists && cur.data().lastPlanKey === planSlot.key) {
-        tx.set(cref, { lastPlanKey: previousPlanKey }, { merge: true });
-      }
     });
   }
   return { jobId, task, upstream: res.status, planSlot: planSlot ? planSlot.key : null };

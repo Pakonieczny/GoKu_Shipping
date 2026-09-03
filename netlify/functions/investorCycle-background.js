@@ -325,6 +325,13 @@ async function runCycle(jobId, { manual = false } = {}) {
   await runRef.set({ jobId, kind: "cycle", status: "running",
     startedAt: A.FV.serverTimestamp(), startedAtMs: startedAt,
     ...A.envelope({ created_by: FN_NAME }) }, { merge: true });
+  /* Which scheduled slot, if any, this run satisfies. Read from the job the
+     kick claimed; stamped onto control only when this worker completes. */
+  let planSlotKey = null;
+  try {
+    const jobSnap = await A.col(A.COL.jobs).doc(jobId).get();
+    if (jobSnap.exists) planSlotKey = jobSnap.data().planSlot || null;
+  } catch { /* a missing slot key only costs one retryable scan */ }
   await reportRunProgress(runRef, { phase: "bootstrap",
     label: "Checking the frozen build and paper account", pct: 2,
     detail: "Validating the universe, strategy identity and ledger before any market decision." });
@@ -1930,8 +1937,22 @@ async function runCycle(jobId, { manual = false } = {}) {
     }
   };
 
+  /* ENTRY CREATION IS SERIALIZED against the one-minute strike pass. Both
+     size against a book snapshot they built themselves, and the approval
+     transaction re-checks only cash — so without this both could admit a
+     position against the same last free slot and the book would exceed its
+     declared caps. Exits, marks and fills are outside the lock. */
+  const entryLockOwner = `cycle:${cycleId}:${Math.random().toString(36).slice(2, 8)}`;
+  const entryLock = entryControl.pass
+    ? await LEASE.acquireEntryLock(accountId, entryLockOwner)
+    : { acquired: false, reason: "entry controls closed" };
+  if (entryControl.pass && !entryLock.acquired) {
+    activityLog.entryLockUnavailable = entryLock.heldBy || entryLock.error || "held elsewhere";
+    await liveEvent("blocked", "—", "entry lock held by the strike pass");
+  }
+
   /* Signal cohort, paced. */
-  for (let queueIndex = 0; queueIndex < proposalQueue.length; queueIndex += 1) {
+  for (let queueIndex = 0; entryLock.acquired && queueIndex < proposalQueue.length; queueIndex += 1) {
     if (exploratorySelection && activityLog.signalProposed >= activity.maxNewEntriesPerCycle) {
       activityLog.signalPacedOut = proposalQueue.length - queueIndex;
       for (const q of proposalQueue.slice(queueIndex)) await liveEvent("paced_out", q.sym, "waits for a later scan");
@@ -1945,7 +1966,7 @@ async function runCycle(jobId, { manual = false } = {}) {
   /* Control cohort: unconditional, random, reduced size, capped per session
      and by open control positions. Only in explicit exploratory paper mode
      and only while the session is one a signal entry could also use. */
-  if (exploratorySelection && activity.controlCohort.enabled && controlPool.length
+  if (entryLock.acquired && exploratorySelection && activity.controlCohort.enabled && controlPool.length
       && session.open && !session.wideSpreadWindow && !breakers.halted) {
     const room = Math.min(
       Math.max(0, activity.controlCohort.maxOpenPositions - controlOpen),
@@ -2061,6 +2082,14 @@ async function runCycle(jobId, { manual = false } = {}) {
             cohort: verdict.cohort || null, detail: verdict.detail });
         } catch (e) { settled.skipped.push({ orderId: o.orderId, why: String(e.message).slice(0, 120) }); }
       }
+    }
+
+    /* Approvals are the last step that can breach a cap, so the lock is
+       released here rather than at the end of settlement. Fills only move an
+       already-counted order into an already-counted position. */
+    if (entryLock.acquired) {
+      await LEASE.releaseEntryLock(accountId, entryLockOwner);
+      entryLock.acquired = false;
     }
 
     const approvedSnap = await A.col(A.COL.orders)
@@ -2207,6 +2236,13 @@ async function runCycle(jobId, { manual = false } = {}) {
     } catch {}
   } catch (e) {
     settled.error = String(e.message).slice(0, 200);
+  } finally {
+    /* A throw anywhere in settlement must not leave entries frozen until the
+       lock's TTL. */
+    if (entryLock.acquired) {
+      try { await LEASE.releaseEntryLock(accountId, entryLockOwner); } catch {}
+      entryLock.acquired = false;
+    }
   }
   await reportRunProgress(runRef, { phase: "learning",
     label: "Recording outcomes and comparing frozen policies", pct: 89,
@@ -2715,6 +2751,8 @@ async function runCycle(jobId, { manual = false } = {}) {
     quoteCoverage,
     ranked, breaches: candidates.length,
     proposals: decisions.length, strikePlans,
+    entryLock: { acquired: !!entryLockOwner && activityLog.entryLockUnavailable == null,
+      unavailable: activityLog.entryLockUnavailable || null },
     patience: { policy: patiencePolicy,
       grantedThisScan: patienceClaims.map((c) => c.symbol),
       sleeve: PA.sleeveUsage(allPositions, [...pendingOrders, ...patienceClaims], navUsd, patiencePolicy) },
@@ -2871,6 +2909,11 @@ async function runCycle(jobId, { manual = false } = {}) {
 
   await A.col(A.COL.control).doc("control").set({
     lastCycleSummary: summary, lastCycleFinishedAt: A.FV.serverTimestamp(),
+    /* THE SCHEDULED SLOT IS SATISFIED HERE, not at dispatch. The kick stamps
+       only its cadence clock; if this worker had died after Netlify accepted
+       the invocation, the slot would still be due and the next kick would
+       re-claim it (a dead job document is not a claimed status). */
+    ...(planSlotKey ? { lastPlanKey: planSlotKey } : {}),
     ...(summary.soakStatus ? { lastSoakStatus: summary.soakStatus } : {}),
     ...(dailyFinalizationCommitted ? {
       lastDailyFinalizeDate: session.date,
