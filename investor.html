@@ -1041,10 +1041,11 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <span class="hint">ON means observation-only. OFF enables the simulated paper ledger; this app has no real-money order path.</span>
           </div>
           <div class="ctrlrow">
-            <span class="lab">Deep scans (ET)</span>
+            <span class="lab">Full-universe scans</span>
+            <button class="btn sm" id="btnPlanInterval">Every 5 min</button>
             <input class="inp mono" id="inpPlanTimes" type="text" placeholder="09:50, 13:00" style="max-width:180px">
-            <button class="btn sm" id="btnPlanTimes">Set</button>
-            <span class="hint">New York times for the full analysis — roster ranking, evidence, model calls, portfolio selection — which also writes the preset exit levels and the armed entry levels the strike pass acts on. One to six times between 09:45 and 15:30; two a day is the intended cadence. The immutable daily finalization still runs after the close, and “Run a scan now” is always available.</span>
+            <button class="btn sm" id="btnPlanTimes">Use ET times</button>
+            <span class="hint">Every 5 min keeps scanning the complete company universe throughout the session. ET times is the lower-cost option for one to six full scans between 09:45 and 15:30. The one-minute strike pass remains separate, and “Check for opportunities now” always requests a complete scan.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Strike pass</span>
@@ -1278,7 +1279,10 @@ function api(action, extra){
   return fetch(API,{method:"POST",headers:headers,body:JSON.stringify(body)})
     .then(function(r){ return r.json().then(function(j){
       if(!r.ok){
-        var msg=j.error||("HTTP "+r.status);
+        /* Operational refusals (including a worker dispatch failure) carry a
+           human-readable `refused` reason. Preserve it instead of collapsing
+           every HTTP 409 into an opaque status code. */
+        var msg=j.error||(typeof j.refused==="string"&&j.refused)||("HTTP "+r.status);
         // Name the failing self-checks so a red "attestation failed" is
         // diagnosable from the desk instead of from the function logs.
         if(Array.isArray(j.fixtureFailures)&&j.fixtureFailures.length)
@@ -1480,6 +1484,13 @@ function render(){
   $("#dryState").textContent = c.dryRun?"ON":"OFF";
   $("#dryState").className = "badge2 "+(c.dryRun?"b-warn":"b-on");
   if(!$("#inpPlanTimes").matches(":focus")) $("#inpPlanTimes").value = (c.planTimesEt||["09:50","13:00"]).join(", ");
+  var planInterval=$("#btnPlanInterval"), planTimes=$("#btnPlanTimes"), intervalMode=c.planMode!=="scheduled";
+  if(planInterval&&planTimes){
+    planInterval.className="btn sm"+(intervalMode?" gold":" ghost");
+    planTimes.className="btn sm"+(intervalMode?" ghost":" gold");
+    planInterval.title=intervalMode?"The full universe is scanned every five minutes":"Switch to a full-universe scan every five minutes";
+    planTimes.title=intervalMode?"Use the New York times entered beside this button":"Scheduled full-universe scans are active";
+  }
   if(!$("#inpGuard").matches(":focus")) $("#inpGuard").value = c.guardSeconds||60;
   if(!$("#selStrikeBars").matches(":focus")) $("#selStrikeBars").value = c.strikeBarTimeframe||"1Min";
   var r=DASH.regime||{};
@@ -2664,11 +2675,15 @@ $("#btnIntelWatch").addEventListener("click",function(){
 $("#btnDry").addEventListener("click",function(){
   runButton(this,"setControl",{patch:{dryRun:!(DASH.control||{}).dryRun}},function(r){
     toast("Dry run "+(r.patched.dryRun?"ON":"OFF")); refresh(false); }); });
+$("#btnPlanInterval").addEventListener("click",function(){
+  runButton(this,"setControl",{patch:{planMode:"interval",cycleSeconds:300}},function(r){
+    var refused=r&&r.refused&&(r.refused.planMode||r.refused.cycleSeconds);
+    toast(refused?("Not saved: "+refused):"Full-universe scan every 5 minutes"); refresh(false); }); });
 $("#btnPlanTimes").addEventListener("click",function(){
   var times=$("#inpPlanTimes").value.split(/[\s,;]+/).map(function(x){return x.trim();}).filter(Boolean);
   runButton(this,"setControl",{patch:{planTimesEt:times,planMode:"scheduled"}},function(r){
     var refused=r&&r.refused&&r.refused.planTimesEt;
-    toast(refused?("Not saved: "+refused):("Deep scans at "+(r.patched.planTimesEt||[]).join(", ")+" ET")); refresh(false); }); });
+    toast(refused?("Not saved: "+refused):("Full scans at "+(r.patched.planTimesEt||[]).join(", ")+" ET")); refresh(false); }); });
 $("#btnStrike").addEventListener("click",function(){
   runButton(this,"setControl",{patch:{guardSeconds:Number($("#inpGuard").value),strikeBarTimeframe:$("#selStrikeBars").value}},function(r){
     var refused=r&&r.refused&&(r.refused.guardSeconds||r.refused.strikeBarTimeframe);
@@ -3061,6 +3076,9 @@ function renderToday(){
       paused=c.operatingState==="paused"||c.killSwitch||c.enabled===false,
       running=!paused&&!frozen;
   var stage=c.mode||"research", exploratory=c.operatingState==="exploratory_auto";
+  var cadence=DASH.cadence||{}, autoScanText=cadence.planMode==="scheduled"
+    ? "Automatic full scans at "+(cadence.planTimesEt||[]).join(", ")+" ET."
+    : "Automatic full scan every "+durationText(cadence.cycleSeconds||300)+".";
   var auto=c.automaticPaperEntries===true||stage==="limited_auto"||exploratory;
   var market=DASH.market||{}, executionFeedReady=market.consolidated===true
     && market.liquidityEligible!==false;
@@ -3122,7 +3140,7 @@ function renderToday(){
     + '</div>'
     + '<div class="ctrlrow" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">'
     +   '<button class="btn ghost sm" id="tdRun">Check for opportunities now</button>'
-    +   '<span class="hint" id="tdRunMsg">It does this by itself every few minutes.</span></div>'
+    +   '<span class="hint" id="tdRunMsg">'+esc(autoScanText)+'</span></div>'
     + '</div>';
 
   $("#tdBig").onclick=function(){
@@ -4452,6 +4470,9 @@ $("#btnRecall").addEventListener("click",function(){
     mount();
     var el = document.getElementById("deskCtl"); if (!el) return;
     var st = deskState(), c = COPY[st];
+    var cadence=(DASH&&DASH.cadence)||{}, cadenceText=cadence.planMode==="scheduled"
+      ? "Full scans run at "+(cadence.planTimesEt||[]).join(", ")+" ET."
+      : "Full scan every "+durationText(cadence.cycleSeconds||300)+".";
     var warn = "";
     if (!tradableNow()) {
       warn = '<div class="note warn" style="margin-top:12px;font-size:12.5px">'
@@ -4476,7 +4497,7 @@ $("#btnRecall").addEventListener("click",function(){
       +   '<button class="btn" id="deskRun" style="font-size:13px;padding:10px 18px;margin-top:9px;'
       +     'display:block;width:100%">Run a cycle now</button>'
       +   '<div class="hint" id="deskRunMsg" style="margin-top:7px;text-align:center;max-width:230px">'
-      +     'Normally it runs itself every few minutes.</div>'
+      +     esc(cadenceText)+'</div>'
       + '</div>' + warn;
     document.getElementById("deskBtn").onclick = function(){
       if (st === "paused") { STEP = 1; CHOICE = "auto"; dialog(); }

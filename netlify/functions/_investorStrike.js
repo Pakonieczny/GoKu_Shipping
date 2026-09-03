@@ -313,10 +313,14 @@ async function loadPlans(accountId, sessionDate, { statuses = ["armed"] } = {}) 
    transition is compare-and-set: only a plan still "armed" may move, so two
    writers cannot both claim the same plan and the later one cannot undo the
    earlier. Returns whether the patch was applied. */
+function planPatchChangesStatus(patch) {
+  return !!patch && patch.status !== undefined;
+}
+
 async function markPlan(plan, patch, { expect = "armed" } = {}) {
   const ref = A.col(A.COL.plans).doc(plan.planId);
   const body = { ...patch, updated_at: A.FV.serverTimestamp() };
-  if (patch.status === undefined) {
+  if (!planPatchChangesStatus(patch)) {
     await ref.set(body, { merge: true });
     return { applied: true };
   }
@@ -773,4 +777,5 @@ async function settleEntries({ accountId, operating, strategy, cfg, activity, se
 }
 
 module.exports = { PLAN_STATUSES, planId, armLevel, strikeVerdict, selectPlans, planCandidate,
-  writePlans, loadPlans, markPlan, evaluateStrikes, settleEntries, trustedSource };
+  planPatchChangesStatus, writePlans, loadPlans, markPlan, evaluateStrikes, settleEntries,
+  trustedSource };

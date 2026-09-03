@@ -19,15 +19,15 @@
  *
  *  TWO TIERS, TWO CLOCKS
  *  ------------------------------------------------------------------------
- *  The desk used to run its entire pipeline — bars for the whole roster,
+ *  The desk historically ran its entire pipeline — bars for the whole roster,
  *  factor regression, ranking, the gate stack for every name, evidence and
- *  model calls, portfolio selection, learning — every five minutes, and the
- *  "fast" exit guard rode the same five-minute cron whatever its setting
- *  said. That is expensive where it does not need to be and slow where it
- *  matters. Now:
+ *  model calls, portfolio selection, learning — every five minutes, while the
+ *  "fast" exit guard rode that same five-minute cron. The two workloads now
+ *  have independent clocks:
  *
- *    DEEP SCAN  (task "cycle")  Scheduled New York times, default 09:50 and
- *                               13:00 ET (control.planTimesEt). It does the
+ *    DEEP SCAN  (task "cycle")  Every `cycleSeconds` (default five minutes),
+ *                               or explicit New York times when the operator
+ *                               selects scheduled mode. It does the
  *                               heavy analysis and writes what the fast tier
  *                               acts on: proposals, preset exit levels on
  *                               holdings, and ARMED ENTRY LEVELS for names
@@ -43,10 +43,9 @@
  *                               orders on their first eligible bar. Never
  *                               ranks the roster, never calls a model.
  *
- *  `planMode: "interval"` keeps the legacy behaviour (a deep scan every
- *  `cycleSeconds`) for operators who want it. netlify.toml fires this
- *  dispatcher every minute so the strike clock is real; nothing assumes an
- *  exact fire count.
+ *  `planMode: "scheduled"` is the lower-cost opt-in clock (default times
+ *  09:50 and 13:00 ET). netlify.toml fires this dispatcher every minute so
+ *  the strike clock is real; nothing assumes an exact fire count.
  * ---------------------------------------------------------------------------
  */
 
@@ -65,6 +64,10 @@ function baseUrl() {
 
 /* ── the deep-scan schedule ─────────────────────────────────────────────── */
 const DEFAULT_PLAN_TIMES_ET = Object.freeze(["09:50", "13:00"]);
+/* Preserve the desk's established behaviour: unless an operator explicitly
+   selects scheduled mode, the complete roster is rescanned on cycleSeconds
+   (five minutes by default). The one-minute guard remains independent. */
+const DEFAULT_PLAN_MODE = "interval";
 const PLAN_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 /* Scans are meaningful only inside the regular session and after the opening
    auction window (the cost model refuses to open in it anyway), and they need
@@ -96,11 +99,15 @@ function normalizePlanTimes(value) {
   return out.length ? out.slice(0, MAX_PLAN_TIMES) : null;
 }
 
+function resolvePlanMode(value) {
+  return value === "scheduled" ? "scheduled" : DEFAULT_PLAN_MODE;
+}
+
 /** Is this control document on the scheduled deep-scan clock? Documents
- *  without a plan mode (older fixtures, hand-built contexts) stay on the
- *  interval clock, so nothing that worked before changes silently. */
+ *  without an explicit plan mode stay on the established five-minute
+ *  interval clock. */
 function scheduledMode(ctrl) {
-  return ctrl && ctrl.planMode === "scheduled"
+  return ctrl && resolvePlanMode(ctrl.planMode) === "scheduled"
     && Array.isArray(ctrl.planTimesEt) && ctrl.planTimesEt.length > 0;
 }
 
@@ -168,10 +175,9 @@ async function control() {
     strategyVersion: d.strategyVersion || require("./_investorStrategy").version,
     bootstrapVersion: Number(d.bootstrapVersion) || 0,
     bootstrapPending: Number(d.bootstrapVersion) !== B.BOOTSTRAP_VERSION,
-    /* Deep-scan clock. Scheduled by default; "interval" restores the legacy
-       every-cycleSeconds scan. The interval ceiling is a day because a deep
-       scan is no longer expected to be frequent. */
-    planMode: d.planMode === "interval" ? "interval" : "scheduled",
+    /* Deep-scan clock. The full roster keeps its established five-minute
+       interval unless the operator explicitly selects scheduled ET times. */
+    planMode: resolvePlanMode(d.planMode),
     planTimesEt: normalizePlanTimes(d.planTimesEt) || [...DEFAULT_PLAN_TIMES_ET],
     lastPlanKey: d.lastPlanKey || null,
     cycleSeconds: bounded(d.cycleSeconds, 300, 60, 86400),
@@ -193,9 +199,8 @@ async function control() {
   };
 }
 
-/** Decide which jobs are due. Market-hours gating and the scheduled deep-scan
- *  clock are together the biggest cost lever in the system: two deep scans a
- *  session instead of seventy-eight. */
+/** Decide which jobs are due. Market-hours gating avoids overnight work;
+ *  operators can explicitly select the lower-cost scheduled scan clock. */
 function decide(ctrl, session, nowMs) {
   const tasks = [];
   const reasons = [];
@@ -296,6 +301,19 @@ function stampField(task) {
     : task === "archive" ? "lastArchiveAt" : "lastEvidenceAt";
 }
 
+/** PURE. A lost background invocation must not reserve a scan forever.
+ *  Complete work is final; queued/running work blocks only while its own
+ *  lease is fresh. Dead, yielded, failed and stale work may be reclaimed. */
+function jobBlocksDispatch(job, nowMs = Date.now()) {
+  const j = job || {};
+  if (j.status === "complete") return true;
+  if (j.status === "queued") return Number(j.leaseExpiresAt) > nowMs;
+  if (j.status === "running") {
+    return Number(j.workerLeaseExpiresAt || j.leaseExpiresAt) > nowMs;
+  }
+  return false;
+}
+
 async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
   const now = Date.now();
   const guardSeconds = session && session.open === false
@@ -323,7 +341,7 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
   let previousStamp = null;
   const claimed = await A.runTransaction(async (tx) => {
     const [cur, control] = await Promise.all([tx.get(jref), tx.get(cref)]);
-    if (cur.exists && ["queued", "running", "complete"].includes(cur.data().status)) return false;
+    if (cur.exists && jobBlocksDispatch(cur.data(), now)) return false;
     previousStamp = control.exists ? (control.data()[stampField(task)] ?? null) : null;
     tx.set(jref, {
       jobId, task, slot: cadenceSlot, accountId: ctrl.accountId, status: "queued",
@@ -435,3 +453,6 @@ exports.duePlanSlot = duePlanSlot;
 exports.nextPlanAtMs = nextPlanAtMs;
 exports.scheduledMode = scheduledMode;
 exports.DEFAULT_PLAN_TIMES_ET = DEFAULT_PLAN_TIMES_ET;
+exports.DEFAULT_PLAN_MODE = DEFAULT_PLAN_MODE;
+exports.resolvePlanMode = resolvePlanMode;
+exports.jobBlocksDispatch = jobBlocksDispatch;

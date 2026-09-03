@@ -421,7 +421,7 @@ const ACTIONS = {
     /* Two-tier cadence as the scheduler itself sees it, so the console never
        describes a clock the dispatcher is not actually running. */
     const K = require("./investorKick");
-    const planMode = ctrl.planMode === "interval" ? "interval" : "scheduled";
+    const planMode = K.resolvePlanMode(ctrl.planMode);
     const planTimesEt = K.normalizePlanTimes(ctrl.planTimesEt) || [...K.DEFAULT_PLAN_TIMES_ET];
     const kickCtrl = { planMode, planTimesEt, lastPlanKey: ctrl.lastPlanKey || null };
     const guardSeconds = Math.min(600, Math.max(60, Number(ctrl.guardSeconds) || 60));
@@ -1890,20 +1890,57 @@ const ACTIONS = {
       return { ok: false, refused: `a manual run started ${Math.round(sinceMs / 1000)}s ago`,
         retryInSeconds: Math.ceil((60000 - sinceMs) / 1000) };
     }
-    await A.col(A.COL.control).doc("control")
-      .set({ lastManualRunAtMs: Date.now() }, { merge: true });
+    const manualStartedAtMs = Date.now();
+    const controlRef = A.col(A.COL.control).doc("control");
+    await controlRef.set({ lastManualRunAtMs: manualStartedAtMs }, { merge: true });
 
     const K = require("./investorKick");
     const session = M.sessionState(new Date());
-    const result = await K.dispatch(wanted, {
-      ...ctrl, enabled: true, mode: operating.stage,
-      dryRun: !operating.paperLedger, killSwitch: false,
-      accountId: ctrl.accountId || "paper-1",
-      cycleSeconds: Number(ctrl.cycleSeconds) || 300,
-      guardSeconds: Number(ctrl.guardSeconds) || 60,
-      guardSecondsClosed: Number(ctrl.guardSecondsClosed) || 900,
-      evidenceEverySeconds: Number(ctrl.evidenceEverySeconds) || 900,
-    }, session, { manual: true });
+    let result;
+    try {
+      result = await K.dispatch(wanted, {
+        ...ctrl, enabled: true, mode: operating.stage,
+        dryRun: !operating.paperLedger, killSwitch: false,
+        accountId: ctrl.accountId || "paper-1",
+        cycleSeconds: Number(ctrl.cycleSeconds) || 300,
+        guardSeconds: Number(ctrl.guardSeconds) || 60,
+        guardSecondsClosed: Number(ctrl.guardSecondsClosed) || 900,
+        evidenceEverySeconds: Number(ctrl.evidenceEverySeconds) || 900,
+      }, session, { manual: true });
+    } catch (e) {
+      result = { error: String(e && e.message || e).slice(0, 160), upstream: 0 };
+    }
+
+    const upstream = Number(result && result.upstream);
+    const accepted = !!result && result.duplicateSlot !== true
+      && upstream >= 200 && upstream < 300;
+    if (!accepted) {
+      /* A failed dispatch did not start work, so it must not consume the
+         operator's one-minute manual-run allowance. Compare-and-set avoids
+         clearing a newer click that raced this response. */
+      try {
+        await A.runTransaction(async (tx) => {
+          const current = await tx.get(controlRef);
+          if (current.exists
+              && Number(current.data().lastManualRunAtMs) === manualStartedAtMs) {
+            tx.set(controlRef, { lastManualRunAtMs: 0 }, { merge: true });
+          }
+        });
+      } catch { /* reporting the dispatch failure is still more important */ }
+      const refused = result && result.duplicateSlot
+        ? "that manual scan was already claimed"
+        : result && result.error
+          ? `the scan worker could not be dispatched: ${result.error}`
+          : `the scan worker refused the request${upstream ? ` (HTTP ${upstream})` : ""}`;
+      try {
+        await A.col(A.COL.audit).add({ action: "run_cycle_now_dispatch_failed", task: wanted,
+          operator: operator || "operator", jobId: result && result.jobId || null,
+          upstream: Number.isFinite(upstream) ? upstream : null, refused,
+          at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
+      } catch { /* best effort */ }
+      return { ok: false, task: wanted, jobId: result && result.jobId || null,
+        upstream: Number.isFinite(upstream) ? upstream : null, refused };
+    }
 
     await A.col(A.COL.audit).add({ action: "run_cycle_now", task: wanted,
       operator: operator || "operator", jobId: result.jobId || null,

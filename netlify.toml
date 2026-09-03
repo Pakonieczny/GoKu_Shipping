@@ -175,10 +175,10 @@
 #
 # EVERY MINUTE, deliberately. The desk runs two tiers on two clocks:
 #   · the DEEP SCAN (task "cycle") — the full roster ranking, evidence and
-#     model work — runs at the operator's scheduled New York times (default
-#     09:50 and 13:00 ET, InvestorAI_Control/control.planTimesEt), plus the
-#     daily finalization after the close. Two scans a day instead of one every
-#     five minutes is the single largest cost lever in the system.
+#     model work — runs every cycleSeconds (default five minutes). Operators
+#     can explicitly select scheduled New York times (default choices 09:50
+#     and 13:00 ET) as a lower-cost mode. Daily finalization still runs after
+#     the close.
 #   · the STRIKE PASS (task "guard") — stops, targets, armed entry levels and
 #     the fills of approved orders — runs every `guardSeconds` (default 60)
 #     while the exchange is open and every `guardSecondsClosed` when it is

@@ -655,6 +655,13 @@ function runFixtures() {
     if (!/\.describe\(ctrl\)/.test(beforeDispatch)) return false;
     if (!/if \(operating\w*\.paused\)\s*return \{ ok: false/.test(beforeDispatch)) return false;
     if (!/manual: true/.test(body)) return false;
+    /* A dispatch error must reach the console as a refusal and release the
+       one-minute click throttle; otherwise the button reports success even
+       though no worker exists, then blocks the operator from retrying. */
+    if (!/upstream >= 200 && upstream < 300/.test(body)) return false;
+    if (!/run_cycle_now_dispatch_failed/.test(body)) return false;
+    if (!/lastManualRunAtMs: 0/.test(body)) return false;
+    if (!/return \{\s*ok: false,\s*task: wanted/.test(body)) return false;
     const kick = sourceOf(K.dispatch);
     /* The slot id and the manual id must be different expressions. */
     if (!/manual \? `\$\{task\}_\$\{account\}_manual_/.test(kick)) return false;
@@ -1710,9 +1717,25 @@ function runFixtures() {
       && !ran.tasks.includes("cycle") && second.tasks.includes("cycle")
       && catchUp && catchUp.time === "13:00" && !done.tasks.includes("cycle")
       && yesterday && yesterday.time === "09:50" && !closed.tasks.includes("cycle")
-      && JSON.stringify(lateSlot) === JSON.stringify(["12:00"])
-      /* documents without a plan mode keep the interval clock unchanged */
-      && K.decide({ ...base, planMode: undefined, lastCycleAt: Date.now() - 600000 }, at(11 * 60), Date.now()).tasks.includes("cycle");
+      && JSON.stringify(lateSlot) === JSON.stringify(["12:00"]);
+  }));
+
+  cases.push(fixture("unspecified_plan_mode_keeps_five_minute_full_universe_scans", () => {
+    const K = require("./investorKick");
+    if (K.resolvePlanMode(undefined) !== "interval") return false;
+    if (K.resolvePlanMode(null) !== "interval") return false;
+    if (K.resolvePlanMode("scheduled") !== "scheduled") return false;
+    if (K.scheduledMode({ planMode: undefined, planTimesEt: ["09:50"] })) return false;
+    const now = 1_000_000;
+    const ctrl = { paused: false, killSwitch: false, enabled: true, bootstrapPending: false,
+      planMode: K.resolvePlanMode(undefined), planTimesEt: ["09:50", "13:00"],
+      cycleSeconds: 300, guardSeconds: 60, guardSecondsClosed: 900,
+      evidenceEverySeconds: 900, lastCycleAt: now - 600000, lastGuardAt: now,
+      lastEvidenceAt: now, lastDailyFinalizeDate: "2026-09-02", lastArchiveDate: "2026-09-02" };
+    const session = { date: "2026-09-02", tradingDay: true, open: true, phase: "regular",
+      minutesEt: 11 * 60, regularOpenMinutesEt: 570, regularCloseMinutesEt: 960,
+      isHalfDay: false };
+    return K.decide(ctrl, session, now).tasks.includes("cycle");
   }));
 
   cases.push(fixture("strike_pass_runs_every_minute_and_is_independent_of_the_deep_scan", () => {
@@ -2010,7 +2033,14 @@ function runFixtures() {
        now a transaction that only advances a plan still "armed". */
     const STK = require("./_investorStrike");
     const mark = sourceOf(STK.markPlan);
-    if (!/patch\.status === undefined/.test(mark)) return false;           // benign merges stay cheap
+    /* Test the exported predicate by behaviour. esbuild legitimately rewrites
+       `undefined` to `void 0` inside bundled functions; asserting its source
+       spelling made the production bundle fail while the same code passed in
+       raw Node, freezing every new entry. */
+    if (typeof STK.planPatchChangesStatus !== "function") return false;
+    if (STK.planPatchChangesStatus({ lastSeenUsd: 10 }) !== false) return false;
+    if (STK.planPatchChangesStatus({ status: undefined }) !== false) return false;
+    if (STK.planPatchChangesStatus({ status: "struck" }) !== true) return false;
     if (!/\w+\.runTransaction/.test(mark)) return false;
     if (!/if \(expect && current !== expect\) return \{ applied: false, reason: current \}/.test(mark)) return false;
     const write = sourceOf(STK.writePlans);
@@ -2023,7 +2053,9 @@ function runFixtures() {
     if (!/if \(!claimed\.applied\)/.test(strike)) return false;
     if (!/plan_status_race/.test(strike)) return false;
     const api = sourceOf(require("./investorApi").ACTIONS.cancelPlan);
-    if (!/ST2\.markPlan/.test(api)) return false;
+    /* Local identifiers are renamed while bundling (for example ST2 -> ST22),
+       so assert the operation and transition rather than the identifier. */
+    if (!/\.markPlan\(/.test(api) || !/status: "cancelled"/.test(api)) return false;
     return true;
   }));
 
@@ -2038,8 +2070,18 @@ function runFixtures() {
     const dispatch = sourceOf(K.dispatch);
     if (/lastPlanKey: planSlot\.key/.test(dispatch)) return false;
     if (!/tx\.set\(cref, \{ \[stamp\]: now \}, \{ merge: true \}\)/.test(dispatch)) return false;
-    /* The job-document guard that replaces it must still be present. */
-    if (!/\["queued", "running", "complete"\]\.includes\(cur\.data\(\)\.status\)/.test(dispatch)) return false;
+    /* A 202 whose background worker never starts remains `queued`; a hard
+       timeout remains `running`. Both must become reclaimable when their own
+       lease expires, while fresh work and completed work remain protected. */
+    if (typeof K.jobBlocksDispatch !== "function") return false;
+    const now = 1_000_000;
+    if (!K.jobBlocksDispatch({ status: "queued", leaseExpiresAt: now + 1 }, now)) return false;
+    if (K.jobBlocksDispatch({ status: "queued", leaseExpiresAt: now - 1 }, now)) return false;
+    if (!K.jobBlocksDispatch({ status: "running", workerLeaseExpiresAt: now + 1 }, now)) return false;
+    if (K.jobBlocksDispatch({ status: "running", workerLeaseExpiresAt: now - 1 }, now)) return false;
+    if (!K.jobBlocksDispatch({ status: "complete" }, now)) return false;
+    if (K.jobBlocksDispatch({ status: "dead" }, now)) return false;
+    if (!/jobBlocksDispatch\(cur\.data\(\), now\)/.test(dispatch)) return false;
     const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
     if (!/planSlotKey \? \{ lastPlanKey: planSlotKey \}/.test(cycleSrc)) return false;
     if (!/jobSnap\.data\(\)\.planSlot/.test(cycleSrc)) return false;
@@ -2072,7 +2114,7 @@ function runFixtures() {
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v27-strategy-v13-concurrency";
+  const SCHEMA = "runtime-fixtures-v28-scan-recovery";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
