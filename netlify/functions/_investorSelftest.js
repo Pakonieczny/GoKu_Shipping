@@ -993,7 +993,7 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v9"
+      && policy.version === "exploratory-auto-v10"
       && learn.minAbsZ === 1.75 && learn.entryRank === 0.3
       && learn.costMarginMultiple === 0.25
       && learn.exitRank === 0.75 && learn.maxHoldDays === 3
@@ -1469,10 +1469,10 @@ function runFixtures() {
 
   cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
     const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
-      exploratoryPolicyVersion: "exploratory-auto-v9", sufficiencyVersion: "data-sufficiency-v2" };
+      exploratoryPolicyVersion: "exploratory-auto-v10", sufficiencyVersion: "data-sufficiency-v2" };
     const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
       strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
-      exploratoryPolicyVersion: "exploratory-auto-v9", closedAt: "2026-09-01T15:00:00Z",
+      exploratoryPolicyVersion: "exploratory-auto-v10", closedAt: "2026-09-01T15:00:00Z",
       decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
     const trades = [
       mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
@@ -1802,7 +1802,7 @@ function runFixtures() {
       sessionCloseMs: Date.parse("2026-09-02T20:00:00Z"), vixNorm: 1, session: { date: "2026-09-02", open: true },
       policyIdentity: { accountId: "paper-1", strategyVersion: "v11", universeVersion: "v1",
         strategyHash: "c".repeat(64), universeHash: "d".repeat(64), variantsHash: "e".repeat(64) },
-      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v9", cohortLabel: "exploratory_auto_unvalidated",
+      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v10", cohortLabel: "exploratory_auto_unvalidated",
       paperLearningOnly: true, activePortfolioControls: strategy.exploratoryAuto.portfolioControls,
       activity: XPL.activityPolicy(strategy), cycleId: "2026-09-02_1500", strategyVersion: "v11",
       operatingState: "exploratory_auto", moveStartedAtMs: Date.parse("2026-09-02T14:00:00Z"), positionScale: 1 };
@@ -2412,10 +2412,85 @@ function runFixtures() {
     return XPL.activityPolicy(strategy).strike.enabled === false;
   }));
 
+  cases.push(fixture("one_unpriced_holding_cannot_halt_every_purchase", () => {
+    /* A single open position without a validated current mark used to halt the
+       account outright: every purchase in every other company stopped until
+       that one name's feed returned. The rule exists because you cannot see a
+       drawdown you cannot price, so what matters is the SHARE of the book that
+       is unpriceable, not the row count. An unmarked position is carried at
+       cost, so it understates a loss on itself and nothing else. */
+    const R2 = require("./_investorRisk");
+    const pc = strategy.exploratoryAuto.portfolioControls;
+    const limit = Number(pc.unmarkedExposureHaltPctOfNav);
+    if (!(limit > 0)) return false;
+    const cfg = { portfolioControls: pc };
+
+    const positions = [{ symbol: "CEG", open: true, qty: 10, entryPriceUsd: 284 },
+      { symbol: "BKR", open: true, qty: 100, entryPriceUsd: 64 }];
+    const marked = R2.markedBook(positions, { BKR: 64 }, () => "x", { cash: 100000 });
+    /* The unpriced position is counted, named and valued at cost. */
+    if (marked.untrustedMarks !== 1) return false;
+    if (JSON.stringify(marked.unmarkedSymbols) !== JSON.stringify(["CEG"])) return false;
+    if (!(marked.unmarkedExposurePctOfNav > 0 && marked.unmarkedExposurePctOfNav < limit)) return false;
+
+    const state = { navUsd: marked.navUsd, hwmUsd: marked.navUsd,
+      untrustedOpenMarks: marked.untrustedMarks,
+      unmarkedExposurePctOfNav: marked.unmarkedExposurePctOfNav,
+      unmarkedSymbols: marked.unmarkedSymbols, drawdownPct: 0, dayPnlPct: 0 };
+    const small = R2.accountBreakers(state, cfg);
+    if (small.halted !== false) return false;
+    const row = (small.breakers || []).find((b) => b.id === "untrusted_open_marks");
+    /* Still reported, and it names the company — "1 position lacks a mark" is
+       not something an operator can act on. */
+    if (!row || row.halt !== false || !/CEG/.test(row.reason)) return false;
+
+    /* Above the limit it still halts: a book that is mostly unpriceable
+       blinds the drawdown breaker, which is what the rule protects. */
+    const big = R2.accountBreakers({ ...state, unmarkedExposurePctOfNav: limit + 15 }, cfg);
+    if (big.halted !== true) return false;
+    /* Drawdown and day-loss breakers are untouched. The exploratory cohort
+       sets both limits wide, so assert against an explicit limit. */
+    const tight = { portfolioControls: { ...pc, drawdownFreezePctFromHigh: 6, oneDayLossPausePctOfNav: 1 } };
+    if (R2.accountBreakers({ ...state, drawdownPct: -7 }, tight).halted !== true) return false;
+    if (R2.accountBreakers({ ...state, dayPnlPct: -2 }, tight).halted !== true) return false;
+
+    /* And a holding that the roster fetch missed is re-requested on its own
+       before anything reads a mark, so this state is rare to begin with. */
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    if (!/const heldSymbols = allPositions/.test(cycleSrc)) return false;
+    return /chunkSize: 10, retries: 3/.test(cycleSrc);
+  }));
+
+  cases.push(fixture("a_scan_that_priced_a_third_of_the_roster_is_not_a_full_scan", () => {
+    /* fullScanIntegrity measured coverage against the number of companies the
+       scan MANAGED to rank, so a fetch that returned 97 of 277 still reported
+       a clean full scan and nothing on the desk said otherwise. The
+       denominator is the roster the scan set out to cover. */
+    const API = require("./investorApi");
+    const run = { kind: "cycle", status: "complete", ranked: 97,
+      live: { counters: { evaluated: 97 } },
+      marketCoverage: { roster: 277, priced: 97, evaluated: 97, failed: 3,
+        failedSample: ["AAPL"], missingSample: [], error: "provider chunk failed" } };
+    const thin = API.fullScanIntegrity(run);
+    if (thin.roster !== 277 || thin.priced !== 97) return false;
+    if (thin.coveragePct !== 35 || thin.rosterCovered !== false) return false;
+    if (thin.coverageReason !== "provider chunk failed") return false;
+
+    const full = API.fullScanIntegrity({ kind: "cycle", status: "complete", ranked: 277,
+      live: { counters: { evaluated: 277 } },
+      marketCoverage: { roster: 277, priced: 277, evaluated: 277 } });
+    if (full.rosterCovered !== true || full.pass !== true) return false;
+
+    /* An older run with no coverage record must not be called short. */
+    const legacy = API.fullScanIntegrity({ kind: "cycle", status: "complete", ranked: 200,
+      live: { counters: { evaluated: 200 } } });
+    return legacy.rosterCovered === null && legacy.pass === true;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v35-one-entry-path";
+  const SCHEMA = "runtime-fixtures-v36-unpriced-holding-and-scan-coverage";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
