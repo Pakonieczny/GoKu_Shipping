@@ -516,6 +516,12 @@ async function runCycle(jobId, { manual = false } = {}) {
       symbolSha256: got.symbolSha256 || {}, note: got.note || null,
       failureCount: got.failureCount || 0,
       chunks: got.chunks || null,
+      /* Why a request failed, verbatim from the provider. Without this a scan
+         that covered a third of the roster gave no clue whether it was a
+         timeout, a rate limit or a bad ticker. */
+      chunkErrors: (got.chunks && got.chunks.failed || []).map((f) => f.error).slice(0, 5),
+      rescue: got.rescue || null,
+      truncated: got.truncated === true,
       failedSymbols: got.failedSymbols || [],
       feedRequested: got.feedRequested || null, feedFallback: got.feedFallback || null,
       /* Names the provider answered for the chunk but omitted: delisted,
@@ -2975,7 +2981,14 @@ async function runCycle(jobId, { manual = false } = {}) {
       failedSample: (fetchMeta.failedSymbols || []).slice(0, 20),
       missingSample: (fetchMeta.missingSymbols || []).slice(0, 20),
       heldRescue: fetchMeta.heldRescue || null,
-      error: fetchMeta.error || fetchMeta.note || null,
+      chunkRescue: fetchMeta.rescue || null,
+      truncated: fetchMeta.truncated === true,
+      /* The reason the console prints. A chunk error is the common case and it
+         was previously invisible; the whole-fetch error is the rare one. */
+      error: fetchMeta.error
+        || (fetchMeta.chunkErrors && fetchMeta.chunkErrors.length
+          ? `provider request failed: ${fetchMeta.chunkErrors[0]}` : null)
+        || fetchMeta.note || null,
     },
     regime: { vixNorm: Number.isFinite(reg.vixNorm) ? Number(reg.vixNorm.toFixed(2)) : null,
       cor3m: reg.cor3m, stale: reg.stale, vixHealthy: reg.vixHealthy, corHealthy: reg.corHealthy },

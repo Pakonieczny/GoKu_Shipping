@@ -2621,10 +2621,53 @@ function runFixtures() {
     return /MS\.sessionAdmits\(sessionMove/.test(cycleSrc);
   }));
 
+  cases.push(fixture("a_failed_request_costs_a_handful_of_companies_not_sixty", () => {
+    /* The roster is fetched in chunks of sixty, and a chunk that failed was
+       sixty companies deleted from the scan in one stroke. With 277 symbols in
+       five chunks, three failures is exactly the "97 of 277" and "104 of 277"
+       the desk kept reporting — and the reason was never recorded anywhere the
+       operator could see it. A failed chunk is now split and retried, and the
+       provider's own error is carried out. */
+    const M2 = require("./_investorMarket");
+
+    /* Recovery: a symbol delivered by a smaller request is NOT a failure. */
+    const list = ["A", "B", "C", "D"];
+    const chunks = [["A", "B", "C", "D"], ["A", "B"], ["C", "D"]];
+    const results = [
+      { error: "socket hang up" },
+      { bars: { A: [{ t: 1 }], B: [{ t: 1 }] }, provider: "alpaca", manifestSha256: "h1", symbolSha256: {} },
+      { error: "429 rate limited" },
+    ];
+    const out = M2.mergeChunkResults(list, chunks, results, "alpaca");
+    if (JSON.stringify(out.failedSymbols.sort()) !== JSON.stringify(["C", "D"])) return false;
+    if (out.failureCount !== 2) return false;
+    if (!out.bars.A || !out.bars.B) return false;
+    /* The provider's reasons survive to the caller. */
+    const reasons = (out.chunks.failed || []).map((f) => f.error);
+    if (!reasons.includes("socket hang up") || !reasons.includes("429 rate limited")) return false;
+
+    /* Nothing lost when every chunk succeeds. */
+    const clean = M2.mergeChunkResults(["A"], [["A"]],
+      [{ bars: { A: [{ t: 1 }] }, provider: "alpaca", manifestSha256: "h", symbolSha256: {} }], "alpaca");
+    if (clean.failureCount !== 0 || clean.missingSymbols.length !== 0) return false;
+
+    /* The split-and-retry pass exists, appends its pieces so the merge counts
+       them, and records what it recovered. */
+    const src = sourceOf(M2.fetchBarsChunked);
+    if (!/rescueSize = 12/.test(src)) return false;
+    if (!/chunks\.push\(piece\)/.test(src) || !/results\.push\(got\)/.test(src)) return false;
+    if (!/recoveredSymbols/.test(src)) return false;
+    /* And the cycle carries the reason into the run record, where the console
+       reads it — a coverage failure must never again be silent. */
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    if (!/chunkErrors/.test(cycleSrc)) return false;
+    return /provider request failed/.test(cycleSrc);
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v38-five-session-selection";
+  const SCHEMA = "runtime-fixtures-v39-chunk-rescue";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
