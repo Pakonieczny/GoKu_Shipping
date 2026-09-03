@@ -531,6 +531,41 @@ async function runCycle(jobId, { manual = false } = {}) {
     fetchMeta = { provider: provider.id, feed: provider.feed || null,
       adjustment: null, error: String(e.code || e.message).slice(0, 160) };
   }
+  /* HELD POSITIONS ARE RE-FETCHED UNTIL THEY PRICE. A roster fetch that comes
+     back partial is survivable for a company we might buy — it is simply not
+     evaluated this cycle. It is NOT survivable for a company we already own:
+     an unpriced holding cannot be marked, which blinds the drawdown breaker
+     and (until this release) halted every purchase in every other name. The
+     holdings are a handful of symbols, so they get their own small request
+     with more retries before anything reads a mark. */
+  const heldSymbols = allPositions
+    .filter((p) => p && p.open && p.symbol && !(panel[p.symbol] || []).length)
+    .map((p) => p.symbol);
+  if (heldSymbols.length) {
+    try {
+      const rescue = await M.fetchBarsChunked(heldSymbols,
+        { timeframe: cfg.barTimeframe || "5Min", limit: 120 }, { chunkSize: 10, retries: 3 });
+      const rescued = [];
+      for (const sym of heldSymbols) {
+        const bars = (rescue.bars || {})[sym] || [];
+        if (!bars.length) continue;
+        panel[sym] = bars;
+        const sourceSha256 = (rescue.symbolSha256 || {})[sym] || rescue.manifestSha256 || null;
+        if (sourceSha256) {
+          marketProvenanceBySymbol[sym] = { provider: rescue.provider,
+            feed: rescue.feed || null, adjustment: rescue.adjustment || null,
+            sourceSha256, fetchedAt: rescue.fetchedAt };
+        }
+        rescued.push(sym);
+      }
+      fetchMeta.heldRescue = { requested: heldSymbols.length, recovered: rescued.length,
+        symbols: rescued.slice(0, 20) };
+    } catch (e) {
+      fetchMeta.heldRescue = { requested: heldSymbols.length, recovered: 0,
+        error: String(e.message || e).slice(0, 160) };
+    }
+  }
+
   const pricedSymbols = symbols.filter((sym) => (panel[sym] || []).length > 0).length;
   await reportRunProgress(runRef, { phase: "market_data",
     label: "Validating current prices", pct: 18, completed: pricedSymbols,
@@ -984,6 +1019,8 @@ async function runCycle(jobId, { manual = false } = {}) {
   const riskState = {
     navUsd, hwmUsd: hwm,
     untrustedOpenMarks: marked.untrustedMarks,
+    unmarkedExposurePctOfNav: marked.unmarkedExposurePctOfNav,
+    unmarkedSymbols: marked.unmarkedSymbols || [],
     drawdownPct: hwm > 0 ? ((navUsd - hwm) / hwm) * 100 : 0,
     dayPnlPct: startOfDayNav > 0 ? ((navUsd - startOfDayNav) / startOfDayNav) * 100 : 0,
   };
@@ -2884,6 +2921,21 @@ async function runCycle(jobId, { manual = false } = {}) {
     experimentHash: shadowExperiment.experimentHash,
     universeHash, strategyHash, variantsHash,
     providerNote: fetchMeta.note || fetchMeta.error || null,
+    /* WHAT THE SCAN COULD ACTUALLY PRICE. "Complete" used to mean "it finished
+       the companies it managed to rank", so a fetch that returned a third of
+       the roster still reported a clean full scan. The denominator is the
+       managed roster, and the reason a company is missing is carried with it. */
+    marketCoverage: {
+      roster: symbols.length,
+      priced: symbols.filter((sym) => (panel[sym] || []).length > 0).length,
+      evaluated: managementWorkset.length,
+      failed: (fetchMeta.failedSymbols || []).length,
+      missing: (fetchMeta.missingSymbols || []).length,
+      failedSample: (fetchMeta.failedSymbols || []).slice(0, 20),
+      missingSample: (fetchMeta.missingSymbols || []).slice(0, 20),
+      heldRescue: fetchMeta.heldRescue || null,
+      error: fetchMeta.error || fetchMeta.note || null,
+    },
     regime: { vixNorm: Number.isFinite(reg.vixNorm) ? Number(reg.vixNorm.toFixed(2)) : null,
       cor3m: reg.cor3m, stale: reg.stale, vixHealthy: reg.vixHealthy, corHealthy: reg.corHealthy },
     session: { phase: session.phase, date: session.date },

@@ -2967,11 +2967,21 @@ function renderOperationsConsole(){
       latestCycleAttempt=cycleRuns[0]||null;
   var cycleFailed=!!(latestCycleAttempt&&(["dead","dispatch_failed","stalled"].includes(latestCycleAttempt.status)
     ||(latestCycleAttempt.status==="complete"&&latestCycleAttempt.fullScanComplete===false)));
+  /* A scan that could only price part of the roster is not a full scan, even
+     when it finishes cleanly. Say which companies were never looked at. */
+  var thin=latestCycleAttempt&&latestCycleAttempt.rosterCovered===false?latestCycleAttempt:null;
   var statusClass=active?"working":(cycleFailed?"failed":
     (ops.state==="paused"||ops.state==="entry_frozen"?"paused":"waiting"));
   var statusText=active?"Scanning now":statusClass==="failed"?"Needs attention":
     ops.state==="paused"?"Paused":ops.state==="entry_frozen"?"Entries frozen":"Between scans";
   var nowHtml="",cad=ops.cadence||{};
+  if(thin){
+    nowHtml+='<div class="note warn" style="margin:0 0 12px"><b>That scan only covered '
+      +esc(String(thin.pricedCompanies))+' of '+esc(String(thin.rosterSize))+' companies.</b> '
+      +'The rest had no usable price this run, so they were not evaluated'
+      +(thin.coverageReason?' — '+esc(String(thin.coverageReason)):'')
+      +'. Holdings are re-requested separately, so protection and marks are unaffected.</div>';
+  }
   if(active){
     var p=active.progress||{},pct=Math.max(0,Math.min(100,Number(p.pct)||0));
     var started=Number(active.startedAtMs)||Number(active.dispatchedAtMs)||Date.parse(active.startedAt||active.dispatchedAt||"");

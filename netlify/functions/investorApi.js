@@ -218,7 +218,24 @@ function fullScanIntegrity(run) {
       ? Math.max(0, Number(r.progress.total)) : null);
   const hasLive = !!(r.live && r.live.counters);
   const covered = !hasLive || expected == null || expected === 0 || evaluated >= expected;
-  return { pass: r.status === "complete" && covered, evaluated, expected };
+  /* THE HONEST DENOMINATOR. `expected` above is what the scan managed to rank,
+     so a fetch that returned a third of the roster still measured itself as
+     fully covered and reported a clean scan. The roster the scan set out to
+     cover is recorded on the run itself; coverage is measured against that,
+     and a materially short scan is named rather than passed over. */
+  const cov = r.marketCoverage || {};
+  const roster = Number.isFinite(Number(cov.roster)) ? Number(cov.roster)
+    : (Number.isFinite(Number(r.symbolCount)) ? Number(r.symbolCount) : null);
+  const priced = Number.isFinite(Number(cov.priced)) ? Number(cov.priced) : null;
+  const coveragePct = roster > 0 && priced != null
+    ? Number(((priced / roster) * 100).toFixed(1)) : null;
+  return { pass: r.status === "complete" && covered, evaluated, expected,
+    roster, priced, coveragePct,
+    /* Below this the scan looked at so little of the roster that reporting it
+       as a full scan would be misleading. */
+    rosterCovered: coveragePct == null ? null : coveragePct >= 80,
+    coverageReason: cov.error || null,
+    failedSymbols: cov.failedSample || [], missingSymbols: cov.missingSample || [] };
 }
 
 /* ── actions ───────────────────────────────────────────────────────────── */
@@ -519,6 +536,13 @@ const ACTIONS = {
       run.evaluated = integrity.evaluated;
       run.fullScanExpected = integrity.expected;
       run.fullScanComplete = integrity.pass;
+      /* Coverage against the managed roster, so a scan that could only price a
+         fraction of it says so instead of reporting a clean full scan. */
+      run.rosterSize = integrity.roster;
+      run.pricedCompanies = integrity.priced;
+      run.coveragePct = integrity.coveragePct;
+      run.rosterCovered = integrity.rosterCovered;
+      run.coverageReason = integrity.coverageReason;
     }
     const summaryRun = runs.find((run) => run.kind === "cycle"
       && (run.jobId === latestSummary.jobId || (latestSummary.cycleId

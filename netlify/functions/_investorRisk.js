@@ -153,19 +153,27 @@ function summarise(positions, marks, sectorOf, navUsd) {
  * not risk NAV; using it hides open losses from breakers and sizing. */
 function markedBook(positions, marks, sectorOf, balancesUsd = {}) {
   const open = (positions || []).filter((p) => p && p.open && Number(p.qty) > 0);
-  let marketValueUsd = 0, untrusted = 0;
+  let marketValueUsd = 0, untrusted = 0, unmarkedUsd = 0;
+  const unmarkedSymbols = [];
   for (const p of open) {
     const mark = Number(marks && marks[p.symbol]);
     if (mark > 0) marketValueUsd += mark * Number(p.qty);
     else {
+      /* Carried at cost, and NAMED: "1 position lacks a mark" is not something
+         an operator can act on without knowing which one. */
+      const atCost = Number(p.entryPriceUsd || p.avgPrice || 0) * Number(p.qty);
       untrusted += 1;
-      marketValueUsd += Number(p.entryPriceUsd || p.avgPrice || 0) * Number(p.qty);
+      unmarkedUsd += atCost;
+      unmarkedSymbols.push(p.symbol);
+      marketValueUsd += atCost;
     }
   }
   const cashUsd = Number(balancesUsd.cash) || 0;
   const reservedUsd = Number(balancesUsd.reserved) || 0;
   const navUsd = cashUsd + reservedUsd + marketValueUsd;
   return { navUsd, cashUsd, reservedUsd, marketValueUsd, untrustedMarks: untrusted,
+    unmarkedUsd, unmarkedSymbols,
+    unmarkedExposurePctOfNav: navUsd > 0 ? Number(((unmarkedUsd / navUsd) * 100).toFixed(2)) : 0,
     book: summarise(open, marks, sectorOf, navUsd) };
 }
 
@@ -229,9 +237,31 @@ function accountBreakers(state, cfg) {
   const pc = cfg.portfolioControls || {};
   const out = [];
 
+  /* AN UNPRICED POSITION IS NOT AUTOMATICALLY AN EMERGENCY.
+     This used to halt the account outright the moment ONE open position had
+     no validated mark for one cycle — a single feed gap on a single name, and
+     every purchase in every other name stopped until it cleared. The reason
+     the rule exists is that you cannot see a drawdown you cannot price, so
+     what actually matters is HOW MUCH of the book is unpriceable, not how many
+     rows. An unmarked position is already carried at COST, which understates a
+     loss on it and nothing else, so a small share of the book being unpriced
+     leaves the drawdown and day-loss breakers working on the rest.
+     Above the limit the account still halts. */
+  const unmarkedLimit = Math.max(0, Number(pc.unmarkedExposureHaltPctOfNav ?? 20));
+  const unmarkedPct = Number(state.unmarkedExposurePctOfNav);
   if (Number(state.untrustedOpenMarks) > 0) {
-    out.push({ id: "untrusted_open_marks", halt: true,
-      reason: `${state.untrustedOpenMarks} open position(s) lack a validated current mark` });
+    const share = Number.isFinite(unmarkedPct) ? unmarkedPct : 100;
+    const names = (state.unmarkedSymbols || []).join(", ");
+    const detail = `${state.untrustedOpenMarks} open position(s) lack a validated current mark`
+      + (names ? ` (${names})` : "") + ` — ${share.toFixed(1)}% of the account, carried at cost`;
+    if (share > unmarkedLimit) {
+      out.push({ id: "untrusted_open_marks", halt: true,
+        reason: `${detail}; past the ${unmarkedLimit}% limit for unpriced exposure` });
+    } else {
+      /* Recorded and shown, but not a halt: the rest of the book is priced. */
+      out.push({ id: "untrusted_open_marks", halt: false,
+        reason: `${detail}; under the ${unmarkedLimit}% limit, so new purchases continue` });
+    }
   }
 
   const ddLimit = -Math.abs(pc.drawdownFreezePctFromHigh ?? 6);
