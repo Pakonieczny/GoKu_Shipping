@@ -64,6 +64,10 @@ const RELAX_LIMITS = {
      information is incomplete. It is a floor, not a target: the ordinary
      position cap and the per-trade risk budget still bound the size above. */
   observationSizeFloor:   { min: 0.05, max: PAPER_OBSERVATION_FLOOR_MAX, dflt: 0.35 },
+  /* The five-session selector. Bounded so a typed-in value cannot turn the
+     desk into a buy-anything generator or a zero-activity one. */
+  minSessionMoveZ:        { min: 0.75, max: 3, dflt: 1.25 },
+  sessionRankCap:         { min: 0.05, max: 0.5, dflt: 0.2 },
 };
 
 function clampRelax(key, value) {
@@ -104,6 +108,14 @@ function paperLearningConfig(base, ctrl = {}) {
       ...(Number(req[key]) !== v ? { clampedFrom: Number(req[key]) } : {}) };
     cfg[key] = v;
   }
+  /* BOOLEAN, SO IT NEEDS ITS OWN BRANCH. clampRelax is numeric-only and
+     silently drops a non-numeric key, which would leave the five-session
+     selector declared in the frozen policy and inert in the running desk —
+     the exact failure mode that let a whole patience policy ship dead. */
+  if (req.requireSessionMove === true && cfg.requireSessionMove !== true) {
+    cfg.requireSessionMove = true;
+    applied.requireSessionMove = { from: false, to: true };
+  }
   if (req.abstainOnMissingInfo === true) {
     cfg.paperAbstainOnMissingInfo = true;
     applied.abstainOnMissingInfo = { from: false, to: true };
@@ -131,11 +143,11 @@ function paperLearningConfig(base, ctrl = {}) {
 
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax, PAPER_OBSERVATION_FLOOR_MAX,
-  "version": "v16",
-  "supersedes": "v15",
+  "version": "v17",
+  "supersedes": "v16",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
   "frozenAt": "2026-09-03",
-  "_versionNote": "v16 changes ONE safety rule (exploratory-auto-v10): unpriced exposure halts the account by SHARE, not by row count. A single open position without a validated current mark used to halt every purchase in every other company until the feed returned it, which is how a one-name data gap stopped the desk outright. An unmarked position is carried at COST, so it understates a loss on itself and nothing else, and the drawdown and day-loss breakers keep working on the priced remainder. Above unmarkedExposureHaltPctOfNav the account still halts. Holdings are also re-requested in their own small batch when a roster fetch comes back partial, so a holding is priced even when the wider scan is not. PRIOR NOTE (v15): carries the same strict hypothesis and strict parameters UNCHANGED and replaces the exploratory cohort's two-step entry with ONE step (exploratory-auto-v9). The armed-level tier is off: a company that passed every hazard gate but had not fallen the last fraction of a percent to the signal threshold used to get a level armed for a later purchase, and would be superseded and retired by subsequent scans without ever being bought. Such a company is now bought at the market price in the scan that finds it, or not at all. This forgives exactly one thing relative to an ordinary entry - |z| may be short of minAbsZ 1.75, down to a floor of 1.25, in the same bottom-half rank band the armed tier used. Nothing else moves: every hazard gate applies unchanged, and the cost hurdle must clear at the price actually being paid rather than at a level the market had not reached. PRIOR NOTE (v14): carries the same strict hypothesis and strict parameters UNCHANGED and changes ONE thing in the exploratory cohort (exploratory-auto-v8): there is no longer a cap on the NUMBER of companies held at once. maxOpenPositions is null, which every consumer reads as unlimited. What still bounds the book is capital, not a count: the 16% ordinary position size, the 95% gross ceiling and the cash actually available. PRIOR NOTE (v13): carries the same strict hypothesis and strict parameters UNCHANGED and adds ONE thing to the exploratory cohort (exploratory-auto-v7): the patience sleeve. Up to 12% of the account, measured at cost, may be held through a rank recovery instead of sold into one, for companies whose own five-year daily record shows they recover from comparable drops within five sessions. Eligibility is deterministic and comes from the reversion statistics the desk already computed and previously used only to scale expected edge. Patience suppresses the rank exit ONLY while the position is underwater and inside its window; the hard stop, trailing stop, profit target, earnings exit and adverse-finding exit are untouched. The grant is stamped at entry and is immutable, so hindsight can never move a loser into the sleeve. PRIOR NOTE (v12): carries the same strict hypothesis and strict parameters UNCHANGED, and changes only the labelled exploratory paper cohort (exploratory-auto-v6). Two things move together. FIRST, the entry bar rises: |z| 1.0 -> 1.75, entry rank 0.50 -> 0.30, and rank recovery must reach 0.75 rather than 0.60. The v11 band admitted the bottom half of the cross-section on a one-sigma hourly wobble and released it 0.1 of rank later, so positions opened and closed inside ordinary intraday noise and the round trip was mostly friction. SECOND, because far fewer names now qualify, each one carries materially more capital: at most 6 open positions at up to 16% of the account each, a 1.5% per-trade risk budget, and a 95% gross ceiling — about 80% deployed across five positions in the ordinary case and 95% across six when the opportunities are there. The observation size floor rises 0.10 -> 0.35 so the per-position cap binds instead of the incomplete-information haircut. PRIOR NOTE (v11): carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
+  "_versionNote": "v17 moves SELECTION from one hour to five completed trading sessions (exploratory-auto-v11). The desk used to choose companies from 12 five-minute bars, which cannot distinguish a multi-day decline from a one-off dislocation and cannot say why a company fell. It now measures each company's move over five completed sessions against its own sector and its own normal five-day swing, requires the fall to be the company's own rather than its industry's, and requires the company to still be in a rising longer trend - above the 200-day average with the 50-day line rising. The hour is demoted to a timer: minAbsZ falls 1.75 to 1.25 and entryRank widens 0.30 to 0.50, so the hour confirms the name is still soft rather than being the reason to buy. Loosening the hour is not optional - adding the five-session condition on top of the old hourly bar would make selection strictly tighter, which is the opposite of the intent. Every hazard gate is unchanged. PRIOR NOTE (v16): changes ONE safety rule (exploratory-auto-v10): unpriced exposure halts the account by SHARE, not by row count. A single open position without a validated current mark used to halt every purchase in every other company until the feed returned it, which is how a one-name data gap stopped the desk outright. An unmarked position is carried at COST, so it understates a loss on itself and nothing else, and the drawdown and day-loss breakers keep working on the priced remainder. Above unmarkedExposureHaltPctOfNav the account still halts. Holdings are also re-requested in their own small batch when a roster fetch comes back partial, so a holding is priced even when the wider scan is not. PRIOR NOTE (v15): carries the same strict hypothesis and strict parameters UNCHANGED and replaces the exploratory cohort's two-step entry with ONE step (exploratory-auto-v9). The armed-level tier is off: a company that passed every hazard gate but had not fallen the last fraction of a percent to the signal threshold used to get a level armed for a later purchase, and would be superseded and retired by subsequent scans without ever being bought. Such a company is now bought at the market price in the scan that finds it, or not at all. This forgives exactly one thing relative to an ordinary entry - |z| may be short of minAbsZ 1.75, down to a floor of 1.25, in the same bottom-half rank band the armed tier used. Nothing else moves: every hazard gate applies unchanged, and the cost hurdle must clear at the price actually being paid rather than at a level the market had not reached. PRIOR NOTE (v14): carries the same strict hypothesis and strict parameters UNCHANGED and changes ONE thing in the exploratory cohort (exploratory-auto-v8): there is no longer a cap on the NUMBER of companies held at once. maxOpenPositions is null, which every consumer reads as unlimited. What still bounds the book is capital, not a count: the 16% ordinary position size, the 95% gross ceiling and the cash actually available. PRIOR NOTE (v13): carries the same strict hypothesis and strict parameters UNCHANGED and adds ONE thing to the exploratory cohort (exploratory-auto-v7): the patience sleeve. Up to 12% of the account, measured at cost, may be held through a rank recovery instead of sold into one, for companies whose own five-year daily record shows they recover from comparable drops within five sessions. Eligibility is deterministic and comes from the reversion statistics the desk already computed and previously used only to scale expected edge. Patience suppresses the rank exit ONLY while the position is underwater and inside its window; the hard stop, trailing stop, profit target, earnings exit and adverse-finding exit are untouched. The grant is stamped at entry and is immutable, so hindsight can never move a loser into the sleeve. PRIOR NOTE (v12): carries the same strict hypothesis and strict parameters UNCHANGED, and changes only the labelled exploratory paper cohort (exploratory-auto-v6). Two things move together. FIRST, the entry bar rises: |z| 1.0 -> 1.75, entry rank 0.50 -> 0.30, and rank recovery must reach 0.75 rather than 0.60. The v11 band admitted the bottom half of the cross-section on a one-sigma hourly wobble and released it 0.1 of rank later, so positions opened and closed inside ordinary intraday noise and the round trip was mostly friction. SECOND, because far fewer names now qualify, each one carries materially more capital: at most 6 open positions at up to 16% of the account each, a 1.5% per-trade risk budget, and a 95% gross ceiling — about 80% deployed across five positions in the ordinary case and 95% across six when the opportunities are there. The observation size floor rises 0.10 -> 0.35 so the per-position cap binds instead of the incomplete-information haircut. PRIOR NOTE (v11): carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
   "immutable": true,
   "status": "research",
   "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
@@ -268,7 +280,7 @@ module.exports = {
      does the analysis and writes the levels; the strike pass (every
      minute) acts on them — see `activity.strike`. */
   "exploratoryAuto": {
-    "version": "exploratory-auto-v10",
+    "version": "exploratory-auto-v11",
     "enabled": true,
     "autoStartAfterSuccessfulBootstrap": true,
     "startingNavUsd": 100000,
@@ -277,8 +289,12 @@ module.exports = {
       "enabled": true,
       "abstainOnMissingInfo": true,
       "costMarginMultiple": 0.25,
-      "minAbsZ": 1.75,
-      "entryRank": 0.3,
+      "requireSessionMove": true,
+      "minSessionMoveZ": 1.25,
+      "sessionRankCap": 0.2,
+      "_selectionNote": "Five COMPLETED sessions choose the company; the hour only times the entry. minSessionMoveZ is the five-session fall, measured against the company's own sector and its own normal five-day swing. sessionRankCap keeps the harvest to the worst fifth of the roster on a broad selloff. The fall must also be a fall - a company up 4% while its sector is up 8% has a large negative excess and must never be described as having fallen.",
+      "minAbsZ": 1.25,
+      "entryRank": 0.5,
       "exitRank": 0.75,
       "maxHoldDays": 3,
       "sectorCrowdingMultiple": 4,
@@ -356,7 +372,8 @@ module.exports = {
       "immediateEntry": {
         "enabled": true,
         "rankCeiling": 0.5,
-        "minAbsZFloor": 1.25,
+        "_floorNote": "The near-miss band is (-minAbsZ, -minAbsZFloor]. With minAbsZ now 1.25 a floor of 1.25 would make that band EMPTY and the only entry path unreachable, so the floor moves with it.",
+        "minAbsZFloor": 0.75,
         "_note": "minAbsZ is 1.75. A name between 1.25 and 1.75 sigma that passes every other gate is a near miss; the armed tier used to wait for it to fall the rest of the way, which in a typical session was 0.2-0.7%. The cost hurdle is measured at the market price being paid, so a name whose edge does not survive its own frictions today is still refused."
       },
       /* THE PATIENCE SLEEVE (_investorPatience.js). A bounded share of the

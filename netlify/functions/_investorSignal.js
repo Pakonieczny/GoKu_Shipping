@@ -766,7 +766,22 @@ function evaluateCandidate(input) {
   add("liquidity", "Liquidity floor", advUsd >= minAdv,
       `$${(advUsd / 1e6).toFixed(0)}M/day vs $${(minAdv / 1e6).toFixed(0)}M floor`);
 
-  // 6. The signal itself.
+  /* 5b. THE FIVE-SESSION SELECTOR — this is what chooses the company.
+     One hour of trading cannot tell a multi-day decline from a one-off
+     dislocation, so selection is made on five COMPLETED sessions measured
+     against the company's own sector and its own normal swing, and the hour
+     below is demoted to a timer that only confirms the name is still soft.
+     Absent when the frozen policy does not require it, in which case the gate
+     abstains and the hour decides alone, exactly as before. */
+  const sessionMove = input.sessionMove || null;
+  const sessionVerdict = input.sessionVerdict || null;
+  if (cfg.requireSessionMove === true) {
+    add("session_move", "Five-session move",
+        !!(sessionVerdict && sessionVerdict.pass),
+        sessionVerdict ? sessionVerdict.reason : "five-session move not measured");
+  }
+
+  // 6. The hour: confirmation that the name is still soft right now.
   const sig = zStat ? entrySignal(rank, zStat.z, cfg, ctx, { price: input.price }) : { fire: false, reason: "no z statistic" };
   add("signal", "Residual signal", sig.fire, sig.reason);
 
@@ -960,6 +975,9 @@ function evaluateCandidate(input) {
       overnightGapEsPct: ctx.overnightGapEsPct,
     } : null,
     reversion: rev || null,
+    /* The five-session picture travels with the verdict so the card, the
+       decision record and the operator's sentence all read the same numbers. */
+    sessionMove, sessionVerdict,
     cost,
     sizing,
   };

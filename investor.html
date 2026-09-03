@@ -2128,6 +2128,7 @@ function renderCandidates(cands){
       '</div>'+
       '<div class="draft__body">'+
         '<div id="chart-'+esc(c.symbol)+'"><div class="empty" style="padding:14px">loading chart…</div></div>'+
+        sessionWhy(c)+
         '<div class="why"><span class="i">◆</span><div><b>How this was derived.</b> '+
           'Each step below is a value the code actually computed, in the order it computed it. '+
           'Nothing here is a black-box score.</div></div>'+
@@ -3400,6 +3401,19 @@ function coBtn(sym, name, mid, right, sub){
    money), why the desk chose it (the move, the edge versus cost, what it knew),
    and what the plan is (when it fills, when it leaves). */
 function candFor(sym){ return (DASH.candidates||[]).filter(function(c){return c.symbol===sym;})[0]||null; }
+/* Why this company moved, over the window that actually chose it. Every number
+   here is computed by the selector; the three parts sum to the total fall. */
+function sessionWhy(c){
+  var m=c&&c.sessionMove;
+  if(!m||m.ok!==true) return "";
+  var own=Math.abs(m.companyPartPct), swing=m.normalSwingPct;
+  return '<div class="note" style="margin:8px 0"><b>Last five trading days:</b> '
+    +(m.r5Pct<0?"down ":"up ")+Math.abs(m.r5Pct)+'%. '
+    +'Sector '+(m.sectorPartPct>=0?"+":"")+m.sectorPartPct+'%, market '
+    +(m.marketPartPct>=0?"+":"")+m.marketPartPct+'% &mdash; so about <b>'+own
+    +' points is this company itself</b>'
+    +(swing>0?' (about '+(own/swing).toFixed(1)+'x its normal five-day swing)':'')+'.</div>';
+}
 function causeText(c){
   var m={cause_detected_fundamental:"news-driven (fundamental cause found)",
     abnormal_activity_without_covered_fundamental_event:"unusual activity, no covered cause",
@@ -3941,7 +3955,8 @@ var GATE_PLAIN = {
   "Dispersion regime":"everything is moving together, so single-company bets do not work",
   "Earnings blackout":"results are due, and prices jump unpredictably around those",
   "Liquidity floor":"too little of it trades each day to get in and out cheaply",
-  "Residual signal":"it has not fallen far enough to be interesting",
+  "Five-session move":"over the last five trading days it has not fallen more than its own sector, or its longer trend is down",
+  "Residual signal":"it is not still soft in the last hour",
   "Sector crowding":"too many companies in the same industry already look this way",
   "Long-horizon trend":"it has been falling for months — this is a decline, not a dip",
   "Turnover conditioning":"unusually heavy trading, which usually means the fall continues",

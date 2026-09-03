@@ -67,6 +67,7 @@ const DS = require("./_investorSufficiency");
 const ST = require("./_investorStrike");
 const PA = require("./_investorPatience");
 const EXITS = require("./_investorExitPolicy");
+const MS = require("./_investorMultiSession");
 
 function sha256Json(value) {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -660,10 +661,17 @@ async function runCycle(jobId, { manual = false } = {}) {
       revRaw[sym] = H.reversionEvents(series, today);
     } catch (e) { /* a name without history simply gets no long-horizon read */ }
   }));
+  /* FIVE COMPLETED SESSIONS CHOOSE THE COMPANY. Built here, in the history
+     pass, from daily closes strictly before today — no live price enters, so
+     the shortlist is stable for the whole session and only the hour rotates. */
+  const sessionPanel = MS.buildSessionPanel(dailySeriesBySymbol, dailyProvenanceBySymbol,
+    { asOfDate: today, sectorOf: S.sectorOf });
+
   await reportRunProgress(runRef, { phase: "rank_companies",
-    label: "Separating company moves from market and sector moves", pct: 35,
-    completed: historyNames, total: symbols.length,
-    detail: `${historyNames} of ${symbols.length} companies have usable long-horizon context.` });
+    label: "Measuring five-session moves against each sector", pct: 35,
+    completed: sessionPanel.measured, total: symbols.length,
+    detail: `${historyNames} of ${symbols.length} companies have long-horizon context; `
+      + `${sessionPanel.measured} have a usable five-session move.` });
 
   /* Shrink every name's own bounce-back record toward the roster-wide average.
      Ten events is not a track record; the shrinkage says so arithmetically. */
@@ -870,6 +878,10 @@ async function runCycle(jobId, { manual = false } = {}) {
   /* Entries admitted on a near miss rather than a fired signal, for the run
      record: this is the number the operator sees bought without a full signal. */
   const nearMissAdmitted = [];
+  /* Companies whose five-session picture admitted them, before the hour and
+     the hazard stack had their say. This is the number that says whether the
+     selector or the coverage is the binding constraint. */
+  const sessionQualified = [];
   /* THE PATIENCE SLEEVE. Resolved once per scan. `patienceClaims` tracks the
      grants this scan has already made: a grant is not yet in `pendingOrders`,
      so without it the sleeve cap would be measured against a stale book and
@@ -1466,9 +1478,16 @@ async function runCycle(jobId, { manual = false } = {}) {
        have cleared the real gates, so the two populations can be scored apart
        later instead of blurring into one unusable sample. When the mode is off
        the two configs are identical and this costs a pure recomputation. */
-    const evalRes = S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z, cfg });
+    /* The five-session verdict is computed against the SAME cfg the gate will
+       read, so the reason on the card is the reason the gate used. */
+    const sessionMove = sessionPanel.bySymbol[sym] || null;
+    const sessionVerdict = MS.sessionAdmits(sessionMove, historyCtx[sym] || null, cfg);
+    if (sessionVerdict.pass) sessionQualified.push(sym);
+    const evalRes = S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z, cfg,
+      sessionMove, sessionVerdict });
     const strictRes = paperLearning.active
-      ? S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z, cfg: strictCfg })
+      ? S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z, cfg: strictCfg,
+        sessionMove, sessionVerdict })
       : evalRes;
     /* The strict verdict is structurally "no" until a calibrated lower bound
        exists (requireCalibratedEdge), so on its own it cannot tell an
@@ -1478,6 +1497,7 @@ async function runCycle(jobId, { manual = false } = {}) {
        record, not a permission. */
     const strictUncalibratedRes = paperLearning.active
       ? S.evaluateCandidate({ ...baseDecisionInput, rank, zStat: z,
+          sessionMove, sessionVerdict,
           cfg: { ...strictCfg, requireCalibratedEdge: false } })
       : evalRes;
     /* How much the desk knew when it decided. Recorded everywhere the
@@ -1544,6 +1564,11 @@ async function runCycle(jobId, { manual = false } = {}) {
       history: evalRes.historyContext,
       reversion: evalRes.reversion,
       historyNotes: historyCtx[sym] ? H.describe(historyCtx[sym], reversionBySymbol[sym]) : null,
+      /* Why this company, in numbers that sum to the fall: how much was the
+         market, how much its industry, how much the company itself. */
+      sessionMove,
+      sessionVerdict,
+      sessionNote: MS.describeMove(sym, sessionMove),
       sigmaBlend: z ? z.sigmaBlend : null,
       zShortOnly: z && isFinite(z.zShortOnly) ? Number(z.zShortOnly.toFixed(2)) : null,
       pass: evalRes.pass, blockedBy: evalRes.blockedBy, firstBlock: evalRes.firstBlock,
@@ -2848,6 +2873,22 @@ async function runCycle(jobId, { manual = false } = {}) {
     quoteCoverage,
     ranked, breaches: candidates.length,
     nearMissEntries: { admitted: nearMissAdmitted.length, symbols: nearMissAdmitted.slice(0, 20) },
+    /* THE SELECTION FUNNEL. Without this, "1 of 276" is unattributable: a
+       threshold that is too tight and a daily spine that never backfilled look
+       identical from the outside. Each row is the count surviving that step. */
+    sessionSelection: {
+      sessions: sessionPanel.sessions,
+      roster: symbols.length,
+      withHistory: historyNames,
+      measured: sessionPanel.measured,
+      qualified: sessionQualified.length,
+      qualifiedSample: sessionQualified.slice(0, 20),
+      modalLastDate: sessionPanel.modalLastDate,
+      rejected: sessionPanel.rejected,
+      thresholds: { minSessionMoveZ: cfg.minSessionMoveZ ?? null,
+        sessionRankCap: cfg.sessionRankCap ?? null,
+        required: cfg.requireSessionMove === true },
+    },
     evaluation: { workset: managementWorkset.length,
       completed: managementWorkset.length,
       successful: Math.max(0, managementWorkset.length - companyErrors.length),

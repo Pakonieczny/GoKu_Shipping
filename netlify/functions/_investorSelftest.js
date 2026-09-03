@@ -993,8 +993,8 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v10"
-      && learn.minAbsZ === 1.75 && learn.entryRank === 0.3
+      && policy.version === "exploratory-auto-v11"
+      && learn.minAbsZ === 1.25 && learn.entryRank === 0.5
       && learn.costMarginMultiple === 0.25
       && learn.exitRank === 0.75 && learn.maxHoldDays === 3
       && pc.maxGrossExposurePct === 95 && pc.minCashPct === 0
@@ -1099,6 +1099,12 @@ function runFixtures() {
     sectorTailFraction: 0.1, turnoverPctile: 0.4,
     session: { open: true, wideSpreadWindow: false, phase: "regular" },
     position: null, historyContext: null, reversion: null,
+    /* Selection is now five COMPLETED sessions; the hour only confirms. A base
+       candidate must therefore carry a passing five-session picture, or it no
+       longer represents a qualifying company. Absence legitimately blocks. */
+    sessionMove: { ok: true, r5Pct: -7.4, sessionZ: -1.9, sessionRank: 0.05,
+      normalSwingPct: 3.1, marketPartPct: -0.9, sectorPartPct: -1.2, companyPartPct: -5.3 },
+    sessionVerdict: { pass: true, reason: "five-session fall in a rising trend" },
   });
   const exploreRelaxed = { ...strategy.parameters, ...strategy.exploratoryAuto.paperLearningDefaults,
     paperAbstainOnMissingInfo: true, paperObservationSizeFloor: 0.1, requireCalibratedEdge: false };
@@ -1469,10 +1475,10 @@ function runFixtures() {
 
   cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
     const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
-      exploratoryPolicyVersion: "exploratory-auto-v10", sufficiencyVersion: "data-sufficiency-v2" };
+      exploratoryPolicyVersion: "exploratory-auto-v11", sufficiencyVersion: "data-sufficiency-v2" };
     const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
       strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
-      exploratoryPolicyVersion: "exploratory-auto-v10", closedAt: "2026-09-01T15:00:00Z",
+      exploratoryPolicyVersion: "exploratory-auto-v11", closedAt: "2026-09-01T15:00:00Z",
       decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
     const trades = [
       mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
@@ -1802,7 +1808,7 @@ function runFixtures() {
       sessionCloseMs: Date.parse("2026-09-02T20:00:00Z"), vixNorm: 1, session: { date: "2026-09-02", open: true },
       policyIdentity: { accountId: "paper-1", strategyVersion: "v11", universeVersion: "v1",
         strategyHash: "c".repeat(64), universeHash: "d".repeat(64), variantsHash: "e".repeat(64) },
-      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v10", cohortLabel: "exploratory_auto_unvalidated",
+      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v11", cohortLabel: "exploratory_auto_unvalidated",
       paperLearningOnly: true, activePortfolioControls: strategy.exploratoryAuto.portfolioControls,
       activity: XPL.activityPolicy(strategy), cycleId: "2026-09-02_1500", strategyVersion: "v11",
       operatingState: "exploratory_auto", moveStartedAtMs: Date.parse("2026-09-02T14:00:00Z"), positionScale: 1 };
@@ -2366,38 +2372,43 @@ function runFixtures() {
     if (policy.enabled !== true) return false;
     if (!(policy.minAbsZFloor < Number(strategy.exploratoryAuto.paperLearningDefaults.minAbsZ))) return false;
 
-    const cfg = { minAbsZ: 1.75 };
+    const cfg = { minAbsZ: Number(strategy.exploratoryAuto.paperLearningDefaults.minAbsZ) };
     const base = { cfg, policy, rank: 0.28,
       quality: { tradable: true, grade: "A" },
       decisionManifest: { manifestHash: "a".repeat(64) },
       marketProvenance: { sourceSha256: "b".repeat(64) } };
     const ev = (blockedBy) => ({ pass: blockedBy.length === 0, blockedBy });
 
-    /* Admitted: every gate passes, only |z| is short, and it clears the floor. */
-    const ok = STK.nearMissEntryEligible({ ...base, z: { z: -1.6 }, evalRes: ev(["signal"]) });
-    if (!ok.ok || Math.abs(ok.zShortfall - 0.15) > 1e-9) return false;
+    /* Admitted: every gate passes, only |z| is short, and it clears the floor.
+       Derived from the frozen values so this cannot drift out of date again. */
+    const midBand = Number((-(cfg.minAbsZ + policy.minAbsZFloor) / 2).toFixed(2));
+    const ok = STK.nearMissEntryEligible({ ...base, z: { z: midBand }, evalRes: ev(["signal"]) });
+    if (!ok.ok) return false;
+    if (Math.abs(ok.zShortfall - (midBand + cfg.minAbsZ)) > 1e-9) return false;
 
     /* Refused, one reason each. */
     const no = (r, args) => { const v = STK.nearMissEntryEligible({ ...base, ...args }); return !v.ok && v.reason === r; };
     /* The cost gate is never forgiven: no edge left at the price being paid. */
-    if (!no("blocked_by_cost", { z: { z: -1.6 }, evalRes: ev(["signal", "cost"]) })) return false;
+    if (!no("blocked_by_cost", { z: { z: midBand }, evalRes: ev(["signal", "cost"]) })) return false;
     /* A hazard finding is not a near miss. */
-    if (!no("blocked_by_trend", { z: { z: -1.6 }, evalRes: ev(["signal", "trend"]) })) return false;
+    if (!no("blocked_by_trend", { z: { z: midBand }, evalRes: ev(["signal", "trend"]) })) return false;
     /* Too weak a move: the floor is a real bound, not decoration. */
-    if (!no("z_-1.10_short_of_floor_1.25", { z: { z: -1.1 }, evalRes: ev(["signal"]) })) return false;
+    const tooWeak = Number((-(policy.minAbsZFloor / 2)).toFixed(2));
+    if (!no(`z_${tooWeak.toFixed(2)}_short_of_floor_${policy.minAbsZFloor}`,
+      { z: { z: tooWeak }, evalRes: ev(["signal"]) })) return false;
     /* Outside the rank band. */
-    if (!no("rank_above_entry_ceiling", { z: { z: -1.6 }, rank: 0.8, evalRes: ev(["signal"]) })) return false;
+    if (!no("rank_above_entry_ceiling", { z: { z: midBand }, rank: 0.8, evalRes: ev(["signal"]) })) return false;
     /* Already past the threshold: that is the ordinary path's trade, and the
        signal must have failed on rank instead. */
-    if (!no("signal_failed_on_rank_not_z", { z: { z: -2.0 }, evalRes: ev(["signal"]) })) return false;
+    if (!no("signal_failed_on_rank_not_z", { z: { z: -(cfg.minAbsZ + 0.5) }, evalRes: ev(["signal"]) })) return false;
     /* A full pass belongs to the ordinary path, which already queued it. */
-    if (!no("already_passes", { z: { z: -2.0 }, evalRes: ev([]) })) return false;
+    if (!no("already_passes", { z: { z: -(cfg.minAbsZ + 0.5) }, evalRes: ev([]) })) return false;
     /* Untradable source, and missing identity, still refuse. */
-    if (!no("execution_source_not_tradable", { z: { z: -1.6 }, evalRes: ev(["signal"]),
+    if (!no("execution_source_not_tradable", { z: { z: midBand }, evalRes: ev(["signal"]),
       quality: { tradable: false, researchEligible: true, grade: "C" } })) return false;
-    if (!no("no_market_provenance", { z: { z: -1.6 }, evalRes: ev(["signal"]), marketProvenance: null })) return false;
+    if (!no("no_market_provenance", { z: { z: midBand }, evalRes: ev(["signal"]), marketProvenance: null })) return false;
     /* Off by policy is off. */
-    if (!no("immediate_entry_disabled", { z: { z: -1.6 }, evalRes: ev(["signal"]),
+    if (!no("immediate_entry_disabled", { z: { z: midBand }, evalRes: ev(["signal"]),
       policy: { ...policy, enabled: false } })) return false;
 
     /* The cycle must route an admitted near miss through the ordinary proposal
@@ -2517,10 +2528,103 @@ function runFixtures() {
     return marked.navUsd === 6000 && marked.untrustedMarks === 1;
   }));
 
+  cases.push(fixture("five_completed_sessions_choose_the_company_not_one_hour", () => {
+    /* The desk used to select on 12 five-minute bars — one hour — which cannot
+       tell a multi-day decline from a one-off dislocation, and cannot say why
+       a company fell. Selection is now five COMPLETED sessions measured against
+       the company's own sector, and the hour is only a timer. */
+    const MS = require("./_investorMultiSession");
+    const mk = (lastFive) => {
+      const out = []; let c = 100;
+      for (let i = 0; i < 120; i += 1) {
+        const d = new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString().slice(0, 10);
+        c *= 1 + 0.0006 + (((i * 37) % 7) - 3) / 1000;
+        out.push({ date: d, c: Number(c.toFixed(4)) });
+      }
+      for (let k = 0; k < 5; k += 1) {
+        out[out.length - 5 + k].c = Number((out[out.length - 6].c * (1 + lastFive * (k + 1) / 5)).toFixed(4));
+      }
+      return out;
+    };
+    const asOf = new Date(Date.UTC(2026, 0, 1) + 120 * 86400000).toISOString().slice(0, 10);
+    const sectors = { A: "tech", B: "tech", C: "tech", D: "tech", E: "fin", F: "fin", G: "fin" };
+    const prov = {}; for (const k of Object.keys(sectors)) prov[k] = { homogeneous: true, provider: "p", sourceSha256: "a".repeat(64) };
+    const build = (daily) => MS.buildSessionPanel(daily, prov, { asOfDate: asOf, sectorOf: (x) => sectors[x] });
+    const policy = { minSessionMoveZ: 1.25, sessionRankCap: 0.2 };
+    const uptrend = { ok: true, aboveSma200: true, sma50Rising: true, downtrendFlags: [] };
+
+    /* THE WHOLE POINT: a company that fell WITH its sector has not dislocated. */
+    const together = {}; for (const k of Object.keys(sectors)) together[k] = mk(sectors[k] === "tech" ? -0.08 : 0);
+    const p1 = build(together);
+    if (MS.sessionAdmits(p1.bySymbol.A, uptrend, policy).pass !== false) return false;
+    if (Math.abs(p1.bySymbol.A.companyPartPct) > 0.01) return false;
+
+    /* The same fall, but its sector did not fall: that is the company's own. */
+    const alone = { ...together }; alone.A = mk(-0.16);
+    const p2 = build(alone);
+    const a = p2.bySymbol.A;
+    if (!MS.sessionAdmits(a, uptrend, policy).pass) return false;
+    /* The three parts must sum to the total fall — this is the operator's
+       "why", and it is arithmetic, not a score. */
+    if (Math.abs((a.marketPartPct + a.sectorPartPct + a.companyPartPct) - a.r5Pct) > 0.02) return false;
+
+    /* A FALL MUST BE A FALL. A company UP while its sector is further up has a
+       large negative excess and would otherwise be announced as having fallen. */
+    const up = { ...together }; up.A = mk(0.04);
+    for (const k of ["B", "C", "D"]) up[k] = mk(0.10);
+    const risen = build(up).bySymbol.A;
+    if (!(risen.r5Pct > 0)) return false;
+    const upVerdict = MS.sessionAdmits(risen, uptrend, policy);
+    if (upVerdict.pass !== false || !/^up /.test(upVerdict.reason)) return false;
+
+    /* A five-session fall inside a DOWNTREND is a falling knife, not a pullback. */
+    if (MS.sessionAdmits(a, { ok: true, aboveSma200: false, sma50Rising: true, downtrendFlags: [] }, policy).pass) return false;
+    if (MS.sessionAdmits(a, { ok: true, aboveSma200: true, sma50Rising: false, downtrendFlags: [] }, policy).pass) return false;
+    if (MS.sessionAdmits(a, { ok: false }, policy).pass) return false;
+
+    /* Coverage failures are NAMED, never a silent skip: a stale spine and an
+       unprovenanced one are different problems from "nothing qualified". */
+    const stale = { ...alone }; stale.B = alone.B.slice(0, -1);
+    const badProv = { ...prov, C: { homogeneous: false, provider: "p", sourceSha256: "a".repeat(64) } };
+    const p3 = MS.buildSessionPanel(stale, badProv, { asOfDate: asOf, sectorOf: (x) => sectors[x] });
+    if (p3.rejected.stale !== 1 || p3.rejected.provenance !== 1) return false;
+
+    /* NO LIVE PRICE. Today's bar must not change any five-session number, or
+       the shortlist would drift through the session and a split effective
+       today could manufacture a phantom fall. */
+    const withToday = { ...alone };
+    withToday.A = [...alone.A, { date: asOf, c: alone.A[alone.A.length - 1].c * 0.5 }];
+    const p4 = build(withToday);
+    if (p4.bySymbol.A.r5Pct !== a.r5Pct) return false;
+
+    /* The frozen policy must actually reach the running config, and the hour
+       must have been LOOSENED — adding the five-session test on top of the old
+       hourly bar would make selection strictly tighter, the opposite of intent. */
+    const learn = strategy.exploratoryAuto.paperLearningDefaults;
+    if (learn.requireSessionMove !== true) return false;
+    if (learn.minAbsZ !== 1.25 || learn.entryRank !== 0.5) return false;
+    /* The near-miss band must not be empty, or the only entry path is dead. */
+    if (!(strategy.exploratoryAuto.activity.immediateEntry.minAbsZFloor < learn.minAbsZ)) return false;
+    const applied = strategy.paperLearningConfig(strategy.parameters,
+      { paperLearning: { enabled: true, ...learn } }).cfg;
+    if (applied.requireSessionMove !== true) return false;
+    if (applied.minSessionMoveZ !== 1.25 || applied.sessionRankCap !== 0.2) return false;
+
+    /* And the gate is wired: it blocks by its own id, and the cycle feeds it. */
+    const SIG = require("./_investorSignal");
+    const gateSrc = sourceOf(SIG.evaluateCandidate);
+    /* esbuild re-wraps long argument lists across lines. */
+    if (!/add\(\s*"session_move",\s*"Five-session move"/.test(gateSrc)) return false;
+    if (!/cfg\.requireSessionMove === true/.test(gateSrc)) return false;
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    if (!/MS\.buildSessionPanel\(\s*dailySeriesBySymbol/.test(cycleSrc)) return false;
+    return /MS\.sessionAdmits\(sessionMove/.test(cycleSrc);
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v37-missing-price-is-not-a-discrepancy";
+  const SCHEMA = "runtime-fixtures-v38-five-session-selection";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

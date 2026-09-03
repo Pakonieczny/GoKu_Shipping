@@ -40,8 +40,13 @@ const crypto = require("crypto");
 const DS = require("./_investorSufficiency");
 
 /* Gates a CONTROL entry may fail. Everything else is a hazard finding and
-   still blocks a control entry exactly as it blocks a signal entry. */
-const CONTROL_MAY_FAIL = Object.freeze(["signal", "cost", "crowding", "turnover"]);
+   still blocks a control entry exactly as it blocks a signal entry.
+   `session_move` belongs here for the same reason `signal` does: the control
+   cohort is the random baseline the signal is measured against, so it must be
+   allowed to fail the SELECTION tests while still clearing every hazard. Left
+   out, the baseline would have gone silently empty the moment five-session
+   selection turned on, and the comparison it exists to provide with it. */
+const CONTROL_MAY_FAIL = Object.freeze(["signal", "session_move", "cost", "crowding", "turnover"]);
 
 const DEFAULTS = Object.freeze({
   enabled: true,
