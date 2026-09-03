@@ -2278,11 +2278,12 @@ function runFixtures() {
     if (B.epochRebindNeeded({ ...base, safetyEpoch: null, operatingState: "observation", dryRun: true, mode: "research" }, args).rebind) return false;
     if (B.epochRebindNeeded({ ...base, safetyEpoch: null, strategyVersion: "v13" }, args).rebind) return false;
     const src = sourceOf(B.ensureBootstrapped);
-    if (!/epochRebindNeeded\(c, \{ commit,/.test(src)) return false;
+    if (!/epochRebindNeeded\(c, \{\s*commit,/.test(src)) return false;
     if (!/activatedBy: "bootstrap:identity_rebind"/.test(src)) return false;
     /* And a freeze imposed by a failed attestation no longer blocks auto-start. */
     if (!/const attestationFreeze = priorOperating\.entriesFrozen/.test(src)) return false;
-    if (!/priorFreeze = \(priorOperating\.entriesFrozen && !attestationFreeze\)/.test(src)) return false;
+    /* esbuild drops the redundant parentheses; either spelling is the same logic. */
+    if (!/priorFreeze = \(?priorOperating\.entriesFrozen\s*&&\s*!attestationFreeze\)?\s*\|\|/.test(src)) return false;
     return !!code;
   }));
 
