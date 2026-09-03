@@ -305,11 +305,22 @@ function sessionAdmits(move, historyContext, policy = {}) {
   }
   const ctx = historyContext || {};
   if (ctx.ok !== true) return { pass: false, reason: "no six-month history to read the trend" };
-  if (ctx.aboveSma200 !== true) {
-    return { pass: false, reason: "below its 200-day average — the longer trend is down" };
+  /* EITHER confirmation, not both. Demanding a company be above its 200-day
+     average AND have a rising 50-day line, on top of a five-session fall,
+     admitted ONE company out of 270 measured — the three conditions are
+     negatively correlated by construction, because a company that just fell
+     hard is the least likely to have a pristine trend. One confirmation plus
+     the downtrend-warning cap still refuses a falling knife. */
+  const mode = policy.sessionTrendMode === "both" ? "both" : "either";
+  const above = ctx.aboveSma200 === true, rising = ctx.sma50Rising === true;
+  if (mode === "both" && !(above && rising)) {
+    return { pass: false, reason: !above
+      ? "below its 200-day average — the longer trend is down"
+      : "50-day line is not rising — this is a decline, not a pullback" };
   }
-  if (ctx.sma50Rising !== true) {
-    return { pass: false, reason: "50-day line is not rising — this is a decline, not a pullback" };
+  if (mode === "either" && !above && !rising) {
+    return { pass: false,
+      reason: "below its 200-day average and its 50-day line is falling — a decline, not a pullback" };
   }
   const flags = Array.isArray(ctx.downtrendFlags) ? ctx.downtrendFlags.length
     : Number(ctx.downtrendFlags) || 0;
