@@ -30,6 +30,10 @@
 
 "use strict";
 
+/* Shared ceiling for the exploratory observation size floor. Repeating the
+   literal in three files is how one of them ends up out of step. */
+const ST_FLOOR_MAX = require("./_investorStrategy").PAPER_OBSERVATION_FLOOR_MAX;
+
 const crypto = require("crypto");
 const A = require("./_investorAdmin");
 const AUTH = require("./_investorAuth");
@@ -1697,7 +1701,7 @@ async function runCycle(jobId, { manual = false } = {}) {
         ? Math.max(1, Math.min(5, Number(cfg.positionScale) || 1)) : 1;
       const signalScaler = Math.min(1, (control
         ? Math.max(Number(evalRes.sizing && evalRes.sizing.combined) || 0,
-            Math.max(0, Math.min(0.25, Number(cfg.paperObservationSizeFloor) || 0)))
+            Math.max(0, Math.min(ST_FLOOR_MAX, Number(cfg.paperObservationSizeFloor) || 0)))
           * activity.controlCohort.sizeMultiplier
         : evalRes.sizing.combined) * sufficiencyMult * positionScale);
       const sizing = R.positionSizeUsd({ navUsd, atrPct: hc.atrPct,

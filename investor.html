@@ -2754,9 +2754,9 @@ function eagerNow(){
   var st=plNow(); if(st.enabled!==true) return "careful";
   return nearest(EAGER,"costMarginMultiple", st.costMarginMultiple!=null?st.costMarginMultiple:2);
 }
-var SIZE={small:{t:"Small",positionScale:1,c:"Risk-sized positions well under the 12% per-position cap. Outcomes are measured in basis points; dollars are noise at this size."},
-  medium:{t:"Medium",positionScale:3,c:"About three times the small size, still under the 12% per-position cap."},
-  large:{t:"Large",positionScale:5,c:"Up to the 12% per-position cap on most names. The book holds at most 8 positions, so it can reach full investment in eight."}};
+var SIZE={small:{t:"Small",positionScale:1,c:"Roughly a third of the per-position cap. Deliberately cautious: the account stays mostly in cash, and outcomes are read in basis points rather than dollars."},
+  medium:{t:"Medium",positionScale:3,c:"Reaches the 16% per-position cap on companies the desk knows well, and scales down where its information is thin. Five positions is about 80% of the account invested."},
+  large:{t:"Large",positionScale:5,c:"Reaches the 16% cap even on thinner information. The book holds at most 6 positions and stops at 95% invested, so this is close to fully deployed."}};
 function sizeNow(){ var st=plNow(); return nearest(SIZE,"positionScale", st.positionScale!=null?st.positionScale:1); }
 function holdNow(){
   var st=plNow(); return nearest(HOLD,"maxHoldDays", st.maxHoldDays!=null?st.maxHoldDays:10);

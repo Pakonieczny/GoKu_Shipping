@@ -39,6 +39,15 @@
  * Overrides are CLAMPED, not trusted: a typed-in zero cost margin cannot turn
  * the desk into a random-entry generator.
  */
+/* The exploratory paper floor's own ceiling. A "floor" that can be set to
+   anything is not a floor, so the value an operator or a frozen policy may
+   ask for is bounded here and every site that applies it imports this
+   constant rather than repeating a literal. Raised from the original 0.25 in
+   v12: with a concentrated book the per-position CAP is meant to be the
+   binding constraint, and a 0.25 ceiling made the information haircut bind
+   instead, holding every position to a few hundred dollars. */
+const PAPER_OBSERVATION_FLOOR_MAX = 0.5;
+
 const RELAX_LIMITS = {
   costMarginMultiple:     { min: 0.25, max: 2,   dflt: 2 },
   minAbsZ:                { min: 1.0,  max: 3,   dflt: 2 },
@@ -51,6 +60,10 @@ const RELAX_LIMITS = {
      signal/coverage size scaler before the ordinary per-position cap; the
      cap, the per-trade risk budget and the one-share floor all still apply. */
   positionScale:          { min: 1,    max: 5,   dflt: 1 },
+  /* How small an exploratory paper position may be scaled to when the desk's
+     information is incomplete. It is a floor, not a target: the ordinary
+     position cap and the per-trade risk budget still bound the size above. */
+  observationSizeFloor:   { min: 0.05, max: PAPER_OBSERVATION_FLOOR_MAX, dflt: 0.35 },
 };
 
 function clampRelax(key, value) {
@@ -98,8 +111,10 @@ function paperLearningConfig(base, ctrl = {}) {
        after every hard gate has passed. A zero-size "pass" produces no outcome,
        so exploratory paper decisions get a small, explicit floor. Portfolio,
        cash, loss, duplication and finding-based gates still run afterwards. */
-    cfg.paperObservationSizeFloor = 0.10;
-    applied.paperObservationSizeFloor = { from: 0, to: 0.10 };
+    const askedFloor = clampRelax("observationSizeFloor", req.observationSizeFloor);
+    const floor = askedFloor == null ? RELAX_LIMITS.observationSizeFloor.dflt : askedFloor;
+    cfg.paperObservationSizeFloor = floor;
+    applied.paperObservationSizeFloor = { from: 0, to: floor };
   }
   /* A paper learner cannot bootstrap a calibrated lower bound before it has
      generated paper outcomes. Requiring that bound here made the mode
@@ -115,12 +130,12 @@ function paperLearningConfig(base, ctrl = {}) {
 }
 
 module.exports = {
-  paperLearningConfig, RELAX_LIMITS, clampRelax,
-  "version": "v11",
-  "supersedes": "v10",
+  paperLearningConfig, RELAX_LIMITS, clampRelax, PAPER_OBSERVATION_FLOOR_MAX,
+  "version": "v12",
+  "supersedes": "v11",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
-  "frozenAt": "2026-09-02",
-  "_versionNote": "v11 carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
+  "frozenAt": "2026-09-03",
+  "_versionNote": "v12 carries the same strict hypothesis and strict parameters UNCHANGED, and changes only the labelled exploratory paper cohort (exploratory-auto-v6). Two things move together. FIRST, the entry bar rises: |z| 1.0 -> 1.75, entry rank 0.50 -> 0.30, and rank recovery must reach 0.75 rather than 0.60. The v11 band admitted the bottom half of the cross-section on a one-sigma hourly wobble and released it 0.1 of rank later, so positions opened and closed inside ordinary intraday noise and the round trip was mostly friction. SECOND, because far fewer names now qualify, each one carries materially more capital: at most 6 open positions at up to 16% of the account each, a 1.5% per-trade risk budget, and a 95% gross ceiling — about 80% deployed across five positions in the ordinary case and 95% across six when the opportunities are there. The observation size floor rises 0.10 -> 0.35 so the per-position cap binds instead of the incomplete-information haircut. PRIOR NOTE (v11): carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
   "immutable": true,
   "status": "research",
   "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
@@ -253,7 +268,7 @@ module.exports = {
      does the analysis and writes the levels; the strike pass (every
      minute) acts on them — see `activity.strike`. */
   "exploratoryAuto": {
-    "version": "exploratory-auto-v5",
+    "version": "exploratory-auto-v6",
     "enabled": true,
     "autoStartAfterSuccessfulBootstrap": true,
     "startingNavUsd": 100000,
@@ -262,12 +277,16 @@ module.exports = {
       "enabled": true,
       "abstainOnMissingInfo": true,
       "costMarginMultiple": 0.25,
-      "minAbsZ": 1.0,
-      "entryRank": 0.5,
-      "exitRank": 0.6,
+      "minAbsZ": 1.75,
+      "entryRank": 0.3,
+      "exitRank": 0.75,
       "maxHoldDays": 3,
       "sectorCrowdingMultiple": 4,
-      "minAdvUsd": 50000000
+      "minAdvUsd": 50000000,
+      "_thresholdNote": "A one-sigma move over a one-hour window in the bottom HALF of the cross-section is not a dislocation, and releasing it 0.1 of rank later measures noise. 1.75 sigma in the bottom 30%, held until the name is genuinely back in the top quarter, demands real reversion.",
+      "positionScale": 3,
+      "observationSizeFloor": 0.35,
+      "_sizeNote": "Fewer qualifying names means each one must carry more capital for the book to be meaningfully invested. Scale 3 against a 0.35 floor reaches the ordinary position cap, so the CAP is what limits the size rather than the information haircut."
     },
     /* The activity layer (_investorExplore.js). Every knob is clamped there.
        - maxNewEntriesPerCycle: new signal entries one cycle may open, so
@@ -291,13 +310,13 @@ module.exports = {
          expected-edge ordering. */
     "activity": {
       "enabled": true,
-      "maxNewEntriesPerCycle": 4,
+      "maxNewEntriesPerCycle": 8,
       "minimumShareFloor": 1,
       "reservationHeadroomBps": 150,
       "expireUnfilledEntriesAtSessionClose": true,
       "controlCohort": {
         "enabled": true,
-        "maxOpenPositions": 2,
+        "maxOpenPositions": 1,
         "maxNewPerSession": 1,
         "sizeMultiplier": 0.5,
         "evidenceCohort": "exploratory_control_unconditional"
@@ -360,11 +379,11 @@ module.exports = {
       }
     },
     "portfolioControls": {
-      "maxOpenPositions": 8,
-      "maxGrossExposurePct": 100,
+      "maxOpenPositions": 6,
+      "maxGrossExposurePct": 95,
       "minCashPct": 0,
-      "ordinaryPositionPctOfNav": 12,
-      "riskBudgetPerTradePctOfNav": 1.0,
+      "ordinaryPositionPctOfNav": 16,
+      "riskBudgetPerTradePctOfNav": 1.5,
       "sectorExposurePctOfNav": 100,
       "correlatedClusterPctOfNav": 100,
       "dynamicCorrelationExposurePctOfNav": 100,
@@ -373,7 +392,7 @@ module.exports = {
       "oneDayLossPausePctOfNav": 100,
       "drawdownFreezePctFromHigh": 100,
       "instruments": "Long US-listed common shares only; virtual cash only; no leverage or broker route.",
-      "_note": "All available virtual cash may be deployed across at most eight independently qualified opportunities, so each position is large enough that modelled per-transaction friction is a small share of the notional. Duplicate-symbol, provenance, cash, lifecycle, reconciliation and executable-clock controls still apply."
+      "_note": "Six positions at up to 16% each: five fully sized is about 80% of the account invested, and the sixth is trimmed to the 95% gross ceiling. Sized this way a round trip's modelled friction is a small share of the notional, which is the whole point of holding fewer names. Duplicate-symbol, provenance, cash, lifecycle, reconciliation and executable-clock controls still apply."
     },
     "autoApproval": {
       "unlimitedOrdersPerDay": true,

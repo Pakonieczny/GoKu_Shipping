@@ -53,6 +53,10 @@
 
 "use strict";
 
+/* Shared ceiling for the exploratory observation size floor. Repeating the
+   literal in three files is how one of them ends up out of step. */
+const ST_FLOOR_MAX = require("./_investorStrategy").PAPER_OBSERVATION_FLOOR_MAX;
+
 const A = require("./_investorAdmin");
 const M = require("./_investorMarket");
 const S = require("./_investorSignal");
@@ -438,7 +442,7 @@ async function evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cf
         intelligenceMult: intelPolicy ? Math.max(Number(intelPolicy.sizeMultiplier) || 0,
           Number(plan.intelligencePolicyAtPlan && plan.intelligencePolicyAtPlan.sizeMultiplier) || 0) : parts.intelligenceMult,
         rule: parts.rule });
-      const paperFloor = Math.max(0, Math.min(0.25, Number(cfg.paperObservationSizeFloor) || 0));
+      const paperFloor = Math.max(0, Math.min(ST_FLOOR_MAX, Number(cfg.paperObservationSizeFloor) || 0));
       const combined = cfg.paperAbstainOnMissingInfo === true && paperFloor > 0 && rawSizing.combined < paperFloor
         ? paperFloor : rawSizing.combined;
       const positionScale = operating.exploratoryAuto ? Math.max(1, Math.min(5, Number(plan.positionScale) || 1)) : 1;

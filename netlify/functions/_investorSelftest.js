@@ -697,7 +697,8 @@ function runFixtures() {
     if (ledger.active !== true || ledger.refused !== null) return false;
     if (ledger.cfg.paperAbstainOnMissingInfo !== true) return false;
     if (ledger.cfg.requireCalibratedEdge !== false) return false;
-    if (ledger.cfg.paperObservationSizeFloor !== 0.10) return false;
+    if (ledger.cfg.paperObservationSizeFloor !== ST.RELAX_LIMITS.observationSizeFloor.dflt) return false;
+    if (!(ledger.cfg.paperObservationSizeFloor >= 0.35)) return false;
     if (ST.parameters.requireCalibratedEdge !== true) return false;
     /* And it stays off unless explicitly enabled. */
     const off = ST.paperLearningConfig(ST.parameters, { dryRun: true });
@@ -980,20 +981,22 @@ function runFixtures() {
     const cfg = { ...strategy, portfolioControls: {
       ...(strategy.portfolioControls || {}), ...pc } };
     const admission = R.checkAdd({ symbol: "AAPL", sector: "hardware",
-      proposedUsd: 100000, book: { count: 0, grossUsd: 0, grossPct: 0,
+      proposedUsd: 16000, book: { count: 0, grossUsd: 0, grossPct: 0,
         rows: [], bySectorPct: {}, byClusterPct: {} },
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v5"
-      && learn.minAbsZ === 1.0 && learn.entryRank === 0.5
+      && policy.version === "exploratory-auto-v6"
+      && learn.minAbsZ === 1.75 && learn.entryRank === 0.3
       && learn.costMarginMultiple === 0.25
-      && learn.exitRank === 0.6 && learn.maxHoldDays === 3
-      && pc.maxGrossExposurePct === 100 && pc.minCashPct === 0
-      && pc.maxOpenPositions === 8 && pc.ordinaryPositionPctOfNav === 12
-      && pc.riskBudgetPerTradePctOfNav === 1.0
+      && learn.exitRank === 0.75 && learn.maxHoldDays === 3
+      && pc.maxGrossExposurePct === 95 && pc.minCashPct === 0
+      && pc.maxOpenPositions === 6 && pc.ordinaryPositionPctOfNav === 16
+      && pc.riskBudgetPerTradePctOfNav === 1.5
       && policy.autoApproval.unlimitedOrdersPerDay === true
-      && admission.allow === true && admission.headroomUsd === 100000;
+      /* One ordinary position is admitted in full; the gross ceiling is the
+         headroom, not the whole account, now that it is below 100%. */
+      && admission.allow === true && admission.headroomUsd === 95000;
   }));
 
   cases.push(fixture("exploratory_approval_has_no_daily_or_position_quota", () => {
@@ -1078,7 +1081,10 @@ function runFixtures() {
   const exploreNow = Date.parse("2026-09-01T15:00:00Z");   // 11:00 ET, regular session
   const exploreBase = () => ({
     symbol: "AAA", rank: 0.2, nowMs: exploreNow,
-    zStat: { z: -1.6, cumResidual: -0.012, window: 12 },
+    /* Must clear the LIVE exploratory bar, which v12 raised to |z| >= 1.75
+       in the bottom 30% of the cross-section. A base that only cleared the
+       old 1.0 would silently stop representing a qualifying candidate. */
+    zStat: { z: -2.1, cumResidual: -0.016, window: 12 },
     quality: { grade: "B", tradable: true, researchEligible: true, reasons: [] },
     advUsd: 2e9, earningsDates: ["2026-11-20"], earningsEstimated: false,
     cause: S.CAUSE.NONE, vixNorm: 1, cor3m: 20,
@@ -1455,10 +1461,10 @@ function runFixtures() {
 
   cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
     const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
-      exploratoryPolicyVersion: "exploratory-auto-v5", sufficiencyVersion: "data-sufficiency-v2" };
+      exploratoryPolicyVersion: "exploratory-auto-v6", sufficiencyVersion: "data-sufficiency-v2" };
     const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
       strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
-      exploratoryPolicyVersion: "exploratory-auto-v5", closedAt: "2026-09-01T15:00:00Z",
+      exploratoryPolicyVersion: "exploratory-auto-v6", closedAt: "2026-09-01T15:00:00Z",
       decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
     const trades = [
       mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
@@ -1767,7 +1773,7 @@ function runFixtures() {
       sessionCloseMs: Date.parse("2026-09-02T20:00:00Z"), vixNorm: 1, session: { date: "2026-09-02", open: true },
       policyIdentity: { accountId: "paper-1", strategyVersion: "v11", universeVersion: "v1",
         strategyHash: "c".repeat(64), universeHash: "d".repeat(64), variantsHash: "e".repeat(64) },
-      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v5", cohortLabel: "exploratory_auto_unvalidated",
+      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v6", cohortLabel: "exploratory_auto_unvalidated",
       paperLearningOnly: true, activePortfolioControls: strategy.exploratoryAuto.portfolioControls,
       activity: XPL.activityPolicy(strategy), cycleId: "2026-09-02_1500", strategyVersion: "v11",
       operatingState: "exploratory_auto", moveStartedAtMs: Date.parse("2026-09-02T14:00:00Z"), positionScale: 1 };
@@ -1833,10 +1839,40 @@ function runFixtures() {
       && legacy && open && exiting && manual && held && emitted.length >= 9;
   }));
 
+  cases.push(fixture("concentrated_book_deploys_the_account_and_the_cap_is_what_binds", () => {
+    const pc = strategy.exploratoryAuto.portfolioControls;
+    const learn = strategy.exploratoryAuto.paperLearningDefaults;
+    const pl = strategy.paperLearningConfig({ ...strategy.parameters }, { paperLearning: { ...learn } });
+    const cfg = pl.cfg;
+    /* The floor must survive every clamp site, or the information haircut
+       silently binds instead of the position cap and every position is a
+       few hundred dollars. */
+    if (cfg.paperObservationSizeFloor !== 0.35) return false;
+    if (strategy.PAPER_OBSERVATION_FLOOR_MAX < 0.35) return false;
+    const raw = S.combineSizeMultipliers({ volScaler: 1, dispersionMult: 1,
+      causeConfidence: 0.2, intelligenceMult: 0.2 });
+    const combined = Math.max(raw.combined, cfg.paperObservationSizeFloor);
+    const sized = (sufficiency) => R.positionSizeUsd({ navUsd: 100000, atrPct: 1.7,
+      expectedShortfall5dPct: 3, overnightGapEsPct: 2,
+      signalScaler: Math.min(1, combined * sufficiency * cfg.positionScale),
+      cfg: { portfolioControls: pc, parameters: cfg } }).usd;
+    const good = sized(1), thin = sized(0.6);
+    /* Five full positions is about 80% invested; the sixth is trimmed by the
+       gross ceiling rather than refused. */
+    const fiveInvestedPct = 5 * pc.ordinaryPositionPctOfNav;
+    /* The risk budget must not bind below the cap, or the cap is decorative. */
+    const riskLimited = (100000 * pc.riskBudgetPerTradePctOfNav / 100) / (8 / 100);
+    const capUsd = 100000 * pc.ordinaryPositionPctOfNav / 100;
+    return good === capUsd && good >= 10000 && thin > 0 && thin < good
+      && riskLimited > capUsd
+      && fiveInvestedPct === 80 && pc.maxOpenPositions * pc.ordinaryPositionPctOfNav > pc.maxGrossExposurePct
+      && pc.maxGrossExposurePct === 95;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v23-strategy-v11-plain-reasons";
+  const SCHEMA = "runtime-fixtures-v24-strategy-v12-concentrated";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

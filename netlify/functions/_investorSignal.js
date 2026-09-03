@@ -46,6 +46,10 @@
 
 "use strict";
 
+/* Shared ceiling for the exploratory observation size floor. Repeating the
+   literal in three files is how one of them ends up out of step. */
+const ST_FLOOR_MAX = require("./_investorStrategy").PAPER_OBSERVATION_FLOOR_MAX;
+
 const T = require("./_investorTemporal");
 const M = require("./_investorMarket");
 const H = require("./_investorHistory");
@@ -925,7 +929,7 @@ function evaluateCandidate(input) {
     intelligenceMult: effectiveIntelPolicy.sizeMultiplier,
     rule: cfg.sizeAggregation,
   });
-  const paperSizeFloor = Math.max(0, Math.min(0.25,
+  const paperSizeFloor = Math.max(0, Math.min(ST_FLOOR_MAX,
     Number(cfg.paperObservationSizeFloor) || 0));
   const sizing = cfg.paperAbstainOnMissingInfo === true && blocked.length === 0
     && paperSizeFloor > 0 && rawSizing.combined < paperSizeFloor

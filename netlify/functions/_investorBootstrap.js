@@ -53,7 +53,7 @@ const S_FALLBACK = require("./_investorStrategy.js");
 const V = require("./_investorVariants");
 const STATE = require("./_investorState");
 
-const BOOTSTRAP_VERSION = 18; // v18: strategy v11 (two-tier cadence, concentrated exploratory book)
+const BOOTSTRAP_VERSION = 19; // v19: strategy v12 (higher entry bar, concentrated and deployed book)
 const DAILY_PROVENANCE_VERSION = 5; // v5 re-attests complete windows to the selected 15-minute SIP identity
 
 function stable(value) {
