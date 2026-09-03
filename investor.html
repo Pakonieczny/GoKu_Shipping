@@ -3334,8 +3334,10 @@ function causeText(c){
   return m[c]||(c?String(c).replace(/_/g," "):"—");
 }
 function exitPlanText(){
-  var st=plNow(), rank=st.exitRank!=null?st.exitRank:0.6, days=st.maxHoldDays!=null?st.maxHoldDays:3;
-  return "sells when rank recovers past "+num(rank,2)+", on a −8% stop, a trailing stop after +3%, an earnings window, or after "+days+" session"+(days===1?"":"s");
+  var st=plNow(), rank=st.exitRank!=null?st.exitRank:0.75, days=st.maxHoldDays!=null?st.maxHoldDays:3;
+  var sl=(DASH.operations||{}).patience||null, g=sl&&sl.policy?sl.policy.grantSessions:null;
+  return "sells when rank recovers past "+num(rank,2)+", on a −8% stop, a trailing stop after +3%, an earnings window, or after "+days+" session"+(days===1?"":"s")
+    +(g?"; companies with a recovery record can hold the rank sale for up to "+g+" sessions while below cost":"");
 }
 function tradeWhy(sym, order){
   var k=candFor(sym), ctx=(order&&order.decisionContext)||{}, cost=(order&&order.cost)||(k&&k.cost)||{};
@@ -3657,13 +3659,19 @@ function renderTodayHeld(){
   if(!all.length){ $("#todayHeldSub").textContent="nothing yet"; $("#todayHeld").innerHTML='<div class="empty">Nothing is owned yet. When an order fills, the company appears here with what was paid, what it is worth now, and whether it is up or down.</div>'; return; }
   var sub=rows.reduce(function(a,r){return a+r.gain;},0), subCost=rows.reduce(function(a,r){return a+r.cost;},0);
   var subInv=rows.reduce(function(a,r){return a+r.value;},0);
-  $("#todayHeldSub").innerHTML=rows.length+(rows.length!==all.length?" of "+all.length:"")+" position"+(rows.length===1?"":"s")+' · <span style="color:'+(sub>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(sub)+' ('+sgnPct(subCost?100*sub/subCost:0)+')</span>'+(k.anyLive?' · <span class="live"><i></i>live</span>':'');
+  var sleeve=(DASH.operations||{}).patience||null;
+  var sleeveTxt="";
+  if(sleeve&&sleeve.capUsd>0){
+    sleeveTxt=' · <span title="A bounded share of the account may be held through a rank recovery for companies whose own history supports it. Measured at what those positions cost, so a falling one cannot free up room.">'
+      +'recovery sleeve '+money(sleeve.usedUsd,0)+' of '+money(sleeve.capUsd,0)+' ('+num(sleeve.usedPctOfNav,1)+'% of '+num(sleeve.sleevePctOfNav,0)+'%)</span>';
+  }
+  $("#todayHeldSub").innerHTML=rows.length+(rows.length!==all.length?" of "+all.length:"")+" position"+(rows.length===1?"":"s")+' · <span style="color:'+(sub>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(sub)+' ('+sgnPct(subCost?100*sub/subCost:0)+')</span>'+sleeveTxt+(k.anyLive?' · <span class="live"><i></i>live</span>':'');
   if(!rows.length){ $("#todayHeld").innerHTML='<div class="empty">Nothing in this group right now.</div>'; return; }
   var tr=rows.map(function(r){
     var up=r.gain>=0;
     var lvp=(DASH.positions||[]).filter(function(p){return p.open&&p.symbol===r.sym;})[0], lv=lvp&&lvp.exitLevels;
     var lvTxt=lv&&Number(lv.stopUsd)>0?('stop '+money(lv.stopUsd,2)+(lv.trailArmed&&Number(lv.trailStopUsd)>0?' · trail '+money(lv.trailStopUsd,2):'')+(Number(lv.targetUsd)>0?' · target '+money(lv.targetUsd,2):'')):'';
-    return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+(lvTxt?' · '+lvTxt:'')+'</div></td>'
+    return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+patienceBadge(lvp)+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+(lvTxt?' · '+lvTxt:'')+'</div></td>'
       +'<td>'+r.qty+'</td><td class="hide-sm">'+money(r.paid,2)+'</td><td>'+money(r.now,2)+(r.live?'':' <span class="muted" title="ledger mark, delayed feed">·</span>')+'</td><td class="hide-sm">'+money(r.value,2)+'</td>'
       +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+sgnMoney(r.gain)+'<span class="pct">'+sgnPct(r.pct)+'</span></td>'
       +'<td class="whyx hide-sm">'+whyChip(lvp&&lvp.buyReason)+'</td>'
@@ -3768,6 +3776,24 @@ function renderTodayHistory(){
     +(rows.length>shown.length?'<div class="hint" style="margin-top:10px">Showing the '+shown.length+' most recent of '+rows.length+'. The full record is on the Results page.</div>':'');
   $$("#todayHistory tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
 }
+/* A holding in the patience sleeve. The badge exists because "why is this
+   still here" has a different answer for these rows: the desk is deliberately
+   waiting out a recovery its own history supports, rather than finding no
+   trigger. The measured evidence is on hover so the claim is checkable. */
+function patienceBadge(p){
+  if(!p||!p.patience||p.patience.granted!==true) return "";
+  var e=p.patience.evidence||{}, g=p.patience.grantSessions;
+  var held=Number(p.heldTradingDays);
+  var left=Number.isFinite(held)&&g?Math.max(0,g-held):null;
+  var t="This company recovered "+(e.winRate!=null?Math.round(e.winRate*100)+"% ":"")
+    +"of the time after "+(e.events!=null?e.events:"?")+" comparable drops, averaging "
+    +(e.expectedPct!=null?num(e.expectedPct,2)+"%":"?")+" over the following "+(e.horizonSessions||5)
+    +" sessions. So the usual 'the gap has closed' sale is held off while it is below what was paid"
+    +(left!=null?", for "+num(left,1)+" more session"+(left===1?"":"s"):"")
+    +". Its safety stop and earnings exit are unchanged.";
+  return ' <span class="badge2 b-info" title="'+esc(t)+'">recovery window'+(left!=null?" · "+num(left,1)+"d left":"")+'</span>';
+}
+
 /* One chip renderer for both tables. The text and tone come from the backend
    vocabulary (_investorPlainReason); the long form is the hover title, so a
    glance gives five words and a pause gives the full explanation. */

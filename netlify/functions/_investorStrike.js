@@ -69,6 +69,7 @@ const H = require("./_investorHistory");
 const T = require("./_investorTemporal");
 const I = require("./_investorIntelligence");
 const W = require("./_investorWorkset");
+const PA = require("./_investorPatience");
 const { redact } = require("./_investorAuth");
 
 const PLAN_STATUSES = Object.freeze(["armed", "struck", "skipped", "expired", "superseded", "cancelled"]);
@@ -197,6 +198,9 @@ function planCandidate({ symbol, evalRes, strictRes, strictUncalibratedRes, z, r
       historyContext: { atrPct: hc.atrPct ?? null, expectedShortfall5dPct: hc.expectedShortfall5dPct ?? null,
         overnightGapEsPct: hc.overnightGapEsPct ?? null, days: hc.days ?? null },
       reversionMultiplier: reversion ? reversion.multiplier : 1,
+      /* The whole record, not just the multiplier: the patience grant needs
+         the event count, win rate and own-weight at strike time. */
+      reversionRecord: reversion || null,
       advUsd: Number(advUsd) || 0,
       qualityAtPlan: quality,
       causeAtPlan: cause || null, coverageAtPlan: coverage || null,
@@ -512,6 +516,14 @@ async function evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cf
         return g;
       });
       const cohortLabel = plan.learningCohort || (exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated");
+      /* Same grant, same evidence, same sleeve — the plan carries the
+         company's reversion record from the deep scan that armed it. */
+      const patienceStamp = PA.grant({
+        reversion: plan.reversionRecord || null,
+        historyContext: plan.historyContext || null,
+        policy: PA.policyFrom(strategy),
+        proposedUsd: qty * last.c,
+        positions, pendingOrders, navUsd: bookState.navUsd, nowMs: decisionAtMs });
       const o = await L.proposeOrder({
         ...plan.policyIdentity, accountId, symbol: sym, side: "buy",
         paperLearningOnly: paperLearningActive === true || plan.paperLearningOnly === true,
@@ -522,7 +534,7 @@ async function evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cf
         decisionManifestHash: plan.decisionManifestHash,
         portfolioDecisionManifestHash: portfolioManifest.manifestHash,
         decisionId, qty, refPriceUsd: last.c, slippageBps: executionCostContext.slippageBps,
-        executionCostContext,
+        executionCostContext, patience: patienceStamp,
         sizing: { ...sizing, signal: { ...rawSizing, combined }, dataSufficiencyMultiplier: plan.sufficiencyMultiplier,
           positionScale, ...(minimumShareFloorApplied ? { minimumShareFloorApplied: true } : {}) },
         gates, cause, variantId: plan.variantId || "A",

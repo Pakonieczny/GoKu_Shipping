@@ -26,6 +26,7 @@ const L = require("./_investorLedger");
 const E = require("./_investorEvidence");
 const IS = require("./_investorIntelligenceSources");
 const PR = require("./_investorPlainReason");
+const PA = require("./_investorPatience");
 const I = require("./_investorIntelligence");
 /* SH/AL/V were used by the "learning" action and never imported — the third
    occurrence of this exact bug class. Every click on the Learning tab was a
@@ -501,6 +502,22 @@ const ACTIONS = {
       plans: { armed: plansToday.filter((p) => p.status === "armed").length,
         struck: plansToday.filter((p) => p.status === "struck").length,
         today: plansToday },
+      /* The patience sleeve, measured live from the current book rather than
+         read off the last scan's summary, so the console cannot show room
+         that a fill since then has already taken. */
+      patience: (() => {
+        const policy = PA.policyFrom(strategy);
+        const usage = PA.sleeveUsage(positions, orders, balances && balances.usd
+          ? (Number(balances.usd.cash) || 0) + (Number(balances.usd.reserved) || 0)
+            + positions.reduce((sum, p) => sum + (Number(p.qty) || 0)
+              * (Number(p.lastMarkUsd) || Number(p.entryPriceUsd) || 0), 0)
+          : 0, policy);
+        return { policy, ...usage,
+          holdings: positions.filter((p) => PA.isPatient(p)).map((p) => ({
+            symbol: p.symbol, grantSessions: p.patience.grantSessions,
+            score: p.patience.score, evidence: p.patience.evidence,
+            heldTradingDays: p.heldTradingDays, heldText: p.heldText })) };
+      })(),
     };
     return {
       ok: true,

@@ -476,6 +476,9 @@ async function proposeOrder(input) {
     operatingStateAtDecision = null, learningCohort = null,
     exploratoryPolicyVersion = null, cohortRole = null, decisionSessionDate = null,
     reservationHeadroomBps = 0, expiresAtMs = null,
+    /* The patience grant is decided once, at entry, and travels with the
+       order so nothing downstream can re-decide it. */
+    patience = null,
     executionLatencyMs = 60000 } = input;
   if (![universeHash, strategyHash, variantsHash].every((h) => /^[a-f0-9]{64}$/.test(String(h || "")))) {
     throw new Error("proposeOrder: complete policy hashes are required");
@@ -543,6 +546,7 @@ async function proposeOrder(input) {
       operatingStateAtDecision, learningCohort,
       exploratoryPolicyVersion,
       cohortRole: cohortRole || "signal", decisionSessionDate: decisionSessionDate || null,
+      patience: patience && patience.granted === true ? patience : null,
       status: "proposed", decisionAtMs: Number(decisionAtMs),
       executionLatencyMs: Math.max(0, Number(executionLatencyMs) || 60000),
       order_committed_at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "ledger.proposeOrder" }) };
@@ -772,6 +776,7 @@ async function recordFill({ orderId, bar, barProvenance }) {
       learningCohort:o.learningCohort||null,
       exploratoryPolicyVersion:o.exploratoryPolicyVersion||null,
       cohortRole:o.cohortRole||"signal",decisionSessionDate:o.decisionSessionDate||null,
+      patience:o.patience||null,
       variantId:o.variantId||"baseline",strategyVersion:o.strategyVersion,universeVersion:o.universeVersion,
       strategyHash:o.strategyHash,universeHash:o.universeHash,variantsHash:o.variantsHash,
       updated_at:A.FV.serverTimestamp()});
@@ -872,6 +877,7 @@ async function closePosition({accountId,symbol,bar,slippageBps,reason,barProvena
       learningCohort:p.learningCohort||null,
       exploratoryPolicyVersion:p.exploratoryPolicyVersion||null,
       cohortRole:p.cohortRole||"signal",decisionSessionDate:p.decisionSessionDate||null,
+      patience:p.patience||null,
       variantId:p.variantId||"baseline",strategyVersion:p.strategyVersion||null,universeVersion:p.universeVersion||null,
       strategyHash:p.strategyHash||null,universeHash:p.universeHash||null,variantsHash:p.variantsHash||null,
       ...A.envelope({created_by:"ledger.closePosition"})};

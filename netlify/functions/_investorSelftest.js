@@ -986,7 +986,7 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v6"
+      && policy.version === "exploratory-auto-v7"
       && learn.minAbsZ === 1.75 && learn.entryRank === 0.3
       && learn.costMarginMultiple === 0.25
       && learn.exitRank === 0.75 && learn.maxHoldDays === 3
@@ -1461,10 +1461,10 @@ function runFixtures() {
 
   cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
     const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
-      exploratoryPolicyVersion: "exploratory-auto-v6", sufficiencyVersion: "data-sufficiency-v2" };
+      exploratoryPolicyVersion: "exploratory-auto-v7", sufficiencyVersion: "data-sufficiency-v2" };
     const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
       strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
-      exploratoryPolicyVersion: "exploratory-auto-v6", closedAt: "2026-09-01T15:00:00Z",
+      exploratoryPolicyVersion: "exploratory-auto-v7", closedAt: "2026-09-01T15:00:00Z",
       decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
     const trades = [
       mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
@@ -1773,7 +1773,7 @@ function runFixtures() {
       sessionCloseMs: Date.parse("2026-09-02T20:00:00Z"), vixNorm: 1, session: { date: "2026-09-02", open: true },
       policyIdentity: { accountId: "paper-1", strategyVersion: "v11", universeVersion: "v1",
         strategyHash: "c".repeat(64), universeHash: "d".repeat(64), variantsHash: "e".repeat(64) },
-      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v6", cohortLabel: "exploratory_auto_unvalidated",
+      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v7", cohortLabel: "exploratory_auto_unvalidated",
       paperLearningOnly: true, activePortfolioControls: strategy.exploratoryAuto.portfolioControls,
       activity: XPL.activityPolicy(strategy), cycleId: "2026-09-02_1500", strategyVersion: "v11",
       operatingState: "exploratory_auto", moveStartedAtMs: Date.parse("2026-09-02T14:00:00Z"), positionScale: 1 };
@@ -1869,10 +1869,91 @@ function runFixtures() {
       && pc.maxGrossExposurePct === 95;
   }));
 
+  cases.push(fixture("patience_sleeve_is_earned_bounded_and_never_weakens_a_protection", () => {
+    const PA = require("./_investorPatience");
+    const XP2 = require("./_investorExitPolicy");
+    const policy = PA.policyFrom(strategy);
+    if (!(policy.enabled && policy.sleevePctOfNav >= 10 && policy.sleevePctOfNav <= 15)) return false;
+    /* The grant is tied to the horizon the reversion evidence is measured
+       over; granting more sessions than the statistic covers would be
+       extrapolating past the measurement. */
+    const HIST = require("./_investorHistory");
+    if (policy.grantSessions !== HIST.REVERSION_HORIZON) return false;
+
+    /* EARNED: every bar is about the company's OWN record. */
+    const strong = { n: 24, winRate: 0.71, shrunkPct: 1.8, weightOwn: 0.55 };
+    if (!PA.assess(strong, policy).eligible) return false;
+    const rejects = [
+      { n: 3, winRate: 0.9, shrunkPct: 3, weightOwn: 0.13 },       // too few events
+      { n: 30, winRate: 0.42, shrunkPct: 1.5, weightOwn: 0.6 },    // rarely recovers
+      { n: 30, winRate: 0.7, shrunkPct: -0.4, weightOwn: 0.6 },    // recovers downward
+      { n: 30, winRate: 0.7, shrunkPct: 1.5, weightOwn: 0.05 },    // carried by the pool
+    ];
+    if (rejects.some((r) => PA.assess(r, policy).eligible)) return false;
+    /* A months-long downtrend is not a short-term slump. */
+    if (PA.assess(strong, policy, { historyContext: { ok: true, downtrend: true } }).eligible) return false;
+
+    /* BOUNDED, at cost. A held patient position and an unfilled patient order
+       both consume the sleeve; a falling position must not free up room. */
+    const held = [{ open: true, symbol: "AAA", qty: 100, entryPriceUsd: 80,
+      lastMarkUsd: 40, patience: { granted: true } }];
+    const pend = [{ status: "approved", symbol: "CCC", qty: 10, refPriceUsd: 100,
+      patience: { granted: true } }];
+    const usage = PA.sleeveUsage(held, pend, 100000, policy);
+    if (usage.capUsd !== 12000 || usage.usedUsd !== 9000 || usage.roomUsd !== 3000) return false;
+    const fits = PA.grant({ reversion: strong, policy, proposedUsd: 3000,
+      positions: held, pendingOrders: pend, navUsd: 100000 });
+    const overflows = PA.grant({ reversion: strong, policy, proposedUsd: 3001,
+      positions: held, pendingOrders: pend, navUsd: 100000 });
+    if (!fits || fits.granted !== true || overflows !== null) return false;
+    /* A qualifying name that does not fit is taken on ORDINARY terms, not
+       refused — grant() returning null is not a veto on the trade. */
+
+    /* THE CONCESSIONS, and only these two. */
+    const cfg = { stopLossPct: -8, trailingStopPct: -4, trailingArmsAtPct: 3,
+      maxHoldDays: 3, exitRank: 0.75 };
+    const patient = { patience: { granted: true, grantSessions: policy.grantSessions } };
+    const terms = (h, pnl) => PA.exitTerms(patient, { heldDays: h, pnlPct: pnl });
+    const rankDown = XP2.exitSignal(0.9, 0.4, cfg, { mark: 98.5, entry: 100, peak: 100, patience: terms(0.4, -1.5) });
+    const rankUp = XP2.exitSignal(0.9, 0.4, cfg, { mark: 102, entry: 100, peak: 102, patience: terms(0.4, 2) });
+    const rankPlain = XP2.exitSignal(0.9, 0.4, cfg, { mark: 98.5, entry: 100, peak: 100 });
+    if (rankDown.exit !== false || rankDown.patienceHeld !== true) return false;   // held while under
+    if (rankUp.kind !== "signal") return false;                                     // up: sells anyway
+    if (rankPlain.kind !== "signal") return false;                                  // not patient: sells
+    /* Past the window it is an ordinary position again. */
+    if (XP2.exitSignal(0.9, 9, cfg, { mark: 98.5, entry: 100, peak: 100, patience: terms(9, -1.5) }).exit !== true) return false;
+
+    /* NEVER WEAKENS A PROTECTION. Each of these must still fire for a
+       patient, underwater, in-window position. */
+    const p04 = terms(0.4, -9);
+    if (XP2.exitSignal(0.9, 0.4, cfg, { mark: 91, entry: 100, peak: 100, patience: p04 }).kind !== "stop_loss") return false;
+    if (XP2.exitSignal(0.9, 0.4, cfg, { mark: 100.5, entry: 100, peak: 105, patience: terms(0.4, 0.5) }).kind !== "trailing_stop") return false;
+    if (XP2.exitSignal(0.9, 0.4, cfg, { mark: 99, entry: 100, peak: 100, earningsInDays: 1, patience: terms(0.4, -1) }).kind !== "earnings_exit") return false;
+    if (XP2.exitSignal(0.9, 0.4, { ...cfg, takeProfitPct: 5 }, { mark: 106, entry: 100, peak: 106, patience: terms(0.4, 6) }).kind !== "take_profit") return false;
+    const critical = { criticalExit: true, monitored: true, fresh: true, complete: true };
+    if (XP2.exitSignal(0.9, 0.4, cfg, { mark: 99, entry: 100, peak: 100, intelligencePolicy: critical, patience: terms(0.4, -1) }).kind !== "intelligence_critical") return false;
+    /* The extended time stop replaces the ordinary one, and only upward. */
+    if (XP2.exitSignal(0.1, 4, cfg, { mark: 99, entry: 100, peak: 100, patience: terms(4, -1) }).exit !== false) return false;
+    if (XP2.exitSignal(0.1, 5, cfg, { mark: 99, entry: 100, peak: 100, patience: terms(5, -1) }).kind !== "time") return false;
+    if (XP2.exitSignal(0.1, 3, cfg, { mark: 99, entry: 100, peak: 100 }).kind !== "time") return false;
+
+    /* IMMUTABLE AND DECIDED AT ENTRY. The stamp travels on the order, and no
+       exit path may create or alter one — exitTerms only READS it. */
+    const ledgerSrc = sourceOf(L.proposeOrder);
+    if (!/patience/.test(ledgerSrc)) return false;
+    const guardSrc = sourceOf(require("./_investorPositionGuard").runGuard);
+    if (/PA\.grant/.test(guardSrc)) return false;
+    if (PA.exitTerms({}, { heldDays: 1, pnlPct: -1 }) !== null) return false;
+    /* A control-cohort pick is never patient: it has no signal to recover. */
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    if (!/control \? null : PA\.grant\(\{/.test(cycleSrc)) return false;
+    return true;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v24-strategy-v12-concentrated";
+  const SCHEMA = "runtime-fixtures-v25-strategy-v13-patience";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

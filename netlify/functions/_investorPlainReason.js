@@ -150,6 +150,15 @@ const SELL_REASONS = Object.freeze({
       + "could honestly trade at.",
     tone: "neutral",
   },
+  patience_hold: {
+    text: "Held to recover",
+    detail: "This company's own history says it recovers from drops like this within "
+      + "a few sessions, so it is in the patience sleeve: the usual 'the gap has closed' "
+      + "sale is held off while it is below what was paid, for a limited number of "
+      + "sessions and a limited share of the account. Its safety stop, its earnings "
+      + "exit and every other protection are unchanged.",
+    tone: "neutral",
+  },
   open: {
     text: "Still held",
     detail: "The position is open and its exit rules are checked every minute the "
@@ -190,6 +199,12 @@ function sellReason(row = {}) {
     if (intent && Number(intent.decisionAtMs) > 0) {
       const pending = entry(SELL_REASONS, intent.kind, "exiting");
       return { ...pending, pending: true };
+    }
+    /* A patient position reads differently from an ordinary one: the reason it
+       is still here is the sleeve, not the absence of a trigger. */
+    if (row.patience && row.patience.granted === true) {
+      return { ...entry(SELL_REASONS, "patience_hold", "open"), pending: false,
+        patient: true, grantSessions: Number(row.patience.grantSessions) || null };
     }
     return { ...entry(SELL_REASONS, "open", "open"), pending: false };
   }

@@ -28,6 +28,7 @@ const CA = require("./_investorCorporateActions");
 const XP = require("./_investorExplore");
 const STATE = require("./_investorState");
 const ST = require("./_investorStrike");
+const PA = require("./_investorPatience");
 const EXITS = require("./_investorExitPolicy");
 
 async function loadPendingOrders(accountId) {
@@ -413,6 +414,9 @@ async function runGuard(jobId) {
         : S.exitSignal(undefined, heldDays, cfg, {
           mark: last.c, entry, peak, earningsInDays,
           intelligencePolicy,
+          /* The guard passes no rank, so the rank exit cannot fire here in
+             any case; what patience changes on this path is the time stop. */
+          patience: PA.exitTerms(position, { heldDays, pnlPct: pnlPctNow }),
         });
       evaluated.add(symbol);
       if (!exit.exit) continue;

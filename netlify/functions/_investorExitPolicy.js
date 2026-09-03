@@ -4,7 +4,20 @@ const EXIT_RANK = 0.50;
 
 function exitSignal(rank, heldDays, cfg, opts = {}) {
   const exitRank = cfg.exitRank ?? EXIT_RANK;
-  const maxDays = cfg.maxHoldDays ?? 10;
+  /* THE PATIENCE SLEEVE (_investorPatience). A position whose own history says
+     it recovers over days rather than hours may be granted two concessions,
+     decided at entry and immutable afterwards: a time stop moved out to the
+     horizon that evidence was measured over, and suppression of the RANK exit
+     while it is underwater inside that window.
+
+     Nothing below section 6 changes. The hard stop, the trailing stop, the
+     profit target, the earnings exit and a corroborated adverse finding all
+     fire exactly as they would for any other position — patience is
+     permission to wait out a relative-rank recovery, never permission to sit
+     in a real loss. */
+  const patience = opts.patience || null;
+  const maxDays = patience && Number(patience.maxHoldDays) > 0
+    ? Number(patience.maxHoldDays) : (cfg.maxHoldDays ?? 10);
   const { mark, entry, peak, earningsInDays } = opts;
 
   const havePrice = Number.isFinite(mark) && Number.isFinite(entry) && entry > 0;
@@ -86,13 +99,28 @@ function exitSignal(rank, heldDays, cfg, opts = {}) {
 
   // 6. The signal exit: the move we were trading has reverted.
   if (haveRank && rank >= exitRank) {
+    /* Suppressed only while a patient position is DOWN and still inside its
+       window. A patient position that is UP takes this exit like any other:
+       the complaint patience answers is being sold at a loss because the rest
+       of the market moved, not banking a gain. */
+    if (patience && patience.rankSuppressed === true) {
+      return {
+        exit: false, kind: null, patienceHeld: true,
+        pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null,
+        priceRulesEvaluated: havePrice,
+        reason: `rank ${rank.toFixed(3)} crossed exit ${exitRank}, but this company recovers from drops like this`
+          + ` — ${patience.note || `holding for up to ${maxDays} sessions`}`,
+      };
+    }
     return { exit: true, urgent: false, reason: `rank ${rank.toFixed(3)} crossed exit ${exitRank}`,
              kind: "signal", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
   }
 
   // 7. Time stop.
   if (heldDays >= maxDays) {
-    return { exit: true, urgent: false, reason: `max hold ${maxDays}d reached`,
+    return { exit: true, urgent: false,
+             reason: patience ? `max hold ${maxDays} sessions reached (extended recovery window used up)`
+               : `max hold ${maxDays}d reached`,
              kind: "time", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
   }
 

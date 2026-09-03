@@ -131,11 +131,11 @@ function paperLearningConfig(base, ctrl = {}) {
 
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax, PAPER_OBSERVATION_FLOOR_MAX,
-  "version": "v12",
-  "supersedes": "v11",
+  "version": "v13",
+  "supersedes": "v12",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
-  "frozenAt": "2026-09-03",
-  "_versionNote": "v12 carries the same strict hypothesis and strict parameters UNCHANGED, and changes only the labelled exploratory paper cohort (exploratory-auto-v6). Two things move together. FIRST, the entry bar rises: |z| 1.0 -> 1.75, entry rank 0.50 -> 0.30, and rank recovery must reach 0.75 rather than 0.60. The v11 band admitted the bottom half of the cross-section on a one-sigma hourly wobble and released it 0.1 of rank later, so positions opened and closed inside ordinary intraday noise and the round trip was mostly friction. SECOND, because far fewer names now qualify, each one carries materially more capital: at most 6 open positions at up to 16% of the account each, a 1.5% per-trade risk budget, and a 95% gross ceiling — about 80% deployed across five positions in the ordinary case and 95% across six when the opportunities are there. The observation size floor rises 0.10 -> 0.35 so the per-position cap binds instead of the incomplete-information haircut. PRIOR NOTE (v11): carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
+  "frozenAt": "2026-09-04",
+  "_versionNote": "v13 carries the same strict hypothesis and strict parameters UNCHANGED and adds ONE thing to the exploratory cohort (exploratory-auto-v7): the patience sleeve. Up to 12% of the account, measured at cost, may be held through a rank recovery instead of sold into one, for companies whose own five-year daily record shows they recover from comparable drops within five sessions. Eligibility is deterministic and comes from the reversion statistics the desk already computed and previously used only to scale expected edge. Patience suppresses the rank exit ONLY while the position is underwater and inside its window; the hard stop, trailing stop, profit target, earnings exit and adverse-finding exit are untouched. The grant is stamped at entry and is immutable, so hindsight can never move a loser into the sleeve. PRIOR NOTE (v12): carries the same strict hypothesis and strict parameters UNCHANGED, and changes only the labelled exploratory paper cohort (exploratory-auto-v6). Two things move together. FIRST, the entry bar rises: |z| 1.0 -> 1.75, entry rank 0.50 -> 0.30, and rank recovery must reach 0.75 rather than 0.60. The v11 band admitted the bottom half of the cross-section on a one-sigma hourly wobble and released it 0.1 of rank later, so positions opened and closed inside ordinary intraday noise and the round trip was mostly friction. SECOND, because far fewer names now qualify, each one carries materially more capital: at most 6 open positions at up to 16% of the account each, a 1.5% per-trade risk budget, and a 95% gross ceiling — about 80% deployed across five positions in the ordinary case and 95% across six when the opportunities are there. The observation size floor rises 0.10 -> 0.35 so the per-position cap binds instead of the incomplete-information haircut. PRIOR NOTE (v11): carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
   "immutable": true,
   "status": "research",
   "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
@@ -268,7 +268,7 @@ module.exports = {
      does the analysis and writes the levels; the strike pass (every
      minute) acts on them — see `activity.strike`. */
   "exploratoryAuto": {
-    "version": "exploratory-auto-v6",
+    "version": "exploratory-auto-v7",
     "enabled": true,
     "autoStartAfterSuccessfulBootstrap": true,
     "startingNavUsd": 100000,
@@ -345,6 +345,36 @@ module.exports = {
         "maxArmDropPct": 5,
         "planRankCeiling": 0.5,
         "strikeBandPct": 2.5
+      },
+      /* THE PATIENCE SLEEVE (_investorPatience.js). A bounded share of the
+         account may be held through a rank recovery rather than sold into
+         one, for names whose OWN daily history says they come back over
+         days. Eligibility is measured, not asserted: H.reversionEvents
+         finds every 1.5-sigma drop in up to five years of that company's
+         history and records what happened five sessions later, and
+         H.shrinkReversion pulls a thin record toward the roster average so
+         a handful of events cannot qualify anything.
+           sleevePctOfNav  the whole carve-out, measured at COST so a
+                           falling position cannot free up room
+           minEvents       how many comparable drops it must have had
+           minWinRate      how often those recovered
+           minForwardPct   the shrunk mean return over the horizon
+           minOwnWeight    how much of that estimate is its own record
+                           rather than the pooled average
+           grantSessions   the extended time stop, tied to the 5-session
+                           horizon the evidence is actually measured over
+         Patience suppresses ONLY the rank exit, and only while the position
+         is underwater inside that window. Every protective exit is
+         untouched. The grant is decided at entry and is immutable, so a
+         losing position can never be moved into the sleeve after the fact. */
+      "patience": {
+        "enabled": true,
+        "sleevePctOfNav": 12,
+        "minEvents": 8,
+        "minWinRate": 0.55,
+        "minForwardPct": 0.5,
+        "minOwnWeight": 0.25,
+        "grantSessions": 5
       },
       "policySelection": {
         "method": "thompson",

@@ -65,6 +65,7 @@ const SOAK = require("./_investorSoak");
 const XP = require("./_investorExplore");
 const DS = require("./_investorSufficiency");
 const ST = require("./_investorStrike");
+const PA = require("./_investorPatience");
 const EXITS = require("./_investorExitPolicy");
 
 function sha256Json(value) {
@@ -810,6 +811,12 @@ async function runCycle(jobId, { manual = false } = {}) {
      signal (and the signal-dependent cost) still short. Collected here,
      selected and written after portfolio selection. */
   const planCandidates = [];
+  /* THE PATIENCE SLEEVE. Resolved once per scan. `patienceClaims` tracks the
+     grants this scan has already made: a grant is not yet in `pendingOrders`,
+     so without it the sleeve cap would be measured against a stale book and
+     one scan could over-fill it several times over. */
+  const patiencePolicy = PA.policyFrom(strategy);
+  const patienceClaims = [];
   const planSessionCloseMs = (() => {
     try { const c = M.sessionCloseMs ? M.sessionCloseMs(new Date()) : null; return Number.isFinite(Number(c)) ? Number(c) : null; }
     catch { return null; }
@@ -1206,8 +1213,15 @@ async function runCycle(jobId, { manual = false } = {}) {
         requireTemporalContext: false, asOfMs: Date.now(),
         maxAgeHours: cfg.intelligenceMaxAgeHours,
         temporalMaxAgeHours: cfg.temporalMaxAgeHours }) : null;
+      /* A patient position's own terms: an extended time stop, and the rank
+         exit suppressed while it is underwater inside that window. Computed
+         from the stamp the position already carries, never re-decided. */
+      const pnlPctNow = entryUsd > 0 && Number.isFinite(last.c)
+        ? ((last.c - entryUsd) / entryUsd) * 100 : null;
+      const patienceTerms = PA.exitTerms(position, { heldDays, pnlPct: pnlPctNow });
       const ex = S.exitSignal(ranks[sym], heldDays, cfg, {
         mark: last.c, entry: entryUsd, peak, earningsInDays, intelligencePolicy,
+        patience: patienceTerms,
       });
       evaluatedHoldingSymbols.add(sym);
       /* Preset exit levels in dollars, for the console and the strike pass. */
@@ -1779,8 +1793,26 @@ async function runCycle(jobId, { manual = false } = {}) {
         grade: quality[sym].grade, wideSpreadWindow: session.wideSpreadWindow,
         vixNorm: reg.vixNorm, measuredAtMs: decisionAtMs });
       const slip = executionCostContext.slippageBps;
+      /* PATIENCE, decided here and never again. The evidence is this
+         company's own five-year reversion record, which existed before the
+         position did; the sleeve is checked at cost. A name that qualifies
+         when the sleeve is full is simply taken on ordinary terms. */
+      const patienceStamp = control ? null : PA.grant({
+        reversion: reversionBySymbol[sym] || null,
+        historyContext: historyCtx[sym] || null,
+        policy: patiencePolicy,
+        proposedUsd: qty * last.c,
+        positions: allPositions,
+        pendingOrders: [...pendingOrders, ...patienceClaims],
+        navUsd, nowMs: decisionAtMs });
+      if (patienceStamp) {
+        patienceClaims.push({ status: "approved", symbol: sym, qty,
+          refPriceUsd: last.c, patience: patienceStamp });
+        await liveEvent("patient", sym, `held up to ${patienceStamp.grantSessions} sessions`);
+      }
       const o = await L.proposeOrder({
         ...policyIdentity, accountId, symbol: sym, side: "buy",
+        patience: patienceStamp,
         paperLearningOnly: paperLearning.active === true,
         operatingStateAtDecision: operating.state,
         learningCohort: cohortLabel,
@@ -2682,7 +2714,11 @@ async function runCycle(jobId, { manual = false } = {}) {
     rankingDiagnostics,
     quoteCoverage,
     ranked, breaches: candidates.length,
-    proposals: decisions.length, strikePlans, exitSignals: exits.length,
+    proposals: decisions.length, strikePlans,
+    patience: { policy: patiencePolicy,
+      grantedThisScan: patienceClaims.map((c) => c.symbol),
+      sleeve: PA.sleeveUsage(allPositions, [...pendingOrders, ...patienceClaims], navUsd, patiencePolicy) },
+    exitSignals: exits.length,
     modelCalls,
     decisionManifests: decisionManifestStats,
     bootstrap,
