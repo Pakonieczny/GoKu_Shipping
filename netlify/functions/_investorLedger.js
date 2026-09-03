@@ -328,7 +328,19 @@ async function reconcileAccount(accountId, { marks = null, expectedNavUsd = null
     };
     for (const x of Object.values(equations)) x.pass = x.actualCents === x.expectedCents;
 
-    let marketValueCents = 0;
+    /* A MISSING PRICE IS NOT AN ACCOUNTING ERROR.
+       This loop used to `continue` past an unpriced position, so that position
+       contributed NOTHING to the computed NAV while the displayed NAV carried
+       it at cost — guaranteeing a mismatch — and its mark violation failed the
+       reconciliation outright. One holding the feed did not return therefore
+       read as "the paper ledger did not reconcile" and froze every new entry,
+       with nothing an operator could actually reconcile.
+       An unpriced position is valued at COST on this side too, which is what
+       markedBook does on the displayed side, so the two agree and the NAV
+       equation stays a real check. The violations are still recorded, and
+       whether unpriced exposure is material enough to stop trading is decided
+       by the account breaker, which measures it as a share of the account. */
+    let marketValueCents = 0, unpricedCostCents = 0;
     const markViolations = [];
     for (const p of open) {
       const supplied = marks && marks[p.symbol];
@@ -336,11 +348,17 @@ async function reconcileAccount(accountId, { marks = null, expectedNavUsd = null
         ? supplied.priceUsd : (supplied != null ? supplied : p.lastMarkUsd));
       const provenance = supplied && typeof supplied === "object"
         ? supplied.provenance : p.lastMarkProvenance;
+      const costCentsFor = Math.round(Number(p.qty)
+        * Number(p.entryPriceUsd || p.avgPrice || 0) * 100);
       if (!(priceUsd > 0)) {
-        markViolations.push({ symbol: p.symbol, kind: "missing_mark" }); continue;
+        markViolations.push({ symbol: p.symbol, kind: "missing_mark" });
+        marketValueCents += costCentsFor; unpricedCostCents += costCentsFor;
+        continue;
       }
       if (!validProvenance(provenance)) {
-        markViolations.push({ symbol: p.symbol, kind: "mark_provenance_invalid" }); continue;
+        markViolations.push({ symbol: p.symbol, kind: "mark_provenance_invalid" });
+        marketValueCents += costCentsFor; unpricedCostCents += costCentsFor;
+        continue;
       }
       marketValueCents += Math.round(Number(p.qty) * priceUsd * 100);
     }
@@ -357,10 +375,12 @@ async function reconcileAccount(accountId, { marks = null, expectedNavUsd = null
     const navToleranceCents = 1 + open.length;
     const nav = { liquidCashCents, marketValueCents, computedNavCents,
       displayedNavCents, marksComplete: markViolations.length === 0,
+      unpricedCostCents, unpricedPositions: markViolations.length,
       toleranceCents: navToleranceCents,
-      pass: markViolations.length === 0
-        && (displayedNavCents == null
-          || Math.abs(displayedNavCents - computedNavCents) <= navToleranceCents) };
+      /* Agreement between the two sides is the invariant. Mark completeness is
+         reported beside it, and acted on by the account breaker. */
+      pass: displayedNavCents == null
+        || Math.abs(displayedNavCents - computedNavCents) <= navToleranceCents };
     const equationPass = Object.values(equations).every((x) => x.pass);
     result = { accountId, context, checkedAtMs, journal, lifecycle, equations,
       markViolations, nav, pass: journal.pass && lifecycle.pass && equationPass && nav.pass };
@@ -369,12 +389,31 @@ async function reconcileAccount(accountId, { marks = null, expectedNavUsd = null
       error: String(error && error.message || error).slice(0, 300) };
   }
 
+  /* Name what actually failed. "The paper ledger did not reconcile" with no
+     detail leaves an operator with nothing to reconcile. */
+  const firstFailure = (() => {
+    if (result.error) return `check could not run: ${result.error}`;
+    const j = (result.journal && result.journal.discrepancies || [])[0];
+    if (j) return `journal: ${j.reason || j.kind || JSON.stringify(j).slice(0, 90)}`;
+    const l = (result.lifecycle && result.lifecycle.violations || [])[0];
+    if (l) return `order lifecycle: ${l.reason || l.kind || JSON.stringify(l).slice(0, 90)}`;
+    const eq = Object.entries(result.equations || {}).find(([, x]) => x && x.pass === false);
+    if (eq) return `${eq[0]}: books say ${eq[1].actualCents} cents, the journal says ${eq[1].expectedCents}`;
+    if (result.nav && result.nav.pass === false) {
+      return `displayed NAV ${result.nav.displayedNavCents} cents vs computed ${result.nav.computedNavCents}`
+        + ` (tolerance ${result.nav.toleranceCents})`;
+    }
+    return null;
+  })();
   const compact = { pass: result.pass, context, checkedAtMs,
     discrepancyCount: (result.journal && result.journal.discrepancies || []).length
       + (result.lifecycle && result.lifecycle.violations || []).length
       + (result.markViolations || []).length,
     computedNavCents: result.nav && result.nav.computedNavCents,
     displayedNavCents: result.nav && result.nav.displayedNavCents,
+    marksComplete: result.nav ? result.nav.marksComplete !== false : null,
+    unpricedPositions: (result.markViolations || []).length,
+    reason: result.pass ? null : firstFailure,
     error: result.error || null };
   await A.col(A.COL.invariants).doc(`reconciliation_${accountId}`).set({
     ...result, checkedAt: A.FV.serverTimestamp(),

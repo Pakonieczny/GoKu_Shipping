@@ -2487,10 +2487,40 @@ function runFixtures() {
     return legacy.rosterCovered === null && legacy.pass === true;
   }));
 
+  cases.push(fixture("a_missing_price_is_not_a_ledger_discrepancy", () => {
+    /* The same unpriced holding that tripped the account breaker also failed
+       RECONCILIATION, by a second route: the mark loop skipped an unpriced
+       position entirely, so it contributed nothing to the computed NAV while
+       the displayed NAV carried it at cost — a guaranteed mismatch — and the
+       violation failed the check outright. The operator was told "the paper
+       ledger did not reconcile" and given nothing to reconcile.
+       Accounting integrity is untouched; only the mark handling changes. */
+    const src = sourceOf(require("./_investorLedger").reconcileAccount);
+    /* Unpriced positions are valued at cost on BOTH sides, so the two agree. */
+    if (!/unpricedCostCents/.test(src)) return false;
+    if (!/marketValueCents \+= costCentsFor/.test(src)) return false;
+    /* Mark completeness is reported, not fatal. */
+    if (/pass: markViolations\.length === 0/.test(src)) return false;
+    if (!/marksComplete: markViolations\.length === 0/.test(src)) return false;
+    /* The NAV agreement itself is still enforced, with its tolerance. */
+    if (!/Math\.abs\(displayedNavCents - computedNavCents\) <= navToleranceCents/.test(src)) return false;
+    /* And every accounting invariant still gates the result. */
+    if (!/pass: journal\.pass && lifecycle\.pass && equationPass && nav\.pass/.test(src)) return false;
+    /* The failure is named, so the console can say what to fix. */
+    if (!/const firstFailure = \(\(\) =>/.test(src)) return false;
+    if (!/reason: result\.pass \? null : firstFailure/.test(src)) return false;
+    /* markedBook uses the same cost fallback, which is what makes the two
+       sides agree in the first place. */
+    const R2 = require("./_investorRisk");
+    const marked = R2.markedBook([{ symbol: "CEG", open: true, qty: 10, entryPriceUsd: 100 }],
+      {}, () => "x", { cash: 5000 });
+    return marked.navUsd === 6000 && marked.untrustedMarks === 1;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v36-unpriced-holding-and-scan-coverage";
+  const SCHEMA = "runtime-fixtures-v37-missing-price-is-not-a-discrepancy";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
