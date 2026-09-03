@@ -401,19 +401,19 @@ function attentionZ(bars, window = 12) {
   const slotMeans = new Map(), baselineResiduals = [];
   for (const [slot, values] of priorBySlot.entries()) {
     if (values.length < 3) continue;
-    const mu = S.mean(values);
+    const mu = mean(values);
     slotMeans.set(slot, mu);
     for (const value of values) baselineResiduals.push(value - mu);
   }
   if (baselineResiduals.length < 18) return 0;
-  const sd = S.stdev(baselineResiduals);
+  const sd = stdev(baselineResiduals);
   if (!(sd > 1e-6)) return 0;
 
   const residuals = recent
     .filter((x) => slotMeans.has(x.clock.minutes))
     .map((x) => x.logVolume - slotMeans.get(x.clock.minutes));
   if (residuals.length < Math.min(recent.length, 6)) return 0;
-  return Math.max(-8, Math.min(8, S.mean(residuals) / sd));
+  return Math.max(-8, Math.min(8, mean(residuals) / sd));
 }
 
 

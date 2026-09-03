@@ -1767,8 +1767,11 @@ function renderRisk(r, coverage){
   if(pend&&pend.unavailable) rows.push(["Pending exposure","UNAVAILABLE this cycle — new entries were refused until it can be read ("+pend.unavailable+")"]);
   var clusterCap=Number(lim.correlatedClusterPctOfNav)||10;
   var top=(r.topClusters||[]).map(function(c){
-    var over = c[1] > clusterCap;
-    return '<span class="badge2 '+(over?"b-bad":"")+'">'+esc(c[0])+' '+num(c[1],1)+'%</span>';
+    /* Current runs write {cluster, pct}; runs written before the nested-array
+       fix carried [name, pct] pairs. Render both. */
+    var name = Array.isArray(c)?c[0]:(c&&c.cluster), pct = Array.isArray(c)?c[1]:(c&&c.pct);
+    var over = pct > clusterCap;
+    return '<span class="badge2 '+(over?"b-bad":"")+'">'+esc(name)+' '+num(pct,1)+'%</span>';
   }).join(" ");
   box.innerHTML =
     (r.halted?'<div class="note warn" style="margin-bottom:10px"><b>Trading paused.</b> '+
