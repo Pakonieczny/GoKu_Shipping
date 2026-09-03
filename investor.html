@@ -203,7 +203,7 @@ button.hero__main .hero__f{color:rgba(240,235,225,.4)}
 .sellbtn.armed{border-color:var(--gold-line);color:var(--gold);cursor:default}
 .sellstate{font-family:var(--sans);font-size:11px;color:var(--ink-45);display:block;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;margin-left:auto}
 .ptable td.act{text-align:right;font-family:var(--sans)}
-.ptable td.whyx{font-family:var(--sans);font-size:12px;color:var(--ink-70);white-space:normal;text-align:left;line-height:1.45;min-width:230px}
+.ptable td.whyx{font-family:var(--sans);font-size:12px;color:var(--ink-70);white-space:normal;text-align:left;line-height:1.45;min-width:132px}
 .whyx .kd{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
   border:1px solid var(--line);border-radius:4px;padding:1px 6px;margin-right:7px;color:var(--ink-45)}
 .whyx .kd.bad{border-color:var(--clay);color:var(--clay)}
@@ -2174,7 +2174,7 @@ function renderPositions(pos, cands){
       '<td class="num">'+num(p.entryPriceUsd,2)+'</td>'+
       '<td class="num">'+num(mark,2)+'</td>'+
       '<td style="font-size:11.5px;color:var(--ink-70)">'+levelsText(p.exitLevels)+'</td>'+
-      '<td class="num">'+(held!=null?num(held,0)+' sessions':'—')+'</td>'+
+      '<td class="num">'+esc(p.heldText||(held!=null?num(held,1)+' sessions':'—'))+'</td>'+
       '<td class="num">'+(hasRank?num(rank,3):'<span class="badge2 b-warn">unknown</span>')+'</td>'+
       '<td style="min-width:150px">'+(hasRank
         ? '<div class="meter" style="margin:0"><i class="'+(prog>=100?"good":"bad")+'" style="width:'+prog.toFixed(0)+'%"></i></div><div style="font-family:var(--mono);font-size:10.5px;color:var(--ink-45);margin-top:3px">'+prog.toFixed(0)+'% to median-rank exit</div>'
@@ -3666,10 +3666,12 @@ function renderTodayHeld(){
     return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+(lvTxt?' · '+lvTxt:'')+'</div></td>'
       +'<td>'+r.qty+'</td><td class="hide-sm">'+money(r.paid,2)+'</td><td>'+money(r.now,2)+(r.live?'':' <span class="muted" title="ledger mark, delayed feed">·</span>')+'</td><td class="hide-sm">'+money(r.value,2)+'</td>'
       +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+sgnMoney(r.gain)+'<span class="pct">'+sgnPct(r.pct)+'</span></td>'
+      +'<td class="whyx hide-sm">'+whyChip(lvp&&lvp.buyReason)+'</td>'
+      +'<td class="hide-sm">'+esc((lvp&&lvp.heldText)||"—")+'</td>'
       +'<td class="act">'+sellCell(r)+'</td></tr>';
   }).join("");
-  $("#todayHeld").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th class="hide-sm">Paid</th><th>Now</th><th class="hide-sm">Value</th><th>Gain / loss</th><th></th></tr></thead><tbody>'+tr
-    +'<tr class="total"><td>Total</td><td>'+rows.reduce(function(a,r){return a+r.qty;},0)+'</td><td class="hide-sm">'+money(subCost,2)+'</td><td></td><td class="hide-sm">'+money(subInv,2)+'</td><td class="gain '+(sub>=0?'up':'down')+'"><span class="arrow">'+(sub>=0?'▲':'▼')+'</span>'+sgnMoney(sub)+'<span class="pct">'+sgnPct(subCost?100*sub/subCost:0)+'</span></td><td></td></tr></tbody></table>';
+  $("#todayHeld").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th class="hide-sm">Paid</th><th>Now</th><th class="hide-sm">Value</th><th>Gain / loss</th><th class="hide-sm">Why bought</th><th class="hide-sm">Held</th><th></th></tr></thead><tbody>'+tr
+    +'<tr class="total"><td>Total</td><td>'+rows.reduce(function(a,r){return a+r.qty;},0)+'</td><td class="hide-sm">'+money(subCost,2)+'</td><td></td><td class="hide-sm">'+money(subInv,2)+'</td><td class="gain '+(sub>=0?'up':'down')+'"><span class="arrow">'+(sub>=0?'▲':'▼')+'</span>'+sgnMoney(sub)+'<span class="pct">'+sgnPct(subCost?100*sub/subCost:0)+'</span></td><td class="hide-sm"></td><td class="hide-sm"></td><td></td></tr></tbody></table>';
   $$("#todayHeld tr.row").forEach(function(r){ r.onclick=function(e){
     if(e.target.closest("button,a")) return; openCompany(r.dataset.sym); }; });
   $$("#todayHeld [data-sell]").forEach(function(b){ b.onclick=function(e){ e.stopPropagation(); doSell(b.dataset.sell); }; });
@@ -3720,6 +3722,9 @@ function closedRows(){
       pct:buy>0&&sell>0?100*(sell-buy)/buy:null,
       opened:t.openedAt||null, closed:t.closedAt||null,
       held:t.heldDays!=null?Number(t.heldDays):null,
+      /* Five-word labels from _investorPlainReason, computed backend-side so
+         the same rule always reads the same way everywhere. */
+      why:t.buyReason||null, whySold:t.sellReason||null, heldText:t.heldText||null,
       kind:kind, reason:t.exitReason||t.closeReason||null,
       manual:t.manualClose===true||kind==="manual",
       control:t.cohortRole==="control", t:t};
@@ -3748,20 +3753,31 @@ function renderTodayHistory(){
   if(!all.length){ $("#todayHistory").innerHTML='<div class="empty">Nothing has been bought and sold yet. Every completed round trip will be listed here with what was paid, what it sold for, and which rule closed it.</div>'; return; }
   if(!rows.length){ $("#todayHistory").innerHTML='<div class="empty">No finished trades in this group.</div>'; return; }
   var shown=rows.slice(0,60);
-  $("#todayHistory").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Bought</th><th>Sold</th><th class="hide-sm">Held</th><th>Result</th><th>Why it sold</th></tr></thead><tbody>'
+  $("#todayHistory").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Bought</th><th>Sold</th><th class="hide-sm">Held</th><th>Result</th><th>Why bought</th><th>Why it sold</th></tr></thead><tbody>'
     +shown.map(function(r){
       var up=(r.pl||0)>=0, p=EXIT_PLAIN[r.kind];
       return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+(r.manual?' <span class="badge2 b-info">by hand</span>':(r.control?' <span class="badge2 b-info">control</span>':''))+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+'</div></td>'
         +'<td>'+(r.qty||'—')+'</td>'
         +'<td>'+(r.buy?money(r.buy,2):'—')+'<span class="pct">'+esc(shortDate(r.opened))+'</span></td>'
         +'<td>'+(r.sell?money(r.sell,2):'—')+'<span class="pct">'+esc(shortDate(r.closed))+'</span></td>'
-        +'<td class="hide-sm">'+(r.held!=null?num(r.held,1)+'d':'—')+'</td>'
+        +'<td class="hide-sm">'+esc(r.heldText||(r.held!=null?num(r.held,1)+'d':'—'))+'</td>'
         +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+(r.pl!=null?sgnMoney(r.pl):'—')+(r.pct!=null?'<span class="pct">'+sgnPct(r.pct)+'</span>':'')+'</td>'
-        +'<td class="whyx"><span class="kd '+(p?p[1]:'')+'">'+esc(p?p[0]:"closed")+'</span>'+esc(reasonText(r))+'</td></tr>';
+        +'<td class="whyx">'+whyChip(r.why)+'</td>'
+        +'<td class="whyx">'+whyChip(r.whySold,p?p[0]:null)+'</td></tr>';
     }).join("")+'</tbody></table>'
     +(rows.length>shown.length?'<div class="hint" style="margin-top:10px">Showing the '+shown.length+' most recent of '+rows.length+'. The full record is on the Results page.</div>':'');
   $$("#todayHistory tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
 }
+/* One chip renderer for both tables. The text and tone come from the backend
+   vocabulary (_investorPlainReason); the long form is the hover title, so a
+   glance gives five words and a pause gives the full explanation. */
+function whyChip(reason, fallbackText){
+  if(!reason||!reason.text) return fallbackText?'<span class="kd">'+esc(fallbackText)+'</span>':'<span class="muted">—</span>';
+  var tone=reason.tone==="good"?"good":reason.tone==="bad"?"bad":"";
+  return '<span class="kd '+tone+'" title="'+esc(reason.detail||"")+'">'+esc(reason.text)+'</span>'
+    +(reason.atPresetPrice?' <span class="badge2 b-info" title="Bought by the fast strike pass when the price reached a level an earlier deep scan had armed.">preset price</span>':'');
+}
+
 /* The stored reason is a machine token for a hand sale and an already-plain
    sentence for every rule. Only the token needs translating. */
 function reasonText(r){

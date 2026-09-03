@@ -25,6 +25,7 @@ const S = require("./_investorSignal");
 const L = require("./_investorLedger");
 const E = require("./_investorEvidence");
 const IS = require("./_investorIntelligenceSources");
+const PR = require("./_investorPlainReason");
 const I = require("./_investorIntelligence");
 /* SH/AL/V were used by the "learning" action and never imported — the third
    occurrence of this exact bug class. Every click on the Learning tab was a
@@ -95,8 +96,18 @@ function closedTradeForUi(value) {
     ?? numeric(x.netPnlUsd) ?? cents(x.netPnlCents) ?? cents(x.netRealizedCents);
   const exitPriceUsd = numeric(x.exitPriceUsd) ?? numeric(x.exitFillUsd)
     ?? numeric(x.exitUsd) ?? cents(x.exitPriceCents);
+  /* The five-word labels a person actually reads. Computed here, from the
+     recorded decision fields, so the console never has to infer a rationale
+     and every surface shows the same words for the same rule. */
+  /* The ledger writes `heldDays` on a closed trade; `heldTradingDays` is the
+     open-position field. Read both so history and holdings agree. */
+  const heldDays = numeric(x.heldDays) ?? numeric(x.heldTradingDays);
   return { ...x, entryPriceUsd, realisedPnlUsd, exitPriceUsd,
     qty: numeric(x.qty),
+    buyReason: PR.buyReason(x),
+    sellReason: PR.sellReason({ ...x, open: false }),
+    heldTradingDays: heldDays,
+    heldText: heldDays != null ? PR.heldText(heldDays) : null,
     openedAt: isoTime(x.openedAt || x.entryAt || x.openedAtMs),
     closedAt: isoTime(x.closedAt || x.exitAt || x.closedAtMs),
     exitKind: x.exitKind || null,
@@ -256,9 +267,13 @@ const ACTIONS = {
       const p = d.data();
       const openedAt = p.openedAt && typeof p.openedAt.toDate === "function"
         ? p.openedAt.toDate() : p.openedAt;
+      const heldTradingDays = openedAt ? M.tradingDaysHeld(openedAt, Date.now()) : null;
       positions.push({ ...p,
         openedAt: openedAt instanceof Date ? openedAt.toISOString() : (openedAt || null),
-        heldTradingDays: openedAt ? M.tradingDaysHeld(openedAt, Date.now()) : null });
+        heldTradingDays,
+        buyReason: PR.buyReason(p),
+        sellReason: PR.sellReason({ ...p, open: true }),
+        heldText: heldTradingDays != null ? PR.heldText(heldTradingDays) : null });
     });
     const closedTrades = []; tradeSnap.forEach((d) => closedTrades.push(closedTradeForUi(d.data())));
     closedTrades.sort((a, b) => String(b.closedAt || "").localeCompare(String(a.closedAt || "")));

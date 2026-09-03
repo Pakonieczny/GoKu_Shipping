@@ -1801,10 +1801,42 @@ function runFixtures() {
       && EX.exitLevels(cfg, { entry: 0 }) === null;
   }));
 
+  cases.push(fixture("plain_reasons_are_a_closed_five_word_vocabulary_covering_every_rule", () => {
+    const PR = require("./_investorPlainReason");
+    const XP = require("./_investorExitPolicy");
+    const vocab = PR.vocabulary();
+    /* The five-word ceiling is the whole point: it has to be scannable. */
+    const allShort = [...vocab.buy, ...vocab.sell]
+      .every((r) => r.text && r.text.trim().split(/\s+/).length <= PR.MAX_WORDS && r.detail);
+    /* Every exitKind the policy can emit must have a label, or a real sale
+       would render as a fallback that explains nothing. */
+    const emitted = [...new Set((String(XP.exitSignal).match(/kind: "([a-z_]+)"/g) || [])
+      .map((m) => m.replace(/kind: "|"/g, "")))];
+    const covered = emitted.every((k) => !!PR.SELL_REASONS[k]) && !!PR.SELL_REASONS.manual;
+    /* Every cause the signal lane can assign must map to a buy label. */
+    const S2 = require("./_investorSignal");
+    const causesCovered = Object.values(S2.CAUSE).every((c) => !!PR.BUY_REASONS[PR.CAUSE_TO_BUY[c]]);
+    /* Routing: control beats cause; a legacy row with no exitKind recovers
+       its rule from the stored sentence; an open position is not "sold". */
+    const control = PR.buyReason({ cohortRole: "control", cause: S2.CAUSE.NONE }).code === "control";
+    const quiet = PR.buyReason({ cause: S2.CAUSE.NONE }).code === "quiet_drop";
+    const unknown = PR.buyReason({}).code === "peer_gap";
+    const legacy = PR.sellReason({ closeReason: "down -8.3% — hard stop at -8%" }).code === "stop_loss";
+    const open = PR.sellReason({ open: true }).code === "open";
+    const exiting = PR.sellReason({ open: true, exitIntent: { decisionAtMs: 1, kind: "stop_loss" } }).pending === true;
+    const manual = PR.sellReason({ manualClose: true, exitKind: "signal" }).code === "manual";
+    /* Held time is in fractional SESSIONS, so a fifth of one is ~80 minutes
+       of market time, not five hours of wall clock. */
+    const held = PR.heldText(0.2) === "1.3 hrs" && PR.heldText(1) === "1 session"
+      && PR.heldText(2.5) === "2.5 sessions" && PR.heldText(null) === "—";
+    return allShort && covered && causesCovered && control && quiet && unknown
+      && legacy && open && exiting && manual && held && emitted.length >= 9;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v22-strategy-v11-two-tier";
+  const SCHEMA = "runtime-fixtures-v23-strategy-v11-plain-reasons";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
