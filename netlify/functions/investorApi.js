@@ -2330,8 +2330,15 @@ exports.handler = async (event) => {
     return AUTH.json(event, 413, { error: "request too large" });
   }
   /* Resolve the operator secrets before the guard reads them. A failed read
-     leaves requireOperator answering AUTH_NOT_CONFIGURED, never open. */
-  await AUTH.loadAuthSecrets();
+     leaves requireOperator answering AUTH_NOT_CONFIGURED, never open. Nothing
+     may escape this handler as an unhandled rejection: the platform turns
+     that into an opaque 502 with no body, which is undiagnosable from the
+     console. */
+  try { await AUTH.loadAuthSecrets(); }
+  catch (e) {
+    console.error("investorApi loadAuthSecrets", String(e && e.message || e));
+    return AUTH.json(event, 500, { error: `auth secrets unavailable: ${String(e && e.message || e).slice(0, 160)}` });
+  }
 
   let body = {};
   try { body = JSON.parse(event.body || "{}"); }

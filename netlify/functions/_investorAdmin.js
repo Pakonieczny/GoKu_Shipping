@@ -67,17 +67,25 @@ function isPlainObject(v) {
   const proto = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
 }
-function firestoreSafe(value, insideArray = false) {
+function firestoreSafe(value, insideArray = false, seen = new WeakSet(), depth = 0) {
+  /* A cyclic or absurdly deep value is left for Firestore's own validation
+     to reject with a normal error; this guard must never itself blow the
+     stack, because the write sites run inside request handlers. */
+  if (depth > 64) return value;
   if (Array.isArray(value)) {
-    const items = value.map((x) => firestoreSafe(x, true));
+    if (seen.has(value)) return value;
+    seen.add(value);
+    const items = value.map((x) => firestoreSafe(x, true, seen, depth + 1));
     if (!insideArray) return items;
     const out = {};
     items.forEach((x, i) => { out[String(i)] = x; });
     return out;
   }
   if (isPlainObject(value)) {
+    if (seen.has(value)) return value;
+    seen.add(value);
     const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = firestoreSafe(v, false);
+    for (const [k, v] of Object.entries(value)) out[k] = firestoreSafe(v, false, seen, depth + 1);
     return out;
   }
   return value;
@@ -92,7 +100,8 @@ function installNestedArrayGuard() {
     const original = proto[method];
     proto[method] = function guarded(...args) {
       if (args.length > dataIndex && isPlainObject(args[dataIndex])) {
-        args[dataIndex] = firestoreSafe(args[dataIndex]);
+        try { args[dataIndex] = firestoreSafe(args[dataIndex]); }
+        catch { /* fall through to the original write and its own validation */ }
       }
       return original.apply(this, args);
     };
@@ -114,7 +123,8 @@ let _db = null;
 function rawDb() {
   if (_db) return _db;
   const sa = serviceAccount();
-  installNestedArrayGuard();
+  try { installNestedArrayGuard(); }
+  catch (e) { console.error("_investorAdmin: nested-array guard not installed:", String(e && e.message || e)); }
   _db = new Firestore({
     projectId: sa.project_id,
     credentials: { client_email: sa.client_email, private_key: sa.private_key },

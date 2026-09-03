@@ -2247,7 +2247,7 @@ function runFixtures() {
     if (!/DocumentReference\.prototype, "set"/.test(adminSrc) || !/Transaction\.prototype, "set"/.test(adminSrc)
         || !/WriteBatch\.prototype, "set"/.test(adminSrc)) return false;
     /* And the guard is installed before the client is ever handed out. */
-    return /installNestedArrayGuard\(\);\s*_db = new Firestore/.test(sourceOf(A2.rawDb));
+    return /installNestedArrayGuard\(\);[\s\S]{0,300}_db = new Firestore/.test(sourceOf(A2.rawDb));
   }));
 
   cases.push(fixture("bootstrap_rebinds_a_missing_or_stale_safety_epoch_for_an_authorised_desk", () => {
