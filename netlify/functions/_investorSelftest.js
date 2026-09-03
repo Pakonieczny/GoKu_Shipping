@@ -2287,10 +2287,70 @@ function runFixtures() {
     return !!code;
   }));
 
+  cases.push(fixture("dashboard_response_stays_under_the_platform_payload_limit", () => {
+    /* A response over 6 MB is never delivered: the runtime answers
+       RequestEntityTooLarge and the browser sees an opaque 502, so the
+       operator cannot even sign in. Restoring genuine full-universe scans
+       took the dashboard from a handful of candidate cards to one per
+       evaluated company and crossed that limit. Two defences are asserted
+       here: the fields no view reads are not shipped at all, and a payload
+       that is still too large degrades in a defined order instead of
+       failing. */
+    const API = require("./investorApi");
+    if (typeof API.boundDashboardPayload !== "function") return false;
+
+    /* The projection drops exactly the unread fields and keeps the rest. */
+    const card = { symbol: "NVDA", rank: 0.02, pass: true, gates: [{ id: "g", pass: true }],
+      cost: { ratio: 1.2 }, breach: true, unionEvidenceTrigger: true,
+      frozenDecision: { big: "x".repeat(50) }, historyNotes: ["a", "b"],
+      manifestCoverage: { a: 1 }, decisionManifestCoverage: { a: 1 },
+      decisionManifestHash: "h", decisionManifestValid: true, sigmaBlend: 1,
+      zShortOnly: -2, sectorTailFraction: 0.1, marketProvider: "p",
+      marketFeed: "f", buildCommit: "c" };
+    const row = API.dashboardCandidateRow(card);
+    for (const k of API.DASHBOARD_CANDIDATE_OMIT) if (k in row) return false;
+    if (row.symbol !== "NVDA" || !row.gates || row.cost.ratio !== 1.2 || row.breach !== true) return false;
+    /* The minimal row still supports the ranked list and the block tally. */
+    const min = API.minimalCandidateRow({ ...card, firstBlock: "cost", blockedBy: ["cost"] });
+    if (min.symbol !== "NVDA" || min.firstBlock !== "cost" || min.pass !== true
+        || min.detailTrimmed !== true || min.gates !== undefined) return false;
+
+    /* A realistic oversized payload: one fat card per company in the roster. */
+    const fat = () => ({ ...card, gates: Array.from({ length: 16 }, (_, i) => ({
+      id: `gate_${i}`, pass: i % 2 === 0, detail: "y".repeat(420) })),
+      history: { note: "z".repeat(4200) }, coverage: { roster: "r".repeat(2100) },
+      intelligence: { topEvents: Array.from({ length: 3 }, () => "e".repeat(1500)) } });
+    const many = Array.from({ length: 300 }, (_, i) => ({ ...fat(), symbol: `S${i}`, rank: i / 300 }));
+    const big = { ok: true, candidates: many, closedTrades: Array.from({ length: 200 }, () => ({ x: "t".repeat(400) })),
+      intelligence: Array.from({ length: 50 }, () => ({ d: "i".repeat(900) })), quoteCoverage: [] };
+    if (API.payloadBytes(big) <= 4_500_000) return false;     // the fixture must actually exercise it
+    const bounded = API.boundDashboardPayload(big);
+    if (API.payloadBytes(bounded) > 4_500_000) return false;
+    if (!bounded.payloadTrimmed || !bounded.payloadTrimmed.dropped.length) return false;
+    /* Every company is still present and still countable. */
+    if (bounded.candidates.length !== many.length) return false;
+    if (bounded.candidates.some((c) => !c.symbol)) return false;
+    /* A payload that already fits is returned untouched. */
+    const small = { ok: true, candidates: [card] };
+    const same = API.boundDashboardPayload(small);
+    if (same !== small || same.payloadTrimmed) return false;
+
+    /* And the handler refuses to hand the platform a body it would reject. */
+    const handlerSrc = sourceOf(API.handler);
+    if (!/payloadBytes\(full\)/.test(handlerSrc)) return false;
+    if (!/bytes > RESPONSE_HARD_LIMIT_BYTES/.test(handlerSrc)) return false;
+    /* 413 with a `refused` string: the console renders that at the sign-in
+       gate, where an opaque 502 told the operator nothing. */
+    if (!/AUTH\.json\(event, 413,/.test(handlerSrc)) return false;
+    if (!/refused:/.test(handlerSrc)) return false;
+    /* The dashboard action must actually apply the bound. */
+    return /return boundDashboardPayload\(payload\)/.test(sourceOf(API.ACTIONS.dashboard));
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v33-safety-epoch-rebind";
+  const SCHEMA = "runtime-fixtures-v34-bounded-dashboard-payload";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

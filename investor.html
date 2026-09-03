@@ -2086,6 +2086,15 @@ function loadRoster(){
 function renderCandidates(cands){
   loadRoster();
   var host=$("#candList"); host.innerHTML="";
+  /* The backend trims this response when a full-universe scan would exceed the
+     platform's response limit. Say so, rather than letting a thinner gate
+     stack read as a broken scan. */
+  var trim=DASH.payloadTrimmed;
+  if(trim){
+    host.innerHTML='<div class="note" style="margin-bottom:12px"><b>Showing a shortened view.</b> '
+      +'The scan itself is complete. This response was trimmed to fit the platform limit ('
+      +esc((trim.dropped||[]).join("; ")||"detail reduced")+'). Open any company for its full record.</div>';
+  }
   if(!cands.length){ host.innerHTML='<div class="card empty">No shortlist yet. '+
     'The roster below is unaffected — it is always the same. A shortlist appears after a cycle runs. '+
     'If nothing has ever run, use <b>Run a cycle now</b> on the briefing page: cycles are started by a '+
@@ -4115,6 +4124,15 @@ function openCompany(sym){
   $("#csStats").innerHTML=""; $("#csPos").innerHTML=""; $("#csWhy").innerHTML="";
   CS.pos=(DASH.positions||[]).filter(function(p){return p.symbol===sym;})[0]||null;
   CS.cand=(DASH.candidates||[]).filter(function(c){return c.symbol===sym;})[0]||null;
+  /* A trimmed row carries no gate stack; fetch the stored card, which is
+     always complete, so the drawer never shows less than the desk recorded. */
+  if(CS.cand&&CS.cand.detailTrimmed){
+    api("candidate",{symbol:sym}).then(function(r){
+      if(r&&r.candidate&&!$("#coSheet").hidden&&$("#csSym").textContent===sym){
+        CS.cand=r.candidate; drawCompany();
+      }
+    }).catch(function(){});
+  }
 
   api("history",{symbol:sym}).then(function(r){
     CS.daily=(r&&r.daily)||[]; CS.hist=(r&&r.history)||null;

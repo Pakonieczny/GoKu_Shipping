@@ -225,6 +225,112 @@ function fullScanIntegrity(run) {
 let quotesCache = { at: 0, quotes: {}, asOf: null };
 const F = require("./_investorFetch");
 
+/* ── RESPONSE SIZE ──────────────────────────────────────────────────────────
+ * The platform rejects a handler response over 6 MB with
+ * "RequestEntityTooLarge", which reaches the browser as an opaque 502 — the
+ * console cannot even log in, and nothing in the page says why. The dashboard
+ * carries one card per evaluated company, so restoring genuine full-universe
+ * scans (277 companies instead of the handful a halted account used to
+ * evaluate) multiplied that section by an order of magnitude and crossed the
+ * limit. Two defences, in order:
+ *
+ *   1. Do not ship what nobody reads. Every field below is absent from the
+ *      console; the stored candidate record keeps them all, and the per-symbol
+ *      `candidate` action still returns the complete card.
+ *   2. Degrade, never fail. If the response is still too large it is trimmed
+ *      in a defined order and says so, so the desk stays usable.
+ */
+const DASHBOARD_CANDIDATE_OMIT = Object.freeze(["frozenDecision", "historyNotes",
+  "manifestCoverage", "decisionManifestCoverage", "decisionManifestHash",
+  "decisionManifestValid", "sigmaBlend", "zShortOnly", "sectorTailFraction",
+  "marketProvider", "marketFeed", "buildCommit", "unionEvidenceTrigger"]);
+
+/** The candidate card as the console reads it. Pure. */
+function dashboardCandidateRow(card) {
+  if (!card || typeof card !== "object") return card;
+  const out = {};
+  for (const [k, v] of Object.entries(card)) {
+    if (!DASHBOARD_CANDIDATE_OMIT.includes(k)) out[k] = v;
+  }
+  return out;
+}
+
+/** The smallest row that still supports the ranked list, the block tally and
+ *  the "which companies were ranked" views. Used only when a full payload
+ *  would exceed the platform limit. Pure. */
+function minimalCandidateRow(card) {
+  if (!card || typeof card !== "object") return card;
+  const { symbol, company, sector, tier, rank, z, cumResidualBps, cause, pass,
+    blockedBy, firstBlock, breach, lastPrice, currentTradingDay, cycleId,
+    dataSufficiency, strict } = card;
+  return { symbol, company, sector, tier, rank, z, cumResidualBps, cause, pass,
+    blockedBy, firstBlock, breach, lastPrice, currentTradingDay, cycleId,
+    dataSufficiency, strict, detailTrimmed: true };
+}
+
+/* Leaves room for headers and the platform's own framing under the 6 MB cap. */
+const RESPONSE_SOFT_LIMIT_BYTES = 4_500_000;
+const RESPONSE_HARD_LIMIT_BYTES = 5_800_000;
+
+function payloadBytes(value) {
+  try { return Buffer.byteLength(JSON.stringify(value)); }
+  catch { return Number.POSITIVE_INFINITY; }
+}
+
+/**
+ * Trim a dashboard payload until it fits, in a defined order, and record what
+ * was dropped. Returns the same object when it already fits. Pure apart from
+ * mutating the copy it returns.
+ */
+function boundDashboardPayload(body, limit = RESPONSE_SOFT_LIMIT_BYTES) {
+  let bytes = payloadBytes(body);
+  if (bytes <= limit) return body;
+  const out = { ...body };
+  const applied = [];
+  const steps = [
+    ["candidate detail beyond the first 60 by rank", () => {
+      const rows = Array.isArray(out.candidates) ? out.candidates : [];
+      if (rows.length <= 60) return false;
+      out.candidates = rows.map((c, i) => (i < 60 ? c : minimalCandidateRow(c)));
+      return true;
+    }],
+    ["all candidate detail", () => {
+      const rows = Array.isArray(out.candidates) ? out.candidates : [];
+      if (!rows.length || rows.every((c) => c && c.detailTrimmed)) return false;
+      out.candidates = rows.map(minimalCandidateRow);
+      return true;
+    }],
+    ["closed-trade history beyond the most recent 25", () => {
+      const rows = Array.isArray(out.closedTrades) ? out.closedTrades : [];
+      if (rows.length <= 25) return false;
+      out.closedTrades = rows.slice(0, 25);
+      return true;
+    }],
+    ["company intelligence dossiers", () => {
+      const rows = Array.isArray(out.intelligence) ? out.intelligence : [];
+      if (!rows.length) return false;
+      out.intelligence = [];
+      return true;
+    }],
+    ["quote coverage detail", () => {
+      const rows = Array.isArray(out.quoteCoverage) ? out.quoteCoverage : [];
+      if (!rows.length) return false;
+      out.quoteCoverage = [];
+      return true;
+    }],
+  ];
+  for (const [label, apply] of steps) {
+    if (bytes <= limit) break;
+    if (!apply()) continue;
+    applied.push(label);
+    bytes = payloadBytes(out);
+  }
+  out.payloadTrimmed = { bytes, limit, dropped: applied,
+    note: "the scan is complete; this response was trimmed to fit the platform's response limit. "
+      + "Open a company for its full record." };
+  return out;
+}
+
 const ACTIONS = {
 
   /* The single call the dashboard polls. One round trip, everything on it. */
@@ -573,7 +679,7 @@ const ACTIONS = {
             heldTradingDays: p.heldTradingDays, heldText: p.heldText })) };
       })(),
     };
-    return {
+    const payload = {
       ok: true,
       now: new Date().toISOString(),
       session,
@@ -669,10 +775,15 @@ const ACTIONS = {
       candidateSetComplete: decisionSetComplete,
       navLive: await require("./_investorNav").snapshot(accountId, { positions, balances, cost })
         .catch((e) => ({ error: String(e.message || e).slice(0, 120) })),
-      candidates: current.sort((a, b) => (a.rank ?? 1) - (b.rank ?? 1)),
+      /* Breaches are selected from the stored cards, then both sets are
+         projected: `unionEvidenceTrigger` is a server-side selector the
+         console never reads. */
+      candidates: current.slice().sort((a, b) => (a.rank ?? 1) - (b.rank ?? 1))
+        .map(dashboardCandidateRow),
       quoteCoverage: summaryMatchesCycle && Array.isArray(latestSummary.quoteCoverage)
         ? latestSummary.quoteCoverage : [],
-      breaches: current.filter((c) => c.unionEvidenceTrigger || c.breach),
+      breaches: current.filter((c) => c.unionEvidenceTrigger || c.breach)
+        .map(dashboardCandidateRow),
       orders, positions, closedTrades: recentClosedTrades, closedTradeTotal: closedTrades.length,
       balances, cost,
       openaiToday: { usd: Number((openai.usd || 0).toFixed(4)), calls: openai.calls || 0,
@@ -681,6 +792,7 @@ const ACTIONS = {
       runs,
       operations,
     };
+    return boundDashboardPayload(payload);
   },
 
   /* The learning view: what each frozen variant has done and whether one has
@@ -2360,7 +2472,25 @@ exports.handler = async (event) => {
        "[object Object]" as the header, and locked itself out. */
     const extra = guard.session ? { authToken: guard.session } : {};
     const status = out && out.ok === false ? 409 : (out && out.error ? 400 : 200);
-    return AUTH.json(event, status, { ...out, ...extra });
+    const full = { ...out, ...extra };
+    /* LAST RESORT. A body over the platform's 6 MB cap is not returned at all:
+       the runtime answers RequestEntityTooLarge and the browser sees an opaque
+       502 with no way to tell an oversized payload from a crash. Answer with a
+       small, honest body instead — the operator can still sign in and every
+       other action keeps working. */
+    const bytes = payloadBytes(full);
+    if (bytes > RESPONSE_HARD_LIMIT_BYTES) {
+      console.error("investorApi oversized response", AUTH.redact({ action, bytes }));
+      /* 413, not 200: the console's error path shows `refused` verbatim, so the
+         operator reads the actual reason at the sign-in gate instead of an
+         empty desk or an opaque 502. */
+      return AUTH.json(event, 413, { ...extra, ok: false, action, responseBytes: bytes,
+        refused: `the ${action} response came to ${(bytes / 1e6).toFixed(1)} MB, over the `
+          + `${(RESPONSE_HARD_LIMIT_BYTES / 1e6).toFixed(1)} MB platform limit, so it was not sent`,
+        payloadTrimmed: { bytes, limit: RESPONSE_HARD_LIMIT_BYTES, dropped: ["the entire response body"],
+          note: "the backend is healthy; this response could not be delivered at its full size" } });
+    }
+    return AUTH.json(event, status, full);
   } catch (e) {
     console.error("investorApi", action, AUTH.redact({ error: e.message, stack: (e.stack || "").slice(0, 300) }));
     return AUTH.json(event, 500, { error: String(e.message).slice(0, 200), action });
@@ -2368,6 +2498,14 @@ exports.handler = async (event) => {
 };
 
 exports.ACTIONS = ACTIONS;
+/* Exported for the runtime fixtures: response bounding is what keeps an
+   oversized dashboard from reaching the browser as an opaque 502. */
+exports.dashboardCandidateRow = dashboardCandidateRow;
+exports.minimalCandidateRow = minimalCandidateRow;
+exports.boundDashboardPayload = boundDashboardPayload;
+exports.payloadBytes = payloadBytes;
+exports.DASHBOARD_CANDIDATE_OMIT = DASHBOARD_CANDIDATE_OMIT;
+exports.RESPONSE_HARD_LIMIT_BYTES = RESPONSE_HARD_LIMIT_BYTES;
 /* Exported for the runtime fixtures: the console's whole history view is
    this projection, so it is tested against real ledger field names. */
 exports.closedTradeForUi = closedTradeForUi;
