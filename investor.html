@@ -1758,7 +1758,7 @@ function renderRisk(r, coverage){
   $("#riskAsOf").textContent = r.openPositions+" open · "+num(committedPct,1)+"% committed ("+num(r.grossPct,1)+"% filled"+(pend&&pend.usd?" + "+num(pend.pctOfNav,1)+"% pending":"")+") · "+esc(String(lim.capSet||"")).split(" ")[0]+" limits";
   var rows=[
     ["Limit set in force", String(lim.capSet||"strict")+(lim.capSet==="exploratory"?" — the labelled paper-learning cohort's wide limits, not the strict policy's":"")],
-    ["Open positions", r.openPositions+" of "+lim.maxOpenPositions+(pend&&pend.orders?" (+"+pend.orders+" pending order"+(pend.orders===1?"":"s")+" counted against the cap)":"")],
+    ["Open positions", r.openPositions+(lim.maxOpenPositions==null?" (no limit on how many companies are held)":" of "+lim.maxOpenPositions)+(pend&&pend.orders?" (+"+pend.orders+" pending order"+(pend.orders===1?"":"s")+" counted against the cap)":"")],
     ["Invested", num(r.grossPct,1)+"% of the account (ceiling "+lim.maxGrossExposurePct+"%)"+(pend&&pend.usd?" · pending "+num(pend.pctOfNav,2)+"% counted":"")],
     ["Unrealised", num(r.unrealisedPct,2)+"%"],
     ["Below its best", num(r.drawdownPct,2)+"% (freezes at -"+lim.drawdownFreezePctFromHigh+"%)"],
@@ -1767,8 +1767,11 @@ function renderRisk(r, coverage){
   if(pend&&pend.unavailable) rows.push(["Pending exposure","UNAVAILABLE this cycle — new entries were refused until it can be read ("+pend.unavailable+")"]);
   var clusterCap=Number(lim.correlatedClusterPctOfNav)||10;
   var top=(r.topClusters||[]).map(function(c){
-    var over = c[1] > clusterCap;
-    return '<span class="badge2 '+(over?"b-bad":"")+'">'+esc(c[0])+' '+num(c[1],1)+'%</span>';
+    /* Current runs write {cluster, pct}; runs written before the nested-array
+       fix carried [name, pct] pairs. Render both. */
+    var name = Array.isArray(c)?c[0]:(c&&c.cluster), pct = Array.isArray(c)?c[1]:(c&&c.pct);
+    var over = pct > clusterCap;
+    return '<span class="badge2 '+(over?"b-bad":"")+'">'+esc(name)+' '+num(pct,1)+'%</span>';
   }).join(" ");
   box.innerHTML =
     (r.halted?'<div class="note warn" style="margin-bottom:10px"><b>Trading paused.</b> '+

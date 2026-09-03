@@ -531,8 +531,9 @@ async function runCycle(jobId, { manual = false } = {}) {
     fetchMeta = { provider: provider.id, feed: provider.feed || null,
       adjustment: null, error: String(e.code || e.message).slice(0, 160) };
   }
+  const pricedSymbols = symbols.filter((sym) => (panel[sym] || []).length > 0).length;
   await reportRunProgress(runRef, { phase: "market_data",
-    label: "Validating current prices", pct: 18, completed: symbols.length,
+    label: "Validating current prices", pct: 18, completed: pricedSymbols,
     total: symbols.length,
     detail: "The market response arrived; validating freshness, feed identity and provenance hashes." });
 
@@ -2828,7 +2829,7 @@ async function runCycle(jobId, { manual = false } = {}) {
          render THESE, not a hardcoded copy of the strict block. */
       limits: {
         capSet: operating.exploratoryAuto ? "exploratory" : "strict",
-        maxOpenPositions: activePortfolioControls.maxOpenPositions ?? 12,
+        maxOpenPositions: R.openPositionLimit(activePortfolioControls),   // null = no limit
         maxGrossExposurePct: activePortfolioControls.maxGrossExposurePct ?? 60,
         minCashPct: activePortfolioControls.minCashPct ?? 40,
         sectorExposurePctOfNav: activePortfolioControls.sectorExposurePctOfNav ?? 20,
@@ -2843,7 +2844,12 @@ async function runCycle(jobId, { manual = false } = {}) {
       dayPnlPct: Number(riskState.dayPnlPct.toFixed(2)),
       halted: breakers.halted,
       breakers: breakers.breakers,
-      topClusters: Object.entries(finalBook.byClusterPct).sort((a, b) => b[1] - a[1]).slice(0, 5),
+      /* Objects, never [name, pct] pairs: Firestore rejects an array nested
+         inside an array ("Property risk contains an invalid nested entity"),
+         which failed the whole run document the moment the book held a
+         position and reported the scan as incomplete. */
+      topClusters: Object.entries(finalBook.byClusterPct).sort((a, b) => b[1] - a[1]).slice(0, 5)
+        .map(([cluster, pct]) => ({ cluster, pct })),
       markCoveragePct: finalBook.markCoveragePct,
       portfolioBlocks: portfolioBlocks.length,
       notes: R.describe(finalBook, breakers, activeRiskStrategy),

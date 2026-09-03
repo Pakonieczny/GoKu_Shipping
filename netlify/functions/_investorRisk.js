@@ -249,6 +249,16 @@ function accountBreakers(state, cfg) {
   return { halted: out.some((o) => o.halt), breakers: out };
 }
 
+/** The position-count cap a control block declares. `null` (or any
+ *  non-positive / non-numeric value) means there is NO limit on how many
+ *  companies may be held at once; an absent key keeps the historical strict
+ *  default of 12 so older frozen versions keep their meaning. */
+function openPositionLimit(pc) {
+  if (!pc || !Object.prototype.hasOwnProperty.call(pc, "maxOpenPositions")) return 12;
+  const n = Number(pc.maxOpenPositions);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 /* ── the per-candidate portfolio checks ────────────────────────────────── */
 /**
  * Decide whether ONE proposed position may be added, given the book. Returns
@@ -267,9 +277,10 @@ function checkAdd({ symbol, sector, proposedUsd, book, navUsd, cashUsd, cfg, dyn
   const deny = (id, reason) => { checks.push({ id, pass: false, reason }); };
   const pass = (id, reason) => { checks.push({ id, pass: true, reason }); };
 
-  // 1. how many positions are we willing to run at once?
-  const maxPos = pc.maxOpenPositions ?? 12;
-  if (book.count >= maxPos) deny("max_positions", `already holding ${book.count} of a maximum ${maxPos} positions`);
+  // 1. how many positions are we willing to run at once? null = no limit.
+  const maxPos = openPositionLimit(pc);
+  if (maxPos === null) pass("max_positions", `${book.count} positions open, no count limit`);
+  else if (book.count >= maxPos) deny("max_positions", `already holding ${book.count} of a maximum ${maxPos} positions`);
   else pass("max_positions", `${book.count} of ${maxPos} positions used`);
 
   // 2. never hold the same name twice
@@ -478,7 +489,7 @@ function attribution(equity, bench) {
   };
 }
 
-module.exports = {
+module.exports = { openPositionLimit,
   CLUSTERS, clusterOf, summarise, markedBook, foldPendingOrders, positionSizeUsd, accountBreakers, checkAdd, describe,
   equityStats, benchmarkReturn, attribution,
 };
