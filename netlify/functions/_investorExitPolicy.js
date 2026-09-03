@@ -97,26 +97,45 @@ function exitSignal(rank, heldDays, cfg, opts = {}) {
              kind: "earnings_exit", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
   }
 
-  // 6. The signal exit: the move we were trading has reverted.
+  /* 6. The signal exit: the move we were trading has reverted.
+
+     A LOSS IS NEVER CLOSED BY A STATISTIC. This exit used to fire on the rank
+     alone, so a position bought an hour earlier was sold because the gap it
+     was trading had closed RELATIVE TO THE CROSS-SECTION — which happens just
+     as readily when every other company falls further as when this one
+     recovers. The record it produced is the whole argument: thirty-eight round
+     trips, twenty up and eighteen down, holds of one to six hours, and a net
+     result of roughly zero before friction. Nearly every one of them exited
+     here, at a fraction of a percent either side of flat.
+
+     A position that is DOWN is now held until a rule about MONEY closes it —
+     the hard stop, the earnings print, a corroborated adverse finding, or the
+     time stop. A position that is UP still takes this exit, because banking a
+     gain when the reason for the trade has gone is exactly right. */
+  /* Two reasons the rank exit may be withheld, and NEITHER may skip the time
+     stop below — that would turn "do not realise a loss on a statistic" into
+     "hold a loser forever", which is worse than the behaviour being fixed.
+     Both paths fall through to section 7. */
+  let heldReason = null, patienceHeld = false;
   if (haveRank && rank >= exitRank) {
-    /* Suppressed only while a patient position is DOWN and still inside its
-       window. A patient position that is UP takes this exit like any other:
-       the complaint patience answers is being sold at a loss because the rest
-       of the market moved, not banking a gain. */
+    /* Patience first: it has the more specific explanation. Granted at entry
+       from this company's own recovery record, and only while it is DOWN and
+       inside its window. */
     if (patience && patience.rankSuppressed === true) {
-      return {
-        exit: false, kind: null, patienceHeld: true,
-        pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null,
-        priceRulesEvaluated: havePrice,
-        reason: `rank ${rank.toFixed(3)} crossed exit ${exitRank}, but this company recovers from drops like this`
-          + ` — ${patience.note || `holding for up to ${maxDays} sessions`}`,
-      };
+      patienceHeld = true;
+      heldReason = `rank ${rank.toFixed(3)} crossed exit ${exitRank}, but this company recovers from drops like this`
+        + ` — ${patience.note || `holding for up to ${maxDays} sessions`}`;
+    } else if (havePrice && pnlPct < 0 && cfg.holdLosersThroughRankExit !== false) {
+      heldReason = `rank ${rank.toFixed(3)} crossed exit ${exitRank}, but this position is down `
+        + `${Math.abs(pnlPct).toFixed(1)}% — a loss is closed by the stop, an earnings date or the `
+        + `time limit, never by the ranking alone`;
+    } else {
+      return { exit: true, urgent: false, reason: `rank ${rank.toFixed(3)} crossed exit ${exitRank}`,
+               kind: "signal", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
     }
-    return { exit: true, urgent: false, reason: `rank ${rank.toFixed(3)} crossed exit ${exitRank}`,
-             kind: "signal", pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null };
   }
 
-  // 7. Time stop.
+  // 7. Time stop — reached whether or not the rank exit was suppressed.
   if (heldDays >= maxDays) {
     return { exit: true, urgent: false,
              reason: patience ? `max hold ${maxDays} sessions reached (extended recovery window used up)`
@@ -128,9 +147,14 @@ function exitSignal(rank, heldDays, cfg, opts = {}) {
     exit: false, kind: null,
     pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null,
     priceRulesEvaluated: havePrice,
-    reason: `${haveRank ? `rank ${rank.toFixed(3)} below exit ${exitRank}` : "cross-sectional rank unavailable"}, held ${heldDays}d`
-          + (havePrice ? `, ${pnlPct >= 0 ? "up" : "down"} ${Math.abs(pnlPct).toFixed(1)}%`
-                       : ", NO PRICE AVAILABLE so the stop could not be checked"),
+    /* A withheld rank exit has a specific explanation and must not be
+       overwritten by the generic "nothing fired" line. */
+    ...(patienceHeld ? { patienceHeld: true } : {}),
+    ...(heldReason && !patienceHeld ? { heldThroughRank: true } : {}),
+    reason: heldReason
+      || `${haveRank ? `rank ${rank.toFixed(3)} below exit ${exitRank}` : "cross-sectional rank unavailable"}, held ${heldDays}d`
+         + (havePrice ? `, ${pnlPct >= 0 ? "up" : "down"} ${Math.abs(pnlPct).toFixed(1)}%`
+                      : ", NO PRICE AVAILABLE so the stop could not be checked"),
   };
 }
 

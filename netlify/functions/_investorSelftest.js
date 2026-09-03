@@ -993,7 +993,7 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v11"
+      && policy.version === "exploratory-auto-v12"
       && learn.minAbsZ === 1.25 && learn.entryRank === 0.5
       && learn.costMarginMultiple === 0.25
       && learn.exitRank === 0.75 && learn.maxHoldDays === 3
@@ -1475,10 +1475,10 @@ function runFixtures() {
 
   cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
     const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
-      exploratoryPolicyVersion: "exploratory-auto-v11", sufficiencyVersion: "data-sufficiency-v2" };
+      exploratoryPolicyVersion: "exploratory-auto-v12", sufficiencyVersion: "data-sufficiency-v2" };
     const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
       strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
-      exploratoryPolicyVersion: "exploratory-auto-v11", closedAt: "2026-09-01T15:00:00Z",
+      exploratoryPolicyVersion: "exploratory-auto-v12", closedAt: "2026-09-01T15:00:00Z",
       decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
     const trades = [
       mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
@@ -1808,7 +1808,7 @@ function runFixtures() {
       sessionCloseMs: Date.parse("2026-09-02T20:00:00Z"), vixNorm: 1, session: { date: "2026-09-02", open: true },
       policyIdentity: { accountId: "paper-1", strategyVersion: "v11", universeVersion: "v1",
         strategyHash: "c".repeat(64), universeHash: "d".repeat(64), variantsHash: "e".repeat(64) },
-      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v11", cohortLabel: "exploratory_auto_unvalidated",
+      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v12", cohortLabel: "exploratory_auto_unvalidated",
       paperLearningOnly: true, activePortfolioControls: strategy.exploratoryAuto.portfolioControls,
       activity: XPL.activityPolicy(strategy), cycleId: "2026-09-02_1500", strategyVersion: "v11",
       operatingState: "exploratory_auto", moveStartedAtMs: Date.parse("2026-09-02T14:00:00Z"), positionScale: 1 };
@@ -1955,7 +1955,16 @@ function runFixtures() {
     const rankPlain = XP2.exitSignal(0.9, 0.4, cfg, { mark: 98.5, entry: 100, peak: 100 });
     if (rankDown.exit !== false || rankDown.patienceHeld !== true) return false;   // held while under
     if (rankUp.kind !== "signal") return false;                                     // up: sells anyway
-    if (rankPlain.kind !== "signal") return false;                                  // not patient: sells
+    /* v18: a losing position is held off the rank exit whether or not it is
+       patient — a loss is closed by a rule about money, never by the ranking.
+       What patience still buys, and what this fixture exists to protect, is
+       the EXTENDED TIME WINDOW asserted immediately below. */
+    if (rankPlain.exit !== false || rankPlain.heldThroughRank !== true) return false;
+    /* And with the loss protection explicitly off, the rank exit still fires
+       for a non-patient position, so the two mechanisms stay distinguishable. */
+    const strictRank = XP2.exitSignal(0.9, 0.4, { ...cfg, holdLosersThroughRankExit: false },
+      { mark: 98.5, entry: 100, peak: 100 });
+    if (strictRank.kind !== "signal") return false;
     /* Past the window it is an ordinary position again. */
     if (XP2.exitSignal(0.9, 9, cfg, { mark: 98.5, entry: 100, peak: 100, patience: terms(9, -1.5) }).exit !== true) return false;
 
@@ -2550,7 +2559,7 @@ function runFixtures() {
     const sectors = { A: "tech", B: "tech", C: "tech", D: "tech", E: "fin", F: "fin", G: "fin" };
     const prov = {}; for (const k of Object.keys(sectors)) prov[k] = { homogeneous: true, provider: "p", sourceSha256: "a".repeat(64) };
     const build = (daily) => MS.buildSessionPanel(daily, prov, { asOfDate: asOf, sectorOf: (x) => sectors[x] });
-    const policy = { minSessionMoveZ: 1.25, sessionRankCap: 0.2 };
+    const policy = { minSessionMoveZ: 1.25, sessionRankCap: 0.2, sessionTrendMode: "either" };
     const uptrend = { ok: true, aboveSma200: true, sma50Rising: true, downtrendFlags: [] };
 
     /* THE WHOLE POINT: a company that fell WITH its sector has not dislocated. */
@@ -2577,9 +2586,11 @@ function runFixtures() {
     const upVerdict = MS.sessionAdmits(risen, uptrend, policy);
     if (upVerdict.pass !== false || !/^up /.test(upVerdict.reason)) return false;
 
-    /* A five-session fall inside a DOWNTREND is a falling knife, not a pullback. */
-    if (MS.sessionAdmits(a, { ok: true, aboveSma200: false, sma50Rising: true, downtrendFlags: [] }, policy).pass) return false;
-    if (MS.sessionAdmits(a, { ok: true, aboveSma200: true, sma50Rising: false, downtrendFlags: [] }, policy).pass) return false;
+    /* A five-session fall with NEITHER trend confirmation is a falling knife.
+       (v18 requires either confirmation rather than both; "both" is still
+       selectable and is asserted separately by the profit-taking fixture.) */
+    if (MS.sessionAdmits(a, { ok: true, aboveSma200: false, sma50Rising: false, downtrendFlags: [] }, policy).pass) return false;
+    if (MS.sessionAdmits(a, { ok: true, aboveSma200: true, sma50Rising: true, downtrendFlags: ["a", "b"] }, policy).pass) return false;
     if (MS.sessionAdmits(a, { ok: false }, policy).pass) return false;
 
     /* Coverage failures are NAMED, never a silent skip: a stale spine and an
@@ -2615,7 +2626,9 @@ function runFixtures() {
     const applied = strategy.paperLearningConfig(strategy.parameters,
       { paperLearning: { enabled: true, ...learn } }).cfg;
     if (applied.requireSessionMove !== true) return false;
-    if (applied.minSessionMoveZ !== 1.25 || applied.sessionRankCap !== 0.2) return false;
+    if (applied.minSessionMoveZ !== Number(learn.minSessionMoveZ)
+      || applied.sessionRankCap !== Number(learn.sessionRankCap)) return false;
+    if (!(Number(learn.minSessionMoveZ) > 0) || !(Number(learn.sessionRankCap) > 0)) return false;
 
     /* And the gate is wired: it blocks by its own id, and the cycle feeds it. */
     const SIG = require("./_investorSignal");
@@ -2671,10 +2684,76 @@ function runFixtures() {
     return /provider request failed/.test(cycleSrc);
   }));
 
+  cases.push(fixture("the_desk_takes_profits_and_never_closes_a_loss_on_a_statistic", () => {
+    /* THE RECORD THAT FORCED THIS: 38 round trips, 20 up and 18 down, holds of
+       one to six hours, net roughly zero before friction — and nearly every
+       exit was the RANK exit firing a fraction of a percent either side of
+       flat. The desk had no profit target at all (takeProfitPct was null), so
+       it never once sold because a position had made money, and the rank exit
+       closed losers because the gap had narrowed relative to the cross-section
+       — which happens just as readily when other companies fall further. */
+    const XP2 = require("./_investorExitPolicy");
+    const cfg = strategy.paperLearningConfig(strategy.parameters,
+      { paperLearning: { enabled: true, ...strategy.exploratoryAuto.paperLearningDefaults } }).cfg;
+
+    /* A profit target now exists and is a real number. */
+    if (!(Number(cfg.takeProfitPct) > 0)) return false;
+    /* The trailing stop cannot turn a gain into a loss: it must arm at a gain
+       larger than what it then gives back. Armed at +3% giving back 4% could
+       sell a +3% position at -1%, which is how a correct call became a loss. */
+    if (!(Number(cfg.trailingArmsAtPct) > Math.abs(Number(cfg.trailingStopPct)))) return false;
+
+    const exitAt = (entry, mark, peak, rank, held) => XP2.exitSignal(rank, held, cfg,
+      { mark, entry, peak: peak == null ? Math.max(entry, mark) : peak });
+
+    /* Every one of the operator's small losses was sold by the rank exit.
+       None of them may be now — the rank alone is not a reason to realise a
+       loss. Real numbers from the record. */
+    for (const [entry, mark] of [[284.32, 283.38], [48.86, 47.50], [100.93, 100.83], [41.90, 41.82]]) {
+      const v = exitAt(entry, mark, entry, 0.90, 0.2);
+      if (v.exit !== false || v.heldThroughRank !== true) return false;
+    }
+    /* A WINNER still takes the rank exit: banking a gain when the reason for
+       the trade has gone is exactly right. */
+    if (exitAt(83.94, 84.48, 84.48, 0.90, 0.2).kind !== "signal") return false;
+    /* The profit target fires on its own, without needing the rank. */
+    const tp = exitAt(100, 100 + Number(cfg.takeProfitPct) + 0.1, null, 0.10, 0.1);
+    if (tp.exit !== true || tp.kind !== "take_profit") return false;
+    /* A position that peaked and slipped is sold while still UP. */
+    const trail = exitAt(100, 101.1, 102.5, 0.10, 0.1);
+    if (trail.exit !== true || trail.kind !== "trailing_stop" || !(trail.pnlPct > 0)) return false;
+
+    /* RULES ABOUT MONEY STILL CLOSE A LOSS — holding losers off the rank exit
+       must never become holding them forever. */
+    if (exitAt(100, 91.5, 100, 0.10, 0.1).kind !== "stop_loss") return false;
+    if (exitAt(100, 98, 100, 0.10, Number(cfg.maxHoldDays) + 1).kind !== "time") return false;
+    const earn = XP2.exitSignal(0.10, 0.1, cfg, { mark: 98, entry: 100, peak: 100, earningsInDays: 1 });
+    if (earn.kind !== "earnings_exit") return false;
+    /* And the operator can restore the old behaviour explicitly. */
+    const strictCfg = { ...cfg, holdLosersThroughRankExit: false };
+    if (XP2.exitSignal(0.90, 0.2, strictCfg, { mark: 99, entry: 100, peak: 100 }).kind !== "signal") return false;
+
+    /* SELECTION LOOSENS TOO: requiring a company be above its 200-day average
+       AND have a rising 50-day line, on top of a five-session fall, admitted
+       ONE company out of 270 measured. Either confirmation now suffices. */
+    const MS = require("./_investorMultiSession");
+    if (cfg.sessionTrendMode !== "either") return false;
+    const move = { ok: true, r5Pct: -6, sessionZ: -1.4, sessionRank: 0.1, normalSwingPct: 3 };
+    const pol = { minSessionMoveZ: cfg.minSessionMoveZ, sessionRankCap: cfg.sessionRankCap,
+      sessionTrendMode: "either" };
+    if (!MS.sessionAdmits(move, { ok: true, aboveSma200: true, sma50Rising: false, downtrendFlags: [] }, pol).pass) return false;
+    if (!MS.sessionAdmits(move, { ok: true, aboveSma200: false, sma50Rising: true, downtrendFlags: [] }, pol).pass) return false;
+    /* Neither confirmation is still a falling knife, and "both" still works. */
+    if (MS.sessionAdmits(move, { ok: true, aboveSma200: false, sma50Rising: false, downtrendFlags: [] }, pol).pass) return false;
+    if (MS.sessionAdmits(move, { ok: true, aboveSma200: true, sma50Rising: false, downtrendFlags: [] },
+      { ...pol, sessionTrendMode: "both" }).pass) return false;
+    return true;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v40-rankable-daily-provenance";
+  const SCHEMA = "runtime-fixtures-v41-take-profits";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

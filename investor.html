@@ -2948,7 +2948,11 @@ function renderPipeline(live, phase){
     ["proposed","Proposed",(c.proposed||0)+(c.control_proposed||0)],
     ["approved","Approved",(c.approved||0)],
     ["filled","Filled",(c.filled||0)],
-    ["exits","Exits / sold",(c.exit_armed||0)+(c.closed||0)]];
+    /* SOLD MEANS SOLD. This counted an ARMED exit as a sale, so the console
+       reported "1 sold" when nothing had left the book and the operator went
+       looking for a trade that did not exist. Armed exits are shown in the
+       event chips; this tile counts closes only. */
+    ["exits","Sold",(c.closed||0)]];
   var activeStage=phase==="evaluate_companies"?"ranked":phase==="portfolio_selection"?"proposed":phase==="settlement"?"filled":null;
   var recent=(live.recent||[]).slice(-40);
   if(recent.length&&!activeStage) activeStage=stageOfEvent(recent[recent.length-1]);

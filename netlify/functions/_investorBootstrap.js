@@ -60,8 +60,8 @@ const STATE = require("./_investorState");
    running the previous version out of Firestore and the new policy inert —
    silently, because every hash still agrees with itself. The fixture
    `strategy_version_change_forces_a_rebootstrap` pins the pair below. */
-const BOOTSTRAP_VERSION = 24; // v24: strategy v17 (five-session selection)
-const BOOTSTRAP_STRATEGY_VERSION = "v17";
+const BOOTSTRAP_VERSION = 25; // v25: strategy v18 (take profits; hold losers off the rank exit)
+const BOOTSTRAP_STRATEGY_VERSION = "v18";
 const DAILY_PROVENANCE_VERSION = 5; // v5 re-attests complete windows to the selected 15-minute SIP identity
 
 function stable(value) {
