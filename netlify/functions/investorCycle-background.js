@@ -2829,7 +2829,7 @@ async function runCycle(jobId, { manual = false } = {}) {
          render THESE, not a hardcoded copy of the strict block. */
       limits: {
         capSet: operating.exploratoryAuto ? "exploratory" : "strict",
-        maxOpenPositions: activePortfolioControls.maxOpenPositions ?? 12,
+        maxOpenPositions: R.openPositionLimit(activePortfolioControls),   // null = no limit
         maxGrossExposurePct: activePortfolioControls.maxGrossExposurePct ?? 60,
         minCashPct: activePortfolioControls.minCashPct ?? 40,
         sectorExposurePctOfNav: activePortfolioControls.sectorExposurePctOfNav ?? 20,

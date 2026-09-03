@@ -1758,7 +1758,7 @@ function renderRisk(r, coverage){
   $("#riskAsOf").textContent = r.openPositions+" open · "+num(committedPct,1)+"% committed ("+num(r.grossPct,1)+"% filled"+(pend&&pend.usd?" + "+num(pend.pctOfNav,1)+"% pending":"")+") · "+esc(String(lim.capSet||"")).split(" ")[0]+" limits";
   var rows=[
     ["Limit set in force", String(lim.capSet||"strict")+(lim.capSet==="exploratory"?" — the labelled paper-learning cohort's wide limits, not the strict policy's":"")],
-    ["Open positions", r.openPositions+" of "+lim.maxOpenPositions+(pend&&pend.orders?" (+"+pend.orders+" pending order"+(pend.orders===1?"":"s")+" counted against the cap)":"")],
+    ["Open positions", r.openPositions+(lim.maxOpenPositions==null?" (no limit on how many companies are held)":" of "+lim.maxOpenPositions)+(pend&&pend.orders?" (+"+pend.orders+" pending order"+(pend.orders===1?"":"s")+" counted against the cap)":"")],
     ["Invested", num(r.grossPct,1)+"% of the account (ceiling "+lim.maxGrossExposurePct+"%)"+(pend&&pend.usd?" · pending "+num(pend.pctOfNav,2)+"% counted":"")],
     ["Unrealised", num(r.unrealisedPct,2)+"%"],
     ["Below its best", num(r.drawdownPct,2)+"% (freezes at -"+lim.drawdownFreezePctFromHigh+"%)"],

@@ -35,6 +35,7 @@
 "use strict";
 
 const XP = require("./_investorExplore");
+const R = require("./_investorRisk");
 
 const STAGES = ["research", "approval", "shadow", "limited_auto"];
 
@@ -309,7 +310,10 @@ function autoApproval(order, { stage, book, navUsd, cfg, dayCount, nowMs = Date.
   const maxPerDay = auto.maxOrdersPerDay ?? 6;
   if ((dayCount || 0) >= maxPerDay) reasons.push(`${dayCount} orders auto-approved today, cap ${maxPerDay}`);
 
-  if ((book.count || 0) >= (auto.maxOpenForAuto ?? Math.max(1, (pc.maxOpenPositions ?? 12) - 4))) {
+  /* With no position-count cap there is nothing to stop short of. */
+  const positionLimit = R.openPositionLimit(pc);
+  const maxOpenForAuto = auto.maxOpenForAuto ?? (positionLimit === null ? null : Math.max(1, positionLimit - 4));
+  if (maxOpenForAuto !== null && (book.count || 0) >= maxOpenForAuto) {
     reasons.push(`${book.count} positions open — auto-approval stops short of the full position cap`);
   }
 

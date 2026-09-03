@@ -53,10 +53,68 @@ function serviceAccount() {
   };
 }
 
+/* ── nested-array guard ────────────────────────────────────────────────────
+ * Firestore refuses an array directly inside an array ("Property X contains
+ * an invalid nested entity") and the whole write fails. One such value in a
+ * 3,000-line run document reported every scan as incomplete for a day. Rather
+ * than trust each of a few hundred write sites, every document write is
+ * passed through this transform: an array found inside an array becomes an
+ * object keyed by index ({"0": …, "1": …}), which Firestore accepts and which
+ * loses no information. Plain objects and arrays are walked; FieldValue,
+ * Timestamp, Date, Buffer and other class instances are left untouched. */
+function isPlainObject(v) {
+  if (v === null || typeof v !== "object") return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+function firestoreSafe(value, insideArray = false) {
+  if (Array.isArray(value)) {
+    const items = value.map((x) => firestoreSafe(x, true));
+    if (!insideArray) return items;
+    const out = {};
+    items.forEach((x, i) => { out[String(i)] = x; });
+    return out;
+  }
+  if (isPlainObject(value)) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = firestoreSafe(v, false);
+    return out;
+  }
+  return value;
+}
+let _guarded = false;
+function installNestedArrayGuard() {
+  if (_guarded) return;
+  _guarded = true;
+  const { DocumentReference, Transaction, WriteBatch } = require("@google-cloud/firestore");
+  const wrap = (proto, method, dataIndex) => {
+    if (!proto || typeof proto[method] !== "function") return;
+    const original = proto[method];
+    proto[method] = function guarded(...args) {
+      if (args.length > dataIndex && isPlainObject(args[dataIndex])) {
+        args[dataIndex] = firestoreSafe(args[dataIndex]);
+      }
+      return original.apply(this, args);
+    };
+  };
+  wrap(DocumentReference.prototype, "set", 0);
+  wrap(DocumentReference.prototype, "update", 0);
+  wrap(DocumentReference.prototype, "create", 0);
+  wrap(Transaction.prototype, "set", 1);
+  wrap(Transaction.prototype, "update", 1);
+  wrap(Transaction.prototype, "create", 1);
+  wrap(WriteBatch.prototype, "set", 1);
+  wrap(WriteBatch.prototype, "update", 1);
+  wrap(WriteBatch.prototype, "create", 1);
+  /* CollectionReference.add builds a DocumentReference and calls create on it,
+     so it is covered by the wrap above. */
+}
+
 let _db = null;
 function rawDb() {
   if (_db) return _db;
   const sa = serviceAccount();
+  installNestedArrayGuard();
   _db = new Firestore({
     projectId: sa.project_id,
     credentials: { client_email: sa.client_email, private_key: sa.private_key },
@@ -159,6 +217,7 @@ function envelope(extra = {}) {
 }
 
 module.exports = {
+  firestoreSafe, installNestedArrayGuard, rawDb,
   FV, TS, col, doc, runTransaction, batch,
   COL, COL_PREFIX,
   envelope,

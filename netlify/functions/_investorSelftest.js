@@ -993,12 +993,13 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v7"
+      && policy.version === "exploratory-auto-v8"
       && learn.minAbsZ === 1.75 && learn.entryRank === 0.3
       && learn.costMarginMultiple === 0.25
       && learn.exitRank === 0.75 && learn.maxHoldDays === 3
       && pc.maxGrossExposurePct === 95 && pc.minCashPct === 0
-      && pc.maxOpenPositions === 6 && pc.ordinaryPositionPctOfNav === 16
+      && pc.maxOpenPositions === null && R.openPositionLimit(pc) === null
+      && pc.ordinaryPositionPctOfNav === 16
       && pc.riskBudgetPerTradePctOfNav === 1.5
       && policy.autoApproval.unlimitedOrdersPerDay === true
       /* One ordinary position is admitted in full; the gross ceiling is the
@@ -1468,10 +1469,10 @@ function runFixtures() {
 
   cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
     const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
-      exploratoryPolicyVersion: "exploratory-auto-v7", sufficiencyVersion: "data-sufficiency-v2" };
+      exploratoryPolicyVersion: "exploratory-auto-v8", sufficiencyVersion: "data-sufficiency-v2" };
     const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
       strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
-      exploratoryPolicyVersion: "exploratory-auto-v7", closedAt: "2026-09-01T15:00:00Z",
+      exploratoryPolicyVersion: "exploratory-auto-v8", closedAt: "2026-09-01T15:00:00Z",
       decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
     const trades = [
       mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
@@ -1796,7 +1797,7 @@ function runFixtures() {
       sessionCloseMs: Date.parse("2026-09-02T20:00:00Z"), vixNorm: 1, session: { date: "2026-09-02", open: true },
       policyIdentity: { accountId: "paper-1", strategyVersion: "v11", universeVersion: "v1",
         strategyHash: "c".repeat(64), universeHash: "d".repeat(64), variantsHash: "e".repeat(64) },
-      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v7", cohortLabel: "exploratory_auto_unvalidated",
+      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v8", cohortLabel: "exploratory_auto_unvalidated",
       paperLearningOnly: true, activePortfolioControls: strategy.exploratoryAuto.portfolioControls,
       activity: XPL.activityPolicy(strategy), cycleId: "2026-09-02_1500", strategyVersion: "v11",
       operatingState: "exploratory_auto", moveStartedAtMs: Date.parse("2026-09-02T14:00:00Z"), positionScale: 1 };
@@ -1888,7 +1889,7 @@ function runFixtures() {
     const capUsd = 100000 * pc.ordinaryPositionPctOfNav / 100;
     return good === capUsd && good >= 10000 && thin > 0 && thin < good
       && riskLimited > capUsd
-      && fiveInvestedPct === 80 && pc.maxOpenPositions * pc.ordinaryPositionPctOfNav > pc.maxGrossExposurePct
+      && fiveInvestedPct === 80 && R.openPositionLimit(pc) === null
       && pc.maxGrossExposurePct === 95;
   }));
 
@@ -2202,10 +2203,57 @@ function runFixtures() {
     return !nested(top) && top.every((x) => typeof x.cluster === "string" && Number.isFinite(x.pct));
   }));
 
+  cases.push(fixture("no_cap_on_how_many_companies_are_held_at_once", () => {
+    /* The operator's instruction: no limit on the NUMBER of companies held.
+       maxOpenPositions null must read as unlimited everywhere a count was
+       enforced — the portfolio admission check and the auto-approval ladder —
+       while an explicit number and the strict block's absent key keep their
+       meaning. Capital limits (position size, gross ceiling, cash) still
+       bound the book; a count never does. */
+    const R2 = require("./_investorRisk");
+    if (R2.openPositionLimit({ maxOpenPositions: null }) !== null) return false;
+    if (R2.openPositionLimit({ maxOpenPositions: 0 }) !== null) return false;
+    if (R2.openPositionLimit({ maxOpenPositions: 6 }) !== 6) return false;
+    if (R2.openPositionLimit({}) !== 12) return false;
+    const xp = strategy.exploratoryAuto;
+    const pc = xp.portfolioControls;
+    if (R2.openPositionLimit(pc) !== null) return false;
+    const rows = Array.from({ length: 40 }, (_, i) => ({ symbol: `S${i}`, sector: "s" + i, cluster: "c" + i }));
+    const wide = R2.checkAdd({ symbol: "NEW", sector: "new", proposedUsd: 1000,
+      book: { count: 40, grossUsd: 40000, grossPct: 40, rows, bySectorPct: {}, byClusterPct: {} },
+      navUsd: 100000, cashUsd: 60000, cfg: { portfolioControls: pc }, dynamicCorrelations: {} });
+    const countCheck = (wide.checks || []).find((c) => c.id === "max_positions");
+    if (!countCheck || countCheck.pass !== true) return false;
+    const ladderSrc = sourceOf(require("./_investorLadder").autoApproval);
+    if (!/openPositionLimit\(pc\)/.test(ladderSrc) || !/maxOpenForAuto !== null &&/.test(ladderSrc)) return false;
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    return /maxOpenPositions: R\.openPositionLimit\(activePortfolioControls\)/.test(cycleSrc);
+  }));
+
+  cases.push(fixture("every_document_write_survives_a_nested_array", () => {
+    /* Belt to the topClusters braces: the admin layer rewrites any array
+       nested inside an array into an index-keyed object before Firestore sees
+       it, so a new write site cannot bring back "invalid nested entity". */
+    const A2 = require("./_investorAdmin");
+    const out = A2.firestoreSafe({ risk: { topClusters: [["semis", 12.5], ["cloud", 3]],
+      breakers: [{ id: "x", halt: true }], notes: ["a", "b"] }, n: 1, when: new Date(0) });
+    const nested = (v) => Array.isArray(v) ? v.some((x) => Array.isArray(x) || nested(x))
+      : (v && typeof v === "object" && !(v instanceof Date)) ? Object.values(v).some(nested) : false;
+    if (nested(out)) return false;
+    if (out.risk.topClusters[0]["0"] !== "semis" || out.risk.topClusters[1]["1"] !== 3) return false;
+    if (out.risk.breakers[0].halt !== true || out.risk.notes[1] !== "b") return false;
+    if (!(out.when instanceof Date)) return false;
+    const adminSrc = sourceOf(A2.installNestedArrayGuard);
+    if (!/DocumentReference\.prototype, "set"/.test(adminSrc) || !/Transaction\.prototype, "set"/.test(adminSrc)
+        || !/WriteBatch\.prototype, "set"/.test(adminSrc)) return false;
+    /* And the guard is installed before the client is ever handed out. */
+    return /installNestedArrayGuard\(\);\s*_db = new Firestore/.test(sourceOf(A2.rawDb));
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v30-attention-z-and-run-document-shape";
+  const SCHEMA = "runtime-fixtures-v31-no-position-count-cap";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
