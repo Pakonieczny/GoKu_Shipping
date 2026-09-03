@@ -680,6 +680,39 @@ async function readShares() {
   return snap.exists ? (snap.data().bySymbol || {}) : {};
 }
 
+/** PURE. Must the safety epoch be re-issued on the current frozen identity?
+ *  The epoch is what the promotion ladder checks every cycle; when it is
+ *  missing, or names a strategy/universe/variants identity other than the
+ *  one the bootstrap has since adopted, the "safety_epoch" gate fails and the
+ *  ladder rolls an authorised exploratory desk back to watching-only at the
+ *  end of every scan — with no way out except the operator pressing Start.
+ *  That happens whenever BOOTSTRAP_VERSION is bumped while the desk is
+ *  frozen or paused (the bump adopts the new identity but may not activate),
+ *  and again when a later build lifts the freeze. Re-binding is allowed only
+ *  when the operator had already authorised automatic exploratory paper
+ *  trading, the desk is in that state now, and the stored identity is
+ *  byte-identical to the code's frozen identity. Exported for a fixture. */
+function epochRebindNeeded(control, { commit, codeStrategy, variantsHash }) {
+  const c = control || {}, epoch = c.safetyEpoch || null;
+  const no = (reason) => ({ rebind: false, reason });
+  if (c.autoExploratoryAuthorized !== true) return no("exploratory auto not authorised");
+  const operating = STATE.describe(c);
+  if (operating.exploratoryAuto !== true) return no(`operating state is ${operating.state}`);
+  if (!codeStrategy || !c.strategyVersion || codeStrategy.version !== c.strategyVersion) return no("stored strategy version is not this build's");
+  if (!c.strategyHash || strategyHash(codeStrategy) !== c.strategyHash) return no("stored strategy hash is not this build's");
+  if (!c.variantsHash || variantsHash !== c.variantsHash) return no("stored variants hash is not this build's");
+  if (!c.universeVersion || !c.universeHash) return no("no frozen universe identity");
+  const accountId = c.accountId || "paper-1";
+  if (!epoch || !epoch.commit) return { rebind: true, reason: "no safety epoch" };
+  const mismatch = [["accountId", accountId], ["strategyVersion", c.strategyVersion],
+    ["strategyHash", c.strategyHash], ["universeVersion", c.universeVersion],
+    ["universeHash", c.universeHash], ["variantsHash", c.variantsHash]]
+    .filter(([k, v]) => epoch[k] !== v).map(([k]) => k);
+  if (mismatch.length) return { rebind: true, reason: `epoch identity differs: ${mismatch.join(", ")}` };
+  if (epoch.commit !== commit) return { rebind: true, reason: "epoch names a previous build" };
+  return no("epoch already binds this identity and build");
+}
+
 /** PURE. May the safety epoch's commit be rolled to the running build?
  *  Only when every identity the epoch attests is byte-identical to the stored
  *  and the code-side frozen identity, and the account was already authorised
@@ -802,6 +835,35 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
   const steps = [];
   if (epochRollover) steps.push({ step: "safetyEpochRollover", ok: epochRollover.rolled === true, ...epochRollover });
 
+  /* IDENTITY RE-BIND. Covers what the rollover cannot: an epoch that is
+     absent or names an identity the bootstrap has since replaced. Without
+     this the ladder rolls the desk back to watching-only after every scan. */
+  if (done && !force && fixtures.pass && !(epochRollover && epochRollover.rolled)) {
+    try {
+      const verdict = epochRebindNeeded(c, { commit,
+        codeStrategy: strategyDocument(S_FALLBACK), variantsHash: V.variantsHash() });
+      if (verdict.rebind) {
+        const previous = c.safetyEpoch || null;
+        const rebound = { accountId: c.accountId || "paper-1",
+          strategyVersion: c.strategyVersion, universeVersion: c.universeVersion,
+          universeHash: c.universeHash, strategyHash: c.strategyHash,
+          variantsHash: c.variantsHash, commit, activatedAtMs: Date.now(),
+          activatedBy: "bootstrap:identity_rebind",
+          previousEpoch: previous ? { commit: previous.commit || null,
+            strategyVersion: previous.strategyVersion || null } : null };
+        await ref.set({ safetyEpoch: rebound }, { merge: true });
+        await A.col(A.COL.audit).add({ action: "safety_epoch_identity_rebind", reason: verdict.reason,
+          previousCommit: previous && previous.commit || null, commit,
+          strategyVersion: c.strategyVersion, atMs: Date.now(),
+          ...A.envelope({ created_by: "investorBootstrap" }) });
+        c.safetyEpoch = rebound;
+        steps.push({ step: "safetyEpochRebind", ok: true, reason: verdict.reason });
+      }
+    } catch (e) {
+      steps.push({ step: "safetyEpochRebind", ok: false, error: String(e.message).slice(0, 160) });
+    }
+  }
+
   /* MIGRATION. Proposals written before expiries existed are ageless and,
      under manual approval, were approvable forever. On every bootstrap pass
      any proposed order without an expiry is rejected (nothing is reserved
@@ -906,7 +968,14 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
     const autoAuthorized = exploratory.enabled === true
       && exploratory.autoStartAfterSuccessfulBootstrap === true;
     const priorOperating = STATE.describe(c);
-    const priorFreeze = priorOperating.entriesFrozen || !!c.reconciliationFailure
+    /* A freeze that a FAILED attestation imposed is not a reason to keep the
+       desk off once this build's attestation passes; it was never the
+       operator's decision. Reconciliation failures and operator freezes are. */
+    const attestationFreeze = priorOperating.entriesFrozen
+      && (c.operatingStateSource === "bootstrap:fixtures"
+        || /fixture attestation failed/.test(String(c.safetyClosedReason || "")));
+    const priorFreeze = (priorOperating.entriesFrozen && !attestationFreeze)
+      || !!c.reconciliationFailure
       || !!(c.ledgerReconciliation && c.ledgerReconciliation.pass === false);
     const mayStart = autoAuthorized && !priorOperating.paused && !priorFreeze;
     let bootstrapOperating;
@@ -1090,7 +1159,7 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
 }
 
 module.exports = {
-  epochRolloverEligible,
+  epochRolloverEligible, epochRebindNeeded,
   expectedHistorySymbols, historyCursorNeedsReconcile, backfillDailyHistory, topUpDailyHistory,
   backfillSharesOutstanding, readShares,
   BOOTSTRAP_VERSION, BOOTSTRAP_STRATEGY_VERSION, DAILY_PROVENANCE_VERSION,
