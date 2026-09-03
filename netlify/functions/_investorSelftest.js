@@ -2250,10 +2250,46 @@ function runFixtures() {
     return /installNestedArrayGuard\(\);\s*_db = new Firestore/.test(sourceOf(A2.rawDb));
   }));
 
+  cases.push(fixture("bootstrap_rebinds_a_missing_or_stale_safety_epoch_for_an_authorised_desk", () => {
+    /* A BOOTSTRAP_VERSION bump while the desk was frozen adopts the new
+       strategy identity without activating (no epoch is issued). When a later
+       build lifts the freeze the desk runs exploratory auto with no epoch —
+       or an epoch naming the previous strategy — so the ladder's
+       safety_epoch gate fails and rolls it back to watching-only after every
+       scan. The bootstrap must re-bind the epoch on the current identity for
+       an already-authorised desk, and only for one. */
+    const code = { version: strategy.version, contentHash: strategy.contentHash };
+    const codeStrategy = { ...strategy };
+    const sh = B.strategyHash(codeStrategy);
+    const base = { autoExploratoryAuthorized: true, operatingState: "exploratory_auto",
+      enabled: true, killSwitch: false, entriesFrozen: false, dryRun: false, mode: "approval",
+      accountId: "paper-1", strategyVersion: strategy.version, strategyHash: sh,
+      universeVersion: "v6", universeHash: "u".repeat(64), variantsHash: V.variantsHash() };
+    const args = { commit: "build-2", codeStrategy, variantsHash: V.variantsHash() };
+    if (B.epochRebindNeeded({ ...base, safetyEpoch: null }, args).rebind !== true) return false;
+    const stale = { accountId: "paper-1", strategyVersion: "v13", strategyHash: "x", universeVersion: "v6",
+      universeHash: base.universeHash, variantsHash: base.variantsHash, commit: "build-1" };
+    if (B.epochRebindNeeded({ ...base, safetyEpoch: stale }, args).rebind !== true) return false;
+    const current = { ...stale, strategyVersion: strategy.version, strategyHash: sh, commit: "build-2" };
+    if (B.epochRebindNeeded({ ...base, safetyEpoch: current }, args).rebind !== false) return false;
+    /* Never for a desk the operator did not authorise, never in observation,
+       never when the stored identity is not this build's. */
+    if (B.epochRebindNeeded({ ...base, safetyEpoch: null, autoExploratoryAuthorized: false }, args).rebind) return false;
+    if (B.epochRebindNeeded({ ...base, safetyEpoch: null, operatingState: "observation", dryRun: true, mode: "research" }, args).rebind) return false;
+    if (B.epochRebindNeeded({ ...base, safetyEpoch: null, strategyVersion: "v13" }, args).rebind) return false;
+    const src = sourceOf(B.ensureBootstrapped);
+    if (!/epochRebindNeeded\(c, \{ commit,/.test(src)) return false;
+    if (!/activatedBy: "bootstrap:identity_rebind"/.test(src)) return false;
+    /* And a freeze imposed by a failed attestation no longer blocks auto-start. */
+    if (!/const attestationFreeze = priorOperating\.entriesFrozen/.test(src)) return false;
+    if (!/priorFreeze = \(priorOperating\.entriesFrozen && !attestationFreeze\)/.test(src)) return false;
+    return !!code;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v32-bundle-tolerant-attestation";
+  const SCHEMA = "runtime-fixtures-v33-safety-epoch-rebind";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
