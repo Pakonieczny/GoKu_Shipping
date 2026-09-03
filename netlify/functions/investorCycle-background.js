@@ -832,6 +832,9 @@ async function runCycle(jobId, { manual = false } = {}) {
      signal (and the signal-dependent cost) still short. Collected here,
      selected and written after portfolio selection. */
   const planCandidates = [];
+  /* Entries admitted on a near miss rather than a fired signal, for the run
+     record: this is the number the operator sees bought without a full signal. */
+  const nearMissAdmitted = [];
   /* THE PATIENCE SLEEVE. Resolved once per scan. `patienceClaims` tracks the
      grants this scan has already made: a grant is not yet in `pendingOrders`,
      so without it the sleeve cap would be measured against a stale book and
@@ -1606,30 +1609,31 @@ async function runCycle(jobId, { manual = false } = {}) {
        with market and sector flat, provided the cost hurdle clears there
        too. The one-minute strike pass buys at that level; this scan does
        not have to be running when it is reached. Exploratory paper only. */
-    if (operating.exploratoryAuto && activity.enabled && activity.strike && activity.strike.enabled
-        && !evalRes.pass && entryControl.pass && manifestValidation.pass && !pendingOrderSymbols.has(sym)) {
-      try {
-        const moveStartedAtMs = z ? Date.parse((liveSignalContext.rp.residualTimestamps[sym] || [])
-          .slice(-(z.window || cfg.signalWindow || 12))[0] || "") : NaN;
-        const candidate = ST.planCandidate({ symbol: sym, evalRes, strictRes, strictUncalibratedRes, z, rank, last, cfg,
-          policy: activity.strike, quality: quality[sym], advUsd: (metaBySymbol[sym] || {}).advUsd || 0,
-          sector: S.sectorOf(sym), historyContext: historyCtx[sym] || null, reversion: reversionBySymbol[sym] || null,
-          dataSufficiency, intelligence, cause, coverage, decisionManifest,
-          marketProvenance: marketProvenanceBySymbol[sym] || null, sessionCloseMs: planSessionCloseMs,
-          vixNorm: reg.vixNorm, session, policyIdentity, variantId: liveVariant ? liveVariant.id : "A",
-          exploratoryPolicyVersion: exploratoryPolicy.version || null,
-          cohortLabel: exploratoryPolicy.evidenceCohort || "exploratory_auto_unvalidated",
-          paperLearningOnly: paperLearning.active === true,
-          activePortfolioControls, activity, cycleId, strategyVersion: strategy.version,
-          operatingState: operating.state, moveStartedAtMs,
-          positionScale: Math.max(1, Math.min(5, Number(cfg.positionScale) || 1)) });
-        planCandidates.push({ ...candidate, symbol: sym });
-        if (candidate.ok) await liveEvent("armed", sym, `level ${candidate.plan.armBelowUsd} (${candidate.dropPct}% below)`);
-      } catch (e) { planCandidates.push({ ok: false, symbol: sym, reason: `error:${String(e.message || e).slice(0, 60)}` }); }
+    /* ONE ENTRY PATH. A company short of the entry threshold on |z| alone,
+       with every hazard gate passing and its cost hurdle clearing at the
+       price being paid, is bought NOW. It used to get a level armed below the
+       market and wait for it — which is how qualified companies sat in
+       "armed", then "replaced by a later scan", then "retired", and the book
+       bought nothing. */
+    let nearMiss = null;
+    if (operating.exploratoryAuto && activity.enabled && activity.immediateEntry
+        && activity.immediateEntry.enabled && !evalRes.pass && entryControl.pass
+        && manifestValidation.pass && !pendingOrderSymbols.has(sym)) {
+      nearMiss = ST.nearMissEntryEligible({ evalRes, z, rank, cfg,
+        policy: activity.immediateEntry, quality: quality[sym], decisionManifest,
+        marketProvenance: marketProvenanceBySymbol[sym] || null });
+      if (nearMiss.ok) {
+        nearMissAdmitted.push({ symbol: sym, zShortfall: nearMiss.zShortfall });
+        await liveEvent("passed", sym, `near miss on signal only (z ${Number(z.z).toFixed(2)}) — buying at market`);
+      }
     }
-    if (evalRes.pass && manifestValidation.pass) {
+    if ((evalRes.pass || (nearMiss && nearMiss.ok)) && manifestValidation.pass) {
       proposalQueue.push({ sym, last, evalRes, strictRes, strictUncalibratedRes, cause, causeDetail, rank,
         intelligence, decisionManifest, cohortRole: "signal", dataSufficiency,
+        /* Recorded on the order and the decision: this entry was admitted on a
+           near miss, not on a fired signal. */
+        nearMiss: nearMiss && nearMiss.ok ? { zShortfall: nearMiss.zShortfall,
+          minAbsZ: Number(cfg.minAbsZ ?? 2), z: Number(z.z), rank: Number(rank) } : null,
         policyIds: explorationPolicyIds.length ? explorationPolicyIds : ["A"],
         utilityBps: Number(evalRes.cost.calibratedNetLowerBoundBps
           ?? (Number(evalRes.cost.expectedGrossBps) - Number(evalRes.cost.requiredBps))) });
@@ -1642,7 +1646,8 @@ async function runCycle(jobId, { manual = false } = {}) {
         policyIds: [], utilityBps: 0 });
     }
     /* One live outcome per name, in pipeline order: ranked → signal → gates. */
-    if (evalRes.pass && manifestValidation.pass) await liveEvent("passed", sym, "cleared company gates");
+    if (nearMiss && nearMiss.ok) { /* already reported as passed above */ }
+    else if (evalRes.pass && manifestValidation.pass) await liveEvent("passed", sym, "cleared company gates");
     else if (!evidenceTrigger) await liveEvent("no_signal", sym, `rank ${Number(rank).toFixed(2)}`);
     else if (evalRes.pass) await liveEvent("blocked", sym, "manifest");
     else await liveEvent("blocked", sym, evalRes.blockedBy[0] || evalRes.firstBlock || "gate");
@@ -1765,11 +1770,18 @@ async function runCycle(jobId, { manual = false } = {}) {
          cap and the risk budget remain the ceiling. */
       const positionScale = operating.exploratoryAuto
         ? Math.max(1, Math.min(5, Number(cfg.positionScale) || 1)) : 1;
+      /* THE PAPER FLOOR APPLIES TO A NEAR MISS TOO. evaluateCandidate only
+         applies it when nothing is blocking, so a near-miss entry — blocked on
+         the signal alone — would otherwise be sized off the raw haircut and
+         come out a few hundred dollars against a five-figure cap, which is the
+         same hidden blocker v12 removed everywhere else. */
+      const paperFloor = Math.max(0, Math.min(ST_FLOOR_MAX,
+        Number(cfg.paperObservationSizeFloor) || 0));
+      const baseCombined = Number(evalRes.sizing && evalRes.sizing.combined) || 0;
       const signalScaler = Math.min(1, (control
-        ? Math.max(Number(evalRes.sizing && evalRes.sizing.combined) || 0,
-            Math.max(0, Math.min(ST_FLOOR_MAX, Number(cfg.paperObservationSizeFloor) || 0)))
-          * activity.controlCohort.sizeMultiplier
-        : evalRes.sizing.combined) * sufficiencyMult * positionScale);
+        ? Math.max(baseCombined, paperFloor) * activity.controlCohort.sizeMultiplier
+        : (q.nearMiss ? Math.max(baseCombined, paperFloor) : baseCombined))
+        * sufficiencyMult * positionScale);
       const sizing = R.positionSizeUsd({ navUsd, atrPct: hc.atrPct,
         expectedShortfall5dPct: hc.expectedShortfall5dPct,
         overnightGapEsPct: hc.overnightGapEsPct,
@@ -1865,6 +1877,9 @@ async function runCycle(jobId, { manual = false } = {}) {
       const o = await L.proposeOrder({
         ...policyIdentity, accountId, symbol: sym, side: "buy",
         patience: patienceStamp,
+        /* Null for an ordinary entry; present when the signal was short of the
+           threshold and the desk bought at market rather than waiting. */
+        nearMissEntry: q.nearMiss || null,
         paperLearningOnly: paperLearning.active === true,
         operatingStateAtDecision: operating.state,
         learningCohort: cohortLabel,
@@ -2795,6 +2810,7 @@ async function runCycle(jobId, { manual = false } = {}) {
     rankingDiagnostics,
     quoteCoverage,
     ranked, breaches: candidates.length,
+    nearMissEntries: { admitted: nearMissAdmitted.length, symbols: nearMissAdmitted.slice(0, 20) },
     evaluation: { workset: managementWorkset.length,
       completed: managementWorkset.length,
       successful: Math.max(0, managementWorkset.length - companyErrors.length),

@@ -131,11 +131,11 @@ function paperLearningConfig(base, ctrl = {}) {
 
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax, PAPER_OBSERVATION_FLOOR_MAX,
-  "version": "v14",
-  "supersedes": "v13",
+  "version": "v15",
+  "supersedes": "v14",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
   "frozenAt": "2026-09-03",
-  "_versionNote": "v14 carries the same strict hypothesis and strict parameters UNCHANGED and changes ONE thing in the exploratory cohort (exploratory-auto-v8): there is no longer a cap on the NUMBER of companies held at once. maxOpenPositions is null, which every consumer reads as unlimited. What still bounds the book is capital, not a count: the 16% ordinary position size, the 95% gross ceiling and the cash actually available. PRIOR NOTE (v13): carries the same strict hypothesis and strict parameters UNCHANGED and adds ONE thing to the exploratory cohort (exploratory-auto-v7): the patience sleeve. Up to 12% of the account, measured at cost, may be held through a rank recovery instead of sold into one, for companies whose own five-year daily record shows they recover from comparable drops within five sessions. Eligibility is deterministic and comes from the reversion statistics the desk already computed and previously used only to scale expected edge. Patience suppresses the rank exit ONLY while the position is underwater and inside its window; the hard stop, trailing stop, profit target, earnings exit and adverse-finding exit are untouched. The grant is stamped at entry and is immutable, so hindsight can never move a loser into the sleeve. PRIOR NOTE (v12): carries the same strict hypothesis and strict parameters UNCHANGED, and changes only the labelled exploratory paper cohort (exploratory-auto-v6). Two things move together. FIRST, the entry bar rises: |z| 1.0 -> 1.75, entry rank 0.50 -> 0.30, and rank recovery must reach 0.75 rather than 0.60. The v11 band admitted the bottom half of the cross-section on a one-sigma hourly wobble and released it 0.1 of rank later, so positions opened and closed inside ordinary intraday noise and the round trip was mostly friction. SECOND, because far fewer names now qualify, each one carries materially more capital: at most 6 open positions at up to 16% of the account each, a 1.5% per-trade risk budget, and a 95% gross ceiling — about 80% deployed across five positions in the ordinary case and 95% across six when the opportunities are there. The observation size floor rises 0.10 -> 0.35 so the per-position cap binds instead of the incomplete-information haircut. PRIOR NOTE (v11): carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
+  "_versionNote": "v15 carries the same strict hypothesis and strict parameters UNCHANGED and replaces the exploratory cohort's two-step entry with ONE step (exploratory-auto-v9). The armed-level tier is off: a company that passed every hazard gate but had not fallen the last fraction of a percent to the signal threshold used to get a level armed for a later purchase, and would be superseded and retired by subsequent scans without ever being bought. Such a company is now bought at the market price in the scan that finds it, or not at all. This forgives exactly one thing relative to an ordinary entry - |z| may be short of minAbsZ 1.75, down to a floor of 1.25, in the same bottom-half rank band the armed tier used. Nothing else moves: every hazard gate applies unchanged, and the cost hurdle must clear at the price actually being paid rather than at a level the market had not reached. PRIOR NOTE (v14): carries the same strict hypothesis and strict parameters UNCHANGED and changes ONE thing in the exploratory cohort (exploratory-auto-v8): there is no longer a cap on the NUMBER of companies held at once. maxOpenPositions is null, which every consumer reads as unlimited. What still bounds the book is capital, not a count: the 16% ordinary position size, the 95% gross ceiling and the cash actually available. PRIOR NOTE (v13): carries the same strict hypothesis and strict parameters UNCHANGED and adds ONE thing to the exploratory cohort (exploratory-auto-v7): the patience sleeve. Up to 12% of the account, measured at cost, may be held through a rank recovery instead of sold into one, for companies whose own five-year daily record shows they recover from comparable drops within five sessions. Eligibility is deterministic and comes from the reversion statistics the desk already computed and previously used only to scale expected edge. Patience suppresses the rank exit ONLY while the position is underwater and inside its window; the hard stop, trailing stop, profit target, earnings exit and adverse-finding exit are untouched. The grant is stamped at entry and is immutable, so hindsight can never move a loser into the sleeve. PRIOR NOTE (v12): carries the same strict hypothesis and strict parameters UNCHANGED, and changes only the labelled exploratory paper cohort (exploratory-auto-v6). Two things move together. FIRST, the entry bar rises: |z| 1.0 -> 1.75, entry rank 0.50 -> 0.30, and rank recovery must reach 0.75 rather than 0.60. The v11 band admitted the bottom half of the cross-section on a one-sigma hourly wobble and released it 0.1 of rank later, so positions opened and closed inside ordinary intraday noise and the round trip was mostly friction. SECOND, because far fewer names now qualify, each one carries materially more capital: at most 6 open positions at up to 16% of the account each, a 1.5% per-trade risk budget, and a 95% gross ceiling — about 80% deployed across five positions in the ordinary case and 95% across six when the opportunities are there. The observation size floor rises 0.10 -> 0.35 so the per-position cap binds instead of the incomplete-information haircut. PRIOR NOTE (v11): carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
   "immutable": true,
   "status": "research",
   "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
@@ -268,7 +268,7 @@ module.exports = {
      does the analysis and writes the levels; the strike pass (every
      minute) acts on them — see `activity.strike`. */
   "exploratoryAuto": {
-    "version": "exploratory-auto-v8",
+    "version": "exploratory-auto-v9",
     "enabled": true,
     "autoStartAfterSuccessfulBootstrap": true,
     "startingNavUsd": 100000,
@@ -339,12 +339,25 @@ module.exports = {
            planRankCeiling only names already in the lower part of the
                            cross-section are planned
            strikeBandPct   strike only within this band below the level */
+      /* Retired in v15. Kept, with its parameters, so the frozen record of
+         what the armed tier was remains readable; `enabled: false` is what
+         takes it out of the pipeline. */
       "strike": {
-        "enabled": true,
+        "enabled": false,
         "maxArmedPlans": 6,
         "maxArmDropPct": 5,
         "planRankCeiling": 0.5,
         "strikeBandPct": 2.5
+      },
+      /* THE ONLY ENTRY PATH. A company that clears every hazard gate and is
+         short of the entry threshold on |z| alone is bought now, at the price
+         on the screen, provided it is still inside the rank band and its |z|
+         is no weaker than the floor. Nothing waits. */
+      "immediateEntry": {
+        "enabled": true,
+        "rankCeiling": 0.5,
+        "minAbsZFloor": 1.25,
+        "_note": "minAbsZ is 1.75. A name between 1.25 and 1.75 sigma that passes every other gate is a near miss; the armed tier used to wait for it to fall the rest of the way, which in a typical session was 0.2-0.7%. The cost hurdle is measured at the market price being paid, so a name whose edge does not survive its own frictions today is still refused."
       },
       /* THE PATIENCE SLEEVE (_investorPatience.js). A bounded share of the
          account may be held through a rank recovery rather than sold into

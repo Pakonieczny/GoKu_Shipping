@@ -130,6 +130,58 @@ function selectPlans(candidates, policy, { exclude = new Set() } = {}) {
    that are not near-miss candidates, or a complete plan document (minus
    status/timestamps) for one that is. Everything it reads is this scan's own
    evidence about the company; nothing is fetched. */
+/* ── BUY IT OR DO NOT BUY IT ───────────────────────────────────────────────
+ * The armed-level tier existed so a company that passed every hazard gate but
+ * had not yet fallen to the signal threshold could be bought LATER, at the
+ * price where the signal would have fired. In practice that parked qualified
+ * companies in a waiting state over a fraction of a percent — the operator
+ * watched levels arm, get superseded by the next scan and retire, while the
+ * book bought nothing. There is now one entry path: a company either qualifies
+ * at the price on the screen and is bought, or it does not qualify.
+ *
+ * This forgives EXACTLY ONE THING relative to an ordinary entry: |z| may be
+ * short of minAbsZ, and only down to an explicit floor. Every hazard gate must
+ * still pass, the rank must already qualify, and — unlike the armed level,
+ * which tested the cost hurdle at a price the market had not reached — the
+ * cost hurdle must clear at the price actually being paid. PURE.
+ */
+function nearMissEntryEligible({ evalRes, z, rank, cfg, policy, quality,
+  decisionManifest, marketProvenance }) {
+  if (!policy || policy.enabled !== true) return { ok: false, reason: "immediate_entry_disabled" };
+  if (!evalRes) return { ok: false, reason: "no_evaluation" };
+  /* A full pass belongs to the ordinary path, which has already queued it. */
+  if (evalRes.pass) return { ok: false, reason: "already_passes" };
+  const blocked = evalRes.blockedBy || [];
+  /* ONLY the signal may be short. The cost gate is never forgiven here: a
+     trade that cannot clear its own frictions at today's price has no edge
+     left to buy, which is precisely why the armed level tested cost at the
+     level rather than at the market. */
+  if (blocked.length !== 1 || blocked[0] !== "signal") {
+    return { ok: false, reason: `blocked_by_${blocked.filter((g) => g !== "signal")[0] || "nothing"}` };
+  }
+  if (!z || !Number.isFinite(Number(z.z)) || !Number.isFinite(Number(rank))) {
+    return { ok: false, reason: "no_signal_statistic" };
+  }
+  const minAbsZ = Number(cfg.minAbsZ ?? 2);
+  /* Short on z, not on rank. A name outside the qualifying part of the
+     cross-section is not a near miss, it is a different trade. */
+  if (Number(z.z) <= -minAbsZ) return { ok: false, reason: "signal_failed_on_rank_not_z" };
+  const floor = Number(policy.minAbsZFloor);
+  if (!Number.isFinite(floor) || !(Number(z.z) <= -floor)) {
+    return { ok: false, reason: `z_${Number(z.z).toFixed(2)}_short_of_floor_${floor}` };
+  }
+  if (Number(rank) > Number(policy.rankCeiling)) return { ok: false, reason: "rank_above_entry_ceiling" };
+  if (!quality || quality.tradable !== true) return { ok: false, reason: "execution_source_not_tradable" };
+  if (!decisionManifest || !SHA256.test(String(decisionManifest.manifestHash || ""))) {
+    return { ok: false, reason: "no_decision_manifest" };
+  }
+  if (!marketProvenance || !SHA256.test(String(marketProvenance.sourceSha256 || ""))) {
+    return { ok: false, reason: "no_market_provenance" };
+  }
+  return { ok: true, reason: "near_miss_bought_at_market",
+    zShortfall: Number((Number(z.z) + minAbsZ).toFixed(3)) };
+}
+
 function planCandidate({ symbol, evalRes, strictRes, strictUncalibratedRes, z, rank, last, cfg,
   policy, quality, advUsd, sector, historyContext, reversion, dataSufficiency, intelligence,
   cause, coverage, decisionManifest, marketProvenance, sessionCloseMs, vixNorm, session,
@@ -777,5 +829,6 @@ async function settleEntries({ accountId, operating, strategy, cfg, activity, se
 }
 
 module.exports = { PLAN_STATUSES, planId, armLevel, strikeVerdict, selectPlans, planCandidate,
+  nearMissEntryEligible,
   planPatchChangesStatus, writePlans, loadPlans, markPlan, evaluateStrikes, settleEntries,
   trustedSource };
