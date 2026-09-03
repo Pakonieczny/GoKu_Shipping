@@ -63,6 +63,19 @@ const DEFAULTS = Object.freeze({
     minClosedForObservedSd: 8,
   }),
   scoreboardLookbackTrades: 1000,
+  /* The strike tier. The deep scan arms an entry LEVEL for names that pass
+     every hazard gate but have not yet fallen far enough to fire; the
+     one-minute strike pass buys when the price reaches it. Defaults are
+     deliberately narrow: a handful of levels, none more than a few percent
+     away, struck only inside a band below the level so a collapse through
+     it is left for the next deep scan (and its evidence lane) to judge. */
+  strike: Object.freeze({
+    enabled: true,
+    maxArmedPlans: 6,
+    maxArmDropPct: 5,
+    planRankCeiling: 0.5,
+    strikeBandPct: 2.5,
+  }),
 });
 
 const COHORT_SIGNAL = "exploratory_auto_unvalidated";
@@ -81,6 +94,7 @@ function activityPolicy(strategy) {
   const raw = (strategy && strategy.exploratoryAuto && strategy.exploratoryAuto.activity) || {};
   const control = raw.controlCohort || {};
   const sel = raw.policySelection || {};
+  const strike = raw.strike || {};
   return {
     enabled: raw.enabled !== false,
     maxNewEntriesPerCycle: Math.round(clampNum(raw.maxNewEntriesPerCycle, 1, 40,
@@ -108,6 +122,13 @@ function activityPolicy(strategy) {
     },
     scoreboardLookbackTrades: Math.round(clampNum(raw.scoreboardLookbackTrades, 50, 5000,
       DEFAULTS.scoreboardLookbackTrades)),
+    strike: {
+      enabled: strike.enabled !== false,
+      maxArmedPlans: Math.round(clampNum(strike.maxArmedPlans, 0, 20, DEFAULTS.strike.maxArmedPlans)),
+      maxArmDropPct: clampNum(strike.maxArmDropPct, 0.5, 15, DEFAULTS.strike.maxArmDropPct),
+      planRankCeiling: clampNum(strike.planRankCeiling, 0.05, 0.75, DEFAULTS.strike.planRankCeiling),
+      strikeBandPct: clampNum(strike.strikeBandPct, 0.25, 10, DEFAULTS.strike.strikeBandPct),
+    },
   };
 }
 

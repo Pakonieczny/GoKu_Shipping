@@ -85,14 +85,24 @@ function closedTradeForUi(value) {
   const numeric = (n) => n !== null && n !== undefined && n !== ""
     && Number.isFinite(Number(n)) ? Number(n) : null;
   const cents = (n) => numeric(n) === null ? null : L.fromCents(numeric(n));
-  const entryPriceUsd = numeric(x.entryPriceUsd) ?? numeric(x.entryUsd)
-    ?? numeric(x.entryPrice) ?? numeric(x.fillPriceUsd) ?? cents(x.entryPriceCents);
+  const entryPriceUsd = numeric(x.entryPriceUsd) ?? numeric(x.entryFillUsd)
+    ?? numeric(x.entryUsd) ?? numeric(x.entryPrice) ?? numeric(x.fillPriceUsd)
+    ?? cents(x.entryPriceCents) ?? numeric(x.entryBarOpenUsd);
+  /* The ledger writes netRealizedCents / exitFillUsd. Reading only the older
+     aliases left every closed trade in the console with a blank P&L and no
+     sell price, which is exactly the history the operator asked to see. */
   const realisedPnlUsd = numeric(x.realisedPnlUsd) ?? numeric(x.realizedPnlUsd)
-    ?? numeric(x.netPnlUsd) ?? cents(x.netPnlCents);
-  return { ...x, entryPriceUsd, realisedPnlUsd,
+    ?? numeric(x.netPnlUsd) ?? cents(x.netPnlCents) ?? cents(x.netRealizedCents);
+  const exitPriceUsd = numeric(x.exitPriceUsd) ?? numeric(x.exitFillUsd)
+    ?? numeric(x.exitUsd) ?? cents(x.exitPriceCents);
+  return { ...x, entryPriceUsd, realisedPnlUsd, exitPriceUsd,
+    qty: numeric(x.qty),
     openedAt: isoTime(x.openedAt || x.entryAt || x.openedAtMs),
     closedAt: isoTime(x.closedAt || x.exitAt || x.closedAtMs),
-    exitReason: x.exitReason || x.reason || null };
+    exitKind: x.exitKind || null,
+    manualClose: x.manualClose === true || x.exitKind === "manual"
+      || x.closeReason === "manual_operator_sell",
+    exitReason: x.exitReason || x.closeReason || x.reason || null };
 }
 
 async function closeEntryQueue(accountId, reason, operator) {
@@ -392,6 +402,35 @@ const ACTIONS = {
     const cycleSeconds = Number(ctrl.cycleSeconds) || 300;
     const scanEligible = !operating.paused && session.tradingDay === true
       && (session.open === true || session.phase === "premarket");
+    /* Two-tier cadence as the scheduler itself sees it, so the console never
+       describes a clock the dispatcher is not actually running. */
+    const K = require("./investorKick");
+    const planMode = ctrl.planMode === "interval" ? "interval" : "scheduled";
+    const planTimesEt = K.normalizePlanTimes(ctrl.planTimesEt) || [...K.DEFAULT_PLAN_TIMES_ET];
+    const kickCtrl = { planMode, planTimesEt, lastPlanKey: ctrl.lastPlanKey || null };
+    const guardSeconds = Math.min(600, Math.max(60, Number(ctrl.guardSeconds) || 60));
+    const guardSecondsClosed = Math.min(3600, Math.max(300, Number(ctrl.guardSecondsClosed) || 900));
+    const lastGuardAtMs = Number(ctrl.lastGuardAt) || null;
+    const strikeBarTimeframe = /^(1|5)Min$/.test(String(ctrl.strikeBarTimeframe || "")) ? ctrl.strikeBarTimeframe : "1Min";
+    let plansToday = [];
+    try {
+      const planSnap = await A.col(A.COL.plans).where("accountId", "==", accountId)
+        .where("sessionDate", "==", session.date).get();
+      planSnap.forEach((d) => {
+        const p = d.data();
+        plansToday.push({ planId: p.planId, symbol: p.symbol, sector: p.sector, status: p.status,
+          armBelowUsd: p.armBelowUsd, floorUsd: p.floorUsd, refPriceUsd: p.refPriceUsd,
+          requiredDropPct: p.requiredDropPct, zAtPlan: p.zAtPlan, rankAtPlan: p.rankAtPlan,
+          lastSeenUsd: p.lastSeenUsd ?? null, lastSeenAt: p.lastSeenAt || null, distancePct: p.distancePct ?? null,
+          armedAtMs: p.armedAtMs || null, refreshedAtMs: p.refreshedAtMs || null, expiresAtMs: p.expiresAtMs || null,
+          cycleId: p.cycleId, costAtLevel: p.costAtLevel || null, causeAtPlan: p.causeAtPlan || null,
+          lastBlock: p.lastBlock || null, skipReason: p.skipReason || null, skipDetail: p.skipDetail || null,
+          struckAtMs: p.struckAtMs || null, strikePriceUsd: p.strikePriceUsd ?? null, orderId: p.orderId || null,
+          qty: p.qty ?? null, approval: p.approval || null, dataSufficiency: p.dataSufficiency || null });
+      });
+      plansToday.sort((a, b) => (a.status === "armed" ? 0 : 1) - (b.status === "armed" ? 0 : 1)
+        || (a.requiredDropPct || 0) - (b.requiredDropPct || 0));
+    } catch (e) { plansToday = []; }
     const operations = {
       state: activeWork.length ? "working"
         : operating.paused ? "paused"
@@ -433,9 +472,20 @@ const ACTIONS = {
           countsOnlyStrictCohort: true };
       })(),
       cadence: { cycleSeconds, lastCycleDispatchAtMs,
-        nextCycleDueAtMs: lastCycleDispatchAtMs
-          ? lastCycleDispatchAtMs + cycleSeconds * 1000 : nowMs,
+        nextCycleDueAtMs: planMode === "scheduled"
+          ? K.nextPlanAtMs(kickCtrl, nowMs)
+          : (lastCycleDispatchAtMs ? lastCycleDispatchAtMs + cycleSeconds * 1000 : nowMs),
+        planMode, planTimesEt, lastPlanKey: ctrl.lastPlanKey || null,
+        duePlanSlot: K.duePlanSlot(kickCtrl, session),
+        nextPlanAtMs: K.nextPlanAtMs(kickCtrl, nowMs),
+        strikeSeconds: guardSeconds, strikeSecondsClosed: guardSecondsClosed,
+        strikeBarTimeframe, lastGuardAtMs,
+        nextGuardDueAtMs: lastGuardAtMs
+          ? lastGuardAtMs + (session.open ? guardSeconds : guardSecondsClosed) * 1000 : nowMs,
         scanEligible, sessionPhase: session.phase },
+      plans: { armed: plansToday.filter((p) => p.status === "armed").length,
+        struck: plansToday.filter((p) => p.status === "struck").length,
+        today: plansToday },
     };
     return {
       ok: true,
@@ -479,12 +529,14 @@ const ACTIONS = {
         stageChangeReason: ctrl.stageChangeReason || null,
         safetyClosedReason: ctrl.safetyClosedReason || null,
         cycleSeconds: ctrl.cycleSeconds || 300,
+        planMode, planTimesEt, strikeBarTimeframe, lastPlanKey: ctrl.lastPlanKey || null,
+        guardSecondsClosed,
         paperLearning: { stored: ctrl.paperLearning || null, active: paperPreview.active,
           refused: paperPreview.refused, applied: paperPreview.applied, limits: ST.RELAX_LIMITS,
           defaults: Object.fromEntries(Object.entries(ST.RELAX_LIMITS)
             .map(([k, v]) => [k, v.dflt])) },
         exploratoryPolicy: strategy.exploratoryAuto || null,
-        guardSeconds: ctrl.guardSeconds || 60,
+        guardSeconds,
         intelligenceSymbols: IS.configuredSymbols(ctrl),
         intelligenceFocus: ctrl.intelligenceFocus || [],
         lastIntelligenceSummary: ctrl.lastIntelligenceSummary || null,
@@ -1266,7 +1318,9 @@ const ACTIONS = {
   async setControl({ patch, operator }) {
     const ALLOW = ["dryRun", "cycleSeconds", "evidenceEverySeconds",
       "operatorCeiling", "operatorHold", "afterHoursCycles", "entriesFrozen",
-      "guardSeconds", "operatingState"];
+      "guardSeconds", "operatingState",
+      /* Two-tier cadence: the deep-scan schedule and the strike pass. */
+      "planMode", "planTimesEt", "strikeBarTimeframe"];
     const MODES = ["research", "approval", "shadow", "limited_auto"];
     const clean = {}, refused = {};
     const ctrl = await ctrlDoc();
@@ -1287,14 +1341,31 @@ const ACTIONS = {
         }
         if (k === "cycleSeconds") {
           const n = Number(patch[k]);
-          if (Number.isFinite(n) && n >= 60 && n <= 3600) clean[k] = n;
-          else refused[k] = "must be between 60 and 3600 seconds";
+          if (Number.isFinite(n) && n >= 60 && n <= 86400) clean[k] = n;
+          else refused[k] = "must be between 60 and 86400 seconds";
           continue;
         }
         if (k === "guardSeconds") {
           const n = Number(patch[k]);
-          if (Number.isFinite(n) && n >= 60 && n <= 300) clean[k] = n;
-          else refused[k] = "must be between 60 and 300 seconds";
+          if (Number.isFinite(n) && n >= 60 && n <= 600) clean[k] = n;
+          else refused[k] = "must be between 60 and 600 seconds";
+          continue;
+        }
+        if (k === "planMode") {
+          if (patch[k] === "scheduled" || patch[k] === "interval") clean[k] = patch[k];
+          else refused[k] = "must be 'scheduled' (deep scans at set New York times) or 'interval' (every cycleSeconds)";
+          continue;
+        }
+        if (k === "planTimesEt") {
+          const K = require("./investorKick");
+          const times = K.normalizePlanTimes(patch[k]);
+          if (times) { clean[k] = times; if (patch.planMode === undefined) clean.planMode = "scheduled"; }
+          else refused[k] = "give one to six HH:MM New York times between 09:45 and 15:30";
+          continue;
+        }
+        if (k === "strikeBarTimeframe") {
+          if (patch[k] === "1Min" || patch[k] === "5Min") clean[k] = patch[k];
+          else refused[k] = "must be 1Min or 5Min";
           continue;
         }
         if (k === "evidenceEverySeconds") {
@@ -1603,6 +1674,155 @@ const ACTIONS = {
     const snap = await A.col(A.COL.universe).doc(ctrl.universeVersion || uMod.version || "v1").get();
     if (snap.exists) return { ok: true, universe: snap.data(), source: "firestore" };
     return { ok: true, universe: require("./_investorUniverse.js"), source: "repo" };
+  },
+
+  /* ── Manual sell ───────────────────────────────────────────────────────
+     The operator can decide, by hand, that a holding should go. That decision
+     is honoured — but it is honoured the same way every other exit is, and
+     that distinction is the whole point of this action.
+
+     What this does NOT do is sell. It records an INTENT on the position. The
+     position guard picks it up on its next pass, stamps the decision clock,
+     attaches the market provenance in force at that moment, and lets
+     M.firstEligibleBar choose the fill — the first bar that OPENS after the
+     decision plus the feed delay. So a manual sell fills at a price nobody,
+     including the operator clicking the button, could have known when they
+     clicked it. Allowing an instant fill at the last displayed price would let
+     a human trade on a 15-minute-old quote as if it were live and would make
+     every number this desk reports about itself a lie.
+
+     A manually closed trade is a real ledger fact and appears in the history,
+     but _investorLadder.strictTradeAdmissible excludes it: it is the
+     operator's judgement, not evidence about the strategy. */
+  async requestSell({ symbol, note, operator }) {
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
+    const sym = String(symbol || "").trim().toUpperCase();
+    if (!/^[A-Z][A-Z.\-]{0,9}$/.test(sym)) {
+      return { ok: false, refused: "not a symbol this desk can act on" };
+    }
+    const ref = A.col(A.COL.positions).doc(`${accountId}_${sym}`);
+    const snap = await ref.get();
+    if (!snap.exists || snap.data().open !== true) {
+      return { ok: false, refused: `nothing open in ${sym}` };
+    }
+    const p = snap.data();
+    if (p.corporateActionPending) {
+      return { ok: false, refused: `${sym} is held for corporate-action reconciliation`
+        + " — its price basis is not trustworthy until that is resolved" };
+    }
+    const existingIntent = p.exitIntent && Number(p.exitIntent.decisionAtMs) > 0
+      ? p.exitIntent : null;
+    const already = p.manualExitRequest && p.manualExitRequest.status === "requested";
+    const request = already ? p.manualExitRequest : {
+      status: "requested", requestedAtMs: Date.now(),
+      requestedAt: new Date().toISOString(),
+      operator: operator || "operator",
+      note: note ? String(note).slice(0, 200) : null,
+      markAtRequestUsd: Number(p.lastMarkUsd) || null,
+      entryPriceUsd: Number(p.entryPriceUsd != null ? p.entryPriceUsd : p.avgPrice) || null,
+      qty: Number(p.qty) || null,
+      armedAtMs: null, eligibleAfterMs: null, blockedReason: null };
+    if (!already) {
+      await ref.set({ manualExitRequest: request,
+        updated_at: A.FV.serverTimestamp() }, { merge: true });
+      await A.col(A.COL.audit).add({ action: "manual_sell_requested", symbol: sym,
+        accountId, operator: operator || "operator",
+        note: request.note, markUsd: request.markAtRequestUsd,
+        at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "investorApi" }) });
+    }
+
+    /* Nudge the guard so the request is acted on in seconds rather than
+       waiting out the cadence. Best effort — the scheduled guard is the
+       guarantee, this is only the courtesy. */
+    let nudged = false;
+    try {
+      const operating = STATE.describe(ctrl);
+      if (!operating.paused) {
+        const K = require("./investorKick");
+        const session = M.sessionState(new Date());
+        const r = await K.dispatch("guard", { ...ctrl, enabled: true,
+          mode: operating.stage, dryRun: !operating.paperLedger, killSwitch: false,
+          accountId, cycleSeconds: Number(ctrl.cycleSeconds) || 300,
+          guardSeconds: Number(ctrl.guardSeconds) || 60,
+          guardSecondsClosed: Number(ctrl.guardSecondsClosed) || 900,
+          evidenceEverySeconds: Number(ctrl.evidenceEverySeconds) || 900,
+        }, session, { manual: true });
+        nudged = !!(r && r.jobId);
+      }
+    } catch { /* the scheduled guard will pick it up */ }
+
+    const session = M.sessionState(new Date());
+    const delay = M.providerConfig(M.activeProvider().id).delayMinutes;
+    return { ok: true, symbol: sym, request,
+      alreadyRequested: already, nudged,
+      existingExitArmed: !!existingIntent,
+      existingExitReason: existingIntent ? existingIntent.reason || null : null,
+      marketOpen: session.open === true,
+      note: existingIntent
+        ? `${sym} was already on its way out (${existingIntent.reason || "exit armed"}).`
+          + " Your request is recorded; the armed exit fills first."
+        : session.open === true
+          ? `Sell recorded for ${sym}. The desk arms the exit on its next protection`
+            + ` pass and fills it on the first price bar that opens after that —`
+            + ` about ${delay + 5}–${delay + 20} minutes on this ${delay}-minute feed.`
+            + " A paper fill is never taken at a price already on your screen."
+          : `Sell recorded for ${sym}. The exchange is shut, so it arms now and`
+            + " fills on the first eligible bar after the next open." };
+  },
+
+  /* Withdraw a manual sell that has not yet been armed. Once the guard has
+     armed the exit the decision clock is running and the intent is immutable —
+     un-arming it would let an operator cancel a decision after seeing the
+     price it would have filled at, which is the same look-ahead the fill rule
+     exists to prevent. */
+  async cancelSell({ symbol, operator }) {
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
+    const sym = String(symbol || "").trim().toUpperCase();
+    const ref = A.col(A.COL.positions).doc(`${accountId}_${sym}`);
+    const snap = await ref.get();
+    if (!snap.exists) return { ok: false, refused: `nothing open in ${sym}` };
+    const p = snap.data();
+    if (p.exitIntent && Number(p.exitIntent.decisionAtMs) > 0) {
+      return { ok: false, refused: `the exit for ${sym} is already armed and its`
+        + " decision clock is running — it cannot be withdrawn" };
+    }
+    if (!p.manualExitRequest || p.manualExitRequest.status !== "requested") {
+      return { ok: true, noop: true, symbol: sym, note: `no pending sell request for ${sym}` };
+    }
+    await ref.set({ manualExitRequest: A.FV.delete(),
+      updated_at: A.FV.serverTimestamp() }, { merge: true });
+    await A.col(A.COL.audit).add({ action: "manual_sell_cancelled", symbol: sym,
+      accountId, operator: operator || "operator", at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, symbol: sym, note: `Sell request for ${sym} withdrawn.` };
+  },
+
+  /* Withdraw an armed entry level. The level is a plan, not an order — no
+     cash is reserved and nothing has been decided — so cancelling it costs
+     nothing and is recorded so the next deep scan does not re-arm the name
+     today. A level already struck has become an order and is handled there. */
+  async cancelPlan({ symbol, operator }) {
+    const ctrl = await ctrlDoc();
+    const accountId = ctrl.accountId || "paper-1";
+    const sym = String(symbol || "").trim().toUpperCase();
+    if (!SYMBOL.test(sym)) return { ok: false, refused: "not a symbol this desk can act on" };
+    const session = M.sessionState(new Date());
+    const ST = require("./_investorStrike");
+    const ref = A.col(A.COL.plans).doc(ST.planId(accountId, session.date, sym));
+    const snap = await ref.get();
+    if (!snap.exists) return { ok: false, refused: `no armed level for ${sym} today` };
+    const p = snap.data();
+    if (p.status !== "armed") return { ok: true, noop: true, symbol: sym, status: p.status,
+      note: `the level for ${sym} is already ${p.status}` };
+    await ref.set({ status: "cancelled", cancelledAtMs: Date.now(), cancelledBy: operator || "operator",
+      updated_at: A.FV.serverTimestamp() }, { merge: true });
+    await A.col(A.COL.audit).add({ action: "entry_plan_cancelled", symbol: sym, accountId,
+      operator: operator || "operator", armBelowUsd: p.armBelowUsd, at: A.FV.serverTimestamp(),
+      ...A.envelope({ created_by: "investorApi" }) });
+    return { ok: true, symbol: sym, status: "cancelled",
+      note: `Armed level for ${sym} withdrawn. It will not be re-armed today.` };
   },
 
   /* Start a cycle now.
@@ -1994,6 +2214,9 @@ exports.handler = async (event) => {
 };
 
 exports.ACTIONS = ACTIONS;
+/* Exported for the runtime fixtures: the console's whole history view is
+   this projection, so it is tested against real ledger field names. */
+exports.closedTradeForUi = closedTradeForUi;
 /* Not an HTTP action. Exposed only so the deployed runtime attestation can
    inspect the exact queue-draining implementation after esbuild bundling,
    without assuming the original source file still exists on disk. */

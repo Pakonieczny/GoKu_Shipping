@@ -167,6 +167,47 @@
 .live.off i{background:var(--ink-25);animation:none}
 @keyframes livepulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media(max-width:1000px){.hero{grid-template-columns:1fr 1fr}.hero__main{grid-column:1/-1}}
+/* ── hero focus: a heading is a filter ── */
+.hero__tile,.hero__main{position:relative}
+button.hero__tile,button.hero__main{font:inherit;text-align:left;width:100%;cursor:pointer;
+  border:1px solid var(--line);transition:border-color .12s ease,transform .12s ease,box-shadow .12s ease}
+button.hero__main{border-color:transparent}
+button.hero__tile:hover{border-color:var(--gold-line);transform:translateY(-1px)}
+button.hero__main:hover{transform:translateY(-1px)}
+button.hero__tile:focus-visible,button.hero__main:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+button.hero__tile.sel{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold-soft,rgba(176,141,63,.18))}
+button.hero__main.sel{box-shadow:0 0 0 2px var(--gold)}
+.hero__f{position:absolute;top:10px;right:12px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-25);font-family:var(--mono)}
+button.hero__tile:hover .hero__f,button.hero__tile.sel .hero__f{color:var(--gold)}
+button.hero__main .hero__f{color:rgba(240,235,225,.4)}
+.focusbar[hidden],.subchips[hidden]{display:none!important}
+.focusbar{display:flex;align-items:center;gap:12px;background:var(--paper-2);border:1px solid var(--gold-line);
+  border-radius:var(--r);padding:9px 14px;margin-bottom:16px}
+.focusbar__t{font-size:13px;color:var(--ink-70);flex:1}
+.focusbar__t b{color:var(--ink)}
+.focusbar__x{font:inherit;font-size:12px;background:none;border:1px solid var(--line);border-radius:999px;
+  padding:4px 12px;cursor:pointer;color:var(--ink-70)}
+.focusbar__x:hover{border-color:var(--gold-line);color:var(--ink)}
+.subchips{display:flex;gap:6px;margin:0 0 12px}
+.subchips button{font:inherit;font-size:11.5px;background:none;border:1px solid var(--line);border-radius:999px;
+  padding:4px 12px;cursor:pointer;color:var(--ink-45)}
+.subchips button:hover{border-color:var(--gold-line);color:var(--ink-70)}
+.subchips button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+/* ── sell control on a held row ── */
+.sellbtn{font:inherit;font-size:11.5px;font-family:var(--sans);background:none;border:1px solid var(--line);
+  border-radius:999px;padding:4px 13px;cursor:pointer;color:var(--ink-70);white-space:nowrap}
+.sellbtn:hover{border-color:var(--clay);color:var(--clay);background:var(--paper-2)}
+.sellbtn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.sellbtn[disabled]{opacity:.5;cursor:default}
+.sellbtn.armed{border-color:var(--gold-line);color:var(--gold);cursor:default}
+.sellstate{font-family:var(--sans);font-size:11px;color:var(--ink-45);display:block;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;margin-left:auto}
+.ptable td.act{text-align:right;font-family:var(--sans)}
+.ptable td.whyx{font-family:var(--sans);font-size:12px;color:var(--ink-70);white-space:normal;text-align:left;line-height:1.45;min-width:230px}
+.whyx .kd{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  border:1px solid var(--line);border-radius:4px;padding:1px 6px;margin-right:7px;color:var(--ink-45)}
+.whyx .kd.bad{border-color:var(--clay);color:var(--clay)}
+.whyx .kd.good{border-color:var(--sage);color:var(--sage)}
 /* ── positions / orders tables ── */
 .ptable{width:100%;border-collapse:collapse;font-size:13px}
 .ptable th{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-45);font-weight:600;text-align:right;padding:6px 10px;border-bottom:1px solid var(--line)}
@@ -552,10 +593,20 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <section class="view on" id="v-today">
         <div class="hero" id="hero"></div>
 
-        <div class="card pad" style="margin-bottom:16px">
+        <div class="focusbar" id="focusBar" hidden>
+          <span class="focusbar__t" id="focusBarText"></span>
+          <button class="focusbar__x" id="focusClear" type="button">Show everything</button>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px" id="todayHeldCard">
           <div class="card__h">
             <h3>What you own</h3>
             <span class="sub" id="todayHeldSub">nothing yet</span>
+          </div>
+          <div class="subchips" id="heldChips" hidden>
+            <button data-sub="all" class="on" type="button">All</button>
+            <button data-sub="win" type="button">Winning</button>
+            <button data-sub="lose" type="button">Losing</button>
           </div>
           <div id="todayHeld"></div>
         </div>
@@ -568,6 +619,32 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           <div id="todayPending"></div>
           <details class="fine" id="todayPendingWhy"><summary>Why is there a wait?</summary>
             <div id="todayPendingNote"></div></details>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px" id="todayPlansCard" hidden>
+          <div class="card__h">
+            <h3>Armed entry levels</h3>
+            <span class="sub" id="todayPlansSub"></span>
+          </div>
+          <div id="todayPlans"></div>
+          <details class="fine"><summary>What is an armed level?</summary>
+            <div>The deep scan found these companies pass every safety check — trend, liquidity, earnings timing, company news, trading volume — but have not yet fallen far enough, relative to the market and their sector, to be bought. For each it wrote down the price at which they would qualify, assuming the market and sector stay put. The strike pass checks those prices every minute and buys on the first print at or below the level, inside a band beneath it. A price that crashes straight through the band is not chased: a fall that size usually means news, which only the deep scan's evidence check can judge. Levels expire before the close and are re-derived by every deep scan.</div></details>
+        </div>
+
+        <div class="card pad" style="margin-bottom:16px" id="todayHistoryCard">
+          <div class="card__h">
+            <h3>What was bought and sold</h3>
+            <span class="sub" id="todayHistSub"></span>
+          </div>
+          <div class="subchips" id="histChips">
+            <button data-sub="all" class="on" type="button">All</button>
+            <button data-sub="win" type="button">Made money</button>
+            <button data-sub="lose" type="button">Lost money</button>
+            <button data-sub="manual" type="button">Sold by hand</button>
+          </div>
+          <div id="todayHistory"></div>
+          <details class="fine" id="todayHistWhy"><summary>Why does it often sell below what it paid?</summary>
+            <div id="todayHistNote"></div></details>
         </div>
 
         <div class="chartbox" style="margin-bottom:16px" id="navCard">
@@ -605,7 +682,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
 
         <div class="simplegrid" id="todayStats" hidden></div>
 
-        <div class="card pad" style="margin-bottom:16px">
+        <div class="card pad" style="margin-bottom:16px" id="todayWatchCard">
           <div class="card__h">
             <h3>What it is looking at</h3>
             <span class="sub" id="todayWatchSub">this cycle</span>
@@ -618,7 +695,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
           <div id="todayWatch"></div>
         </div>
 
-        <div class="card pad">
+        <div class="card pad" id="todayBlocksCard">
           <div class="card__h"><h3>Why nothing was bought</h3><span class="sub">plain reasons</span></div>
           <div id="todayBlocks"></div>
         </div>
@@ -749,12 +826,15 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
       <!-- ─── POSITIONS ─── -->
       <section class="view" id="v-positions">
         <div class="note">
-          Exits are evaluated on every guard cycle, including while entries are killed or paused.
-          Rank exits require a current cross-section; otherwise only price, earnings, or time controls
-          may close the position. A missing rank is shown as unknown rather than silently treated as zero.
+          Exits are evaluated on every strike pass — each minute while the market is open — including
+          while entries are killed or paused. The preset levels column shows the dollar stop, trailing stop
+          and target the pass is watching for. Rank exits require a current cross-section from the last deep
+          scan; otherwise only price, earnings, or time controls may close the position. A missing rank is
+          shown as unknown rather than silently treated as zero.
         </div>
         <div class="card pad"><div class="scrollcap"><table id="tPos"><thead><tr>
           <th>Symbol</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Last</th>
+          <th>Preset levels</th>
           <th class="num">Held</th><th class="num">Rank</th><th>Exit progress</th>
         </tr></thead><tbody></tbody></table></div></div>
       </section>
@@ -961,11 +1041,22 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <span class="hint">ON means observation-only. OFF enables the simulated paper ledger; this app has no real-money order path.</span>
           </div>
           <div class="ctrlrow">
-            <span class="lab">Cycle interval</span>
-            <input class="inp mono" id="inpCycle" type="number" min="60" max="3600" step="60" style="max-width:120px">
-            <span style="font-size:12px;color:var(--ink-45)">seconds</span>
-            <button class="btn sm" id="btnCycle">Set</button>
-            <span class="hint">Netlify documents no minimum cron interval and sub-hourly schedules are known to drift, so nothing assumes an exact fire count.</span>
+            <span class="lab">Deep scans (ET)</span>
+            <input class="inp mono" id="inpPlanTimes" type="text" placeholder="09:50, 13:00" style="max-width:180px">
+            <button class="btn sm" id="btnPlanTimes">Set</button>
+            <span class="hint">New York times for the full analysis — roster ranking, evidence, model calls, portfolio selection — which also writes the preset exit levels and the armed entry levels the strike pass acts on. One to six times between 09:45 and 15:30; two a day is the intended cadence. The immutable daily finalization still runs after the close, and “Run a scan now” is always available.</span>
+          </div>
+          <div class="ctrlrow">
+            <span class="lab">Strike pass</span>
+            <span style="font-size:12px;color:var(--ink-45)">every</span>
+            <input class="inp mono" id="inpGuard" type="number" min="60" max="600" step="30" style="max-width:96px">
+            <span style="font-size:12px;color:var(--ink-45)">s on</span>
+            <select class="inp mono" id="selStrikeBars" style="max-width:110px">
+              <option value="1Min">1-minute bars</option>
+              <option value="5Min">5-minute bars</option>
+            </select>
+            <button class="btn sm" id="btnStrike">Set</button>
+            <span class="hint">The fast tier. It prices only held, planned and pending companies, checks stops and targets, strikes armed entry levels and fills approved orders on their first eligible bar. It never ranks the roster or calls a model, so every minute is affordable. The dispatcher runs every minute; sub-minute settings are not possible on Netlify cron.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Entry freeze</span>
@@ -1388,7 +1479,9 @@ function render(){
   $("#safetyState").className = "badge2 "+(c.safetyEpochValid?"b-on":"b-bad");
   $("#dryState").textContent = c.dryRun?"ON":"OFF";
   $("#dryState").className = "badge2 "+(c.dryRun?"b-warn":"b-on");
-  if(!$("#inpCycle").matches(":focus")) $("#inpCycle").value = c.cycleSeconds||300;
+  if(!$("#inpPlanTimes").matches(":focus")) $("#inpPlanTimes").value = (c.planTimesEt||["09:50","13:00"]).join(", ");
+  if(!$("#inpGuard").matches(":focus")) $("#inpGuard").value = c.guardSeconds||60;
+  if(!$("#selStrikeBars").matches(":focus")) $("#selStrikeBars").value = c.strikeBarTimeframe||"1Min";
   var r=DASH.regime||{};
   if(!$("#inpVix").matches(":focus") && r.vix) $("#inpVix").value=r.vix;
   if(!$("#inpVixMed").matches(":focus") && r.vixMedian) $("#inpVixMed").value=r.vixMedian;
@@ -2052,9 +2145,21 @@ function loadCandidateDetail(c){
   });
 }
 
+/* The preset exit levels the strike pass watches, as the position document
+   carries them (written by the deep scan and refreshed every pass). */
+function levelsText(lv){
+  if(!lv||!(Number(lv.stopUsd)>0)) return '<span class="muted">not computed yet</span>';
+  var bits=['stop '+money(lv.stopUsd,2)];
+  if(lv.trailArmed&&Number(lv.trailStopUsd)>0) bits.push('trailing stop '+money(lv.trailStopUsd,2));
+  else bits.push('trail arms at '+money(lv.trailArmUsd,2));
+  if(Number(lv.targetUsd)>0) bits.push('target '+money(lv.targetUsd,2));
+  if(lv.sessionsLeft!=null) bits.push(num(lv.sessionsLeft,1)+' sessions left');
+  if(lv.earningsInDays!=null&&lv.earningsInDays<=(lv.exitBeforeEarningsDays!=null?lv.exitBeforeEarningsDays:2)+1) bits.push('earnings in '+num(lv.earningsInDays,0)+'d');
+  return bits.join(' · ');
+}
 function renderPositions(pos, cands){
   var tb=$("#tPos tbody"); tb.innerHTML="";
-  if(!pos.length){ tb.innerHTML='<tr><td colspan="7" class="empty">No open positions.</td></tr>'; return; }
+  if(!pos.length){ tb.innerHTML='<tr><td colspan="8" class="empty">No open positions.</td></tr>'; return; }
   var byS={}; cands.forEach(function(c){ byS[c.symbol]=c; });
   pos.forEach(function(p){
     var c=byS[p.symbol]||{};
@@ -2068,6 +2173,7 @@ function renderPositions(pos, cands){
       '<td class="num">'+(p.qty||0)+'</td>'+
       '<td class="num">'+num(p.entryPriceUsd,2)+'</td>'+
       '<td class="num">'+num(mark,2)+'</td>'+
+      '<td style="font-size:11.5px;color:var(--ink-70)">'+levelsText(p.exitLevels)+'</td>'+
       '<td class="num">'+(held!=null?num(held,0)+' sessions':'—')+'</td>'+
       '<td class="num">'+(hasRank?num(rank,3):'<span class="badge2 b-warn">unknown</span>')+'</td>'+
       '<td style="min-width:150px">'+(hasRank
@@ -2558,9 +2664,15 @@ $("#btnIntelWatch").addEventListener("click",function(){
 $("#btnDry").addEventListener("click",function(){
   runButton(this,"setControl",{patch:{dryRun:!(DASH.control||{}).dryRun}},function(r){
     toast("Dry run "+(r.patched.dryRun?"ON":"OFF")); refresh(false); }); });
-$("#btnCycle").addEventListener("click",function(){
-  runButton(this,"setControl",{patch:{cycleSeconds:Number($("#inpCycle").value)}},function(r){
-    toast("Cycle interval "+r.patched.cycleSeconds+"s"); refresh(false); }); });
+$("#btnPlanTimes").addEventListener("click",function(){
+  var times=$("#inpPlanTimes").value.split(/[\s,;]+/).map(function(x){return x.trim();}).filter(Boolean);
+  runButton(this,"setControl",{patch:{planTimesEt:times,planMode:"scheduled"}},function(r){
+    var refused=r&&r.refused&&r.refused.planTimesEt;
+    toast(refused?("Not saved: "+refused):("Deep scans at "+(r.patched.planTimesEt||[]).join(", ")+" ET")); refresh(false); }); });
+$("#btnStrike").addEventListener("click",function(){
+  runButton(this,"setControl",{patch:{guardSeconds:Number($("#inpGuard").value),strikeBarTimeframe:$("#selStrikeBars").value}},function(r){
+    var refused=r&&r.refused&&(r.refused.guardSeconds||r.refused.strikeBarTimeframe);
+    toast(refused?("Not saved: "+refused):("Strike pass every "+r.patched.guardSeconds+"s on "+r.patched.strikeBarTimeframe+" bars")); refresh(false); }); });
 $("#btnCeil").addEventListener("click",function(){
   var value=$("#ceilSel").value;
   runButton(this,"setControl",{patch:{operatorCeiling:value}},function(){
@@ -2642,9 +2754,9 @@ function eagerNow(){
   var st=plNow(); if(st.enabled!==true) return "careful";
   return nearest(EAGER,"costMarginMultiple", st.costMarginMultiple!=null?st.costMarginMultiple:2);
 }
-var SIZE={small:{t:"Small",positionScale:1,c:"Positions of a few hundred dollars. Outcomes are measured in basis points; dollars are noise at this size."},
-  medium:{t:"Medium",positionScale:3,c:"About three times the small size, still under the 5% per-position cap."},
-  large:{t:"Large",positionScale:5,c:"Up to the 5% per-position cap on most names. The book can reach full investment in about 20 positions."}};
+var SIZE={small:{t:"Small",positionScale:1,c:"Risk-sized positions well under the 12% per-position cap. Outcomes are measured in basis points; dollars are noise at this size."},
+  medium:{t:"Medium",positionScale:3,c:"About three times the small size, still under the 12% per-position cap."},
+  large:{t:"Large",positionScale:5,c:"Up to the 12% per-position cap on most names. The book holds at most 8 positions, so it can reach full investment in eight."}};
 function sizeNow(){ var st=plNow(); return nearest(SIZE,"positionScale", st.positionScale!=null?st.positionScale:1); }
 function holdNow(){
   var st=plNow(); return nearest(HOLD,"maxHoldDays", st.maxHoldDays!=null?st.maxHoldDays:10);
@@ -2856,12 +2968,21 @@ function renderOperationsConsole(){
       +(lastCycle?'<div class="opsmeta" style="margin-top:10px"><b>Last scan</b><span>'+esc(timeAgo(lastCycle.updatedAtMs||lastCycle.startedAtMs))+'</span></div>'+renderPipeline(lastCycle.live,null):'')+'</div>';
   }
   var nextText;
-  if(ops.state==="paused") nextText="Automatic new-entry scans remain paused until you start the desk.";
-  else if(!cad.scanEligible) nextText="Next new-price scan: waiting for an eligible market session; scheduled research and exit protection remain separate.";
+  var strikeText=(session.open?"Strike pass every "+(cad.strikeSeconds||60)+"s on "+(cad.strikeBarTimeframe||"1Min")+" bars: stops, targets, armed entry levels and fills.":
+    "Holding protection every "+Math.round((cad.strikeSecondsClosed||900)/60)+" min while the exchange is shut.");
+  var planText=cad.planMode==="scheduled"?("Deep scans at "+(cad.planTimesEt||[]).join(", ")+" ET"):("Deep scan every "+durationText(cad.cycleSeconds||300));
+  if(ops.state==="paused") nextText="Deep scans remain paused until you start the desk. "+strikeText;
+  else if(cad.planMode==="scheduled"){
+    var nextPlan=Number(cad.nextPlanAtMs)||null, dueSlot=cad.duePlanSlot||null;
+    nextText=planText+(dueSlot?" — the "+dueSlot.time+" scan is due now; the one-minute dispatcher claims it within about a minute."
+      :(nextPlan?" — next in about "+durationText(Math.max(0,(nextPlan-Date.now())/1000))+" ("+new Date(nextPlan).toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"})+").":"."))
+      +" "+strikeText;
+  }
+  else if(!cad.scanEligible) nextText=planText+" — waiting for an eligible market session. "+strikeText;
   else{
     var due=(Number(cad.nextCycleDueAtMs)-Date.now())/1000;
-    nextText=due<=0?"Next automatic opportunity scan is due now; the one-minute dispatcher may take roughly a minute to claim it."
-      :"Next automatic opportunity scan in about "+durationText(due)+". Netlify scheduling can drift, so this is an estimate.";
+    nextText=(due<=0?"Next deep scan is due now; the one-minute dispatcher may take roughly a minute to claim it."
+      :"Next deep scan in about "+durationText(due)+".")+" "+strikeText;
   }
 
   var scan=ops.scan||{completed:0,total:DASH.candidateExpected||0,ranked:DASH.candidateTotal||0,pct:0},
@@ -3052,7 +3173,9 @@ function renderToday(){
       .finally(function(){b.disabled=false;});
   };
 
-  renderOperationsConsole(); renderHero(); renderTodayHeld(); renderTodayPending(); renderTodayWatch(); renderTodayBlocks(); loadNavSeries(false);
+  renderOperationsConsole(); renderHero(); renderTodayHeld(); renderTodayPending();
+  try { renderTodayPlans(); } catch(e){ console.error("plans", e); }
+  renderTodayHistory(); applyFocus(); renderTodayWatch(); renderTodayBlocks(); loadNavSeries(false);
   if(!LIVEQ.timer) pollQuotes();
 }
 
@@ -3246,7 +3369,7 @@ function tradeCard(o){
       +'</div>';
   } else {
     var elig=Number(o.fillEligibleAfterMs)||null, exp=Number(o.expiresAtMs)||null, reserved=((Number(o.grossCents)||0)+(Number(o.frictionCents)||0)+(Number(o.reservationHeadroomCents)||0))/100;
-    var when=o.status==="approved"?(elig?(elig>now?new Date(elig).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})+' (in '+durationText((elig-now)/1000)+')':'now — next 5-min bar'):'approved'):'awaiting approval';
+    var when=o.status==="approved"?(elig?(elig>now?new Date(elig).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})+' (in '+durationText((elig-now)/1000)+')':'now — next eligible bar'):'approved'):'awaiting approval';
     grid='<div class="trade__grid">'
       +'<div><div class="trade__k">Status</div><div class="trade__v"><span class="badge2 '+(o.status==="approved"?"b-on":"b-warn")+'">'+esc(o.status)+'</span></div></div>'
       +'<div><div class="trade__k">Reserved</div><div class="trade__v">'+(o.status==="approved"?money(reserved,2):'—')+'</div></div>'
@@ -3257,7 +3380,7 @@ function tradeCard(o){
   }
   return '<button class="trade" data-sym="'+esc(sym)+'">'+head+grid
     +'<div class="trade__why">'+tradeWhy(sym,o)+'</div>'
-    +'<div class="trade__plan">Plan: '+(isPos?'':'fills on the first 5-minute bar after it is fillable; then ')+esc(exitPlanText())+'.</div></button>';
+    +'<div class="trade__plan">Plan: '+(isPos?'':'fills on the first eligible bar the strike pass sees; then ')+esc(exitPlanText())+(isPos&&o.exitLevels&&Number(o.exitLevels.stopUsd)>0?' — '+levelsText(o.exitLevels).replace(/<[^>]+>/g,""):'')+'.</div></button>';
 }
 
 /* ══ LIVE QUOTES (display only) ═════════════════════════════════════════════
@@ -3281,7 +3404,7 @@ function pollQuotes(){
     api("quotes",{symbols:syms}).then(function(r){
       if(r&&r.ok){ Object.assign(LIVEQ.quotes,r.quotes||{}); LIVEQ.asOf=r.asOf||new Date().toISOString(); LIVEQ.feed=r.feed; LIVEQ.error=null; }
       else LIVEQ.error=(r&&r.error)||"quote feed unavailable";
-      renderHero(); renderTodayHeld(); renderTodayPending(); if(NAVC.series) drawNavChart();
+      renderHero(); renderTodayHeld(); renderTodayPending(); try{renderTodayPlans();}catch(e){} if(NAVC.series&&!FOCUS) drawNavChart();
     }).catch(function(e){ LIVEQ.error=e.message; }).finally(function(){ LIVEQ.timer=setTimeout(pollQuotes,5000); });
   } else LIVEQ.timer=setTimeout(pollQuotes,15000);
 }
@@ -3311,6 +3434,54 @@ function bookNow(){
   return {rows:rows,cash:cash,reserved:reserved,invested:invested,cost:cost,unr:unr,win:win,los:los,nav:nav,start:start,realised:realised,anyLive:anyLive,dayStart:dayStart,
     pending:(DASH.orders||[]).filter(function(o){return o.status==="approved"||o.status==="proposed";})};
 }
+/* ── focus: a hero heading is a filter over everything below it ──────────
+   The operator asked to click a number and see only what produced it. Each
+   focus names the cards that belong to that number; nothing else is a
+   different page, it is the same page with the irrelevant parts folded away. */
+var FOCUS=null, HELDSUB="all", HISTSUB="all";
+var FOCUS_DEF={
+  today:{cards:["held","pending","hist"], histToday:true,
+    t:'<b>Today</b> — everything that moved your account value today: what you own, what is on the way, and anything sold today.'},
+  since:{cards:["held","hist"],
+    t:'<b>Since you started</b> — every position you hold now plus every trade already bought and sold.'},
+  open:{cards:["held"],
+    t:'<b>Open gain / loss</b> — only the companies you own right now. These numbers move while the market is open.'},
+  closed:{cards:["hist"],
+    t:'<b>Closed gain / loss</b> — only trades that are finished: bought, sold, and settled. This money is banked.'},
+  cash:{cards:["pending"],
+    t:'<b>Cash</b> — money not in the market. Anything reserved is held against the orders below until they fill or expire.'}
+};
+function focusHas(card){ var d=FOCUS?FOCUS_DEF[FOCUS]:null; return !d || d.cards.indexOf(card)>=0; }
+function setFocus(k){
+  FOCUS = (FOCUS===k) ? null : k;
+  if(FOCUS!=="open") HELDSUB="all";
+  if(FOCUS!=="closed"&&FOCUS!=="since") HISTSUB="all";
+  renderHero(); applyFocus();
+  var host=$(FOCUS==="cash"?"#todayPendingCard":FOCUS==="closed"?"#todayHistoryCard":"#todayHeldCard");
+  if(FOCUS&&host&&host.scrollIntoView) host.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+function applyFocus(){
+  var d=FOCUS?FOCUS_DEF[FOCUS]:null, bar=$("#focusBar");
+  if(bar){ bar.hidden=!d; if(d) $("#focusBarText").innerHTML=d.t; }
+  var show=function(id,on){ var e=$(id); if(e) e.hidden=!on; };
+  show("#todayHeldCard", focusHas("held"));
+  show("#todayHistoryCard", focusHas("hist"));
+  show("#navCard", !d);
+  /* Research cards describe the scan, not any one hero number — a focus is a
+     promise that only related things are on screen, so they fold away. */
+  show("#todayWatchCard", !d);
+  show("#todayBlocksCard", !d);
+  show("#heldChips", FOCUS==="open");
+  renderTodayHeld(); renderTodayPending(); try{renderTodayPlans();}catch(e){} renderTodayHistory();
+}
+function bindSubChips(sel, get, set){
+  $$(sel+" button").forEach(function(b){
+    b.classList.toggle("on", get()===b.dataset.sub);
+    b.onclick=function(){ set(b.dataset.sub); $$(sel+" button").forEach(function(x){
+      x.classList.toggle("on", x===b); }); };
+  });
+}
+
 function sgnMoney(x){ return (x>0?'+':(x<0?'−':''))+money(Math.abs(x),2); }
 function sgnPct(x){ return (x>0?'+':(x<0?'−':''))+num(Math.abs(x),2)+'%'; }
 function renderHero(){
@@ -3321,31 +3492,52 @@ function renderHero(){
   var open=marketOpenNow();
   var asOf=k.anyLive&&LIVEQ.asOf?new Date(LIVEQ.asOf).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}):(DASH.navLive&&DASH.navLive.lastMarkAt?new Date(DASH.navLive.lastMarkAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"—");
   var liveTag='<span class="live'+(k.anyLive?'':' off')+'"><i></i>'+(k.anyLive?'live · '+esc(asOf):(open?'delayed marks · '+esc(asOf):'market closed · last '+esc(asOf)))+'</span>';
+  var sel=function(f){ return FOCUS===f?' sel':''; };
+  var hist=closedRows();
   host.innerHTML=
-    '<div class="hero__main"><div><div class="hero__k">Account worth now</div><div class="hero__v">'+money(k.nav,2)+'</div>'
+    '<button type="button" class="hero__main'+sel("today")+'" data-focus="today"><div><div class="hero__k">Account worth now</div><div class="hero__v">'+money(k.nav,2)+'</div>'
     +(today!=null?'<div class="hero__chg '+(today>=0?'up':'down')+'">'+sgnMoney(today)+' ('+sgnPct(todayPct)+') today</div>':'<div class="hero__chg">first session — no day baseline yet</div>')
-    +'</div><div class="hero__sub">'+liveTag+(k.start!=null?' · started with '+money(k.start,0):'')+'</div></div>'
-    +'<div class="hero__tile '+(since>0?'up':since<0?'down':'')+'"><div class="k">Since start</div><div class="v">'+(since!=null?sgnMoney(since):'—')+'</div><div class="d">'+(sincePct!=null?sgnPct(sincePct)+' on '+money(k.start,0):'')+'</div></div>'
-    +'<div class="hero__tile '+(k.unr>0?'up':k.unr<0?'down':'')+'"><div class="k">Open gain / loss</div><div class="v">'+sgnMoney(k.unr)+'</div><div class="d">'+k.rows.length+' position'+(k.rows.length===1?'':'s')+' · '+sgnMoney(k.win)+' winning, '+sgnMoney(k.los)+' losing</div></div>'
-    +'<div class="hero__tile '+(k.realised>0?'up':k.realised<0?'down':'')+'"><div class="k">Closed gain / loss</div><div class="v">'+sgnMoney(k.realised)+'</div><div class="d">after trading costs</div></div>'
-    +'<div class="hero__tile"><div class="k">Cash</div><div class="v">'+money(k.cash,0)+'</div><div class="d">'+money(k.invested,0)+' invested'+(k.reserved?' · '+money(k.reserved,0)+' reserved for '+k.pending.length+' order'+(k.pending.length===1?'':'s'):'')+'</div></div>';
+    +'</div><div class="hero__sub">'+liveTag+(k.start!=null?' · started with '+money(k.start,0):'')+'</div><span class="hero__f">'+(FOCUS==="today"?'showing':'filter')+'</span></button>'
+    +'<button type="button" class="hero__tile '+(since>0?'up':since<0?'down':'')+sel("since")+'" data-focus="since"><div class="k">Since start</div><div class="v">'+(since!=null?sgnMoney(since):'—')+'</div><div class="d">'+(sincePct!=null?sgnPct(sincePct)+' on '+money(k.start,0):'')+'</div><span class="hero__f">'+(FOCUS==="since"?'showing':'filter')+'</span></button>'
+    +'<button type="button" class="hero__tile '+(k.unr>0?'up':k.unr<0?'down':'')+sel("open")+'" data-focus="open"><div class="k">Open gain / loss</div><div class="v">'+sgnMoney(k.unr)+'</div><div class="d">'+k.rows.length+' position'+(k.rows.length===1?'':'s')+' · '+sgnMoney(k.win)+' winning, '+sgnMoney(k.los)+' losing</div><span class="hero__f">'+(FOCUS==="open"?'showing':'filter')+'</span></button>'
+    +'<button type="button" class="hero__tile '+(k.realised>0?'up':k.realised<0?'down':'')+sel("closed")+'" data-focus="closed"><div class="k">Closed gain / loss</div><div class="v">'+sgnMoney(k.realised)+'</div><div class="d">'+(hist.length?plural(hist.length,"finished trade")+' · after costs':'after trading costs')+'</div><span class="hero__f">'+(FOCUS==="closed"?'showing':'filter')+'</span></button>'
+    +'<button type="button" class="hero__tile'+sel("cash")+'" data-focus="cash"><div class="k">Cash</div><div class="v">'+money(k.cash,0)+'</div><div class="d">'+money(k.invested,0)+' invested'+(k.reserved?' · '+money(k.reserved,0)+' reserved for '+k.pending.length+' order'+(k.pending.length===1?'':'s'):'')+'</div><span class="hero__f">'+(FOCUS==="cash"?'showing':'filter')+'</span></button>';
+  $$("#hero [data-focus]").forEach(function(b){ b.onclick=function(){ setFocus(b.dataset.focus); }; });
+  var clear=$("#focusClear"); if(clear) clear.onclick=function(){ FOCUS=null; renderHero(); applyFocus(); };
 }
+
 function renderTodayPending(){
   var card=$("#todayPendingCard"); if(!card) return;
   var ords=bookNow().pending;
-  if(!ords.length){ card.hidden=true; return; }
+  if(!focusHas("pending")){ card.hidden=true; return; }
+  var forced=FOCUS==="cash";
+  if(!ords.length&&!forced){ card.hidden=true; return; }
   card.hidden=false;
   var now=Date.now(), reservedUsd=0, approved=0;
   ords.forEach(function(o){ if(o.status==="approved"){ approved+=1; reservedUsd+=((Number(o.grossCents)||0)+(Number(o.frictionCents)||0)+(Number(o.reservationHeadroomCents)||0))/100; } });
   $("#todayPendingSub").textContent=ords.length+" order"+(ords.length===1?"":"s")+(approved?" · "+money(reservedUsd,0)+" reserved":"");
   var delay=(DASH.market&&DASH.market.feedDelayMinutes)||15;
-  $("#todayPendingNote").innerHTML='A paper order is filled at a price the desk could not have known when it decided — the first 5-minute bar that opens after the order becomes fillable. Prices arrive '+delay+' minutes late on this feed, so a fill lands about '+(delay+5)+'–'+(delay+20)+' minutes after approval. Cash is reserved meanwhile; the company moves to <b>What you own</b> when the fill lands, and an order that never fills is released at its expiry. A real-time consolidated feed would cut the wait to a few minutes.';
+  var sbars=((DASH.operations||{}).cadence||{}).strikeBarTimeframe==="5Min"?5:1;
+  $("#todayPendingNote").innerHTML='A paper order is filled at a price the desk could not have known when it decided — the first '+sbars+'-minute bar that opens after the order becomes fillable, checked by the strike pass every '+(((DASH.operations||{}).cadence||{}).strikeSeconds||60)+' seconds. Prices arrive '+delay+' minutes late on this feed, so a fill lands about '+(delay+1)+'–'+(delay+3)+' minutes after approval. Cash is reserved meanwhile; the company moves to <b>What you own</b> when the fill lands, and an order that never fills is released at its expiry. A real-time consolidated feed would cut the wait to about a minute.';
+  var cashHead="";
+  if(FOCUS==="cash"){
+    var b=bookNow();
+    cashHead='<table class="ptable" style="margin-bottom:16px"><tbody>'
+      +'<tr><td>Free to spend</td><td>'+money(b.cash-b.reserved,2)+'</td></tr>'
+      +'<tr><td>Reserved for the orders below</td><td>'+money(b.reserved,2)+'</td></tr>'
+      +'<tr><td>Invested in '+plural(b.rows.length,"company","companies")+'</td><td>'+money(b.invested,2)+'</td></tr>'
+      +'<tr class="total"><td>Account worth</td><td>'+money(b.nav,2)+'</td></tr></tbody></table>';
+  }
+  if(!ords.length){
+    $("#todayPending").innerHTML=cashHead+'<div class="empty">No orders are waiting. All of your cash is either invested or free to spend.</div>';
+    return;
+  }
   ords.sort(function(a,b){return (Number(b.approvedAtMs)||Number(b.decisionAtMs)||0)-(Number(a.approvedAtMs)||Number(a.decisionAtMs)||0);});
-  $("#todayPending").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Price</th><th>Amount</th><th class="hide-sm">Now</th><th>Status</th></tr></thead><tbody>'
+  $("#todayPending").innerHTML=cashHead+'<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Price</th><th>Amount</th><th class="hide-sm">Now</th><th>Status</th></tr></thead><tbody>'
     +ords.map(function(o){
       var qty=Number(o.qty)||0, px=Number(o.refPriceUsd)||0, amt=(Number(o.grossCents)||qty*px*100)/100;
       var elig=Number(o.fillEligibleAfterMs)||null, pn=priceNow(o.symbol,null);
-      var st=o.status==="approved"?(elig?(elig>now?'fills in ~'+durationText((elig-now)/1000+5*60):'fills on the next bar'):'approved'):'awaiting approval';
+      var st=o.status==="approved"?(elig?(elig>now?'fills in ~'+durationText((elig-now)/1000+60):'fills on the next bar'):'approved'):'awaiting approval';
       return '<tr class="row" data-sym="'+esc(o.symbol)+'"><td><div class="sym">'+esc(o.symbol)+(o.cohortRole==="control"?' <span class="badge2 b-info">control</span>':'')+'</div><div class="sec">'+esc(S_SECTOR(o.symbol)||"")+'</div></td>'
         +'<td>'+qty+'</td><td>'+money(px,2)+'</td><td>'+money(amt,2)+'</td><td class="hide-sm">'+(pn.p?money(pn.p,2):'<span class="muted">—</span>')+'</td>'
         +'<td><span class="badge2 '+(o.status==="approved"?"b-on":"b-warn")+'">'+esc(st)+'</span></td></tr>';
@@ -3353,19 +3545,255 @@ function renderTodayPending(){
   $$("#todayPending tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
 }
 
+/* ── armed entry levels (the strike tier) ───────────────────────────────── */
+function renderTodayPlans(){
+  var card=$("#todayPlansCard"); if(!card) return;
+  var plans=((DASH.operations||{}).plans||{}).today||[];
+  if(!focusHas("pending")||!plans.length){ card.hidden=true; return; }
+  card.hidden=false;
+  var armed=plans.filter(function(p){return p.status==="armed";}), struck=plans.filter(function(p){return p.status==="struck";});
+  var cad=(DASH.operations||{}).cadence||{};
+  $("#todayPlansSub").textContent=armed.length+" armed"+(struck.length?" · "+struck.length+" struck today":"")
+    +(plans.length-armed.length-struck.length?" · "+(plans.length-armed.length-struck.length)+" retired":"")
+    +(marketOpenNow()?" · checked every "+(cad.strikeSeconds||60)+"s":"");
+  var order={armed:0,struck:1,skipped:2,superseded:3,expired:4,cancelled:5};
+  plans=plans.slice().sort(function(a,b){return (order[a.status]||9)-(order[b.status]||9)||(a.requiredDropPct||0)-(b.requiredDropPct||0);});
+  $("#todayPlans").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Buy at or below</th><th>Now</th><th class="hide-sm">Distance</th><th>Status</th><th></th></tr></thead><tbody>'
+    +plans.map(function(p){
+      var pn=priceNow(p.symbol,p.lastSeenUsd), now=pn.p!=null?pn.p:p.lastSeenUsd;
+      var dist=now!=null&&p.armBelowUsd?100*(now-p.armBelowUsd)/p.armBelowUsd:null;
+      var st,cls="b-info";
+      if(p.status==="armed"){ st=p.lastBlock?("waiting — "+plainBlock(p.lastBlock.reason)):"armed"; cls=p.lastBlock?"b-warn":"b-on"; }
+      else if(p.status==="struck"){ st="struck at "+money(p.strikePriceUsd,2)+(p.approval&&p.approval.approved?" · order approved":" · order proposed"); cls="b-on"; }
+      else if(p.status==="skipped"){ st="passed — "+plainBlock(p.skipReason); cls="b-warn"; }
+      else if(p.status==="superseded"){ st="replaced by a later scan"; }
+      else if(p.status==="expired"){ st="expired at the close"; }
+      else if(p.status==="cancelled"){ st="withdrawn by you"; }
+      else st=p.status;
+      return '<tr class="row" data-sym="'+esc(p.symbol)+'"><td><div class="sym">'+esc(p.symbol)+'</div><div class="sec">'+esc(S_SECTOR(p.symbol)||"")+(p.requiredDropPct!=null?' · needed −'+num(p.requiredDropPct,2)+'% when armed':'')+'</div></td>'
+        +'<td>'+money(p.armBelowUsd,2)+'<div class="sec">floor '+money(p.floorUsd,2)+'</div></td>'
+        +'<td>'+(now!=null?money(now,2):'<span class="muted">—</span>')+(pn.p!=null?' <span class="live"><i></i></span>':'')+'</td>'
+        +'<td class="hide-sm">'+(dist!=null?('<span style="color:'+(dist<=0?'var(--sage)':'var(--ink-70)')+'">'+(dist>0?'+':'')+num(dist,2)+'%</span>'):'—')+'</td>'
+        +'<td><span class="badge2 '+cls+'">'+esc(st)+'</span></td>'
+        +'<td class="act">'+(p.status==="armed"?'<button class="btn ghost sm" data-cancel-plan="'+esc(p.symbol)+'">Withdraw</button>':'')+'</td></tr>';
+    }).join("")+'</tbody></table>';
+  $$("#todayPlans tr.row").forEach(function(r){ r.onclick=function(e){ if(e.target.closest("button,a")) return; openCompany(r.dataset.sym); }; });
+  $$("#todayPlans [data-cancel-plan]").forEach(function(b){ b.onclick=function(e){ e.stopPropagation();
+    var sym=b.dataset.cancelPlan; if(!confirm("Withdraw the armed level for "+sym+"? It will not be re-armed today.")) return;
+    api("cancelPlan",{symbol:sym}).then(function(r){ toast(r.note||r.refused||"Level withdrawn"); refresh(false); }).catch(function(err){ toast("Could not withdraw: "+err.message); }); }; });
+}
+var PLAN_BLOCK_PLAIN={session:"market closed or spreads too wide",decision_source_not_tradable:"price feed not good enough to trade on",
+  missing_market_provenance:"price feed identity missing",entry_control:"new entries are closed",observation_only:"observation-only mode",
+  account_halted:"account breaker is on",cost:"expected bounce does not cover trading costs here",portfolio:"portfolio limits are full",
+  order:"an order already exists",already_committed:"already held or on order",earnings_blackout:"earnings are too close",
+  intelligence_finding:"an adverse company finding",evidence:"a fundamental cause explains the fall",gap_below_band:"it fell straight through the band — left for the next deep scan",
+  portfolio_duplicate:"already in the book",error:"a backend error"};
+function plainBlock(k){ return PLAN_BLOCK_PLAIN[k]||String(k||"a check").replace(/_/g," "); }
+
+/* ── selling by hand ────────────────────────────────────────────────────
+   The button records an intent. It never fills anything, because a fill has
+   to happen at a price that was not on the screen when the button was
+   pressed — the same rule the automatic exits obey. */
+var SELLING={};
+function sellState(p){
+  var intent=p.exitIntent&&Number(p.exitIntent.decisionAtMs)>0?p.exitIntent:null;
+  var req=p.manualExitRequest||null;
+  if(intent) return {kind:"armed", manual:intent.kind==="manual"||intent.reason==="manual_operator_sell",
+    reason:intent.reason||null, eligible:Number(intent.eligibleAfterMs)||null};
+  if(req&&req.status==="requested") return {kind:"requested", at:Number(req.requestedAtMs)||null};
+  if(req&&req.status==="blocked") return {kind:"blocked", why:req.blockedReason||null};
+  if(p.corporateActionPending) return {kind:"held", why:"corporate action under review"};
+  return {kind:"idle"};
+}
+function sellCell(r){
+  var st=sellState(r.pos), sym=r.sym, busy=SELLING[sym];
+  if(st.kind==="armed"){
+    var when=st.eligible&&st.eligible>Date.now()?'fills in ~'+durationText((st.eligible-Date.now())/1000+5*60):'fills on the next bar';
+    return '<button class="sellbtn armed" disabled>Exiting</button>'
+      +'<span class="sellstate">'+esc(st.manual?"you sold this":exitShort(exitKindOfReason(st.reason))||"exit armed")+' · '+esc(when)+'</span>';
+  }
+  if(st.kind==="requested"){
+    return '<button class="sellbtn armed" disabled>Requested</button>'
+      +'<span class="sellstate">arming on the next check · <a href="#" data-undo="'+esc(sym)+'">undo</a></span>';
+  }
+  if(st.kind==="held"){
+    return '<button class="sellbtn" disabled>Sell</button><span class="sellstate">'+esc(st.why)+'</span>';
+  }
+  return '<button class="sellbtn" data-sell="'+esc(sym)+'"'+(busy?' disabled':'')+'>'+(busy?'…':'Sell')+'</button>'
+    +(st.kind==="blocked"?'<span class="sellstate" title="'+esc(plainBlock(st.why))+'">retrying — '+esc(plainBlock(st.why))+'</span>':'');
+}
+function plainBlock(w){
+  var M={ decision_source_not_tradable:"the price feed was not good enough to sell on — it retries",
+    missing_market_provenance:"no verified price source yet — it retries",
+    missing_adjustment_identity:"the price basis was unverified — it retries",
+    position_not_open:"the position was already closed", invalid_exit_clock:"internal clock error" };
+  return M[w]||w||"not armed yet";
+}
+function doSell(sym){
+  var r=bookNow().rows.filter(function(x){return x.sym===sym;})[0];
+  var line=r?(sym+" — "+r.qty+" share"+(r.qty===1?"":"s")+" worth "+money(r.value,2)+", currently "+sgnMoney(r.gain)+" ("+sgnPct(r.pct)+")"):sym;
+  if(!window.confirm("Sell "+line+"?\n\nThis records your decision now. The desk fills it at the first price bar that opens after this moment — it cannot fill at the price on your screen, which is already "+((DASH.market&&DASH.market.feedDelayMinutes)||15)+" minutes old.\n\nA hand-sold trade is kept out of the strategy's scorecard, because it is your judgement rather than the strategy's.")) return;
+  SELLING[sym]=true; renderTodayHeld();
+  api("requestSell",{symbol:sym}).then(function(res){
+    if(!res||res.ok===false){ toast(res&&res.refused?res.refused:"could not record the sell"); }
+    else toast(res.note||("Sell recorded for "+sym));
+  }).catch(function(e){ toast(String(e.message||e).slice(0,120)); })
+    .finally(function(){ delete SELLING[sym]; refresh(false); });
+}
+function undoSell(sym){
+  SELLING[sym]=true; renderTodayHeld();
+  api("cancelSell",{symbol:sym}).then(function(res){ toast(res&&res.note?res.note:"withdrawn"); })
+    .catch(function(e){ toast(String(e.message||e).slice(0,120)); })
+    .finally(function(){ delete SELLING[sym]; refresh(false); });
+}
+
 function renderTodayHeld(){
-  var k=bookNow(), rows=k.rows.slice().sort(function(a,b){return b.gain-a.gain;});
-  if(!rows.length){ $("#todayHeldSub").textContent="nothing yet"; $("#todayHeld").innerHTML='<div class="empty">Nothing is owned yet. When an order fills, the company appears here with what was paid, what it is worth now, and whether it is up or down.</div>'; return; }
-  $("#todayHeldSub").innerHTML=rows.length+" position"+(rows.length===1?"":"s")+' · <span style="color:'+(k.unr>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(k.unr)+' ('+sgnPct(k.cost?100*k.unr/k.cost:0)+')</span>'+(k.anyLive?' · <span class="live"><i></i>live</span>':'');
+  if(!focusHas("held")) return;
+  var k=bookNow(), all=k.rows.slice().sort(function(a,b){return b.gain-a.gain;});
+  var rows=all;
+  if(FOCUS==="open"&&HELDSUB==="win") rows=all.filter(function(r){return r.gain>=0;});
+  if(FOCUS==="open"&&HELDSUB==="lose") rows=all.filter(function(r){return r.gain<0;});
+  bindSubChips("#heldChips",function(){return HELDSUB;},function(v){ HELDSUB=v; renderTodayHeld(); });
+  if(!all.length){ $("#todayHeldSub").textContent="nothing yet"; $("#todayHeld").innerHTML='<div class="empty">Nothing is owned yet. When an order fills, the company appears here with what was paid, what it is worth now, and whether it is up or down.</div>'; return; }
+  var sub=rows.reduce(function(a,r){return a+r.gain;},0), subCost=rows.reduce(function(a,r){return a+r.cost;},0);
+  var subInv=rows.reduce(function(a,r){return a+r.value;},0);
+  $("#todayHeldSub").innerHTML=rows.length+(rows.length!==all.length?" of "+all.length:"")+" position"+(rows.length===1?"":"s")+' · <span style="color:'+(sub>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(sub)+' ('+sgnPct(subCost?100*sub/subCost:0)+')</span>'+(k.anyLive?' · <span class="live"><i></i>live</span>':'');
+  if(!rows.length){ $("#todayHeld").innerHTML='<div class="empty">Nothing in this group right now.</div>'; return; }
   var tr=rows.map(function(r){
     var up=r.gain>=0;
-    return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+'</div></td>'
+    var lvp=(DASH.positions||[]).filter(function(p){return p.open&&p.symbol===r.sym;})[0], lv=lvp&&lvp.exitLevels;
+    var lvTxt=lv&&Number(lv.stopUsd)>0?('stop '+money(lv.stopUsd,2)+(lv.trailArmed&&Number(lv.trailStopUsd)>0?' · trail '+money(lv.trailStopUsd,2):'')+(Number(lv.targetUsd)>0?' · target '+money(lv.targetUsd,2):'')):'';
+    return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+(lvTxt?' · '+lvTxt:'')+'</div></td>'
       +'<td>'+r.qty+'</td><td class="hide-sm">'+money(r.paid,2)+'</td><td>'+money(r.now,2)+(r.live?'':' <span class="muted" title="ledger mark, delayed feed">·</span>')+'</td><td class="hide-sm">'+money(r.value,2)+'</td>'
-      +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+sgnMoney(r.gain)+'<span class="pct">'+sgnPct(r.pct)+'</span></td></tr>';
+      +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+sgnMoney(r.gain)+'<span class="pct">'+sgnPct(r.pct)+'</span></td>'
+      +'<td class="act">'+sellCell(r)+'</td></tr>';
   }).join("");
-  $("#todayHeld").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th class="hide-sm">Paid</th><th>Now</th><th class="hide-sm">Value</th><th>Gain / loss</th></tr></thead><tbody>'+tr
-    +'<tr class="total"><td>Total</td><td>'+rows.reduce(function(a,r){return a+r.qty;},0)+'</td><td class="hide-sm">'+money(k.cost,2)+'</td><td></td><td class="hide-sm">'+money(k.invested,2)+'</td><td class="gain '+(k.unr>=0?'up':'down')+'"><span class="arrow">'+(k.unr>=0?'▲':'▼')+'</span>'+sgnMoney(k.unr)+'<span class="pct">'+sgnPct(k.cost?100*k.unr/k.cost:0)+'</span></td></tr></tbody></table>';
-  $$("#todayHeld tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
+  $("#todayHeld").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th class="hide-sm">Paid</th><th>Now</th><th class="hide-sm">Value</th><th>Gain / loss</th><th></th></tr></thead><tbody>'+tr
+    +'<tr class="total"><td>Total</td><td>'+rows.reduce(function(a,r){return a+r.qty;},0)+'</td><td class="hide-sm">'+money(subCost,2)+'</td><td></td><td class="hide-sm">'+money(subInv,2)+'</td><td class="gain '+(sub>=0?'up':'down')+'"><span class="arrow">'+(sub>=0?'▲':'▼')+'</span>'+sgnMoney(sub)+'<span class="pct">'+sgnPct(subCost?100*sub/subCost:0)+'</span></td><td></td></tr></tbody></table>';
+  $$("#todayHeld tr.row").forEach(function(r){ r.onclick=function(e){
+    if(e.target.closest("button,a")) return; openCompany(r.dataset.sym); }; });
+  $$("#todayHeld [data-sell]").forEach(function(b){ b.onclick=function(e){ e.stopPropagation(); doSell(b.dataset.sell); }; });
+  $$("#todayHeld [data-undo]").forEach(function(a){ a.onclick=function(e){ e.preventDefault(); e.stopPropagation(); undoSell(a.dataset.undo); }; });
+}
+
+/* ── history: what was bought and sold, and why ─────────────────────────
+   The operator's question — "why is so much sold below what we paid?" — is
+   answered by naming the rule that fired on every single row, and by the
+   tally in the explainer underneath. */
+var EXIT_PLAIN={
+  stop_loss:["Hard stop","bad","It fell far enough below what was paid that the desk cuts the loss rather than hoping. This is the floor under every position and it fires by definition at a loss."],
+  trailing_stop:["Trailing stop","good","It had gained, then gave back too much from its best price. Selling here banks part of a win instead of letting it round-trip to nothing — it can still land below the purchase price if the gain was small."],
+  take_profit:["Profit target","good","It reached the gain the strategy was aiming for."],
+  pullback_target:["Reached target","good","It climbed back to the prior swing high the trade was aiming at."],
+  pullback_failed:["Level failed","bad","It gave back more of the up-leg than the setup allows, so the level it was leaning on failed."],
+  earnings_exit:["Before earnings","","Results were due. Prices jump unpredictably around a print, so the desk steps aside rather than gamble — whatever the position is worth at that moment."],
+  intelligence_critical:["Company news","bad","A corroborated material event about the company itself."],
+  signal:["Reason gone","","The reason it was bought no longer applies. This desk does not buy companies it expects to rise; it buys one that has fallen further than its sector and the market can explain, and sells when that gap closes <i>relative to everything else</i>. The gap can close because the company recovered — or because everything else fell too. In the second case there is nothing left to collect even though the price is below what was paid, and holding on is no longer the strategy, it is hoping."],
+  time:["Time is up","","The trade was given a fixed number of sessions to work. It did not, so the money is released for a better idea instead of being tied up indefinitely."],
+  manual:["You sold it","","You asked the desk to sell this holding. It is kept out of the strategy's scorecard, because it is your judgement rather than the strategy's."]
+};
+function exitKindOfReason(r){
+  var t=String(r||"");
+  if(!t) return null;
+  if(/manual/i.test(t)) return "manual";
+  if(/hard stop/i.test(t)) return "stop_loss";
+  if(/trailing stop/i.test(t)) return "trailing_stop";
+  if(/profit target/i.test(t)) return "take_profit";
+  if(/swing high|pullback target/i.test(t)) return "pullback_target";
+  if(/level failed|gave back/i.test(t)) return "pullback_failed";
+  if(/earnings/i.test(t)) return "earnings_exit";
+  if(/adverse|material/i.test(t)) return "intelligence_critical";
+  if(/crossed exit|^rank /i.test(t)) return "signal";
+  if(/max hold/i.test(t)) return "time";
+  return null;
+}
+function exitKindOf(t){ return t.exitKind || exitKindOfReason(t.exitReason||t.closeReason); }
+function exitShort(kind){ return EXIT_PLAIN[kind]?EXIT_PLAIN[kind][0]:null; }
+function closedRows(){
+  return (DASH.closedTrades||[]).filter(function(t){return t&&t.closedAt;}).map(function(t){
+    var qty=Number(t.qty)||0;
+    var buy=Number(t.entryPriceUsd!=null?t.entryPriceUsd:t.entryFillUsd)||0;
+    var sell=Number(t.exitPriceUsd!=null?t.exitPriceUsd:t.exitFillUsd)||0;
+    var pl=t.realisedPnlUsd!=null?Number(t.realisedPnlUsd):(qty&&buy&&sell?qty*(sell-buy):null);
+    var kind=exitKindOf(t);
+    return {sym:t.symbol, qty:qty, buy:buy, sell:sell, pl:pl,
+      pct:buy>0&&sell>0?100*(sell-buy)/buy:null,
+      opened:t.openedAt||null, closed:t.closedAt||null,
+      held:t.heldDays!=null?Number(t.heldDays):null,
+      kind:kind, reason:t.exitReason||t.closeReason||null,
+      manual:t.manualClose===true||kind==="manual",
+      control:t.cohortRole==="control", t:t};
+  }).sort(function(a,b){ return String(b.closed).localeCompare(String(a.closed)); });
+}
+function renderTodayHistory(){
+  var card=$("#todayHistoryCard"); if(!card) return;
+  if(!focusHas("hist")){ card.hidden=true; return; }
+  card.hidden=false;
+  var all=closedRows();
+  if(FOCUS&&FOCUS_DEF[FOCUS]&&FOCUS_DEF[FOCUS].histToday){
+    var d=new Date().toISOString().slice(0,10);
+    all=all.filter(function(r){ return String(r.closed).slice(0,10)===d; });
+  }
+  bindSubChips("#histChips",function(){return HISTSUB;},function(v){ HISTSUB=v; renderTodayHistory(); });
+  var rows=all;
+  if(HISTSUB==="win") rows=all.filter(function(r){return (r.pl||0)>0;});
+  if(HISTSUB==="lose") rows=all.filter(function(r){return (r.pl||0)<0;});
+  if(HISTSUB==="manual") rows=all.filter(function(r){return r.manual;});
+  var net=all.reduce(function(a,r){return a+(r.pl||0);},0);
+  var wins=all.filter(function(r){return (r.pl||0)>0;}).length;
+  $("#todayHistSub").innerHTML = all.length
+    ? plural(all.length,"finished trade")+' · '+wins+' up, '+(all.length-wins)+' down · <span style="color:'+(net>=0?'var(--sage)':'var(--clay)')+';font-weight:600">'+sgnMoney(net)+'</span> across these rows'
+    : "nothing sold yet";
+  writeHistWhy(all);
+  if(!all.length){ $("#todayHistory").innerHTML='<div class="empty">Nothing has been bought and sold yet. Every completed round trip will be listed here with what was paid, what it sold for, and which rule closed it.</div>'; return; }
+  if(!rows.length){ $("#todayHistory").innerHTML='<div class="empty">No finished trades in this group.</div>'; return; }
+  var shown=rows.slice(0,60);
+  $("#todayHistory").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th><th>Bought</th><th>Sold</th><th class="hide-sm">Held</th><th>Result</th><th>Why it sold</th></tr></thead><tbody>'
+    +shown.map(function(r){
+      var up=(r.pl||0)>=0, p=EXIT_PLAIN[r.kind];
+      return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+(r.manual?' <span class="badge2 b-info">by hand</span>':(r.control?' <span class="badge2 b-info">control</span>':''))+'</div><div class="sec">'+esc(S_SECTOR(r.sym)||"")+'</div></td>'
+        +'<td>'+(r.qty||'—')+'</td>'
+        +'<td>'+(r.buy?money(r.buy,2):'—')+'<span class="pct">'+esc(shortDate(r.opened))+'</span></td>'
+        +'<td>'+(r.sell?money(r.sell,2):'—')+'<span class="pct">'+esc(shortDate(r.closed))+'</span></td>'
+        +'<td class="hide-sm">'+(r.held!=null?num(r.held,1)+'d':'—')+'</td>'
+        +'<td class="gain '+(up?'up':'down')+'"><span class="arrow">'+(up?'▲':'▼')+'</span>'+(r.pl!=null?sgnMoney(r.pl):'—')+(r.pct!=null?'<span class="pct">'+sgnPct(r.pct)+'</span>':'')+'</td>'
+        +'<td class="whyx"><span class="kd '+(p?p[1]:'')+'">'+esc(p?p[0]:"closed")+'</span>'+esc(reasonText(r))+'</td></tr>';
+    }).join("")+'</tbody></table>'
+    +(rows.length>shown.length?'<div class="hint" style="margin-top:10px">Showing the '+shown.length+' most recent of '+rows.length+'. The full record is on the Results page.</div>':'');
+  $$("#todayHistory tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
+}
+/* The stored reason is a machine token for a hand sale and an already-plain
+   sentence for every rule. Only the token needs translating. */
+function reasonText(r){
+  if(r.manual||r.kind==="manual") return "you asked the desk to sell this";
+  return r.reason||"";
+}
+function shortDate(iso){
+  if(!iso) return "";
+  var d=new Date(iso); if(isNaN(d)) return "";
+  return d.toLocaleDateString([],{month:"short",day:"numeric"});
+}
+/* The explainer is written from the operator's OWN trades, not from theory:
+   it counts how many sales landed below cost and names the rule behind each. */
+function writeHistWhy(rows){
+  var host=$("#todayHistNote"); if(!host) return;
+  var down=rows.filter(function(r){return (r.pl||0)<0;});
+  var tally={}; down.forEach(function(r){ var k=r.kind||"other"; tally[k]=(tally[k]||0)+1; });
+  var order=Object.keys(tally).sort(function(a,b){return tally[b]-tally[a];});
+  var head = rows.length
+    ? '<p><b>'+down.length+' of '+rows.length+'</b> finished trades sold below what they cost. That is expected, and here is exactly why each of them did.</p>'
+    : '<p>Nothing has been sold yet. When it is, this will name the rule behind every sale.</p>';
+  var body = order.length
+    ? '<ul style="margin:10px 0 0;padding-left:18px">'+order.map(function(k){
+        var p=EXIT_PLAIN[k];
+        return '<li style="margin-bottom:9px"><b>'+esc(p?p[0]:"Other")+'</b> — '+plural(tally[k],"trade")+'. '+(p?p[2]:"")+'</li>';
+      }).join("")+'</ul>'
+    : "";
+  var tail = '<p style="margin-top:12px">Two things follow from the design, and both are deliberate. '
+    + 'First, <b>no exit rule requires a profit.</b> A stop is a loss by definition, a time stop pays no attention to price at all, and the main signal exit asks only whether the gap it was trading has closed — not whether the position is up. '
+    + 'Second, <b>the strategy is not trying to win most trades.</b> It is trying to keep every loss small and bounded while letting the winners run to their target, so a majority of small red rows alongside a smaller number of larger green ones is the shape it is aiming for. Judge it on the total at the top of this card, not on the count.</p>'
+    + '<p style="margin-top:10px">If a specific sale looks wrong to you, that is worth acting on: you can sell anything you own by hand from the <b>What you own</b> table above. Trades you close yourself are excluded from the strategy’s scorecard, so your judgement never contaminates its measured record.</p>';
+  host.innerHTML = head + body + tail;
 }
 
 function renderTodayWatch(){

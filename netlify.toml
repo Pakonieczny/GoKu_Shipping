@@ -165,7 +165,7 @@
 [functions."charmBatchSweepCron"]
   schedule = "4-59/10 * * * *"
 
-# ─── Investor_AI — volatility desk, August 2026 ─────────────────────────────
+# ─── Investor_AI — volatility desk, two-tier cadence (September 2026) ───────
 # The ONLY scheduled function in that system. investorKick reads control state,
 # decides what is due, and dispatches a job id plus a single-use nonce to
 # investorCycle-background. It never fetches a source, never calls a model and
@@ -173,15 +173,22 @@
 # ceiling. investorCycle-background needs no entry here — Netlify grants any
 # -background function the 15-minute budget from the filename suffix.
 #
-# Offset 2-59/5 (:02, :07, :12, …) follows the same convention as
-# etsyPricingScheduleCron and charmBatchSweepCron: the plain */5 slot already
-# carries etsyMailReapers and etsyMailTrackingSweepStuck, and :00 is the
-# busiest minute on this site.
-#
-# The function suppresses its own price cycle outside US market hours, so most
-# ticks are a cheap no-op. That is the single largest cost lever in the system.
+# EVERY MINUTE, deliberately. The desk runs two tiers on two clocks:
+#   · the DEEP SCAN (task "cycle") — the full roster ranking, evidence and
+#     model work — runs at the operator's scheduled New York times (default
+#     09:50 and 13:00 ET, InvestorAI_Control/control.planTimesEt), plus the
+#     daily finalization after the close. Two scans a day instead of one every
+#     five minutes is the single largest cost lever in the system.
+#   · the STRIKE PASS (task "guard") — stops, targets, armed entry levels and
+#     the fills of approved orders — runs every `guardSeconds` (default 60)
+#     while the exchange is open and every `guardSecondsClosed` when it is
+#     shut. It fetches bars only for held, planned and pending symbols and
+#     never calls a model, so a one-minute clock is cheap.
+# The old 2-59/5 schedule silently pinned the strike pass to five minutes
+# regardless of its setting. A kick that finds nothing due costs two
+# Firestore reads.
 [functions."investorKick"]
-  schedule = "2-59/5 * * * *"
+  schedule = "* * * * *"
 
 [[headers]]
   for = "/*"

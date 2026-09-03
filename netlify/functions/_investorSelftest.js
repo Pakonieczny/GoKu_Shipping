@@ -985,12 +985,13 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v4"
+      && policy.version === "exploratory-auto-v5"
       && learn.minAbsZ === 1.0 && learn.entryRank === 0.5
       && learn.costMarginMultiple === 0.25
       && learn.exitRank === 0.6 && learn.maxHoldDays === 3
       && pc.maxGrossExposurePct === 100 && pc.minCashPct === 0
-      && pc.maxOpenPositions === 304
+      && pc.maxOpenPositions === 8 && pc.ordinaryPositionPctOfNav === 12
+      && pc.riskBudgetPerTradePctOfNav === 1.0
       && policy.autoApproval.unlimitedOrdersPerDay === true
       && admission.allow === true && admission.headroomUsd === 100000;
   }));
@@ -1454,10 +1455,10 @@ function runFixtures() {
 
   cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
     const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
-      exploratoryPolicyVersion: "exploratory-auto-v4", sufficiencyVersion: "data-sufficiency-v2" };
+      exploratoryPolicyVersion: "exploratory-auto-v5", sufficiencyVersion: "data-sufficiency-v2" };
     const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
       strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
-      exploratoryPolicyVersion: "exploratory-auto-v4", closedAt: "2026-09-01T15:00:00Z",
+      exploratoryPolicyVersion: "exploratory-auto-v5", closedAt: "2026-09-01T15:00:00Z",
       decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
     const trades = [
       mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
@@ -1600,10 +1601,210 @@ function runFixtures() {
       && !recent.tasks.includes("archive") && !early.tasks.includes("archive");
   }));
 
+  /* ── manual sell ──────────────────────────────────────────────────────
+     The operator's Sell button is the one place a human decision enters the
+     execution path. Three things must hold or it becomes a way to trade on a
+     price already visible on the screen, which would invalidate every number
+     this desk reports about itself. */
+  cases.push(fixture("manual_sell_records_an_intent_and_never_fills", () => {
+    const API = require("./investorApi");
+    if (typeof API.ACTIONS.requestSell !== "function") return false;
+    if (typeof API.ACTIONS.cancelSell !== "function") return false;
+    const body = sourceOf(API.ACTIONS.requestSell);
+    /* It writes a REQUEST on the position and touches nothing that executes. */
+    if (!/manualExitRequest/.test(body)) return false;
+    if (!/status:\s*"requested"/.test(body)) return false;
+    if (/closePosition|applyLegs|firstEligibleBar|armExitIntent/.test(body)) return false;
+    /* It refuses a symbol that is not open, and a quarantined price basis. */
+    if (!/open !== true/.test(body)) return false;
+    if (!/corporateActionPending/.test(body)) return false;
+    /* An armed exit's clock is already running and cannot be withdrawn — that
+       would let an operator cancel after seeing the price it would have got. */
+    const cancel = sourceOf(API.ACTIONS.cancelSell);
+    return /exitIntent[\s\S]{0,80}decisionAtMs/.test(cancel)
+      && /return \{ ok: false, refused/.test(cancel);
+  }));
+
+  cases.push(fixture("manual_sell_enters_the_same_exit_clock_as_every_rule", () => {
+    const G = require("./_investorPositionGuard");
+    const src = sourceOf(G.runGuard);
+    /* The request is turned into an exit at the SAME point a rule exit is, so
+       it inherits armExitIntent, the feed delay and firstEligibleBar. A branch
+       that armed or closed anywhere else would bypass all three. */
+    if (!/manualExitRequest/.test(src)) return false;
+    if (!/kind:\s*"manual"/.test(src)) return false;
+    if (!/reason:\s*"manual_operator_sell"/.test(src)) return false;
+    const armAt = src.indexOf("armExitIntent(");
+    const manualAt = src.indexOf("manualPending");
+    if (!(manualAt > 0 && armAt > manualAt)) return false;
+    /* And the decision clock it inherits is still delay + latency. esbuild
+       reprints numeric literals (60000 -> 6e4), so match the shape, not the
+       spelling — a source assertion that only holds before bundling is the
+       one kind of self-check that fails exclusively in production. */
+    return /eligibleAfterMs\s*=\s*decisionAtMs\s*\+\s*feedCfg\.delayMinutes\s*\*\s*(?:60000|6e4)/.test(src)
+      && /executionLatencyMs/.test(src);
+  }));
+
+  cases.push(fixture("hand_sold_trades_are_excluded_from_the_promotion_sample", () => {
+    const LD = require("./_investorLadder");
+    const identity = { strategyHash: "s", universeHash: "u", variantsHash: "v" };
+    const base = { ...identity, variantId: "A", cohortRole: "signal",
+      learningCohort: "strict_policy", openedAt: "2026-08-01T14:00:00.000Z" };
+    if (!LD.strictTradeAdmissible({ ...base }, identity)) return false;
+    if (LD.strictTradeAdmissible({ ...base, manualClose: true }, identity)) return false;
+    if (LD.strictTradeAdmissible({ ...base, exitKind: "manual" }, identity)) return false;
+    if (LD.strictTradeAdmissible({ ...base, closeReason: "manual_operator_sell" }, identity)) return false;
+    /* The ledger has to carry the marker, or the exclusion above is unreachable. */
+    const L = require("./_investorLedger");
+    const close = sourceOf(L.closePosition);
+    return /exitKind:\s*intent\.kind/.test(close) && /manualClose:/.test(close);
+  }));
+
+  /* The console's closed-trade rows drive the operator's whole history view.
+     Reading only the legacy aliases left every row with a blank P&L and no
+     sell price against a ledger that writes netRealizedCents / exitFillUsd. */
+  cases.push(fixture("closed_trade_view_reads_the_fields_the_ledger_actually_writes", () => {
+    const API = require("./investorApi");
+    if (typeof API.closedTradeForUi !== "function") return false;
+    /* Exactly the shape _investorLedger.closePosition writes. */
+    const row = API.closedTradeForUi({ symbol: "AAA", qty: 4,
+      entryFillUsd: 10, exitFillUsd: 9.5, netRealizedCents: -215,
+      openedAt: "2026-08-20T14:00:00.000Z", closedAt: "2026-08-24T14:00:00.000Z",
+      closeReason: "rank 0.612 crossed exit 0.6", exitKind: "signal" });
+    if (row.entryPriceUsd !== 10 || row.exitPriceUsd !== 9.5) return false;
+    if (Math.abs(row.realisedPnlUsd + 2.15) > 1e-9) return false;
+    if (row.exitReason !== "rank 0.612 crossed exit 0.6") return false;
+    if (row.exitKind !== "signal" || row.manualClose !== false) return false;
+    const hand = API.closedTradeForUi({ symbol: "BBB", qty: 1,
+      closeReason: "manual_operator_sell", exitKind: "manual" });
+    return hand.manualClose === true;
+  }));
+
+  /* ── two-tier cadence ─────────────────────────────────────────────────── */
+  cases.push(fixture("scheduled_deep_scan_fires_once_per_new_york_slot_and_catches_up", () => {
+    const K = require("./investorKick");
+    const base = { paused: false, killSwitch: false, enabled: true, bootstrapPending: false,
+      planMode: "scheduled", planTimesEt: ["09:50", "13:00"], lastPlanKey: null,
+      cycleSeconds: 300, guardSeconds: 60, guardSecondsClosed: 900, evidenceEverySeconds: 900,
+      lastCycleAt: Date.now(), lastGuardAt: Date.now(), lastEvidenceAt: Date.now(),
+      lastDailyFinalizeDate: "2026-09-02", lastArchiveDate: "2026-09-02" };
+    const at = (min) => ({ date: "2026-09-02", tradingDay: true, open: true, phase: "regular",
+      minutesEt: min, regularOpenMinutesEt: 570, regularCloseMinutesEt: 960, isHalfDay: false });
+    const early = K.decide(base, at(9 * 60 + 47), Date.now());                    // before the first slot
+    const due = K.decide(base, at(9 * 60 + 51), Date.now());                      // 09:50 passed, never run
+    const ran = K.decide({ ...base, lastPlanKey: "2026-09-02 09:50" }, at(10 * 60), Date.now());
+    const second = K.decide({ ...base, lastPlanKey: "2026-09-02 09:50" }, at(13 * 60 + 2), Date.now());
+    const catchUp = K.duePlanSlot(base, at(14 * 60 + 10));                        // desk came up late: one scan, for 13:00
+    const done = K.decide({ ...base, lastPlanKey: "2026-09-02 13:00" }, at(15 * 60), Date.now());
+    const yesterday = K.duePlanSlot({ ...base, lastPlanKey: "2026-09-01 13:00" }, at(9 * 60 + 55));
+    const closed = K.decide(base, { date: "2026-09-02", tradingDay: true, open: false, phase: "postmarket",
+      minutesEt: 17 * 60, regularCloseMinutesEt: 960 }, Date.now());
+    const lateSlot = K.normalizePlanTimes(["15:55", "09:30", "12:00", "nonsense", "12:00"]);
+    return !early.tasks.includes("cycle") && due.tasks.includes("cycle")
+      && !ran.tasks.includes("cycle") && second.tasks.includes("cycle")
+      && catchUp && catchUp.time === "13:00" && !done.tasks.includes("cycle")
+      && yesterday && yesterday.time === "09:50" && !closed.tasks.includes("cycle")
+      && JSON.stringify(lateSlot) === JSON.stringify(["12:00"])
+      /* documents without a plan mode keep the interval clock unchanged */
+      && K.decide({ ...base, planMode: undefined, lastCycleAt: Date.now() - 600000 }, at(11 * 60), Date.now()).tasks.includes("cycle");
+  }));
+
+  cases.push(fixture("strike_pass_runs_every_minute_and_is_independent_of_the_deep_scan", () => {
+    const K = require("./investorKick");
+    const base = { paused: false, killSwitch: false, enabled: true, bootstrapPending: false,
+      planMode: "scheduled", planTimesEt: ["09:50", "13:00"], lastPlanKey: "2026-09-02 09:50",
+      cycleSeconds: 300, guardSeconds: 60, guardSecondsClosed: 900, evidenceEverySeconds: 900,
+      lastCycleAt: Date.now(), lastEvidenceAt: Date.now(), lastDailyFinalizeDate: "2026-09-02",
+      lastArchiveDate: "2026-09-02" };
+    const open = { date: "2026-09-02", tradingDay: true, open: true, phase: "regular",
+      minutesEt: 11 * 60, regularCloseMinutesEt: 960 };
+    const now = Date.now();
+    const due = K.decide({ ...base, lastGuardAt: now - 61000 }, open, now);
+    const notDue = K.decide({ ...base, lastGuardAt: now - 20000 }, open, now);
+    /* netlify.toml must fire the dispatcher every minute or the 60s clock is fiction. */
+    const toml = require("fs").existsSync(require("path").join(__dirname, "..", "..", "netlify.toml"))
+      ? require("fs").readFileSync(require("path").join(__dirname, "..", "..", "netlify.toml"), "utf8") : null;
+    const cronOk = toml === null || /\[functions\."investorKick"\]\s*\n\s*schedule = "\* \* \* \* \*"/.test(toml);
+    return due.tasks.includes("guard") && !due.tasks.includes("cycle")
+      && !notDue.tasks.includes("guard") && cronOk;
+  }));
+
+  cases.push(fixture("armed_level_is_the_price_where_the_residual_breaches_and_strikes_stay_in_band", () => {
+    const STK = require("./_investorStrike");
+    /* cum -0.6%, sigma 1%, threshold z 1 -> needs a further -0.4%: 100 -> 99.60 */
+    const level = STK.armLevel({ lastPrice: 100, cumResidual: -0.006, residVol: 0.01, minAbsZ: 1 });
+    const breached = STK.armLevel({ lastPrice: 100, cumResidual: -0.012, residVol: 0.01, minAbsZ: 1 });
+    const far = STK.armLevel({ lastPrice: 100, cumResidual: 0.05, residVol: 0.01, minAbsZ: 1, maxArmDropPct: 5 });
+    const plan = { armBelowUsd: 99.6, floorUsd: 97.11 };
+    const above = STK.strikeVerdict(99.7, plan), at = STK.strikeVerdict(99.6, plan);
+    const inBand = STK.strikeVerdict(98, plan), gap = STK.strikeVerdict(96.5, plan);
+    const pick = STK.selectPlans([{ ok: true, symbol: "B", dropPct: 2 }, { ok: true, symbol: "A", dropPct: 1 },
+      { ok: false, symbol: "C" }, { ok: true, symbol: "D", dropPct: 3 }], { maxArmedPlans: 2 }, { exclude: new Set(["A"]) });
+    return level.ok && level.armBelowUsd === 99.6 && level.dropPct === 0.4
+      && !breached.ok && breached.reason === "already_breached"
+      && !far.ok && far.reason === "too_far"
+      && !above.strike && at.strike && inBand.strike && !gap.strike && gap.gap === true
+      && pick.selected.map((x) => x.symbol).join(",") === "B,D";
+  }));
+
+  cases.push(fixture("plan_candidate_requires_every_hazard_gate_and_a_clearing_cost_at_the_level", () => {
+    const STK = require("./_investorStrike");
+    const XPL = require("./_investorExplore");
+    const policy = XPL.activityPolicy(strategy).strike;
+    /* The relaxed exploratory configuration the deep scan actually plans
+       with: paper learning lifts the calibration requirement. */
+    const cfg = { ...strategy.parameters, minAbsZ: 1.0, entryRank: 0.5, costMarginMultiple: 0.25,
+      paperAbstainOnMissingInfo: true, requireCalibratedEdge: false };
+    const gates = (fail) => ["quality", "session", "dispersion", "blackout", "liquidity", "signal", "trend",
+      "turnover", "intelligence", "evidence", "cost"].map((id) => ({ id, label: id, pass: !fail.includes(id), blocking: true }));
+    const common = { symbol: "NVDA", strictRes: { pass: false, blockedBy: ["signal"], firstBlock: "Residual signal" },
+      strictUncalibratedRes: null, z: { z: -0.6, cumResidual: -0.006, residVol: 0.01, window: 12 }, rank: 0.3,
+      last: { c: 100, t: "2026-09-02T15:00:00Z" }, cfg, policy,
+      quality: { tradable: true, grade: "B" }, advUsd: 5e9, sector: "semi", historyContext: { ok: true, atrPct: 2 },
+      reversion: { multiplier: 1 }, dataSufficiency: { sizeMultiplier: 1, score: 80, bucket: "high" }, intelligence: null,
+      cause: "pending", coverage: null, decisionManifest: { manifestHash: "a".repeat(64), version: "decision-input-manifest-v1" },
+      marketProvenance: { provider: "alpaca", feed: "delayed_sip", adjustment: "all", sourceSha256: "b".repeat(64) },
+      sessionCloseMs: Date.parse("2026-09-02T20:00:00Z"), vixNorm: 1, session: { date: "2026-09-02", open: true },
+      policyIdentity: { accountId: "paper-1", strategyVersion: "v11", universeVersion: "v1",
+        strategyHash: "c".repeat(64), universeHash: "d".repeat(64), variantsHash: "e".repeat(64) },
+      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v5", cohortLabel: "exploratory_auto_unvalidated",
+      paperLearningOnly: true, activePortfolioControls: strategy.exploratoryAuto.portfolioControls,
+      activity: XPL.activityPolicy(strategy), cycleId: "2026-09-02_1500", strategyVersion: "v11",
+      operatingState: "exploratory_auto", moveStartedAtMs: Date.parse("2026-09-02T14:00:00Z"), positionScale: 1 };
+    const sizing = { volScaler: 1, dispersionMult: 1, causeConfidence: 0.2, intelligenceMult: 0.2, combined: 0.2 };
+    const nearMiss = STK.planCandidate({ ...common, evalRes: { pass: false, blockedBy: ["signal", "cost"], gates: gates(["signal", "cost"]), sizing } });
+    const hazard = STK.planCandidate({ ...common, evalRes: { pass: false, blockedBy: ["signal", "trend"], gates: gates(["signal", "trend"]), sizing } });
+    const passed = STK.planCandidate({ ...common, evalRes: { pass: true, blockedBy: [], gates: gates([]), sizing } });
+    const highRank = STK.planCandidate({ ...common, rank: 0.8, evalRes: { pass: false, blockedBy: ["signal"], gates: gates(["signal"]), sizing } });
+    const researchOnly = STK.planCandidate({ ...common, quality: { tradable: false, researchEligible: true, grade: "C" },
+      evalRes: { pass: false, blockedBy: ["signal"], gates: gates(["signal"]), sizing } });
+    return nearMiss.ok && nearMiss.plan.armBelowUsd === 99.6 && nearMiss.plan.floorUsd < nearMiss.plan.armBelowUsd
+      && nearMiss.plan.expiresAtMs === Date.parse("2026-09-02T19:45:00Z")
+      && nearMiss.plan.decisionManifestHash === "a".repeat(64) && nearMiss.plan.strictVerdict.pass === false
+      && !hazard.ok && hazard.reason === "blocked_by_trend"
+      && !passed.ok && !highRank.ok && highRank.reason === "rank_above_plan_ceiling"
+      && !researchOnly.ok && researchOnly.reason === "execution_source_not_tradable"
+      && policy.maxArmedPlans === 6 && policy.strikeBandPct === 2.5;
+  }));
+
+  cases.push(fixture("exit_levels_are_the_rule_engine_in_dollars", () => {
+    const EX = require("./_investorExitPolicy");
+    const cfg = { stopLossPct: -8, trailingStopPct: -4, trailingArmsAtPct: 3, takeProfitPct: null, maxHoldDays: 3 };
+    const flat = EX.exitLevels(cfg, { entry: 100, peak: 101, heldDays: 1 });
+    const armed = EX.exitLevels(cfg, { entry: 100, peak: 105, heldDays: 2.5 });
+    const stopHit = EX.exitSignal(undefined, 1, cfg, { mark: flat.stopUsd - 0.01, entry: 100, peak: 100 });
+    const trailHit = EX.exitSignal(undefined, 1, cfg, { mark: armed.trailStopUsd - 0.01, entry: 100, peak: 105 });
+    return flat.stopUsd === 92 && flat.trailArmUsd === 103 && flat.trailArmed === false && flat.trailStopUsd === null
+      && flat.targetUsd === null && flat.sessionsLeft === 2
+      && armed.trailArmed === true && armed.trailStopUsd === 100.8 && armed.sessionsLeft === 0.5
+      && stopHit.exit && stopHit.kind === "stop_loss" && trailHit.exit && trailHit.kind === "trailing_stop"
+      && EX.exitLevels(cfg, { entry: 0 }) === null;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v20-strategy-v10-variants-q";
+  const SCHEMA = "runtime-fixtures-v22-strategy-v11-two-tier";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

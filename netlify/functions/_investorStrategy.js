@@ -116,11 +116,11 @@ function paperLearningConfig(base, ctrl = {}) {
 
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax,
-  "version": "v10",
-  "supersedes": "v9",
+  "version": "v11",
+  "supersedes": "v10",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",
-  "frozenAt": "2026-09-01",
-  "_versionNote": "v10 carries the v8/v9 strict hypothesis and strict parameters UNCHANGED. It differs from v9 only in the labelled exploratory paper cohort (exploratory-auto-v4: frozen data-sufficiency policy, signal lifetime, identity-bound scoreboard, pacing 10/scan, control 5/session, exit rank 0.6). v9 remains in the StrategyVersions record; a frozen identity is never edited in place, so the exploratory changes are a new version rather than a mutation of v9.",
+  "frozenAt": "2026-09-02",
+  "_versionNote": "v11 carries the v8-v10 strict hypothesis and strict parameters UNCHANGED. It differs from v10 only in the labelled exploratory paper cohort (exploratory-auto-v5): a CONCENTRATED book (at most 8 open positions, up to 12% of the account each, 1% risk budget per trade) so that fewer, larger positions make per-transaction friction less relevant; pacing 4/scan and a 2-position control cohort to match; and the STRIKE tier — the deep scan arms entry levels for names that pass every hazard gate but have not yet fallen far enough, and the one-minute strike pass buys when the level is reached. v10 remains in the StrategyVersions record; a frozen identity is never edited in place, so these changes are a new version rather than a mutation of v10.",
   "immutable": true,
   "status": "research",
   "hypothesis": "In liquid US large caps, an abnormal NEGATIVE residual return (market- and sector-adjusted) may revert partially over 1-10 trading days only when current, required public-source company intelligence finds no corroborated material adverse event, the move is not explained by covered fundamentals, and the conservatively estimated reversion exceeds modelled round-trip frictions.",
@@ -240,11 +240,20 @@ module.exports = {
      observations over. Entries are paced per
      cycle, a small unconditional control cohort runs beside the signal
      cohort, and Thompson sampling over the frozen policy family orders
-     which qualified candidates are taken first. Strict v10 remains at rank
+     which qualified candidates are taken first. Strict v11 remains at rank
      10% / |z| 2 / ten sessions, so increased paper activity cannot
-     masquerade as validation. */
+     masquerade as validation.
+
+     v5 changes the SHAPE of the paper book and the CLOCK it trades on.
+     Concentration: at most 8 open positions at up to 12% of the account
+     each (was 304 at 5%), with a 1% per-trade risk budget. Fewer, larger
+     positions mean each round trip carries more notional against the same
+     modelled friction, and far fewer buys and sells are needed to deploy
+     the account. Two tiers: the deep scan (twice a session by default)
+     does the analysis and writes the levels; the strike pass (every
+     minute) acts on them — see `activity.strike`. */
   "exploratoryAuto": {
-    "version": "exploratory-auto-v4",
+    "version": "exploratory-auto-v5",
     "enabled": true,
     "autoStartAfterSuccessfulBootstrap": true,
     "startingNavUsd": 100000,
@@ -282,16 +291,41 @@ module.exports = {
          expected-edge ordering. */
     "activity": {
       "enabled": true,
-      "maxNewEntriesPerCycle": 10,
+      "maxNewEntriesPerCycle": 4,
       "minimumShareFloor": 1,
       "reservationHeadroomBps": 150,
       "expireUnfilledEntriesAtSessionClose": true,
       "controlCohort": {
         "enabled": true,
-        "maxOpenPositions": 10,
-        "maxNewPerSession": 5,
+        "maxOpenPositions": 2,
+        "maxNewPerSession": 1,
         "sizeMultiplier": 0.5,
         "evidenceCohort": "exploratory_control_unconditional"
+      },
+      /* THE STRIKE TIER (_investorStrike.js). At each deep scan, a name that
+         passes every hazard gate (quality, session, dispersion, earnings,
+         liquidity, trend, turnover, intelligence, evidence) but whose
+         residual has not yet fallen to -minAbsZ gets an ARMED LEVEL: the
+         price at which, with market and sector factors flat, its residual
+         would breach the threshold — and at which the cost hurdle would
+         also clear. The strike pass prices those names every minute and
+         buys on the first observation at or below the level, inside a band
+         beneath it. A price that gaps THROUGH the band is not chased: a fall
+         that large is more likely news than noise, and news is the deep
+         scan's evidence lane to judge, not the strike pass's. Levels expire
+         at the close and are re-derived by every deep scan.
+           maxArmedPlans   how many levels may be armed at once (closest first)
+           maxArmDropPct   a level more than this far below the price is not
+                           armed — an intraday fall that size is not a dip
+           planRankCeiling only names already in the lower part of the
+                           cross-section are planned
+           strikeBandPct   strike only within this band below the level */
+      "strike": {
+        "enabled": true,
+        "maxArmedPlans": 6,
+        "maxArmDropPct": 5,
+        "planRankCeiling": 0.5,
+        "strikeBandPct": 2.5
       },
       "policySelection": {
         "method": "thompson",
@@ -326,11 +360,11 @@ module.exports = {
       }
     },
     "portfolioControls": {
-      "maxOpenPositions": 304,
+      "maxOpenPositions": 8,
       "maxGrossExposurePct": 100,
       "minCashPct": 0,
-      "ordinaryPositionPctOfNav": 5,
-      "riskBudgetPerTradePctOfNav": 0.5,
+      "ordinaryPositionPctOfNav": 12,
+      "riskBudgetPerTradePctOfNav": 1.0,
       "sectorExposurePctOfNav": 100,
       "correlatedClusterPctOfNav": 100,
       "dynamicCorrelationExposurePctOfNav": 100,
@@ -339,7 +373,7 @@ module.exports = {
       "oneDayLossPausePctOfNav": 100,
       "drawdownFreezePctFromHigh": 100,
       "instruments": "Long US-listed common shares only; virtual cash only; no leverage or broker route.",
-      "_note": "All available virtual cash may be deployed across independently qualified opportunities. Duplicate-symbol, provenance, cash, lifecycle, reconciliation and executable-clock controls still apply."
+      "_note": "All available virtual cash may be deployed across at most eight independently qualified opportunities, so each position is large enough that modelled per-transaction friction is a small share of the notional. Duplicate-symbol, provenance, cash, lifecycle, reconciliation and executable-clock controls still apply."
     },
     "autoApproval": {
       "unlimitedOrdersPerDay": true,

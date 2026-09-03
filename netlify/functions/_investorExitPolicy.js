@@ -106,4 +106,38 @@ function exitSignal(rank, heldDays, cfg, opts = {}) {
   };
 }
 
-module.exports = { exitSignal };
+/* THE PRESET LEVELS, in dollars.
+ *
+ * exitSignal() above is the rule engine and stays authoritative. This turns
+ * the same configuration into the price levels a person can read off a
+ * position — "stop at 91.20, trailing stop arms above 102.10, target none,
+ * two sessions left" — so the strike pass can display exactly what it is
+ * watching for and the operator can see the preset targets rather than infer
+ * them from percentages. Display and telemetry only: no decision reads these
+ * numbers back; exitSignal recomputes from the configuration every pass. */
+function exitLevels(cfg = {}, { entry, peak = null, heldDays = null, earningsInDays = null } = {}) {
+  const e = Number(entry);
+  if (!(e > 0)) return null;
+  const r = (x) => Number(x.toFixed(4));
+  const stopPct = cfg.stopLossPct ?? -8;
+  const trailPct = cfg.trailingStopPct ?? -4;
+  const armPct = cfg.trailingArmsAtPct ?? 3;
+  const takePct = cfg.takeProfitPct ?? null;
+  const maxDays = cfg.maxHoldDays ?? 10;
+  const pk = Number(peak) > e ? Number(peak) : null;
+  const trailArmed = pk != null && ((pk - e) / e) * 100 >= armPct;
+  return {
+    stopUsd: r(e * (1 + stopPct / 100)), stopPct,
+    trailArmUsd: r(e * (1 + armPct / 100)), trailArmed,
+    trailStopUsd: trailArmed ? r(pk * (1 + trailPct / 100)) : null, trailPct,
+    peakUsd: pk,
+    targetUsd: takePct != null ? r(e * (1 + takePct / 100)) : null, takePct,
+    maxHoldDays: maxDays,
+    sessionsLeft: Number.isFinite(Number(heldDays)) ? Math.max(0, Number((maxDays - Number(heldDays)).toFixed(2))) : null,
+    earningsInDays: Number.isFinite(Number(earningsInDays)) ? Number(earningsInDays) : null,
+    exitBeforeEarningsDays: cfg.exitBeforeEarningsDays ?? 2,
+    computedAtMs: Date.now(),
+  };
+}
+
+module.exports = { exitSignal, exitLevels };

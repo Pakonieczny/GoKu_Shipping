@@ -43,6 +43,12 @@ const STAGES = ["research", "approval", "shadow", "limited_auto"];
  *  exploratory, not control — and bound to the current frozen identity. */
 function strictTradeAdmissible(t, identity = {}, { leaderId = null, sinceMs = null } = {}) {
   if (!t || t.paperLearningOnly === true) return false;
+  /* An operator who sells by hand has substituted their judgement for the
+     policy under test. The trade is a real ledger fact and shows in the
+     history, but it is not evidence for or against the strategy and can
+     never count toward a promotion sample. */
+  if (t.manualClose === true || t.exitKind === "manual"
+      || t.closeReason === "manual_operator_sell") return false;
   if (t.learningCohort != null && t.learningCohort !== "strict_policy") return false;
   if (t.cohortRole != null && t.cohortRole !== "signal") return false;
   for (const k of ["strategyHash", "universeHash", "variantsHash"]) {
