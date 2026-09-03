@@ -68,6 +68,12 @@ const DEFAULT_PLAN_TIMES_ET = Object.freeze(["09:50", "13:00"]);
    selects scheduled mode, the complete roster is rescanned on cycleSeconds
    (five minutes by default). The one-minute guard remains independent. */
 const DEFAULT_PLAN_MODE = "interval";
+/* v0 briefly made two scheduled scans the implicit/default policy and wrote
+   that value into the live control document. Merely changing the code-side
+   fallback does not repair that stored value. v1 is a one-time control
+   migration back to the operator's required five-minute full-universe clock;
+   later explicit choices carry this version and are preserved. */
+const FULL_SCAN_CADENCE_VERSION = 1;
 const PLAN_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 /* Scans are meaningful only inside the regular session and after the opening
    auction window (the cost model refuses to open in it anyway), and they need
@@ -101,6 +107,17 @@ function normalizePlanTimes(value) {
 
 function resolvePlanMode(value) {
   return value === "scheduled" ? "scheduled" : DEFAULT_PLAN_MODE;
+}
+
+/** PURE. Old control documents predate an explicit cadence-policy marker.
+ *  Treat their stored scheduled value as the retired default, not as a new
+ *  operator choice. `control()` persists the same answer on the next cron. */
+function effectivePlanMode(ctrl) {
+  const c = ctrl || {};
+  if ((Number(c.fullScanCadenceVersion) || 0) < FULL_SCAN_CADENCE_VERSION) {
+    return DEFAULT_PLAN_MODE;
+  }
+  return resolvePlanMode(c.planMode);
 }
 
 /** Is this control document on the scheduled deep-scan clock? Documents
@@ -156,6 +173,17 @@ async function control() {
   const ref = A.col(A.COL.control).doc("control");
   const snap = await ref.get();
   const d = snap.exists ? snap.data() : {};
+  if ((Number(d.fullScanCadenceVersion) || 0) < FULL_SCAN_CADENCE_VERSION) {
+    const cadenceMigration = {
+      planMode: DEFAULT_PLAN_MODE,
+      cycleSeconds: 300,
+      fullScanCadenceVersion: FULL_SCAN_CADENCE_VERSION,
+      planModeSource: "migration:restore_five_minute_full_universe",
+      cadenceMigratedAtMs: Date.now(),
+    };
+    await ref.set(cadenceMigration, { merge: true });
+    Object.assign(d, cadenceMigration);
+  }
   const operating = STATE.describe(d);
   const bounded = (value, fallback, min, max) => {
     const n = Number(value);
@@ -454,5 +482,7 @@ exports.nextPlanAtMs = nextPlanAtMs;
 exports.scheduledMode = scheduledMode;
 exports.DEFAULT_PLAN_TIMES_ET = DEFAULT_PLAN_TIMES_ET;
 exports.DEFAULT_PLAN_MODE = DEFAULT_PLAN_MODE;
+exports.FULL_SCAN_CADENCE_VERSION = FULL_SCAN_CADENCE_VERSION;
 exports.resolvePlanMode = resolvePlanMode;
+exports.effectivePlanMode = effectivePlanMode;
 exports.jobBlocksDispatch = jobBlocksDispatch;

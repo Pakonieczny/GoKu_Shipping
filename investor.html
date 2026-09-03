@@ -1628,6 +1628,7 @@ function unproposedReason(a){
   if(!a) return "";
   var q=a.signalQualified||0, p=a.signalProposed||0;
   if(!(q>0&&p===0)) return "";
+  if(a.entryControlReason) return q+" cleared the company gates, but purchases were not attempted because "+entryControlText(a.entryControlReason);
   if(a.executionSourceRefused) return "All "+q+" were refused at the order step because the price feed is not execution-grade ("+(a.executionSourceReason||"non-consolidated")+"). Decisions can be measured on it, but no paper fill may be priced against it. Fix: Control room → Market data → provider alpaca, feed delayed_sip, Save.";
   if(a.proposeErrors) return "All "+q+" failed at the order step with an error: "+(a.lastProposeError||"unknown")+". This is a defect, not a market condition.";
   if(a.signalPacedOut>=q) return q+" qualified but the per-scan cap ("+(a.perCycleCap||0)+") was already used.";
@@ -1646,6 +1647,7 @@ function staleVerdictNote(){
 }
 function entryControlText(reason){
   var r=String(reason||"");
+  if(/account risk stop/.test(r)) return r.replace(/^.*?account risk stop:\s*/,"The account safety breaker is active: ")+". The full company scan still runs and records opportunities; only new purchases wait.";
   if(/commit mismatch/.test(r)) return "A new build was deployed and the safety attestation still names the previous build. The next bootstrap re-attests automatically when the frozen policy is unchanged; if this stays red for more than two scans, press Start desk once.";
   if(/fixtures not attested/.test(r)) return "This build's runtime self-checks have not been attested yet. The next scan runs them; if it stays red, a self-check is failing and the build must be fixed.";
   if(/safety epoch mismatch/.test(r)) return "The frozen policy identity changed ("+r.replace(/^safety epoch mismatch:\s*/,"")+"). Press Start desk to re-activate on the new identity.";
@@ -2829,13 +2831,21 @@ function operationFeed(ops){
   });
   (DASH.runs||[]).forEach(function(r){
     if(!r||!r.jobId||seen[r.jobId]) return;seen[r.jobId]=1;
-    var text,cls=r.status==="dead"?"bad":"good";
-    if(r.status==="dead") text=opKind(r.kind)+" failed: "+(r.error||"the worker stopped before completion");
+    var incomplete=r.kind==="cycle"&&r.status==="complete"&&r.fullScanComplete===false;
+    var failed=["dead","dispatch_failed","stalled"].includes(r.status)||incomplete;
+    var text,cls=failed?"bad":"good";
+    if(failed) text=r.kind==="cycle"
+      ?("Opportunity scan incomplete: "+(r.evaluated||0)+" of "+(r.fullScanExpected||r.ranked||0)
+        +" ranked companies recorded an outcome. "+(r.error||"This attempt was not accepted as a full scan."))
+      :(opKind(r.kind)+" failed: "+(r.error||"the worker stopped before completion"));
     else if(r.kind==="cycle"){
       var st=r.settlement||{};
       text="Opportunity scan finished: "+(r.ranked!=null?r.ranked:(r.symbols||0))+" ranked, "
         +(r.breaches||0)+" signal breaches, "+(r.proposals||0)+" proposals, "
         +(st.filled||0)+" fills and "+(st.closed||0)+" closes.";
+      if(r.evaluation&&r.evaluation.errors){
+        text+=" "+r.evaluation.errors+" company evaluation(s) failed in isolation; the rest continued.";cls="bad";
+      }
       if(!(r.ranked>0)&&r.diagnostics){ var dg=r.diagnostics;
         text+=" Nothing ranked: bars for "+(dg.barsReceived||0)+" of "+(dg.rosterChecked||0)+" companies"
           +(dg.fetchFailed?"; "+dg.fetchFailed+" provider request(s) failed"+(dg.fetchError?" — "+dg.fetchError:""):"")
@@ -2870,7 +2880,7 @@ function operationFeed(ops){
 var PIPE_PREV={};
 function stageOfEvent(ev){
   var s=ev.s;
-  if(s==="no_signal"||s==="unpriced"||s==="held") return "ranked";
+  if(s==="no_signal"||s==="unpriced"||s==="held"||s==="company_error") return "ranked";
   if(s==="blocked") return "signal";
   if(s==="passed"||s==="paced_out") return "checks";
   if(s==="proposed"||s==="control_proposed") return "proposed";
@@ -2894,6 +2904,7 @@ function chipFor(ev){
   else if(s==="exit_blocked"){cls="c-exit";text="exit waiting: "+(ev.n||"");}
   else if(s==="held"){cls="c-none";text="holding";}
   else if(s==="unpriced"){cls="c-none";text="no bars";}
+  else if(s==="company_error"){cls="c-blocked";text="evaluation error: "+(ev.n||"unknown");}
   else {text=s;}
   return '<span class="pchip '+cls.replace(/^c-/,"k-")+'"><i></i><b>'+esc(ev.sym||"")+'</b><em>'+esc(text)+'</em></span>';
 }
@@ -2905,7 +2916,8 @@ function plainGateShort(id){
 }
 function renderPipeline(live, phase){
   if(!live) return "";
-  var c=live.counters||{}, evaluated=(c.no_signal||0)+(c.blocked||0)+(c.passed||0)+(c.held||0)+(c.unpriced||0)+(c.exit_armed||0)+(c.exit_blocked||0);
+  var c=live.counters||{}, evaluated=Number.isFinite(Number(c.evaluated))?Number(c.evaluated):
+    (c.no_signal||0)+(c.blocked||0)+(c.passed||0)+(c.held||0)+(c.unpriced||0)+(c.exit_armed||0)+(c.exit_blocked||0)+(c.company_error||0);
   var signal=(c.blocked||0)+(c.passed||0)+(c.paced_out||0);
   var stages=[
     ["ranked","Evaluated",evaluated],
@@ -2931,8 +2943,11 @@ function renderPipeline(live, phase){
 function renderOperationsConsole(){
   var host=$("#opsConsole");if(!host||!DASH)return;
   var ops=DASH.operations||{},active=ops.active||null,c=ctl(),session=DASH.session||{};
-  var runs=DASH.runs||[],latestRun=runs[0]||null;
-  var statusClass=active?"working":(latestRun&&latestRun.status==="dead"?"failed":
+  var runs=DASH.runs||[],cycleRuns=runs.filter(function(r){return r.kind==="cycle";}),
+      latestCycleAttempt=cycleRuns[0]||null;
+  var cycleFailed=!!(latestCycleAttempt&&(["dead","dispatch_failed","stalled"].includes(latestCycleAttempt.status)
+    ||(latestCycleAttempt.status==="complete"&&latestCycleAttempt.fullScanComplete===false)));
+  var statusClass=active?"working":(cycleFailed?"failed":
     (ops.state==="paused"||ops.state==="entry_frozen"?"paused":"waiting"));
   var statusText=active?"Working now":statusClass==="failed"?"Needs attention":
     ops.state==="paused"?"Paused":ops.state==="entry_frozen"?"Entries frozen":"Between jobs";
@@ -2965,10 +2980,19 @@ function renderOperationsConsole(){
         .map(function(x){return opKind(x.kind)+" — "+((x.progress||{}).label||x.status);}).map(esc).join(" · ")+'</div>';
     }
     nowHtml+='</div>';
+    if(cycleFailed&&active.kind!=="cycle"){
+      nowHtml='<div class="note bad" style="margin:0 0 12px"><b>The latest full-universe scan was incomplete.</b> '
+        +esc((latestCycleAttempt&&latestCycleAttempt.error)||"A holding/research job is active now, but it does not replace the missing company scan.")+'</div>'+nowHtml;
+    }
   }else{
     var title,detail;
     if(statusClass==="failed"){
-      title="The latest backend job failed";detail=(latestRun&&latestRun.error)||"The worker stopped before recording a successful completion.";
+      var attempted=Number(latestCycleAttempt&&latestCycleAttempt.evaluated)||0,
+          expected=Number(latestCycleAttempt&&latestCycleAttempt.fullScanExpected)||Number(latestCycleAttempt&&latestCycleAttempt.ranked)||0;
+      title="The latest full-universe scan did not complete";
+      detail=(latestCycleAttempt&&latestCycleAttempt.error)
+        ||(expected?("Only "+attempted+" of "+expected+" ranked companies reached a recorded outcome. The result was not accepted as a completed scan.")
+          :"The worker stopped before recording a successful full scan.");
     }else if(ops.state==="paused"){
       title="The desk is paused";detail="New-entry opportunity scans are stopped. Holding protection and available exits remain independent.";
     }else if(ops.state==="entry_frozen"){
@@ -2978,9 +3002,11 @@ function renderOperationsConsole(){
     }else{
       title="Waiting for the next eligible market session";detail="New-price opportunity scans wait for premarket or the regular session. Company research and holding protection can still run separately.";
     }
-    var lastCycle=(runs||[]).filter(function(r){return r.kind==="cycle"&&r.live;})[0];
+    var incompleteCycle=cycleFailed&&latestCycleAttempt&&latestCycleAttempt.live?latestCycleAttempt:null;
+    var lastCycle=cycleRuns.filter(function(r){return r.status==="complete"&&r.fullScanComplete!==false&&r.live;})[0];
     nowHtml='<div class="opsnow"><div class="opsnow__title">'+esc(title)+'</div><div class="opsnow__detail">'+esc(detail)+'</div>'
-      +(lastCycle?'<div class="opsmeta" style="margin-top:10px"><b>Last scan</b><span>'+esc(timeAgo(lastCycle.updatedAtMs||lastCycle.startedAtMs))+'</span></div>'+renderPipeline(lastCycle.live,null):'')+'</div>';
+      +(incompleteCycle?'<div class="opsmeta" style="margin-top:10px"><b>Incomplete scan attempt — not a result</b><span>'+esc(timeAgo(incompleteCycle.updatedAtMs||incompleteCycle.startedAtMs))+'</span></div>'+renderPipeline(incompleteCycle.live,null):'')
+      +(lastCycle&&lastCycle!==incompleteCycle?'<div class="opsmeta" style="margin-top:10px"><b>Last completed full scan</b><span>'+esc(timeAgo(lastCycle.updatedAtMs||lastCycle.startedAtMs))+'</span></div>'+renderPipeline(lastCycle.live,null):'')+'</div>';
   }
   var nextText;
   var strikeText=(session.open?"Strike pass every "+(cad.strikeSeconds||60)+"s on "+(cad.strikeBarTimeframe||"1Min")+" bars: stops, targets, armed entry levels and fills.":
@@ -3012,7 +3038,8 @@ function renderOperationsConsole(){
   var scanDesc=scan.complete
     ? ((scan.ranked||0)+" companies had enough comparable data to rank; "
       +(scan.excludedFromRanking||0)+" were excluded before or during ranking"
-      +(exclusionText?" ("+exclusionText+").":"."))
+      +(exclusionText?" ("+exclusionText+").":".")
+      +(scan.evaluation&&scan.evaluation.errors?" "+scan.evaluation.errors+" company evaluation(s) failed individually; every other company continued.":""))
     : scanRemaining+" frozen eligible companies remain to be checked in this cycle.";
   var sumX=(ctl().lastCycleSummary||{}), xa=(sumX.exploration&&sumX.exploration.activity)||null, xec=sumX.entryControl||null;
   var streams=operationStream("Latest roster check",scan.completed,scan.total,scan.pct||0,scanDesc)
@@ -3076,7 +3103,7 @@ function renderToday(){
       paused=c.operatingState==="paused"||c.killSwitch||c.enabled===false,
       running=!paused&&!frozen;
   var stage=c.mode||"research", exploratory=c.operatingState==="exploratory_auto";
-  var cadence=DASH.cadence||{}, autoScanText=cadence.planMode==="scheduled"
+  var cadence=(DASH.operations||{}).cadence||{}, autoScanText=cadence.planMode==="scheduled"
     ? "Automatic full scans at "+(cadence.planTimesEt||[]).join(", ")+" ET."
     : "Automatic full scan every "+durationText(cadence.cycleSeconds||300)+".";
   var auto=c.automaticPaperEntries===true||stage==="limited_auto"||exploratory;
@@ -4470,7 +4497,7 @@ $("#btnRecall").addEventListener("click",function(){
     mount();
     var el = document.getElementById("deskCtl"); if (!el) return;
     var st = deskState(), c = COPY[st];
-    var cadence=(DASH&&DASH.cadence)||{}, cadenceText=cadence.planMode==="scheduled"
+    var cadence=(DASH&&DASH.operations&&DASH.operations.cadence)||{}, cadenceText=cadence.planMode==="scheduled"
       ? "Full scans run at "+(cadence.planTimesEt||[]).join(", ")+" ET."
       : "Full scan every "+durationText(cadence.cycleSeconds||300)+".";
     var warn = "";

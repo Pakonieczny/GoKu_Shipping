@@ -197,6 +197,30 @@ function progressForUi(value) {
   };
 }
 
+/* A cycle can be terminal in Firestore yet still have skipped most of the
+   ranked universe (the retired account-breaker shortcut did exactly that).
+   Keep a separate semantic completion check so the console never presents a
+   one-holding trace as a completed full scan. */
+function liveEvaluatedCount(live) {
+  const c = live && live.counters || {};
+  if (Number.isFinite(Number(c.evaluated))) return Math.max(0, Number(c.evaluated));
+  return ["no_signal", "blocked", "passed", "held", "unpriced",
+    "exit_armed", "exit_blocked", "company_error"]
+    .reduce((sum, key) => sum + Math.max(0, Number(c[key]) || 0), 0);
+}
+
+function fullScanIntegrity(run) {
+  const r = run || {};
+  if (r.kind !== "cycle") return { pass: r.status === "complete", evaluated: null, expected: null };
+  const evaluated = liveEvaluatedCount(r.live);
+  const expected = Number.isFinite(Number(r.ranked)) ? Math.max(0, Number(r.ranked))
+    : (r.progress && Number.isFinite(Number(r.progress.total))
+      ? Math.max(0, Number(r.progress.total)) : null);
+  const hasLive = !!(r.live && r.live.counters);
+  const covered = !hasLive || expected == null || expected === 0 || evaluated >= expected;
+  return { pass: r.status === "complete" && covered, evaluated, expected };
+}
+
 /* ── actions ───────────────────────────────────────────────────────────── */
 let quotesCache = { at: 0, quotes: {}, asOf: null };
 const F = require("./_investorFetch");
@@ -283,10 +307,11 @@ const ACTIONS = {
       const r = d.data();
       const startedAt = isoTime(r.startedAt);
       const finishedAt = isoTime(r.finishedAt);
-      runs.push({ jobId: r.jobId || d.id, kind: r.kind,
+      runs.push({ jobId: r.jobId || d.id, cycleId: r.cycleId || null, kind: r.kind,
         status: r.status || (finishedAt ? "complete" : "running"),
         breaches: r.breaches, ranked: r.ranked, symbols: r.symbols || r.symbolCount,
         proposals: r.proposals, modelCalls: r.modelCalls, elapsedMs: r.elapsedMs,
+        evaluation: r.evaluation || null,
         selected: r.selected || [], swept: r.swept,
         settlement: r.settlement || null, positionCoverage: r.positionCoverage || null,
         diagnostics: r.rankingDiagnostics ? (() => {
@@ -359,7 +384,7 @@ const ACTIONS = {
     const rankedInCycle = summaryMatchesCycle
       ? Math.max(0, Number(latestSummary.ranked) || 0)
       : current.length;
-    const scanComplete = summaryMatchesCycle && expectedCandidates > 0
+    let scanComplete = summaryMatchesCycle && expectedCandidates > 0
       && rosterChecked >= expectedCandidates;
     const decisionSetComplete = summaryMatchesCycle
       ? current.length === rankedInCycle : current.length > 0;
@@ -368,6 +393,31 @@ const ACTIONS = {
     const jobById = Object.fromEntries(jobs.map((j) => [j.jobId, j]));
     const activeCutoffMs = nowMs - 20 * 60 * 1000;
     const terminalStatuses = new Set(["complete", "dead", "dispatch_failed", "cancelled", "yielded"]);
+    /* The run and job documents are two views of one worker. A platform kill
+       can mark only the job terminal, while a lost worker can leave the run
+       saying "running" forever. Reconcile them before returning either view
+       to the console, then attest whether a cycle actually covered its ranked
+       workset rather than trusting the word "complete" alone. */
+    for (const run of runs) {
+      const matchingJob = jobById[run.jobId];
+      if (matchingJob && terminalStatuses.has(matchingJob.status)) {
+        run.status = matchingJob.status;
+        run.error = run.error || matchingJob.error || null;
+      }
+      const lastSeenMs = run.updatedAtMs || run.startedAtMs || 0;
+      if (["queued", "running"].includes(run.status) && lastSeenMs < activeCutoffMs) {
+        run.status = "stalled";
+        run.error = run.error || "the worker stopped updating before the full scan completed";
+      }
+      const integrity = fullScanIntegrity(run);
+      run.evaluated = integrity.evaluated;
+      run.fullScanExpected = integrity.expected;
+      run.fullScanComplete = integrity.pass;
+    }
+    const summaryRun = runs.find((run) => run.kind === "cycle"
+      && (run.jobId === latestSummary.jobId || (latestSummary.cycleId
+        && run.cycleId === latestSummary.cycleId)));
+    if (summaryRun && summaryRun.fullScanComplete === false) scanComplete = false;
     const activeWork = [];
     for (const run of runs) {
       const matchingJob = jobById[run.jobId];
@@ -421,7 +471,10 @@ const ACTIONS = {
     /* Two-tier cadence as the scheduler itself sees it, so the console never
        describes a clock the dispatcher is not actually running. */
     const K = require("./investorKick");
-    const planMode = K.resolvePlanMode(ctrl.planMode);
+    /* Apply the same one-time cadence policy the cron applies. The API may be
+       read in the few seconds before the next cron persists the migration;
+       it must not keep advertising the retired twice-daily default then. */
+    const planMode = K.effectivePlanMode(ctrl);
     const planTimesEt = K.normalizePlanTimes(ctrl.planTimesEt) || [...K.DEFAULT_PLAN_TIMES_ET];
     const kickCtrl = { planMode, planTimesEt, lastPlanKey: ctrl.lastPlanKey || null };
     const guardSeconds = Math.min(600, Math.max(60, Number(ctrl.guardSeconds) || 60));
@@ -462,6 +515,7 @@ const ACTIONS = {
         ranked: rankedInCycle, recorded: current.length,
         excludedFromRanking: Math.max(0, expectedCandidates - rankedInCycle),
         decisionSetComplete,
+        evaluation: latestSummary.evaluation || null,
         rankingDiagnostics: latestSummary.rankingDiagnostics || null },
       research: { focusCount: (ctrl.intelligenceFocus || []).length,
         selected: lastIntelligence.selected || [],
@@ -562,6 +616,8 @@ const ACTIONS = {
         safetyClosedReason: ctrl.safetyClosedReason || null,
         cycleSeconds: ctrl.cycleSeconds || 300,
         planMode, planTimesEt, strikeBarTimeframe, lastPlanKey: ctrl.lastPlanKey || null,
+        fullScanCadenceVersion: Number(ctrl.fullScanCadenceVersion)
+          || K.FULL_SCAN_CADENCE_VERSION,
         guardSecondsClosed,
         paperLearning: { stored: ctrl.paperLearning || null, active: paperPreview.active,
           refused: paperPreview.refused, applied: paperPreview.applied, limits: ST.RELAX_LIMITS,
@@ -1384,14 +1440,23 @@ const ACTIONS = {
           continue;
         }
         if (k === "planMode") {
-          if (patch[k] === "scheduled" || patch[k] === "interval") clean[k] = patch[k];
+          if (patch[k] === "scheduled" || patch[k] === "interval") {
+            clean[k] = patch[k];
+            clean.fullScanCadenceVersion = require("./investorKick").FULL_SCAN_CADENCE_VERSION;
+            clean.planModeSource = "operator";
+          }
           else refused[k] = "must be 'scheduled' (deep scans at set New York times) or 'interval' (every cycleSeconds)";
           continue;
         }
         if (k === "planTimesEt") {
           const K = require("./investorKick");
           const times = K.normalizePlanTimes(patch[k]);
-          if (times) { clean[k] = times; if (patch.planMode === undefined) clean.planMode = "scheduled"; }
+          if (times) {
+            clean[k] = times;
+            if (patch.planMode === undefined) clean.planMode = "scheduled";
+            clean.fullScanCadenceVersion = require("./investorKick").FULL_SCAN_CADENCE_VERSION;
+            clean.planModeSource = "operator";
+          }
           else refused[k] = "give one to six HH:MM New York times between 09:45 and 15:30";
           continue;
         }
@@ -1900,6 +1965,8 @@ const ACTIONS = {
     try {
       result = await K.dispatch(wanted, {
         ...ctrl, enabled: true, mode: operating.stage,
+        planMode: K.effectivePlanMode(ctrl),
+        fullScanCadenceVersion: K.FULL_SCAN_CADENCE_VERSION,
         dryRun: !operating.paperLedger, killSwitch: false,
         accountId: ctrl.accountId || "paper-1",
         cycleSeconds: Number(ctrl.cycleSeconds) || 300,
@@ -2297,6 +2364,8 @@ exports.ACTIONS = ACTIONS;
 /* Exported for the runtime fixtures: the console's whole history view is
    this projection, so it is tested against real ledger field names. */
 exports.closedTradeForUi = closedTradeForUi;
+exports.liveEvaluatedCount = liveEvaluatedCount;
+exports.fullScanIntegrity = fullScanIntegrity;
 /* Not an HTTP action. Exposed only so the deployed runtime attestation can
    inspect the exact queue-draining implementation after esbuild bundling,
    without assuming the original source file still exists on disk. */

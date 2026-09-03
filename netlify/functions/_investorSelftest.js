@@ -2111,10 +2111,51 @@ function runFixtures() {
     return true;
   }));
 
+  cases.push(fixture("legacy_twice_daily_default_migrates_once_to_five_minute_full_scans", () => {
+    const K = require("./investorKick");
+    /* A stored scheduled value from the retired implicit default has no
+       policy marker and must not survive this release. A later explicit
+       operator choice carries the marker and remains scheduled. */
+    if (K.effectivePlanMode({ planMode: "scheduled" }) !== "interval") return false;
+    if (K.effectivePlanMode({ planMode: "scheduled",
+      fullScanCadenceVersion: K.FULL_SCAN_CADENCE_VERSION }) !== "scheduled") return false;
+    const control = sourceOf(K.control);
+    if (!/planMode: DEFAULT_PLAN_MODE/.test(control)
+        || !/cycleSeconds: 300/.test(control)
+        || !/fullScanCadenceVersion: FULL_SCAN_CADENCE_VERSION/.test(control)) return false;
+    const setControl = sourceOf(require("./investorApi").ACTIONS.setControl);
+    return /planModeSource = "operator"/.test(setControl)
+      && /fullScanCadenceVersion/.test(setControl);
+  }));
+
+  cases.push(fixture("account_breakers_block_purchases_without_hiding_the_company_scan", () => {
+    const CYCLE = require("./investorCycle-background");
+    const stopped = CYCLE.applyAccountBreakers({ pass: true }, { halted: true,
+      breakers: [{ id: "drawdown_freeze", reason: "drawdown limit reached" }] });
+    if (stopped.pass !== false || !/account risk stop/.test(stopped.reason)) return false;
+    const open = { pass: true, reason: null };
+    if (CYCLE.applyAccountBreakers(open, { halted: false }) !== open) return false;
+    const source = sourceOf(CYCLE.runCycle);
+    /* The old shortcut was the defect: after the holdings it silently
+       continued over every entry-eligible company. Qualification is now a
+       company verdict; entryControl is enforced later at purchase creation. */
+    if (/if \(breakers\.halted\) \{[^}]*continue/.test(source)) return false;
+    if (!/if \(evalRes\.pass && manifestValidation\.pass\)/.test(source)) return false;
+    if (!/company_error/.test(source) || !/evaluation_error/.test(source)) return false;
+
+    const API = require("./investorApi");
+    const partial = API.fullScanIntegrity({ kind: "cycle", status: "complete", ranked: 276,
+      live: { counters: { evaluated: 1, held: 1, blocked: 275 } } });
+    const covered = API.fullScanIntegrity({ kind: "cycle", status: "complete", ranked: 276,
+      live: { counters: { evaluated: 276, held: 1, no_signal: 273, passed: 1, company_error: 1 } } });
+    return partial.pass === false && partial.evaluated === 1
+      && covered.pass === true && covered.evaluated === 276;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v28-scan-recovery";
+  const SCHEMA = "runtime-fixtures-v29-full-universe-scan-truth";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

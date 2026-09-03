@@ -153,6 +153,19 @@ function executionSourceEligible(quality) {
   return !!quality && quality.tradable === true;
 }
 
+/** Account breakers close purchase creation; they do not close measurement.
+ *  Keeping this projection separate is what lets the full roster continue
+ *  through signals and company gates while the ledger safely refuses risk. */
+function applyAccountBreakers(entryControl, breakers) {
+  const base = entryControl || { pass: false, reason: "entry controls unavailable" };
+  if (!breakers || breakers.halted !== true) return base;
+  const reasons = (breakers.breakers || []).map((b) => b && b.reason).filter(Boolean);
+  const accountReason = `account risk stop: ${reasons.join("; ") || "a portfolio circuit breaker is active"}`;
+  return { ...base, pass: false,
+    reason: base.pass === true || !base.reason ? accountReason : `${base.reason}; ${accountReason}`,
+    accountBreakerReason: accountReason };
+}
+
 /* ── universe + strategy loading ───────────────────────────────────────── */
 async function loadUniverse(version) {
   /* Default to the version the shipped roster declares, not a hardcoded "v1".
@@ -971,6 +984,11 @@ async function runCycle(jobId, { manual = false } = {}) {
     dayPnlPct: startOfDayNav > 0 ? ((navUsd - startOfDayNav) / startOfDayNav) * 100 : 0,
   };
   const breakers = R.accountBreakers(riskState, activeRiskStrategy);
+  /* A circuit breaker forbids NEW RISK; it must never make 300 companies
+     disappear from the scan. The retired per-symbol shortcut skipped the
+     signal engine, decision records and live counters for every non-holding,
+     producing an apparently completed one-company scan. Fold the breaker
+     into the purchase control instead, then keep measuring the whole roster. */
 
   /* Symbols with an order already in flight. The duplicate check in the
      portfolio gate looks at POSITIONS, so a proposed-but-unapproved order was
@@ -993,6 +1011,7 @@ async function runCycle(jobId, { manual = false } = {}) {
     pendingExposureUnavailable = String(e.message || e).slice(0, 120);
     entryControl = { pass: false, reason: `pending_exposure_unavailable: ${pendingExposureUnavailable}` };
   }
+  entryControl = applyAccountBreakers(entryControl, breakers);
 
   /* ── PENDING EXPOSURE IS EXPOSURE ──────────────────────────────────────
      An order proposed or approved in an earlier cycle is a position the book
@@ -1131,6 +1150,7 @@ async function runCycle(jobId, { manual = false } = {}) {
   const orphanSymbols = allPositions
     .filter((p) => p && p.open && p.symbol && !tradeSymbols.includes(p.symbol))
     .map((p) => p.symbol);
+  const companyErrors = [];
   let lastEvaluationReportMs = 0;
   for (let workIndex = 0; workIndex < managementWorkset.length; workIndex += 1) {
     const work = managementWorkset[workIndex];
@@ -1143,6 +1163,9 @@ async function runCycle(jobId, { manual = false } = {}) {
         completed: workIndex, total: managementWorkset.length, currentItem: sym,
         detail: `Checking ${sym}: held-position exits first, then data, evidence, cost and portfolio gates.` });
     }
+    /* A bad dossier or one rejected Firestore row belongs to that company;
+       it must not abort the remaining hundreds of evaluations. */
+    try {
     const meta = tierBySymbol[sym] || {};
     const bars = panel[sym] || [];
     const last = bars[bars.length - 1];
@@ -1166,6 +1189,7 @@ async function runCycle(jobId, { manual = false } = {}) {
         exits.push({ symbol: sym, kind: "corporate_action_quarantine",
           blocked: "operator_confirmation_required", reason: pending.reason || null,
           shareRatio: pending.shareRatio || null });
+        await liveEvent("exit_blocked", sym, "corporate action needs operator confirmation");
         continue;
       }
       const heldDays = M.tradingDaysHeld(position.openedAt, Date.now()) ?? 0;
@@ -1296,10 +1320,6 @@ async function runCycle(jobId, { manual = false } = {}) {
 
     // Held-only symbols are included for protection, never for fresh entries.
     if (!work.entryEligible) continue;
-
-    /* A halted account opens nothing. Exits above still run — being unable to
-       sell during a drawdown is how a pause becomes a disaster. */
-    if (breakers.halted) { causeBySymbol[sym] = S.CAUSE.PENDING; continue; }
 
     /* --- entries: only threshold breaches proceed past this line --------- */
     const z = zBySymbol[sym];
@@ -1501,6 +1521,8 @@ async function runCycle(jobId, { manual = false } = {}) {
       decisionManifestCoverage: decisionManifest.coverage,
       decisionManifestValid: manifestValidation.pass,
       cost: evalRes.cost, sizing: evalRes.sizing,
+      entryControl: { pass: entryControl.pass === true,
+        reason: entryControl.pass ? null : entryControl.reason || null },
       breach: !!breach, unionEvidenceTrigger: !!evidenceTrigger,
       sectorTailFraction: crowd.fractionInTail[S.sectorOf(sym)] ?? 0,
       strategyVersion: strategy.version,
@@ -1526,6 +1548,8 @@ async function runCycle(jobId, { manual = false } = {}) {
       strictUncalibrated: { pass: strictUncalibratedRes.pass,
         blockedBy: strictUncalibratedRes.blockedBy, firstBlock: strictUncalibratedRes.firstBlock },
       dataSufficiency,
+      entryControl: { pass: entryControl.pass === true,
+        reason: entryControl.pass ? null : entryControl.reason || null },
       paperLearning: { active: paperLearning.active === true,
         applied: paperLearning.applied || {} },
       operatingState: operating.state,
@@ -1602,14 +1626,14 @@ async function runCycle(jobId, { manual = false } = {}) {
         if (candidate.ok) await liveEvent("armed", sym, `level ${candidate.plan.armBelowUsd} (${candidate.dropPct}% below)`);
       } catch (e) { planCandidates.push({ ok: false, symbol: sym, reason: `error:${String(e.message || e).slice(0, 60)}` }); }
     }
-    if (evalRes.pass && entryControl.pass && manifestValidation.pass) {
+    if (evalRes.pass && manifestValidation.pass) {
       proposalQueue.push({ sym, last, evalRes, strictRes, strictUncalibratedRes, cause, causeDetail, rank,
         intelligence, decisionManifest, cohortRole: "signal", dataSufficiency,
         policyIds: explorationPolicyIds.length ? explorationPolicyIds : ["A"],
         utilityBps: Number(evalRes.cost.calibratedNetLowerBoundBps
           ?? (Number(evalRes.cost.expectedGrossBps) - Number(evalRes.cost.requiredBps))) });
     } else if (operating.exploratoryAuto && activity.enabled && activity.controlCohort.enabled
-        && entryControl.pass && manifestValidation.pass && XP.controlEligible(evalRes)) {
+        && manifestValidation.pass && XP.controlEligible(evalRes)) {
       /* Passed every hazard gate, failed only signal-type gates: a control
          candidate. Chosen at random later, at reduced size, and labelled. */
       controlPool.push({ sym, last, evalRes, strictRes, strictUncalibratedRes, cause, causeDetail, rank,
@@ -1617,10 +1641,29 @@ async function runCycle(jobId, { manual = false } = {}) {
         policyIds: [], utilityBps: 0 });
     }
     /* One live outcome per name, in pipeline order: ranked → signal → gates. */
-    if (evalRes.pass && entryControl.pass && manifestValidation.pass) await liveEvent("passed", sym, "cleared every gate");
+    if (evalRes.pass && manifestValidation.pass) await liveEvent("passed", sym, "cleared company gates");
     else if (!evidenceTrigger) await liveEvent("no_signal", sym, `rank ${Number(rank).toFixed(2)}`);
-    else if (evalRes.pass) await liveEvent("blocked", sym, entryControl.pass ? "manifest" : "entry_control");
+    else if (evalRes.pass) await liveEvent("blocked", sym, "manifest");
     else await liveEvent("blocked", sym, evalRes.blockedBy[0] || evalRes.firstBlock || "gate");
+    } catch (e) {
+      const error = String(e && (e.code || e.message) || e).slice(0, 160);
+      companyErrors.push({ symbol: sym, error });
+      await liveEvent("company_error", sym, error);
+      try {
+        await A.col(A.COL.decisions).doc(`${cycleId}_${sym}`).set({
+          cycleId, symbol: sym, kind: "evaluation_error", error,
+          strategyVersion: strategy.version, decisionAtMs: Date.now(),
+          ...A.envelope({ created_by: FN_NAME }),
+        }, { merge: true });
+      } catch { /* the live run manifest still retains the company failure */ }
+    } finally {
+      /* Exact once-per-work-item counter. Stage counters may gain later
+         portfolio events for the same symbol, so summing them is only a
+         compatibility fallback for old runs. */
+      LIVE.counters.evaluated = (LIVE.counters.evaluated || 0) + 1;
+      LIVE.pending = true;
+      await liveFlush(false);
+    }
   }
   await reportRunProgress(runRef, { phase: "portfolio_selection",
     label: "Choosing among qualifying opportunities", pct: 73,
@@ -1667,7 +1710,8 @@ async function runCycle(jobId, { manual = false } = {}) {
   const activityLog = { signalQualified: proposalQueue.length, signalProposed: 0,
     signalPacedOut: 0, controlEligible: controlPool.length, controlProposed: 0,
     controlOpenBefore: controlOpen, controlNewThisSessionBefore: controlNewThisSession,
-    minimumShareFloorApplied: 0, perCycleCap: exploratorySelection ? activity.maxNewEntriesPerCycle : null };
+    minimumShareFloorApplied: 0, perCycleCap: exploratorySelection ? activity.maxNewEntriesPerCycle : null,
+    entryControlReason: entryControl.pass ? null : entryControl.reason || "entries are closed" };
   const ordinaryCapUsd = navUsd * (Number(activePortfolioControls.ordinaryPositionPctOfNav) || 3) / 100;
 
   /* One proposal path for both cohorts. Returns true when an order was
@@ -2750,6 +2794,10 @@ async function runCycle(jobId, { manual = false } = {}) {
     rankingDiagnostics,
     quoteCoverage,
     ranked, breaches: candidates.length,
+    evaluation: { workset: managementWorkset.length,
+      completed: managementWorkset.length,
+      successful: Math.max(0, managementWorkset.length - companyErrors.length),
+      errors: companyErrors.length, errorSample: companyErrors.slice(0, 20) },
     proposals: decisions.length, strikePlans,
     entryLock: { acquired: !!entryLockOwner && activityLog.entryLockUnavailable == null,
       unavailable: activityLog.entryLockUnavailable || null },
@@ -2861,8 +2909,9 @@ async function runCycle(jobId, { manual = false } = {}) {
     updatedAt: A.FV.serverTimestamp(), updatedAtMs: Date.now(),
     progress: { phase: "complete", label: "Opportunity cycle complete",
       detail: `${ranked} ranked, ${candidates.length} signal breaches, ${decisions.length} proposals, `
-        + `${settled.filled.length} fills and ${settled.closed.length} closes.`,
-      pct: 100, completed: symbols.length, total: symbols.length, remaining: 0,
+        + `${settled.filled.length} fills and ${settled.closed.length} closes`
+        + `${companyErrors.length ? `; ${companyErrors.length} company evaluation errors` : ""}.`,
+      pct: 100, completed: managementWorkset.length, total: managementWorkset.length, remaining: 0,
       currentItem: null, updatedAtMs: Date.now() },
   }, { merge: true });
 
@@ -3361,6 +3410,7 @@ exports.WORKER_LEASE_TTL_MS = WORKER_LEASE_TTL_MS;
 exports.applyOverfitGuard = applyOverfitGuard;
 exports.attentionZ = attentionZ;
 exports.executionSourceEligible = executionSourceEligible;
+exports.applyAccountBreakers = applyAccountBreakers;
 /* Exported for deterministic invariant tests. These are pure helpers; the
    worker entry point remains runCycle. */
 exports.advFor = advFor;
