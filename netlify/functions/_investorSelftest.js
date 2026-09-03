@@ -993,7 +993,7 @@ function runFixtures() {
       navUsd: 100000, cashUsd: 100000, cfg, dynamicCorrelations: {} });
     const learn = policy.paperLearningDefaults || {};
     return policy.startingNavUsd === 100000
-      && policy.version === "exploratory-auto-v8"
+      && policy.version === "exploratory-auto-v9"
       && learn.minAbsZ === 1.75 && learn.entryRank === 0.3
       && learn.costMarginMultiple === 0.25
       && learn.exitRank === 0.75 && learn.maxHoldDays === 3
@@ -1469,10 +1469,10 @@ function runFixtures() {
 
   cases.push(fixture("exploratory_scoreboard_admits_only_this_experiment_newest_first_and_hashes_the_sample", () => {
     const id = { strategyHash: "a".repeat(64), universeHash: "b".repeat(64), variantsHash: "c".repeat(64),
-      exploratoryPolicyVersion: "exploratory-auto-v8", sufficiencyVersion: "data-sufficiency-v2" };
+      exploratoryPolicyVersion: "exploratory-auto-v9", sufficiencyVersion: "data-sufficiency-v2" };
     const mk = (over) => ({ paperLearningOnly: true, learningCohort: XP.COHORT_SIGNAL, netBps: 1, tradeId: "t" + Math.random(),
       strategyHash: id.strategyHash, universeHash: id.universeHash, variantsHash: id.variantsHash,
-      exploratoryPolicyVersion: "exploratory-auto-v8", closedAt: "2026-09-01T15:00:00Z",
+      exploratoryPolicyVersion: "exploratory-auto-v9", closedAt: "2026-09-01T15:00:00Z",
       decisionContext: { dataSufficiency: { score: 50, version: "data-sufficiency-v2" } }, ...over });
     const trades = [
       mk({ tradeId: "a", closedAt: "2026-09-01T15:00:00Z" }),
@@ -1780,7 +1780,12 @@ function runFixtures() {
   cases.push(fixture("plan_candidate_requires_every_hazard_gate_and_a_clearing_cost_at_the_level", () => {
     const STK = require("./_investorStrike");
     const XPL = require("./_investorExplore");
-    const policy = XPL.activityPolicy(strategy).strike;
+    /* The armed tier is RETIRED in the frozen strategy (v15): entries are made
+       at the market price or not at all. Its code is kept so the record of
+       what it did stays readable, so this fixture enables it explicitly and
+       separately asserts that the shipped policy leaves it off. */
+    const shipped = XPL.activityPolicy(strategy).strike;
+    const policy = { ...shipped, enabled: true };
     /* The relaxed exploratory configuration the deep scan actually plans
        with: paper learning lifts the calibration requirement. */
     const cfg = { ...strategy.parameters, minAbsZ: 1.0, entryRank: 0.5, costMarginMultiple: 0.25,
@@ -1797,7 +1802,7 @@ function runFixtures() {
       sessionCloseMs: Date.parse("2026-09-02T20:00:00Z"), vixNorm: 1, session: { date: "2026-09-02", open: true },
       policyIdentity: { accountId: "paper-1", strategyVersion: "v11", universeVersion: "v1",
         strategyHash: "c".repeat(64), universeHash: "d".repeat(64), variantsHash: "e".repeat(64) },
-      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v8", cohortLabel: "exploratory_auto_unvalidated",
+      variantId: "A", exploratoryPolicyVersion: "exploratory-auto-v9", cohortLabel: "exploratory_auto_unvalidated",
       paperLearningOnly: true, activePortfolioControls: strategy.exploratoryAuto.portfolioControls,
       activity: XPL.activityPolicy(strategy), cycleId: "2026-09-02_1500", strategyVersion: "v11",
       operatingState: "exploratory_auto", moveStartedAtMs: Date.parse("2026-09-02T14:00:00Z"), positionScale: 1 };
@@ -1814,7 +1819,8 @@ function runFixtures() {
       && !hazard.ok && hazard.reason === "blocked_by_trend"
       && !passed.ok && !highRank.ok && highRank.reason === "rank_above_plan_ceiling"
       && !researchOnly.ok && researchOnly.reason === "execution_source_not_tradable"
-      && policy.maxArmedPlans === 6 && policy.strikeBandPct === 2.5;
+      && policy.maxArmedPlans === 6 && policy.strikeBandPct === 2.5
+      && shipped.enabled === false;
   }));
 
   cases.push(fixture("exit_levels_are_the_rule_engine_in_dollars", () => {
@@ -2347,10 +2353,69 @@ function runFixtures() {
     return /return boundDashboardPayload\(payload\)/.test(sourceOf(API.ACTIONS.dashboard));
   }));
 
+  cases.push(fixture("one_entry_path_buys_at_market_or_not_at_all", () => {
+    /* The armed tier parked qualified companies in "armed", then "replaced by
+       a later scan", then "retired", and bought almost nothing. v15 retires it:
+       a company short of the entry threshold on |z| ALONE, still inside the
+       rank band and above the z floor, is bought at the price on the screen.
+       Nothing else is forgiven — every hazard gate, and the cost gate measured
+       at the price actually paid, still refuse. */
+    const STK = require("./_investorStrike");
+    const XPL = require("./_investorExplore");
+    const policy = XPL.activityPolicy(strategy).immediateEntry;
+    if (policy.enabled !== true) return false;
+    if (!(policy.minAbsZFloor < Number(strategy.exploratoryAuto.paperLearningDefaults.minAbsZ))) return false;
+
+    const cfg = { minAbsZ: 1.75 };
+    const base = { cfg, policy, rank: 0.28,
+      quality: { tradable: true, grade: "A" },
+      decisionManifest: { manifestHash: "a".repeat(64) },
+      marketProvenance: { sourceSha256: "b".repeat(64) } };
+    const ev = (blockedBy) => ({ pass: blockedBy.length === 0, blockedBy });
+
+    /* Admitted: every gate passes, only |z| is short, and it clears the floor. */
+    const ok = STK.nearMissEntryEligible({ ...base, z: { z: -1.6 }, evalRes: ev(["signal"]) });
+    if (!ok.ok || Math.abs(ok.zShortfall - 0.15) > 1e-9) return false;
+
+    /* Refused, one reason each. */
+    const no = (r, args) => { const v = STK.nearMissEntryEligible({ ...base, ...args }); return !v.ok && v.reason === r; };
+    /* The cost gate is never forgiven: no edge left at the price being paid. */
+    if (!no("blocked_by_cost", { z: { z: -1.6 }, evalRes: ev(["signal", "cost"]) })) return false;
+    /* A hazard finding is not a near miss. */
+    if (!no("blocked_by_trend", { z: { z: -1.6 }, evalRes: ev(["signal", "trend"]) })) return false;
+    /* Too weak a move: the floor is a real bound, not decoration. */
+    if (!no("z_-1.10_short_of_floor_1.25", { z: { z: -1.1 }, evalRes: ev(["signal"]) })) return false;
+    /* Outside the rank band. */
+    if (!no("rank_above_entry_ceiling", { z: { z: -1.6 }, rank: 0.8, evalRes: ev(["signal"]) })) return false;
+    /* Already past the threshold: that is the ordinary path's trade, and the
+       signal must have failed on rank instead. */
+    if (!no("signal_failed_on_rank_not_z", { z: { z: -2.0 }, evalRes: ev(["signal"]) })) return false;
+    /* A full pass belongs to the ordinary path, which already queued it. */
+    if (!no("already_passes", { z: { z: -2.0 }, evalRes: ev([]) })) return false;
+    /* Untradable source, and missing identity, still refuse. */
+    if (!no("execution_source_not_tradable", { z: { z: -1.6 }, evalRes: ev(["signal"]),
+      quality: { tradable: false, researchEligible: true, grade: "C" } })) return false;
+    if (!no("no_market_provenance", { z: { z: -1.6 }, evalRes: ev(["signal"]), marketProvenance: null })) return false;
+    /* Off by policy is off. */
+    if (!no("immediate_entry_disabled", { z: { z: -1.6 }, evalRes: ev(["signal"]),
+      policy: { ...policy, enabled: false } })) return false;
+
+    /* The cycle must route an admitted near miss through the ordinary proposal
+       path — same gates, same caps, same approval — and size it with the paper
+       floor, or it lands as a few hundred dollars against a five-figure cap. */
+    const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
+    if (!/nearMissEntryEligible\(\{/.test(cycleSrc)) return false;
+    /* esbuild drops the redundant parentheses around the && operand. */
+    if (!/if \(\(evalRes\.pass \|\| \(?nearMiss && nearMiss\.ok\)?\) && manifestValidation\.pass\)/.test(cycleSrc)) return false;
+    if (!/q\.nearMiss \? Math\.max\(baseCombined, paperFloor\) : baseCombined/.test(cycleSrc)) return false;
+    /* And nothing arms a level any more. */
+    return XPL.activityPolicy(strategy).strike.enabled === false;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v34-bounded-dashboard-payload";
+  const SCHEMA = "runtime-fixtures-v35-one-entry-path";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

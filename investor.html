@@ -623,12 +623,10 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
 
         <div class="card pad" style="margin-bottom:16px" id="todayPlansCard" hidden>
           <div class="card__h">
-            <h3>Armed entry levels</h3>
+            <h3>Orders</h3>
             <span class="sub" id="todayPlansSub"></span>
           </div>
           <div id="todayPlans"></div>
-          <details class="fine"><summary>What is an armed level?</summary>
-            <div>The deep scan found these companies pass every safety check — trend, liquidity, earnings timing, company news, trading volume — but have not yet fallen far enough, relative to the market and their sector, to be bought. For each it wrote down the price at which they would qualify, assuming the market and sector stay put. The strike pass checks those prices every minute and buys on the first print at or below the level, inside a band beneath it. A price that crashes straight through the band is not chased: a fall that size usually means news, which only the deep scan's evidence check can judge. Levels expire before the close and are re-derived by every deep scan.</div></details>
         </div>
 
         <div class="card pad" style="margin-bottom:16px" id="todayHistoryCard">
@@ -1048,7 +1046,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
             <span class="hint">Every 5 min keeps scanning the complete company universe throughout the session. ET times is the lower-cost option for one to six full scans between 09:45 and 15:30. The one-minute strike pass remains separate, and “Check for opportunities now” always requests a complete scan.</span>
           </div>
           <div class="ctrlrow">
-            <span class="lab">Strike pass</span>
+            <span class="lab">Position protection</span>
             <span style="font-size:12px;color:var(--ink-45)">every</span>
             <input class="inp mono" id="inpGuard" type="number" min="60" max="600" step="30" style="max-width:96px">
             <span style="font-size:12px;color:var(--ink-45)">s on</span>
@@ -1057,7 +1055,7 @@ td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:righ
               <option value="5Min">5-minute bars</option>
             </select>
             <button class="btn sm" id="btnStrike">Set</button>
-            <span class="hint">The fast tier. It prices only held, planned and pending companies, checks stops and targets, strikes armed entry levels and fills approved orders on their first eligible bar. It never ranks the roster or calls a model, so every minute is affordable. The dispatcher runs every minute; sub-minute settings are not possible on Netlify cron.</span>
+            <span class="hint">Position protection. It prices held and pending companies, checks stops and targets, and fills approved orders on their first eligible bar. It never ranks the roster or calls a model, so every minute is affordable. The dispatcher runs every minute; sub-minute settings are not possible on Netlify cron.</span>
           </div>
           <div class="ctrlrow">
             <span class="lab">Entry freeze</span>
@@ -2705,7 +2703,7 @@ $("#btnPlanTimes").addEventListener("click",function(){
 $("#btnStrike").addEventListener("click",function(){
   runButton(this,"setControl",{patch:{guardSeconds:Number($("#inpGuard").value),strikeBarTimeframe:$("#selStrikeBars").value}},function(r){
     var refused=r&&r.refused&&(r.refused.guardSeconds||r.refused.strikeBarTimeframe);
-    toast(refused?("Not saved: "+refused):("Strike pass every "+r.patched.guardSeconds+"s on "+r.patched.strikeBarTimeframe+" bars")); refresh(false); }); });
+    toast(refused?("Not saved: "+refused):("Position protection every "+r.patched.guardSeconds+"s on "+r.patched.strikeBarTimeframe+" bars")); refresh(false); }); });
 $("#btnCeil").addEventListener("click",function(){
   var value=$("#ceilSel").value;
   runButton(this,"setControl",{patch:{operatorCeiling:value}},function(){
@@ -2958,15 +2956,21 @@ function renderPipeline(live, phase){
 }
 function renderOperationsConsole(){
   var host=$("#opsConsole");if(!host||!DASH)return;
-  var ops=DASH.operations||{},active=ops.active||null,c=ctl(),session=DASH.session||{};
+  var ops=DASH.operations||{},c=ctl(),session=DASH.session||{};
+  /* ONE SCAN. Company research and the holding-protection pass are background
+     work, not scans, and showing them as headline jobs made the desk look like
+     it was running three competing searches. Only the opportunity scan is
+     reported here; when none is running the console says so. */
+  var active=(ops.activeAll||[]).filter(function(x){return x.kind==="cycle";})[0]
+    ||((ops.active&&ops.active.kind==="cycle")?ops.active:null);
   var runs=DASH.runs||[],cycleRuns=runs.filter(function(r){return r.kind==="cycle";}),
       latestCycleAttempt=cycleRuns[0]||null;
   var cycleFailed=!!(latestCycleAttempt&&(["dead","dispatch_failed","stalled"].includes(latestCycleAttempt.status)
     ||(latestCycleAttempt.status==="complete"&&latestCycleAttempt.fullScanComplete===false)));
   var statusClass=active?"working":(cycleFailed?"failed":
     (ops.state==="paused"||ops.state==="entry_frozen"?"paused":"waiting"));
-  var statusText=active?"Working now":statusClass==="failed"?"Needs attention":
-    ops.state==="paused"?"Paused":ops.state==="entry_frozen"?"Entries frozen":"Between jobs";
+  var statusText=active?"Scanning now":statusClass==="failed"?"Needs attention":
+    ops.state==="paused"?"Paused":ops.state==="entry_frozen"?"Entries frozen":"Between scans";
   var nowHtml="",cad=ops.cadence||{};
   if(active){
     var p=active.progress||{},pct=Math.max(0,Math.min(100,Number(p.pct)||0));
@@ -2991,15 +2995,7 @@ function renderOperationsConsole(){
       +operationBar(pct,p.label||opKind(active.kind))
       +'<div class="opsmeta"><span>'+count+'</span><span>'+esc(timing)+'</span><span>'+esc(updated)+'</span></div>'
       +(active.kind==="cycle"||/cycle/.test(String(active.jobId||""))?renderPipeline(active.live||null,p.phase):'');
-    if((ops.activeAll||[]).length>1){
-      nowHtml+='<div class="opscadence"><b>Also active:</b> '+(ops.activeAll||[]).slice(1)
-        .map(function(x){return opKind(x.kind)+" — "+((x.progress||{}).label||x.status);}).map(esc).join(" · ")+'</div>';
-    }
     nowHtml+='</div>';
-    if(cycleFailed&&active.kind!=="cycle"){
-      nowHtml='<div class="note bad" style="margin:0 0 12px"><b>The latest full-universe scan was incomplete.</b> '
-        +esc((latestCycleAttempt&&latestCycleAttempt.error)||"A holding/research job is active now, but it does not replace the missing company scan.")+'</div>'+nowHtml;
-    }
   }else{
     var title,detail;
     if(statusClass==="failed"){
@@ -3025,7 +3021,7 @@ function renderOperationsConsole(){
       +(lastCycle&&lastCycle!==incompleteCycle?'<div class="opsmeta" style="margin-top:10px"><b>Last completed full scan</b><span>'+esc(timeAgo(lastCycle.updatedAtMs||lastCycle.startedAtMs))+'</span></div>'+renderPipeline(lastCycle.live,null):'')+'</div>';
   }
   var nextText;
-  var strikeText=(session.open?"Strike pass every "+(cad.strikeSeconds||60)+"s on "+(cad.strikeBarTimeframe||"1Min")+" bars: stops, targets, armed entry levels and fills.":
+  var strikeText=(session.open?"Position protection every "+(cad.strikeSeconds||60)+"s on "+(cad.strikeBarTimeframe||"1Min")+" bars: stops, targets and fills.":
     "Holding protection every "+Math.round((cad.strikeSecondsClosed||900)/60)+" min while the exchange is shut.");
   var planText=cad.planMode==="scheduled"?("Deep scans at "+(cad.planTimesEt||[]).join(", ")+" ET"):("Deep scan every "+durationText(cad.cycleSeconds||300));
   if(ops.state==="paused") nextText="Deep scans remain paused until you start the desk. "+strikeText;
@@ -3608,42 +3604,51 @@ function renderTodayPending(){
   $$("#todayPending tr.row").forEach(function(r){ r.onclick=function(){ openCompany(r.dataset.sym); }; });
 }
 
-/* ── armed entry levels (the strike tier) ───────────────────────────────── */
+/* ── orders: two states, and nothing else ─────────────────────────────────
+   A company is either bought or it is not. The desk used to arm a price below
+   the market and wait for it, which produced "armed", "replaced by a later
+   scan", "retired" and "withdraw" — four words for "nothing happened". That
+   tier is gone. What is left is what an operator actually needs to see:
+   APPROVED, meaning an order is placed and waiting for its first eligible
+   bar, and PURCHASED, meaning it filled. */
 function renderTodayPlans(){
   var card=$("#todayPlansCard"); if(!card) return;
-  var plans=((DASH.operations||{}).plans||{}).today||[];
-  if(!focusHas("pending")||!plans.length){ card.hidden=true; return; }
+  var orders=(DASH.orders||[]).filter(function(o){
+    return o.status==="approved"||o.status==="proposed";
+  });
+  var today=new Date(); today.setHours(0,0,0,0);
+  var bought=(DASH.positions||[]).filter(function(p){
+    return p.open && p.openedAt && new Date(p.openedAt).getTime()>=today.getTime();
+  });
+  if(!focusHas("pending")||(!orders.length&&!bought.length)){ card.hidden=true; return; }
   card.hidden=false;
-  var armed=plans.filter(function(p){return p.status==="armed";}), struck=plans.filter(function(p){return p.status==="struck";});
-  var cad=(DASH.operations||{}).cadence||{};
-  $("#todayPlansSub").textContent=armed.length+" armed"+(struck.length?" · "+struck.length+" struck today":"")
-    +(plans.length-armed.length-struck.length?" · "+(plans.length-armed.length-struck.length)+" retired":"")
-    +(marketOpenNow()?" · checked every "+(cad.strikeSeconds||60)+"s":"");
-  var order={armed:0,struck:1,skipped:2,superseded:3,expired:4,cancelled:5};
-  plans=plans.slice().sort(function(a,b){return (order[a.status]||9)-(order[b.status]||9)||(a.requiredDropPct||0)-(b.requiredDropPct||0);});
-  $("#todayPlans").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Buy at or below</th><th>Now</th><th class="hide-sm">Distance</th><th>Status</th><th></th></tr></thead><tbody>'
-    +plans.map(function(p){
-      var pn=priceNow(p.symbol,p.lastSeenUsd), now=pn.p!=null?pn.p:p.lastSeenUsd;
-      var dist=now!=null&&p.armBelowUsd?100*(now-p.armBelowUsd)/p.armBelowUsd:null;
-      var st,cls="b-info";
-      if(p.status==="armed"){ st=p.lastBlock?("waiting — "+plainBlock(p.lastBlock.reason)):"armed"; cls=p.lastBlock?"b-warn":"b-on"; }
-      else if(p.status==="struck"){ st="struck at "+money(p.strikePriceUsd,2)+(p.approval&&p.approval.approved?" · order approved":" · order proposed"); cls="b-on"; }
-      else if(p.status==="skipped"){ st="passed — "+plainBlock(p.skipReason); cls="b-warn"; }
-      else if(p.status==="superseded"){ st="replaced by a later scan"; }
-      else if(p.status==="expired"){ st="expired at the close"; }
-      else if(p.status==="cancelled"){ st="withdrawn by you"; }
-      else st=p.status;
-      return '<tr class="row" data-sym="'+esc(p.symbol)+'"><td><div class="sym">'+esc(p.symbol)+'</div><div class="sec">'+esc(S_SECTOR(p.symbol)||"")+(p.requiredDropPct!=null?' · needed −'+num(p.requiredDropPct,2)+'% when armed':'')+'</div></td>'
-        +'<td>'+money(p.armBelowUsd,2)+'<div class="sec">floor '+money(p.floorUsd,2)+'</div></td>'
-        +'<td>'+(now!=null?money(now,2):'<span class="muted">—</span>')+(pn.p!=null?' <span class="live"><i></i></span>':'')+'</td>'
-        +'<td class="hide-sm">'+(dist!=null?('<span style="color:'+(dist<=0?'var(--sage)':'var(--ink-70)')+'">'+(dist>0?'+':'')+num(dist,2)+'%</span>'):'—')+'</td>'
-        +'<td><span class="badge2 '+cls+'">'+esc(st)+'</span></td>'
-        +'<td class="act">'+(p.status==="armed"?'<button class="btn ghost sm" data-cancel-plan="'+esc(p.symbol)+'">Withdraw</button>':'')+'</td></tr>';
+  $("#todayPlansSub").textContent=
+    (bought.length?bought.length+" purchased today":"nothing purchased today")
+    +(orders.length?" · "+orders.length+" waiting to fill":"");
+
+  var rows=bought.map(function(p){
+    var qty=Number(p.qty)||0, px=Number(p.entryPriceUsd)||0;
+    return { sym:p.symbol, when:p.openedAt, qty:qty, px:px, usd:qty*px,
+      state:"purchased", cls:"b-on", sort:0 };
+  }).concat(orders.map(function(o){
+    var qty=Number(o.qty)||0, px=Number(o.refPriceUsd)||0;
+    return { sym:o.symbol, when:o.approvedAt||o.proposedAt||null, qty:qty, px:px, usd:qty*px,
+      state:"approved — waiting to fill", cls:"b-warn", sort:1 };
+  })).sort(function(a,b){ return a.sort-b.sort || b.usd-a.usd; });
+
+  $("#todayPlans").innerHTML='<table class="ptable"><thead><tr><th>Company</th><th>Shares</th>'
+    +'<th>Price</th><th class="hide-sm">Amount</th><th>Status</th></tr></thead><tbody>'
+    +rows.map(function(r){
+      return '<tr class="row" data-sym="'+esc(r.sym)+'"><td><div class="sym">'+esc(r.sym)+'</div>'
+        +'<div class="sec">'+esc(S_SECTOR(r.sym)||"")
+        +(r.when?' · '+new Date(r.when).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):'')+'</div></td>'
+        +'<td>'+(r.qty||'—')+'</td>'
+        +'<td>'+(r.px?money(r.px,2):'<span class="muted">—</span>')+'</td>'
+        +'<td class="hide-sm">'+(r.usd?money(r.usd,2):'—')+'</td>'
+        +'<td><span class="badge2 '+r.cls+'">'+esc(r.state)+'</span></td></tr>';
     }).join("")+'</tbody></table>';
-  $$("#todayPlans tr.row").forEach(function(r){ r.onclick=function(e){ if(e.target.closest("button,a")) return; openCompany(r.dataset.sym); }; });
-  $$("#todayPlans [data-cancel-plan]").forEach(function(b){ b.onclick=function(e){ e.stopPropagation();
-    var sym=b.dataset.cancelPlan; if(!confirm("Withdraw the armed level for "+sym+"? It will not be re-armed today.")) return;
-    api("cancelPlan",{symbol:sym}).then(function(r){ toast(r.note||r.refused||"Level withdrawn"); refresh(false); }).catch(function(err){ toast("Could not withdraw: "+err.message); }); }; });
+  $$("#todayPlans tr.row").forEach(function(r){ r.onclick=function(e){
+    if(e.target.closest("button,a")) return; openCompany(r.dataset.sym); }; });
 }
 var PLAN_BLOCK_PLAIN={session:"market closed or spreads too wide",decision_source_not_tradable:"price feed not good enough to trade on",
   missing_market_provenance:"price feed identity missing",entry_control:"new entries are closed",observation_only:"observation-only mode",

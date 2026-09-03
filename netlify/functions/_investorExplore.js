@@ -76,6 +76,7 @@ const DEFAULTS = Object.freeze({
     planRankCeiling: 0.5,
     strikeBandPct: 2.5,
   }),
+  immediateEntry: Object.freeze({ rankCeiling: 0.5, minAbsZFloor: 1.25 }),
 });
 
 const COHORT_SIGNAL = "exploratory_auto_unvalidated";
@@ -95,6 +96,7 @@ function activityPolicy(strategy) {
   const control = raw.controlCohort || {};
   const sel = raw.policySelection || {};
   const strike = raw.strike || {};
+  const immediate = raw.immediateEntry || {};
   return {
     enabled: raw.enabled !== false,
     maxNewEntriesPerCycle: Math.round(clampNum(raw.maxNewEntriesPerCycle, 1, 40,
@@ -128,6 +130,14 @@ function activityPolicy(strategy) {
       maxArmDropPct: clampNum(strike.maxArmDropPct, 0.5, 15, DEFAULTS.strike.maxArmDropPct),
       planRankCeiling: clampNum(strike.planRankCeiling, 0.05, 0.75, DEFAULTS.strike.planRankCeiling),
       strikeBandPct: clampNum(strike.strikeBandPct, 0.25, 10, DEFAULTS.strike.strikeBandPct),
+    },
+    /* One entry path: buy at the market price now, or do not buy. Disabled
+       unless the frozen strategy turns it on, and every bound is clamped so a
+       typed-in value cannot turn a near miss into "buy anything". */
+    immediateEntry: {
+      enabled: immediate.enabled === true,
+      rankCeiling: clampNum(immediate.rankCeiling, 0.05, 0.75, DEFAULTS.immediateEntry.rankCeiling),
+      minAbsZFloor: clampNum(immediate.minAbsZFloor, 0.5, 5, DEFAULTS.immediateEntry.minAbsZFloor),
     },
   };
 }
