@@ -3072,7 +3072,23 @@ function renderOperationsConsole(){
       +(scan.evaluation&&scan.evaluation.errors?" "+scan.evaluation.errors+" company evaluation(s) failed individually; every other company continued.":""))
     : scanRemaining+" frozen eligible companies remain to be checked in this cycle.";
   var sumX=(ctl().lastCycleSummary||{}), xa=(sumX.exploration&&sumX.exploration.activity)||null, xec=sumX.entryControl||null;
-  var streams=operationStream("Latest roster check",scan.completed,scan.total,scan.pct||0,scanDesc)
+  /* THE SELECTION FUNNEL. "277 evaluated, 0 chosen" is unattributable without
+     it: a threshold that is too tight and a daily spine that never backfilled
+     look identical from outside. Each number is the count surviving a step. */
+  var sel=sumX.sessionSelection||null;
+  var selHtml="";
+  if(sel){
+    var rej=sel.rejected||{}, thr=sel.thresholds||{};
+    selHtml=operationStream("Five-session selection",sel.qualified||0,sel.measured||0,
+      sel.measured?Math.round(100*(sel.qualified||0)/sel.measured):0,
+      (sel.measured||0)+" of "+(sel.roster||0)+" companies had a usable five-day move; "
+      +(sel.qualified||0)+" fell more than their sector while still in a rising trend"
+      +(thr.minSessionMoveZ!=null?" (needs "+thr.minSessionMoveZ+"x its normal five-day swing, worst "
+        +Math.round((thr.sessionRankCap||0)*100)+"% of the roster)":"")+". "
+      +"Not measured: "+(rej.noHistory||0)+" no stored history, "+(rej.tooShort||0)+" too short, "
+      +(rej.stale||0)+" out of date, "+(rej.provenance||0)+" unidentified source.");
+  }
+  var streams=selHtml+operationStream("Latest roster check",scan.completed,scan.total,scan.pct||0,scanDesc)
     +operationStream(researchActive?"Current research sweep":"Latest research sweep",researchDone,researchTotal,researchPct,
       researchActive?Math.max(0,(rp.remaining||0))+" selected dossiers remain in this sweep.":
         (research.dossierCount||0)+" dossiers stored; "+(research.readyDossiers||0)+" are fresh and complete. The focus queue rotates continuously.")

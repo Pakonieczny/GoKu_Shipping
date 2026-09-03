@@ -95,11 +95,25 @@ function dailyReturns(series) {
   return out;
 }
 
-/** Provenance strong enough to let a number affect real risk — the same test
- *  the correlation network applies before it may change a position size. */
+/**
+ * Is this daily series identified well enough to rank on?
+ *
+ * It must name its provider and carry the hash of the response it came from,
+ * so the number is traceable to an attested fetch.
+ *
+ * It must NOT be required to be volume-provenance homogeneous. That flag says
+ * every bar's VOLUME came from one continuous feed identity, and it latches
+ * false forever the first time the feed changes — which happens routinely
+ * here, because the provider rejects `delayed_sip` on this account and the
+ * desk falls back to embargoed consolidated SIP. This statistic is computed
+ * from CLOSES and never reads volume, so demanding volume homogeneity
+ * rejected almost the whole roster for a property the measurement does not
+ * use. It is reported instead, and the checks that genuinely depend on volume
+ * identity — the correlation network, and execution provenance on the order
+ * itself — are untouched and still enforce it.
+ */
 function trustedDailyProvenance(p) {
-  return !!p && p.homogeneous === true && !!p.provider
-    && /^[a-f0-9]{64}$/.test(String(p.sourceSha256 || ""));
+  return !!p && !!p.provider && /^[a-f0-9]{64}$/.test(String(p.sourceSha256 || ""));
 }
 
 /**
@@ -172,6 +186,8 @@ function buildSessionPanel(dailyBySymbol, provenanceBySymbol, opts = {}) {
     const sd60 = stdev(baseline);
     if (!(sd60 > 0)) { rejected.tooShort.push(sym); continue; }
     raw.set(sym, { r5: to / from - 1, sd5: sd60 * Math.sqrt(SESSIONS), sd60,
+      volumeHomogeneous: !!(provenanceBySymbol && provenanceBySymbol[sym]
+        && provenanceBySymbol[sym].homogeneous === true),
       anchorDate: p.series[p.series.length - CLOSES_NEEDED].date, lastDate: p.lastDate });
   }
 
@@ -222,6 +238,7 @@ function buildSessionPanel(dailyBySymbol, provenanceBySymbol, opts = {}) {
       reason: Number.isFinite(sessionZ) ? null : "no_scale",
       sector: sec,
       sessions: SESSIONS,
+      volumeHomogeneous: r.volumeHomogeneous,
       anchorDate: r.anchorDate, lastDate: r.lastDate,
       r5Pct: Number((r.r5 * 100).toFixed(2)),
       sessionZ: Number.isFinite(sessionZ) ? Number(sessionZ.toFixed(2)) : null,

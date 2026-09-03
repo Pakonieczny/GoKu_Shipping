@@ -2585,7 +2585,14 @@ function runFixtures() {
     /* Coverage failures are NAMED, never a silent skip: a stale spine and an
        unprovenanced one are different problems from "nothing qualified". */
     const stale = { ...alone }; stale.B = alone.B.slice(0, -1);
-    const badProv = { ...prov, C: { homogeneous: false, provider: "p", sourceSha256: "a".repeat(64) } };
+    /* An UNIDENTIFIED series is refused; a series whose FEED changed is not.
+       Volume-provenance homogeneity latches false the first time the provider
+       swaps feed — which happens routinely on this account — and this
+       statistic reads closes only, so requiring it rejected the roster for a
+       property the measurement never touches. */
+    const badProv = { ...prov, C: { homogeneous: true, provider: null, sourceSha256: "a".repeat(64) } };
+    if (!MS.trustedDailyProvenance({ provider: "alpaca", sourceSha256: "a".repeat(64), homogeneous: false })) return false;
+    if (MS.trustedDailyProvenance({ provider: "alpaca", homogeneous: true })) return false;
     const p3 = MS.buildSessionPanel(stale, badProv, { asOfDate: asOf, sectorOf: (x) => sectors[x] });
     if (p3.rejected.stale !== 1 || p3.rejected.provenance !== 1) return false;
 
@@ -2667,7 +2674,7 @@ function runFixtures() {
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v39-chunk-rescue";
+  const SCHEMA = "runtime-fixtures-v40-rankable-daily-provenance";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
