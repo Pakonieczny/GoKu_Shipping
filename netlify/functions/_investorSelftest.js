@@ -1328,7 +1328,7 @@ function runFixtures() {
     return /\w+\.strictTradeAdmissible\(\s*t,\s*\{\s*strategyHash,\s*universeHash,\s*variantsHash\s*\},\s*\{\s*leaderId:\s*evidenceLeaderId,\s*sinceMs:\s*evidenceSinceMs\s*\}\s*\)/.test(cycle)
       && /cohortCostMeter\(accountId, \{ admit: strictTradeAdmit \}\)/.test(cycle)
       && /closedRealTrades: closedReal\.size/.test(cycle)
-      && /if \(strictTradeAdmit\(d\.data\(\)\)\) closedStrict \+= 1/.test(cycle);
+      && /if \(strictTradeAdmit\(d\.data\(\)\)\)\s*closedStrict \+= 1/.test(cycle);
   }));
 
   cases.push(fixture("worker_lease_exceeds_platform_ceiling_and_heartbeats", () => {
@@ -1410,7 +1410,7 @@ function runFixtures() {
   cases.push(fixture("dispatch_failure_restores_cadence_stamp_by_compare_and_set", () => {
     const src = sourceOf(require("./investorKick").dispatch);
     return /res = \{ ok: false, status: 0, thrown:/.test(src)
-      && /if \(stored === now\) tx\.set\(cref, \{ \[stamp\]: previousStamp \}, \{ merge: true \}\)/.test(src)
+      && /if \(stored === now\)\s*tx\.set\(cref, \{ \[stamp\]: previousStamp \}, \{ merge: true \}\)/.test(src)
       /* The module alias may be renamed by the bundler (A → A2); the
          transaction shape is what matters. */
       && /\w+\.runTransaction\(async \(tx\) => \{\s*const cur = await tx\.get\(cref\)/.test(src);
@@ -2008,7 +2008,7 @@ function runFixtures() {
     if (!/return \{ acquired: false, error:/.test(acq)) return false;
     if (!/\w+\.runTransaction/.test(acq)) return false;
     const rel = sourceOf(LEASE.releaseEntryLock);
-    if (!/owner !== owner\) return \{ released: false, reason: "not_owner" \}/.test(rel)) return false;
+    if (!/owner !== owner\)\s*return \{ released: false, reason: "not_owner" \}/.test(rel)) return false;
 
     const cycleSrc = sourceOf(require("./investorCycle-background").runCycle);
     /* The deep scan gates BOTH proposal loops on the lock and releases it
@@ -2016,11 +2016,11 @@ function runFixtures() {
     if (!/acquireEntryLock\(accountId, entryLockOwner\)/.test(cycleSrc)) return false;
     if (!/entryLock\.acquired && queueIndex < proposalQueue\.length/.test(cycleSrc)) return false;
     if (!/entryLock\.acquired && exploratorySelection/.test(cycleSrc)) return false;
-    if (!/\} finally \{[\s\S]{0,400}releaseEntryLock\(accountId, entryLockOwner\)/.test(cycleSrc)) return false;
+    if (!/\} finally \{[\s\S]{0,1500}releaseEntryLock\(accountId, entryLockOwner\)/.test(cycleSrc)) return false;
 
     const guardSrc = sourceOf(require("./_investorPositionGuard").runGuard);
     if (!/acquireEntryLock\(accountId, lockOwner\)/.test(guardSrc)) return false;
-    if (!/if \(entryLock\.acquired\) \{[\s\S]{0,600}evaluateStrikes/.test(guardSrc)) return false;
+    if (!/if \(entryLock\.acquired\) \{[\s\S]{0,1500}evaluateStrikes/.test(guardSrc)) return false;
     /* Exits are evaluated and armed BEFORE the lock is taken, so a locked
        account can still protect its holdings. */
     if (guardSrc.indexOf("evaluate_exits") > guardSrc.indexOf("acquireEntryLock")) return false;
@@ -2043,7 +2043,7 @@ function runFixtures() {
     if (STK.planPatchChangesStatus({ status: undefined }) !== false) return false;
     if (STK.planPatchChangesStatus({ status: "struck" }) !== true) return false;
     if (!/\w+\.runTransaction/.test(mark)) return false;
-    if (!/if \(expect && current !== expect\) return \{ applied: false, reason: current \}/.test(mark)) return false;
+    if (!/if \(expect && current !== expect\)\s*return \{ applied: false, reason: current \}/.test(mark)) return false;
     const write = sourceOf(STK.writePlans);
     if (/\w+\.batch\(\)/.test(write)) return false;                       // the blind batch is gone
     if (!/\["struck", "cancelled"\]\.includes\(prev\.status\)/.test(write)) return false;
@@ -2253,7 +2253,7 @@ function runFixtures() {
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v31-no-position-count-cap";
+  const SCHEMA = "runtime-fixtures-v32-bundle-tolerant-attestation";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
