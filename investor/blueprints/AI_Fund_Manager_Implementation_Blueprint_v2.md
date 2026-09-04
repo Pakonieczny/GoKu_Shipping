@@ -5,7 +5,7 @@
 **Current investor release:** strategy v18 / bootstrap 25  
 **Design date:** 2026-09-03  
 **Revision date:** 2026-09-04  
-**Revision scope:** twelve defects verified against the running code are added as §2A. §19 replaces v1's ten-phase rollout with **one build and one install**, and §21 re-maps v1's fifteen pull requests to commit order inside it. D-1 through D-9 are current-plumbing defects; D-10 through D-12 are architectural collisions between this design and the runtime's behaviour. §19 replaces v1's ten-phase rollout with a single build and one install, and all twelve are remediated inside it. Amendments applied inline to §2, §3, §5, §6.1, §6.3, §8.2, §8.5, §8.8 (new), §9.5, §11.1, §11.2, §12.1, §13, §14.10, §15.1, §16.5, §17.2, §17.4, §17.5, §19 and §21. Every other section is v1 as written. Changed passages are marked **[v2]**.  
+**Revision scope:** twelve defects verified against the running code are added as §2A. §19 replaces v1's ten-phase rollout with **one build and one install**, and §21 re-maps v1's fifteen pull requests to commit order inside it. D-1 through D-9 are current-plumbing defects; D-10 through D-12 are architectural collisions between this design and the runtime's behaviour. All twelve are remediated inside that build. Amendments applied inline to §2, §3, §5, §6.1, §6.3, §8.2, §8.5, §8.8 (new), §9.5, §11.1, §11.2, §12.1, §13, §14.10, §15.1, §16.5, §17.2, §17.4, §17.5, §19 and §21. Every other section is v1 as written. Changed passages are marked **[v2]**.  
 **Primary UI:** `investor.html`  
 **Input record reviewed:** `Investor_AIChangeRecord.md` (577 lines)  
 **Deliverable type:** implementation plan; this document does not alter the running application or authorize live trading.
@@ -19,7 +19,7 @@
 5. Deeply research only a new opportunity, a materially changed company, an earnings release, a stale thesis, or an explicit anti-anchoring audit. There is no fixed daily quota.
 6. Every actionable AI decision must publish a complete, versioned standing mandate: action, executable limit/order terms, proposed size, profit target, loss boundary, holding horizon, separate entry/protection lifetimes, invalidators, and review triggers.
 7. A deterministic executor continuously enforces those standing mandates at **$0 of AI-token cost**. It does not ask Sol again when the authorized price is reached.
-8. Use broker-native limit/OCO/bracket protection when available. The current one-minute close-only guard can miss an intrabar target touch; paper simulation must use bar high/low with conservative collision handling.
+8. Use broker-native limit/OCO/bracket protection when available. The current one-minute close-only guard can miss an intrabar target touch; **every** exit evaluation — live, paper, shadow, backtest and KPI — must use bar high/low with conservative collision handling (§8.5).
 9. Record every decision, forecast, revision, rejected name, execution, outcome, prompt, model, and source version. Learn through prospective evaluation and controlled challenger tests—not by letting recent P&L silently rewrite the strategy.
 10. Rebuild `investor.html` around five clear views: **Manager, Companies, Portfolio, Decisions & Learning, System**. Remove the Advanced drawer, deterministic knobs, rank/gate explanations, duplicate controls, and approval ceremony.
 
@@ -57,7 +57,7 @@ The **exploratory paper configuration** (`_investorStrategy.js:308-335`, `paperL
 
 **[v2] The evidence plane is entirely free public sources.** GDELT discovery indexes, SEC EDGAR, Federal Register, USAspending, ten government RSS feeds, and NWS alerts (`_investorIntelligenceSources.js`, 25 sources). Market data is Alpaca. There is **no** fundamentals vendor, **no** consensus-estimate feed, **no** transcript source, and **no** confirmed earnings calendar — `investor/universe/v1.json` carries `earningsDates: []` with `earningsDatesSource: "operator_entry_required"` for every name, and `cikSource: "unresolved_pending_sec_map"` for a substantial minority. The only XBRL fact retrieved anywhere in the codebase is `dei:EntityCommonStockSharesOutstanding`. **[v2]** §5.6 closes the earnings-date and forward-view gaps from sources already fetched; the fundamentals gap closes by widening the existing SEC call. **[v2] Of the four dossier fields §5.4 requires, three are free and already half-wired.** `revenueGrowthBps`, `fcfMarginBps` and `netDebtEbitdaMilli` are all derivable from SEC XBRL, and `_investorMarket.js` already calls `https://data.sec.gov/api/xbrl/companyconcept/CIK...` today — it uses the single-concept endpoint where `_investorFundamentals.js` needs bulk `companyfacts`/`frames`. That is build work, not a purchase.
 
-**The fourth, `forwardMultipleMilli`, has no source and will not get one.** It requires analyst consensus, which this operator does not have and is not buying. §5.6 replaces it with primary-source forward evidence. `expectations.coverage` stays `vendor_missing` permanently and honestly, and §22 question 3 is closed: the answer is no vendor.
+**The fourth, `forwardMultipleMilli`, has no source and will not get one.** It requires analyst consensus, which this operator does not have and is not buying. §5.6 replaces it with primary-source forward evidence. `expectations.coverage` stays `no_consensus_vendor` permanently and honestly, and §22 question 3 is closed: the answer is no vendor.
 
 The current investment pipeline is explicitly inverted for cost:
 
@@ -90,7 +90,7 @@ The record reports 141/141 raw and bundled fixtures. This review could not indep
 
 ## 2A. Verified defect register **[v2]**
 
-**[v2] Twelve defects**, thirteen rows (D-8 and D-8b are one defect and its trigger), verified by direct inspection at commit `ea14b71`. **Nine of the twelve appear nowhere in v1.** They divide into two kinds.
+**[v2] Twelve defects**, thirteen rows (D-8 and D-8b are one defect and its trigger), verified by direct inspection at commit `ea14b71`. **Eight of the twelve appear nowhere in v1**, and D-6 breaks a rule §5.1 already states. They divide into two kinds.
 
 **D-1 through D-9 are defects in the current plumbing.** Six of them sit below the strategy rather than inside it, so they survive the replacement of the decider: built on top of them the manager would be scored on outcomes it did not produce. All nine are remediated in build group 1 (§19.1.1), which depends on nothing else in the build.
 
@@ -103,7 +103,7 @@ The record reports 141/141 raw and bundled fixtures. This review could not indep
 | **D-3** | The pre-registered strategy cannot place an order | `_investorSignal.js:683,690`; `_investorStrategy.js:230-231`; `_investorCalibration.js:33-40` requires 534 sessions | no | Critical |
 | **D-4** | The lane that traded ran with declared risk controls reduced | `_investorStrategy.js:313`, `:329`, `:478-480,483-484` | no | Critical |
 | **D-5** | All 15 frozen shadow variants carry the exit defect v18 fixed | `_investorVariants.js:31-152` (ids A–Q) — `grep -c takeProfitPct` → **0** | no | Major |
-| **D-6** | Company-agnostic feeds are fetched once per company | `_investorIntelligenceSources.js:485` keys state `` `${sourceId}_${symbol}` ``; 10 of 25 sources are unambiguously global (`kind:"feed"`) → ~3,040 requests where ~10 suffice | no | Major |
+| **D-6** | Company-agnostic feeds are fetched once per company | `_investorIntelligenceSources.js:485` keys state `` `${sourceId}_${symbol}` ``; 10 of 25 sources are unambiguously global (`kind:"feed"`) → ~3,040 requests where ~10 suffice | §5.1 already requires fetch-once; the violation is new | Major |
 | **D-7** | `plainBlock()` declared twice; the second silently wins | `investor.html:3710` and `:3744` | §14.5 | Moderate |
 | **D-8** | No job can be dispatched before 09:45 ET, so the pre-market Manager Meeting of §11.1 cannot run | `investorKick.js:81` `PLAN_EARLIEST_MIN = 9*60+45`, enforced at `:101` | no | Major |
 | **D-8b** | AI budget ceilings block the Manager Meeting silently, and that block routes into D-1 | `_investorOpenai.js:62-63` — `DAILY_USD_CEILING` $5, `CYCLE_CALL_CEILING` 12; exhaustion returns `cause:"evidence_pending"` at `:331` | no | Critical |
@@ -235,7 +235,7 @@ For every active symbol in `_investorUniverse.js` v6—the current 304-name runt
 
 `_investorFundamentals.js` owns the numerical filing plane. It ingests SEC `companyfacts`/`frames`, normalizes taxonomy concept, unit, fiscal period, filing/accession, amendment, segment/context, and as-of availability, reconciles stock splits and share bases, and emits immutable `FinancialFactVersion` records. Tests cover amended filings, duplicate contexts, instant versus duration facts, fiscal-year changes, currency/unit conversion, restatements, and point-in-time queries. Benchmark returns, sector returns, risk-free/cash rates, and corporate actions receive the same source/version/as-of treatment.
 
-Do not pass SEC bulk ZIPs through `_investorFetch.js`, whose audited default cap is 8 MiB, or assume they fit a 15-minute Netlify function. An explicit `scripts/investor/bootstrap-sec.js` streams bulk files into object storage in a controlled one-time/backfill job, creates immutable manifests, and queues bounded normalization batches. Incremental per-company API calls remain in the scheduled ingest worker. Netlify documents a non-configurable 15-minute background-function limit, so every production job must checkpoint and resume rather than assume a large backfill will finish in one invocation ([Netlify background functions](https://docs.netlify.com/build/functions/background-functions/)).
+Do not pass SEC bulk ZIPs through `_investorFetch.js`, whose audited default cap is 8 MiB, or assume they fit a 15-minute Netlify function. An explicit one-time operator script — run locally, not a Netlify function, and therefore outside the 32 modules of §12.1 — streams bulk files into object storage in a controlled one-time/backfill job, creates immutable manifests, and queues bounded normalization batches. Incremental per-company API calls remain in the scheduled ingest worker. Netlify documents a non-configurable 15-minute background-function limit, so every production job must checkpoint and resume rather than assume a large backfill will finish in one invocation ([Netlify background functions](https://docs.netlify.com/build/functions/background-functions/)).
 
 ### 5.3 Separate facts, interpretations, and forecasts
 
