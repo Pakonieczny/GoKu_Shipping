@@ -3849,6 +3849,263 @@ function runFixtures() {
     return true;
   }));
 
+  /* ── Group 5 (commit 10): the model gateway. One request path, fixed role
+     routing, strict schemas, integer-cent cost from published rates, a
+     ModelRequest record per call, bounded allowlisted tools, verbatim
+     extraction checks, and a failure shape that can never be read as a
+     decision (§3, §9, §12.2; invariant I-1). */
+  function scriptedTransport(script) {
+    const calls = [];
+    let i = 0;
+    const transport = async (url, opts) => {
+      const body = opts && opts.body ? JSON.parse(opts.body) : null;
+      calls.push({ url, method: opts && opts.method, body });
+      const step = script[i] || script[script.length - 1];
+      i += 1;
+      const reply = typeof step === "function" ? step({ url, body, n: i }) : step;
+      return { ok: reply.status ? reply.status < 400 : true, status: reply.status || 200, json: async () => reply.data };
+    };
+    return { transport, calls };
+  }
+  const HEX64 = "a".repeat(64);
+  function completed(model, outputObject, usage = {}, extra = {}) {
+    return { data: { id: `resp_${Math.random().toString(36).slice(2, 10)}`, status: "completed", model,
+      output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(outputObject) }] }],
+      usage: { input_tokens: 50000, output_tokens: 8000, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 6000 }, ...usage }, ...extra } };
+  }
+  const coverageRow = (symbol, extra = {}) => ({ symbol, reviewDirective: "NONE", provisionalDisposition: "WATCH", reason: "no change", changedSincePrior: false, reasonCode: null, ...extra });
+  const reviewOutput = (symbols, requests = []) => ({ schemaVersion: "universe-review.v1", universeVersion: "v6", universeHash: HEX64, eligibleCount: symbols.length,
+    coverage: symbols.map((s) => coverageRow(s)), holdingAnalysis: [], researchRequests: requests, managerNote: "" });
+
+  cases.push(fixture("gateway_routes_by_fixed_role_settles_exact_cents_and_records_every_request", async () => {
+    const O = require("./_investorOpenai");
+    const P = require("./_investorPolicy");
+    const fake = fakeAdmin();
+    const symbols = ["AAA", "BBB", "CCC"];
+    const manifest = { universeVersion: "v6", universeHash: HEX64, eligibleCount: 3, symbols };
+    const cards = symbols.map((symbol) => ({ symbol, identity: { sector: "sw" }, price: null, dataQuality: { complete: false, missing: ["price"] } }));
+    /* background lifecycle: queued on POST, completed on the first GET */
+    const { transport, calls } = scriptedTransport([
+      ({ body }) => ({ data: { id: "resp_bg1", status: "queued", model: body.model } }),
+      () => completed("gpt-5.6-sol", reviewOutput(symbols, [{ symbol: "BBB", researchPriority: 1, completionClass: "BUY_REQUIRED", reason: "inflection", reviewDirective: "RESEARCH_NOW" }])),
+    ]);
+    const G = O.withDeps({ admin: fake, fetchImpl: transport, env: { OPENAI_API_KEY: "test-key" } });
+    const r = await G.reviewUniverse({ cards, universeManifest: manifest, holdings: [], portfolio: { navMinor: "10000000" }, policy: P.loadActiveSync({}), contextManifestHash: "c".repeat(64) });
+    if (r.ok !== true) throw new Error(`review failed ${JSON.stringify(r).slice(0, 300)}`);
+    if (r.plan.mode !== "single" || r.coverage.length !== 3 || r.researchRequests[0].symbol !== "BBB") throw new Error("review output");
+    /* the POST carried the fixed manager routing: Sol, high reasoning, store:false, strict schema, background */
+    const post = calls[0];
+    if (post.method !== "POST" || post.body.model !== "gpt-5.6-sol" || post.body.store !== false || post.body.background !== true) throw new Error(`post body ${JSON.stringify(post.body).slice(0, 200)}`);
+    if (!post.body.reasoning || post.body.reasoning.effort !== "high" || post.body.text.format.strict !== true || post.body.text.format.type !== "json_schema") throw new Error("reasoning/schema");
+    if (!post.body.text.format.schema.required.includes("coverage") || post.body.text.format.schema.additionalProperties !== false) throw new Error("strict schema not generated from the canonical one");
+    if (calls[1].method !== "GET" || !/resp_bg1/.test(calls[1].url)) throw new Error("background poll");
+    /* exact cost from the published rates: 50k ordinary input × $4/M + 8k output × $20/M = $0.36 */
+    if (r.costMinor !== "36") throw new Error(`cost ${r.costMinor}`);
+    const spend = await G.spendToday();
+    if (spend.spentMinor !== 36 || spend.reservedMinor !== 0 || spend.calls !== 1 || spend.tokens.reasoning !== 6000 || spend.byRole.manager !== 1) throw new Error(`ledger ${JSON.stringify(spend)}`);
+    const rec = await G.readRequest(r.requestIds[0]);
+    if (!rec || rec.status !== "complete" || rec.responseId !== "resp_bg1" && !rec.responseId) throw new Error("request record");
+    for (const k of ["promptHash", "schemaHash", "policyHash", "contextManifestHash", "tokens", "costMinor", "latencyMs", "returnedModel", "reasoningEffort", "outputHash"]) if (rec[k] == null) throw new Error(`record missing ${k}`);
+    if (rec.role !== "manager" || rec.model !== "gpt-5.6-sol" || rec.costMinor !== "36" || rec.policyHash !== P.policyIdentity().policyHash) throw new Error("record identity");
+    /* the same request key resumes from the record instead of paying twice */
+    const again = await G.reviewUniverse({ cards, universeManifest: manifest, holdings: [], portfolio: { navMinor: "10000000" }, policy: P.loadActiveSync({}), contextManifestHash: "c".repeat(64) });
+    if (again.ok !== true || calls.length !== 2) throw new Error("completed request was re-bought");
+    /* Terra is forbidden and no function routes to it; facts and verification route to Luna */
+    if (O.ROLE_OF.reviewUniverse !== "manager" || O.ROLE_OF.extractFacts !== "facts" || O.ROLE_OF.verifyClaimsIndependently !== "verification") throw new Error("role map");
+    for (const fn of Object.keys(O.ROLE_OF)) { const m = P.ROLE_MODELS[O.ROLE_OF[fn]].model; if (P.FORBIDDEN_INVESTMENT_MODELS.includes(m)) throw new Error(`${fn} routes to a forbidden model`); }
+    for (const fn of ["reviewUniverse", "researchCompany", "finalizePortfolio", "reviseEntry", "reviseHolding", "finalizeEventRevision", "repairCoverageStructure"]) if (P.ROLE_MODELS[O.ROLE_OF[fn]].model !== "gpt-5.6-sol") throw new Error(`${fn} is not Sol`);
+    if (O.MODELS.classify.model !== "gpt-5.6-luna" || /terra/.test(JSON.stringify(O.MODELS))) throw new Error("legacy table still names Terra");
+    return true;
+  }));
+
+  cases.push(fixture("gateway_failures_are_never_decisions_refusal_truncation_schema_budget_and_substitution", async () => {
+    const O = require("./_investorOpenai");
+    const P = require("./_investorPolicy");
+    const symbols = ["AAA"];
+    const manifest = { universeVersion: "v6", universeHash: HEX64, eligibleCount: 1, symbols };
+    const cards = [{ symbol: "AAA" }];
+    const run = async (script, seed = null, key = "k") => {
+      const fake = fakeAdmin();
+      if (seed) fake.docs.set(`${fake.COL.costs}/openai_${new Date().toISOString().slice(0, 10)}`, seed);
+      const { transport, calls } = scriptedTransport(script);
+      const G = O.withDeps({ admin: fake, fetchImpl: transport, env: { OPENAI_API_KEY: "test-key" } });
+      const r = await G.reviewUniverse({ cards, universeManifest: manifest, background: false, contextManifestHash: key.repeat(64).slice(0, 64) });
+      return { r, calls, fake, G };
+    };
+    const assertFailure = (r, error) => {
+      if (r.ok !== false || r.error !== error) throw new Error(`expected ${error}, got ${JSON.stringify(r).slice(0, 200)}`);
+      if (r.cause !== "evidence_unavailable" || r.decision !== "ABSTAIN" || r.reasonCode !== "MODEL_FAILURE" || r.evidenceUnavailable !== true) throw new Error(`failure shape for ${error}`);
+      if (r.coverage.length !== 0) throw new Error("partial coverage returned on failure");
+    };
+    /* refusal */
+    const refusal = await run([{ data: { id: "r1", status: "completed", model: "gpt-5.6-sol", output: [{ type: "message", content: [{ type: "refusal", refusal: "cannot" }] }], usage: { input_tokens: 1000, output_tokens: 10 } } }]);
+    assertFailure(refusal.r, "model_refusal");
+    if ((await refusal.G.spendToday()).spentMinor !== 0 || (await refusal.G.spendToday()).calls !== 1) throw new Error("refusal not settled at its billed cost");
+    /* truncation */
+    const trunc = await run([completed("gpt-5.6-sol", reviewOutput(symbols), {}, { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } })]);
+    assertFailure(trunc.r, "output_truncated");
+    /* schema-invalid: a workflow value in the decision column and a missing field */
+    const bad = await run([completed("gpt-5.6-sol", { ...reviewOutput(symbols), coverage: [{ ...coverageRow("AAA"), provisionalDisposition: "RESEARCH_NOW" }] })]);
+    assertFailure(bad.r, "schema_invalid");
+    if (!bad.r.schemaErrors || !bad.r.schemaErrors.length) throw new Error("schema errors not surfaced");
+    /* unparseable */
+    const junk = await run([{ data: { id: "j", status: "completed", model: "gpt-5.6-sol", output: [{ type: "message", content: [{ type: "output_text", text: "{not json" }] }], usage: {} } }]);
+    assertFailure(junk.r, "unparseable_model_output");
+    /* an unexpected tool call when none were offered */
+    const tool = await run([{ data: { id: "t", status: "completed", model: "gpt-5.6-sol", output: [{ type: "function_call", call_id: "c", name: "submitOrder", arguments: "{}" }], usage: {} } }]);
+    assertFailure(tool.r, "tool_call_without_tools");
+    /* model substitution by the provider */
+    const sub = await run([completed("gpt-5.6-terra", reviewOutput(symbols))]);
+    assertFailure(sub.r, "model_substituted");
+    /* HTTP error and unreachable: reservation released, nothing spent */
+    const http = await run([{ status: 429, data: { error: { message: "rate" } } }]);
+    assertFailure(http.r, "openai_http_429");
+    if ((await http.G.spendToday()).reservedMinor !== 0) throw new Error("reservation leaked after HTTP error");
+    const dead = await run([() => { throw new Error("ECONNRESET"); }]);
+    assertFailure(dead.r, "model_unreachable");
+    /* exhausted reservation: no HTTP call is made, and the shortfall is not a smaller proposal */
+    const ceiling = Number(P.budgetPolicy().dailyReservationMinor);
+    const broke = await run([completed("gpt-5.6-sol", reviewOutput(symbols))], { day: new Date().toISOString().slice(0, 10), spentMinor: ceiling, reservedMinor: 0 });
+    assertFailure(broke.r, "daily_reservation_exhausted");
+    if (broke.calls.length !== 0 || broke.r.budgetBlocked !== true) throw new Error("budget-blocked call still reached the model");
+    const rec = [...broke.fake.docs.values()].find((d) => d && d.status === "budget_blocked");
+    if (!rec) throw new Error("budget block not recorded");
+    /* no key: fail closed before any transport */
+    const nokey = O.withDeps({ admin: fakeAdmin(), fetchImpl: async () => { throw new Error("must not be called"); }, env: {} });
+    const nk = await nokey.reviewUniverse({ cards, universeManifest: manifest });
+    if (nk.ok !== false || nk.decision !== "ABSTAIN") throw new Error("missing key not fail-closed");
+    /* the failure helper itself */
+    const f = O.failure("x");
+    if (f.ok !== false || f.cause !== "evidence_unavailable" || f.decision !== "ABSTAIN" || f.reasonCode !== "MODEL_FAILURE") throw new Error("failure shape");
+    return true;
+  }));
+
+  cases.push(fixture("gateway_tools_are_allowlisted_bounded_and_scoped_and_citations_must_exist", async () => {
+    const O = require("./_investorOpenai");
+    const P = require("./_investorPolicy");
+    const memo = (symbol, claimId = "claim_1") => ({ schemaVersion: "research-memo.v1", symbol, asOf: "2026-09-04T12:00:00Z",
+      checklist: { business: "b", whatChanged: "c", agreementDisagreement: "a", risks: "r", valuationFramework: "v", disconfirmingEvidence: "d", returnAndHorizon: "h", versusAlternatives: "x", mandateOrAbstain: "m" },
+      factualPremises: [{ premiseId: "p1", text: "revenue grew", claimId, documentVersionId: "docv_1" }], inferences: [], valuation: null, bearCase: "bear",
+      thesisHealth: "INTACT", proposedDecision: "WATCH", reasonCode: null, mandate: null });
+    const dossier = { symbol: "ABC", dossierHash: "d".repeat(64), claimIds: ["claim_1"], card: {} };
+    const executed = [];
+    const tools = {
+      getFilingFactsAsOf: { description: "facts", parameters: { type: "object", additionalProperties: false, required: ["symbol", "asOfMs", "concepts"], properties: { symbol: { type: "string" }, asOfMs: { type: "number" }, concepts: { type: "array", items: { type: "string" } } } },
+        execute: async (args) => { executed.push(args); return { facts: [{ concept: "Revenues", valueScaled: "1" }] }; } },
+    };
+    const cutoffMs = Date.UTC(2026, 8, 4, 12);
+    /* one allowlisted call, then the memo: stateless continuation carries the call and its output */
+    let t = scriptedTransport([
+      { data: { id: "r1", status: "completed", model: "gpt-5.6-sol", output: [{ type: "function_call", call_id: "c1", name: "getFilingFactsAsOf", arguments: JSON.stringify({ symbol: "ABC", asOfMs: cutoffMs, concepts: ["Revenues"] }) }], usage: { input_tokens: 1000, output_tokens: 100 } } },
+      completed("gpt-5.6-sol", memo("ABC"), { input_tokens: 2000, output_tokens: 3000 }),
+    ]);
+    let G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const r = await G.researchCompany({ dossier, tools, cutoffMs });
+    if (r.ok !== true || r.memo.symbol !== "ABC" || r.toolCalls.length !== 1 || r.toolCalls[0].ok !== true || !r.toolCalls[0].resultHash) throw new Error(`tool loop ${JSON.stringify(r).slice(0, 300)}`);
+    if (executed.length !== 1 || executed[0].symbol !== "ABC") throw new Error("tool not executed once");
+    const second = t.calls[1].body;
+    if (!second.input.some((x) => x.type === "function_call_output" && x.call_id === "c1") || !second.input.some((x) => x.type === "function_call")) throw new Error("continuation lacks the call and its output");
+    if (!t.calls[0].body.tools || t.calls[0].body.tools[0].name !== "getFilingFactsAsOf" || t.calls[0].body.tools[0].strict !== true) throw new Error("tool definition");
+    /* both turns settle into one cost: (1000+2000) input × $4/M + (100+3000) output × $20/M = $0.074 → 7 cents */
+    if (r.costMinor !== "7") throw new Error(`tool-loop cost ${r.costMinor}`);
+    /* a tool that is not allowlisted is a rejected output, not an executed call */
+    t = scriptedTransport([{ data: { id: "r2", status: "completed", model: "gpt-5.6-sol", output: [{ type: "function_call", call_id: "c2", name: "browse", arguments: "{}" }], usage: {} } }]);
+    G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const bad = await G.researchCompany({ dossier, tools, cutoffMs });
+    if (bad.ok !== false || bad.error !== "tool_not_allowlisted" || bad.decision !== "ABSTAIN" || t.calls.length !== 1) throw new Error(`browse ${JSON.stringify(bad).slice(0, 200)}`);
+    /* a call for another symbol is out of scope */
+    t = scriptedTransport([{ data: { id: "r3", status: "completed", model: "gpt-5.6-sol", output: [{ type: "function_call", call_id: "c3", name: "getFilingFactsAsOf", arguments: JSON.stringify({ symbol: "ZZZ", asOfMs: cutoffMs, concepts: [] }) }], usage: {} } }]);
+    G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const scope = await G.researchCompany({ dossier, tools, cutoffMs });
+    if (scope.ok !== false || scope.error !== "tool_symbol_out_of_scope") throw new Error("symbol scope");
+    /* the call cap ends the loop as a failure, never as an unbounded spend */
+    const cap = P.TOOL_POLICY.maxCallsPerJob;
+    let n = 0;
+    t = scriptedTransport([() => { n += 1; return { data: { id: `r${n}`, status: "completed", model: "gpt-5.6-sol", output: [{ type: "function_call", call_id: `c${n}`, name: "getFilingFactsAsOf", arguments: JSON.stringify({ symbol: "ABC", asOfMs: cutoffMs, concepts: [] }) }], usage: {} } }; }]);
+    G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const capped = await G.researchCompany({ dossier, tools, cutoffMs });
+    if (capped.ok !== false || capped.error !== "tool_call_cap" || t.calls.length !== cap + 1) throw new Error(`cap ${capped.error} after ${t.calls.length} calls`);
+    /* a defined tool outside the allowlist cannot even be offered */
+    let threw = null;
+    try { G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } }); await G.researchCompany({ dossier, tools: { submitOrder: { execute: async () => ({}) } }, cutoffMs }); } catch (e) { threw = e.code; }
+    if (threw !== "TOOL_NOT_ALLOWLISTED") throw new Error("forbidden tool offered");
+    /* an invented claim id is a rejected output */
+    t = scriptedTransport([completed("gpt-5.6-sol", memo("ABC", "claim_made_up"))]);
+    G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const invented = await G.researchCompany({ dossier, tools: null, cutoffMs });
+    if (invented.ok !== false || invented.error !== "unknown_claim_reference" || invented.unknownClaimIds[0] !== "claim_made_up") throw new Error("invented citation accepted");
+    /* BUY without a mandate is not a research result */
+    t = scriptedTransport([completed("gpt-5.6-sol", { ...memo("ABC"), proposedDecision: "BUY" })]);
+    G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    if ((await G.researchCompany({ dossier, cutoffMs })).error !== "buy_without_mandate") throw new Error("BUY without mandate accepted");
+    /* extraction: only verbatim quotes survive; a paraphrase is dropped and reported */
+    const text = "Net revenue for the quarter was $1.21 billion, up 14% year over year. We now expect full year revenue of $4.0 billion to $4.2 billion.";
+    t = scriptedTransport([completed("gpt-5.6-luna", { schemaVersion: "fact-extraction.v1", abstained: false, abstainReason: "", contradictions: [], claims: [
+      { claimType: "GUIDANCE", text: "FY revenue guide", quote: "expect full year revenue of $4.0 billion to $4.2 billion", documentRef: "v1", effectivePeriod: "FY2026", metric: "revenue", lowValue: "4000000000", highValue: "4200000000", unit: "USD", date: null, confirmed: null, supersedesHint: null },
+      { claimType: "FACT", text: "Revenue rose 14%", quote: "revenue increased fourteen percent", documentRef: "v1", effectivePeriod: null, metric: null, lowValue: null, highValue: null, unit: null, date: null, confirmed: null, supersedesHint: null },
+      { claimType: "FACT", text: "x", quote: "up 14% year over year", documentRef: "v_unknown", effectivePeriod: null, metric: null, lowValue: null, highValue: null, unit: null, date: null, confirmed: null, supersedesHint: null },
+    ] }, { input_tokens: 3000, output_tokens: 500 })]);
+    G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const ex = await G.extractFacts({ documentVersions: [{ versionId: "v1", canonicalText: text, sourceId: "sec.latest", form: "8-K" }], symbol: "ABC" });
+    if (ex.ok !== true || ex.claims.length !== 1 || ex.claims[0].claimType !== "GUIDANCE" || ex.claims[0].documentVersionId !== "v1" || ex.dropped.length !== 2) throw new Error(`extraction ${JSON.stringify(ex).slice(0, 300)}`);
+    if (!ex.dropped.some((d) => d.dropReason === "quote_not_found_verbatim") || !ex.dropped.some((d) => d.dropReason === "unknown_document_reference")) throw new Error("drop reasons");
+    if (t.calls[0].body.model !== "gpt-5.6-luna" || t.calls[0].body.reasoning) throw new Error("extraction did not route to Luna without reasoning");
+    /* Luna cost at $0.20/M in + $1.20/M out: 3000 in, 500 out → $0.0012 → 0 cents, recorded exactly in nano-dollars */
+    if (ex.costMinor !== "0") throw new Error(`luna cost ${ex.costMinor}`);
+    /* nothing survived verification → extraction incomplete, not an empty finding */
+    t = scriptedTransport([completed("gpt-5.6-luna", { schemaVersion: "fact-extraction.v1", abstained: false, abstainReason: "", contradictions: [], claims: [
+      { claimType: "FACT", text: "x", quote: "this sentence is not in the document", documentRef: "v1", effectivePeriod: null, metric: null, lowValue: null, highValue: null, unit: null, date: null, confirmed: null, supersedesHint: null }] })]);
+    G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const none = await G.extractFacts({ documentVersions: [{ versionId: "v1", canonicalText: text }], symbol: "ABC" });
+    if (none.ok !== true || none.claims.length !== 0 || none.extractionIncomplete !== true) throw new Error("unverified extraction reported as complete");
+    return true;
+  }));
+
+  cases.push(fixture("gateway_partitions_a_large_roster_into_sol_blocks_without_filtering_and_synthesis_checks_ranks", async () => {
+    const O = require("./_investorOpenai");
+    const P = require("./_investorPolicy");
+    const symbols = Array.from({ length: 40 }, (_, i) => `S${String(i).padStart(3, "0")}`);
+    const cards = symbols.map((symbol) => ({ symbol, identity: { sector: "sw" }, filler: "x".repeat(400) }));
+    const holdings = [{ symbol: "S005", position: { qty: 10 } }, { symbol: "OFFR", position: { qty: 3 } }];
+    const plan = O.planBlocks({ cards, holdings, guardrailTokens: 3000 });
+    if (plan.mode !== "blocks" || plan.blocks.length < 2) throw new Error(`plan ${plan.mode} ${plan.blocks.length}`);
+    const covered = plan.blocks.flatMap((b) => b.symbols);
+    if (covered.length !== 40 || new Set(covered).size !== 40 || !symbols.every((s) => covered.includes(s))) throw new Error("a block filtered or duplicated a symbol");
+    const heldPlaced = plan.blocks.flatMap((b) => b.holdings.map((h) => h.symbol));
+    if (heldPlaced.length !== 2 || !heldPlaced.includes("OFFR") || !heldPlaced.includes("S005")) throw new Error("holdings not analysed exactly once");
+    if (plan.blocks.some((b) => b.symbols.length > Math.ceil(40 / plan.blocks.length))) throw new Error("blocks unbalanced");
+    /* every block is a Sol call; merged coverage is complete and research priorities are unique across blocks */
+    const manifest = { universeVersion: "v6", universeHash: HEX64, eligibleCount: 40, symbols };
+    const { transport, calls } = scriptedTransport([({ body }) => {
+      const m = JSON.parse(body.input[1].content.match(/UNIVERSE_MANIFEST=(\{.*?\})\n/s)[1]);
+      return completed("gpt-5.6-sol", reviewOutput(m.symbols, [{ symbol: m.symbols[0], researchPriority: 1, completionClass: "OPTIONAL_DISCOVERY", reason: "r", reviewDirective: "RESEARCH_NOW" }]), { input_tokens: 10000, output_tokens: 2000 });
+    }]);
+    const G = O.withDeps({ admin: fakeAdmin(), fetchImpl: transport, env: { OPENAI_API_KEY: "k" } });
+    const r = await G.reviewUniverse({ cards, universeManifest: manifest, holdings, background: false, guardrailTokens: 3000, contextManifestHash: "e".repeat(64) });
+    if (r.ok !== true || r.plan.mode !== "blocks" || r.coverage.length !== 40 || new Set(r.coverage.map((x) => x.symbol)).size !== 40) throw new Error(`merged coverage ${r.coverage.length}`);
+    if (calls.length !== plan.blocks.length || calls.some((c) => c.body.model !== "gpt-5.6-sol")) throw new Error("a block did not go to Sol");
+    const prios = r.researchRequests.map((q) => q.researchPriority);
+    if (new Set(prios).size !== prios.length || prios[0] !== 1 || r.researchRequests.every((q) => q.blockPriority === 1) !== true) throw new Error("priorities not unique after merge");
+    if (r.costMinor !== String(calls.length * 8)) throw new Error(`block cost ${r.costMinor}`);
+    /* final synthesis: duplicate capital ranks and BUY on a held name are rejected; a clean basket passes */
+    const synth = (decisions, mandates) => ({ schemaVersion: "portfolio-synthesis.v1", planClass: "EXPANSION", decisions, expansionMandates: mandates, comparisonNote: "n" });
+    const row = (symbol, decision, capitalRank, fundingState = "FUNDED") => ({ symbol, decision, capitalRank, reasonCode: null, fundingState, reason: "r" });
+    const mandate = (symbol) => ({ ...P.EXAMPLE_MANDATE_PROPOSAL, symbol });
+    let t = scriptedTransport([completed("gpt-5.6-sol", synth([row("AAA", "BUY", 1), row("BBB", "BUY", 1)], [mandate("AAA"), mandate("BBB")]))]);
+    let F = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const dup = await F.finalizePortfolio({ coverage: [], researchResults: [{ memo: { symbol: "AAA", factualPremises: [{ claimId: "claim_1" }, { claimId: "claim_2" }, { claimId: "claim_3" }] } }], holdings: [], background: false });
+    if (dup.ok !== false || dup.error !== "capital_ranks_not_unique") throw new Error("duplicate ranks accepted");
+    t = scriptedTransport([completed("gpt-5.6-sol", synth([row("HLD", "BUY", 1)], [mandate("HLD")]))]);
+    F = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const held = await F.finalizePortfolio({ coverage: [], researchResults: [{ memo: { symbol: "HLD", factualPremises: [{ claimId: "claim_1" }, { claimId: "claim_2" }, { claimId: "claim_3" }] } }], holdings: [{ symbol: "HLD" }], background: false });
+    if (held.ok !== false || held.error !== "buy_on_held_symbol") throw new Error("scaling in accepted by the gateway");
+    t = scriptedTransport([completed("gpt-5.6-sol", synth([row("AAA", "BUY", 1), row("BBB", "WATCH", null, "UNFUNDED")], [mandate("AAA")]))]);
+    F = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
+    const clean = await F.finalizePortfolio({ coverage: [], researchResults: [{ memo: { symbol: "AAA", factualPremises: [{ claimId: "claim_1" }, { claimId: "claim_2" }, { claimId: "claim_3" }] } }], holdings: [], background: false });
+    if (clean.ok !== true || clean.synthesis.expansionMandates.length !== 1 || clean.synthesis.decisions[1].reasonCode !== null) throw new Error(`clean synthesis ${JSON.stringify(clean).slice(0, 200)}`);
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is

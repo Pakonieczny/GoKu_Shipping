@@ -44,6 +44,8 @@ const { redact } = require("./_investorAuth");
 const FUND = require("./_investorFundamentals");
 const ROUTER = require("./_investorEventRouter");
 const DOSSIER = require("./_investorDossier");
+const O = require("./_investorOpenai");
+const E = require("./_investorEvidence");
 
 const FN_NAME = "investorIngest-background";
 const TASK = "ingest";
@@ -165,6 +167,30 @@ async function runIngestSegment(claim) {
         } catch (e) { entry.routeError = String(e.code || e.message).slice(0, 80); }
       }
       entry.routed = routed; entry.highImpact = highImpact;
+      /* Luna extraction (§5.3, §5.6): new filing versions with text become
+         source-bound claims — guidance, earnings dates, facts — recorded by
+         identity. A Luna failure marks extraction incomplete on the version
+         and blocks nothing else here: an unverified claim never reaches a
+         mandate because verification later returns INSUFFICIENT (I-1). */
+      const withText = (refreshed.newVersions || []).filter((v) => v.canonicalText && v.canonicalText.length >= 200).slice(0, 6);
+      if (withText.length) {
+        const ex = await O.extractFacts({ documentVersions: withText, symbol });
+        entry.extraction = { ok: ex.ok === true, claims: (ex.claims || []).length, dropped: (ex.dropped || []).length, incomplete: ex.extractionIncomplete === true, costMinor: ex.costMinor || "0", error: ex.ok ? null : ex.error };
+        if (ex.ok) {
+          const byVersion = new Map();
+          for (const c of ex.claims) byVersion.set(c.documentVersionId, [...(byVersion.get(c.documentVersionId) || []), c]);
+          for (const v of withText) {
+            const claims = byVersion.get(v.versionId) || [];
+            try {
+              if (claims.length) await E.recordClaims({ symbol, documentId: v.documentId, documentVersionId: v.versionId, sourceId: v.sourceId, extractedBy: ex.model || "gpt-5.6-luna",
+                publishedAtMs: Date.parse(v.source_published_at || "") || null, firstSeenAtMs: v.firstSeenAtMs, claims });
+              await A.col(A.COL.versions).doc(v.versionId).set({ extraction: { status: claims.length ? "complete" : (ex.extractionIncomplete ? "incomplete" : "no_claims"), claims: claims.length, atMs: Date.now(), requestId: ex.requestId || null } }, { merge: true });
+            } catch (e) { entry.extraction.recordError = String(e.code || e.message).slice(0, 80); }
+          }
+        } else {
+          for (const v of withText) { try { await A.col(A.COL.versions).doc(v.versionId).set({ extraction: { status: "incomplete", error: String(ex.error).slice(0, 80), atMs: Date.now() } }, { merge: true }); } catch {} }
+        }
+      }
       /* Facts-layer dossier: composed at this instant from point-in-time
          facts, claims and document versions; appended only when its content
          hash changed (§5.2 step 6). Interpretations are pointers only. */

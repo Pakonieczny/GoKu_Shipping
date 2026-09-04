@@ -253,6 +253,7 @@ const COL = {
   evals:               COL_PREFIX + "Evals",               // eval run id: challenger results and release gates
   kpiDaily:            COL_PREFIX + "KpiDaily",            // account+date: KPI aggregates
   contentManifests:    COL_PREFIX + "ContentManifests",    // content hash: pointer to object storage
+  modelRequests:       COL_PREFIX + "ModelRequests",       // request id: every model call's ids, status, hashes, tokens, cost (§12.2)
 };
 
 /* ── REQUIRED COMPOSITE INDEXES (blueprint §10.6) ────────────────────────
@@ -260,6 +261,8 @@ const COL = {
  * whatever mechanism the operator already uses for Firestore. No writer
  * epoch flips while an index is building or missing (§17.5). */
 const REQUIRED_INDEXES = Object.freeze([
+  { collection: COL.modelRequests, fields: ["day", "role", "startedAtMs"] },
+  { collection: COL.modelRequests, fields: ["status", "startedAtMs"] },
   { collection: COL.activeMandates, fields: ["accountId", "status", "expiresAtMs", "capitalRank"] },
   { collection: COL.managerRuns, fields: ["tradingDate", "status"] },
   { collection: COL.managerDecisions, fields: ["managerRunId", "decision", "symbol"] },
