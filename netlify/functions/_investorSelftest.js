@@ -4341,6 +4341,158 @@ function runFixtures() {
     return true;
   }));
 
+  /* ── Group 6 (commit 12): the activation invariant. Three records, three
+     hashes; the envelope only ever shrinks; staging is one all-or-none CAS
+     transaction against a fresh activation snapshot; the outbox carries
+     desired state and nothing claims the broker applied it. */
+  function stagingWorld() {
+    const P = require("./_investorPolicy");
+    const fake = fakeAdmin();
+    const nowMs = Date.UTC(2026, 8, 4, 13);
+    fake.docs.set(`${fake.COL.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 6000000, reserved: 0 }, balanceRevision: 7 });
+    const snapshot = (extra = {}) => ({ activationSnapshotId: "act_1", accountId: "paper-1", navMinor: "10000000", settledCashMinor: "6000000", reservedMinor: "0", positions: [], workingOrders: [], portfolioVersion: 7, reservationAccountVersion: 0, writerEpoch: 0, ...extra });
+    const proposal = (symbol, extra = {}) => ({ ...P.EXAMPLE_MANDATE_PROPOSAL, symbol, ...extra });
+    const texts = { docv_1: "Net revenue for the quarter was $1.21 billion, up 14% year over year.", docv_2: "We now expect full year revenue of $4.0 billion to $4.2 billion.", docv_3: "Gross margin contracted 300 basis points on input costs." };
+    const claimsById = { claim_1: { claimId: "claim_1", documentVersionId: "docv_1", text: "revenue +14%", quote: "up 14% year over year" },
+      claim_2: { claimId: "claim_2", documentVersionId: "docv_2", text: "FY guide", quote: "full year revenue of $4.0 billion to $4.2 billion" },
+      claim_3: { claimId: "claim_3", documentVersionId: "docv_3", text: "margin contracted", quote: "gross margin contracted 300 basis points" } };
+    const spanReader = async (ids) => Object.fromEntries(ids.map((id) => [id, { versionId: id, contentHash: `h_${id}`, canonicalText: texts[id] || "" }]));
+    const verifier = async ({ premises }) => ({ available: true, model: "luna", output: { verdicts: premises.map((p) => ({ claimId: p.claimId, verdict: "SUPPORTED" })) } });
+    const marks = { AAA: { advMinor: "10000000000", spreadBps: "10" }, BBB: { advMinor: "10000000000", spreadBps: "10" }, CCC: { advMinor: "10000000000", spreadBps: "10" }, DDD: { advMinor: "10000000000", spreadBps: "10" } };
+    const verify = async (proposals) => require("./_investorClaimVerifier").verifyAndPersistBatch({ proposals, claimsById, spanReader, verifier, admin: fake });
+    const stage = async (args) => require("./_investorMandate").stagePortfolioPlan({ accountId: "paper-1", policy: P.loadActiveSync({}), managerRunId: "run_1", admin: fake, marks, nowMs, eligibleSymbols: ["AAA", "BBB", "CCC", "DDD"], ...args });
+    const docsIn = (col) => [...fake.docs.entries()].filter(([k]) => k.startsWith(`${col}/`)).map(([, v]) => v);   /* raw documents: an added id would break the codec hash */
+    return { P, fake, nowMs, snapshot, proposal, verify, stage, docsIn, marks };
+  }
+
+  cases.push(fixture("mandate_staging_binds_three_records_reserves_capital_writes_the_outbox_and_commits_all_or_none_under_cas", async () => {
+    const MD = require("./_investorMandate");
+    const SC = require("./_investorStorageCodec");
+    const W = stagingWorld();
+    const AAA = W.proposal("AAA"), BBB = W.proposal("BBB", { allocation: { ...W.P.EXAMPLE_MANDATE_PROPOSAL.allocation, capitalRank: 1 } });
+    const verified = await W.verify([AAA, BBB]);
+    if (verified.allSupported !== true) throw new Error("claims not verified");
+    const staged = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [AAA, BBB], verifiedProposalClaims: verified, activationSnapshot: W.snapshot() });
+    if (staged.status !== "COMMITTED" || staged.mandateVersionIds.length !== 2 || !staged.planId) throw new Error(`staging ${JSON.stringify(staged).slice(0, 300)}`);
+    const dec = (d) => (d._codec ? SC.decode(d) : d);
+    const proposals = W.docsIn(W.fake.COL.mandateProposals).map(dec), bindings = W.docsIn(W.fake.COL.mandates).map(dec), envelopes = W.docsIn(W.fake.COL.activationEnvelopes).map(dec);
+    const reservations = W.docsIn(W.fake.COL.capitalReservations).map(dec), orderSets = W.docsIn(W.fake.COL.orderSets).map(dec), legs = W.docsIn(W.fake.COL.orderLegs).map(dec);
+    const outbox = W.docsIn(W.fake.COL.executionOutbox), pointers = W.docsIn(W.fake.COL.activeMandates), events = W.docsIn(W.fake.COL.mandateEvents), plans = W.docsIn(W.fake.COL.portfolioPlans);
+    if (proposals.length !== 2 || bindings.length !== 2 || envelopes.length !== 2 || reservations.length !== 2 || orderSets.length !== 2 || legs.length !== 8 || outbox.length !== 2 || pointers.length !== 2 || events.length !== 2) throw new Error(`counts ${[proposals.length, bindings.length, envelopes.length, reservations.length, orderSets.length, legs.length, outbox.length, pointers.length, events.length]}`);
+    /* the proposal is stored unmodified; the binding and the envelope are separate records with their own fields */
+    const pa = proposals.find((p) => p.symbol === "AAA");
+    if (pa.proposalHash !== MD.hashPortfolioPlanProposal && JSON.stringify(pa.proposal) !== JSON.stringify(AAA)) throw new Error("proposal edited");
+    const ba = bindings.find((b) => b.symbol === "AAA");
+    for (const k of ["mandateVersionId", "mandateSeriesId", "version", "expectedActiveVersion", "proposalId", "proposalHash", "portfolioPlanId", "managerRunId", "schemaHash", "policyHash", "sourceManifestHash"]) if (ba[k] == null) throw new Error(`binding missing ${k}`);
+    if (ba.version !== 1 || ba.expectedActiveVersion !== 0 || ba.mandateSeriesId !== "paper-1_AAA") throw new Error("lineage");
+    const ea = envelopes.find((e) => e.symbol === "AAA");
+    for (const k of ["status", "activationSnapshotId", "riskPolicyHash", "authorizedQuantityUnits", "reservedNotionalMinor", "plannedLossAtBoundaryMinor", "bindingGapStressLossMinor"]) if (ea[k] == null) throw new Error(`envelope missing ${k}`);
+    if (ea.status !== "ALLOW" || BigInt(ea.authorizedQuantityUnits) > BigInt(AAA.allocation.proposedQuantityUnits)) throw new Error("envelope enlarged the proposal");
+    /* §7.1 worked example: 86 × ($43.25 − $37.25) + 86 × $0.04 = $519.44 planned loss at the boundary; reservation covers limit plus cost */
+    if (ea.plannedLossAtBoundaryMinor !== "51944" || ea.reservedNotionalMinor !== "372294" || ea.withinDeclaredCapital !== true || ea.withinDeclaredLoss !== true) throw new Error(`arithmetic ${JSON.stringify(ea).slice(0, 300)}`);
+    /* desired order set: ENTRY, TARGET, STOP and TIME_EXIT for exactly the authorized quantity; nothing is applied */
+    const os = orderSets.find((o) => o.symbol === "AAA");
+    if (os.status !== "DESIRED" || os.appliedMandateVersionId !== null || os.purpose !== "ENTRY_WITH_PROTECTION") throw new Error("order set state");
+    const roles = os.legs.map((l) => l.role).sort().join(",");
+    if (roles !== "ENTRY,SELL,STOP,TARGET" || os.legs.some((l) => l.quantityUnits !== ea.authorizedQuantityUnits)) throw new Error(`legs ${roles}`);
+    if (os.legs.find((l) => l.role === "ENTRY").timeInForce !== "DAY" || os.legs.find((l) => l.role === "STOP").timeInForce !== "GTC") throw new Error("leg time in force");
+    if (outbox.some((o) => o.status !== "PENDING" || o.kind !== "APPLY_DESIRED_ORDER_SET" || o.authority !== "SOL_MANDATE")) throw new Error("outbox");
+    const pt = pointers.find((p) => p.symbol === "AAA");
+    if (pt.desiredVersion !== 1 || pt.status !== "DESIRED" || pt.appliedVersionId !== null || pt.lossBoundaryPriceMicros !== "37250000" || !pt.expiresAtMs) throw new Error(`pointer ${JSON.stringify(pt).slice(0, 200)}`);
+    const res = W.fake.docs.get(`${W.fake.COL.reservationAccounts}/paper-1`);
+    if (res.version !== 1 || res.reservedNotionalMinor !== String(372294 * 2) || res.committedPortfolioPlanId !== staged.planId) throw new Error(`reservation account ${JSON.stringify(res)}`);
+    if (!plans.some((p) => p.planId === staged.planId && p.status === "COMMITTED" && !p.auditOnly)) throw new Error("plan record");
+    /* the same plan against the same snapshot is a duplicate; a stale snapshot is refused; neither writes */
+    const before = W.fake.docs.size;
+    const dup = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [AAA, BBB], verifiedProposalClaims: verified, activationSnapshot: W.snapshot({ reservationAccountVersion: 1 }) });
+    if (dup.status !== "DUPLICATE") throw new Error(`duplicate ${dup.status} ${dup.reason}`);
+    const stale = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [W.proposal("CCC")], verifiedProposalClaims: await W.verify([W.proposal("CCC")]), activationSnapshot: W.snapshot({ activationSnapshotId: "act_2", reservationAccountVersion: 0 }) });
+    if (stale.status !== "STALE") throw new Error(`stale ${stale.status} ${stale.reason}`);
+    if (W.docsIn(W.fake.COL.activeMandates).length !== 2 || W.docsIn(W.fake.COL.mandates).length !== 2) throw new Error("a refused plan wrote mandate state");
+    if (W.fake.docs.size - before !== 2) throw new Error("refusals should leave exactly their two audit records");
+    /* all-or-none: one invalid member (boundary above limit) rejects the whole basket; the valid member is not activated */
+    const bad = W.proposal("DDD", { action: { ...W.P.EXAMPLE_MANDATE_PROPOSAL.action, protection: { ...W.P.EXAMPLE_MANDATE_PROPOSAL.action.protection, lossBoundaryPriceMicros: "44000000" } } });
+    const basket = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [W.proposal("CCC"), bad], verifiedProposalClaims: await W.verify([W.proposal("CCC"), bad]), activationSnapshot: W.snapshot({ activationSnapshotId: "act_3", reservationAccountVersion: 1 }) });
+    if (basket.status !== "REJECTED" || !basket.rejected.some((r) => r.symbol === "DDD" && r.reasons.includes("LOSS_BOUNDARY_NOT_BELOW_LIMIT"))) throw new Error(`basket ${JSON.stringify(basket).slice(0, 300)}`);
+    if (W.docsIn(W.fake.COL.activeMandates).some((p) => p.symbol === "CCC")) throw new Error("a valid member of a rejected basket was activated");
+    /* a held name cannot receive BUY; a WATCH cannot carry order fields */
+    const held = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [W.proposal("CCC")], verifiedProposalClaims: await W.verify([W.proposal("CCC")]), activationSnapshot: W.snapshot({ activationSnapshotId: "act_4", reservationAccountVersion: 1, positions: [{ symbol: "CCC", quantityUnits: "10", markMicros: "43000000", sector: "sw" }] }) });
+    if (held.status !== "REJECTED" || !held.rejected.some((r) => r.reasons.includes("SCALING_IN_FORBIDDEN"))) throw new Error("scaling in accepted");
+    const watch = MD.validateProposal({ ...W.P.EXAMPLE_MANDATE_PROPOSAL, decision: "WATCH", forecast: null, allocation: null }, { nowMs: W.nowMs });
+    if (watch.ok !== false || !watch.errors.includes("NON_EXECUTABLE_DECISION_CARRIES_ORDER_FIELDS")) throw new Error("WATCH with order fields accepted");
+    /* a material clamp returns the basket to Sol instead of silently shrinking it */
+    const tiny = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [W.proposal("CCC")], verifiedProposalClaims: await W.verify([W.proposal("CCC")]), activationSnapshot: W.snapshot({ activationSnapshotId: "act_5", reservationAccountVersion: 1, navMinor: "1000000", settledCashMinor: "900000" }) });
+    if (tiny.status !== "NEEDS_SOL_RESYNTHESIS" || !tiny.revisedFeasibleAlternatives || tiny.envelopes[0].materialClamp !== true || BigInt(tiny.envelopes[0].authorizedQuantityUnits) >= 86n) throw new Error(`clamp ${JSON.stringify(tiny).slice(0, 200)}`);
+    /* RISK_MAINTENANCE: a HOLD for a held name commits protection legs only and reserves nothing */
+    const hold = W.proposal("BBB", { decision: "HOLD", forecast: null, allocation: null, action: { kind: "HOLD_PROTECT", entry: null, protection: W.P.EXAMPLE_MANDATE_PROPOSAL.action.protection, exit: null } });
+    const maint = await W.stage({ planClass: "RISK_MAINTENANCE", portfolioPlanProposal: { planClass: "RISK_MAINTENANCE" }, proposals: [hold], verifiedProposalClaims: await W.verify([hold]), activationSnapshot: W.snapshot({ activationSnapshotId: "act_6", reservationAccountVersion: 1, positions: [{ symbol: "BBB", quantityUnits: "86", markMicros: "45000000", sector: "sw" }] }) });
+    if (maint.status !== "COMMITTED" || maint.reservedNotionalMinor !== String(372294 * 2)) throw new Error(`maintenance ${JSON.stringify(maint).slice(0, 200)}`);
+    const holdSet = W.docsIn(W.fake.COL.orderSets).map(dec).find((o) => o.symbol === "BBB" && o.purpose === "PROTECT");
+    if (!holdSet || holdSet.legs.some((l) => l.role === "ENTRY") || holdSet.legs.find((l) => l.role === "STOP").quantityUnits !== "86") throw new Error("hold order set");
+    const bbbPointer = W.docsIn(W.fake.COL.activeMandates).find((p) => p.symbol === "BBB");
+    if (bbbPointer.desiredVersion !== 2 || bbbPointer.decision !== "HOLD") throw new Error("hold pointer did not advance the series");
+    /* a high-impact event pauses only the unfilled entry: outbox CANCEL_UNFILLED_ENTRY, pointer PAUSED_EVIDENCE, mandate still active */
+    const paused = await MD.pauseUnfilledEntry("AAA", "evt_1", { accountId: "paper-1", admin: W.fake });
+    if (paused.paused !== true || !W.fake.docs.has(`${W.fake.COL.executionOutbox}/${paused.transitionId}`)) throw new Error("pause not written");
+    const ap = W.docsIn(W.fake.COL.activeMandates).find((p) => p.symbol === "AAA");
+    if (ap.status !== "PAUSED_EVIDENCE" || ap.lossBoundaryPriceMicros !== "37250000") throw new Error("pause touched protection or missed status");
+    if ((await MD.hasActiveMandate("AAA", { accountId: "paper-1", admin: W.fake })) !== true || (await MD.hasActiveMandate("ZZZ", { accountId: "paper-1", admin: W.fake })) !== false) throw new Error("hasActiveMandate");
+    return true;
+  }));
+
+  cases.push(fixture("emergency_risk_policy_only_freezes_cancels_reduces_or_covers_never_opens_a_long_and_is_inactive_until_approved", async () => {
+    const ER = require("./_investorEmergencyRisk");
+    const R = require("./_investorRisk");
+    const P = require("./_investorPolicy");
+    const crypto = require("crypto");
+    const nowMs = Date.UTC(2026, 8, 4, 14);
+    const content = { ...P.EMERGENCY_RISK_POLICY_TEMPLATE, status: "APPROVED", approvedBy: "owner", approvedAtMs: nowMs - 86400000, effectiveFrom: "2026-09-01" };
+    delete content.policyHash;
+    const stored = { ...content, policyHash: crypto.createHash("sha256").update(JSON.stringify(P.canonical(content))).digest("hex") };
+    const active = P.activeEmergencyPolicy(stored);
+    if (active.active !== true) throw new Error(`policy not active: ${active.reason}`);
+    const portfolio = { navMinor: "10000000", settledCashMinor: "3000000", reservedMinor: "0",
+      positions: [{ symbol: "BIG", quantityUnits: "400", markMicros: "50000000", lossBoundaryPriceMicros: "45000000", sector: "sw" }, { symbol: "SHRT", quantityUnits: "-5", markMicros: "10000000", sector: "sw" }, { symbol: "NAK", quantityUnits: "10", markMicros: "20000000", lossBoundaryPriceMicros: null, sector: "sw" }],
+      workingOrders: [{ orderId: "o1", symbol: "NEW", side: "buy", remainingUnits: "20", limitPriceMicros: "30000000", sector: "sw" }] };
+    /* persistence: a breach must hold for its declared seconds before it fires */
+    const first = ER.evaluateTriggers({ policy: stored, metrics: { drawdownFromPeakBps: "700" }, persistence: {}, nowMs });
+    if (first.fired.length !== 0 || first.pending.length !== 1) throw new Error("drawdown fired without persistence");
+    const second = ER.evaluateTriggers({ policy: stored, metrics: { drawdownFromPeakBps: "700", shortQuantityUnits: "5", singleNameWeightBps: "2000" }, persistence: first.persistence, nowMs: nowMs + 61000 });
+    if (!second.fired.some((f) => f.id === "drawdown") || !second.fired.some((f) => f.id === "accidental_short")) throw new Error(`fired ${JSON.stringify(second.fired.map((f) => f.id))}`);
+    const plan = ER.planActions({ fired: [...second.fired, { id: "concentration_breach", action: "REDUCE_TO_LIMIT", metric: "singleNameWeightBps", value: "2000", threshold: "1200", op: "gt" }], portfolio, policy: stored, riskMandate: P.RISK_MANDATE, nowMs });
+    const ops = plan.actions.map((a) => a.op);
+    if (!ops.includes("FREEZE_EXPANSION") || !ops.includes("CANCEL_UNFILLED_ENTRY") || !ops.includes("BUY_TO_COVER_ACCIDENTAL_SHORT") || !ops.includes("REDUCE")) throw new Error(`ops ${ops}`);
+    for (const a of plan.actions) { if (a.label !== "EMERGENCY_RISK") throw new Error("unlabelled action"); if (ER.FORBIDDEN.includes(a.op)) throw new Error(`forbidden op ${a.op}`); if (!stored.permittedOperations.includes(a.op)) throw new Error(`unpermitted op ${a.op}`); }
+    const cover = plan.actions.find((a) => a.op === "BUY_TO_COVER_ACCIDENTAL_SHORT");
+    if (cover.symbol !== "SHRT" || cover.quantityUnits !== "5" || cover.targetQuantityUnits !== "0") throw new Error("cover quantity is not exactly the short");
+    /* concentration: 400 × $50 = $20,000 of $100,000 NAV against a 10% cap → remove exactly 200 shares, marketable limit, regular session */
+    const reduce = plan.actions.find((a) => a.op === "REDUCE" && a.symbol === "BIG");
+    if (!reduce || reduce.quantityUnits !== "200" || reduce.orderType !== "MARKETABLE_LIMIT" || reduce.session !== "REGULAR_ONLY" || reduce.ruleUsed !== "EXACT_BREACH_REMOVAL_WHOLE_SHARES") throw new Error(`reduce ${JSON.stringify(reduce)}`);
+    const cancel = plan.actions.find((a) => a.op === "CANCEL_UNFILLED_ENTRY");
+    if (!cancel || cancel.symbol !== "NEW" || cancel.quantityUnits !== "20") throw new Error("unfilled entry not cancelled");
+    if (plan.forcesLaterSolReview !== true || plan.forcesReconciliation !== true) throw new Error("emergency action does not force review");
+    /* without an owner-approved policy the template is inactive: freeze and alert only */
+    const inactive = ER.planActions({ fired: second.fired, portfolio, policy: P.EMERGENCY_RISK_POLICY_TEMPLATE, riskMandate: P.RISK_MANDATE, nowMs, policyActive: false });
+    if (inactive.actions.length !== 1 || inactive.actions[0].op !== "FREEZE_EXPANSION") throw new Error(`inactive policy acted: ${inactive.actions.map((a) => a.op)}`);
+    /* a thesis-less position gets a protection plan that can never buy */
+    const ep = ER.emergencyProtectionPlan({ accountId: "paper-1", symbol: "NAK", position: { quantityUnits: "10", markMicros: "20000000", entryPriceMicros: "19000000" }, reason: "inherited without thesis", nowMs });
+    if (ep.permittedOperations.includes("BUY") || !ep.forbiddenOperations.includes("BUY") || ep.status !== "ACTION_REQUIRED" || ep.protectiveOrder.stopMicros !== "19500000" || ep.protectiveOrder.quantityUnits !== "10") throw new Error(`protection plan ${JSON.stringify(ep).slice(0, 200)}`);
+    /* enforcement persists outbox transitions labelled EMERGENCY_RISK and freezes buys; never a Sol decision */
+    const fake = fakeAdmin();
+    const out = await ER.enforceBoundedPolicy({ accountId: "paper-1", observed: { shortQuantityUnits: "5" }, portfolio, control: { emergencyRiskPolicy: stored }, admin: fake, nowMs });
+    if (out.policyActive !== true || !out.actions.some((a) => a.op === "BUY_TO_COVER_ACCIDENTAL_SHORT") || out.outbox.length !== 1) throw new Error(`enforce ${JSON.stringify(out).slice(0, 200)}`);
+    const ob = fake.docs.get(`${fake.COL.executionOutbox}/${out.outbox[0]}`);
+    if (!ob || ob.authority !== "EMERGENCY_RISK" || ob.kind !== "BUY_TO_COVER_ACCIDENTAL_SHORT" || ob.quantityUnits !== "5") throw new Error("outbox transition");
+    const ctrl = fake.docs.get(`${fake.COL.control}/control`);
+    if (!ctrl || ctrl.buyState !== "FROZEN" || ctrl.emergencyState !== "ENGAGED" || ctrl.emergencyForcesSolReview !== true) throw new Error("control not frozen");
+    /* operational revalidation: stale broker truth freezes expansion as a hard breach; a clean book allows it */
+    const stale = R.revalidateOperationalLimits({ portfolio: { navMinor: "10000000", settledCashMinor: "9000000", reservedMinor: "0", positions: [], workingOrders: [] }, brokerTruthAgeSeconds: 900 });
+    if (stale.allowExpansion !== false || stale.hardBreach !== true || !stale.reasons.includes("STALE_BROKER_TRUTH")) throw new Error("stale truth allowed expansion");
+    const clean = R.revalidateOperationalLimits({ portfolio: { navMinor: "10000000", settledCashMinor: "9000000", reservedMinor: "0", positions: [], workingOrders: [] }, brokerTruthAgeSeconds: 30 });
+    if (clean.allowExpansion !== true || clean.hardBreach !== false) throw new Error(`clean book refused: ${clean.reasons}`);
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is
