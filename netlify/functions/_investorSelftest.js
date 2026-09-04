@@ -3453,6 +3453,93 @@ function runFixtures() {
     return true;
   }));
 
+  /* ── Group 4 (commit 7): transparent universe snapshot and the 304-name
+     coverage contract (§6.3). The snapshot is frozen per trading date, its
+     hash is deterministic, and a coverage response must match it exactly. */
+  cases.push(fixture("universe_snapshot_freezes_the_eligible_roster_and_coverage_must_match_it_exactly", () => {
+    const U = require("./_investorUniverse");
+    const t0 = 1_800_000_000_000;
+    const snap = U.freezeEligibleSnapshot({ tradingDate: "2026-09-04", nowMs: t0 });
+    if (snap.schemaVersion !== "universe-snapshot.v1") throw new Error("schemaVersion");
+    if (snap.eligibleCount !== U.tradeTier.length || snap.eligibleCount !== 304) throw new Error(`eligibleCount ${snap.eligibleCount}`);
+    if (snap.symbols.length !== 304 || new Set(snap.symbols).size !== 304) throw new Error("symbols not unique");
+    const sorted = [...snap.symbols].sort();
+    if (snap.symbols.some((s, i) => s !== sorted[i])) throw new Error("symbols not sorted");
+    /* Determinism: the same roster and removals give the same hash regardless of clock. */
+    const again = U.freezeEligibleSnapshot({ tradingDate: "2026-09-05", nowMs: t0 + 86_400_000 });
+    if (again.universeHash !== snap.universeHash || !/^[0-9a-f]{64}$/.test(snap.universeHash)) throw new Error("hash not deterministic");
+    /* Every excluded name carries an owner, a reason and an effective date; attractiveness is never a reason. */
+    if (!snap.excluded.length) throw new Error("no exclusions declared");
+    for (const x of snap.excluded) {
+      if (!x.symbol || !x.reason || !x.owner || !x.effectiveDate) throw new Error(`exclusion incomplete ${JSON.stringify(x)}`);
+      if (/attractiv|momentum|performance/i.test(String(x.reason))) throw new Error(`attractiveness used as eligibility ${x.symbol}`);
+    }
+    if (!snap.eligibility.rules.some((r) => /never an eligibility event/.test(r))) throw new Error("policy text");
+    /* An objective removal shrinks the roster, changes the hash, and a held name stays managed off-roster. */
+    const victim = snap.symbols[7];
+    const removed = U.freezeEligibleSnapshot({ tradingDate: "2026-09-04", nowMs: t0,
+      removed: [{ symbol: victim, reason: "acquired", owner: "operator", effectiveDate: "2026-09-01" }],
+      positions: [{ symbol: victim, open: true }], pendingOrders: [{ symbol: "ZZZZ" }] });
+    if (removed.eligibleCount !== 303 || removed.symbols.includes(victim)) throw new Error("removal not applied");
+    if (removed.universeHash === snap.universeHash) throw new Error("hash ignores removals");
+    if (!removed.managedOffRoster.some((m) => m.symbol === victim && m.reason === "held_position")) throw new Error("held name dropped");
+    if (!removed.managedOffRoster.some((m) => m.symbol === "ZZZZ" && m.reason === "working_or_pending_order")) throw new Error("pending order dropped");
+    if (!removed.excluded.some((x) => x.symbol === victim && x.reason === "acquired")) throw new Error("removal not recorded");
+    /* Coverage: exact match passes; one missing, one duplicate, one unknown each fail with the offender named. */
+    const full = snap.symbols.map((symbol) => ({ symbol, decision: "NO_BUY" }));
+    const ok = U.coverageMatches(snap, full);
+    if (ok.ok !== true || ok.completedCount !== 304 || ok.universeHash !== snap.universeHash) throw new Error("full coverage rejected");
+    const missing = U.coverageMatches(snap, full.slice(1));
+    if (missing.ok !== false || missing.missing.length !== 1 || missing.missing[0] !== snap.symbols[0]) throw new Error("missing not named");
+    const dup = U.coverageMatches(snap, [...full, full[3]]);
+    if (dup.ok !== false || dup.duplicates.length !== 1 || dup.duplicates[0] !== full[3].symbol) throw new Error("duplicate not named");
+    const unknown = U.coverageMatches(snap, [...full, { symbol: "NOTAROSTERNAME" }]);
+    if (unknown.ok !== false || unknown.unknown[0] !== "NOTAROSTERNAME") throw new Error("unknown not named");
+    return true;
+  }));
+
+  /* ── Group 4 (commit 7): the numerical filing plane is point-in-time and
+     exact (§5.1, §5.2, §6.5). A restated number is invisible before the
+     restatement was filed; values are canonical integer strings; the
+     provider registry states what is NOT available rather than guessing. */
+  cases.push(fixture("sec_facts_are_point_in_time_exact_and_the_provider_registry_declares_what_is_unavailable", async () => {
+    const F = require("./_investorFundamentals");
+    const D = require("./_investorDataProviders");
+    const f = await F.selfCheck();
+    if (f.pass !== true) throw new Error(`fundamentals selfCheck: ${JSON.stringify(f.failures).slice(0, 300)}`);
+    const d = await D.selfCheck();
+    if (d.pass !== true) throw new Error(`providers selfCheck: ${JSON.stringify(d.failures).slice(0, 300)}`);
+    /* Restatement: the 10-K/A value must not be visible before its own filed date. */
+    const payload = { cik: 123456, facts: { "us-gaap": { Revenues: { units: { USD: [
+      { start: "2025-01-01", end: "2025-12-31", val: 1000000000, accn: "0000123456-26-000001", fy: 2025, fp: "FY", form: "10-K", filed: "2026-02-20" },
+      { start: "2025-01-01", end: "2025-12-31", val: 950000000, accn: "0000123456-26-000009", fy: 2025, fp: "FY", form: "10-K/A", filed: "2026-05-15" },
+    ] } } } } };
+    const { facts, rejected } = F.normalizeCompanyFacts(payload, { cik: 123456, retrievedAtMs: Date.UTC(2026, 5, 1) });
+    if (rejected.length || facts.length !== 2) throw new Error(`normalise ${facts.length} facts, ${rejected.length} rejected`);
+    for (const x of facts) if (!/^-?(0|[1-9][0-9]*)$/.test(String(x.valueScaled))) throw new Error("value is not a canonical integer string");
+    const before = F.pointInTime(facts, { asOfMs: Date.UTC(2026, 3, 1) });
+    if (before.length !== 1 || before[0].form !== "10-K" || before[0].valueScaled !== "100000000000") throw new Error(`pre-restatement view ${JSON.stringify(before[0])}`);
+    const after = F.pointInTime(facts, { asOfMs: Date.UTC(2026, 6, 1) });
+    if (after.length !== 1 || after[0].form !== "10-K/A" || after[0].valueScaled !== "95000000000") throw new Error("restatement not visible after filing");
+    if (F.pointInTime(facts, { asOfMs: Date.UTC(2026, 0, 1) }).length !== 0) throw new Error("fact visible before it was filed");
+    const sel = F.selectAsOf(facts, { asOfMs: Date.UTC(2026, 6, 1) });
+    const orig = sel.lineage.find((l) => l.accession === "0000123456-26-000001");
+    const amend = sel.lineage.find((l) => l.accession === "0000123456-26-000009");
+    if (!orig || !amend || orig.supersededByFactId !== amend.factId || amend.supersedesFactId !== orig.factId) throw new Error("restatement lineage");
+    let code = null;
+    try { F.pointInTime(facts, {}); } catch (e) { code = e.code; }
+    if (code !== "AS_OF_REQUIRED") throw new Error("as-of not required");
+    /* Providers: consensus and transcripts are declared unavailable; SEC is entitled; unknown kinds fail closed. */
+    const cov = D.coverageStatement();
+    if (cov.consensus !== "no_consensus_vendor" || cov.transcripts !== "unavailable") throw new Error("coverage statement");
+    if (D.entitlement("consensus").entitled !== false || D.entitlement("transcripts").entitled !== false) throw new Error("unavailable data treated as entitled");
+    if (D.entitlement("filings").entitled !== true) throw new Error("SEC filings not entitled");
+    if (D.entitlement("made_up_kind").entitled !== false || D.entitlement("made_up_kind").reason !== "unknown_kind") throw new Error("unknown kind not refused");
+    const bad = await D.searchDecisionData({ symbol: "ABC", kinds: ["consensus"] });
+    if (!bad.missing.some((m) => /asOfMs_required/.test(m.reason))) throw new Error("as-of not required by the search tool");
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is
