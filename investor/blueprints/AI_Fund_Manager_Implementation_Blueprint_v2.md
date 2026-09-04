@@ -672,7 +672,7 @@ class BrokerAdapter {
 }
 ```
 
-Implement `PaperBrokerAdapter` first. `AlpacaBrokerAdapter` remains disabled until a separate live-trading authorization, credentials, account/jurisdiction review, and rollout gate. The current repository has Alpaca market-data credentials but explicitly has **no live broker integration**.
+Implement `PaperBrokerAdapter` first; it carries Phases 4 through 7. **[v2]** `AlpacaBrokerAdapter` is implemented in Phase 8 behind this same interface and is the end state of this plan, not a deferred RFC. The current repository has Alpaca market-data credentials and no live broker integration, so the adapter and its live credentials are both new work in that phase.
 
 Every adapter publishes a versioned, startup-tested capability record; configuration may only disable capabilities, never claim unsupported ones. The validator blocks any mandate/order combination it cannot implement exactly:
 
@@ -1090,7 +1090,7 @@ Do not repeat the current six-megabyte dashboard failure. `managerDashboard` con
 
 ### 11.5 Wire/auth contract
 
-All v2 reads use `{apiVersion:"investor.v2", requestId, action, params}`. Mutations additionally require `{idempotencyKey, csrfToken, auditReason?}` plus the action-specific concurrency field: `expectedResourceVersion`, `expectedAbsent:true`, or a one-use preview token. All responses use `{ok, requestId, payloadVersion, asOf, partial, partialReason, nextCursor, data, error}`; mutation responses add `{mutationId,acceptedAt,jobId?,resourceVersion,requestedState?,appliedState?}` only where meaningful. Errors are typed as `{code,message,severity,retryable,fieldIssues,correlationId}` with consistent HTTP mapping: 400 schema, 401 expired/no session, 403 origin/CSRF/role, 404 unknown resource, 409 version/state conflict, 422 semantic rejection, 429 budget/rate, 503 degraded dependency. JSON Schemas under `netlify/functions/investor-assets/schemas/api-v2/` reject unknown fields, oversized page sizes, malformed cursors, unsafe numbers, and unsupported transitions.
+All v2 reads use `{apiVersion:"investor.v2", requestId, action, params}`. Mutations additionally require `{idempotencyKey, csrfToken, auditReason?}` plus the action-specific concurrency field: `expectedResourceVersion`, `expectedAbsent:true`, or a one-use preview token. All responses use `{ok, requestId, payloadVersion, asOf, partial, partialReason, nextCursor, data, error}`; mutation responses add `{mutationId,acceptedAt,jobId?,resourceVersion,requestedState?,appliedState?}` only where meaningful. Errors are typed as `{code,message,severity,retryable,fieldIssues,correlationId}` with consistent HTTP mapping: 400 schema, 401 expired/no session, 403 origin/CSRF/role, 404 unknown resource, 409 version/state conflict, 422 semantic rejection, 429 budget/rate, 503 degraded dependency. **[v2]** The API v2 schemas, inline in `_investorApiSchemas.js` (§12.1), reject unknown fields, oversized page sizes, malformed cursors, unsafe numbers, and unsupported transitions.
 
 `investorApi.js` must dispatch `ACTIONS_V1` only when `apiVersion` is absent/`investor.v1` and `ACTIONS_V2` only for exact `investor.v2`; each registry has separate schemas. During observation, v2 mutations are disabled. At cutover, `InvestorAI_Control.writerEpoch` grants exactly one engine mutation authority per account and all v1 investment mutations return `410 ACTION_RETIRED`; emergency compatibility is explicitly mapped, not inferred. This prevents two UIs/writers acting on one account.
 
@@ -1224,7 +1224,7 @@ The action column means **production authority after migration**. Retired files 
 | `investorApi.js` | Rewrite/additive v2 | New bounded manager/dossier/mandate/journal/KPI API; preserve auth and operational compatibility reads |
 | `investorCycle-background.js` | Split/retire | Keep legacy worker behind flag during dual run; move ingest, manager, execution, and post-close into bounded jobs |
 | `investorKick.js` | Rewrite | Dispatch new task vocabulary and due queues; remain fast and model/ledger-free |
-| `netlify.toml` | Update | Bundle only backend `netlify/functions/investor-assets/{policy,schemas,prompts}/**` plus canonical file-backed universe data; configure workers/cron; set version-safe UI asset caching and strict Investor CSP; never expose backend assets as static files |
+| `netlify.toml` | **[v2] Update** | Policy, schemas and prompts are inline in their modules (§12.1), so `included_files` needs only the canonical file-backed universe data it already carries. Configure workers/cron; keep the existing no-store caching on `investor.html`; set the strict Investor CSP with per-block hashes for its inline script and style |
 | `package.json` | **[v2] Leave alone** | It is `etsy-app`, shared with unrelated subsystems, and its build script targets `cherry-viewer`. This plan adds no test framework, no Ajv/Playwright/axe dependency and no npm scripts. Netlify installs the existing dependencies at deploy; the investor system needs nothing further from it. Adding a lockfile remains worthwhile for reproducible deploys, but it is not part of this plan. |
 | lockfile (new) | Add | Commit a reproducible npm lockfile generated by the supported Node/npm toolchain and enforce clean install in CI |
 | `netlify/functions/netlify.toml` | Delete/deprecate explicitly | It is a tracked stale alternative, not necessarily simultaneous production config; remove ambiguity and ensure tooling selects root config |
@@ -1406,7 +1406,7 @@ The UI must distinguish source freshness, dossier freshness, manager-review fres
 
 ### 14.10 Exact UI view-model contracts
 
-The JSON Schemas in `netlify/functions/investor-assets/schemas/api-v2/` define these minimum fields; UI code may not infer them from legacy dashboard objects:
+**[v2]** The API v2 schemas in `_investorApiSchemas.js` define these minimum fields; UI code may not infer them from legacy dashboard objects:
 
 Canonical UI primitives are `Money{currency,amountMinor,minorScale}`, `Price{currency,priceMicros}`, `Quantity{quantityUnits,quantityScale}`, RFC-3339 UTC instants, and `SessionRef{calendarId,calendarVersion,sessionDate}`. Authoritative payloads are never preformatted strings. `_investorMoney.js` validates/calculates server values; the display helpers inside `investor.html` parse bounded canonical integers with `BigInt` and use `Intl.NumberFormat` only for display. Server and browser share JSON test vectors. Every mutable resource contains `{resourceId,resourceVersion,availableActions[]}`; each action capability is `{action,enabled,disabledReason,requiresReauth,requiresReason,confirmationKind}`. The UI never infers eligibility.
 
@@ -1467,7 +1467,7 @@ A BUY without an evidence-backed bear case and invalidators is invalid. A SELL d
 
 ### 15.1 Hard-risk policy and sizing precedence
 
-`netlify/functions/investor-assets/policy/fund-manager-v1.json` embeds a versioned `riskMandate` with currency/account NAV basis and explicit operator inputs: maximum single-name and sector weights, gross/net exposure, minimum settled-cash reserve, maximum planned and binding stressed loss per position/in aggregate, daily-loss/freeze thresholds, peak-to-trough drawdown states, maximum order/position share of rolling ADV, maximum spread, overnight exposure, correlated-cluster cap, gap/halt scenarios, and open-order notional. Manager v1 fixes whole shares and regular-session protected orders; fractional shares and extended-hours execution are not configurable. Paper defaults are labeled assumptions; live operation is blocked until the owner supplies capital, loss tolerance, liquidity needs, tax/account constraints, jurisdiction, and broker rules.
+**[v2]** `_investorPolicy.js` embeds a versioned `riskMandate` (inline, per §12.1) with currency/account NAV basis and explicit operator inputs: maximum single-name and sector weights, gross/net exposure, minimum settled-cash reserve, maximum planned and binding stressed loss per position/in aggregate, daily-loss/freeze thresholds, peak-to-trough drawdown states, maximum order/position share of rolling ADV, maximum spread, overnight exposure, correlated-cluster cap, gap/halt scenarios, and open-order notional. Manager v1 fixes whole shares and regular-session protected orders; fractional shares and extended-hours execution are not configurable. Paper defaults are labeled assumptions. **[v2]** Live operation (Phase 8) requires the owner to supply capital, loss tolerance, liquidity needs, tax/account constraints, jurisdiction and broker rules — these are inputs the sizing precedence needs to compute a quantity at all, not a separate gate.
 
 Manager v1 should be long-only common equity plus cash, with no leverage, options, short selling, margin expansion, or averaging down from a delta-only review. `SELL` can close only owned quantity. Any broader instrument set requires a new discriminated schema, risk model, market-data contract, simulator, broker capability test, and explicit policy release; it must not slip in through a prompt change.
 
@@ -1746,11 +1746,13 @@ Each item is independently deployable and independently testable, and none requi
 
 **P−1.9 — Credential remediation (D-9).** In this order: (1) identify the principal and **rotate/revoke at the provider**, treating the key as compromised from first commit rather than from discovery; (2) inventory deployments and review access logs for the key's lifetime; (3) `git rm --cached` and add a `.gitignore` covering `netlify/functions/secrets/`, `*.pem`, `*_rsa`, `*PrivateKey*`; (4) purge history where the repository's sharing model warrants it — noting that rotation, not purging, is the control that matters, and purging without rotating is theatre; (5) replace with a managed secret injected at runtime — no source file references `gcpPrivateKey`, verified by grep, so removal is behaviourally inert; (6) add the secret-scanning suite of §17.2 to CI. **Ship alone, first, before any other change in Phase −1.**
 
-### Phase 0 — Freeze and baseline
+### Phase 0 — Freeze and baseline **[v2] (minimized)**
 
-**Files:** `netlify/functions/secrets/gcpPrivateKey.txt`, auth/config, `package.json` + new lockfile/CI, legacy strategy/universe modules, ledger, API, selftest.  
-**Work:** rotate/remove the exposed key and add secret scanning first; tag commit `ea14b710...` as the legacy baseline; lock the supported dependency/runtime toolchain; export current control/positions/orders/ledger/strategy/universe hashes; document actual v18/v6 versus stale JSON; add `engineVersion` projection; freeze new legacy entries during migration drills; decide the point-in-time news/estimate/transcript launch source or explicitly accept missing coverage.  
-**Exit:** credential incident closed; clean CI install is reproducible; legacy replay and account conservation reproduce; every open position/order is inventoried; data entitlements/known gaps are approved.
+**[v2]** The credential work that dominated v1's Phase 0 is now P−1.9 and ships first, alone, in Phase −1. The lockfile and CI items are removed with the toolchain (§17.5). What remains is a baseline snapshot and one decision.
+
+**Files:** none modified.  
+**Work:** tag `ea14b710...` as the legacy baseline; export current control/positions/orders/ledger/strategy/universe hashes; record the running v18/v6 versions against the stale `investor/strategies/v1.json` and `investor/universe/v1.json`; add the `engineVersion` projection; freeze new legacy entries during migration drills; choose the point-in-time news/estimate/transcript source, or record explicit acceptance of missing coverage.  
+**Exit:** baseline tagged and hashes exported; legacy replay and account conservation reproduce; every open position and order is inventoried; the data-source decision is recorded either way.
 
 ### Phase 1 — Contracts, policy, indexes, and authority tests
 
@@ -1793,9 +1795,21 @@ Each item is independently deployable and independently testable, and none requi
 **Work:** freeze legacy entry writer; cancel/drain old proposals and inert EntryPlans; full Sol review for every open holding; apply complete new protection through the acknowledged desired/applied saga; enable `PAPER_AI`; run prospective sessions across ordinary and volatile conditions.  
 **Exit:** safety gates remain perfect and the AI book has enough prospective evidence to decide the next experiment. At least 60 trading sessions is a reasonable **operational-soak** starting point, not proof of durable alpha. Performance promotion requires predeclared power/confidence criteria, sufficient independent decisions/forecast resolutions, and regime coverage rather than a calendar count alone.
 
-### Phase 8 — Optional limited live operation
+### Phase 8 — Live operation **[v2] (fully scoped; the end state of this plan)**
 
-This phase is **out of scope for automatic execution of this plan**. It requires explicit user authorization, broker adapter implementation, legal/account review, separate secrets, cancel/replace/poll/reconnect tests (plus stream/webhook tests only if that adapter is separately chosen), and a predeclared capital-loss envelope. Start with a small fixed fraction of capital; promotion raises exposure, not model authority. Roll back to freeze-new-buys while preserving protective orders.
+**[v2]** v1 deferred this phase as an optional RFC with no activation. It is now the delivered end state. Nothing new is introduced here: every control this phase runs under is already specified in §8, §15.1 and §18, and Phase 8 wires the live adapter behind the interface those sections already define.
+
+**Files:** `_investorBroker.js` (add `AlpacaBrokerAdapter` behind the existing broker-independent interface of §8.2), `_investorExecution.js`, `investorExecution-background.js`, `_investorLedger.js`, `_investorAlerts.js`, `investorApi.js`, `investor.html`, `netlify.toml` (live credential wiring).
+
+**Work:**
+1. Implement `AlpacaBrokerAdapter` against the §8.2 capability contract — submit, cancel, replace, poll, reconnect, and the §8.3 order-set/leg/fill/ledger mapping. The adapter satisfies the same interface `PaperBrokerAdapter` already satisfies, so §8.1's lifecycle, §8.4's order rules and §8.6's desired-to-applied saga run unchanged against a live account.
+2. Provision separate live broker credentials under the least-privilege split §18 already requires. The executor holds them; the model process does not.
+3. Supply the `riskMandate` operator inputs §15.1 already enumerates — account NAV basis, single-name and sector weights, gross/net exposure, cash reserve, planned and stressed loss per position and in aggregate, daily-loss and drawdown thresholds, ADV and spread caps, correlated-cluster cap, open-order notional. These are inputs the sizing precedence needs to compute a quantity at all, not new controls.
+4. Run the §19 cutover sequence for open positions against the live account.
+5. Confirm protective legs are live at the broker per §8.4, and that §8.7's emergency-only protection reaches the live adapter.
+6. Reconcile live fills, partials, rejects, corporate actions and cash against the ledger's existing conservation equations.
+
+**Exit:** every mandate is traceable end to end — proposal, server binding, activation envelope, order set, broker order id, fill, ledger entry — against a live account; the desired and applied states agree after cancel, replace and reconnect; protective legs are confirmed resting at the broker for every open position; ledger conservation holds across live fills and corporate actions; the §19 rollback returns the book to freeze-new-buys with protection intact.
 
 ### Cutover sequence for open positions
 
@@ -1867,7 +1881,7 @@ The overhaul is not complete when Sol produces persuasive prose. It is complete 
 12. `investor: add exact v2 API and five-route UI`
 13. `investor: dual-run legacy control and AI paper manager`
 14. `investor: remove legacy production writers after cutover evidence`
-15. `investor: optional live-broker RFC—no activation in this series`
+15. **[v2]** `investor: live broker adapter, credentials, and cutover` — implements `AlpacaBrokerAdapter` behind the §8.2 interface and runs the §19 cutover. This is a delivered PR, not an RFC.
 
 Each pull request must be independently deployable behind a feature flag, include migrations and rollback, and keep the paper ledger balanced. Do not mix UI deletion, decision-authority migration, and live execution in one release.
 
