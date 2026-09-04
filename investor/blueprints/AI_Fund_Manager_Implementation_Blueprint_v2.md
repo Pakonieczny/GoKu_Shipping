@@ -962,7 +962,7 @@ On crash or ambiguous acknowledgement, broker truth wins and the order set enter
 
 ### 10.6 Required indexes and retention
 
-The repository currently has no checked-in Firestore index definition even though composite queries are load-bearing. Add `firestore.indexes.json` and document its deployment. At minimum index:
+The repository currently has no checked-in Firestore index definition even though composite queries are load-bearing. **[v2]** Declare and deploy these indexes through whatever mechanism the operator already uses for Firestore; this plan adds no `firebase.json`, `.firebaserc` or index-readiness script. At minimum index:
 
 - active mandates by account/status/expiry/priority;
 - manager runs by date/status;
@@ -1100,64 +1100,16 @@ Add `investorSession.js` for `create`, `refresh`, and `revoke` session operation
 
 ## 12. New module and asset map
 
-### 12.1 New production files
+### 12.1 New production files **[v2]**
+
+**[v2] Scope correction.** v1 listed 96 files. Sixty-four of them were not application code: 36 JSON schema files, 5 prompt `.md` files, 3 test files plus a Playwright/emulator toolchain, `firebase.json`, `firestore.indexes.json`, a GitHub Actions workflow, three one-off migration scripts, a `.css` and a `.svg`, and 13 files splitting `investor.html` into ES modules.
+
+That decomposition does not match how this application deploys. Netlify bundles `netlify/functions/**` with esbuild; the operator console is one self-contained `investor.html`; JSON schemas are already carried inline in code (`CLASSIFY_SCHEMA` in `_investorOpenai.js`); prompts are already carried inline in the same module; and the repository already has a working, deploy-gated test harness in `_investorSelftest.js` whose results block trading through `controlAllowsEntry` (`_investorLedger.js:499`). Introducing an npm/CI/emulator/Playwright toolchain would replace something that works with something weaker, since CI tests do not gate trading and these do.
+
+**The file map is therefore Netlify function modules plus the existing console. Nothing else.**
 
 | New file | Required exports/responsibility |
 |---|---|
-| `investor-ui.css` | Design tokens, five-view responsive layout, status/badge/chart/accessibility styles |
-| `investor-ui.js` | Thin ES-module bootstrap only; no investment rules |
-| `investor/ui/api.js` | Authenticated API/session client, cancellation, pagination, payload-version checks |
-| `investor/ui/store.js` | Normalized client state and out-of-order response protection |
-| `investor/ui/router.js` | Five-view URL/session routing, deep links, focus restoration |
-| `investor/ui/status.js` | Shared icons, badges, accessible labels, formatting, safe structured-text rendering |
-| `investor/ui/charts.js` | NAV/company charts and plan/catalyst overlays |
-| `investor/ui/drawer.js` | Company drawer lifecycle, focus trap, loading races, mobile full-screen behavior |
-| `investor/ui/polling.js` | Visibility-aware summary/job/quote polling; browser remains display-only |
-| `investor/ui/views/manager.js` | Manager view renderer/actions |
-| `investor/ui/views/companies.js` | Companies/opportunities coverage renderer |
-| `investor/ui/views/portfolio.js` | Holdings, mandates, manual override, execution renderer |
-| `investor/ui/views/learning.js` | Journal, performance, KPI and model-comparison renderer |
-| `investor/ui/views/system.js` | Health, audit, configuration and corporate-action renderer |
-| `investor/icons.svg` | Single accessible SVG sprite for navigation and statuses |
-| `netlify/functions/investor-assets/policy/fund-manager-v1.json` | Backend-only mission, universe/asset rules, cadence, models, budgets, hard risk and execution constraints |
-| `netlify/functions/investor-assets/schemas/universe-snapshot.v1.json` | Eligible/excluded membership, reasons, effective/as-of identity and lineage |
-| `netlify/functions/investor-assets/schemas/financial-fact.v1.json` | Normalized concept/unit/context/period/accession/amendment point-in-time fact |
-| `netlify/functions/investor-assets/schemas/evidence-delta.v1.json` | Added/revised/contradicted/expired fact IDs, objective safety classes and review state |
-| `netlify/functions/investor-assets/schemas/dossier-version.v1.json` | Fact/content pointers, sector card, freshness and memo/forecast references |
-| `netlify/functions/investor-assets/schemas/universe-review.v1.json` | Complete frozen-roster coverage, separate directive/disposition, universe hash/count |
-| `netlify/functions/investor-assets/schemas/research-memo.v1.json` | Initial/full research, sourced premises and inference links |
-| `netlify/functions/investor-assets/schemas/claim-verification.v1.json` | Independent premise/span verdict and verifier lineage |
-| `netlify/functions/investor-assets/schemas/holding-revision.v1.json` | Delta revision, emergency rank, and entry-state revision schema |
-| `netlify/functions/investor-assets/schemas/manager-decision.v1.json` | Per-symbol canonical decision and separate workflow directive |
-| `netlify/functions/investor-assets/schemas/portfolio-plan.v1.json` | `RISK_MAINTENANCE|EXPANSION` class, Sol change-set/basket, rank uniqueness and portfolio proposal |
-| `netlify/functions/investor-assets/schemas/activation-snapshot.v1.json` | Fresh broker/account/reservation snapshot and CAS versions |
-| `netlify/functions/investor-assets/schemas/mandate-proposal.v1.json` | Strict Sol-only BUY/HOLD-protect/REDUCE/SELL proposal |
-| `netlify/functions/investor-assets/schemas/mandate-server-binding.v1.json` | Server-allocated series/version/run/hash lineage |
-| `netlify/functions/investor-assets/schemas/activation-envelope.v1.json` | Validator-owned clamp/reservation/stress result, never model output |
-| `netlify/functions/investor-assets/schemas/reservation-account.v1.json` | Aggregate account notional/planned/stress capacity ledger |
-| `netlify/functions/investor-assets/schemas/capital-reservation.v1.json` | Per-mandate reservation debit/release and aggregate-version linkage |
-| `netlify/functions/investor-assets/schemas/order-set.v1.json` | Order-set/leg/fill/desired-applied lifecycle contract |
-| `netlify/functions/investor-assets/schemas/emergency-plan.v1.json` | Protection-only cutover/outage plan that cannot authorize entry |
-| `netlify/functions/investor-assets/schemas/emergency-risk-policy.v1.json` | Owner-approved hard triggers and bounded neutralization/reduction authority |
-| `netlify/functions/investor-assets/schemas/corporate-action.v1.json` | Split/dividend/merger identity, quarantine and reconciliation |
-| `netlify/functions/investor-assets/schemas/alert.v1.json` | Stable condition/version, severity, acknowledgement and resolution |
-| `netlify/functions/investor-assets/schemas/mutation-record.v1.json` | Durable idempotency request hash/result/expiry and one-use preview state |
-| `netlify/functions/investor-assets/schemas/calendar-snapshot.v1.json` | Venue sessions, early/unscheduled closures and source/version lineage |
-| `netlify/functions/investor-assets/schemas/forecast.v1.json` | Basis, scenario distribution, fill/no-fill semantics and resolution rule |
-| `netlify/functions/investor-assets/schemas/counterfactual.v1.json` | Frozen alternative/cohort, post-decision outcome and provenance |
-| `netlify/functions/investor-assets/schemas/postmortem.v1.json` | Immutable error attribution, evidence and operator adjudication |
-| `netlify/functions/investor-assets/schemas/eval-run.v1.json` | Dataset/model/prompt/schema metrics, uncertainty and promotion verdict |
-| `netlify/functions/investor-assets/schemas/kpi-daily.v1.json` | Versioned portfolio/decision/evidence/execution/cost aggregates |
-| `netlify/functions/investor-assets/schemas/api-v2/common.v2.json` | Numeric/time primitives, envelopes, typed errors, cursor and action capability |
-| `netlify/functions/investor-assets/schemas/api-v2/read-actions.v2.json` | Exact discriminated read requests/responses |
-| `netlify/functions/investor-assets/schemas/api-v2/mutation-actions.v2.json` | Exact discriminated mutations, concurrency and transition rules |
-| `netlify/functions/investor-assets/schemas/api-v2/view-models.v2.json` | Exact joined UI read models; never accepted as model output |
-| `netlify/functions/investor-assets/schemas/api-v2/session.v2.json` | Session create/refresh/revoke, CSRF and reauthentication contracts |
-| `netlify/functions/investor-assets/prompts/universe-review.v1.md` | Sol all-universe comparison instructions |
-| `netlify/functions/investor-assets/prompts/research.v1.md` | Sol focused underwriting instructions |
-| `netlify/functions/investor-assets/prompts/holding-revision.v1.md` | Sol delta-only/anti-goalpost instructions |
-| `netlify/functions/investor-assets/prompts/portfolio-synthesis.v1.md` | Sol final comparison, unique ranks and complete portfolio proposal |
-| `netlify/functions/investor-assets/prompts/postmortem.v1.md` | Error-attribution prompt; no automatic strategy changes |
 | `netlify/functions/_investorStorageCodec.js` | Schema-aware encode/decode, size limits, content references, round-trip assertions |
 | `netlify/functions/_investorMoney.js` | BigInt parsing, checked rational arithmetic, explicit rounding, tick/lot/ISO-4217 conversion and sortable mirrors |
 | `netlify/functions/_investorContentStore.js` | Content-addressed GCS put/get/verify and immutable Firestore manifest pointer |
@@ -1190,20 +1142,16 @@ Add `investorSession.js` for `create`, `refresh`, and `revoke` session operation
 | `netlify/functions/investorPostclose-background.js` | Final marks, outcomes, counterfactual and KPI observations |
 | `netlify/functions/investorArchive-background.js` | Bounded content/audit archive and retention-manifest handler |
 | `netlify/functions/investorSession.js` | Create/refresh/revoke HttpOnly sessions, rotate CSRF, clear cookies, expiry/revocation and reauthentication |
-| `scripts/investor/bootstrap-sec.js` | Resumable streaming SEC bulk/object-storage bootstrap; never a Netlify request body |
-| `scripts/investor/migrate-v18-to-manager-v1.js` | Checkpointed additive document migration, dry run, verification and rollback manifest |
-| `scripts/investor/assert-firestore-indexes-ready.js` | Compare required composite indexes with deployed READY state before cutover |
-| `firestore.indexes.json` | Checked-in composite index source of truth |
-| `firebase.json` | Emulator/index configuration only; no production project ID |
-| `tests/investor/helpers/firestore-emulator.js` | Seed isolated namespace, expose `FIRESTORE_EMULATOR_HOST`, and deterministic cleanup |
-| `.github/workflows/investor-tests.yml` | Clean-install, schema, unit, fixture, bundle, secret-scan and migration checks |
-| `tests/investor/*.test.js` | Node `--test` suites described in Section 17, including storage/API/UI contracts |
-| `playwright.config.js` | Local/Deploy-Preview browser matrix and trace/artifact settings |
-| `tests/investor-ui/*.spec.js` | Playwright + axe authentication, capability, stale-response, injection, focus, keyboard and responsive tests |
 
-Do not create a separate “AI committee” module. `_investorManager.js` is the single investment authority.
+**Schemas** stay inline in the module that owns them, exactly as `CLASSIFY_SCHEMA` does today. Every schema keeps a `schemaVersion` string and a stable hash so the mandate contract's `schemaHash` binding (§7) still works — a hash over an inline literal is identical to a hash over a file.
 
-Pin `ajv` (2020-12 mode), `ajv-formats`, `firebase-tools`, `@playwright/test`, and `@axe-core/playwright` in `package.json` and the committed lockfile. `_investorApiSchemas.js` compiles every repository schema during `build:investor` and once per cold start; invalid schemas, unsupported OpenAI Strict Structured Outputs constructs, missing `additionalProperties:false`, bad formats, or unsafe numeric fields fail deployment. Generate the strict model subset from the same canonical schema source and test it against OpenAI schema constraints rather than maintaining a divergent copy.
+**Prompts** stay inline in `_investorOpenai.js`, which is already the sole model boundary (§12.2). `promptHash` is computed over the literal. If a prompt later needs to be edited without a code deploy, `netlify.toml` already bundles `netlify/functions/prompts/**` via `included_files` and that path can be reused — but nothing in this design requires it.
+
+**Tests** are added as `fixture()` cases in the existing `_investorSelftest.js` (§17.2). No new test files, no test framework, no lockfile, no CI pipeline.
+
+**UI** remains the single `investor.html`. §14's view architecture, component IDs, state definitions and defect list all still apply; they describe sections of one file rather than separate modules.
+
+**Indexes** are declared and deployed by whatever mechanism the operator already uses for Firestore. No `firebase.json` or `firestore.indexes.json` is added by this plan.
 
 ### 12.2 Model gateway rewrite
 
@@ -1256,11 +1204,11 @@ The action column means **production authority after migration**. Retired files 
 | `_investorNav.js` | Retain | Marked NAV snapshots/series with mandate revision markers |
 | `_investorOpenai.js` | Rewrite | Luna fact extraction + Sol manager/research/revision roles and strict schemas; remove Terra investment path |
 | `_investorPatience.js` | Retire | Remove historical-bounce sleeve and underwater rank suppression |
-| `_investorPlainReason.js` | Retire | Stored structured AI prose is data; escaped UI renderers in `investor/ui/status.js` own display, with no backend hard-coded strategy narrative |
+| `_investorPlainReason.js` | Retire | Stored structured AI prose is data; escaped UI renderers inside `investor.html` own display, with no backend hard-coded strategy narrative |
 | `_investorPositionGuard.js` | Replace/shim | During migration delegate to `_investorExecution`; then keep a compatibility wrapper or retire |
 | `_investorResearchStats.js` | Retire | Remove old variant-gate authority; DSR/PBO/multiple-testing research metrics belong in offline `_investorEvals.js`, not daily KPI authority |
 | `_investorRisk.js` | Retain/rewrite | Normal `buildActivationEnvelope` and operational `revalidate`; hard cash/exposure/drawdown/liquidity/concentration/tail bounds; reject or smaller envelope only; emergency order authority lives separately |
-| `_investorSelftest.js` | Retain/refactor | Runtime attestation subset plus new schema/plan/execution/authority invariants; move broad tests to `tests/investor` |
+| `_investorSelftest.js` | **[v2] Retain and extend** | This file is the verification harness, not a subset of one (§17.5). It gains the new schema/plan/execution/authority invariants and the nine suites of §17.2 as additional `fixture()` cases. Nothing moves to a separate test directory. |
 | `_investorShadow.js` | Archive/rewrite later | Preserve legacy benchmark replay; new shadow manager operates on mandates and forecasts |
 | `_investorSignal.js` | Retire authority | Optional pure feature extraction only; remove residual/rank/gate decisions from runtime |
 | `_investorSoak.js` | Rewrite | AI mandate lifecycle, failure-mode, reconciliation, target-touch and cost soak evidence |
@@ -1277,14 +1225,14 @@ The action column means **production authority after migration**. Retired files 
 | `investorCycle-background.js` | Split/retire | Keep legacy worker behind flag during dual run; move ingest, manager, execution, and post-close into bounded jobs |
 | `investorKick.js` | Rewrite | Dispatch new task vocabulary and due queues; remain fast and model/ledger-free |
 | `netlify.toml` | Update | Bundle only backend `netlify/functions/investor-assets/{policy,schemas,prompts}/**` plus canonical file-backed universe data; configure workers/cron; set version-safe UI asset caching and strict Investor CSP; never expose backend assets as static files |
-| `package.json` | Update | Pin runtime plus Ajv/Playwright/axe dependencies; add `build:investor`, schema, Node, fixture, UI, bundle, emulator, migration and secret-scan scripts without relying on the stale general build |
+| `package.json` | **[v2] Leave alone** | It is `etsy-app`, shared with unrelated subsystems, and its build script targets `cherry-viewer`. This plan adds no test framework, no Ajv/Playwright/axe dependency and no npm scripts. Netlify installs the existing dependencies at deploy; the investor system needs nothing further from it. Adding a lockfile remains worthwhile for reproducible deploys, but it is not part of this plan. |
 | lockfile (new) | Add | Commit a reproducible npm lockfile generated by the supported Node/npm toolchain and enforce clean install in CI |
 | `netlify/functions/netlify.toml` | Delete/deprecate explicitly | It is a tracked stale alternative, not necessarily simultaneous production config; remove ambiguity and ensure tooling selects root config |
 | `netlify/functions/secrets/gcpPrivateKey.txt` | Remove and rotate credential | Tracked mode-644 private key is treated as compromised; never print it. Revoke/rotate, inventory deployments/logs, purge history as appropriate, move to least-privilege managed secrets, and block recurrence with secret scanning |
 
 This table deliberately includes `investor.html`, both stale JSON files, all 43 Investor JS files, root build/dependency files, the nested configuration hazard, and the separately discovered credential blocker. The repository currently has no lockfile, and `package.json` uses ranges (including `@google-cloud/firestore: ^6.8.0`) plus one `latest`; it is not reproducibly pinned today.
 
-The Investor response header policy is `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, adding only a specifically documented provider origin if a same-origin backend proxy cannot serve a required resource. Hashed/versioned `/investor/ui/*` assets may be immutable; the unversioned `investor.html`, `/investor-ui.js`, `/investor-ui.css`, and `/investor/icons.svg` must revalidate so a shell cannot retain incompatible contracts. Function `included_files` contains backend policy/schema/prompt/universe assets only—never public UI modules or icons.
+The Investor response header policy is `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, adding only a specifically documented provider origin if a same-origin backend proxy cannot serve a required resource. **[v2]** The console is one self-contained `investor.html` with no separate UI modules, stylesheet or icon sprite, so there are no versioned UI assets to cache. `investor.html` must revalidate on every load — `netlify.toml` already sets `Cache-Control: max-age=0, no-cache, no-store, must-revalidate` on it — so a stale shell cannot retain incompatible contracts. Because styles and scripts are inline, `script-src` and `style-src` require the corresponding `'unsafe-inline'` or, preferably, per-block hashes; adopt hashes. Function `included_files` continues to carry backend assets only.
 
 ## 14. UI overhaul
 
@@ -1460,7 +1408,7 @@ The UI must distinguish source freshness, dossier freshness, manager-review fres
 
 The JSON Schemas in `netlify/functions/investor-assets/schemas/api-v2/` define these minimum fields; UI code may not infer them from legacy dashboard objects:
 
-Canonical UI primitives are `Money{currency,amountMinor,minorScale}`, `Price{currency,priceMicros}`, `Quantity{quantityUnits,quantityScale}`, RFC-3339 UTC instants, and `SessionRef{calendarId,calendarVersion,sessionDate}`. Authoritative payloads are never preformatted strings. `_investorMoney.js` validates/calculates server values; `investor/ui/status.js` parses bounded canonical integers with `BigInt` and uses `Intl.NumberFormat` only for display. Server and browser share JSON test vectors. Every mutable resource contains `{resourceId,resourceVersion,availableActions[]}`; each action capability is `{action,enabled,disabledReason,requiresReauth,requiresReason,confirmationKind}`. The UI never infers eligibility.
+Canonical UI primitives are `Money{currency,amountMinor,minorScale}`, `Price{currency,priceMicros}`, `Quantity{quantityUnits,quantityScale}`, RFC-3339 UTC instants, and `SessionRef{calendarId,calendarVersion,sessionDate}`. Authoritative payloads are never preformatted strings. `_investorMoney.js` validates/calculates server values; the display helpers inside `investor.html` parse bounded canonical integers with `BigInt` and use `Intl.NumberFormat` only for display. Server and browser share JSON test vectors. Every mutable resource contains `{resourceId,resourceVersion,availableActions[]}`; each action capability is `{action,enabled,disabledReason,requiresReauth,requiresReason,confirmationKind}`. The UI never infers eligibility.
 
 | View model | Required fields |
 |---|---|
@@ -1654,6 +1602,8 @@ Demote the residual/five-session/variant/Thompson/patience/strike/paper-relaxati
 
 ### 17.2 New blocking unit/contract suites
 
+**[v2] These are `fixture()` cases added to the existing `_investorSelftest.js`, not new test files.** They run on the deployed commit and, through `fixturesPass`/`fixturesCommit`, halt trading when they fail (§17.5). Each keeps the file's existing shape: `cases.push(fixture("name", () => { ... return true }))`.
+
 | Suite | Blocking cases |
 |---|---|
 | Authority boundary | No deterministic module originates a **normal investment** BUY/REDUCE/SELL, improves priority, increases size, or replaces a symbol; operator/emergency orders require their exact authority label, policy/actor hash and bounds; emergency code can only reduce/flatten or buy-to-cover an accidental short to zero; Sol cannot bypass hard risk |
@@ -1664,9 +1614,9 @@ Demote the residual/five-session/variant/Thompson/patience/strike/paper-relaxati
 | **[v2] Configuration provenance** | Every result row carries `riskConfigHash`; `deviationsFromDeclared` names `costMarginMultiple`, `minAdvUsd` and the five breakers under the current exploratory configuration *(D-4; I-4)* |
 | **[v2] Variant parity** | Every registered variant declares a complete exit parameter set, or carries an explicit retired-regime tag; mixed regimes cannot be promoted *(D-5; I-4)* |
 | **[v2] Source scope** | A two-company sweep issues exactly one request per global source; the sweep-budget assertion fires when the request count exceeds `(globalSources × 1) + (companySources × companiesInSweep)` *(D-6; I-3)* |
-| **[v2] UI declarations** | No duplicate top-level function declarations in `investor.html`; known plan-block codes render from `PLAN_BLOCK_PLAIN` *(D-7)* |
+| **[v2] UI declarations** | Static check over the `investor.html` source text: no duplicate top-level function declaration, and the `PLAN_BLOCK_PLAIN` dictionary is reachable from its call site. Source-text assertions in the existing file's style — no browser, no Playwright *(D-7)* |
 | **[v2] Scheduler windows** | `premarket_manager` dispatchable at 08:30 ET; `scan` not dispatchable at 08:30 ET; the `scan` window is bit-identical to current behaviour *(D-8)* |
-| **[v2] Secrets** | No PEM header, no `PRIVATE KEY` marker and no high-entropy credential in tracked files. Fails the build; not a warning *(D-9)* |
+| **[v2] Secrets** | No PEM header, no `PRIVATE KEY` marker and no high-entropy credential reachable in the bundle. Runs in the same harness, so a reintroduced credential halts trading rather than merely warning *(D-9)* |
 | Fundamentals/dossier/as-of | XBRL taxonomy/unit/context/amendment/period/share/split reconciliation; source versions; publication-or-first-seen cutoff; no future evidence; unchanged hash avoids repeat extraction; fact/opinion separation |
 | Complete coverage | Dynamic roster hash/count equality; duplicates/unknown/missing names; block resume/synthesis; order rotation/sentinels; held/pending off-roster names never lost; stale/delisted/unpriced treatment |
 | Manager schema | Separate review directive/final decision, every action/workflow variant, final portfolio comparison, unique ranks, refusal/truncation/repair merge, invalid enum, missing source, probability/fill/no-fill errors, missing bear case/invalidator, context overflow |
@@ -1718,33 +1668,21 @@ An invalid result may receive one bounded schema/coverage repair. The system the
 
 **[v2] Correction to the build attestation.** `controlAllowsEntry` (`_investorLedger.js:481`) unlocks all trading on `fixturesPass && fixturesCommit === commit` (`:499`). `_investorSelftest.js` contains zero references to `_investorOpenai.js` or `OPENAI` — no runtime fixture exercises the model path at all. That is tolerable today, when the model is one enum among thirteen blocking gates; it is not tolerable once the model is the investment authority. The **fail-closed evidence** and **touch/fill** suites of §17.2 are added to the attestation set before Phase 3.
 
-### 17.5 Reproducible test/CI commands
+### 17.5 How verification actually runs **[v2]**
 
-The current `package.json` has no test script or test framework and there is no lockfile. Add scripts whose CI sequence is exactly:
+**[v2] v1 specified `npm ci`, a lockfile, `node --test`, a pinned `firebase-tools` emulator, and a Playwright Chromium runtime driven by a GitHub Actions workflow. That is removed.** This application has no local npm workflow; npm runs only on Netlify's build box to install the packages `external_node_modules` keeps unbundled. Adding a parallel CI toolchain would duplicate a harness the repository already has, and would be weaker than it.
 
-```sh
-npm ci
-npm run build:investor
-npm run test:investor:schemas
-npm run test:investor
-npm run test:investor:fixtures
-npm run test:investor:integration
-npm run test:investor:migration
-npm run test:investor:bundle
-npm run test:investor:ui
-npm run test:secrets
-```
+Verification runs where it already runs:
 
-`test:investor` uses Node's built-in `node --test`. `test:investor:integration` invokes pinned `firebase-tools emulators:exec --only firestore --config firebase.json --project demo-investor-ai`, which supplies `FIRESTORE_EMULATOR_HOST`; the helper seeds a run-unique namespace and deletes only that namespace afterward. Fake OpenAI/market/broker/content adapters are mandatory and production credentials forbidden. The workflow installs the pinned Playwright Chromium runtime before UI tests. Bundle tests load every background handler and every backend-only policy/schema/prompt asset from a clean `build:investor`; do not rely on the repository's currently stale general build path. The runtime `_investorSelftest.js` remains a small attestation set, not a CI substitute.
+- `_investorSelftest.js` registers checks through `fixture(name, fn)` and executes them on the deployed commit.
+- `_investorBootstrap.js` writes `fixturesPass` and `fixturesCommit` from that run.
+- `_investorLedger.js:499` refuses entry unless `fixturesPass === true` **and** `fixturesCommit === commit`, and `investorApi.js:53` enforces the same.
 
-Index rollout is an explicit pre-cutover operation:
+So a failing check does not merely turn a pipeline red — **it halts trading on the current build.** That property is worth more than a CI badge and this plan preserves it rather than competing with it.
 
-```sh
-npx firebase-tools deploy --only firestore:indexes --config firebase.json --project "$INVESTOR_FIREBASE_PROJECT"
-node scripts/investor/assert-firestore-indexes-ready.js --project "$INVESTOR_FIREBASE_PROJECT"
-```
+The nine suites of §17.2 are therefore nine additional `fixture()` cases in that file, and the two named in §17.4 join the set `controlAllowsEntry` already reads. No new file, no framework, no lockfile, no workflow.
 
-The readiness script compares `firestore.indexes.json` with the production index API and exits nonzero until every required index is `READY`; no writer-epoch flip occurs while an index is building or missing. No `.firebaserc` hard-codes a production project.
+**Index rollout** remains an explicit pre-cutover operation, performed by whatever mechanism the operator already uses to manage Firestore indexes. No writer-epoch flip occurs while an index is building or missing. This plan does not add `firebase.json` or a `.firebaserc`.
 
 ## 18. Security, governance, and operational risk
 
@@ -1816,7 +1754,7 @@ Each item is independently deployable and independently testable, and none requi
 
 ### Phase 1 — Contracts, policy, indexes, and authority tests
 
-**Files:** backend-only policy/schemas/prompts, `_investorAdmin.js`, `_investorStorageCodec.js`, `_investorMoney.js`, `_investorContentStore.js`, `_investorPolicy.js`, `_investorJobs.js`, `_investorApiSchemas.js`, `_investorBootstrap.js`, `_investorDecisionManifest.js`, `_investorSelftest.js`, `investorKick.js`, root `netlify.toml`, `firestore.indexes.json`, `firebase.json`, emulator helper and index-readiness script.  
+**[v2] Files:** `_investorAdmin.js`, `_investorStorageCodec.js`, `_investorMoney.js`, `_investorContentStore.js`, `_investorPolicy.js`, `_investorJobs.js`, `_investorApiSchemas.js`, `_investorBootstrap.js`, `_investorDecisionManifest.js`, `_investorSelftest.js`, `investorKick.js`, root `netlify.toml`. Policy and schemas are inline in the modules that own them (§12.1). Firestore indexes are deployed by the operator's existing mechanism.  
 **Work:** define/compile discriminated schemas/states/hashes, canonical BigInt values, storage codecs/size boundaries, normalized collections/indexes, fixed role-model mapping, lineage/desired-applied/outbox contracts, atomically consumed worker nonces, execution-first dispatcher skeleton, and authority tests.  
 **Exit:** schema/round-trip/size/emulator fixtures pass; malformed/unsupported/future/stale mandates, concurrent versions, replayed nonce and unsafe transitions are rejected; required test-environment indexes work and production rollout procedure can prove READY.
 
@@ -1846,7 +1784,7 @@ Each item is independently deployable and independently testable, and none requi
 
 ### Phase 6 — UI/API cutover
 
-**Files:** `investor.html`, `investor-ui.css`, UI ES modules, `investor/icons.svg`, `investorApi.js` v1/v2 registry, static headers in `netlify.toml`, `playwright.config.js`, `tests/investor-ui/*.spec.js`.  
+**[v2] Files:** `investor.html` (single self-contained console — styles, markup and script inline, as today), `investorApi.js` v1/v2 registry, static headers in `netlify.toml`, and UI `fixture()` cases in `_investorSelftest.js`.  
 **Work:** validate wireframes; build five-route progressive UI and exact component/state/icon/action mapping, canonical numeric formatting, safe AI text, pagination/auth/accessibility. Use a Netlify Deploy Preview of the rewritten `investor.html`: preview receives v2 reads while all v2 mutations are rejected and production stays v1. Cutover deploys/smoke-tests v2 first, then atomically flips `writerEpoch` so only one engine writes. Rollback freezes buys, restores the prior deploy/read routing, and never enables two writers.  
 **Exit:** no old investment-control action is called; every active mandate traces from UI to evidence and broker state; every frozen-roster row has a reason; the four above-the-fold questions are answerable without opening System.
 
