@@ -707,7 +707,157 @@ async function readSnapshot(symbol) {
   return snap.exists ? snap.data() : null;
 }
 
+/* ── PER-COMPANY EVIDENCE REFRESH ─────────────────────────────────────────
+ * Lifted verbatim from investorCycle-background.runEvidence so the bounded
+ * ingest job (investorIngest-background, blueprint §11.1) and the legacy
+ * evidence sweep run the same routine: SEC submissions and filing bodies,
+ * public-source polling through the sweep context (fetch-once for global
+ * sources, D-6), deterministic and model event hypotheses, temporal
+ * exposures, and the stored point-in-time snapshot. Nothing here decides
+ * to trade. The caller supplies control, strategy and earnings inputs;
+ * heavy siblings are required lazily to keep the module graph acyclic. */
+async function refreshCompanyEvidence({ symbol, rosterRow = null, focusReason = "roster", ctrl = {}, strategy = {},
+  earningsWindows = {}, sweep = null }) {
+  const E = require("./_investorEvidence");
+  const IS = require("./_investorIntelligenceSources");
+  const H = require("./_investorHistory");
+  const O = require("./_investorOpenai");
+  const startedMs = Date.now();
+  const t = rosterRow || { symbol };
+  const prior = await readSnapshot(t.symbol).catch(() => null);
+  const configuredProfile = ctrl.intelligenceProfiles && ctrl.intelligenceProfiles[t.symbol] || {};
+  let profile = await IS.resolveIdentity({ ...t, ...configuredProfile,
+    relatedEntities: prior && prior.relatedEntities || configuredProfile.relatedEntities || [],
+    temporalExposures: prior && prior.temporalContext && prior.temporalContext.exposures
+      || configuredProfile.temporalExposures || [] });
+  let secHealthy = false, secFresh = 0, secError = null;
+  if (profile.cik) {
+    const history = await E.pollSubmissionsHistory(profile.cik, {
+      lookbackDays: Number((strategy.parameters || {}).intelligenceLookbackDays) || 180,
+      limit: 120,
+    });
+    const latest = await E.pollEdgar(profile.cik, { forms: "" });
+    secHealthy = !history.error;
+    const combined = [...(history.entries || []), ...(latest.entries || [])]
+      .filter((d, i, a) => d.accession && a.findIndex((x) => x.accession === d.accession) === i);
+    const bodyAccessions = new Set([...combined].sort((a, b) => {
+      const weight = (x) => Number(E.FORM_WEIGHT[x.form] || 0);
+      return weight(b) - weight(a) || Date.parse(b.updated || 0) - Date.parse(a.updated || 0);
+    }).slice(0, 16).map((x) => x.accession));
+    secFresh = combined.length;
+    secError = history.error || latest.error || null;
+    for (const d of combined.slice(0, 120)) {
+      let body = { text: "", sha256: null };
+      if (bodyAccessions.has(d.accession)) { try { body = await E.fetchFilingBody(d); } catch {} }
+      await E.recordVersion({ symbol: t.symbol, sourceId: d.sourceId || "sec.latest", entry: d,
+        rawSha256: history.sha256 || latest.sha256, body: body.text, bodySha256: body.sha256 });
+    }
+  }
+  let documents = await E.documentsForCompany(profile.symbol, Date.now(),
+    Number((strategy.parameters || {}).intelligenceLookbackDays) || LOOKBACK_DAYS, 260);
+  profile = IS.enrichProfile(profile, documents, configuredProfile.officialDomains || []);
+  const publicPoll = await IS.pollCompany(profile, {
+    budgetMs: Math.max(30000, Math.min(150000,
+      Number(process.env.INVESTOR_INTELLIGENCE_COMPANY_BUDGET_MS) || 110000)),
+    sweep,
+  });
+  let dossierAsOfMs = Date.now();
+  let coverage = sourceCoverage(profile, publicPoll.results, { secHealthy, asOfMs: dossierAsOfMs,
+    sourceRegistry: IS.SOURCE_REGISTRY });
+  documents = await E.documentsForCompany(profile.symbol, dossierAsOfMs,
+    Number((strategy.parameters || {}).intelligenceLookbackDays) || LOOKBACK_DAYS, 260);
+  let dailyBars = [], companyDailyProvenance = null;
+  try {
+    const daily = await H.readDailyWithMeta(profile.symbol);
+    dailyBars = daily.series || []; companyDailyProvenance = daily.provenance || null;
+  } catch {}
+  const deterministic = extractEvents(documents, dossierAsOfMs);
+  const synthesis = await O.synthesizeIntelligence({ profile, documents,
+    priceContext: priceContext(dailyBars, dossierAsOfMs), coverage, asOfMs: dossierAsOfMs });
+  const modelEvents = synthesis.ok ? (synthesis.rawEvents || []) : [];
+  const rawEvents = mergeEventHypotheses(modelEvents, deterministic);
+  const priorTemporalExposures = profile.temporalExposures || [];
+  const deterministicTemporalExposures = T.extractDeterministicExposures(documents, dossierAsOfMs);
+  const rawTemporalExposures = [...(synthesis.ok ? synthesis.temporalExposures || [] : []),
+    ...deterministicTemporalExposures, ...priorTemporalExposures].filter((x, index, rows) => x && x.exposureType
+      && rows.findIndex((y) => y && y.exposureType === x.exposureType
+        && String(y.support && y.support.documentRef || "") === String(x.support && x.support.documentRef || "")
+        && String(y.support && y.support.quote || "") === String(x.support && x.support.quote || "")) === index);
+  const normalizedExposures = T.normalizeExposures(rawTemporalExposures, documents, dossierAsOfMs);
+  let nws = publicPoll.results.find((x) => x.sourceId === "nws.alerts") || null;
+  const neededStates = [...new Set(normalizedExposures.flatMap((x) => x.states || []))];
+  const queriedStates = new Set(nws && nws.statesQueried || []);
+  if (neededStates.some((state) => !queriedStates.has(state))) {
+    nws = await IS.pollSource({ ...profile, temporalExposures: normalizedExposures }, "nws.alerts", sweep);
+    const at = publicPoll.results.findIndex((x) => x.sourceId === "nws.alerts");
+    if (at >= 0) publicPoll.results[at] = nws; else publicPoll.results.push(nws);
+  }
+  const driverSymbols = new Set([T.DRIVER_BY_SECTOR[profile.sector] || "SPY"]);
+  for (const x of normalizedExposures) if (x.driverSymbol) driverSymbols.add(x.driverSymbol);
+  const driverSeries = {}, driverProvenance = {};
+  for (const symbol of driverSymbols) {
+    try {
+      const daily = await H.readDailyWithMeta(symbol);
+      driverSeries[symbol] = daily.series || []; driverProvenance[symbol] = daily.provenance || null;
+    }
+    catch { driverSeries[symbol] = []; }
+  }
+  dossierAsOfMs = Date.now();
+  coverage = sourceCoverage(profile, publicPoll.results, { secHealthy, asOfMs: dossierAsOfMs,
+    sourceRegistry: IS.SOURCE_REGISTRY });
+  const snapshot = buildSnapshot({ profile, documents, dailyBars, rawEvents,
+    coverage, requireTemporalContext: (strategy.parameters || {}).requireTemporalContext === true,
+    temporalInputs: { driverSeries, driverProvenance, companyProvenance: companyDailyProvenance,
+      earningsWindow: earningsWindows[profile.symbol] || null,
+      rawExposures: rawTemporalExposures, activeHazards: nws && nws.temporalHazards || [],
+      temporalSourceHealth: {
+        exposureInventory: synthesis.ok === true,
+        nws: !!(nws && nws.healthy && nws.coverageComplete !== false),
+        requireNwsProvenance: true,
+        priceProvenance: !!(companyDailyProvenance && companyDailyProvenance.provider
+          && companyDailyProvenance.adjustment
+          && companyDailyProvenance.homogeneous === true
+          && /^[a-f0-9]{64}$/.test(String(companyDailyProvenance.sourceSha256 || ""))),
+        nwsResponses: nws && nws.responses || [],
+      } },
+    asOfMs: dossierAsOfMs,
+    maxAgeHours: Number((strategy.parameters || {}).intelligenceMaxAgeHours) || 6,
+    temporalMaxAgeHours: Number((strategy.parameters || {}).temporalMaxAgeHours) || 6,
+    minSeasonalityDays: Number((strategy.parameters || {}).temporalSeasonalityMinTradingDays) || T.MIN_SEASONAL_DAYS });
+  snapshot.focusReason = focusReason;
+  snapshot.identity = { cik: profile.cik, sic: profile.sic,
+    sicDescription: profile.sicDescription, identitySource: profile.identitySource,
+    officialDomains: profile.officialDomains, domainResolution: profile.domainResolution || [],
+    sectorPack: profile.sectorPack };
+  snapshot.relatedEntities = [...(synthesis.relatedEntities || []), ...(profile.relatedEntities || [])]
+    .filter((x, index, rows) => x && x.name && rows.findIndex((y) =>
+      String(y.name).toLowerCase() === String(x.name).toLowerCase()
+      && y.relationship === x.relationship) === index)
+    .sort((a, b) => Number(b.searchPriority || b.confidence || 0)
+      - Number(a.searchPriority || a.confidence || 0)).slice(0, 20);
+  snapshot.synthesis = {
+    usedModel: synthesis.ok === true && modelEvents.length > 0,
+    abstained: synthesis.abstained === true,
+    error: synthesis.ok ? null : synthesis.error || null,
+    citationValidity: synthesis.citationValidity ?? null,
+    provenance: synthesis.provenance || null,
+  };
+  await storeSnapshot(snapshot);
+  const row = { symbol: t.symbol, focusReason,
+    documents: documents.length, events: snapshot.events.length,
+    coverageComplete: coverage.complete, missingRoles: coverage.missingRoles,
+    adverseRiskScore: snapshot.policy.adverseRiskScore,
+    temporalRiskScore: snapshot.policy.temporalPolicy && snapshot.policy.temporalPolicy.riskScore,
+    entryAllowed: snapshot.policy.entryAllowed, criticalExit: snapshot.policy.criticalExit,
+    secFresh, secError, sourceHealthy: coverage.healthySources.length,
+    sourceFailed: coverage.failedSources.length, sourceDeferred: coverage.deferredSources.length,
+    dossierHash: snapshot.dossierHash };
+
+  return { ok: true, symbol: t.symbol, result: row, snapshot, elapsedMs: Date.now() - startedMs };
+}
+
 module.exports = {
+  refreshCompanyEvidence,
   DAY_MS, LOOKBACK_DAYS, DEFAULT_MAX_AGE_HOURS, EVENT_RULES,
   clamp, eventTime, docRef, publisherGroup, reliability, isDiscovery,
   deduplicateDocuments, extractEvents, verifiedClaims, corroborateEvent,

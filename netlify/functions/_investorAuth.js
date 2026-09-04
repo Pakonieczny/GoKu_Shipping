@@ -284,6 +284,41 @@ function verifyWorkerNonce(nonce, fn) {
   return { jobId, fn: gotFn };
 }
 
+/* ── bound worker nonce (blueprint §11.1) ─────────────────────────────────
+   The fund-manager dispatcher signs the EXACT binding of a job attempt:
+   {jobId, task, targetFunction, attempt, payloadHash, nonceId, expiry}. The
+   worker verifies the signature, expiry and handler identity here, then
+   _investorJobs.claimOnce atomically flips the stored nonce record from
+   UNUSED to CONSUMED while claiming the attempt — so a replayed token is
+   refused even though it still verifies. The key is injectable only so the
+   deploy attestation can exercise the round trip without a live secret. */
+const BOUND_NONCE_VERSION = "wn2";
+function mintBoundWorkerNonce({ jobId, task, targetFunction, attempt = 1, payloadHash = "", nonceId, expiresAtMs }, { key = null } = {}) {
+  const k = key || signingKey();
+  if (!k || !jobId || !task || !targetFunction || !nonceId || !Number.isFinite(Number(expiresAtMs))) return null;
+  const payload = [BOUND_NONCE_VERSION, jobId, task, targetFunction, String(Number(attempt) || 1),
+    String(payloadHash || ""), nonceId, String(Math.floor(Number(expiresAtMs)))].join("|");
+  const mac = crypto.createHmac("sha256", k).update(payload).digest("base64url");
+  return Buffer.from(payload).toString("base64url") + "." + mac;
+}
+function verifyBoundWorkerNonce(token, expectedTargetFunction, { key = null, nowMs = Date.now() } = {}) {
+  const k = key || signingKey();
+  if (!k || typeof token !== "string" || !token.includes(".")) return null;
+  const idx = token.lastIndexOf(".");
+  const raw = token.slice(0, idx), mac = token.slice(idx + 1);
+  let payload;
+  try { payload = Buffer.from(raw, "base64url").toString("utf8"); } catch { return null; }
+  const expect = crypto.createHmac("sha256", k).update(payload).digest("base64url");
+  const a = Buffer.from(mac), b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  const parts = payload.split("|");
+  if (parts.length !== 8 || parts[0] !== BOUND_NONCE_VERSION) return null;
+  const [, jobId, task, targetFunction, attempt, payloadHash, nonceId, expStr] = parts;
+  if (targetFunction !== expectedTargetFunction) return null;
+  if (nowMs > Number(expStr)) return null;
+  return { jobId, task, targetFunction, attempt: Number(attempt), payloadHash, nonceId, expiresAtMs: Number(expStr) };
+}
+
 /* ── scheduled invocation detection (same shape as _etsyMailAuth) ──────── */
 function isScheduledInvocation(event = {}) {
   const raw = event.headers || {};
@@ -315,6 +350,6 @@ module.exports = {
   authSecrets, loadAuthSecrets, usableSecretPair, AUTH_SECRETS_DOC, AUTH_BUILD,
   firestoreDriverState,
   requireOperator, mintSession, verifySession,
-  mintWorkerNonce, verifyWorkerNonce,
+  mintWorkerNonce, verifyWorkerNonce, mintBoundWorkerNonce, verifyBoundWorkerNonce, BOUND_NONCE_VERSION,
   isScheduledInvocation, redact,
 };

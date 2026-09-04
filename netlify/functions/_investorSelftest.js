@@ -3250,6 +3250,209 @@ function runFixtures() {
     return true;
   }));
 
+
+  /* ═══ GROUP 3 — JOBS AND DISPATCH (blueprint §11.1, D-10; §21 commit 6) ═══ */
+
+  /* An in-memory Firestore for the lease/nonce/claim transactions. */
+  function fakeAdmin() {
+    const A2 = require("./_investorAdmin");
+    const docs = new Map();
+    const key = (c, id) => `${c}/${id}`;
+    const merge = (cur, data) => {
+      const out = { ...(cur || {}) };
+      for (const [k, v] of Object.entries(data)) {
+        if (v && typeof v === "object" && v.__inc !== undefined) out[k] = (Number(out[k]) || 0) + v.__inc;
+        else if (v && typeof v === "object" && v.__ts) out[k] = Date.now();
+        else out[k] = v;
+      }
+      return out;
+    };
+    const ref = (c, id) => ({ id, collection: c,
+      async get() { const d = docs.get(key(c, id)); return { exists: d !== undefined, id, data: () => d }; },
+      async set(data, opts) { const cur = docs.get(key(c, id)); docs.set(key(c, id), opts && opts.merge ? merge(cur, data) : merge({}, data)); } });
+    const query = (c, filters = []) => ({
+      where: (f, op, v) => query(c, [...filters, [f, op, v]]),
+      limit: () => query(c, filters),
+      async get() {
+        const rows = [];
+        for (const [k, d] of docs) {
+          if (!k.startsWith(`${c}/`)) continue;
+          if (filters.every(([f, op, v]) => op === "==" ? d[f] === v : op === "in" ? v.includes(d[f]) : true)) rows.push(d);
+        }
+        return { docs: rows.map((d) => ({ data: () => d })), forEach: (fn) => rows.forEach((d) => fn({ data: () => d })) };
+      },
+    });
+    return { docs, COL: A2.COL, FV: { increment: (n) => ({ __inc: n }), serverTimestamp: () => ({ __ts: true }) },
+      envelope: () => ({}),
+      col: (c) => ({ doc: (id) => ref(c, id), where: (...a) => query(c).where(...a), limit: (n) => query(c).limit(n) }),
+      runTransaction: async (fn) => fn({ get: (r) => r.get(), set: (r, d, o) => r.set(d, o) }) };
+  }
+
+  cases.push(fixture("run_scoped_lease_spans_segments_yields_immediately_and_reclaims_a_dead_segment_inside_the_cap", async () => {
+    const JOBS0 = require("./_investorJobs");
+    const P = require("./_investorPolicy");
+    const fake = fakeAdmin();
+    const JOBS = JOBS0.withAdmin(fake);
+    Object.assign(JOBS, { RUN_LEASE_TTL_MS: JOBS0.RUN_LEASE_TTL_MS, runIdFor: JOBS0.runIdFor, runLeaseDocId: JOBS0.runLeaseDocId });
+    try {
+      /* The run lease TTL is shorter than the 15-minute function cap (D-10). */
+      if (!(JOBS.RUN_LEASE_TTL_MS < P.CUTOFFS_ET.platform.functionCapSeconds * 1000)) return false;
+      if (!(JOBS.RUN_LEASE_TTL_MS <= 10 * 60 * 1000)) return false;
+      const runId = JOBS.runIdFor({ task: "premarket_manager", accountId: "paper-1", tradingDate: "2026-09-04" });
+      const seg1 = { jobId: "j1", attempt: 1, runId };
+      const seg2 = { jobId: "j2", attempt: 1, runId };
+      const t0 = 1_800_000_000_000;
+      /* Segment 1 claims; a second segment cannot while the lease is live. */
+      if ((await JOBS.claimRunLease(seg1, { nowMs: t0 })).claimed !== true) return false;
+      const refused = await JOBS.claimRunLease(seg2, { nowMs: t0 + 60000 });
+      if (refused.claimed !== false || refused.reason !== "run_in_flight" || refused.heldBy !== "j1#1") return false;
+      /* The same segment re-claims idempotently. */
+      if ((await JOBS.claimRunLease(seg1, { nowMs: t0 + 60000 })).claimed !== true) return false;
+      /* Segment 1 yields (releases): segment 2 claims IMMEDIATELY, not after 16 minutes. */
+      if ((await JOBS.releaseRunLease(seg1, { reason: "yield" })).released !== true) return false;
+      const handoff = await JOBS.claimRunLease(seg2, { nowMs: t0 + 61000 });
+      if (handoff.claimed !== true || handoff.reclaimed !== true) return false;
+      /* A dead segment (never released) is reclaimed once its TTL lapses — inside the cap. */
+      const seg3 = { jobId: "j3", attempt: 1, runId };
+      if ((await JOBS.claimRunLease(seg3, { nowMs: t0 + 61000 + JOBS.RUN_LEASE_TTL_MS - 1 })).claimed !== false) return false;
+      const reclaimed = await JOBS.claimRunLease(seg3, { nowMs: t0 + 61000 + JOBS.RUN_LEASE_TTL_MS + 1 });
+      if (reclaimed.claimed !== true) return false;
+      const lease = fake.docs.get(`${fake.COL.jobs}/${JOBS.runLeaseDocId(runId)}`);
+      if (!lease || lease.segmentOwner !== "j3#1" || lease.lineage.length !== 4 || lease.segmentsSeen !== 3) return false;
+      /* Lineage records every handoff, oldest first. */
+      if (lease.lineage.map((l) => l.jobId).join(",") !== "j1,j1,j2,j3") return false;
+      return true;
+    } finally { /* scoped instance; nothing to unbind */ }
+  }));
+
+  cases.push(fixture("worker_nonce_is_bound_to_the_exact_attempt_and_consumed_atomically_so_a_replay_is_refused", async () => {
+    const JOBS0 = require("./_investorJobs");
+    const AUTH2 = require("./_investorAuth");
+    const fake = fakeAdmin();
+    const JOBS = JOBS0.withAdmin(fake);
+    Object.assign(JOBS, { taskFor: JOBS0.taskFor, payloadHash: JOBS0.payloadHash });
+    const key = require("crypto").randomBytes(32);
+    try {
+      const payload = { accountId: "paper-1", tradingDate: "2026-09-04" };
+      const enq = await JOBS.enqueueOnce({ task: "premarket_manager", dedupeId: "paper-1_2026-09-04", accountId: "paper-1", payload });
+      if (enq.enqueued !== true) return false;
+      /* Enqueue is idempotent. */
+      if ((await JOBS.enqueueOnce({ task: "premarket_manager", dedupeId: "paper-1_2026-09-04", accountId: "paper-1", payload })).duplicate !== true) return false;
+      const jobId = enq.jobId;
+      const spec = JOBS.taskFor("premarket_manager");
+      if (spec.targetFunction !== "investorManager-background") return false;
+      const nonce = await JOBS.issueWorkerNonce({ jobId, task: "premarket_manager", targetFunction: spec.targetFunction,
+        attempt: 1, payloadHash: JOBS.payloadHash(payload), key });
+      /* Verification is bound to the target function and the attempt. */
+      const good = AUTH2.verifyBoundWorkerNonce(nonce.token, "investorManager-background", { key });
+      if (!good || good.jobId !== jobId || good.attempt !== 1 || good.nonceId !== nonce.nonceId) return false;
+      if (AUTH2.verifyBoundWorkerNonce(nonce.token, "investorExecution-background", { key }) !== null) return false;
+      if (AUTH2.verifyBoundWorkerNonce(nonce.token, "investorManager-background", { key, nowMs: nonce.expiresAtMs + 1 }) !== null) return false;
+      if (AUTH2.verifyBoundWorkerNonce(nonce.token, "investorManager-background", { key: require("crypto").randomBytes(32) }) !== null) return false;
+      /* A tampered payload is refused before any claim. */
+      const tampered = await JOBS.claimOnce({ jobId, task: "premarket_manager", targetFunction: spec.targetFunction,
+        token: nonce.token, payload: { ...payload, tradingDate: "2026-09-05" }, key });
+      if (tampered.claimed !== false || tampered.reason !== "payload_hash_mismatch") return false;
+      /* The claim consumes the nonce and starts the segment. */
+      const claim = await JOBS.claimOnce({ jobId, task: "premarket_manager", targetFunction: spec.targetFunction, token: nonce.token, payload, key });
+      if (claim.claimed !== true || !claim.claim.leaseOwner || claim.claim.attempt !== 1) return false;
+      const stored = fake.docs.get(`${fake.COL.workerNonces}/${nonce.nonceId}`);
+      if (!stored || stored.status !== "CONSUMED" || stored.consumedBy !== claim.claim.leaseOwner) return false;
+      /* A replay of the same token is refused with 409. */
+      const replay = await JOBS.claimOnce({ jobId, task: "premarket_manager", targetFunction: spec.targetFunction, token: nonce.token, payload, key });
+      if (replay.claimed !== false || replay.httpStatus !== 409 || replay.reason !== "nonce_consumed") return false;
+      /* Checkpoint, yield, and the re-dispatch lineage. */
+      if ((await JOBS.checkpoint(claim.claim, { stage: "coverage", cursor: 120, data: { ok: true } })).ok !== true) return false;
+      if ((await JOBS.yieldSegment(claim.claim, { reason: "segment_budget", resumeAtMs: 1 })).status !== "yielded_resumable") return false;
+      const job = fake.docs.get(`${fake.COL.jobs}/${jobId}`);
+      if (job.status !== "yielded_resumable" || job.checkpoint.cursor !== 120 || job.attempts !== 1 || job.segments !== 1) return false;
+      /* The next segment needs a NEW nonce for attempt 2; the old one is spent. */
+      const nonce2 = await JOBS.issueWorkerNonce({ jobId, task: "premarket_manager", targetFunction: spec.targetFunction,
+        attempt: 2, payloadHash: JOBS.payloadHash(payload), key });
+      const claim2 = await JOBS.claimOnce({ jobId, task: "premarket_manager", targetFunction: spec.targetFunction, token: nonce2.token, payload, key });
+      if (claim2.claimed !== true || claim2.claim.attempt !== 2 || claim2.claim.checkpoint.cursor !== 120) return false;
+      if ((await JOBS.complete(claim2.claim, { rows: 304 })).status !== "complete") return false;
+      if (fake.docs.get(`${fake.COL.jobs}/${jobId}`).status !== "complete") return false;
+      /* A completed job is never claimed again, and a failure fails CLOSED. */
+      const nonce3 = await JOBS.issueWorkerNonce({ jobId, task: "premarket_manager", targetFunction: spec.targetFunction, attempt: 3, payloadHash: JOBS.payloadHash(payload), key });
+      const done = await JOBS.claimOnce({ jobId, task: "premarket_manager", targetFunction: spec.targetFunction, token: nonce3.token, payload, key });
+      if (done.claimed !== false || done.reason !== "job_complete") return false;
+      return true;
+    } finally { /* scoped instance; nothing to unbind */ }
+  }));
+
+  cases.push(fixture("dispatch_launches_execute_first_then_events_continuations_manager_ingest_and_caps_heavy_work", () => {
+    const JOBS = require("./_investorJobs");
+    const mk = (task, extra = {}) => ({ jobId: `${task}_${extra.n || 1}`, task, status: "queued", dueAtMs: 0, priority: 100, attempts: 0, ...extra });
+    const jobs = [mk("archive"), mk("ingest"), mk("premarket_manager", { status: "yielded_resumable" }), mk("focused_research"),
+      mk("event_revision"), mk("execute"), mk("postclose"), mk("ingest", { n: 2 })];
+    const plan = JOBS.dispatchPlan(jobs, { nowMs: 0, startedAtMs: 0, budgetMs: 20000, maxJobs: 4 });
+    const chosen = plan.chosen.map((j) => j.task);
+    /* execute → event → the yielded continuation → the first fresh heavy manager job */
+    if (chosen.join(",") !== "execute,event_revision,premarket_manager,focused_research") throw new Error(chosen.join(","));
+    if (!plan.deferred.some((d) => d.reason === "tick_full")) return false;
+    /* One heavy job per category: the second ingest and the postclose pair wait. */
+    const two = JOBS.dispatchPlan([mk("ingest"), mk("ingest", { n: 2 }), mk("archive", { priority: 500 }), mk("postclose", { priority: 400 })], { nowMs: 0, startedAtMs: 0, maxJobs: 4 });
+    if (two.chosen.map((j) => j.task).join(",") !== "ingest,postclose") throw new Error(two.chosen.map((j) => j.task).join(","));
+    if (!two.deferred.some((d) => d.reason === "one_heavy_per_category")) return false;
+    /* The dispatch budget is respected. */
+    const late = JOBS.dispatchPlan([mk("execute"), mk("event_revision")], { nowMs: 19000, startedAtMs: 0, budgetMs: 20000 });
+    if (late.chosen.length !== 0 || !late.deferred.every((d) => d.reason === "dispatch_budget")) return false;
+    /* Every task names its handler and engine; legacy tasks never dispatch under the manager engine. */
+    for (const [task, spec] of Object.entries(JOBS.TASKS)) {
+      if (!/-background$/.test(spec.targetFunction) || !["manager", "legacy"].includes(spec.engine)) throw new Error(task);
+    }
+    if (JOBS.MAX_JOBS_PER_TICK !== 4 || JOBS.DISPATCH_BUDGET_MS !== 20000) return false;
+    return true;
+  }));
+
+  cases.push(fixture("kick_manager_engine_enqueues_the_overnight_pass_to_finish_at_the_freeze_and_the_meeting_after_it", () => {
+    const K = require("./investorKick");
+    const at = (min, extra = {}) => ({ date: "2026-09-04", tradingDay: true, open: false, phase: "premarket_early",
+      minutesEt: min, regularOpenMinutesEt: 570, regularCloseMinutesEt: 960, isHalfDay: false, ...extra });
+    const nowMs = Date.parse("2026-09-04T09:00:00Z");
+    /* Legacy engine by default; the manager engine is an explicit control state. */
+    if (K.engineMode({}) !== "legacy" || K.engineMode({ engineMode: "manager" }) !== "manager") return false;
+    /* An unmeasured pass starts 3.2 h + margin before the 08:30 freeze; a measured pass moves it. */
+    const unmeasured = K.ingestStartMinuteEt({});
+    if (unmeasured.minuteEt !== 510 - 192 - 10 || unmeasured.previousEvening !== false) throw new Error(JSON.stringify(unmeasured));
+    const measured = K.ingestStartMinuteEt({ lastIngestPass: { elapsedMs: 2 * 3600e3 } });
+    if (measured.minuteEt !== 510 - 120 - 10) return false;
+    /* A measured pass is capped at 8 h: longer than that cannot finish inside the window anyway. */
+    const long = K.ingestStartMinuteEt({ lastIngestPass: { elapsedMs: 9 * 3600e3 } });
+    if (long.minuteEt !== 510 - 480 - 10 || long.passMs !== 8 * 3600e3) return false;
+    /* Before the start minute nothing is due; at it the pass is enqueued once; a started pass is not re-enqueued. */
+    const ctrl = { accountId: "paper-1", engineMode: "manager" };
+    if (K.decideManager(ctrl, at(300), nowMs).enqueue.some((e) => e.task === "ingest")) return false;
+    const due = K.decideManager(ctrl, at(310), nowMs);
+    const ingest = due.enqueue.find((e) => e.task === "ingest");
+    if (!ingest || ingest.dedupeId !== "paper-1_2026-09-04" || ingest.payload.perSweep !== 8) throw new Error(JSON.stringify(due));
+    if (K.decideManager({ ...ctrl, ingestPassState: { tradingDate: "2026-09-04" } }, at(310), nowMs).enqueue.some((e) => e.task === "ingest")) return false;
+    /* No daytime rescan: the ingest window is closed at noon (D-11). */
+    if (K.decideManager({ ...ctrl, lastIngestPass: { elapsedMs: 60000 } }, at(12 * 60, { open: true, phase: "regular" }), nowMs).enqueue.some((e) => e.task === "ingest")) return false;
+    /* The Manager Meeting is enqueued at the freeze, once per date, never while paused. */
+    const meeting = K.decideManager(ctrl, at(510), nowMs).enqueue.find((e) => e.task === "premarket_manager");
+    if (!meeting || meeting.runId !== "premarket_manager_paper-1_2026-09-04" || meeting.payload.reason !== "SCHEDULED_PREMARKET") return false;
+    if (K.decideManager(ctrl, at(509), nowMs).enqueue.some((e) => e.task === "premarket_manager")) return false;
+    if (K.decideManager({ ...ctrl, lastManagerRunDate: "2026-09-04" }, at(520), nowMs).enqueue.some((e) => e.task === "premarket_manager")) return false;
+    if (K.decideManager({ ...ctrl, managerState: "PAUSED" }, at(520), nowMs).enqueue.some((e) => e.task === "premarket_manager")) return false;
+    /* Execution every minute in its window, never while paused for safety; nothing on a non-trading day. */
+    const exec = K.decideManager(ctrl, at(600, { open: true, phase: "regular" }), nowMs).enqueue.find((e) => e.task === "execute");
+    if (!exec || exec.priority !== 10) return false;
+    if (K.decideManager({ ...ctrl, executorState: "PAUSED_SAFETY" }, at(600, { open: true, phase: "regular" }), nowMs).enqueue.some((e) => e.task === "execute")) return false;
+    if (K.decideManager(ctrl, at(600, { tradingDay: false }), nowMs).enqueue.some((e) => e.task === "execute" || e.task === "premarket_manager")) return false;
+    /* The ingest handler processes at most perSweep companies per segment and measures elapsed time. */
+    const ING = require("./investorIngest-background");
+    if (ING.PER_SEGMENT !== 8) return false;
+    const roster = ING.passRoster({ universe: { tradeTier: [{ symbol: "A" }, { symbol: "B" }, { symbol: "C" }] },
+      positions: [{ open: true, symbol: "Z" }], pendingOrders: [{ symbol: "B" }], rotation: 1 });
+    if (roster.join(",") !== "B,C,Z,A") throw new Error(roster.join(","));
+    const stats = ING.elapsedStats([{ ms: 100, ok: true }, { ms: 300, ok: false }, { ms: 200, ok: true }]);
+    if (stats.count !== 3 || stats.maxMs !== 300 || stats.failed !== 1 || stats.p50Ms !== 200) return false;
+    if (!/segmentBudgetRemainingMs/.test(sourceOf(ING.runIngestSegment)) || !/yieldSegment/.test(sourceOf(ING.handler))) return false;
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is

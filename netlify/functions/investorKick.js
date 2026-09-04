@@ -57,6 +57,8 @@ const { mintWorkerNonce, isScheduledInvocation, redact,
 const M = require("./_investorMarket");
 const STATE = require("./_investorState");
 const B = require("./_investorBootstrap");
+const JOBS = require("./_investorJobs");
+const POLICY = require("./_investorPolicy");
 
 function baseUrl() {
   return process.env.URL || process.env.DEPLOY_PRIME_URL || "http://localhost:8888";
@@ -232,6 +234,8 @@ async function control() {
     return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
   };
   return {
+    /* The raw control document, for the manager engine's own decisions. */
+    raw: d,
     operatingState: operating.state,
     operatingLabel: operating.label,
     paused: operating.paused,
@@ -474,6 +478,153 @@ async function dispatch(task, ctrl, session = null, { manual = false } = {}) {
   return { jobId, task, upstream: res.status, planSlot: planSlot ? planSlot.key : null };
 }
 
+/* ═══ THE FUND-MANAGER ENGINE (blueprint §11.1) ═══════════════════════════
+ * Two engines share this one-minute dispatcher during the cutover. Which one
+ * holds the writer epoch is a control-document state (`engineMode`), flipped
+ * only by the cutover sequence of §19.4; until then the legacy path above
+ * runs bit-identical. Under the manager engine the dispatcher:
+ *   1. enqueues due work idempotently (one logical run per task, account
+ *      and trading date);
+ *   2. reads every due or resumable job and orders it: execute first, then
+ *      critical event revisions, then continuations, then the pre-market
+ *      manager, then ingest, then post-close/archive;
+ *   3. launches at most four jobs and at most one heavy job per category
+ *      inside a 20-second budget, each with a freshly signed, single-use
+ *      nonce bound to the exact job attempt and target function.
+ * Research, ingest and model latency can therefore never starve order
+ * reconciliation. */
+function engineMode(ctrl) { return ctrl && ctrl.engineMode === "manager" ? "manager" : "legacy"; }
+
+/** PURE. When should the overnight ingest pass START so that it COMPLETES at
+ *  the freeze? The last measured pass duration, plus a margin; the §6.1
+ *  default of 3.2 h stands until a pass has been measured. */
+function ingestStartMinuteEt(ctrl = {}) {
+  const measuredMs = Number(ctrl.lastIngestPass && ctrl.lastIngestPass.elapsedMs);
+  const assumedMs = 3.2 * 3600e3;
+  const passMs = Number.isFinite(measuredMs) && measuredMs > 0 ? Math.min(measuredMs, 8 * 3600e3) : assumedMs;
+  const marginMin = 10;
+  const start = POLICY.CUTOFFS_ET.evidenceFreezeMin - Math.ceil(passMs / 60000) - marginMin;
+  /* Normalise into the overnight window: a negative start means "the
+     previous evening"; express it as minutes on that day. */
+  return start >= 0 ? { minuteEt: start, previousEvening: false, passMs } : { minuteEt: 24 * 60 + start, previousEvening: true, passMs };
+}
+
+/** The next trading date at or after this session (the date a pre-market
+ *  pass serves). */
+function nextTradingDate(session, nowMs) {
+  if (session && session.tradingDay && Number(session.minutesEt) < POLICY.CUTOFFS_ET.evidenceFreezeMin) return session.date;
+  for (let day = 1; day <= 10; day += 1) {
+    const st = M.sessionState(new Date(nowMs + day * 864e5));
+    if (st.tradingDay) return st.date;
+  }
+  return session ? session.date : null;
+}
+
+/** PURE apart from the calendar. Which manager-engine work is due now. */
+function decideManager(ctrl, session, nowMs) {
+  const enqueue = [], reasons = [];
+  const accountId = String(ctrl.accountId || "paper-1");
+  const mm = Number(session.minutesEt);
+  const operating = STATE.describe(ctrl);
+  const managerPaused = ctrl.managerState === "PAUSED" || operating.paused;
+  const executorPaused = ctrl.executorState === "PAUSED_SAFETY" || ctrl.executorEnabled === false;
+
+  /* Ingest: one pass ahead of each trading date, started so it completes at
+     the freeze; dispatchable only inside the overnight window (D-11). */
+  const target = nextTradingDate(session, nowMs);
+  const start = ingestStartMinuteEt(ctrl);
+  const startedThisTarget = ctrl.ingestPassState && ctrl.ingestPassState.tradingDate === target;
+  const completedThisTarget = ctrl.lastIngestTradingDate === target;
+  const startDue = start.previousEvening
+    ? (mm >= start.minuteEt || mm < POLICY.CUTOFFS_ET.evidenceFreezeMin)
+    : (mm >= start.minuteEt && mm < POLICY.CUTOFFS_ET.evidenceFreezeMin);
+  if (target && !completedThisTarget && !startedThisTarget && taskDispatchable("ingest", mm) && startDue) {
+    enqueue.push({ task: "ingest", dedupeId: `${accountId}_${target}`, accountId, priority: 300,
+      runId: JOBS.runIdFor({ task: "ingest", accountId, tradingDate: target }),
+      payload: { accountId, tradingDate: target, perSweep: POLICY.CUTOFFS_ET.ingest.perSweep }, sessionDate: target });
+    reasons.push(`overnight ingest pass for ${target} due (start ${start.minuteEt} min ET, measured pass ${Math.round(start.passMs / 60000)} min)`);
+  } else if (target && !completedThisTarget && !startedThisTarget) {
+    reasons.push(`ingest for ${target} not due (starts at ${start.minuteEt} min ET${start.previousEvening ? " the previous evening" : ""})`);
+  }
+
+  /* The Manager Meeting: from the freeze until the holding hard deadline,
+     once per trading date; a yielded continuation is a resumable job and
+     needs no new enqueue. */
+  if (session.tradingDay && taskDispatchable("premarket_manager", mm) && mm >= POLICY.CUTOFFS_ET.evidenceFreezeMin) {
+    if (managerPaused) reasons.push("manager paused — no Manager Meeting enqueued");
+    else if (ctrl.lastManagerRunDate === session.date) reasons.push(`Manager Meeting for ${session.date} already ran`);
+    else {
+      enqueue.push({ task: "premarket_manager", dedupeId: `${accountId}_${session.date}`, accountId, priority: 200,
+        runId: JOBS.runIdFor({ task: "premarket_manager", accountId, tradingDate: session.date }),
+        payload: { accountId, tradingDate: session.date, reason: "SCHEDULED_PREMARKET" }, sessionDate: session.date });
+      reasons.push(`Manager Meeting for ${session.date} due after the ${POLICY.CUTOFFS_ET.evidenceFreezeMin} min ET freeze`);
+    }
+  }
+
+  /* Execution: every minute inside the execute window on a trading day,
+     unless the executor is paused for safety. Never a model call. */
+  if (session.tradingDay && taskDispatchable("execute", mm) && !executorPaused) {
+    enqueue.push({ task: "execute", dedupeId: `${accountId}_${session.date}_${mm}`, accountId, priority: 10,
+      payload: { accountId, tradingDate: session.date, minuteEt: mm }, sessionDate: session.date });
+  } else if (session.tradingDay && executorPaused) reasons.push("executor paused for safety — reconciliation only");
+
+  /* Post-close and archive: after the official close and the finalization buffer. */
+  const finalization = M.dailyFinalizationState(session);
+  if (session.tradingDay && finalization.ready && taskDispatchable("postclose", mm) && ctrl.lastPostcloseDate !== session.date) {
+    enqueue.push({ task: "postclose", dedupeId: `${accountId}_${session.date}`, accountId, priority: 400,
+      payload: { accountId, tradingDate: session.date }, sessionDate: session.date });
+    reasons.push(`post-close marks and outcomes due for ${session.date}`);
+  }
+  if (session.tradingDay && finalization.ready && taskDispatchable("archive", mm) && ctrl.lastArchiveDate !== session.date) {
+    enqueue.push({ task: "archive", dedupeId: `${accountId}_${session.date}`, accountId, priority: 500,
+      payload: { accountId, tradingDate: session.date }, sessionDate: session.date });
+  }
+  return { enqueue, reasons };
+}
+
+/** Launch one due job: sign a single-use nonce bound to the next attempt and
+ *  POST to the task's target function. A dispatch that never reached the
+ *  worker leaves the job due for the next tick. */
+async function dispatchJob(job) {
+  const spec = JOBS.taskFor(job.task);
+  if (!spec) return { jobId: job.jobId, error: "unknown task" };
+  const attempt = (Number(job.attempts) || 0) + 1;
+  const jref = A.col(A.COL.jobs).doc(job.jobId);
+  const nonce = await JOBS.issueWorkerNonce({ jobId: job.jobId, task: job.task, targetFunction: spec.targetFunction,
+    attempt, payloadHash: job.payloadHash || JOBS.payloadHash(job.payload || {}) });
+  await jref.set({ dispatchedAtMs: Date.now(), dispatchAttempts: A.FV.increment(1), lastNonceId: nonce.nonceId }, { merge: true });
+  let res;
+  try {
+    res = await fetch(`${baseUrl()}/.netlify/functions/${spec.targetFunction}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: job.jobId, task: job.task, nonce: nonce.token, payload: job.payload || {} }),
+    });
+  } catch (e) { res = { ok: false, status: 0, thrown: String(e && e.message || e).slice(0, 120) }; }
+  if (!res.ok) {
+    await jref.set({ lastDispatchError: { status: res.status, thrown: res.thrown || null, atMs: Date.now() },
+      dueAtMs: Date.now() + 60000 }, { merge: true });
+  }
+  return { jobId: job.jobId, task: job.task, targetFunction: spec.targetFunction, attempt, upstream: res.status };
+}
+
+async function runManagerEngine(ctrl, session, startedAt) {
+  const decided = decideManager(ctrl, session, startedAt);
+  const enqueued = [];
+  for (const item of decided.enqueue) {
+    try { enqueued.push(await JOBS.enqueueOnce({ ...item, createdBy: "investorKick" })); }
+    catch (e) { enqueued.push({ task: item.task, error: String(e.message).slice(0, 120) }); }
+  }
+  const due = await JOBS.dueJobs({ nowMs: Date.now(), engine: "manager" });
+  const plan = JOBS.dispatchPlan(due, { nowMs: Date.now(), startedAtMs: startedAt });
+  const dispatched = [];
+  for (const job of plan.chosen) {
+    if (Date.now() - startedAt > JOBS.DISPATCH_BUDGET_MS) { plan.deferred.push({ jobId: job.jobId, reason: "deadline" }); break; }
+    try { dispatched.push(await dispatchJob(job)); }
+    catch (e) { dispatched.push({ jobId: job.jobId, error: String(e.message).slice(0, 160) }); }
+  }
+  return { engine: "manager", enqueued, dispatched, deferred: plan.deferred, due: due.length, reasons: decided.reasons };
+}
+
 exports.handler = async (event) => {
   // Belt and braces: Netlify already refuses direct HTTP to a scheduled
   // function, but if that ever changes this must not become an open trigger.
@@ -490,6 +641,15 @@ exports.handler = async (event) => {
     await M.loadMarketSettings();
     const ctrl = await control();
     const session = M.sessionState(new Date());
+    /* Which engine holds the writer epoch decides what this tick may launch. */
+    if (engineMode(ctrl.raw) === "manager") {
+      const out = await runManagerEngine(ctrl.raw, session, startedAt);
+      const summary = { ok: true, ...out,
+        session: { phase: session.phase, tradingDay: session.tradingDay, date: session.date },
+        operatingState: ctrl.operatingState, elapsedMs: Date.now() - startedAt };
+      console.log("investorKick", JSON.stringify(redact(summary)));
+      return { statusCode: 200, body: JSON.stringify(summary) };
+    }
     const { tasks, reasons } = decide(ctrl, session, startedAt);
 
     const dispatched = [];
@@ -499,7 +659,7 @@ exports.handler = async (event) => {
     }
 
     const summary = {
-      ok: true, dispatched, reasons,
+      ok: true, engine: "legacy", dispatched, reasons,
       session: { phase: session.phase, tradingDay: session.tradingDay, date: session.date },
       mode: ctrl.mode, dryRun: ctrl.dryRun,
       operatingState: ctrl.operatingState,
@@ -533,3 +693,9 @@ exports.dispatchWindow = dispatchWindow;
 exports.taskDispatchable = taskDispatchable;
 exports.PLAN_EARLIEST_MIN = PLAN_EARLIEST_MIN;
 exports.PLAN_LATEST_MIN = PLAN_LATEST_MIN;
+exports.engineMode = engineMode;
+exports.ingestStartMinuteEt = ingestStartMinuteEt;
+exports.nextTradingDate = nextTradingDate;
+exports.decideManager = decideManager;
+exports.dispatchJob = dispatchJob;
+exports.runManagerEngine = runManagerEngine;
