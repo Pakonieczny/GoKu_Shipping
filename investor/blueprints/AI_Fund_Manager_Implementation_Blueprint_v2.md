@@ -5,7 +5,7 @@
 **Current investor release:** strategy v18 / bootstrap 25  
 **Design date:** 2026-09-03  
 **Revision date:** 2026-09-04  
-**Revision scope:** twelve defects verified against the running code are added as §2A. D-1 through D-9 are current-plumbing defects remediated by a new blocking Phase −1; D-10 through D-12 are architectural collisions between this design and the runtime's limits, and bind the exit criteria of Phases 1 and 2. Phase 0 is minimized and Phase 8 is fully scoped as the delivered end state. Amendments applied inline to §2, §3, §5, §6.1, §6.3, §8.2, §8.5, §8.8 (new), §9.5, §11.1, §11.2, §12.1, §13, §14.10, §15.1, §16.5, §17.2, §17.4, §17.5, §19 and §21. Every other section is v1 as written. Changed passages are marked **[v2]**.  
+**Revision scope:** twelve defects verified against the running code are added as §2A. §19 replaces v1's ten-phase rollout with **one build and one install**, and §21 re-maps v1's fifteen pull requests to commit order inside it. D-1 through D-9 are current-plumbing defects; D-10 through D-12 are architectural collisions between this design and the runtime's behaviour. §19 replaces v1's ten-phase rollout with a single build and one install, and all twelve are remediated inside it. Amendments applied inline to §2, §3, §5, §6.1, §6.3, §8.2, §8.5, §8.8 (new), §9.5, §11.1, §11.2, §12.1, §13, §14.10, §15.1, §16.5, §17.2, §17.4, §17.5, §19 and §21. Every other section is v1 as written. Changed passages are marked **[v2]**.  
 **Primary UI:** `investor.html`  
 **Input record reviewed:** `Investor_AIChangeRecord.md` (577 lines)  
 **Deliverable type:** implementation plan; this document does not alter the running application or authorize live trading.
@@ -92,9 +92,9 @@ The record reports 141/141 raw and bundled fixtures. This review could not indep
 
 **[v2] Twelve defects**, thirteen rows (D-8 and D-8b are one defect and its trigger), verified by direct inspection at commit `ea14b71`. **Nine of the twelve appear nowhere in v1.** They divide into two kinds.
 
-**D-1 through D-9 are defects in the current plumbing.** Six of them sit below the strategy rather than inside it, so they survive the replacement of the decider: built on top of them the manager would be scored on outcomes it did not produce. All nine are remediated in Phase −1 (§19).
+**D-1 through D-9 are defects in the current plumbing.** Six of them sit below the strategy rather than inside it, so they survive the replacement of the decider: built on top of them the manager would be scored on outcomes it did not produce. All nine are remediated in build group 1 (§19.1.1), which depends on nothing else in the build.
 
-**D-10, D-11 and D-12 are different in kind.** The current code is internally consistent; the architecture this document specifies collides with its runtime behaviour and limits. They cannot be remediated in Phase −1 because the machinery they concern does not exist yet — they are binding design constraints on **Phase 1** (D-10) and **Phase 2** (D-11, D-12), and appear in those phases' exit criteria. D-12 is the compound consequence of the other two meeting §17.4's coverage gate.
+**D-10, D-11 and D-12 are different in kind.** The current code is internally consistent; the architecture this document specifies collides with its runtime behaviour and limits. They cannot be fixed alongside the other nine because the machinery they concern does not exist yet — D-10 closes with build group 3 and D-11 with group 4 (§19.1). D-12 is the compound consequence of the other two meeting §17.4's coverage gate.
 
 | ID | Defect | Evidence | In v1? | Severity |
 |---|---|---|---|---|
@@ -153,7 +153,7 @@ Terra is removed from the investment path. A cheaper model may help prepare fact
 - Market/data staleness: freeze new buys; keep broker-native protective exits in force.
 - Evidence conflict: Sol must return `ABSTAIN` or request more research; code may not resolve it by a ratio.
 - Executor failure: do not call Sol. Reconcile broker state, retry idempotently, and escalate visibly.
-- **[v2] Evidence-classification failure: the absence of a verdict is not a verdict.** Where the classifier cannot be reached, cannot be afforded, returns unparseable or schema-invalid output, or returns output whose citations fail verbatim verification, the system holds. It does not fall back to a prior regime, a cheaper model, a heuristic, or a reduced-size version of the proposal it did not receive. This is the fail-closed boundary; the current system violates it (D-1, D-8b) and Phase −1 item P−1.1 restores it.
+- **[v2] Evidence-classification failure: the absence of a verdict is not a verdict.** Where the classifier cannot be reached, cannot be afforded, returns unparseable or schema-invalid output, or returns output whose citations fail verbatim verification, the system holds. It does not fall back to a prior regime, a cheaper model, a heuristic, or a reduced-size version of the proposal it did not receive. This is the fail-closed boundary; the current system violates it (D-1, D-8b) and build item G1.1 restores it.
 
 ## 4. Target system topology
 
@@ -203,7 +203,7 @@ The ingest planner distinguishes provider-global feeds from issuer queries. A gl
 
 The exchange calendar is ingested from an authoritative exchange or broker calendar and versioned into immutable session snapshots. The application does not generate holiday/half-day tables by hand. If the current or next required XNYS session, early close, or unscheduled closure is unresolved or disagrees across configured authorities, new entries fail closed while existing broker protection remains; fixtures cover DST, July/Thanksgiving/Christmas half days, national mourning/unscheduled closures, and provider correction.
 
-The current public-source stack is not “everything about a company.” It is missing reliable point-in-time analyst estimates, broad licensed news, and many transcripts. Pretending otherwise would create false confidence. A provider decision is therefore a **Phase 0 architecture gate**, not an indefinite enhancement: define a provider-neutral schema, run a time-boxed bake-off on timeliness, corrections, universe coverage, historical point-in-time integrity, entitlement/retention rights, permission to process content through the selected model, and cost, then either procure a source or explicitly launch with those fields marked unavailable. Do not scrape paywalls or allow model memory to fill the gap.
+The current public-source stack is not “everything about a company.” It is missing reliable point-in-time analyst estimates, broad licensed news, and many transcripts. Pretending otherwise would create false confidence. **[v2] That decision is made: there is no vendor.** §5.6 sources the forward view from issuer guidance and earnings dates from issuer announcements, both through the extraction path §5.3 already defines. Consensus-dependent fields stay null and are shown to Sol as absent. Do not scrape paywalls or allow model memory to fill the gap.
 
 #### Roster eligibility is also part of investment governance
 
@@ -336,7 +336,7 @@ Twenty trading days is a starting policy, not a discovered optimum. Earnings and
 
 Sanity check against the platform: 8 companies × 110 s worst case = 14.7 minutes, just inside Netlify's 15-minute background budget, so `perSweep` 8 is the largest value that still fits one invocation. That is what the 110-second ceiling was tuned for.
 
-Before Phase 2 exits, a measured overnight pass must complete inside the freshness window with the roster size actually configured. The per-company elapsed time is already recorded (`pollCompany` returns `elapsedMs`), so this is a measurement, not an estimate.
+Before the first Manager Meeting is run (§19.2 step 2), a measured overnight pass must complete inside the freshness window with the roster size actually configured. The per-company elapsed time is already recorded (`pollCompany` returns `elapsedMs`), so this is a measurement, not an estimate.
 
 The scheduler uses the NYSE calendar rather than fixed UTC closes. Recommended starting cutoffs are: freeze the initial evidence manifest at 08:30 ET; start the manager immediately; treat holding protection/revision as a 09:15 hard operational deadline; treat new-opportunity completion as a 09:20 soft deadline. A mandate not safely completed by then receives a later `validFrom`—possibly after the open or next session—rather than rushed reasoning. Between the frozen cutoff and the open, every new verified delta is appended to a late-evidence queue; a high-impact class pauses the affected entry immediately, and all deltas reach Sol at the next continuation/revision. Holding protection never expires merely because research is late.
 
@@ -721,7 +721,7 @@ class BrokerAdapter {
 }
 ```
 
-Implement `PaperBrokerAdapter` first; it carries Phases 4 through 7. **[v2]** `AlpacaBrokerAdapter` is implemented in Phase 8 behind this same interface and is the end state of this plan, not a deferred RFC. The current repository has Alpaca market-data credentials and no live broker integration, so the adapter and its live credentials are both new work in that phase.
+**[v2]** Both adapters ship in build group 6 behind this one interface. `PaperBrokerAdapter` is what runs under `PAPER_AI`; `AlpacaBrokerAdapter` is bound when the operator switches to live (§19.3). The current repository has Alpaca market-data credentials and no live broker integration, so the adapter and its live credentials are both new work.
 
 Every adapter publishes a versioned, startup-tested capability record; configuration may only disable capabilities, never claim unsupported ones. The validator blocks any mandate/order combination it cannot implement exactly:
 
@@ -772,7 +772,7 @@ The current ledger assumes one active order per symbol, one fill per position li
 
 A bar touching an order level is a `TOUCH`, not automatically a `FILL`. The simulator implements side/order-specific rules: a buy limit marketable at the open fills no worse than the open/limit rule after spread and latency; an unmarketable touched limit is subject to queue position and capped volume participation; a sell stop-market gapped through fills at the open or a worse modeled eligible print; a stop-limit may trigger and remain unfilled; marketable limits obey their collar; halts forbid fills; and partials consume modeled eligible volume. If both target and stop could execute within one OHLC bar and no finer sequence exists, choose the adverse path for conservative performance or mark the observation `AMBIGUOUS`/exclude it from primary scoring—never choose the favorable path. The same rule applies when one bar first becomes entry-fillable and also crosses a target or stop: use finer eligible data when available; otherwise never award a favorable same-bar exit, and apply the predeclared adverse or unscorable convention. Store touch and fill separately with bar OHLC, quote/NBBO approximation, provider/provenance, latency, participation, trigger resolution, authorized level, simulated fill, and cost. Retain `_investorMarket.storeBars/readStoredBars`; missing or untrusted one-minute data makes the interval `UNSCORABLE`/`DEGRADED`, never a false pass for “no missed touch.”
 
-**[v2] This convention is a hard rule for the whole system, not a paper-simulation rule.** It governs every exit evaluation — live, paper, shadow, backtest and KPI. Every protective and target level is evaluated against the bar's high and low. A bar whose range contains both levels with no finer sequence resolves adversely or is marked `UNSCORABLE`; it never resolves favourably. **Any performance figure computed under a close-only convention is invalid and must be recomputed or discarded.** The current system evaluates exits on `last.c` alone (D-2), which both erases gains that were touched and retreated and hides losses that were touched and recovered; Phase −1 item P−1.2 corrects it.
+**[v2] This convention is a hard rule for the whole system, not a paper-simulation rule.** It governs every exit evaluation — live, paper, shadow, backtest and KPI. Every protective and target level is evaluated against the bar's high and low. A bar whose range contains both levels with no finer sequence resolves adversely or is marked `UNSCORABLE`; it never resolves favourably. **Any performance figure computed under a close-only convention is invalid and must be recomputed or discarded.** The current system evaluates exits on `last.c` alone (D-2), which both erases gains that were touched and retreated and hides losses that were touched and recovered; build item G1.2 corrects it.
 
 ### 8.6 Desired-to-applied saga and core loop
 
@@ -889,9 +889,9 @@ When the daily budget is near exhaustion:
 6. If complete frozen-roster coverage cannot finish, activate no new buy mandate from that run.
 7. **[v2]** Exhaustion never becomes a trade. When the reservation is spent the run abstains visibly under `evidence_unavailable` and activates no new BUY. It does not convert the shortfall into a reduced-size position (D-1, D-8b).
 
-**[v2] Reconciling §9.4's provisioned budget with the ceilings the code actually enforces.** §9.4 provisions $4–$10 on a normal day and $10–$20 on a busy day. `_investorOpenai.js:62-63` enforces `DAILY_USD_CEILING` $5 and `CYCLE_CALL_CEILING` 12. The Manager Meeting would therefore block on day one, and today that block routes into the fail-open path of D-1. Before Phase 3, `INVESTOR_OPENAI_DAILY_USD` and `INVESTOR_OPENAI_CYCLE_CALLS` are raised to the provisioned figures and treated as a **reservation, not a cap on correctness**.
+**[v2] Reconciling §9.4's provisioned budget with the ceilings the code actually enforces.** §9.4 provisions $4–$10 on a normal day and $10–$20 on a busy day. `_investorOpenai.js:62-63` enforces `DAILY_USD_CEILING` $5 and `CYCLE_CALL_CEILING` 12. The Manager Meeting would therefore block on day one, and today that block routes into the fail-open path of D-1. Before the first Manager Meeting (§19.2 step 3), `INVESTOR_OPENAI_DAILY_USD` and `INVESTOR_OPENAI_CYCLE_CALLS` are raised to the provisioned figures and treated as a **reservation, not a cap on correctness**.
 
-Two terms dominate the variance in §9.3's table and must be budgeted and instrumented before Phase 3:
+Two terms dominate the variance in §9.3's table and must be budgeted and instrumented before the first Manager Meeting:
 
 - **Reasoning tokens.** L764 correctly states these are a subset of billed output rather than a separate charge. They remain the largest uncertain term: at 500 / 1,000 / 1,500 reasoning tokens per name, the 304-name coverage call alone costs approximately **$3.04 / $6.08 / $9.12**, the upper figure exceeding the entire normal-day envelope in a single call.
 - **Cache writes.** A first write is 1.25× ordinary input; only confirmed later reads receive the 0.1× rate. §9.4 already says not to assume a hit rate — so the budget is provisioned at the **zero-hit-rate** figure and reduced only once `cache_write_tokens`, `cached_tokens` and realized savings are measured.
@@ -1059,7 +1059,7 @@ Each one-minute `investorKick` has a 20-second dispatch budget and launches at m
 
 **[v2] D-10 — the meeting's lease must survive invocation handoff.** §6.1 runs the Manager Meeting from an 08:30 ET freeze to a 09:15 ET hard deadline: 45 minutes across at least four Netlify background invocations, each capped at 15 minutes. The current lease cannot span them. `investorCycle-background.js:83` sets `WORKER_LEASE_TTL_MS` to 16 minutes — deliberately *longer* than the function cap, so that a worker always dies before its own lease expires and overlap is impossible. `:3423` mints `leaseOwner` fresh per invocation from the Lambda log-stream name, a timestamp and a random suffix, and `:3491`/`:3512` renew only when `leaseOwner` matches exactly. A second invocation therefore cannot renew the first one's lease and cannot claim it for 16 minutes.
 
-The claim in this section that "job leases, heartbeats, deterministic IDs, checkpoint cursors, and retry semantics remain" does not hold for this shape of work. Before Phase 1 exits, the lease must be owned by the **meeting**, not the invocation: a `managerRunId`-scoped lease that successive invocations claim and renew by presenting the run id and their attempt lineage, with a TTL shorter than the function cap so a genuinely dead segment is reclaimed rather than blocking the next one for 16 minutes. The existing per-invocation `leaseOwner` remains what prevents two workers writing at once *within* a segment.
+The claim in this section that "job leases, heartbeats, deterministic IDs, checkpoint cursors, and retry semantics remain" does not hold for this shape of work. This closes with build group 3 (§19.1): the lease must be owned by the **meeting**, not the invocation: a `managerRunId`-scoped lease that successive invocations claim and renew by presenting the run id and their attempt lineage, with a TTL shorter than the function cap so a genuinely dead segment is reclaimed rather than blocking the next one for 16 minutes. The existing per-invocation `leaseOwner` remains what prevents two workers writing at once *within* a segment.
 
 Long OpenAI work is an async response polled by successive short manager jobs. OpenAI says `store:false` background data is temporarily stored for roughly ten minutes, so the application polls each due response every minute, treats two minutes without a successful poll as degraded, and uses an eight-minute terminal-output-persistence SLA ([OpenAI background mode](https://developers.openai.com/api/docs/guides/background)). Persist terminal output and usage immediately to the private content store and heartbeat `lastSuccessfulPollAt`. If a response expires, query persisted terminal content first; otherwise record `RESPONSE_EXPIRED_UNKNOWN`, reserve retry cost, and require an operator or idempotency-policy decision—never blindly resubmit an expensive Sol run. Store provider response ID, request hash, billing/usage seen, attempt lineage, and whether a retry might be double-billed.
 
@@ -1521,7 +1521,7 @@ A BUY without an evidence-backed bear case and invalidators is invalid. A SELL d
 
 ### 15.1 Hard-risk policy and sizing precedence
 
-**[v2]** `_investorPolicy.js` embeds a versioned `riskMandate` (inline, per §12.1) with currency/account NAV basis and explicit operator inputs: maximum single-name and sector weights, gross/net exposure, minimum settled-cash reserve, maximum planned and binding stressed loss per position/in aggregate, daily-loss/freeze thresholds, peak-to-trough drawdown states, maximum order/position share of rolling ADV, maximum spread, overnight exposure, correlated-cluster cap, gap/halt scenarios, and open-order notional. Manager v1 fixes whole shares and regular-session protected orders; fractional shares and extended-hours execution are not configurable. Paper defaults are labeled assumptions. **[v2]** Live operation (Phase 8) requires the owner to supply capital, loss tolerance, liquidity needs, tax/account constraints, jurisdiction and broker rules — these are inputs the sizing precedence needs to compute a quantity at all, not a separate gate.
+**[v2]** `_investorPolicy.js` embeds a versioned `riskMandate` (inline, per §12.1) with currency/account NAV basis and explicit operator inputs: maximum single-name and sector weights, gross/net exposure, minimum settled-cash reserve, maximum planned and binding stressed loss per position/in aggregate, daily-loss/freeze thresholds, peak-to-trough drawdown states, maximum order/position share of rolling ADV, maximum spread, overnight exposure, correlated-cluster cap, gap/halt scenarios, and open-order notional. Manager v1 fixes whole shares and regular-session protected orders; fractional shares and extended-hours execution are not configurable. Paper defaults are labeled assumptions. **[v2]** Live operation (§19.3) requires the owner to supply capital, loss tolerance, liquidity needs, tax/account constraints, jurisdiction and broker rules — these are inputs the sizing precedence needs to compute a quantity at all, not a separate gate.
 
 Manager v1 should be long-only common equity plus cash, with no leverage, options, short selling, margin expansion, or averaging down from a delta-only review. `SELL` can close only owned quantity. Any broader instrument set requires a new discriminated schema, risk model, market-data contract, simulator, broker capability test, and explicit policy release; it must not slip in through a prompt change.
 
@@ -1720,7 +1720,7 @@ Before activating any new buy mandate, require:
 
 An invalid result may receive one bounded schema/coverage repair. The system then abstains; it does not coerce malformed text into an order.
 
-**[v2] Correction to the build attestation.** `controlAllowsEntry` (`_investorLedger.js:481`) unlocks all trading on `fixturesPass && fixturesCommit === commit` (`:499`). `_investorSelftest.js` contains zero references to `_investorOpenai.js` or `OPENAI` — no runtime fixture exercises the model path at all. That is tolerable today, when the model is one enum among thirteen blocking gates; it is not tolerable once the model is the investment authority. The **fail-closed evidence** and **touch/fill** suites of §17.2 are added to the attestation set before Phase 3.
+**[v2] Correction to the build attestation.** `controlAllowsEntry` (`_investorLedger.js:481`) unlocks all trading on `fixturesPass && fixturesCommit === commit` (`:499`). `_investorSelftest.js` contains zero references to `_investorOpenai.js` or `OPENAI` — no runtime fixture exercises the model path at all. That is tolerable today, when the model is one enum among thirteen blocking gates; it is not tolerable once the model is the investment authority. The **fail-closed evidence** and **touch/fill** suites of §17.2 are added to the attestation set before the first Manager Meeting.
 
 ### 17.5 How verification actually runs **[v2]**
 
@@ -1764,17 +1764,34 @@ The current `_investorAuth.js` correctly describes a broad shared-service-accoun
 
 FINRA's AI guidance is directly relevant as engineering practice even if this remains a personal paper-trading application: autonomy, auditability, domain knowledge, hallucination, privacy, and reward design remain real failure modes ([FINRA Regulatory Notice 24-09](https://www.finra.org/rules-guidance/notices/24-09)). “AI Fund Manager” is product language, not a legal status. Determine the actual owner jurisdiction, broker/account type, tax treatment, market-data rights, automated-order rules, advisory/recordkeeping obligations, and terminology with qualified counsel before live use or use for anyone else. If the owner/account is Canadian, explicitly review CIRO/CSA and the Canadian broker's automation terms rather than assuming US FINRA/SEC material is sufficient.
 
-## 19. Phased implementation and cutover
+## 19. Build and install **[v2]**
 
-This must be additive and reversible. A big-bang rewrite would recreate the same costly “fix the visible gate, discover the next gate” cycle documented in v18.
+**[v2] This section replaces v1's ten-phase rollout.** v1 staged the work across Phases 0-8 with an exit gate between each, an observation-only mode, a shadow dual-run and a sixty-session soak. The owner has chosen a single build: the complete system is written, deployed once, and cut over in one operation.
 
-### Phase −1 — Plumbing remediation **[v2]** (blocking; precedes Phase 0)
+What follows is therefore a **dependency order, not a release schedule**. Netlify deploys the whole `netlify/functions/**` tree and `investor.html` together on one push, so the install is already atomic; the ordering below exists because code cannot call a module that has not been written yet, not because anything ships separately.
 
-Nine defects (§2A). Six are in the plumbing rather than the strategy and survive the replacement of the decider — built on top of them, the manager's mandates are evaluated against prices that never existed, every model failure becomes a purchase, the evidence sweep stays ~300× over-subscribed, the pre-market meeting cannot be dispatched, and the coverage run silently exhausts its budget. The AI would then be scored on outcomes it did not produce. This is not cleanup; it is the precondition for the measurement §16 depends on.
+**One consequence, stated once.** With no staged rollout, the first time any of this is exercised end to end is the first live run. The controls that catch a bad decision are unchanged — §8's execution plane, §15.1's sizing precedence, §17.4's activation gates and §18's risk table all apply from the first session — but there is no earlier run in which a build error would have surfaced against smaller stakes. The `PAPER_AI` / live switch (§19.3) is the lever that governs that exposure, and it is an operator setting rather than a phase.
 
-Each item is independently deployable and independently testable, and none requires an AI decision. **Exit:** all nine suites of §17.2 green in the deploy attestation (§17.5), and thirty consecutive sessions recorded with no regression.
+### 19.1 Build order
 
-**P−1.1 — Fail-closed evidence classification (D-1, D-8b).** `_investorOpenai.js` collapses eleven distinct outcomes into `evidence_pending`: missing API key, incomplete coverage, lease contention, exhausted budget, unreachable model, HTTP error, unexpected tool call, unparseable output, schema-invalid cause, model abstention, and failed citation verification. `_investorSignal.js:640-649` reads that token as *absence of information* and — where `paperAbstainOnMissingInfo` is true, as it is in the exploratory lane — returns `{trade:true, side:"long", confidence:0.2, relaxed:true}`. A rejected model output, an unreachable model, and an exhausted budget all become purchases. Split the token into three causes:
+Each group depends only on those above it.
+
+| # | Group | Modules | Carries |
+|---|---|---|---|
+| 1 | **Plumbing fixes** | `_investorOpenai.js`, `_investorSignal.js`, `_investorExitPolicy.js`, `_investorStrike.js`, `_investorPositionGuard.js`, `_investorVariants.js`, `_investorIntelligenceSources.js`, `investorKick.js`, `_investorLedger.js`, `_investorNav.js`, `_investorAdmin.js`, `investor.html`, `.gitignore` | D-1 … D-9 (§2A). Independent of everything below; nothing here needs the new architecture to exist. Rotate the tracked credential (D-9) before the first push of this work, not after. |
+| 2 | **Primitives** | `_investorMoney.js`, `_investorStorageCodec.js`, `_investorContentStore.js`, `_investorPolicy.js` | BigInt money, canonical encode/decode, content-addressed storage, the versioned `riskMandate`. Everything downstream writes through these. |
+| 3 | **Jobs and dispatch** | `_investorJobs.js`, `investorKick.js`, `investorIngest-background.js` | Job lineage, checkpoints, worker nonces. **D-10 closes here**: the lease is scoped to `managerRunId`, claimable and renewable across four or more consecutive background invocations spanning 45+ minutes, with a killed segment reclaimed inside the function cap. |
+| 4 | **Evidence plane** | `_investorFundamentals.js`, `_investorDataProviders.js`, `_investorClaimVerifier.js`, `_investorDossier.js`, `_investorEventRouter.js` | Bulk SEC `companyfacts`/`frames`, guidance and earnings-date claims (§5.6), cards and deltas. **D-11 closes here**: one overnight pass at `perSweep` 8, daytime rescans off, measured against the freshness window using the `elapsedMs` already recorded. |
+| 5 | **Manager** | `_investorManager.js`, `_investorResearch.js`, `_investorResearchTools.js`, `_investorValuation.js`, `_investorPortfolio.js`, `_investorPortfolioRisk.js`, `investorManager-background.js` | The Manager Meeting, coverage contract, focused research, valuation, portfolio synthesis. |
+| 6 | **Mandate and execution** | `_investorMandate.js`, `_investorExecution.js`, `_investorBroker.js`, `_investorEmergencyRisk.js`, `investorExecution-background.js` | The three-record authority split (§7), order lifecycle (§8), both `PaperBrokerAdapter` and `AlpacaBrokerAdapter`. |
+| 7 | **Learning and reporting** | `_investorLearning.js`, `_investorKpi.js`, `_investorEvals.js`, `_investorAlerts.js`, `investorPostclose-background.js`, `investorArchive-background.js` | Outcome records, KPIs, typed alerts, archives. |
+| 8 | **Surface** | `_investorApiSchemas.js`, `_investorApiV2.js`, `investorSession.js`, `_investorAuth.js`, `investor.html` | v2 API and the five-view console (§14), rebuilt inside the single HTML file. |
+
+### 19.1.1 Group 1 in detail — the twelve verified defects
+
+Group 1 is specified item by item because every one of these is a defect in code that exists today, verified at `ea14b71` (§2A). None depends on the new architecture; all can be written and tested before anything below them exists.
+
+**G1.1 — Fail-closed evidence classification (D-1, D-8b).** `_investorOpenai.js` collapses eleven distinct outcomes into `evidence_pending`: missing API key, incomplete coverage, lease contention, exhausted budget, unreachable model, HTTP error, unexpected tool call, unparseable output, schema-invalid cause, model abstention, and failed citation verification. `_investorSignal.js:640-649` reads that token as *absence of information* and — where `paperAbstainOnMissingInfo` is true, as it is in the exploratory lane — returns `{trade:true, side:"long", confidence:0.2, relaxed:true}`. A rejected model output, an unreachable model, and an exhausted budget all become purchases. Split the token into three causes:
 
 | Cause | Meaning | Permits new risk? |
 |---|---|---|
@@ -1784,88 +1801,43 @@ Each item is independently deployable and independently testable, and none requi
 
 `_investorOpenai.js:309,312,325,331,372,379,395,404,435,442,447` map to `evidence_unavailable`; only the model's own returned enum maps to `evidence_insufficient`. `directionFromCause` gains an explicit `EVIDENCE_UNAVAILABLE` case returning `{trade:false}`, and its `default:` branch is changed to return `{trade:false}` unconditionally so any cause added later fails closed rather than open.
 
-**P−1.2 — Touch-based exit evaluation (D-2).** Bars carry `{o,h,l,c}` (`_investorMarket.js:751`) and are integrity-checked against their own high/low (`:959-961`), but the exit path reads only `c`. Three parts: (a) `_investorExitPolicy.js` `evaluateExit` accepts `{mark, barHigh, barLow, entry, peak}` — stops and trailing stops test against `barLow`, profit and pullback targets against `barHigh`, and `mark` is retained only for reporting `pnlPct`; (b) the collision rule of §8.5 applies — adverse path, or `UNSCORABLE` where the position's status materially depends on an unresolvable sequence; (c) `_investorStrike.js:443` passes `{low: last.l, high: last.h, close: last.c}`, with arm levels struck on `low <= armBelowUsd` and `gap_below_band` determined from `low`. The durable production answer remains §1 item 8 and §8.4: lodge authorized protective and target orders with the broker so its engine watches continuously, leaving polling as the reconciliation path rather than the trigger path. P−1.2 makes polling honest in the interim and paper simulation faithful permanently.
+**G1.2 — Touch-based exit evaluation (D-2).** Bars carry `{o,h,l,c}` (`_investorMarket.js:751`) and are integrity-checked against their own high/low (`:959-961`), but the exit path reads only `c`. Three parts: (a) `_investorExitPolicy.js` `evaluateExit` accepts `{mark, barHigh, barLow, entry, peak}` — stops and trailing stops test against `barLow`, profit and pullback targets against `barHigh`, and `mark` is retained only for reporting `pnlPct`; (b) the collision rule of §8.5 applies — adverse path, or `UNSCORABLE` where the position's status materially depends on an unresolvable sequence; (c) `_investorStrike.js:443` passes `{low: last.l, high: last.h, close: last.c}`, with arm levels struck on `low <= armBelowUsd` and `gap_below_band` determined from `low`. The durable production answer remains §1 item 8 and §8.4: lodge authorized protective and target orders with the broker so its engine watches continuously, leaving polling as the reconciliation path rather than the trigger path. G1.2 makes polling honest in the interim and paper simulation faithful permanently.
 
-**P−1.3 — Declare the calibration state (D-3).** No behavioural change: the gate is correct and stays. Disclosure only — (a) `_investorSignal.js` returns a structured `calibration_unavailable` carrying `{sessionsAvailable, sessionsRequired, earliestEligibleSession}`; (b) the console surfaces it as a first-class state rather than a silent no-op; (c) `StrategyVersions` records for every version whether it was ever order-eligible, and any performance claim about a version that never was is rejected at write time.
+**G1.3 — Declare the calibration state (D-3).** No behavioural change: the gate is correct and stays. Disclosure only — (a) `_investorSignal.js` returns a structured `calibration_unavailable` carrying `{sessionsAvailable, sessionsRequired, earliestEligibleSession}`; (b) the console surfaces it as a first-class state rather than a silent no-op; (c) `StrategyVersions` records for every version whether it was ever order-eligible, and any performance claim about a version that never was is rejected at write time.
 
-**P−1.4 — Configuration parity and provenance (D-4).** No parameter changes — the operator keeps whatever floor they choose. What changes is that the floor joins the record: (a) every closed position, NAV row and KPI row carries a `riskConfigHash` over the effective parameter set in force at the decision, plus a `deviationsFromDeclared` array naming each parameter differing from the frozen strategy's declared value, with both values; (b) a persistent banner whenever any breaker is at a disabling value or any hurdle is below its declared value; (c) any comparison across two periods with different `riskConfigHash` is labelled non-comparable rather than charted as one series.
+**G1.4 — Configuration parity and provenance (D-4).** No parameter changes — the operator keeps whatever floor they choose. What changes is that the floor joins the record: (a) every closed position, NAV row and KPI row carries a `riskConfigHash` over the effective parameter set in force at the decision, plus a `deviationsFromDeclared` array naming each parameter differing from the frozen strategy's declared value, with both values; (b) a persistent banner whenever any breaker is at a disabling value or any hurdle is below its declared value; (c) any comparison across two periods with different `riskConfigHash` is labelled non-comparable rather than charted as one series.
 
-**P−1.5 — Variant parity (D-5).** The 15 variants at `_investorVariants.js:31-152` predate v18 and declare none of `takeProfitPct`, `trailingArmsAtPct`, `trailingStopPct`, `holdLosersThroughRankExit`, `requireSessionMove`. Either (a) mint a `v19-*` generation inheriting the v18 exit parameters and retire the 15 with `retiredReason: "pre-v18 exit regime"`, preserving prior results as belonging to the old regime — recommended; or (b) keep them and add an explicit `exitRegime: "pre-v18"` field, blocking promotion of a pre-v18 variant into a post-v18 configuration. Either way `_investorVariants.js` gains a validator rejecting a variant whose exit parameters are undeclared, so regimes can no longer mix silently.
+**G1.5 — Variant parity (D-5).** The 15 variants at `_investorVariants.js:31-152` predate v18 and declare none of `takeProfitPct`, `trailingArmsAtPct`, `trailingStopPct`, `holdLosersThroughRankExit`, `requireSessionMove`. Either (a) mint a `v19-*` generation inheriting the v18 exit parameters and retire the 15 with `retiredReason: "pre-v18 exit regime"`, preserving prior results as belonging to the old regime — recommended; or (b) keep them and add an explicit `exitRegime: "pre-v18"` field, blocking promotion of a pre-v18 variant into a post-v18 configuration. Either way `_investorVariants.js` gains a validator rejecting a variant whose exit parameters are undeclared, so regimes can no longer mix silently.
 
-**P−1.6 — Source scope correction (D-6).** (a) Add `scope: "global" | "company"` to every source descriptor — all ten `kind:"feed"` sources are `global`, and `nws.alerts` is classified during implementation since it is a geography-filtered endpoint; GDELT queries, `company.direct`, `federal.register` and `usaspending` are `company`. (b) `readState` keys global sources by `sourceId` alone. (c) A global source is fetched at most once per sweep and **entity resolution fans its items out to companies** rather than the fetch being repeated. (d) A sweep issuing more than `(globalSources × 1) + (companySources × companiesInSweep)` requests fails and raises a typed alert rather than silently continuing. For a 304-name pass the global-feed request count falls from ~3,040 to ~10. This is the precondition for the bounded ingest queue of §11.1 and the evidence deltas of §5.5.
+**G1.6 — Source scope correction (D-6).** (a) Add `scope: "global" | "company"` to every source descriptor — all ten `kind:"feed"` sources are `global`, and `nws.alerts` is classified during implementation since it is a geography-filtered endpoint; GDELT queries, `company.direct`, `federal.register` and `usaspending` are `company`. (b) `readState` keys global sources by `sourceId` alone. (c) A global source is fetched at most once per sweep and **entity resolution fans its items out to companies** rather than the fetch being repeated. (d) A sweep issuing more than `(globalSources × 1) + (companySources × companiesInSweep)` requests fails and raises a typed alert rather than silently continuing. For a 304-name pass the global-feed request count falls from ~3,040 to ~10. This is the precondition for the bounded ingest queue of §11.1 and the evidence deltas of §5.5.
 
-**P−1.7 — Remove the duplicate UI declaration (D-7).** `plainBlock` at `investor.html:3710` (plan-block reasons, backed by `PLAN_BLOCK_PLAIN`) and again at `:3744` (sell-state reasons). Hoisting keeps the second, so `PLAN_BLOCK_PLAIN` is dead and plan-block messages render from the wrong dictionary. Rename to `plainPlanBlock` and `plainSellBlock`, update call sites, and merge the dictionaries only if the merge is verified non-lossy. Superseded by §14 if and when the UI is rewritten; fixed now because it is live today.
+**G1.7 — Remove the duplicate UI declaration (D-7).** `plainBlock` at `investor.html:3710` (plan-block reasons, backed by `PLAN_BLOCK_PLAIN`) and again at `:3744` (sell-state reasons). Hoisting keeps the second, so `PLAN_BLOCK_PLAIN` is dead and plan-block messages render from the wrong dictionary. Rename to `plainPlanBlock` and `plainSellBlock`, update call sites, and merge the dictionaries only if the merge is verified non-lossy. Superseded by §14 if and when the UI is rewritten; fixed now because it is live today.
 
-**P−1.8 — Scheduler window for pre-market work (D-8).** Per the task-class window table in §11.1. The existing constant is retained as the `scan` window so current behaviour is bit-identical.
+**G1.8 — Scheduler window for pre-market work (D-8).** Per the task-class window table in §11.1. The existing constant is retained as the `scan` window so current behaviour is bit-identical.
 
-**P−1.9 — Credential remediation (D-9).** In this order: (1) identify the principal and **rotate/revoke at the provider**, treating the key as compromised from first commit rather than from discovery; (2) inventory deployments and review access logs for the key's lifetime; (3) `git rm --cached` and add a `.gitignore` covering `netlify/functions/secrets/`, `*.pem`, `*_rsa`, `*PrivateKey*`; (4) purge history where the repository's sharing model warrants it — noting that rotation, not purging, is the control that matters, and purging without rotating is theatre; (5) replace with a managed secret injected at runtime — no source file references `gcpPrivateKey`, verified by grep, so removal is behaviourally inert; (6) add the secret-scanning suite of §17.2 to the deploy attestation (§17.5). **Ship alone, first, before any other change in Phase −1.**
+**G1.9 — Credential remediation (D-9).** In this order: (1) identify the principal and **rotate/revoke at the provider**, treating the key as compromised from first commit rather than from discovery; (2) inventory deployments and review access logs for the key's lifetime; (3) `git rm --cached` and add a `.gitignore` covering `netlify/functions/secrets/`, `*.pem`, `*_rsa`, `*PrivateKey*`; (4) purge history where the repository's sharing model warrants it — noting that rotation, not purging, is the control that matters, and purging without rotating is theatre; (5) replace with a managed secret injected at runtime — no source file references `gcpPrivateKey`, verified by grep, so removal is behaviourally inert; (6) add the secret-scanning suite of §17.2 to the deploy attestation (§17.5). **Ship alone, first, before any other change in this group — rotating the credential must not wait on the rest of the build.**
 
-### Phase 0 — Freeze and baseline **[v2] (minimized)**
+**G1.10 — D-10, the meeting lease.** Detail in §11.1. Built with group 3.
+**G1.11 — D-11, the overnight sweep.** Detail in §6.1. Built with group 4.
+**G1.12 — D-12, the coverage gate.** Detail in §6.3. Closes when G1.10 and G1.11 close.
 
-**[v2]** The credential work that dominated v1's Phase 0 is now P−1.9 and ships first, alone, in Phase −1. The lockfile and CI items are removed with the toolchain (§17.5). What remains is a baseline snapshot and one decision.
+Verification for every group is `fixture()` cases in `_investorSelftest.js` (§17.2, §17.5). A failing fixture halts trading on the deployed build through `controlAllowsEntry` — that mechanism is the acceptance test, and it works from the first deploy.
 
-**Files:** none modified.  
-**Work:** tag `ea14b710...` as the legacy baseline; export current control/positions/orders/ledger/strategy/universe hashes; record the running v18/v6 versions against the stale `investor/strategies/v1.json` and `investor/universe/v1.json`; add the `engineVersion` projection; freeze new legacy entries during migration drills; choose the point-in-time news/estimate/transcript source, or record explicit acceptance of missing coverage.  
-**Exit:** baseline tagged and hashes exported; legacy replay and account conservation reproduce; every open position and order is inventoried; the data-source decision is recorded either way.
+### 19.2 Install
 
-### Phase 1 — Contracts, policy, indexes, and authority tests
+One push deploys everything. Then, in order:
 
-**[v2] Files:** `_investorAdmin.js`, `_investorStorageCodec.js`, `_investorMoney.js`, `_investorContentStore.js`, `_investorPolicy.js`, `_investorJobs.js`, `_investorApiSchemas.js`, `_investorBootstrap.js`, `_investorDecisionManifest.js`, `_investorSelftest.js`, `investorKick.js`, root `netlify.toml`. Policy and schemas are inline in the modules that own them (§12.1). Firestore indexes are deployed by the operator's existing mechanism.  
-**Work:** define/compile discriminated schemas/states/hashes, canonical BigInt values, storage codecs/size boundaries, normalized collections/indexes, fixed role-model mapping, lineage/desired-applied/outbox contracts, atomically consumed worker nonces, execution-first dispatcher skeleton, and authority tests.  
-**[v2] Exit:** schema/round-trip/size fixtures pass; malformed/unsupported/future/stale mandates, concurrent versions, replayed nonce and unsafe transitions are rejected; required indexes work and the rollout procedure can prove READY; **and D-10 is closed — a `managerRunId`-scoped lease is demonstrably claimed and renewed across at least four consecutive background invocations spanning more than 45 minutes, with a segment killed mid-run reclaimed inside the function cap rather than blocking its successor.**
+1. Deploy with `PAPER_AI` set and the executor disabled. Bootstrap runs, fixtures attest, indexes are confirmed READY.
+2. Run one overnight ingest pass. Confirm every eligible and managed off-roster symbol has a card or an explicit `INCOMPLETE`, and that the pass finished inside the freshness window.
+3. Run one Manager Meeting. Confirm complete roster coverage against `{universeVersion, universeHash, eligibleCount, symbols}` and that costs match §9.
+4. Enable the executor.
+5. Run the cutover sequence in §19.4 against the open book.
 
-### Phase 2 — Evidence and complete-roster dossier plane
+### 19.3 Paper and live
 
-**Files:** `_investorOpenai.js` Luna boundary, `_investorClaimVerifier.js`, `_investorEvidence.js`, `_investorFetch.js`, `_investorFundamentals.js`, `_investorDataProviders.js`, `_investorIntelligenceSources.js`, `_investorIntelligence.js`, `_investorHistory.js`, `_investorTemporal.js`, `_investorWorkset.js`, `_investorDossier.js`, `_investorEventRouter.js`, `investorIngest-background.js`, `scripts/investor/bootstrap-sec.js`.  
-**Work:** publish transparent canonical eligible/excluded snapshots; fetch global feeds once and fan out; stream SEC bulk content to object storage; ingest authoritative calendar and XBRL/benchmark/cash-rate/corporate-action facts; build cards/deltas; run Luna extraction and independent claim-verification recall/support checks with direct excerpts.  
-**[v2] Exit:** every frozen eligible and managed off-roster symbol has a reproducible card or explicit `INCOMPLETE`; no symbol starves; facts/manifests replay point-in-time; large content never exceeds Firestore limits; **and D-11 is closed — the sweep runs as one overnight pass at `perSweep` 8, daytime rescans are off, and a measured pass completes inside the freshness window with the roster size actually configured (using the `elapsedMs` already recorded per company).** Until that measurement exists, §17.4's coverage gate is not switched on and no BUY path is enabled.
+Paper and live are the same code path behind the same interface (§8.2) and differ only by which adapter is bound and which credentials are present. `PaperBrokerAdapter` and `AlpacaBrokerAdapter` both ship in this build. Switching is an operator setting, not a release: bind the live adapter, supply the live broker credentials under the least-privilege split §18 requires, and supply the `riskMandate` inputs §15.1 needs to compute a quantity. Everything else — mandate lifecycle, sizing precedence, activation gates, protective legs, reconciliation — is identical in both modes.
 
-### Phase 3 — Sol Manager in observation mode
-
-**Files:** `_investorOpenai.js` Sol roles, `_investorManager.js`, `_investorResearch.js`, `_investorResearchTools.js`, `_investorValuation.js`, `_investorPortfolio.js`, `_investorPortfolioRisk.js`, `_investorApiV2.js`, `_investorAuth.js`, `investorSession.js`, `_investorAlerts.js`, `investorManager-background.js`, ManagerRun/ManagerDecision persistence and read-only v2 APIs.  
-**Work:** dynamic full-roster Manager Meeting, managed-position revision, async response recovery, fully bounded read-only research tools, focused research, deterministic portfolio scenarios, final Sol selection, separate directive/decision, repair merge, claim verification and exact cost accounting. Session-authenticated v2 reads expose every decision; mutations/order output remain disabled.  
-**Exit:** ten or more complete shadow sessions can actually be captured and compared; every frozen-roster disposition is visible; positional-bias tests and costs measured; model eval baseline approved.
-
-### Phase 4 — Mandate and paper executor
-
-**Files:** `_investorMandate.js`, `_investorExecution.js`, `_investorBroker.js`, `_investorRisk.js`, `_investorEmergencyRisk.js`, `_investorLedger.js`, `_investorExitPolicy.js`, `_investorPositionGuard.js`, `_investorCorporateActions.js`, `_investorState.js`, `_investorAlerts.js`, `_investorSoak.js`, `investorExecution-background.js`, v2 mutation handlers.  
-**Work:** fresh activation snapshots and atomic portfolio-plan/reservation CAS; desired/applied outbox saga; PaperBroker capability matrix; multi-fill ledger; exact limit/stop/OCO/session lifecycle; touch-versus-fill simulation; partial protection; safe/blocked replacement; oversell recovery; emergency-risk authority; typed controls; manual-sell/corporate-action races and reconciliation.  
-**Exit:** zero duplicates/orphans/double-sells/unprotected positions in the blocking soak; zero missed **scorable** target-stop touches, with data gaps explicitly degraded/unscorable.
-
-### Phase 5 — Learning and prospective controls
-
-**Files:** `_investorLearning.js`, `_investorKpi.js`, `_investorEvals.js`, rewritten DecisionFeedback/Shadow/Soak, retired ResearchStats authority, Decisions & Learning API contracts.  
-**Work:** forecasts with resolvable distributions, matched counterfactuals/random books/factor controls, anti-anchoring samples, postmortems, KPI definitions, challenger runs, v18/benchmark parallel books.  
-**Exit:** outcome clock proves no look-ahead; all trials counted; model/prompt comparisons and owner/trading economics are reproducible.
-
-### Phase 6 — UI/API cutover
-
-**[v2] Files:** `investor.html` (single self-contained console — styles, markup and script inline, as today), `investorApi.js` v1/v2 registry, static headers in `netlify.toml`, and UI `fixture()` cases in `_investorSelftest.js`.  
-**Work:** validate wireframes; build five-route progressive UI and exact component/state/icon/action mapping, canonical numeric formatting, safe AI text, pagination/auth/accessibility. Use a Netlify Deploy Preview of the rewritten `investor.html`: preview receives v2 reads while all v2 mutations are rejected and production stays v1. Cutover deploys/smoke-tests v2 first, then atomically flips `writerEpoch` so only one engine writes. Rollback freezes buys, restores the prior deploy/read routing, and never enables two writers.  
-**Exit:** no old investment-control action is called; every active mandate traces from UI to evidence and broker state; every frozen-roster row has a reason; the four above-the-fold questions are answerable without opening System.
-
-### Phase 7 — Paper AI operation
-
-**Work:** freeze legacy entry writer; cancel/drain old proposals and inert EntryPlans; full Sol review for every open holding; apply complete new protection through the acknowledged desired/applied saga; enable `PAPER_AI`; run prospective sessions across ordinary and volatile conditions.  
-**Exit:** safety gates remain perfect and the AI book has enough prospective evidence to decide the next experiment. At least 60 trading sessions is a reasonable **operational-soak** starting point, not proof of durable alpha. Performance promotion requires predeclared power/confidence criteria, sufficient independent decisions/forecast resolutions, and regime coverage rather than a calendar count alone.
-
-### Phase 8 — Live operation **[v2] (fully scoped; the end state of this plan)**
-
-**[v2]** v1 deferred this phase as an optional RFC with no activation. It is now the delivered end state. Nothing new is introduced here: every control this phase runs under is already specified in §8, §15.1 and §18, and Phase 8 wires the live adapter behind the interface those sections already define.
-
-**Files:** `_investorBroker.js` (add `AlpacaBrokerAdapter` behind the existing broker-independent interface of §8.2), `_investorExecution.js`, `investorExecution-background.js`, `_investorLedger.js`, `_investorAlerts.js`, `investorApi.js`, `investor.html`, `netlify.toml` (live credential wiring).
-
-**Work:**
-1. Implement `AlpacaBrokerAdapter` against the §8.2 capability contract — submit, cancel, replace, poll, reconnect, and the §8.3 order-set/leg/fill/ledger mapping. The adapter satisfies the same interface `PaperBrokerAdapter` already satisfies, so §8.1's lifecycle, §8.4's order rules and §8.6's desired-to-applied saga run unchanged against a live account.
-2. Provision separate live broker credentials under the least-privilege split §18 already requires. The executor holds them; the model process does not.
-3. Supply the `riskMandate` operator inputs §15.1 already enumerates — account NAV basis, single-name and sector weights, gross/net exposure, cash reserve, planned and stressed loss per position and in aggregate, daily-loss and drawdown thresholds, ADV and spread caps, correlated-cluster cap, open-order notional. These are inputs the sizing precedence needs to compute a quantity at all, not new controls.
-4. Run the §19 cutover sequence for open positions against the live account.
-5. Confirm protective legs are live at the broker per §8.4, and that §8.7's emergency-only protection reaches the live adapter.
-6. Reconcile live fills, partials, rejects, corporate actions and cash against the ledger's existing conservation equations.
-
-**Exit:** every mandate is traceable end to end — proposal, server binding, activation envelope, order set, broker order id, fill, ledger entry — against a live account; the desired and applied states agree after cancel, replace and reconnect; protective legs are confirmed resting at the broker for every open position; ledger conservation holds across live fills and corporate actions; the §19 rollback returns the book to freeze-new-buys with protection intact.
-
-### Cutover sequence for open positions
+### 19.4 Cutover sequence for open positions
 
 1. Engage `freezeBuys`; leave exits operational.
 2. Drain/reject legacy proposed orders and cancel old EntryPlans.
@@ -1876,6 +1848,7 @@ Each item is independently deployable and independently testable, and none requi
 7. Disable legacy writers, enable new executor, and run reconciliation.
 8. Switch UI/API reads; retain legacy data read-only.
 9. Keep a one-action rollback that freezes buys and returns control to emergency protection, never to automatic residual buying.
+
 
 ## 20. Definition of done
 
@@ -1919,25 +1892,30 @@ The overhaul is not complete when Sol produces persuasive prose. It is complete 
 - No model/prompt/policy change reaches production without task-specific evals and prospective shadow evidence.
 - The AI strategy demonstrates incremental **after-cost, risk-adjusted** value before live capital is considered.
 
-## 21. Recommended implementation order by pull request
+## 21. Implementation order **[v2]**
 
-1. `security: rotate tracked GCP key and add secret scanning`
-2. `investor: freeze legacy v18/v6 and lock reproducible dependencies`
-3. `investor: add fund-manager policy and discriminated schemas`
-4. `investor: add normalized storage codecs, collections, indexes, and content manifests`
-5. `investor: ingest point-in-time SEC facts and transparent universe snapshots`
-6. `investor: build sector-aware dossiers and complete managed workset`
-7. `investor: rewrite OpenAI gateway for Luna facts and async Sol manager`
-8. `investor: add full-roster meeting, holding revision, research, and final synthesis`
-9. `investor: add mandate lineage, risk envelopes, reservations, and desired-state outbox`
-10. `investor: rewrite ledger and OHLC PaperBroker order-set reconciliation`
-11. `investor: add forecasts, matched counterfactuals, KPI and eval suite`
-12. `investor: add exact v2 API and five-route UI`
-13. `investor: dual-run legacy control and AI paper manager`
-14. `investor: remove legacy production writers after cutover evidence`
-15. **[v2]** `investor: live broker adapter, credentials, and cutover` — implements `AlpacaBrokerAdapter` behind the §8.2 interface and runs the §19 cutover. This is a delivered PR, not an RFC.
+**[v2]** v1 listed fifteen pull requests, each "independently deployable behind a feature flag," which was the release schedule §19 no longer uses. The same fifteen units remain useful as **commit order within one build** — they are the order in which the work is written, not fifteen separate releases. Map to the build groups of §19.1:
 
-Each pull request must be independently deployable behind a feature flag, include migrations and rollback, and keep the paper ledger balanced. Do not mix UI deletion, decision-authority migration, and live execution in one release.
+| # | Commit | Group |
+|---|---|---|
+| 1 | `security: rotate tracked GCP key and add secret scanning` | 1 (G1.9 — first, alone) |
+| 2 | `investor: fail-closed evidence, touch-based exits, source scope, scheduler windows` | 1 (G1.1–G1.8) |
+| 3 | `investor: freeze legacy v18/v6 baseline and export hashes` | 1 |
+| 4 | `investor: add fund-manager policy and discriminated schemas` | 2 |
+| 5 | `investor: add normalized storage codecs, collections, indexes, and content manifests` | 2 |
+| 6 | `investor: job lineage, nonces, and managerRunId-scoped leases` | 3 (D-10) |
+| 7 | `investor: ingest point-in-time SEC facts and transparent universe snapshots` | 4 |
+| 8 | `investor: guidance and earnings-date claims; one overnight sweep` | 4 (§5.6, D-11) |
+| 9 | `investor: build sector-aware dossiers and complete managed workset` | 4 |
+| 10 | `investor: rewrite OpenAI gateway for Luna facts and async Sol manager` | 5 |
+| 11 | `investor: add full-roster meeting, holding revision, research, and final synthesis` | 5 |
+| 12 | `investor: add mandate lineage, risk envelopes, reservations, and desired-state outbox` | 6 |
+| 13 | `investor: rewrite ledger and OHLC order-set reconciliation; both broker adapters` | 6 |
+| 14 | `investor: add forecasts, matched counterfactuals, KPI and eval suite` | 7 |
+| 15 | `investor: add exact v2 API and five-view console` | 8 |
+
+Every commit keeps the paper ledger balanced and its `fixture()` cases green, because a red fixture halts trading on whatever is deployed (§17.5). Commit 1 ships and deploys on its own — a tracked credential does not wait on a rewrite. The rest accumulate to the single install of §19.2.
+
 
 ## 22. Research basis and unresolved questions
 
