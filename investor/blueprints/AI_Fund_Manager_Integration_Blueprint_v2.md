@@ -14,7 +14,7 @@ v1 is retained in full. This document does three things and nothing else:
 
 1. **Adds a blocking Phase −1** in front of v1's Phase 0. Nine verified defects in the current plumbing are remediated before any AI Fund Manager work begins. Six of the nine appear nowhere in v1.
 2. **Amends specific v1 sections** where v1 is factually wrong about the current system, or silent where it must not be. Each amendment names the v1 section and gives replacement text.
-3. **Adds four invariants, six blocking test suites and four runtime hard gates** that v1 does not contain.
+3. **Adds four invariants and nine blocking test suites** that v1 does not contain.
 
 Every v1 section not named in §4 or §6 below carries forward **unchanged**. In particular v1's authority model (§3), mandate contract (§7), execution plane (§8), persistence model (§10) and sizing precedence (§15.1) are adopted as written — they are the strongest part of v1 and this revision does not touch them.
 
@@ -65,13 +65,13 @@ v1 §2 (L46-79) describes the current system as a working deterministic residual
 >
 > The **exploratory paper configuration** (`_investorStrategy.js:308-335`, `paperLearningDefaults`) is what produced every trade in the record, including the 38 round trips cited in the v18 note. It runs at `costMarginMultiple` 0.25 (one eighth of the declared hurdle), `minAdvUsd` $50M (one sixth of the declared floor, against a slippage model that charges 12bp half-trip below $100M ADV), `positionScale` 3, and with all five exposure and loss breakers at 100% of NAV (`:478-484`).
 >
-> **Consequence for this project.** The comparison "AI Fund Manager versus the deterministic strategy" is not currently available. What exists is a comparison against a deliberately loosened paper configuration whose measured results are additionally corrupted by D-2. v1 §16.5's control arm "frozen v18 legacy control" must be restated (see §4.6 below).
+> **Consequence for this project.** The comparison "AI Fund Manager versus the deterministic strategy" is not currently available. What exists is a comparison against a deliberately loosened paper configuration whose measured results are additionally corrupted by D-2. v1 §16.5's control arm "frozen v18 legacy control" must be restated (see §4.5 below).
 
 **Replace v1's description of the evidence plane with:**
 
 > The evidence plane is composed entirely of free public sources: GDELT discovery indexes, SEC EDGAR, Federal Register, USAspending, ten government RSS feeds, and NWS alerts (`_investorIntelligenceSources.js`). Market data is Alpaca. There is **no** fundamentals vendor, **no** consensus-estimate feed, **no** transcript source, and **no** confirmed earnings calendar — `investor/universe/v1.json` carries `earningsDates: []` with `earningsDatesSource: "operator_entry_required"` for every name, and `cikSource: "unresolved_pending_sec_map"` for a substantial minority. The only XBRL fact retrieved anywhere in the codebase is `dei:EntityCommonStockSharesOutstanding`.
 >
-> The dossier fields v1 §5.4 requires the manager to reason over — `revenueGrowthBps`, `fcfMarginBps`, `netDebtEbitdaMilli`, `forwardMultipleMilli` — have **zero sources in this repository**. v1 §22 question 3 correctly identifies vendor selection as open. This document elevates it from an open question to a **Phase 0 blocking dependency with a priced line item** (see §4.5).
+> The dossier fields v1 §5.4 requires the manager to reason over — `revenueGrowthBps`, `fcfMarginBps`, `netDebtEbitdaMilli`, `forwardMultipleMilli` — have **zero sources in this repository**. v1 §22 question 3 correctly identifies vendor selection as open and is unaffected by this revision.
 
 ---
 
@@ -258,17 +258,7 @@ Amend the scheduler table to carry the per-task-class windows from P−1.8, and 
 
 > The existing `PLAN_EARLIEST_MIN` / `PLAN_LATEST_MIN` window applies to the `scan` task class only and is retained unchanged for it. Task classes that place no order — `ingest`, `premarket_manager`, `focused_research` — carry their own windows. A task class with no declared window is not dispatchable.
 
-### 4.5 — v1 §22 question 3: promote the data vendor from open question to priced dependency
-
-v1 §22 lists vendor selection as one of nine questions "to be answered by measured implementation." Given §2's correction — that four of the dossier's economic fields have no source at all — it is not a research question but a purchase.
-
-> **Phase 0 blocking dependency.** Before Phase 2 begins, the following must be selected, priced, contracted, and rights-verified for automated use: point-in-time news with corrections, consensus estimates and revisions, transcripts or their absence justified, guidance history, a corporate-actions feed, and an exchange calendar. Until then, `revenueGrowthBps`, `fcfMarginBps`, `netDebtEbitdaMilli` and `forwardMultipleMilli` are **absent**, not null — the dossier schema must distinguish the two, and the manager must be shown their absence explicitly rather than being handed a null it may read as a value.
->
-> A manager reasoning about expectation gaps from GDELT headlines (`full_text_allowed: false`), EDGAR filings and one XBRL field is not the system v1 describes. This dependency is stated with its annual cost before Phase 2 is authorized.
->
-> The exchange calendar in particular is already a live defect: `_investorMarket.js:372-414` derives holidays by hand, including an Easter computus (`easterSunday()` at `:372`). v1 L167 requires an authoritative versioned calendar. Alpaca's `/v2/calendar` is already available to this account and should replace the hand-derived table in Phase −1 or Phase 0.
-
-### 4.6 — v1 §16.5: restate the control arms
+### 4.5 — v1 §16.5: restate the control arms
 
 v1 §16.5 names "frozen v18 legacy control" as experimental arm 2. Per §2 above, that arm is ambiguous. Replace with:
 
@@ -277,48 +267,6 @@ v1 §16.5 names "frozen v18 legacy control" as experimental arm 2. Per §2 above
 > **Arm 2b — declared strict configuration, shadow only.** The pre-registered configuration with `requireCalibratedEdge` observed but not enforced, run in shadow so that the strategy the repository actually declares finally generates a record. It is labelled *shadow, non-eligible* and its results are never presented as the strict strategy's live performance.
 >
 > Arms 1 (AI Fund Manager), 3 (declared benchmark / equal weight) and 4 (matched random and factor baselines) carry forward from v1 unchanged.
-
-### 4.7 — v1 §16.3 and §19: declare the acceptance numbers
-
-v1 §16.3 and §17 specify metrics correctly — Deflated Sharpe, PBO, clustering by decision date, block bootstrap, effective sample size — and v1 §16.4 L1568 correctly warns that sixty sessions is an operational soak only. But **every threshold in v1 is written in the future tense** ("predeclared", "fixed before promotion") and no number appears anywhere in 2,256 lines.
-
-This is the single most consequential omission in v1, because portfolio-return significance is unreachable on the owner's timescale: detecting a true annualized Sharpe of 0.5 at 80% power and 5% two-sided requires roughly 31 years of daily returns; Sharpe 1.0 roughly 8 years; Sharpe 2.0 roughly 2 years. The repository's own strict configuration already implies ~1,137 trading days before its own hurdle can be evaluated.
-
-> **Amendment.** Promotion is gated on **forecast-quality** metrics, which resolve in months, not on portfolio return, which does not. Before Phase 3 begins, the following are written down as numbers and frozen:
->
-> | Metric | Resolves in | Threshold |
-> |---|---|---|
-> | Matched selection lift vs. matched-random, clustered by decision date | weeks–months | *declare before starting* |
-> | CRPS / quantile loss on the manager's own declared outcome buckets | weeks | *declare before starting* |
-> | Calibration error on predeclared, dated, binary events | weeks | *declare before starting* |
-> | Coverage completeness and citation-verification pass rate | days | 100% / *declare* |
-> | Post-cost portfolio return vs. arms 2a, 3, 4 | years | reported, **not** a gate |
->
-> A stop condition is declared alongside each start condition. The experiment must be able to fail, on a stated number, within a stated horizon. v1 §19's Phase 7 exit criterion — "enough evidence to decide the next experiment" — is replaced by these thresholds.
-
-### 4.8 — v1 §19: a merit gate inside the delivered scope
-
-v1's phase plan gates plumbing at every phase in scope. Its only investment-merit criterion (L1807) gates Phase 8, which L1753 places out of scope. The plan can therefore complete in full without ever testing whether the AI adds value.
-
-> **Amendment — new Phase 3.5, blocking.** After Phase 3 (Sol in observation mode) and before Phase 4 (mandate and paper executor), the §4.7 forecast-quality thresholds are evaluated on accumulated shadow decisions. If they are not met, Phase 4 does not begin. The project either iterates within Phase 3 or stops. **No further build occurs on unmet merit.**
-
-### 4.9 — v1 §14: defer the UI rewrite
-
-v1 §14 specifies a 15-module rewrite of `investor.html`. It is a 100% rewrite of the only interface the operator has, and it delivers no evidence about the central question.
-
-> **Amendment.** The UI rewrite moves to Phase 6 as v1 has it, but is explicitly **out of scope until Phase 3.5 passes**. Until then, the existing console is extended in place with: the calibration-state banner (P−1.3), the reduced-risk-controls banner (P−1.4), a manager-run panel, and the D-7 fix. v1 §14.5's six enumerated current UI defects are fixed in place rather than dissolved into a rewrite that may not happen.
-
-### 4.10 — v1 §13: dispositions corrected
-
-v1 §13 dispositions are adopted with three corrections:
-
-| File | v1 disposition | Corrected disposition | Reason |
-|---|---|---|---|
-| `_investorLedger.js` | rewrite into the new execution plane | **Port intact.** Its lifecycle is not rewritten in the same window as introducing a broker route that does not yet exist. | Integer double-entry, four conservation equations, content-hash idempotency and an execution clock that forbids filling on a bar at or before the decision. This is the strongest code in the repository and it is load-bearing for every arm of §16.5. |
-| `_investorVariants.js` | retire | **Retire only after P−1.5 resolves the regime mismatch,** so prior variant results are preserved with their regime attached rather than discarded silently. | D-5 |
-| `_investorSignal.js` | retire (superseded by manager judgment) | **Retire the entry-selection path; retain `directionFromCause`'s fail-closed boundary** as the pattern for the manager's own unavailability handling. | D-1 |
-
----
 
 ## 5. New invariants
 
@@ -354,19 +302,16 @@ Added to v1 §17.2. All are `node --test`, all run in CI, all block merge. The r
 
 ---
 
-## 7. Revised phase plan
+## 7. Phase plan — where Phase −1 sits
 
 | Phase | Content | Gate to exit |
 |---|---|---|
 | **−1** | P−1.1 … P−1.9 (this document §3) | All nine suites green; 30 sessions with no regression |
-| **0** | v1 Phase 0 freeze and baseline, **plus** the priced data-vendor dependency (§4.5) and the exchange calendar | Vendor contracted and rights-verified, or Phase 2 explicitly deferred |
+| **0** | v1 Phase 0 freeze and baseline, unchanged | v1 gate |
 | **1** | v1 Phase 1 — contracts, policy, indexes, authority tests | v1 gate, plus I-1…I-4 encoded as tests |
 | **2** | v1 Phase 2 — evidence and dossier plane | v1 gate, plus source-scope budget assertion holding at 304 names |
-| **3** | v1 Phase 3 — Sol in observation mode, **on 30–40 names, not 304** | Ten or more complete shadow sessions captured |
-| **3.5** | **New, blocking.** Forecast-quality evaluation against the §4.7 thresholds | Thresholds met. **If not met, the project stops or iterates in Phase 3. No further build.** |
-| **4–8** | v1 Phases 4–8 unchanged | v1 gates, plus §4.7's reporting requirements |
-
-**On the reduced Phase 3 roster.** v1 §6.3's complete-coverage contract — that no score, rank or shortlist may hide a company from the manager — is a good principle and carries forward for the production system. It is not required to *test* whether the manager has skill. A 30–40 name shadow at full dossier depth answers the §4.7 questions at roughly 2% of the 304-name cost, and every one of those metrics is a per-decision metric that does not require the full roster to resolve. The roster expands to 304 at Phase 4, once merit is established.
+| **3** | v1 Phase 3 — Sol in observation mode, unchanged | v1 gate |
+| **4–8** | v1 Phases 4–8 unchanged | v1 gates |
 
 ---
 
@@ -374,13 +319,13 @@ Added to v1 §17.2. All are `node --test`, all run in CI, all block merge. The r
 
 | Defect | Phase −1 item | Invariant | Test suite | v1 amendment | Runtime gate |
 |---|---|---|---|---|---|
-| D-1 | P−1.1 | I-1 | 6.1 | §4.1, §4.10 | Added to attestation set |
+| D-1 | P−1.1 | I-1 | 6.1 | §4.1 | Added to attestation set |
 | D-2 | P−1.2 | I-2 | 6.2 | §4.2 | Added to attestation set |
-| D-3 | P−1.3 | I-4 | 6.3 | §4.6 | Dashboard state |
-| D-4 | P−1.4 | I-4 | 6.4 | §4.6 | Persistent banner |
-| D-5 | P−1.5 | I-4 | 6.5 | §4.10 | Variant validator |
+| D-3 | P−1.3 | I-4 | 6.3 | §4.5 | Dashboard state |
+| D-4 | P−1.4 | I-4 | 6.4 | §4.5 | Persistent banner |
+| D-5 | P−1.5 | I-4 | 6.5 | — | Variant validator |
 | D-6 | P−1.6 | I-3 | 6.6 | §4.4 | Sweep-budget assertion |
-| D-7 | P−1.7 | — | 6.7 | §4.9 | — |
+| D-7 | P−1.7 | — | 6.7 | — | — |
 | D-8 | P−1.8 | — | 6.8 | §4.4 | Task-class window |
 | D-8b | P−1.1 | I-1 | 6.1 | §4.3 | Reservation, not cap |
 | D-9 | P−1.9 | — | 6.9 | §18 (v1, verbatim) | CI secret scan |
@@ -399,7 +344,5 @@ Stated explicitly so that the scope of the amendment is unambiguous.
 
 ## 10. Open items this revision does not close
 
-1. The §4.7 thresholds are specified as *required*, not *chosen*. The owner supplies the numbers before Phase 3. This document deliberately does not pick them.
-2. v1 §22's remaining questions 1, 2, 4, 5, 6, 8 and 9 stay open and are unaffected by this revision.
-3. Whether `_investorLedger.js`'s conservation equations survive the introduction of a real broker adapter is untested until a live paper account exists. It is the highest-risk untested assumption in the ported code.
-4. The one-time dossier bootstrap cost remains unbounded until §4.3's ceiling is set against measured documents.
+1. v1 §22's questions stay open and are unaffected by this revision.
+2. The one-time dossier bootstrap cost remains unbounded until §4.3's ceiling is set against measured documents.
