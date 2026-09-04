@@ -43,6 +43,7 @@ const B = require("./_investorBootstrap");
 const { redact } = require("./_investorAuth");
 const FUND = require("./_investorFundamentals");
 const ROUTER = require("./_investorEventRouter");
+const DOSSIER = require("./_investorDossier");
 
 const FN_NAME = "investorIngest-background";
 const TASK = "ingest";
@@ -164,6 +165,17 @@ async function runIngestSegment(claim) {
         } catch (e) { entry.routeError = String(e.code || e.message).slice(0, 80); }
       }
       entry.routed = routed; entry.highImpact = highImpact;
+      /* Facts-layer dossier: composed at this instant from point-in-time
+         facts, claims and document versions; appended only when its content
+         hash changed (§5.2 step 6). Interpretations are pointers only. */
+      try {
+        const built = await DOSSIER.buildBaseline({ symbol, rosterRow: bySymbol[symbol] || { symbol }, asOfMs: Date.now() });
+        const wrote = await DOSSIER.persistVersion(built.version, { sourceAtMs: Date.now() });
+        entry.dossier = { appended: wrote.appended, version: wrote.version, hash: String(wrote.contentHash || "").slice(0, 12),
+          complete: built.version.dataQuality.complete, missing: built.version.dataQuality.missing.length,
+          deltaSafety: built.delta.safetyClass, deltaCounts: built.delta.counts };
+        entry.dossierHash = wrote.contentHash || entry.dossierHash;
+      } catch (e) { entry.dossier = { error: String(e.code || e.message).slice(0, 80) }; }
       data.completed += 1;
     } catch (e) {
       entry = { symbol, ok: false, ms: Date.now() - started, error: String(e.code || e.message).slice(0, 120) };

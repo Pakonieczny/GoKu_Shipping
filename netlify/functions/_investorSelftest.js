@@ -3698,6 +3698,157 @@ function runFixtures() {
     return true;
   }));
 
+  /* ── Group 4 (commit 9): dossiers hash the FACTS layer only, deltas are
+     typed differences, the §5.4 card has the blueprint shape with a sector
+     block derived from filings, and "fresh" is a matrix, not a boolean. */
+  cases.push(fixture("dossier_versions_hash_facts_only_and_deltas_are_typed_not_opinions", async () => {
+    const D = require("./_investorDossier");
+    const F = require("./_investorFundamentals");
+    const asOf = Date.UTC(2026, 8, 1);
+    const U = (start, end, val, accn, fy, fp, form, filed) => ({ start, end, val, accn, fy, fp, form, filed });
+    const I = (end, val, accn, fy, fp, form, filed) => ({ end, val, accn, fy, fp, form, filed });
+    const K25 = ["0000123456-26-000001", 2025, "FY", "10-K", "2026-02-20"];
+    const payload = { cik: 123456, facts: { "us-gaap": {
+      Revenues: { units: { USD: [U("2024-01-01", "2024-12-31", 3600000000, "0000123456-25-000001", 2024, "FY", "10-K", "2025-02-21"), U("2025-01-01", "2025-12-31", 4000000000, ...K25)] } },
+      GrossProfit: { units: { USD: [U("2025-01-01", "2025-12-31", 2800000000, ...K25)] } },
+      ResearchAndDevelopmentExpense: { units: { USD: [U("2025-01-01", "2025-12-31", 900000000, ...K25)] } },
+      ContractWithCustomerLiabilityCurrent: { units: { USD: [I("2025-12-31", 1200000000, ...K25)] } },
+      InventoryNet: { units: { USD: [I("2025-12-31", 500000000, ...K25)] } },
+      CostOfRevenue: { units: { USD: [U("2025-01-01", "2025-12-31", 1200000000, ...K25)] } },
+    } } };
+    const { facts, rejected } = F.normalizeCompanyFacts(payload, { cik: 123456, retrievedAtMs: asOf });
+    if (rejected.length) throw new Error(`normalise rejected ${JSON.stringify(rejected).slice(0, 200)}`);
+    const fundamentals = F.deriveMetrics(facts, { asOfMs: asOf });
+    const identity = { name: "ABC Corp", sector: "sw", cik: "0000123456" };
+    const claims = [{ claimId: "claim_g1", claimType: "GUIDANCE", metric: "revenue", periodLabel: "FY2026", lowValue: "4300000000", highValue: "4500000000",
+      unit: "USD", publishedAtMs: Date.UTC(2026, 6, 29), documentVersionId: "v9", quote: "we expect FY2026 revenue of $4.3 billion to $4.5 billion" },
+      { claimId: "claim_e1", claimType: "EARNINGS_DATE", date: "2026-10-28", confirmed: true, publishedAtMs: Date.UTC(2026, 7, 20), documentVersionId: "v10", quote: "will report on October 28, 2026" }];
+    const documents = [{ documentId: "ABC_sec.latest_1", versionId: "ABC_sec.latest_1_aaaa", canonicalContentSha256: "h1", sourceId: "sec.latest", form: "10-K", firstSeenAtMs: Date.UTC(2026, 1, 20) }];
+    const v1 = D.composeVersion({ symbol: "abc", identity, asOfMs: asOf, facts, fundamentals, claims, documents });
+    if (v1.schemaVersion !== "dossier-version.v1" || v1.symbol !== "ABC" || v1.version !== 1) throw new Error("version envelope");
+    /* the sector block comes from the filings, with fact ids, and is the software block */
+    if (v1.sectorBlock.block !== "software") throw new Error(`block ${v1.sectorBlock.block}`);
+    if (v1.sectorBlock.metrics.grossProfitTtmMinor !== "280000000000" || v1.sectorBlock.metrics.deferredRevenueMinor !== "120000000000") throw new Error(`sector metrics ${JSON.stringify(v1.sectorBlock.metrics)}`);
+    if (!Array.isArray(v1.sectorBlock.factIds.grossProfitTtmMinor_facts) || !v1.sectorBlock.factIds.grossProfitTtmMinor_facts.length) throw new Error("sector metric without fact ids");
+    if (v1.sectorBlock.metrics.salesMarketingTtmMinor !== null || !v1.sectorBlock.notes.some((n) => /salesMarketingTtmMinor/.test(n))) throw new Error("missing metric not explained");
+    if (v1.fundamentals.revenueGrowthBps !== "1111") throw new Error(`revenue growth ${v1.fundamentals.revenueGrowthBps}`);
+    if (v1.guidance.length !== 1 || v1.guidance[0].claimId !== "claim_g1" || v1.nextEarnings.date !== "2026-10-28") throw new Error("claims not carried by id");
+    /* no interpretation lives in the version: only pointers */
+    for (const k of ["thesis", "decision", "memo", "score", "forecast"]) if (k in v1) throw new Error(`opinion field ${k} in facts layer`);
+    if (!("pointers" in v1) || v1.pointers.researchMemoId !== null) throw new Error("pointer layer");
+    /* the hash ignores time and price: same facts at a later as-of → same hash */
+    const v1b = D.composeVersion({ symbol: "ABC", identity, asOfMs: asOf + 86_400_000, facts, fundamentals, claims, documents });
+    if (v1b.contentHash !== v1.contentHash) throw new Error("hash depends on clock");
+    /* a new document version and a superseding guide → typed delta */
+    const claims2 = [...claims, { claimId: "claim_g2", claimType: "GUIDANCE", metric: "revenue", periodLabel: "FY2026", lowValue: "4400000000", highValue: "4600000000",
+      unit: "USD", publishedAtMs: Date.UTC(2026, 7, 30), documentVersionId: "v11", supersedes: "claim_g1", quote: "raising FY2026 revenue outlook to $4.4 billion to $4.6 billion" }];
+    const documents2 = [{ ...documents[0], versionId: "ABC_sec.latest_1_bbbb", canonicalContentSha256: "h2" }, { documentId: "ABC_sec.latest_2", versionId: "ABC_sec.latest_2_cccc", canonicalContentSha256: "h3", sourceId: "sec.latest", form: "8-K", firstSeenAtMs: Date.UTC(2026, 7, 30) }];
+    const v2 = D.composeVersion({ symbol: "ABC", identity, asOfMs: asOf, facts, fundamentals, claims: claims2, documents: documents2, priorVersion: 1 });
+    if (v2.contentHash === v1.contentHash) throw new Error("hash ignores new evidence");
+    const delta = D.buildDelta(v1, v2);
+    if (delta.schemaVersion !== "evidence-delta.v1" || delta.changed !== true || delta.safetyClass !== "routine") throw new Error(`delta ${JSON.stringify(delta.counts)} ${delta.safetyClass}`);
+    if (!delta.added.some((x) => x.kind === "claim" && x.id === "claim_g2") || !delta.added.some((x) => x.kind === "document" && x.id === "ABC_sec.latest_2")) throw new Error("added not typed");
+    if (!delta.revised.some((x) => x.kind === "document" && x.id === "ABC_sec.latest_1") || !delta.revised.some((x) => x.kind === "guidance" && x.from === "claim_g1")) throw new Error("revised not typed");
+    if (delta.contradicted.length !== 0) throw new Error("supersession mis-typed as contradiction");
+    if (D.buildDelta(v1, v1b).changed !== false) throw new Error("no-op delta reports change");
+    /* two live guides for the same metric and period that disagree → integrity event */
+    const conflict = D.composeVersion({ symbol: "ABC", identity, asOfMs: asOf, facts, fundamentals, documents, claims: [...claims,
+      { claimId: "claim_g3", claimType: "GUIDANCE", metric: "revenue", periodLabel: "FY2026", lowValue: "3000000000", highValue: "3100000000", unit: "USD", publishedAtMs: Date.UTC(2026, 6, 29), documentVersionId: "v12", quote: "expects FY2026 revenue of $3.0 billion to $3.1 billion" }] });
+    /* latestGuidanceFrom keeps one live guide per metric/period, so the version itself cannot carry two; the delta reports the contradiction only when both are live */
+    const forced = { ...conflict, guidance: [...conflict.guidance, { claimId: "claim_g3", metric: "revenue", periodLabel: "FY2026", lowValue: "3000000000", highValue: "3100000000" }] };
+    if (D.buildDelta(v1, forced).safetyClass !== "integrity") throw new Error("conflicting live guides not an integrity event");
+    /* persistence appends only on hash change; pointer stays small and learns of deltas */
+    const fake = fakeAdmin();
+    const w1 = await D.persistVersion(v1, { admin: fake, sourceAtMs: asOf });
+    const w1b = await D.persistVersion(v1b, { admin: fake });
+    const w2 = await D.persistVersion(v2, { admin: fake });
+    if (w1.appended !== true || w1b.appended !== false || w2.appended !== true || w2.version !== 2 || w2.previousVersionId !== w1.versionId) throw new Error(`persist ${JSON.stringify([w1, w1b, w2])}`);
+    const versions = [...fake.docs.keys()].filter((k) => k.startsWith(`${fake.COL.dossierVersions}/`));
+    if (versions.length !== 2) throw new Error(`versions stored ${versions.length}`);
+    const pointer = await D.current("ABC", { admin: fake });
+    if (pointer.currentVersionId !== w2.versionId || pointer.version !== 2 || pointer.unchangedRuns !== 0 || pointer.contentHash !== v2.contentHash) throw new Error("pointer");
+    if (JSON.stringify(pointer).length > 4000) throw new Error("pointer is not small");
+    const back = await D.readVersion(w2.versionId, { admin: fake });
+    if (!back || back.contentHash !== v2.contentHash || back.sectorBlock.metrics.grossProfitTtmMinor !== "280000000000") throw new Error("version round trip");
+    await D.recordRoutineDelta({ symbol: "ABC", deltaId: "delta_ABC_1", eventClass: "ROUTINE_NEWS", safetyClass: "routine", firstSeenAt: asOf }, { admin: fake });
+    const p2 = await D.current("ABC", { admin: fake });
+    if (p2.pendingDeltaCount !== 1 || p2.recentDeltaIds[0] !== "delta_ABC_1" || p2.lastDeltaEventClass !== "ROUTINE_NEWS") throw new Error("routine delta not recorded on pointer");
+    /* freshness is a matrix: each dimension carries its own state */
+    const fm = D.freshnessMatrix({ asOfMs: asOf - 3600e3, lastSourceAtMs: asOf - 40 * 3600e3, lastManagerReviewAtMs: null, lastMandateAtMs: asOf - 86400e3, lastMarketMarkAtMs: asOf - 600e3 }, { nowMs: asOf });
+    if (fm.dossier.fresh !== true || fm.source.fresh !== false || fm.source.state !== "stale" || fm.managerReview.state !== "never" || fm.mandate.fresh !== true || fm.marketMark.fresh !== true) throw new Error(`freshness ${JSON.stringify(fm)}`);
+    if (typeof fm.fresh !== "undefined") throw new Error("global fresh boolean present");
+    return true;
+  }));
+
+  cases.push(fixture("compact_card_has_the_blueprint_shape_declares_missing_data_and_carries_no_score", async () => {
+    const D = require("./_investorDossier");
+    const asOf = Date.UTC(2026, 8, 1);
+    const bars = [];
+    let c = 40;
+    for (let i = 300; i >= 1; i -= 1) { const d = new Date(asOf - i * 864e5).toISOString().slice(0, 10); c *= 1 + ((i % 7) - 3) / 400; bars.push({ date: d, c: Number(c.toFixed(4)) }); }
+    const price = D.returnsBps(bars, { asOfMs: asOf });
+    if (price.ok !== true || !/^[1-9][0-9]*$/.test(price.closeMicros) || price.asOfDate >= "2026-09-01") throw new Error(`price ${JSON.stringify(price)}`);
+    for (const k of ["1d", "5d", "3m", "1y"]) if (!/^-?(0|[1-9][0-9]*)$/.test(String(price.bps[k]))) throw new Error(`return ${k} not canonical`);
+    /* the cutoff day itself is never included: bars dated on or after the cutoff are ignored */
+    const leak = D.returnsBps([...bars, { date: "2026-09-01", c: 999 }, { date: "2026-09-02", c: 999 }], { asOfMs: asOf });
+    if (leak.closeMicros !== price.closeMicros) throw new Error("future bar leaked into the card");
+    const identity = { name: "ABC Corp", sector: "energy", cik: "0000123456" };
+    const version = D.composeVersion({ symbol: "ABC", identity, asOfMs: asOf, facts: [], fundamentals: { revenueGrowthBps: "920", fcfMarginBps: "1210", netDebtEbitdaMilli: "1400", sharesOutstanding: "100000000", epsTrailingMicros: "2500000", revenueTtmMinor: "400000000000", netIncomeTtmMinor: "25000000000", basis: { factIds: {}, periods: {}, notes: [] } },
+      claims: [{ claimId: "claim_g1", claimType: "GUIDANCE", metric: "revenue", periodLabel: "FY2026", lowValue: "4100000000", highValue: "4300000000", unit: "USD", publishedAtMs: Date.UTC(2026, 6, 29), documentVersionId: "docv_1", quote: "we expect FY2026 revenue of $4.1 billion to $4.3 billion" }], documents: [] });
+    const card = D.cardFromVersion(version, { cutoffMs: asOf, price, sectorPrice: price, marketPrice: price,
+      changes: [{ deltaId: "delta_1", eventClass: "NEW_8K", form: "8-K", safetyClass: "high_impact", managerMateriality: "pending" }],
+      standingView: { status: "WATCH", researchVersion: 3, ageTradingDays: 7 }, portfolio: { held: false, activeMandate: false } });
+    const required = ["symbol", "identity", "asOf", "price", "relative", "fundamentals", "valuation", "guidance", "expectations", "nextEarnings", "changes", "standingView", "portfolio", "dataQuality"];
+    for (const k of required) if (!(k in card)) throw new Error(`card missing ${k}`);
+    for (const k of Object.keys(card)) if (/score|rank|signal|conviction/i.test(k)) throw new Error(`composite field ${k} on card`);
+    if (card.price.currency !== "USD" || card.price.closeMicros !== price.closeMicros || card.price.returnBps["5d"] !== price.bps["5d"]) throw new Error("price block");
+    if (card.relative.sector5dBps !== price.bps["5d"] || card.relative.drawdownBps !== price.drawdownBps) throw new Error("relative block");
+    if (card.fundamentals.revenueGrowthBps !== "920" || card.fundamentals.fcfMarginBps !== "1210" || card.fundamentals.netDebtEbitdaMilli !== "1400") throw new Error("fundamentals block");
+    if (card.expectations.coverage !== "no_consensus_vendor" || card.expectations.revision30dBps !== null) throw new Error("consensus mislabelled");
+    if (card.guidance.lowMicros !== "4100000000000000" || card.guidance.claimId !== "claim_g1" || card.guidance.documentVersionId !== "docv_1") throw new Error(`guidance block ${JSON.stringify(card.guidance)}`);
+    if (!card.valuation.methodHints.includes("ev_ebitda") || card.valuation.trailingMultipleMilli === null || card.valuation.forwardMultipleMilli === null || card.valuation.forwardBasis !== "price_to_guided_revenue_midpoint") throw new Error(`valuation ${JSON.stringify(card.valuation)}`);
+    if (card.changes[0].safetyClass !== "high_impact" || card.changes[0].managerMateriality !== "pending") throw new Error("changes block");
+    if (card.standingView.status !== "WATCH" || card.standingView.researchVersion !== 3 || card.portfolio.held !== false) throw new Error("standing view / portfolio");
+    if (card.nextEarnings !== null || card.dataQuality.complete !== false || !card.dataQuality.missing.includes("nextEarnings.confirmed")) throw new Error("missing data not declared");
+    if (card.sectorBlock.block !== "resources") throw new Error("sector block on card");
+    if (card.tokenEstimate > D.MAX_TOKENS_PER_CARD + 150) throw new Error(`card too large: ~${card.tokenEstimate} tokens`);
+    /* with no guidance the forward multiple stays null and is never inferred */
+    const bare = D.cardFromVersion(D.composeVersion({ symbol: "ABC", identity, asOfMs: asOf, facts: [], fundamentals: null, claims: [], documents: [] }), { cutoffMs: asOf, price: null });
+    if (bare.guidance !== null || bare.valuation.forwardMultipleMilli !== null || bare.valuation.trailingMultipleMilli !== null || bare.price !== null) throw new Error("absent data was invented");
+    if (!bare.dataQuality.missing.includes("guidance") || !bare.dataQuality.missing.includes("price") || !bare.dataQuality.missing.includes("fundamentals")) throw new Error("absence not declared");
+    return true;
+  }));
+
+  cases.push(fixture("managed_workset_is_eligible_union_held_union_pending_and_forbids_scaling_in", () => {
+    const W = require("./_investorWorkset");
+    const roster = { symbols: ["AAA", "BBB", "CCC"], universeVersion: "v6", universeHash: "h".repeat(64) };
+    const ws = W.buildManaged({ roster,
+      positions: [{ symbol: "BBB", qty: 10, open: true }, { symbol: "OLD", qty: 5, open: true }, { symbol: "FLAT", qty: 0, open: false }],
+      pending: [{ symbol: "CCC", orderId: "o1", status: "working", side: "buy" }, { symbol: "GONE", orderId: "o2", status: "pending_cancel", side: "sell" }] });
+    if (ws.symbols.join(",") !== "AAA,BBB,CCC,OLD,GONE") throw new Error(`workset order ${ws.symbols}`);
+    if (ws.eligibleCount !== 3 || ws.counts.held !== 2 || ws.counts.offRoster !== 2 || ws.counts.pending !== 2) throw new Error(`counts ${JSON.stringify(ws.counts)}`);
+    if (ws.managedPositionSymbols.join(",") !== "BBB,OLD") throw new Error("managed positions");
+    if (!ws.managedOffRoster.some((m) => m.symbol === "OLD" && m.reason === "held_off_roster") || !ws.managedOffRoster.some((m) => m.symbol === "GONE" && m.reason === "pending_off_roster")) throw new Error("off-roster reporting");
+    if (ws.entryCandidateSymbols.join(",") !== "AAA") throw new Error(`entry candidates ${ws.entryCandidateSymbols}`);
+    const row = (s) => ws.rows.find((r) => r.symbol === s);
+    if (row("BBB").scalingInForbidden !== true || row("BBB").entryEligible !== false) throw new Error("held name still entry-eligible");
+    if (W.actionAllowedForRow(row("BBB"), "BUY").reason !== "SCALING_IN_FORBIDDEN") throw new Error("scaling in allowed");
+    if (W.actionAllowedForRow(row("OLD"), "BUY").reason !== "SCALING_IN_FORBIDDEN") throw new Error("off-roster held BUY");
+    if (W.actionAllowedForRow(row("OLD"), "SELL").ok !== true || W.actionAllowedForRow(row("OLD"), "REDUCE").ok !== true) throw new Error("off-roster holding cannot be managed");
+    if (W.actionAllowedForRow(row("GONE"), "BUY").reason !== "OFF_ROSTER_ENTRY_FORBIDDEN") throw new Error("off-roster entry allowed");
+    if (W.actionAllowedForRow(row("AAA"), "HOLD").reason !== "NOT_HELD" || W.actionAllowedForRow(row("AAA"), "BUY").ok !== true) throw new Error("flat eligible name");
+    if (W.actionAllowedForRow(null, "BUY").ok !== false) throw new Error("unknown symbol");
+    /* fair queue: never-built first, then held, then stalest; rotation never reorders staleness bands */
+    const now = Date.UTC(2026, 8, 1);
+    const pointers = { AAA: { asOfMs: now - 10 * 3600e3 }, BBB: { asOfMs: now - 2 * 3600e3 }, CCC: { asOfMs: now - 50 * 3600e3 } };
+    const q = W.fairDossierQueue({ workset: ws, pointers, nowMs: now });
+    if (q[0] !== "OLD" && q[1] !== "OLD") throw new Error(`never-built held name not first: ${q}`);
+    if (q.indexOf("CCC") > q.indexOf("AAA")) throw new Error("stalest not ahead of fresher");
+    const q2 = W.fairDossierQueue({ workset: ws, pointers, nowMs: now, rotation: 3 });
+    if (q2.length !== q.length || new Set(q2).size !== q.length) throw new Error("rotation lost symbols");
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is

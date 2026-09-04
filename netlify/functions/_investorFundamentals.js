@@ -985,5 +985,7 @@ module.exports = {
   normalizeCompanyFacts, normalizeFrames, pointInTime, deriveMetrics, selectAsOf,
   quarterSeries, ttmAt, decimalStringOf, scaleValue, availabilityMs, companyFactsUrl, cik10Of,
   ingestCompanyFacts, getFilingFactsAsOf, financialFactsHealth,
+  /* fact-level helpers the dossier sector blocks reuse (all PURE) */
+  pickConcept, latestInstant, latestDurationEnd, factRational, scaledCanonical, lineageKey,
   selfCheck,
 };
