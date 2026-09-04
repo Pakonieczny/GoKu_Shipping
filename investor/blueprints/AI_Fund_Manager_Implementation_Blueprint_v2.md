@@ -55,7 +55,9 @@ The **pre-registered strict configuration** (`_investorStrategy.js:168-300`) car
 
 The **exploratory paper configuration** (`_investorStrategy.js:308-335`, `paperLearningDefaults`) produced every trade in the record, including the 38 round trips cited in the v18 note. It runs at `costMarginMultiple` 0.25 (one eighth of the declared hurdle), `minAdvUsd` $50M (one sixth of the declared floor, against a slippage model charging 12bp half-trip below $100M ADV), `positionScale` 3, and with all five exposure and loss breakers at 100% of NAV (`:478-484`). These values sit inside the declared clamp (`:52`, `:58`), so this is an operator-selectable floor and not a code defect — but every performance conclusion drawn from this lane was drawn at that floor, and none of those conclusions currently carries that fact.
 
-**[v2] The evidence plane is entirely free public sources.** GDELT discovery indexes, SEC EDGAR, Federal Register, USAspending, ten government RSS feeds, and NWS alerts (`_investorIntelligenceSources.js`, 25 sources). Market data is Alpaca. There is **no** fundamentals vendor, **no** consensus-estimate feed, **no** transcript source, and **no** confirmed earnings calendar — `investor/universe/v1.json` carries `earningsDates: []` with `earningsDatesSource: "operator_entry_required"` for every name, and `cikSource: "unresolved_pending_sec_map"` for a substantial minority. The only XBRL fact retrieved anywhere in the codebase is `dei:EntityCommonStockSharesOutstanding`. The dossier fields §5.4 requires the manager to reason over — `revenueGrowthBps`, `fcfMarginBps`, `netDebtEbitdaMilli`, `forwardMultipleMilli` — therefore have **zero sources in this repository**. The dossier schema must distinguish *absent* from *null*, and the manager must be shown absence explicitly rather than handed a null it may read as a value. §22 question 3 remains open.
+**[v2] The evidence plane is entirely free public sources.** GDELT discovery indexes, SEC EDGAR, Federal Register, USAspending, ten government RSS feeds, and NWS alerts (`_investorIntelligenceSources.js`, 25 sources). Market data is Alpaca. There is **no** fundamentals vendor, **no** consensus-estimate feed, **no** transcript source, and **no** confirmed earnings calendar — `investor/universe/v1.json` carries `earningsDates: []` with `earningsDatesSource: "operator_entry_required"` for every name, and `cikSource: "unresolved_pending_sec_map"` for a substantial minority. The only XBRL fact retrieved anywhere in the codebase is `dei:EntityCommonStockSharesOutstanding`. **[v2]** §5.6 closes the earnings-date and forward-view gaps from sources already fetched; the fundamentals gap closes by widening the existing SEC call. **[v2] Of the four dossier fields §5.4 requires, three are free and already half-wired.** `revenueGrowthBps`, `fcfMarginBps` and `netDebtEbitdaMilli` are all derivable from SEC XBRL, and `_investorMarket.js` already calls `https://data.sec.gov/api/xbrl/companyconcept/CIK...` today — it uses the single-concept endpoint where `_investorFundamentals.js` needs bulk `companyfacts`/`frames`. That is build work, not a purchase.
+
+**The fourth, `forwardMultipleMilli`, has no source and will not get one.** It requires analyst consensus, which this operator does not have and is not buying. §5.6 replaces it with primary-source forward evidence. `expectations.coverage` stays `vendor_missing` permanently and honestly, and §22 question 3 is closed: the answer is no vendor.
 
 The current investment pipeline is explicitly inverted for cost:
 
@@ -192,7 +194,7 @@ NIST recommends provenance, origin/modification tracking, production monitoring,
 | Company communications | SEC-linked official domains/IR pages | Press releases, guidance, presentations, calls where lawfully available | Management's explanation and forward statements | Issuer evidence; self-interested |
 | Government/regulatory | Existing Federal Register, DOJ, FTC, DOL, NLRB, FDA, NTSB, FAA, EPA, FDIC, Fed, CISA, CPSC and related adapters | Source-specific polling | Legal, regulatory, contracts, trials, recalls, safety, sector events | Primary external evidence |
 | Broad discovery | GDELT and specialist-publication metadata | Incremental discovery | Find potentially relevant reporting | Lead only until source is verified |
-| Estimates and transcripts | **Not adequately supplied by the current repository** | Licensed point-in-time vendor recommended | Consensus revisions, guidance history, call transcripts, expectation gap | Required for a truly comprehensive manager; vendor bake-off first |
+| Estimates and transcripts | **[v2] Not available and not being purchased** | Issuer guidance from 8-K Item 2.02 and MD&A, extracted as cited claims (§5.6) | Guidance level, guidance revisions, guided-versus-delivered history | No consensus, therefore no expectation gap. Forward view is the issuer's own published statement, with a citation. Transcripts are out of scope |
 | Portfolio state | Existing paper account, orders, fills, positions, ledger, NAV | Real-time internal records | Cash, exposure, cost basis, mandate capacity | Exact internal state |
 
 The SEC's APIs provide unauthenticated submissions and XBRL JSON, update throughout the day, and publish nightly bulk archives; SEC calls bulk archives the most efficient way to backfill large amounts of data ([SEC EDGAR API](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)). Use the nightly `companyfacts.zip` and submissions archive for initial coverage, then real-time per-company endpoints for deltas. Respect the SEC's [fair-access guidance](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data), including a declared user agent and the 10-request-per-second ceiling.
@@ -257,12 +259,15 @@ Target 300–500 tokens per company, generated from structured state rather than
   "price": {"currency": "USD", "closeMicros": "42100000", "returnBps": {"1d": "-120", "5d": "-480", "3m": "710", "1y": "1840"}},
   "relative": {"sector5dBps": "-90", "market5dBps": "20", "drawdownBps": "-840"},
   "fundamentals": {"revenueGrowthBps": "920", "fcfMarginBps": "1210", "netDebtEbitdaMilli": "1400"},
-  "valuation": {"methodHints": ["ev_ebitda", "dcf"], "forwardMultipleMilli": "14300"},
-  "expectations": {"revision30dBps": null, "coverage": "vendor_missing"},
+  "valuation": {"methodHints": ["ev_ebitda", "dcf"], "trailingMultipleMilli": "16800", "forwardMultipleMilli": null},
+  "guidance": {"periodLabel": "FY2026", "metric": "revenue", "lowMicros": "4100000000", "highMicros": "4300000000",
+               "issuedAt": "2026-07-29", "claimId": "claim_...", "documentVersionId": "docv_...", "supersedes": "claim_..."},
+  "expectations": {"revision30dBps": null, "coverage": "no_consensus_vendor"},
+  "nextEarnings": {"date": "2026-10-28", "confirmed": true, "claimId": "claim_...", "sourceClass": "company_primary"},
   "changes": [{"eventId": "evt_...", "type": "8-K", "safetyClass": "high_impact", "managerMateriality": "pending"}],
   "standingView": {"status": "WATCH", "researchVersion": 3, "ageTradingDays": 7},
   "portfolio": {"held": false, "activeMandate": false},
-  "dataQuality": {"complete": false, "missing": ["consensus_estimates"]}
+  "dataQuality": {"complete": true, "missing": [], "note": "no consensus vendor by design; forward view is issuer guidance"}
 }
 ```
 
@@ -286,6 +291,20 @@ The card contains signals that a human manager would inspect, but no composite �
 | Conflicting/stale required facts | Integrity event | ABSTAIN/freeze affected new authorization |
 
 “Material” means plausibly capable of changing the thesis, valuation distribution, expected duration, invalidation condition, or portfolio risk—not merely that a keyword appeared. Code may attach objective event classes and high-recall safety flags, but it must not silently decide investment materiality. Every verified delta reaches the next Sol packet; high-impact classes also pause affected new entries pending Sol. Luna extraction is evaluated for recall and evidentiary support, with direct source excerpts for high-impact documents, sampled raw-document audits, and Sol escalation when extraction is uncertain.
+
+### 5.6 Forward evidence without a consensus vendor **[v2]**
+
+There is no analyst-estimate feed and none is being purchased. Forward-looking evidence comes from primary sources this system already fetches, extracted as cited claims through the same Luna extraction and verbatim claim-verification path as every other fact (§5.3). Nothing new is built to support it.
+
+**Issuer guidance replaces consensus.** Companies publish forward statements in 8-K Item 2.02 earnings releases and in 10-Q/10-K MD&A — both already in the EDGAR ingestion path. Luna extracts them into a `GuidanceClaim` carrying period label, metric, low/high bounds, issue date, `documentVersionId` and verbatim span. Guidance is versioned like any other fact: a later release supersedes an earlier one through `supersedes`, and a withdrawn or reaffirmed guide is itself an event.
+
+This is not consensus and must never be labelled as such. What it gives up is the expectation gap — Sol cannot say "cheap relative to what the street expects." What it gains is a primary-source forward number with a citation, against which Sol can measure the two things that actually matter: **guidance versus what the company subsequently delivered**, and **guidance revisions over time**. A company that has guided down three quarters running is legible from filings alone.
+
+**Where no guidance exists**, `guidance` is null and `forwardMultipleMilli` stays null. `_investorValuation.js` may compute a trailing multiple and a trend extrapolation from XBRL history, both explicitly labelled as derived rather than forecast. Sol is shown the absence; it is never handed an inferred number dressed as an estimate.
+
+**Earnings dates come from the issuer, not a calendar vendor.** Large companies announce the date in advance on their investor-relations pages and in press releases — both already fetched by the `company.direct` source, which polls official SEC-linked domains and their news/investor pages. Luna extracts the announced date as a `nextEarnings` claim with `confirmed: true` and a verbatim span. Where no announcement is found, the existing 8-K Item 2.02 cadence projection stands with `confirmed: false` and its wider window, exactly as `_investorStrategy.js` describes today. The universe file's `earningsDatesSource: "operator_entry_required"` is replaced by this path; operator entry remains available as an override, not the default.
+
+**Both extractions are the same mechanism.** Neither adds a source, a vendor, or a subsystem — they add two claim types to an extraction path §5.3 already defines, over documents §5.1 already fetches.
 
 ## 6. The AI Fund Manager process
 
@@ -422,6 +441,8 @@ Sol chooses the appropriate method and assumptions; `_investorValuation.js` calc
 - Probability-weighted event trees for binary or special situations.
 
 Ratios are inputs and cross-checks. The code verifies units, formulas, probability sums, and sensitivity tables; it does not conclude that “P/E below X means buy.”
+
+**[v2] Forward inputs are issuer guidance, not consensus (§5.6).** Sol's forward assumptions come from the company's own published guidance with a citation, or from Sol's own reasoning declared as an assumption — never from an estimate the system does not have. A reverse DCF is the natural primary method here: rather than comparing price to a consensus it cannot see, Sol solves for what the price implies and judges that against guidance, filing history and its own thesis. Where guidance is absent, valuation proceeds on trailing figures and explicit scenario assumptions, and the card records the absence.
 
 Every forecast declares `forecastBasis`: reference quote type/value/time, currency, arithmetic or log-return convention, price-return or total-return treatment, corporate-action treatment, horizon and resolution calendar, conditional-on-entry-fill versus opportunity forecast, estimated round-trip costs deducted, probability of fill by expiry, and the no-fill/cash-drag outcome. Sol supplies scenario assumptions and probabilities; `_investorValuation.js` derives expected value, quantiles, and cost-adjusted return exactly once. Model-authored derived arithmetic is rejected rather than trusted. This makes a patient limit order comparable with cash, another opportunity, and a currently held position.
 
@@ -1937,7 +1958,7 @@ Each pull request must be independently deployable behind a feature flag, includ
 
 1. What common/sector-card length preserves selection quality across the current 304-company eligible snapshot and later roster sizes?
 2. How often does a company need full re-underwriting: 10, 20, or 30 trading days absent material events?
-3. Which point-in-time news/estimates/transcript vendor has adequate coverage, latency, corrections, rights, and cost?
+3. **[v2] Closed — no vendor.** Consensus estimates, transcripts and a commercial earnings calendar are not available to this operator and are not being bought. §5.6 sources the forward view from issuer guidance and earnings dates from issuer announcements, both through the existing extraction path. The open measurement is narrower: what fraction of the 304-name roster publishes usable guidance and announces its earnings date on a fetchable page, and how stale those get between filings.
 4. Does Sol high materially outperform medium reasoning for the application's frozen eval set and prospective decisions?
 5. Does one guarded sub-220k context or Sol-only balanced blocks plus global synthesis perform better on frozen coverage, sentinel, order-rotation, stability, latency, and cost evals? Ship the measured winner with automatic resumable fallback; never allow a cheaper-model prefilter.
 6. What research depth produces incremental decision quality before marginal tokens stop helping?
