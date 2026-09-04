@@ -92,7 +92,7 @@ The record reports 141/141 raw and bundled fixtures. This review could not indep
 
 **D-1 through D-9 are defects in the current plumbing.** Six of them sit below the strategy rather than inside it, so they survive the replacement of the decider: built on top of them the manager would be scored on outcomes it did not produce. All nine are remediated in Phase −1 (§19).
 
-**D-10, D-11 and D-12 are different in kind.** The current code is internally consistent; the architecture this document specifies collides with its runtime limits. They cannot be remediated in Phase −1 because the machinery they concern does not exist yet — they are binding design constraints on **Phase 1** (D-10) and **Phase 2** (D-11, D-12), and appear in those phases' exit criteria. D-12 is the compound consequence of the other two meeting §17.4's coverage gate.
+**D-10, D-11 and D-12 are different in kind.** The current code is internally consistent; the architecture this document specifies collides with its runtime behaviour and limits. They cannot be remediated in Phase −1 because the machinery they concern does not exist yet — they are binding design constraints on **Phase 1** (D-10) and **Phase 2** (D-11, D-12), and appear in those phases' exit criteria. D-12 is the compound consequence of the other two meeting §17.4's coverage gate.
 
 | ID | Defect | Evidence | In v1? | Severity |
 |---|---|---|---|---|
@@ -107,7 +107,7 @@ The record reports 141/141 raw and bundled fixtures. This review could not indep
 | **D-8b** | AI budget ceilings block the Manager Meeting silently, and that block routes into D-1 | `_investorOpenai.js:62-63` — `DAILY_USD_CEILING` $5, `CYCLE_CALL_CEILING` 12; exhaustion returns `cause:"evidence_pending"` at `:331` | no | Critical |
 | **D-9** | A live private key is tracked in the repository | `netlify/functions/secrets/gcpPrivateKey.txt` — git-tracked, mode 644, 1,734 bytes, begins `-----BEGIN PRIVATE KEY-----`; no `.gitignore` exists | §18 | Critical |
 | **D-10** | The Manager Meeting cannot hold a lease across its own invocations | `investorCycle-background.js:83` `WORKER_LEASE_TTL_MS = 16 min`, deliberately longer than Netlify's 15-minute background cap; `:3423` mints a fresh `leaseOwner` per invocation; `:3491` and `:3512` renew only on an exact `leaseOwner` match | **absent** | Critical |
-| **D-11** | Full-roster evidence refresh takes longer than the evidence stays fresh | `investorCycle-background.js:3216` caps `perSweep` at 8; `:3271` allows 110 s per company. 304 × 110 s ≈ **9.3 h** against `intelligenceMaxAgeHours` and `temporalMaxAgeHours` of **6** (`_investorStrategy.js:218,221`) | **absent** | Critical |
+| **D-11** | The evidence sweep runs on the wrong schedule for this design, and its cadence — not its timeouts — bounds a full pass | `investorCycle-background.js:3216` sets `perSweep` to 4 (max 8); `investorKick.js:179` sets `cycleSeconds` to 300. That is 48 companies/hour, so 304 names take **6.3 h** per pass at the default and **3.2 h** at `perSweep` 8, against a 6 h freshness window (`_investorStrategy.js:218,221`). The sweep also runs continuously through the day, giving ~3-4 full passes the target design never asks for | **absent** | Major |
 | **D-12** | D-10 and D-11 together produce sessions that activate no BUY at all | §6.3 "If coverage is still incomplete, no new BUY mandate from that run is activated"; §17.4 requires `completedCount === eligibleCount` **and** all critical freshness attestations | **absent** | Critical |
 
 ## 3. Target authority model
@@ -293,7 +293,7 @@ The card contains signals that a human manager would inspect, but no composite �
 
 | Time/trigger | Work | AI used | Scope | Result |
 |---|---|---|---|---|
-| Overnight | Fetch and normalize new filings, facts, news, events, prices | Luna only for new unstructured documents | Changed evidence across the eligible roster | Versioned fact deltas |
+| Overnight, **one pass**, timed to finish just before the 08:30 freeze **[v2]** | Fetch and normalize new filings, facts, news, events, prices. One full-roster sweep per night — not a rolling daytime rescan | Luna only for new unstructured documents | Changed evidence across the eligible roster | Versioned fact deltas |
 | Pre-market, holding target by 09:15 ET | One logical Manager Meeting | Sol high | Frozen eligible roster + managed positions + portfolio | Complete roster coverage, holding revisions, research questions and capital ordering |
 | Same meeting, when research is requested | Focused underwriting and final portfolio synthesis | Sol high with managed retrieval/calculation tools | New/material/stale names plus current holdings | Final BUY/WATCH/IGNORE/HOLD/REDUCE/SELL/ABSTAIN choices and complete portfolio-feasible mandates |
 | Market hours | Monitor/submit/reconcile active mandates and broker events | None | Active orders and holdings | Deterministic fills, OCO protection, audit events |
@@ -304,13 +304,20 @@ The card contains signals that a human manager would inspect, but no composite �
 
 Twenty trading days is a starting policy, not a discovered optimum. Earnings and other material events override it immediately. The application must measure whether 10, 20, or 30 days gives better decision quality per dollar before changing the policy.
 
-**[v2] D-11 — the cadence above is not currently reachable, by arithmetic.** This table requires a current card for every one of the 304 eligible names at the 08:30 ET freeze. The evidence sweep processes at most 8 companies per pass (`investorCycle-background.js:3216`, hard-capped by `Math.min(8, …)`) and allows up to 110 seconds per company (`:3271`). A full roster pass is therefore about **9.3 hours** of company-processing time, while `intelligenceMaxAgeHours` and `temporalMaxAgeHours` are both **6** (`_investorStrategy.js:218,221`). The first names swept expire before the last are fetched, so "every name is fresh at 08:30" is unreachable no matter when the sweep starts.
+**[v2] D-11 — the sweep must become one overnight pass, and its cadence is what bounds it.** The Overnight row above is a single full-roster refresh completing before the 08:30 ET freeze. The current sweep does something different: it runs continuously all day on a five-minute cycle (`investorKick.js:179`, `cycleSeconds: 300`) taking 4 companies at a time (`investorCycle-background.js:3216`), which is roughly three to four full passes per day. The target design asks for one.
 
-D-6's fix reduces the number of requests per company but not this: 110 seconds is a per-company *time* budget, not a request count. Before Phase 2 exits, these four numbers must be reconciled so that
+**The binding constraint is the cadence, not the per-company timeout.** The 110-second figure at `:3271` is a ceiling that only binds when a company's sources are slow — `pollCompany` iterates sources sequentially and checks the budget before each one, so a responsive company finishes well inside it. What sets the pass duration is 4 companies per 5 minutes = 48/hour:
 
-    rosterSize × perCompanySeconds ÷ concurrentSweeps ≤ freshnessWindowHours × 3600
+| `perSweep` | Rate | 304-name pass |
+|---|---:|---:|
+| 4 (current default) | 48/hour | **6.3 h** |
+| 8 (current maximum) | 96/hour | **3.2 h** |
 
-holds with the values actually configured. The document does not choose which term moves — roster size, per-company budget, sweep concurrency, or the freshness window are all operator decisions with different costs — but a plan that leaves the inequality false cannot deliver §6.3's coverage contract.
+**Required configuration.** The ingest sweep runs overnight only, at `perSweep` 8, scheduled so the pass *completes* immediately before the 08:30 freeze rather than starting at an arbitrary hour. A 3.2-hour pass beginning around 05:00 ET leaves the oldest card roughly 3.2 hours old at the freeze, inside the 6-hour window, and the newest minutes old. Daytime sweeps stop; intraday evidence arrives through the material-event route of §6.1 and the late-evidence queue below, not through a rolling full-roster rescan.
+
+Sanity check against the platform: 8 companies × 110 s worst case = 14.7 minutes, just inside Netlify's 15-minute background budget, so `perSweep` 8 is the largest value that still fits one invocation. That is what the 110-second ceiling was tuned for.
+
+Before Phase 2 exits, a measured overnight pass must complete inside the freshness window with the roster size actually configured. The per-company elapsed time is already recorded (`pollCompany` returns `elapsedMs`), so this is a measurement, not an estimate.
 
 The scheduler uses the NYSE calendar rather than fixed UTC closes. Recommended starting cutoffs are: freeze the initial evidence manifest at 08:30 ET; start the manager immediately; treat holding protection/revision as a 09:15 hard operational deadline; treat new-opportunity completion as a 09:20 soft deadline. A mandate not safely completed by then receives a later `validFrom`—possibly after the open or next session—rather than rushed reasoning. Between the frozen cutoff and the open, every new verified delta is appended to a late-evidence queue; a high-impact class pauses the affected entry immediately, and all deltas reach Sol at the next continuation/revision. Holding protection never expires merely because research is late.
 
@@ -1016,7 +1023,7 @@ Keep `investorKick` as the sole one-minute cron dispatcher, but replace its task
 
 | Task | Handler | Owner module | Due rule / behavior |
 |---|---|---|---|
-| `ingest` | `investorIngest-background.js` | evidence, fundamentals, dossier | Continuous bounded source queue; fetch/version/normalize and create deltas; no investment decision |
+| `ingest` | `investorIngest-background.js` | evidence, fundamentals, dossier | **[v2]** One overnight full-roster pass at `perSweep` 8, scheduled to complete immediately before the 08:30 ET freeze, then stops. Fetch/version/normalize and create deltas; no investment decision. Intraday evidence arrives through `event_revision`, not a rolling rescan. Replaces the current continuous five-minute `cycleSeconds` sweep (D-11) |
 | `premarket_manager` | `investorManager-background.js` | manager/jobs/OpenAI | Trading day after initial evidence cutoff; freeze manifests, cover full roster/holdings, manage async Sol response |
 | `focused_research` | `investorManager-background.js` | research/valuation/jobs | Continuation inside the manager run or event revision; checkpoint every bounded tool batch |
 | `portfolio_synthesis` | `investorManager-background.js` | manager/portfolio risk/OpenAI | After focused event research, compare against the current full decision/portfolio set; only this path may propose a new BUY |
@@ -1040,7 +1047,8 @@ Long OpenAI work is an async response polled by successive short manager jobs. O
 | Task class | Window (ET) | Rationale |
 |---|---|---|
 | `scan` (existing opportunity scan) | 09:45–15:30 | Unchanged. The existing comment is correct: scans are meaningful only after the opening auction and need time before the close. Behaviour stays bit-identical. |
-| `premarket_manager`, `ingest`, `focused_research` | 04:00–09:15 | Model and evidence work; no order is placed. |
+| `premarket_manager`, `focused_research` | 04:00–09:15 | Model work; no order is placed. |
+| `ingest` | overnight until the roster pass completes, ending at the 08:30 freeze | One pass per night (D-11). No daytime dispatch. |
 | `execute` | market hours plus extended per broker | Unchanged path. |
 | `postclose`, `archive` | after official close | Unchanged path. |
 
@@ -1789,7 +1797,7 @@ Each item is independently deployable and independently testable, and none requi
 
 **Files:** `_investorOpenai.js` Luna boundary, `_investorClaimVerifier.js`, `_investorEvidence.js`, `_investorFetch.js`, `_investorFundamentals.js`, `_investorDataProviders.js`, `_investorIntelligenceSources.js`, `_investorIntelligence.js`, `_investorHistory.js`, `_investorTemporal.js`, `_investorWorkset.js`, `_investorDossier.js`, `_investorEventRouter.js`, `investorIngest-background.js`, `scripts/investor/bootstrap-sec.js`.  
 **Work:** publish transparent canonical eligible/excluded snapshots; fetch global feeds once and fan out; stream SEC bulk content to object storage; ingest authoritative calendar and XBRL/benchmark/cash-rate/corporate-action facts; build cards/deltas; run Luna extraction and independent claim-verification recall/support checks with direct excerpts.  
-**[v2] Exit:** every frozen eligible and managed off-roster symbol has a reproducible card or explicit `INCOMPLETE`; no symbol starves; facts/manifests replay point-in-time; large content never exceeds Firestore limits; **and D-11 is closed — the configured roster size, per-company budget, sweep concurrency and freshness window satisfy the §6.1 inequality, demonstrated by a measured full-roster pass completing inside the freshness window rather than by assumption.** Until that measurement exists, §17.4's coverage gate is not switched on and no BUY path is enabled.
+**[v2] Exit:** every frozen eligible and managed off-roster symbol has a reproducible card or explicit `INCOMPLETE`; no symbol starves; facts/manifests replay point-in-time; large content never exceeds Firestore limits; **and D-11 is closed — the sweep runs as one overnight pass at `perSweep` 8, daytime rescans are off, and a measured pass completes inside the freshness window with the roster size actually configured (using the `elapsedMs` already recorded per company).** Until that measurement exists, §17.4's coverage gate is not switched on and no BUY path is enabled.
 
 ### Phase 3 — Sol Manager in observation mode
 
