@@ -16,6 +16,11 @@
 
 "use strict";
 
+/* invariant: the executor never loads the model gateway. Measured against
+   what THIS module's imports bring in (a host that already holds the
+   gateway, such as the attestation runner, is not the executor's doing);
+   the source-level dependency walk in the fixture set is the second lock. */
+const preloadedModules = new Set(Object.keys(require.cache));
 const A = require("./_investorAdmin");
 const AUTH = require("./_investorAuth");
 const M = require("./_investorMarket");
@@ -26,8 +31,7 @@ const { redact } = require("./_investorAuth");
 
 const FN_NAME = "investorExecution-background";
 const TASK = "execute";
-/* invariant: the executor never loads the model gateway */
-if (Object.keys(require.cache).some((k) => /_investorOpenai\.js$/.test(k))) throw new Error("executor must not load the model gateway");
+if (Object.keys(require.cache).some((k) => !preloadedModules.has(k) && /_investorOpenai\.js$/.test(k))) throw new Error("executor must not load the model gateway");
 
 async function controlDoc() { const s = await A.col(A.COL.control).doc("control").get(); return s.exists ? s.data() : {}; }
 

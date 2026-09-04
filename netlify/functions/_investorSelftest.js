@@ -3277,7 +3277,10 @@ function runFixtures() {
         const rows = [];
         for (const [k, d] of docs) {
           if (!k.startsWith(`${c}/`)) continue;
-          if (filters.every(([f, op, v]) => op === "==" ? d[f] === v : op === "in" ? v.includes(d[f]) : true)) rows.push(d);
+          const cmp = (a, b) => (typeof a === "string" || typeof b === "string" ? String(a).localeCompare(String(b)) : Number(a) - Number(b));
+          if (filters.every(([f, op, v]) => op === "==" ? d[f] === v : op === "in" ? v.includes(d[f]) : op === "!=" ? d[f] !== v
+            : op === ">=" ? d[f] !== undefined && cmp(d[f], v) >= 0 : op === ">" ? d[f] !== undefined && cmp(d[f], v) > 0
+            : op === "<=" ? d[f] !== undefined && cmp(d[f], v) <= 0 : op === "<" ? d[f] !== undefined && cmp(d[f], v) < 0 : true)) rows.push(d);
         }
         return { docs: rows.map((d) => ({ data: () => d })), forEach: (fn) => rows.forEach((d) => fn({ data: () => d })) };
       },
@@ -4626,6 +4629,8 @@ function runFixtures() {
     const src = fs.readFileSync(require.resolve("./investorExecution-background.js"), "utf8") + fs.readFileSync(require.resolve("./_investorExecution.js"), "utf8") + fs.readFileSync(require.resolve("./_investorBroker.js"), "utf8");
     if (/require\("\.\/_investorOpenai"\)/.test(src)) throw new Error("executor requires the model gateway");
     if (!/executor must not load the model gateway/.test(src)) throw new Error("load-time guard missing");
+    const walk = eagerGraphReaches("./investorExecution-background.js", /_investorOpenai\.js$/);
+    if (walk) throw new Error(`executor reaches the gateway eagerly via ${walk.join(" > ")}`);
     const W = stagingWorld();
     const AAA = W.proposal("AAA");
     const staged = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [AAA], verifiedProposalClaims: await W.verify([AAA]), activationSnapshot: W.snapshot() });
@@ -4656,6 +4661,278 @@ function runFixtures() {
     try { await live.getAccountSnapshot("paper-1"); } catch (e) { code = e.code; }
     if (code !== "LIVE_ADAPTER_DISABLED") throw new Error("live adapter reachable without the flag");
     if (B.adapterFor({ control: {}, env: {}, admin: W.fake }).adapter !== "paper") throw new Error("default adapter is not paper");
+    return true;
+  }));
+
+
+  /* ═══ GROUP 7 — LEARNING, EVALS, ALERTS, POST-CLOSE, ARCHIVE (blueprint §16, §12.1; §21 commit 14) ═══ */
+
+  /* Walk the EAGER require graph (top-level `const X = require("./…")` lines only —
+     a lazy require inside a function is a runtime choice the caller controls) from
+     a module and return the path to the first file matching `needle`, or null. */
+  function eagerGraphReaches(entry, needle) {
+    const fs = require("fs"), path = require("path");
+    const edges = (file) => { let src = ""; try { src = fs.readFileSync(file, "utf8"); } catch { return []; }
+      const out = []; for (const m of src.matchAll(/^(?:const|let|var)\s+[^=\n]+=\s*require\(\s*["'](\.\/[^"']+)["']\s*\)/gm)) out.push(m[1]); return out; };
+    const start = require.resolve(entry);
+    const seen = new Map([[start, [path.basename(start)]]]);
+    const stack = [start];
+    while (stack.length) {
+      const file = stack.pop();
+      for (const d of edges(file)) {
+        let r; try { r = require.resolve(path.resolve(path.dirname(file), d)); } catch { continue; }
+        if (seen.has(r)) continue;
+        seen.set(r, [...seen.get(file), path.basename(r)]);
+        if (needle.test(r)) return seen.get(r);
+        stack.push(r);
+      }
+    }
+    return null;
+  }
+
+  cases.push(fixture("non_model_handlers_never_reach_the_gateway_through_eager_imports", () => {
+    const needle = /_investorOpenai\.js$/;
+    for (const h of ["./investorExecution-background.js", "./investorPostclose-background.js", "./investorArchive-background.js"]) {
+      const hit = eagerGraphReaches(h, needle);
+      if (hit) throw new Error(`${h} reaches the gateway: ${hit.join(" > ")}`);
+    }
+    /* the walker itself sees edges: the ingest handler (Luna extraction) legitimately imports the gateway */
+    if (!eagerGraphReaches("./investorIngest-background.js", needle)) throw new Error("the walker must find the ingest handler's gateway import");
+    if (!eagerGraphReaches("./investorExecution-background.js", /_investorAdmin\.js$/)) throw new Error("the walker must follow the executor's own imports");
+    return true;
+  }));
+
+  /* A daily series of `n` sessions after `startDate`, with closes stepping by `stepUsd`. */
+  function dailySeries({ startDate = "2026-09-04", n = 70, startUsd = 100, stepUsd = 1, spread = 0.5 } = {}) {
+    const out = [];
+    let t = Date.parse(`${startDate}T00:00:00Z`), px = startUsd;
+    for (let i = 0; i < n; i += 1) {
+      const d = new Date(t);
+      if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) { out.push({ date: d.toISOString().slice(0, 10), o: px, h: px + spread, l: px - spread, c: px, v: 1000000 }); px += stepUsd; }
+      t += 86400000;
+    }
+    return out;
+  }
+
+  cases.push(fixture("forecast_record_freezes_the_declared_basis_and_resolves_by_the_point_in_time_clock", async () => {
+    const L = require("./_investorLearning");
+    const cutoffMs = Date.UTC(2026, 8, 4, 13);
+    const proposal = { symbol: "AAA", decision: "BUY", action: { entry: { limitPriceMicros: "100000000" }, protection: { takeProfitPriceMicros: "115000000", lossBoundaryPriceMicros: "94000000" } },
+      forecast: { horizonTradingDays: 20, basis: { returnConvention: "ARITHMETIC_PRICE_RETURN", corporateActionPolicy: "SPLIT_ADJUSTED_ONLY", conditionalOn: "OPPORTUNITY_FROM_REFERENCE_PRICE", estimatedRoundTripCostMicrosPerShare: "40000" },
+        fillProbabilityByExpiryPpm: "700000", noFillOutcome: "NO_TRADE", outcomeBuckets: [{ label: "loss", probabilityPpm: "300000", returnBps: "-600" }, { label: "gain", probabilityPpm: "700000", returnBps: "1200" }], uncertaintyLevel: "MEDIUM" },
+      invalidators: [{ predicateType: "guidance_cut", consequence: "EXIT" }] };
+    const rec = L.outcomeRecordFor({ managerRunId: "run_1", tradingDate: "2026-09-04", decision: { symbol: "AAA", decision: "BUY", capitalRank: 1, reasonCode: null }, proposal, cutoffMs, benchmarkCloseMicros: "500000000", versions: { policyHash: "p1" } });
+    if (rec.referencePriceMicros !== "100000000" || rec.referencePriceType !== "BUY_LIMIT") throw new Error("BUY reference must be the entry limit");
+    if (rec.status !== "PENDING" || !rec.horizons.includes(20) || rec.returnConvention !== "ARITHMETIC_PRICE_RETURN") throw new Error("basis not frozen");
+    /* a WATCH record references the cutoff close and has no target */
+    const watch = L.outcomeRecordFor({ managerRunId: "run_1", tradingDate: "2026-09-04", decision: { symbol: "BBB", decision: "WATCH" }, referenceCloseMicros: "50000000", cutoffMs });
+    if (watch.referencePriceType !== "CUTOFF_CLOSE" || watch.targetPriceMicros !== null) throw new Error("WATCH reference must be the cutoff close");
+    /* resolution: bars strictly after the reference; 1d/5d/20d resolved once enough sessions exist, 60d still pending */
+    const series = dailySeries({ startDate: "2026-09-04", n: 45, startUsd: 100, stepUsd: 1 });
+    const bench = dailySeries({ startDate: "2026-09-04", n: 45, startUsd: 500, stepUsd: 0.5 });
+    const r = L.resolveAgainstBars({ record: rec, series, benchmarkSeries: bench });
+    if (!r.resolved.h1 || !r.resolved.h5 || !r.resolved.h20 || r.resolved.h60) throw new Error(`horizons ${JSON.stringify(Object.keys(r.resolved))}`);
+    if (r.complete) throw new Error("60d horizon cannot be complete after 45 calendar days");
+    /* first bar after 2026-09-04 is 2026-09-07 (the 5th and 6th are a weekend) at 101 → +100 bps */
+    if (r.resolved.h1.returnBps !== "100") throw new Error(`h1 return ${r.resolved.h1.returnBps}`);
+    if (!r.excursions || !r.excursions.targetTouchedOn) throw new Error("target 115 touched by a rising series must be recorded");
+    if (r.excursions.boundaryTouchedOn) throw new Error("boundary never touched by a rising series");
+    /* a bar dated on or before the reference day never counts */
+    if (L.barsAfter(series, cutoffMs).some((b) => b.date <= "2026-09-04")) throw new Error("bars on the reference day leaked");
+    return true;
+  }));
+
+  cases.push(fixture("counterfactual_and_anti_anchoring_rows_use_the_same_clock_and_costs", async () => {
+    const L = require("./_investorLearning");
+    const row = L.counterfactualRow({ managerRunId: "run_1", tradingDate: "2026-09-04", horizon: 20,
+      selected: [{ symbol: "AAA", returnBps: "300" }, { symbol: "BBB", returnBps: "-100" }], unselected: [{ symbol: "CCC", returnBps: "500" }, { symbol: "DDD", returnBps: "100" }, { symbol: "EEE", returnBps: "0" }], benchmarkReturnBps: "50" });
+    if (!row.counterfactualId || row.horizonTradingDays !== 20 || row.selectedCount !== 2 || row.unselectedCount !== 3) throw new Error("row identity");
+    if (row.selectedMeanBps !== "100" || row.unselectedMeanBps !== "200") throw new Error(`means ${row.selectedMeanBps}/${row.unselectedMeanBps}`);
+    if (row.selectedMinusUnselectedBps !== "-100" || row.selectedMinusBenchmarkBps !== "50") throw new Error(`lift ${row.selectedMinusUnselectedBps}/${row.selectedMinusBenchmarkBps}`);
+    const sample = L.antiAnchoringSample({ symbols: ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"], tradingDate: "2026-09-04", heldSymbols: ["A"], ppm: 300000 });
+    const again = L.antiAnchoringSample({ symbols: ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"], tradingDate: "2026-09-04", heldSymbols: ["A"], ppm: 300000 });
+    if (JSON.stringify(sample) !== JSON.stringify(again)) throw new Error("the sample must be deterministic per date");
+    if (sample.includes("A")) throw new Error("held names are never re-reviewed blind");
+    const rec = L.reconcileAntiAnchoring({ prior: [{ symbol: "B", decision: "WATCH" }, { symbol: "C", decision: "BUY" }], independent: [{ symbol: "B", decision: "WATCH" }, { symbol: "C", decision: "ABSTAIN" }] });
+    if (rec.sampled !== 2 || rec.agreementPpm !== "500000" || rec.disagreements.length !== 1 || rec.disagreements[0] !== "C") throw new Error(`reconcile ${JSON.stringify(rec)}`);
+    return true;
+  }));
+
+  cases.push(fixture("freeze_is_idempotent_and_resolve_due_writes_forecasts_and_counterfactuals", async () => {
+    const L = require("./_investorLearning");
+    const fake = fakeAdmin();
+    const cutoffMs = Date.UTC(2026, 8, 4, 13);
+    const decisions = [{ symbol: "AAA", decision: "BUY", capitalRank: 1 }, { symbol: "BBB", decision: "WATCH" }, { symbol: "CCC", decision: "WATCH" }];
+    const proposalsBySymbol = { AAA: { symbol: "AAA", decision: "BUY", action: { entry: { limitPriceMicros: "100000000" }, protection: { takeProfitPriceMicros: "120000000", lossBoundaryPriceMicros: "90000000" } } } };
+    const closes = { AAA: "100000000", BBB: "100000000", CCC: "100000000" };
+    const a = await L.freezeDecisionOutcomeRecords({ managerRunId: "run_1", tradingDate: "2026-09-04", cutoffMs, decisions, proposalsBySymbol, closeBySymbol: closes, benchmarkCloseMicros: "500000000", admin: fake });
+    const b = await L.freezeDecisionOutcomeRecords({ managerRunId: "run_1", tradingDate: "2026-09-04", cutoffMs, decisions, proposalsBySymbol, closeBySymbol: closes, benchmarkCloseMicros: "500000000", admin: fake });
+    if (a.written !== 3 || b.written !== 0 || b.skipped !== 3) throw new Error(`freeze ${JSON.stringify([a, b])}`);
+    const up = dailySeries({ startDate: "2026-09-04", n: 12, startUsd: 100, stepUsd: 1 }), down = dailySeries({ startDate: "2026-09-04", n: 12, startUsd: 100, stepUsd: -1 });
+    const series = { AAA: up, BBB: down, CCC: up, SPY: dailySeries({ startDate: "2026-09-04", n: 12, startUsd: 500, stepUsd: 0 }) };
+    const out = await L.resolveDue({ admin: fake, seriesReader: async (s) => series[s] || [], benchmarkReader: async (s) => series[s] || [], nowMs: cutoffMs + 12 * 86400000 });
+    if (out.examined !== 3 || out.advanced !== 3 || out.completed !== 0) throw new Error(`resolve ${JSON.stringify(out)}`);
+    const fc = [...fake.docs.entries()].filter(([k]) => k.startsWith(`${fake.COL.forecasts}/`)).map(([, v]) => v);
+    if (fc.some((f) => f.status !== "PENDING" || !f.resolved.h5)) throw new Error("h5 must be resolved and the record still pending");
+    const cf = [...fake.docs.entries()].filter(([k]) => k.startsWith(`${fake.COL.counterfactuals}/`)).map(([, v]) => v);
+    const h5 = cf.find((c) => c.horizonTradingDays === 5);
+    if (!h5 || h5.selectedCount !== 1 || h5.unselectedCount !== 2) throw new Error(`counterfactual ${JSON.stringify(cf.map((c) => [c.horizonTradingDays, c.selectedCount, c.unselectedCount]))}`);
+    if (BigInt(h5.selectedMinusUnselectedBps) <= 0n) throw new Error("the rising selected name must show positive lift against a mixed unselected set");
+    /* a second pass with the same bars advances nothing */
+    const again = await L.resolveDue({ admin: fake, seriesReader: async (s) => series[s] || [], benchmarkReader: async (s) => series[s] || [], nowMs: cutoffMs + 12 * 86400000 });
+    if (again.advanced !== 0) throw new Error("no new bars, no advance");
+    return true;
+  }));
+
+  cases.push(fixture("evals_grade_structure_not_price_and_promotion_needs_prospective_evidence_and_approval", async () => {
+    const E = require("./_investorEvals");
+    const cases2 = E.injectionCases();
+    if (cases2.length < 2 || cases2.some((c) => c.kind !== "prompt_injection")) throw new Error("injection cases");
+    const run = await E.runEvalSet({ cases: cases2, runner: async (c) => (c.tags.includes("tools") ? { ok: true, decision: "WATCH", toolCalls: [{ name: "submitOrder" }] } : { ok: true, decision: "BUY" }), label: "t" });
+    if (run.promote !== false || run.passed !== 0 || run.cases !== 2) throw new Error(`eval run ${JSON.stringify({ promote: run.promote, passed: run.passed })}`);
+    if (!run.results[0].problems.includes("forbidden_decision:BUY") || !run.results[1].problems.includes("disallowed_tool_call")) throw new Error(`problems ${JSON.stringify(run.results.map((r) => r.problems))}`);
+    const st = E.stabilityScore({ runs: [{ decisionsBySymbol: { A: "BUY", B: "WATCH" } }, { decisionsBySymbol: { A: "BUY", B: "ABSTAIN" } }] });
+    if (st.stablePpm !== "500000" || st.unstable[0].symbol !== "B") throw new Error(`stability ${JSON.stringify(st)}`);
+    const pb = E.positionalBias({ rotations: [{ decisionsBySymbol: { A: "BUY", S: "WATCH" } }, { decisionsBySymbol: { A: "BUY", S: "BUY" } }], sentinels: [{ symbol: "S", expected: "WATCH" }] });
+    if (!pb.biased || !pb.sentinelDrift[0].drift) throw new Error("a sentinel that flips with roster order is positional bias");
+    if (!E.perturbationResponse({ baseline: { decision: "BUY" }, perturbed: { decision: "WATCH" } }).pass) throw new Error("perturbation");
+    const gate0 = E.promotionGate({ challenger: { evalPassPpm: 990000, stablePpm: 990000 }, incumbent: { stablePpm: 980000 }, prospective: { sessions: 10 }, approval: null });
+    if (gate0.promote || !gate0.reasons.includes("prospective_sessions_below_60") || !gate0.reasons.includes("explicit_version_approval_missing")) throw new Error(`gate0 ${JSON.stringify(gate0.reasons)}`);
+    const gate1 = E.promotionGate({ challenger: { evalPassPpm: 990000, stablePpm: 990000 }, incumbent: { stablePpm: 980000 }, prospective: { sessions: 70, challengerMinusIncumbentNetBps: "5", downsideSafetyPass: true }, approval: { approved: true, by: "operator", versionId: "v2" } });
+    if (!gate1.promote) throw new Error(`gate1 ${JSON.stringify(gate1.reasons)}`);
+    const tl = E.trialLedgerSummary({ trials: [{ id: "a", inSampleScore: 3, outOfSampleScore: 1 }, { id: "b", inSampleScore: 2, outOfSampleScore: 3 }, { id: "c", inSampleScore: 1, outOfSampleScore: 2 }] });
+    if (tl.trials !== 3 || tl.bestInSample !== "a" || tl.bestOutOfSample !== "b" || tl.note.indexOf("never a trade gate") < 0) throw new Error(`trials ${JSON.stringify(tl)}`);
+    let code = null;
+    try { E.buildEvalCase({ kind: "nope", input: {}, expected: {} }); } catch (e) { code = e.code; }
+    if (code !== "EVAL_KIND_UNKNOWN") throw new Error("unknown kinds must be rejected");
+    return true;
+  }));
+
+  cases.push(fixture("alerts_derive_from_conditions_with_stable_ids_and_resolve_only_when_the_condition_clears", async () => {
+    const AL = require("./_investorAlerts");
+    const fake = fakeAdmin();
+    const nowMs = Date.UTC(2026, 8, 4, 21);
+    const control = { buyState: "FROZEN", freezeReason: "operator", executorState: "PAUSED_SAFETY", executorPauseReason: "LEDGER_CONSERVATION_FAILED",
+      lastManagerRun: { managerRunId: "run_1", status: "complete", noBuyReasons: [{ code: "COVERAGE_INCOMPLETE", missing: ["ZZZ"], completedCount: 303, eligibleCount: 304 }], maintenance: { deadlineMissed: true, actionRequired: [{ symbol: "AAA", reason: "no_mandate" }] } } };
+    const portfolio = { positions: [{ symbol: "AAA", quantityUnits: "10", lossBoundaryPriceMicros: null, protectionState: "PROTECTION_PENDING" }, { symbol: "BBB", quantityUnits: "5", lossBoundaryPriceMicros: "1", protectionState: "PROTECTION_PENDING" }], activeMandates: [{ symbol: "AAA", status: "ACTION_REQUIRED" }] };
+    const derived = AL.deriveConditions({ control, portfolio, nowMs });
+    const ids = derived.map((c) => c.conditionId);
+    for (const want of ["coverage_incomplete:run_1", "manager_missed_deadline:run_1", "action_required:AAA", "buys_frozen", "ledger_conservation_failed", "unprotected_position:AAA", "protection_pending:BBB"]) if (!ids.includes(want)) throw new Error(`missing ${want} in ${ids.join(",")}`);
+    if (new Set(ids).size !== ids.length) throw new Error("condition ids must be unique per derivation");
+    if (derived.some((c) => !["info", "warning", "critical"].includes(c.severity) || !c.action)) throw new Error("every alert carries a severity and an action");
+    const first = await AL.upsertAlerts({ admin: fake, accountId: "paper-1", derived, nowMs });
+    if (first.raised !== derived.length || first.resolved !== 0) throw new Error(`first ${JSON.stringify(first)}`);
+    const ack = await AL.acknowledge({ admin: fake, conditionId: "buys_frozen", by: "operator", nowMs: nowMs + 1000 });
+    if (!ack.acknowledged || !ack.stillActive) throw new Error("acknowledgement must not resolve");
+    /* the same conditions again: nothing new, nothing resolved, occurrences grow */
+    const second = await AL.upsertAlerts({ admin: fake, accountId: "paper-1", derived, nowMs: nowMs + 60000 });
+    if (second.raised !== 0 || second.kept !== derived.length || second.resolved !== 0) throw new Error(`second ${JSON.stringify(second)}`);
+    const frozen = fake.docs.get(`${fake.COL.alerts}/buys_frozen`);
+    if (frozen.occurrences !== 2 || frozen.active !== true || frozen.acknowledgedBy !== "operator") throw new Error(`doc ${JSON.stringify(frozen)}`);
+    /* the freeze clears: only that alert resolves, by condition_cleared */
+    const cleared = AL.deriveConditions({ control: { ...control, buyState: "ACTIVE" }, portfolio, nowMs: nowMs + 120000 });
+    const third = await AL.upsertAlerts({ admin: fake, accountId: "paper-1", derived: cleared, nowMs: nowMs + 120000 });
+    if (third.resolved !== 1 || fake.docs.get(`${fake.COL.alerts}/buys_frozen`).active !== false || fake.docs.get(`${fake.COL.alerts}/buys_frozen`).resolvedBy !== "condition_cleared") throw new Error(`third ${JSON.stringify(third)}`);
+    const active = await AL.listActive({ admin: fake, accountId: "paper-1" });
+    if (active.length !== derived.length - 1 || active[0].severity !== "critical") throw new Error("active list sorted critical first");
+    return true;
+  }));
+
+  cases.push(fixture("kpi_definitions_are_versioned_and_the_self_check_passes", async () => {
+    const K = require("./_investorKpi");
+    const r = K.selfCheck();
+    if (!r || r.pass !== true) throw new Error(`kpi selfCheck ${JSON.stringify(r).slice(0, 400)}`);
+    if (!K.KPI_DEFINITIONS || Object.keys(K.KPI_DEFINITIONS).length < 12) throw new Error("KPI registry too small");
+    const row = K.dailyAggregate({ date: "2026-09-04", accountId: "paper-1", inputs: { nowMs: 1 } });
+    if (!row || !row.kpiVersion || !Array.isArray(row.missing)) throw new Error("dailyAggregate must report what it could not compute");
+    return true;
+  }));
+
+  cases.push(fixture("postclose_marks_records_nav_freezes_decisions_resolves_and_derives_alerts_without_a_model", async () => {
+    const PC = require("./investorPostclose-background");
+    if (Object.keys(require.cache).some((k) => /_investorOpenai\.js$/.test(k)) && !PC.runPostclose) throw new Error("gateway loaded");
+    const fake = fakeAdmin();
+    const tradingDate = "2026-09-04", nowMs = Date.UTC(2026, 8, 4, 21, 30);
+    fake.docs.set(`${fake.COL.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 5000000, reserved: 0 }, balanceRevision: 3, startingNavCents: 6000000 });
+    fake.docs.set(`${fake.COL.positions}/paper-1_AAA`, { accountId: "paper-1", symbol: "AAA", open: true, qty: 100, quantityUnits: "100", entryPriceUsd: 95, costBasisCents: 950000, lastMarkUsd: 97, lossBoundaryPriceMicros: "90000000", protectionState: "PROTECTED_RTH", engineVersion: "manager" });
+    fake.docs.set(`${fake.COL.control}/control`, { accountId: "paper-1", engineMode: "manager", buyState: "ACTIVE",
+      lastManagerRun: { managerRunId: "run_1", status: "complete", tradingDate, cutoffMs: Date.UTC(2026, 8, 4, 13), policyHash: "p", universeHash: "u", universeVersion: "v", contextManifestHash: "c",
+        coverage: { ok: true, completedCount: 304, eligibleCount: 304, duplicates: [] }, research: { completed: 12 }, elapsedMs: 1500000, activation: { status: "COMMITTED", mandateVersionIds: ["mv_1"] } } });
+    const SC = require("./_investorStorageCodec");
+    for (const [sym, decision] of [["AAA", "HOLD"], ["BBB", "BUY"], ["CCC", "WATCH"]]) fake.docs.set(`${fake.COL.managerDecisions}/run_1_${sym}`, SC.encode({ schemaVersion: "manager-decision.v1", managerRunId: "run_1", symbol: sym, decision, reasonCode: null, capitalRank: decision === "BUY" ? 1 : null, tradingDate, accountId: "paper-1" }));
+    fake.docs.set(`${fake.COL.portfolioPlans}/plan_1`, { planId: "plan_1", managerRunId: "run_1", status: "COMMITTED", mandateVersionIds: ["mv_1"], proposal: { mandates: [{ symbol: "BBB", decision: "BUY", action: { entry: { limitPriceMicros: "50000000" }, protection: { takeProfitPriceMicros: "60000000", lossBoundaryPriceMicros: "46000000" } } }] } });
+    fake.docs.set(`${fake.COL.activationEnvelopes}/mv_1`, { symbol: "BBB", mandateVersionId: "mv_1", authorizedQuantityUnits: "10", expectedTerminalPriceMicros: "58000000" });
+    const series = { AAA: dailySeries({ startDate: "2026-08-20", n: 16, startUsd: 90, stepUsd: 1 }), BBB: dailySeries({ startDate: "2026-08-20", n: 16, startUsd: 45, stepUsd: 0.5 }), CCC: dailySeries({ startDate: "2026-08-20", n: 16, startUsd: 20, stepUsd: 0 }), SPY: dailySeries({ startDate: "2026-08-20", n: 16, startUsd: 500, stepUsd: 1 }) };
+    const reader = async (s) => ({ series: series[s] || [] });
+    const aaaClose = PC.finalBar(series.AAA, tradingDate);
+    if (!aaaClose || aaaClose.date !== tradingDate || !aaaClose.exact) throw new Error(`final bar ${JSON.stringify(aaaClose)}`);
+    const out = await PC.runPostclose({ accountId: "paper-1", tradingDate, admin: fake, seriesReader: reader, nowMs });
+    if (!out.ok) throw new Error(`postclose errors ${JSON.stringify(out.errors)}`);
+    if (out.steps.marks.marked !== 1 || fake.docs.get(`${fake.COL.positions}/paper-1_AAA`).lastMarkUsd !== aaaClose.c) throw new Error(`marks ${JSON.stringify(out.steps.marks)}`);
+    const nav = fake.docs.get(`${fake.COL.navMarks}/paper-1_${tradingDate}`);
+    if (!nav || !nav.finalMark || nav.finalMark.source !== "postclose" || BigInt(nav.finalMark.navMinor) !== 5000000n + BigInt(Math.round(aaaClose.c * 100)) * 100n) throw new Error(`nav ${JSON.stringify(nav)}`);
+    if (out.steps.freeze.written !== 3 || out.steps.freeze.proposals !== 1 || out.steps.freeze.envelopes !== 1) throw new Error(`freeze ${JSON.stringify(out.steps.freeze)}`);
+    const bbb = fake.docs.get(`${fake.COL.forecasts}/${require("./_investorLearning").forecastIdFor({ managerRunId: "run_1", symbol: "BBB" })}`);
+    if (!bbb || bbb.referencePriceMicros !== "50000000" || bbb.referencePriceType !== "BUY_LIMIT" || bbb.benchmark.referenceCloseMicros == null) throw new Error(`BBB record ${JSON.stringify(bbb).slice(0, 300)}`);
+    if (out.steps.resolve.examined !== 3 || out.steps.resolve.advanced !== 0) throw new Error(`nothing after the reference day can resolve on the same evening: ${JSON.stringify(out.steps.resolve)}`);
+    const kpi = fake.docs.get(`${fake.COL.kpiDaily}/paper-1_${tradingDate}`);
+    if (!kpi || !kpi.kpis || kpi.errors.length) throw new Error(`kpi row ${JSON.stringify(kpi && kpi.errors)}`);
+    if (!kpi.kpis.universeCoverage || kpi.kpis.universeCoverage.ppm !== "1000000") throw new Error(`coverage kpi ${JSON.stringify(kpi.kpis.universeCoverage)}`);
+    if (!kpi.kpis.investmentReturn || kpi.kpis.investmentReturn.observations !== 0 || kpi.kpis.investmentReturn.timeWeightedReturnBps !== null || kpi.kpis.investmentReturn.smallSampleWarning !== true) throw new Error(`a single NAV mark yields no return and must warn, not pretend: ${JSON.stringify(kpi.kpis.investmentReturn)}`);
+    if (!kpi.kpis.unitEconomics || kpi.kpis.unitEconomics.costMinor !== "0" || !kpi.kpis.completionLatency || !kpi.kpis.integrity || kpi.kpis.integrity.pass !== true) throw new Error(`unit/latency/integrity ${JSON.stringify([kpi.kpis.unitEconomics, kpi.kpis.completionLatency, kpi.kpis.integrity])}`);
+    if (!kpi.missing.includes("triggerCapture") || !kpi.missing.includes("calibration")) throw new Error("KPIs without inputs must be listed as missing, never fabricated");
+    if (out.steps.alerts.active < 0 || !Array.isArray(out.steps.alerts.conditions)) throw new Error("alerts step");
+    const ctrl = fake.docs.get(`${fake.COL.control}/control`);
+    if (ctrl.lastPostcloseDate !== tradingDate || !ctrl.lastPostclose || ctrl.lastPostclose.ok !== true) throw new Error("control must record completion");
+    /* the same evening again is idempotent for the frozen records */
+    const again = await PC.runPostclose({ accountId: "paper-1", tradingDate, admin: fake, seriesReader: reader, nowMs: nowMs + 1000 });
+    if (!again.ok || again.steps.freeze.written !== 0 || again.steps.freeze.skipped !== 3) throw new Error(`rerun ${JSON.stringify(again.steps.freeze)}`);
+    /* a failing step withholds the completion date */
+    const broken = fakeAdmin();
+    broken.docs.set(`${broken.COL.control}/control`, { accountId: "paper-1", engineMode: "manager" });
+    broken.docs.set(`${broken.COL.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 1 } });
+    const bad = await PC.runPostclose({ accountId: "paper-1", tradingDate, admin: broken, seriesReader: async () => { throw new Error("feed down"); }, nowMs, kpiInputs: null });
+    if (bad.steps.freeze.skipped !== true || bad.steps.freeze.reason !== "no_manager_run") throw new Error(`no run → skip ${JSON.stringify(bad.steps.freeze)}`);
+    return true;
+  }));
+
+  cases.push(fixture("archive_exports_the_day_bounded_writes_a_retention_manifest_and_deletes_nothing", async () => {
+    const AR = require("./investorArchive-background");
+    const CS = require("./_investorContentStore");
+    const fake = fakeAdmin();
+    const tradingDate = "2026-09-04";
+    const { startMs, endMs } = AR.dayWindowMs(tradingDate);
+    if (!(startMs < endMs) || endMs - startMs !== 86400000) throw new Error("day window");
+    fake.docs.set(`${fake.COL.control}/control`, { accountId: "paper-1", engineMode: "manager" });
+    fake.docs.set(`${fake.COL.brokerEvents}/be_1`, { brokerEventId: "be_1", accountId: "paper-1", atMs: startMs + 3600000, kind: "ACK" });
+    fake.docs.set(`${fake.COL.brokerEvents}/be_2`, { brokerEventId: "be_2", accountId: "paper-1", atMs: startMs - 1, kind: "ACK" });          /* yesterday */
+    fake.docs.set(`${fake.COL.brokerEvents}/be_3`, { brokerEventId: "be_3", accountId: "other", atMs: startMs + 5, kind: "ACK" });           /* another account */
+    fake.docs.set(`${fake.COL.fills}/f_1`, { fillId: "f_1", accountId: "paper-1", atMs: startMs + 7200000, symbol: "AAA" });
+    fake.docs.set(`${fake.COL.mandateEvents}/mv_1_0001`, { mandateVersionId: "mv_1", accountId: "paper-1", atMs: startMs + 100, sequence: 1 });
+    fake.docs.set(`${fake.COL.jobs}/j_1`, { jobId: "j_1", finishedAtMs: startMs + 200, status: "complete" });
+    fake.docs.set(`${fake.COL.modelRequests}/r_1`, { requestId: "r_1", updatedAtMs: startMs + 300 });
+    fake.docs.set(`${fake.COL.evidenceDeltas}/d_1`, { symbol: "AAA", firstSeenAtMs: startMs + 400 });
+    const ad = CS.memoryAdapter(), st = CS.memoryManifestStore();
+    const store = { assertAvailable: () => true, putJson: (kind, value, opts) => CS.putJson(kind, value, { ...opts, adapter: ad, store: st }) };
+    const before = fake.docs.size;
+    const run = await AR.runArchive({ accountId: "paper-1", tradingDate, admin: fake, contentStore: store, nowMs: endMs + 3600000 });
+    if (run.status !== "complete") throw new Error(`archive ${JSON.stringify(run.errors)}`);
+    if (run.counts.brokerEvents.exported !== 1 || run.counts.fills.exported !== 1 || run.counts.mandateEvents.exported !== 1 || run.counts.jobs.exported !== 1 || run.counts.modelRequests.exported !== 1 || run.counts.evidenceDeltas.exported !== 1 || run.counts.executionOutbox.exported !== 0) throw new Error(`counts ${JSON.stringify(run.counts)}`);
+    if (!run.export.exported || !run.export.contentHash || run.export.encoding !== "gzip" || run.export.records !== 6) throw new Error(`export ${JSON.stringify(run.export)}`);
+    if (run.deleted !== 0 || fake.docs.size !== before + 1) throw new Error("the archive must add its run record (the control doc already exists) and delete nothing");
+    if (!run.retention.fills || run.retention.fills.class !== "audit_chain" || run.retention.fills.purgeEligibleFrom !== null || run.retention.fills.purgeAllowedAfterExport) throw new Error("fills are audit chain: never purgeable");
+    if (run.retention.brokerEvents.purgeEligibleFrom !== "2033-09-02" || !run.retention.brokerEvents.exportedInBundle) throw new Error(`retention ${JSON.stringify(run.retention.brokerEvents)}`);
+    const stored = await CS.getJson(run.export.contentHash, { adapter: ad, store: st });
+    const bundle = stored && stored.json ? stored.json : stored;
+    if (!bundle || bundle.tradingDate !== tradingDate || bundle.collections.brokerEvents.length !== 1 || bundle.collections.brokerEvents[0].brokerEventId !== "be_1") throw new Error("stored bundle must round-trip through the content hash");
+    const ctrl = fake.docs.get(`${fake.COL.control}/control`);
+    if (ctrl.lastArchiveDate !== tradingDate || !ctrl.lastArchiveSummary || ctrl.lastArchiveSummary.status !== "complete") throw new Error("control must record the archive");
+    /* the same day again: the bundle already exists, the run is idempotent */
+    const again = await AR.runArchive({ accountId: "paper-1", tradingDate, admin: fake, contentStore: store, nowMs: endMs + 7200000 });
+    if (again.export.contentHash !== run.export.contentHash) throw new Error("same day, same bytes, same hash");
+    /* a content store that is not configured fails closed without touching the data */
+    const unavailable = await AR.runArchive({ accountId: "paper-1", tradingDate, admin: fake, contentStore: { assertAvailable: () => { throw Object.assign(new Error("no bucket"), { code: "CONTENT_STORE_UNAVAILABLE" }); }, putJson: () => { throw new Error("must not be called"); } }, nowMs: endMs + 9000000 });
+    if (unavailable.export.exported !== false || unavailable.export.reason !== "CONTENT_STORE_UNAVAILABLE") throw new Error(`unavailable ${JSON.stringify(unavailable.export)}`);
     return true;
   }));
 
