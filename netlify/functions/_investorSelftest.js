@@ -3090,6 +3090,106 @@ function runFixtures() {
     return true;
   }));
 
+
+  /* ═══ GROUP 2 — PRIMITIVES (blueprint §19.1 group 2; §21 commit 4) ═══ */
+
+  /* §3 fixed routing, §7.1 contract, §9.2/9.3 prices, §15.1 mandate. */
+  cases.push(fixture("fund_manager_policy_is_hashed_routing_is_fixed_and_the_mandate_contract_validates", () => {
+    const P = require("./_investorPolicy");
+    /* Routing: Luna extracts, Sol decides at high effort, Terra is gone, and
+       no model may filter the roster before Sol sees it. */
+    if (P.ROLE_MODELS.facts.model !== "gpt-5.6-luna" || P.ROLE_MODELS.manager.model !== "gpt-5.6-sol") return false;
+    if (P.ROLE_MODELS.manager.reasoning.effort !== "high") return false;
+    if (!P.FORBIDDEN_INVESTMENT_MODELS.includes("gpt-5.6-terra") || P.ROSTER_FILTER_MODELS_ALLOWED.length !== 0) return false;
+    /* Identity is stable and every schema has a hash. */
+    const a = P.policyIdentity(), b = P.policyIdentity();
+    for (const h of [a.policyHash, a.riskPolicyHash, a.modelPolicyHash, a.costPolicyHash]) if (!/^[a-f0-9]{64}$/.test(h)) return false;
+    if (a.policyHash !== b.policyHash || Object.keys(a.schemaHashes).length !== 11) return false;
+    if (a.calendarId !== "XNYS" || P.POLICY_VERSION !== "fund-manager-v1") return false;
+    /* The §7.1 worked example validates; a JSON number at a money boundary,
+       an unknown field, a fractional share and INCREASE do not. */
+    const ex = P.EXAMPLE_MANDATE_PROPOSAL;
+    if (!P.validate("mandate-proposal.v1", ex).ok) throw new Error(JSON.stringify(P.validate("mandate-proposal.v1", ex).errors));
+    const withNumber = { ...ex, allocation: { ...ex.allocation, proposedQuantityUnits: 86 } };
+    if (P.validate("mandate-proposal.v1", withNumber).ok) return false;
+    if (P.validate("mandate-proposal.v1", { ...ex, extra: 1 }).ok) return false;
+    if (P.validate("mandate-proposal.v1", { ...ex, allocation: { ...ex.allocation, quantityScale: 2 } }).ok) return false;
+    if (P.validate("mandate-proposal.v1", { ...ex, action: { ...ex.action, kind: "INCREASE" } }).ok) return false;
+    if (P.validate("mandate-proposal.v1", { ...ex, decision: "INCREASE" }).ok) return false;
+    /* The strict subset is generated, never hand-maintained: no unsupported
+       keyword survives, every object is closed and fully required. */
+    const strict = P.strictOutputSchema(P.SCHEMAS["mandate-proposal.v1"], { name: "mandate" });
+    const text = JSON.stringify(strict.schema);
+    if (/"pattern"|"maxLength"|"minimum"/.test(text)) return false;
+    if (strict.schema.additionalProperties !== false || strict.schema.required.length !== Object.keys(strict.schema.properties).length) return false;
+    if (strict.schemaHash !== a.schemaHashes["mandate-proposal.v1"]) return false;
+    /* §9.3 cost formula: exact, and the §9.5 reasoning-token arithmetic. */
+    const c = (rt) => P.costMinor({ model: "gpt-5.6-sol", outputTokens: 304 * rt }).amountMinor;
+    if (c(500) !== "304" || c(1000) !== "608" || c(1500) !== "912") return false;
+    const luna = P.costMinor({ model: "gpt-5.6-luna", ordinaryInputTokens: 1000000, cacheWriteTokens: 0, cachedReadTokens: 0, outputTokens: 100000 });
+    if (luna.amountMinor !== "32") return false;            // $0.20 + $0.12
+    const long = P.costNanoUsd({ model: "gpt-5.6-sol", ordinaryInputTokens: 300000, outputTokens: 1000 });
+    if (long.longContext !== true || long.nanoUsd !== 2430000000n) return false;
+    if (P.costNanoUsd({ model: "gpt-5.6-sol", ordinaryInputTokens: 272000, outputTokens: 0 }).longContext !== false) return false;
+    /* §15.1: long-only whole-share common equity; owner overrides stay inside bounds. */
+    const rm = P.RISK_MANDATE;
+    if (!rm.instruments.longOnly || rm.instruments.quantityScale !== 0 || rm.instruments.leverage || rm.instruments.increaseAction) return false;
+    const ov = P.applyRiskMandateOverrides({ "weights.maxSingleNameWeightBps": "800", "weights.maxGrossExposureBps": "99999", "losses.dailyLossFreezeBps": 12 });
+    if (ov.applied.length !== 1 || ov.refused.length !== 2 || ov.riskMandate.weights.maxSingleNameWeightBps !== "800") return false;
+    if (P.RISK_MANDATE.weights.maxSingleNameWeightBps !== "1000") return false;   // never mutated
+    /* §8.7: the emergency policy is inactive until an owner approves it, and
+       cannot be widened to open a long. */
+    if (P.activeEmergencyPolicy(null).active !== false) return false;
+    const approved = { ...JSON.parse(JSON.stringify(P.EMERGENCY_RISK_POLICY_TEMPLATE)), status: "APPROVED", approvedBy: "owner", approvedAtMs: 1 };
+    delete approved.policyHash; approved.policyHash = P.sha256(approved);
+    if (P.activeEmergencyPolicy(approved).active !== true) return false;
+    const widened = { ...approved, permittedOperations: [...approved.permittedOperations, "OPEN_LONG"] };
+    delete widened.policyHash; widened.policyHash = P.sha256(widened);
+    if (P.activeEmergencyPolicy(widened).active !== false) return false;
+    if (P.activeEmergencyPolicy({ ...approved, approvedBy: null }).active !== false) return false;
+    /* Hash sets are validated exactly. */
+    const active = P.loadActiveSync({});
+    if (!P.validateHashSet({ policyHash: active.policyHash, schemaHash: active.schemaHashes["universe-review.v1"] }, active).ok) return false;
+    if (P.validateHashSet({ riskPolicyHash: "0".repeat(64) }, active).ok) return false;
+    /* §6.1 cutoffs and D-11 ingest configuration. */
+    if (P.CUTOFFS_ET.evidenceFreezeMin !== 510 || P.CUTOFFS_ET.holdingHardDeadlineMin !== 555 || P.CUTOFFS_ET.expansionSoftDeadlineMin !== 560) return false;
+    if (P.CUTOFFS_ET.ingest.perSweep !== 8 || P.CUTOFFS_ET.ingest.daytimeRescan !== false || P.CUTOFFS_ET.ingest.freshnessWindowHours !== 6) return false;
+    if (!(P.CUTOFFS_ET.platform.runLeaseTtlSeconds < P.CUTOFFS_ET.platform.functionCapSeconds)) return false;
+    return true;
+  }));
+
+  /* §7.1 numeric contract: strings on the wire, BigInt in memory, Number never. */
+  cases.push(fixture("money_primitive_is_exact_and_refuses_binary_floating_point_at_every_boundary", () => {
+    const MN = require("./_investorMoney");
+    const r = MN.selfCheck();
+    if (r.pass !== true) throw new Error(`money selfCheck: ${JSON.stringify(r.failures.slice(0, 3))}`);
+    if (!(r.vectors >= 25)) return false;
+    /* The §7.1 worked example, derived exactly once by the calculator. */
+    const P = require("./_investorPolicy");
+    const f = P.EXAMPLE_MANDATE_PROPOSAL.forecast;
+    if (String(MN.expectedTerminalPriceMicros(f.outcomeBuckets)) !== "46750000") return false;
+    if (MN.assertPpmDistribution(f.outcomeBuckets).ok !== true) return false;
+    if (MN.assertPpmDistribution([{ id: "a", probabilityPpm: "500000" }, { id: "b", probabilityPpm: "499999" }]).ok !== false) return false;
+    const loss = MN.plannedLossMinor({ limitPriceMicros: "43250000", lossBoundaryPriceMicros: "37250000",
+      quantityUnits: "86", costPerShareMicros: "40000", mode: MN.ROUNDING.HALF_UP });
+    /* 86 × ($43.25 − $37.25 + $0.04 cost) = $519.44 at the worst authorized fill. */
+    if (String(loss) !== "51944") throw new Error(`planned loss ${String(loss)}`);
+    /* A JSON number is refused wherever an audited value is expected. */
+    let refused = false;
+    try { MN.parseInteger(86, { name: "quantityUnits" }); } catch (e) { refused = e.code === "NOT_CANONICAL_INTEGER"; }
+    if (!refused) return false;
+    if (MN.isCanonicalIntegerString("007") || MN.isCanonicalIntegerString("+7") || MN.isCanonicalIntegerString("-0")) return false;
+    if (MN.validateQuantity({ quantityUnits: "5", quantityScale: 2 }).ok !== false) return false;
+    /* Broker round trips are lossless and off-tick prices are rejected. */
+    if (MN.toBrokerDecimalPrice("43250000", { tickMicros: "10000", decimals: 2 }) !== "43.25") return false;
+    let offTick = false;
+    try { MN.toBrokerDecimalPrice("43251000", { tickMicros: "10000", decimals: 2 }); } catch (e) { offTick = e.code === "OFF_TICK"; }
+    if (!offTick) return false;
+    if (MN.divRound(-7n, 2n, MN.ROUNDING.HALF_EVEN) !== -4n || MN.divRound(7n, 2n, MN.ROUNDING.HALF_EVEN) !== 4n
+        || MN.divRound(5n, 2n, MN.ROUNDING.HALF_EVEN) !== 2n || MN.divRound(-1n, 3n, MN.ROUNDING.FLOOR) !== -1n) return false;
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is
