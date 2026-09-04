@@ -3190,6 +3190,66 @@ function runFixtures() {
     return true;
   }));
 
+  /* §10.2 collections and §10.6 indexes are declared once, uniquely. */
+  cases.push(fixture("manager_collections_and_required_indexes_are_declared", () => {
+    const A2 = require("./_investorAdmin");
+    const names = Object.values(A2.COL);
+    if (new Set(names).size !== names.length) return false;
+    if (!names.every((n) => n.startsWith(A2.COL_PREFIX))) return false;
+    for (const k of ["dossiers", "dossierVersions", "financialFacts", "evidenceDeltas", "managerRuns", "managerDecisions",
+      "claimVerifications", "researchMemos", "portfolioPlans", "activationSnapshots", "mandateProposals", "mandates",
+      "activationEnvelopes", "activeMandates", "mandateEvents", "orderSets", "orderLegs", "brokerEvents",
+      "capitalReservations", "reservationAccounts", "executionOutbox", "workerNonces", "emergencyPlans",
+      "emergencyRiskPolicies", "alerts", "mutations", "calendarSnapshots", "corporateActions", "forecasts",
+      "counterfactuals", "postmortems", "evals", "kpiDaily", "contentManifests"]) {
+      if (!A2.COL[k]) throw new Error(`collection missing: ${k}`);
+    }
+    if (A2.REQUIRED_INDEXES.length < 20) return false;
+    for (const ix of A2.REQUIRED_INDEXES) {
+      if (!names.includes(ix.collection) || !Array.isArray(ix.fields) || ix.fields.length < 2) return false;
+    }
+    return true;
+  }));
+
+  /* §10.3 storage shape: schema-aware codecs, byte limits, content pointers. */
+  cases.push(fixture("storage_codec_round_trips_every_v1_shape_and_refuses_oversized_or_guessed_documents", () => {
+    const SC = require("./_investorStorageCodec");
+    const r = SC.selfCheck();
+    if (r.pass !== true) throw new Error(`codec selfCheck: ${JSON.stringify(r.failures.slice(0, 3))}`);
+    if (SC.MAX_DOCUMENT_BYTES !== 1048576 || !(SC.SAFE_DOCUMENT_BYTES < SC.MAX_DOCUMENT_BYTES)) return false;
+    for (const v of ["manager-run.v1", "manager-decision.v1", "mandate-proposal.v1", "mandate-binding.v1",
+      "activation-envelope.v1", "dossier-version.v1", "financial-fact.v1", "order-set.v1", "order-leg.v1",
+      "broker-event.v1", "capital-reservation.v1", "content-manifest.v1"]) {
+      if (!SC.codecFor(v) || !String(SC.collectionFor(v)).startsWith("InvestorAI_")) throw new Error(`codec missing: ${v}`);
+    }
+    /* A manager run never carries 304 rows; one decision per document does. */
+    const rows = Array.from({ length: 304 }, (_, i) => ({ symbol: `S${i}`, decision: "WATCH", reason: "x".repeat(900) }));
+    let tooLarge = false;
+    try { SC.encode({ schemaVersion: "manager-run.v1", managerRunId: "r", status: "COMPLETE", universeVersion: "v6",
+      universeHash: "a".repeat(64), eligibleCount: 304, rows }); } catch (e) { tooLarge = e.code === "DOCUMENT_TOO_LARGE"; }
+    if (!tooLarge) return false;
+    const one = SC.encode({ schemaVersion: "manager-decision.v1", managerRunId: "r", symbol: "S1", decision: "WATCH", reason: "y" });
+    if (!one._codec || !/^[a-f0-9]{64}$/.test(one._codec.contentHash)) return false;
+    let guessed = false;
+    try { SC.decode({ managerRunId: "r", symbol: "S1" }); } catch (e) { guessed = e.code === "UNRECOGNISED_SHAPE"; }
+    if (!guessed) return false;
+    let floatRefused = false;
+    try { SC.encode({ schemaVersion: "manager-decision.v1", managerRunId: "r", symbol: "S1", decision: "BUY", limitPriceMicros: 43.25 }); }
+    catch (e) { floatRefused = e.code === "FLOAT_AT_MONEY_BOUNDARY"; }
+    if (!floatRefused) return false;
+    return true;
+  }));
+
+  /* §10.3 content store: content-addressed, verified, never truncated into a field. */
+  cases.push(fixture("content_store_is_content_addressed_verified_and_fails_visibly_when_unavailable", async () => {
+    const CS = require("./_investorContentStore");
+    const r = await CS.selfCheck();
+    if (r.pass !== true) throw new Error(`content store selfCheck: ${JSON.stringify(r.failures.slice(0, 3))}`);
+    if (!String(CS.objectKey("document", "a".repeat(64))).startsWith("investor-ai/document/aa/")) return false;
+    if (CS.MAX_OBJECT_BYTES !== 256 * 1024 * 1024) return false;
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is
