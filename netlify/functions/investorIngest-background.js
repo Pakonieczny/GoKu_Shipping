@@ -41,6 +41,8 @@ const IS = require("./_investorIntelligenceSources");
 const I = require("./_investorIntelligence");
 const B = require("./_investorBootstrap");
 const { redact } = require("./_investorAuth");
+const FUND = require("./_investorFundamentals");
+const ROUTER = require("./_investorEventRouter");
 
 const FN_NAME = "investorIngest-background";
 const TASK = "ingest";
@@ -142,6 +144,26 @@ async function runIngestSegment(claim) {
         ctrl, strategy, earningsWindows, sweep });
       entry = { symbol, ok: true, ms: refreshed.elapsedMs, coverageComplete: refreshed.result.coverageComplete === true,
         dossierHash: refreshed.result.dossierHash || null };
+      /* One overnight sweep (D-11): the numerical filing plane refreshes here,
+         once per name per pass; an unchanged payload is a manifest check only. */
+      if (refreshed.cik) {
+        try {
+          const facts = await FUND.ingestCompanyFacts({ cik: refreshed.cik });
+          entry.facts = { newVersions: facts.newVersions || 0, unchanged: facts.unchanged === true, rejected: (facts.rejected || []).length };
+        } catch (e) { entry.facts = { error: String(e.code || e.message).slice(0, 80) }; }
+      }
+      /* New filing versions route once: high-impact classes pause an
+         unfilled entry and enqueue one event revision; everything else is a
+         recorded delta for the next Manager Meeting. */
+      let routed = 0, highImpact = 0;
+      for (const v of refreshed.newVersions || []) {
+        try {
+          const r = await ROUTER.routeEvidenceEvent({ symbol, accountId, document: v });
+          if (r.isNewVerifiedDelta) routed += 1;
+          if (r.route && r.route.action === "high_impact") highImpact += 1;
+        } catch (e) { entry.routeError = String(e.code || e.message).slice(0, 80); }
+      }
+      entry.routed = routed; entry.highImpact = highImpact;
       data.completed += 1;
     } catch (e) {
       entry = { symbol, ok: false, ms: Date.now() - started, error: String(e.code || e.message).slice(0, 120) };

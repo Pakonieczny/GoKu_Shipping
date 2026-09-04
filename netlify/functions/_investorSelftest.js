@@ -3540,6 +3540,164 @@ function runFixtures() {
     return true;
   }));
 
+  /* ── Group 4 (commit 8): guidance and earnings-date claims are versioned,
+     point-in-time, and immutable by identity (§5.3, D-11 companion). */
+  cases.push(fixture("guidance_claims_supersede_by_metric_and_period_and_earnings_dates_are_point_in_time", async () => {
+    const E = require("./_investorEvidence");
+    const fake = fakeAdmin();
+    const t1 = Date.UTC(2026, 6, 1), t2 = Date.UTC(2026, 7, 1), t3 = Date.UTC(2026, 8, 1);
+    const q1 = "we now expect full year 2026 revenue of $4.0 billion to $4.2 billion";
+    const q2 = "we are raising our full year 2026 revenue outlook to $4.3 billion to $4.5 billion";
+    const first = await E.recordClaims({ symbol: "abc", documentId: "doc1", documentVersionId: "v1", sourceId: "sec:8k", publishedAtMs: t1,
+      extractedBy: "luna", admin: fake, claims: [
+        { claimType: "GUIDANCE", metric: "revenue", periodLabel: "FY2026", lowValue: "4000000000", highValue: "4200000000", unit: "USD", text: "FY26 revenue guide", quote: q1 },
+        { claimType: "EARNINGS_DATE", date: "2026-10-28", confirmed: true, text: "Q3 call", quote: "will report third quarter results on October 28, 2026" },
+        { claimType: "GUIDANCE", metric: "revenue", periodLabel: "FY2026", quote: "too short" },
+      ] });
+    if (first.written.length !== 2 || first.skipped.length !== 1 || first.skipped[0].reason !== "invalid_claim") throw new Error(`first ${JSON.stringify(first)}`);
+    if (first.superseded.length !== 0) throw new Error("nothing to supersede yet");
+    /* Idempotent by claim identity: re-recording the same version writes nothing. */
+    const again = await E.recordClaims({ symbol: "ABC", documentId: "doc1", documentVersionId: "v1", publishedAtMs: t1, admin: fake, claims: [
+      { claimType: "GUIDANCE", metric: "revenue", periodLabel: "FY2026", lowValue: "4000000000", highValue: "4200000000", unit: "USD", quote: q1 } ] });
+    if (again.written.length !== 0 || !again.skipped.some((s) => s.reason === "exists")) throw new Error("not idempotent");
+    /* A later statement for the same metric and period supersedes; both remain readable. */
+    const second = await E.recordClaims({ symbol: "ABC", documentId: "doc2", documentVersionId: "v2", publishedAtMs: t2, admin: fake, claims: [
+      { claimType: "GUIDANCE", metric: "revenue", periodLabel: "FY2026", lowValue: "4300000000", highValue: "4500000000", unit: "USD", quote: q2 } ] });
+    if (second.written.length !== 1 || second.superseded.length !== 1 || second.superseded[0].claimId !== first.written[0]) throw new Error("supersession");
+    const priorDoc = fake.docs.get(`${fake.COL.claims}/${first.written[0]}`);
+    const newDoc = fake.docs.get(`${fake.COL.claims}/${second.written[0]}`);
+    if (priorDoc.supersededBy !== second.written[0] || newDoc.supersedes !== first.written[0]) throw new Error("links not bidirectional");
+    if (priorDoc.lowValue !== "4000000000" || newDoc.highValue !== "4500000000") throw new Error("numeric contract");
+    /* Point-in-time reads: as of t1+1 only the first guide is known; as of t3 the raised guide wins. */
+    const early = await E.claimsForCompany("ABC", { asOfMs: t1 + 1, admin: fake });
+    if (early.length !== 2 || early.some((c) => c.documentVersionId === "v2")) throw new Error("future claim leaked");
+    const g1 = E.latestGuidanceFrom(early, { asOfMs: t1 + 1 });
+    if (g1.length !== 1 || g1[0].highValue !== "4200000000") throw new Error("early guide");
+    const late = await E.claimsForCompany("ABC", { asOfMs: t3, admin: fake });
+    const g2 = E.latestGuidanceFrom(late, { asOfMs: t3 });
+    if (g2.length !== 1 || g2[0].lowValue !== "4300000000" || g2[0].supersedes !== first.written[0]) throw new Error("late guide");
+    const before = await E.claimsForCompany("ABC", { asOfMs: t1 - 1, admin: fake });
+    if (before.length !== 0) throw new Error("claim known before publication");
+    /* Earnings date: known only from publication, and only while it is still ahead. */
+    const ed = E.nextEarningsFrom(late, { asOfMs: t3 });
+    if (!ed || ed.date !== "2026-10-28" || ed.confirmed !== true || !ed.claimId) throw new Error("earnings date");
+    if (E.nextEarningsFrom(late, { asOfMs: Date.UTC(2026, 10, 1) }) !== null) throw new Error("past earnings date returned");
+    if (E.nextEarningsFrom(late, { asOfMs: t1 - 1 }) !== null) throw new Error("earnings date known before publication");
+    return true;
+  }));
+
+  /* Claim verification: span identity is exact, the verifier is independent,
+     an unavailable verifier is INSUFFICIENT (I-1), a CONTRADICTED material
+     premise forces abstention, and a stored verdict cannot be altered. */
+  cases.push(fixture("claim_verifier_fails_closed_on_span_identity_and_a_contradicted_premise_forces_abstain", async () => {
+    const V = require("./_investorClaimVerifier");
+    const fake = fakeAdmin();
+    const text = "Net revenue for the quarter was $1.21 billion, up 14% year over year. We expect full year revenue of $4.0 billion to $4.2 billion.";
+    const version = { versionId: "v1", contentHash: "h1", canonicalText: text };
+    const good = V.spanIdentity({ premise: { quote: "up 14% year over year" }, version });
+    if (good.ok !== true || !good.spanId || good.versionId !== "v1") throw new Error("verbatim quote rejected");
+    if (V.spanIdentity({ premise: { quote: "up 41% year over year" }, version }).reason !== "quote_not_found_verbatim") throw new Error("paraphrase accepted");
+    if (V.spanIdentity({ premise: { quote: "up 14%" }, version }).reason !== "quote_too_short") throw new Error("short quote accepted");
+    if (V.spanIdentity({ premise: { quote: "up 14% year over year" }, version: null }).reason !== "document_version_missing") throw new Error("missing version accepted");
+    const claims = {
+      c1: { claimId: "c1", documentVersionId: "v1", text: "Revenue +14% y/y", quote: "up 14% year over year" },
+      c2: { claimId: "c2", documentVersionId: "v1", text: "FY revenue guide", quote: "full year revenue of $4.0 billion to $4.2 billion" },
+      c3: { claimId: "c3", documentVersionId: "v1", text: "Margins expanded", quote: "gross margin expanded 300 basis points" },
+    };
+    const proposal = { symbol: "ABC", decision: "BUY", thesis: { evidenceFor: ["c1", "c2"], evidenceAgainst: ["c3"] }, sourceManifest: [] };
+    const spanReader = async () => ({ v1: version });
+    /* Verifier unavailable: every premise is INSUFFICIENT and the gate blocks (never SUPPORTED by default). */
+    const down = await V.verifyAndPersistBatch({ proposals: [proposal], claimsById: claims, spanReader, admin: fake,
+      verifier: async () => ({ available: false, reason: "gateway_unavailable" }) });
+    const d = down.byProposal.ABC;
+    if (down.allSupported !== false || d.blocking !== true || d.forceAbstain !== false || d.reason !== "UNSUPPORTED_MATERIAL_PREMISE") throw new Error(`down ${JSON.stringify(d)}`);
+    if (fake.docs.size !== 3) throw new Error("verdicts not persisted");
+    /* The stored verdict for c1 is immutable: a later SUPPORTED verdict does not overwrite it. */
+    const up = await V.verifyAndPersistBatch({ proposals: [proposal], claimsById: claims, spanReader, admin: fake,
+      verifier: async ({ premises }) => ({ available: true, model: "luna", output: { verdicts: premises.map((p) => ({ claimId: p.claimId, verdict: "SUPPORTED" })) } }) });
+    const u = up.byProposal.ABC;
+    /* c3's quote is not in the document, so it stays INSUFFICIENT whatever the verifier says. */
+    if (u.insufficientClaimIds.length !== 1 || u.insufficientClaimIds[0] !== "c3" || u.supported !== 2) throw new Error(`span gate ${JSON.stringify(u)}`);
+    const c1Stored = [...fake.docs.values()].find((v) => v.claimId === "c1");
+    if (c1Stored.verdict !== "INSUFFICIENT") throw new Error("stored verdict overwritten");
+    const tx = { get: (ref) => ref.get() };
+    let threw = null;
+    try { await V.assertImmutableClaimVerdicts(tx, up, { admin: fake }); } catch (e) { threw = e.code; }
+    if (threw !== "CLAIM_VERDICT_ALTERED") throw new Error(`altered verdict passed activation: ${threw}`);
+    /* A fresh store with a contradicted material premise forces abstention. */
+    const fake2 = fakeAdmin();
+    const contra = await V.verifyAndPersistBatch({ proposals: [{ ...proposal, thesis: { evidenceFor: ["c1", "c2"], evidenceAgainst: [] } }], claimsById: claims, spanReader, admin: fake2,
+      verifier: async ({ premises }) => ({ available: true, output: { verdicts: premises.map((p) => ({ claimId: p.claimId, verdict: p.claimId === "c2" ? "CONTRADICTED" : "SUPPORTED" })) } }) });
+    const c = contra.byProposal.ABC;
+    if (c.forceAbstain !== true || c.reason !== "CONTRADICTED_MATERIAL_PREMISE" || contra.forceAbstainSymbols[0] !== "ABC") throw new Error("contradiction ignored");
+    let code = null;
+    try { await V.assertImmutableClaimVerdicts(tx, contra, { admin: fake2 }); } catch (e) { code = e.code; }
+    if (code !== "CLAIM_NOT_SUPPORTED") throw new Error(`contradicted verdict passed activation: ${code}`);
+    /* All supported on a fresh store passes the activation assertion. */
+    const fake3 = fakeAdmin();
+    const clean = await V.verifyAndPersistBatch({ proposals: [{ ...proposal, thesis: { evidenceFor: ["c1", "c2"], evidenceAgainst: [] } }], claimsById: claims, spanReader, admin: fake3,
+      verifier: async ({ premises }) => ({ available: true, output: { verdicts: premises.map((p) => ({ claimId: p.claimId, verdict: "SUPPORTED" })) } }) });
+    if (clean.allSupported !== true) throw new Error("clean set blocked");
+    const checked = await V.assertImmutableClaimVerdicts(tx, clean, { admin: fake3 });
+    if (checked.checked !== 2) throw new Error("activation check count");
+    return true;
+  }));
+
+  /* Event routing (Appendix B): classes are objective and high-recall, an
+     event is recorded once, only a high-impact class pauses an unfilled
+     entry, and routine deltas wait for the meeting unless a mandate is
+     active. Code never decides materiality. */
+  cases.push(fixture("event_router_classifies_objectively_records_once_and_pauses_only_high_impact_unfilled_entries", async () => {
+    const R = require("./_investorEventRouter");
+    const earnings = R.classifyDocument({ form: "8-K", title: "Form 8-K", canonicalText: "Item 2.02 Results of Operations and Financial Condition. Item 9.01 Exhibits." });
+    if (earnings.eventClass !== "EARNINGS" || earnings.safetyClass !== "high_impact" || !earnings.items.includes("2.02")) throw new Error(`earnings ${JSON.stringify(earnings)}`);
+    const reg = R.classifyDocument({ form: "8-K", canonicalText: "Item 7.01 Regulation FD Disclosure. Item 9.01 Financial Statements and Exhibits." });
+    if (reg.eventClass !== "ROUTINE_NEWS" || reg.safetyClass !== "routine" || reg.verified !== true) throw new Error(`fd ${JSON.stringify(reg)}`);
+    const tenq = R.classifyDocument({ form: "10-Q", canonicalText: "Quarterly report. Revenue increased." });
+    if (tenq.eventClass !== "PERIODIC_FILING" || tenq.safetyClass !== "routine") throw new Error("10-Q");
+    const recall = R.classifyDocument({ sourceClass: "regulator_primary", title: "Company recalls 40,000 units" });
+    if (recall.eventClass !== "RECALL" || recall.safetyClass !== "high_impact") throw new Error("recall");
+    const lead = R.classifyDocument({ sourceClass: "discovery_index", title: "Analyst chatter about a possible deal" });
+    if (lead.eventClass !== "DISCOVERY_LEAD" || lead.safetyClass !== "attention_only" || lead.verified !== false) throw new Error("discovery lead treated as verified");
+    if (!R.EVENT_CLASSES.includes(earnings.eventClass) || R.HIGH_IMPACT_CLASSES.has("ROUTINE_NEWS")) throw new Error("class vocabulary");
+    /* Dedupe is by canonical hash: a syndicated copy of the same accession is the same event. */
+    const a = R.canonicalEventHash({ symbol: "abc", doc: { sourceId: "sec", accession: "0001-26-1" }, eventClass: "EARNINGS" });
+    const b = R.canonicalEventHash({ symbol: "ABC", doc: { sourceId: "sec", accession: "0001-26-1", title: "different title" }, eventClass: "EARNINGS" });
+    if (a !== b) throw new Error("hash unstable");
+    /* Routing in memory with the fixture's own effect recorders. */
+    const fake = fakeAdmin();
+    const calls = [];
+    const deps = { admin: fake,
+      dossier: { recordRoutineDelta: async (m) => calls.push(["delta", m.symbol, m.eventClass]) },
+      mandate: { hasActiveMandate: async (s) => s === "MND", pauseUnfilledEntry: async (s, e) => calls.push(["pause", s, e]) },
+      jobs: { enqueueOnce: async (j) => { calls.push(["enqueue", j.task, j.dedupeId]); return { enqueued: true }; },
+              prioritizeNextManagerPacket: async (p) => calls.push(["prioritize", p.symbol]) } };
+    const hi = await R.routeEvidenceEvent({ symbol: "ABC", document: { form: "8-K", sourceId: "sec", accession: "A1", firstSeenAtMs: 1_800_000_000_000,
+      canonicalText: "Item 4.01 Changes in Registrant's Certifying Accountant." } }, { deps });
+    if (hi.route.action !== "high_impact" || hi.eventClass !== "AUDITOR_CHANGE") throw new Error(`hi ${JSON.stringify(hi.route)}`);
+    if (!hi.effects.includes("record_delta") || !hi.effects.includes("pause_unfilled_entry") || !hi.effects.includes("enqueued_event_revision")) throw new Error(`hi effects ${hi.effects}`);
+    if (!calls.some((c) => c[0] === "pause" && c[1] === "ABC") || !calls.some((c) => c[0] === "enqueue" && c[1] === "event_revision")) throw new Error("high-impact effects missing");
+    const dupe = await R.routeEvidenceEvent({ symbol: "ABC", document: { form: "8-K", sourceId: "sec", accession: "A1", canonicalText: "Item 4.01 syndicated copy." } }, { deps });
+    if (dupe.duplicate !== true || dupe.route.action !== "ignore" || dupe.effects) throw new Error("duplicate re-routed");
+    const stored = [...fake.docs.values()].filter((d) => d.schemaVersion === "evidence-delta.v1");
+    if (stored.length !== 1 || stored[0].managerMateriality !== "pending") throw new Error("delta not recorded once with materiality pending");
+    /* Routine delta on a name without a mandate: recorded, nothing paused, nothing enqueued. */
+    calls.length = 0;
+    const routine = await R.routeEvidenceEvent({ symbol: "XYZ", document: { form: "8-K", sourceId: "sec", accession: "B1", canonicalText: "Item 7.01 Regulation FD." } }, { deps });
+    if (routine.route.action !== "routine" || calls.some((c) => c[0] !== "delta")) throw new Error("routine delta triggered a protective action");
+    /* Routine delta on a name with an active mandate: prioritised in the next packet, still no pause. */
+    calls.length = 0;
+    const withMandate = await R.routeEvidenceEvent({ symbol: "MND", document: { form: "10-Q", sourceId: "sec", accession: "C1", canonicalText: "Quarterly report." } }, { deps });
+    if (withMandate.route.action !== "routine_with_mandate" || !calls.some((c) => c[0] === "prioritize" && c[1] === "MND") || calls.some((c) => c[0] === "pause")) throw new Error("mandate routing");
+    /* A discovery lead is never a verified delta and never routes. */
+    const disc = await R.routeEvidenceEvent({ symbol: "ABC", document: { sourceClass: "discovery_index", sourceId: "idx", link: "https://x/y", title: "rumour" } }, { deps });
+    if (disc.isNewVerifiedDelta !== false || disc.route.action !== "ignore") throw new Error("discovery lead routed");
+    /* The false-negative review sample is deterministic. */
+    const sample = R.sampleForReview([{ canonicalEventHash: "000000abc" }, { canonicalEventHash: "ffffffabc" }]);
+    if (sample.length !== 1 || sample[0].canonicalEventHash !== "000000abc") throw new Error("sample");
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is

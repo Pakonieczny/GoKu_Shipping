@@ -731,6 +731,9 @@ async function refreshCompanyEvidence({ symbol, rosterRow = null, focusReason = 
     temporalExposures: prior && prior.temporalContext && prior.temporalContext.exposures
       || configuredProfile.temporalExposures || [] });
   let secHealthy = false, secFresh = 0, secError = null;
+  /* New filing versions recorded in this refresh; the sweep routes them
+     through the event router once (Appendix B), never per cycle. */
+  const newVersions = [];
   if (profile.cik) {
     const history = await E.pollSubmissionsHistory(profile.cik, {
       lookbackDays: Number((strategy.parameters || {}).intelligenceLookbackDays) || 180,
@@ -749,8 +752,12 @@ async function refreshCompanyEvidence({ symbol, rosterRow = null, focusReason = 
     for (const d of combined.slice(0, 120)) {
       let body = { text: "", sha256: null };
       if (bodyAccessions.has(d.accession)) { try { body = await E.fetchFilingBody(d); } catch {} }
-      await E.recordVersion({ symbol: t.symbol, sourceId: d.sourceId || "sec.latest", entry: d,
+      const rec = await E.recordVersion({ symbol: t.symbol, sourceId: d.sourceId || "sec.latest", entry: d,
         rawSha256: history.sha256 || latest.sha256, body: body.text, bodySha256: body.sha256 });
+      if (rec.created) newVersions.push({ documentId: rec.documentId, versionId: rec.versionId, symbol: t.symbol,
+        sourceId: d.sourceId || "sec.latest", sourceClass: "company_primary", form: d.form || null, title: d.title || null,
+        accession: d.accession || null, link: d.link || null, summary: d.summary || null,
+        source_published_at: d.updated || null, firstSeenAtMs: Date.now(), canonicalText: String(body.text || "").slice(0, 20000) });
     }
   }
   let documents = await E.documentsForCompany(profile.symbol, Date.now(),
@@ -853,7 +860,8 @@ async function refreshCompanyEvidence({ symbol, rosterRow = null, focusReason = 
     sourceFailed: coverage.failedSources.length, sourceDeferred: coverage.deferredSources.length,
     dossierHash: snapshot.dossierHash };
 
-  return { ok: true, symbol: t.symbol, result: row, snapshot, elapsedMs: Date.now() - startedMs };
+  return { ok: true, symbol: t.symbol, result: row, snapshot, elapsedMs: Date.now() - startedMs,
+    cik: profile.cik || null, newVersions };
 }
 
 module.exports = {
