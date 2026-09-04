@@ -4349,7 +4349,9 @@ function runFixtures() {
     const P = require("./_investorPolicy");
     const fake = fakeAdmin();
     const nowMs = Date.UTC(2026, 8, 4, 13);
-    fake.docs.set(`${fake.COL.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 6000000, reserved: 0 }, balanceRevision: 7 });
+    fake.docs.set(`${fake.COL.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 6000000, reserved: 0, contributed_capital: -6000000 }, balanceRevision: 7, startingNavCents: 6000000 });
+    /* the opening balance is a journal entry, as openAccount writes it, so conservation can be rebuilt from the ledger alone */
+    fake.docs.set(`${fake.COL.ledger}/genesis_paper-1`, { txnId: "genesis_paper-1", accountId: "paper-1", kind: "capital_contribution", legs: [{ account: "cash", amountCents: 6000000 }, { account: "contributed_capital", amountCents: -6000000 }] });
     const snapshot = (extra = {}) => ({ activationSnapshotId: "act_1", accountId: "paper-1", navMinor: "10000000", settledCashMinor: "6000000", reservedMinor: "0", positions: [], workingOrders: [], portfolioVersion: 7, reservationAccountVersion: 0, writerEpoch: 0, ...extra });
     const proposal = (symbol, extra = {}) => ({ ...P.EXAMPLE_MANDATE_PROPOSAL, symbol, ...extra });
     const texts = { docv_1: "Net revenue for the quarter was $1.21 billion, up 14% year over year.", docv_2: "We now expect full year revenue of $4.0 billion to $4.2 billion.", docv_3: "Gross margin contracted 300 basis points on input costs." };
@@ -4490,6 +4492,170 @@ function runFixtures() {
     if (stale.allowExpansion !== false || stale.hardBreach !== true || !stale.reasons.includes("STALE_BROKER_TRUTH")) throw new Error("stale truth allowed expansion");
     const clean = R.revalidateOperationalLimits({ portfolio: { navMinor: "10000000", settledCashMinor: "9000000", reservedMinor: "0", positions: [], workingOrders: [] }, brokerTruthAgeSeconds: 30 });
     if (clean.allowExpansion !== true || clean.hardBreach !== false) throw new Error(`clean book refused: ${clean.reasons}`);
+    return true;
+  }));
+
+  /* ── Group 6 (commit 13): deterministic execution. The OHLC simulator is
+     touch-before-close with the adverse convention; the outbox saga applies
+     desired state through the bound adapter; fills are immutable, positions
+     are rebuilt from them, the ledger balances, reservations release only
+     when the entry is terminal, and protection attaches for exactly the
+     owned quantity. No model code is loaded by the executor. */
+  cases.push(fixture("ohlc_simulator_is_touch_before_close_takes_the_adverse_path_and_never_awards_a_favourable_same_bar_exit", () => {
+    const X = require("./_investorExecution");
+    const bar = (o, h, l, c, v = 100000) => ({ t: "2026-09-04T14:31:00.000Z", o, h, l, c, v });
+    const entry = { role: "ENTRY", side: "buy", type: "LIMIT", priceMicros: "43250000", remainingUnits: "86" };
+    /* marketable at the open fills at the open, never above the limit */
+    let s = X.simulateLegOnBar({ leg: entry, bar: bar(43.0, 43.5, 42.9, 43.4) });
+    if (!s.fill || s.fill.priceMicros !== "43000000" || s.fill.quantityUnits !== "86") throw new Error(`marketable ${JSON.stringify(s)}`);
+    /* touched but unmarketable fills at the limit, capped by participation (10% of 500 shares = 50) */
+    s = X.simulateLegOnBar({ leg: entry, bar: bar(43.6, 43.8, 43.2, 43.7, 500) });
+    if (!s.fill || s.fill.priceMicros !== "43250000" || s.fill.quantityUnits !== "50") throw new Error(`queue ${JSON.stringify(s)}`);
+    /* not touched: no fill; the close is irrelevant */
+    s = X.simulateLegOnBar({ leg: entry, bar: bar(43.6, 43.9, 43.3, 43.26) });
+    if (s.fill || s.touch) throw new Error("close-only fill");
+    /* a halted bar fills nothing even when the level is inside its range */
+    s = X.simulateLegOnBar({ leg: entry, bar: bar(43.0, 43.5, 42.9, 43.4, 0) });
+    if (s.fill || s.reason !== "halted_no_volume") throw new Error("halt filled");
+    const stop = { role: "STOP", side: "sell", type: "STOP", stopMicros: "37250000", remainingUnits: "86" };
+    /* gapped through: fills at the (worse) open */
+    s = X.simulateLegOnBar({ leg: stop, bar: bar(36.0, 36.5, 35.8, 36.2) });
+    if (!s.fill || s.fill.priceMicros !== "36000000" || s.fill.quantityUnits !== "86") throw new Error(`gap ${JSON.stringify(s)}`);
+    /* touched intrabar: fills at the stop less the modelled adverse print, never at the close */
+    s = X.simulateLegOnBar({ leg: stop, bar: bar(38.0, 38.2, 37.1, 37.9) });
+    if (!s.fill || BigInt(s.fill.priceMicros) >= 37250000n || BigInt(s.fill.priceMicros) < 37100000n) throw new Error(`stop print ${JSON.stringify(s)}`);
+    if (X.simulateLegOnBar({ leg: stop, bar: bar(38.0, 38.2, 37.3, 37.26) }).fill) throw new Error("stop filled without a touch");
+    const target = { role: "TARGET", side: "sell", type: "LIMIT", priceMicros: "49000000", remainingUnits: "86" };
+    s = X.simulateLegOnBar({ leg: target, bar: bar(49.5, 49.8, 49.1, 49.3) });
+    if (!s.fill || s.fill.priceMicros !== "49500000") throw new Error("gap-up target should fill at the open");
+    s = X.simulateLegOnBar({ leg: target, bar: bar(48.0, 49.2, 47.9, 48.9) });
+    if (!s.fill || s.fill.priceMicros !== "49000000") throw new Error("touched target");
+    /* stop-limit may trigger and stay unfilled */
+    const sl = { role: "STOP", side: "sell", type: "STOP_LIMIT", stopMicros: "37250000", priceMicros: "37000000", remainingUnits: "10" };
+    s = X.simulateLegOnBar({ leg: sl, bar: bar(38.0, 38.1, 36.5, 36.8) });
+    if (s.fill || s.triggered !== true || s.reason !== "stop_limit_triggered_unfilled") throw new Error(`stop-limit ${JSON.stringify(s)}`);
+    /* a marketable limit obeys its collar against the reference */
+    const ml = { role: "SELL", side: "sell", type: "MARKETABLE_LIMIT", collarBps: "75", remainingUnits: "10" };
+    s = X.simulateLegOnBar({ leg: ml, bar: { ...bar(39.0, 39.2, 38.8, 39.1), prevClose: 40.0 } });
+    if (s.fill || s.reason !== "outside_collar") throw new Error("collar ignored");
+    s = X.simulateLegOnBar({ leg: ml, bar: { ...bar(39.8, 40.0, 39.7, 39.9), prevClose: 40.0 } });
+    if (!s.fill || s.fill.priceMicros !== "39800000") throw new Error("marketable limit inside collar");
+    /* collisions: entry + target → target suppressed; entry + stop → ambiguous adverse; target + stop → stop wins, ambiguous */
+    const f = (p) => ({ touch: true, fill: { quantityUnits: "1", priceMicros: p } });
+    let r = X.resolveBarCollisions({ entry: f("43000000"), target: f("49000000"), stop: null });
+    if (r.target.fill !== null || r.target.suppressed !== true || r.ambiguous) throw new Error("favourable same-bar exit awarded");
+    r = X.resolveBarCollisions({ entry: f("43000000"), target: null, stop: f("37000000") });
+    if (!r.stop.fill || r.ambiguous !== true) throw new Error("adverse same-bar stop not taken");
+    r = X.resolveBarCollisions({ entry: null, target: f("49000000"), stop: f("37000000") });
+    if (r.target.fill !== null || !r.stop.fill || r.ambiguous !== true) throw new Error("target and stop collision not adverse");
+    return true;
+  }));
+
+  cases.push(fixture("execution_saga_applies_desired_state_records_immutable_fills_protects_exactly_the_owned_quantity_and_keeps_the_ledger_balanced", async () => {
+    const X = require("./_investorExecution");
+    const B = require("./_investorBroker");
+    const W = stagingWorld();
+    const AAA = W.proposal("AAA");
+    const verified = await W.verify([AAA]);
+    const staged = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [AAA], verifiedProposalClaims: verified, activationSnapshot: W.snapshot() });
+    if (staged.status !== "COMMITTED") throw new Error(`staging ${staged.status} ${staged.reason}`);
+    const t0 = Date.UTC(2026, 9, 5, 13, 30);          // Monday 2026-10-05 09:30 ET, an authorized session in the example
+    const adapter = B.createPaperAdapter({ admin: W.fake, now: () => t0 });
+    const orderSetId = `os_${staged.mandateVersionIds[0]}`;
+    /* the outbox transition applies the desired order set: entry WORKING, protection ARMED, pointer WORKING, applied pointer advanced */
+    const applied = await X.applyOutbox({ admin: W.fake, adapter, accountId: "paper-1", nowMs: t0 });
+    if (applied.applied !== 1) throw new Error(`apply ${JSON.stringify(applied)}`);
+    let os = await X.readOrderSet(W.fake, orderSetId);
+    if (os.status !== "WORKING" || !os.brokerGroupId || os.appliedMandateVersionId !== staged.mandateVersionIds[0]) throw new Error("order set not working");
+    const st = (role) => os.legs.find((l) => l.role === role).status;
+    if (st("ENTRY") !== "WORKING" || st("TARGET") !== "ARMED" || st("STOP") !== "ARMED") throw new Error(`legs ${os.legs.map((l) => `${l.role}:${l.status}`)}`);
+    let pointer = W.fake.docs.get(`${W.fake.COL.activeMandates}/paper-1_AAA`);
+    if (pointer.status !== "WORKING" || pointer.appliedVersionId !== staged.mandateVersionIds[0]) throw new Error(`pointer ${JSON.stringify(pointer).slice(0, 200)}`);
+    /* re-applying is idempotent: no second broker acknowledgement */
+    const again = await X.applyOutbox({ admin: W.fake, adapter, accountId: "paper-1", nowMs: t0 + 60000 });
+    if (again.applied !== 0 || [...W.fake.docs.keys()].filter((k) => k.startsWith(`${W.fake.COL.brokerEvents}/`)).length !== 1) throw new Error("duplicate broker submission");
+    const bar = (min, o, h, l, c, v) => ({ t: new Date(t0 + min * 60000).toISOString(), o, h, l, c, v });
+    /* bar 1: the limit is touched but only 300 shares trade → 30 fill (10% participation); the remainder is cancelled and protection attaches for exactly 30 */
+    let sim = await X.simulatePaperFills({ admin: W.fake, adapter, accountId: "paper-1", barsBySymbol: { AAA: [bar(1, 43.40, 43.60, 43.20, 43.50, 300)] }, nowMs: t0 + 120000 });
+    if (sim.fills.length !== 1 || sim.fills[0].quantityUnits !== "30" || sim.fills[0].priceMicros !== "43250000") throw new Error(`partial ${JSON.stringify(sim)}`);
+    if (sim.cancelledRemainders.length !== 1 || sim.cancelledRemainders[0].remainingUnits !== "56" || sim.protectionAttached[0].quantityUnits !== "30") throw new Error(`remainder ${JSON.stringify(sim)}`);
+    os = await X.readOrderSet(W.fake, orderSetId);
+    if (st("ENTRY") !== "CANCELLED" || st("TARGET") !== "WORKING" || st("STOP") !== "WORKING" || os.legs.find((l) => l.role === "STOP").quantityUnits !== "30") throw new Error(`protection legs ${os.legs.map((l) => `${l.role}:${l.status}:${l.quantityUnits}`)}`);
+    pointer = W.fake.docs.get(`${W.fake.COL.activeMandates}/paper-1_AAA`);
+    if (pointer.status !== "PROTECTED_RTH" || pointer.protectedQuantityUnits !== "30" || pointer.lossBoundaryPriceMicros !== "37250000") throw new Error(`pointer after fill ${JSON.stringify(pointer).slice(0, 300)}`);
+    const pos = W.fake.docs.get(`${W.fake.COL.positions}/paper-1_AAA`);
+    if (!pos || pos.quantityUnits !== "30" || pos.engineVersion !== "manager" || pos.decisionAuthority !== "SOL" || pos.protectionState !== "PROTECTED_RTH" || pos.costBasisMinor !== "129750") throw new Error(`position ${JSON.stringify(pos).slice(0, 300)}`);
+    const res = W.fake.docs.get(`${W.fake.COL.reservationAccounts}/paper-1`);
+    if (res.reservedNotionalMinor !== "0") throw new Error("reservation not released when the entry became terminal");
+    let cons = await X.assertConservation("paper-1", { admin: W.fake });
+    if (cons.pass !== true) throw new Error(`ledger ${JSON.stringify(cons)}`);
+    const acct = W.fake.docs.get(`${W.fake.COL.accounts}/paper-1`);
+    if (acct.balanceCents.cash !== 6000000 - 129750 || acct.balanceCents.positions !== 129750) throw new Error(`cash ${JSON.stringify(acct.balanceCents)}`);
+    /* a duplicate bar replays nothing */
+    sim = await X.simulatePaperFills({ admin: W.fake, adapter, accountId: "paper-1", barsBySymbol: { AAA: [bar(1, 43.40, 43.60, 43.20, 43.50, 300)] }, nowMs: t0 + 180000 });
+    if (sim.fills.length !== 0) throw new Error("replayed bar produced a fill");
+    /* bar 2: the target is touched (not the close): 30 sell at 49.00, the OCO sibling is cancelled, the position closes with realized P&L and a trade record */
+    sim = await X.simulatePaperFills({ admin: W.fake, adapter, accountId: "paper-1", barsBySymbol: { AAA: [bar(5, 48.50, 49.10, 48.40, 48.70, 5000)] }, nowMs: t0 + 400000 });
+    if (sim.fills.length !== 1 || sim.fills[0].role !== "TARGET" || sim.fills[0].priceMicros !== "49000000" || sim.closed.length !== 1) throw new Error(`exit ${JSON.stringify(sim)}`);
+    os = await X.readOrderSet(W.fake, orderSetId);
+    if (st("TARGET") !== "FILLED" || st("STOP") !== "CANCELLED" || os.status !== "CLOSED") throw new Error(`after exit ${os.legs.map((l) => `${l.role}:${l.status}`)} ${os.status}`);
+    const pos2 = W.fake.docs.get(`${W.fake.COL.positions}/paper-1_AAA`);
+    if (pos2.open !== false || pos2.quantityUnits !== "0" || pos2.realizedMinor !== String(30 * 4900 - 129750)) throw new Error(`closed position ${JSON.stringify(pos2).slice(0, 200)}`);
+    const trades = [...W.fake.docs.entries()].filter(([k]) => k.startsWith(`${W.fake.COL.trades}/`)).map(([, v]) => v);
+    if (trades.length !== 1 || trades[0].engineVersion !== "manager" || trades[0].realizedMinor !== String(30 * 4900 - 129750)) throw new Error("trade record");
+    const fills = [...W.fake.docs.entries()].filter(([k]) => k.startsWith(`${W.fake.COL.fills}/`)).map(([, v]) => v);
+    if (fills.length !== 2 || fills.some((f) => f.engineVersion !== "manager" || !f.bar)) throw new Error("fills not immutable events with bars");
+    cons = await X.assertConservation("paper-1", { admin: W.fake });
+    if (cons.pass !== true) throw new Error(`ledger after exit ${JSON.stringify(cons)}`);
+    const acct2 = W.fake.docs.get(`${W.fake.COL.accounts}/paper-1`);
+    if (acct2.balanceCents.cash !== 6000000 - 129750 + 147000 || acct2.balanceCents.positions !== 0 || acct2.balanceCents.realized_pl !== -(147000 - 129750)) throw new Error(`balances ${JSON.stringify(acct2.balanceCents)}`);
+    if (W.fake.docs.get(`${W.fake.COL.activeMandates}/paper-1_AAA`).status !== "CLOSED") throw new Error("pointer not closed");
+    /* the legacy lifecycle audit never judges manager records and refuses an identity-less one */
+    const L = require("./_investorLedger");
+    let code = null;
+    try { L.assertManagerRecordIdentity({ symbol: "AAA" }); } catch (e) { code = e.code; }
+    if (code !== "LEGACY_IDENTITY_REJECTED" || L.assertManagerRecordIdentity(pos2) !== true) throw new Error("identity check");
+    return true;
+  }));
+
+  cases.push(fixture("executor_tick_expires_entries_freezes_on_operational_breach_and_never_loads_the_model_gateway", async () => {
+    const X = require("./_investorExecution");
+    const B = require("./_investorBroker");
+    const fs = require("fs");
+    /* the executor handler imports no model code */
+    const src = fs.readFileSync(require.resolve("./investorExecution-background.js"), "utf8") + fs.readFileSync(require.resolve("./_investorExecution.js"), "utf8") + fs.readFileSync(require.resolve("./_investorBroker.js"), "utf8");
+    if (/require\("\.\/_investorOpenai"\)/.test(src)) throw new Error("executor requires the model gateway");
+    if (!/executor must not load the model gateway/.test(src)) throw new Error("load-time guard missing");
+    const W = stagingWorld();
+    const AAA = W.proposal("AAA");
+    const staged = await W.stage({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION" }, proposals: [AAA], verifiedProposalClaims: await W.verify([AAA]), activationSnapshot: W.snapshot() });
+    if (staged.status !== "COMMITTED") throw new Error("staging");
+    const t0 = Date.UTC(2026, 8, 3, 14);
+    const adapter = B.createPaperAdapter({ admin: W.fake, now: () => t0 });
+    await X.applyOutbox({ admin: W.fake, adapter, accountId: "paper-1", nowMs: t0 });
+    /* after the last authorized session's close the unfilled entry expires and its reservation is released; a fresh tick cancels through the outbox */
+    const late = Date.UTC(2026, 8, 5, 12);
+    const tick = await X.tick({ admin: W.fake, adapter, accountId: "paper-1", control: { engineMode: "manager" }, nowMs: late, metrics: { brokerTruthAgeSeconds: 5 } });
+    if (tick.expired.join(",") !== "AAA") throw new Error(`expiry ${JSON.stringify(tick.expired)}`);
+    const pointer = W.fake.docs.get(`${W.fake.COL.activeMandates}/paper-1_AAA`);
+    if (!["ENTRY_EXPIRED", "CANCELLED"].includes(pointer.status)) throw new Error(`pointer ${pointer.status}`);
+    const os = await X.readOrderSet(W.fake, `os_${staged.mandateVersionIds[0]}`);
+    if (os.legs.find((l) => l.role === "ENTRY").status !== "CANCELLED") throw new Error("entry not cancelled on expiry");
+    if (W.fake.docs.get(`${W.fake.COL.reservationAccounts}/paper-1`).reservedNotionalMinor !== "0") throw new Error("expired entry kept its reservation");
+    if (tick.conservation.pass !== true || tick.operational.allowExpansion !== true) throw new Error(`tick ${JSON.stringify(tick.operational)}`);
+    /* stale broker truth is a hard breach: expansion freezes and the (inactive) emergency policy may only freeze */
+    const tick2 = await X.tick({ admin: W.fake, adapter, accountId: "paper-1", control: { engineMode: "manager" }, nowMs: late + 60000, metrics: { brokerTruthAgeSeconds: 900 } });
+    if (tick2.operational.allowExpansion !== false || tick2.operational.hardBreach !== true) throw new Error("stale truth allowed expansion");
+    const ctrl = W.fake.docs.get(`${W.fake.COL.control}/control`);
+    if (!ctrl || ctrl.buyState !== "FROZEN" || ctrl.freezeReason !== "STALE_BROKER_TRUTH") throw new Error(`control ${JSON.stringify(ctrl)}`);
+    if (tick2.emergency && tick2.emergency.actions.some((a) => a.op !== "FREEZE_EXPANSION")) throw new Error("inactive emergency policy acted beyond freezing");
+    /* the broker capability matrix is a record: configuration may only disable */
+    if (B.selfCheck().pass !== true) throw new Error(`broker selfCheck ${JSON.stringify(B.selfCheck())}`);
+    const live = B.createAlpacaAdapter({ env: {}, control: {} });
+    let code = null;
+    try { await live.getAccountSnapshot("paper-1"); } catch (e) { code = e.code; }
+    if (code !== "LIVE_ADAPTER_DISABLED") throw new Error("live adapter reachable without the flag");
+    if (B.adapterFor({ control: {}, env: {}, admin: W.fake }).adapter !== "paper") throw new Error("default adapter is not paper");
     return true;
   }));
 

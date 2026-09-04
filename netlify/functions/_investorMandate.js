@@ -42,7 +42,7 @@ const PLAN_CLASSES = Object.freeze(["RISK_MAINTENANCE", "EXPANSION"]);
 const ENVELOPE_STATUSES = Object.freeze(["ALLOW", "CLAMP", "REJECT"]);
 const POINTER_STATUSES = Object.freeze(["DESIRED", "BROKER_SYNC_PENDING", "WORKING", "PARTIALLY_FILLED", "PROTECTION_PENDING", "PROTECTED_RTH",
   "OVERNIGHT_GAP_EXPOSED", "FILLED", "CANCEL_PENDING", "ENTRY_EXPIRED", "CANCELLED", "PAUSED_OPERATIONAL", "PAUSED_EVIDENCE", "SUPERSEDED",
-  "RECONCILING", "OVERSELL_INCIDENT", "ACTION_REQUIRED", "ERROR", "UNPROTECTED"]);
+  "RECONCILING", "OVERSELL_INCIDENT", "ACTION_REQUIRED", "ERROR", "UNPROTECTED", "CLOSED"]);
 const MAX_AUTHORIZED_SESSIONS = 3;
 const HALF_CLOSE_MIN = 13 * 60, CLOSE_MIN = 16 * 60;
 
@@ -377,8 +377,10 @@ async function stagePortfolioPlan({ planClass, portfolioPlanProposal = {}, propo
         tx.set(D.col(D.COL.mandates).doc(b.mandateVersionId), enc({ ...b.binding, ...D.envelope({ created_by: "mandate.stagePortfolioPlan" }) }));
         tx.set(D.col(D.COL.activationEnvelopes).doc(b.mandateVersionId), enc({ ...b.envelope, ...D.envelope({ created_by: "mandate.stagePortfolioPlan" }) }));
         tx.set(D.col(D.COL.capitalReservations).doc(b.reservation.reservationId), enc({ ...b.reservation, ...D.envelope({ created_by: "mandate.stagePortfolioPlan" }) }));
-        tx.set(D.col(D.COL.orderSets).doc(b.orderSet.orderSetId), enc({ ...b.orderSet, ...D.envelope({ created_by: "mandate.stagePortfolioPlan" }) }));
-        for (const leg of b.orderSet.legs) tx.set(D.col(D.COL.orderLegs).doc(leg.legId), enc({ schemaVersion: "order-leg.v1", ...leg, orderSetId: b.orderSet.orderSetId, accountId, symbol: b.p.symbol, mandateVersionId: b.mandateVersionId, filledUnits: "0", remainingUnits: leg.quantityUnits, brokerOrderId: null, status: "DESIRED", createdAtMs: nowMs }));
+        /* order sets and legs are LIFECYCLE records the executor advances in place (status, fills, broker ids), so they are
+           stored plain; the immutable records above carry the codec's content hash */
+        tx.set(D.col(D.COL.orderSets).doc(b.orderSet.orderSetId), { ...b.orderSet, ...D.envelope({ created_by: "mandate.stagePortfolioPlan" }) });
+        for (const leg of b.orderSet.legs) tx.set(D.col(D.COL.orderLegs).doc(leg.legId), { schemaVersion: "order-leg.v1", ...leg, orderSetId: b.orderSet.orderSetId, accountId, symbol: b.p.symbol, mandateVersionId: b.mandateVersionId, filledUnits: "0", remainingUnits: leg.quantityUnits, brokerOrderId: null, status: "DESIRED", createdAtMs: nowMs });
         tx.set(D.col(D.COL.executionOutbox).doc(b.outbox.transitionId), b.outbox);
         tx.set(D.col(D.COL.activeMandates).doc(b.seriesId), b.pointerNext, { merge: true });
         tx.set(D.col(D.COL.mandateEvents).doc(`${b.mandateVersionId}_${String(1).padStart(4, "0")}`), { mandateVersionId: b.mandateVersionId, mandateSeriesId: b.seriesId, sequence: 1, accountId, symbol: b.p.symbol,
