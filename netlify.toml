@@ -18,9 +18,10 @@
   included_files = [
     "netlify/functions/fonts/**",
     "netlify/functions/prompts/**",
-    # investor/  — Investor_AI's strategies/v1.json and universe/v1.json are
-    # require()'d at runtime by investorCycle-background and investorApi.
-    # Without this line the first cycle dies with MODULE_NOT_FOUND.
+    # investor/  — retired legacy metadata (strategies/v1.json, universe/v1.json).
+    # The runtime strategy and roster are the frozen modules
+    # _investorStrategy.js (v18) and _investorUniverse.js (v6); these files are
+    # carried for historical replay only and are read by nothing.
     "investor/**",
     # investor.html — Investor AI's fixture set makes static assertions over
     # the console source (no duplicate top-level declarations, reachable

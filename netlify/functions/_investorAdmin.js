@@ -215,6 +215,30 @@ const COL = {
   plans:      COL_PREFIX + "EntryPlans",     // armed entry levels written by the deep scan, struck by the guard
 };
 
+/* ── ENGINE VERSIONS AND THE LEGACY FREEZE (blueprint §10.4, §13) ────────
+ * Two engines share the InvestorAI_ namespace during the cutover: the
+ * deterministic residual-reversal desk (legacy-v18) and the AI Fund Manager
+ * (fund-manager-v1). Every record projected through the API is labelled
+ * with the engine that produced it, and the legacy collections below are
+ * frozen read-only after cutover. A legacy Candidate or EntryPlan is never
+ * reinterpreted as an AI authorization. */
+const ENGINE_VERSIONS = Object.freeze({ LEGACY: "legacy-v18", MANAGER: "fund-manager-v1" });
+const LEGACY_COLLECTIONS = Object.freeze([
+  COL.candidates, COL.decisions, COL.strategies,
+  COL.shadowDays, COL.shadowOpen, COL.shadowClosed, COL.shadowAccounts, COL.shadowObservations,
+  COL.calibration, COL.soakCycles, COL.scanSnapshots, COL.plans,
+]);
+function isLegacyCollection(name) { return LEGACY_COLLECTIONS.includes(String(name || "")); }
+/** Label a record with the engine that produced it when it is projected
+ *  through the API. A record that already declares an engine keeps it. */
+function legacyProjection(record, { collection = null } = {}) {
+  if (!record || typeof record !== "object") return record;
+  if (record.engineVersion) return record;
+  const legacy = collection ? isLegacyCollection(collection) : true;
+  return { ...record, engineVersion: legacy ? ENGINE_VERSIONS.LEGACY : ENGINE_VERSIONS.MANAGER,
+    decisionAuthority: record.decisionAuthority || (legacy ? "deterministic_v18" : "ai_manager") };
+}
+
 /* ── provenance envelope required on every generated record ────────────── */
 function envelope(extra = {}) {
   return {
@@ -230,5 +254,6 @@ module.exports = {
   firestoreSafe, installNestedArrayGuard, rawDb,
   FV, TS, col, doc, runTransaction, batch,
   COL, COL_PREFIX,
+  ENGINE_VERSIONS, LEGACY_COLLECTIONS, isLegacyCollection, legacyProjection,
   envelope,
 };

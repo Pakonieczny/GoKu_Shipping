@@ -2469,6 +2469,9 @@ const ACTIONS = {
         firebase: !!(process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_PROJECT_ID),
         openai: !!process.env.OPENAI_API_KEY,
       },
+      engineVersions: A.ENGINE_VERSIONS,
+      legacyCollections: A.LEGACY_COLLECTIONS,
+      legacyBaseline: (() => { try { return B.legacyBaseline(); } catch (e) { return { error: String(e.message).slice(0, 160) }; } })(),
       /* Which invariant failed, not merely that one did. Names only — the
          fixture bodies are code, and the operator needs the label to act. */
       fixtures: await (async () => {

@@ -3046,6 +3046,50 @@ function runFixtures() {
     return true;
   }));
 
+
+  /* ── The legacy baseline is frozen and exported (blueprint §21 commit 3;
+     §16.5 arms 2a/2b; §10.4 legacy collections; §13 configuration hygiene). */
+  cases.push(fixture("legacy_baseline_is_frozen_with_full_hashes_and_the_legacy_surface_is_labelled", () => {
+    const fs = require("fs"), path = require("path");
+    const A2 = require("./_investorAdmin");
+    const base = B.legacyBaseline({ strategy, universe: U, commit: "fixture" });
+    if (base.schema !== "legacy-baseline.v1" || base.engineVersion !== "legacy-v18") return false;
+    for (const h of [base.strategyHash, base.universeHash, base.variantsHash,
+      base.arms.exploratoryControl.riskConfigHash, base.arms.declaredStrict.riskConfigHash]) {
+      if (!/^[a-f0-9]{64}$/.test(String(h))) return false;
+    }
+    if (base.strategyVersion !== "v18" || base.universeVersion !== "v6" || base.eligibleCount !== 304) return false;
+    /* Determinism: the same inputs give the same identity. */
+    const again = B.legacyBaseline({ strategy, universe: U, commit: "fixture" });
+    if (JSON.stringify(canonical(again)) !== JSON.stringify(canonical(base))) return false;
+    /* The two arms are distinct configurations; the strict arm is not order-eligible. */
+    if (base.arms.exploratoryControl.riskConfigHash === base.arms.declaredStrict.riskConfigHash) return false;
+    if (base.arms.exploratoryControl.breakersDisabled.length !== 5 || base.arms.exploratoryControl.trackRecord !== true) return false;
+    if (base.arms.declaredStrict.orderEligibility.eligible !== false || base.arms.declaredStrict.trackRecord !== false) return false;
+    /* The legacy collections of §10.4 are declared and projected records are labelled. */
+    const expected = ["Candidates", "Decisions", "StrategyVersions", "ShadowDays", "ShadowOpen", "ShadowClosed",
+      "ShadowAccounts", "ShadowObservations", "Calibration", "SoakCycles", "ScanSnapshots", "EntryPlans"];
+    for (const n of expected) if (!A2.LEGACY_COLLECTIONS.includes(A2.COL_PREFIX + n)) throw new Error(`legacy collection missing: ${n}`);
+    if (A2.LEGACY_COLLECTIONS.length !== expected.length) return false;
+    const projected = A2.legacyProjection({ symbol: "X" }, { collection: A2.COL.plans });
+    if (projected.engineVersion !== "legacy-v18" || projected.decisionAuthority !== "deterministic_v18") return false;
+    if (A2.legacyProjection({ engineVersion: "fund-manager-v1" }).engineVersion !== "fund-manager-v1") return false;
+    if (A2.legacyProjection({ x: 1 }, { collection: A2.COL.control }).engineVersion !== "fund-manager-v1") return false;
+    /* Configuration hygiene, where the checkout is visible: no nested
+       netlify.toml, and the stale JSON files carry a retired marker. */
+    const root = [path.join(__dirname, "..", ".."), process.cwd()].find((r) => fs.existsSync(path.join(r, "netlify.toml")));
+    if (root) {
+      if (fs.existsSync(path.join(root, "netlify", "functions", "netlify.toml"))) throw new Error("nested netlify/functions/netlify.toml must not exist");
+      for (const f of ["investor/strategies/v1.json", "investor/universe/v1.json"]) {
+        const p = path.join(root, f);
+        if (!fs.existsSync(p)) continue;
+        const doc = JSON.parse(fs.readFileSync(p, "utf8"));
+        if (!doc.retired || doc.retired.authority !== "none") throw new Error(`${f} lacks a retired marker`);
+      }
+    }
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is

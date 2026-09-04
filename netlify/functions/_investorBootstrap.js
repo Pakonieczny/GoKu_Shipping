@@ -292,6 +292,48 @@ async function resolveCiksAndFreeze() {
   return { frozen, report };
 }
 
+/* ── THE LEGACY BASELINE (blueprint §21 commit 3; §16.5 arms 2a/2b) ──────
+ * The identity of what the AI Fund Manager is compared against, frozen
+ * before the manager exists. Two arms share the v18 strategy and the v6
+ * roster but differ in risk configuration:
+ *   2a  the exploratory configuration as actually run (the only arm with a
+ *       track record), at its actual riskConfigHash with its deviations from
+ *       the declared strategy attached;
+ *   2b  the declared strict configuration, shadow only, never order-eligible
+ *       until a calibration exists.
+ * PURE: the same inputs always give the same hashes. */
+function legacyBaseline({ strategy = null, universe = null, commit = null } = {}) {
+  const ST = require("./_investorStrategy.js");
+  const V = require("./_investorVariants.js");
+  const s = strategy || require("./_investorStrategy.js");
+  const u = universe || require("./_investorUniverse.js");
+  const strictControls = s.portfolioControls || {};
+  const exploratoryControls = { ...strictControls, ...(((s.exploratoryAuto || {}).portfolioControls) || {}) };
+  const exploratoryCfg = ST.paperLearningConfig({ ...(s.parameters || {}) },
+    { paperLearning: { enabled: true, ...(((s.exploratoryAuto || {}).paperLearningDefaults) || {}) } }).cfg;
+  const strict = ST.riskConfigIdentity(s.parameters || {}, strictControls, s);
+  const exploratory = ST.riskConfigIdentity(exploratoryCfg, exploratoryControls, s);
+  return {
+    schema: "legacy-baseline.v1",
+    engineVersion: A.ENGINE_VERSIONS.LEGACY,
+    strategyVersion: s.version, strategyHash: strategyHash(strategyDocument(s)),
+    universeVersion: u.version, universeHash: u.contentHash || universeHash(u),
+    eligibleCount: (u.tradeTier || []).length,
+    variantsHash: V.variantsHash(),
+    arms: {
+      exploratoryControl: { id: "2a", label: "frozen exploratory control (as actually run)",
+        riskConfigHash: exploratory.riskConfigHash, deviationsFromDeclared: exploratory.deviationsFromDeclared,
+        breakersDisabled: exploratory.breakersDisabled, hurdlesLowered: exploratory.hurdlesLowered,
+        exitConvention: "touch_before_close", trackRecord: true },
+      declaredStrict: { id: "2b", label: "declared strict configuration (shadow, non-eligible)",
+        riskConfigHash: strict.riskConfigHash, deviationsFromDeclared: strict.deviationsFromDeclared,
+        orderEligibility: ST.orderEligibility(s.parameters || {}), trackRecord: false },
+    },
+    frozenAt: s.frozenAt || null,
+    commit: commit || process.env.COMMIT_REF || process.env.DEPLOY_ID || "local",
+  };
+}
+
 async function freezeStrategy() {
   const s=strategyDocument(require("./_investorStrategy.js")),contentHash=strategyHash(s),ref=A.col(A.COL.strategies).doc(s.version);
   await A.runTransaction(async(tx)=>{const cur=await tx.get(ref);
@@ -1021,6 +1063,11 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
       strategyHash: strategyHashValue,
       variantsHash,
       safetyEpoch,
+      /* Written once and never edited: the identity of the legacy arms the
+         AI Fund Manager is measured against (§16.5). */
+      ...(c.legacyBaseline && c.legacyBaseline.schema === "legacy-baseline.v1" ? {}
+        : { legacyBaseline: { ...legacyBaseline({ strategy: S_FALLBACK, universe: universe || null, commit }),
+            frozenAtMs: Date.now() } }),
       autoExploratoryAuthorized: autoAuthorized,
       exploratoryPolicyVersion: exploratory.version || null,
       paperLearning: autoAuthorized
@@ -1166,7 +1213,7 @@ module.exports = {
   epochRolloverEligible, epochRebindNeeded,
   expectedHistorySymbols, historyCursorNeedsReconcile, backfillDailyHistory, topUpDailyHistory,
   backfillSharesOutstanding, readShares,
-  BOOTSTRAP_VERSION, BOOTSTRAP_STRATEGY_VERSION, DAILY_PROVENANCE_VERSION,
+  BOOTSTRAP_VERSION, BOOTSTRAP_STRATEGY_VERSION, DAILY_PROVENANCE_VERSION, legacyBaseline,
   ensureBootstrapped, resolveCiksAndFreeze, freezeBundledUniverse,
   validateBundledUniverseSnapshot, freezeStrategy,
   SEC_RENAMED_TICKERS, canonicalSecTicker, buildSecTickerMap, resolveSecTicker,

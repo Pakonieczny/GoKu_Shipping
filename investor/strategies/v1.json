@@ -1,4 +1,10 @@
 {
+  "retired": {
+    "at": "2026-09-04",
+    "engineVersion": "legacy-v18",
+    "authority": "none",
+    "reason": "Stale v1 hypothesis. The runtime strategy is the frozen module netlify/functions/_investorStrategy.js (v18); this file is archived legacy metadata and is read by nothing (blueprint §13)."
+  },
   "version": "v1",
   "name": "Residual reversal with evidence classification",
   "frozenAt": "2026-08-29",
@@ -20,7 +26,7 @@
     "signalWindow": 12,
     "entryRank": 0.1,
     "exitRank": 0.5,
-    "minAbsZ": 2.0,
+    "minAbsZ": 2,
     "maxHoldDays": 10,
     "_exitRankNote": "The buy/hold spread. de Groot/Huij/Zhou: identical signal on the 100 largest names nets +31.5bp/wk with standard rebalancing and +53.1bp/wk when the exit is deferred to the 50% rank, with turnover cut from ~700% to ~330%. Novy-Marx & Velikov independently call this the single most effective simple cost mitigation. The exit rule is worth more than any entry refinement.",
     "minAdvUsd": 300000000,
@@ -37,7 +43,7 @@
     "_causeNote": "Ben-Rephael/Da/Easton/Israelsen: 8-Ks drawing institutional attention show no under- or over-reaction (already priced); those drawing retail attention reverse, peaking days t+7..t+8. A fundamental cause means DO NOT FADE. 'No cause detected' is traded at half size because the system cannot bound sources it does not cover.",
     "decayHaircut": 0.5,
     "reversionCapture": 0.35,
-    "costMarginMultiple": 2.0,
+    "costMarginMultiple": 2,
     "_costNote": "A candidate must expect at least twice its modelled round-trip friction before it is proposed at all.",
     "positionPctOfNav": 0.03,
     "executionLatencyMs": 60000,

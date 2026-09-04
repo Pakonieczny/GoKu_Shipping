@@ -1,6 +1,12 @@
 {
+  "retired": {
+    "at": "2026-09-04",
+    "engineVersion": "legacy-v18",
+    "authority": "none",
+    "reason": "Stale 45-trade / 12-research roster. The runtime roster is netlify/functions/_investorUniverse.js (v6, 304 eligible); this file is archived legacy metadata and is read by nothing (blueprint §13)."
+  },
   "version": "v1",
-  "name": "Investor_AI trade tier \u2014 high-cadence residual reversal",
+  "name": "Investor_AI trade tier — high-cadence residual reversal",
   "createdAt": "2026-08-29",
   "marketDataAsOf": "2026-08-28 close",
   "rationale": "Selected for the high-cadence, 1-10 day, high-turnover objective, NOT for rare high-materiality catalysts. Three binding constraints drove the roster: (1) turnover cost dominates - ~5-day holds are ~400% one-sided monthly turnover, so only the most liquid tier survives (de Groot/Huij/Zhou: 1,500 largest nets -103.7bp/wk, 100 largest nets +31.5bp/wk on an identical signal); (2) breadth is required - IR scales with the square root of independent bets and every published net-profitable short-hold reversal result uses at minimum the 100 largest names, so 15 names sits below the evidence floor; (3) gap risk is solved by an earnings blackout calendar, not by name exclusion, because the fat tail lives almost entirely on ~4 scheduled dates a year.",
@@ -436,7 +442,7 @@
       "tier": "research",
       "earningsDates": [],
       "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 99.0
+      "marketCapUsdB": 99
     },
     {
       "symbol": "MCHP",
@@ -723,7 +729,7 @@
       "tier": "research",
       "earningsDates": [],
       "earningsDatesSource": "operator_entry_required",
-      "marketCapUsdB": 99.0
+      "marketCapUsdB": 99
     },
     {
       "symbol": "UBER",
