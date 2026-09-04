@@ -584,6 +584,7 @@ async function expandedHoldingDeltas({ symbols = [], cutoff, admin = null, deps 
 
 /* ── health ────────────────────────────────────────────────────────────── */
 async function dossierHealth({ symbols = [], admin = null, nowMs = Date.now() } = {}) {
+  /* pointer reads only: no market reads, so this is cheap for a full roster */
   const out = { total: symbols.length, present: 0, missing: [], stale: [], complete: 0, pendingDeltas: 0, oldestAsOfMs: null };
   for (const s of symbols) {
     const p = await current(s, { admin });

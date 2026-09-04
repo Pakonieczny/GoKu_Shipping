@@ -4106,6 +4106,241 @@ function runFixtures() {
     return true;
   }));
 
+  /* ── Group 5 (commit 11): the one logical Manager Meeting, in memory.
+     Freeze → review → exact coverage with one MISSING-rows repair →
+     holding maintenance → bounded research → final synthesis → activation
+     → one decision row per managed symbol; typed no-BUY reasons (D-12);
+     yield and resume from a checkpoint without paying twice. */
+  function meetingWorld({ reviewMissing = ["BBB"], reviewFails = false, synthesisBuy = true, heldMandateWidens = false } = {}) {
+    const D = require("./_investorDossier");
+    const P = require("./_investorPolicy");
+    const U = require("./_investorUniverse");
+    const fake = fakeAdmin();
+    const t0 = Date.UTC(2026, 8, 4, 12, 45);   // 08:45 ET on a Friday
+    const symbols = ["AAA", "BBB", "CCC"];
+    const bars = [];
+    let c = 40;
+    for (let i = 300; i >= 1; i -= 1) { const d = new Date(t0 - i * 864e5).toISOString().slice(0, 10); c *= 1 + ((i % 7) - 3) / 400; bars.push({ date: d, c: Number(c.toFixed(4)) }); }
+    const snapshotRoster = { schemaVersion: "universe-snapshot.v1", universeVersion: "v6", universeHash: "f".repeat(64), eligibleCount: 3, symbols, members: [], excluded: [], managedOffRoster: [], tradingDate: "2026-09-04" };
+    const universe = { freezeEligibleSnapshot: () => snapshotRoster, coverageMatches: U.coverageMatches, tradeTier: symbols.map((symbol) => ({ symbol, sector: "sw", cik: "0000123456", company: `${symbol} Corp` })), researchTier: [] };
+    const calls = { review: 0, repair: 0, research: 0, synthesis: 0, staged: [] };
+    const mandateFor = (symbol) => ({ ...P.EXAMPLE_MANDATE_PROPOSAL, symbol });
+    const gateway = {
+      reviewUniverse: async ({ cards, universeManifest, holdings }) => {
+        calls.review += 1;
+        if (reviewFails) return { ok: false, error: "daily_reservation_exhausted", budgetBlocked: true, cause: "evidence_unavailable", decision: "ABSTAIN", reasonCode: "MODEL_FAILURE", coverage: [], holdingAnalysis: [], researchRequests: [] };
+        if (cards.length !== 3 || universeManifest.universeHash !== snapshotRoster.universeHash) throw new Error("review did not receive the frozen roster");
+        const rows = symbols.filter((s) => !reviewMissing.includes(s)).map((symbol) => ({ symbol, reviewDirective: symbol === "AAA" ? "RESEARCH_NOW" : "NONE", provisionalDisposition: symbol === "CCC" ? "IGNORE" : "WATCH", reason: "r", changedSincePrior: false, reasonCode: null }));
+        const holdingAnalysis = holdings.map((h) => ({ symbol: h.symbol, decision: "HOLD", reasonCode: null, revisionResult: heldMandateWidens ? "REVISED" : "UNCHANGED", researchDirective: "NONE", thesisHealth: "INTACT",
+          emergency: { emergencyReductionRank: 1, emergencyRankAsOf: new Date(t0).toISOString(), emergencyRankExpiresAfterSession: "2026-09-08", rationale: "x" }, rationale: "hold",
+          mandate: heldMandateWidens ? { ...mandateFor(h.symbol), decision: "HOLD", action: { ...P.EXAMPLE_MANDATE_PROPOSAL.action, kind: "HOLD_PROTECT", entry: null, protection: { ...P.EXAMPLE_MANDATE_PROPOSAL.action.protection, lossBoundaryPriceMicros: "1000000" } } } : null }));
+        return { ok: true, coverage: rows, holdingAnalysis, researchRequests: [{ symbol: "AAA", researchPriority: 1, completionClass: "BUY_REQUIRED", reason: "inflection", reviewDirective: "RESEARCH_NOW" }], managerNote: "", plan: { mode: "single" }, responseIds: ["resp_1"], requestIds: ["mr_1"], costMinor: "36" };
+      },
+      repairCoverageStructure: async ({ missing }) => { calls.repair += 1; return { ok: true, coverage: [...missing, "ZZZ"].map((symbol) => ({ symbol, reviewDirective: "NONE", provisionalDisposition: "WATCH", reason: "repaired", changedSincePrior: false, reasonCode: null })), repaired: missing.length, costMinor: "4" }; },
+      researchCompany: async ({ dossier }) => { calls.research += 1; return { ok: true, symbol: dossier.symbol, costMinor: "120", requestId: "mr_r", outputHash: "h".repeat(64), memo: { schemaVersion: "research-memo.v1", symbol: dossier.symbol, asOf: new Date(t0).toISOString(),
+        checklist: { business: "b", whatChanged: "c", agreementDisagreement: "a", risks: "r", valuationFramework: "v", disconfirmingEvidence: "d", returnAndHorizon: "h", versusAlternatives: "x", mandateOrAbstain: "m" },
+        factualPremises: [{ premiseId: "p1", text: "t", claimId: "claim_1", documentVersionId: "v1" }, { premiseId: "p2", text: "t", claimId: "claim_2", documentVersionId: "v1" }, { premiseId: "p3", text: "t", claimId: "claim_3", documentVersionId: "v1" }],
+        inferences: [], valuation: null, bearCase: "bear", thesisHealth: "INTACT", proposedDecision: "BUY", reasonCode: null, mandate: mandateFor(dossier.symbol) } }; },
+      finalizePortfolio: async ({ researchResults, holdings }) => { calls.synthesis += 1; const s = researchResults[0].symbol; return { ok: true, costMinor: "80", requestId: "mr_f", synthesis: { schemaVersion: "portfolio-synthesis.v1", planClass: "EXPANSION",
+        decisions: [{ symbol: s, decision: synthesisBuy ? "BUY" : "WATCH", capitalRank: synthesisBuy ? 1 : null, reasonCode: synthesisBuy ? null : "UNCERTAINTY", fundingState: synthesisBuy ? "FUNDED" : "NOT_APPLICABLE", reason: "best" }],
+        expansionMandates: synthesisBuy ? [mandateFor(s)] : [], comparisonNote: "n" } }; },
+    };
+    const claimVerifier = { verifyAndPersistBatch: async ({ proposals }) => ({ allSupported: true, blockingSymbols: [], forceAbstainSymbols: [], byProposal: Object.fromEntries(proposals.map((p) => [p.symbol, { symbol: p.symbol, allSupported: true, blocking: false, forceAbstain: false, verdictIds: [] }])) }), verifyAndPersist: async () => ({ summary: { allSupported: true } }) };
+    const mandate = { stagePortfolioPlan: async ({ planClass, proposals, activationSnapshot }) => { calls.staged.push({ planClass, symbols: proposals.map((p) => p.symbol), snapshotId: activationSnapshot.activationSnapshotId }); return { status: "COMMITTED", planId: `plan_${planClass}_${calls.staged.length}` }; } };
+    const history = { readDailyWithMeta: async () => ({ series: bars, provenance: null }) };
+    const seed = async () => {
+      for (const symbol of symbols) {
+        const v = D.composeVersion({ symbol, identity: { name: `${symbol} Corp`, sector: "sw", cik: "0000123456" }, asOfMs: t0 - 3600e3, facts: [], fundamentals: null, claims: [], documents: [] });
+        await D.persistVersion(v, { admin: fake, sourceAtMs: t0 - 3600e3 });
+      }
+      fake.docs.set(`${fake.COL.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 1000000, reserved: 0, positions: 42000 }, balanceRevision: 7 });
+      fake.docs.set(`${fake.COL.positions}/paper-1_BBB`, { accountId: "paper-1", symbol: "BBB", open: true, qty: 10, entryPriceUsd: 40, lastMarkUsd: 42, lastMarkAt: new Date(t0 - 60e3).toISOString(), costBasisCents: 40000 });
+    };
+    const deps = { admin: fake, gateway, universe, claimVerifier, mandate, history, tools: null, now: () => t0, reconcile: null };
+    return { fake, deps, calls, t0, symbols, seed, snapshotRoster };
+  }
+
+  cases.push(fixture("manager_meeting_covers_the_frozen_roster_exactly_repairs_missing_rows_once_and_persists_one_decision_per_symbol", async () => {
+    const MGR = require("./_investorManager");
+    const W = meetingWorld();
+    await W.seed();
+    const claim = { jobId: "j_mgr", runId: "run_premarket_manager_paper-1_2026-09-04", payload: { accountId: "paper-1", tradingDate: "2026-09-04" }, checkpoint: null };
+    const out = await MGR.runManagerMeeting({ claim, deps: W.deps, budget: () => 10 * 60 * 1000, control: { engineMode: "manager" } });
+    if (out.done !== true || out.failed) throw new Error(`meeting ${JSON.stringify(out).slice(0, 400)}`);
+    const s = out.summary;
+    if (s.status !== "complete" || s.eligibleCount !== 3 || s.universeHash !== W.snapshotRoster.universeHash || s.decisionCount !== 3) throw new Error(`summary ${JSON.stringify(s).slice(0, 300)}`);
+    /* coverage: one structural repair supplied the missing BBB row; the extraneous ZZZ row was ignored */
+    if (W.calls.review !== 1 || W.calls.repair !== 1 || s.coverage.ok !== true || s.coverage.completedCount !== 3 || s.coverage.repaired !== 1) throw new Error(`coverage ${JSON.stringify(s.coverage)} calls ${JSON.stringify(W.calls)}`);
+    const decisions = [...W.fake.docs.entries()].filter(([k]) => k.startsWith(`${W.fake.COL.managerDecisions}/`)).map(([, v]) => v);
+    if (decisions.length !== 3) throw new Error(`decision rows ${decisions.length}`);
+    const SC = require("./_investorStorageCodec");
+    const rows = decisions.map((d) => (d._codec ? SC.decode(d) : d));
+    const by = Object.fromEntries(rows.map((r) => [r.symbol, r]));
+    if (by.AAA.decision !== "BUY" || by.AAA.capitalRank !== 1 || by.AAA.fundingState !== "FUNDED" || by.AAA.source !== "final_synthesis") throw new Error(`AAA ${JSON.stringify(by.AAA)}`);
+    if (by.BBB.decision !== "HOLD" || by.BBB.held !== true || by.BBB.source !== "holding_analysis") throw new Error(`BBB ${JSON.stringify(by.BBB)}`);
+    if (by.CCC.decision !== "IGNORE" || by.CCC.source !== "coverage") throw new Error(`CCC ${JSON.stringify(by.CCC)}`);
+    for (const r of rows) { if (!/^(BUY|WATCH|IGNORE|HOLD|REDUCE|SELL|ABSTAIN)$/.test(r.decision)) throw new Error("workflow value in decision column"); if (r.managerRunId !== claim.runId || !r.contextManifestHash) throw new Error("decision lineage"); }
+    /* research ran once, smallest priority first; synthesis once; the expansion basket was staged against a fresh activation snapshot after maintenance */
+    if (W.calls.research !== 1 || W.calls.synthesis !== 1) throw new Error(`calls ${JSON.stringify(W.calls)}`);
+    if (W.calls.staged.length !== 1 || W.calls.staged[0].planClass !== "EXPANSION" || W.calls.staged[0].symbols[0] !== "AAA" || !W.calls.staged[0].snapshotId) throw new Error(`staging ${JSON.stringify(W.calls.staged)}`);
+    if (s.activation.status !== "COMMITTED" || !s.activation.planId || s.noBuyReasons.length !== 0 || s.buys[0].symbol !== "AAA") throw new Error(`activation ${JSON.stringify(s.activation)} ${JSON.stringify(s.noBuyReasons)}`);
+    if (s.costMinor !== "240") throw new Error(`cost ${s.costMinor}`);
+    /* the run record is counters and hashes, never 304 rows */
+    const run = await MGR.readRun(claim.runId, { admin: W.fake });
+    if (!run || run.status !== "complete" || run.universeHash !== W.snapshotRoster.universeHash || run.decisionCount !== 3 || JSON.stringify(run).length > 20000) throw new Error("run record");
+    const memo = await require("./_investorResearch").latest("AAA", { admin: W.fake });
+    if (!memo || memo.researchVersion !== 1 || memo.proposedDecision !== "BUY" || memo.factualPremises.length !== 3) throw new Error("memo not persisted immutably");
+    const ctrl = W.fake.docs.get(`${W.fake.COL.control}/control`);
+    if (!ctrl || ctrl.lastManagerRunDate !== "2026-09-04" || ctrl.lastManagerRun.status !== "complete") throw new Error("control not updated");
+    return true;
+  }));
+
+  cases.push(fixture("manager_meeting_yields_on_budget_resumes_from_its_checkpoint_and_never_pays_for_a_stage_twice", async () => {
+    const MGR = require("./_investorManager");
+    const W = meetingWorld({ reviewMissing: [] });
+    await W.seed();
+    const claim = { jobId: "j_mgr2", runId: "run_premarket_manager_paper-1_2026-09-04", payload: { accountId: "paper-1", tradingDate: "2026-09-04" }, checkpoint: null };
+    let ticks = 0;
+    const first = await MGR.runManagerMeeting({ claim, deps: W.deps, budget: () => (ticks++ < 1 ? 10 * 60 * 1000 : 1000), control: { engineMode: "manager" } });
+    if (first.yielded !== true || first.checkpoint.stage !== "review" || !first.checkpoint.data.contextManifestHash) throw new Error(`first ${JSON.stringify(first).slice(0, 200)}`);
+    if (W.calls.review !== 0) throw new Error("review paid before the yield");
+    const second = await MGR.runManagerMeeting({ claim: { ...claim, checkpoint: first.checkpoint }, deps: W.deps, budget: () => 10 * 60 * 1000, control: { engineMode: "manager" } });
+    if (second.done !== true || second.failed || second.summary.decisionCount !== 3) throw new Error(`second ${JSON.stringify(second).slice(0, 300)}`);
+    if (W.calls.review !== 1 || W.calls.repair !== 0 || W.calls.research !== 1 || W.calls.synthesis !== 1) throw new Error(`calls after resume ${JSON.stringify(W.calls)}`);
+    if (second.summary.contextManifestHash !== first.checkpoint.data.contextManifestHash) throw new Error("context hash changed across resume");
+    return true;
+  }));
+
+  cases.push(fixture("manager_meeting_fails_closed_with_typed_no_buy_reasons_and_holding_protection_is_never_widened_from_a_delta_review", async () => {
+    const MGR = require("./_investorManager");
+    /* an exhausted reservation at review: no decisions, typed BUDGET_EXHAUSTED, run failed closed */
+    const W = meetingWorld({ reviewFails: true });
+    await W.seed();
+    const claim = { jobId: "j_mgr3", runId: "run_premarket_manager_paper-1_2026-09-04", payload: { accountId: "paper-1", tradingDate: "2026-09-04" }, checkpoint: null };
+    const out = await MGR.runManagerMeeting({ claim, deps: W.deps, budget: () => 10 * 60 * 1000, control: { engineMode: "manager" } });
+    if (out.done !== true || out.failed !== true || out.reason !== "REVIEW_FAILED") throw new Error(`failure ${JSON.stringify(out).slice(0, 200)}`);
+    if (!out.summary.noBuyReasons.some((r) => r.code === "BUDGET_EXHAUSTED")) throw new Error("no-BUY reason not typed");
+    if ([...W.fake.docs.keys()].some((k) => k.startsWith(`${W.fake.COL.managerDecisions}/`))) throw new Error("decisions written on a failed run");
+    if (W.calls.staged.length !== 0) throw new Error("something was staged on a failed run");
+    const run = await MGR.readRun(claim.runId, { admin: W.fake });
+    if (!run || run.status !== "failed_closed") throw new Error("run not failed closed");
+    /* a missing card fails before Sol is asked anything */
+    const W2 = meetingWorld();
+    await W2.seed();
+    W2.fake.docs.delete(`${W2.fake.COL.dossiers}/CCC`);
+    const out2 = await MGR.runManagerMeeting({ claim: { ...claim, jobId: "j_mgr4" }, deps: W2.deps, budget: () => 10 * 60 * 1000, control: { engineMode: "manager" } });
+    if (out2.failed !== true || out2.reason !== "COVERAGE_INPUT_INCOMPLETE" || W2.calls.review !== 0 || !out2.summary.noBuyReasons[0].missing.includes("CCC")) throw new Error(`cards gate ${JSON.stringify(out2).slice(0, 200)}`);
+    /* anti-goalpost: a HOLD mandate that widens the loss boundary from a delta review is refused; prior protection stays; expansion freezes */
+    const W3 = meetingWorld({ reviewMissing: [], heldMandateWidens: true });
+    await W3.seed();
+    W3.fake.docs.set(`${W3.fake.COL.activeMandates}/paper-1_BBB`, { accountId: "paper-1", symbol: "BBB", status: "ACTIVE", appliedVersionId: "mv1", lossBoundaryPriceMicros: "39000000", action: { protection: { lossBoundaryPriceMicros: "39000000" } } });
+    const out3 = await MGR.runManagerMeeting({ claim: { ...claim, jobId: "j_mgr5" }, deps: W3.deps, budget: () => 10 * 60 * 1000, control: { engineMode: "manager" } });
+    if (out3.done !== true || out3.failed) throw new Error(`goalpost run ${JSON.stringify(out3).slice(0, 200)}`);
+    const m = out3.summary.maintenance;
+    if (!m || !m.actionRequired.some((x) => x.symbol === "BBB" && /ANTI_GOALPOST/.test(x.reason))) throw new Error(`anti-goalpost not enforced ${JSON.stringify(m)}`);
+    if (W3.calls.staged.some((x) => x.planClass === "RISK_MAINTENANCE")) throw new Error("widened protection was staged");
+    if (out3.summary.buys.length !== 0 || !out3.summary.noBuyReasons.some((r) => r.code === "FREEZE_STATE")) throw new Error(`expansion not frozen on an unsafe holding ${JSON.stringify(out3.summary.noBuyReasons)}`);
+    const SC = require("./_investorStorageCodec");
+    const bbb = SC.decode(W3.fake.docs.get(`${W3.fake.COL.managerDecisions}/${claim.runId}_BBB`));
+    if (bbb.decision !== "ABSTAIN" || bbb.reasonCode !== "DATA_INCOMPLETE") throw new Error(`held row after refused maintenance ${JSON.stringify(bbb)}`);
+    /* pure pieces: a held name never becomes BUY; repair adds only expected missing rows; ranks must be unique */
+    const rows = MGR.composeFinalDecisionRows({ roster: { symbols: ["AAA", "BBB"] }, workset: { symbols: ["AAA", "BBB"], rows: [{ symbol: "AAA", eligible: true, held: false, heldQty: 0, entryEligible: true }, { symbol: "BBB", eligible: true, held: true, heldQty: 5, entryEligible: false }] },
+      effective: { coverage: [{ symbol: "AAA", reviewDirective: "NONE", provisionalDisposition: "WATCH", reason: "r", changedSincePrior: false, reasonCode: null }, { symbol: "BBB", reviewDirective: "NONE", provisionalDisposition: "HOLD_CANDIDATE", reason: "r", changedSincePrior: false, reasonCode: null }], holdingAnalysis: [{ symbol: "BBB", decision: "HOLD", rationale: "h" }] },
+      synthesis: { decisions: [{ symbol: "BBB", decision: "BUY", capitalRank: 1, fundingState: "FUNDED", reason: "x" }], expansionMandates: [{ symbol: "BBB" }] } });
+    if (rows.find((r) => r.symbol === "BBB").decision !== "HOLD") throw new Error("held name overridden by a BUY");
+    const merged = MGR.mergeStructuralCoverageRepair({ original: { coverage: [{ symbol: "AAA", provisionalDisposition: "WATCH" }] }, repairedRows: [{ symbol: "AAA", provisionalDisposition: "IGNORE" }, { symbol: "BBB", provisionalDisposition: "WATCH" }, { symbol: "ZZZ" }], expectedMissing: ["BBB"] });
+    if (merged.coverage.length !== 2 || merged.coverage[0].provisionalDisposition !== "WATCH" || merged.repair.ignored.length !== 2) throw new Error("repair changed a returned row or added an unexpected one");
+    let code = null;
+    try { MGR.validateUniqueCapitalRanksAndFeasibility([{ decision: "BUY", capitalRank: 1, mandate: {} }, { decision: "BUY", capitalRank: 1, mandate: {} }]); } catch (e) { code = e.code; }
+    if (code !== "CAPITAL_RANK_DUPLICATE") throw new Error("duplicate ranks accepted");
+    if (MGR.antiGoalpostViolations({ action: { protection: { lossBoundaryPriceMicros: "38000000" } } }, { action: { protection: { lossBoundaryPriceMicros: "39000000" } } })[0] !== "LOSS_BOUNDARY_WIDENED") throw new Error("widening not detected");
+    if (MGR.antiGoalpostViolations({ action: { protection: { lossBoundaryPriceMicros: "40000000" } } }, { action: { protection: { lossBoundaryPriceMicros: "39000000" } } }).length !== 0) throw new Error("tightening refused");
+    return true;
+  }));
+
+  cases.push(fixture("research_pool_launches_smallest_unique_priority_first_defers_only_a_suffix_and_waits_at_the_barrier", async () => {
+    const R = require("./_investorResearch");
+    const P = require("./_investorPortfolio");
+    const pool = R.createPool({ now: () => 0 });
+    const req = (symbol, p, cls = "OPTIONAL_DISCOVERY") => ({ symbol, researchPriority: p, completionClass: cls, reason: "r", reviewDirective: "RESEARCH_NOW" });
+    const launched = [];
+    const worker = async (r) => { launched.push(r.researchPriority); return { ok: true, symbol: r.symbol }; };
+    const out = await pool.run({ requests: [req("C", 3, "HOLDING_REQUIRED"), req("A", 1), req("B", 2)], concurrency: 1, worker });
+    if (out.launchedOrder.join(",") !== "1,2,3" || out.completed.length !== 3 || out.barrier !== true) throw new Error(`order ${out.launchedOrder}`);
+    /* deferral removes only a suffix and never a HOLDING_REQUIRED request */
+    const d = R.deferSuffix(R.orderRequests([req("A", 1), req("B", 2, "HOLDING_REQUIRED"), req("C", 3), req("D", 4)]), { maxJobs: 1 });
+    if (d.keep.map((r) => r.symbol).join(",") !== "A,B" || d.deferred.map((r) => r.symbol).join(",") !== "C,D") throw new Error(`suffix ${JSON.stringify(d)}`);
+    let code = null;
+    try { R.orderRequests([req("A", 1), req("B", 1)]); } catch (e) { code = e.code; }
+    if (code !== "RESEARCH_PRIORITY_DUPLICATE") throw new Error("duplicate priority accepted");
+    /* deadline pressure after the must-complete work defers the rest, and the pool's cap never exceeds the policy */
+    let t = 0;
+    const late = R.createPool({ now: () => t });
+    const out2 = await late.run({ requests: [req("A", 1, "HOLDING_REQUIRED"), req("B", 2), req("C", 3)], concurrency: 9, deadlineMs: 5, worker: async (r) => { t = 10; return { ok: true, symbol: r.symbol }; } });
+    if (out2.completed.length !== 1 || out2.deferred.length !== 2 || out2.concurrency > 3) throw new Error(`deadline ${JSON.stringify(out2.ranges)} cap ${out2.concurrency}`);
+    /* symbol state kinds from the portfolio reader */
+    const fake = fakeAdmin();
+    fake.docs.set(`${fake.COL.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 500000, reserved: 12000 } });
+    fake.docs.set(`${fake.COL.positions}/p1`, { accountId: "paper-1", symbol: "HLD", open: true, qty: 4, entryPriceUsd: 10, lastMarkUsd: 11 });
+    fake.docs.set(`${fake.COL.positions}/p2`, { accountId: "paper-1", symbol: "PRT", open: true, qty: 2, entryPriceUsd: 10, lastMarkUsd: 10 });
+    fake.docs.set(`${fake.COL.orders}/o1`, { accountId: "paper-1", symbol: "UNF", side: "buy", status: "working", qty: 5, qtyFilled: 0, refPriceUsd: 20, grossCents: 10000, frictionCents: 10 });
+    fake.docs.set(`${fake.COL.orders}/o2`, { accountId: "paper-1", symbol: "PRT", side: "buy", status: "partially_filled", qty: 5, qtyFilled: 2, refPriceUsd: 10 });
+    const kinds = {};
+    for (const s of ["HLD", "PRT", "UNF", "NON"]) kinds[s] = (await P.symbolState({ accountId: "paper-1", symbol: s, admin: fake })).kind;
+    if (kinds.HLD !== "HELD" || kinds.PRT !== "PARTIALLY_FILLED_ENTRY" || kinds.UNF !== "UNFILLED_ENTRY" || kinds.NON !== "NONHOLDING_NO_ENTRY") throw new Error(`kinds ${JSON.stringify(kinds)}`);
+    const snap = await P.snapshot({ accountId: "paper-1", admin: fake });
+    if (snap.navMinor !== String(500000 + 12000 + 4400 + 2000) || snap.settledCashMinor !== "500000" || snap.aggregates.heldSymbols.join(",") !== "HLD,PRT" || snap.aggregates.unprotected.length !== 2) throw new Error(`snapshot ${JSON.stringify(snap.aggregates)} ${snap.navMinor}`);
+    if (!/^[a-f0-9]{64}$/.test(snap.contentHash)) throw new Error("snapshot hash");
+    const act = await P.captureActivationSnapshot({ accountId: "paper-1", admin: fake, reason: "test" });
+    if (!act.activationSnapshotId || act.contentHash !== snap.contentHash || !fake.docs.has(`${fake.COL.activationSnapshots}/${act.activationSnapshotId}`)) throw new Error("activation snapshot not persisted");
+    return true;
+  }));
+
+  /* ── Group 5 (commit 11): the deterministic calculators. Sizing precedence
+     (§15.1) only ever makes a quantity smaller and names the binding term;
+     clamp materiality (§6.8) returns a proposal to Sol rather than silently
+     changing it; valuation arithmetic is exact and rejects model-authored
+     derived numbers (§6.6). */
+  cases.push(fixture("sizing_precedence_only_shrinks_names_the_binding_term_and_valuation_arithmetic_is_exact_and_rejects_derived_input", () => {
+    const PR = require("./_investorPortfolioRisk");
+    const V = require("./_investorValuation");
+    const P = require("./_investorPolicy");
+    const pr = PR.selfCheck();
+    if (pr.pass !== true) throw new Error(`portfolio risk selfCheck: ${JSON.stringify(pr.failures).slice(0, 300)}`);
+    const va = V.selfCheck();
+    if (va.pass !== true) throw new Error(`valuation selfCheck: ${JSON.stringify(va.failures).slice(0, 300)}`);
+    /* §15.1 on the policy's own paper mandate: NAV $1,000,000; the name cap (10%) binds before cash */
+    const portfolio = { navMinor: "100000000", settledCashMinor: "60000000", reservedMinor: "0", positions: [], workingOrders: [] };
+    const candidate = { symbol: "AAA", sector: "sw", proposedQuantityUnits: "5000", limitPriceMicros: "50000000", lossBoundaryPriceMicros: "47000000", costPerShareMicros: "20000", advMinor: "10000000000", spreadBps: "10" };
+    const q = PR.quantityAuthority({ candidate, portfolio, policy: P.RISK_MANDATE, marks: {}, advBySymbol: {}, sectorOf: () => "sw", clusterOf: null });
+    if (BigInt(q.authorizedQuantityUnits) > BigInt(candidate.proposedQuantityUnits)) throw new Error("authority enlarged the proposal");
+    if (!/^(0|[1-9][0-9]*)$/.test(q.authorizedQuantityUnits) || !q.bindingConstraint) throw new Error(`authority shape ${JSON.stringify(q).slice(0, 200)}`);
+    /* name cap: 10% × $1,000,000 = $100,000 / $50 = 2000 shares; planned loss: 1% × NAV = $10,000 / ($3 + $0.02) = 3311 → name binds at 2000 */
+    if (q.authorizedQuantityUnits !== "2000" || !/name/i.test(q.bindingConstraint)) throw new Error(`binding ${q.bindingConstraint} ${q.authorizedQuantityUnits}`);
+    /* a wide spread refuses outright with a rule reason, never a smaller position */
+    const wide = PR.quantityAuthority({ candidate: { ...candidate, spreadBps: "500" }, portfolio, policy: P.RISK_MANDATE, marks: {}, advBySymbol: {}, sectorOf: () => "sw", clusterOf: null });
+    if (wide.authorizedQuantityUnits !== "0" || wide.refused !== true || !wide.reasons.some((r) => /SPREAD/.test(r.code || r))) throw new Error(`spread refusal ${JSON.stringify(wide).slice(0, 200)}`);
+    /* clamp materiality on tiny positions (§6.8): 3→2 is material, 100→96 is silent rounding, 1→0 is a rejection */
+    const cm = (p, a, extra = {}) => PR.clampMateriality({ proposedQuantityUnits: p, authorizedQuantityUnits: a, limitPriceMicros: "50000000", navMinor: "100000000", policy: P.RISK_MANDATE, ...extra });
+    if (cm("3", "2").material !== true || cm("1", "0").material !== true || cm("100", "96").silent !== true || cm("100", "95").material !== true) throw new Error("clamp thresholds");
+    if (cm("100", "100", { boundaryTouched: true }).material !== true) throw new Error("boundary equality not material");
+    /* scenarios carry measurements only: no score, no rank */
+    const sc = PR.runScenarios({ portfolio, candidates: [candidate], policy: P.RISK_MANDATE, marks: {}, advBySymbol: {}, sectorOf: () => "sw", clusterOf: null });
+    if (/"(score|ranking|preferred)"/i.test(JSON.stringify(sc))) throw new Error("scenario output ranks companies");
+    if (typeof (sc.set && sc.set.basketFeasible) !== "boolean") throw new Error("basket feasibility missing");
+    /* valuation: exact event tree and the derived-arithmetic refusal */
+    const leaf = (t) => [{ name: "branch.x.probabilityPpm", value: "1000000", unit: "ppm" }, { name: "branch.x.terminalPriceMicros", value: t, unit: "micros" }];
+    const tree = V.run({ method: "event_tree", assumptions: [], scenarios: [{ id: "bear", probabilityPpm: "250000", assumptions: leaf("20000000"), terminalPriceMicros: "20000000" }, { id: "base", probabilityPpm: "500000", assumptions: leaf("50000000"), terminalPriceMicros: "50000000" }, { id: "bull", probabilityPpm: "250000", assumptions: leaf("80000000"), terminalPriceMicros: "80000000" }], priceMicros: "40000000" });
+    if (tree.ok !== true || tree.expectedTerminalPriceMicros !== "50000000" || tree.impliedReturnBps !== "2500") throw new Error(`event tree ${JSON.stringify(tree).slice(0, 200)}`);
+    let code = null;
+    try { V.run({ method: "event_tree", assumptions: [], scenarios: [{ id: "base", probabilityPpm: "1000000", assumptions: leaf("1"), terminalPriceMicros: "1" }], priceMicros: "1", expectedTerminalPriceMicros: "1" }); } catch (e) { code = e.code; }
+    if (code !== "MODEL_DERIVED_ARITHMETIC_REJECTED") throw new Error(`derived arithmetic accepted: ${code}`);
+    code = null;
+    try { V.run({ method: "event_tree", assumptions: [], scenarios: [{ id: "base", probabilityPpm: "900000", assumptions: leaf("1"), terminalPriceMicros: "1" }], priceMicros: "1" }); } catch (e) { code = e.code; }
+    if (code !== "PROBABILITY_SUM_INVALID") throw new Error(`probability sum accepted: ${code}`);
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is
