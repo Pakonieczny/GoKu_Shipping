@@ -2750,10 +2750,69 @@ function runFixtures() {
     return true;
   }));
 
+
+  /* ── D-9: no credential material may be reachable from the deployed build.
+     A tracked private key was found at netlify/functions/secrets/ (mode 644,
+     PEM). Rotation at the provider is the control that matters; this check is
+     what stops a reintroduced credential from deploying quietly: it runs in
+     the same attestation set that controlAllowsEntry reads, so a key in the
+     tree halts trading on that build instead of merely warning. It scans
+     (1) every exported function of every investor module, (2) any secrets
+     directory reachable from the bundle or the checkout, and (3) the
+     repository's ignore rules when the checkout root is reachable. */
+  cases.push(fixture("no_private_key_material_reachable_from_the_build", () => {
+    const fs = require("fs"), path = require("path");
+    const PEM = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+    const MARK = /PRIVATE KEY/;
+    const BLOB = /[A-Za-z0-9+/=]{400,}/;
+    const modules = { M, S, L, R, V, SH, C, U, B, I, T, AL, RS, strategy,
+      K: require("./investorKick"), O: require("./_investorOpenai"),
+      AU: require("./_investorAuth"), AD: require("./_investorAdmin"),
+      XP: require("./_investorExitPolicy"), ST: require("./_investorStrike"),
+      IS: require("./_investorIntelligenceSources"), E: require("./_investorEvidence") };
+    const offenders = [];
+    for (const [name, mod] of Object.entries(modules)) {
+      for (const [k, v] of Object.entries(mod || {})) {
+        const src = sourceOf(v);
+        if (PEM.test(src) || MARK.test(src)) offenders.push(`${name}.${k}`);
+      }
+    }
+    const roots = [__dirname, process.cwd(), path.join(process.cwd(), "netlify", "functions")];
+    const dirs = new Set();
+    for (const root of roots) {
+      dirs.add(path.join(root, "secrets"));
+      dirs.add(path.join(root, "gcp-secrets"));
+      dirs.add(path.join(root, "gcp-secrets", "secrets"));
+    }
+    for (const dir of dirs) {
+      let names = [];
+      try { names = fs.readdirSync(dir); } catch { continue; }
+      for (const n of names) {
+        let text = "";
+        try { text = fs.readFileSync(path.join(dir, n), "utf8").slice(0, 65536); } catch { continue; }
+        if (PEM.test(text) || MARK.test(text) || BLOB.test(text)) offenders.push(path.join(dir, n));
+        else offenders.push(`${path.join(dir, n)} (unexpected file in a secrets directory)`);
+      }
+    }
+    /* Repository hygiene, only where the checkout root is visible (build box,
+       local run). The bundle has no .gitignore and is not penalised for it. */
+    const repoRoots = [path.join(__dirname, "..", ".."), process.cwd()];
+    for (const root of repoRoots) {
+      if (!fs.existsSync(path.join(root, "netlify.toml"))) continue;
+      let ignore = "";
+      try { ignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8"); } catch {}
+      if (!/^netlify\/functions\/secrets\/$/m.test(ignore)) offenders.push(`${root}/.gitignore lacks netlify/functions/secrets/`);
+      if (!/^\*PrivateKey\*$/m.test(ignore)) offenders.push(`${root}/.gitignore lacks *PrivateKey*`);
+      break;
+    }
+    if (offenders.length) throw new Error(`credential material reachable: ${offenders.slice(0, 6).join("; ")}`);
+    return true;
+  }));
+
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v41-take-profits";
+  const SCHEMA = "runtime-fixtures-v42-fund-manager-build";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };

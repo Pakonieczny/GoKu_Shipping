@@ -1,0 +1,24 @@
+# ─── Credentials ─────────────────────────────────────────────────────────────
+# A GCP service-account private key was tracked at netlify/functions/secrets/
+# until 2026-09-04 (Investor AI blueprint D-9). That key is treated as
+# compromised and must be rotated at the provider; this file prevents any
+# credential from being committed again. Secrets are injected at runtime from
+# the Netlify environment (FIREBASE_PRIVATE_KEY etc.), never from the tree.
+netlify/functions/secrets/
+gcp-secrets/
+*.pem
+*_rsa
+*_rsa.pub
+*PrivateKey*
+*PRIVATE_KEY*
+*.p12
+*.pfx
+*.key
+.env
+.env.*
+
+# ─── Toolchain output ────────────────────────────────────────────────────────
+node_modules/
+cherry-viewer-dist/
+.netlify/
+npm-debug.log*
