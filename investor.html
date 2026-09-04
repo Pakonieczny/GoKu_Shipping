@@ -1386,7 +1386,38 @@ function signOut(reason){
 }
 
 /* ── render ── */
+/* G1.4 (b): a persistent banner whenever any breaker is at a disabling
+   value or any hurdle is below its declared value. G1.3 (b): the strict
+   configuration's calibration state, as a state rather than silence.
+   Neither is a toast: both stay until the underlying condition changes. */
+function renderProvenanceBanners(){
+  var host=$("#provenanceBanners");
+  if(!host){ host=document.createElement("div"); host.id="provenanceBanners"; host.setAttribute("aria-live","polite");
+    var wrap=document.querySelector(".wrap"); if(wrap) wrap.insertBefore(host, wrap.firstChild); else return; }
+  var rc=DASH.riskConfig||null, cal=DASH.calibration||null, html="";
+  if(rc&&rc.bannerRequired){
+    var parts=[];
+    if((rc.breakersDisabled||[]).length) parts.push("breakers disabled: "+rc.breakersDisabled.join(", "));
+    if((rc.hurdlesLowered||[]).length) parts.push("hurdles below declared: "+rc.hurdlesLowered.map(function(k){
+      var d=(rc.deviationsFromDeclared||[]).filter(function(x){return x.key===k;})[0];
+      return d?(k+" "+d.effective+" vs "+d.declared):k; }).join(", "));
+    html+='<div class="note bad" id="riskConfigBanner" style="margin:0 0 12px"><b>Running below the declared strategy.</b> '
+      +esc(parts.join("; "))+'. Every result carries risk configuration '+esc(String(rc.riskConfigHash||"").slice(0,12))
+      +'; results from different configurations are never one series.</div>';
+  }
+  if(cal&&cal.state==="calibration_unavailable"&&!cal.paperLearningActive){
+    html+='<div class="note warn" id="calibrationState" style="margin:0 0 12px"><b>Strict configuration cannot place orders yet.</b> '
+      +esc(cal.sessionsAvailable+" of "+cal.sessionsRequired+" chronological sessions available")
+      +(cal.earliestEligibleSession?'; earliest eligible session '+esc(cal.earliestEligibleSession):'')+'. This is a declared state, not a fault.</div>';
+  } else if(cal&&cal.state==="calibration_unavailable"){
+    html+='<div class="note" id="calibrationState" style="margin:0 0 12px">Declared strict configuration: calibration unavailable ('
+      +esc(cal.sessionsAvailable+" of "+cal.sessionsRequired+" sessions")+(cal.earliestEligibleSession?', earliest '+esc(cal.earliestEligibleSession):'')
+      +'). Paper learning is running the exploratory configuration instead; no performance claim applies to the strict one.</div>';
+  }
+  host.innerHTML=html;
+}
 function render(){
+  renderProvenanceBanners();
   if(!DASH) return;
   var c = DASH.control||{}, s = DASH.session||{}, m = DASH.market||{};
 
@@ -1523,7 +1554,10 @@ function causeTag(cause){
     "abnormal_activity_without_covered_fundamental_event":["attention","Abnormal activity"],
     "cause_detected_fundamental":["fundamental","Fundamental"],
     "no_cause_detected_in_covered_sources":["nocause","No cause"],
-    "evidence_pending":["pending","Pending"]
+    "evidence_not_yet_gathered":["pending","Not yet gathered"],
+    "evidence_insufficient":["pending","Sources insufficient"],
+    "evidence_unavailable":["pending","Unavailable — no trade"],
+    "evidence_pending":["pending","Pending (legacy)"]
   };
   var e = map[cause]||["pending","—"];
   return '<span class="tagk '+e[0]+'">'+e[1]+'</span>';
@@ -3438,7 +3472,10 @@ function causeText(c){
   var m={cause_detected_fundamental:"news-driven (fundamental cause found)",
     abnormal_activity_without_covered_fundamental_event:"unusual activity, no covered cause",
     no_cause_detected_in_covered_sources:"no cause found in covered sources",
-    evidence_pending:"research pending"};
+    evidence_not_yet_gathered:"research not yet gathered",
+    evidence_insufficient:"covered sources insufficient to explain the move",
+    evidence_unavailable:"evidence unavailable — a failed classification never permits a trade",
+    evidence_pending:"research pending (legacy record)"};
   return m[c]||(c?String(c).replace(/_/g," "):"—");
 }
 function exitPlanText(){
@@ -3707,7 +3744,12 @@ var PLAN_BLOCK_PLAIN={session:"market closed or spreads too wide",decision_sourc
   order:"an order already exists",already_committed:"already held or on order",earnings_blackout:"earnings are too close",
   intelligence_finding:"an adverse company finding",evidence:"a fundamental cause explains the fall",gap_below_band:"it fell straight through the band — left for the next deep scan",
   portfolio_duplicate:"already in the book",error:"a backend error"};
-function plainBlock(k){ return PLAN_BLOCK_PLAIN[k]||String(k||"a check").replace(/_/g," "); }
+/* D-7: this was declared as plainBlock twice; the second (sell-state)
+   declaration hoisted over this one, so PLAN_BLOCK_PLAIN was never reached.
+   The two dictionaries are NOT merged: their keys overlap with different
+   meanings (decision_source_not_tradable means "will not buy" here and
+   "will not sell yet" below). */
+function plainPlanBlock(k){ return PLAN_BLOCK_PLAIN[k]||String(k||"a check").replace(/_/g," "); }
 
 /* ── selling by hand ────────────────────────────────────────────────────
    The button records an intent. It never fills anything, because a fill has
@@ -3739,9 +3781,9 @@ function sellCell(r){
     return '<button class="sellbtn" disabled>Sell</button><span class="sellstate">'+esc(st.why)+'</span>';
   }
   return '<button class="sellbtn" data-sell="'+esc(sym)+'"'+(busy?' disabled':'')+'>'+(busy?'…':'Sell')+'</button>'
-    +(st.kind==="blocked"?'<span class="sellstate" title="'+esc(plainBlock(st.why))+'">retrying — '+esc(plainBlock(st.why))+'</span>':'');
+    +(st.kind==="blocked"?'<span class="sellstate" title="'+esc(plainSellBlock(st.why))+'">retrying — '+esc(plainSellBlock(st.why))+'</span>':'');
 }
-function plainBlock(w){
+function plainSellBlock(w){
   var M={ decision_source_not_tradable:"the price feed was not good enough to sell on — it retries",
     missing_market_provenance:"no verified price source yet — it retries",
     missing_adjustment_identity:"the price basis was unverified — it retries",
@@ -3986,9 +4028,18 @@ var GATE_PLAIN = {
 };
 function plainGate(l){ return GATE_PLAIN[l] || (l||"a safety check"); }
 
+function planBlockSummary(){
+  var plans=((DASH.operations||{}).plans||{}).today||[];
+  var declined=plans.filter(function(p){ return p&&(p.status==="skipped"||p.status==="blocked"||p.skipReason||p.lastBlock); });
+  if(!declined.length) return '';
+  var tally={};
+  declined.forEach(function(p){ var k=p.skipReason||(p.lastBlock&&p.lastBlock.reason)||p.status; tally[k]=(tally[k]||0)+1; });
+  return '<div class="note" style="margin-top:10px"><b>Preset entry levels not taken today:</b> '
+    +Object.keys(tally).sort(function(a,b){return tally[b]-tally[a];}).map(function(k){ return esc(plainPlanBlock(k))+' ('+tally[k]+')'; }).join(' · ')+'</div>';
+}
 function renderTodayBlocks(){
   var c=DASH.candidates||[];
-  if(!c.length){ $("#todayBlocks").innerHTML='<div class="empty">Nothing has been evaluated yet.</div>'; return; }
+  if(!c.length){ $("#todayBlocks").innerHTML='<div class="empty">Nothing has been evaluated yet.</div>'+planBlockSummary(); return; }
   var tally={};
   c.forEach(function(x){ (x.blockedBy||[]).forEach(function(){}); if(x.firstBlock) tally[x.firstBlock]=(tally[x.firstBlock]||0)+1; });
   var rows=Object.keys(tally).sort(function(a,b){return tally[b]-tally[a];});

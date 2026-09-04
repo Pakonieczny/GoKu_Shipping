@@ -58,8 +58,40 @@ const ENDPOINT = "https://api.openai.com/v1/responses";
 
 const MAX_INPUT_CHARS = 24000;
 const MAX_RESEARCH_INPUT_CHARS = 60000;
-const DAILY_USD_CEILING = Number(process.env.INVESTOR_OPENAI_DAILY_USD || 5);
-const CYCLE_CALL_CEILING = Number(process.env.INVESTOR_OPENAI_CYCLE_CALLS || 12);
+/* Budget ceilings. Blueprint §9.4/§9.5: these are a RESERVATION, not a cap on
+   correctness. Exhaustion never becomes a trade — it surfaces as
+   evidence_unavailable, which permits no new risk (D-8b). Raised from $5/12
+   to the provisioned normal-day figures; the operator sets the busy-day
+   figure through the environment. */
+const DAILY_USD_CEILING = Number(process.env.INVESTOR_OPENAI_DAILY_USD || 10);
+const CYCLE_CALL_CEILING = Number(process.env.INVESTOR_OPENAI_CYCLE_CALLS || 40);
+
+/* ── the three ways "no cause" can be reported, kept apart on purpose ───────
+   D-1: the old single token "evidence_pending" collapsed eleven distinct
+   outcomes — missing API key, incomplete coverage, lease contention, an
+   exhausted budget, an unreachable model, an HTTP error, an unexpected tool
+   call, unparseable output, a schema-invalid cause, model abstention and a
+   failed citation check — into one value that _investorSignal read as an
+   ABSENCE of information and, in the exploratory lane, turned into a BUY.
+
+   evidence_not_yet_gathered — the sweep has not reached this name. Absence.
+   evidence_insufficient     — the model was reached, answered validly, and
+                               reported that the supplied sources cannot
+                               determine a cause. A finding of insufficiency.
+   evidence_unavailable      — a system failure or a rejected output. NOT a
+                               finding. It never permits new risk, in any
+                               cohort, at any size (invariant I-1). */
+const CAUSES = Object.freeze({
+  NOT_YET_GATHERED: "evidence_not_yet_gathered",
+  INSUFFICIENT: "evidence_insufficient",
+  UNAVAILABLE: "evidence_unavailable",
+});
+/* A failure result: the shape every unavailable path returns. `ok:false` and
+   `cause: evidence_unavailable` travel together so no caller can read the
+   failure as a classification. */
+function unavailable(error, extra = {}) {
+  return { ok: false, error, cause: CAUSES.UNAVAILABLE, evidenceUnavailable: true, ...extra };
+}
 
 /* ── the extraction schema ─────────────────────────────────────────────── */
 const CLASSIFY_SCHEMA = {
@@ -70,7 +102,7 @@ const CLASSIFY_SCHEMA = {
     cause: {
       type: "string",
       enum: ["cause_detected_fundamental", "abnormal_activity_without_covered_fundamental_event",
-             "no_cause_detected_in_covered_sources", "evidence_pending"],
+             "no_cause_detected_in_covered_sources", "evidence_insufficient"],
     },
     confidence: { type: "number", minimum: 0, maximum: 1 },
     rationale: { type: "string", maxLength: 400 },
@@ -174,7 +206,7 @@ Return exactly one of four causes:
 - "cause_detected_fundamental": a supplied document reports genuinely new information about the business (earnings, guidance, a material agreement, an officer departure, a restatement, a regulatory action). The move is real repricing.
 - "abnormal_activity_without_covered_fundamental_event": no supplied document reports new fundamentals, while same-clock market activity is abnormal. Do not infer investor type.
 - "no_cause_detected_in_covered_sources": nothing in the supplied documents explains the move and attention is unremarkable.
-- "evidence_pending": you cannot tell from what was supplied.
+- "evidence_insufficient": you cannot tell from what was supplied. This is a finding that the supplied sources are insufficient, not a system failure.
 
 RULES YOU MUST FOLLOW:
 1. Every claim you emit MUST include a "quote" that appears VERBATIM in the supplied text. Copy it character for character. A claim whose quote is not found verbatim will be discarded and counted as an error against you.
@@ -305,12 +337,9 @@ async function failCacheLease(ref, reason) {
 /* ── the call ──────────────────────────────────────────────────────────── */
 async function classifyMove({ symbol, role = "classify", documents, moveSummary, attentionScore,
                               cacheKey, coverageComplete = false }) {
-  if (!process.env.OPENAI_API_KEY) {
-    return { ok: false, error: "OPENAI_API_KEY not configured", cause: "evidence_pending" };
-  }
+  if (!process.env.OPENAI_API_KEY) return unavailable("OPENAI_API_KEY not configured");
   const cfg = MODELS[role] || MODELS.classify;
-  if (coverageComplete !== true) return { ok:false, cause:"evidence_pending",
-    error:"required source coverage incomplete", abstained:true };
+  if (coverageComplete !== true) return unavailable("required source coverage incomplete", { abstained: true });
 
   // Deduplicate by content hash: extract once per unique input, ever.
   const sourceText = (documents || [])
@@ -321,14 +350,23 @@ async function classifyMove({ symbol, role = "classify", documents, moveSummary,
 
   const cacheRef = A.col(A.COL.claims).doc(`llm_${inputHash}`);
   const lease = await acquireCacheLease(cacheRef, inputHash, symbol);
-  if (lease.complete) return { ...lease.result, ok:true, cached:true, inputHash };
-  if (lease.busy) return {ok:false,cause:"evidence_pending",error:"classification already leased"};
+  if (lease.complete) {
+    const cachedResult = lease.result || {};
+    /* A rejected output is cached so it is never bought twice, but it is
+       still a failure: it must not come back as a classification. */
+    if (cachedResult.rejected === true || cachedResult.cause === CAUSES.UNAVAILABLE) {
+      return { ...cachedResult, ok: false, cached: true, inputHash, cause: CAUSES.UNAVAILABLE,
+        evidenceUnavailable: true, error: cachedResult.error || "model_output_rejected" };
+    }
+    return { ...cachedResult, ok: true, cached: true, inputHash };
+  }
+  if (lease.busy) return unavailable("classification already leased");
 
   const estUsd = ((sourceText.length / 4 / 1e6) * cfg.inPer1M) + ((cfg.maxOutput / 1e6) * cfg.outPer1M);
   const budget = await reserveBudget(inputHash, estUsd);
   if (!budget.ok) {
     await failCacheLease(cacheRef, "budget_blocked");
-    return { ok: false, error: budget.reason, cause: "evidence_pending", budgetBlocked: true };
+    return unavailable(budget.reason, { budgetBlocked: true });
   }
 
   const truncated = sourceText.length > MAX_INPUT_CHARS;
@@ -369,14 +407,14 @@ async function classifyMove({ symbol, role = "classify", documents, moveSummary,
     await releaseBudget(inputHash).catch(()=>{});
     await failCacheLease(cacheRef, "model_unreachable");
     console.error("investorOpenai: call failed", redact({ symbol, error: e.message }));
-    return { ok: false, error: "model_unreachable", cause: "evidence_pending" };
+    return unavailable("model_unreachable");
   }
 
   if (!res.ok) {
     await releaseBudget(inputHash).catch(()=>{});
     await failCacheLease(cacheRef, `openai_http_${res.status}`);
     console.error("investorOpenai: HTTP", res.status, redact({ symbol, err: data && data.error }));
-    return { ok: false, error: `openai_http_${res.status}`, cause: "evidence_pending" };
+    return unavailable(`openai_http_${res.status}`);
   }
 
   // Reject any tool call outright — none were offered, so one appearing is a
@@ -392,7 +430,7 @@ async function classifyMove({ symbol, role = "classify", documents, moveSummary,
   await settleBudget(inputHash, usd, { input: inTok, output: outTok }, role);
   if (out.some((o) => o.type && /tool|function/i.test(o.type))) {
     await failCacheLease(cacheRef, "unexpected_tool_call");
-    return { ok: false, error: "unexpected_tool_call", cause: "evidence_pending" };
+    return unavailable("unexpected_tool_call");
   }
 
   let parsed = null;
@@ -401,7 +439,7 @@ async function classifyMove({ symbol, role = "classify", documents, moveSummary,
     parsed = JSON.parse(textNode ? textNode.text : (data.output_text || "{}"));
   } catch {
     await failCacheLease(cacheRef, "unparseable_model_output");
-    return { ok: false, error: "unparseable_model_output", cause: "evidence_pending" };
+    return unavailable("unparseable_model_output");
   }
 
   // THE GATE: every quote must exist verbatim in what we actually sent.
@@ -431,23 +469,34 @@ async function classifyMove({ symbol, role = "classify", documents, moveSummary,
   };
 
   const allowedCauses = new Set(CLASSIFY_SCHEMA.properties.cause.enum);
-  if (!allowedCauses.has(result.cause) || result.abstained) {
-    result.cause = "evidence_pending";
+  if (!allowedCauses.has(result.cause)) {
+    /* A schema-invalid cause is a rejected output, not a finding. */
+    result.cause = CAUSES.UNAVAILABLE;
     result.confidence = 0;
     result.rejected = true;
+    result.evidenceUnavailable = true;
+    result.rationale = "model returned a cause outside the schema — output rejected";
+  } else if (result.abstained) {
+    /* The model was reached and chose to abstain: that IS its finding, and
+       the finding is that the supplied sources are insufficient. */
+    result.cause = CAUSES.INSUFFICIENT;
+    result.confidence = 0;
   }
 
-  // A response where the model cited nothing verifiably is downgraded, not used.
+  // A response where the model cited nothing verifiably is rejected, not used.
   if (parsed.claims && parsed.claims.length && verified.kept.length === 0) {
-    result.cause = "evidence_pending";
+    result.cause = CAUSES.UNAVAILABLE;
+    result.confidence = 0;
     result.rationale = "all cited spans failed verbatim verification — model output rejected";
     result.rejected = true;
+    result.evidenceUnavailable = true;
   }
   if (result.cause === "cause_detected_fundamental" && verified.kept.length === 0) {
-    result.cause = "evidence_pending";
+    result.cause = CAUSES.UNAVAILABLE;
     result.confidence = 0;
-    result.rationale = "fundamental label requires at least one verified supporting claim";
+    result.rationale = "fundamental label requires at least one verified supporting claim — output rejected";
     result.rejected = true;
+    result.evidenceUnavailable = true;
   }
 
   await cacheRef.set({
@@ -455,6 +504,10 @@ async function classifyMove({ symbol, role = "classify", documents, moveSummary,
     ...A.envelope({ created_by: "openai.classifyMove" }),
   }, { merge: true });
 
+  /* A rejected output is billed and cached (so it is not re-bought), but it
+     is returned as a failure: ok:false, cause evidence_unavailable. The
+     caller cannot mistake it for a classification. */
+  if (result.rejected) return { ...result, ok: false, cached: false, error: "model_output_rejected" };
   return { ok: true, cached: false, ...result };
 }
 
@@ -634,7 +687,7 @@ function roundRate(numerator, denominator) {
 }
 
 module.exports = {
-  MODELS, CLASSIFY_SCHEMA, INTELLIGENCE_SCHEMA, SYSTEM_PROMPT, INTELLIGENCE_SYSTEM_PROMPT,
+  MODELS, CAUSES, CLASSIFY_SCHEMA, INTELLIGENCE_SCHEMA, SYSTEM_PROMPT, INTELLIGENCE_SYSTEM_PROMPT,
   classifyMove, synthesizeIntelligence, researchSourcePack, verifyDocumentClaims,
   verifyClaims, acquireCacheLease, checkBudget, recordSpend, reserveBudget, settleBudget, releaseBudget,
   DAILY_USD_CEILING, CYCLE_CALL_CEILING,

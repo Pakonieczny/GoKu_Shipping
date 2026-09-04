@@ -383,7 +383,8 @@ async function runGuard(jobId) {
         continue;
       }
 
-      const peak = Math.max(Number(position.peakPriceUsd) || 0, Number(last.c) || 0);
+      /* The high-water mark is the observed bar HIGH (touch before close). */
+      const peak = Math.max(Number(position.peakPriceUsd) || 0, Number(last.h) || 0, Number(last.c) || 0);
       const priorCost = position.lastExecutionCostContext || position.entryExecutionCostContext || {};
       const currentExecutionCostContext = M.executionCostContext({
         advUsd: Number(priorCost.advUsd) || 0,
@@ -424,7 +425,7 @@ async function runGuard(jobId) {
         ? { exit: true, urgent: true, kind: "manual", pnlPct: pnlPctNow,
             reason: "manual_operator_sell" }
         : S.exitSignal(undefined, heldDays, cfg, {
-          mark: last.c, entry, peak, earningsInDays,
+          mark: last.c, barHigh: Number(last.h), barLow: Number(last.l), entry, peak, earningsInDays,
           intelligencePolicy,
           /* The guard passes no rank, so the rank exit cannot fire here in
              any case; what patience changes on this path is the time stop. */
@@ -450,6 +451,9 @@ async function runGuard(jobId) {
         decisionRecord: { cycleId: jobId, symbol, kind: "exit_signal",
           exitKind: exit.kind, reason: exit.reason, urgent: !!exit.urgent,
           pnlPct: exit.pnlPct, markUsd: last.c, entryUsd: entry || null,
+          barHighUsd: Number(last.h) || null, barLowUsd: Number(last.l) || null,
+          touchBasis: exit.touchBasis || null, touchedPct: exit.touchedPct ?? null,
+          sameBarCollision: exit.sameBarCollision === true, collision: exit.collision || null,
           heldDays, source: session.open
             ? "held_position_guard" : "held_position_guard_closed_market",
           intelligenceDossierHash: intelligence && intelligence.dossierHash || null,
@@ -653,7 +657,8 @@ async function runGuard(jobId) {
   try {
     const NAV = require("./_investorNav");
     const snap = await NAV.snapshot(accountId);
-    await NAV.record(accountId, snap, { source: "guard" });
+    await NAV.record(accountId, snap, { source: "guard",
+      riskConfig: require("./_investorStrategy.js").riskConfigIdentity(cfg, activePortfolioControls) });
     summary.nav = { navUsd: snap.navUsd, unrealisedUsd: snap.unrealisedUsd, open: snap.openPositions };
     await A.col(A.COL.control).doc("control").set({ navLive: snap }, { merge: true });
   } catch (e) { summary.navError = String(e.message || e).slice(0, 120); }

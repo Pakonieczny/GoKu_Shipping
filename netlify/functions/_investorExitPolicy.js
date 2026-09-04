@@ -19,58 +19,88 @@ function exitSignal(rank, heldDays, cfg, opts = {}) {
   const maxDays = patience && Number(patience.maxHoldDays) > 0
     ? Number(patience.maxHoldDays) : (cfg.maxHoldDays ?? 10);
   const { mark, entry, peak, earningsInDays } = opts;
+  /* TOUCH BEFORE CLOSE (blueprint §8.5, invariant I-2; D-2). A bar can trade
+     through a level and close back on the other side of it, so every
+     protective level is tested against the bar's LOW and every target
+     against its HIGH. `mark` (the close) is retained only for reporting
+     pnlPct. A caller that supplies no high/low falls back to the close and
+     the verdict says so, so a close-only evaluation can never be mistaken
+     for a touch-based one. */
+  const haveHigh = Number.isFinite(Number(opts.barHigh)), haveLow = Number.isFinite(Number(opts.barLow));
+  const barHigh = haveHigh ? Number(opts.barHigh) : mark;
+  const barLow = haveLow ? Number(opts.barLow) : mark;
+  const touchBasis = haveHigh || haveLow ? "bar_high_low" : "close_only";
 
   const havePrice = Number.isFinite(mark) && Number.isFinite(entry) && entry > 0;
   const haveRank = Number.isFinite(rank);
   const pnlPct = havePrice ? ((mark - entry) / entry) * 100 : null;
+  const r2 = (x) => Number(Number(x).toFixed(2));
 
   if (havePrice) {
-    // 1. HARD STOP. The floor under every position.
+    const lowPnlPct = ((barLow - entry) / entry) * 100;
+    const highPnlPct = ((barHigh - entry) / entry) * 100;
     const stopPct = cfg.stopLossPct ?? -8;
-    if (pnlPct <= stopPct) {
-      return { exit: true, urgent: true, reason: `down ${pnlPct.toFixed(1)}% — hard stop at ${stopPct}%`,
-               kind: "stop_loss", pnlPct: Number(pnlPct.toFixed(2)) };
-    }
-
-    // 2. TRAILING STOP, once a position has actually made money. Protects a
-    //    winner from round-tripping back to flat, which is the most common way
-    //    a short-horizon reversion trade wastes a correct call.
     const trailPct = cfg.trailingStopPct ?? -4;
+    const takePct = cfg.takeProfitPct ?? null;
+    const pe = cfg.pullbackExit, leg = opts.pullbackLeg;
+    const legOk = !!(pe && leg && Number(leg.legHigh) > Number(leg.legLow));
+
+    /* Every level is tested FIRST and the verdict chosen AFTERWARDS, so a bar
+       that touched both an adverse level and a favourable one resolves
+       adversely — never favourably — and is flagged UNSCORABLE for
+       performance scoring. The precedence inside each group is unchanged:
+       hard stop, trailing stop, pullback failure; pullback target, profit
+       target. */
+    const adverse = [], favourable = [];
+
+    // 1. HARD STOP. The floor under every position, tested at the bar low.
+    if (lowPnlPct <= stopPct) {
+      adverse.push({ kind: "stop_loss", urgent: true,
+        reason: `touched ${lowPnlPct.toFixed(1)}% at the bar low — hard stop at ${stopPct}%` });
+    }
+    // 2. TRAILING STOP, once a position has actually made money. Protects a
+    //    winner from round-tripping back to flat. The peak is the observed
+    //    high-water mark; the giveback is measured at the bar low.
     if (Number.isFinite(peak) && peak > entry) {
-      const fromPeak = ((mark - peak) / peak) * 100;
+      const fromPeak = ((barLow - peak) / peak) * 100;
       const peakGainPct = ((peak - entry) / entry) * 100;
       if (peakGainPct >= (cfg.trailingArmsAtPct ?? 3) && fromPeak <= trailPct) {
-        return { exit: true, urgent: true,
-                 reason: `up ${peakGainPct.toFixed(1)}% at best, now ${fromPeak.toFixed(1)}% off that peak — trailing stop`,
-                 kind: "trailing_stop", pnlPct: Number(pnlPct.toFixed(2)) };
+        adverse.push({ kind: "trailing_stop", urgent: true,
+          reason: `up ${peakGainPct.toFixed(1)}% at best, bar low ${fromPeak.toFixed(1)}% off that peak — trailing stop` });
       }
     }
-
     // 3a. STRUCTURAL PULLBACK EXITS (policy Q). The leg recorded at entry
     //     defines both ends of the trade: the prior swing high is the target
-    //     ("if it continues to here, great"), and giving back more than the
-    //     declared share of the leg means the level failed ("if not, it most
-    //     likely reverses"). Only a variant that declares pullbackExit and a
-    //     position that recorded its leg reach this branch.
-    const pe = cfg.pullbackExit, leg = opts.pullbackLeg;
-    if (pe && leg && Number(leg.legHigh) > Number(leg.legLow)) {
-      if (mark >= Number(leg.legHigh)) {
-        return { exit: true, urgent: false, reason: `reached the prior swing high ${Number(leg.legHigh).toFixed(2)} — pullback target`,
-                 kind: "pullback_target", pnlPct: Number(pnlPct.toFixed(2)) };
-      }
-      const retr = (Number(leg.legHigh) - mark) / (Number(leg.legHigh) - Number(leg.legLow));
+    //     (tested at the bar high) and giving back more than the declared
+    //     share of the leg (tested at the bar low) means the level failed.
+    if (legOk) {
+      const retr = (Number(leg.legHigh) - barLow) / (Number(leg.legHigh) - Number(leg.legLow));
       const failAt = Number(pe.failRetracement) || 0.786;
       if (retr >= failAt) {
-        return { exit: true, urgent: true, reason: `gave back ${Math.round(retr * 100)}% of the up-leg (limit ${Math.round(failAt * 100)}%) — the level failed`,
-                 kind: "pullback_failed", pnlPct: Number(pnlPct.toFixed(2)) };
+        adverse.push({ kind: "pullback_failed", urgent: true,
+          reason: `gave back ${Math.round(retr * 100)}% of the up-leg at the bar low (limit ${Math.round(failAt * 100)}%) — the level failed` });
+      }
+      if (barHigh >= Number(leg.legHigh)) {
+        favourable.push({ kind: "pullback_target", urgent: false,
+          reason: `reached the prior swing high ${Number(leg.legHigh).toFixed(2)} at the bar high — pullback target` });
       }
     }
+    // 3. PROFIT TARGET, tested at the bar high.
+    if (takePct != null && highPnlPct >= takePct) {
+      favourable.push({ kind: "take_profit", urgent: false,
+        reason: `touched ${highPnlPct.toFixed(1)}% at the bar high — profit target ${takePct}%` });
+    }
 
-    // 3. PROFIT TARGET. The research expects partial reversion, not full.
-    const takePct = cfg.takeProfitPct ?? null;
-    if (takePct != null && pnlPct >= takePct) {
-      return { exit: true, urgent: false, reason: `up ${pnlPct.toFixed(1)}% — profit target ${takePct}%`,
-               kind: "take_profit", pnlPct: Number(pnlPct.toFixed(2)) };
+    const collision = adverse.length && favourable.length
+      ? { adverse: adverse[0].kind, favourable: favourable[0].kind, resolution: "adverse", scoring: "UNSCORABLE" }
+      : null;
+    const chosen = adverse[0] || favourable[0] || null;
+    if (chosen) {
+      return { exit: true, urgent: chosen.urgent, kind: chosen.kind,
+        reason: chosen.reason + (collision ? " — same-bar collision with a favourable level, resolved adversely" : ""),
+        pnlPct: r2(pnlPct), touchBasis, barHigh, barLow,
+        touchedPct: r2(adverse.length ? lowPnlPct : highPnlPct),
+        ...(collision ? { sameBarCollision: true, collision, scorable: false } : {}) };
     }
   }
 
@@ -146,7 +176,7 @@ function exitSignal(rank, heldDays, cfg, opts = {}) {
   return {
     exit: false, kind: null,
     pnlPct: pnlPct != null ? Number(pnlPct.toFixed(2)) : null,
-    priceRulesEvaluated: havePrice,
+    priceRulesEvaluated: havePrice, touchBasis,
     /* A withheld rank exit has a specific explanation and must not be
        overwritten by the generic "nothing fired" line. */
     ...(patienceHeld ? { patienceHeld: true } : {}),

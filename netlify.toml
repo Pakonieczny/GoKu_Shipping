@@ -21,7 +21,12 @@
     # investor/  — Investor_AI's strategies/v1.json and universe/v1.json are
     # require()'d at runtime by investorCycle-background and investorApi.
     # Without this line the first cycle dies with MODULE_NOT_FOUND.
-    "investor/**"
+    "investor/**",
+    # investor.html — Investor AI's fixture set makes static assertions over
+    # the console source (no duplicate top-level declarations, reachable
+    # reason dictionaries; blueprint D-7). It is a build attestation input,
+    # never served from the function.
+    "investor.html"
   ]
 
 # ─── M3: Etsy receipts sync — REMOVED 2026-05-21 ─────────────────────────

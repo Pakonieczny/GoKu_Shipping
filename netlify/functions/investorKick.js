@@ -75,11 +75,51 @@ const DEFAULT_PLAN_MODE = "interval";
    later explicit choices carry this version and are preserved. */
 const FULL_SCAN_CADENCE_VERSION = 1;
 const PLAN_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
-/* Scans are meaningful only inside the regular session and after the opening
-   auction window (the cost model refuses to open in it anyway), and they need
-   time to complete before the closing auction. */
-const PLAN_EARLIEST_MIN = 9 * 60 + 45;
-const PLAN_LATEST_MIN = 15 * 60 + 30;
+/* ── DISPATCH WINDOWS ARE PER TASK CLASS (blueprint §11.1, D-8 / G1.8) ────
+   One module-level window used to bound EVERY configured time, so nothing
+   could be dispatched before 09:45 ET and the pre-market Manager Meeting of
+   §6.1 could not run at all. Each task class now declares its own New York
+   window as a list of [earliestMin, latestMin] segments; a class with no
+   declared window is not dispatchable. The scan window is the old constant
+   pair, so scan behaviour is bit-identical. */
+const TASK_WINDOWS_ET = Object.freeze({
+  /* Scans are meaningful only inside the regular session and after the
+     opening auction window (the cost model refuses to open in it anyway),
+     and they need time to complete before the closing auction. */
+  scan:              Object.freeze({ segments: Object.freeze([[9 * 60 + 45, 15 * 60 + 30]]),
+                       note: "regular session after the opening auction, before the closing auction" }),
+  /* Model work; no order is placed. Freeze at 08:30, hard deadline 09:15. */
+  premarket_manager: Object.freeze({ segments: Object.freeze([[4 * 60, 9 * 60 + 15]]),
+                       note: "pre-market model work, 04:00–09:15 ET" }),
+  focused_research:  Object.freeze({ segments: Object.freeze([[4 * 60, 9 * 60 + 15]]),
+                       note: "pre-market model work, 04:00–09:15 ET" }),
+  portfolio_synthesis: Object.freeze({ segments: Object.freeze([[4 * 60, 9 * 60 + 15]]),
+                       note: "pre-market model work, 04:00–09:15 ET" }),
+  /* A material-event revision may run whenever evidence arrives. */
+  event_revision:    Object.freeze({ segments: Object.freeze([[0, 24 * 60 - 1]]), note: "any time" }),
+  /* One overnight full-roster pass ending at the 08:30 freeze (D-11). */
+  ingest:            Object.freeze({ segments: Object.freeze([[20 * 60, 24 * 60 - 1], [0, 8 * 60 + 30]]),
+                       note: "overnight, ending at the 08:30 ET evidence freeze; no daytime dispatch" }),
+  /* Market hours plus extended, per broker. */
+  execute:           Object.freeze({ segments: Object.freeze([[4 * 60, 20 * 60]]),
+                       note: "market hours plus extended, 04:00–20:00 ET" }),
+  /* After the official close. Half days close earlier; the finalization
+     state machine, not this window, decides when marks are final. */
+  postclose:         Object.freeze({ segments: Object.freeze([[13 * 60 + 15, 24 * 60 - 1]]),
+                       note: "after the official close" }),
+  archive:           Object.freeze({ segments: Object.freeze([[13 * 60 + 15, 24 * 60 - 1]]),
+                       note: "after the official close" }),
+});
+function dispatchWindow(taskClass) { return TASK_WINDOWS_ET[taskClass] || null; }
+/** PURE. Is a task class dispatchable at this New York minute-of-day? */
+function taskDispatchable(taskClass, minutesEt) {
+  const w = dispatchWindow(taskClass);
+  const mm = Number(minutesEt);
+  if (!w || !Number.isFinite(mm)) return false;
+  return w.segments.some(([a, b]) => mm >= a && mm <= b);
+}
+const PLAN_EARLIEST_MIN = TASK_WINDOWS_ET.scan.segments[0][0];   // 09:45, unchanged
+const PLAN_LATEST_MIN = TASK_WINDOWS_ET.scan.segments[0][1];     // 15:30, unchanged
 const MAX_PLAN_TIMES = 6;
 
 function planTimeMinutes(t) {
@@ -87,18 +127,20 @@ function planTimeMinutes(t) {
   return h * 60 + m;
 }
 
-/** PURE. Clean an operator-entered list of "HH:MM" New York times. Returns
- *  null when nothing usable was supplied so the caller can fall back. */
-function normalizePlanTimes(value) {
+/** PURE. Clean an operator-entered list of "HH:MM" New York times for a task
+ *  class (default: the deep scan). Times outside the class's window are
+ *  dropped; a class with no window accepts nothing. Returns null when nothing
+ *  usable was supplied so the caller can fall back. */
+function normalizePlanTimes(value, taskClass = "scan") {
   const list = Array.isArray(value) ? value
     : typeof value === "string" ? value.split(/[\s,;]+/) : null;
   if (!list) return null;
+  if (!dispatchWindow(taskClass)) return null;
   const out = [];
   for (const raw of list) {
     const s = String(raw || "").trim();
     if (!PLAN_TIME.test(s)) continue;
-    const mm = planTimeMinutes(s);
-    if (mm < PLAN_EARLIEST_MIN || mm > PLAN_LATEST_MIN) continue;
+    if (!taskDispatchable(taskClass, planTimeMinutes(s))) continue;
     if (!out.includes(s)) out.push(s);
   }
   out.sort();
@@ -486,3 +528,8 @@ exports.FULL_SCAN_CADENCE_VERSION = FULL_SCAN_CADENCE_VERSION;
 exports.resolvePlanMode = resolvePlanMode;
 exports.effectivePlanMode = effectivePlanMode;
 exports.jobBlocksDispatch = jobBlocksDispatch;
+exports.TASK_WINDOWS_ET = TASK_WINDOWS_ET;
+exports.dispatchWindow = dispatchWindow;
+exports.taskDispatchable = taskDispatchable;
+exports.PLAN_EARLIEST_MIN = PLAN_EARLIEST_MIN;
+exports.PLAN_LATEST_MIN = PLAN_LATEST_MIN;

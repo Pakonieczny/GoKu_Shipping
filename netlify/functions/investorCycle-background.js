@@ -431,6 +431,12 @@ async function runCycle(jobId, { manual = false } = {}) {
       if (a.powered && a.leaderId && hashOk && a.forwardResult && a.forwardResult.pass === true
           && Number(a.calibratedNetLowerBoundBps) > 0) {
         liveVariant = V.byId(a.leaderId);
+        /* D-5 (G1.5): exit regimes never mix. A variant whose results were
+           produced under the pre-v18 exit regime cannot become the live
+           configuration of a desk that now takes profits. */
+        const runningCfg = require("./_investorStrategy.js").paperLearningConfig({ ...baseParams }, ctrl).cfg;
+        const parity = V.promotionAllowed(liveVariant, runningCfg);
+        if (!parity.ok) { allocationRead.promotionBlocked = parity.reason; liveVariant = null; }
       }
     }
   } catch (e) { allocationRead = { error: String(e.message).slice(0, 120) }; }
@@ -452,6 +458,11 @@ async function runCycle(jobId, { manual = false } = {}) {
   let strictCfg = { ...cfg };
   let paperLearning = require("./_investorStrategy.js").paperLearningConfig(cfg, ctrl);
   cfg = paperLearning.cfg;
+  /* G1.4: the identity of the risk configuration actually in force. It
+     travels with every order, NAV row and daily finalization row, so a
+     result produced at the exploratory floor can never be charted beside
+     one produced under the declared strategy without saying so. */
+  let riskConfig = require("./_investorStrategy.js").riskConfigIdentity(cfg, activePortfolioControls);
   if (paperLearning.active) {
     cfgSource += ` · paper learning mode: ${Object.keys(paperLearning.applied).join(", ") || "no change"}`;
   } else if (paperLearning.refused) {
@@ -741,6 +752,7 @@ async function runCycle(jobId, { manual = false } = {}) {
     strictCfg = { ...baseParams };
     paperLearning = require("./_investorStrategy.js").paperLearningConfig(strictCfg, ctrl);
     cfg = paperLearning.cfg;
+    riskConfig = require("./_investorStrategy.js").riskConfigIdentity(cfg, activePortfolioControls);
     cfgSource = "baseline — the stored leader belongs to a different market-data experiment"
       + (paperLearning.active ? " · paper learning mode still applied" : "");
   }
@@ -1174,6 +1186,9 @@ async function runCycle(jobId, { manual = false } = {}) {
       sessionsSpanned: Number.isFinite(Number(sessionsSpanned))
         ? Number(sessionsSpanned) : null,
       returnAdmissible,
+      /* G1.4: the KPI row carries the risk configuration in force. */
+      riskConfigHash: riskConfig ? riskConfig.riskConfigHash : null,
+      deviationsFromDeclared: riskConfig ? riskConfig.deviationsFromDeclared : [],
       ...(finalized === true
         ? { finalized: true, finalizedAt: A.FV.serverTimestamp() }
         : { finalized: false }),
@@ -1283,7 +1298,8 @@ async function runCycle(jobId, { manual = false } = {}) {
           .filter((d) => d >= 0).sort((a, b) => a - b)[0];
         if (soonest != null) earningsInDays = soonest;
       }
-      const peak = Math.max(Number(position.peakPriceUsd) || 0, last.c);
+      /* The high-water mark is the observed bar HIGH (touch before close). */
+      const peak = Math.max(Number(position.peakPriceUsd) || 0, Number(last.h) || 0, Number(last.c) || 0);
       if (peak > (Number(position.peakPriceUsd) || 0)) {
         try {
           await A.col(A.COL.positions).doc(`${accountId}_${sym}`)
@@ -1310,7 +1326,8 @@ async function runCycle(jobId, { manual = false } = {}) {
         ? ((last.c - entryUsd) / entryUsd) * 100 : null;
       const patienceTerms = PA.exitTerms(position, { heldDays, pnlPct: pnlPctNow });
       const ex = S.exitSignal(ranks[sym], heldDays, cfg, {
-        mark: last.c, entry: entryUsd, peak, earningsInDays, intelligencePolicy,
+        mark: last.c, barHigh: Number(last.h), barLow: Number(last.l),
+        entry: entryUsd, peak, earningsInDays, intelligencePolicy,
         patience: patienceTerms,
       });
       evaluatedHoldingSymbols.add(sym);
@@ -1943,7 +1960,7 @@ async function runCycle(jobId, { manual = false } = {}) {
         await liveEvent("patient", sym, `held up to ${patienceStamp.grantSessions} sessions`);
       }
       const o = await L.proposeOrder({
-        ...policyIdentity, accountId, symbol: sym, side: "buy",
+        ...policyIdentity, accountId, symbol: sym, side: "buy", riskConfig,
         patience: patienceStamp,
         /* Null for an ordinary entry; present when the signal was short of the
            threshold and the desk bought at market rather than waiting. */
@@ -3079,7 +3096,7 @@ async function runCycle(jobId, { manual = false } = {}) {
   try {
     const NAV = require("./_investorNav");
     const snap = await NAV.snapshot(accountId);
-    await NAV.record(accountId, snap, { source: "cycle" });
+    await NAV.record(accountId, snap, { source: "cycle", riskConfig });
     summary.navLive = { navUsd: snap.navUsd, unrealisedUsd: snap.unrealisedUsd, open: snap.openPositions };
     await A.col(A.COL.control).doc("control").set({ navLive: snap }, { merge: true });
   } catch (e) { summary.navError = String(e.message || e).slice(0, 120); }
@@ -3225,6 +3242,10 @@ async function runEvidence(jobId) {
     detail: selected.length
       ? `${selected.length} companies selected from a rotating priority queue of ${focus.length}.`
       : "No company currently qualifies for this research sweep." });
+  /* G1.6 (D-6, invariant I-3): one sweep context for the whole pass. A
+     global source is fetched at most once per sweep and its items are
+     fanned out to every selected company by entity resolution. */
+  const sweep = IS.createSweep({ companies: selected.map((x) => x.symbol) });
   for (let selectedIndex = 0; selectedIndex < selected.length; selectedIndex += 1) {
     const focusRow = selected[selectedIndex];
     const t = bySymbol[focusRow.symbol] || { symbol: focusRow.symbol };
@@ -3269,6 +3290,7 @@ async function runEvidence(jobId) {
       const publicPoll = await IS.pollCompany(profile, {
         budgetMs: Math.max(30000, Math.min(150000,
           Number(process.env.INVESTOR_INTELLIGENCE_COMPANY_BUDGET_MS) || 110000)),
+        sweep,
       });
       let dossierAsOfMs = Date.now();
       let coverage = I.sourceCoverage(profile, publicPoll.results, { secHealthy, asOfMs: dossierAsOfMs,
@@ -3297,7 +3319,7 @@ async function runEvidence(jobId) {
       const neededStates = [...new Set(normalizedExposures.flatMap((x) => x.states || []))];
       const queriedStates = new Set(nws && nws.statesQueried || []);
       if (neededStates.some((state) => !queriedStates.has(state))) {
-        nws = await IS.pollSource({ ...profile, temporalExposures: normalizedExposures }, "nws.alerts");
+        nws = await IS.pollSource({ ...profile, temporalExposures: normalizedExposures }, "nws.alerts", sweep);
         const at = publicPoll.results.findIndex((x) => x.sourceId === "nws.alerts");
         if (at >= 0) publicPoll.results[at] = nws; else publicPoll.results.push(nws);
       }
@@ -3370,6 +3392,14 @@ async function runEvidence(jobId) {
       completed: selectedIndex + 1, total: selected.length,
       detail: `${selectedIndex + 1} of ${selected.length} company dossiers completed in this sweep.` });
   }
+  /* G1.6: a sweep that issued more source requests than its scope allows is
+     a defect, not a slow day. It is recorded as a typed breach on the run
+     and the control document so the console shows it. */
+  const sourceScope = IS.assertSweepBudget(sweep);
+  if (!sourceScope.ok) {
+    console.error("investorCycle: source scope breach", JSON.stringify(redact(sourceScope.alert)));
+    try { await A.col(A.COL.control).doc("control").set({ sourceScopeBreach: sourceScope.alert }, { merge: true }); } catch {}
+  }
   await reportRunProgress(runRef, { phase: "publish_research",
     label: "Publishing research results for the decision engine", pct: 92,
     completed: results.length, total: selected.length,
@@ -3378,7 +3408,8 @@ async function runEvidence(jobId) {
   const summary = { jobId, kind: "evidence", bootstrap,
     focusCount: focus.length,
     selected: selected.map((x) => x.symbol), swept: results.length, nextCursor,
-    publicSourceMode: true, results, elapsedMs: Date.now() - startedAt };
+    publicSourceMode: true,
+    sourceScope: { ok: sourceScope.ok, budget: sourceScope.budget, breach: sourceScope.ok ? null : sourceScope.alert }, results, elapsedMs: Date.now() - startedAt };
   await A.col(A.COL.control).doc("control").set({ intelligenceCursor: nextCursor,
     intelligenceFocus: focus.map((x) => x.symbol), lastIntelligenceSummary: summary,
     lastIntelligenceAt: A.FV.serverTimestamp() }, { merge: true });

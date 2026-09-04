@@ -108,13 +108,21 @@ function armLevel({ lastPrice, cumResidual, residVol, minAbsZ, maxArmDropPct = 5
 }
 
 /* ── PURE: is this observation a strike? ─────────────────────────────────── */
-function strikeVerdict(price, plan) {
-  const px = Number(price), arm = Number(plan && plan.armBelowUsd), floor = Number(plan && plan.floorUsd);
-  if (!(px > 0) || !(arm > 0)) return { strike: false, reason: "unpriced", distancePct: null };
-  const distancePct = round(((px - arm) / arm) * 100, 3);
-  if (px > arm) return { strike: false, reason: "above_level", distancePct };
-  if (floor > 0 && px < floor) return { strike: false, reason: "gap_below_band", distancePct, gap: true };
-  return { strike: true, reason: "at_or_below_level", distancePct };
+/* D-2 (G1.2): a strike is a TOUCH. A bar whose LOW reached the armed level
+   struck it even if the close recovered, and a bar whose LOW fell through the
+   floor gapped below the band. A bare number is a close-only observation
+   and the verdict is labelled as such. */
+function strikeVerdict(observation, plan) {
+  const obs = observation !== null && typeof observation === "object" ? observation : { close: observation };
+  const close = Number(obs.close);
+  const low = Number.isFinite(Number(obs.low)) ? Number(obs.low) : close;
+  const touchBasis = Number.isFinite(Number(obs.low)) ? "bar_low" : "close_only";
+  const arm = Number(plan && plan.armBelowUsd), floor = Number(plan && plan.floorUsd);
+  if (!(close > 0) || !(low > 0) || !(arm > 0)) return { strike: false, reason: "unpriced", distancePct: null, touchBasis };
+  const distancePct = round(((close - arm) / arm) * 100, 3);
+  if (low > arm) return { strike: false, reason: "above_level", distancePct, touchBasis };
+  if (floor > 0 && low < floor) return { strike: false, reason: "gap_below_band", distancePct, gap: true, touchBasis, touchedUsd: low };
+  return { strike: true, reason: "at_or_below_level", distancePct, touchBasis, touchedUsd: low };
 }
 
 /* ── PURE: choose which plans to arm ─────────────────────────────────────── */
@@ -425,6 +433,8 @@ async function evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cf
   const out = { considered: plans.length, struck: [], skipped: [], waiting: [], blocked: [], expired: [] };
   if (!plans.length) return out;
   const nowMs = Date.now();
+  /* G1.4: the risk configuration actually in force travels with every order. */
+  const riskConfig = require("./_investorStrategy").riskConfigIdentity(cfg, activePortfolioControls);
   const heldSymbols = new Set(positions.filter((p) => p && p.open).map((p) => p.symbol));
   const pendingSymbols = new Set(pendingOrders.map((o) => o.symbol));
   const strikePolicy = activity.strike || {};
@@ -440,7 +450,7 @@ async function evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cf
       const bars = panel[sym] || [];
       const last = bars[bars.length - 1];
       if (!last) { out.waiting.push({ symbol: sym, reason: "no_bars" }); continue; }
-      const verdict = strikeVerdict(last.c, plan);
+      const verdict = strikeVerdict({ low: last.l, high: last.h, close: last.c }, plan);
       const seen = { lastSeenUsd: Number(last.c), lastSeenAt: last.t, distancePct: verdict.distancePct,
         lastCheckedAtMs: nowMs, lastCheckJobId: jobId };
       if (!verdict.strike) {
@@ -449,7 +459,7 @@ async function evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cf
              noise. Leave it to the deep scan's evidence lane. */
           await markPlan(plan, { ...seen, status: "skipped", skippedAtMs: nowMs,
             skipReason: "gap_below_band",
-            skipDetail: `price ${Number(last.c).toFixed(2)} is below the strike floor ${Number(plan.floorUsd).toFixed(2)} — left for the next deep scan` });
+            skipDetail: `bar low ${Number(verdict.touchedUsd ?? last.c).toFixed(2)} is below the strike floor ${Number(plan.floorUsd).toFixed(2)} — left for the next deep scan` });
           out.skipped.push({ symbol: sym, reason: "gap_below_band", price: last.c });
         } else {
           await markPlan(plan, seen);
@@ -625,7 +635,7 @@ async function evaluateStrikes({ jobId, ctrl, accountId, operating, strategy, cf
         proposedUsd: qty * last.c,
         positions, pendingOrders, navUsd: bookState.navUsd, nowMs: decisionAtMs });
       const o = await L.proposeOrder({
-        ...plan.policyIdentity, accountId, symbol: sym, side: "buy",
+        ...plan.policyIdentity, accountId, symbol: sym, side: "buy", riskConfig,
         paperLearningOnly: paperLearningActive === true || plan.paperLearningOnly === true,
         operatingStateAtDecision: operating.state,
         learningCohort: cohortLabel, cohortRole: "signal",

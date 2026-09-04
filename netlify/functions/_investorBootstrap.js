@@ -296,7 +296,11 @@ async function freezeStrategy() {
   const s=strategyDocument(require("./_investorStrategy.js")),contentHash=strategyHash(s),ref=A.col(A.COL.strategies).doc(s.version);
   await A.runTransaction(async(tx)=>{const cur=await tx.get(ref);
     if(cur.exists){if(cur.data().contentHash!==contentHash)throw new Error(`strategy ${s.version} immutable content mismatch`);return;}
+    /* G1.3(c): record whether this version could ever place an order. A
+       performance claim about a never-eligible version is refused. */
+    const orderEligibility=require("./_investorStrategy.js").orderEligibility(s.parameters||null);
     tx.set(ref,{...s,immutable:true,contentHash,frozenAt:A.FV.serverTimestamp(),
+      orderEligibility,everOrderEligible:orderEligibility.eligible===true,
       ...A.envelope({created_by:"bootstrap.freezeStrategy"})});});
   return{version:s.version,contentHash};
 }
@@ -748,7 +752,7 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
      an older deploy is not evidence about this one. */
   const commit = process.env.COMMIT_REF || process.env.DEPLOY_ID || "local";
   let fixtures;
-  try { fixtures = require("./_investorSelftest").runFixtures(); }
+  try { fixtures = await require("./_investorSelftest").runFixturesAsync(); }
   catch (e) { fixtures = { pass: false, fixtureHash: null, error: String(e.message).slice(0, 200) }; }
   await ref.set({ fixturesPass: fixtures.pass === true, fixturesCommit: commit,
     fixtureHash: fixtures.fixtureHash || null, fixturesCheckedAt: A.FV.serverTimestamp(),

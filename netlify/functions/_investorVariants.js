@@ -29,36 +29,42 @@ const NEUTRAL = Object.freeze({ ...require("./_investorStrategy").parameters });
 const VARIANTS = [
   {
     id: "A",
+    exitRegime: "pre-v18",
     name: "Baseline",
     plain: "The standard setup. Waits for a stock to fall further than its sector explains, then holds until it climbs back to the middle of the pack.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10, noCauseConfidence: 0.5 },
   },
   {
     id: "B",
+    exitRegime: "pre-v18",
     name: "Choosier",
     plain: "Same idea, but only acts on bigger, rarer drops. Fewer trades, each one a stronger case.",
     params: { entryRank: 0.05, minAbsZ: 2.5, exitRank: 0.50, maxHoldDays: 10, noCauseConfidence: 0.5 },
   },
   {
     id: "C",
+    exitRegime: "pre-v18",
     name: "Quick exit",
     plain: "Enters like the baseline but takes profit earlier instead of waiting for a full recovery. Less time exposed, smaller wins.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.35, maxHoldDays: 6, noCauseConfidence: 0.5 },
   },
   {
     id: "D",
+    exitRegime: "pre-v18",
     name: "Patient",
     plain: "Enters like the baseline but waits longer for the bounce. More time exposed, bigger wins when it works.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.65, maxHoldDays: 14, noCauseConfidence: 0.5 },
   },
   {
     id: "E",
+    exitRegime: "pre-v18",
     name: "Crowd-only",
     plain: "Only trades drops that look like crowd panic with no real news behind them. Skips anything where we cannot find a cause at all.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10, noCauseConfidence: 0.0 },
   },
   {
     id: "F",
+    exitRegime: "pre-v18",
     name: "Wide net",
     plain: "Acts on smaller drops too. Many more trades, each with a weaker case — a test of whether volume of trades beats quality of trades.",
     params: { entryRank: 0.20, minAbsZ: 1.5, exitRank: 0.50, maxHoldDays: 10, noCauseConfidence: 0.5 },
@@ -75,6 +81,7 @@ const VARIANTS = [
      and the horse race will say which. Both start from zero evidence. */
   {
     id: "G",
+    exitRegime: "pre-v18",
     name: "Dips in uptrends",
     plain: "Only buys the dip when the company's stock has still been rising over the last six months. The idea being tested: a stumble in something healthy bounces back, but a stumble in something already sliding just keeps sliding.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10, noCauseConfidence: 0.5,
@@ -82,6 +89,7 @@ const VARIANTS = [
   },
   {
     id: "H",
+    exitRegime: "pre-v18",
     name: "Deeply beaten down",
     plain: "The opposite bet. Only buys names already well below their six-month high, on the theory that the biggest bounces come from the most abandoned stocks. Deliberately takes the other side of G so the system can find out which view is actually right.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10, noCauseConfidence: 0.5,
@@ -93,6 +101,7 @@ const VARIANTS = [
      rather than only peripheral entry refinements. */
   {
     id: "I",
+    exitRegime: "pre-v18",
     name: "Fast formation",
     plain: "Measures the abnormal fall over six 5-minute bars. It tests whether the reversal signal forms faster than the 12-bar baseline assumes.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10,
@@ -100,6 +109,7 @@ const VARIANTS = [
   },
   {
     id: "J",
+    exitRegime: "pre-v18",
     name: "Slow formation",
     plain: "Measures the abnormal fall over 24 5-minute bars. It tests whether a more persistent dislocation is more reliable than the 12-bar baseline.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10,
@@ -111,6 +121,7 @@ const VARIANTS = [
      weakened by a challenger. Only non-blocking haircuts differ. */
   {
     id: "K",
+    exitRegime: "pre-v18",
     name: "Temporal cautious",
     plain: "Applies 25% more weight to non-blocking temporal risk while preserving every hard data and event block.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10,
@@ -118,6 +129,7 @@ const VARIANTS = [
   },
   {
     id: "L",
+    exitRegime: "pre-v18",
     name: "Intelligence cautious",
     plain: "Applies 25% more weight to non-blocking company-intelligence risk while preserving every hard data and event block.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10,
@@ -125,6 +137,7 @@ const VARIANTS = [
   },
   {
     id: "M",
+    exitRegime: "pre-v18",
     name: "Multiplicative sizing",
     plain: "Combines independent non-zero size haircuts by multiplication, providing a frozen comparison with the ranked-haircut baseline.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10,
@@ -132,6 +145,7 @@ const VARIANTS = [
   },
   {
     id: "N",
+    exitRegime: "pre-v18",
     name: "Material-context threshold",
     plain: "Ignores small non-blocking context scores below 25, testing whether minor warnings add value or only suppress good trades. Hard blocks remain unchanged.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.50, maxHoldDays: 10,
@@ -150,6 +164,7 @@ const VARIANTS = [
      number; the scoreboard will say whether it earns its keep. */
   {
     id: "Q",
+    exitRegime: "pre-v18",
     name: "Pullback in trend",
     plain: "Only buys the dip when the stock is already in a rising trend and has pulled back about halfway through its last upswing. Aims for the previous high and gives up if most of the upswing is lost. Tests whether trading with the trend beats catching bottoms.",
     params: { entryRank: 0.10, minAbsZ: 2.0, exitRank: 0.90, maxHoldDays: 14, noCauseConfidence: 0.5,
@@ -185,6 +200,67 @@ function variantsHash() {
 
 function byId(id) { return VARIANTS.find((v) => v.id === id) || null; }
 
+/* ── EXIT-REGIME PARITY (blueprint D-5, G1.5; invariant I-4) ──────────────
+   Every variant above predates v18 and declares none of the v18 exit
+   parameters, so each inherits the strict baseline's takeProfitPct null and
+   the old trailing-stop geometry. Those results belong to the PRE-v18 exit
+   regime and must never be pooled with, or promoted into, the post-v18
+   configuration that takes profits. Option (b) of G1.5: the regime is an
+   explicit tag, the validator refuses a variant whose exit parameters are
+   undeclared AND untagged, and promotion across regimes is refused. The
+   tag sits outside `params`, so variantsHash() — and every observation
+   recorded against it — is unchanged. */
+const EXIT_PARAMETER_KEYS = Object.freeze(["takeProfitPct", "trailingArmsAtPct", "trailingStopPct",
+  "holdLosersThroughRankExit", "requireSessionMove"]);
+const EXIT_REGIMES = Object.freeze(["pre-v18", "post-v18"]);
+
+/** PURE. Which exit parameters a variant declares itself, and its regime. */
+function exitParity(variant) {
+  const params = (variant && variant.params) || {};
+  const declared = EXIT_PARAMETER_KEYS.filter((k) => Object.prototype.hasOwnProperty.call(params, k));
+  const missing = EXIT_PARAMETER_KEYS.filter((k) => !declared.includes(k));
+  const complete = missing.length === 0;
+  const tag = variant && EXIT_REGIMES.includes(variant.exitRegime) ? variant.exitRegime : null;
+  return { id: variant && variant.id, declared, missing, complete,
+    regime: tag || (complete ? exitRegimeOf(params) : null) };
+}
+
+/** PURE. Which regime a configuration belongs to: post-v18 takes profits
+ *  and cannot turn a gain into a loss through its trailing stop. */
+function exitRegimeOf(cfg = {}) {
+  const takes = cfg.takeProfitPct !== null && cfg.takeProfitPct !== undefined && Number(cfg.takeProfitPct) > 0;
+  const safeTrail = Number(cfg.trailingArmsAtPct) > Math.abs(Number(cfg.trailingStopPct));
+  return takes && safeTrail ? "post-v18" : "pre-v18";
+}
+
+/** Fail closed at load: a variant with undeclared exits and no regime tag
+ *  would let regimes mix silently. */
+function validateVariants(list = VARIANTS) {
+  const problems = [];
+  for (const variant of list) {
+    const p = exitParity(variant);
+    if (!p.complete && !p.regime) problems.push(`variant ${variant.id}: exit parameters undeclared (${p.missing.join(", ")}) and no exitRegime tag`);
+    if (variant.exitRegime && !EXIT_REGIMES.includes(variant.exitRegime)) problems.push(`variant ${variant.id}: unknown exitRegime ${variant.exitRegime}`);
+  }
+  if (problems.length) throw new Error(`_investorVariants: ${problems.join("; ")}`);
+  return { ok: true, count: list.length };
+}
+
+/** PURE. May this variant be promoted into (become the live configuration
+ *  under) the given target configuration? Regimes never mix. */
+function promotionAllowed(variant, targetCfg = {}) {
+  if (!variant) return { ok: false, reason: "unknown variant" };
+  const parity = exitParity(variant);
+  const target = exitRegimeOf(targetCfg);
+  if (!parity.regime) return { ok: false, reason: `variant ${variant.id} declares no exit regime` };
+  if (parity.regime !== target) {
+    return { ok: false, regime: parity.regime, target,
+      reason: `variant ${variant.id} belongs to the ${parity.regime} exit regime; the running configuration is ${target} — regimes cannot mix` };
+  }
+  return { ok: true, regime: parity.regime, target };
+}
+validateVariants();
+
 /**
  * Materialize a variant from the same immutable neutral policy every time.
  *
@@ -198,4 +274,5 @@ function configFor(id, baseCfg) { // eslint-disable-line no-unused-vars
   return v ? { ...NEUTRAL, ...v.params } : { ...NEUTRAL };
 }
 
-module.exports = { VARIANTS, NEUTRAL, stable, materialized, variantsHash, byId, configFor };
+module.exports = { VARIANTS, NEUTRAL, stable, materialized, variantsHash, byId, configFor,
+  EXIT_PARAMETER_KEYS, EXIT_REGIMES, exitParity, exitRegimeOf, validateVariants, promotionAllowed };

@@ -768,6 +768,35 @@ const ACTIONS = {
         reconciliationFailure: ctrl.reconciliationFailure || null,
         soakStatus: ctrl.lastSoakStatus || null,
       },
+      /* G1.4 (D-4): the risk configuration actually in force, its hash and
+         every deviation from the declared strategy. bannerRequired drives a
+         persistent console banner. */
+      riskConfig: (() => {
+        const operatingNow = STATE.describe(ctrl);
+        const exploratoryControls = ((strategy.exploratoryAuto || {}).portfolioControls) || {};
+        const activePortfolioControls = operatingNow.exploratoryAuto
+          ? { ...(strategy.portfolioControls || {}), ...exploratoryControls }
+          : (strategy.portfolioControls || {});
+        return ST.riskConfigIdentity(paperPreview.cfg, activePortfolioControls);
+      })(),
+      /* G1.3 (D-3): the declared strict configuration cannot place an order
+         until a calibration exists. Stated as a first-class state with finite
+         numbers, not a silent no-op. */
+      calibration: await (async () => {
+        let sessionsAvailable = 0, experimentHash = null;
+        try {
+          const allocSnap = await A.col(A.COL.control).doc("allocation").get();
+          experimentHash = allocSnap.exists ? (allocSnap.data().experimentHash || null) : null;
+          const stored = experimentHash ? await C.read(experimentHash) : null;
+          sessionsAvailable = Number(stored && stored.sessions) || 0;
+        } catch {}
+        const state = C.calibrationState({ sessionsAvailable });
+        return { ...state, experimentHash,
+          strictOrderEligibility: ST.orderEligibility(strategy.parameters || ST.parameters),
+          paperLearningActive: paperPreview.active === true,
+          costHurdleState: S.costHurdle({ cumResidual: -0.02, advUsd: 5e8, grade: "A",
+            wideSpreadWindow: false, vixNorm: 1, cfg: strategy.parameters || ST.parameters }).calibration };
+      })(),
       market: {
         provider: provider.id, feed: provider.feed || null,
         consolidated: !!provider.consolidated,
@@ -1141,9 +1170,44 @@ const ACTIONS = {
         reserved: b.usd[L.ACCT.RESERVED] || 0 });
     })();
 
+    /* G1.4 (c): closed positions are grouped by the risk configuration in
+       force at the decision. Two periods with different hashes are labelled
+       non-comparable rather than charted as one series. */
+    const riskConfigSeries = await (async () => {
+      const groups = new Map();
+      try {
+        const ts = await A.col(A.COL.trades).where("accountId", "==", accountId).limit(1000).get();
+        ts.forEach((d) => {
+          const t = d.data();
+          const hash = t.riskConfigHash || "unrecorded";
+          const g = groups.get(hash) || { riskConfigHash: hash, trades: 0, firstClosedAt: null, lastClosedAt: null,
+            netRealizedCents: 0, deviationsFromDeclared: Array.isArray(t.deviationsFromDeclared) ? t.deviationsFromDeclared : [] };
+          g.trades += 1;
+          g.netRealizedCents += Number(t.netRealizedCents) || 0;
+          if (t.closedAt && (!g.firstClosedAt || t.closedAt < g.firstClosedAt)) g.firstClosedAt = t.closedAt;
+          if (t.closedAt && (!g.lastClosedAt || t.closedAt > g.lastClosedAt)) g.lastClosedAt = t.closedAt;
+          groups.set(hash, g);
+        });
+      } catch {}
+      const series = [...groups.values()].sort((a, b) => String(a.firstClosedAt).localeCompare(String(b.firstClosedAt)));
+      return { series, comparable: series.length <= 1,
+        note: series.length > 1
+          ? "Closed positions were produced under more than one risk configuration. They are reported per configuration and must not be charted as one series."
+          : (series.length === 1 && series[0].riskConfigHash === "unrecorded"
+            ? "These closed positions predate configuration provenance; their risk configuration is unrecorded." : null) };
+    })();
+    const strictStrategy = await activeStrategy(ctrl);
+    const strictEligibility = ST.orderEligibility(strictStrategy.parameters || ST.parameters);
     return {
       ok: true, equity, benchmark: bench,
       attribution: R.attribution(equity, bench),
+      riskConfigSeries,
+      /* G1.3 (c): no performance claim may be made about a version that was
+         never order-eligible. The declared strict configuration is reported
+         as exactly that. */
+      strictConfiguration: { version: strictStrategy.version || null,
+        orderEligibility: strictEligibility, performanceClaimsAllowed: strictEligibility.eligible === true,
+        everOrderEligible: strictStrategy.everOrderEligible === true },
       navHistory: nav.map((n) => ({ date: n.date, navUsd: n.navUsd })),
       book: { navUsd: book.navUsd, count: book.book.count, grossPct: book.book.grossPct,
         byClusterPct: book.book.byClusterPct, untrustedMarks: book.untrustedMarks },
@@ -1409,7 +1473,7 @@ const ACTIONS = {
          this function, bind their result to the current deploy identity, and
          continue only when every fixture passes. */
       let fixtures;
-      try { fixtures = require("./_investorSelftest").runFixtures(); }
+      try { fixtures = await require("./_investorSelftest").runFixturesAsync(); }
       catch (e) {
         fixtures = { pass: false, fixtureHash: null,
           error: String(e && e.message || e).slice(0, 200), cases: [] };
@@ -2407,9 +2471,9 @@ const ACTIONS = {
       },
       /* Which invariant failed, not merely that one did. Names only — the
          fixture bodies are code, and the operator needs the label to act. */
-      fixtures: (() => {
+      fixtures: await (async () => {
         try {
-          const r = require("./_investorSelftest").runFixtures();
+          const r = await require("./_investorSelftest").runFixturesAsync();
           return { pass: r.pass, passed: r.passed, total: r.total,
             fixtureHash: r.fixtureHash, schema: r.schema || null,
             failed: r.cases.filter((c) => !c.pass).map((c) => c.name) };

@@ -28,6 +28,13 @@ function fixture(name, fn) {
   const check = digest(String(fn));
   try {
     const detail = fn();
+    /* An asynchronous fixture is PENDING until runFixturesAsync awaits it. A
+       synchronous caller sees it as a failure, never as a pass: forgetting to
+       await must fail closed, not attest a promise object as true. */
+    if (detail && typeof detail.then === "function") {
+      return { name, check, pass: false, pending: true, promise: detail,
+        error: "asynchronous fixture not awaited — use runFixturesAsync()" };
+    }
     return { name, check, pass: detail !== false, detail: detail === true ? null : detail };
   } catch (e) {
     return { name, check, pass: false, error: String(e.message).slice(0, 200) };
@@ -747,12 +754,14 @@ function runFixtures() {
     /* A real fundamental cause is a finding: never faded, relaxed or not. */
     const hard = S.directionFromCause(S.CAUSE.HARD_NEWS, cfg, 3, { complete: true });
     if (hard.trade !== false) return false;
-    /* Pending evidence is an absence: a paper desk may record it. */
-    const pending = S.directionFromCause("something_unclassified", cfg, 0, null);
+    /* Evidence not yet gathered is an absence: a paper desk may record it.
+       An UNKNOWN cause is not an absence — it fails closed (D-1). */
+    const pending = S.directionFromCause(S.CAUSE.NOT_YET_GATHERED, cfg, 0, null);
     if (pending.trade !== true || pending.relaxed !== true) return false;
     if (pending.confidence >= 0.5) return false;
+    if (S.directionFromCause("something_unclassified", cfg, 0, null).trade !== false) return false;
     /* And with the mode off, pending still blocks. */
-    const strict = S.directionFromCause("something_unclassified", strategy.parameters, 0, null);
+    const strict = S.directionFromCause(S.CAUSE.NOT_YET_GATHERED, strategy.parameters, 0, null);
     if (strict.trade !== false) return false;
     /* Unknown correlation is also an absence and is admitted small; a known
        high-correlation regime is a finding and still blocks. */
@@ -1857,7 +1866,11 @@ function runFixtures() {
     const covered = emitted.every((k) => !!PR.SELL_REASONS[k]) && !!PR.SELL_REASONS.manual;
     /* Every cause the signal lane can assign must map to a buy label. */
     const S2 = require("./_investorSignal");
-    const causesCovered = Object.values(S2.CAUSE).every((c) => !!PR.BUY_REASONS[PR.CAUSE_TO_BUY[c]]);
+    /* Every cause that CAN produce a buy maps to a buy label. evidence_unavailable
+       never can (invariant I-1), so its absence from the buy vocabulary is the
+       invariant, not a gap. */
+    const causesCovered = Object.values(S2.CAUSE).filter((c) => c !== S2.CAUSE.UNAVAILABLE)
+      .every((c) => !!PR.BUY_REASONS[PR.CAUSE_TO_BUY[c]]) && !PR.CAUSE_TO_BUY[S2.CAUSE.UNAVAILABLE];
     /* Routing: control beats cause; a legacy row with no exitKind recovers
        its rule from the stored sentence; an open position is not "sold". */
     const control = PR.buyReason({ cohortRole: "control", cause: S2.CAUSE.NONE }).code === "control";
@@ -2751,6 +2764,288 @@ function runFixtures() {
   }));
 
 
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     BLUEPRINT v2 §17.2 — GROUP 1 BLOCKING SUITES (D-1 … D-9). Each halts
+     trading on the deployed build through controlAllowsEntry when it fails.
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  /* D-1, D-8b; invariant I-1. The absence of a verdict is never a verdict. */
+  cases.push(fixture("fail_closed_evidence_every_gateway_failure_is_unavailable_and_never_trades", () => {
+    const O = require("./_investorOpenai");
+    const relaxed = { ...strategy.parameters, paperAbstainOnMissingInfo: true };
+    /* The gateway: no failure path may still emit the old token, the schema
+       enum must not offer it to the model, and every failure return must go
+       through the unavailable() shape. */
+    const src = sourceOf(O.classifyMove);
+    if (/evidence_pending/.test(src)) return false;
+    if (O.CLASSIFY_SCHEMA.properties.cause.enum.includes("evidence_pending")) return false;
+    if (!O.CLASSIFY_SCHEMA.properties.cause.enum.includes("evidence_insufficient")) return false;
+    const unavailableSites = (src.match(/unavailable\(/g) || []).length;
+    if (unavailableSites < 8) throw new Error(`FAIL ${JSON.stringify({ unavailableSites })}`);
+    if ((src.match(/CAUSES\.UNAVAILABLE/g) || []).length < 3) return false;
+    if (O.CAUSES.UNAVAILABLE !== S.CAUSE.UNAVAILABLE || O.CAUSES.INSUFFICIENT !== S.CAUSE.INSUFFICIENT) return false;
+    /* The direction rule, in the most permissive cohort there is. */
+    const un = S.directionFromCause(S.CAUSE.UNAVAILABLE, relaxed, 3, { complete: true });
+    if (un.trade !== false || un.failClosed !== true) return false;
+    const unknown = S.directionFromCause("cause_added_later", relaxed, 3, { complete: true });
+    if (unknown.trade !== false || unknown.failClosed !== true) return false;
+    const legacy = S.directionFromCause("evidence_pending", relaxed, 3, { complete: true });
+    if (legacy.trade !== false) return false;
+    /* Absence and insufficiency remain paper observations at reduced size,
+       and only where the cohort declares it. */
+    const gathered = S.directionFromCause(S.CAUSE.NOT_YET_GATHERED, relaxed, 0, null);
+    const insufficient = S.directionFromCause(S.CAUSE.INSUFFICIENT, relaxed, 0, null);
+    if (gathered.trade !== true || gathered.relaxed !== true || gathered.confidence >= 0.5) return false;
+    if (insufficient.trade !== true || insufficient.relaxed !== true || insufficient.confidence >= 0.5) return false;
+    if (S.directionFromCause(S.CAUSE.NOT_YET_GATHERED, strategy.parameters, 0, null).trade !== false) return false;
+    if (S.directionFromCause(S.CAUSE.INSUFFICIENT, strategy.parameters, 0, null).trade !== false) return false;
+    /* The default branch fails closed in source, not only in this run. */
+    const dsrc = sourceOf(S.directionFromCause);
+    const defaultBranch = dsrc.slice(dsrc.lastIndexOf("default:"));
+    if (/trade:\s*true/.test(defaultBranch)) return false;
+    return true;
+  }));
+
+  /* D-2; invariant I-2. Touch before close, adverse on collision. */
+  cases.push(fixture("touch_before_close_targets_at_bar_high_stops_at_bar_low_collisions_adverse", () => {
+    const XP = require("./_investorExitPolicy");
+    const cfg = { ...strategy.parameters, takeProfitPct: 2, trailingArmsAtPct: 1.5, trailingStopPct: -1, stopLossPct: -8 };
+    /* REGRESSION: the pre-fix close-only convention. The bar touched the
+       target at its high and closed below it; the close alone sees nothing. */
+    const closeOnly = XP.exitSignal(0.1, 1, cfg, { mark: 101, entry: 100, peak: 100 });
+    if (closeOnly.exit !== false || closeOnly.touchBasis !== "close_only") return false;
+    const touched = XP.exitSignal(0.1, 1, cfg, { mark: 101, entry: 100, peak: 100, barHigh: 102.5, barLow: 100.4 });
+    if (touched.exit !== true || touched.kind !== "take_profit" || touched.touchBasis !== "bar_high_low") return false;
+    /* A stop touched at the low and recovered by the close is still a stop. */
+    const stopTouch = XP.exitSignal(0.1, 1, cfg, { mark: 95, entry: 100, peak: 100, barHigh: 96, barLow: 91.5 });
+    if (stopTouch.exit !== true || stopTouch.kind !== "stop_loss") return false;
+    if (XP.exitSignal(0.1, 1, cfg, { mark: 95, entry: 100, peak: 100 }).exit !== false) return false;
+    /* Trailing stop: the giveback is measured at the bar low. */
+    const trail = XP.exitSignal(0.1, 1, cfg, { mark: 104.5, entry: 100, peak: 105, barHigh: 105, barLow: 103.8 });
+    if (trail.exit !== true || trail.kind !== "trailing_stop") return false;
+    /* SAME-BAR COLLISION: both the target and the stop inside one bar and no
+       finer sequence. Resolved adversely, flagged UNSCORABLE; never the
+       favourable path. */
+    const both = XP.exitSignal(0.1, 1, cfg, { mark: 100, entry: 100, peak: 100, barHigh: 102.5, barLow: 91 });
+    if (both.exit !== true || both.kind !== "stop_loss" || both.sameBarCollision !== true) return false;
+    if (!both.collision || both.collision.resolution !== "adverse" || both.collision.scoring !== "UNSCORABLE" || both.scorable !== false) return false;
+    /* A strike is a touch: the bar low reached the level, the close did not. */
+    const STK = require("./_investorStrike");
+    const plan = { armBelowUsd: 99.6, floorUsd: 97.11 };
+    const closeMiss = STK.strikeVerdict({ low: 99.5, high: 100.4, close: 100.1 }, plan);
+    if (closeMiss.strike !== true || closeMiss.touchBasis !== "bar_low") return false;
+    if (STK.strikeVerdict(100.1, plan).strike !== false) return false;
+    const gap = STK.strikeVerdict({ low: 96.9, high: 100, close: 98.5 }, plan);
+    if (gap.strike !== false || gap.gap !== true) return false;
+    /* The guard and the deep scan both pass the bar's high and low. */
+    const PG = require("./_investorPositionGuard");
+    if (!/barHigh:\s*Number\(last\.h\)/.test(sourceOf(PG.runGuard))) return false;
+    const cycle = require("./investorCycle-background");
+    if (!/barHigh:\s*Number\(last\.h\)/.test(sourceOf(cycle.runCycle))) return false;
+    return true;
+  }));
+
+  /* D-3; invariant I-4. The calibration gate stays, and is declared. */
+  cases.push(fixture("calibration_state_is_declared_with_finite_sessions_and_an_earliest_eligible_date", () => {
+    const state = C.calibrationState({ sessionsAvailable: 40, nowMs: Date.parse("2026-09-04T16:00:00Z") });
+    if (state.state !== "calibration_unavailable") return false;
+    if (state.sessionsRequired !== 534 || C.REQUIRED_SESSIONS !== 534) return false;
+    if (state.sessionsAvailable !== 40 || state.sessionsRemaining !== 494) return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(state.earliestEligibleSession))) return false;
+    if (!(Number(state.calendarDaysAhead) > 494 && Number(state.calendarDaysAhead) < 800)) return false;
+    /* The strict cost hurdle reports the state instead of failing silently. */
+    const hurdle = S.costHurdle({ cumResidual: -0.03, advUsd: 5e8, grade: "A", wideSpreadWindow: false,
+      vixNorm: 1, cfg: strategy.parameters, reversionMult: 1 });
+    if (hurdle.pass !== false || !hurdle.calibration || hurdle.calibration.state !== "calibration_unavailable") return false;
+    if (hurdle.calibration.required !== true || hurdle.calibration.known !== false) return false;
+    /* The strict version is recorded as never order-eligible; a claim is refused. */
+    const ST = require("./_investorStrategy");
+    const eligibility = ST.orderEligibility(strategy.parameters);
+    if (eligibility.eligible !== false || eligibility.code !== "calibration_unavailable") return false;
+    let refused = false;
+    try { ST.assertPerformanceClaimAllowed({ version: strategy.version, parameters: strategy.parameters }); }
+    catch { refused = true; }
+    if (!refused) return false;
+    if (ST.orderEligibility({ ...strategy.parameters, requireCalibratedEdge: false }).eligible !== true) return false;
+    /* The dashboard and the frozen strategy document carry it. */
+    const api = require("./investorApi");
+    if (!/calibrationState\(/.test(sourceOf(api.ACTIONS.dashboard))) return false;
+    if (!/orderEligibility/.test(sourceOf(B.freezeStrategy))) return false;
+    return true;
+  }));
+
+  /* D-4; invariant I-4. Configuration provenance on every result row. */
+  cases.push(fixture("configuration_provenance_names_lowered_hurdles_and_disabled_breakers", () => {
+    const ST = require("./_investorStrategy");
+    const explore = ST.paperLearningConfig(strategy.parameters,
+      { paperLearning: { enabled: true, ...strategy.exploratoryAuto.paperLearningDefaults } }).cfg;
+    const controls = { ...strategy.portfolioControls, ...strategy.exploratoryAuto.portfolioControls };
+    const id = ST.riskConfigIdentity(explore, controls);
+    if (!/^[a-f0-9]{64}$/.test(id.riskConfigHash)) return false;
+    const keys = id.deviationsFromDeclared.map((d) => d.key);
+    for (const k of ["costMarginMultiple", "minAdvUsd"]) {
+      const d = id.deviationsFromDeclared.find((x) => x.key === k);
+      if (!d || d.kind !== "hurdle_lowered" || !(Number(d.effective) < Number(d.declared))) throw new Error(`FAIL ${JSON.stringify({ missing: k })}`);
+    }
+    for (const k of ST.BREAKER_KEYS) {
+      const d = id.deviationsFromDeclared.find((x) => x.key === k);
+      if (!d || d.kind !== "breaker_disabled" || d.declared === null) throw new Error(`FAIL ${JSON.stringify({ missing: k })}`);
+    }
+    if (id.breakersDisabled.length !== 5 || id.bannerRequired !== true || id.matchesDeclared !== false) return false;
+    /* The declared configuration deviates from itself nowhere and needs no banner. */
+    const strict = ST.riskConfigIdentity(strategy.parameters, strategy.portfolioControls);
+    if (strict.deviationsFromDeclared.length !== 0 || strict.bannerRequired !== false || strict.matchesDeclared !== true) return false;
+    if (strict.riskConfigHash === id.riskConfigHash) return false;
+    /* Hash moves with any effective parameter, not only the named ones. */
+    if (ST.riskConfigIdentity({ ...explore, exitBeforeEarningsDays: 3 }, controls).riskConfigHash === id.riskConfigHash) return false;
+    /* Every result row carries it: order → position → closed trade, NAV row,
+       daily finalization row. */
+    if (!/riskConfigHash/.test(sourceOf(L.proposeOrder)) || !/riskConfigHash:o\.riskConfigHash/.test(sourceOf(L.recordFill))
+        || !/riskConfigHash:p\.riskConfigHash/.test(sourceOf(L.closePosition))) return false;
+    const NAV = require("./_investorNav");
+    if (!/riskConfigHash/.test(sourceOf(NAV.record))) return false;
+    const cycle = require("./investorCycle-background");
+    if (!/riskConfigHash: riskConfig \? riskConfig\.riskConfigHash/.test(sourceOf(cycle.runCycle))) return false;
+    if (!/proposeOrder\(\{[^}]*riskConfig/.test(sourceOf(cycle.runCycle))) return false;
+    const api = require("./investorApi");
+    if (!/riskConfigSeries/.test(sourceOf(api.ACTIONS.performance)) || !/riskConfigIdentity/.test(sourceOf(api.ACTIONS.dashboard))) return false;
+    return true;
+  }));
+
+  /* D-5; invariant I-4. Exit regimes never mix. */
+  cases.push(fixture("variant_parity_every_variant_declares_its_exit_regime_and_regimes_cannot_be_promoted_across", () => {
+    if (V.validateVariants().count !== 15) return false;
+    for (const variant of V.VARIANTS) {
+      const p = V.exitParity(variant);
+      if (!p.regime) throw new Error(`FAIL ${JSON.stringify({ variant: variant.id })}`);
+      if (!p.complete && variant.exitRegime !== "pre-v18") throw new Error(`FAIL ${JSON.stringify({ variant: variant.id, missing: p.missing })}`);
+    }
+    /* A pre-v18 variant may not become the live configuration of a desk that
+       takes profits (the post-v18 exploratory configuration). */
+    const post = { ...strategy.parameters, ...strategy.exploratoryAuto.paperLearningDefaults };
+    if (V.exitRegimeOf(post) !== "post-v18" || V.exitRegimeOf(strategy.parameters) !== "pre-v18") return false;
+    const blocked = V.promotionAllowed(V.byId("A"), post);
+    if (blocked.ok !== false || !/regimes cannot mix/.test(blocked.reason)) return false;
+    if (V.promotionAllowed(V.byId("A"), strategy.parameters).ok !== true) return false;
+    /* A variant that declares every exit parameter carries its own regime. */
+    const complete = { id: "Z", params: { takeProfitPct: 2, trailingArmsAtPct: 1.5, trailingStopPct: -1,
+      holdLosersThroughRankExit: true, requireSessionMove: true } };
+    if (V.exitParity(complete).regime !== "post-v18" || V.promotionAllowed(complete, post).ok !== true) return false;
+    /* Undeclared AND untagged is refused at validation. */
+    let refused = false;
+    try { V.validateVariants([{ id: "Y", params: { entryRank: 0.1 } }]); } catch { refused = true; }
+    if (!refused) return false;
+    /* The hash over the observation-bearing parameters is unchanged by the tag. */
+    if (!/^[a-f0-9]{64}$/.test(V.variantsHash())) return false;
+    if (Object.keys(V.materialized()[0]).sort().join(",") !== "id,name,params") return false;
+    /* The cycle refuses the promotion, not merely the validator. */
+    const cycle = require("./investorCycle-background");
+    if (!/promotionAllowed\(liveVariant/.test(sourceOf(cycle.runCycle))) return false;
+    return true;
+  }));
+
+  /* D-6; invariant I-3. A two-company sweep issues one request per global source. */
+  cases.push(fixture("source_scope_global_feeds_are_fetched_once_per_sweep_and_fanned_out", async () => {
+    const IS = require("./_investorIntelligenceSources");
+    for (const src of Object.values(IS.SOURCE_REGISTRY)) {
+      if (!["global", "company", "regional"].includes(src.scope)) throw new Error(`FAIL ${JSON.stringify({ source: src.source_id })}`);
+    }
+    if (IS.scopeOf("dol.releases") !== "global" || IS.scopeOf("company.direct") !== "company"
+        || IS.scopeOf("federal.register") !== "company" || IS.scopeOf("nws.alerts") !== "regional") return false;
+    if (Object.values(IS.SOURCE_REGISTRY).filter((x) => x.kind === "feed").some((x) => x.scope !== "global")) return false;
+    if (IS.stateDocId("dol.releases", "ACME") !== "dol.releases" || IS.stateDocId("federal.register", "ACME") !== "federal.register_ACME") return false;
+    /* An in-memory sweep: one global feed, one company source, two companies. */
+    const urls = [];
+    const feedXml = `<rss><channel><item><title>Acme Corp settles wage case</title><link>https://www.dol.gov/a1</link>` +
+      `<description>Acme Corp and Beta Industries named in the settlement</description></item></channel></rss>`;
+    const io = {
+      fetch: async (url) => { urls.push(String(url)); return /federalregister/.test(String(url))
+        ? { json: { results: [] }, text: "", sha256: "b".repeat(64), fetchedAt: new Date().toISOString() }
+        : { text: feedXml, sha256: "a".repeat(64), etag: null, lastModified: null, notModified: false }; },
+      readState: async (sourceId, symbol) => ({ id: IS.stateDocId(sourceId, symbol), ref: null, data: {} }),
+      markSuccess: async () => {}, markFailure: async () => {},
+      recordItems: async (profile, source, items) => items.filter((it) => IS.matchesProfile(it, profile, source)).length,
+    };
+    const profiles = ["ACME|Acme Corp", "BETA|Beta Industries"].map((s) => {
+      const [symbol, companyName] = s.split("|");
+      return { symbol, companyName, aliases: [companyName], sourceIds: ["dol.releases", "federal.register"] };
+    });
+    const sweep = IS.createSweep({ companies: profiles.map((p) => p.symbol), io });
+    const out = [];
+    for (const p of profiles) out.push(await IS.pollCompany(p, { sweep }));
+    const feedFetches = urls.filter((u) => /dol\.gov/.test(u)).length;
+    const registerFetches = urls.filter((u) => /federalregister/.test(u)).length;
+    if (feedFetches !== 1 || registerFetches !== 2) throw new Error(`FAIL ${JSON.stringify({ feedFetches, registerFetches })}`);
+    /* Both companies received the feed's items through entity resolution. */
+    const matched = out.map((o) => o.results.find((r) => r.sourceId === "dol.releases").matched);
+    if (matched[0] !== 1 || matched[1] !== 1) throw new Error(`FAIL ${JSON.stringify({ matched })}`);
+    if (out[1].results.find((r) => r.sourceId === "dol.releases").reused !== true) return false;
+    const budget = IS.sweepBudget(sweep);
+    /* one global source × 1, one company source × two companies */
+    if (budget.allowed !== 1 + 1 * 2 || budget.used !== 1 + 2 || budget.ok !== true) throw new Error(`FAIL ${JSON.stringify({ budget })}`);
+    if (IS.assertSweepBudget(sweep).ok !== true) return false;
+    /* The assertion fires when a global source is fetched once per company. */
+    const bad = IS.createSweep({ companies: ["ACME", "BETA"], io });
+    bad.polled.global.add("dol.releases"); bad.counts.globalFetches = 2;
+    const breach = IS.assertSweepBudget(bad);
+    if (breach.ok !== false || breach.alert.type !== "SOURCE_SCOPE_BREACH" || bad.breaches.length !== 1) return false;
+    /* The evidence sweep uses one sweep context and asserts the budget. */
+    const cycle = require("./investorCycle-background");
+    const cycleSrc = sourceOf(cycle.handler);
+    if (!/createSweep/.test(sourceOf(cycle.runCycle)) && !/createSweep/.test(cycleSrc)) {
+      const fs = require("fs"), path = require("path");
+      let text = "";
+      try { text = fs.readFileSync(path.join(__dirname, "investorCycle-background.js"), "utf8"); } catch {}
+      if (text && !(/IS\.createSweep\(/.test(text) && /IS\.assertSweepBudget\(sweep\)/.test(text))) return false;
+    }
+    return true;
+  }));
+
+  /* D-7. Static assertions over the console source. */
+  cases.push(fixture("console_has_no_duplicate_top_level_declarations_and_plan_block_dictionary_is_reachable", () => {
+    const fs = require("fs"), path = require("path");
+    const candidates = [];
+    for (const root of [__dirname, process.cwd()]) {
+      for (let up = 0; up <= 4; up += 1) candidates.push(path.join(root, ...Array(up).fill(".."), "investor.html"));
+    }
+    const file = candidates.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+    if (!file) throw new Error(`investor.html not reachable from the bundle (netlify.toml included_files must carry it); looked in ${candidates.slice(0, 3).join(", ")}`);
+    const html = fs.readFileSync(file, "utf8");
+    const script = html.slice(html.indexOf("<script>"), html.lastIndexOf("</script>"));
+    const declared = new Map();
+    for (const m of script.matchAll(/^function ([A-Za-z_$][\w$]*)\s*\(/gm)) declared.set(m[1], (declared.get(m[1]) || 0) + 1);
+    const dupes = [...declared.entries()].filter(([, n]) => n > 1).map(([k]) => k);
+    if (dupes.length) throw new Error(`FAIL ${JSON.stringify({ duplicates: dupes })}`);
+    if (declared.has("plainBlock")) return false;
+    if (!declared.has("plainPlanBlock") || !declared.has("plainSellBlock")) return false;
+    const planFn = /function plainPlanBlock\([^)]*\)\s*\{[^}]*PLAN_BLOCK_PLAIN/.test(script);
+    const callSites = (script.match(/plainPlanBlock\(/g) || []).length - 1;
+    if (!planFn || callSites < 1) throw new Error(`FAIL ${JSON.stringify({ planFn, callSites })}`);
+    if ((script.match(/plainSellBlock\(/g) || []).length < 2) return false;
+    return true;
+  }));
+
+  /* D-8. Dispatch windows are per task class. */
+  cases.push(fixture("scheduler_windows_premarket_manager_dispatchable_at_0830_and_scan_window_unchanged", () => {
+    const K = require("./investorKick");
+    const at0830 = 8 * 60 + 30;
+    if (K.taskDispatchable("premarket_manager", at0830) !== true) return false;
+    if (K.taskDispatchable("focused_research", at0830) !== true) return false;
+    if (K.taskDispatchable("scan", at0830) !== false) return false;
+    if (K.taskDispatchable("ingest", at0830) !== true || K.taskDispatchable("ingest", 12 * 60) !== false) return false;
+    if (K.taskDispatchable("no_such_task", 12 * 60) !== false || K.dispatchWindow("no_such_task") !== null) return false;
+    /* Bit-identical scan window. */
+    if (K.PLAN_EARLIEST_MIN !== 9 * 60 + 45 || K.PLAN_LATEST_MIN !== 15 * 60 + 30) return false;
+    if (JSON.stringify(K.TASK_WINDOWS_ET.scan.segments) !== JSON.stringify([[585, 930]])) return false;
+    if (K.taskDispatchable("scan", 585) !== true || K.taskDispatchable("scan", 584) !== false
+        || K.taskDispatchable("scan", 930) !== true || K.taskDispatchable("scan", 931) !== false) return false;
+    if (JSON.stringify(K.normalizePlanTimes(["15:55", "09:30", "12:00", "nonsense", "12:00"])) !== JSON.stringify(["12:00"])) return false;
+    if (JSON.stringify(K.normalizePlanTimes(["08:30", "09:30"], "premarket_manager")) !== JSON.stringify(["08:30"])) return false;
+    if (K.normalizePlanTimes(["08:30"], "no_such_task") !== null) return false;
+    return true;
+  }));
+
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is
@@ -2818,4 +3113,27 @@ function runFixtures() {
     total: cases.length, cases };
 }
 
-module.exports = { canonical, digest, fixture, runFixtures };
+/** Await every pending (asynchronous) fixture and recompute the attestation.
+ *  The bootstrap and the health action use this; runFixtures() remains for
+ *  callers that can only run synchronously and reports async cases as failed. */
+async function runFixturesAsync() {
+  const r = runFixtures();
+  for (const c of r.cases) {
+    if (!c.pending) continue;
+    try {
+      const detail = await c.promise;
+      c.pass = detail !== false;
+      c.detail = detail === true ? null : detail;
+      delete c.error;
+    } catch (e) {
+      c.pass = false;
+      c.error = String(e.message).slice(0, 200);
+    }
+    delete c.pending; delete c.promise;
+  }
+  const pass = r.cases.every((c) => c.pass);
+  const fixtureHash = digest({ schema: r.schema, count: r.cases.length, cases: r.cases });
+  return { ...r, pass, fixtureHash, passed: r.cases.filter((c) => c.pass).length };
+}
+
+module.exports = { canonical, digest, fixture, runFixtures, runFixturesAsync };
