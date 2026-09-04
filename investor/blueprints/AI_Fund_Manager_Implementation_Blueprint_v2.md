@@ -5,7 +5,7 @@
 **Current investor release:** strategy v18 / bootstrap 25  
 **Design date:** 2026-09-03  
 **Revision date:** 2026-09-04  
-**Revision scope:** nine defects verified in the current plumbing are added as §2A and remediated by a new blocking Phase −1 (§19). Amendments applied inline to §2, §3, §8.5, §8.8 (new), §9.5, §11.1, §16.5, §17.2, §17.4 and §19. Every other section is v1 as written. Changed passages are marked **[v2]**.  
+**Revision scope:** twelve defects verified against the running code are added as §2A. D-1 through D-9 are current-plumbing defects remediated by a new blocking Phase −1; D-10 through D-12 are architectural collisions between this design and the runtime's limits, and bind the exit criteria of Phases 1 and 2. Phase 0 is minimized and Phase 8 is fully scoped as the delivered end state. Amendments applied inline to §2, §3, §5, §6.1, §6.3, §8.2, §8.5, §8.8 (new), §9.5, §11.1, §11.2, §12.1, §13, §14.10, §15.1, §16.5, §17.2, §17.4, §17.5, §19 and §21. Every other section is v1 as written. Changed passages are marked **[v2]**.  
 **Primary UI:** `investor.html`  
 **Input record reviewed:** `Investor_AIChangeRecord.md` (577 lines)  
 **Deliverable type:** implementation plan; this document does not alter the running application or authorize live trading.
@@ -88,7 +88,11 @@ The record reports 141/141 raw and bundled fixtures. This review could not indep
 
 ## 2A. Verified defect register **[v2]**
 
-Nine defects verified by direct inspection at commit `ea14b71`. Six appear nowhere in v1. Six are in the **plumbing**, not the strategy, and therefore survive the replacement of the decider: built on top of them the manager would be scored on outcomes it did not produce. All nine are remediated in Phase −1 (§19).
+**[v2] Twelve defects**, thirteen rows (D-8 and D-8b are one defect and its trigger), verified by direct inspection at commit `ea14b71`. **Nine of the twelve appear nowhere in v1.** They divide into two kinds.
+
+**D-1 through D-9 are defects in the current plumbing.** Six of them sit below the strategy rather than inside it, so they survive the replacement of the decider: built on top of them the manager would be scored on outcomes it did not produce. All nine are remediated in Phase −1 (§19).
+
+**D-10, D-11 and D-12 are different in kind.** The current code is internally consistent; the architecture this document specifies collides with its runtime limits. They cannot be remediated in Phase −1 because the machinery they concern does not exist yet — they are binding design constraints on **Phase 1** (D-10) and **Phase 2** (D-11, D-12), and appear in those phases' exit criteria. D-12 is the compound consequence of the other two meeting §17.4's coverage gate.
 
 | ID | Defect | Evidence | In v1? | Severity |
 |---|---|---|---|---|
@@ -102,6 +106,9 @@ Nine defects verified by direct inspection at commit `ea14b71`. Six appear nowhe
 | **D-8** | No job can be dispatched before 09:45 ET, so the pre-market Manager Meeting of §11.1 cannot run | `investorKick.js:81` `PLAN_EARLIEST_MIN = 9*60+45`, enforced at `:101` | no | Major |
 | **D-8b** | AI budget ceilings block the Manager Meeting silently, and that block routes into D-1 | `_investorOpenai.js:62-63` — `DAILY_USD_CEILING` $5, `CYCLE_CALL_CEILING` 12; exhaustion returns `cause:"evidence_pending"` at `:331` | no | Critical |
 | **D-9** | A live private key is tracked in the repository | `netlify/functions/secrets/gcpPrivateKey.txt` — git-tracked, mode 644, 1,734 bytes, begins `-----BEGIN PRIVATE KEY-----`; no `.gitignore` exists | §18 | Critical |
+| **D-10** | The Manager Meeting cannot hold a lease across its own invocations | `investorCycle-background.js:83` `WORKER_LEASE_TTL_MS = 16 min`, deliberately longer than Netlify's 15-minute background cap; `:3423` mints a fresh `leaseOwner` per invocation; `:3491` and `:3512` renew only on an exact `leaseOwner` match | **absent** | Critical |
+| **D-11** | Full-roster evidence refresh takes longer than the evidence stays fresh | `investorCycle-background.js:3216` caps `perSweep` at 8; `:3271` allows 110 s per company. 304 × 110 s ≈ **9.3 h** against `intelligenceMaxAgeHours` and `temporalMaxAgeHours` of **6** (`_investorStrategy.js:218,221`) | **absent** | Critical |
+| **D-12** | D-10 and D-11 together produce sessions that activate no BUY at all | §6.3 "If coverage is still incomplete, no new BUY mandate from that run is activated"; §17.4 requires `completedCount === eligibleCount` **and** all critical freshness attestations | **absent** | Critical |
 
 ## 3. Target authority model
 
@@ -297,6 +304,14 @@ The card contains signals that a human manager would inspect, but no composite �
 
 Twenty trading days is a starting policy, not a discovered optimum. Earnings and other material events override it immediately. The application must measure whether 10, 20, or 30 days gives better decision quality per dollar before changing the policy.
 
+**[v2] D-11 — the cadence above is not currently reachable, by arithmetic.** This table requires a current card for every one of the 304 eligible names at the 08:30 ET freeze. The evidence sweep processes at most 8 companies per pass (`investorCycle-background.js:3216`, hard-capped by `Math.min(8, …)`) and allows up to 110 seconds per company (`:3271`). A full roster pass is therefore about **9.3 hours** of company-processing time, while `intelligenceMaxAgeHours` and `temporalMaxAgeHours` are both **6** (`_investorStrategy.js:218,221`). The first names swept expire before the last are fetched, so "every name is fresh at 08:30" is unreachable no matter when the sweep starts.
+
+D-6's fix reduces the number of requests per company but not this: 110 seconds is a per-company *time* budget, not a request count. Before Phase 2 exits, these four numbers must be reconciled so that
+
+    rosterSize × perCompanySeconds ÷ concurrentSweeps ≤ freshnessWindowHours × 3600
+
+holds with the values actually configured. The document does not choose which term moves — roster size, per-company budget, sweep concurrency, or the freshness window are all operator decisions with different costs — but a plan that leaves the inequality false cannot deliver §6.3's coverage contract.
+
 The scheduler uses the NYSE calendar rather than fixed UTC closes. Recommended starting cutoffs are: freeze the initial evidence manifest at 08:30 ET; start the manager immediately; treat holding protection/revision as a 09:15 hard operational deadline; treat new-opportunity completion as a 09:20 soft deadline. A mandate not safely completed by then receives a later `validFrom`—possibly after the open or next session—rather than rushed reasoning. Between the frozen cutoff and the open, every new verified delta is appended to a late-evidence queue; a high-impact class pauses the affected entry immediately, and all deltas reach Sol at the next continuation/revision. Holding protection never expires merely because research is late.
 
 ### 6.2 One logical Manager Meeting—not redundant committees
@@ -331,6 +346,12 @@ Sol's universe response must include exactly one row for every symbol in the fro
 - `provisionalDisposition`: `WATCH`, `IGNORE`, `ABSTAIN`, `HOLD_CANDIDATE`, `REDUCE_CANDIDATE`, or `SELL_CANDIDATE`.
 
 The final persisted `ManagerDecision.decision` is one canonical value—`BUY`, `WATCH`, `IGNORE`, `HOLD`, `REDUCE`, `SELL`, or `ABSTAIN`—for every roster row. Workflow values never appear in the decision column. Every row requires a short plain-language reason, `changedSincePrior`, and a machine-readable reason code where relevant (`DATA_INCOMPLETE`, `EVIDENCE_CONFLICT`, `UNCERTAINTY`, or `MODEL_FAILURE`). Backend validation compares the response against `{universeVersion, universeHash, eligibleCount, symbols}` rather than a hard-coded `304`. Duplicate, missing, or unknown symbols invalidate the run; one repair request may supply only missing rows. The repaired rows are merged into an `effectiveCoverage` object and that object—not the original incomplete response—is used by research, final synthesis, persistence, and audit. If coverage is still incomplete, no new BUY mandate from that run is activated.
+
+**[v2] D-12 — this gate is unconditional, so D-10 and D-11 turn it into a book that never buys.** §17.4 requires `completedCount === eligibleCount` with exact symbol and hash equality, **and** all critical source and freshness attestations, before any new BUY mandate activates. One stale card out of 304 therefore blocks every purchase in that session. With D-11 unresolved, staleness is not an edge case — it is the steady state, because a full pass takes longer than a card stays fresh. With D-10 unresolved, a meeting that stalls on lease handoff fails to complete coverage for the same reason.
+
+This is a real risk in this repository rather than a theoretical one: the v18 strategy note records that v17's conjunction "admitted 1 company out of 270 measured, which is not a strategy, it is a refusal to trade." A stricter conjunction over a larger roster with a shorter freshness window is the same failure with more moving parts.
+
+The gate itself is correct and stays — activating a BUY on incomplete coverage is exactly what this design exists to prevent. What must change is that D-10 and D-11 are resolved before the gate is switched on, and that the *reason* for a no-BUY session is visible and typed rather than silent: coverage-incomplete sessions report which symbols were missing or stale and why, so a book that never buys is immediately distinguishable from a book that found nothing worth buying.
 
 The compact-card phase cannot issue a new BUY mandate. It can request focused underwriting, provisionally classify a name as `WATCH`, `IGNORE`, or `ABSTAIN`, or analyze an existing holding against its prior full memo. Every first-time BUY requires source-complete focused research and the meeting's final cross-company portfolio synthesis.
 
@@ -1007,6 +1028,10 @@ Keep `investorKick` as the sole one-minute cron dispatcher, but replace its task
 Each one-minute `investorKick` has a 20-second dispatch budget and launches at most four jobs: due `execute` work first; then critical event revisions; then existing async-response continuations; then pre-market manager; then ingest; then post-close/archive. At most one new heavy job per category launches per tick. Dispatch stops when the deadline is near, leaving durable queue state for the next minute. Research/ingest/model latency can therefore never starve order reconciliation.
 
 `investorKick.dispatch()` writes `{jobId, task, targetFunction, attempt, payloadHash}`, creates a random nonce ID, stores only its HMAC/hash and `UNUSED` state with a short expiry under the attempt, and signs the exact binding. The worker transaction verifies signature, expiry, payload hash and handler identity **and atomically changes the nonce to `CONSUMED` while claiming that job attempt**. A retry receives a new attempt/nonce; a replay receives 409. Job leases, heartbeats, deterministic IDs, checkpoint cursors, and retry semantics remain.
+
+**[v2] D-10 — the meeting's lease must survive invocation handoff.** §6.1 runs the Manager Meeting from an 08:30 ET freeze to a 09:15 ET hard deadline: 45 minutes across at least four Netlify background invocations, each capped at 15 minutes. The current lease cannot span them. `investorCycle-background.js:83` sets `WORKER_LEASE_TTL_MS` to 16 minutes — deliberately *longer* than the function cap, so that a worker always dies before its own lease expires and overlap is impossible. `:3423` mints `leaseOwner` fresh per invocation from the Lambda log-stream name, a timestamp and a random suffix, and `:3491`/`:3512` renew only when `leaseOwner` matches exactly. A second invocation therefore cannot renew the first one's lease and cannot claim it for 16 minutes.
+
+The claim in this section that "job leases, heartbeats, deterministic IDs, checkpoint cursors, and retry semantics remain" does not hold for this shape of work. Before Phase 1 exits, the lease must be owned by the **meeting**, not the invocation: a `managerRunId`-scoped lease that successive invocations claim and renew by presenting the run id and their attempt lineage, with a TTL shorter than the function cap so a genuinely dead segment is reclaimed rather than blocking the next one for 16 minutes. The existing per-invocation `leaseOwner` remains what prevents two workers writing at once *within* a segment.
 
 Long OpenAI work is an async response polled by successive short manager jobs. OpenAI says `store:false` background data is temporarily stored for roughly ten minutes, so the application polls each due response every minute, treats two minutes without a successful poll as degraded, and uses an eight-minute terminal-output-persistence SLA ([OpenAI background mode](https://developers.openai.com/api/docs/guides/background)). Persist terminal output and usage immediately to the private content store and heartbeat `lastSuccessfulPollAt`. If a response expires, query persisted terminal content first; otherwise record `RESPONSE_EXPIRED_UNKNOWN`, reserve retry cost, and require an operator or idempotency-policy decision—never blindly resubmit an expensive Sol run. Store provider response ID, request hash, billing/usage seen, attempt lineage, and whether a retry might be double-billed.
 
@@ -1758,13 +1783,13 @@ Each item is independently deployable and independently testable, and none requi
 
 **[v2] Files:** `_investorAdmin.js`, `_investorStorageCodec.js`, `_investorMoney.js`, `_investorContentStore.js`, `_investorPolicy.js`, `_investorJobs.js`, `_investorApiSchemas.js`, `_investorBootstrap.js`, `_investorDecisionManifest.js`, `_investorSelftest.js`, `investorKick.js`, root `netlify.toml`. Policy and schemas are inline in the modules that own them (§12.1). Firestore indexes are deployed by the operator's existing mechanism.  
 **Work:** define/compile discriminated schemas/states/hashes, canonical BigInt values, storage codecs/size boundaries, normalized collections/indexes, fixed role-model mapping, lineage/desired-applied/outbox contracts, atomically consumed worker nonces, execution-first dispatcher skeleton, and authority tests.  
-**Exit:** schema/round-trip/size/emulator fixtures pass; malformed/unsupported/future/stale mandates, concurrent versions, replayed nonce and unsafe transitions are rejected; required test-environment indexes work and production rollout procedure can prove READY.
+**[v2] Exit:** schema/round-trip/size fixtures pass; malformed/unsupported/future/stale mandates, concurrent versions, replayed nonce and unsafe transitions are rejected; required indexes work and the rollout procedure can prove READY; **and D-10 is closed — a `managerRunId`-scoped lease is demonstrably claimed and renewed across at least four consecutive background invocations spanning more than 45 minutes, with a segment killed mid-run reclaimed inside the function cap rather than blocking its successor.**
 
 ### Phase 2 — Evidence and complete-roster dossier plane
 
 **Files:** `_investorOpenai.js` Luna boundary, `_investorClaimVerifier.js`, `_investorEvidence.js`, `_investorFetch.js`, `_investorFundamentals.js`, `_investorDataProviders.js`, `_investorIntelligenceSources.js`, `_investorIntelligence.js`, `_investorHistory.js`, `_investorTemporal.js`, `_investorWorkset.js`, `_investorDossier.js`, `_investorEventRouter.js`, `investorIngest-background.js`, `scripts/investor/bootstrap-sec.js`.  
 **Work:** publish transparent canonical eligible/excluded snapshots; fetch global feeds once and fan out; stream SEC bulk content to object storage; ingest authoritative calendar and XBRL/benchmark/cash-rate/corporate-action facts; build cards/deltas; run Luna extraction and independent claim-verification recall/support checks with direct excerpts.  
-**Exit:** every frozen eligible and managed off-roster symbol has a reproducible card or explicit `INCOMPLETE`; no symbol starves; facts/manifests replay point-in-time; large content never exceeds Firestore limits.
+**[v2] Exit:** every frozen eligible and managed off-roster symbol has a reproducible card or explicit `INCOMPLETE`; no symbol starves; facts/manifests replay point-in-time; large content never exceeds Firestore limits; **and D-11 is closed — the configured roster size, per-company budget, sweep concurrency and freshness window satisfy the §6.1 inequality, demonstrated by a measured full-roster pass completing inside the freshness window rather than by assumption.** Until that measurement exists, §17.4's coverage gate is not switched on and no BUY path is enabled.
 
 ### Phase 3 — Sol Manager in observation mode
 
