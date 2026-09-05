@@ -78,7 +78,7 @@ function typed(code, message, extra = {}) { return Object.assign(new Error(messa
 function rows(snap) { const out = []; if (snap && typeof snap.forEach === "function") snap.forEach((d) => out.push(d.data())); return out; }
 
 /* ── PaperBrokerAdapter ────────────────────────────────────────────────── */
-function createPaperAdapter({ admin = null, now = Date.now, capabilityConfig = {} } = {}) {
+function createPaperAdapter({ admin = null, now = A.now, capabilityConfig = {} } = {}) {
   const D = admin || A;
   const caps = applyCapabilityConfig(CAPABILITY_MATRIX.paper, capabilityConfig);
   const legRef = (legId) => D.col(D.COL.orderLegs).doc(legId);
@@ -170,7 +170,7 @@ function createPaperAdapter({ admin = null, now = Date.now, capabilityConfig = {
 function alpacaEnabled({ control = {}, env = process.env } = {}) {
   return String(env.INVESTOR_LIVE_BROKER || "").toLowerCase() === "alpaca" && control.accountMode === "LIMITED_LIVE";
 }
-function createAlpacaAdapter({ credentials = null, env = process.env, control = {}, fetchImpl = null, baseUrl = null, now = Date.now, capabilityConfig = {} } = {}) {
+function createAlpacaAdapter({ credentials = null, env = process.env, control = {}, fetchImpl = null, baseUrl = null, now = A.now, capabilityConfig = {} } = {}) {
   const caps = applyCapabilityConfig(CAPABILITY_MATRIX.alpaca, capabilityConfig);
   const enabled = alpacaEnabled({ control, env });
   const url = baseUrl || env.ALPACA_TRADING_BASE_URL || "https://paper-api.alpaca.markets";
@@ -225,7 +225,7 @@ function createAlpacaAdapter({ credentials = null, env = process.env, control = 
 }
 
 /** Pick the bound adapter for the account mode. Paper unless live is enabled. */
-function adapterFor({ control = {}, env = process.env, admin = null, now = Date.now } = {}) {
+function adapterFor({ control = {}, env = process.env, admin = null, now = A.now } = {}) {
   if (alpacaEnabled({ control, env })) return createAlpacaAdapter({ env, control, now });
   return createPaperAdapter({ admin, now, capabilityConfig: (control.brokerCapabilityConfig) || {} });
 }

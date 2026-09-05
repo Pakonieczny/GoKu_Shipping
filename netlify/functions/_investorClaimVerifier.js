@@ -91,7 +91,7 @@ function composeVerdicts({ premises, spans, verifierOutput, model = null, usage 
     const verdictHash = sha256(core);
     return { ...core, verdictHash, recordId: verdictRecordId(p.claimId, premiseHash),
       usage: usage || null, latencyMs, humanSample: sampledForHuman(verdictHash), humanVerdict: null, disagreement: null,
-      asOfMs: Date.now() };
+      asOfMs: A.now() };
   });
 }
 

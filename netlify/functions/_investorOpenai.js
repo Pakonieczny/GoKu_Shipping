@@ -906,6 +906,8 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
 
   /* ── transport ─────────────────────────────────────────────────────────── */
   async function http(method, url, body, timeoutMs) {
+    const scope = A.currentScope();
+    if (scope && scope.modelRequest) return scope.modelRequest({method,url,body,timeoutMs});
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs || DEFAULT_TIMEOUT_MS);
     try {
@@ -960,6 +962,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
   /* ── the one request path ──────────────────────────────────────────────── */
   async function invoke(fn, { user, tools = null, scope = {}, background = false, waitMs = DEFAULT_WAIT_MS, timeoutMs = DEFAULT_TIMEOUT_MS,
     requestKey = null, contextManifestHash = null, sourceManifestHash = null, allowedClaimIds = null, promptCacheKey = null, extraRules = "" } = {}) {
+    if (A.currentScope() && await A.currentScope().paused()) return {ok:false,pending:true,simulationPaused:true};
     const roleName = ROLE_OF[fn], role = POLICY.ROLE_MODELS[roleName], schemaVersion = SCHEMA_OF[fn];
     if (!role || !schemaVersion) return failure(`unknown gateway function ${fn}`);
     if (POLICY.FORBIDDEN_INVESTMENT_MODELS.includes(role.model)) return failure("forbidden_model_in_role");
@@ -1152,7 +1155,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
 
   async function pollBackground({ requestId, prior, waitMs, timeoutMs, strict, allowedClaimIds, scope, base }) {
     const responseId = prior.responseId;
-    const deadline = now() + Math.max(BACKGROUND_POLL_MS, Number(waitMs) || DEFAULT_WAIT_MS);
+    const deadline = now() + (A.currentScope() ? BACKGROUND_POLL_MS : Math.max(BACKGROUND_POLL_MS, Number(waitMs) || DEFAULT_WAIT_MS));
     const role = POLICY.ROLE_MODELS[base.role];
     let data = null;
     while (true) {

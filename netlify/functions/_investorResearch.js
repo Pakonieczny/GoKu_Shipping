@@ -85,13 +85,13 @@ async function persistImmutable(result, { admin = null, managerRunId = null, dir
     verifiedValuation: result.verifiedValuation || null,
     usage: result.usage || null, costMinor: result.costMinor || null, toolCalls: (result.toolCalls || []).length,
     factualPremises, inferences: (memo.inferences || []).map((i) => ({ inferenceId: i.inferenceId, premiseIds: i.premiseIds, text: i.text, label: "INFERENCE" })),
-    sourceManifest, sourceManifestHash: sha(sourceManifest), memo, createdAtMs: Date.now(),
+    sourceManifest, sourceManifestHash: sha(sourceManifest), memo, createdAtMs: A.now(),
     ...D.envelope({ created_by: "research.persistImmutable" }),
   };
   const ref = D.col(D.COL.researchMemos).doc(memoId);
   const written = await D.runTransaction(async (tx) => { const cur = await tx.get(ref); if (cur.exists) return false; tx.set(ref, doc); return true; });
   /* the dossier pointer learns the interpretation layer by POINTER only */
-  try { await D.col(D.COL.dossiers).doc(symbol).set({ researchMemoId: memoId, researchVersion, researchAtMs: Date.now(), standingView: { status: memo.proposedDecision, researchVersion, decision: memo.proposedDecision, asOfMs: Date.now() } }, { merge: true }); } catch {}
+  try { await D.col(D.COL.dossiers).doc(symbol).set({ researchMemoId: memoId, researchVersion, researchAtMs: A.now(), standingView: { status: memo.proposedDecision, researchVersion, decision: memo.proposedDecision, asOfMs: A.now() } }, { merge: true }); } catch {}
   return { persisted: true, duplicate: !written, memoId, id: memoId, symbol, researchVersion, outputHash, factualPremises, sourceManifest, sourceManifestHash: doc.sourceManifestHash,
     verifiedValuation: doc.verifiedValuation, memo, proposedDecision: memo.proposedDecision, reasonCode: memo.reasonCode || null, mandate: memo.mandate || null, dossierVersionId: doc.dossierVersionId };
 }
@@ -101,7 +101,7 @@ async function buildPacket({ symbol, cutoff, prior = null, directive = "RESEARCH
   const DOSSIER = deps.dossier || require("./_investorDossier");
   const E = deps.evidence || require("./_investorEvidence");
   const sym = String(symbol || "").toUpperCase();
-  const cutoffMs = Number(cutoff && cutoff.cutoffMs != null ? cutoff.cutoffMs : cutoff) || Date.now();
+  const cutoffMs = Number(cutoff && cutoff.cutoffMs != null ? cutoff.cutoffMs : cutoff) || A.now();
   const pointer = await DOSSIER.current(sym, { admin });
   const version = DOSSIER.versionAsOf ? await DOSSIER.versionAsOf(sym, { cutoffMs, admin, pointer }) : pointer && pointer.currentVersionId ? await DOSSIER.readVersion(pointer.currentVersionId, { admin }) : null;
   if (!version) return { ok: false, symbol: sym, reason: "no_dossier", cutoffMs };
@@ -152,7 +152,7 @@ function deferSuffix(ordered, { maxJobs = Infinity, mustCompleteClasses = ["HOLD
   const keepCount = Math.max(lastMust + 1, Math.min(ordered.length, Number.isFinite(maxJobs) ? maxJobs : ordered.length));
   return { keep: ordered.slice(0, keepCount), deferred: ordered.slice(keepCount).map((r) => ({ ...r, deferredReason: "budget_or_deadline_suffix" })) };
 }
-function createPool({ now = Date.now } = {}) {
+function createPool({ now = A.now } = {}) {
   async function run({ requests = [], concurrency = DEFAULT_CONCURRENCY, worker, maxJobs = Infinity, deadlineMs = null, mustCompleteClasses = ["HOLDING_REQUIRED"], onResult = null, budgetRemaining = null } = {}) {
     const ordered = orderRequests(requests);
     const { keep, deferred } = deferSuffix(ordered, { maxJobs, mustCompleteClasses });

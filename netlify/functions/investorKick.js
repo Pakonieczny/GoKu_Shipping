@@ -678,6 +678,8 @@ exports.handler = async (event) => {
   } catch (e) {
     console.error("investorKick failed", redact({ error: e.message }));
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(e.message).slice(0, 200) }) };
+  } finally {
+    try { await require("./_investorEvals").Simulator.create().schedule({dispatch:dispatchJob}); } catch (error) { console.error("Simulation dispatch failed", String(error.code || error.message)); }
   }
 };
 

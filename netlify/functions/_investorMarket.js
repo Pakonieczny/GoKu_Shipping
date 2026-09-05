@@ -200,7 +200,7 @@ function providerCredentialed(providerId) {
 
 /** Synchronous view of the resolved settings. Never throws. */
 function marketSettings() {
-  if (_marketSettings && Date.now() - _marketSettingsAtMs <= MARKET_SETTINGS_TTL_MS) {
+  if (_marketSettings && A.now() - _marketSettingsAtMs <= MARKET_SETTINGS_TTL_MS) {
     return _marketSettings;
   }
   return envMarketSettings();
@@ -208,7 +208,7 @@ function marketSettings() {
 
 /** Refresh the cache from Firestore. Call once per handler invocation. */
 async function loadMarketSettings({ force = false } = {}) {
-  if (!force && _marketSettings && Date.now() - _marketSettingsAtMs <= MARKET_SETTINGS_TTL_MS) {
+  if (!force && _marketSettings && A.now() - _marketSettingsAtMs <= MARKET_SETTINGS_TTL_MS) {
     return _marketSettings;
   }
   const fallback = envMarketSettings();
@@ -293,7 +293,7 @@ async function loadMarketSettings({ force = false } = {}) {
        must never open a lane the operator did not choose. */
     _marketSettings = { ...fallback, note: `marketConfig read failed: ${String(e.message).slice(0, 90)}` };
   }
-  _marketSettingsAtMs = Date.now();
+  _marketSettingsAtMs = A.now();
   return _marketSettings;
 }
 
@@ -435,7 +435,7 @@ const OPEN_MIN = 9 * 60 + 30;      // 09:30 ET
 const CLOSE_MIN = 16 * 60;         // 16:00 ET
 const HALF_CLOSE_MIN = 13 * 60;    // 13:00 ET
 
-function sessionState(d = new Date()) {
+function sessionState(d = new Date(A.now())) {
   const { date, minutes, weekday } = nyParts(d);
   const cal = marketCalendar(Number(date.slice(0, 4)));
   const isWeekend = weekday === "Sat" || weekday === "Sun";
@@ -467,7 +467,7 @@ function sessionState(d = new Date()) {
 /** Epoch ms of today's regular close (16:00 ET, 13:00 on half days), for
  *  the instant `d`. Derived from the same wall-clock parts as sessionState,
  *  so it agrees with the phase logic across DST. Null on non-trading days. */
-function sessionCloseMs(d = new Date()) {
+function sessionCloseMs(d = new Date(A.now())) {
   const st = sessionState(d);
   if (!st.tradingDay) return null;
   const minutesToClose = st.regularCloseMinutesEt - st.minutesEt;
@@ -480,7 +480,7 @@ function sessionCloseMs(d = new Date()) {
  * the Basic SIP embargo plus clock/transport slack while keeping IEX and paid
  * SIP on the same deterministic research boundary.
  */
-function dailyFinalizationState(value = new Date(), { bufferMinutes = 20 } = {}) {
+function dailyFinalizationState(value = new Date(A.now()), { bufferMinutes = 20 } = {}) {
   /* Scheduler retries and deterministic fixtures may carry a serialized or
      deliberately partial session. Treat those as incomplete information —
      never try to coerce an arbitrary object into Date, which produces an
@@ -528,7 +528,7 @@ function nyWallClockToUtcMs(date, minutes) {
  * regular interval. This replaces mislabeled wall-clock "days" everywhere a
  * holding horizon is enforced or reported.
  */
-function tradingDaysHeld(openedAt, asOf = Date.now(), { maxCalendarDays = 8000 } = {}) {
+function tradingDaysHeld(openedAt, asOf = A.now(), { maxCalendarDays = 8000 } = {}) {
   const startMs = typeof openedAt === "number" ? openedAt : Date.parse(openedAt);
   const endMs = typeof asOf === "number" ? asOf : Date.parse(asOf);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
@@ -590,7 +590,7 @@ function tradingSessionsBetween(fromDate, toDate, { maxSessions = 400 } = {}) {
  * was what silenced the held-position guard for every hour the exchange was
  * closed. Coarse hourly walk back, then a one-minute refinement forward.
  */
-function lastRegularOpenMs(d = new Date()) {
+function lastRegularOpenMs(d = new Date(A.now())) {
   const start = d instanceof Date ? d.getTime() : Number(d);
   if (!Number.isFinite(start)) return null;
   if (sessionState(new Date(start)).open) return start;
@@ -628,14 +628,14 @@ function slippageBps({ advUsd, grade, wideSpreadWindow, vixNorm = 1 }) {
   return Math.round(bps * 100) / 100;
 }
 
-function executionCostContext({ advUsd, grade, wideSpreadWindow, vixNorm, measuredAtMs = Date.now() } = {}) {
+function executionCostContext({ advUsd, grade, wideSpreadWindow, vixNorm, measuredAtMs = A.now() } = {}) {
   const context = {
     advUsd: Number.isFinite(Number(advUsd)) && Number(advUsd) > 0 ? Number(advUsd) : 0,
     grade: ["A", "B", "C"].includes(String(grade || "").toUpperCase())
       ? String(grade).toUpperCase() : "F",
     wideSpreadWindow: wideSpreadWindow === true,
     vixNorm: Number.isFinite(Number(vixNorm)) && Number(vixNorm) > 0 ? Number(vixNorm) : 1,
-    measuredAtMs: Number.isFinite(Number(measuredAtMs)) ? Number(measuredAtMs) : Date.now(),
+    measuredAtMs: Number.isFinite(Number(measuredAtMs)) ? Number(measuredAtMs) : A.now(),
   };
   return { ...context, slippageBps: slippageBps(context), modelVersion: "public-adv-half-trip-v2" };
 }
@@ -666,7 +666,7 @@ function executionCostContext({ advUsd, grade, wideSpreadWindow, vixNorm, measur
    we are actually entitled to is not a workaround; it is the correct request. */
 const ALPACA_BASIC_EMBARGO_MS = 16 * 60000;   // 15m restriction + a minute of slack
 function alpacaWindow(timeframe, limit, feed, opts = {}) {
-  const nowMs = Number.isFinite(Number(opts.nowMs)) ? Number(opts.nowMs) : Date.now();
+  const nowMs = Number.isFinite(Number(opts.nowMs)) ? Number(opts.nowMs) : A.now();
   const f = String(feed || "iex").toLowerCase();
   /* Alpaca Basic's IEX lane is real-time. It is the consolidated SIP lane
      that is embargoed unless the account explicitly declares a real-time SIP
@@ -780,10 +780,10 @@ async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
   const daily = /day/i.test(timeframe);
   const mult = daily ? 1 : (timeframe === "1Min" ? 1 : 5);
   const span = daily ? "day" : "minute";
-  const to = new Date().toISOString().slice(0, 10);
+  const to = new Date(A.now()).toISOString().slice(0, 10);
   // enough calendar days to yield `limit` trading days, plus slack for holidays
   const lookbackDays = daily ? Math.ceil(limit * 1.5) + 10 : 5;
-  const from = new Date(Date.now() - lookbackDays * 864e5).toISOString().slice(0, 10);
+  const from = new Date(A.now() - lookbackDays * 864e5).toISOString().slice(0, 10);
   const out = {}, symbolSha256 = {}, errors = {}, fetchedTimes = [];
   const requested = [...new Set(symbols.map(String))].sort();
   let cursor = 0;
@@ -821,7 +821,7 @@ async function fetchBarsMassive(symbols, { timeframe = "5Min", limit = 120 }) {
     requested.map((symbol) => [symbol, symbolSha256[symbol] || null, errors[symbol] || null])
   )).digest("hex");
   return { bars: out, provider: "massive", sha256: manifestSha256, manifestSha256,
-           symbolSha256, fetchedAt: fetchedTimes.sort().at(-1) || new Date().toISOString(),
+           symbolSha256, fetchedAt: fetchedTimes.sort().at(-1) || new Date(A.now()).toISOString(),
            failedSymbols: Object.keys(errors), failureCount: Object.keys(errors).length,
            adjustment: "split_only" };
 }
@@ -838,7 +838,7 @@ async function fetchBars(symbols, opts = {}) {
   const p = activeProvider();
   if (p.id === "alpaca") return { ...(await fetchBarsAlpaca(symbols, opts)), adjustment: "split_and_dividend" };
   if (p.id === "massive") return fetchBarsMassive(symbols, opts);
-  return { bars: {}, provider: "manual", sha256: null, fetchedAt: new Date().toISOString(),
+  return { bars: {}, provider: "manual", sha256: null, fetchedAt: new Date(A.now()).toISOString(),
            note: p.degradedFrom ? `degraded from ${p.degradedFrom}: ${p.reason}` : "manual import only" };
 }
 
@@ -988,7 +988,7 @@ function partitionBarsBySession(bars) {
 }
 
 function gradeSeries(bars, { provider, feed = null, sourceSha256 = null,
-                             nowMs = Date.now(), maxStaleMinutes = 45 }) {
+                             nowMs = A.now(), maxStaleMinutes = 45 }) {
   const series = normalizeBars(bars);
   if (series.length === 0) {
     return { grade: "F", reasons: ["no_bars"], tradable: false, researchEligible: false };
@@ -1095,14 +1095,14 @@ async function writeBars(symbol, dateStr, bars, meta) {
       }
       superseded = { provider: existing.provider, feed: existing.feed || null,
         adjustment: existing.adjustment || null, barCount: (existing.bars || []).length,
-        replacedAtMs: Date.now() };
+        replacedAtMs: A.now() };
       existing = {};
     }
     const previous=new Map((existing.bars || []).map(b=>[b.t,b]));
     const merged = normalizeBars([...(existing.bars || []), ...sessionBars]).slice(-400).map(b=>{
       const old=previous.get(b.t);
       const unchanged=old && ["o","h","l","c","v"].every(k=>old[k]===b[k]);
-      return {...b,knownAtMs:unchanged && Number(old.knownAtMs)>0 ? old.knownAtMs : Date.now()};
+      return {...b,knownAtMs:unchanged && Number(old.knownAtMs)>0 ? old.knownAtMs : A.now()};
     });
     const sourceHashes = [...new Set([...(existing.sourceHashes || []), meta && meta.sourceSha256]
       .filter((h) => /^[a-f0-9]{64}$/.test(String(h))))].sort();
@@ -1130,7 +1130,8 @@ async function readRecentBars(symbol, sessions = 3) {
   return (await readRecentBarsWithMeta(symbol, sessions)).bars;
 }
 
-async function readRecentBarsWithMeta(symbol, sessions = 3, {asOfMs=Date.now()} = {}) {
+async function readRecentBarsWithMeta(symbol, sessions = 3, {asOfMs=A.now()} = {}) {
+  if(A.currentScope()?.marketBars) return A.currentScope().marketBars(symbol,asOfMs);
   const dates = [];
   const d = new Date(asOfMs);
   let guard = 0;

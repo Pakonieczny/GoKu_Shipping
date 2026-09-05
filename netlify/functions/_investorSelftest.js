@@ -3403,7 +3403,7 @@ function runFixtures() {
     if (late.chosen.length !== 0 || !late.deferred.every((d) => d.reason === "dispatch_budget")) return false;
     /* Every task names its handler and engine; legacy tasks never dispatch under the manager engine. */
     for (const [task, spec] of Object.entries(JOBS.TASKS)) {
-      if (!/-background$/.test(spec.targetFunction) || !["manager", "legacy"].includes(spec.engine)) throw new Error(task);
+      if (!/-background$/.test(spec.targetFunction) || !["manager", "legacy", "simulation"].includes(spec.engine)) throw new Error(task);
     }
     if (JOBS.MAX_JOBS_PER_TICK !== 4 || JOBS.DISPATCH_BUDGET_MS !== 20000) return false;
     return true;
@@ -5046,7 +5046,7 @@ function runFixtures() {
     const S = require("./_investorApiSchemas");
     const c = S.compileAll();
     if (!c || c.count < 60) throw new Error(`compiled ${c && c.count}`);
-    if (S.READ_ACTIONS.length !== 27 || S.MUTATION_ACTIONS.length !== 31) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
+    if (S.READ_ACTIONS.length !== 29 || S.MUTATION_ACTIONS.length !== 33) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
     const req = (body) => S.validateRequest(body);
     const base = { apiVersion: "investor.v2", requestId: "req_0000000001" };
     if (!req({ ...base, action: "companies", params: { pageSize: 200, bucket: "eligible" } }).ok) throw new Error("valid read rejected");
@@ -5433,7 +5433,7 @@ function runFixtures() {
 
   cases.push(fixture("standalone_ui_keeps_all_advanced_controls_without_an_asset_loader", () => {
     const {html,script,style}=consoleSource();
-    if (!style.includes("--bg:#141210") || !style.includes("--gold:#c9a75d") || !style.includes("color-scheme:dark")) throw Error("Original brand colours must render from the embedded stylesheet");
+    if (!style.includes("--paper:#f3f0ea") || !style.includes("--velvet:#221f1b") || !style.includes("--gold:#a9823f") || !style.includes("color-scheme:light")) throw Error("Brites app-family colours must render from the embedded stylesheet");
     if (/<script[^>]+src=|<link[^>]+rel="stylesheet"|investorUi\?asset=/.test(html)) throw Error("Unexpected UI asset dependency");
     new (require("vm").Script)(script);
     for(const id of ["chartRange","chartSma20","chartSma50","chartVol","chartMarkers","chartFrom","chartTo","chartApply","chartReset","chartStyle","chartAuto","chartData","companyNextStep","marketContext","managerBrief","p-activity","s-data","l-analysis","jDate","jDecision","jSymbol","horizonSegs"]){if(!html.includes('id="'+id+'"'))throw Error("lost UI control "+id);}
@@ -5797,10 +5797,11 @@ function runFixtures() {
     if(out.status!=="CLOSED" || out.realizedAfterFeesMinor!=="-2200" || out.averageEntryMicros!=="100000000" || out.scoring.realizedReturnBps!=="1000" || out.scoring.errorBps!=="0" || out.excursions.mfeBps!=="1000" || !out.fillScoring.occurred)throw Error(JSON.stringify(out));return true;
   }));
 
+  cases.push(fixture("historical_simulator_adversarial_behavior",async()=>{const r=await simulatorAdversarial();if(!r.pass)throw new Error(JSON.stringify(r.results.filter(x=>!x.pass)));return {checks:r.checks,sourceHash:digest(String(simulatorAdversarial))};}));
   const pass = cases.every((c) => c.pass);
   /* The count is inside the hash: silently dropping a fixture must change
      the attestation, not merely shorten the list behind an unchanged one. */
-  const SCHEMA = "runtime-fixtures-v43-astra-decision-process";
+  const SCHEMA = "runtime-fixtures-v44-historical-simulator";
   const fixtureHash = digest({ schema: SCHEMA, count: cases.length, cases });
   return { schema: SCHEMA, pass, fixtureHash, passed: cases.filter((c) => c.pass).length,
     total: cases.length, cases };
@@ -5829,4 +5830,58 @@ async function runFixturesAsync() {
   return { ...r, pass, fixtureHash, passed: r.cases.filter((c) => c.pass).length };
 }
 
-module.exports = { canonical, digest, fixture, runFixtures, runFixturesAsync };
+async function simulatorAdversarial() {
+  const assert=require('assert/strict'),A=require('./_investorAdmin'),Sim=require('./_investorEvals').Simulator,P=require('./_investorPolicy');
+  const results=[];
+  async function check(name,fn){try{await fn();results.push({name,pass:true});}catch(e){results.push({name,pass:false,error:e.message,stack:e.stack?.split('\n').slice(0,4).join('\n')});}}
+  function database() {
+    const docs=new Map();let tail=Promise.resolve();
+    const snap=(path)=>({id:path.split('/').at(-1),ref:ref(path),exists:docs.has(path),data:()=>docs.get(path)});
+    function merge(old,data){const out={...old};for(const [k,v] of Object.entries(data)){if(v && v.__inc!=null)out[k]=(out[k]||0)+v.__inc;else out[k]=v;}return out;}
+    function ref(path){return {id:path.split('/').at(-1),path,collection:n=>collection(path+'/'+n),get:async()=>snap(path),set:async(d,o)=>{docs.set(path,o?.merge?merge(docs.get(path),d):merge({},d));},create:async d=>{if(docs.has(path))throw new Error('exists');docs.set(path,d);},delete:async()=>docs.delete(path)};}
+    function collection(path,filters=[],order=null,limit=Infinity,after=null){const q={path,doc:n=>ref(path+'/'+n),where:(...f)=>collection(path,[...filters,f],order,limit,after),orderBy:(f,dir='asc')=>collection(path,filters,[f,dir],limit,after),limit:n=>collection(path,filters,order,n,after),startAfter:v=>collection(path,filters,order,limit,typeof v==='object'?v.id:v),add:async d=>{const r=ref(path+'/'+Math.random().toString(36).slice(2));await r.set(d);return r;},get:async()=>{let items=[...docs.entries()].filter(([k,d])=>k.startsWith(path+'/')&&k.split('/').length===path.split('/').length+1&&filters.every(([f,op,v])=>op==='=='?d[f]===v:op==='in'?v.includes(d[f]):op==='>'?d[f]>v:op==='>='?d[f]>=v:op==='<'?d[f]<v:op==='<='?d[f]<=v:op==='!='?d[f]!==v:false)).map(([k])=>snap(k));if(order){const val=d=>order[0]==='__name__'?d.id:d.data()[order[0]];items.sort((a,b)=>(val(a)<val(b)?-1:val(a)>val(b)?1:0)*(order[1]==='desc'?-1:1));if(after!=null)items=items.filter(d=>order[1]==='desc'?val(d)<after:val(d)>after);}items=items.slice(0,limit);return {docs:items,size:items.length,empty:!items.length,forEach:fn=>items.forEach(fn)};}};return q;}
+    function transaction(fn){const work=tail.then(async()=>{const writes=[];const value=await fn({get:r=>r.get(),set:(r,d,o)=>writes.push(()=>r.set(d,o)),update:(r,d)=>writes.push(()=>r.set(d,{merge:true})),create:(r,d)=>writes.push(()=>r.create(d)),delete:r=>writes.push(()=>r.delete())});for(const w of writes)await w();return value;});tail=work.catch(()=>{});return work;}
+    return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
+  }
+  const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  await check('exact_cost_includes_reasoning_once_and_cache_categories',()=>{assert.equal(Sim.price('gpt-6-astra',{input_tokens:1000,output_tokens:100,input_tokens_details:{cached_tokens:200,cache_write_tokens:100},output_tokens_details:{reasoning_tokens:80}},'flex'),6725000);assert.equal(Sim.CEILING,1045000000);assert.throws(()=>Sim.price('gpt-6-astra',{input_tokens:-1}));assert.equal(Sim.price('gpt-5.6-luna',{input_tokens:1000,output_tokens:100}),320000);});
+  await check('unobserved_and_future_evidence_are_not_available',()=>{assert.equal(Sim.knownAt({}),Infinity);assert.equal(Sim.knownAt({publishedAtMs:1000,fetchedAtMs:2000}),2000);assert.equal(Sim.knownAt({asOfMs:1000,firstSeenAtMs:3000}),3000);});
+  await check('distinct_dates_and_no_future_sessions',()=>{const d=Sim.datesBetween('2026-08-01','2026-09-04'),a=Sim.selectedDates(d,10,'seed');assert.equal(new Set(a).size,10);assert.deepEqual(a,Sim.selectedDates(d,10,'seed'));assert.throws(()=>Sim.selectedDates(d,500,'seed'));assert.throws(()=>Sim.selectedDates(d,0,'seed'));});
+  await check('parallel_scopes_isolate_collections_clocks_and_paper',async()=>{const fake=database(),wall=A.now();await Promise.all([1000,2000].map((clock,i)=>A.withSimulationScope({runId:'sim_'+String(i+1).repeat(24),clock:()=>clock,collection:n=>fake.col('scope'+i+'/'+n)},async()=>{await new Promise(r=>setTimeout(r,3-i));assert.equal(A.now(),clock);await A.col(A.COL.accounts).doc('paper-1').set({clock});})));assert.equal(A.currentScope(),null);assert(A.now()>=wall);assert.equal(fake.docs.size,2);assert([...fake.docs.keys()].every(k=>k.startsWith('scope')));});
+  await check('scope_forbids_live_source_fetch_and_namespace_escape',async()=>{await A.withSimulationScope({runId:RID,clock:()=>1000,collection:()=>{throw new Error('unexpected collection');}},async()=>{assert.throws(()=>A.col('OtherApp'));await assert.rejects(()=>require('./_investorFetch').fetchPublic('https://www.sec.gov/',{sourceId:'sec.latest'}));});});
+  await check('immutable_chunks_detect_corruption_and_preserve_unicode',async()=>{const f=database(),svc=Sim.create({admin:f}),parent=f.col('Artifacts').doc('test');const a=await svc.saveJSON(parent,'data',{text:'🌟'.repeat(80000),nested:[[1,2],[3,4]]});assert.equal((await svc.readJSON(parent,a)).text.length,160000);await parent.collection('artifacts').doc(a).collection('chunks').doc('0').set({text:'tampered'});await assert.rejects(()=>svc.readJSON(parent,a),/CORRUPT/);});
+  async function metered(script){const fake=database(),ref=fake.col('InvestorAI_Simulations').doc(RID),run={runId:RID,clockMs:1000,leaseOwner:'owner',owner:'operator',spentNano:0,reservedNano:0,paused:false,leaseUntil:now+1000000};await ref.set(run);let posts=0,counts=0;const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{if(url.endsWith('/input_tokens')){counts++;return {ok:true,status:200,json:async()=>({input_tokens:1000})};}if(opts.method==='POST')posts++;return script(url,opts,posts);}});const meter=svc.meter(run,ref,async()=>(await ref.get()).data().paused,async()=>{});return {fake,ref,run,svc,meter,posts:()=>posts,counts:()=>counts};}
+  const body={model:'gpt-6-astra',input:[{role:'user',content:'fixture'}],max_output_tokens:4000,reasoning:{effort:'high'}};
+  const completed={id:'resp_fixture',status:'completed',service_tier:'flex',model:'gpt-6-astra',output:[],usage:{input_tokens:1000,output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}};
+  await check('pause_during_request_settles_once_and_resume_reuses_response',async()=>{const x=await metered(async(u,o)=>({ok:true,status:200,json:async()=>o.method==='POST'?{id:'resp_fixture',status:'in_progress'}:completed}));const first=await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body});assert.equal(first.data.status,'in_progress');await x.ref.set({paused:true},{merge:true});await x.meter.drain();assert.equal((await x.ref.get()).data().spentNano,30000000);assert.equal((await x.ref.get()).data().reservedNano,0);await x.ref.set({paused:false},{merge:true});await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body});assert.equal(x.posts(),1);assert.equal((await x.ref.get()).data().spentNano,30000000);});
+  await check('ambiguous_submission_retains_reservation_and_never_resubmits',async()=>{const x=await metered(async()=>{throw new Error('timeout after sending');});await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body}),e=>e.code==='SIMULATION_SUBMISSION_UNCERTAIN');const reserved=(await x.ref.get()).data().reservedNano;assert(reserved>0);await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body}),e=>e.code==='SIMULATION_SUBMISSION_UNCERTAIN');assert.equal(x.posts(),1);assert.equal((await x.ref.get()).data().reservedNano,reserved);});
+  await check('budget_reservation_is_atomic_across_concurrent_calls',async()=>{const x=await metered(async()=>({ok:true,status:200,json:async()=>({id:'resp_fixture',status:'in_progress'})}));await x.ref.set({spentNano:950000000},{merge:true});await Promise.allSettled([1,2,3].map(i=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:{...body,input:'request '+i}})));const r=(await x.ref.get()).data();assert(r.spentNano+r.reservedNano<=Sim.CEILING);assert.equal(x.posts(),1);});
+  await check('unknown_usage_does_not_turn_paid_work_into_zero_cost',async()=>{const x=await metered(async()=>({ok:true,status:200,json:async()=>({id:'resp_fixture',status:'completed'})}));await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body}),/usage/i);assert((await x.ref.get()).data().reservedNano>0);});
+  await check('incomplete_results_are_excluded_but_counted',()=>{const r=Sim.distribution([{status:'complete',date:'2026-01-02',returnBps:100},{status:'complete',date:'2026-01-05',returnBps:-50},{status:'incomplete',date:'2026-01-06',returnBps:5000}]);assert.equal(r.medianBps,25);assert.equal(r.incomplete,1);assert.equal(r.positive,.5);});
+  await check('batch_creation_idempotence_ownership_pause_and_resume',async()=>{const fake=database(),svc=Sim.create({admin:fake});const b=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');const again=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');assert.equal(again.batchId,b.batchId);await assert.rejects(()=>svc.getBatch(b.batchId,'intruder'),/another operator/);await svc.control({batchId:b.batchId,command:'pause'},'operator');assert((await svc.getRun(b.runIds[0])).paused);await svc.control({batchId:b.batchId,command:'resume'},'operator');assert.equal((await svc.getRun(b.runIds[0])).paused,false);assert.equal((await svc.overview({owner:'operator'})).runs.length,2);});
+  await check('bar_fills_apply_adverse_spread_never_violate_limit',async()=>{await A.withSimulationScope({runId:RID,clock:()=>1000,collection:()=>{},executionSpreadBps:10},async()=>{const E=require('./_investorExecution'),bar={o:100,h:102,l:99,c:101,v:100000};const r=E.simulateLegOnBar({leg:{role:'ENTRY',side:'buy',type:'LIMIT',priceMicros:'101000000',remainingUnits:'10'},bar});assert.equal(r.fill.priceMicros,'100050000');const n=E.simulateLegOnBar({leg:{role:'ENTRY',side:'buy',type:'LIMIT',priceMicros:'100000000',remainingUnits:'10'},bar});assert.equal(n.fill,null);});});
+  await check('complete_replay_uses_real_manager_and_preserves_paper_account',async()=>{
+    const fake=database();await fake.col(A.COL.accounts).doc('paper-1').set({untouched:true});
+    let submitted=0;
+    const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{
+      if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:1000})};
+      const b=JSON.parse(opts.body||'{}');submitted++;const user=b.input?.find(x=>x.role==='user')?.content||'';
+      const manifest=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]);
+      const output={schemaVersion:'universe-review.v1',universeVersion:manifest.universeVersion,universeHash:manifest.universeHash,eligibleCount:manifest.eligibleCount,coverage:manifest.symbols.map(symbol=>({symbol,reviewDirective:'NONE',provisionalDisposition:'IGNORE',reason:'No opportunity in this fixture',changedSincePrior:false,reasonCode:null})),holdingAnalysis:[],researchRequests:[],managerNote:'Fixture review'};
+      return {ok:true,status:200,json:async()=>({...completed,id:'resp_'+submitted,output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]})};}});
+    const b=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','engine');const ref=fake.col('InvestorAI_Simulations').doc(b.runIds[0]),br=fake.col('InvestorAI_SimulationBatches').doc(b.batchId);
+    const config=await svc.readJSON(br,b.configRef);config.roster={universeVersion:'fixture',universeHash:'f'.repeat(64),eligibleCount:1,symbols:['AAA'],managedOffRoster:[]};
+    const cfg=await svc.saveJSON(br,'fixture_config',config);await br.set({configRef:cfg},{merge:true});await ref.set({configRef:cfg},{merge:true});
+    const M=require('./_investorMarket'),date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,510),open=M.nyWallClockToUtcMs(date,570),end=M.sessionCloseMs(new Date(date+'T12:00:00Z'))+1200000;
+    const scenarioId='fixture_scenario',sr=fake.col('InvestorAI_SimulationScenarios').doc(scenarioId);
+    const dossier=require('./_investorDossier').composeVersion({symbol:'AAA',identity:{name:'Fixture company',sector:'sw',cik:'0000000001'},asOfMs:cutoff-1000,dataQuality:{complete:true,missing:[]}});
+    const packet={symbol:'AAA',data:[{collection:A.COL.dossierVersions,id:'AAA_fixture',knownAtMs:cutoff-1000,data:{...dossier,knownAtMs:cutoff-1000}}],daily:{date:[],o:[],h:[],l:[],c:[],v:[],provider:'fixture',adjustment:'raw'},bars:Array.from({length:78},(_,i)=>({t:new Date(open+i*300000).toISOString(),o:100,h:101,l:99,c:100,v:100000})),provenance:{provider:'fixture',feed:'sip',adjustment:'raw'}};
+    const art=await svc.saveJSON(sr,'AAA',packet);await sr.collection('symbols').doc('AAA').set({artifact:art});await sr.set({status:'ready',date,symbols:['AAA'],cutoffMs:cutoff,endMs:end});await ref.set({scenarioId,scenarioCursor:1},{merge:true});
+    // Ready scenarios are loaded by their immutable identifier, not regenerated.
+    const result=await svc.execute(b.runIds[0]);const run=await svc.getRun(b.runIds[0]);
+    assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(run.returnBps,0);assert.equal(run.progress,100);assert.equal(submitted,1);assert.deepEqual((await fake.col(A.COL.accounts).doc('paper-1').get()).data(),{untouched:true});assert.equal((await ref.collection('curve').get()).size,83);
+  });
+  return {pass:results.every(x=>x.pass),checks:results.length,results};
+}
+
+module.exports = { simulatorAdversarial, canonical, digest, fixture, runFixtures, runFixturesAsync };

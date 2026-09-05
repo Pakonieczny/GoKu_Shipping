@@ -193,7 +193,7 @@ async function pollSubmissionsHistory(cik, { lookbackDays = 180, limit = 80 } = 
       maxBytes: 6 * 1024 * 1024,
     });
     const recent = res.json && res.json.filings && res.json.filings.recent || {};
-    const minMs = Date.now() - Math.max(1, Math.min(366, Number(lookbackDays) || 180)) * 864e5;
+    const minMs = A.now() - Math.max(1, Math.min(366, Number(lookbackDays) || 180)) * 864e5;
     const rows = [];
     const n = Math.max(...["accessionNumber", "filingDate", "form", "primaryDocument"]
       .map((k) => Array.isArray(recent[k]) ? recent[k].length : 0));
@@ -203,7 +203,7 @@ async function pollSubmissionsHistory(cik, { lookbackDays = 180, limit = 80 } = 
       const accepted = recent.acceptanceDateTime && recent.acceptanceDateTime[i];
       const published = accepted || filingDate;
       const at = Date.parse(published || "");
-      if (!accession || !Number.isFinite(at) || at < minMs || at > Date.now()) continue;
+      if (!accession || !Number.isFinite(at) || at < minMs || at > A.now()) continue;
       const primary = recent.primaryDocument && recent.primaryDocument[i];
       const accessionCompact = String(accession).replace(/-/g, "");
       const link = primary
@@ -220,7 +220,7 @@ async function pollSubmissionsHistory(cik, { lookbackDays = 180, limit = 80 } = 
     const bounded = rows.slice(0, Math.max(1, Math.min(240, Number(limit) || 80)));
     const fresh = bounded.filter((x) => !seen.has(x.accession));
     await stateRef.set({ sourceId: "sec.submissions", cik: String(cik),
-      lastSuccessAt: A.FV.serverTimestamp(), lastSuccessAtMs: Date.now(),
+      lastSuccessAt: A.FV.serverTimestamp(), lastSuccessAtMs: A.now(),
       consecutiveFailures: 0, lastError: null, responseSha256: res.sha256,
       seenAccessions: uniqAccessions([...bounded.map((x) => x.accession), ...seen]).slice(0, 500),
       lookbackDays, matched: bounded.length }, { merge: true });
@@ -245,7 +245,7 @@ function uniqAccessions(values) { return [...new Set((values || []).filter(Boole
 
 /** Persist a document version. A version exists only when the bytes changed. */
 async function recordVersion({ symbol, sourceId, entry, rawSha256, body = "", bodySha256 = null }) {
-  const fetchedAtMs = Date.now();
+  const fetchedAtMs = A.now();
   const sourceMeta = (entry && entry.sourceMeta) || SOURCES[sourceId] || {};
   /* One public article can concern several issuers. Symbol-bound identity
      prevents the first dossier to record it from stealing it from the rest. */
@@ -305,7 +305,7 @@ function canonicalInt(v) { return typeof v === "string" && /^-?(0|[1-9][0-9]*)$/
 /** Persist extracted claims for one document version. Idempotent by claim
  *  id; guidance supersession is linked within the symbol's stored claims. */
 async function recordClaims({ symbol, documentId, documentVersionId, sourceId, claims = [], extractedBy = null,
-  publishedAtMs = null, firstSeenAtMs = Date.now(), nowMs = Date.now(), admin = null }) {
+  publishedAtMs = null, firstSeenAtMs = A.now(), nowMs = A.now(), admin = null }) {
   const DB = admin || A;
   const sym = String(symbol || "").toUpperCase();
   if (!sym || !documentVersionId) throw Object.assign(new Error("recordClaims: symbol and documentVersionId required"), { code: "CLAIM_IDENTITY_REQUIRED" });
@@ -325,7 +325,7 @@ async function recordClaims({ symbol, documentId, documentVersionId, sourceId, c
       date: c.date && /^\d{4}-\d{2}-\d{2}$/.test(c.date) ? c.date : null,
       confirmed: c.confirmed === true, sourceClass: c.sourceClass || null,
       publishedAtMs: Number.isFinite(Number(publishedAtMs)) ? Number(publishedAtMs) : null,
-      firstSeenAtMs: Number(firstSeenAtMs) || Date.now(),
+      firstSeenAtMs: Number(firstSeenAtMs) || A.now(),
       knownAtMs:nowMs, extractedBy: extractedBy || null, supersedes: null, supersededBy: null,
       ...DB.envelope({ created_by: "evidence.recordClaims" }),
     };
@@ -354,7 +354,7 @@ async function recordClaims({ symbol, documentId, documentVersionId, sourceId, c
 }
 /** Point-in-time claims: a claim is known from its publication time when
  *  stated, else from first-seen; never earlier. */
-async function claimsForCompany(symbol, { asOfMs = Date.now(), claimTypes = null, limit = 400, admin = null } = {}) {
+async function claimsForCompany(symbol, { asOfMs = A.now(), claimTypes = null, limit = 400, admin = null } = {}) {
   const DB = admin || A;
   const sym = String(symbol || "").toUpperCase();
   const snap = await DB.col(DB.COL.claims).where("kind", "==", "claim").where("symbol", "==", sym).get();
@@ -370,7 +370,7 @@ async function claimsForCompany(symbol, { asOfMs = Date.now(), claimTypes = null
   return rows.slice(0, limit);
 }
 /** PURE. The newest non-superseded guidance per metric and period. */
-function latestGuidanceFrom(claims, { asOfMs = Date.now() } = {}) {
+function latestGuidanceFrom(claims, { asOfMs = A.now() } = {}) {
   const by = new Map();
   for (const c of claims || []) {
     if (c.claimType !== "GUIDANCE" || !c.metric) continue;
@@ -385,13 +385,13 @@ function latestGuidanceFrom(claims, { asOfMs = Date.now() } = {}) {
     issuedAt: c.date || (c.publishedAtMs ? new Date(c.publishedAtMs).toISOString().slice(0, 10) : null),
     supersedes: c.supersedes || null, quote: c.quote }));
 }
-async function latestGuidance(symbol, { asOfMs = Date.now() } = {}) {
+async function latestGuidance(symbol, { asOfMs = A.now() } = {}) {
   return latestGuidanceFrom(await claimsForCompany(symbol, { asOfMs, claimTypes: ["GUIDANCE"] }), { asOfMs });
 }
 /** PURE. The issuer's own announced next earnings date, if any, else null;
  *  the caller falls back to the 8-K Item 2.02 cadence projection with
  *  confirmed:false and its wider window (§5.6). */
-function nextEarningsFrom(claims, { asOfMs = Date.now() } = {}) {
+function nextEarningsFrom(claims, { asOfMs = A.now() } = {}) {
   const today = new Date(asOfMs).toISOString().slice(0, 10);
   const candidates = (claims || []).filter((c) => c.claimType === "EARNINGS_DATE" && c.date && c.date >= today
     && Math.max(Number(c.publishedAtMs)||0, Number(c.firstSeenAtMs)||0, Number(c.knownAtMs)||0) <= asOfMs)
@@ -400,7 +400,7 @@ function nextEarningsFrom(claims, { asOfMs = Date.now() } = {}) {
   return c ? { date: c.date, confirmed: c.confirmed === true, claimId: c.claimId, documentVersionId: c.documentVersionId,
     sourceClass: c.sourceClass || "company_primary", quote: c.quote } : null;
 }
-async function nextEarningsClaim(symbol, { asOfMs = Date.now() } = {}) {
+async function nextEarningsClaim(symbol, { asOfMs = A.now() } = {}) {
   return nextEarningsFrom(await claimsForCompany(symbol, { asOfMs, claimTypes: ["EARNINGS_DATE"] }), { asOfMs });
 }
 /** The stored spans a verifier needs: version id, canonical text, hashes. */
@@ -422,7 +422,7 @@ async function sourceSpans({ documentVersionIds = [] } = {}) {
 async function documentsForCompany(symbol, decisionAtMs, lookbackDays = 180, limit = 240, { admin = null } = {}) {
   const D=admin || A;
   const snap = await D.col(D.COL.documents).where("symbol", "==", symbol).get();
-  const max = Number(decisionAtMs) || Date.now();
+  const max = Number(decisionAtMs) || A.now();
   const min = max - Math.max(1, Math.min(366, Number(lookbackDays) || 180)) * 864e5;
   const rows = [];
   for (const d of snap.docs) {

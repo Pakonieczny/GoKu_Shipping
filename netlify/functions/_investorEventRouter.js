@@ -159,7 +159,7 @@ async function resolveDeduplicateAndClassifyObjective(event, { deps = {} } = {})
   const id = `delta_${symbol}_${canonical.slice(0, 32)}`;
   const admin = deps.admin || A;
   const ref = admin.col(admin.COL.evidenceDeltas).doc(id);
-  const firstSeenAtMs = Number(doc.firstSeenAtMs) || Date.now();
+  const firstSeenAtMs = Number(doc.firstSeenAtMs) || A.now();
   const publishedAtMs = Date.parse(doc.source_published_at || doc.sourcePublishedAt || "");
   const inclusionMs = Math.max(firstSeenAtMs, Number(doc.fetchedAtMs) || 0);
   const created = await admin.runTransaction(async (tx) => {
@@ -172,7 +172,7 @@ async function resolveDeduplicateAndClassifyObjective(event, { deps = {} } = {})
       summary: String(doc.summary || doc.canonicalText || "").slice(0,800),
       sourceClass: doc.sourceClass || null, title: String(doc.title || "").slice(0, 300),
       publishedAtMs: Number.isFinite(publishedAtMs) ? publishedAtMs : null, firstSeenAtMs, inclusionAtMs: inclusionMs,
-      managerMateriality: "pending", reviewedAtMs: null, createdAtMs: Date.now(),
+      managerMateriality: "pending", reviewedAtMs: null, createdAtMs: A.now(),
       ...admin.envelope({ created_by: "eventRouter" }) });
     return true;
   });

@@ -80,7 +80,7 @@ function barsAfter(series, referenceMs) {
   return (series || []).filter(b=>b && b.date && Number(b.c)>0 && market.sessionCloseMs(new Date(`${b.date}T16:00:00Z`))>referenceMs).sort((a,b)=>a.date.localeCompare(b.date));
 }
 /** Resolve every horizon the bars can reach; touches on high/low; MFE/MAE. */
-function resolveAgainstBars({ record, series, benchmarkSeries = null, nowMs = Date.now() }) {
+function resolveAgainstBars({ record, series, benchmarkSeries = null, nowMs = A.now() }) {
   const ref = record.referencePriceMicros ? big(record.referencePriceMicros) : null;
   const refMs = Date.parse(record.referenceTime || `${record.tradingDate}T20:00:00Z`);
   const after = barsAfter(require("./_investorDecisionContext").completedDaily(series,nowMs), refMs).slice(0,Math.max(...record.horizons));
@@ -178,7 +178,7 @@ async function freezeDecisionOutcomeRecords({ managerRunId, tradingDate, cutoffM
     const pointer=await D.col(D.COL.activeMandates).doc(`${accountId}_${d.symbol}`).get();
     rec.mandateVersionId=d.decision === "BUY" && pointer.exists ? pointer.data().desiredVersionId || pointer.data().appliedVersionId || null : null;
     const ref = D.col(D.COL.forecasts).doc(rec.forecastId);
-    const wrote = await D.runTransaction(async (tx) => { const cur = await tx.get(ref); if (cur.exists) return false; tx.set(ref, { ...rec, createdAtMs: Date.now(), ...D.envelope({ created_by: "learning.freeze" }) }); return true; });
+    const wrote = await D.runTransaction(async (tx) => { const cur = await tx.get(ref); if (cur.exists) return false; tx.set(ref, { ...rec, createdAtMs: A.now(), ...D.envelope({ created_by: "learning.freeze" }) }); return true; });
     if (wrote) written += 1; else skipped += 1;
   }
   return { written, skipped };
@@ -188,7 +188,7 @@ async function pendingForecasts({ admin = null, limit = 400 } = {}) {
   return rows(await D.col(D.COL.forecasts).where("status", "==", "PENDING").get()).sort((a,b)=>(Number(a.lastResolutionAtMs)||0)-(Number(b.lastResolutionAtMs)||0)).slice(0,limit);
 }
 /** Resolve every pending record the supplied series can advance. `seriesReader(symbol)` returns daily bars. */
-async function resolveDue({ admin = null, seriesReader, benchmarkReader = null, nowMs = Date.now(), limit = 400 } = {}) {
+async function resolveDue({ admin = null, seriesReader, benchmarkReader = null, nowMs = A.now(), limit = 400 } = {}) {
   const D = db(admin);
   const pending = await pendingForecasts({ admin: D, limit });
   const out = { examined: pending.length, advanced: 0, completed: 0, byRun: {} };
@@ -230,7 +230,7 @@ async function resolveDue({ admin = null, seriesReader, benchmarkReader = null, 
   return out;
 }
 /** Version-aware memory by pointer: the latest memo, decisions and outcomes for a symbol. */
-async function retrievalMemory({ symbol, admin = null, limit = 12, cutoffMs = Date.now() } = {}) {
+async function retrievalMemory({ symbol, admin = null, limit = 12, cutoffMs = A.now() } = {}) {
   const D = db(admin);
   const sym = String(symbol || "").toUpperCase();
   const R = lazy("./_investorResearch");
@@ -303,7 +303,7 @@ function rebaseSeries(pack,anchor) {
 }
 function safeDecode(d) { try { return require("./_investorStorageCodec").decode(d); } catch { return null; } }
 /** Sol's offline attribution for a selected case; adjudication stays with the operator. */
-async function writePostmortem({ decisionId, frozenDecision, laterOutcome, gateway = null, admin = null, nowMs = Date.now() } = {}) {
+async function writePostmortem({ decisionId, frozenDecision, laterOutcome, gateway = null, admin = null, nowMs = A.now() } = {}) {
   const D = db(admin);
   const O = gateway || lazy("./_investorOpenai");
   if (!O || typeof O.writePostmortem !== "function") return { written: false, reason: "gateway_unavailable" };

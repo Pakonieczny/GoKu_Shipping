@@ -26,6 +26,7 @@ const crypto = require("crypto");
 const dns = require("dns").promises;
 const net = require("net");
 const fetchFn = (...args) => {
+  if (require("./_investorAdmin").currentScope()) throw Object.assign(new Error("Historical replay cannot fetch live sources"), {code:"SIMULATION_LIVE_FETCH_FORBIDDEN"});
   if (typeof globalThis.fetch !== "function") throw new Error("Node 22 native fetch is required");
   return globalThis.fetch(...args);
 };
@@ -208,6 +209,7 @@ const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
  * @returns {Promise<{status,notModified,bytes,text,json,sha256,contentType,etag,lastModified,finalUrl,fetchedAt,elapsedMs}>}
  */
 async function fetchPublic(url, opts = {}) {
+  if (require("./_investorAdmin").currentScope()) throw fail("SIMULATION_LIVE_FETCH_FORBIDDEN", "Historical replay cannot fetch live sources");
   const {
     sourceId = "unregistered",
     etag = null, lastModified = null,

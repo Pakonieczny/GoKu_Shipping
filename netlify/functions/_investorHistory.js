@@ -328,7 +328,7 @@ async function ensureDailyHistory(symbol, opts = {}) {
   if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(sym)) throw new Error("valid symbol required");
   const targetDays = Math.max(CONTEXT_MIN_DAYS,
     Math.min(KEEP_DAYS, Number(opts.targetDays) || KEEP_DAYS));
-  const nowMs = Number.isFinite(Number(opts.nowMs)) ? Number(opts.nowMs) : Date.now();
+  const nowMs = Number.isFinite(Number(opts.nowMs)) ? Number(opts.nowMs) : A.now();
   const cooldownMs = Math.max(60_000, Number(opts.cooldownMs) || 30 * 60_000);
   const read = opts.read || readDailyWithMeta;
   const fetch = opts.fetch || fetchDailyWithMeta;

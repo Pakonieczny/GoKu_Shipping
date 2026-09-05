@@ -73,7 +73,7 @@ function entryExpiresAtMs(proposal) {
 }
 
 /* ── semantic validation (§7.3) — pure ─────────────────────────────────── */
-function validateProposal(proposal, { eligibleSymbols = null, heldSymbols = [], pendingSymbols = [], nowMs = Date.now(), policy = null } = {}) {
+function validateProposal(proposal, { eligibleSymbols = null, heldSymbols = [], pendingSymbols = [], nowMs = A.now(), policy = null } = {}) {
   const errors = [];
   const v = POLICY.validate("mandate-proposal.v1", proposal);
   if (!v.ok) return { ok: false, errors: v.errors.map((e) => `schema:${e.path}:${e.error}`), derived: null };
@@ -301,7 +301,7 @@ function assertNoEnvelopeIncreasesProposal({ proposals, envelopes }) {
  * NEEDS_SOL_RESYNTHESIS | STALE | EMPTY, ... }. Never touches the broker.
  */
 async function stagePortfolioPlan({ planClass, portfolioPlanProposal = {}, proposals = [], verifiedProposalClaims = null, activationSnapshot, accountId, cutoff = null, policy = null,
-  managerRunId = null, admin = null, eligibleSymbols = null, marks = {}, advBySymbol = {}, sectorOf = null, clusterOf = null, lineage = {}, verifiedValuations = {}, nowMs = Date.now() } = {}) {
+  managerRunId = null, admin = null, eligibleSymbols = null, marks = {}, advBySymbol = {}, sectorOf = null, clusterOf = null, lineage = {}, verifiedValuations = {}, nowMs = A.now() } = {}) {
   const D = db(admin);
   const SC = lazy("./_investorStorageCodec");
   const CV = lazy("./_investorClaimVerifier");
@@ -411,8 +411,8 @@ async function stagePortfolioPlan({ planClass, portfolioPlanProposal = {}, propo
   }
 }
 async function persistPlanAudit(D, fields) {
-  const id = `${fields.planId}_${fields.status}_${Date.now()}`;
-  await D.col(D.COL.portfolioPlans).doc(id).set({ schemaVersion: "portfolio-plan.v1", auditOnly: true, ...fields, atMs: Date.now(), ...D.envelope({ created_by: "mandate.persistPlanAudit" }) });
+  const id = `${fields.planId}_${fields.status}_${A.now()}`;
+  await D.col(D.COL.portfolioPlans).doc(id).set({ schemaVersion: "portfolio-plan.v1", auditOnly: true, ...fields, atMs: A.now(), ...D.envelope({ created_by: "mandate.persistPlanAudit" }) });
   return { auditId: id };
 }
 
@@ -424,7 +424,7 @@ async function readPointer(accountId, symbol, { admin = null } = {}) {
 }
 async function appendEvent(D, pointer, kind, fields = {}) {
   const seq = (Number(pointer.eventSequence) || 1) + 1;
-  await D.col(D.COL.mandateEvents).doc(`${pointer.desiredVersionId || pointer.mandateSeriesId}_${String(seq).padStart(4, "0")}`).set({ mandateVersionId: pointer.desiredVersionId || null, mandateSeriesId: pointer.mandateSeriesId, sequence: seq, accountId: pointer.accountId, symbol: pointer.symbol, kind, atMs: Date.now(), ...fields });
+  await D.col(D.COL.mandateEvents).doc(`${pointer.desiredVersionId || pointer.mandateSeriesId}_${String(seq).padStart(4, "0")}`).set({ mandateVersionId: pointer.desiredVersionId || null, mandateSeriesId: pointer.mandateSeriesId, sequence: seq, accountId: pointer.accountId, symbol: pointer.symbol, kind, atMs: A.now(), ...fields });
   await D.col(D.COL.activeMandates).doc(pointer.mandateSeriesId).set({ eventSequence: seq }, { merge: true });
   return seq;
 }
@@ -443,8 +443,8 @@ async function pauseUnfilledEntry(symbol, eventId, { accountId = null, admin = n
   if (["FILLED", "CANCELLED", "SUPERSEDED", "ENTRY_EXPIRED"].includes(p.status)) return { paused: false, reason: `status_${p.status}` };
   const transitionId = `${p.desiredVersionId}:PAUSE_ENTRY:${eventId}`;
   await D.col(D.COL.executionOutbox).doc(transitionId).set({ transitionId, accountId: acct, symbol, mandateVersionId: p.desiredVersionId, orderSetId: `os_${p.desiredVersionId}`, kind: "CANCEL_UNFILLED_ENTRY",
-    reason: "material_event_pending_review", eventId, status: "PENDING", idempotencyKey: transitionId, attempts: 0, createdAtMs: Date.now(), authority: "EVIDENCE_PAUSE" });
-  await D.col(D.COL.activeMandates).doc(p.mandateSeriesId).set({ status: "PAUSED_EVIDENCE", pausedReason: `material_event:${eventId}`, pausedAtMs: Date.now() }, { merge: true });
+    reason: "material_event_pending_review", eventId, status: "PENDING", idempotencyKey: transitionId, attempts: 0, createdAtMs: A.now(), authority: "EVIDENCE_PAUSE" });
+  await D.col(D.COL.activeMandates).doc(p.mandateSeriesId).set({ status: "PAUSED_EVIDENCE", pausedReason: `material_event:${eventId}`, pausedAtMs: A.now() }, { merge: true });
   await appendEvent(D, p, "PAUSED_EVIDENCE", { eventId });
   return { paused: true, mandateVersionId: p.desiredVersionId, transitionId };
 }
@@ -454,8 +454,8 @@ async function requestEntryCancelWithOutbox({ state, eventId, accountId, admin =
   if (!p || !p.desiredVersionId) return { status: "NOT_APPLIED", reason: "no_pointer" };
   const transitionId = `${p.desiredVersionId}:REVOKE_ENTRY:${eventId || "manager"}`;
   await D.col(D.COL.executionOutbox).doc(transitionId).set({ transitionId, accountId, symbol: state.symbol, mandateVersionId: p.desiredVersionId, orderSetId: `os_${p.desiredVersionId}`, kind: "CANCEL_UNFILLED_ENTRY",
-    reason: "entry_revoked_by_sol", eventId: eventId || null, status: "PENDING", idempotencyKey: transitionId, attempts: 0, createdAtMs: Date.now(), authority: "SOL_REVISION", releaseReservationOnTerminal: true });
-  await D.col(D.COL.activeMandates).doc(p.mandateSeriesId).set({ status: "CANCEL_PENDING", pausedReason: "revoked", updatedAtMs: Date.now() }, { merge: true });
+    reason: "entry_revoked_by_sol", eventId: eventId || null, status: "PENDING", idempotencyKey: transitionId, attempts: 0, createdAtMs: A.now(), authority: "SOL_REVISION", releaseReservationOnTerminal: true });
+  await D.col(D.COL.activeMandates).doc(p.mandateSeriesId).set({ status: "CANCEL_PENDING", pausedReason: "revoked", updatedAtMs: A.now() }, { merge: true });
   await appendEvent(D, p, "ENTRY_REVOKED", { eventId: eventId || null });
   return { status: "CANCEL_PENDING", transitionId, note: "reservation stays binding until broker truth proves the remainder terminal" };
 }
@@ -469,7 +469,7 @@ async function keepEvidencePausedAndCancelRemainder({ state, eventId, accountId,
 async function retainProtectionActionRequired({ state, assessment, accountId, admin = null } = {}) {
   const D = db(admin);
   const p = await readPointer(accountId, state.symbol, { admin });
-  if (p) { await D.col(D.COL.activeMandates).doc(p.mandateSeriesId).set({ status: "ACTION_REQUIRED", actionRequiredReason: `ABSTAIN:${(assessment && assessment.reasonCode) || "UNCERTAINTY"}`, updatedAtMs: Date.now() }, { merge: true }); await appendEvent(D, p, "ACTION_REQUIRED", { reasonCode: assessment && assessment.reasonCode || null }); }
+  if (p) { await D.col(D.COL.activeMandates).doc(p.mandateSeriesId).set({ status: "ACTION_REQUIRED", actionRequiredReason: `ABSTAIN:${(assessment && assessment.reasonCode) || "UNCERTAINTY"}`, updatedAtMs: A.now() }, { merge: true }); await appendEvent(D, p, "ACTION_REQUIRED", { reasonCode: assessment && assessment.reasonCode || null }); }
   await raiseAlert(D, { conditionId: `action_required_${accountId}_${state.symbol}`, severity: "critical", kind: "ACTION_REQUIRED", accountId, symbol: state.symbol, reason: `held position ABSTAIN: ${(assessment && assessment.reasonCode) || "UNCERTAINTY"}; protection retained` });
   return { status: "ACTION_REQUIRED", protectionRetained: true };
 }
@@ -477,13 +477,13 @@ async function retainPriorAcknowledgedProtectionAndAlert({ accountId, affectedSy
   const D = db(admin);
   for (const s of affectedSymbols) {
     const p = await readPointer(accountId, s, { admin });
-    if (p) { await D.col(D.COL.activeMandates).doc(p.mandateSeriesId).set({ status: "ACTION_REQUIRED", actionRequiredReason: `MAINTENANCE_NOT_COMMITTED:${reason}`, updatedAtMs: Date.now() }, { merge: true }); await appendEvent(D, p, "ACTION_REQUIRED", { reason }); }
+    if (p) { await D.col(D.COL.activeMandates).doc(p.mandateSeriesId).set({ status: "ACTION_REQUIRED", actionRequiredReason: `MAINTENANCE_NOT_COMMITTED:${reason}`, updatedAtMs: A.now() }, { merge: true }); await appendEvent(D, p, "ACTION_REQUIRED", { reason }); }
     await raiseAlert(D, { conditionId: `maintenance_not_committed_${accountId}_${s}`, severity: "critical", kind: "ACTION_REQUIRED", accountId, symbol: s, reason: `holding maintenance not committed (${reason}); prior acknowledged protection retained` });
   }
   return { retained: affectedSymbols.length, reason };
 }
 async function raiseAlert(D, { conditionId, severity, kind, accountId, symbol = null, reason }) {
-  try { await D.col(D.COL.alerts).doc(conditionId).set({ conditionId, severity, kind, accountId, symbol, reason: String(reason).slice(0, 300), active: true, raisedAtMs: Date.now(), acknowledgedAtMs: null, resolvedAtMs: null }, { merge: true }); } catch {}
+  try { await D.col(D.COL.alerts).doc(conditionId).set({ conditionId, severity, kind, accountId, symbol, reason: String(reason).slice(0, 300), active: true, raisedAtMs: A.now(), acknowledgedAtMs: null, resolvedAtMs: null }, { merge: true }); } catch {}
 }
 
 module.exports = {

@@ -122,7 +122,7 @@ function orderView(o) {
     mandateVersionId: o.mandateVersionId || null, orderSetId: o.orderSetId || null, pausedReason: o.pausedReason || null,
   };
 }
-async function snapshot({ accountId, asOfMs = Date.now(), admin = null, sectorOf = null } = {}) {
+async function snapshot({ accountId, asOfMs = A.now(), admin = null, sectorOf = null } = {}) {
   const acct = String(accountId || "paper-1");
   const [positions, orders, balances, mandates, reservation] = await Promise.all([
     readPositions(acct, { admin }), readOpenOrders(acct, { admin }), readBalances(acct, { admin }), readActiveMandates(acct, { admin }), readReservationAccount(acct, { admin }),
@@ -168,9 +168,9 @@ async function captureActivationSnapshot({ accountId, reason = "activation", adm
   let reconciliation = null;
   if (reconcile) { try { reconciliation = await reconcile(acct); } catch (e) { reconciliation = { ok: false, error: String(e.message).slice(0, 120) }; } }
   const snap = await snapshot({ accountId: acct, admin });
-  const id = `act_${sha256({ acct, contentHash: snap.contentHash, versions: snap.versions, t: Date.now() }).slice(0, 32)}`;
+  const id = `act_${sha256({ acct, contentHash: snap.contentHash, versions: snap.versions, t: A.now() }).slice(0, 32)}`;
   const doc = {
-    schemaVersion: ACTIVATION_SCHEMA, activationSnapshotId: id, accountId: acct, reason, capturedAtMs: Date.now(),
+    schemaVersion: ACTIVATION_SCHEMA, activationSnapshotId: id, accountId: acct, reason, capturedAtMs: A.now(),
     navMinor: snap.navMinor, settledCashMinor: snap.settledCashMinor, reservedMinor: snap.reservedMinor, investedMinor: snap.investedMinor,
     positions: snap.positions.map((p) => ({ symbol: p.symbol, quantityUnits: p.quantityUnits, markMicros: p.markMicros, lossBoundaryPriceMicros: p.lossBoundaryPriceMicros, protectionState: p.protectionState, sector: p.sector })),
     workingOrders: snap.workingOrders.map((o) => ({ orderId: o.orderId, symbol: o.symbol, side: o.side, remainingUnits: o.remainingUnits, limitPriceMicros: o.limitPriceMicros, status: o.status, sector: o.sector })),
@@ -204,7 +204,7 @@ async function symbolState({ accountId, symbol, admin = null } = {}) {
 
 /* ── the read-only tool ────────────────────────────────────────────────── */
 async function getSnapshot({ accountId, asOfMs = null, admin = null } = {}) {
-  const s = await snapshot({ accountId, asOfMs: asOfMs || Date.now(), admin });
+  const s = await snapshot({ accountId, asOfMs: asOfMs || A.now(), admin });
   /* the tool view is bounded: no ids the model could confuse for authority */
   return { schemaVersion: s.schemaVersion, accountId: s.accountId, asOf: s.asOf, navMinor: s.navMinor, settledCashMinor: s.settledCashMinor,
     reservedMinor: s.reservedMinor, investedMinor: s.investedMinor, currency: s.currency,

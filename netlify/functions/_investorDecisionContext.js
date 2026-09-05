@@ -39,7 +39,7 @@ async function freeze({ runId, context, admin = null }) {
     const old = await tx.get(ref);
     if (old.exists) return;
     chunks.forEach((text, i) => tx.set(col.doc(`${runId}_${i}`), { runId, index: i, text }));
-    tx.set(ref, { runId, contentHash, chunks: chunks.length, createdAtMs: Date.now(), schemaVersion: "decision-inputs.v1" });
+    tx.set(ref, { runId, contentHash, chunks: chunks.length, createdAtMs: A.now(), schemaVersion: "decision-inputs.v1" });
   });
   return read({ runId, admin: D });
 }
@@ -115,4 +115,4 @@ async function marketState({ cards = [], cutoffMs, deps = {} }) {
     creditAndRates: { available:observations.some(x=>["HYG","LQD","IEF","TLT"].includes(x.symbol) && x.priceMicros), basis:"ETF price proxies only: HYG/LQD credit appetite, IEF/TLT duration, GLD gold, UUP dollar; these are not observed credit spreads or policy rates.", directRatesAndSpreadsAvailable:false },
     interpretationRequired: "Distinguish broad risk appetite, sector leadership, company change, priced-in expectations and uncertainty. Explain the effect on entry, horizon, size or waiting. Incomplete breadth is not whole-market breadth." };
 }
-module.exports = { hash, moneyMicros, riskInputs, availableAt, unavailableCard, freeze, read, completedDaily, marketObservation, marketState };
+module.exports = { barTime, hash, moneyMicros, riskInputs, availableAt, unavailableCard, freeze, read, completedDaily, marketObservation, marketState };

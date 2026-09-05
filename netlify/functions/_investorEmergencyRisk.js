@@ -55,7 +55,7 @@ function cmp(op, value, threshold) {
 /* ── triggers (pure) ───────────────────────────────────────────────────── */
 /** Evaluate every trigger against the observed metrics with persistence.
  *  `persistence` maps triggerId → firstSeenAtMs from the previous tick. */
-function evaluateTriggers({ policy, metrics = {}, persistence = {}, nowMs = Date.now() } = {}) {
+function evaluateTriggers({ policy, metrics = {}, persistence = {}, nowMs = A.now() } = {}) {
   const triggers = (policy && policy.triggers) || [];
   const fired = [], pending = [], next = {};
   for (const t of triggers) {
@@ -83,7 +83,7 @@ function unitsToRemove({ excessMicros, markMicros }) {
   if (excessMicros <= 0n || markMicros <= 0n) return 0n;
   return M.divRound(excessMicros, markMicros, M.ROUNDING.CEIL);
 }
-function planActions({ fired = [], portfolio, policy, riskMandate = POLICY.RISK_MANDATE, ranks = null, marks = {}, advBySymbol = {}, nowMs = Date.now(), policyActive = true } = {}) {
+function planActions({ fired = [], portfolio, policy, riskMandate = POLICY.RISK_MANDATE, ranks = null, marks = {}, advBySymbol = {}, nowMs = A.now(), policyActive = true } = {}) {
   const PR = lazy("./_investorPortfolioRisk");
   const terms = orderTerms(policy);
   const actions = [];
@@ -145,7 +145,7 @@ function planActions({ fired = [], portfolio, policy, riskMandate = POLICY.RISK_
 }
 
 /* ── persistence ───────────────────────────────────────────────────────── */
-async function enforceBoundedPolicy({ accountId, observed = {}, portfolio, control = {}, ranks = null, marks = {}, advBySymbol = {}, admin = null, nowMs = Date.now() } = {}) {
+async function enforceBoundedPolicy({ accountId, observed = {}, portfolio, control = {}, ranks = null, marks = {}, advBySymbol = {}, admin = null, nowMs = A.now() } = {}) {
   const D = db(admin);
   const active = POLICY.activeEmergencyPolicy(control.emergencyRiskPolicy || null);
   const policy = active.policy;
@@ -172,7 +172,7 @@ async function enforceBoundedPolicy({ accountId, observed = {}, portfolio, contr
 }
 
 /* ── the EmergencyProtectionPlan for a thesis-less position (§8.7) ─────── */
-function emergencyProtectionPlan({ accountId, symbol, position, reason, creator = "SYSTEM_POLICY", hardLossCeilingBps = null, riskMandate = POLICY.RISK_MANDATE, version = 1, nowMs = Date.now(), reviewAfterMs = 5 * 86400000 } = {}) {
+function emergencyProtectionPlan({ accountId, symbol, position, reason, creator = "SYSTEM_POLICY", hardLossCeilingBps = null, riskMandate = POLICY.RISK_MANDATE, version = 1, nowMs = A.now(), reviewAfterMs = 5 * 86400000 } = {}) {
   const qty = big(position && position.quantityUnits);
   if (qty <= 0n) throw Object.assign(new Error("protection plan requires an owned quantity"), { code: "NOT_HELD" });
   const mark = big(position.markMicros);
@@ -190,8 +190,8 @@ function emergencyProtectionPlan({ accountId, symbol, position, reason, creator 
 async function persistProtectionPlan(plan, { admin = null } = {}) {
   const D = db(admin);
   await D.col(D.COL.emergencyPlans).doc(plan.planId).set({ ...plan, ...D.envelope({ created_by: "emergencyRisk.persistProtectionPlan" }) });
-  await D.col(D.COL.activeMandates).doc(`${plan.accountId}_${plan.symbol}`).set({ accountId: plan.accountId, symbol: plan.symbol, mandateSeriesId: `${plan.accountId}_${plan.symbol}`, status: "ACTION_REQUIRED", emergencyPlanId: plan.planId, lossBoundaryPriceMicros: plan.protectiveOrder.stopMicros, protectionState: "EMERGENCY_PLAN", updatedAtMs: Date.now() }, { merge: true });
-  try { await D.col(D.COL.alerts).doc(`emergency_plan_${plan.accountId}_${plan.symbol}`).set({ conditionId: `emergency_plan_${plan.accountId}_${plan.symbol}`, severity: "critical", kind: "ACTION_REQUIRED", accountId: plan.accountId, symbol: plan.symbol, reason: `emergency protection plan v${plan.version}: ${plan.reason}`, active: true, raisedAtMs: Date.now(), acknowledgedAtMs: null, resolvedAtMs: null }, { merge: true }); } catch {}
+  await D.col(D.COL.activeMandates).doc(`${plan.accountId}_${plan.symbol}`).set({ accountId: plan.accountId, symbol: plan.symbol, mandateSeriesId: `${plan.accountId}_${plan.symbol}`, status: "ACTION_REQUIRED", emergencyPlanId: plan.planId, lossBoundaryPriceMicros: plan.protectiveOrder.stopMicros, protectionState: "EMERGENCY_PLAN", updatedAtMs: A.now() }, { merge: true });
+  try { await D.col(D.COL.alerts).doc(`emergency_plan_${plan.accountId}_${plan.symbol}`).set({ conditionId: `emergency_plan_${plan.accountId}_${plan.symbol}`, severity: "critical", kind: "ACTION_REQUIRED", accountId: plan.accountId, symbol: plan.symbol, reason: `emergency protection plan v${plan.version}: ${plan.reason}`, active: true, raisedAtMs: A.now(), acknowledgedAtMs: null, resolvedAtMs: null }, { merge: true }); } catch {}
   return { persisted: true, planId: plan.planId };
 }
 

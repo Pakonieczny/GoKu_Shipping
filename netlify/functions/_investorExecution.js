@@ -70,7 +70,16 @@ function simulateLegOnBar({ leg, bar, participationBps = DEFAULT_PARTICIPATION_B
   if (halted) return none("halted_no_volume", { touch: false });
   const cap = participationCap(bar, participationBps);
   const qtyCapped = (q) => (cap > 0n ? (q < cap ? q : cap) : 0n);
-  const fillAt = (priceMicros, q, basis, touch = true, extra = {}) => ({ touch, fill: q > 0n ? { quantityUnits: q.toString(), priceMicros: priceMicros.toString(), basis } : null, reason: q > 0n ? basis : "participation_exhausted", triggered: true, ...extra });
+  const fillAt = (priceMicros, q, basis, touch = true, extra = {}) => {
+    const scope=A.currentScope();
+    if(scope && scope.executionSpreadBps) {
+      const halfSpread=priceMicros*BigInt(scope.executionSpreadBps)/20000n;
+      const adjusted=String(leg.side).toLowerCase()==="buy"?priceMicros+halfSpread:priceMicros-halfSpread;
+      if(String(leg.type).toUpperCase()==="LIMIT" && (String(leg.side).toLowerCase()==="buy"?adjusted>big(leg.priceMicros):adjusted<big(leg.priceMicros)))return none("spread_outside_limit");
+      priceMicros=adjusted;
+    }
+    return { touch, fill: q > 0n ? { quantityUnits: q.toString(), priceMicros: priceMicros.toString(), basis } : null, reason: q > 0n ? basis : "participation_exhausted", triggered: true, ...extra };
+  };
   const type = String(leg.type || "").toUpperCase();
   const side = String(leg.side || "").toLowerCase();
   if (leg.role === "ENTRY" && side === "buy" && type === "LIMIT") {
@@ -138,8 +147,8 @@ async function postJournal({ admin = null, accountId, kind, idParts, legs, meta 
     const acct = a.data();
     const balance = { ...(acct.balanceCents || {}) };
     for (const leg of legs) balance[leg.account] = (Number(balance[leg.account]) || 0) + Number(leg.amountCents);
-    tx.set(lref, { txnId: id, accountId, kind, legs, meta, engineVersion: ENGINE_VERSION, postedAtMs: Date.now(), ...D.envelope({ created_by: "execution.postJournal" }) });
-    tx.set(aref, { balanceCents: balance, balanceRevision: (Number(acct.balanceRevision) || 0) + 1, balanceUpdatedAtMs: Date.now() }, { merge: true });
+    tx.set(lref, { txnId: id, accountId, kind, legs, meta, engineVersion: ENGINE_VERSION, postedAtMs: A.now(), ...D.envelope({ created_by: "execution.postJournal" }) });
+    tx.set(aref, { balanceCents: balance, balanceRevision: (Number(acct.balanceRevision) || 0) + 1, balanceUpdatedAtMs: A.now() }, { merge: true });
     return { id, duplicate: false };
   });
 }
@@ -160,7 +169,8 @@ async function assertConservation(accountId, { admin = null } = {}) {
 function positionDocId(accountId, symbol) { return `${accountId}_${symbol}`; }
 async function readPosition(D, accountId, symbol) { const s = await D.col(D.COL.positions).doc(positionDocId(accountId, symbol)).get(); return s.exists ? s.data() : null; }
 /** Record one immutable fill and its consequences. Idempotent by fill id. */
-async function recordFill({ admin = null, accountId, orderSet, leg, fill, bar = null, provenance = null, feeMinor = "0", nowMs = Date.now(), source = "paper" } = {}) {
+async function recordFill({ admin = null, accountId, orderSet, leg, fill, bar = null, provenance = null, feeMinor = "0", nowMs = A.now(), source = "paper" } = {}) {
+  if(A.currentScope()?.feePerShareMicros) {feeMinor=((big(fill.quantityUnits)*BigInt(A.currentScope().feePerShareMicros)+9999n)/10000n).toString();source="historical_simulation";}
   const D = db(admin);
   const fillId = `fill_${sha([leg.legId, bar ? bar.t : fill.eventId || nowMs, fill.quantityUnits, fill.priceMicros].join("|")).slice(0, 32)}`;
   const fref = D.col(D.COL.fills).doc(fillId);
@@ -230,12 +240,12 @@ async function readOrderSet(D, orderSetId) {
   const legs = rows(await D.col(D.COL.orderLegs).where("orderSetId", "==", orderSetId).get()).map((l) => (l._codec && SC ? SC.decode(l) : l));
   return { ...os, legs };
 }
-async function setPointer(D, accountId, symbol, fields) { await D.col(D.COL.activeMandates).doc(`${accountId}_${symbol}`).set({ ...fields, updatedAtMs: Date.now() }, { merge: true }); }
+async function setPointer(D, accountId, symbol, fields) { await D.col(D.COL.activeMandates).doc(`${accountId}_${symbol}`).set({ ...fields, updatedAtMs: A.now() }, { merge: true }); }
 async function event(D, { accountId, symbol, mandateVersionId, kind, fields = {} }) {
   const pref = D.col(D.COL.activeMandates).doc(`${accountId}_${symbol}`);
   const p = await pref.get();
   const seq = (Number(p.exists ? p.data().eventSequence : 0) || 1) + 1;
-  await D.col(D.COL.mandateEvents).doc(`${mandateVersionId}_${String(seq).padStart(4, "0")}`).set({ mandateVersionId, mandateSeriesId: `${accountId}_${symbol}`, sequence: seq, accountId, symbol, kind, atMs: Date.now(), ...fields });
+  await D.col(D.COL.mandateEvents).doc(`${mandateVersionId}_${String(seq).padStart(4, "0")}`).set({ mandateVersionId, mandateSeriesId: `${accountId}_${symbol}`, sequence: seq, accountId, symbol, kind, atMs: A.now(), ...fields });
   await pref.set({ eventSequence: seq }, { merge: true });
 }
 async function releaseReservation(D, { accountId, reservationId, reason }) {
@@ -246,8 +256,8 @@ async function releaseReservation(D, { accountId, reservationId, reason }) {
     if (!r.exists || r.data().status !== "ACTIVE") return { released: false, reason: "not_active" };
     const res = r.data(), acct = a.exists ? a.data() : {};
     const sub = (k, v) => { const n = big(acct[k] || 0) - big(v || 0); return (n < 0n ? 0n : n).toString(); };
-    tx.set(rref, { status: "RELEASED", releasedAtMs: Date.now(), releaseReason: reason }, { merge: true });
-    tx.set(aref, { reservedNotionalMinor: sub("reservedNotionalMinor", res.reservedNotionalMinor), reservedPlannedLossMinor: sub("reservedPlannedLossMinor", res.plannedLossMinor), reservedStressLossMinor: sub("reservedStressLossMinor", res.stressLossMinor), version: (Number(acct.version) || 0) + 1, updatedAtMs: Date.now() }, { merge: true });
+    tx.set(rref, { status: "RELEASED", releasedAtMs: A.now(), releaseReason: reason }, { merge: true });
+    tx.set(aref, { reservedNotionalMinor: sub("reservedNotionalMinor", res.reservedNotionalMinor), reservedPlannedLossMinor: sub("reservedPlannedLossMinor", res.plannedLossMinor), reservedStressLossMinor: sub("reservedStressLossMinor", res.stressLossMinor), version: (Number(acct.version) || 0) + 1, updatedAtMs: A.now() }, { merge: true });
     return { released: true };
   });
 }
@@ -259,13 +269,13 @@ async function claimTransition(D, t, worker) {
     const cur = await tx.get(ref);
     if (!cur.exists) return false;
     const d = cur.data();
-    if (d.status !== "PENDING" && !(d.status === "CLAIMED" && Number(d.claimedAtMs) < Date.now() - 10 * 60000)) return false;
-    tx.set(ref, { status: "CLAIMED", claimedBy: worker, claimedAtMs: Date.now(), attempts: (Number(d.attempts) || 0) + 1 }, { merge: true });
+    if (d.status !== "PENDING" && !(d.status === "CLAIMED" && Number(d.claimedAtMs) < A.now() - 10 * 60000)) return false;
+    tx.set(ref, { status: "CLAIMED", claimedBy: worker, claimedAtMs: A.now(), attempts: (Number(d.attempts) || 0) + 1 }, { merge: true });
     return true;
   });
 }
-async function finishTransition(D, t, status, fields = {}) { await D.col(D.COL.executionOutbox).doc(t.transitionId).set({ status, finishedAtMs: Date.now(), ...fields }, { merge: true }); }
-async function applyTransition({ admin = null, adapter, transition: t, control = {}, nowMs = Date.now(), worker = "executor" } = {}) {
+async function finishTransition(D, t, status, fields = {}) { await D.col(D.COL.executionOutbox).doc(t.transitionId).set({ status, finishedAtMs: A.now(), ...fields }, { merge: true }); }
+async function applyTransition({ admin = null, adapter, transition: t, control = {}, nowMs = A.now(), worker = "executor" } = {}) {
   const D = db(admin);
   const B = lazy("./_investorBroker");
   if (!(await claimTransition(D, t, worker))) return { transitionId: t.transitionId, skipped: true };
@@ -395,7 +405,7 @@ async function addsExposure(D, t) {
   const os = await readOrderSet(D, t.orderSetId);
   return !!(os && (os.legs || []).some((l) => l.role === "ENTRY" && String(l.side).toLowerCase() === "buy" && !["FILLED", "CANCELLED", "EXPIRED"].includes(l.status)));
 }
-async function applyOutbox({ admin = null, adapter, accountId, control = {}, nowMs = Date.now(), limit = 20, allowExpansion = true } = {}) {
+async function applyOutbox({ admin = null, adapter, accountId, control = {}, nowMs = A.now(), limit = 20, allowExpansion = true } = {}) {
   const D = db(admin);
   const pending = rows(await D.col(D.COL.executionOutbox).where("status", "==", "PENDING").get()).filter((t) => !accountId || t.accountId === accountId)
     .sort((a, b) => (a.authority === "EMERGENCY_RISK" ? -1 : 0) - (b.authority === "EMERGENCY_RISK" ? -1 : 0) || Number(a.createdAtMs) - Number(b.createdAtMs)).slice(0, limit);
@@ -413,7 +423,7 @@ async function applyOutbox({ admin = null, adapter, accountId, control = {}, now
 }
 
 /* ── paper fills over stored bars ──────────────────────────────────────── */
-async function simulatePaperFills({ admin = null, adapter, accountId, barsBySymbol = {}, nowMs = Date.now(), provenanceBySymbol = {} } = {}) {
+async function simulatePaperFills({ admin = null, adapter, accountId, barsBySymbol = {}, nowMs = A.now(), provenanceBySymbol = {} } = {}) {
   const D = db(admin);
   const legs = rows(await D.col(D.COL.orderLegs).where("accountId", "==", accountId).get()).filter((l) => ["WORKING", "ARMED", "PARTIALLY_FILLED"].includes(l.status));
   const bySet = new Map();
@@ -507,7 +517,7 @@ async function simulatePaperFills({ admin = null, adapter, accountId, barsBySymb
 }
 
 /* ── the per-tick loop (§8.6) ──────────────────────────────────────────── */
-async function tick({ admin = null, adapter, accountId, control = {}, barsBySymbol = {}, nowMs = Date.now(), metrics = {}, ranks = null } = {}) {
+async function tick({ admin = null, adapter, accountId, control = {}, barsBySymbol = {}, nowMs = A.now(), metrics = {}, ranks = null } = {}) {
   const D = db(admin);
   const R = lazy("./_investorRisk"), ER = lazy("./_investorEmergencyRisk"), MD = lazy("./_investorMandate"), DOSSIER = lazy("./_investorDossier"), P = lazy("./_investorPortfolio");
   const summary = { accountId, nowMs, expired: [], paused: [], operational: null, emergency: null, outbox: null, fills: null, conservation: null };

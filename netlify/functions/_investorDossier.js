@@ -310,7 +310,7 @@ const FRESHNESS_WINDOWS_S = Object.freeze({
   source: 36 * 3600, dossier: 36 * 3600, managerReview: 2 * 86400, mandate: 5 * 86400, marketMark: 26 * 3600,
 });
 /** PURE. Each dimension carries its own as-of, age and window. */
-function freshnessMatrix(pointer = {}, { nowMs = Date.now(), windows = FRESHNESS_WINDOWS_S } = {}) {
+function freshnessMatrix(pointer = {}, { nowMs = A.now(), windows = FRESHNESS_WINDOWS_S } = {}) {
   const dim = (key, asOfMs) => {
     const at = Number(asOfMs);
     const known = Number.isFinite(at) && at > 0;
@@ -423,7 +423,7 @@ async function versionAsOf(symbol, { cutoffMs, admin = null, pointer = null } = 
   return null;
 }
 /** Append a version only when the facts hash changed; the pointer stays small. */
-async function persistVersion(version, { admin = null, sourceAtMs = null, nowMs = Date.now() } = {}) {
+async function persistVersion(version, { admin = null, sourceAtMs = null, nowMs = A.now() } = {}) {
   const D = db(admin);
   const SC = require("./_investorStorageCodec");
   const pointerRef = D.col(D.COL.dossiers).doc(version.symbol);
@@ -431,7 +431,7 @@ async function persistVersion(version, { admin = null, sourceAtMs = null, nowMs 
     const cur = await tx.get(pointerRef);
     const pointer = cur.exists ? cur.data() : {};
     if (pointer.contentHash === version.contentHash) {
-      tx.set(pointerRef, { asOfMs: version.asOfMs, lastCheckedAtMs: Date.now(), lastSourceAtMs: sourceAtMs || pointer.lastSourceAtMs || null,
+      tx.set(pointerRef, { asOfMs: version.asOfMs, lastCheckedAtMs: A.now(), lastSourceAtMs: sourceAtMs || pointer.lastSourceAtMs || null,
         unchangedRuns: (Number(pointer.unchangedRuns) || 0) + 1 }, { merge: true });
       return { appended: false, versionId: pointer.currentVersionId, version: pointer.version, contentHash: pointer.contentHash };
     }
@@ -446,7 +446,7 @@ async function persistVersion(version, { admin = null, sourceAtMs = null, nowMs 
       version: next.version, contentHash: next.contentHash, asOfMs: next.asOfMs, builderVersion: BUILDER_VERSION,
       sector: next.identity.sector, block: next.sectorBlock.block, cik: next.identity.cik,
       dataQuality: next.dataQuality, lastSourceAtMs: sourceAtMs || pointer.lastSourceAtMs || null,
-      lastCheckedAtMs: Date.now(), unchangedRuns: 0, updatedAtMs: Date.now(),
+      lastCheckedAtMs: A.now(), unchangedRuns: 0, updatedAtMs: A.now(),
       pendingDeltaCount: Number(pointer.pendingDeltaCount) || 0, recentDeltaIds: pointer.recentDeltaIds || [],
       lastManagerReviewAtMs: pointer.lastManagerReviewAtMs || null, lastMandateAtMs: pointer.lastMandateAtMs || null,
       lastMarketMarkAtMs: pointer.lastMarketMarkAtMs || null, standingView: pointer.standingView || null,
@@ -468,14 +468,14 @@ async function recordRoutineDelta(match, { admin = null } = {}) {
     const p = cur.exists ? cur.data() : {};
     const recent = [...(p.recentDeltaIds || []).filter((id) => id !== match.deltaId), match.deltaId].slice(-12);
     tx.set(ref, { symbol: String(match.symbol).toUpperCase(), pendingDeltaCount: (Number(p.pendingDeltaCount) || 0) + 1,
-      recentDeltaIds: recent, lastDeltaAtMs: Number(match.firstSeenAt) || Date.now(), lastDeltaEventClass: match.eventClass || null,
-      lastDeltaSafetyClass: match.safetyClass || null, lastSourceAtMs: Number(match.firstSeenAt) || Date.now(), updatedAtMs: Date.now() }, { merge: true });
+      recentDeltaIds: recent, lastDeltaAtMs: Number(match.firstSeenAt) || A.now(), lastDeltaEventClass: match.eventClass || null,
+      lastDeltaSafetyClass: match.safetyClass || null, lastSourceAtMs: Number(match.firstSeenAt) || A.now(), updatedAtMs: A.now() }, { merge: true });
   });
   return { recorded: true, deltaId: match.deltaId };
 }
 
 /** Deltas still awaiting the manager's materiality call, visible at the cutoff. */
-async function pendingChanges(symbol, { cutoffMs = Date.now(), admin = null, limit = 50 } = {}) {
+async function pendingChanges(symbol, { cutoffMs = A.now(), admin = null, limit = 50 } = {}) {
   const D = db(admin);
   const snap = await D.col(D.COL.evidenceDeltas).where("symbol", "==", String(symbol).toUpperCase()).where("managerMateriality", "==", "pending").get();
   const rows = [];
@@ -492,7 +492,7 @@ async function markDeltasReviewed({ symbol, deltaIds = [], managerRunId, materia
     const refs = [...new Set(deltaIds)].map(id=>D.col(D.COL.evidenceDeltas).doc(id));
     const snapshots = await Promise.all(refs.map(ref=>tx.get(ref)));
     const pending = snapshots.map((snap,i)=>({snap,ref:refs[i]})).filter(x=>x.snap.exists && x.snap.data().symbol===String(symbol).toUpperCase() && x.snap.data().managerMateriality==='pending');
-    const nowMs=Date.now();
+    const nowMs=A.now();
     for(const {ref} of pending) tx.set(ref,{managerMateriality:materiality,reviewedAtMs:nowMs,reviewedByRunId:managerRunId || null},{merge:true});
     if(pending.length) tx.set(pointer,{pendingDeltaCount:Math.max(0,Number(current.exists && current.data().pendingDeltaCount || 0)-pending.length),lastManagerReviewAtMs:nowMs},{merge:true});
     return {reviewed:pending.length};
@@ -501,7 +501,7 @@ async function markDeltasReviewed({ symbol, deltaIds = [], managerRunId, materia
 
 /* ── building from live state ──────────────────────────────────────────── */
 /** Read everything the facts layer needs, at the cutoff, and compose. */
-async function buildBaseline({ symbol, rosterRow = null, asOfMs = Date.now(), admin = null, deps = {} } = {}) {
+async function buildBaseline({ symbol, rosterRow = null, asOfMs = A.now(), admin = null, deps = {} } = {}) {
   const sym = String(symbol || "").toUpperCase();
   const E = deps.evidence || require("./_investorEvidence");
   const F = deps.fundamentals || require("./_investorFundamentals");
@@ -546,7 +546,7 @@ async function marketInputs(symbol, sector, { cutoffMs, deps = {} } = {}) {
  *  dossier are reported, never silently dropped (the coverage gate needs
  *  to see them). */
 async function compactCards({ symbols = [], cutoff, admin = null, deps = {}, portfolioBySymbol = {}, standingViews = {} } = {}) {
-  const cutoffMs = Number(cutoff && cutoff.cutoffMs != null ? cutoff.cutoffMs : cutoff) || Date.now();
+  const cutoffMs = Number(cutoff && cutoff.cutoffMs != null ? cutoff.cutoffMs : cutoff) || A.now();
   const cards = [], missing = [];
   const marketCache = new Map();
   for (const symbol of symbols) {
@@ -570,7 +570,7 @@ async function compactCards({ symbols = [], cutoff, admin = null, deps = {}, por
 /** Holding packets: the card plus the full typed delta since the last
  *  research memo's dossier version and every pending change (§6.7). */
 async function expandedHoldingDeltas({ symbols = [], cutoff, admin = null, deps = {}, portfolioBySymbol = {}, memoBySymbol = {} } = {}) {
-  const cutoffMs = Number(cutoff && cutoff.cutoffMs != null ? cutoff.cutoffMs : cutoff) || Date.now();
+  const cutoffMs = Number(cutoff && cutoff.cutoffMs != null ? cutoff.cutoffMs : cutoff) || A.now();
   const packets = [], missing = [];
   for (const symbol of symbols) {
     const sym = String(symbol).toUpperCase();
@@ -602,7 +602,7 @@ async function expandedHoldingDeltas({ symbols = [], cutoff, admin = null, deps 
 }
 
 /* ── health ────────────────────────────────────────────────────────────── */
-async function dossierHealth({ symbols = [], admin = null, nowMs = Date.now() } = {}) {
+async function dossierHealth({ symbols = [], admin = null, nowMs = A.now() } = {}) {
   /* pointer reads only: no market reads, so this is cheap for a full roster */
   const out = { total: symbols.length, present: 0, missing: [], stale: [], complete: 0, pendingDeltas: 0, oldestAsOfMs: null };
   for (const s of symbols) {

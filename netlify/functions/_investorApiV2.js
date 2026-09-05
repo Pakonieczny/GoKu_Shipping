@@ -1012,6 +1012,8 @@ function checkVersion(expected, actual) { if (expected != null && String(expecte
 async function pointerEvent(D, p, kind, fields) { const MD = require("./_investorMandate"); try { await MD.appendEvent(D, p, kind, fields); } catch {} }
 
 const MUTATIONS = {
+  simulationStart:async(params,ctx,env)=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).createBatch(params,ctx.actorId,env.idempotencyKey)}),
+  simulationControl:async(params,ctx)=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).control(params,ctx.actorId)}),
   /* ── manager and global controls ─────────────────────────────────────── */
   async pauseManager(params, ctx, env) {
     const out = await transitionControl(ctx.admin, { expectedVersion: env.expectedResourceVersion, patch: { managerState: "PAUSED", managerPauseReason: env.auditReason || null, managerPausedAtMs: ctx.nowMs }, requested: { managerRequested: { requested: "PAUSED", applied: "PAUSED" } }, action: "pauseManager", actorId: ctx.actorId, reason: env.auditReason, nowMs: ctx.nowMs, correlationId: ctx.correlationId, mutationId: ctx.mutationId });
@@ -1473,7 +1475,9 @@ const MUTATIONS = {
 };
 
 /* ═══ DISPATCH ════════════════════════════════════════════════════════════ */
-const READS = { managerDashboard: readManagerDashboard, controlState: readControlState, companies: readCompanies, companyDossier: readCompanyDossier, portfolio: readPortfolio, mandates: readMandates, orderSets: readOrderSets, executionEvents: readExecutionEvents,
+const READS = {
+  simulationOverview:async({params,ctx})=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).overview({...params,owner:ctx.actorId})}),
+  simulationDetail:async({params,ctx})=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).detail(params.runId,ctx.actorId,params)}), managerDashboard: readManagerDashboard, controlState: readControlState, companies: readCompanies, companyDossier: readCompanyDossier, portfolio: readPortfolio, mandates: readMandates, orderSets: readOrderSets, executionEvents: readExecutionEvents,
   managerRuns: readManagerRuns, jobs: readJobs, decisionJournal: readDecisionJournal, decisionAnalytics: readDecisionAnalytics, performance: readPerformance, materialEvents: readMaterialEvents, corporateActions: readCorporateActions, systemHealth: readSystemHealth,
   universe: readUniverse, sources: readSources, soakStatus: readSoakStatus, auditExports: readAuditExports, alerts: readAlerts, account: readAccount, quotes: readQuotes, intraday: readIntraday, history: readHistory, navSeries: readNavSeries, ledger: readLedger };
 for (const a of S.READ_ACTIONS) if (!READS[a]) throw new Error(`v2 read ${a} declared in the contract has no handler`);
@@ -1511,7 +1515,7 @@ async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), au
     }
   }
   /* mutation: attestation first, then the idempotency claim before any side effect */
-  if (!attestationOk(ctrl) && action !== "freezeBuys" && action !== "emergencyStop" && action !== "acknowledgeAlert" && action !== "pauseManager") {
+  if (!attestationOk(ctrl) && !(action === "simulationControl" && params.command === "pause") && action !== "freezeBuys" && action !== "emergencyStop" && action !== "acknowledgeAlert" && action !== "pauseManager") {
     return { statusCode: 503, body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape("ATTESTATION_FAILED", "the deployed build's fixtures are not attested; only freezeBuys, emergencyStop, pauseManager and acknowledgeAlert are accepted", { correlationId }) }) };
   }
   const env = { idempotencyKey: body.idempotencyKey, auditReason: body.auditReason || null, expectedResourceVersion: body.expectedResourceVersion, expectedAbsent: body.expectedAbsent, previewToken: body.previewToken };

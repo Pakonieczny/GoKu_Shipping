@@ -54,7 +54,7 @@ function typed(code, message, extra = {}) { return Object.assign(new Error(messa
 /** PURE. The decision cutoff: evidence known by this instant is in; later
  *  evidence waits for an event revision or the next meeting. Inclusion uses
  *  publication time when reliable, else the immutable first-seen time. */
-function freezeDecisionCutoff({ runStartedAtMs, tradingDate, inclusionRule = "published_and_observed_by_cutoff", nowMs = Date.now() } = {}) {
+function freezeDecisionCutoff({ runStartedAtMs, tradingDate, inclusionRule = "published_and_observed_by_cutoff", nowMs = A.now() } = {}) {
   const M = lazy("./_investorMarket");
   const freezeMs = M && tradingDate ? M.nyWallClockToUtcMs(tradingDate, POLICY.CUTOFFS_ET.evidenceFreezeMin) : null;
   const started = Number(runStartedAtMs) || nowMs;
@@ -119,7 +119,7 @@ function antiGoalpostViolations(mandate, prior) {
   return v;
 }
 /** PURE. The RISK_MAINTENANCE change-set from Sol's holding analyses. */
-function buildRiskMaintenancePlan({ holdingAnalysis = [], holdings = [], priorMandateBySymbol = {}, hardDeadlineMs = null, nowMs = Date.now(), tradingDate = null } = {}) {
+function buildRiskMaintenancePlan({ holdingAnalysis = [], holdings = [], priorMandateBySymbol = {}, hardDeadlineMs = null, nowMs = A.now(), tradingDate = null } = {}) {
   const heldSymbols = holdings.map((h) => String(h.symbol).toUpperCase());
   const byHeld = new Map();
   const duplicates = [];
@@ -258,7 +258,7 @@ async function persistDecisionRows({ managerRunId, tradingDate, accountId, decis
       capitalRank: d.capitalRank, fundingState: d.fundingState, reviewDirective: d.reviewDirective, provisionalDisposition: d.provisionalDisposition,
       changedSincePrior: d.changedSincePrior, held: d.held, eligible: d.eligible, offRoster: d.offRoster, source: d.source,
       mandateProposalHash: d.mandate ? sha(d.mandate) : null, researchMemoId: d.researchMemoId || null,
-      tradingDate, accountId, asOfMs: cutoffMs || Date.now(), contextManifestHash, maintenancePortfolioPlanId, expansionPortfolioPlanId, createdAtMs: Date.now(),
+      tradingDate, accountId, asOfMs: cutoffMs || A.now(), contextManifestHash, maintenancePortfolioPlanId, expansionPortfolioPlanId, createdAtMs: A.now(),
       ...D.envelope({ created_by: "manager.persistDecisionRows" }) };
     let doc = row;
     if (SC) { try { doc = SC.encode(row); } catch (e) { throw typed("DECISION_CODEC_REJECTED", e.message); } }
@@ -268,8 +268,8 @@ async function persistDecisionRows({ managerRunId, tradingDate, accountId, decis
   }
   /* the dossier pointers learn the manager review by pointer only */
   for (const d of decisions) {
-    try { await D.col(D.COL.dossiers).doc(d.symbol).set({ managerDecisionId: `${managerRunId}_${d.symbol}`, lastManagerReviewAtMs: Date.now(),
-      standingView: { status: d.decision, decision: d.decision, reasonCode: d.reasonCode, managerRunId, asOfMs: Date.now(), researchVersion: null } }, { merge: true }); } catch {}
+    try { await D.col(D.COL.dossiers).doc(d.symbol).set({ managerDecisionId: `${managerRunId}_${d.symbol}`, lastManagerReviewAtMs: A.now(),
+      standingView: { status: d.decision, decision: d.decision, reasonCode: d.reasonCode, managerRunId, asOfMs: A.now(), researchVersion: null } }, { merge: true }); } catch {}
   }
   return { written, ids: decisions.map((d) => `${managerRunId}_${d.symbol}`) };
 }
@@ -279,7 +279,7 @@ async function writeRun({ managerRunId, admin = null, ...fields }) {
   const ref = D.col(D.COL.managerRuns).doc(managerRunId);
   const cur = await ref.get();
   const prior = cur.exists ? (cur.data()._codec && SC ? SC.decode(cur.data()) : cur.data()) : {};
-  const row = { ...prior, schemaVersion: RUN_SCHEMA, managerRunId, updatedAtMs: Date.now(), ...fields, ...D.envelope({ created_by: "manager.writeRun" }) };
+  const row = { ...prior, schemaVersion: RUN_SCHEMA, managerRunId, updatedAtMs: A.now(), ...fields, ...D.envelope({ created_by: "manager.writeRun" }) };
   let doc = row;
   if (SC) { try { doc = SC.encode(row); } catch (e) { throw typed("RUN_CODEC_REJECTED", e.message); } }
   await ref.set(doc);
@@ -300,7 +300,7 @@ function defaultDeps(admin = null) {
     admin, gateway: lazy("./_investorOpenai"), dossier: lazy("./_investorDossier"), universe: lazy("./_investorUniverse"),
     portfolio: lazy("./_investorPortfolio"), research: lazy("./_investorResearch"), claimVerifier: lazy("./_investorClaimVerifier"),
     mandate: lazy("./_investorMandate"), portfolioRisk: lazy("./_investorPortfolioRisk"), tools: lazy("./_investorResearchTools"),
-    workset: lazy("./_investorWorkset"), contentStore: lazy("./_investorContentStore"), market: lazy("./_investorMarket"), now: Date.now,
+    workset: lazy("./_investorWorkset"), contentStore: lazy("./_investorContentStore"), market: lazy("./_investorMarket"), now: A.now,
   };
 }
 /* ── liquidity marks for the size authority (§15.1): ADV measured from the
@@ -308,7 +308,7 @@ function defaultDeps(admin = null) {
    the spread is the policy's labelled paper assumption until a quote feed
    exists. A symbol without 10 priced sessions gets advMinor null, which
    the risk service refuses as ADV_UNKNOWN — never a silent default. ── */
-async function liquidityMarks(symbols, deps, { policy = null, cutoffMs = Date.now() } = {}) {
+async function liquidityMarks(symbols, deps, { policy = null, cutoffMs = A.now() } = {}) {
   const H = deps.history || lazy("./_investorHistory");
   const liq = (policy && policy.riskMandate && policy.riskMandate.liquidity) || POLICY.RISK_MANDATE.liquidity;
   const spreadBps = String(liq.paperAssumedSpreadBps || "10");
@@ -352,6 +352,8 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
   }
 
   while (stage !== "complete") {
+    if (deps.checkpoint) await deps.checkpoint({stage,data:st});
+    if (deps.shouldYield && await deps.shouldYield()) return yieldNow("simulation_paused");
     if (budget() < minStageMs) return yieldNow("segment_budget");
     // Publish the actual stage before a long/background model request begins.
     if (stage !== "freeze") await record({ startedAtMs: st.startedAtMs });
@@ -602,7 +604,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
 async function rebuildContext(st, deps, accountId) {
   return C.read({runId:st.managerRunId,admin:deps.admin});
 }
-async function stageHoldingAnalyses({ analyses, holdings, accountId, cutoff, policy, managerRunId, deps, nowMs = Date.now() }) {
+async function stageHoldingAnalyses({ analyses, holdings, accountId, cutoff, policy, managerRunId, deps, nowMs = A.now() }) {
   const portfolio = await deps.portfolio.snapshot({accountId,admin:deps.admin,asOfMs:nowMs});
   const priorMandateBySymbol = Object.fromEntries(portfolio.activeMandates.map(m=>[m.symbol,m]));
   const plan = buildRiskMaintenancePlan({holdingAnalysis:analyses,holdings:holdings.map(symbol=>({symbol})),priorMandateBySymbol,nowMs});
@@ -671,9 +673,11 @@ async function runEventRevision({ claim, deps: partial = {}, control = null } = 
   const evidenceDelta = {...packet.delta,claims:packet.claims,pendingChanges:packet.pendingChanges,marketState:packet.marketState,marketObservation:packet.marketObservation,learning:packet.learning};
   if (state.kind === "UNFILLED_ENTRY" || state.kind === "PARTIALLY_FILLED_ENTRY") {
     const r = await deps.gateway.reviseEntry({ baseline: { symbol, ...baseline }, delta: evidenceDelta, state: { kind: state.kind, ownedQuantityUnits: state.ownedQuantityUnits, remainingEntryUnits: state.remainingEntryUnits, entries: state.entries }, portfolio });
+    if (r.pending) return {pending:true};
     assessment = r.ok ? { ...r.revision, ok: true } : { ok: false, symbol, decision: "ABSTAIN", reasonCode: "MODEL_FAILURE", entryRevision: "KEEP", error: r.error };
   } else {
     const r = await deps.gateway.reviseHolding({ baseline: { symbol, ...baseline }, delta: evidenceDelta, position: state.position, mandate: state.appliedMandate });
+    if (r.pending) return {pending:true};
     assessment = r.ok ? { ...r.revision, ok: true } : { ok: false, symbol, decision: "ABSTAIN", reasonCode: "MODEL_FAILURE", researchDirective: "NONE", error: r.error };
   }
   let expanded = null;

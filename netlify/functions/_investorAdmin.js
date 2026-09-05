@@ -35,6 +35,15 @@
 
 const { Firestore, FieldValue, Timestamp } = require("@google-cloud/firestore");
 
+const { AsyncLocalStorage } = require("async_hooks");
+const simulationScope = new AsyncLocalStorage();
+function currentScope() { return simulationScope.getStore() || null; }
+function withSimulationScope(scope, fn) {
+  if (!scope || !/^sim_[a-f0-9]{24}$/.test(scope.runId) || typeof scope.collection !== "function") throw new Error("Invalid simulation scope");
+  return simulationScope.run(scope, fn);
+}
+function now() { const s=currentScope(); return s && s.clock ? s.clock() : Date.now(); }
+
 const COL_PREFIX = "InvestorAI_";
 
 /* ── credential (same three vars the rest of the deployment already uses) ── */
@@ -153,7 +162,8 @@ function col(name) {
   if (n.includes("/")) {
     throw new Error(`_investorAdmin.col: refused path with separator "${n}" — use col(root).doc(id).collection(sub)`);
   }
-  return rawDb().collection(n);
+  const scope = currentScope();
+  return scope ? scope.collection(n) : rawDb().collection(n);
 }
 
 /** Firestore doc by "InvestorAI_Xxx/docId" path. */
@@ -166,12 +176,14 @@ function doc(path) {
   if (parts.length % 2 !== 0) {
     throw new Error(`_investorAdmin.doc: "${p}" is a collection path, not a document path`);
   }
+  const scope = currentScope();
+  if (scope) { let ref=col(parts[0]).doc(parts[1]); for(let i=2;i<parts.length;i+=2) ref=ref.collection(parts[i]).doc(parts[i+1]); return ref; }
   return rawDb().doc(p);
 }
 
 /** Firestore transaction — callers still use col()/doc() for refs. */
-function runTransaction(fn) { return rawDb().runTransaction(fn); }
-function batch() { return rawDb().batch(); }
+function runTransaction(fn) { const s=currentScope(); return s && s.transaction ? s.transaction(fn) : rawDb().runTransaction(fn); }
+function batch() { const s=currentScope(); return s && s.batch ? s.batch() : rawDb().batch(); }
 
 /* ── canonical collection names ────────────────────────────────────────── */
 const COL = {
@@ -327,6 +339,7 @@ function envelope(extra = {}) {
 }
 
 module.exports = {
+  currentScope, withSimulationScope, now,
   firestoreSafe, installNestedArrayGuard, rawDb,
   FV, TS, col, doc, runTransaction, batch,
   COL, COL_PREFIX,
