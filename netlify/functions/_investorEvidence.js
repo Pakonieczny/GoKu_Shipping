@@ -36,6 +36,7 @@
 "use strict";
 
 const A = require("./_investorAdmin");
+const crypto = require("crypto");
 const { fetchPublic, normalizedHash } = require("./_investorFetch");
 const S = require("./_investorSignal");
 const { visibleText } = require("./_investorVisibleText");
@@ -252,8 +253,10 @@ async function recordVersion({ symbol, sourceId, entry, rawSha256, body = "", bo
   const dref = A.col(A.COL.documents).doc(docId);
   const contentHash = bodySha256 || rawSha256 || normalizedHash(body || entry.summary || entry.title).hash;
   const versionId = `${docId}_${contentHash.slice(0, 24)}`, vref = A.col(A.COL.versions).doc(versionId);
+  let created = false;
   await A.runTransaction(async (tx) => {
     const [d, v] = await Promise.all([tx.get(dref), tx.get(vref)]);
+    created = !v.exists;
     if (!d.exists) tx.set(dref, {
       documentId: docId, symbol, sourceId, title: entry.title, form: entry.form,
       link: entry.link, accession: entry.accession, summary: entry.summary || null,
@@ -279,13 +282,146 @@ async function recordVersion({ symbol, sourceId, entry, rawSha256, body = "", bo
       ...A.envelope({ created_by: "evidence.recordVersion" }),
     });
   });
-  return { documentId: docId, versionId, contentHash };
+  return { documentId: docId, versionId, contentHash, created };
+}
+
+/* ── CLAIMS (blueprint §5.3, §5.6) ───────────────────────────────────────
+ * A claim is a source-bound fact extracted by Luna from a document version:
+ * type, text, verbatim quote, and for guidance the metric, period and
+ * bounds; for an earnings date the date and whether the issuer confirmed
+ * it. Claims are versioned like any other fact: a later guidance release
+ * SUPERSEDES an earlier one for the same metric and period, and a withdrawn
+ * or reaffirmed guide is itself an event. Nothing here interprets a claim;
+ * the compact card shows Sol the claim and its citation, or its absence. */
+const CLAIM_TYPES = Object.freeze(["FACT", "GUIDANCE", "EARNINGS_DATE", "MANAGEMENT_CHANGE", "RISK_FACTOR", "CATALYST", "CONTRADICTION"]);
+function claimKey(value) {
+  return String(value || "").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
+}
+function claimIdFor({ symbol, documentVersionId, claimType, quote }) {
+  return "claim_" + crypto.createHash("sha256")
+    .update(`${String(symbol).toUpperCase()}|${documentVersionId}|${claimType}|${claimKey(quote)}`).digest("hex").slice(0, 40);
+}
+function canonicalInt(v) { return typeof v === "string" && /^-?(0|[1-9][0-9]*)$/.test(v) ? v : null; }
+/** Persist extracted claims for one document version. Idempotent by claim
+ *  id; guidance supersession is linked within the symbol's stored claims. */
+async function recordClaims({ symbol, documentId, documentVersionId, sourceId, claims = [], extractedBy = null,
+  publishedAtMs = null, firstSeenAtMs = Date.now(), nowMs = Date.now(), admin = null }) {
+  const DB = admin || A;
+  const sym = String(symbol || "").toUpperCase();
+  if (!sym || !documentVersionId) throw Object.assign(new Error("recordClaims: symbol and documentVersionId required"), { code: "CLAIM_IDENTITY_REQUIRED" });
+  const written = [], skipped = [], superseded = [];
+  const existingGuidance = claims.some((c) => c && c.claimType === "GUIDANCE")
+    ? await claimsForCompany(sym, { asOfMs: Number.MAX_SAFE_INTEGER, claimTypes: ["GUIDANCE"], admin: DB }) : [];
+  for (const c of claims) {
+    if (!c || !CLAIM_TYPES.includes(c.claimType) || !c.quote || claimKey(c.quote).length < 12) { skipped.push({ reason: "invalid_claim", claimType: c && c.claimType }); continue; }
+    const claimId = claimIdFor({ symbol: sym, documentVersionId, claimType: c.claimType, quote: c.quote });
+    const ref = DB.col(DB.COL.claims).doc(claimId);
+    const row = {
+      kind: "claim", claimId, symbol: sym, documentId: documentId || null, documentVersionId, sourceId: sourceId || null,
+      claimType: c.claimType, text: String(c.text || "").slice(0, 400), quote: String(c.quote).slice(0, 600),
+      metric: c.metric ? String(c.metric).slice(0, 60) : null, periodLabel: c.periodLabel || c.effectivePeriod || null,
+      normalizedLowMicros: require("./_investorDecisionContext").moneyMicros(c.lowValue, c.unit), normalizedHighMicros: require("./_investorDecisionContext").moneyMicros(c.highValue, c.unit),
+      lowValue: canonicalInt(c.lowValue), highValue: canonicalInt(c.highValue), unit: c.unit ? String(c.unit).slice(0, 24) : null,
+      date: c.date && /^\d{4}-\d{2}-\d{2}$/.test(c.date) ? c.date : null,
+      confirmed: c.confirmed === true, sourceClass: c.sourceClass || null,
+      publishedAtMs: Number.isFinite(Number(publishedAtMs)) ? Number(publishedAtMs) : null,
+      firstSeenAtMs: Number(firstSeenAtMs) || Date.now(),
+      knownAtMs:nowMs, extractedBy: extractedBy || null, supersedes: null, supersededBy: null,
+      ...DB.envelope({ created_by: "evidence.recordClaims" }),
+    };
+    /* Guidance versioning: the newest statement for a metric and period
+       supersedes the older one; both remain readable. */
+    if (row.claimType === "GUIDANCE" && row.metric && row.periodLabel) {
+      const prior = existingGuidance.filter((g) => g.claimId !== claimId && g.metric === row.metric
+        && g.periodLabel === row.periodLabel && !g.supersededBy
+        && (Number(g.publishedAtMs ?? g.firstSeenAtMs) || 0) <= (Number(row.publishedAtMs ?? row.firstSeenAtMs) || 0))
+        .sort((a, b) => (Number(b.publishedAtMs ?? b.firstSeenAtMs) || 0) - (Number(a.publishedAtMs ?? a.firstSeenAtMs) || 0))[0];
+      if (prior) {
+        row.supersedes = prior.claimId;
+        await DB.col(DB.COL.claims).doc(prior.claimId).set({ supersededBy: claimId, supersededAtMs: nowMs }, { merge: true });
+        superseded.push({ claimId: prior.claimId, by: claimId });
+      }
+    }
+    const outcome = await DB.runTransaction(async (tx) => {
+      const cur = await tx.get(ref);
+      if (cur.exists) return "exists";
+      tx.set(ref, row);
+      return "written";
+    });
+    if (outcome === "written") written.push(claimId); else skipped.push({ claimId, reason: "exists" });
+  }
+  return { symbol: sym, written, skipped, superseded };
+}
+/** Point-in-time claims: a claim is known from its publication time when
+ *  stated, else from first-seen; never earlier. */
+async function claimsForCompany(symbol, { asOfMs = Date.now(), claimTypes = null, limit = 400, admin = null } = {}) {
+  const DB = admin || A;
+  const sym = String(symbol || "").toUpperCase();
+  const snap = await DB.col(DB.COL.claims).where("kind", "==", "claim").where("symbol", "==", sym).get();
+  const rows = [];
+  snap.forEach((d) => {
+    const c = d.data();
+    if (claimTypes && !claimTypes.includes(c.claimType)) return;
+    const knownAt = Math.max(Number(c.publishedAtMs)||0, Number(c.firstSeenAtMs)||0, Number(c.knownAtMs)||0);
+    if (!Number.isFinite(knownAt) || knownAt > Number(asOfMs)) return;
+    rows.push(c.supersededAtMs > asOfMs ? { ...c, supersededBy:null, supersededAtMs:null } : c);
+  });
+  rows.sort((a, b) => (Number(b.publishedAtMs ?? b.firstSeenAtMs) || 0) - (Number(a.publishedAtMs ?? a.firstSeenAtMs) || 0));
+  return rows.slice(0, limit);
+}
+/** PURE. The newest non-superseded guidance per metric and period. */
+function latestGuidanceFrom(claims, { asOfMs = Date.now() } = {}) {
+  const by = new Map();
+  for (const c of claims || []) {
+    if (c.claimType !== "GUIDANCE" || !c.metric) continue;
+    const knownAt = Math.max(Number(c.publishedAtMs)||0, Number(c.firstSeenAtMs)||0, Number(c.knownAtMs)||0);
+    if (!Number.isFinite(knownAt) || knownAt > asOfMs) continue;
+    const key = `${c.metric}|${c.periodLabel || ""}`;
+    const cur = by.get(key);
+    if (!cur || Number(c.publishedAtMs ?? c.firstSeenAtMs) > Number(cur.publishedAtMs ?? cur.firstSeenAtMs)) by.set(key, c);
+  }
+  return [...by.values()].map((c) => ({ claimId: c.claimId, documentVersionId: c.documentVersionId, metric: c.metric,
+    periodLabel: c.periodLabel, lowValue: c.lowValue, highValue: c.highValue, unit: c.unit,
+    issuedAt: c.date || (c.publishedAtMs ? new Date(c.publishedAtMs).toISOString().slice(0, 10) : null),
+    supersedes: c.supersedes || null, quote: c.quote }));
+}
+async function latestGuidance(symbol, { asOfMs = Date.now() } = {}) {
+  return latestGuidanceFrom(await claimsForCompany(symbol, { asOfMs, claimTypes: ["GUIDANCE"] }), { asOfMs });
+}
+/** PURE. The issuer's own announced next earnings date, if any, else null;
+ *  the caller falls back to the 8-K Item 2.02 cadence projection with
+ *  confirmed:false and its wider window (§5.6). */
+function nextEarningsFrom(claims, { asOfMs = Date.now() } = {}) {
+  const today = new Date(asOfMs).toISOString().slice(0, 10);
+  const candidates = (claims || []).filter((c) => c.claimType === "EARNINGS_DATE" && c.date && c.date >= today
+    && Math.max(Number(c.publishedAtMs)||0, Number(c.firstSeenAtMs)||0, Number(c.knownAtMs)||0) <= asOfMs)
+    .sort((a, b) => (Number(b.publishedAtMs ?? b.firstSeenAtMs) || 0) - (Number(a.publishedAtMs ?? a.firstSeenAtMs) || 0));
+  const c = candidates[0];
+  return c ? { date: c.date, confirmed: c.confirmed === true, claimId: c.claimId, documentVersionId: c.documentVersionId,
+    sourceClass: c.sourceClass || "company_primary", quote: c.quote } : null;
+}
+async function nextEarningsClaim(symbol, { asOfMs = Date.now() } = {}) {
+  return nextEarningsFrom(await claimsForCompany(symbol, { asOfMs, claimTypes: ["EARNINGS_DATE"] }), { asOfMs });
+}
+/** The stored spans a verifier needs: version id, canonical text, hashes. */
+async function sourceSpans({ documentVersionIds = [] } = {}) {
+  const out = {};
+  for (const id of [...new Set(documentVersionIds)].slice(0, 64)) {
+    const s = await A.col(A.COL.versions).doc(String(id)).get();
+    if (!s.exists) { out[id] = null; continue; }
+    const v = s.data();
+    out[id] = { versionId: v.versionId, documentId: v.documentId, symbol: v.symbol, sourceId: v.sourceId,
+      canonicalText: v.canonicalText || "", contentHash: v.canonical_content_sha256 || null,
+      sourcePublishedAt: v.sourcePublishedAt || null, fetchedAtMs: v.fetchedAtMs || null };
+  }
+  return out;
 }
 
 /** Point-in-time company dossier. Unknown publication time never becomes
  *  backdated knowledge: such a document is eligible only from firstSeenAtMs. */
-async function documentsForCompany(symbol, decisionAtMs, lookbackDays = 180, limit = 240) {
-  const snap = await A.col(A.COL.documents).where("symbol", "==", symbol).get();
+async function documentsForCompany(symbol, decisionAtMs, lookbackDays = 180, limit = 240, { admin = null } = {}) {
+  const D=admin || A;
+  const snap = await D.col(D.COL.documents).where("symbol", "==", symbol).get();
   const max = Number(decisionAtMs) || Date.now();
   const min = max - Math.max(1, Math.min(366, Number(lookbackDays) || 180)) * 864e5;
   const rows = [];
@@ -294,7 +430,7 @@ async function documentsForCompany(symbol, decisionAtMs, lookbackDays = 180, lim
     const published = Date.parse(row.source_published_at || "");
     const knownAt = Number(row.firstSeenAtMs);
     const eventAt = Number.isFinite(published) ? published : knownAt;
-    if (!Number.isFinite(eventAt) || eventAt < min || eventAt > max) continue;
+    if (!Number.isFinite(eventAt) || eventAt < min || eventAt > max || knownAt > max) continue;
     rows.push(row);
   }
   rows.sort((a, b) => {
@@ -306,7 +442,7 @@ async function documentsForCompany(symbol, decisionAtMs, lookbackDays = 180, lim
   const wanted = new Set(boundedRows.map((x) => x.documentId));
   /* One symbol query replaces one version query per document while retaining
      the newest version that was actually known by the decision timestamp. */
-  const versionSnap = await A.col(A.COL.versions).where("symbol", "==", symbol).get();
+  const versionSnap = await D.col(D.COL.versions).where("symbol", "==", symbol).get();
   const latest = new Map();
   versionSnap.forEach((v) => {
     const x = v.data(), seen = Number(x.fetchedAtMs);
@@ -463,6 +599,8 @@ async function coverageRoster(symbol, cik) {
 }
 
 module.exports = {
+  CLAIM_TYPES, claimIdFor, claimKey, recordClaims, claimsForCompany, latestGuidanceFrom, latestGuidance,
+  nextEarningsFrom, nextEarningsClaim, sourceSpans,
   SOURCES, FORM_WEIGHT,
   parseAtomEntries, pollEdgar, pollSubmissionsHistory, filingPlainText, fetchFilingBody, recordVersion, documentsForMove,
   documentsForCompany, preClassify, coverageRoster,

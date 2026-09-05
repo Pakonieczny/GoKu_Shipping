@@ -226,6 +226,97 @@ const SOURCE_REGISTRY = {
   },
 };
 
+/* ── SOURCE SCOPE (blueprint §5.1, invariant I-3; D-6 / G1.6) ───────────
+ * A source is fetched at a cadence set by its OWN scope, never multiplied by
+ * the roster. State was keyed `${sourceId}_${symbol}` for every source, so a
+ * 304-name pass issued ~3,040 requests for ten identical government feeds.
+ *   global   — the same URL for every company (RSS and HTML index feeds).
+ *              Fetched ONCE per sweep; entity resolution fans the items out
+ *              to every company in the sweep. One state document per source.
+ *   company  — the request embeds the issuer (GDELT queries, the issuer's
+ *              own site, Federal Register / USAspending / ClinicalTrials
+ *              searches). Fetched per company; per-company state.
+ *   regional — nws.alerts, a geography-filtered endpoint: fetched once per
+ *              U.S. state area per sweep and shared by every company exposed
+ *              to that state; per-company state (which areas were queried).
+ * The scope is derived from `kind`, so every descriptor carries one and a
+ * new kind must be classified before it can be polled. */
+const SOURCE_SCOPE_BY_KIND = Object.freeze({
+  feed: "global", html_index: "global", nws_alerts: "regional",
+  gdelt: "company", gdelt_sector: "company", gdelt_relationships: "company",
+  company_direct: "company", federal_register: "company", usaspending: "company",
+  clinicaltrials: "company",
+});
+for (const source of Object.values(SOURCE_REGISTRY)) {
+  const scope = SOURCE_SCOPE_BY_KIND[source.kind];
+  if (!scope) throw new Error(`_investorIntelligenceSources: source ${source.source_id} has kind ${source.kind} with no declared scope`);
+  source.scope = scope;
+}
+function scopeOf(sourceId) { const src = SOURCE_REGISTRY[sourceId]; return src ? src.scope : "company"; }
+function sourceScopes() {
+  return Object.fromEntries(Object.values(SOURCE_REGISTRY).map((src) => [src.source_id, src.scope]));
+}
+
+/** One sweep context per evidence pass. It owns the fetch-once cache for
+ *  global and regional sources, the request accounting the budget assertion
+ *  reads, and the I/O seams (fetch, state, recording) so the fixture set can
+ *  run a sweep in memory. */
+function createSweep({ companies = [], io = null, fetchImpl = null, nowMs = Date.now() } = {}) {
+  const list = uniq((companies || []).map((c) => typeof c === "string" ? c : c && c.symbol).filter(Boolean));
+  return {
+    schema: "source-sweep.v1", startedAtMs: nowMs, companies: list,
+    io: { fetch: fetchImpl || fetchPublic, readState, markSuccess, markFailure, recordItems, ...(io || {}) },
+    globalCache: new Map(),
+    counts: { sourcePolls: 0, globalFetches: 0, regionalFetches: 0, companyPolls: 0, fanouts: 0, httpRequests: 0 },
+    polled: { global: new Set(), regional: new Set(), company: new Map() },
+    breaches: [],
+  };
+}
+function sweepIo(sweep) {
+  return sweep && sweep.io ? sweep.io : { fetch: fetchPublic, readState, markSuccess, markFailure, recordItems };
+}
+/** Fetch a global/regional resource at most once per sweep. A failure is
+ *  cached too, so a broken feed is not retried once per company. */
+async function fetchGlobalOnce(sweep, source, cacheKey, doFetch) {
+  if (sweep && sweep.globalCache.has(cacheKey)) {
+    sweep.counts.fanouts += 1;
+    return { ...sweep.globalCache.get(cacheKey), reused: true };
+  }
+  let entry;
+  try { entry = { ok: true, res: await doFetch(), fetchedAtMs: Date.now() }; }
+  catch (error) { entry = { ok: false, error, fetchedAtMs: Date.now() }; }
+  if (sweep) {
+    sweep.globalCache.set(cacheKey, entry);
+    sweep.counts.httpRequests += 1;
+    sweep.counts[source.scope === "regional" ? "regionalFetches" : "globalFetches"] += 1;
+  }
+  return entry;
+}
+/** PURE over the sweep record. Permitted requests are
+ *  (global sources × 1) + (regional areas × 1) + (company sources × companies). */
+function sweepBudget(sweep) {
+  const companies = Math.max(1, (sweep.companies || []).length || 1);
+  const globalSources = sweep.polled.global.size, regionalAreas = sweep.polled.regional.size;
+  const companySources = sweep.polled.company.size;
+  const allowed = globalSources + regionalAreas + companySources * companies;
+  const used = sweep.counts.globalFetches + sweep.counts.regionalFetches + sweep.counts.companyPolls;
+  return { allowed, used, ok: used <= allowed, globalSources, regionalAreas, companySources, companies,
+    counts: { ...sweep.counts } };
+}
+/** A sweep that issued more requests than its scope permits FAILS with a
+ *  typed alert rather than silently continuing (G1.6 d). */
+function assertSweepBudget(sweep) {
+  const budget = sweepBudget(sweep);
+  if (budget.ok) return { ok: true, budget };
+  const alert = { type: "SOURCE_SCOPE_BREACH", severity: "critical", detectedAtMs: Date.now(),
+    message: `sweep issued ${budget.used} source requests where at most ${budget.allowed} were permitted `
+      + `(${budget.globalSources} global × 1 + ${budget.regionalAreas} regional areas + `
+      + `${budget.companySources} company sources × ${budget.companies} companies)`,
+    budget };
+  sweep.breaches.push(alert);
+  return { ok: false, alert, budget };
+}
+
 /* Routing is by economic activity, never ticker. Every eligible issuer goes
  * through the same resolver; SIC detail can refine the broad roster sector.
  * Publication/event domains are queried through GDELT as discovery leads and
@@ -481,8 +572,13 @@ function sourceMeta(source, item = {}) {
   };
 }
 
+/* G1.6 (b): a global source has ONE state document keyed by sourceId alone;
+   company and regional sources keep per-company state. */
+function stateDocId(sourceId, symbol) {
+  return scopeOf(sourceId) === "global" ? sourceId : `${sourceId}_${symbol}`;
+}
 async function readState(sourceId, symbol) {
-  const id = `${sourceId}_${symbol}`;
+  const id = stateDocId(sourceId, symbol);
   const snap = await A.col(A.COL.sourceState).doc(id).get();
   return { id, ref: A.col(A.COL.sourceState).doc(id), data: snap.exists ? snap.data() : {} };
 }
@@ -515,42 +611,52 @@ async function recordItems(profile, source, items, rawSha256) {
   return recorded;
 }
 
-async function pollFeed(profile, source, state) {
-  const res = await fetchPublic(source.url, { sourceId: source.source_id,
-    etag: state.data.etag, lastModified: state.data.lastModified,
-    accept: ["xml", "rss", "atom", "text"], timeoutMs: 18000, maxBytes: 2 * 1024 * 1024 });
-  if (res.notModified) {
-    await markSuccess(state, source, { symbol: profile.symbol, notModified: true, matched: 0 });
-    return { sourceId: source.source_id, healthy: true, notModified: true, matched: 0 };
+async function pollFeed(profile, source, state, sweep = null) {
+  const io = sweepIo(sweep);
+  /* Global scope: one fetch per sweep, WITHOUT conditional headers. A
+     conditional fetch would answer 304 for a company that was never fanned
+     out from the previous response; E.recordVersion deduplicates by
+     accession, so an unconditional fetch of ten feeds per sweep is the
+     cheap and correct trade. */
+  const entry = await fetchGlobalOnce(sweep, source, `feed|${source.source_id}`, () => io.fetch(source.url, {
+    sourceId: source.source_id, accept: ["xml", "rss", "atom", "text"], timeoutMs: 18000, maxBytes: 2 * 1024 * 1024 }));
+  if (!entry.ok) throw entry.error;
+  const res = entry.res;
+  if (!entry.parsed) entry.parsed = res.notModified ? [] : parseFeed(res.text);
+  const parsed = entry.parsed;
+  const matched = await io.recordItems(profile, source, parsed, res.sha256);
+  if (!entry.reused) {
+    await io.markSuccess(state, source, { symbol: null, scope: source.scope, etag: res.etag || null,
+      lastModified: res.lastModified || null, parsed: parsed.length, responseSha256: res.sha256 || null,
+      fetchedOnceForSweep: !!sweep, fanoutCompanies: sweep ? sweep.companies.length : 1 });
   }
-  const parsed = parseFeed(res.text);
-  const matched = await recordItems(profile, source, parsed, res.sha256);
-  await markSuccess(state, source, { symbol: profile.symbol, etag: res.etag || null,
-    lastModified: res.lastModified || null, parsed: parsed.length, matched, responseSha256: res.sha256 });
-  return { sourceId: source.source_id, healthy: true, parsed: parsed.length, matched };
+  return { sourceId: source.source_id, healthy: true, parsed: parsed.length, matched, scope: source.scope,
+    reused: entry.reused === true };
 }
 
-async function pollHtmlIndex(profile, source, state) {
-  const res = await fetchPublic(source.url, { sourceId: source.source_id,
-    etag: state.data.etag, lastModified: state.data.lastModified,
-    accept: ["html", "text"], timeoutMs: 18000, maxBytes: 2 * 1024 * 1024 });
-  if (res.notModified) {
-    await markSuccess(state, source, { symbol: profile.symbol, notModified: true, matched: 0 });
-    return { sourceId: source.source_id, healthy: true, notModified: true, matched: 0 };
-  }
-  const plain = stripTags(res.text).slice(0, 120000);
+async function pollHtmlIndex(profile, source, state, sweep = null) {
+  const io = sweepIo(sweep);
+  const entry = await fetchGlobalOnce(sweep, source, `html|${source.source_id}`, () => io.fetch(source.url, {
+    sourceId: source.source_id, accept: ["html", "text"], timeoutMs: 18000, maxBytes: 2 * 1024 * 1024 }));
+  if (!entry.ok) throw entry.error;
+  const res = entry.res;
+  if (entry.plain == null) entry.plain = res.notModified ? "" : stripTags(res.text).slice(0, 120000);
+  const plain = entry.plain;
   /* Never seed the match text with the company name: doing so makes every
      sector index look relevant even when the issuer is absent from the page. */
-  const relevant = matchesProfile({ title: source.name, summary: plain }, profile, source);
-  const matched = relevant ? await recordItems(profile, source, [{
+  const relevant = plain && matchesProfile({ title: source.name, summary: plain }, profile, source);
+  const matched = relevant ? await io.recordItems(profile, source, [{
     title: `${source.name} snapshot for ${profile.companyName}`,
     summary: plain.slice(0, source.full_text_allowed ? 120000 : 6000),
     body: source.full_text_allowed ? plain : "", link: source.url, updated: null,
     accession: normalizedHash(`${source.url}|${res.sha256}`).hash.slice(0, 32),
   }], res.sha256) : 0;
-  await markSuccess(state, source, { symbol: profile.symbol, etag: res.etag || null,
-    lastModified: res.lastModified || null, matched, responseSha256: res.sha256 });
-  return { sourceId: source.source_id, healthy: true, matched };
+  if (!entry.reused) {
+    await io.markSuccess(state, source, { symbol: null, scope: source.scope, etag: res.etag || null,
+      lastModified: res.lastModified || null, responseSha256: res.sha256 || null,
+      fetchedOnceForSweep: !!sweep, fanoutCompanies: sweep ? sweep.companies.length : 1 });
+  }
+  return { sourceId: source.source_id, healthy: true, matched, scope: source.scope, reused: entry.reused === true };
 }
 
 function sameResolvedDomain(host, domains) {
@@ -572,7 +678,8 @@ function publicSiteLinks(html, baseUrl, domains) {
   }
   return uniq(out).slice(0, 4);
 }
-async function pollCompanyDirect(profile, source, state) {
+async function pollCompanyDirect(profile, source, state, sweep = null) {
+  const io = sweepIo(sweep);
   const domains = uniq(profile.officialDomains || []).map(cleanDomain).filter(Boolean).slice(0, 6);
   if (!domains.length) throw new Error("official company domain not yet resolved from SEC-linked or operator-verified evidence");
   const allowedHosts = uniq(domains.flatMap((d) => [d, `www.${d}`]));
@@ -581,11 +688,11 @@ async function pollCompanyDirect(profile, source, state) {
     const root = `https://${domain}/`;
     let res;
     try {
-      res = await fetchPublic(root, { sourceId: source.source_id, allowedHosts,
+      res = await io.fetch(root, { sourceId: source.source_id, allowedHosts,
         accept: ["html", "text", "xml"], timeoutMs: 16000, maxBytes: 2 * 1024 * 1024 });
       fetched += 1;
     } catch (error) { lastError = error; continue; }
-    matched += await recordItems(profile, source, [{
+    matched += await io.recordItems(profile, source, [{
       title: `${profile.companyName} official public-site snapshot`,
       summary: stripTags(res.text).slice(0, 12000), body: stripTags(res.text).slice(0, 120000),
       link: res.finalUrl || root, updated: null,
@@ -595,7 +702,7 @@ async function pollCompanyDirect(profile, source, state) {
     const links = publicSiteLinks(res.text, res.finalUrl || root, domains);
     for (const link of links.slice(0, 2)) {
       try {
-        const lr = await fetchPublic(link, { sourceId: source.source_id,
+        const lr = await io.fetch(link, { sourceId: source.source_id,
           allowedHosts: uniq([...allowedHosts, new URL(link).hostname]),
           accept: ["html", "text", "xml", "rss", "atom"], timeoutMs: 16000,
           maxBytes: 2 * 1024 * 1024 });
@@ -608,13 +715,13 @@ async function pollCompanyDirect(profile, source, state) {
           publisherDomain: new URL(lr.finalUrl || link).hostname,
           publisherGroup: `company:${profile.symbol}`,
         }];
-        matched += await recordItems(profile, source, items.map((x) => ({ ...x,
+        matched += await io.recordItems(profile, source, items.map((x) => ({ ...x,
           publisherGroup: `company:${profile.symbol}` })), lr.sha256);
       } catch (error) { lastError = error; }
     }
   }
   if (!fetched) throw lastError || new Error("resolved company domains were unreachable");
-  await markSuccess(state, source, { symbol: profile.symbol, matched, fetched,
+  await io.markSuccess(state, source, { symbol: profile.symbol, matched, fetched,
     resolvedDomains: domains, domainResolution: profile.domainResolution || [] });
   return { sourceId: source.source_id, healthy: true, matched, fetched, resolvedDomains: domains };
 }
@@ -637,14 +744,15 @@ function gdeltQuery(profile, source) {
   }
   return company;
 }
-async function pollGdelt(profile, source, state) {
+async function pollGdelt(profile, source, state, sweep = null) {
+  const io = sweepIo(sweep);
   const query = gdeltQuery(profile, source);
   if (!query) throw new Error("company aliases are insufficient for broad discovery");
   const url = "https://api.gdeltproject.org/api/v2/doc/doc?" + new URLSearchParams({
     query: `(${query})`, mode: "artlist", format: "json", maxrecords: "75",
     timespan: "3d", sort: "datedesc",
   }).toString();
-  const res = await fetchPublic(url, { sourceId: source.source_id,
+  const res = await io.fetch(url, { sourceId: source.source_id,
     accept: ["json", "text"], timeoutMs: 20000, maxBytes: 3 * 1024 * 1024 });
   const articles = (res.json && (res.json.articles || res.json.items)) || [];
   const items = articles.map((x) => ({ title: cleanText(x.title, 500),
@@ -654,21 +762,22 @@ async function pollGdelt(profile, source, state) {
     publisherGroup: cleanText(x.domain, 200).toLowerCase() || null,
     discoveryOnly: true,
   })).filter((x) => x.title && x.link);
-  const matched = await recordItems(profile, source, items, res.sha256);
-  await markSuccess(state, source, { symbol: profile.symbol, parsed: items.length,
+  const matched = await io.recordItems(profile, source, items, res.sha256);
+  await io.markSuccess(state, source, { symbol: profile.symbol, parsed: items.length,
     matched, responseSha256: res.sha256, discoveryWindowDays: 3 });
   return { sourceId: source.source_id, healthy: true, parsed: items.length, matched };
 }
 
 function isoDay(ms) { return new Date(ms).toISOString().slice(0, 10); }
-async function pollFederalRegister(profile, source, state) {
+async function pollFederalRegister(profile, source, state, sweep = null) {
+  const io = sweepIo(sweep);
   const term = (profile.aliases || [])[0];
   if (!term) throw new Error("company name required for Federal Register search");
   const params = new URLSearchParams({ per_page: "100", order: "newest",
     "conditions[term]": term,
     "conditions[publication_date][gte]": isoDay(Date.now() - 180 * DAY_MS) });
   const url = `https://www.federalregister.gov/api/v1/documents.json?${params}`;
-  const res = await fetchPublic(url, { sourceId: source.source_id,
+  const res = await io.fetch(url, { sourceId: source.source_id,
     accept: ["json"], timeoutMs: 18000, maxBytes: 3 * 1024 * 1024 });
   const rows = (res.json && res.json.results) || [];
   const items = rows.map((x) => ({ title: cleanText(x.title, 500),
@@ -679,13 +788,14 @@ async function pollFederalRegister(profile, source, state) {
     accession: x.document_number || null,
     publisherDomain: "federalregister.gov", publisherGroup: "us_federal_register",
   })).filter((x) => x.title && x.link);
-  const matched = await recordItems(profile, source, items, res.sha256);
-  await markSuccess(state, source, { symbol: profile.symbol, parsed: items.length,
+  const matched = await io.recordItems(profile, source, items, res.sha256);
+  await io.markSuccess(state, source, { symbol: profile.symbol, parsed: items.length,
     matched, responseSha256: res.sha256, lookbackDays: 180 });
   return { sourceId: source.source_id, healthy: true, parsed: items.length, matched };
 }
 
-async function pollUsaspending(profile, source, state) {
+async function pollUsaspending(profile, source, state, sweep = null) {
+  const io = sweepIo(sweep);
   const names = (profile.recipientNames || []).slice(0, 4);
   if (!names.length) throw new Error("recipient identity unavailable for USAspending search");
   const start = isoDay(Date.now() - 180 * DAY_MS), end = isoDay(Date.now());
@@ -696,7 +806,7 @@ async function pollUsaspending(profile, source, state) {
       "Awarding Agency", "Award Description", "generated_subaward_id"],
     page: 1, limit: 100, subawards: false,
   };
-  const res = await fetchPublic("https://api.usaspending.gov/api/v2/search/spending_by_award/",
+  const res = await io.fetch("https://api.usaspending.gov/api/v2/search/spending_by_award/",
     { sourceId: source.source_id, method: "POST", body, accept: ["json"],
       timeoutMs: 22000, maxBytes: 4 * 1024 * 1024, maxRedirects: 0 });
   const rows = (res.json && res.json.results) || [];
@@ -711,8 +821,8 @@ async function pollUsaspending(profile, source, state) {
       updated: x["Start Date"] || x.Start_Date || null, accession: awardId || null,
       publisherDomain: "usaspending.gov", publisherGroup: "usaspending" };
   }).filter((x) => x.accession);
-  const matched = await recordItems(profile, source, items, res.sha256);
-  await markSuccess(state, source, { symbol: profile.symbol, parsed: items.length,
+  const matched = await io.recordItems(profile, source, items, res.sha256);
+  await io.markSuccess(state, source, { symbol: profile.symbol, parsed: items.length,
     matched, responseSha256: res.sha256, lookbackDays: 180 });
   return { sourceId: source.source_id, healthy: true, parsed: items.length, matched };
 }
@@ -752,36 +862,41 @@ function clinicalTrialItems(payload = {}) {
   }).filter((x) => x.accession && x.title && x.link);
 }
 
-async function pollClinicalTrials(profile, source, state) {
+async function pollClinicalTrials(profile, source, state, sweep = null) {
+  const io = sweepIo(sweep);
   const sponsor = (profile.recipientNames || profile.aliases || [])
     .map((x) => cleanText(x, 180)).find((x) => x.length >= 4);
   if (!sponsor) throw new Error("resolved sponsor identity required for ClinicalTrials.gov search");
   const params = new URLSearchParams({ "query.spons": sponsor, pageSize: "100",
     sort: "LastUpdatePostDate:desc", format: "json" });
   const url = `https://clinicaltrials.gov/api/v2/studies?${params}`;
-  const res = await fetchPublic(url, { sourceId: source.source_id,
+  const res = await io.fetch(url, { sourceId: source.source_id,
     accept: ["json"], timeoutMs: 22000, maxBytes: 8 * 1024 * 1024 });
   const items = clinicalTrialItems(res.json || {});
-  const matched = await recordItems(profile, source, items, res.sha256);
-  await markSuccess(state, source, { symbol: profile.symbol, parsed: items.length,
+  const matched = await io.recordItems(profile, source, items, res.sha256);
+  await io.markSuccess(state, source, { symbol: profile.symbol, parsed: items.length,
     matched, responseSha256: res.sha256, sponsorQuery: sponsor });
   return { sourceId: source.source_id, healthy: true, parsed: items.length, matched };
 }
 
-async function pollNwsAlerts(profile, source, state) {
+async function pollNwsAlerts(profile, source, state, sweep = null) {
+  const io = sweepIo(sweep);
   const states = uniq([...(profile.operatingStates || []),
     ...((profile.temporalExposures || []).flatMap((x) => x && x.states || []))])
     .map((x) => String(x).trim().toUpperCase()).filter((x) => /^[A-Z]{2}$/.test(x));
   if (!states.length) {
-    await markSuccess(state, source, { symbol: profile.symbol, matched: 0, notApplicable: true });
+    await io.markSuccess(state, source, { symbol: profile.symbol, matched: 0, notApplicable: true });
     return { sourceId: source.source_id, healthy: true, matched: 0, notApplicable: true,
       temporalHazards: [], statesQueried: [] };
   }
   const queryStates = states.slice(0, 8), hazards = [], responses = [];
   const queryArea = async (area) => {
     const url = `https://api.weather.gov/alerts/active?${new URLSearchParams({ area })}`;
-    const res = await fetchPublic(url, { sourceId: source.source_id, accept: ["json"],
-      timeoutMs: 16000, maxBytes: 4 * 1024 * 1024 });
+    if (sweep) sweep.polled.regional.add(area);
+    const entry = await fetchGlobalOnce(sweep, source, `nws|${area}`, () => io.fetch(url, {
+      sourceId: source.source_id, accept: ["json"], timeoutMs: 16000, maxBytes: 4 * 1024 * 1024 }));
+    if (!entry.ok) throw entry.error;
+    const res = entry.res;
     responses.push({ state: area, responseSha256: res.sha256 || null, fetchedAt: res.fetchedAt || null });
     for (const feature of res.json && res.json.features || []) {
       const p = feature && feature.properties || {};
@@ -800,7 +915,7 @@ async function pollNwsAlerts(profile, source, state) {
   }
   const unique = [...new Map(hazards.map((x) => [`${x.id}|${x.states[0]}`, x])).values()];
   const coverageComplete = queryStates.length === states.length;
-  await markSuccess(state, source, { symbol: profile.symbol, matched: unique.length,
+  await io.markSuccess(state, source, { symbol: profile.symbol, matched: unique.length,
     statesQueried: queryStates, coverageComplete, responses });
   return { sourceId: source.source_id, healthy: true, matched: unique.length,
     temporalHazards: unique.slice(0, 100), statesQueried: queryStates,
@@ -808,36 +923,46 @@ async function pollNwsAlerts(profile, source, state) {
     responses: responses.sort((a, b) => a.state.localeCompare(b.state)) };
 }
 
-async function pollSource(profile, sourceId) {
+async function pollSource(profile, sourceId, sweep = null) {
   const source = SOURCE_REGISTRY[sourceId];
   if (!source) return { sourceId, healthy: false, error: "unregistered_source" };
-  const state = await readState(sourceId, profile.symbol);
+  const io = sweepIo(sweep);
+  const state = await io.readState(sourceId, profile.symbol);
+  if (sweep) {
+    sweep.counts.sourcePolls += 1;
+    if (source.scope === "global") sweep.polled.global.add(sourceId);
+    else if (source.scope === "company") {
+      if (!sweep.polled.company.has(sourceId)) sweep.polled.company.set(sourceId, new Set());
+      sweep.polled.company.get(sourceId).add(profile.symbol);
+      sweep.counts.companyPolls += 1;
+    }
+  }
   try {
-    if (source.kind === "feed") return await pollFeed(profile, source, state);
-    if (source.kind === "html_index") return await pollHtmlIndex(profile, source, state);
-    if (source.kind === "company_direct") return await pollCompanyDirect(profile, source, state);
-    if (source.kind === "gdelt") return await pollGdelt(profile, source, state);
-    if (source.kind === "gdelt_sector") return await pollGdelt(profile, source, state);
-    if (source.kind === "gdelt_relationships") return await pollGdelt(profile, source, state);
-    if (source.kind === "federal_register") return await pollFederalRegister(profile, source, state);
-    if (source.kind === "usaspending") return await pollUsaspending(profile, source, state);
-    if (source.kind === "clinicaltrials") return await pollClinicalTrials(profile, source, state);
-    if (source.kind === "nws_alerts") return await pollNwsAlerts(profile, source, state);
+    if (source.kind === "feed") return await pollFeed(profile, source, state, sweep);
+    if (source.kind === "html_index") return await pollHtmlIndex(profile, source, state, sweep);
+    if (source.kind === "company_direct") return await pollCompanyDirect(profile, source, state, sweep);
+    if (source.kind === "gdelt") return await pollGdelt(profile, source, state, sweep);
+    if (source.kind === "gdelt_sector") return await pollGdelt(profile, source, state, sweep);
+    if (source.kind === "gdelt_relationships") return await pollGdelt(profile, source, state, sweep);
+    if (source.kind === "federal_register") return await pollFederalRegister(profile, source, state, sweep);
+    if (source.kind === "usaspending") return await pollUsaspending(profile, source, state, sweep);
+    if (source.kind === "clinicaltrials") return await pollClinicalTrials(profile, source, state, sweep);
+    if (source.kind === "nws_alerts") return await pollNwsAlerts(profile, source, state, sweep);
     throw new Error(`unsupported source kind ${source.kind}`);
   } catch (error) {
-    await markFailure(state, source, profile.symbol, error);
+    await io.markFailure(state, source, profile.symbol, error);
     return { sourceId, healthy: false, error: String(error.code || error.message).slice(0, 160) };
   }
 }
 
-async function pollCompany(profile, { budgetMs = 150000 } = {}) {
+async function pollCompany(profile, { budgetMs = 150000, sweep = null } = {}) {
   const started = Date.now(), results = [];
   for (const sourceId of profile.sourceIds || []) {
     if (Date.now() - started >= budgetMs) {
       results.push({ sourceId, healthy: false, deferred: true, error: "company_source_budget_exhausted" });
       continue;
     }
-    results.push(await pollSource(profile, sourceId));
+    results.push(await pollSource(profile, sourceId, sweep));
   }
   return { symbol: profile.symbol, results, elapsedMs: Date.now() - started };
 }
@@ -873,4 +998,6 @@ module.exports = {
   decodeXml, stripTags, parseFeed, profileFor, resolveIdentity, inferOfficialDomains,
   enrichProfile, cleanDomain, sameResolvedDomain, matchesProfile, sourceMeta, clinicalTrialItems,
   pollSource, pollCompany, configuredSymbols, focusSymbols, cleanSymbol,
+  SOURCE_SCOPE_BY_KIND, scopeOf, sourceScopes, stateDocId, createSweep, sweepIo, fetchGlobalOnce,
+  sweepBudget, assertSweepBudget, readState, markSuccess, markFailure, recordItems,
 };

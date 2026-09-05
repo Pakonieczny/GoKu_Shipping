@@ -85,7 +85,7 @@ async function snapshot(accountId, { positions = null, balances = null, cost = n
 
 /** Append one point to the account-day document. Thinned so a day never
  *  exceeds MAX_POINTS_PER_DAY (older points are kept at coarser spacing). */
-async function record(accountId, snap, { source = "guard" } = {}) {
+async function record(accountId, snap, { source = "guard", riskConfig = null } = {}) {
   const date = M.nyParts(new Date(snap.tMs)).date;
   const ref = A.col(A.COL.navMarks).doc(docId(accountId, date));
   const point = { t: snap.tMs, nav: snap.navUsd, cash: snap.cashUsd, res: snap.reservedUsd,
@@ -107,6 +107,10 @@ async function record(accountId, snap, { source = "guard" } = {}) {
     tx.set(ref, { accountId, date, points, count: points.length,
       first: points[0] ? points[0].t : null, last: point.t,
       startingNavUsd: snap.startingNavUsd, updatedAt: A.FV.serverTimestamp(),
+      /* G1.4: the NAV row carries the risk configuration in force. */
+      ...(riskConfig ? { riskConfigHash: riskConfig.riskConfigHash || null,
+        deviationsFromDeclared: riskConfig.deviationsFromDeclared || [],
+        riskBreakersDisabled: riskConfig.breakersDisabled || [] } : {}),
       ...(cur.exists ? {} : A.envelope({ created_by: "investorNav" })) }, { merge: true });
   });
   return { date, ref: ref.id };

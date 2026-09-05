@@ -768,6 +768,35 @@ const ACTIONS = {
         reconciliationFailure: ctrl.reconciliationFailure || null,
         soakStatus: ctrl.lastSoakStatus || null,
       },
+      /* G1.4 (D-4): the risk configuration actually in force, its hash and
+         every deviation from the declared strategy. bannerRequired drives a
+         persistent console banner. */
+      riskConfig: (() => {
+        const operatingNow = STATE.describe(ctrl);
+        const exploratoryControls = ((strategy.exploratoryAuto || {}).portfolioControls) || {};
+        const activePortfolioControls = operatingNow.exploratoryAuto
+          ? { ...(strategy.portfolioControls || {}), ...exploratoryControls }
+          : (strategy.portfolioControls || {});
+        return ST.riskConfigIdentity(paperPreview.cfg, activePortfolioControls);
+      })(),
+      /* G1.3 (D-3): the declared strict configuration cannot place an order
+         until a calibration exists. Stated as a first-class state with finite
+         numbers, not a silent no-op. */
+      calibration: await (async () => {
+        let sessionsAvailable = 0, experimentHash = null;
+        try {
+          const allocSnap = await A.col(A.COL.control).doc("allocation").get();
+          experimentHash = allocSnap.exists ? (allocSnap.data().experimentHash || null) : null;
+          const stored = experimentHash ? await C.read(experimentHash) : null;
+          sessionsAvailable = Number(stored && stored.sessions) || 0;
+        } catch {}
+        const state = C.calibrationState({ sessionsAvailable });
+        return { ...state, experimentHash,
+          strictOrderEligibility: ST.orderEligibility(strategy.parameters || ST.parameters),
+          paperLearningActive: paperPreview.active === true,
+          costHurdleState: S.costHurdle({ cumResidual: -0.02, advUsd: 5e8, grade: "A",
+            wideSpreadWindow: false, vixNorm: 1, cfg: strategy.parameters || ST.parameters }).calibration };
+      })(),
       market: {
         provider: provider.id, feed: provider.feed || null,
         consolidated: !!provider.consolidated,
@@ -1141,9 +1170,44 @@ const ACTIONS = {
         reserved: b.usd[L.ACCT.RESERVED] || 0 });
     })();
 
+    /* G1.4 (c): closed positions are grouped by the risk configuration in
+       force at the decision. Two periods with different hashes are labelled
+       non-comparable rather than charted as one series. */
+    const riskConfigSeries = await (async () => {
+      const groups = new Map();
+      try {
+        const ts = await A.col(A.COL.trades).where("accountId", "==", accountId).limit(1000).get();
+        ts.forEach((d) => {
+          const t = d.data();
+          const hash = t.riskConfigHash || "unrecorded";
+          const g = groups.get(hash) || { riskConfigHash: hash, trades: 0, firstClosedAt: null, lastClosedAt: null,
+            netRealizedCents: 0, deviationsFromDeclared: Array.isArray(t.deviationsFromDeclared) ? t.deviationsFromDeclared : [] };
+          g.trades += 1;
+          g.netRealizedCents += Number(t.netRealizedCents) || 0;
+          if (t.closedAt && (!g.firstClosedAt || t.closedAt < g.firstClosedAt)) g.firstClosedAt = t.closedAt;
+          if (t.closedAt && (!g.lastClosedAt || t.closedAt > g.lastClosedAt)) g.lastClosedAt = t.closedAt;
+          groups.set(hash, g);
+        });
+      } catch {}
+      const series = [...groups.values()].sort((a, b) => String(a.firstClosedAt).localeCompare(String(b.firstClosedAt)));
+      return { series, comparable: series.length <= 1,
+        note: series.length > 1
+          ? "Closed positions were produced under more than one risk configuration. They are reported per configuration and must not be charted as one series."
+          : (series.length === 1 && series[0].riskConfigHash === "unrecorded"
+            ? "These closed positions predate configuration provenance; their risk configuration is unrecorded." : null) };
+    })();
+    const strictStrategy = await activeStrategy(ctrl);
+    const strictEligibility = ST.orderEligibility(strictStrategy.parameters || ST.parameters);
     return {
       ok: true, equity, benchmark: bench,
       attribution: R.attribution(equity, bench),
+      riskConfigSeries,
+      /* G1.3 (c): no performance claim may be made about a version that was
+         never order-eligible. The declared strict configuration is reported
+         as exactly that. */
+      strictConfiguration: { version: strictStrategy.version || null,
+        orderEligibility: strictEligibility, performanceClaimsAllowed: strictEligibility.eligible === true,
+        everOrderEligible: strictStrategy.everOrderEligible === true },
       navHistory: nav.map((n) => ({ date: n.date, navUsd: n.navUsd })),
       book: { navUsd: book.navUsd, count: book.book.count, grossPct: book.book.grossPct,
         byClusterPct: book.book.byClusterPct, untrustedMarks: book.untrustedMarks },
@@ -1409,7 +1473,7 @@ const ACTIONS = {
          this function, bind their result to the current deploy identity, and
          continue only when every fixture passes. */
       let fixtures;
-      try { fixtures = require("./_investorSelftest").runFixtures(); }
+      try { fixtures = await require("./_investorSelftest").runFixturesAsync(); }
       catch (e) {
         fixtures = { pass: false, fixtureHash: null,
           error: String(e && e.message || e).slice(0, 200), cases: [] };
@@ -2405,11 +2469,14 @@ const ACTIONS = {
         firebase: !!(process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_PROJECT_ID),
         openai: !!process.env.OPENAI_API_KEY,
       },
+      engineVersions: A.ENGINE_VERSIONS,
+      legacyCollections: A.LEGACY_COLLECTIONS,
+      legacyBaseline: (() => { try { return B.legacyBaseline(); } catch (e) { return { error: String(e.message).slice(0, 160) }; } })(),
       /* Which invariant failed, not merely that one did. Names only — the
          fixture bodies are code, and the operator needs the label to act. */
-      fixtures: (() => {
+      fixtures: await (async () => {
         try {
-          const r = require("./_investorSelftest").runFixtures();
+          const r = await require("./_investorSelftest").runFixturesAsync();
           return { pass: r.pass, passed: r.passed, total: r.total,
             fixtureHash: r.fixtureHash, schema: r.schema || null,
             failed: r.cases.filter((c) => !c.pass).map((c) => c.name) };
@@ -2455,9 +2522,35 @@ const ACTIONS = {
 };
 
 /* ── handler ───────────────────────────────────────────────────────────── */
+/* ── fund-manager-v1: version routing, retirement and signed downloads (§11.5) ── */
+const SCHEMAS_V2 = require("./_investorApiSchemas");
+async function recordV1Telemetry(action) {
+  if (!SCHEMAS_V2.RETIRED_V1_MUTATIONS.includes(action)) return;
+  try { await A.col(A.COL.control).doc("control").set({ v1ActionTelemetry: { [action]: A.FV.increment(1), lastAtMs: Date.now() } }, { merge: true }); } catch {}
+}
+/** GET ?download=<token>: a completed audit export, same-origin, session-bound, short-lived, audited. */
+async function downloadExport(event) {
+  const token = event.queryStringParameters.download;
+  const origin = AUTH.enforceOrigin(event);
+  if (!origin.ok) return AUTH.json(event, 403, { ok: false, error: origin.reason, errorCode: "ORIGIN_REJECTED" });
+  const session = await AUTH.verifyCookieSession(event);
+  if (!session) return AUTH.json(event, 401, { ok: false, error: "sign in to download", errorCode: "SESSION_EXPIRED" });
+  const claims = AUTH.openPayload("download", token);
+  if (!claims || !claims.h || claims.sid !== session.sessionId) return AUTH.json(event, 403, { ok: false, error: "download link invalid or expired", errorCode: "CSRF_INVALID" });
+  const CS = require("./_investorContentStore");
+  let r;
+  try { r = await CS.getContent(String(claims.h), { verify: true }); } catch (e) { return AUTH.json(event, 404, { ok: false, error: String(e.code || e.message).slice(0, 120), errorCode: "NOT_FOUND" }); }
+  try { await A.col(A.COL.audit).doc(`download_${String(claims.h).slice(0, 24)}_${Date.now()}`).set({ kind: "audit_export_download", contentHash: claims.h, sessionId: session.sessionId, subject: session.subject, atMs: Date.now(), ...A.envelope({ created_by: "investorApi.download" }) }); } catch {}
+  return { statusCode: 200, headers: { ...AUTH.corsHeaders(event), "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="investor-audit-${String(claims.h).slice(0, 16)}.json"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" }, body: JSON.stringify(r.json !== undefined ? r.json : { contentHash: claims.h, text: r.text }) };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers: AUTH.corsHeaders(event), body: "" };
+  }
+  if (event.httpMethod === "GET" && event.queryStringParameters && event.queryStringParameters.download) {
+    try { await AUTH.loadAuthSecrets(); return await downloadExport(event); }
+    catch (e) { console.error("investorApi download", AUTH.redact({ error: e.message })); return AUTH.json(event, 500, { ok: false, error: String(e.message).slice(0, 160) }); }
   }
   if (event.httpMethod !== "POST") {
     return AUTH.json(event, 405, { error: "POST only" });
@@ -2480,12 +2573,29 @@ exports.handler = async (event) => {
   try { body = JSON.parse(event.body || "{}"); }
   catch { return AUTH.json(event, 400, { error: "invalid JSON body" }); }
 
-  const guard = AUTH.requireOperator(event, body);
+  /* ACTIONS_V2 only for exact investor.v2; ACTIONS_V1 only when apiVersion is absent or investor.v1; never a fallthrough */
+  if (body.apiVersion === SCHEMAS_V2.API_VERSION) {
+    const V2 = require("./_investorApiV2");
+    try { const r = await V2.dispatch({ body, event }); return AUTH.json(event, r.statusCode, r.body, r.headers || {}); }
+    catch (e) { console.error("investorApiV2", AUTH.redact({ error: e.message, stack: (e.stack || "").slice(0, 300) })); return AUTH.json(event, 500, V2.envelope({ ok: false, requestId: body.requestId || null, nowMs: Date.now(), error: SCHEMAS_V2.errorShape("INTERNAL", String(e.message).slice(0, 200)) })); }
+  }
+  if (body.apiVersion !== undefined && body.apiVersion !== "investor.v1") return AUTH.json(event, 400, { ok: false, error: `unsupported apiVersion ${String(body.apiVersion).slice(0, 40)}`, errorCode: "UNSUPPORTED_API_VERSION" });
+
+  const guard = await AUTH.requireOperatorAsync(event, body);
   if (!guard.ok) return guard.response;
 
   const action = String(body.action || "dashboard");
   const fn = ACTIONS[action];
   if (!fn) return AUTH.json(event, 400, { error: `unknown action "${action}"` });
+  /* cutover: once the manager engine holds the writer epoch, v1 investment mutations are retired (410) and emergency compatibility is mapped explicitly */
+  if (SCHEMAS_V2.RETIRED_V1_MUTATIONS.includes(action)) {
+    await recordV1Telemetry(action);
+    const ctrlNow = await ctrlDoc();
+    if (ctrlNow.engineMode === "manager" && Number(ctrlNow.writerEpoch) > 0) {
+      return AUTH.json(event, 410, { ok: false, error: `v1 action "${action}" is retired under the manager engine (writer epoch ${ctrlNow.writerEpoch})`, errorCode: "ACTION_RETIRED", code: "ACTION_RETIRED", action, apiVersion: "investor.v1",
+        replacement: SCHEMAS_V2.V1_EMERGENCY_MAP[action] || null, retiredVersion: "investor.v1", writerEpoch: ctrlNow.writerEpoch });
+    }
+  }
 
   try {
     const out = await fn({ ...body, operator: guard.subject || "operator" });

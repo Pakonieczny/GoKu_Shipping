@@ -215,10 +215,20 @@ async function lifecycleAudit(accountId) {
     A.col(A.COL.trades).where("accountId", "==", accountId).get(),
     A.col(A.COL.ledger).where("accountId", "==", accountId).get(),
   ]);
-  const orders = snapshotRows(orderSnap), fills = snapshotRows(fillSnap);
-  const positions = snapshotRows(positionSnap), trades = snapshotRows(tradeSnap);
-  const journals = snapshotRows(ledgerSnap);
-  const violations = [], orderById = new Map(), fillByOrder = new Map();
+  /* Manager-engine records (engineVersion "manager": multi-fill order sets,
+     OCO legs, partial reductions) are owned by _investorExecution and never
+     judged by the one-order/one-fill legacy lifecycle rules; a record that
+     declares neither identity is rejected rather than guessed (§8.3). */
+  const isManager = (d) => d && d.engineVersion === "manager";
+  const identityViolations = [];
+  const identityOf = (d, kind) => { if (isManager(d)) return "manager"; if (d && (d.lifecycleId || d.orderId || kind === "ledger")) return "legacy"; identityViolations.push({ kind: `${kind}_identity_unknown`, id: d && (d.fillId || d.orderId || d.symbol || null) }); return "unknown"; };
+  const orders = snapshotRows(orderSnap).filter((d) => identityOf(d, "order") === "legacy");
+  const fills = snapshotRows(fillSnap).filter((d) => identityOf(d, "fill") === "legacy");
+  const positions = snapshotRows(positionSnap).filter((d) => identityOf(d, "position") === "legacy");
+  const trades = snapshotRows(tradeSnap).filter((d) => identityOf(d, "trade") === "legacy");
+  const journals = snapshotRows(ledgerSnap).filter((d) => !isManager(d));
+  const managerRecords = { fills: snapshotRows(fillSnap).filter(isManager).length, positions: snapshotRows(positionSnap).filter(isManager).length, trades: snapshotRows(tradeSnap).filter(isManager).length, journals: snapshotRows(ledgerSnap).filter(isManager).length };
+  const violations = [...identityViolations], orderById = new Map(), fillByOrder = new Map();
   const lifecycleOwners = new Map();
   for (const o of orders) {
     orderById.set(o.orderId, o);
@@ -279,8 +289,15 @@ async function lifecycleAudit(accountId) {
     }
   }
   return { accountId, orders: orders.length, fills: fills.length,
-    positions: positions.length, trades: trades.length, violations,
+    positions: positions.length, trades: trades.length, violations, managerRecords,
     pass: violations.length === 0 };
+}
+/** Manager-engine records must declare their identity; the executor never guesses (§8.3). */
+function assertManagerRecordIdentity(doc, kind = "record") {
+  if (!doc || doc.engineVersion !== "manager" || doc.decisionAuthority !== "SOL") {
+    throw Object.assign(new Error(`${kind}: not a manager-engine record (engineVersion/decisionAuthority missing)`), { code: "LEGACY_IDENTITY_REJECTED" });
+  }
+  return true;
 }
 
 /** Recompute cash, reservations, cost basis and marked NAV from independent
@@ -518,6 +535,10 @@ async function proposeOrder(input) {
     /* The patience grant is decided once, at entry, and travels with the
        order so nothing downstream can re-decide it. */
     patience = null,
+    /* G1.4: the risk configuration in force at the decision, from
+       _investorStrategy.riskConfigIdentity. It travels order → position →
+       closed trade so no result row loses it. */
+    riskConfig = null,
     executionLatencyMs = 60000 } = input;
   if (![universeHash, strategyHash, variantsHash].every((h) => /^[a-f0-9]{64}$/.test(String(h || "")))) {
     throw new Error("proposeOrder: complete policy hashes are required");
@@ -586,6 +607,8 @@ async function proposeOrder(input) {
       exploratoryPolicyVersion,
       cohortRole: cohortRole || "signal", decisionSessionDate: decisionSessionDate || null,
       patience: patience && patience.granted === true ? patience : null,
+      riskConfigHash: riskConfig && /^[a-f0-9]{64}$/.test(String(riskConfig.riskConfigHash || "")) ? riskConfig.riskConfigHash : null,
+      deviationsFromDeclared: riskConfig && Array.isArray(riskConfig.deviationsFromDeclared) ? riskConfig.deviationsFromDeclared : [],
       status: "proposed", decisionAtMs: Number(decisionAtMs),
       executionLatencyMs: Math.max(0, Number(executionLatencyMs) || 60000),
       order_committed_at: A.FV.serverTimestamp(), ...A.envelope({ created_by: "ledger.proposeOrder" }) };
@@ -816,6 +839,7 @@ async function recordFill({ orderId, bar, barProvenance }) {
       exploratoryPolicyVersion:o.exploratoryPolicyVersion||null,
       cohortRole:o.cohortRole||"signal",decisionSessionDate:o.decisionSessionDate||null,
       patience:o.patience||null,
+      riskConfigHash:o.riskConfigHash||null,deviationsFromDeclared:o.deviationsFromDeclared||[],
       variantId:o.variantId||"baseline",strategyVersion:o.strategyVersion,universeVersion:o.universeVersion,
       strategyHash:o.strategyHash,universeHash:o.universeHash,variantsHash:o.variantsHash,
       updated_at:A.FV.serverTimestamp()});
@@ -917,6 +941,7 @@ async function closePosition({accountId,symbol,bar,slippageBps,reason,barProvena
       exploratoryPolicyVersion:p.exploratoryPolicyVersion||null,
       cohortRole:p.cohortRole||"signal",decisionSessionDate:p.decisionSessionDate||null,
       patience:p.patience||null,
+      riskConfigHash:p.riskConfigHash||null,deviationsFromDeclared:p.deviationsFromDeclared||[],
       variantId:p.variantId||"baseline",strategyVersion:p.strategyVersion||null,universeVersion:p.universeVersion||null,
       strategyHash:p.strategyHash||null,universeHash:p.universeHash||null,variantsHash:p.variantsHash||null,
       ...A.envelope({created_by:"ledger.closePosition"})};
@@ -989,7 +1014,7 @@ async function executionAudit(accountId){
   return{accountId,entryFills:fills.size,exits:trades.size,auditedExecutions:fills.size+trades.size,violations,pass:violations.length===0};
 }
 
-module.exports={ACCT,CENTS,PRICE_SCALE,toCents,fromCents,toPrice,fromPrice,notionalCents,txnId,assertBalanced,applyLegs,
+module.exports={ACCT,CENTS,PRICE_SCALE,toCents,fromCents,toPrice,fromPrice,notionalCents,txnId,assertBalanced,applyLegs,assertManagerRecordIdentity,
   fillAmounts,executionClockCheck,assertExecutionClock,assertBar,controlAllowsEntry,orderLockRef,
   openAccount,post,cashDividendLegs,recordCashDividend,balances,rebuildBalances,auditLedger,
   lifecycleAudit,reconcileAccount,validLifecycleId,validProvenance,executionAudit,

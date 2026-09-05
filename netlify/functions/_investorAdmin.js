@@ -213,7 +213,107 @@ const COL = {
   archiveRuns: COL_PREFIX + "ArchiveRuns",   // nightly intraday archive manifests
   navMarks:   COL_PREFIX + "NavMarks",       // one doc per account-day: minute-level account value
   plans:      COL_PREFIX + "EntryPlans",     // armed entry levels written by the deep scan, struck by the guard
+
+  /* ── AI Fund Manager collections (blueprint §10.2) ─────────────────────
+     Small current pointers stay small; a version is appended only when its
+     content hash changes; one logical decision per document (a run stores
+     counters and hashes, never 304 rows). Large content lives in the
+     private content bucket behind a ContentManifests pointer. */
+  dossiers:            COL_PREFIX + "Dossiers",            // symbol: current pointer, freshness matrix, version/hash
+  dossierVersions:     COL_PREFIX + "DossierVersions",     // symbol+version: immutable fact ids and memo/forecast pointers
+  financialFacts:      COL_PREFIX + "FinancialFacts",      // issuer+concept+period+as-of: point-in-time XBRL fact
+  evidenceDeltas:      COL_PREFIX + "EvidenceDeltas",      // symbol+from/to hashes: typed deltas, objective safety class
+  managerRuns:         COL_PREFIX + "ManagerRuns",         // run id: immutable decision trace, counters, hashes
+  managerDecisions:    COL_PREFIX + "ManagerDecisions",    // {managerRunId}_{symbol}: exactly one row per symbol
+  claimVerifications:  COL_PREFIX + "ClaimVerifications",  // claim+verifier version: independent support verdict
+  researchMemos:       COL_PREFIX + "ResearchMemos",       // symbol+version: immutable underwriting history
+  portfolioPlans:      COL_PREFIX + "PortfolioPlans",      // plan id: RISK_MAINTENANCE | EXPANSION proposal and commit state
+  activationSnapshots: COL_PREFIX + "ActivationSnapshots", // snapshot id: broker-reconciled truth used for CAS activation
+  mandateProposals:    COL_PREFIX + "MandateProposals",    // proposal id/hash: strict Sol output only
+  mandates:            COL_PREFIX + "Mandates",            // mandate version id: server binding and lineage
+  activationEnvelopes: COL_PREFIX + "ActivationEnvelopes", // mandate version id: validator status and authorized quantity
+  activeMandates:      COL_PREFIX + "ActiveMandates",      // account+symbol: desired/applied version pointers (CAS)
+  mandateEvents:       COL_PREFIX + "MandateEvents",       // mandate+sequence: audit stream
+  orderSets:           COL_PREFIX + "OrderSets",           // order-set id: desired/applied versions, broker group, state
+  orderLegs:           COL_PREFIX + "OrderLegs",           // order-set+leg id: entry/target/stop/reduce/sell terms
+  brokerEvents:        COL_PREFIX + "BrokerEvents",        // provider+account+event id: immutable normalized observations
+  capitalReservations: COL_PREFIX + "CapitalReservations", // account+mandate version: reserved notional and risk
+  reservationAccounts: COL_PREFIX + "ReservationAccounts", // account: CAS-protected aggregate ledger
+  executionOutbox:     COL_PREFIX + "ExecutionOutbox",     // transition id: crash-resumable desired broker transition
+  workerNonces:        COL_PREFIX + "WorkerNonces",        // job+attempt+nonce: atomic unused/consumed replay state
+  emergencyPlans:      COL_PREFIX + "EmergencyPlans",      // account+symbol+version: protection-only authority
+  emergencyRiskPolicies: COL_PREFIX + "EmergencyRiskPolicies", // account+policy version: owner-approved hard triggers
+  alerts:              COL_PREFIX + "Alerts",              // condition id: typed alert, ack and resolution history
+  mutations:           COL_PREFIX + "Mutations",           // actor+account+action+idempotency key: request hash and result
+  calendarSnapshots:   COL_PREFIX + "CalendarSnapshots",   // venue+version/range: authoritative sessions
+  corporateActions:    COL_PREFIX + "CorporateActions",    // provider/action id+version: quarantine and rebase lineage
+  forecasts:           COL_PREFIX + "Forecasts",           // forecast id: horizon, distribution, later outcome
+  counterfactuals:     COL_PREFIX + "Counterfactuals",     // decision+horizon: later return for selected and unselected
+  postmortems:         COL_PREFIX + "Postmortems",         // decision/trade id: attribution and adjudication
+  evals:               COL_PREFIX + "Evals",               // eval run id: challenger results and release gates
+  kpiDaily:            COL_PREFIX + "KpiDaily",            // account+date: KPI aggregates
+  contentManifests:    COL_PREFIX + "ContentManifests",    // content hash: pointer to object storage
+  decisionInputs: COL_PREFIX + "DecisionInputs", // immutable chunked decision context
+  modelRequests:       COL_PREFIX + "ModelRequests",       // request id: every model call's ids, status, hashes, tokens, cost (§12.2)
 };
+
+/* ── REQUIRED COMPOSITE INDEXES (blueprint §10.6) ────────────────────────
+ * Declared here as data and surfaced by the health action; deployed through
+ * whatever mechanism the operator already uses for Firestore. No writer
+ * epoch flips while an index is building or missing (§17.5). */
+const REQUIRED_INDEXES = Object.freeze([
+  { collection: COL.modelRequests, fields: ["day", "role", "startedAtMs"] },
+  { collection: COL.modelRequests, fields: ["status", "startedAtMs"] },
+  { collection: COL.activeMandates, fields: ["accountId", "status", "expiresAtMs", "capitalRank"] },
+  { collection: COL.managerRuns, fields: ["tradingDate", "status"] },
+  { collection: COL.managerDecisions, fields: ["managerRunId", "decision", "symbol"] },
+  { collection: COL.managerDecisions, fields: ["symbol", "asOfMs"] },
+  { collection: COL.portfolioPlans, fields: ["accountId", "status", "asOfMs"] },
+  { collection: COL.activationSnapshots, fields: ["accountId", "portfolioVersion", "asOfMs"] },
+  { collection: COL.claimVerifications, fields: ["claimId", "verdict", "asOfMs"] },
+  { collection: COL.dossierVersions, fields: ["symbol", "asOfMs"] },
+  { collection: COL.evidenceDeltas, fields: ["symbol", "safetyClass", "createdAtMs"] },
+  { collection: COL.evidenceDeltas, fields: ["managerMateriality", "reviewedAtMs"] },
+  { collection: COL.mandateEvents, fields: ["mandateVersionId", "sequence"] },
+  { collection: COL.mandateEvents, fields: ["accountId", "atMs"] },
+  { collection: COL.forecasts, fields: ["horizonTradingDays", "resolutionAtMs"] },
+  { collection: COL.counterfactuals, fields: ["horizonTradingDays", "resolutionAtMs"] },
+  { collection: COL.versions, fields: ["symbol", "sourcePublishedAt", "fetchedAtMs"] },
+  { collection: COL.orderSets, fields: ["accountId", "status"] },
+  { collection: COL.orderSets, fields: ["accountId", "desiredMandateVersionId", "appliedMandateVersionId"] },
+  { collection: COL.orderLegs, fields: ["orderSetId", "status", "role"] },
+  { collection: COL.brokerEvents, fields: ["accountId", "providerCursor"] },
+  { collection: COL.capitalReservations, fields: ["accountId", "status", "capitalRank"] },
+  { collection: COL.reservationAccounts, fields: ["committedPortfolioPlanId", "version"] },
+  { collection: COL.executionOutbox, fields: ["status", "nextAttemptAtMs"] },
+  { collection: COL.alerts, fields: ["active", "severity", "updatedAtMs"] },
+  { collection: COL.calendarSnapshots, fields: ["venue", "effectiveFrom", "version"] },
+  { collection: COL.emergencyRiskPolicies, fields: ["accountId", "effectiveFromMs"] },
+]);
+
+/* ── ENGINE VERSIONS AND THE LEGACY FREEZE (blueprint §10.4, §13) ────────
+ * Two engines share the InvestorAI_ namespace during the cutover: the
+ * deterministic residual-reversal desk (legacy-v18) and the AI Fund Manager
+ * (fund-manager-v1). Every record projected through the API is labelled
+ * with the engine that produced it, and the legacy collections below are
+ * frozen read-only after cutover. A legacy Candidate or EntryPlan is never
+ * reinterpreted as an AI authorization. */
+const ENGINE_VERSIONS = Object.freeze({ LEGACY: "legacy-v18", MANAGER: "fund-manager-v1" });
+const LEGACY_COLLECTIONS = Object.freeze([
+  COL.candidates, COL.decisions, COL.strategies,
+  COL.shadowDays, COL.shadowOpen, COL.shadowClosed, COL.shadowAccounts, COL.shadowObservations,
+  COL.calibration, COL.soakCycles, COL.scanSnapshots, COL.plans,
+]);
+function isLegacyCollection(name) { return LEGACY_COLLECTIONS.includes(String(name || "")); }
+/** Label a record with the engine that produced it when it is projected
+ *  through the API. A record that already declares an engine keeps it. */
+function legacyProjection(record, { collection = null } = {}) {
+  if (!record || typeof record !== "object") return record;
+  if (record.engineVersion) return record;
+  const legacy = collection ? isLegacyCollection(collection) : true;
+  return { ...record, engineVersion: legacy ? ENGINE_VERSIONS.LEGACY : ENGINE_VERSIONS.MANAGER,
+    decisionAuthority: record.decisionAuthority || (legacy ? "deterministic_v18" : "ai_manager") };
+}
 
 /* ── provenance envelope required on every generated record ────────────── */
 function envelope(extra = {}) {
@@ -230,5 +330,7 @@ module.exports = {
   firestoreSafe, installNestedArrayGuard, rawDb,
   FV, TS, col, doc, runTransaction, batch,
   COL, COL_PREFIX,
+  ENGINE_VERSIONS, LEGACY_COLLECTIONS, isLegacyCollection, legacyProjection,
+  REQUIRED_INDEXES,
   envelope,
 };

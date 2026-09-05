@@ -519,7 +519,51 @@ function attribution(equity, bench) {
   };
 }
 
+/* ── AI Fund Manager risk service (blueprint §3, §6.8, §8.6) ─────────────
+ * The deterministic risk service may refuse, pause, or create a SMALLER
+ * activation envelope. It never mutates the AI proposal, increases size,
+ * substitutes a symbol, improves priority, or creates a normal order.
+ * Envelopes are built by _investorMandate (lazily required: this module is
+ * dependency-free at load and _investorPortfolioRisk imports clusterOf). */
+function buildPortfolioActivationEnvelopes(args) {
+  return require("./_investorMandate").buildPortfolioActivationEnvelopes(args);
+}
+/** PURE. The executor's per-tick revalidation (§8.6): operational safety and
+ *  current cash/exposure only. It cannot decide a company is unattractive. */
+function revalidateOperationalLimits({ portfolio, control = {}, riskMandate = null, brokerTruthAgeSeconds = null, reconciliationUnresolved = false,
+  dayLossBps = null, drawdownFromPeakBps = null, nowMs = Date.now() } = {}) {
+  const POLICY = require("./_investorPolicy");
+  const rm = riskMandate || POLICY.RISK_MANDATE;
+  const reasons = [];
+  let hardBreach = false;
+  const big = (v) => BigInt(String(v == null ? 0 : v));
+  if (control.killSwitch || control.emergencyState === "ENGAGED") { reasons.push("EMERGENCY_STATE"); hardBreach = hardBreach || control.emergencyState === "ENGAGED"; }
+  if (control.freezeNewBuys || control.buyState === "FROZEN") reasons.push("BUYS_FROZEN");
+  if (control.managerState === "PAUSED") reasons.push("MANAGER_PAUSED");
+  if (control.executorState === "PAUSED_SAFETY") reasons.push("EXECUTOR_PAUSED_SAFETY");
+  if (brokerTruthAgeSeconds != null && Number(brokerTruthAgeSeconds) > 600) { reasons.push("STALE_BROKER_TRUTH"); hardBreach = true; }
+  if (reconciliationUnresolved) { reasons.push("RECONCILIATION_UNRESOLVED"); hardBreach = true; }
+  if (dayLossBps != null && big(dayLossBps) >= big(rm.losses.dailyLossFreezeBps)) { reasons.push("DAILY_LOSS_FREEZE"); hardBreach = true; }
+  if (drawdownFromPeakBps != null) {
+    for (const s of rm.losses.drawdownStates || []) if (big(drawdownFromPeakBps) >= big(s.fromPeakBps)) { reasons.push("DRAWDOWN_" + s.state); if (s.state === "EMERGENCY_REVIEW") hardBreach = true; }
+  }
+  let exposures = null;
+  try {
+    const PR = require("./_investorPortfolioRisk");
+    if (portfolio && portfolio.navMinor) {
+      exposures = PR.exposures({ positions: portfolio.positions || [], workingOrders: portfolio.workingOrders || [], navMinor: portfolio.navMinor, settledCashMinor: portfolio.settledCashMinor || "0", reservedMinor: portfolio.reservedMinor || "0", policy: rm });
+      if (exposures.grossExposureBps != null && big(exposures.grossExposureBps) > big(rm.weights.maxGrossExposureBps)) { reasons.push("GROSS_EXPOSURE_BREACH"); hardBreach = true; }
+      if (exposures.plannedLossAggregateBps != null && big(exposures.plannedLossAggregateBps) > big(rm.losses.maxAggregatePlannedLossBps)) reasons.push("PLANNED_LOSS_AGGREGATE_BREACH");
+      if (exposures.stressedLossAggregateBps != null && big(exposures.stressedLossAggregateBps) > big(rm.losses.maxAggregateStressedLossBps)) { reasons.push("STRESSED_LOSS_AGGREGATE_BREACH"); hardBreach = true; }
+      if (Array.isArray(exposures.unprotectedSymbols) && exposures.unprotectedSymbols.length) reasons.push("UNPROTECTED_POSITIONS");
+    }
+  } catch (e) { reasons.push("EXPOSURE_EVALUATION_FAILED:" + String(e.code || e.message).slice(0, 40)); }
+  return { allowExpansion: reasons.length === 0, hardBreach, reasons, reason: reasons[0] || null, exposures, evaluatedAtMs: nowMs };
+}
+
 module.exports = { openPositionLimit,
   CLUSTERS, clusterOf, summarise, markedBook, foldPendingOrders, positionSizeUsd, accountBreakers, checkAdd, describe,
   equityStats, benchmarkReturn, attribution,
+  buildPortfolioActivationEnvelopes, revalidateOperationalLimits,
 };
+

@@ -8,6 +8,8 @@
     "build": "vite build --config cherry-viewer/vite.config.js && cp cherry-viewer/_redirects cherry-viewer-dist/_redirects"
   },
   "dependencies": {
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
     "node-fetch": "^2.6.1",
     "formidable": "^2.0.1",
     "form-data": "^4.0.0",
@@ -28,3 +30,4 @@
   "author": "",
   "license": "ISC"
 }
+

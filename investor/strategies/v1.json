@@ -1,4 +1,5 @@
 {
+  "retired": {"authority": "none", "reason": "Archived deterministic configuration; AI Manager policy is authoritative."},
   "version": "v1",
   "name": "Residual reversal with evidence classification",
   "frozenAt": "2026-08-29",

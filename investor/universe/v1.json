@@ -1,4 +1,5 @@
 {
+  "retired": {"authority": "none", "reason": "Archived deterministic configuration; AI Manager policy is authoritative."},
   "version": "v1",
   "name": "Investor_AI trade tier \u2014 high-cadence residual reversal",
   "createdAt": "2026-08-29",

@@ -163,8 +163,118 @@ function paperLearningConfig(base, ctrl = {}) {
   return { cfg, active: true, refused: null, applied };
 }
 
+/* ── CONFIGURATION PROVENANCE (blueprint D-4, G1.4; invariant I-4) ────────
+   The lane that produced every trade in the record ran with the declared
+   risk controls reduced: a 0.25× cost-margin hurdle against a declared 2.0×,
+   a $50M ADV floor against $300M, and all five exposure/loss breakers at
+   100% of NAV. Those values sit inside the declared clamp, so this is an
+   operator-selectable floor and not a code defect — but no result carried
+   that fact. Every closed position, NAV row and KPI row now carries the
+   hash of the risk configuration actually in force at the decision plus an
+   explicit list of deviations from the declared strategy, with both values.
+   Results produced under different hashes are never charted as one series. */
+const DECLARED_RISK_KEYS = Object.freeze({
+  parameters: Object.freeze(["costMarginMultiple", "minAdvUsd", "minAbsZ", "entryRank", "exitRank",
+    "maxHoldDays", "sectorCrowdingMultiple", "requireCalibratedEdge", "takeProfitPct",
+    "trailingStopPct", "trailingArmsAtPct", "stopLossPct", "requireSessionMove", "sessionTrendMode"]),
+  portfolioControls: Object.freeze(["maxOpenPositions", "maxGrossExposurePct", "minCashPct",
+    "ordinaryPositionPctOfNav", "riskBudgetPerTradePctOfNav", "sectorExposurePctOfNav",
+    "correlatedClusterPctOfNav", "dynamicCorrelationExposurePctOfNav", "dynamicCorrelationThreshold",
+    "requireDynamicCorrelation", "oneDayLossPausePctOfNav", "drawdownFreezePctFromHigh"]),
+});
+/* The five exposure and loss breakers (`_investorStrategy.js` exploratory
+   portfolioControls). A value at or above 100% of NAV disables the breaker. */
+const BREAKER_KEYS = Object.freeze(["sectorExposurePctOfNav", "correlatedClusterPctOfNav",
+  "dynamicCorrelationExposurePctOfNav", "oneDayLossPausePctOfNav", "drawdownFreezePctFromHigh"]);
+/* Hurdles: a value below the declared one weakens the research discipline. */
+const HURDLE_KEYS = Object.freeze(["costMarginMultiple", "minAdvUsd", "minAbsZ", "sectorCrowdingMultiple"]);
+
+function riskStrip(o) {
+  return Object.fromEntries(Object.entries(o || {})
+    .filter(([k, val]) => !String(k).startsWith("_") && typeof val !== "function")
+    .sort(([a], [b]) => a.localeCompare(b)));
+}
+function riskCanonical(value) {
+  if (Array.isArray(value)) return value.map(riskCanonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((k) => [k, riskCanonical(value[k])]));
+  }
+  return value === undefined ? null : value;
+}
+function riskSame(a, b) {
+  const na = a === undefined ? null : a, nb = b === undefined ? null : b;
+  return JSON.stringify(riskCanonical(na)) === JSON.stringify(riskCanonical(nb));
+}
+
+/** PURE. Identity of the risk configuration in force: a hash over the full
+ *  effective parameter/portfolio-control set, plus every deviation from the
+ *  declared (strict) strategy on the keys that govern risk. */
+function riskConfigIdentity(effectiveParams = {}, effectivePortfolioControls = {}, declared = null) {
+  const D = declared || module.exports;
+  const dp = D.parameters || {}, dc = D.portfolioControls || {};
+  const ep = effectiveParams || {}, ec = effectivePortfolioControls || {};
+  const effective = { parameters: riskStrip(ep), portfolioControls: riskStrip(ec) };
+  const canon = JSON.stringify(riskCanonical({ schema: "risk-config-identity.v1",
+    declaredStrategyVersion: D.version || null, effective }));
+  const riskConfigHash = require("crypto").createHash("sha256").update(canon).digest("hex");
+  const deviationsFromDeclared = [];
+  for (const key of DECLARED_RISK_KEYS.parameters) {
+    if (riskSame(dp[key], ep[key])) continue;
+    const lowered = HURDLE_KEYS.includes(key) && Number.isFinite(Number(ep[key]))
+      && Number.isFinite(Number(dp[key])) && Number(ep[key]) < Number(dp[key]);
+    deviationsFromDeclared.push({ scope: "parameters", key, declared: dp[key] ?? null,
+      effective: ep[key] ?? null, kind: lowered ? "hurdle_lowered" : "changed" });
+  }
+  for (const key of DECLARED_RISK_KEYS.portfolioControls) {
+    if (riskSame(dc[key], ec[key])) continue;
+    const disabled = BREAKER_KEYS.includes(key) && (ec[key] == null || Number(ec[key]) >= 100);
+    deviationsFromDeclared.push({ scope: "portfolioControls", key, declared: dc[key] ?? null,
+      effective: ec[key] ?? null, kind: disabled ? "breaker_disabled" : "changed" });
+  }
+  const breakersDisabled = deviationsFromDeclared.filter((d) => d.kind === "breaker_disabled").map((d) => d.key);
+  const hurdlesLowered = deviationsFromDeclared.filter((d) => d.kind === "hurdle_lowered").map((d) => d.key);
+  return { schema: "risk-config-identity.v1", riskConfigHash,
+    declaredStrategyVersion: D.version || null,
+    deviationsFromDeclared, breakersDisabled, hurdlesLowered,
+    /* G1.4(b): a persistent banner whenever any breaker is at a disabling
+       value or any hurdle is below its declared value. */
+    bannerRequired: breakersDisabled.length > 0 || hurdlesLowered.length > 0,
+    matchesDeclared: deviationsFromDeclared.length === 0 };
+}
+
+/** PURE. Could this configuration ever place an order? The declared strict
+ *  configuration requires a calibrated edge that is null, so it cannot
+ *  (blueprint D-3). Recorded on the frozen StrategyVersions document so a
+ *  performance claim about a never-eligible version is refused at write time. */
+function orderEligibility(parameters = null) {
+  const p = parameters || module.exports.parameters || {};
+  const raw = p.calibratedExpectedEdgeBps;
+  const known = raw !== null && raw !== undefined && raw !== "" && Number.isFinite(Number(raw));
+  if (p.requireCalibratedEdge !== false && !known) {
+    return { eligible: false, code: "calibration_unavailable",
+      reason: "requireCalibratedEdge is true and calibratedExpectedEdgeBps is null: the cost hurdle cannot pass, so this configuration cannot place an order until a calibration exists (blueprint D-3)" };
+  }
+  if (p.requireCalibratedEdge !== false && !(Number(raw) > 0)) {
+    return { eligible: false, code: "calibrated_non_positive", reason: "the calibrated lower bound is not positive" };
+  }
+  return { eligible: true, code: known ? "calibrated" : "calibration_not_required",
+    reason: known ? "a calibrated edge exists" : "calibration is not required by this configuration" };
+}
+
+/** Refuse a performance claim about a strategy version that was never
+ *  order-eligible. Throws; callers that only describe state use
+ *  orderEligibility() instead. */
+function assertPerformanceClaimAllowed(strategyDoc, claim = "performance claim") {
+  const doc = strategyDoc || {};
+  const eligibility = doc.orderEligibility || orderEligibility(doc.parameters || null);
+  if (doc.everOrderEligible === true || eligibility.eligible === true) return { ok: true };
+  throw new Error(`${claim} refused: strategy ${doc.version || "unknown"} was never order-eligible (${eligibility.reason})`);
+}
+
 module.exports = {
   paperLearningConfig, RELAX_LIMITS, clampRelax, PAPER_OBSERVATION_FLOOR_MAX,
+  riskConfigIdentity, orderEligibility, assertPerformanceClaimAllowed,
+  DECLARED_RISK_KEYS, BREAKER_KEYS, HURDLE_KEYS,
   "version": "v18",
   "supersedes": "v17",
   "name": "Residual reversal with controlled decision-feedback and locked forward confirmation",

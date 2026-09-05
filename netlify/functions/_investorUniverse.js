@@ -2586,7 +2586,80 @@ function attachIdentity(row) {
 }
 const tradeTier = declaredTradeTier.filter((r)=>!EXCLUDED[r.symbol]).map(attachIdentity);
 const researchTier = DECLARED.researchTier.map(attachIdentity);
+/* ── THE FROZEN ELIGIBLE SNAPSHOT (blueprint §5.1, §6.3, §17.4) ──────────
+ * Membership is a governance decision, not an implicit list. Every run
+ * freezes {universeVersion, universeHash, eligibleCount, symbols} as of the
+ * decision time and records every included and excluded security with its
+ * objective reason; Sol's coverage is validated against THIS object, never a
+ * hard-coded 304. Held or pending symbols outside the roster remain in the
+ * managed-position roster until flat. Manager v1 keeps all eligible names
+ * unless an objective eligibility event removes one: poor recent
+ * attractiveness is never a removal reason. PURE. */
+const ELIGIBILITY_POLICY = Object.freeze({
+  policyVersion: "eligibility-v1",
+  rules: Object.freeze([
+    "supported jurisdiction/exchange and common-equity security type (v6 roster, SEC-resolved identity)",
+    "broker tradability, long-only, whole shares (fractional capability not required)",
+    "declared exclusions with owner, rationale and effective date (material-exclusions-v1)",
+    "dead, acquired, delisted or recycled tickers removed with a recorded reason",
+    "held or working-order symbols outside the roster stay in the managed-position roster until flat",
+    "poor recent attractiveness is never an eligibility event",
+  ]),
+});
+function eligibleSnapshotHash(symbols, extra = {}) {
+  const canon = JSON.stringify({ schema: "universe-snapshot.v1", version: DECLARED.version,
+    identitySnapshotSha256: IDENTITY.snapshotSha256, exclusionPolicyVersion: "material-exclusions-v1",
+    symbols: [...symbols].sort(), ...extra });
+  return require("crypto").createHash("sha256").update(canon).digest("hex");
+}
+function freezeEligibleSnapshot({ tradingDate = null, positions = [], pendingOrders = [], nowMs = Date.now(),
+  removed = [] } = {}) {
+  const removedSet = new Set((removed || []).map((r) => String(r.symbol || r).toUpperCase()));
+  const members = tradeTier.filter((r) => !removedSet.has(r.symbol)).map((r) => ({
+    symbol: r.symbol, sector: r.sector, cik: r.cik || null, company: r.company || null,
+    cikSource: r.cikSource || null, included: true, reason: "eligible_roster_v6" }));
+  const symbols = members.map((m) => m.symbol).sort();
+  const excluded = [
+    ...excludedTier.map((r) => ({ symbol: r.symbol, sector: r.sector, included: false,
+      reason: r.exclusionReason, reasonText: DECLARED.exclusions[r.exclusionReason] || null,
+      owner: "roster-v6", effectiveDate: DECLARED.createdAt })),
+    ...Object.entries(DECLARED.deadTickers).filter(([k]) => !/_NOTE$/.test(k)).map(([symbol, reasonText]) => ({
+      symbol, sector: null, included: false, reason: "dead_ticker", reasonText, owner: "roster-v6", effectiveDate: DECLARED.createdAt })),
+    ...(removed || []).map((r) => ({ symbol: String(r.symbol || r).toUpperCase(), sector: null, included: false,
+      reason: r.reason || "eligibility_event", reasonText: r.reasonText || null, owner: r.owner || "operator",
+      effectiveDate: r.effectiveDate || (tradingDate || null) })),
+  ];
+  const eligible = new Set(symbols);
+  const managedOffRoster = [];
+  const seen = new Set();
+  for (const p of positions || []) if (p && p.open && p.symbol && !eligible.has(p.symbol) && !seen.has(p.symbol)) { seen.add(p.symbol); managedOffRoster.push({ symbol: p.symbol, reason: "held_position" }); }
+  for (const o of pendingOrders || []) if (o && o.symbol && !eligible.has(o.symbol) && !seen.has(o.symbol)) { seen.add(o.symbol); managedOffRoster.push({ symbol: o.symbol, reason: "working_or_pending_order" }); }
+  const universeHash = eligibleSnapshotHash(symbols, { removed: [...removedSet].sort() });
+  return {
+    schemaVersion: "universe-snapshot.v1",
+    universeVersion: DECLARED.version, universeHash, eligibleCount: symbols.length, symbols,
+    members, excluded, managedOffRoster,
+    researchOnly: researchTier.map((r) => r.symbol),
+    identitySnapshot: { schema: IDENTITY.schema, source: IDENTITY.source, count: IDENTITY.count, snapshotSha256: IDENTITY.snapshotSha256 },
+    eligibility: ELIGIBILITY_POLICY,
+    frozenAtMs: nowMs, tradingDate: tradingDate || null,
+  };
+}
+/** PURE. Does a coverage response match the frozen snapshot exactly? */
+function coverageMatches(snapshot, rows) {
+  const expected = new Set(snapshot.symbols);
+  const seen = new Map();
+  for (const r of rows || []) { const s = r && r.symbol; if (!s) continue; seen.set(s, (seen.get(s) || 0) + 1); }
+  const duplicates = [...seen.entries()].filter(([, n]) => n > 1).map(([s]) => s).sort();
+  const unknown = [...seen.keys()].filter((s) => !expected.has(s)).sort();
+  const missing = [...expected].filter((s) => !seen.has(s)).sort();
+  return { ok: duplicates.length === 0 && unknown.length === 0 && missing.length === 0,
+    completedCount: [...seen.keys()].filter((s) => expected.has(s)).length, eligibleCount: snapshot.eligibleCount,
+    duplicates, unknown, missing, universeHash: snapshot.universeHash, universeVersion: snapshot.universeVersion };
+}
+
 module.exports = {...DECLARED,immutable:true,declaredTradeTierCount:declaredTradeTier.length,
+  ELIGIBILITY_POLICY, freezeEligibleSnapshot, coverageMatches, eligibleSnapshotHash,
   tradeTier,researchTier,excludedTier,
   identitySnapshot:{schema:IDENTITY.schema,source:IDENTITY.source,count:IDENTITY.count,
     snapshotSha256:IDENTITY.snapshotSha256},

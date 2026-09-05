@@ -171,6 +171,9 @@ const CAUSE_TO_BUY = Object.freeze({
   cause_detected_fundamental: "news_drop",
   abnormal_activity_without_covered_fundamental_event: "heavy_selling",
   no_cause_detected_in_covered_sources: "quiet_drop",
+  evidence_not_yet_gathered: "news_pending",
+  evidence_insufficient: "news_pending",
+  /* Legacy records only: the token was split in G1.1 and never written again. */
   evidence_pending: "news_pending",
 });
 

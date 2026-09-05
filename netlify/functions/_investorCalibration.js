@@ -30,6 +30,41 @@ function cleanRows(rows) {
  * between partitions prevent an outcome from a multi-day position leaking
  * across adjacent train/calibration/holdout boundaries.
  */
+/* ── THE CALIBRATION STATE, DECLARED (blueprint D-3, G1.3) ────────────────
+   The strict configuration requires a calibrated edge that cannot exist
+   until 252 + 126 + 126 + 2×15 = 534 chronological sessions have been
+   observed. That gate is correct and stays. What was wrong was that it was
+   silent: the desk simply never proposed, and nothing said why or when
+   that would change. This is the disclosure, in finite numbers. */
+const REQUIREMENT = Object.freeze({ minTrain: 252, minCalibration: 126, minHoldout: 126, embargoSessions: 15 });
+const REQUIRED_SESSIONS = REQUIREMENT.minTrain + REQUIREMENT.minCalibration
+  + REQUIREMENT.minHoldout + 2 * REQUIREMENT.embargoSessions;   // 534
+
+/** PURE apart from the exchange calendar. Sessions available vs required and
+ *  the earliest exchange session on which a calibration could exist. */
+function calibrationState({ sessionsAvailable = 0, nowMs = Date.now() } = {}) {
+  const available = Math.max(0, Math.floor(Number(sessionsAvailable) || 0));
+  const remaining = Math.max(0, REQUIRED_SESSIONS - available);
+  let earliestEligibleSession = null, calendarDaysAhead = null;
+  if (remaining > 0) {
+    const M = require("./_investorMarket");
+    let counted = 0;
+    for (let day = 1; day <= 1500 && counted < remaining; day += 1) {
+      const probe = new Date(nowMs + day * 864e5);
+      const st = M.sessionState(new Date(Date.UTC(probe.getUTCFullYear(), probe.getUTCMonth(), probe.getUTCDate(), 16, 0, 0)));
+      if (st && st.tradingDay) { counted += 1; if (counted === remaining) { earliestEligibleSession = st.date; calendarDaysAhead = day; } }
+    }
+  }
+  return {
+    state: remaining > 0 ? "calibration_unavailable" : "calibration_possible",
+    sessionsAvailable: available, sessionsRequired: REQUIRED_SESSIONS, sessionsRemaining: remaining,
+    earliestEligibleSession, calendarDaysAhead, requirement: REQUIREMENT,
+    note: remaining > 0
+      ? `The declared strict configuration cannot place an order until a calibrated edge exists, which requires ${REQUIRED_SESSIONS} chronological sessions; ${available} are available and the earliest eligible session is ${earliestEligibleSession || "beyond the calendar horizon"}. This is a disclosed state, not a defect: no performance conclusion may be drawn about this configuration.`
+      : `${available} chronological sessions are available; a calibration can be computed.`,
+  };
+}
+
 function chronologicalSplit(rows, opts = {}) {
   const all = cleanRows(rows);
   const embargo = Math.max(0, Math.floor(opts.embargoSessions ?? 15));
@@ -237,4 +272,5 @@ async function read(experimentHash) {
 }
 
 module.exports = { value, cleanRows, chronologicalSplit, developmentOnly, lowerBound, calibrate,
-  calibrateAll, holdoutLockTemplate, forwardLockTemplate, evaluateForward, persist, read };
+  calibrateAll, holdoutLockTemplate, forwardLockTemplate, evaluateForward, persist, read,
+  REQUIREMENT, REQUIRED_SESSIONS, calibrationState };

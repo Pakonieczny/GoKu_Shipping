@@ -489,3 +489,9 @@
 # 2026-06-12). The verifier trio (verifyCharmSetsKick,
 # verifyCharmSets-background, charmSetsConsole) and its schedule were
 # removed in the verified-full-v3 deploy.
+
+
+# Investor runtime checks inspect their own source; keep these functions unbundled.
+[functions."investor*"]
+  node_bundler = "zisi"
+  included_files = ["investor.html", "netlify/functions/*investor*.js"]

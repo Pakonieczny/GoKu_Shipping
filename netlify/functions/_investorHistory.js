@@ -127,6 +127,13 @@ function expectedShortfallLoss(returns, alpha = 0.95) {
 
 /* ── storage ───────────────────────────────────────────────────────────── */
 function dailyRef(symbol) { return A.col(DAILY_COL).doc(String(symbol).toUpperCase()); }
+/** The same read through an injected admin (the deploy attestation's in-memory store). */
+async function readDailyWithMetaFor(admin, symbol) {
+  if (!admin || admin === A) return readDailyWithMeta(symbol);
+  const s = await admin.col(DAILY_COL).doc(String(symbol).toUpperCase()).get();
+  const d = s.exists ? (s.data() || {}) : {};
+  return { series: seriesFromDailyDoc(d), provenance: d.provider ? { provider: d.provider, feed: d.feed != null ? d.feed : null, adjustment: d.adjustment || null, sourceSha256: d.sourceSha256 || null, homogeneous: d.volumeProvenanceHomogeneous === true } : null, backfill: { complete: d.backfillComplete === true } };
+}
 
 function seriesFromDailyDoc(d = {}) {
   const date = d.date || [];
@@ -739,6 +746,7 @@ function describe(ctx, rev) {
 }
 
 module.exports = {
+  readDailyWithMetaFor, seriesFromDailyDoc,
   DAILY_CHUNK_SYMBOLS,
   detectSplitSeams, repairSplits, SPLIT_MOVE_THRESHOLD,
   DAILY_COL, KEEP_DAYS, CONTEXT_MIN_DAYS,

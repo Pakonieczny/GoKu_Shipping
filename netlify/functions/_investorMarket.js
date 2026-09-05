@@ -699,7 +699,7 @@ function alpacaPageBudget(limit, symbolCount) {
   return Math.min(64, Math.max(12, Math.ceil((limit * symbolCount) / 10000) + 4));
 }
 
-async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed } = {}) {
+async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed, recentMinutes = null } = {}) {
   const out = {}, pageHashes = [];
   let pageToken = null, pages = 0, lastAt = null;
   const settings = marketSettings();
@@ -708,6 +708,9 @@ async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed 
   const total = Math.min(10000, Math.max(limit, limit * symbols.length));
   const win = alpacaWindow(timeframe, limit, useFeed,
     { sipRealtime: settings.alpacaSipRealtime === true });
+  // Daytime context polls need a recent window, not five days of minute
+  // bars whose ascending pagination can crowd out the end of the roster.
+  if(!/day/i.test(timeframe) && Number(recentMinutes)>0) win.start=new Date(Date.parse(win.end)-Math.min(360,Math.max(30,Number(recentMinutes)))*60000).toISOString();
   /* Pages are 10k bars. A 90-symbol x 1300-day backfill is 117k bars, which
      silently truncated under the old 12-page ceiling. Size the ceiling to the
      request instead of to a constant. */
@@ -742,6 +745,7 @@ async function fetchBarsAlpaca(symbols, { timeframe = "5Min", limit = 120, feed 
       if (!(rejected && requestFeed === "delayed_sip" && pages === 0)) throw e;
       requestFeed = "sip";
       requestWin = alpacaWindow(timeframe, limit, "sip", { sipRealtime: false });
+      if(Number(recentMinutes)>0) requestWin.start=new Date(Date.parse(requestWin.end)-Math.min(360,Math.max(30,Number(recentMinutes)))*60000).toISOString();
       feedFallback = { from: "delayed_sip", to: "sip_embargoed", reason: String(e.message || e).slice(0, 200) };
       r = await alpacaRequest(requestFeed, requestWin);
     }
@@ -1094,7 +1098,12 @@ async function writeBars(symbol, dateStr, bars, meta) {
         replacedAtMs: Date.now() };
       existing = {};
     }
-    const merged = normalizeBars([...(existing.bars || []), ...sessionBars]).slice(-400);
+    const previous=new Map((existing.bars || []).map(b=>[b.t,b]));
+    const merged = normalizeBars([...(existing.bars || []), ...sessionBars]).slice(-400).map(b=>{
+      const old=previous.get(b.t);
+      const unchanged=old && ["o","h","l","c","v"].every(k=>old[k]===b[k]);
+      return {...b,knownAtMs:unchanged && Number(old.knownAtMs)>0 ? old.knownAtMs : Date.now()};
+    });
     const sourceHashes = [...new Set([...(existing.sourceHashes || []), meta && meta.sourceSha256]
       .filter((h) => /^[a-f0-9]{64}$/.test(String(h))))].sort();
     const sourceSha256 = sourceHashes.length ? crypto.createHash("sha256")
@@ -1121,9 +1130,9 @@ async function readRecentBars(symbol, sessions = 3) {
   return (await readRecentBarsWithMeta(symbol, sessions)).bars;
 }
 
-async function readRecentBarsWithMeta(symbol, sessions = 3) {
+async function readRecentBarsWithMeta(symbol, sessions = 3, {asOfMs=Date.now()} = {}) {
   const dates = [];
-  const d = new Date();
+  const d = new Date(asOfMs);
   let guard = 0;
   while (dates.length < sessions && guard < 20) {
     const st = sessionState(d);
@@ -1152,7 +1161,8 @@ async function readRecentBarsWithMeta(symbol, sessions = 3) {
   const out = [];
   for (const d of docs) out.push(...(d.bars || []));
   const latest = docs.at(-1) || {};
-  return { bars: normalizeBars(out), provenance: docs.length ? {
+  const knownByTime=new Map(out.map(b=>[b.t,b.knownAtMs || null]));
+  return { bars: normalizeBars(out).map(b=>({...b,knownAtMs:knownByTime.get(b.t)})), provenance: docs.length ? {
     provider: latest.provider || "manual", feed: latest.feed || null,
     adjustment: latest.adjustment || null, sourceSha256: latest.sourceSha256 || null,
   } : null, reason: docs.length ? "ok" : "missing", ...(mixedNote ? { note: mixedNote } : {}) };

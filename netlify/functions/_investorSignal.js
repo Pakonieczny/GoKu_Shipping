@@ -610,7 +610,20 @@ const CAUSE = {
   ABNORMAL_ACTIVITY: "abnormal_activity_without_covered_fundamental_event",
   ATTENTION: "abnormal_activity_without_covered_fundamental_event",
   NONE: "no_cause_detected_in_covered_sources",
-  PENDING: "evidence_pending",
+  /* D-1 (blueprint §2A, G1.1). The single "evidence_pending" token used to
+     stand for eleven different outcomes, and the direction rule below read
+     all of them as an ABSENCE of information. It is now three causes:
+       evidence_not_yet_gathered  the sweep has not reached the name (absence)
+       evidence_insufficient      the model answered validly and found the
+                                  covered sources insufficient (a finding)
+       evidence_unavailable       a system failure or a rejected output —
+                                  NOT a finding; never permits new risk.
+     PENDING stays as the alias for the absence case so the call sites that
+     seed a name before the sweep reaches it keep their meaning. */
+  PENDING: "evidence_not_yet_gathered",
+  NOT_YET_GATHERED: "evidence_not_yet_gathered",
+  INSUFFICIENT: "evidence_insufficient",
+  UNAVAILABLE: "evidence_unavailable",
 };
 
 function directionFromCause(cause, cfg = {}, attentionScore = null, coverage = null) {
@@ -637,17 +650,38 @@ function directionFromCause(cause, cfg = {}, attentionScore = null, coverage = n
       }
       return { trade: false, side: null, confidence: 0,
                reason: "no-cause automation locked until external known-cause recall is measured" };
-    default:
-      /* Pending means the evidence sweep has not reached this name yet. That is
-         an absence of information, not a finding against the trade, so a paper
-         desk may record it. HARD_NEWS above is a FINDING and never relaxes:
-         fading a real repricing is the known-losing trade, and taking it would
-         teach the system something false. */
+    case CAUSE.NOT_YET_GATHERED:
+      /* The evidence sweep has not reached this name yet. That is an absence
+         of information, not a finding against the trade, so a paper desk may
+         record it at reduced size. HARD_NEWS above is a FINDING and never
+         relaxes: fading a real repricing is the known-losing trade. */
       if (cfg.paperAbstainOnMissingInfo === true) {
         return { trade: true, side: "long", confidence: 0.2, relaxed: true,
-                 reason: "evidence still pending — taken as a paper observation at reduced confidence" };
+                 reason: "evidence not yet gathered — taken as a paper observation at reduced confidence" };
       }
-      return { trade: false, side: null, confidence: 0, reason: "evidence still pending" };
+      return { trade: false, side: null, confidence: 0, reason: "evidence not yet gathered" };
+    case CAUSE.INSUFFICIENT:
+      /* The model was reached, returned validly, and reported that the
+         supplied sources cannot determine a cause. A finding of
+         insufficiency — still the absence of a cause, so the same reduced
+         paper observation applies and nothing more. */
+      if (cfg.paperAbstainOnMissingInfo === true) {
+        return { trade: true, side: "long", confidence: 0.2, relaxed: true,
+                 reason: "covered sources insufficient to determine a cause — taken as a paper observation at reduced confidence" };
+      }
+      return { trade: false, side: null, confidence: 0, reason: "covered sources insufficient to determine a cause" };
+    case CAUSE.UNAVAILABLE:
+      /* A system failure or a rejected model output. NOT a finding in either
+         direction. Invariant I-1: the absence of a verdict is never a verdict,
+         so this permits no new risk in any cohort at any size. */
+      return { trade: false, side: null, confidence: 0, failClosed: true,
+               reason: "evidence unavailable — a failed or rejected classification is not a finding and permits no new risk" };
+    default:
+      /* Any cause added later fails CLOSED. The old default fell open under
+         paperAbstainOnMissingInfo, which is how every model failure became a
+         purchase (D-1). */
+      return { trade: false, side: null, confidence: 0, failClosed: true,
+               reason: `unrecognised evidence cause "${String(cause)}" — fails closed` };
   }
 }
 
@@ -690,6 +724,17 @@ function costHurdle({ cumResidual, advUsd, grade, wideSpreadWindow, vixNorm, cfg
     pass: expectedBps >= required && calibratedPass,
     ratio: required > 0 ? Number((expectedBps / required).toFixed(2)) : 0,
     reversionMult: revMult,
+    /* D-3 (G1.3): the calibration gate is correct and stays; it is DECLARED
+       instead of silent. With requireCalibratedEdge true and no calibrated
+       edge, no order can pass this hurdle and the state says so. The session
+       arithmetic (available / required / earliest eligible) is supplied by
+       _investorCalibration.calibrationState for the dashboard. */
+    calibration: {
+      required: cfg.requireCalibratedEdge !== false,
+      known: calibrationKnown,
+      state: cfg.requireCalibratedEdge === false ? "not_required"
+        : (calibrationKnown ? (calibrated > 0 ? "calibrated" : "calibrated_non_positive") : "calibration_unavailable"),
+    },
     assumptions: { decayHaircut: decay, reversionCapture: capture, costMarginMultiple: marginMult,
       reversionMult: revMult, calibrationRequired: cfg.requireCalibratedEdge !== false },
   };
