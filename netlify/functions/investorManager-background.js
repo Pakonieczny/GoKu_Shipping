@@ -158,6 +158,8 @@ exports.handler = async (event) => {
   const claim = claimed.claim;
   if (task === "simulation") {
     try {
+      // Simulation workers cold-start independently of the paper manager.
+      await M.loadMarketSettings();
       const out=await require("./_investorEvals").Simulator.create().execute(payload.runId);
       await JOBS.complete(claim,out);
       return {statusCode:200,body:JSON.stringify({ok:true,...out})};

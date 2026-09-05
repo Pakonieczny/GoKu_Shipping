@@ -271,6 +271,8 @@ const Simulator = (() => {
       } while(cursor);return out;
     }
     async function historicalBars(symbol,date,timeframe) {
+      // Preparation can outlast the settings cache; refresh before each fetch.
+      await M.loadMarketSettings();
       const credentials=M.providerCredentials('alpaca');
       if(!credentials.keyId || !credentials.secretKey) throw fail('HISTORICAL_BARS_MISSING','Archived raw prices or Alpaca historical-data credentials are required');
       const start=timeframe==='1Day'?new Date(Date.parse(date+'T00:00:00Z')-550*86400000).toISOString():new Date(M.nyWallClockToUtcMs(date,570)).toISOString();

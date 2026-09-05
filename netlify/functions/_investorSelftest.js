@@ -5844,6 +5844,42 @@ async function simulatorAdversarial() {
     return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
   }
   const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  await check('cold_simulation_worker_loads_market_credentials_after_verified_claim',async()=>{
+    const M=require('./_investorMarket'),AUTH=require('./_investorAuth'),J=require('./_investorJobs'),worker=require('./investorManager-background');
+    const originals={load:M.loadMarketSettings,auth:AUTH.loadAuthSecrets,claim:J.claimOnce,complete:J.complete,create:Sim.create};
+    let loaded=false,accepted=true,executed=0,completed=0;
+    try {
+      AUTH.loadAuthSecrets=async()=>{};
+      J.claimOnce=async()=>({claimed:accepted,claim:{jobId:'fixture'},httpStatus:403,reason:'invalid_nonce'});
+      M.loadMarketSettings=async()=>{loaded=true;};
+      Sim.create=()=>({execute:async runId=>{assert(loaded,'saved market credentials were not loaded');assert.equal(runId,RID);executed++;return {done:true};}});
+      J.complete=async()=>{completed++;};
+      const event={body:JSON.stringify({jobId:'fixture',task:'simulation',nonce:'fixture',payload:{runId:RID}})};
+      assert.equal((await worker.handler(event)).statusCode,200);assert.equal(executed,1);assert.equal(completed,1);
+      accepted=false;loaded=false;
+      assert.equal((await worker.handler(event)).statusCode,403);assert.equal(loaded,false);assert.equal(executed,1);
+    } finally {M.loadMarketSettings=originals.load;AUTH.loadAuthSecrets=originals.auth;J.claimOnce=originals.claim;J.complete=originals.complete;Sim.create=originals.create;}
+  });
+  await check('historical_preparation_refreshes_credentials_and_keeps_missing_data_closed',async()=>{
+    const M=require('./_investorMarket'),originals={load:M.loadMarketSettings,credentials:M.providerCredentials};
+    const date='2026-09-03',open=M.nyWallClockToUtcMs(date,570),end=M.sessionCloseMs(new Date(date+'T12:00:00Z'));
+    let loaded=false,missing=false,fetches=0,loads=0;
+    try {
+      M.loadMarketSettings=async()=>{loaded=true;loads++;};
+      M.providerCredentials=()=>{assert(loaded,'credentials cache must be refreshed');loaded=false;return missing?{}:{keyId:'fixture-id',secretKey:'fixture-secret'};};
+      const svc=Sim.create({admin:database(),fetchImpl:async(url,opts)=>{
+        fetches++;assert.equal(opts.headers['APCA-API-KEY-ID'],'fixture-id');assert.equal(opts.headers['APCA-API-SECRET-KEY'],'fixture-secret');
+        const q=new URL(url).searchParams;assert.equal(q.get('adjustment'),'raw');assert.equal(q.get('feed'),'sip');
+        const daily=q.get('timeframe')==='1Day';
+        const bars=Array.from({length:daily?30:78},(_,i)=>({t:new Date(daily?open-(30-i)*86400000:open+i*300000).toISOString(),o:100,h:101,l:99,c:100,v:100000}));
+        return {ok:true,status:200,json:async()=>({bars:{SPY:bars}})};
+      }});
+      const packet=await svc.prepareSymbol('SPY',null,date,end);
+      assert.equal(packet.bars.length,78);assert.equal(fetches,2);assert.equal(loads,2);
+      missing=true;
+      await assert.rejects(()=>svc.prepareSymbol('SPY',null,date,end),e=>e.code==='HISTORICAL_BARS_MISSING');assert.equal(fetches,2);
+    } finally {M.loadMarketSettings=originals.load;M.providerCredentials=originals.credentials;}
+  });
   await check('exact_cost_includes_reasoning_once_and_cache_categories',()=>{assert.equal(Sim.price('gpt-6-astra',{input_tokens:1000,output_tokens:100,input_tokens_details:{cached_tokens:200,cache_write_tokens:100},output_tokens_details:{reasoning_tokens:80}},'flex'),6725000);assert.equal(Sim.CEILING,1045000000);assert.throws(()=>Sim.price('gpt-6-astra',{input_tokens:-1}));assert.equal(Sim.price('gpt-5.6-luna',{input_tokens:1000,output_tokens:100}),320000);});
   await check('unobserved_and_future_evidence_are_not_available',()=>{assert.equal(Sim.knownAt({}),Infinity);assert.equal(Sim.knownAt({publishedAtMs:1000,fetchedAtMs:2000}),2000);assert.equal(Sim.knownAt({asOfMs:1000,firstSeenAtMs:3000}),3000);});
   await check('distinct_dates_and_no_future_sessions',()=>{const d=Sim.datesBetween('2026-08-01','2026-09-04'),a=Sim.selectedDates(d,10,'seed');assert.equal(new Set(a).size,10);assert.deepEqual(a,Sim.selectedDates(d,10,'seed'));assert.throws(()=>Sim.selectedDates(d,500,'seed'));assert.throws(()=>Sim.selectedDates(d,0,'seed'));});
