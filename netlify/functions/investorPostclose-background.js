@@ -146,7 +146,7 @@ async function buildKpiInputs({ D, accountId, tradingDate, control, snapshot, be
     inputs.operatingCostDrag = { costMinor, averageNavMinor: avg.toString() };
     inputs.unitEconomics = { costMinor, meetings: run ? 1 : 0, namesCovered: run && run.coverage ? Number(run.coverage.completedCount) || 0 : 0,
       researchJobs: run && run.research ? Number(run.research.completed) || 0 : 0, actionableMandates: run && run.maintenance ? Number(run.maintenance.actionable) || 0 : 0,
-      activatedMandates: run && run.activation && run.activation.status === "COMMITTED" ? (run.activation.mandateVersionIds || []).length : 0, fillProducingMandates: new Set((fills || []).map((f) => f.mandateVersionId).filter(Boolean)).size };
+      activatedMandates: run && run.activation && run.activation.status === "COMMITTED" ? (run.activation.mandateVersionIds || run.activation.mandates || []).length : 0, fillProducingMandates: new Set((fills || []).map((f) => f.mandateVersionId).filter(Boolean)).size };
     if (snapshot) inputs.exposure = { averageNavMinor: avg.toString(), grossExposureMinor: snapshot.investedMinor, tradedNotionalMinor: (fills || []).reduce((n, f) => n + BigInt(String(f.notionalMinor || 0)), 0n).toString(),
       positions: (snapshot.positions || []).map((p) => ({ symbol: p.symbol, marketValueMinor: p.marketValueMinor })) };
   }

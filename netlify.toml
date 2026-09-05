@@ -232,7 +232,7 @@
     Pragma = "no-cache"
     Expires = "0"
     X-Robots-Tag = "noindex, nofollow, noarchive"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'sha256-9NNrAkFazcQdWSFQEOet0w8WEUsToV6FFlGl4kd4TLY='; style-src 'self' 'sha256-DSF3Zme7FL8A/1bLlsfCDK1kjb7HeYoiLj4CSAN5xLE='; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'sha256-9NNrAkFazcQdWSFQEOet0w8WEUsToV6FFlGl4kd4TLY='; style-src 'self' 'sha256-DSF3Zme7FL8A/1bLlsfCDK1kjb7HeYoiLj4CSAN5xLE='; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 
 [[redirects]]
   from = "https://scanner.goldenspike.app"

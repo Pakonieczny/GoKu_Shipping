@@ -223,6 +223,10 @@ const RISK_MANDATE = deepFreeze({
   liquidity: {
     maxOrderPctOfAdvBps: "100", maxPositionPctOfAdvBps: "500", maxSpreadBps: "50",
     minAdvMinor: "5000000000",             // $50M rolling median dollar volume
+    /* Paper mode has no quoted spread feed: the assumed spread is a labelled
+       assumption (§15.1), applied as a hard input to the size authority. A
+       live adapter must replace it with a measured quote before LIMITED_LIVE. */
+    paperAssumedSpreadBps: "10", spreadSource: "paper_assumption",
   },
   stress: {
     gapHaltAdverseBps: "1500",             // a stop is not a promised fill

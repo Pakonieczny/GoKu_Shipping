@@ -302,6 +302,27 @@ function defaultDeps(admin = null) {
     workset: lazy("./_investorWorkset"), contentStore: lazy("./_investorContentStore"), market: lazy("./_investorMarket"), now: Date.now,
   };
 }
+/* ── liquidity marks for the size authority (§15.1): ADV measured from the
+   stored daily series over the last 20 sessions at or before the cutoff;
+   the spread is the policy's labelled paper assumption until a quote feed
+   exists. A symbol without 10 priced sessions gets advMinor null, which
+   the risk service refuses as ADV_UNKNOWN — never a silent default. ── */
+async function liquidityMarks(symbols, deps, { policy = null, cutoffMs = Date.now() } = {}) {
+  const H = deps.history || lazy("./_investorHistory");
+  const liq = (policy && policy.riskMandate && policy.riskMandate.liquidity) || POLICY.RISK_MANDATE.liquidity;
+  const spreadBps = String(liq.paperAssumedSpreadBps || "10");
+  const marks = {};
+  for (const symbol of [...new Set((symbols || []).filter(Boolean))]) {
+    let series = [];
+    try { const r = H && typeof H.readDailyWithMetaFor === "function" ? await H.readDailyWithMetaFor(deps.admin || null, symbol) : await H.readDailyWithMeta(symbol); series = (r && r.series) || []; } catch { series = []; }
+    const bars = series.filter((b) => b && b.date && Number(b.c) > 0 && (!cutoffMs || Date.parse(`${b.date}T00:00:00Z`) <= cutoffMs)).slice(-20);
+    let acc = 0n, n = 0;
+    for (const b of bars) { const dv = Number(b.c) * (Number(b.v) || 0); if (Number.isFinite(dv) && dv > 0) { acc += BigInt(Math.round(dv * 100)); n += 1; } }
+    marks[symbol] = { advMinor: n >= 10 ? (acc / BigInt(n)).toString() : null, advSessions: n, advSource: "measured_daily_series_20", spreadBps, spreadSource: liq.spreadSource || "paper_assumption", asOfDate: bars.length ? bars[bars.length - 1].date : null };
+  }
+  return marks;
+}
+
 /** Run the meeting from its checkpoint. Returns { done, yielded, checkpoint,
  *  summary }. `budget()` says how many ms of invocation time remain. */
 async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 * 60 * 1000, minStageMs = 90 * 1000, control = null } = {}) {
@@ -398,7 +419,8 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
         if (accepted.length) {
           const activation = await deps.portfolio.captureActivationSnapshot({ accountId, reason: "RISK_MAINTENANCE", admin: deps.admin, reconcile: deps.reconcile || null });
           staged = deps.mandate && typeof deps.mandate.stagePortfolioPlan === "function"
-            ? await deps.mandate.stagePortfolioPlan({ planClass: "RISK_MAINTENANCE", portfolioPlanProposal: { ...plan, actionableMandates: accepted }, proposals: accepted, verifiedProposalClaims: claims, activationSnapshot: activation, accountId, cutoff: st.cutoff, policy, managerRunId, admin: deps.admin })
+            ? await deps.mandate.stagePortfolioPlan({ planClass: "RISK_MAINTENANCE", portfolioPlanProposal: { ...plan, actionableMandates: accepted }, proposals: accepted, verifiedProposalClaims: claims, activationSnapshot: activation, accountId, cutoff: st.cutoff, policy, managerRunId, admin: deps.admin,
+              eligibleSymbols: st.roster.symbols, marks: await liquidityMarks(accepted.map((p) => p.symbol), deps, { policy, cutoffMs: st.cutoff.cutoffMs }), nowMs: now() })
             : { status: "NOT_COMMITTED", reason: "mandate_module_unavailable" };
         }
         if (staged.status !== "COMMITTED" && staged.status !== "EMPTY") {
@@ -479,7 +501,8 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       if (legal.length && !st.expansionBlocked) {
         const snap = await deps.portfolio.captureActivationSnapshot({ accountId, reason: "EXPANSION", admin: deps.admin, reconcile: deps.reconcile || null });
         activation = deps.mandate && typeof deps.mandate.stagePortfolioPlan === "function"
-          ? await deps.mandate.stagePortfolioPlan({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION", decisions: st.synthesis.decisions, comparisonNote: st.synthesis.comparisonNote, planHash: sha(legal) }, proposals: legal, verifiedProposalClaims: st.verifiedProposalClaims || { byProposal: {} }, activationSnapshot: snap, accountId, cutoff: st.cutoff, policy, managerRunId, admin: deps.admin })
+          ? await deps.mandate.stagePortfolioPlan({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION", decisions: st.synthesis.decisions, comparisonNote: st.synthesis.comparisonNote, planHash: sha(legal) }, proposals: legal, verifiedProposalClaims: st.verifiedProposalClaims || { byProposal: {} }, activationSnapshot: snap, accountId, cutoff: st.cutoff, policy, managerRunId, admin: deps.admin,
+              eligibleSymbols: st.roster.symbols, marks: await liquidityMarks(legal.map((p) => p.symbol), deps, { policy, cutoffMs: st.cutoff.cutoffMs }), nowMs: now() })
           : { status: "NOT_COMMITTED", reason: "mandate_module_unavailable" };
         if (activation.status === "NEEDS_SOL_RESYNTHESIS" && !(st.synthesisAttempt >= 1)) {
           st.synthesisAttempt = (st.synthesisAttempt || 0) + 1;
@@ -598,12 +621,13 @@ async function runEventRevision({ claim, deps: partial = {}, control = null } = 
   if (!claims.allSupported) return { ok: true, symbol, state: state.kind, action: "RETAIN_PROTECTION_ACTION_REQUIRED", decision: "ABSTAIN", reasonCode: claims.forceAbstainSymbols && claims.forceAbstainSymbols.length ? "EVIDENCE_CONFLICT" : "DATA_INCOMPLETE", claims: { blocking: claims.blockingSymbols } };
   const activation = await deps.portfolio.captureActivationSnapshot({ accountId, reason: "EVENT_REVISION", admin: deps.admin, reconcile: deps.reconcile || null });
   const staged = MANDATE && typeof MANDATE.stagePortfolioPlan === "function"
-    ? await MANDATE.stagePortfolioPlan({ planClass: "RISK_MAINTENANCE", portfolioPlanProposal: { planClass: "RISK_MAINTENANCE", single: true, symbol, assessment: { decision: assessment.decision, materiality: assessment.materiality || null } }, proposals: [assessment.mandate], verifiedProposalClaims: claims, activationSnapshot: activation, accountId, cutoff: { cutoffMs }, policy, managerRunId: claim.runId || null, admin: deps.admin })
+    ? await MANDATE.stagePortfolioPlan({ planClass: "RISK_MAINTENANCE", portfolioPlanProposal: { planClass: "RISK_MAINTENANCE", single: true, symbol, assessment: { decision: assessment.decision, materiality: assessment.materiality || null } }, proposals: [assessment.mandate], verifiedProposalClaims: claims, activationSnapshot: activation, accountId, cutoff: { cutoffMs }, policy, marks: await liquidityMarks([symbol], deps, { policy, cutoffMs }), managerRunId: claim.runId || null, admin: deps.admin })
     : { status: "NOT_COMMITTED", reason: "mandate_module_unavailable" };
   return { ok: true, symbol, state: state.kind, action: "STAGED_REVISION", decision: assessment.decision, reasonCode: assessment.reasonCode || null, materiality: assessment.materiality || null, staged: { status: staged.status, reason: staged.reason || null, planId: staged.planId || null } };
 }
 
 module.exports = {
+  liquidityMarks,
   MANAGER_VERSION, RUN_SCHEMA, DECISION_SCHEMA, STAGES, NO_BUY_REASONS,
   freezeDecisionCutoff, assertExactCoverageInput, validateCoverage, mergeStructuralCoverageRepair,
   antiGoalpostViolations, buildRiskMaintenancePlan, validateUniqueResearchPriority, forceNonExecutableForIncompleteResearch,

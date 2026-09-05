@@ -388,12 +388,27 @@ async function applyTransition({ admin = null, adapter, transition: t, control =
     return { transitionId: t.transitionId, applied: false, error: String(e.code || e.message).slice(0, 160) };
   }
 }
-async function applyOutbox({ admin = null, adapter, accountId, control = {}, nowMs = Date.now(), limit = 20 } = {}) {
+/** Whether a transition would add new long exposure: only an APPLY of an order set that still carries an unfilled ENTRY leg. Cancels,
+ *  protective-only sets, emergency reductions and operator sells never count. */
+async function addsExposure(D, t) {
+  if (t.kind !== "APPLY_DESIRED_ORDER_SET") return false;
+  const os = await readOrderSet(D, t.orderSetId);
+  return !!(os && (os.legs || []).some((l) => l.role === "ENTRY" && String(l.side).toLowerCase() === "buy" && !["FILLED", "CANCELLED", "EXPIRED"].includes(l.status)));
+}
+async function applyOutbox({ admin = null, adapter, accountId, control = {}, nowMs = Date.now(), limit = 20, allowExpansion = true } = {}) {
   const D = db(admin);
   const pending = rows(await D.col(D.COL.executionOutbox).where("status", "==", "PENDING").get()).filter((t) => !accountId || t.accountId === accountId)
     .sort((a, b) => (a.authority === "EMERGENCY_RISK" ? -1 : 0) - (b.authority === "EMERGENCY_RISK" ? -1 : 0) || Number(a.createdAtMs) - Number(b.createdAtMs)).slice(0, limit);
   const results = [];
-  for (const t of pending) results.push(await applyTransition({ admin: D, adapter, transition: t, control, nowMs }));
+  for (const t of pending) {
+    /* a buy freeze (operator, operational or emergency) holds every transition that would add exposure; it stays PENDING and applies once buys resume */
+    if (!allowExpansion && await addsExposure(D, t)) {
+      await D.col(D.COL.executionOutbox).doc(t.transitionId).set({ deferredReason: "EXPANSION_FROZEN", deferredAtMs: nowMs, deferrals: (Number(t.deferrals) || 0) + 1 }, { merge: true });
+      results.push({ transitionId: t.transitionId, applied: false, deferred: true, reason: "EXPANSION_FROZEN" });
+      continue;
+    }
+    results.push(await applyTransition({ admin: D, adapter, transition: t, control, nowMs }));
+  }
   return { applied: results.filter((r) => r.applied).length, results };
 }
 
@@ -520,7 +535,9 @@ async function tick({ admin = null, adapter, accountId, control = {}, barsBySymb
     if (!summary.operational.allowExpansion && control.buyState !== "FROZEN") await D.col(D.COL.control).doc("control").set({ buyState: "FROZEN", freezeNewBuys: true, freezeReason: summary.operational.reason, frozenAtMs: nowMs }, { merge: true });
     if (summary.operational.hardBreach && ER) summary.emergency = await ER.enforceBoundedPolicy({ accountId, observed: { ...metrics, grossExposureBps: summary.operational.exposures && summary.operational.exposures.grossExposureBps, aggregateStressedLossBps: summary.operational.exposures && summary.operational.exposures.stressedLossAggregateBps }, portfolio, control, ranks, admin: D, nowMs });
   }
-  summary.outbox = await applyOutbox({ admin: D, adapter, accountId, control, nowMs });
+  const frozen = control.buyState === "FROZEN" || control.freezeNewBuys === true || control.emergencyState === "ENGAGED" || control.killSwitch === true || (summary.operational && summary.operational.allowExpansion === false);
+  summary.allowExpansion = !frozen;
+  summary.outbox = await applyOutbox({ admin: D, adapter, accountId, control, nowMs, allowExpansion: !frozen });
   if (adapter.adapter === "paper") summary.fills = await simulatePaperFills({ admin: D, adapter, accountId, barsBySymbol, nowMs });
   summary.conservation = await assertConservation(accountId, { admin: D });
   if (!summary.conservation.pass) { await D.col(D.COL.control).doc("control").set({ executorState: "PAUSED_SAFETY", executorPauseReason: "LEDGER_CONSERVATION_FAILED", executorPausedAtMs: nowMs }, { merge: true }); }

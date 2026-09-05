@@ -16,7 +16,7 @@ if ((html.match(/<script>/g) || []).length !== 1 || (html.match(/<style>/g) || [
 const script = html.slice(html.indexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
 const style = html.slice(html.indexOf("<style>") + "<style>".length, html.indexOf("</style>"));
 const h = (s) => `'sha256-${crypto.createHash("sha256").update(s, "utf8").digest("base64")}'`;
-const csp = `default-src 'self'; script-src 'self' ${h(script)}; style-src 'self' ${h(style)}; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
+const csp = `default-src 'self'; script-src 'self' ${h(script)}; style-src 'self' ${h(style)}; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
 const tomlPath = path.join(root, "netlify.toml");
 let toml = fs.readFileSync(tomlPath, "utf8");
 const start = toml.indexOf('for = "/investor.html"');

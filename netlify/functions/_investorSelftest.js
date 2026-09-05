@@ -5391,6 +5391,135 @@ function runFixtures() {
     if (!/Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"/.test(block)) throw new Error("the console must revalidate on every load");
     return true;
   }));
+
+  /* ═══ GROUP 9 — END-TO-END PROCESS REVIEW (blueprint §20, §23): one Manager Meeting flows
+     through real activation, the executor, paper fills, the post-close pass and the console
+     reads, with every hand-off checked against the documents the next stage actually reads. ═══ */
+  cases.push(fixture("end_to_end_meeting_activation_execution_postclose_and_console_agree_on_one_trading_day", async () => {
+    const MGR = require("./_investorManager");
+    const X = require("./_investorExecution");
+    const B = require("./_investorBroker");
+    const PC = require("./investorPostclose-background");
+    const V2 = require("./_investorApiV2");
+    const S = require("./_investorApiSchemas");
+    const SC = require("./_investorStorageCodec");
+    const W = meetingWorld({ reviewMissing: [] });
+    const { fake, t0 } = W;
+    const C = fake.COL;
+    const commit = process.env.COMMIT_REF || process.env.DEPLOY_ID || "local";
+    /* a daily series with volume: $80M/day of dollar volume clears the $50M ADV floor; the 4th is the trading day */
+    const series = [];
+    let c = 40;
+    for (let i = 300; i >= 0; i -= 1) { const d = new Date(t0 - i * 864e5).toISOString().slice(0, 10); c *= 1 + ((i % 7) - 3) / 400; const px = Number(c.toFixed(4)); series.push({ date: d, o: px, h: px * 1.01, l: px * 0.99, c: px, v: 2000000 }); }
+    W.deps.history = { readDailyWithMeta: async () => ({ series, provenance: { provider: "fixture", feed: null } }) };
+    W.deps.mandate = require("./_investorMandate");          /* the real activation path, not the stub */
+    await W.seed();
+    /* a $100k book: the example proposal (86 × $43.25) fits inside the name-weight and planned-loss limits without a material clamp */
+    fake.docs.set(`${C.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 10000000, reserved: 0, positions: 42000, contributed_capital: -10042000 }, balanceRevision: 7, portfolioVersion: 7, startingNavCents: 10042000 });
+    fake.docs.set(`${C.ledger}/genesis`, { txnId: "genesis", accountId: "paper-1", kind: "capital_contribution", atMs: t0 - 30 * 864e5, legs: [{ account: "cash", amountCents: 10042000 }, { account: "contributed_capital", amountCents: -10042000 }] });
+    fake.docs.set(`${C.ledger}/buy_BBB`, { txnId: "buy_BBB", accountId: "paper-1", kind: "manager_fill", atMs: t0 - 10 * 864e5, legs: [{ account: "cash", amountCents: -42000 }, { account: "positions", amountCents: 42000 }], meta: { symbol: "BBB" } });
+    fake.docs.set(`${C.control}/control`, { accountId: "paper-1", engineMode: "manager", accountMode: "PAPER_AI", writerEpoch: 1, controlVersion: 1, fixturesPass: true, fixturesCommit: commit, buyState: "OPEN", managerState: "ENABLED", emergencyState: "CLEAR", executorState: "MONITORING" });
+    /* the held name carries acknowledged protection from an earlier applied mandate; an unprotected holding would (correctly) freeze expansion */
+    fake.docs.set(`${C.positions}/paper-1_BBB`, { ...fake.docs.get(`${C.positions}/paper-1_BBB`), quantityUnits: "10", lossBoundaryPriceMicros: "36000000", takeProfitPriceMicros: "50000000", protectionState: "PROTECTED_RTH", protectionAcknowledged: true, engineVersion: "manager", positionLifecycleId: "plc_BBB" });
+    const marks = await MGR.liquidityMarks(["AAA"], W.deps, { cutoffMs: t0 });
+    if (!marks.AAA || marks.AAA.advMinor == null || BigInt(marks.AAA.advMinor) < 5000000000n || marks.AAA.spreadSource !== "paper_assumption") throw new Error(`liquidity marks ${JSON.stringify(marks)}`);
+    /* 1. the Manager Meeting: frozen roster, research, synthesis, real activation */
+    const claim = { jobId: "j_e2e", runId: "run_premarket_manager_paper-1_2026-09-04", payload: { accountId: "paper-1", tradingDate: "2026-09-04" }, checkpoint: null };
+    const out = await MGR.runManagerMeeting({ claim, deps: W.deps, budget: () => 10 * 60 * 1000, control: { engineMode: "manager" } });
+    if (out.done !== true || out.failed) throw new Error(`meeting ${JSON.stringify(out).slice(0, 400)}`);
+    const s = out.summary;
+    if (s.activation.status !== "COMMITTED" || !s.activation.planId || !(s.activation.mandates || []).includes("AAA")) throw new Error(`activation ${JSON.stringify(s.activation)} ${JSON.stringify(s.noBuyReasons)}`);
+    const pointer = fake.docs.get(`${C.activeMandates}/paper-1_AAA`);
+    if (!pointer || pointer.status !== "DESIRED" || !pointer.desiredVersionId) throw new Error(`pointer ${JSON.stringify(pointer)}`);
+    const envelope = SC.decode(fake.docs.get(`${C.activationEnvelopes}/${pointer.desiredVersionId}`));
+    const authorized = BigInt(envelope.authorizedQuantityUnits);
+    if (authorized <= 0n || authorized > 86n) throw new Error(`envelope ${JSON.stringify(envelope).slice(0, 300)}`);
+    const outbox = [...fake.docs.entries()].filter(([k]) => k.startsWith(`${C.executionOutbox}/`)).map(([, v]) => v);
+    if (outbox.length !== 1 || outbox[0].kind !== "APPLY_DESIRED_ORDER_SET" || outbox[0].status !== "PENDING") throw new Error(`outbox ${JSON.stringify(outbox)}`);
+    const reservation = fake.docs.get(`${C.reservationAccounts}/paper-1`);
+    if (!reservation || BigInt(reservation.reservedNotionalMinor) <= 0n) throw new Error("reservation account");
+    /* 2. the executor applies the desired order set through the paper adapter; no model code is involved */
+    const adapter = B.createPaperAdapter({ admin: fake, now: () => t0 + 60000 });
+    const ctrl = () => fake.docs.get(`${C.control}/control`);
+    const tick1 = await X.tick({ admin: fake, adapter, accountId: "paper-1", control: ctrl(), barsBySymbol: {}, nowMs: t0 + 60000, metrics: { brokerTruthAgeSeconds: 1, reconciliationUnresolved: false }, ranks: {} });
+    if (!tick1.outbox || tick1.outbox.applied !== 1) throw new Error(`tick1 ${JSON.stringify(tick1).slice(0, 400)}`);
+    if (fake.docs.get(`${C.activeMandates}/paper-1_AAA`).status !== "WORKING") throw new Error("entry working");
+    /* 3. a bar at the limit fills the entry; the protective legs attach for exactly the owned quantity */
+    const barMs = Date.UTC(2026, 8, 4, 14, 35);
+    const tick2 = await X.tick({ admin: fake, adapter, accountId: "paper-1", control: ctrl(), barsBySymbol: { AAA: [{ t: new Date(barMs).toISOString(), o: 43.0, h: 43.4, l: 42.9, c: 43.2, v: 500000, prevClose: 43.1 }] }, nowMs: barMs + 1000, metrics: { brokerTruthAgeSeconds: 1, reconciliationUnresolved: false }, ranks: {} });
+    const fills = tick2.fills;
+    if (!fills || !fills.fills.some((f) => f.symbol === "AAA" && f.role === "ENTRY")) throw new Error(`no entry fill ${JSON.stringify(tick2).slice(0, 400)}`);
+    const pos = fake.docs.get(`${C.positions}/paper-1_AAA`);
+    if (!pos || pos.open !== true || BigInt(pos.quantityUnits) !== authorized || pos.protectionState !== "PROTECTED_RTH" || pos.lossBoundaryPriceMicros !== "37250000" || pos.takeProfitPriceMicros !== "49000000" || pos.engineVersion !== "manager") throw new Error(`position ${JSON.stringify(pos).slice(0, 400)}`);
+    if (fake.docs.get(`${C.activeMandates}/paper-1_AAA`).status !== "PROTECTED_RTH") throw new Error("pointer protected");
+    if (!tick2.conservation || tick2.conservation.pass !== true) throw new Error(`conservation ${JSON.stringify(tick2.conservation)}`);
+    if (fake.docs.get(`${C.capitalReservations}/${envelope.reservationId}`).status !== "RELEASED") throw new Error("the reservation releases on fill");
+    /* 4. post-close: final marks, NAV, frozen forecasts for every decision, KPI row, alerts */
+    const evening = Date.UTC(2026, 8, 4, 21, 30);
+    const reader = async (sym) => ({ series: sym === "SPY" ? series.map((b) => ({ ...b, c: b.c * 10 })) : series });
+    const pc = await PC.runPostclose({ accountId: "paper-1", tradingDate: "2026-09-04", admin: fake, seriesReader: reader, nowMs: evening });
+    if (!pc.ok) throw new Error(`postclose ${JSON.stringify(pc.errors)}`);
+    if (pc.steps.marks.marked !== 2 || pc.steps.freeze.written !== 3 || pc.steps.freeze.envelopes !== 1 || pc.steps.freeze.proposals !== 1) throw new Error(`postclose steps ${JSON.stringify(pc.steps)}`);
+    const L = require("./_investorLearning");
+    const fc = fake.docs.get(`${C.forecasts}/${L.forecastIdFor({ managerRunId: claim.runId, symbol: "AAA" })}`);
+    if (!fc || fc.referencePriceType !== "BUY_LIMIT" || fc.referencePriceMicros !== "43250000" || fc.status !== "PENDING" || fc.lossBoundaryPriceMicros !== "37250000") throw new Error(`forecast ${JSON.stringify(fc).slice(0, 300)}`);
+    if (!fake.docs.get(`${C.kpiDaily}/paper-1_2026-09-04`) || !fake.docs.get(`${C.navMarks}/paper-1_2026-09-04`).finalMark) throw new Error("kpi and nav rows");
+    if (ctrl().lastPostcloseDate !== "2026-09-04") throw new Error("postclose completion date");
+    /* 5. the console reads the same story through the v2 API */
+    const auth = { ok: true, via: "cookie", subject: "operator", sessionId: "s_e2e", reauthed: false };
+    let seq = 0;
+    const read = (action, params = {}) => V2.dispatch({ body: { apiVersion: "investor.v2", requestId: `req_e2e_${++seq}`, action, params }, admin: fake, nowMs: evening + 60000, authOverride: auth });
+    const ok = (r, n) => { if (r.statusCode !== 200 || !r.body.ok) throw new Error(`${n} ${r.statusCode} ${JSON.stringify(r.body.error)}`); const v = S.validateResponse(r.body); if (!v.ok) throw new Error(`${n} envelope ${JSON.stringify(v.issues)}`); return r.body.data; };
+    const dash = ok(await read("managerDashboard"), "dashboard");
+    if (!S.validateView("ManagerDashboardView", dash).ok) throw new Error("dashboard view");
+    if (dash.coverage.completedCount !== 3 || dash.coverage.eligibleCount !== 3 || dash.committedPlan.portfolioPlanId !== s.activation.planId || dash.counts.decisions.BUY !== 1 || dash.latestRun.state !== "COMPLETE") throw new Error(`dashboard ${JSON.stringify({ coverage: dash.coverage, plan: dash.committedPlan, counts: dash.counts.decisions })}`);
+    if (dash.workflow.find((w) => w.step === "mandates").state !== "complete" || dash.workflow.find((w) => w.step === "coverage").state !== "complete") throw new Error(`workflow ${JSON.stringify(dash.workflow)}`);
+    /* the executor handler records its tick on Control; the direct ticks above did not, so the console reports execution as pending, never as running */
+    if (dash.workflow.find((w) => w.step === "execution").state !== "pending") throw new Error("execution state must come from the recorded tick, not be inferred");
+    const cs = ok(await read("controlState"), "controlState");
+    if (!cs.mutationsEnabled || cs.attestation.pass !== true || cs.blockingConditions.length !== 0) throw new Error(`control ${JSON.stringify({ m: cs.mutationsEnabled, a: cs.attestation, b: cs.blockingConditions, mode: cs.accountMode, buy: cs.buyState, em: cs.emergencyState, ex: cs.executorState })}`);
+    const pf = ok(await read("portfolio"), "portfolio");
+    const aaa = pf.holdings.items.find((h) => h.symbol === "AAA");
+    if (pf.holdings.items.length !== 2 || !aaa || aaa.quantity.quantityUnits !== authorized.toString() || aaa.protection.state !== "PROTECTED_RTH" || aaa.lossBoundary.priceMicros !== "37250000" || aaa.target.priceMicros !== "49000000" || aaa.averageCost.priceMicros !== "43000000") throw new Error(`holding ${JSON.stringify(aaa).slice(0, 400)}`);
+    const auth1 = pf.standingAuthorizations.items.find((a) => a.symbol === "AAA");
+    if (!auth1 || auth1.state !== "PROTECTED_RTH" || auth1.filledQuantity.quantityUnits !== authorized.toString() || auth1.remainingQuantity.quantityUnits !== "0" || auth1.hashes.proposal !== envelope.proposalHash) throw new Error(`authorization ${JSON.stringify(auth1).slice(0, 400)}`);
+    const journal = ok(await read("decisionJournal", { managerRunId: claim.runId }), "journal");
+    const jAAA = journal.items.find((r) => r.symbol === "AAA");
+    if (journal.totalCount !== 3 || !jAAA || jAAA.decision !== "BUY" || !jAAA.forecast || jAAA.forecast.referenceType !== "BUY_LIMIT" || jAAA.attributionAuthority !== "AI_MANDATE") throw new Error(`journal ${JSON.stringify(jAAA).slice(0, 300)}`);
+    const ev = ok(await read("executionEvents"), "events");
+    if (!ev.items.some((e) => e.type === "BROKER_ACKNOWLEDGED" && e.authority === "AI_MANDATE") || !ev.items.some((e) => e.type === "PROTECTION_ACKNOWLEDGED")) throw new Error(`events ${JSON.stringify(ev.items.map((e) => e.type))}`);
+    const perf = ok(await read("performance", { range: "1M" }), "performance");
+    if (perf.nav.series.points.length !== 1 || perf.costs.ai.amountMinor === undefined) throw new Error("performance");
+    const sys = ok(await read("systemHealth"), "system");
+    /* health is measured from recorded state: the manager and ledger are healthy; the executor shows DEGRADED because no handler tick was recorded on Control (the direct ticks above bypass it) — never inferred as healthy */
+    if (sys.health.manager.state !== "HEALTHY" || sys.health.ledger.state !== "HEALTHY" || sys.health.executor.state !== "DEGRADED" || sys.health.mandates.state !== "HEALTHY") throw new Error(`health ${JSON.stringify({ m: sys.health.manager.state, e: sys.health.executor.state, l: sys.health.ledger.state, md: sys.health.mandates.state })}`);
+    /* 6. a target touch the next session executes mechanically — no AI is called (the gateway stub counts its calls) */
+    const before = { ...W.calls };
+    const nextBar = Date.UTC(2026, 8, 8, 14, 35);
+    const tick3 = await X.tick({ admin: fake, adapter, accountId: "paper-1", control: ctrl(), barsBySymbol: { AAA: [{ t: new Date(nextBar).toISOString(), o: 48.5, h: 49.5, l: 48.4, c: 49.2, v: 800000, prevClose: 43.2 }] }, nowMs: nextBar + 1000, metrics: { brokerTruthAgeSeconds: 1, reconciliationUnresolved: false }, ranks: {} });
+    if (!tick3.fills.fills.some((f) => f.symbol === "AAA" && f.role === "TARGET")) throw new Error(`target fill ${JSON.stringify(tick3.fills)}`);
+    if (W.calls.review !== before.review || W.calls.research !== before.research || W.calls.synthesis !== before.synthesis) throw new Error("a price touch must never call a model");
+    const closed = fake.docs.get(`${C.positions}/paper-1_AAA`);
+    if (closed.open !== false || fake.docs.get(`${C.activeMandates}/paper-1_AAA`).status !== "CLOSED") throw new Error(`closed ${JSON.stringify(closed).slice(0, 200)}`);
+    const trades = [...fake.docs.entries()].filter(([k]) => k.startsWith(`${C.trades}/`)).map(([, v]) => v);
+    if (trades.length !== 1 || trades[0].decisionAuthority !== "SOL" || BigInt(trades[0].realizedMinor) <= 0n) throw new Error(`trade ${JSON.stringify(trades)}`);
+    if (!tick3.conservation.pass) throw new Error("conservation after the exit");
+    /* 7. a freeze holds every transition that would add exposure, and only those: an unprotected holding freezes buys, the new entry waits, a protective set still applies */
+    fake.docs.set(`${C.positions}/paper-1_CCC`, { accountId: "paper-1", symbol: "CCC", open: true, qty: 5, quantityUnits: "5", entryPriceUsd: 40, costBasisCents: 20000, costBasisMinor: "20000", lastMarkUsd: 41, lastMarkAt: new Date(nextBar).toISOString(), engineVersion: "manager" });
+    fake.docs.set(`${C.ledger}/buy_CCC`, { txnId: "buy_CCC", accountId: "paper-1", kind: "manager_fill", atMs: nextBar, legs: [{ account: "cash", amountCents: -20000 }, { account: "positions", amountCents: 20000 }], meta: { symbol: "CCC" } });
+    const acct = fake.docs.get(`${C.accounts}/paper-1`); acct.balanceCents.cash -= 20000; acct.balanceCents.positions += 20000;
+    const entrySet = { schemaVersion: "order-set.v1", orderSetId: "os_DDD_1", accountId: "paper-1", symbol: "DDD", mandateVersionId: "mv_DDD_1", status: "DESIRED", legIds: ["os_DDD_1_ENTRY"], legs: [{ legId: "os_DDD_1_ENTRY", role: "ENTRY", side: "buy", type: "LIMIT", priceMicros: "10000000", quantityUnits: "5", remainingUnits: "5", status: "DESIRED", timeInForce: "DAY" }], createdAtMs: nextBar };
+    fake.docs.set(`${C.orderSets}/os_DDD_1`, entrySet); fake.docs.set(`${C.orderLegs}/os_DDD_1_ENTRY`, { ...entrySet.legs[0], orderSetId: "os_DDD_1", accountId: "paper-1", symbol: "DDD" });
+    fake.docs.set(`${C.executionOutbox}/t_DDD`, { transitionId: "t_DDD", accountId: "paper-1", symbol: "DDD", mandateVersionId: "mv_DDD_1", orderSetId: "os_DDD_1", kind: "APPLY_DESIRED_ORDER_SET", status: "PENDING", idempotencyKey: "t_DDD", attempts: 0, createdAtMs: nextBar, authority: "SOL_MANDATE" });
+    const protectSet = { schemaVersion: "order-set.v1", orderSetId: "os_CCC_p", accountId: "paper-1", symbol: "CCC", mandateVersionId: "mv_CCC_1", status: "DESIRED", legIds: ["os_CCC_p_STOP"], legs: [{ legId: "os_CCC_p_STOP", role: "STOP", side: "sell", type: "STOP", stopMicros: "36000000", quantityUnits: "5", remainingUnits: "5", status: "DESIRED", timeInForce: "GTC" }], createdAtMs: nextBar };
+    fake.docs.set(`${C.orderSets}/os_CCC_p`, protectSet); fake.docs.set(`${C.orderLegs}/os_CCC_p_STOP`, { ...protectSet.legs[0], orderSetId: "os_CCC_p", accountId: "paper-1", symbol: "CCC" });
+    fake.docs.set(`${C.executionOutbox}/t_CCC`, { transitionId: "t_CCC", accountId: "paper-1", symbol: "CCC", mandateVersionId: "mv_CCC_1", orderSetId: "os_CCC_p", kind: "APPLY_DESIRED_ORDER_SET", status: "PENDING", idempotencyKey: "t_CCC", attempts: 0, createdAtMs: nextBar, authority: "SOL_MANDATE" });
+    const tick4 = await X.tick({ admin: fake, adapter, accountId: "paper-1", control: ctrl(), barsBySymbol: {}, nowMs: nextBar + 60000, metrics: { brokerTruthAgeSeconds: 1, reconciliationUnresolved: false }, ranks: {} });
+    if (tick4.allowExpansion !== false || ctrl().buyState !== "FROZEN" || !/UNPROTECTED/.test(ctrl().freezeReason || "")) throw new Error(`freeze ${JSON.stringify(tick4.operational)} ${ctrl().freezeReason}`);
+    if (fake.docs.get(`${C.executionOutbox}/t_DDD`).status !== "PENDING" || fake.docs.get(`${C.executionOutbox}/t_DDD`).deferredReason !== "EXPANSION_FROZEN") throw new Error("a new entry must wait while buys are frozen");
+    if (fake.docs.get(`${C.executionOutbox}/t_CCC`).status !== "COMPLETE" || fake.docs.get(`${C.positions}/paper-1_CCC`).protectionState !== "PROTECTED_RTH") throw new Error(`protection must still apply under a freeze: ${JSON.stringify(fake.docs.get(`${C.executionOutbox}/t_CCC`))}`);
+    return true;
+  }));
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is
