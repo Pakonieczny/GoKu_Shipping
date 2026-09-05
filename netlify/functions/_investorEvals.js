@@ -195,6 +195,33 @@ const Simulator = (() => {
     if(!Number.isInteger(count)||count<1||count>500||count>days.length) throw fail('BAD_REQUEST','Choose 1–500 simulations and a date range with enough distinct trading days');
     return [...days].sort((a,b)=>hash(seed+a).localeCompare(hash(seed+b))).slice(0,count).sort();
   }
+  function regularSessionBars(archive,symbol,date) {
+    const open=M.nyWallClockToUtcMs(date,570),close=M.sessionCloseMs(new Date(date+'T12:00:00Z'));
+    if(!close)throw fail('HISTORICAL_SESSION_CLOSED',`${date} is not a trading day`);
+    const expected=(close-open)/300000,byTime=new Map();let outsideSession=0,duplicates=0;
+    for(const source of archive) {
+      const t=C.barTime(source);
+      if(!Number.isFinite(t))throw fail('HISTORICAL_BAR_INVALID',`Invalid price timestamp for ${symbol} on ${date}`);
+      // Alpaca's end is inclusive. The bar stamped at close belongs to after-hours.
+      if(t<open||t>=close){outsideSession++;continue;}
+      const bar={...source,t:new Date(t).toISOString()};
+      for(const k of ['o','h','l','c','v']) {
+        if(source[k]==null||source[k]===''||!Number.isFinite(Number(source[k])))throw fail('HISTORICAL_BAR_INVALID',`Invalid price or volume for ${symbol} on ${date}`);
+        bar[k]=Number(source[k]);
+      }
+      if((t-open)%300000||bar.o<=0||bar.c<=0||bar.l<=0||bar.v<0||bar.h<Math.max(bar.o,bar.c)||bar.l>Math.min(bar.o,bar.c)||bar.h<bar.l)
+        throw fail('HISTORICAL_BAR_INVALID',`Invalid five-minute price bar for ${symbol} on ${date}`);
+      if(byTime.has(t)) {
+        if(['o','h','l','c','v'].some(k=>byTime.get(t)[k]!==bar[k]))throw fail('HISTORICAL_BAR_CONFLICT',`Conflicting price bars for ${symbol} on ${date}`);
+        duplicates++;continue;
+      }
+      byTime.set(t,bar);
+    }
+    const missing=Array.from({length:expected},(_,i)=>open+i*300000).filter(t=>!byTime.has(t));
+    const coverage={expected,received:archive.length,regular:byTime.size,outsideSession,duplicates,missing:missing.length,firstMissing:missing.slice(0,3).map(t=>new Date(t).toISOString())};
+    if(missing.length)throw Object.assign(fail('HISTORICAL_BAR_GAPS',`Price history for ${symbol} on ${date} has ${byTime.size} of ${expected} regular-session bars; ${missing.length} missing.`),{details:coverage});
+    return {bars:[...byTime.values()].sort((a,b)=>C.barTime(a)-C.barTime(b)),coverage};
+  }
   function create({admin=A,fetchImpl=globalThis.fetch,wallNow=Date.now,env=process.env}={}) {
     // Capture root references outside replay scope; never dynamically fall back.
     const batchCol=admin.col(BATCHES), runCol=admin.col(RUNS), scenarioCol=admin.col(SCENARIOS);
@@ -229,13 +256,20 @@ const Simulator = (() => {
       const count=Number(config.count), days=datesBetween(config.from,config.to);
       const batchId='sim_'+hash(owner+'|'+key).slice(0,24), ref=batchCol.doc(batchId);
       if((await ref.get()).exists) return getBatch(batchId,owner);
-      const dates=selectedDates(days,count,batchId), runIds=dates.map((d,i)=>'sim_'+hash(batchId+'|'+i).slice(0,24));
+      selectedDates(days,count,batchId); // Validate the request before archive reads.
       const control=(await admin.col(admin.COL.control).doc('control').get()).data() || {};
-      const policy=P.loadActiveSync(control), roster=require('./_investorUniverse').freezeEligibleSnapshot({tradingDate:dates[0],nowMs:wallNow(),removed:control.universeRemovals || []});
+      const policy=P.loadActiveSync(control), roster=require('./_investorUniverse').freezeEligibleSnapshot({tradingDate:days[0],nowMs:wallNow(),removed:control.universeRemovals || []});
+      const coverage=await researchAvailability(roster,days);
+      if(coverage.days.length<count)throw fail('PREFLIGHT_FAILED',coverage.days.length
+        ? `Only ${coverage.days.length} trading days in this range have saved research for all ${roster.symbols.length} companies. Choose at most ${coverage.days.length} simulations or another date range. No simulations started.`
+        : `No trading days in this range have saved research for all ${roster.symbols.length} companies${coverage.missingSymbols.length?`; ${coverage.missingSymbols.length} companies have no dated research archive`:''}. Historical prices alone are insufficient. Historical company research must be loaded before these dates can be simulated. No simulations started.`);
+      const dates=selectedDates(coverage.days,count,batchId),runIds=dates.map((d,i)=>'sim_'+hash(batchId+'|'+i).slice(0,24));
+      roster.tradingDate=dates[0];
       const b={batchId,owner,count,dates,runIds,config:{from:config.from,to:config.to,count,initialCashMinor:'10000000',feedDelayMinutes:15,spreadBps:10,feePerShareMicros:5000},
+        researchCoverage:{checkedAtMs:wallNow(),eligibleDays:coverage.days.length,excludedDays:days.length-coverage.days.length,firstEligibleDate:coverage.days[0],lastEligibleDate:coverage.days.at(-1)},
         status:'running',paused:false,createdAtMs:wallNow(),targetNano:TARGET*count,ceilingNano:CEILING*count,version:VERSION,
         model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:Math.max(1,Math.min(12,Number(env.INVESTOR_SIM_CONCURRENCY)||3)),
-        limitations:['Current eligible universe: survivorship-limited historical selection.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
+        limitations:['Current eligible universe: survivorship-limited historical selection.','Dates are sampled only where saved company research exists; price availability is checked during preparation.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
       const configRef=await saveJSON(ref,'configuration',{policy,roster,control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES});
       // Publish the batch last so a partially-created batch is never dispatched.
       for(let offset=0;offset<runIds.length;offset+=150) {
@@ -270,18 +304,46 @@ const Simulator = (() => {
         if(out.length>20000)throw fail('SCENARIO_TOO_LARGE','This source requires a larger offline preparation pass');
       } while(cursor);return out;
     }
+    async function researchAvailability(roster,days) {
+      const firstKnown=new Map();
+      for(let i=0;i<roster.symbols.length;i+=30) {
+        const symbols=roster.symbols.slice(i,i+30);
+        for(const x of await queryAll(rootCollection(admin.COL.dossierVersions).where('symbol','in',symbols))) {
+          const t=knownAt(x.data),s=x.data.symbol;
+          if(Number.isFinite(t)&&(!firstKnown.has(s)||t<firstKnown.get(s)))firstKnown.set(s,t);
+        }
+      }
+      const missingSymbols=roster.symbols.filter(s=>!firstKnown.has(s));
+      const ready=await queryAll(scenarioCol.where('status','==','ready'));
+      const cached=new Set(ready.filter(x=>x.data.version===VERSION&&x.data.universeHash===roster.universeHash&&roster.symbols.every(s=>(x.data.symbols||[]).includes(s))).map(x=>x.data.date));
+      const earliest=missingSymbols.length?Infinity:Math.max(...firstKnown.values());
+      return {days:days.filter(d=>cached.has(d)||M.nyWallClockToUtcMs(d,P.CUTOFFS_ET.evidenceFreezeMin)>=earliest),missingSymbols};
+    }
     async function historicalBars(symbol,date,timeframe) {
       // Preparation can outlast the settings cache; refresh before each fetch.
       await M.loadMarketSettings();
       const credentials=M.providerCredentials('alpaca');
       if(!credentials.keyId || !credentials.secretKey) throw fail('HISTORICAL_BARS_MISSING','Archived raw prices or Alpaca historical-data credentials are required');
       const start=timeframe==='1Day'?new Date(Date.parse(date+'T00:00:00Z')-550*86400000).toISOString():new Date(M.nyWallClockToUtcMs(date,570)).toISOString();
-      const end=new Date(M.sessionCloseMs(new Date(date+'T12:00:00Z'))).toISOString();
+      const end=new Date(M.sessionCloseMs(new Date(date+'T12:00:00Z'))-(timeframe==='5Min'?1:0)).toISOString();
       const output=[];let pageToken=null;
       do {
         const qs=new URLSearchParams({symbols:symbol,timeframe,start,end,feed:'sip',adjustment:'raw',limit:'10000',sort:'asc'});if(pageToken)qs.set('page_token',pageToken);
         const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),20000);
-        let response;try {const res=await fetchImpl('https://data.alpaca.markets/v2/stocks/bars?'+qs,{headers:{'APCA-API-KEY-ID':credentials.keyId,'APCA-API-SECRET-KEY':credentials.secretKey},signal:ac.signal});if(!res.ok)throw fail('HISTORICAL_DATA_UNAVAILABLE',`Historical price provider returned ${res.status}`);response=await res.json();}finally{clearTimeout(timer);}
+        let response;
+        try {
+          const res=await fetchImpl('https://data.alpaca.markets/v2/stocks/bars?'+qs,{headers:{'APCA-API-KEY-ID':credentials.keyId,'APCA-API-SECRET-KEY':credentials.secretKey},signal:ac.signal});
+          if(res.status===429||res.status>=500) {
+            const retry=res.headers?.get('retry-after'),seconds=Number(retry),when=Date.parse(retry||'');
+            const delay=retry&&Number.isFinite(seconds)?seconds*1000:Number.isFinite(when)?when-wallNow():60000;
+            throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Historical price provider is busy. Preparation will retry automatically.'),{retryAfterMs:Math.max(60000,Math.min(300000,delay))});
+          }
+          if(!res.ok)throw fail('HISTORICAL_DATA_UNAVAILABLE',`Historical price provider returned ${res.status}`);
+          response=await res.json();
+        } catch(e) {
+          if(/^HISTORICAL_/.test(e.code||''))throw e;
+          throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Historical price request did not finish. Preparation will retry automatically.'),{retryAfterMs:60000});
+        } finally {clearTimeout(timer);}
         output.push(...(response.bars?.[symbol] || []));pageToken=response.next_page_token || null;
         if(output.length>20000)throw fail('SCENARIO_TOO_LARGE');
       }while(pageToken);
@@ -294,21 +356,21 @@ const Simulator = (() => {
         if(!q) continue;
         for(const v of await queryAll(q)) {const at=knownAt(v.data);if(at<=endMs) {const clean={...v.data};for(const field of ['reviewedAtMs','reviewedBy','managerRunId','supersededBy','supersededByFactId','supersededAtMs','standingView','lastManagerReviewAtMs'])delete clean[field];data.push({collection:admin.COL[key],id:v.id,knownAtMs:at,data:clean});}}
       }
+      const cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin);
+      if(row && !data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff)) throw fail('HISTORICAL_EVIDENCE_MISSING',`No dated company research for ${symbol} before ${date}. Historical company research must be loaded for this session.`);
       const daily=await require('./_investorHistory').readDailyWithMetaFor(admin,symbol);
       let series=(daily.series || []).filter(b=>b.date<date).slice(-400);
       if(series.length<20 || !['raw','none','unadjusted'].includes(daily.provenance?.adjustment)) series=(await historicalBars(symbol,date,'1Day')).map(b=>({...b,date:M.nyParts(new Date(b.t)).date})).filter(b=>b.date<date).slice(-400);
       const raw=await rootCollection(admin.COL.marketLatest).doc(M.barDocId(symbol,date)).get();
       const doc=raw.exists?raw.data():{};
-      let archive=doc.bars || [];if(!archive.length || !['raw','none','unadjusted'].includes(doc.adjustment)) {archive=await historicalBars(symbol,date,'5Min');Object.assign(doc,{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min'});}
-      const bars=archive.filter(b=>Number(b.o)>0&&Number(b.h)>0&&Number(b.l)>0&&Number(b.c)>0&&Number(b.v)>=0).map(b=>({...b,t:new Date(C.barTime(b)).toISOString()})).sort((a,b)=>a.t.localeCompare(b.t));
-      const openMs=M.nyWallClockToUtcMs(date,570),closeMs=M.sessionCloseMs(new Date(date+'T12:00:00Z')),expected=(closeMs-openMs)/300000;
-      const times=new Set(bars.map(b=>C.barTime(b)));
-      if(bars.length!==expected || times.size!==expected || Array.from({length:expected},(_,i)=>openMs+i*300000).some(t=>!times.has(t)) || bars.some(b=>b.h<Math.max(b.o,b.c)||b.l>Math.min(b.o,b.c)||b.h<b.l))throw fail('HISTORICAL_BAR_GAPS',`Incomplete five-minute price history for ${symbol} on ${date}`);
-      if(!bars.length) throw fail('HISTORICAL_BARS_MISSING',`No archived intraday prices for ${symbol} on ${date}`);
-      if(doc.adjustment && !['raw','none','unadjusted'].includes(doc.adjustment)) throw fail('HISTORICAL_ADJUSTMENT_UNVERIFIED',`Archived prices for ${symbol} are adjusted. A point-in-time adjustment anchor is required.`);
-      const cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin);
-      if(row && !data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff)) throw fail('HISTORICAL_EVIDENCE_MISSING',`No dated company research for ${symbol} before ${date}`);
-      return {symbol,data,daily:{symbol,provider:'alpaca',feed:'sip',adjustment:'raw',date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true},bars,provenance:{provider:doc.provider || null,feed:doc.feed || null,adjustment:doc.adjustment || 'not_reported',timeframe:doc.timeframe || '5Min'},cutoff};
+      let normalized=null;
+      if((doc.bars||[]).length&&['raw','none','unadjusted'].includes(doc.adjustment)) {
+        try {normalized=regularSessionBars(doc.bars,symbol,date);}catch(e){if(!/^HISTORICAL_BAR_/.test(e.code||''))throw e;}
+      }
+      // A raw archive may contain only the bars collected while the app was open.
+      // Fetch a full session before concluding that historical prices are missing.
+      if(!normalized) {normalized=regularSessionBars(await historicalBars(symbol,date,'5Min'),symbol,date);Object.assign(doc,{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min'});}
+      return {symbol,data,daily:{symbol,provider:'alpaca',feed:'sip',adjustment:'raw',date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true},bars:normalized.bars,coverage:normalized.coverage,provenance:{provider:doc.provider || null,feed:doc.feed || null,adjustment:doc.adjustment || 'not_reported',timeframe:doc.timeframe || '5Min'},cutoff};
     }
     async function prepare(run,config,save,shouldPause) {
       const scenarioId=run.scenarioId || hash({date:run.date,universe:config.roster.universeHash,version:VERSION}).slice(0,40), sr=scenarioCol.doc(scenarioId);
@@ -324,7 +386,7 @@ const Simulator = (() => {
           const packet=await prepareSymbol(symbol,config.roster.symbols.includes(symbol)?rowFor(symbol):null,run.date,endMs);
           const artifact=await saveJSON(sr,'symbol_'+symbol,packet);await ptr.set({symbol,artifact});
         }
-        await save({scenarioId,scenarioCursor:i+1,phase:`Preparing historical evidence · ${i+1} of ${symbols.length}`,preparationTotal:symbols.length});
+        await save({scenarioId,scenarioCursor:i+1,phase:`Preparing historical evidence · ${i+1} of ${symbols.length}`,preparationTotal:symbols.length,preparationRetries:0,nextAttemptAtMs:0});
       }
       await sr.set({scenarioId,status:'ready',date:run.date,symbols,universeHash:config.roster.universeHash,cutoffMs:M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin),endMs,createdAtMs:wallNow(),version:VERSION});
       await save({scenarioId,status:'running',phase:'Preparing account'});return true;
@@ -397,7 +459,7 @@ const Simulator = (() => {
     async function execute(runId,{deadlineMs=wallNow()+11*60000}={}) {
       const ref=runCol.doc(id(runId)),owner=crypto.randomBytes(12).toString('hex');let run;
       const claimed=await admin.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)return false;run=s.data();
-        if((TERMINAL.includes(run.status)&&!run.pendingAiCount)||run.leaseUntil>wallNow())return false;
+        if((TERMINAL.includes(run.status)&&!run.pendingAiCount)||run.leaseUntil>wallNow()||run.nextAttemptAtMs>wallNow())return false;
         tx.set(ref,{leaseOwner:owner,leaseUntil:wallNow()+90000,dispatchedUntil:0,segmentStartedAtMs:wallNow()},{merge:true});run.leaseOwner=owner;return true;});
       if(!claimed)return {done:true,reason:'already_running_or_finished'};
       let activeStarted=run.initialized&&!run.paused&&!TERMINAL.includes(run.status)?wallNow():null;
@@ -505,8 +567,14 @@ const Simulator = (() => {
         return {done:TERMINAL.includes(latest.status)||latest.paused,yielded:!TERMINAL.includes(latest.status)&&!latest.paused};
       } catch(e) {
         const latest=await getRun(runId);
+        if(e.code==='HISTORICAL_PROVIDER_BUSY'&&!latest.paused&&(latest.preparationRetries||0)<3) {
+          const nextAttemptAtMs=wallNow()+e.retryAfterMs;
+          await save({status:'queued',phase:'Price provider is busy — retrying shortly',nextAttemptAtMs,preparationRetries:(latest.preparationRetries||0)+1,lastProviderError:{code:e.code,atMs:wallNow()},error:null});
+          return {done:false,yielded:true,nextAttemptAtMs};
+        }
+        if(e.code==='HISTORICAL_PROVIDER_BUSY'&&(latest.preparationRetries||0)>=3)e.message='Historical price provider remained unavailable after three retries. No result was produced.';
         const status=latest.paused?'paused':/^HISTORICAL_|^SCENARIO_/.test(e.code||'')?'unavailable':'incomplete';
-        if(e.code!=='SIMULATION_LEASE_LOST')await save({status,phase:status==='paused'?'Paused — progress saved':status==='unavailable'?'Historical data unavailable':'Needs review',error:{code:e.code||'SIMULATION_FAILED',message:String(e.message).slice(0,500)},finishedAtMs:wallNow()});
+        if(e.code!=='SIMULATION_LEASE_LOST')await save({status,phase:status==='paused'?'Paused — progress saved':status==='unavailable'?'Historical data unavailable':'Needs review',error:{code:e.code||'SIMULATION_FAILED',message:String(e.message).slice(0,500),details:e.details||null},finishedAtMs:wallNow()});
         return {done:true,status,error:e.code||e.message};
       } finally {
         clearInterval(heartbeat);await heartbeatPending;
@@ -525,7 +593,7 @@ const Simulator = (() => {
         for(const {b,runs} of sets) {
           if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)) {await batchCol.doc(b.batchId).set({status:'complete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
           if(runs.some(r=>r.rateLimitedAtMs>wallNow()-60000))capacity=Math.min(capacity,1);
-          for(const r of runs.filter(r=>(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())).slice(0,capacity)) {
+          for(const r of runs.filter(r=>(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow())).slice(0,capacity)) {
             const generation=Math.floor(wallNow()/90000),out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_'+generation,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
             const j=await admin.col(admin.COL.jobs).doc(out.jobId).get();
             if(j.exists&&dispatch) {await runCol.doc(r.runId).set({dispatchedUntil:wallNow()+90000},{merge:true});selected.push(dispatch(j.data()));capacity--;}
@@ -565,8 +633,8 @@ const Simulator = (() => {
       if(after)q=q.startAfter(String(after));const items=await rows(q);
       return {run,collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null};
     }
-    return {createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,meter};
+    return {createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,meter};
   }
-  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,knownAt,rate,price,distribution,datesBetween,selectedDates,create};
+  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,create};
 })();
 module.exports.Simulator=Simulator;

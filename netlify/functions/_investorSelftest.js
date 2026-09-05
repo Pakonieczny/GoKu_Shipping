@@ -5844,6 +5844,44 @@ async function simulatorAdversarial() {
     return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
   }
   const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  async function seedSimulationArchive(fake,asOfMs=Date.UTC(2026,6,1)) {
+    const U=require('./_investorUniverse'),row=U.tradeTier.find(r=>r.symbol==='A');
+    await fake.col(A.COL.control).doc('control').set({universeRemovals:U.tradeTier.filter(r=>r.symbol!=='A').map(r=>r.symbol)});
+    const dossier=require('./_investorDossier').composeVersion({symbol:'A',identity:row,asOfMs});
+    await fake.col(A.COL.dossierVersions).doc('A_fixture').set(dossier);
+  }
+  function providerSession(date,{extra=true,gap=false}={}) {
+    const M=require('./_investorMarket'),open=M.nyWallClockToUtcMs(date,570),close=M.sessionCloseMs(new Date(date+'T12:00:00Z'));
+    const bars=Array.from({length:(close-open)/300000},(_,i)=>({t:new Date(open+i*300000).toISOString(),o:100,h:101,l:99,c:100,v:100000}));
+    if(gap)bars.splice(7,1);
+    if(extra)bars.push({t:new Date(close).toISOString(),o:200,h:250,l:190,c:240,v:999999});
+    return bars;
+  }
+  await check('provider_inclusive_close_dst_half_days_and_duplicate_pages',()=>{
+    for(const date of ['2025-09-22','2025-12-08','2025-11-28']) {
+      const bars=providerSession(date);bars.unshift({...bars[0]});
+      const out=Sim.regularSessionBars(bars,'A',date);
+      assert.equal(out.bars.length,date==='2025-11-28'?42:78);assert.equal(out.coverage.outsideSession,1);assert.equal(out.coverage.duplicates,1);assert(out.bars.every(b=>b.c===100));
+    }
+    const date='2025-09-22';
+    assert.throws(()=>Sim.regularSessionBars(providerSession(date,{gap:true}),'A',date),e=>e.code==='HISTORICAL_BAR_GAPS'&&e.details.regular===77&&e.details.missing===1);
+    const conflict=providerSession(date);conflict.push({...conflict[0],c:100.5});assert.throws(()=>Sim.regularSessionBars(conflict,'A',date),e=>e.code==='HISTORICAL_BAR_CONFLICT');
+    const invalid=providerSession(date);invalid[0].v=Infinity;assert.throws(()=>Sim.regularSessionBars(invalid,'A',date),e=>e.code==='HISTORICAL_BAR_INVALID');
+  });
+  await check('start_rejects_missing_archives_without_creating_runs_or_spending',async()=>{
+    const fake=database();let requests=0;
+    const svc=Sim.create({admin:fake,fetchImpl:async()=>{requests++;throw Error('network must not run');}});
+    await assert.rejects(()=>svc.createBatch({count:10,from:'2025-09-01',to:'2025-12-31'},'operator','empty-archive'),e=>e.code==='PREFLIGHT_FAILED'&&e.message.includes('No simulations started'));
+    assert.equal(fake.docs.size,0);assert.equal(requests,0);
+    await seedSimulationArchive(fake,Date.UTC(2026,8,2,16));
+    const b=await svc.createBatch({count:1,from:'2026-09-01',to:'2026-09-03'},'operator','dated-archive');
+    assert.deepEqual(b.dates,['2026-09-03']);assert.equal(b.researchCoverage.excludedDays,2);
+    const before=fake.docs.size;
+    await assert.rejects(()=>svc.createBatch({count:2,from:'2026-09-01',to:'2026-09-03'},'operator','too-many'),e=>e.code==='PREFLIGHT_FAILED'&&e.message.includes('Only 1'));
+    assert.equal(fake.docs.size,before);assert.equal(requests,0);
+    const availability=await svc.researchAvailability({symbols:['A','B'],universeHash:'missing-B'},['2026-09-03']);assert.deepEqual(availability.days,[]);assert.deepEqual(availability.missingSymbols,['B']);
+  });
+
   await check('cold_simulation_worker_loads_market_credentials_after_verified_claim',async()=>{
     const M=require('./_investorMarket'),AUTH=require('./_investorAuth'),J=require('./_investorJobs'),worker=require('./investorManager-background');
     const originals={load:M.loadMarketSettings,auth:AUTH.loadAuthSecrets,claim:J.claimOnce,complete:J.complete,create:Sim.create};
@@ -5894,28 +5932,46 @@ async function simulatorAdversarial() {
   await check('budget_reservation_is_atomic_across_concurrent_calls',async()=>{const x=await metered(async()=>({ok:true,status:200,json:async()=>({id:'resp_fixture',status:'in_progress'})}));await x.ref.set({spentNano:950000000},{merge:true});await Promise.allSettled([1,2,3].map(i=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:{...body,input:'request '+i}})));const r=(await x.ref.get()).data();assert(r.spentNano+r.reservedNano<=Sim.CEILING);assert.equal(x.posts(),1);});
   await check('unknown_usage_does_not_turn_paid_work_into_zero_cost',async()=>{const x=await metered(async()=>({ok:true,status:200,json:async()=>({id:'resp_fixture',status:'completed'})}));await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body}),/usage/i);assert((await x.ref.get()).data().reservedNano>0);});
   await check('incomplete_results_are_excluded_but_counted',()=>{const r=Sim.distribution([{status:'complete',date:'2026-01-02',returnBps:100},{status:'complete',date:'2026-01-05',returnBps:-50},{status:'incomplete',date:'2026-01-06',returnBps:5000}]);assert.equal(r.medianBps,25);assert.equal(r.incomplete,1);assert.equal(r.positive,.5);});
-  await check('batch_creation_idempotence_ownership_pause_and_resume',async()=>{const fake=database(),svc=Sim.create({admin:fake});const b=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');const again=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');assert.equal(again.batchId,b.batchId);await assert.rejects(()=>svc.getBatch(b.batchId,'intruder'),/another operator/);await svc.control({batchId:b.batchId,command:'pause'},'operator');assert((await svc.getRun(b.runIds[0])).paused);await svc.control({batchId:b.batchId,command:'resume'},'operator');assert.equal((await svc.getRun(b.runIds[0])).paused,false);assert.equal((await svc.overview({owner:'operator'})).runs.length,2);});
+  await check('batch_creation_idempotence_ownership_pause_and_resume',async()=>{const fake=database(),svc=Sim.create({admin:fake});await seedSimulationArchive(fake);const b=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');const again=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');assert.equal(again.batchId,b.batchId);await assert.rejects(()=>svc.getBatch(b.batchId,'intruder'),/another operator/);await svc.control({batchId:b.batchId,command:'pause'},'operator');assert((await svc.getRun(b.runIds[0])).paused);await svc.control({batchId:b.batchId,command:'resume'},'operator');assert.equal((await svc.getRun(b.runIds[0])).paused,false);assert.equal((await svc.overview({owner:'operator'})).runs.length,2);});
   await check('bar_fills_apply_adverse_spread_never_violate_limit',async()=>{await A.withSimulationScope({runId:RID,clock:()=>1000,collection:()=>{},executionSpreadBps:10},async()=>{const E=require('./_investorExecution'),bar={o:100,h:102,l:99,c:101,v:100000};const r=E.simulateLegOnBar({leg:{role:'ENTRY',side:'buy',type:'LIMIT',priceMicros:'101000000',remainingUnits:'10'},bar});assert.equal(r.fill.priceMicros,'100050000');const n=E.simulateLegOnBar({leg:{role:'ENTRY',side:'buy',type:'LIMIT',priceMicros:'100000000',remainingUnits:'10'},bar});assert.equal(n.fill,null);});});
-  await check('complete_replay_uses_real_manager_and_preserves_paper_account',async()=>{
-    const fake=database();await fake.col(A.COL.accounts).doc('paper-1').set({untouched:true});
-    let submitted=0;
-    const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{
-      if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:1000})};
-      const b=JSON.parse(opts.body||'{}');submitted++;const user=b.input?.find(x=>x.role==='user')?.content||'';
-      const manifest=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]);
-      const output={schemaVersion:'universe-review.v1',universeVersion:manifest.universeVersion,universeHash:manifest.universeHash,eligibleCount:manifest.eligibleCount,coverage:manifest.symbols.map(symbol=>({symbol,reviewDirective:'NONE',provisionalDisposition:'IGNORE',reason:'No opportunity in this fixture',changedSincePrior:false,reasonCode:null})),holdingAnalysis:[],researchRequests:[],managerNote:'Fixture review'};
-      return {ok:true,status:200,json:async()=>({...completed,id:'resp_'+submitted,output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]})};}});
-    const b=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','engine');const ref=fake.col('InvestorAI_Simulations').doc(b.runIds[0]),br=fake.col('InvestorAI_SimulationBatches').doc(b.batchId);
-    const config=await svc.readJSON(br,b.configRef);config.roster={universeVersion:'fixture',universeHash:'f'.repeat(64),eligibleCount:1,symbols:['AAA'],managedOffRoster:[]};
-    const cfg=await svc.saveJSON(br,'fixture_config',config);await br.set({configRef:cfg},{merge:true});await ref.set({configRef:cfg},{merge:true});
-    const M=require('./_investorMarket'),date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,510),open=M.nyWallClockToUtcMs(date,570),end=M.sessionCloseMs(new Date(date+'T12:00:00Z'))+1200000;
-    const scenarioId='fixture_scenario',sr=fake.col('InvestorAI_SimulationScenarios').doc(scenarioId);
-    const dossier=require('./_investorDossier').composeVersion({symbol:'AAA',identity:{name:'Fixture company',sector:'sw',cik:'0000000001'},asOfMs:cutoff-1000,dataQuality:{complete:true,missing:[]}});
-    const packet={symbol:'AAA',data:[{collection:A.COL.dossierVersions,id:'AAA_fixture',knownAtMs:cutoff-1000,data:{...dossier,knownAtMs:cutoff-1000}}],daily:{date:[],o:[],h:[],l:[],c:[],v:[],provider:'fixture',adjustment:'raw'},bars:Array.from({length:78},(_,i)=>({t:new Date(open+i*300000).toISOString(),o:100,h:101,l:99,c:100,v:100000})),provenance:{provider:'fixture',feed:'sip',adjustment:'raw'}};
-    const art=await svc.saveJSON(sr,'AAA',packet);await sr.collection('symbols').doc('AAA').set({artifact:art});await sr.set({status:'ready',date,symbols:['AAA'],cutoffMs:cutoff,endMs:end});await ref.set({scenarioId,scenarioCursor:1},{merge:true});
-    // Ready scenarios are loaded by their immutable identifier, not regenerated.
-    const result=await svc.execute(b.runIds[0]);const run=await svc.getRun(b.runIds[0]);
-    assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(run.returnBps,0);assert.equal(run.progress,100);assert.equal(submitted,1);assert.deepEqual((await fake.col(A.COL.accounts).doc('paper-1').get()).data(),{untouched:true});assert.equal((await ref.collection('curve').get()).size,83);
+  await check('uncached_provider_preparation_through_real_manager_to_session_close',async()=>{
+    const M=require('./_investorMarket'),saved={load:M.loadMarketSettings,credentials:M.providerCredentials};
+    try {
+      M.loadMarketSettings=async()=>{};M.providerCredentials=()=>({keyId:'fixture-id',secretKey:'fixture-secret'});
+      const fake=database();await seedSimulationArchive(fake);await fake.col(A.COL.accounts).doc('paper-1').set({untouched:true});
+      // A partial raw archive must be replaced by a full historical response.
+      await fake.col(A.COL.marketLatest).doc(M.barDocId('A','2026-09-03')).set({adjustment:'raw',bars:providerSession('2026-09-03').slice(0,7)});
+      let submitted=0,priceRequests=0,wall=Date.now();
+      const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{
+        if(url.startsWith('https://data.alpaca.markets/')) {
+          priceRequests++;if(priceRequests===1)return {ok:false,status:429,headers:{get:()=> '1'}};const q=new URL(url).searchParams,symbol=q.get('symbols'),date='2026-09-03',daily=q.get('timeframe')==='1Day';
+          if(!daily)assert.equal(Date.parse(q.get('end')),M.sessionCloseMs(new Date(date+'T12:00:00Z'))-1);
+          // Deliberately include an extra closing bar to exercise response filtering too.
+          const bars=daily?Array.from({length:30},(_,i)=>({t:new Date(Date.parse(date+'T04:00:00Z')-(30-i)*86400000).toISOString(),o:100,h:101,l:99,c:100,v:100000})):providerSession(date);
+          return {ok:true,status:200,json:async()=>({bars:{[symbol]:bars}})};
+        }
+        if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:1000})};
+        const b=JSON.parse(opts.body||'{}');submitted++;const user=b.input?.find(x=>x.role==='user')?.content||'';
+        const manifest=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]);
+        const output={schemaVersion:'universe-review.v1',universeVersion:manifest.universeVersion,universeHash:manifest.universeHash,eligibleCount:manifest.eligibleCount,coverage:manifest.symbols.map(symbol=>({symbol,reviewDirective:'NONE',provisionalDisposition:'IGNORE',reason:'No opportunity in this fixture',changedSincePrior:false,reasonCode:null})),holdingAnalysis:[],researchRequests:[],managerNote:'Fixture review'};
+        return {ok:true,status:200,json:async()=>({...completed,id:'resp_'+submitted,output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]})};
+      }});
+      const b=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','engine');
+      const ref=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+      const deferred=await svc.execute(b.runIds[0]);assert.equal(deferred.yielded,true);assert.equal((await svc.getRun(b.runIds[0])).status,'queued');assert.equal(submitted,0);
+      let dispatched=0;await svc.schedule({dispatch:async()=>{dispatched++;}});assert.equal(dispatched,0);
+      await svc.control({runId:b.runIds[0],command:'pause'},'operator');wall+=61000;
+      await svc.execute(b.runIds[0]);assert.equal(priceRequests,1);assert.equal(submitted,0);
+      await svc.control({runId:b.runIds[0],command:'resume'},'operator');
+      const result=await svc.execute(b.runIds[0]),run=await svc.getRun(b.runIds[0]);
+      assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(run.returnBps,0);assert.equal(run.progress,100);assert.equal(submitted,1);assert(priceRequests>=18);
+      assert.deepEqual((await fake.col(A.COL.accounts).doc('paper-1').get()).data(),{untouched:true});assert.equal((await ref.collection('curve').get()).size,83);
+      const sr=fake.col('InvestorAI_SimulationScenarios').doc(run.scenarioId),ptr=(await sr.collection('symbols').doc('A').get()).data();
+      const packet=await svc.readJSON(sr,ptr.artifact);assert.equal(packet.coverage.regular,78);assert.equal(packet.coverage.outsideSession,1);assert(packet.bars.every(b=>b.c===100));
+      // A second batch reuses the fully prepared scenario without downloading again.
+      const prior=priceRequests,b2=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','reuse');
+      assert.equal((await svc.execute(b2.runIds[0])).done,true);assert.equal((await svc.getRun(b2.runIds[0])).status,'complete');assert.equal(priceRequests,prior);
+    } finally {M.loadMarketSettings=saved.load;M.providerCredentials=saved.credentials;}
   });
   return {pass:results.every(x=>x.pass),checks:results.length,results};
 }
