@@ -173,11 +173,21 @@
 
 # ─── Investor_AI — volatility desk, two-tier cadence (September 2026) ───────
 # The ONLY scheduled function in that system. investorKick reads control state,
-# decides what is due, and dispatches a job id plus a single-use nonce to
-# investorCycle-background. It never fetches a source, never calls a model and
-# never touches the ledger, so it finishes well inside Netlify's 30s scheduled
-# ceiling. investorCycle-background needs no entry here — Netlify grants any
-# -background function the 15-minute budget from the filename suffix.
+# decides what is due, and dispatches a job id plus a single-use bound worker
+# nonce to the background worker that owns the task (fund-manager-v1, §11.1):
+#   ingest → investorIngest-background      (overnight evidence sweep)
+#   premarket_manager, focused_research, event_revision, portfolio_synthesis
+#          → investorManager-background     (the Manager Meeting and revisions)
+#   execute → investorExecution-background  (the executor; no model code)
+#   postclose, archive, audit_export → investorPostclose-/investorArchive-background
+#   cycle, guard, evidence, legacy_archive → investorCycle-background (legacy
+#          engine, dispatchable only while it holds the writer epoch)
+# Each one-minute kick has a 20-second dispatch budget and launches at most four
+# jobs in the order execute → event → continuation → manager → ingest →
+# postclose. It never fetches a source, never calls a model and never touches
+# the ledger, so it finishes well inside Netlify's 30s scheduled ceiling. The
+# background workers need no entry here — Netlify grants any -background
+# function the 15-minute budget from the filename suffix.
 #
 # EVERY MINUTE, deliberately. The desk runs two tiers on two clocks:
 #   · the DEEP SCAN (task "cycle") — the full roster ranking, evidence and
@@ -222,6 +232,7 @@
     Pragma = "no-cache"
     Expires = "0"
     X-Robots-Tag = "noindex, nofollow, noarchive"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'sha256-9NNrAkFazcQdWSFQEOet0w8WEUsToV6FFlGl4kd4TLY='; style-src 'self' 'sha256-DSF3Zme7FL8A/1bLlsfCDK1kjb7HeYoiLj4CSAN5xLE='; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 
 [[redirects]]
   from = "https://scanner.goldenspike.app"

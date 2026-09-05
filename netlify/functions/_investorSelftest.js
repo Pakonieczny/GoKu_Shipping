@@ -4936,6 +4936,461 @@ function runFixtures() {
     return true;
   }));
 
+
+  /* ═══ GROUP 8 — API v2, SESSIONS, FIVE-VIEW CONSOLE (blueprint §11, §14; §21 commit 15) ═══ */
+
+  /** A seeded manager-mode world for the v2 API: control, account, a held protected position, a working entry, decisions, a run, alerts, deltas. */
+  function apiWorld({ accountMode = "PAPER_AI", writerEpoch = 1, attested = true } = {}) {
+    const fake = fakeAdmin();
+    const C = fake.COL;
+    const nowMs = Date.UTC(2026, 8, 4, 15, 30);
+    const commit = process.env.COMMIT_REF || process.env.DEPLOY_ID || "local";
+    const P = require("./_investorPolicy");
+    const policy = P.loadActiveSync({});
+    const run = { managerRunId: "run_premarket_manager_paper-1_2026-09-04", status: "complete", tradingDate: "2026-09-04", accountId: "paper-1", universeVersion: "v6", universeHash: "u".repeat(64), eligibleCount: 304, decisionCount: 304, byDecision: { WATCH: 300, BUY: 2, HOLD: 2 },
+      buys: [{ symbol: "AAA", capitalRank: 1 }], contextManifestHash: "c".repeat(64), policyHash: policy.policyHash, cutoffMs: nowMs - 6 * 3600000, startedAtMs: nowMs - 5 * 3600000, completedAtMs: nowMs - 4 * 3600000, elapsedMs: 3600000,
+      coverage: { ok: true, completedCount: 304, eligibleCount: 304, repaired: 0 }, maintenance: { actionable: 1, actionRequired: [], staged: null }, research: { completed: 3, failed: 0, deferred: 1, ranges: null }, activation: { status: "COMMITTED", planId: "plan_1", activationSnapshotId: "act_1", mandateVersionIds: ["mv_AAA_1"] }, noBuyReasons: [], costMinor: "420", stage: "complete" };
+    fake.docs.set(`${C.control}/control`, { accountId: "paper-1", engineMode: writerEpoch > 0 ? "manager" : "legacy", accountMode, writerEpoch, controlVersion: 3, fixturesPass: attested, fixturesCommit: attested ? commit : "other", fixturesCount: 200, buyState: "OPEN", managerState: "ENABLED", emergencyState: "CLEAR", executorState: "MONITORING",
+      lastManagerRunId: run.managerRunId, lastManagerRun: run, lastManagerRunDate: "2026-09-04", lastIngestPass: { finishedAtMs: nowMs - 8 * 3600000, companies: 304, freshness: { finishedBeforeFreeze: true } }, lastExecutionTick: { atMs: nowMs - 60000, reasons: [], conservation: { pass: true, discrepancies: [] }, outboxApplied: 1, fills: { fills: 0 } } });
+    fake.docs.set(`${C.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 4950000, reserved: 100000, positions: 950000, contributed_capital: -6000000 }, balanceRevision: 7, portfolioVersion: 7, writerEpoch, startingNavCents: 6000000 });
+    fake.docs.set(`${C.ledger}/genesis_paper-1`, { txnId: "genesis_paper-1", accountId: "paper-1", kind: "capital_contribution", atMs: nowMs - 86400000 * 30, postedAt: new Date(nowMs - 86400000 * 30).toISOString(), legs: [{ account: "cash", amountCents: 6000000 }, { account: "contributed_capital", amountCents: -6000000 }] });
+    /* the journal explains every balance: the BBB purchase and the AAA reservation */
+    fake.docs.set(`${C.ledger}/buy_BBB`, { txnId: "buy_BBB", accountId: "paper-1", kind: "manager_fill", atMs: nowMs - 86400000, postedAt: new Date(nowMs - 86400000).toISOString(), legs: [{ account: "cash", amountCents: -950000 }, { account: "positions", amountCents: 950000 }], meta: { symbol: "BBB", fillId: "fill_BBB_1", orderSetId: "os_mv_BBB_1", mandateVersionId: "mv_BBB_1" } });
+    fake.docs.set(`${C.ledger}/reserve_AAA`, { txnId: "reserve_AAA", accountId: "paper-1", kind: "reservation", atMs: nowMs - 3600000, postedAt: new Date(nowMs - 3600000).toISOString(), legs: [{ account: "cash", amountCents: -100000 }, { account: "reserved", amountCents: 100000 }], meta: { symbol: "AAA", mandateVersionId: "mv_AAA_1" } });
+    /* BBB: held, protected by an applied mandate; AAA: a working entry with reservation */
+    fake.docs.set(`${C.positions}/paper-1_BBB`, { accountId: "paper-1", symbol: "BBB", open: true, qty: 100, quantityUnits: "100", entryPriceUsd: 95, costBasisCents: 950000, costBasisMinor: "950000", lastMarkUsd: 97, lastMarkAt: new Date(nowMs).toISOString(), lossBoundaryPriceMicros: "90000000", takeProfitPriceMicros: "110000000", protectionState: "PROTECTED_RTH", protectionAcknowledged: true, engineVersion: "manager", mandateVersionId: "mv_BBB_1", positionLifecycleId: "plc_BBB", sector: "software" });
+    fake.docs.set(`${C.activeMandates}/paper-1_BBB`, { accountId: "paper-1", symbol: "BBB", mandateSeriesId: "paper-1_BBB", desiredVersion: 1, desiredVersionId: "mv_BBB_1", appliedVersion: 1, appliedVersionId: "mv_BBB_1", status: "PROTECTED_RTH", entryState: "FILLED", protectionState: "PROTECTED_RTH", planClass: "EXPANSION", decision: "BUY", capitalRank: 1, expiresAtMs: nowMs + 20 * 86400000, lossBoundaryPriceMicros: "90000000", takeProfitPriceMicros: "110000000", thesisHealth: "INTACT", updatedAtMs: nowMs - 86400000 });
+    fake.docs.set(`${C.orderSets}/os_mv_BBB_1`, { schemaVersion: "order-set.v1", orderSetId: "os_mv_BBB_1", accountId: "paper-1", symbol: "BBB", mandateVersionId: "mv_BBB_1", status: "WORKING", legIds: ["os_mv_BBB_1_TARGET", "os_mv_BBB_1_STOP"], reservationId: "res_BBB", createdAtMs: nowMs - 86400000, planId: "plan_0", brokerGroupId: "pg_bbb",
+      legs: [{ legId: "os_mv_BBB_1_TARGET", role: "TARGET", side: "sell", type: "LIMIT", priceMicros: "110000000", quantityUnits: "100", remainingUnits: "100", status: "WORKING", timeInForce: "GTC", ocoGroup: "oco_BBB" }, { legId: "os_mv_BBB_1_STOP", role: "STOP", side: "sell", type: "STOP", stopMicros: "90000000", quantityUnits: "100", remainingUnits: "100", status: "WORKING", timeInForce: "GTC", ocoGroup: "oco_BBB" }] });
+    fake.docs.set(`${C.orderLegs}/os_mv_BBB_1_TARGET`, { legId: "os_mv_BBB_1_TARGET", orderSetId: "os_mv_BBB_1", accountId: "paper-1", symbol: "BBB", role: "TARGET", side: "sell", type: "LIMIT", priceMicros: "110000000", quantityUnits: "100", remainingUnits: "100", filledUnits: "0", status: "WORKING", timeInForce: "GTC", ocoGroup: "oco_BBB", workingSinceMs: nowMs - 86400000 });
+    fake.docs.set(`${C.orderLegs}/os_mv_BBB_1_STOP`, { legId: "os_mv_BBB_1_STOP", orderSetId: "os_mv_BBB_1", accountId: "paper-1", symbol: "BBB", role: "STOP", side: "sell", type: "STOP", stopMicros: "90000000", quantityUnits: "100", remainingUnits: "100", filledUnits: "0", status: "WORKING", timeInForce: "GTC", ocoGroup: "oco_BBB", workingSinceMs: nowMs - 86400000 });
+    fake.docs.set(`${C.activationEnvelopes}/mv_BBB_1`, { symbol: "BBB", mandateVersionId: "mv_BBB_1", authorizedQuantityUnits: "100", proposedQuantityUnits: "120", reservedNotionalMinor: "950000", plannedLossAtBoundaryMinor: "50000", bindingGapStressLossMinor: "90000", bindingConstraint: "cashCapacity", validatedAtMs: nowMs - 86400000, portfolioPlanId: "plan_0", reservationId: "res_BBB" });
+    fake.docs.set(`${C.activeMandates}/paper-1_AAA`, { accountId: "paper-1", symbol: "AAA", mandateSeriesId: "paper-1_AAA", desiredVersion: 1, desiredVersionId: "mv_AAA_1", appliedVersion: 1, appliedVersionId: "mv_AAA_1", status: "WORKING", entryState: "WORKING", planClass: "EXPANSION", decision: "BUY", capitalRank: 1, expiresAtMs: nowMs + 3 * 86400000, updatedAtMs: nowMs - 3600000 });
+    fake.docs.set(`${C.orderSets}/os_mv_AAA_1`, { schemaVersion: "order-set.v1", orderSetId: "os_mv_AAA_1", accountId: "paper-1", symbol: "AAA", mandateVersionId: "mv_AAA_1", status: "WORKING", legIds: ["os_mv_AAA_1_ENTRY", "os_mv_AAA_1_TARGET", "os_mv_AAA_1_STOP"], reservationId: "res_AAA", createdAtMs: nowMs - 3600000, planId: "plan_1",
+      legs: [{ legId: "os_mv_AAA_1_ENTRY", role: "ENTRY", side: "buy", type: "LIMIT", priceMicros: "50000000", quantityUnits: "20", remainingUnits: "20", status: "WORKING", timeInForce: "DAY", sessionDates: ["2026-09-04", "2026-09-05"] }, { legId: "os_mv_AAA_1_TARGET", role: "TARGET", side: "sell", type: "LIMIT", priceMicros: "60000000", quantityUnits: "20", remainingUnits: "20", status: "ARMED", activatesOn: "ENTRY_FILL" }, { legId: "os_mv_AAA_1_STOP", role: "STOP", side: "sell", type: "STOP", stopMicros: "46000000", quantityUnits: "20", remainingUnits: "20", status: "ARMED", activatesOn: "ENTRY_FILL" }] });
+    for (const l of fake.docs.get(`${C.orderSets}/os_mv_AAA_1`).legs) fake.docs.set(`${C.orderLegs}/${l.legId}`, { ...l, orderSetId: "os_mv_AAA_1", accountId: "paper-1", symbol: "AAA", filledUnits: "0", workingSinceMs: nowMs - 3600000 });
+    fake.docs.set(`${C.capitalReservations}/res_AAA`, { schemaVersion: "capital-reservation.v1", reservationId: "res_AAA", accountId: "paper-1", symbol: "AAA", mandateVersionId: "mv_AAA_1", status: "ACTIVE", reservedNotionalMinor: "100000", plannedLossMinor: "8000", stressLossMinor: "12000", createdAtMs: nowMs - 3600000 });
+    fake.docs.set(`${C.reservationAccounts}/paper-1`, { accountId: "paper-1", version: 2, reservedNotionalMinor: "100000", reservedPlannedLossMinor: "8000", reservedStressLossMinor: "12000", committedPortfolioPlanId: "plan_1", updatedAtMs: nowMs - 3600000 });
+    fake.docs.set(`${C.activationEnvelopes}/mv_AAA_1`, { symbol: "AAA", mandateVersionId: "mv_AAA_1", authorizedQuantityUnits: "20", proposedQuantityUnits: "20", reservedNotionalMinor: "100000", plannedLossAtBoundaryMinor: "8000", bindingGapStressLossMinor: "12000", bindingConstraint: "plannedLossCapacity", validatedAtMs: nowMs - 3600000, portfolioPlanId: "plan_1", reservationId: "res_AAA", proposalHash: "p".repeat(64) });
+    fake.docs.set(`${C.portfolioPlans}/plan_1`, { planId: "plan_1", planClass: "EXPANSION", status: "COMMITTED", accountId: "paper-1", managerRunId: run.managerRunId, activationSnapshotId: "act_1", mandateVersionIds: ["mv_AAA_1"], symbols: ["AAA"], committedAtMs: nowMs - 3600000 });
+    const SC = require("./_investorStorageCodec");
+    const U = require("./_investorUniverse");
+    const symbols = U.tradeTier.map((r) => r.symbol);
+    symbols.forEach((sym, i) => fake.docs.set(`${C.managerDecisions}/${run.managerRunId}_${sym}`, SC.encode({ schemaVersion: "manager-decision.v1", managerRunId: run.managerRunId, symbol: sym, decision: i === 0 ? "BUY" : i === 1 ? "HOLD" : "WATCH", reasonCode: null, reason: i === 0 ? "attractive after-cost opportunity" : "no edge yet", capitalRank: i === 0 ? 1 : null, fundingState: i === 0 ? "FUNDED" : "NOT_APPLICABLE", reviewDirective: "REUSE_CURRENT", changedSincePrior: i < 3, held: i === 1, eligible: true, offRoster: false, source: i === 1 ? "holding_analysis" : "review", tradingDate: "2026-09-04", accountId: "paper-1", asOfMs: nowMs - 4 * 3600000 })));
+    fake.docs.set(`${C.dossiers}/${symbols[0]}`, { symbol: symbols[0], currentVersionId: "dv_1", asOfMs: nowMs - 8 * 3600000, updatedAtMs: nowMs - 8 * 3600000, lastManagerReviewAtMs: nowMs - 4 * 3600000, standingView: { decision: "BUY", status: "BUY", asOfMs: nowMs - 4 * 3600000 }, pendingDeltaCount: 1 });
+    fake.docs.set(`${C.evidenceDeltas}/delta_${symbols[0]}_1`, { deltaId: `delta_${symbols[0]}_1`, eventId: `delta_${symbols[0]}_1`, symbol: symbols[0], safetyClass: "routine", eventClass: "guidance_update", title: "Company raised full-year guidance", firstSeenAtMs: nowMs - 2 * 3600000, publishedAtMs: nowMs - 3 * 3600000, managerMateriality: "pending", verified: true, sourceId: "sec.latest", reasons: ["guidance"] });
+    fake.docs.set(`${C.alerts}/buys_frozen`, { conditionId: "buys_frozen", code: "buys_frozen", severity: "warning", title: "New buys frozen", action: "see the freeze reason", detail: null, accountId: "paper-1", active: true, raisedAtMs: nowMs - 3600000, lastSeenAtMs: nowMs - 60000, acknowledgedAtMs: null, acknowledgedBy: null, resolvedAtMs: null, occurrences: 3 });
+    fake.docs.set(`${C.jobs}/focused_research__AAA_2026-09-04`, { jobId: "focused_research__AAA_2026-09-04", task: "focused_research", status: "queued", priority: 300, enqueuedAtMs: nowMs - 600000, dueAtMs: nowMs - 600000, attempts: 0, payload: { symbol: "AAA", accountId: "paper-1" }, targetFunction: "investorManager-background" });
+    fake.docs.set(`${C.navMarks}/paper-1_2026-09-03`, { accountId: "paper-1", date: "2026-09-03", finalMark: { navMinor: "5990000", source: "postclose", atMs: nowMs - 86400000 } });
+    fake.docs.set(`${C.navMarks}/paper-1_2026-09-02`, { accountId: "paper-1", date: "2026-09-02", finalMark: { navMinor: "6000000", source: "postclose", atMs: nowMs - 2 * 86400000 } });
+    fake.docs.set(`${C.costs}/openai_2026-09-04`, { spentMinor: 420, reservedMinor: 0, calls: 12, byRole: { manager: { model: "gpt-5.6-sol", calls: 4, spentMinor: 380, inputTokens: 900000, outputTokens: 40000 }, facts: { model: "gpt-5.6-luna", calls: 8, spentMinor: 40 } } });
+    const fcId = require("./_investorLearning").forecastIdFor({ managerRunId: run.managerRunId, symbol: symbols[0] });
+    fake.docs.set(`${C.forecasts}/${fcId}`, { forecastId: fcId, managerRunId: run.managerRunId, symbol: symbols[0], status: "PENDING", decision: "BUY", referencePriceMicros: "50000000", referencePriceType: "BUY_LIMIT", horizons: [1, 5, 20, 60], tradingDate: "2026-09-04" });
+    const S = require("./_investorApiSchemas");
+    const V2 = require("./_investorApiV2");
+    const auth = (reauthed = false) => ({ ok: true, via: "cookie", subject: "operator", sessionId: "s_fixture", reauthed });
+    let seq = 0;
+    const read = (action, params = {}) => V2.dispatch({ body: { apiVersion: "investor.v2", requestId: `req_fixture_${++seq}`, action, params }, admin: fake, nowMs, authOverride: auth() });
+    const mutate = (action, params = {}, { key = null, reason = "fixture reason", version = null, preview = null, absent = null, reauthed = false, nowMs: at = null } = {}) =>
+      V2.dispatch({ body: { apiVersion: "investor.v2", requestId: `req_fixture_${++seq}`, action, params, idempotencyKey: key || `key_${action}_${++seq}_${"x".repeat(12)}`, csrfToken: "c".repeat(24), auditReason: reason, ...(version != null ? { expectedResourceVersion: String(version) } : {}), ...(preview ? { previewToken: preview } : {}), ...(absent ? { expectedAbsent: true } : {}) }, admin: fake, nowMs: at || nowMs, authOverride: auth(reauthed) });
+    const ctrl = () => fake.docs.get(`${C.control}/control`);
+    return { fake, C, nowMs, run, policy, symbols, S, V2, read, mutate, ctrl, commit };
+  }
+
+  cases.push(fixture("api_v2_contract_compiles_strictly_and_rejects_unknown_fields_oversized_pages_and_unsafe_numbers", () => {
+    const S = require("./_investorApiSchemas");
+    const c = S.compileAll();
+    if (!c || c.count < 60) throw new Error(`compiled ${c && c.count}`);
+    if (S.READ_ACTIONS.length !== 27 || S.MUTATION_ACTIONS.length !== 31) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
+    const req = (body) => S.validateRequest(body);
+    const base = { apiVersion: "investor.v2", requestId: "req_0000000001" };
+    if (!req({ ...base, action: "companies", params: { pageSize: 200, bucket: "eligible" } }).ok) throw new Error("valid read rejected");
+    if (req({ ...base, action: "companies", params: { pageSize: 201 } }).ok) throw new Error("oversized page accepted");
+    if (req({ ...base, action: "companies", params: { cursor: "short" } }).ok) throw new Error("malformed cursor accepted");
+    if (req({ ...base, action: "companies", params: { nope: 1 } }).ok) throw new Error("unknown field accepted");
+    if (req({ ...base, action: "requestSell", params: { positionId: "p", symbol: "AAA", quantityUnits: 10, quantityScale: 0, orderType: "LIMIT", timeInForce: "DAY", exchangeSession: "RTH", reason: "why", expectedPositionVersion: "1", expectedMandateVersion: null }, idempotencyKey: "k".repeat(20), csrfToken: "c".repeat(20), auditReason: "why" }).ok) throw new Error("a JSON number for a quantity must be rejected");
+    if (req({ ...base, action: "requestSell", params: { positionId: "p", symbol: "AAA", quantityUnits: "012", quantityScale: 0, orderType: "LIMIT", limitPriceMicros: "1", timeInForce: "DAY", exchangeSession: "RTH", reason: "why", expectedPositionVersion: "1", expectedMandateVersion: null }, idempotencyKey: "k".repeat(20), csrfToken: "c".repeat(20), auditReason: "why" }).ok) throw new Error("a leading zero is not canonical");
+    if (req({ apiVersion: "investor.v1", requestId: "req_0000000001", action: "companies" }).error.code !== "UNSUPPORTED_API_VERSION") throw new Error("v1 must not reach v2");
+    if (req({ ...base, action: "freezeBuys", params: {}, idempotencyKey: "k".repeat(20), csrfToken: "c".repeat(20), auditReason: "why" }).ok) throw new Error("a versioned mutation needs expectedResourceVersion");
+    if (req({ ...base, action: "companies", params: {}, idempotencyKey: "k".repeat(20) }).ok) throw new Error("a read must not carry mutation fields");
+    if (!req({ ...base, action: "pauseMandate", params: { mandateSeriesId: "m", symbol: "AAA", pauseKind: "OPERATIONAL" }, idempotencyKey: "k".repeat(20), csrfToken: "c".repeat(20), auditReason: "why", expectedResourceVersion: "1" }).ok) throw new Error("valid mutation rejected");
+    if (req({ ...base, action: "pauseMandate", params: { mandateSeriesId: "m", symbol: "AAA", pauseKind: "OPERATIONAL" }, idempotencyKey: "k".repeat(20), csrfToken: "c".repeat(20), expectedResourceVersion: "1" }).ok) throw new Error("a reason-required mutation without auditReason must be rejected");
+    /* every §14.10 view model is compiled and every model schema passes the strict-subset walk */
+    for (const name of ["ManagerDashboardView", "ControlStateView", "CompanyRowView", "HoldingRowView", "AuthorizationExecutionView", "AlertView", "SystemView", "PerformanceView", "SpendView"]) if (!S.VIEW_MODELS[name]) throw new Error(`view model ${name} missing`);
+    if (!S.validateModelOutput("mandate-proposal.v1", require("./_investorPolicy").EXAMPLE_MANDATE_PROPOSAL).ok) throw new Error("the example mandate proposal must validate through Ajv");
+    if (S.HTTP_STATUS.IDEMPOTENCY_KEY_REUSED !== 409 || S.HTTP_STATUS.ACTION_RETIRED !== 410 || S.HTTP_STATUS.REAUTH_REQUIRED !== 403 || S.HTTP_STATUS.SESSION_EXPIRED !== 401 || S.HTTP_STATUS.SEMANTIC_REJECTED !== 422 || S.HTTP_STATUS.BUDGET_EXHAUSTED !== 429) throw new Error("http mapping");
+    if (!/^[a-f0-9]{64}$/.test(S.contractHash())) throw new Error("contract hash");
+    return true;
+  }));
+
+  cases.push(fixture("api_v2_reads_answer_bounded_envelopes_and_typed_view_models_from_a_seeded_world", async () => {
+    const W = apiWorld();
+    const { S, read } = W;
+    const check = (r, name = null) => { if (r.statusCode !== 200 || !r.body.ok) throw new Error(`${name || "read"} → ${r.statusCode} ${JSON.stringify(r.body.error).slice(0, 300)}`); const v = S.validateResponse(r.body); if (!v.ok) throw new Error(`envelope ${JSON.stringify(v.issues).slice(0, 300)}`); return r.body; };
+    const view = (name, value) => { const v = S.validateView(name, value); if (!v.ok) throw new Error(`${name}: ${JSON.stringify(v.issues).slice(0, 400)}`); };
+    const dash = check(await read("managerDashboard"), "managerDashboard");
+    view("ManagerDashboardView", dash.data);
+    if (dash.data.coverage.completedCount !== 304 || dash.data.coverage.eligibleCount !== 304) throw new Error("coverage must come from the run's frozen denominator");
+    if (dash.data.account.accountMode !== "PAPER_AI" || dash.data.account.nav.amountMinor !== "6020000") throw new Error(`account ${JSON.stringify(dash.data.account)}`);
+    if (dash.data.models.investment.snapshot !== "gpt-5.6-sol" || dash.data.models.investment.reasoningEffort !== "high") throw new Error("model routing");
+    if (!dash.data.alerts.length || dash.data.alerts[0].conditionId !== "buys_frozen") throw new Error("alerts");
+    if (dash.data.evidenceDeltas.length !== 1 || dash.data.workflow.length !== 6) throw new Error("deltas/workflow");
+    if (JSON.stringify(dash.data).length > 200000) throw new Error("the dashboard must stay a summary");
+    view("SpendView", dash.data.spend);
+    if (dash.data.spend.actual.amountMinor !== "420" || dash.data.spend.dailyLimit.amountMinor === "0") throw new Error("spend");
+    const cs = check(await read("controlState"), "controlState");
+    view("ControlStateView", cs.data);
+    if (cs.data.resourceVersion !== "3" || cs.data.mutationsEnabled !== true || cs.data.writerEpoch !== 1) throw new Error(`control ${JSON.stringify(cs.data).slice(0, 200)}`);
+    const cap = (a) => cs.data.availableActions.find((c) => c.action === a);
+    if (!cap("freezeBuys").enabled || cap("resumeBuys").enabled || !cap("runManagerReview").enabled || cap("activateAccountMode").enabled || !cap("deactivateAccountMode").enabled || !cap("emergencyStop").enabled || cap("resumeSystem").enabled) throw new Error(`capabilities ${JSON.stringify(cs.data.availableActions.map((c) => [c.action, c.enabled]))}`);
+    if (!cap("resumeBuys").requiresReauth || cap("freezeBuys").requiresReauth || !cap("freezeBuys").requiresReason) throw new Error("capability flags must mirror the contract");
+    /* companies: the complete book, paginated with a bound cursor */
+    const p1 = check(await read("companies", { pageSize: 100, sort: "symbol" }), "companies");
+    if (p1.data.collectionState !== "READY" || p1.data.items.length !== 100 || !p1.nextCursor || p1.data.totalCount < 304) throw new Error(`page1 ${p1.data.items.length}/${p1.data.totalCount}`);
+    for (const row of p1.data.items.slice(0, 5)) view("CompanyRowView", row);
+    if (!p1.data.buckets || !p1.data.buckets.byBucket || p1.data.buckets.byBucket.eligible !== 304) throw new Error(`buckets ${JSON.stringify(p1.data.buckets)}`);
+    const p2 = check(await read("companies", { pageSize: 100, sort: "symbol", cursor: p1.nextCursor }), "companies page 2");
+    if (p2.data.items.some((r) => p1.data.items.some((x) => x.symbol === r.symbol)) || p2.data.completedCount !== 200) throw new Error("pages must not overlap");
+    const tampered = await read("companies", { pageSize: 100, sort: "symbol", cursor: p1.nextCursor.slice(0, -2) + "zz" });
+    if (tampered.statusCode !== 400 || tampered.body.error.code !== "CURSOR_INVALID") throw new Error("a tampered cursor must be refused");
+    const wrongSort = await read("companies", { pageSize: 100, sort: "decision", cursor: p1.nextCursor });
+    if (wrongSort.statusCode !== 400) throw new Error("a cursor from another sort must be refused");
+    const held = check(await read("companies", { held: true }), "companies held");
+    if (held.data.items.length !== 1 || held.data.items[0].symbol !== "BBB" || held.data.items[0].researchState === undefined) throw new Error(`held ${JSON.stringify(held.data.items.map((r) => r.symbol))}`);
+    const buy = check(await read("companies", { decision: "BUY" }), "companies BUY");
+    if (buy.data.items.length !== 1 || buy.data.items[0].capitalRank !== 1 || buy.data.items[0].changed !== true) throw new Error(`buy ${JSON.stringify(buy.data.items[0]).slice(0, 300)}`);
+    if (held.data.items[0].bucket !== "managedOffRoster" || held.data.items[0].mandateState !== "PROTECTED_RTH") throw new Error(`a held off-roster name stays managed: ${JSON.stringify(held.data.items[0]).slice(0, 300)}`);
+    const excluded = check(await read("companies", { bucket: "excluded", pageSize: 5 }), "excluded");
+    if (!excluded.data.items.length || excluded.data.items[0].exclusionReason == null || excluded.data.items[0].availableActions[0].enabled) throw new Error("excluded rows carry the reason and no research capability");
+    /* portfolio: holdings, authorizations, working orders, queue, revisions */
+    const pf = check(await read("portfolio"), "portfolio");
+    if (pf.data.holdings.items.length !== 1) throw new Error("one holding");
+    view("HoldingRowView", pf.data.holdings.items[0]);
+    const h = pf.data.holdings.items[0];
+    if (h.symbol !== "BBB" || h.quantity.quantityUnits !== "100" || h.mark.priceMicros !== "97000000" || h.averageCost.priceMicros !== "95000000" || h.lossBoundary.priceMicros !== "90000000" || h.protection.state !== "PROTECTED_RTH" || h.weightBps !== "1611") throw new Error(`holding ${JSON.stringify(h).slice(0, 400)}`);
+    if (h.distanceToBoundaryBps !== "-722" || h.distanceToTargetBps !== "1340" || h.forwardDownside.amountMinor !== "70000") throw new Error(`distances ${h.distanceToBoundaryBps}/${h.distanceToTargetBps}/${h.forwardDownside.amountMinor}`);
+    if (!h.availableActions.find((c) => c.action === "requestSell").enabled) throw new Error("a held position can be sold");
+    if (pf.data.standingAuthorizations.items.length !== 2) throw new Error("two standing authorizations");
+    for (const a of pf.data.standingAuthorizations.items) view("AuthorizationExecutionView", a);
+    const aaa = pf.data.standingAuthorizations.items.find((a) => a.symbol === "AAA");
+    if (aaa.state !== "WORKING" || aaa.entry.priceMicros !== "50000000" || aaa.authorizedQuantity.quantityUnits !== "20" || aaa.reservations.notional.amountMinor !== "100000" || aaa.remainingQuantity.quantityUnits !== "20") throw new Error(`AAA ${JSON.stringify(aaa).slice(0, 300)}`);
+    if (pf.data.workingOrders.items.length !== 2) throw new Error("two working order sets");
+    view("OrderSetView", pf.data.workingOrders.items[0]);
+    /* the rest of the read surface answers and validates */
+    const runs = check(await read("managerRuns"), "managerRuns"); view("ManagerRunView", runs.data.items[0]);
+    if (runs.data.items[0].state !== "COMPLETE" || runs.data.items[0].coverage.completedCount !== 304) throw new Error("run view");
+    const jobs = check(await read("jobs"), "jobs"); view("JobView", jobs.data.items[0]);
+    const journal = check(await read("decisionJournal", { pageSize: 10 }), "journal"); view("DecisionJournalRowView", journal.data.items[0]);
+    if (journal.data.totalCount !== 304 || journal.data.items[0].decision !== "BUY" || !journal.data.items[0].forecast) throw new Error(`journal ${journal.data.totalCount} ${journal.data.items[0].decision}`);
+    const ev = check(await read("materialEvents"), "materialEvents"); view("MaterialEventView", ev.data.items[0]);
+    const al = check(await read("alerts"), "alerts"); view("AlertView", al.data.items[0]);
+    const sys = check(await read("systemHealth"), "systemHealth"); view("SystemView", sys.data);
+    if (!sys.data.identities.fixtures.matchesBuild || sys.data.identities.roles.investment.model !== "gpt-5.6-sol" || sys.data.configuration.riskMandate.bounds == null) throw new Error("system identities");
+    for (const k of ["sources", "dossiers", "models", "manager", "mandates", "reservations", "executor", "broker", "ledger", "calendar"]) { const hc = sys.data.health[k]; for (const f of ["state", "lastSuccessAt", "expectedBy", "ageSeconds", "backlog", "errorCode", "conditionId", "operatorAction"]) if (!(f in hc)) throw new Error(`health.${k}.${f} missing`); if (!S.ENUMS.ComponentHealth.includes(hc.state)) throw new Error(`health.${k}.state ${hc.state}`); }
+    const perf = check(await read("performance", { range: "1M" }), "performance"); view("PerformanceView", perf.data);
+    if (perf.data.returns.observations !== 1 || perf.data.returns.smallSampleWarning !== true || perf.data.costs.ai.amountMinor !== "420") throw new Error(`performance ${JSON.stringify(perf.data.returns)} ${perf.data.costs.ai.amountMinor}`);
+    const an = check(await read("decisionAnalytics", { horizon: 20 }), "analytics"); view("DecisionAnalyticsView", an.data);
+    const uni = check(await read("universe"), "universe");
+    if (uni.data.snapshot.eligibleCount !== 304 || uni.data.members !== undefined) throw new Error("universe snapshot");
+    const acct = check(await read("account"), "account");
+    if (acct.data.nav.amountMinor !== "6020000") throw new Error("account nav");
+    const os = check(await read("orderSets"), "orderSets");
+    if (os.data.totalCount !== 2) throw new Error("order sets");
+    const md = check(await read("mandates", { status: "active" }), "mandates");
+    if (md.data.totalCount !== 2) throw new Error("mandates");
+    const ex = check(await read("executionEvents"), "executionEvents");
+    if (ex.data.collectionState !== "EMPTY") throw new Error("no events yet");
+    const doss = check(await read("companyDossier", { symbol: W.symbols[0] }), "companyDossier"); view("CompanyDetailView", doss.data);
+    if (doss.data.decision.decision !== "BUY" || doss.data.deltas.length !== 1 || doss.data.mandate !== null) throw new Error(`dossier ${JSON.stringify(doss.data.decision)} ${doss.data.deltas.length}`);
+    const dossB = check(await read("companyDossier", { symbol: "BBB" }), "companyDossier BBB"); view("CompanyDetailView", dossB.data);
+    if (!dossB.data.mandate || dossB.data.mandate.state !== "PROTECTED_RTH" || dossB.data.mandate.boundary.priceMicros !== "90000000" || dossB.data.mandate.authorizedQuantity.quantityUnits !== "100" || dossB.data.mandate.plannedLoss.amountMinor !== "50000") throw new Error(`BBB mandate ${JSON.stringify(dossB.data.mandate)}`);
+    return true;
+  }));
+
+  cases.push(fixture("api_v2_mutations_claim_idempotency_before_side_effects_and_honour_versions_modes_and_reauth", async () => {
+    const W = apiWorld();
+    const { fake, C, mutate, ctrl, read } = W;
+    /* observe mode: investment mutations are disabled; the release control itself, safety freezes and administration remain */
+    const O = apiWorld({ accountMode: "OBSERVE", writerEpoch: 0 });
+    const disabled = await O.mutate("runManagerReview", { reason: "OPERATOR" });
+    if (disabled.statusCode !== 403 || disabled.body.error.code !== "MUTATIONS_DISABLED") throw new Error(`observe mode ${disabled.statusCode} ${JSON.stringify(disabled.body.error)}`);
+    const frozenInObserve = await O.mutate("freezeBuys", {}, { version: 3 });
+    if (frozenInObserve.statusCode !== 200) throw new Error(`freezeBuys must work in OBSERVE: ${JSON.stringify(frozenInObserve.body.error)}`);
+    const badPreflight = await O.mutate("activateAccountMode", { targetMode: "PAPER_AI", policyHash: "a".repeat(64), universeHash: "b".repeat(64) }, { version: 4, reauthed: true });
+    if (badPreflight.statusCode !== 422 || badPreflight.body.error.code !== "PREFLIGHT_FAILED" || !/policy_hash_mismatch/.test(badPreflight.body.error.message)) throw new Error(`preflight ${badPreflight.statusCode} ${JSON.stringify(badPreflight.body.error).slice(0, 200)}`);
+    const uni = await O.read("universe");
+    const good = await O.mutate("activateAccountMode", { targetMode: "PAPER_AI", policyHash: O.policy.policyHash, universeHash: uni.body.data.snapshot.universeHash }, { version: 4, reauthed: true });
+    if (good.statusCode !== 200 || O.ctrl().accountMode !== "PAPER_AI" || O.ctrl().writerEpoch !== 1 || O.ctrl().engineMode !== "manager" || O.ctrl().controlVersion !== 5) throw new Error(`activation ${good.statusCode} ${JSON.stringify(good.body.error)} ${JSON.stringify(O.ctrl()).slice(0, 200)}`);
+    if (!O.ctrl().lastTransition || O.ctrl().lastTransition.action !== "activateAccountMode") throw new Error("transition record");
+    /* idempotency: same key + same content replays; same key + other content is refused; stale version conflicts */
+    const key = "key_freeze_0000000001";
+    const a = await mutate("freezeBuys", {}, { key, version: 3 });
+    if (a.statusCode !== 200 || !a.body.mutationId || a.body.resourceVersion !== "4" || a.body.appliedState.buyState !== "FROZEN" || ctrl().buyState !== "FROZEN" || ctrl().freezeNewBuys !== true) throw new Error(`freeze ${a.statusCode} ${JSON.stringify(a.body).slice(0, 300)}`);
+    const b = await mutate("freezeBuys", {}, { key, version: 3 });
+    if (b.statusCode !== 200 || b.body.mutationId !== a.body.mutationId || b.body.replayed !== true || ctrl().controlVersion !== 4) throw new Error(`replay ${JSON.stringify(b.body).slice(0, 300)}`);
+    const c = await mutate("freezeBuys", {}, { key, version: 3, reason: "a different reason" });
+    if (c.statusCode !== 409 || c.body.error.code !== "IDEMPOTENCY_KEY_REUSED") throw new Error(`reuse ${c.statusCode} ${JSON.stringify(c.body.error)}`);
+    const stale = await mutate("pauseManager", {}, { version: 3 });
+    if (stale.statusCode !== 409 || stale.body.error.code !== "VERSION_CONFLICT" || stale.body.resourceVersion !== "4") throw new Error(`stale ${stale.statusCode} ${JSON.stringify(stale.body.error)}`);
+    const audits = [...fake.docs.entries()].filter(([k]) => k.startsWith(`${C.audit}/`)).map(([, v]) => v);
+    if (!audits.some((x) => x.action === "freezeBuys" && x.mutationId === a.body.mutationId)) throw new Error("every mutation leaves an audit link");
+    /* resumeBuys is reauth-gated by the contract and blocked while the emergency state is not CLEAR */
+    const cs = await read("controlState");
+    if (cs.body.data.buyState.applied !== "FROZEN" || cs.body.data.availableActions.find((x) => x.action === "resumeBuys").enabled !== true) throw new Error("resumeBuys must be offered once frozen");
+    const resumed = await mutate("resumeBuys", {}, { version: 4, reauthed: true });
+    if (resumed.statusCode !== 200 || ctrl().buyState !== "OPEN" || ctrl().freezeNewBuys !== false) throw new Error(`resume ${resumed.statusCode} ${JSON.stringify(resumed.body.error)}`);
+    /* the budget: an increase needs reauthentication, a decrease does not */
+    const up = await mutate("setBudget", { dailyReservationMinor: "999999" }, { version: 5 });
+    if (up.statusCode !== 403 || up.body.error.code !== "REAUTH_REQUIRED") throw new Error(`budget increase ${up.statusCode}`);
+    const down = await mutate("setBudget", { dailyReservationMinor: "100" }, { version: 5 });
+    if (down.statusCode !== 200 || ctrl().budget.dailyReservationMinor !== "100" || ctrl().budget.version !== 1) throw new Error(`budget decrease ${down.statusCode} ${JSON.stringify(down.body.error)}`);
+    /* the risk mandate: bounded, versioned, an over-limit book freezes expansion instead of liquidating */
+    const oob = await mutate("setRiskMandate", { overrides: { "weights.maxSingleNameWeightBps": "9999" } }, { version: 6, reauthed: true });
+    if (oob.statusCode !== 422 || oob.body.error.code !== "RISK_BOUND_EXCEEDED") throw new Error(`bounds ${oob.statusCode} ${JSON.stringify(oob.body.error)}`);
+    const tight = await mutate("setRiskMandate", { overrides: { "weights.maxSingleNameWeightBps": "1000" } }, { version: 6, reauthed: true });
+    if (tight.statusCode !== 200 || tight.body.data.version !== 1 || !/^[a-f0-9]{64}$/.test(tight.body.data.hash) || tight.body.data.overLimit[0] !== "BBB" || ctrl().buyState !== "FROZEN" || fake.docs.get(`${C.positions}/paper-1_BBB`).open !== true) throw new Error(`risk ${tight.statusCode} ${JSON.stringify(tight.body).slice(0, 300)}`);
+    /* alerts: acknowledgement is recorded and silences nothing */
+    const ack = await mutate("acknowledgeAlert", { alertId: "buys_frozen", alertVersion: "3" });
+    if (ack.statusCode !== 200 || ack.body.data.stillActive !== true || fake.docs.get(`${C.alerts}/buys_frozen`).active !== true || fake.docs.get(`${C.alerts}/buys_frozen`).acknowledgedBy !== "operator") throw new Error(`ack ${ack.statusCode} ${JSON.stringify(ack.body)}`);
+    const ackStale = await mutate("acknowledgeAlert", { alertId: "buys_frozen", alertVersion: "2" });
+    if (ackStale.statusCode !== 409) throw new Error("alert version conflict");
+    /* research and review enqueue jobs with operator lineage; never activate */
+    const rr = await mutate("requestResearch", { symbol: "CCC", directive: "RESEARCH_NOW" });
+    if (rr.statusCode !== 200 || !rr.body.jobId || !fake.docs.get(`${C.jobs}/${rr.body.jobId}`) || fake.docs.get(`${C.jobs}/${rr.body.jobId}`).payload.reason !== "OPERATOR") throw new Error(`research ${rr.statusCode} ${JSON.stringify(rr.body.error)}`);
+    const rm = await mutate("runManagerReview", { reason: "OPERATOR" });
+    if (rm.statusCode !== 200 || !rm.body.jobId || !rm.body.data.evidenceCutoff || !fake.docs.get(`${C.jobs}/${rm.body.jobId}`).runId.includes("_op")) throw new Error(`review ${rm.statusCode} ${JSON.stringify(rm.body).slice(0, 300)}`);
+    const rm2 = await mutate("runManagerReview", { reason: "OPERATOR" });
+    if (rm2.statusCode !== 200 || rm2.body.jobId !== rm.body.jobId || rm2.body.data.duplicate !== true) throw new Error("the same slot deduplicates");
+    const rev = await mutate("runFocusedRevision", { symbol: W.symbols[0], deltaId: `delta_${W.symbols[0]}_1` });
+    if (rev.statusCode !== 200 || !rev.body.jobId) throw new Error(`revision ${rev.statusCode} ${JSON.stringify(rev.body.error)}`);
+    /* pause / resume / cancel a mandate: typed pause, same-hash resume, cancel keeps protection */
+    const pause = await mutate("pauseMandate", { mandateSeriesId: "paper-1_AAA", symbol: "AAA", pauseKind: "OPERATIONAL" }, { version: 1 });
+    const outbox = () => [...fake.docs.entries()].filter(([k]) => k.startsWith(`${C.executionOutbox}/`)).map(([, v]) => v);
+    if (pause.statusCode !== 200 || fake.docs.get(`${C.activeMandates}/paper-1_AAA`).status !== "PAUSED_OPERATIONAL" || !outbox().some((t) => t.kind === "CANCEL_UNFILLED_ENTRY" && t.authority === "OPERATOR" && t.symbol === "AAA")) throw new Error(`pause ${pause.statusCode} ${JSON.stringify(pause.body.error)}`);
+    const wrongHash = await mutate("resumeMandate", { mandateSeriesId: "paper-1_AAA", symbol: "AAA", mandateHash: "0".repeat(64) }, { version: 1 });
+    if (wrongHash.statusCode !== 409) throw new Error("resume needs the paused hash");
+    const blockedByDelta = await mutate("resumeMandate", { mandateSeriesId: "paper-1_AAA", symbol: "AAA", mandateHash: require("./_investorPolicy").sha256("mv_AAA_1") }, { version: 1 });
+    if (blockedByDelta.statusCode !== 409 && blockedByDelta.statusCode !== 200) throw new Error(`resume ${blockedByDelta.statusCode} ${JSON.stringify(blockedByDelta.body.error)}`);
+    const cancelHeld = await mutate("cancelMandate", { mandateSeriesId: "paper-1_BBB", symbol: "BBB" }, { version: 1 });
+    if (cancelHeld.statusCode !== 200 || cancelHeld.body.data.protectionRetained !== true || fake.docs.get(`${C.activeMandates}/paper-1_BBB`).status !== "PROTECTED_RTH" || fake.docs.get(`${C.activeMandates}/paper-1_BBB`).replacementRequired !== true) throw new Error(`cancel held ${cancelHeld.statusCode} ${JSON.stringify(cancelHeld.body).slice(0, 300)}`);
+    if (fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_STOP`).status !== "WORKING") throw new Error("cancelling a held mandate must never touch its protection");
+    /* the account reset needs a one-use preview, the right versions, no exposure, and conservation */
+    const pv = await mutate("previewPaperAccountReset", {});
+    if (pv.statusCode !== 200 || !pv.body.data.previewToken || pv.body.data.canReset !== false || !pv.body.data.blockers.some((b) => /open_positions/.test(b))) throw new Error(`preview ${pv.statusCode} ${JSON.stringify(pv.body).slice(0, 300)}`);
+    const reset = await mutate("resetPaperAccount", { accountVersion: pv.body.data.accountVersion, balanceHash: pv.body.data.balanceHash }, { preview: pv.body.data.previewToken, reauthed: true });
+    if (reset.statusCode !== 409 || reset.body.error.code !== "STATE_CONFLICT") throw new Error(`reset with exposure ${reset.statusCode} ${JSON.stringify(reset.body.error)}`);
+    /* emergency stop: expansion frozen, unfilled entries cancelled through the outbox, protection untouched, not a liquidation */
+    const es = await mutate("emergencyStop", {});
+    if (es.statusCode !== 200 || ctrl().emergencyState !== "ENGAGED" || ctrl().buyState !== "FROZEN" || ctrl().managerState !== "PAUSED") throw new Error(`emergency ${es.statusCode} ${JSON.stringify(es.body.error)}`);
+    if (fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_STOP`).status !== "WORKING" || fake.docs.get(`${C.positions}/paper-1_BBB`).open !== true) throw new Error("an emergency stop never cancels protection or liquidates");
+    const rs = await mutate("resumeSystem", {}, { version: ctrl().controlVersion, reauthed: true });
+    if (rs.statusCode !== 200 || !["CLEAR", "RECOVERING"].includes(ctrl().emergencyState) || ctrl().buyState !== "FROZEN") throw new Error(`resumeSystem ${rs.statusCode} ${JSON.stringify(rs.body.error)} ${ctrl().emergencyState}`);
+    /* deactivation: back to OBSERVE with buys frozen and protection retained */
+    const de = await mutate("deactivateAccountMode", { targetMode: "OBSERVE" }, { version: ctrl().controlVersion, reauthed: true });
+    if (de.statusCode !== 200 || ctrl().accountMode !== "OBSERVE" || ctrl().buyState !== "FROZEN") throw new Error(`deactivate ${de.statusCode} ${JSON.stringify(de.body.error)}`);
+    const after = await mutate("requestResearch", { symbol: "DDD" });
+    if (after.statusCode !== 403 || after.body.error.code !== "MUTATIONS_DISABLED") throw new Error("OBSERVE disables investment mutations again");
+    return true;
+  }));
+
+  cases.push(fixture("operator_sell_is_a_typed_outbox_transition_that_resizes_protection_and_cancel_restores_it", async () => {
+    const W = apiWorld();
+    const { fake, C, mutate, nowMs } = W;
+    const X = require("./_investorExecution");
+    const B = require("./_investorBroker");
+    const adapter = B.createPaperAdapter({ admin: fake, now: () => nowMs });
+    const bad = await mutate("requestSell", { positionId: "paper-1_BBB", symbol: "BBB", quantityUnits: "150", quantityScale: 0, orderType: "MARKETABLE_LIMIT", timeInForce: "DAY", exchangeSession: "RTH", collarBps: "100", reason: "trim", expectedPositionVersion: "7", expectedMandateVersion: "1" });
+    if (bad.statusCode !== 422) throw new Error(`oversell must be refused: ${bad.statusCode} ${JSON.stringify(bad.body.error)}`);
+    const staleV = await mutate("requestSell", { positionId: "paper-1_BBB", symbol: "BBB", quantityUnits: "25", quantityScale: 0, orderType: "MARKETABLE_LIMIT", timeInForce: "DAY", exchangeSession: "RTH", reason: "trim", expectedPositionVersion: "6", expectedMandateVersion: "1" });
+    if (staleV.statusCode !== 409 || staleV.body.error.code !== "VERSION_CONFLICT") throw new Error(`stale position version ${staleV.statusCode}`);
+    const sell = await mutate("requestSell", { positionId: "paper-1_BBB", symbol: "BBB", quantityUnits: "25", quantityScale: 0, orderType: "MARKETABLE_LIMIT", timeInForce: "DAY", exchangeSession: "RTH", collarBps: "100", reason: "trim a quarter", expectedPositionVersion: "7", expectedMandateVersion: "1" });
+    if (sell.statusCode !== 200 || !sell.body.data.overrideId || !sell.body.data.orderSetId || sell.body.data.quantity.quantityUnits !== "25" || sell.body.data.thesisUnchanged !== true) throw new Error(`sell ${sell.statusCode} ${JSON.stringify(sell.body).slice(0, 300)}`);
+    const orderSetId = sell.body.data.orderSetId;
+    const os = fake.docs.get(`${C.orderSets}/${orderSetId}`);
+    if (os.purpose !== "OPERATOR_SELL" || os.authority !== "OPERATOR" || os.legs[0].role !== "SELL" || os.legs[0].type !== "MARKETABLE_LIMIT") throw new Error("operator order set shape");
+    const t = fake.docs.get(`${C.executionOutbox}/${orderSetId}:OPERATOR_SELL`);
+    if (!t || t.kind !== "OPERATOR_SELL" || t.status !== "PENDING" || t.authority !== "OPERATOR") throw new Error("outbox transition");
+    const dup = await mutate("requestSell", { positionId: "paper-1_BBB", symbol: "BBB", quantityUnits: "10", quantityScale: 0, orderType: "MARKETABLE_LIMIT", timeInForce: "DAY", exchangeSession: "RTH", reason: "again", expectedPositionVersion: "7", expectedMandateVersion: "1" });
+    if (dup.statusCode !== 409 || !/PROTECTION_RESIZE_PENDING/.test(dup.body.error.message)) throw new Error("a second sell while one is working is refused");
+    /* the executor applies it: protection legs resized to the 75 shares that stay owned, the sell submitted */
+    const applied = await X.applyTransition({ admin: fake, adapter, transition: t, nowMs });
+    if (!applied.applied || applied.protectionResize.length !== 2 || applied.protectionResize.some((r) => r.remainingUnits !== "75")) throw new Error(`apply ${JSON.stringify(applied)}`);
+    if (fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_STOP`).remainingUnits !== "75" || fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_TARGET`).remainingUnits !== "75" || fake.docs.get(`${C.orderLegs}/${orderSetId}_SELL`).status !== "WORKING") throw new Error("protection resized and sell working");
+    if (fake.docs.get(`${C.activeMandates}/paper-1_BBB`).symbolLock !== null || fake.docs.get(`${C.activeMandates}/paper-1_BBB`).protectedQuantityUnits !== "75") throw new Error("symbol lock released; protected quantity recorded");
+    /* a marketable sell fills on the next bar and the ledger stays balanced */
+    const fills = await X.simulatePaperFills({ admin: fake, adapter, accountId: "paper-1", barsBySymbol: { BBB: [{ t: new Date(nowMs + 60000).toISOString(), o: 97, h: 97.5, l: 96.5, c: 97.2, v: 500000, prevClose: 97 }] }, nowMs: nowMs + 60000 });
+    if (!fills.fills.some((f) => f.symbol === "BBB" && f.role === "SELL" && f.quantityUnits === "25")) throw new Error(`sell fill ${JSON.stringify(fills.fills)}`);
+    const pos = fake.docs.get(`${C.positions}/paper-1_BBB`);
+    if (pos.quantityUnits !== "75" || pos.open !== true) throw new Error(`position after sell ${JSON.stringify(pos).slice(0, 200)}`);
+    const cons = await X.assertConservation("paper-1", { admin: fake });
+    if (!cons.pass) throw new Error(`conservation ${JSON.stringify(cons.discrepancies)}`);
+    const late = await mutate("cancelSell", { overrideId: sell.body.data.overrideId, orderSetId }, { version: 1 });
+    if (late.statusCode !== 409 || !/EXECUTION_BEGUN|FILLED|is /.test(late.body.error.message)) throw new Error(`cancel after fill ${late.statusCode} ${JSON.stringify(late.body.error)}`);
+    /* a second sell: cancelled before the executor touches it, no resize; then one cancelled after submission restores protection */
+    const s2 = await mutate("requestSell", { positionId: "paper-1_BBB", symbol: "BBB", quantityUnits: "10", quantityScale: 0, orderType: "LIMIT", limitPriceMicros: "99000000", timeInForce: "GTC", exchangeSession: "RTH", reason: "limit trim", expectedPositionVersion: String(fake.docs.get(`${C.accounts}/paper-1`).portfolioVersion || fake.docs.get(`${C.accounts}/paper-1`).balanceRevision), expectedMandateVersion: "1" });
+    if (s2.statusCode !== 200) throw new Error(`second sell ${s2.statusCode} ${JSON.stringify(s2.body.error)}`);
+    const c2 = await mutate("cancelSell", { overrideId: s2.body.data.overrideId, orderSetId: s2.body.data.orderSetId }, { version: 1 });
+    if (c2.statusCode !== 200 || c2.body.data.state !== "CANCELLED" || fake.docs.get(`${C.executionOutbox}/${s2.body.data.orderSetId}:OPERATOR_SELL`).status !== "CANCELLED") throw new Error(`early cancel ${c2.statusCode} ${JSON.stringify(c2.body).slice(0, 200)}`);
+    const s3 = await mutate("requestSell", { positionId: "paper-1_BBB", symbol: "BBB", quantityUnits: "10", quantityScale: 0, orderType: "LIMIT", limitPriceMicros: "99000000", timeInForce: "GTC", exchangeSession: "RTH", reason: "limit trim", expectedPositionVersion: String(fake.docs.get(`${C.accounts}/paper-1`).portfolioVersion || fake.docs.get(`${C.accounts}/paper-1`).balanceRevision), expectedMandateVersion: "1" });
+    if (s3.statusCode !== 200) throw new Error(`third sell ${s3.statusCode} ${JSON.stringify(s3.body.error)}`);
+    const t3 = fake.docs.get(`${C.executionOutbox}/${s3.body.data.orderSetId}:OPERATOR_SELL`);
+    const ap3 = await X.applyTransition({ admin: fake, adapter, transition: t3, nowMs: nowMs + 120000 });
+    if (!ap3.applied || fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_STOP`).remainingUnits !== "65") throw new Error(`third apply ${JSON.stringify(ap3)}`);
+    const c3 = await mutate("cancelSell", { overrideId: s3.body.data.overrideId, orderSetId: s3.body.data.orderSetId }, { version: 1 });
+    if (c3.statusCode !== 200 || c3.body.data.state !== "CANCEL_PENDING") throw new Error(`cancel pending ${c3.statusCode} ${JSON.stringify(c3.body).slice(0, 200)}`);
+    const tc = fake.docs.get(`${C.executionOutbox}/${c3.body.data.transitionId}`);
+    const apc = await X.applyTransition({ admin: fake, adapter, transition: tc, nowMs: nowMs + 180000 });
+    if (!apc.applied || fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_STOP`).remainingUnits !== "75" || fake.docs.get(`${C.orderLegs}/${s3.body.data.orderSetId}_SELL`).status !== "CANCELLED") throw new Error(`restore ${JSON.stringify(apc)} stop=${fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_STOP`).remainingUnits}`);
+    return true;
+  }));
+
+  cases.push(fixture("sessions_are_server_state_with_httponly_cookie_rotating_csrf_reauth_and_origin_enforcement", async () => {
+    const AUTH = require("./_investorAuth");
+    const SESSION = require("./investorSession");
+    const S = require("./_investorApiSchemas");
+    const fake = fakeAdmin();
+    const hadPass = process.env.INVESTOR_PASSCODE, hadSecret = process.env.INVESTOR_SESSION_SECRET;
+    if (!AUTH.authSecrets().passcode) { process.env.INVESTOR_PASSCODE = "fixture-passcode-0123456789"; process.env.INVESTOR_SESSION_SECRET = "fixture-session-secret-0123456789abcdef0123456789"; }
+    try {
+      const passcode = AUTH.authSecrets().passcode;
+      if (!passcode) return true; /* no secrets reachable in this process: nothing to attest */
+      const nowMs = Date.UTC(2026, 8, 4, 15);
+      const ev = (body, { cookie = null, origin = "https://investor.goldenspike.app", host = "investor.goldenspike.app", method = "POST", extra = {} } = {}) => ({ httpMethod: method, headers: { origin, host, "content-type": "application/json", ...(cookie ? { cookie } : {}), ...extra }, body: JSON.stringify(body) });
+      const bad = await SESSION.handle(ev({ action: "create", passcode: "wrong-passcode-000000" }), { admin: fake, nowMs });
+      if (bad.statusCode !== 401 || JSON.parse(bad.body).error.code !== "AUTH_MISSING" || bad.headers["Set-Cookie"]) throw new Error(`wrong passcode ${bad.statusCode}`);
+      const foreign = await SESSION.handle(ev({ action: "create", passcode }, { origin: "https://evil.example" }), { admin: fake, nowMs });
+      if (foreign.statusCode !== 403 || JSON.parse(foreign.body).error.code !== "ORIGIN_REJECTED") throw new Error(`origin ${foreign.statusCode}`);
+      const crossSite = await SESSION.handle(ev({ action: "create", passcode }, { extra: { "sec-fetch-site": "cross-site" } }), { admin: fake, nowMs });
+      if (crossSite.statusCode !== 403) throw new Error("cross-site fetch must be rejected");
+      const created = await SESSION.handle(ev({ action: "create", passcode }), { admin: fake, nowMs });
+      const cb = JSON.parse(created.body);
+      if (created.statusCode !== 200 || !cb.ok || !cb.data.csrfToken || !cb.data.expiresAt || cb.payloadVersion !== S.PAYLOAD_VERSION) throw new Error(`create ${created.statusCode} ${created.body.slice(0, 200)}`);
+      const setCookie = created.headers["Set-Cookie"];
+      if (!/HttpOnly/.test(setCookie) || !/SameSite=Strict/.test(setCookie) || !/Secure/.test(setCookie) || !/^inv_session=/.test(setCookie)) throw new Error(`cookie ${setCookie}`);
+      if (JSON.stringify(cb).includes(passcode) || /session=/.test(JSON.stringify(cb.data))) throw new Error("secrets never return in the body");
+      const cookie = setCookie.split(";")[0];
+      const sessions = [...fake.docs.entries()].filter(([k]) => k.startsWith(`${fake.COL.sessions}/`)).map(([, v]) => v);
+      if (sessions.length !== 1 || sessions[0].csrfHash === cb.data.csrfToken) throw new Error("server session record with a hashed CSRF token");
+      /* the v2 guard: cookie required, CSRF for mutations, reauth when demanded */
+      const g1 = await AUTH.requireOperatorV2(ev({ apiVersion: "investor.v2" }), {}, { mutation: false, admin: fake, nowMs });
+      if (g1.ok || g1.code !== "SESSION_EXPIRED") throw new Error("no cookie → 401 class");
+      const g2 = await AUTH.requireOperatorV2(ev({}, { cookie }), { csrfToken: "nope" }, { mutation: true, admin: fake, nowMs });
+      if (g2.ok || g2.code !== "CSRF_INVALID") throw new Error("bad csrf");
+      const g3 = await AUTH.requireOperatorV2(ev({}, { cookie }), { csrfToken: cb.data.csrfToken }, { mutation: true, admin: fake, nowMs });
+      if (!g3.ok || g3.reauthed !== false) throw new Error(`good csrf ${JSON.stringify(g3)}`);
+      const g4 = await AUTH.requireOperatorV2(ev({}, { cookie }), { csrfToken: cb.data.csrfToken }, { mutation: true, reauth: true, admin: fake, nowMs });
+      if (g4.ok || g4.code !== "REAUTH_REQUIRED") throw new Error("reauth demanded");
+      const reauthBad = await SESSION.handle(ev({ action: "reauth", passcode: "wrong-passcode-000000", csrfToken: cb.data.csrfToken }, { cookie }), { admin: fake, nowMs });
+      if (reauthBad.statusCode !== 401) throw new Error("reauth wrong passcode");
+      const reauth = await SESSION.handle(ev({ action: "reauth", passcode, csrfToken: cb.data.csrfToken }, { cookie }), { admin: fake, nowMs });
+      const rb = JSON.parse(reauth.body);
+      if (reauth.statusCode !== 200 || !rb.data.reauthToken) throw new Error(`reauth ${reauth.statusCode} ${reauth.body.slice(0, 200)}`);
+      const g5 = await AUTH.requireOperatorV2(ev({}, { cookie }), { csrfToken: cb.data.csrfToken, reauthToken: rb.data.reauthToken }, { mutation: true, reauth: true, admin: fake, nowMs });
+      if (!g5.ok || g5.reauthed !== true) throw new Error("reauth token accepted");
+      const g6 = await AUTH.requireOperatorV2(ev({}, { cookie }), { csrfToken: cb.data.csrfToken, reauthToken: rb.data.reauthToken }, { mutation: true, reauth: true, admin: fake, nowMs: nowMs + 8 * 60000 });
+      if (g6.ok) throw new Error("a reauth token expires in minutes");
+      /* refresh rotates the CSRF token; the old one stops working; the cookie stays the same */
+      const refreshed = await SESSION.handle(ev({ action: "refresh" }, { cookie }), { admin: fake, nowMs: nowMs + 60000 });
+      const fb = JSON.parse(refreshed.body);
+      if (refreshed.statusCode !== 200 || fb.data.csrfToken === cb.data.csrfToken) throw new Error("csrf must rotate");
+      const g7 = await AUTH.requireOperatorV2(ev({}, { cookie }), { csrfToken: cb.data.csrfToken }, { mutation: true, admin: fake, nowMs: nowMs + 60000 });
+      if (g7.ok) throw new Error("the rotated-out csrf token must fail");
+      /* revoke is server-side: the same cookie is dead immediately */
+      const revoked = await SESSION.handle(ev({ action: "revoke" }, { cookie }), { admin: fake, nowMs: nowMs + 120000 });
+      if (revoked.statusCode !== 200 || !/Max-Age=0/.test(revoked.headers["Set-Cookie"])) throw new Error("revoke clears the cookie");
+      const g8 = await AUTH.requireOperatorV2(ev({}, { cookie }), {}, { admin: fake, nowMs: nowMs + 120000 });
+      if (g8.ok || g8.code !== "SESSION_EXPIRED") throw new Error("revoked session must be dead");
+      const expired = await SESSION.handle(ev({ action: "refresh" }, { cookie }), { admin: fake, nowMs: nowMs + 120000 });
+      if (expired.statusCode !== 401) throw new Error("refresh after revoke is 401");
+      /* the v1 compatibility guard accepts a live cookie too, so the legacy reads keep working during dual run */
+      const created2 = await SESSION.handle(ev({ action: "create", passcode }), { admin: fake, nowMs });
+      const cookie2 = created2.headers["Set-Cookie"].split(";")[0];
+      const g9 = await AUTH.requireOperatorAsync(ev({}, { cookie: cookie2 }), {}, { admin: fake });
+      if (!g9.ok || g9.via !== "cookie") throw new Error("v1 guard accepts the cookie");
+      return true;
+    } finally {
+      if (hadPass === undefined) delete process.env.INVESTOR_PASSCODE; else process.env.INVESTOR_PASSCODE = hadPass;
+      if (hadSecret === undefined) delete process.env.INVESTOR_SESSION_SECRET; else process.env.INVESTOR_SESSION_SECRET = hadSecret;
+    }
+  }));
+
+  cases.push(fixture("v1_investment_mutations_retire_under_the_manager_engine_and_reads_route_by_exact_api_version", () => {
+    const S = require("./_investorApiSchemas");
+    const fs = require("fs");
+    const src = fs.readFileSync(require.resolve("./investorApi.js"), "utf8");
+    for (const a of ["approve", "reject", "kill", "resume", "activateSafety", "setControl", "recordRecallBenchmark", "setRegime", "setIntelligenceWatchlist", "setPaperLearning"]) if (!S.RETIRED_V1_MUTATIONS.includes(a)) throw new Error(`${a} must be retired`);
+    if (S.V1_EMERGENCY_MAP.kill !== "emergencyStop" || S.V1_EMERGENCY_MAP.resume !== "resumeSystem") throw new Error("emergency compatibility is mapped explicitly");
+    if (!/body\.apiVersion === SCHEMAS_V2\.API_VERSION/.test(src) || !/V2\.dispatch\(/.test(src)) throw new Error("v2 dispatch");
+    if (!/apiVersion !== undefined && body\.apiVersion !== "investor\.v1"/.test(src)) throw new Error("only absent or investor.v1 reaches ACTIONS_V1");
+    if (!/statusCode: 410|json\(event, 410/.test(src) || !/ACTION_RETIRED/.test(src) || !/recordV1Telemetry/.test(src)) throw new Error("410 retirement with telemetry");
+    if (!/requireOperatorAsync/.test(src)) throw new Error("v1 accepts the cookie session");
+    if (!/download=/.test(src) || !/openPayload\("download"/.test(src)) throw new Error("signed download");
+    const V2 = require("./_investorApiV2");
+    for (const a of S.READ_ACTIONS) if (typeof V2.READS[a] !== "function") throw new Error(`read ${a}`);
+    for (const a of S.MUTATION_ACTIONS) if (typeof V2.MUTATIONS[a] !== "function") throw new Error(`mutation ${a}`);
+    return true;
+  }));
+
+  /* ── the console (§14): one file, five views, stable ids, shared vectors, no inline handlers, CSP hashes ── */
+  function consoleSource() {
+    const fs = require("fs"), path = require("path");
+    const candidates = [];
+    for (const root of [__dirname, process.cwd()]) for (let up = 0; up <= 4; up += 1) candidates.push(path.join(root, ...Array(up).fill(".."), "investor.html"));
+    const file = candidates.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+    if (!file) throw new Error("investor.html not reachable from the bundle");
+    const html = fs.readFileSync(file, "utf8");
+    const script = html.slice(html.indexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
+    const style = html.slice(html.indexOf("<style>") + "<style>".length, html.indexOf("</style>"));
+    return { file, html, script, style, root: path.dirname(file) };
+  }
+  cases.push(fixture("console_is_one_file_with_five_views_stable_ids_shared_vectors_and_no_inline_script_or_style", () => {
+    const S = require("./_investorApiSchemas");
+    const { html, script } = consoleSource();
+    if ((html.match(/<script>/g) || []).length !== 1 || (html.match(/<\/script>/g) || []).length !== 1 || (html.match(/<style>/g) || []).length !== 1) throw new Error("exactly one script block and one style block");
+    if (/<script[^>]+src=|<link[^>]+href=|src="https?:/.test(html)) throw new Error("no external resources");
+    if (/\son[a-z]+="/i.test(html) || /javascript:/i.test(html)) throw new Error("no inline event handlers");
+    if (/ style="/.test(html)) throw new Error("no style attributes (CSP hashes cover the one style block)");
+    if (/innerHTML/.test(script) || /\beval\(|new Function\(/.test(script)) throw new Error("no innerHTML / eval");
+    if (/sessionStorage\.setItem\(|localStorage\.setItem\(/.test(script) && /token|session|passcode|csrf/i.test(script.match(/(sessionStorage|localStorage)\.setItem\([^)]*\)/g).join(" "))) throw new Error("credentials never persist in browser storage");
+    const ids = [...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
+    const dup = ids.filter((x, i) => ids.indexOf(x) !== i);
+    if (dup.length) throw new Error(`duplicate ids ${dup.slice(0, 5).join(",")}`);
+    const need = ["criticalBanner", "alertCenter", "signOut", "managerStatus", "managerReviewSummary", "universeCoverage", "evidenceDelta", "holdingRevisions", "newDecisions", "materialEventInbox", "managerAuthorizationSummary", "managerWorkflow", "managerSpend", "managerRunDetail", "managerModelSummary",
+      "companySearch", "companyCount", "companyPager", "companyFilters", "companyCoverageList", "researchQueue", "opportunityList", "watchList", "expiredPlans", "companyDrawer", "companyIdentity", "companyChart", "companyEvidenceDelta", "companyThesis", "companyValuation", "companyDecision", "companyPlan", "companyCatalysts", "companyRisks", "companySources", "companyDecisionHistory",
+      "portfolioSummary", "holdingList", "standingAuthorizations", "workingOrders", "executionQueue", "executionTimeline", "planRevisionHistory", "performanceSummary", "forecastCalibration", "expectedVsRealized", "selectionLift", "thesisAccuracy", "missedOpportunityAudit", "decisionAttribution", "modelComparison",
+      "systemAlerts", "sourceHealth", "sourceAdministration", "dossierHealth", "managerJobHealth", "modelHealth", "executorHealth", "brokerHealth", "marketConfig", "accountConfig", "accountModeActivation", "policyIdentity", "modelPolicyStatus", "ledgerSummary", "reconcileSystem", "costBreakdown", "budgetAdministration", "riskAdministration", "universeAdministration", "freezeUniverse", "resolveCiks", "corporateActionQueue", "auditExport",
+      "pauseManager", "resumeManager", "reviewNow", "freezeBuys", "resumeBuys", "emergencyStop", "resumeSystem", "managerMode", "dailyBudget", "riskMandate", "modePill", "sessPill", "syncLab", "railState", "railProv", "refreshBtn", "gate", "gateForm", "pc", "gateErr", "app", "toast"];
+    const missing = need.filter((i) => !ids.includes(i));
+    if (missing.length) throw new Error(`missing ids ${missing.join(",")}`);
+    for (const gone of ["renderMovers", "renderLiveConfig", "renderExploration", "renderLadder", "renderMemory", "renderRegime", "causeTag", "gateChips", "GATE_PLAIN", "exitPlanText", "patienceBadge", "EXIT_PLAIN", "eagerNow", "sizeNow", "holdNow", "sessionWhy", "tradeCard", "advToggle", "navAdv", "todayHistWhy", "v-approvals", "v-knobs", "v-candidates"]) if (new RegExp(`\\b${gone}\\b`).test(html)) throw new Error(`${gone} must not survive the rewrite`);
+    const m = script.match(/var INVESTOR_TEST_VECTORS = (\{.*?\});\n/);
+    if (!m) throw new Error("shared test vectors missing");
+    if (JSON.stringify(JSON.parse(m[1])) !== JSON.stringify(S.TEST_VECTORS)) throw new Error("the console's test vectors must equal the server's");
+    if (!/"investor\.v2"/.test(script) || !/apiVersion\s*:/.test(script) || !/credentials\s*:\s*"same-origin"/.test(script) || !/investorSession/.test(script)) throw new Error("v2 wire + same-origin credentials + session endpoint");
+    if (!/idempotencyKey/.test(script) || !/csrfToken/.test(script) || !/expectedResourceVersion/.test(script) || !/reauthToken/.test(script)) throw new Error("mutation envelope fields");
+    if (!/availableActions/.test(script) || !/data-action/.test(script) || !/data-resource-version/.test(script)) throw new Error("capabilities drive controls");
+    if (!/payloadVersion/.test(script) || !/investor\.v2\.1/.test(script)) throw new Error("payloadVersion check");
+    if (!/Investor AI — AI Fund Manager/.test(html)) throw new Error("product name");
+    if (!/function selfTestVectors\(/.test(script) || !/function canonicalInt\(/.test(script) || !/BigInt\(/.test(script)) throw new Error("BigInt formatters with a self-test");
+    return true;
+  }));
+  cases.push(fixture("console_csp_hashes_in_netlify_toml_match_the_inline_script_and_style_blocks", () => {
+    const fs = require("fs"), path = require("path"), crypto = require("crypto");
+    const { script, style, root } = consoleSource();
+    const tomlPath = [path.join(root, "netlify.toml"), path.join(__dirname, "..", "..", "netlify.toml")].find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+    if (!tomlPath) return true; /* the checkout root is not reachable from this bundle; the deploy-time check runs where it is */
+    const toml = fs.readFileSync(tomlPath, "utf8");
+    const block = toml.slice(toml.indexOf('for = "/investor.html"'));
+    const csp = (block.match(/Content-Security-Policy\s*=\s*"([^"]+)"/) || [])[1];
+    if (!csp) throw new Error("no CSP for /investor.html");
+    const h = (s) => `'sha256-${crypto.createHash("sha256").update(s, "utf8").digest("base64")}'`;
+    if (!csp.includes(`script-src 'self' ${h(script)}`)) throw new Error("script hash mismatch — recompute with scripts/investor/csp-hashes");
+    if (!csp.includes(`style-src 'self' ${h(style)}`)) throw new Error("style hash mismatch");
+    for (const d of ["default-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'"]) if (!csp.includes(d)) throw new Error(`csp directive missing: ${d}`);
+    if (/unsafe-inline|unsafe-eval/.test(csp)) throw new Error("no unsafe-* in the console CSP");
+    if (!/Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"/.test(block)) throw new Error("the console must revalidate on every load");
+    return true;
+  }));
   /* ── D-9: no credential material may be reachable from the deployed build.
      A tracked private key was found at netlify/functions/secrets/ (mode 644,
      PEM). Rotation at the provider is the control that matters; this check is

@@ -838,11 +838,16 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
 
   /* ── spend ledger in integer minor units; the reservation is not a cap on correctness ── */
   function dailyReservationMinor() { return Number(POLICY.budgetPolicy().dailyReservationMinor) || 0; }
+  /* the operator's versioned budget (setBudget, §11.3) overrides the policy default; read per call so a change never waits on a cold start */
+  async function ceilingMinor() {
+    try { const s = await DB.col(DB.COL.control).doc("control").get(); const b = s.exists && s.data().budget; if (b && b.dailyReservationMinor != null && /^[0-9]+$/.test(String(b.dailyReservationMinor))) return Number(b.dailyReservationMinor); } catch {}
+    return dailyReservationMinor();
+  }
   async function spendToday() {
     const s = await DB.col(DB.COL.costs).doc(`openai_${day()}`).get();
     const d = s.exists ? s.data() : {};
     return { day: day(), spentMinor: Number(d.spentMinor) || 0, reservedMinor: Number(d.reservedMinor) || 0, calls: Number(d.calls) || 0,
-      ceilingMinor: dailyReservationMinor(), byRole: d.byRole || {}, tokens: d.tokens || {} };
+      ceilingMinor: await ceilingMinor(), byRole: d.byRole || {}, tokens: d.tokens || {} };
   }
   async function reserveMinor(reservationId, estMinor, role) {
     const ref = DB.col(DB.COL.costs).doc(`openai_${day()}`), rref = DB.col(DB.COL.costs).doc(`openai_res_${reservationId}`);
@@ -850,7 +855,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       const [s, r] = await Promise.all([tx.get(ref), tx.get(rref)]);
       if (r.exists) return { ok: r.data().status === "reserved", duplicate: true };
       const d = s.exists ? s.data() : {};
-      const spent = Number(d.spentMinor) || 0, reserved = Number(d.reservedMinor) || 0, ceiling = dailyReservationMinor();
+      const spent = Number(d.spentMinor) || 0, reserved = Number(d.reservedMinor) || 0, ceiling = await ceilingMinor();
       if (spent + reserved + estMinor > ceiling) {
         return { ok: false, reason: "daily_reservation_exhausted", spentMinor: spent, reservedMinor: reserved, ceilingMinor: ceiling, estMinor };
       }

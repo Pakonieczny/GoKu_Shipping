@@ -133,6 +133,34 @@ async function completeIntradayBars({ D, tradingDate, isHalfDay, market = M, uni
   return out;
 }
 
+/* ── audit export (§11.3 requestAuditExport): a bounded point-in-time export, content-addressed ── */
+const EXPORT_SCOPES = Object.freeze({
+  decisions: [{ collection: "managerDecisions", field: "asOfMs" }, { collection: "managerRuns", field: "updatedAtMs" }, { collection: "forecasts", field: "createdAtMs" }],
+  mandates: [{ collection: "mandateProposals", field: "createdAtMs" }, { collection: "activationEnvelopes", field: "validatedAtMs" }, { collection: "mandateEvents", field: "atMs" }, { collection: "portfolioPlans", field: "committedAtMs" }, { collection: "activationSnapshots", field: "capturedAtMs" }],
+  execution: [{ collection: "orderSets", field: "createdAtMs" }, { collection: "fills", field: "receivedAtMs" }, { collection: "brokerEvents", field: "atMs" }, { collection: "executionOutbox", field: "createdAtMs" }],
+  ledger: [{ collection: "ledger", field: "atMs" }, { collection: "trades", field: "closedAtMs" }, { collection: "navMarks", field: "finalMark.atMs" }],
+});
+function fieldOf(doc, path) { return String(path).split(".").reduce((v, k) => (v && v[k] !== undefined ? v[k] : undefined), doc); }
+async function runAuditExport({ accountId, fromDate, toDate, scope = "all", admin = null, contentStore = null, nowMs = Date.now(), requestedBy = null, limit = MAX_DOCS_PER_COLLECTION } = {}) {
+  const D = admin || A;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fromDate)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(toDate)) || String(toDate) < String(fromDate)) throw Object.assign(new Error("invalid export range"), { code: "EXPORT_INVALID_RANGE" });
+  const startMs = dayWindowMs(fromDate).startMs, endMs = dayWindowMs(toDate).endMs;
+  const specs = scope === "all" ? Object.values(EXPORT_SCOPES).flat() : (EXPORT_SCOPES[scope] || []);
+  const bundle = { schemaVersion: "audit-export.v1", accountId, fromDate, toDate, scope, windowMs: { startMs, endMs }, requestedBy, exportedAtMs: nowMs, collections: {}, counts: {} };
+  for (const s of specs) {
+    let docs = [];
+    try { docs = rows(await D.col(D.COL[s.collection]).limit(5000).get()); } catch (err) { bundle.counts[s.collection] = { error: String(err.code || err.message).slice(0, 80) }; continue; }
+    const mine = docs.filter((d) => (!d.accountId || d.accountId === accountId)).filter((d) => { const t = Number(fieldOf(d, s.field)); return !Number.isFinite(t) || t === 0 ? false : t >= startMs && t < endMs; }).slice(0, limit);
+    bundle.collections[s.collection] = mine;
+    bundle.counts[s.collection] = { exported: mine.length, truncated: mine.length >= limit };
+  }
+  const store = contentStore || CS;
+  store.assertAvailable();
+  const put = await store.putJson("export", bundle, { createdBy: FN_NAME, encoding: "gzip", asOf: `${toDate}T23:59:59Z`, meta: { accountId, fromDate, toDate, scope, kind: "audit_export" } });
+  const m = put.manifest || put;
+  return { exported: true, contentHash: m.contentHash || null, storageUri: m.storageUri || null, bytes: m.bytes || null, plainBytes: m.plainBytes || null, encoding: m.encoding || null, counts: bundle.counts, records: Object.values(bundle.collections).reduce((n, a) => n + a.length, 0), fromDate, toDate, scope };
+}
+
 /* the whole run, injectable for the deploy attestation ───────────────── */
 async function runArchive({ accountId, tradingDate, admin = null, contentStore = null, market = null, isHalfDay = false, nowMs = Date.now(), completeBars = false } = {}) {
   const D = admin || A;
@@ -164,9 +192,9 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch { return { statusCode: 400, body: JSON.stringify({ error: "invalid JSON" }) }; }
   const { jobId, task, nonce, payload = {} } = body;
-  if (task !== TASK || !jobId) return { statusCode: 400, body: JSON.stringify({ error: "invalid job shape" }) };
+  if (!["archive", "audit_export"].includes(task) || !jobId) return { statusCode: 400, body: JSON.stringify({ error: "invalid job shape" }) };
   await AUTH.loadAuthSecrets();
-  const claimed = await JOBS.claimOnce({ jobId, task: TASK, targetFunction: FN_NAME, token: nonce, payload });
+  const claimed = await JOBS.claimOnce({ jobId, task, targetFunction: FN_NAME, token: nonce, payload });
   if (!claimed.claimed) return { statusCode: claimed.httpStatus || 409, body: JSON.stringify({ ok: false, reason: claimed.reason }) };
   const claim = claimed.claim;
   await M.loadMarketSettings();
@@ -177,6 +205,11 @@ exports.handler = async (event) => {
   const tradingDate = String(payload.tradingDate || session.date);
   try {
     if (ctrl.engineMode !== "manager") { await JOBS.complete(claim, { skipped: true, reason: "engine_mode_legacy" }); return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: true }) }; }
+    if (task === "audit_export") {
+      const out = await runAuditExport({ accountId, fromDate: payload.fromDate, toDate: payload.toDate, scope: payload.scope || "all", requestedBy: payload.requestedBy || null, nowMs: Date.now() });
+      await JOBS.complete(claim, out);
+      return { statusCode: 200, body: JSON.stringify({ ok: true, summary: out }) };
+    }
     const summary = await runArchive({ accountId, tradingDate, isHalfDay: session.isHalfDay === true, completeBars: session.tradingDay === true && tradingDate === session.date, nowMs: Date.now() });
     const compact = { ...summary, retention: undefined };
     if (summary.status === "complete") await JOBS.complete(claim, compact);
@@ -197,3 +230,5 @@ exports.dayWindowMs = dayWindowMs;
 exports.collectDay = collectDay;
 exports.exportBundle = exportBundle;
 exports.runArchive = runArchive;
+exports.runAuditExport = runAuditExport;
+exports.EXPORT_SCOPES = EXPORT_SCOPES;

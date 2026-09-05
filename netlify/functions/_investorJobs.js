@@ -71,6 +71,7 @@ const TASKS = Object.freeze({
   execute:             { targetFunction: "investorExecution-background", category: "execute",   heavy: false, engine: "manager" },
   postclose:           { targetFunction: "investorPostclose-background", category: "postclose", heavy: true,  engine: "manager" },
   archive:             { targetFunction: "investorArchive-background",   category: "postclose", heavy: true,  engine: "manager" },
+  audit_export:        { targetFunction: "investorArchive-background",   category: "postclose", heavy: true,  engine: "manager" },
   /* Legacy worker tasks, dispatchable only while the legacy engine holds
      the writer epoch (dual run, §13). */
   cycle:               { targetFunction: "investorCycle-background",     category: "legacy",    heavy: true,  engine: "legacy" },

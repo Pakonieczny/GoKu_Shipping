@@ -195,6 +195,12 @@ async function recordFill({ admin = null, accountId, orderSet, leg, fill, bar = 
     closed = nextQty === 0n;
     positionNext = { ...pos, quantityUnits: nextQty.toString(), qty: Number(nextQty), costBasisMinor: nextCost.toString(), costBasisCents: Number(nextCost), open: !closed, closedAt: closed ? (bar ? bar.t : new Date(nowMs).toISOString()) : null,
       lastMarkUsd: Number(px) / 1e6, lastMarkAt: bar ? bar.t : new Date(nowMs).toISOString(), realizedMinor: (big(pos.realizedMinor || 0) + realizedMinor).toString(), updatedAtMs: nowMs, engineVersion: ENGINE_VERSION };
+    /* an operator sell records its own lifecycle on the position so the console shows filled/partial without inferring it */
+    if (orderSet.purpose === "OPERATOR_SELL") {
+      const legRemaining = big(leg.remainingUnits != null ? leg.remainingUnits : leg.quantityUnits) - qty;
+      positionNext.operatorSell = { ...(pos.operatorSell || {}), state: legRemaining > 0n ? "PARTIALLY_FILLED" : "FILLED", filledUnits: (big((pos.operatorSell || {}).filledUnits || 0) + qty).toString(), lastFillAtMs: nowMs };
+      if (legRemaining <= 0n) await D.col(D.COL.orderSets).doc(orderSet.orderSetId).set({ status: "FILLED", filledAtMs: nowMs }, { merge: true });
+    }
   }
   const fillDoc = { schemaVersion: "fill.v2", fillId, accountId, symbol, orderSetId: orderSet.orderSetId, legId: leg.legId, role: leg.role, side: leg.side, mandateVersionId: orderSet.mandateVersionId,
     quantityUnits: qty.toString(), priceMicros: px.toString(), notionalMinor: notionalMinor.toString(), feeMinor: fee.toString(), basis: fill.basis || null, source, brokerFillId: fill.eventId || null,
@@ -312,6 +318,68 @@ async function applyTransition({ admin = null, adapter, transition: t, control =
       await D.col(D.COL.orderSets).doc(orderSetId).set({ status: "WORKING", brokerGroupId: ack.brokerGroupId || null }, { merge: true });
       await finishTransition(D, t, "COMPLETE", { orderSetId, brokerGroupId: ack.brokerGroupId || null });
       return { transitionId: t.transitionId, applied: true, emergency: true, orderSetId };
+    }
+    /* ── operator sell (§11.3 requestSell / cancelSell): symbol lock, broker refresh, protection resize, submit ── */
+    if (t.kind === "OPERATOR_SELL") {
+      const os = await readOrderSet(D, t.orderSetId);
+      if (!os) throw typed("ORDER_SET_MISSING", t.orderSetId);
+      const leg = os.legs.find((l) => l.role === "SELL" || l.role === "REDUCE");
+      const owned = await readPosition(D, t.accountId, t.symbol);
+      const ownedQty = owned && owned.open ? big(owned.quantityUnits || owned.qty || 0) : 0n;
+      const q = big(leg ? leg.quantityUnits : 0);
+      const refuse = async (code) => { await D.col(D.COL.orderSets).doc(os.orderSetId).set({ status: "REJECTED", error: code, rejectedAtMs: nowMs }, { merge: true }); await finishTransition(D, t, "FAILED", { error: code }); return { transitionId: t.transitionId, applied: false, reason: code }; };
+      if (!leg || q <= 0n || q > ownedQty) return refuse("OVERSELL_REFUSED");
+      const pref = D.col(D.COL.activeMandates).doc(`${t.accountId}_${t.symbol}`);
+      const psnap = await pref.get();
+      const pointer = psnap.exists ? psnap.data() : null;
+      if (pointer && pointer.symbolLock && pointer.symbolLock !== t.transitionId) return refuse("SYMBOL_LOCKED");
+      const caps = await adapter.getCapabilities();
+      const protectionSet = pointer && pointer.desiredVersionId ? await readOrderSet(D, `os_${pointer.desiredVersionId}`) : null;
+      const protective = protectionSet ? protectionSet.legs.filter((l) => ["TARGET", "STOP"].includes(l.role) && ["WORKING", "ARMED", "PARTIALLY_FILLED"].includes(l.status)) : [];
+      const keep = ownedQty - q;
+      if (protective.length && adapter.adapter !== "paper" && !caps.atomicGroupReplacement) return refuse("PROTECTION_RESIZE_UNSUPPORTED");
+      if (pointer) await pref.set({ symbolLock: t.transitionId, updatedAtMs: nowMs }, { merge: true });
+      const resized = [];
+      for (const l of protective) {
+        if (keep <= 0n) { await adapter.cancelOrderSet(protectionSet.orderSetId, "operator_sell_full", { legIds: [l.legId] }); resized.push({ legId: l.legId, role: l.role, remainingUnits: "0", cancelled: true, priorRemainingUnits: String(l.remainingUnits || l.quantityUnits) }); }
+        else { await D.col(D.COL.orderLegs).doc(l.legId).set({ quantityUnits: keep.toString(), remainingUnits: keep.toString(), resizedAtMs: nowMs, resizedBy: t.transitionId, priorRemainingUnits: String(l.remainingUnits || l.quantityUnits) }, { merge: true }); resized.push({ legId: l.legId, role: l.role, remainingUnits: keep.toString(), cancelled: false, priorRemainingUnits: String(l.remainingUnits || l.quantityUnits) }); }
+      }
+      const opState = { overrideId: os.overrideId || null, orderSetId: os.orderSetId, quantityUnits: q.toString(), protectionResize: resized, state: "SUBMITTED", atMs: nowMs, transitionId: t.transitionId };
+      await D.col(D.COL.positions).doc(positionDocId(t.accountId, t.symbol)).set({ operatorSell: opState, updatedAtMs: nowMs }, { merge: true });
+      const ack = await adapter.submitOrderSet(os, t.idempotencyKey);
+      if (!ack.accepted) { if (pointer) await pref.set({ symbolLock: null }, { merge: true }); throw typed("BROKER_REJECTED", ack.reason || "rejected"); }
+      await D.col(D.COL.orderSets).doc(os.orderSetId).set({ status: "WORKING", brokerGroupId: ack.brokerGroupId || null, acknowledgedAtMs: nowMs, protectionResize: resized }, { merge: true });
+      if (pointer) await pref.set({ symbolLock: null, operatorSell: opState, protectedQuantityUnits: keep > 0n ? keep.toString() : "0", updatedAtMs: nowMs }, { merge: true });
+      await event(D, { accountId: t.accountId, symbol: t.symbol, mandateVersionId: os.mandateVersionId || `OPERATOR_${os.overrideId || os.orderSetId}`, kind: "OPERATOR_SELL_SUBMITTED", fields: { overrideId: os.overrideId || null, orderSetId: os.orderSetId, quantityUnits: q.toString(), protectionResize: resized, authority: "OPERATOR" } });
+      await finishTransition(D, t, "COMPLETE", { orderSetId: os.orderSetId, brokerGroupId: ack.brokerGroupId || null, protectionResize: resized });
+      return { transitionId: t.transitionId, applied: true, operatorSell: true, orderSetId: os.orderSetId, protectionResize: resized };
+    }
+    if (t.kind === "CANCEL_OPERATOR_SELL") {
+      const os = await readOrderSet(D, t.orderSetId);
+      if (!os) { await finishTransition(D, t, "COMPLETE", { note: "no order set" }); return { transitionId: t.transitionId, applied: true, noop: true }; }
+      const leg = os.legs.find((l) => l.role === "SELL" || l.role === "REDUCE");
+      if (leg && big(leg.filledUnits || 0) > 0n) { await finishTransition(D, t, "FAILED", { error: "EXECUTION_BEGUN" }); return { transitionId: t.transitionId, applied: false, reason: "EXECUTION_BEGUN" }; }
+      const res = await adapter.cancelOrderSet(os.orderSetId, "operator_cancel_sell");
+      if (!res.terminal) { await D.col(D.COL.orderSets).doc(os.orderSetId).set({ status: "CANCEL_PENDING" }, { merge: true }); await finishTransition(D, t, "PENDING", { note: "awaiting terminal cancel", claimedBy: null }); return { transitionId: t.transitionId, applied: false, pending: true }; }
+      /* the protection that was resized for the sale covers the whole owned quantity again */
+      const owned = await readPosition(D, t.accountId, t.symbol);
+      const ownedQty = owned && owned.open ? big(owned.quantityUnits || owned.qty || 0) : 0n;
+      const restored = [];
+      for (const r of (os.protectionResize || [])) {
+        if (ownedQty <= 0n) break;
+        const patch = { quantityUnits: ownedQty.toString(), remainingUnits: ownedQty.toString(), restoredAtMs: nowMs, restoredBy: t.transitionId };
+        if (r.cancelled) { if (adapter.adapter !== "paper") continue; patch.status = "WORKING"; patch.workingSinceMs = nowMs; patch.cancelReason = null; }
+        await D.col(D.COL.orderLegs).doc(r.legId).set(patch, { merge: true });
+        restored.push({ legId: r.legId, role: r.role, remainingUnits: ownedQty.toString(), rearmed: r.cancelled === true });
+      }
+      await D.col(D.COL.orderSets).doc(os.orderSetId).set({ status: "CANCELLED", cancelledAtMs: nowMs, protectionRestored: restored }, { merge: true });
+      const opState = { overrideId: os.overrideId || null, orderSetId: os.orderSetId, state: "CANCELLED", atMs: nowMs, protectionRestored: restored };
+      await D.col(D.COL.positions).doc(positionDocId(t.accountId, t.symbol)).set({ operatorSell: opState, updatedAtMs: nowMs }, { merge: true });
+      const pref = D.col(D.COL.activeMandates).doc(`${t.accountId}_${t.symbol}`);
+      if ((await pref.get()).exists) await pref.set({ operatorSell: opState, protectedQuantityUnits: ownedQty.toString(), updatedAtMs: nowMs }, { merge: true });
+      await event(D, { accountId: t.accountId, symbol: t.symbol, mandateVersionId: os.mandateVersionId || `OPERATOR_${os.overrideId || os.orderSetId}`, kind: "OPERATOR_SELL_CANCELLED", fields: { overrideId: os.overrideId || null, orderSetId: os.orderSetId, protectionRestored: restored, authority: "OPERATOR" } });
+      await finishTransition(D, t, "COMPLETE", { protectionRestored: restored });
+      return { transitionId: t.transitionId, applied: true, terminal: true, protectionRestored: restored };
     }
     await finishTransition(D, t, "FAILED", { error: `unknown transition kind ${t.kind}` });
     return { transitionId: t.transitionId, applied: false, reason: "unknown_kind" };
