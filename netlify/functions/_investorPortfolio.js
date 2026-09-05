@@ -62,7 +62,9 @@ async function readBalances(accountId, { admin = null } = {}) {
   const a = s.exists ? s.data() : {};
   const cents = a.balanceCents || {};
   return { cashMinor: minorFromCents(cents.cash), reservedMinor: minorFromCents(cents.reserved), positionsMinor: minorFromCents(cents.positions),
-    startingNavMinor: a.startingNavCents != null ? minorFromCents(a.startingNavCents) : null, balanceRevision: Number(a.balanceRevision) || 0,
+    startingNavMinor: a.startingNavCents != null ? minorFromCents(a.startingNavCents) : null,
+    netCapitalMinor: cents.contributed_capital != null ? String(-BigInt(minorFromCents(cents.contributed_capital))) : null,
+    balanceRevision: Number(a.balanceRevision) || 0,
     portfolioVersion: Number(a.portfolioVersion) || Number(a.balanceRevision) || 0, writerEpoch: Number(a.writerEpoch) || 0, exists: s.exists };
 }
 async function readActiveMandates(accountId, { admin = null } = {}) {
@@ -135,7 +137,7 @@ async function snapshot({ accountId, asOfMs = Date.now(), admin = null, sectorOf
   const out = {
     schemaVersion: SNAPSHOT_SCHEMA, accountId: acct, asOfMs: Number(asOfMs), asOf: new Date(Number(asOfMs)).toISOString(),
     navMinor: navMinor.toString(), settledCashMinor: balances.cashMinor, reservedMinor: balances.reservedMinor, investedMinor: investedMinor.toString(),
-    startingNavMinor: balances.startingNavMinor, currency: "USD",
+    startingNavMinor: balances.startingNavMinor, netCapitalMinor: balances.netCapitalMinor, currency: "USD",
     positions: pos, workingOrders: open, activeMandates: mandates.map((m) => ({ symbol: m.symbol, desiredProposalHash:m.desiredProposalHash || null, status: m.status || null, desiredVersionId: m.desiredVersionId || null,
       appliedVersionId: m.appliedVersionId || null, capitalRank: m.capitalRank == null ? null : m.capitalRank, expiresAtMs: m.expiresAtMs || null, planClass: m.planClass || null,
       /* the applied terms travel with the pointer so a delta review can be checked against them (anti-goalpost, §6.7) */

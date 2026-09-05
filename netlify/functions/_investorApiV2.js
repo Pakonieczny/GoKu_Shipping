@@ -164,12 +164,12 @@ function controlView(ctrl, opts = {}) {
 
 /* ── shared loaders (bounded, memoized per container) ─────────────────── */
 async function latestRunDoc(D, ctrl) {
-  const id = ctrl.lastManagerRunId || (ctrl.lastManagerRun && ctrl.lastManagerRun.managerRunId) || null;
+  const id = ctrl.activeManagerRunId || ctrl.lastManagerRunId || (ctrl.lastManagerRun && ctrl.lastManagerRun.managerRunId) || null;
   if (!id) return ctrl.lastManagerRun || null;
   const MG = lazy("./_investorManager");
   let doc = null;
   try { doc = MG ? await MG.readRun(id, { admin: D }) : null; } catch { doc = null; }
-  return { ...(ctrl.lastManagerRun || {}), ...(doc || {}), managerRunId: id };
+  return { ...((ctrl.lastManagerRun || {}).managerRunId === id ? ctrl.lastManagerRun : {}), ...(doc || {}), managerRunId: id };
 }
 function runState(run) {
   const s = String((run && run.status) || "").toLowerCase();
@@ -189,11 +189,11 @@ function runView(run) {
   return {
     managerRunId: run.managerRunId, state: runState(run), tradingDate: run.tradingDate || null, accountId: run.accountId || null, universeVersion: run.universeVersion || null, universeHash: run.universeHash || null,
     contextManifestHash: run.contextManifestHash || null, policyHash: run.policyHash || null, portfolioVersion: run.activation && run.activation.activationSnapshotId ? run.activation.activationSnapshotId : null,
-    startedAt: iso(run.startedAtMs), cutoffAt: iso(run.cutoffMs), deadlineAt: iso(run.deadlineMs || run.hardDeadlineMs), completedAt: iso(run.completedAtMs),
+    startedAt: iso(run.startedAtMs), updatedAt: iso(run.updatedAtMs), cutoffAt: iso(run.cutoffMs), deadlineAt: iso(run.deadlineMs || run.hardDeadlineMs), completedAt: iso(run.completedAtMs),
     investmentNote: run.investmentNote ? clip(run.investmentNote,1600) : null, stage: run.stage || null, checkpoints: (run.checkpoints || run.lineage || []).slice(0, 40), segments: Number(run.segments) || null,
     coverage: { eligibleCount: Number(cov.eligibleCount ?? run.eligibleCount) || 0, completedCount: Number(cov.completedCount) || 0, missing: list(cov.missing).slice(0, 400), missingCount: Array.isArray(cov.missing) ? cov.missing.length : Number(cov.missing) || 0, duplicates: list(cov.duplicates).slice(0, 100), unknown: list(cov.unknown).slice(0, 100), ok: cov.ok === true, repaired: Number(cov.repaired) || 0 },
     countsByDecision: run.byDecision || {}, decisionCount: Number(run.decisionCount) || 0, buys: (run.buys || []).slice(0, 40),
-    researchJobs: { completed: Number(research.completed) || 0, failed: Number(research.failed) || 0, deferred: Number(research.deferred) || 0, ranges: research.ranges || null },
+    researchJobs: { requested: research.requested == null ? null : Number(research.requested), completed: Number(research.completed) || 0, failed: Number(research.failed) || 0, deferred: Number(research.deferred) || 0, ranges: research.ranges || null },
     maintenance: run.maintenance ? { actionable: Number(run.maintenance.actionable) || 0, actionRequired: (Array.isArray(run.maintenance.actionRequired) ? run.maintenance.actionRequired : []).slice(0, 40), deadlineMissed: run.maintenance.deadlineMissed === true, staged: run.maintenance.staged || null } : null,
     finalPlan: run.activation ? { status: run.activation.status || null, planId: run.activation.planId || null, activationSnapshotId: run.activation.activationSnapshotId || null, mandateVersionIds: (run.activation.mandateVersionIds || []).slice(0, 40), reason: run.activation.reason || null } : null,
     cost: { aiMinor: canon(run.costMinor || 0), ai: money(run.costMinor || 0), requests: Array.isArray(run.requestIds) ? run.requestIds.length : null },
@@ -293,6 +293,19 @@ function workflowOf(ctrl, run) {
 }
 
 /* ── managerDashboard (summaries only, §11.4) ─────────────────────────── */
+function nextReviewWindow(ctrl, nowMs) {
+  if (!mutationsEnabled(ctrl) || managerStateOf(ctrl) !== "ENABLED" || emergencyStateOf(ctrl) !== "CLEAR" || !attestationOk(ctrl)) return null;
+  const MK = require("./_investorMarket"), today = MK.sessionState(new Date(nowMs));
+  for (let offset = 0; offset < 14; offset++) {
+    const date = new Date(Date.parse(`${today.date}T12:00:00Z`) + offset * 86400000).toISOString().slice(0,10);
+    const state = MK.sessionState(new Date(MK.nyWallClockToUtcMs(date, 12 * 60)));
+    if (!state.tradingDay || date === ctrl.lastManagerRunDate) continue;
+    const start = MK.nyWallClockToUtcMs(date, POLICY.CUTOFFS_ET.managerStartMin);
+    const end = MK.nyWallClockToUtcMs(date, POLICY.CUTOFFS_ET.holdingHardDeadlineMin);
+    if (nowMs < end) return { startsAt: iso(start), due: nowMs >= start, tradingDate: date };
+  }
+  return null;
+}
 async function readManagerDashboard({ params, ctx }) {
   const { admin: D, control: ctrl, accountId, nowMs, policy } = ctx;
   const PF = require("./_investorPortfolio");
@@ -302,13 +315,34 @@ async function readManagerDashboard({ params, ctx }) {
     PF.snapshot({ accountId, asOfMs: nowMs, admin: D }), latestRunDoc(D, ctrl), pointersFor(D, accountId), AL.listActive({ admin: D, accountId }), pendingDeltas(D, { limit: 50 }), spendView(D, { nowMs, policy }),
   ]);
   const decisions = await decisionsForRun(D, run && run.managerRunId);
-  const avail = big(snap.settledCashMinor) - big(snap.reservedMinor);
+  // The ledger transfers reservations out of cash; do not subtract them twice.
+  const avail = big(snap.settledCashMinor);
+  const MK = require("./_investorMarket");
+  const session = MK.sessionState(new Date(nowMs));
+  const U = require("./_investorUniverse");
+  const names = new Map([...(U.tradeTier || []), ...(U.researchTier || []), ...(U.excludedTier || [])].map(r => [r.symbol, r.name || r.company || r.symbol]));
+  const marked = snap.positions.every(p => p.markAt != null);
+  const capital = snap.netCapitalMinor == null ? null : big(snap.netCapitalMinor);
+  const totalPnl = capital == null || !marked ? null : big(snap.navMinor) - capital;
   const health = await healthMap(D, ctrl, { nowMs, accountId, pointers, spend });
   const promptHashes = {};
   if (O && O.PROMPTS && O.promptHash) for (const k of Object.keys(O.PROMPTS)) { try { promptHashes[k] = O.promptHash(k); } catch {} }
   const byStatus = count(pointers, "status");
   const data = {
     account: { accountId, accountMode: accountModeOf(ctrl), nav: money(snap.navMinor), settledCash: money(snap.settledCashMinor), buyingPower: money(avail > 0n ? avail : 0n), reserved: money(snap.reservedMinor), available: money(avail > 0n ? avail : 0n), invested: money(snap.investedMinor), openPositions: snap.aggregates.openPositions, versions: snap.versions },
+    overview: {
+      asOf: iso(nowMs), totalPnl: totalPnl == null ? null : money(totalPnl),
+      totalReturnBps: totalPnl != null && capital > 0n ? String(totalPnl * 10000n / capital) : null,
+      resultBasis: "Account value minus net money added, including costs charged to this account",
+      marksComplete: marked,
+      holdings: snap.positions.map(p => ({ symbol: p.symbol, name: names.get(p.symbol) || p.symbol, quantity: qty(p.quantityUnits), marketValue: money(p.marketValueMinor), pnl: p.markAt ? money(p.unrealisedMinor) : null, markAt: p.markAt,
+        returnBps: p.markAt && big(p.costBasisMinor) > 0n ? String(big(p.unrealisedMinor) * 10000n / big(p.costBasisMinor)) : null,
+        reason: clip((decisions.find(d => d.symbol === p.symbol) || {}).reason, 180) })),
+      chosenCompanies: decisions.filter(d => !d.held && ["BUY", "WATCH"].includes(d.decision)).sort((a,b) => (a.decision === "BUY" ? 0 : 1) - (b.decision === "BUY" ? 0 : 1) || (a.capitalRank || 999) - (b.capitalRank || 999)).slice(0,6).map(d => ({ symbol:d.symbol, name:names.get(d.symbol) || d.symbol, decision:d.decision, reason:clip(d.reason,180), state:(pointers.find(p => p.symbol === d.symbol) || {}).status || null })),
+      nextReview: nextReviewWindow(ctrl, nowMs),
+      cadence: { reviewMinuteEt: POLICY.CUTOFFS_ET.managerStartMin, holdingDeadlineMinuteEt: POLICY.CUTOFFS_ET.holdingHardDeadlineMin, newsCheckMinutes:10, orderCheckMinutes:1 }
+    },
+    market: { open:session.open, phase:session.phase, sessionDate:session.date, tradingDay:session.tradingDay },
     models: { investment: { snapshot: POLICY.ROLE_MODELS.manager.model, reasoningEffort: POLICY.ROLE_MODELS.manager.reasoning.effort }, extraction: { snapshot: POLICY.ROLE_MODELS.facts.model, reasoningEffort: "none" } },
     identity: { policyHash: policy.policyHash || null, policyVersion: policy.policyVersion || POLICY.POLICY_VERSION, schemaHashes: POLICY.schemaHashes(), promptHashes, universeVersion: run ? run.universeVersion || null : null, universeHash: run ? run.universeHash || null : null, commit: commitId() },
     marketContext: run && run.marketContext || null, latestRun: runView(run), coverage: run && run.coverage ? { ...runView(run).coverage, universeVersion: run.universeVersion || null, universeHash: run.universeHash || null, tradingDate: run.tradingDate || null } : null,
@@ -1508,5 +1542,5 @@ async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), au
 module.exports = {
   API_BUILD, READS, MUTATIONS, INVESTMENT_MUTATIONS, TERMINAL_POINTER, dispatch, envelope,
   controlView, controlCapabilities, blockingConditions, accountModeOf, managerStateOf, buyStateOf, emergencyStateOf, executorStateOf, mutationsEnabled, attestationOk,
-  page, cursorEncode, cursorDecode, money, price, qty, runView, alertView, healthComponent, claimMutation, transitionControl, issuePreview, consumePreview, forgetMemo, mandateStateOf,
+  page, cursorEncode, cursorDecode, money, price, qty, runView, nextReviewWindow, alertView, healthComponent, claimMutation, transitionControl, issuePreview, consumePreview, forgetMemo, mandateStateOf,
 };

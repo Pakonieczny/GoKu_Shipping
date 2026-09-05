@@ -340,12 +340,25 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
   const policy = st.policySnapshot || POLICY.loadActiveSync(ctrl);
   const yieldNow = (reason) => ({ done: false, yielded: true, reason, checkpoint: { stage, data: st } });
   const addCost = (c) => { st.costMinor = (BigInt(st.costMinor || "0") + BigInt(c || "0")).toString(); };
-  const record = async (fields) => { try { await writeRun({ managerRunId, admin: deps.admin, tradingDate, accountId, status: fields.status || "running", stage, costMinor: st.costMinor, ...fields }); } catch (e) { console.error("manager run record", e.message); } };
+  let recordQueue = Promise.resolve();
+  const record = (fields) => {
+    const saved = { managerRunId, admin: deps.admin, tradingDate, accountId, status: fields.status || "running", stage, costMinor: st.costMinor, ...fields };
+    recordQueue = recordQueue.then(() => writeRun(saved)).catch(e => { console.error("manager run record", e.message); });
+    return recordQueue;
+  };
+  if (st.roster) {
+    await record({ startedAtMs: st.startedAtMs, universeVersion: st.roster.universeVersion, universeHash: st.roster.universeHash, eligibleCount: st.roster.eligibleCount });
+    try { const D = db(deps.admin); await D.col(D.COL.control).doc("control").set({ activeManagerRunId: managerRunId }, { merge: true }); } catch (e) { console.error("manager activity pointer", e.message); }
+  }
 
   while (stage !== "complete") {
     if (budget() < minStageMs) return yieldNow("segment_budget");
+    // Publish the actual stage before a long/background model request begins.
+    if (stage !== "freeze") await record({ startedAtMs: st.startedAtMs });
     if (stage === "freeze") {
       const snapshotRoster = deps.universe.freezeEligibleSnapshot({ tradingDate, nowMs: now(), removed: ctrl.universeRemovals || [] });
+      await record({ startedAtMs: st.startedAtMs, universeVersion: snapshotRoster.universeVersion, universeHash: snapshotRoster.universeHash, eligibleCount: snapshotRoster.eligibleCount });
+      try { const D = db(deps.admin); await D.col(D.COL.control).doc("control").set({ activeManagerRunId: managerRunId }, { merge: true }); } catch (e) { console.error("manager activity pointer", e.message); }
       const portfolio = await deps.portfolio.snapshot({ accountId, asOfMs: now(), admin: deps.admin });
       const workset = deps.workset.buildManaged({ roster: snapshotRoster, positions: portfolio.positions.map((p) => ({ symbol: p.symbol, qty: Number(p.quantityUnits), open: true })), pending: portfolio.workingOrders.map((o) => ({ symbol: o.symbol, orderId: o.orderId, status: o.status, side: o.side })), nowMs: now() });
       const cutoff = freezeDecisionCutoff({ runStartedAtMs: st.startedAtMs, tradingDate, nowMs: now() });
@@ -453,6 +466,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       const holdingDeadlineMs = deps.market ? deps.market.nyWallClockToUtcMs(tradingDate, 20 * 60) : null;
       const frozenContext = await rebuildContext(st, deps, accountId);
       const already = new Map((st.research && st.research.completed || []).map((r) => [r.symbol, r]));
+      await record({ research: { requested: requests.length, completed: already.size, failed: 0, deferred: 0 } });
       const worker = async (request) => {
         if (already.has(request.symbol)) return { ok: true, ...already.get(request.symbol), reused: true };
         const packetId = `${managerRunId}_research_${request.symbol}`;
@@ -477,7 +491,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
           verifiedValuation:persisted.verifiedValuation || null, mandate: persisted.mandate || null, memo: persisted.memo || null, factualPremises: persisted.factualPremises || [], error: persisted.persisted ? null : persisted.reason, toolCalls: bound.log.length, costMinor: r.costMinor || "0" };
       };
       const out = await pool.run({ requests, concurrency: policy.maxConcurrentResearchJobs, worker, deadlineMs: holdingDeadlineMs,
-        budgetRemaining: () => budget() > minStageMs, onResult: async (row) => { st.research = st.research || { completed: [], failed: [], deferred: [] }; if (row.ok) st.research.completed.push({ symbol: row.request.symbol, verifiedValuation:row.result.verifiedValuation || null, memoId: row.result.memoId, dossierVersionId:row.result.dossierVersionId, proposedDecision: row.result.proposedDecision, reasonCode: row.result.reasonCode, mandate: row.result.mandate, memo: row.result.memo, factualPremises: row.result.factualPremises, request: row.request }); } });
+        budgetRemaining: () => budget() > minStageMs, onResult: async (row) => { st.research = st.research || { completed: [], failed: [], deferred: [] }; if (row.ok) st.research.completed.push({ symbol: row.request.symbol, verifiedValuation:row.result.verifiedValuation || null, memoId: row.result.memoId, dossierVersionId:row.result.dossierVersionId, proposedDecision: row.result.proposedDecision, reasonCode: row.result.reasonCode, mandate: row.result.mandate, memo: row.result.memo, factualPremises: row.result.factualPremises, request: row.request }); await record({ research: { requested: requests.length, completed: new Set(st.research.completed.map(x => x.symbol)).size, failed: 0, deferred: 0 } }); } });
       st.research = { completed: out.completed.map((r) => ({ symbol: r.request.symbol, request: r.request, verifiedValuation:r.result.verifiedValuation || null, memoId: r.result.memoId, dossierVersionId:r.result.dossierVersionId, proposedDecision: r.result.proposedDecision, reasonCode: r.result.reasonCode, mandate: r.result.mandate, memo: r.result.memo, factualPremises: r.result.factualPremises })),
         failed: out.failed.map((r) => ({ symbol: r.request.symbol, request: r.request, error: r.error || (r.result && r.result.error) || null })), deferred: out.deferred.map((r) => ({ symbol: r.symbol, request: r, reason: r.deferredReason })),
         ranges: out.ranges, launchedOrder: out.launchedOrder, concurrency: out.concurrency, invalid: st.researchInvalid || null };
@@ -574,7 +588,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
         decisionCount: persisted.written, byDecision: st.decisions.byDecision, buys: st.decisions.buys, contextManifestHash: st.contextManifestHash, policyHash: st.policyHash, cutoffMs: st.cutoff.cutoffMs,
         coverage: { ok: st.coverage.ok, completedCount: st.coverage.completedCount, eligibleCount: st.coverage.eligibleCount, repaired: st.repair ? st.repair.repaired : 0 },
         maintenance: st.maintenance ? { actionable: st.maintenance.actionable.length, actionRequired: st.maintenance.actionRequired, staged: st.maintenance.staged } : null,
-        research: st.research ? { completed: st.research.completed.length, failed: st.research.failed.length, deferred: st.research.deferred.length, ranges: st.research.ranges } : null,
+        research: st.research ? { requested: (st.effective.researchRequests || []).length, completed: st.research.completed.length, failed: st.research.failed.length, deferred: st.research.deferred.length, ranges: st.research.ranges } : null,
         activation: st.activation, noBuyReasons: st.noBuyReasons, costMinor: st.costMinor, requestIds: st.requestIds, elapsedMs: now() - st.startedAtMs };
       await record({ ...summary, status: "complete", completedAtMs: now() });
       try { await db(deps.admin).col(db(deps.admin).COL.control).doc("control").set({ lastManagerRunDate: tradingDate, lastManagerRunId: managerRunId, lastManagerRun: { ...summary, requestIds: undefined } }, { merge: true }); } catch {}

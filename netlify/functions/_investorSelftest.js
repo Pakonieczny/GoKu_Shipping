@@ -5005,6 +5005,43 @@ function runFixtures() {
     return { fake, C, nowMs, run, policy, symbols, S, V2, read, mutate, ctrl, commit };
   }
 
+  cases.push(fixture("novice_overview_uses_net_capital_and_free_cash_without_double_reservations", async () => {
+    const W = apiWorld(), first = (await W.read("managerDashboard")).body;
+    if (!first.ok) throw Error(JSON.stringify(first.error));
+    const d = first.data;
+    if (d.account.available.amountMinor !== "4950000" || d.overview.totalPnl.amountMinor !== "20000") throw Error("cash or contribution-adjusted gain is wrong");
+    if (!d.overview.holdings.some(h => h.symbol === "BBB" && h.pnl.amountMinor === "20000")) throw Error("holding gain missing");
+    if (!d.overview.chosenCompanies.some(c => c.decision === "WATCH") || d.overview.chosenCompanies.some(c => c.symbol === "BBB")) throw Error("unchanged watch ideas or held exclusions lost");
+    const a = W.fake.docs.get(`${W.C.accounts}/paper-1`);
+    a.balanceCents.cash += 100000; a.balanceCents.contributed_capital -= 100000;
+    W.V2.forgetMemo();
+    if ((await W.read("managerDashboard")).body.data.overview.totalPnl.amountMinor !== "20000") throw Error("deposit counted as profit");
+    delete a.balanceCents.contributed_capital;
+    W.V2.forgetMemo();
+    if ((await W.read("managerDashboard")).body.data.overview.totalPnl !== null) throw Error("missing capital must not fabricate gain");
+    return true;
+  }));
+  cases.push(fixture("novice_dashboard_reports_live_run_without_inheriting_old_completion", async () => {
+    const W=apiWorld(), id="new_live_review";
+    W.ctrl().activeManagerRunId=id;
+    await require("./_investorManager").writeRun({admin:W.fake,managerRunId:id,status:"running",stage:"research",accountId:"paper-1",tradingDate:"2026-09-04",universeVersion:"v6",universeHash:"new",eligibleCount:304,startedAtMs:W.nowMs,coverage:{completedCount:280,eligibleCount:304,ok:false},research:{requested:10,completed:3}});
+    const response=await W.read("managerDashboard"),d=response.body.data;
+    if (!d || d.latestRun.managerRunId!==id || d.latestRun.state!=="RUNNING" || d.latestRun.completedAt || d.latestRun.investmentNote) throw Error("old finished review leaked into active review");
+    if(d.latestRun.researchJobs.requested!==10 || d.latestRun.researchJobs.completed!==3 || d.latestRun.coverage.ok) throw Error("partial progress incorrectly completed");
+    if(!d.latestRun.updatedAt || !d.market.sessionDate) throw Error("progress timestamp or market session missing");
+    return true;
+  }));
+  cases.push(fixture("novice_start_is_available_in_observe_and_schedule_skips_market_holidays", async () => {
+    const W=apiWorld({accountMode:"OBSERVE",writerEpoch:0}),c=(await W.read("controlState")).body.data;
+    if(c.mutationsEnabled || !c.availableActions.find(x=>x.action==="activateAccountMode").enabled || c.availableActions.find(x=>x.action==="runManagerReview").enabled) throw Error("observe activation or review gate is wrong");
+    if(W.V2.nextReviewWindow(W.ctrl(),W.nowMs)!==null) throw Error("observing account must not promise a scheduled review");
+    const live=apiWorld(),next=live.V2.nextReviewWindow(live.ctrl(),Date.UTC(2026,8,5,15));
+    if(!next || next.tradingDate!=="2026-09-08" || next.due) throw Error("weekend/Labor Day schedule incorrect");
+    live.ctrl().managerState="PAUSED";
+    if(live.V2.nextReviewWindow(live.ctrl(),live.nowMs)!==null) throw Error("paused account promised automatic review");
+    return true;
+  }));
+
   cases.push(fixture("api_v2_contract_compiles_strictly_and_rejects_unknown_fields_oversized_pages_and_unsafe_numbers", () => {
     const S = require("./_investorApiSchemas");
     const c = S.compileAll();
@@ -5658,8 +5695,9 @@ function runFixtures() {
     const before=await C.read({runId:claim.runId,admin:W.fake});
     W.fake.docs.set(`${W.fake.COL.accounts}/paper-1`,{accountId:"paper-1",balanceCents:{cash:1},balanceRevision:8});
     W.fake.docs.delete(`${W.fake.COL.dossiers}/AAA`);
+    const live=await G.readRun(claim.runId,{admin:W.fake}); if(!live || W.fake.docs.get(`${W.fake.COL.control}/control`).activeManagerRunId!==claim.runId)throw Error("live run not published before completion");
     const review=W.deps.gateway.reviewUniverse;
-    W.deps.gateway.reviewUniverse=async args=>{if(args.portfolio.navMinor!==before.portfolio.navMinor)throw Error("portfolio changed on resume");if(!args.cards.find(c=>c.symbol==="AAA" && c.dossierHash))throw Error("evidence reread on resume");return review(args);};
+    W.deps.gateway.reviewUniverse=async args=>{const progress=await G.readRun(claim.runId,{admin:W.fake});if(progress.stage!=="review" || progress.status!=="running")throw Error("review stage not visible before model request");if(args.portfolio.navMinor!==before.portfolio.navMinor)throw Error("portfolio changed on resume");if(!args.cards.find(c=>c.symbol==="AAA" && c.dossierHash))throw Error("evidence reread on resume");return review(args);};
     const second=await G.runManagerMeeting({claim:{...claim,checkpoint:first.checkpoint},deps:W.deps,control:{engineMode:"manager"},budget:()=>600000});
     const after=await C.read({runId:claim.runId,admin:W.fake});
     if(!second.done || before.contentHash!==after.contentHash)throw Error("frozen input changed");return true;
