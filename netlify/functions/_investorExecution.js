@@ -533,7 +533,10 @@ async function tick({ admin = null, adapter, accountId, control = {}, barsBySymb
     }
     /* a high-impact delta not yet reviewed pauses an unfilled entry (Appendix B, §8.6) */
     if (p.decision === "BUY" && ["WORKING", "DESIRED", "BROKER_SYNC_PENDING"].includes(p.status) && DOSSIER && MD) {
-      const pend = await DOSSIER.pendingChanges(p.symbol, { cutoffMs: nowMs, admin: D }).catch(() => []);
+      // Fixed-plan historical sessions keep the initial evidence boundary.
+      // Normal desk execution continues to use current evidence.
+      const evidenceCutoffMs = Math.min(nowMs, A.currentScope()?.executionEvidenceCutoffMs ?? nowMs);
+      const pend = await DOSSIER.pendingChanges(p.symbol, { cutoffMs: evidenceCutoffMs, admin: D }).catch(() => []);
       const hi = pend.find((d) => d.safetyClass === "high_impact");
       if (hi) { const r = await MD.pauseUnfilledEntry(p.symbol, hi.deltaId || hi.eventId, { accountId, admin: D }); if (r.paused) summary.paused.push({ symbol: p.symbol, deltaId: hi.deltaId }); }
     }

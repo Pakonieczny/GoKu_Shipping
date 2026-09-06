@@ -6894,23 +6894,34 @@ async function simulatorAdversarial({only=null}={}) {
     const detail=await x.svc.detail(x.runId,'operator');assert.equal(detail.preparedDocuments.length,2);assert(detail.preparedDocuments.some(d=>d.referenceRecovery?.discardedSections.includes('business')));
     assert.equal(done.costByStage.manager_document.requests,2);assert.equal(done.reservedNano,0);assert.equal(done.pendingAiCount,0);
   });
-  await check('replay_allocation_persists_canonical_rows_and_recovers_paid_storage_failure_without_rebuying',async()=>{
-    const MGR=require('./_investorManager'),SC=require('./_investorStorageCodec'),persist=MGR.persistDecisionRows,x=await researchPipeline({prepared:true,measure:true,event:true});let failed;
-    // Reproduce the live raw-model-row persistence bug after the event response settles.
-    MGR.persistDecisionRows=async args=>{
-      if(!args.managerRunId.startsWith('meeting_'))throw Object.assign(Error('_investorStorageCodec: undefined at /reviewDirective'),{code:'DECISION_CODEC_REJECTED'});
-      return persist(args);
-    };
-    try{failed=await x.drive();}finally{MGR.persistDecisionRows=persist;}
-    assert.equal(failed.status,'incomplete',JSON.stringify(failed.error));assert.equal(failed.error.code,'DECISION_CODEC_REJECTED',JSON.stringify(failed.error));assert(failed.managerDone);assert.equal(failed.work.stage,'portfolio_review');
-    const view=await x.svc.overview({owner:'operator'});assert(view.runs[0].canResumePersistence);assert(!view.runs[0].canRetryAIStep);
-    const paid=x.calls.length,spent=failed.spentNano,requests=JSON.stringify((await x.ref.collection('requests').get()).docs.map(d=>d.data()));
-    await x.svc.control({runId:x.runId,command:'retry'},'operator');assert.equal((await x.svc.getRun(x.runId)).aiRequestRetries,undefined);
-    const done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));assert.equal(x.calls.length,paid,'all paid responses must be reused');assert.equal(done.spentNano,spent);assert.equal(done.reservedNano,0);assert.equal(done.pendingAiCount,0);
-    assert.equal(JSON.stringify((await x.ref.collection('requests').get()).docs.map(d=>d.data())),requests);
-    const rows=(await x.ref.collection(A.COL.managerDecisions).get()).docs.map(d=>SC.decode(d.data())).filter(d=>!d.managerRunId.startsWith('meeting_'));assert(rows.length>0);
-    for(const row of rows){assert.equal(row.decision,'WATCH');assert.equal(row.held,false);assert.equal(row.eligible,true);assert.equal(row.offRoster,false);assert.equal(typeof row.changedSincePrior,'boolean');assert(row.reviewDirective===null||typeof row.reviewDirective==='string');assert.equal(row.source,'final_synthesis');}
-    assert(done.costByStage.event.spentNano>0);assert(done.costByStage.portfolio_review.spentNano>0);
+  await check('fixed_plan_executor_uses_initial_evidence_but_normal_execution_keeps_current_event_pauses',async()=>{
+    const X=require('./_investorExecution'),D=require('./_investorDossier'),MD=require('./_investorMandate'),pending=D.pendingChanges,pause=MD.pauseUnfilledEntry,cutoff=Date.UTC(2026,8,3,12,30),clock=cutoff+3600000;
+    try {
+      for(const scenario of [{fixed:true,deltaAt:cutoff+1000,paused:false},{fixed:true,deltaAt:cutoff-1000,paused:true},{fixed:false,deltaAt:cutoff+1000,paused:true}]) {
+        const fake=database(),accountId='paper-1';let pauses=0,observedCutoff;
+        await fake.col(A.COL.accounts).doc(accountId).set({accountId,balanceCents:{cash:10000000,contributed_capital:-10000000},startingNavCents:10000000});
+        await fake.col(A.COL.ledger).doc('capital').set({accountId,legs:[{account:'cash',amountCents:10000000},{account:'contributed_capital',amountCents:-10000000}]});
+        await fake.col(A.COL.activeMandates).doc(accountId+'_AAA').set({accountId,symbol:'AAA',decision:'BUY',status:'WORKING'});
+        D.pendingChanges=async(symbol,{cutoffMs})=>{observedCutoff=cutoffMs;return scenario.deltaAt<=cutoffMs?[{deltaId:'event',safetyClass:'high_impact'}]:[];};
+        MD.pauseUnfilledEntry=async()=>{pauses++;return {paused:true};};
+        const run=()=>X.tick({admin:fake,adapter:require('./_investorBroker').createPaperAdapter({admin:fake,now:()=>clock}),accountId,nowMs:clock,metrics:{brokerTruthAgeSeconds:0,reconciliationUnresolved:false}});
+        const result=scenario.fixed?await A.withSimulationScope({runId:RID,clock:()=>clock,collection:fake.col,transaction:fake.runTransaction,batch:fake.batch,executionEvidenceCutoffMs:cutoff},run):await run();
+        assert.equal(observedCutoff,scenario.fixed?cutoff:clock);assert.equal(pauses,scenario.paused?1:0);assert(result.conservation.pass);
+      }
+    } finally {D.pendingChanges=pending;MD.pauseUnfilledEntry=pause;}
+  });
+  await check('fixed_plan_replay_ignores_intraday_research_and_queued_allocation_jobs_without_more_ai_calls',async()=>{
+    const MGR=require('./_investorManager'),BG=require('./investorManager-background'),event=MGR.runEventRevision,synthesis=BG.runPortfolioSynthesis;
+    const x=await researchPipeline({prepared:true,measure:true,event:true});let ticks=0;
+    // An old run can retain an intraday job. It must never buy another review.
+    await x.ref.collection(A.COL.jobs).doc('old_intraday_synthesis').set({task:'portfolio_synthesis',status:'queued',payload:{accountId:x.runId,changedSymbol:'MA'}});
+    MGR.runEventRevision=async()=>{throw Error('Intraday research must not execute');};BG.runPortfolioSynthesis=async()=>{throw Error('Intraday allocation must not execute');};
+    const X=require('./_investorExecution'),tick=X.tick;X.tick=async args=>{ticks++;assert.equal(A.currentScope().executionEvidenceCutoffMs,(await x.svc.getRun(x.runId)).shortlist.cutoffMs);return tick(args);};
+    let done;try{done=await x.drive();}finally{MGR.runEventRevision=event;BG.runPortfolioSynthesis=synthesis;X.tick=tick;}
+    assert.equal(done.status,'complete',JSON.stringify(done.error));assert.equal(done.progress,100);assert(ticks>=78,'price execution must cover the full session');assert.equal(x.calls.length,5);
+    assert.deepEqual(x.calls.map(b=>b.text.format.name),['historical_shortlist','universe_review_v1','prepared_research_document_v1','prepared_research_document_v1','prepared_investment_decision_v1']);
+    assert.equal(done.costByStage.event,undefined);assert.equal(done.costByStage.portfolio_review,undefined);assert.equal(done.pendingAiCount,0);assert.equal(done.reservedNano,0);
+    const paid=x.calls.length;await x.svc.execute(x.runId);assert.equal(x.calls.length,paid);
   });
   await check('finalization_settles_acknowledged_usage_and_recovers_old_finalize_failures_without_new_purchases',async()=>{
     for(const legacy of [false,'pending','settled']) {
