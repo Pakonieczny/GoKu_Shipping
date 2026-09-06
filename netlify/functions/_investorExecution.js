@@ -629,17 +629,18 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
           throw typed('HISTORICAL_CORPORATE_ACTION_UNRESOLVED',symbol+': an overnight share-basis change cannot be treated as an investment return.');
         const timedExit=!!deadline&&at+300000===deadline&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS);
         const bid=x=>x-x*spread/20000n,stop=big(position.lossBoundaryPriceMicros),target=big(position.takeProfitPriceMicros);
-        const stopHit=bid(l)<=stop,targetHit=bid(h)>=target;
-        // Adverse ordering for ambiguous OHLC; never award a favourable entry-bar exit.
-        const sell=stopHit||(!entered&&targetHit&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS))||timedExit;
+        const openStop=bid(o)<=stop,openTarget=bid(o)>=target&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS),stopHit=openStop||(!openTarget&&bid(l)<=stop),targetHit=openTarget||bid(h)>=target;
+        // Entry is at the bar open: both protections are active afterwards.
+        // If the open already triggers an exit it precedes later extrema; otherwise stop-first is conservative.
+        const sell=stopHit||(targetHit&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS))||timedExit;
         if(sell) {
-          const targetExit=!entered&&targetHit&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS);
+          const targetExit=targetHit&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS);
           const px=stopHit?(bid(o)<stop?bid(o)-(schedule?bid(o)*STOP_SLIPPAGE_BPS/10000n:0n):stop-stop*STOP_SLIPPAGE_BPS/10000n):targetExit?(bid(o)>target?bid(o):target):bid(c);
           const qty=big(position.quantityUnits),notional=minorOf(qty,px),fee=(qty*feeMicros+9999n)/10000n,cost=big(position.costBasisMinor),proceeds=notional-fee,realized=proceeds-cost;
           fills.push({side:'sell',role:stopHit?'STOP':targetExit?'TARGET':'TIME_LIMIT',qty,px,notional,fee,realized,basis:stopHit?'stop_adverse_or_gap':targetExit?'target_observed':'holding_deadline_observed_close',ambiguous:stopHit&&(entered||targetHit),
             legs:[{account:ACCT.CASH,amountCents:Number(proceeds)},{account:ACCT.POSITIONS,amountCents:-Number(cost)},{account:ACCT.REALIZED_PL,amountCents:-Number(realized)}]});
           balance.cash+=Number(proceeds);balance.positions-=Number(cost);balance.realized_pl=(balance.realized_pl||0)-Number(realized);
-          position={...position,open:false,quantityUnits:'0',qty:0,costBasisMinor:'0',costBasisCents:0,closedAt:timedExit&&!stopHit&&!targetExit?new Date(at+300000).toISOString():bar.t,realizedMinor:realized.toString(),protectionState:'CLOSED'};
+          position={...position,open:false,quantityUnits:'0',qty:0,costBasisMinor:'0',costBasisCents:0,closedAt:new Date(openStop||openTarget?at:at+300000).toISOString(),realizedMinor:realized.toString(),protectionState:'CLOSED'};
         }
         position={...position,lastMarkUsd:bar.c,lastPriceUsd:bar.c,markMicros:c.toString(),lastMarkAt:bar.t,updatedAtMs:nowMs};
         // One transaction covers fills, cash, journal, position and replay cursor.
@@ -648,7 +649,8 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
           assertBalanced(f.legs);
           const fillId='fill_'+sha([accountId,planHash,symbol,f.role,at]).slice(0,32);
           tx.set(D.col(D.COL.fills).doc(fillId),{schemaVersion:'fill.v2',fillId,accountId,symbol,side:f.side,role:f.role,quantityUnits:f.qty.toString(),priceMicros:f.px.toString(),
-            notionalMinor:f.notional.toString(),feeMinor:f.fee.toString(),realizedMinor:f.realized.toString(),eventAtMs:f.role==='TIME_LIMIT'?at+300000:at,receivedAtMs:nowMs,
+            notionalMinor:f.notional.toString(),feeMinor:f.fee.toString(),realizedMinor:f.realized.toString(),eventAtMs:f.side==='buy'||openStop||openTarget?at:at+300000,receivedAtMs:nowMs,
+            ...(f.side==='sell'?{exitTiming:openStop||openTarget?'BAR_OPEN':f.role==='TIME_LIMIT'?'BAR_CLOSE':'WITHIN_BAR',exitEarliestAtMs:openStop||openTarget?at:f.role==='TIME_LIMIT'?at+300000:at,exitLatestAtMs:openStop||openTarget?at:at+300000}:{}),
             ...(schedule?{holdingSessions:investment.holdingSessions,holdingDeadlineMs:deadline}:{}),source:'historical_simulation',basis:f.basis,bar,ambiguous:!!f.ambiguous,mandateVersionId:planHash,positionLifecycleId:position.positionLifecycleId,
             orderSetId:'required_'+symbol,legId:'required_'+symbol+'_'+f.role,decisionAuthority:'ASTRA_REQUIRED_SIMULATION'});
           tx.set(D.col(D.COL.ledger).doc(fillId),{txnId:fillId,accountId,kind:'manager_fill',legs:f.legs,meta:{fillId,symbol,planHash},postedAtMs:nowMs});

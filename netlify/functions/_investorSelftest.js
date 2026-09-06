@@ -6964,6 +6964,13 @@ async function simulatorAdversarial({only=null}={}) {
     await x.tick(x.schedule[2].closeMs-300000);const fills=await x.fills();assert.equal(fills.length,2);assert.equal(fills[1].role,'TIME_LIMIT');assert.equal(fills[1].eventAtMs,x.schedule[2].closeMs);
     await x.tick(x.schedule[2].closeMs-300000);assert.equal((await x.fills()).length,2);
     const half=await setup('2025-11-28',1);await half.tick(half.schedule[0].openMs);await half.tick(half.schedule[0].closeMs-300000);assert.equal((await half.fills())[1].eventAtMs,half.schedule[0].closeMs);
+    const earlyStop=await setup();await earlyStop.tick(earlyStop.schedule[0].openMs,{o:100,h:101,l:90,c:99,v:100000});
+    const es=(await earlyStop.fills())[1];assert.equal(es.role,'STOP');assert.equal(es.exitTiming,'WITHIN_BAR');assert.equal(es.eventAtMs,earlyStop.schedule[0].openMs+300000);
+    const earlyTarget=await setup();await earlyTarget.tick(earlyTarget.schedule[0].openMs,{o:100,h:160,l:99,c:150,v:100000});assert.equal((await earlyTarget.fills())[1].role,'TARGET','target protection is active after entry open');
+    const openingTarget=await setup();await openingTarget.tick(openingTarget.schedule[0].openMs);await openingTarget.tick(openingTarget.schedule[0].openMs+300000,{o:160,h:165,l:90,c:100,v:100000});
+    const ot=(await openingTarget.fills())[1];assert.equal(ot.role,'TARGET','known opening target precedes a later low');assert.equal(ot.exitTiming,'BAR_OPEN');
+    const ambiguous=await setup();await ambiguous.tick(ambiguous.schedule[0].openMs,{o:100,h:160,l:90,c:100,v:100000});assert.equal((await ambiguous.fills())[1].role,'STOP','unknown intrabar ordering remains adverse');
+    const cards=RealSim.tradeCards(await earlyStop.fills(),{},earlyStop.schedule[0].closeMs);assert.equal(cards[0].heldMinMs,0);assert.equal(cards[0].heldMaxMs,300000);assert.equal(cards[0].exitRole,'STOP');
     const gap=await setup();await gap.tick(gap.schedule[0].openMs);await gap.tick(gap.schedule[1].openMs,{o:90,h:101,l:89,c:100,v:100000});const stop=(await gap.fills())[1];assert.equal(stop.role,'STOP');assert(Number(stop.priceMicros)<90000000,'gap uses observed adverse opening bid and slippage');
     for(const last of [null,{o:100,h:101,l:99,c:100,v:1},{o:100,h:101,l:99,c:100,v:100000,halted:true}]) {
       const missing=await setup('2025-11-28',1);await missing.tick(missing.schedule[0].openMs);

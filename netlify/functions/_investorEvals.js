@@ -191,6 +191,10 @@ const Simulator = (() => {
       const buys=events.filter(f=>String(f.side).toLowerCase()==='buy'),sells=events.filter(f=>String(f.side).toLowerCase()==='sell');
       const sum=(items,key)=>items.reduce((n,f)=>n+Number(f[key]||0),0),bought=sum(buys,'quantityUnits'),sold=sum(sells,'quantityUnits'),held=Math.max(0,bought-sold);
       const entry=buys[0]?.eventAtMs??null,exit=held===0&&sells.length?sells.at(-1).eventAtMs:null;
+      const lastSell=sells.at(-1),exitRole=exit!=null?lastSell?.role:null;
+      const interval=exit!=null&&['STOP','TARGET'].includes(exitRole)&&lastSell?.bar?.t;
+      const exitMin=exit==null?null:lastSell.exitEarliestAtMs??(interval?Date.parse(lastSell.bar.t):exit);
+      const exitMax=exit==null?null:lastSell.exitLatestAtMs??(interval?Date.parse(lastSell.bar.t)+300000:exit);
       const average=items=>{const qty=sum(items,'quantityUnits');return qty?Math.round(items.reduce((n,f)=>n+Number(f.priceMicros)*Number(f.quantityUnits),0)/qty):null;};
       const mark=marks[symbol],entryPriceMicros=average(buys),exitPriceMicros=average(sells),priceMicros=mark?.priceMicros??null;
       const investedMinor=sum(buys,'notionalMinor')+sum(buys,'feeMinor'),proceedsMinor=sum(sells,'notionalMinor')-sum(sells,'feeMinor');
@@ -198,6 +202,7 @@ const Simulator = (() => {
       const previous=prior.find(r=>r.symbol===symbol),curve=(previous?.curve||[]).filter(p=>p.atMs!==mark?.atMs);
       if(priceMicros!=null&&entryPriceMicros)curve.push({atMs:mark.atMs,priceMicros,returnBps:10000*(priceMicros/entryPriceMicros-1)});
       return {...(buys[0]?.holdingSessions?{holdingSessions:buys[0].holdingSessions,holdingDeadlineMs:buys[0].holdingDeadlineMs}:{}),symbol,boughtShares:bought,soldShares:sold,heldShares:held,investedMinor,entryPriceMicros,exitPriceMicros,priceMicros,
+        exitRole,heldMinMs:entry==null||exitMin==null?null:Math.max(0,exitMin-entry),heldMaxMs:entry==null||exitMax==null?null:Math.max(0,exitMax-entry),
         priceAsOfMs:mark?.atMs??null,entryAtMs:entry,exitAtMs:exit,heldMs:entry==null?null:Math.max(0,(exit??marketTimeMs)-entry),
         pnlMinor,returnBps:pnlMinor==null||!investedMinor?null:10000*pnlMinor/investedMinor,status:held?'OPEN':'CLOSED',curve:curve.slice(-85)};
     }).filter(r=>r.boughtShares>0).sort((a,b)=>a.entryAtMs-b.entryAtMs||a.symbol.localeCompare(b.symbol));
@@ -206,6 +211,7 @@ const Simulator = (() => {
     const out=JSON.parse(JSON.stringify(body)),format=out.text?.format;
     // Apply only after the meter has checked the original request identity for paid answers.
     if(stage==='manager_decision'&&out.model==='gpt-6-astra')out.reasoning={...out.reasoning,effort:'medium'};
+    if(stage==='manager_decision'&&out.model==='gpt-6-astra')out.input.push({role:'system',content:'HOLDING STRATEGY: Prefer evidenced multi-hour trades within the chosen 1–3-session deadline, not minute-scale scalping. Set stopLossBps and takeProfitBps together using only supplied pre-cutoff price variability, adverse scenarios, catalyst timing and costs. Explain in outlook why ordinary opening volatility should not invalidate the thesis, what loss invalidates it, and why the profit target suits the intended duration. If volatility evidence is missing, say so; do not invent ATR, probabilities or a universal tight percentage. Reduce allocation when a defensible wider stop implies too much dollar risk. Do not widen stops merely to force longer holds or suppress a genuine protective exit. A session allowance is a maximum, not a promise to hold. Entry occurs at the observed bar open; both stop and target are active in that first bar. An opening trigger precedes later extrema; otherwise if both thresholds occur in the same five-minute bar, stop-first is a conservative unresolved ordering, not a known price path. No prices after the historical cutoff may inform this decision.'});
     const canonical=Object.entries({...P.SCHEMAS,...require('./_investorResearchHandoff').SCHEMAS}).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
     if(canonical){const minimum=format.schema?.properties?.researchRequests?.minItems,maximum=format.schema?.properties?.researchRequests?.maxItems;format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
       if(minimum) {format.schema.properties.researchRequests.minItems=minimum;format.schema.properties.researchRequests.maxItems=maximum||2;}}

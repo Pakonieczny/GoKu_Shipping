@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-kx9p7BM4hPuc4W4wH2MvudjwZmUjzA5KY9PmEDiXSVc='; style-src 'self' 'sha256-FeHaraZXjOhx6/rvT0qPMTjKicb0Vpf6FQdbsXUJB+s='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-4sHBLrTVHCxPdnOLkGXz3NJcg5D7hSpuKhb5z1VnHjU='; style-src 'self' 'sha256-FeHaraZXjOhx6/rvT0qPMTjKicb0Vpf6FQdbsXUJB+s='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -2607,8 +2607,9 @@ function simInvestmentNode(x){
   el('div',{class:'sim-stock-head'},el('div',{},el('div',{class:'sim-stock-ticker',text:x.symbol}),el('div',{class:'sim-stock-state',text:x.status==='OPEN'?'● Holding '+x.heldShares+' shares':'✓ Position closed'})),
    el('div',{class:'sim-stock-price',title:'Observed historical price · '+simMarketTime(x.priceAsOfMs)},el('small',{text:'Market price'}),el('strong',{'data-market-price':x.symbol,text:simPrice(x.priceMicros)}))),
   x.curve?.length?simSpark(x.curve,x.symbol+' historical price movement'):null,
+  x.exitRole?el('p',{class:'tiny muted',text:'Exit: '+({STOP:'Protective stop',TARGET:'Profit target',TIME_LIMIT:'Holding deadline'}[x.exitRole]||x.exitRole)}):null,
   x.holdingSessions?el('p',{class:'tiny muted',text:'Astra limit · '+x.holdingSessions+' trading session'+(x.holdingSessions===1?'':'s')+' · exit by '+new Date(x.holdingDeadlineMs).toLocaleDateString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric'})+' close'}):null,
-  el('div',{class:'sim-stock-metrics'},metric('Invested',simCash(x.investedMinor)),metric('Shares bought',Number(x.boughtShares).toLocaleString()),metric(x.status==='OPEN'?'Holding time':'Held for',simHeld(x.heldMs))),
+  el('div',{class:'sim-stock-metrics'},metric('Invested',simCash(x.investedMinor)),metric('Shares bought',Number(x.boughtShares).toLocaleString()),metric(x.status==='OPEN'?'Holding time':'Held for',x.heldMinMs!=null&&x.heldMaxMs>x.heldMinMs?simHeld(x.heldMinMs)+'–'+simHeld(x.heldMaxMs)+' (5m bars)':simHeld(x.heldMs))),
   el('div',{class:'sim-stock-prices'},el('div',{title:simMarketTime(x.entryAtMs)},'Entry',el('b',{text:simPrice(x.entryPriceMicros)})),icon('chevron'),
    el('div',{title:x.exitAtMs?simMarketTime(x.exitAtMs):'No exit fill yet'},x.status==='OPEN'&&x.exitPriceMicros!=null?'Partial exit':'Exit',el('b',{text:simPrice(x.exitPriceMicros)})),
    el('div',{class:'sim-stock-result '+(x.pnlMinor>=0?'sim-positive':'sim-negative')},x.status==='OPEN'?'Gain / loss':'Realized',el('b',{class:x.pnlMinor>=0?'sim-positive':'sim-negative',text:result}))));
