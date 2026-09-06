@@ -528,6 +528,23 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
           const resultId=`${managerRunId}_joint_${joint.requestId}`;await C.freeze({runId:resultId,context:{joint},admin:deps.admin});
           st.handoff.resultRef=resultId;addCost(joint.costMinor);await saveHandoff();
         }
+        if(joint.simulationPlan) {
+          const plan=joint.simulationPlan;
+          await require('./_investorExecution').saveRequiredSimulationPlan({plan,admin:deps.admin,accountId,managerRunId});
+          const buys=Object.entries(plan.investments).map(([symbol,row],i)=>({symbol,capitalRank:i+1,row}));
+          const decisions=st.workset.symbols.map(symbol=>{const buy=buys.find(b=>b.symbol===symbol),cov=st.effective.coverage.find(r=>r.symbol===symbol);
+            return {symbol,decision:buy?'BUY':'IGNORE',reasonCode:null,reason:buy?buy.row.sizingReason:cov?.reason||'Not selected',capitalRank:buy?.capitalRank||null,
+              fundingState:buy?'FUNDED':'NOT_APPLICABLE',reviewDirective:cov?.reviewDirective||'NONE',provisionalDisposition:cov?.provisionalDisposition||'IGNORE',
+              changedSincePrior:false,held:false,eligible:true,offRoster:false,source:'required_investment_simulation',mandate:null};});
+          await persistDecisionRows({managerRunId,tradingDate,accountId,decisions,contextManifestHash:st.contextManifestHash,admin:deps.admin,cutoffMs:st.cutoff.cutoffMs});
+          st.handoff.phase='complete';st.simulationPlan=plan;
+          const summary={managerRunId,status:'complete',tradingDate,accountId,policyHash:st.policyHash,investmentPolicy:plan.policy,
+            research:{requested:requests.length,completed:requests.length,failed:0,deferred:0},
+            buys:buys.map(({symbol,capitalRank})=>({symbol,capitalRank})),byDecision:countBy(decisions,'decision'),
+            investmentNote:plan.comparisonNote,costMinor:st.costMinor,noBuyReasons:[],activation:{status:'COMMITTED',planId:plan.planHash,mandates:buys.map(b=>b.symbol)}};
+          await record({...summary,completedAtMs:now()});
+          return {done:true,summary,checkpoint:{stage:'complete',data:st}};
+        }
         const completed=[];
         for(const memo of joint.research) {
           const packet=packets.find(p=>p.symbol===memo.symbol);

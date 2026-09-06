@@ -6739,6 +6739,7 @@ async function simulatorAdversarial({only=null}={}) {
       savedResponse={id:'resp_pipeline_'+calls.length,model:b.model,status:'completed',service_tier:b.service_tier,usage:{input_tokens:12000,output_tokens:3000,output_tokens_details:{reasoning_tokens:1000}},output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]};
       return {ok:true,status:200,json:async()=>({...savedResponse,usage:null})};
     }}),batch=await svc.createBatch({count:1,from:date,to:date},'operator','full-shortlist-pipeline'),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config);
+    delete config.investmentPolicy;await br.set({configRef:await svc.saveJSON(br,'legacy_investment_config',config)},{merge:true});
     const units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
     const daily=Array.from({length:400},(_,i)=>({date:new Date(Date.parse(date+'T00:00:00Z')-(400-i)*86400000).toISOString().slice(0,10),o:100,h:101,l:99,c:100,v:100000}));
     for(const unit of units.filter(x=>x.data().kind==='company')) {const symbol=unit.data().symbol,parent=fake.col('InvestorAI_SimulationScenarios').doc('fixture_company_'+symbol),row=config.roster.members.find(x=>x.symbol===symbol),data=row?[{collection:A.COL.dossierVersions,id:symbol+'_fixture',knownAtMs:cutoff-1000,data:D.composeVersion({symbol,identity:{...row,name:row.company},asOfMs:cutoff-1000})}]:[];
@@ -6791,7 +6792,7 @@ async function simulatorAdversarial({only=null}={}) {
     await x.ref.set({reservedNano:0,pendingAiCount:0},{merge:true});
     await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:research,stage:'manager_research'});assert.equal(x.posts(),1);
   });
-  async function researchPipeline({failure=null,prepared=false,measure=false,event=false}={}) {
+  async function researchPipeline({failure=null,prepared=false,measure=false,event=false,required=false}={}) {
     const fake=database(),D=require('./_investorDossier'),M=require('./_investorMarket'),date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),calls=[],responses=new Map(),toolRounds=new Map();
     let finalists=[],bad=failure,missingUsage=failure==='usage',wall=Date.now();const transportErrors=[];
     const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{OPENAI_API_KEY:'fixture'},publicFetch:async()=>{throw Error('No live source access in pipeline test');},fetchImpl:async(url,opts)=>{try {
@@ -6814,14 +6815,19 @@ async function simulatorAdversarial({only=null}={}) {
         output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,{summary:'Available historical evidence is limited.',evidenceIds:[source.catalog.find(c=>c.kind==='claim').citationId],missing:['Insufficient evidence for a firm investment thesis']}]))};
         if(bad==='document_citations')output.sections.business={summary:'Invented growth claim that must never reach Astra.',evidenceIds:['claim:not_in_the_source_packet'],missing:[]};
         else {const validate=new(require('ajv/dist/2020'))({strict:false}).compile(b.text.format.schema);assert(validate(output),JSON.stringify(validate.errors));}
-      } else if(name==='prepared_investment_decision_v1') {
+      } else if(name==='prepared_investment_decision_v1'||name==='simulation_investment_plan_v1') {
         assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'high');assert(!b.tools);assert.equal(b.max_output_tokens,23940);
-        const docs=JSON.parse(user.match(/<untrusted_context name="prepared_documents">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);const prior=JSON.parse(user.match(/<untrusted_context name="completed_research">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);assert.equal(docs.length+prior.length,2);assert(docs.every(d=>d.documentHash));
+        const docs=JSON.parse(user.match(/<untrusted_context name="prepared_documents">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);const prior=required?[]:JSON.parse(user.match(/<untrusted_context name="completed_research">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);assert.equal(docs.length+prior.length,2);assert(docs.every(d=>d.documentHash));
         assert(!JSON.stringify(docs).includes('Invented growth claim that must never reach Astra.'));
         for(const doc of docs){const ids=new Set(doc.evidence.map(e=>e.id));assert(Object.values(doc.sections).every(s=>s.evidenceIds.every(id=>ids.has(id))));assert(doc.evidence.some(e=>e.claimType==='RISK_FACTOR'),'adverse evidence must survive preparation');}
         const research=finalists.map(symbol=>({schemaVersion:'research-memo.v1',symbol,asOf:new Date(cutoff).toISOString(),checklist:Object.fromEntries(['business','whatChanged','agreementDisagreement','risks','valuationFramework','disconfirmingEvidence','returnAndHorizon','versusAlternatives','mandateOrAbstain'].map(k=>[k,'Evidence does not justify investment.'])),factualPremises:[],inferences:[],valuation:null,bearCase:'Uncertain return',thesisHealth:'UNKNOWN',proposedDecision:'WATCH',reasonCode:'UNCERTAINTY',mandate:null}));
         output={schemaVersion:'prepared-investment-decision.v1',research,allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:finalists.map(symbol=>({symbol,decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Retain cash after joint underwriting'})),expansionMandates:[],holdingAnalysis:[],comparisonNote:'Compared both finalists and cash in one decision'}};
         if(bad==='joint_schema')output.research[0].bearCase='x'.repeat(1201);
+        if(required)output={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Best available candidates; allocate less to uncertainty.',
+          investments:Object.fromEntries(finalists.map((symbol,i)=>[symbol,{allocationUsd:i?30000:5000,conviction:i?'HIGH':'LOW',sizingReason:i?'Stronger relative conviction':'Missing forward evidence reduces allocation',
+            assessment:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,'Dated evidence assessed; uncertainty remains.'])),
+            outlook:'Bear: loss; base: flat; bull: upside. These are assumptions, not issuer guidance.',takeProfitBps:2000,stopLossBps:2000,evidenceIds:['baseline:symbol']}]))};
+
       } else if(name==='research_memo_v1') {
         const symbol=user.match(/SYMBOL=(\S+)/)[1],round=toolRounds.get(symbol)||0;toolRounds.set(symbol,round+1);
         assert.equal(b.reasoning.effort,'high');assert(b.tools.some(t=>t.name==='getPortfolioSnapshot'));
@@ -6837,7 +6843,7 @@ async function simulatorAdversarial({only=null}={}) {
       } else throw Error('Unexpected paid stage '+name);
       if(output && bad!=='joint_schema' && !(bad==='research'&&output.bearCase?.length>1200) && !(bad==='synthesis'&&name==='portfolio_synthesis_v1'))assert.deepEqual(P.validateAgainst(b.text.format.schema,output),[],'fixture must obey the actual submitted schema');
       const response={id:'resp_full_research_'+calls.length,model:b.model,status:'completed',service_tier:b.service_tier,usage:{input_tokens:measure?400000:12000,output_tokens:1500,output_tokens_details:{reasoning_tokens:1000}},output:items||[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]};responses.set(response.id,response);
-      if(missingUsage&&(name==='research_memo_v1'||name==='prepared_investment_decision_v1')){missingUsage=false;return {ok:true,status:200,json:async()=>({...response,usage:null})};}
+      if(missingUsage&&(name==='research_memo_v1'||name==='prepared_investment_decision_v1'||name==='simulation_investment_plan_v1')){missingUsage=false;return {ok:true,status:200,json:async()=>({...response,usage:null})};}
       return {ok:true,status:200,json:async()=>response};
     } catch(e){transportErrors.push(e.stack);throw e;}}});
     const batch=await svc.createBatch({count:1,from:date,to:date,budgetMode:measure?'measure_actual_cost':'capped'},'operator','research-pipeline-'+failure),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config),units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
@@ -6850,10 +6856,74 @@ async function simulatorAdversarial({only=null}={}) {
       const artifact=await svc.saveJSON(parent,'company',{data,daily,provenance:{provider:'fixture',adjustment:'split_only'}});await unit.ref.set({status:'ready',pointer:{cacheId:parent.id,artifact}},{merge:true});priceSymbols[symbol]={bars:providerSession(date,{extra:false}),coverage:{regular:78,expected:78,missing:0}};
     }
     const prices=fake.col('InvestorAI_SimulationScenarios').doc('research_session'),artifact=await svc.saveJSON(prices,'prices',{symbols:priceSymbols,provenance:{provider:'fixture'}});await units.find(x=>x.data().kind==='prices').ref.set({status:'ready',pointer:{cacheId:prices.id,artifact}},{merge:true});
+    if(!required){delete config.investmentPolicy;await br.set({configRef:await svc.saveJSON(br,'discretionary_config',config)},{merge:true});}
     if(!prepared){config.aiPlan={...config.aiPlan,preparedResearch:false};await br.set({configRef:await svc.saveJSON(br,'legacy_config',config)},{merge:true});}
     const runId=batch.runIds[0],ref=fake.col('InvestorAI_Simulations').doc(runId);
     return {svc,runId,ref,fake,calls,toolRounds,finalists:()=>finalists,setValid:()=>{bad=null;},drive:async()=>{for(let i=0;i<8;i++){await svc.execute(runId);wall+=10000;const r=await svc.getRun(runId);if(transportErrors.length)throw Error(transportErrors.join('\n'));if(['complete','incomplete'].includes(r.status))return r;}throw Error('Pipeline failed to terminate: '+JSON.stringify({run:await svc.getRun(runId),calls:calls.map(b=>b.text.format.name)}));}};
   }
+  await check('required_investment_execution_is_atomic_bounded_and_uses_real_prices_and_protection',async()=>{
+    const E=require('./_investorExecution'),H=require('./_investorResearchHandoff'),C=require('./_investorDecisionContext'),M=require('./_investorMarket');
+    const date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,535),open=M.nyWallClockToUtcMs(date,570);
+    await assert.rejects(()=>E.tickRequiredSimulation({accountId:RID}),/historical-simulation only/);
+    for(const scenario of ['target','gap','ambiguous','crash']) {
+      const fake=database();let clock=open+20*60000;
+      const investment={allocationUsd:scenario==='target'?30000:5000,conviction:'LOW',sizingReason:'Uncertain outlook',assessment:{},outlook:'Assumption',takeProfitBps:500,stopLossBps:500,evidenceIds:[]};
+      const content={schemaVersion:'simulation-investment-plan.v1',investments:{AAA:investment},comparisonNote:'Relative selection',policy:H.INVESTMENT_POLICY,cutoffMs:cutoff,documentHashes:{AAA:'source'}};
+      const plan={...content,planHash:C.hash(content)},scope={runId:RID,investmentPolicy:H.INVESTMENT_POLICY,clock:()=>clock,collection:fake.col,transaction:fn=>fake.runTransaction(fn),batch:fake.batch,executionSpreadBps:10,feePerShareMicros:5000};
+      await fake.col(A.COL.accounts).doc(RID).set({balanceCents:{cash:10000000,contributed_capital:-10000000}});
+      await fake.col(A.COL.ledger).doc('initial').set({accountId:RID,legs:[{account:'cash',amountCents:10000000},{account:'contributed_capital',amountCents:-10000000}]});
+      await A.withSimulationScope(scope,async()=>{
+        await E.saveRequiredSimulationPlan({plan,admin:fake,accountId:RID,managerRunId:'meeting'});
+        const bar={t:new Date(open).toISOString(),o:100,h:scenario==='ambiguous'?110:101,l:scenario==='ambiguous'?90:99,c:100,v:100000};
+        const tick=b=>E.tickRequiredSimulation({admin:fake,accountId:RID,barsBySymbol:{AAA:[b]},nowMs:clock});
+        for(const invalid of [{...bar,v:0},{...bar,halted:true},{...bar,t:new Date(open-3600000).toISOString()},{...bar,t:new Date(clock).toISOString()}])await tick(invalid);
+        assert.equal((await fake.col(A.COL.fills).get()).size,0);
+        if(scenario==='crash') {
+          const normal=fake.runTransaction;fake.runTransaction=fn=>normal(async tx=>{await fn(tx);throw Error('worker stopped before commit');});
+          await assert.rejects(()=>tick(bar),/worker stopped/);assert.equal((await fake.col(A.COL.fills).get()).size,0);
+          assert.equal((await fake.col(A.COL.accounts).doc(RID).get()).data().balanceCents.cash,10000000);fake.runTransaction=normal;
+        }
+        await Promise.all([tick(bar),tick(bar)]);
+        let fills=(await fake.col(A.COL.fills).get()).docs.map(d=>d.data()),buys=fills.filter(f=>f.side==='buy');assert.equal(buys.length,1);
+        const buy=buys[0],spent=Number(buy.notionalMinor)+Number(buy.feeMinor);assert.equal(buy.priceMicros,'100050000');
+        assert(spent<=investment.allocationUsd*100&&spent>investment.allocationUsd*100-10006);
+        clock+=5*60000;
+        const next={...bar,t:new Date(open+5*60000).toISOString(),o:scenario==='gap'?90:110,h:scenario==='gap'?93:112,l:scenario==='gap'?88:109,c:scenario==='gap'?90:111};
+        await tick(next);await tick(next);
+        fills=(await fake.col(A.COL.fills).get()).docs.map(d=>d.data());assert.equal(fills.length,2);
+        const sell=fills.find(f=>f.side==='sell');assert.equal(sell.role,scenario==='gap'||scenario==='ambiguous'?'STOP':'TARGET');
+        if(scenario==='gap')assert.equal(sell.priceMicros,'89955000');
+        if(scenario==='ambiguous')assert.equal(sell.ambiguous,true);
+        const conservation=await E.assertConservation(RID,{admin:fake});assert(conservation.pass,JSON.stringify(conservation));
+        assert.equal((await fake.col(A.COL.positions).doc(RID+'_AAA').get()).data().open,false);
+        const profit=BigInt(sell.notionalMinor)-BigInt(sell.feeMinor)-BigInt(buy.notionalMinor)-BigInt(buy.feeMinor);
+        assert.equal(BigInt((await fake.col(A.COL.accounts).doc(RID).get()).data().balanceCents.cash),10000000n+profit);
+      });
+    }
+  });
+  await check('required_investment_schema_enforces_allocation_and_exact_candidate_coverage',()=>{
+    const H=require('./_investorResearchHandoff'),C=require('./_investorDecisionContext');
+    const content={version:H.VERSION,symbol:'AAA',cutoffMs:Date.UTC(2026,8,3),baseline:{symbol:'AAA'},evidence:[]},doc={...content,documentHash:C.hash(content)};
+    const row={allocationUsd:5000,conviction:'LOW',sizingReason:'Thin evidence',assessment:Object.fromEntries(H.SECTIONS.map(k=>[k,'Uncertain'])),outlook:'Assumptions',takeProfitBps:100,stopLossBps:100,evidenceIds:['baseline:symbol']};
+    const out={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Best available',investments:{AAA:row}};
+    assert(H.validateInvestmentPlan(out,[doc]).planHash);
+    for(const amount of [0,4999,30001])assert.throws(()=>H.validateInvestmentPlan({...out,investments:{AAA:{...row,allocationUsd:amount}}},[doc]),/INVALID/);
+    assert.throws(()=>H.validateInvestmentPlan({...out,investments:{}},[doc]),/INVALID/);
+    assert.throws(()=>H.validateInvestmentPlan({...out,investments:{AAA:{...row,evidenceIds:['invented']}}},[doc]),/INVALID/);
+    assert.throws(()=>H.validateInvestmentPlan({...out,investments:{BBB:row}},[doc]),/INVALID/);
+  });
+  await check('required_investments_complete_real_pipeline_with_two_purchases_and_no_extra_ai',async()=>{
+    const x=await researchPipeline({prepared:true,required:true,failure:'usage'}),r=await x.drive();
+    assert.equal(r.status,'complete',JSON.stringify(r.error));assert.equal(r.buys,2);assert.equal(r.progress,100);assert.equal(x.calls.length,5);
+    const fills=(await x.ref.collection(A.COL.fills).get()).docs.map(d=>d.data());
+    const buys=fills.filter(f=>f.side==='buy');assert.equal(buys.length,2);
+    assert.equal(buys[0].source,'historical_simulation');
+    for(const f of buys){const spent=Number(f.notionalMinor)+Number(f.feeMinor);assert(spent>=490000&&spent<=3000000);}
+    assert.equal(r.pendingAiCount,0);assert.equal(r.reservedNano,0);
+    const plan=(await x.ref.collection(A.COL.portfolioPlans).doc('required_investment').get()).data();assert.equal(plan.policy.maxUsd,30000);
+    const view=await x.svc.detail(x.runId,'operator',{collection:'decisions'});assert.equal(view.items.filter(d=>d.decision==='BUY').length,2);
+    await x.svc.execute(x.runId);assert.equal((await x.ref.collection(A.COL.fills).get()).size,fills.length);assert.equal(x.calls.length,5);
+  });
   await check('prepared_document_binds_exact_sources_retains_risks_and_rejects_unknown_future_or_changed_evidence',()=>{
     const H=require('./_investorResearchHandoff'),cutoff=Date.UTC(2026,8,3,12,55),claim={claimId:'c1',documentVersionId:'d1',claimType:'FACT',text:'Revenue increased.',quote:'Revenue increased.',publishedAtMs:cutoff-1000};
     const risk={...claim,claimId:'risk',claimType:'RISK_FACTOR',text:'Debt covenant risk.'};
@@ -7188,7 +7258,7 @@ async function simulatorAdversarial({only=null}={}) {
       }});
       const b=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','engine');
       const ref=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
-      const legacyConfig=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef);delete legacyConfig.aiPlan;
+      const legacyConfig=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef);delete legacyConfig.aiPlan;delete legacyConfig.investmentPolicy;
       await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({configRef:await svc.saveJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),'legacy_config',legacyConfig)},{merge:true});await ref.set({aiPlan:null},{merge:true});
       b.configRef=(await svc.getBatch(b.batchId)).configRef;
       const deferred=await svc.execute(b.runIds[0]);assert.equal(deferred.yielded,true);assert.equal((await svc.getRun(b.runIds[0])).status,'queued');assert.equal(submitted,0);
@@ -7242,7 +7312,7 @@ async function simulatorAdversarial({only=null}={}) {
       assert.equal(run.evidenceStorage,'shared_read_only.v1');assert(stages.filter(s=>s.stage==='release').every(s=>s.total>0&&s.done<=s.total));
       // A second batch reuses the fully prepared scenario without downloading again.
       const prior=priceRequests,b2=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','reuse');
-      const config2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef);await svc.ensureRepository(b2,config2);
+      const config2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef);delete config2.investmentPolicy;await fake.col('InvestorAI_SimulationBatches').doc(b2.batchId).set({configRef:await svc.saveJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),'legacy_investment_config',config2)},{merge:true});await svc.ensureRepository(b2,config2);
       assert.equal((await svc.execute(b2.runIds[0])).done,true);assert.equal((await svc.getRun(b2.runIds[0])).status,'complete');assert.equal((await svc.getRun(b2.runIds[0])).shortlist.count,1);assert.equal(submitted,1);assert.equal(priceRequests,prior);assert(sec.calls.length>=4);assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);
     } finally {M.loadMarketSettings=saved.load;M.providerCredentials=saved.credentials;}
   });

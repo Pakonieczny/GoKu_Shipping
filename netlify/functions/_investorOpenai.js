@@ -971,17 +971,26 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
 
   /* ── the one request path ──────────────────────────────────────────────── */
   async function invoke(fn, { user, tools = null, scope = {}, background = false, waitMs = DEFAULT_WAIT_MS, timeoutMs = DEFAULT_TIMEOUT_MS,
-    requestKey = null, contextManifestHash = null, sourceManifestHash = null, allowedClaimIds = null, promptCacheKey = null, extraRules = "" } = {}) {
+    requestKey = null, contextManifestHash = null, sourceManifestHash = null, allowedClaimIds = null, promptCacheKey = null, extraRules = "", outputSchema = null } = {}) {
     if (A.currentScope() && await A.currentScope().paused()) return {ok:false,pending:true,simulationPaused:true};
     const roleName = ROLE_OF[fn], role = POLICY.ROLE_MODELS[roleName], schemaVersion = SCHEMA_OF[fn];
     if (!role || !schemaVersion) return failure(`unknown gateway function ${fn}`);
     if (POLICY.FORBIDDEN_INVESTMENT_MODELS.includes(role.model)) return failure("forbidden_model_in_role");
     if (!env.OPENAI_API_KEY) return failure("OPENAI_API_KEY not configured");
     const identity = POLICY.policyIdentity();
-    const strict = POLICY.strictOutputSchema(gatewaySchema(schemaVersion), { preserveConstraints:!!HANDOFF.SCHEMAS[schemaVersion], name: schemaVersion.replace(/[^a-z0-9_]/gi, "_") });
+    const strict = POLICY.strictOutputSchema(outputSchema || gatewaySchema(schemaVersion), { preserveConstraints:!!outputSchema || !!HANDOFF.SCHEMAS[schemaVersion], name: schemaVersion.replace(/[^a-z0-9_]/gi, "_") });
+    strict.localSchema=outputSchema;
+    if(outputSchema)strict.name=outputSchema.properties.schemaVersion.enum[0].replace(/[^a-z0-9_]/gi,'_');
     const workload=A.currentScope()?.aiWorkload;
     const simulationRules=workload ? `\nThis historical simulation uses a saved 50-company shortlist and a strict total AI budget. Keep prose concise and do not repeat input evidence. ${fn==='reviewUniverse'?'Review every supplied company, but request deep research for at most '+workload.maxResearchCompanies+' highest-priority finalists. All other rows must use reviewDirective NONE unless an existing researched holding can be reused. Keep each coverage reason under 15 words. Research requests must name only supplied shortlist symbols.':fn==='researchCompany'?'Write a compact, complete memo with short checklist entries. Use source identifiers and verified calculations; do not invent evidence to save tokens.':''}` : '';
-    const system = PROMPTS[fn].system + (extraRules ? `\n${extraRules}` : "") + simulationRules;
+    const requiredInvestment=workload?.investmentPolicy?.version===HANDOFF.INVESTMENT_POLICY.version;
+    if(requiredInvestment && fn==='reviewUniverse') {
+      strict.schema.properties.researchRequests.minItems=1;
+      strict.schema.properties.researchRequests.maxItems=2;
+      strict.strictHash=sha(strict.schema);strict.localSchema=strict.schema;
+    }
+    const investmentRules=requiredInvestment && fn==='reviewUniverse'?'\nSIMULATION MANDATE: choose the best one or two candidates to INVEST in, not whether to hold cash. You must request RESEARCH_NOW for at least one entry-eligible candidate. Prefer complete dated evidence and available prices. Uncertainty affects subsequent position size. Do not exclude every company merely because cash looks better.':'';
+    const system = PROMPTS[fn].system + (extraRules ? `\n${extraRules}` : "") + simulationRules + investmentRules;
     const inputItems = [{ role: "system", content: system }, { role: "user", content: user }];
     const inputTokensEst = estimateTokens(system) + estimateTokens(user);
     const maxOutputTokens = workload?.outputTokens?.[fn] || MAX_OUTPUT_TOKENS[fn];
@@ -1218,7 +1227,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     if (parsed.truncated) return reject("output_truncated");
     if (parsed.incomplete) return reject(`incomplete_${(data.incomplete_details || {}).reason || "unknown"}`);
     if (parsed.parsed == null) return reject(parsed.parseError ? "unparseable_model_output" : "empty_model_output");
-    const localErrors=HANDOFF.SCHEMAS[schemaVersion]?POLICY.validateAgainst(HANDOFF.SCHEMAS[schemaVersion],parsed.parsed):null;
+    const localErrors=strict.localSchema?POLICY.validateAgainst(strict.localSchema,parsed.parsed):HANDOFF.SCHEMAS[schemaVersion]?POLICY.validateAgainst(HANDOFF.SCHEMAS[schemaVersion],parsed.parsed):null;
     const v = localErrors?{ok:localErrors.length===0,errors:localErrors}:POLICY.validate(schemaVersion, parsed.parsed);
     if (!v.ok) return reject("schema_invalid", { schemaErrors: v.errors.slice(0, 12) });
     if (allowedClaimIds) {
@@ -1385,6 +1394,17 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
   }
   async function decidePreparedPortfolio({documents=[],packets=[],completedResearch=[],holdings=[],portfolio,marks,policy,marketState,expansionBlocked=false,contextManifestHash,waitMs=DEFAULT_WAIT_MS}={}) {
     try{documents.forEach(HANDOFF.assertDocument);}catch(e){return failure(e.code);}
+    if(A.currentScope()?.aiWorkload?.investmentPolicy?.version===HANDOFF.INVESTMENT_POLICY.version) {
+      const outputSchema=HANDOFF.investmentSchema(documents);
+      const user=[untrusted('prepared_documents',documents),untrusted('historical_market',marketState),
+        untrusted('simulation_policy',HANDOFF.INVESTMENT_POLICY)].join('\n\n');
+      const extraRules=`SIMULATION POLICY OVERRIDE: This is a mandatory-investment historical experiment with $100,000 fictitious cash, not the discretionary desk. Use the supplied simulation schema instead of the earlier memo/mandate schema. Invest in EACH of the one or two supplied finalists. Choose an integer allocationUsd from 5000 through 30000 per company based on your conviction; low confidence and incomplete evidence should generally mean a smaller allocation. Explain the amount. Cash preference or a negative expected return is not grounds to omit a purchase in this experiment; report it honestly. No invented facts, sources, probabilities or promised returns. Complete every assessment section, including missingInformation, and provide a bear/base/bull outlook with assumptions clearly labelled. Cite only the supplied evidenceIds or baseline handles. Choose takeProfitBps and stopLossBps relative to the actual entry price; these control exits for the entire session. The simulator buys whole shares at the first available regular-session bar opening price plus spread and fees, rounding the allocation down to avoid exceeding it. It sells on your target or stop and otherwise marks the position at session end. No further AI calls or intraday reanalysis. The simulation policy replaces the earlier cash-abstention, positive-return, discretionary risk-sizing, LIMIT-mandate and valuation-calculator requirements; retain source honesty and the historical cutoff. Return the simulation schema only.`;
+      const r=await invoke('decidePreparedPortfolio',{user,outputSchema,extraRules,background:true,waitMs,contextManifestHash,
+        requestKey:'required-investment|'+sha(user)});
+      if(!r.ok)return r;
+      try{return {...r,simulationPlan:HANDOFF.validateInvestmentPlan(r.output,documents)};}
+      catch(e){return {...r,ok:false,error:e.code||'SIMULATION_INVESTMENT_PLAN_INVALID'};}
+    }
     const allowedClaimIds=[...new Set([...packets.flatMap(p=>(p.claims||[]).map(c=>c.claimId)),...holdings.flatMap(h=>(h.claims||[]).map(c=>c.claimId))])];
     const user=[untrusted("prepared_documents",documents),untrusted("completed_research",completedResearch),untrusted("holdings",holdings),
       untrusted("portfolio",portfolio),untrusted("liquidity",marks),untrusted("risk_policy",policy),untrusted("market_state",marketState),
