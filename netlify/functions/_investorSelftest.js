@@ -5859,6 +5859,13 @@ async function simulatorAdversarial() {
     return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
   }
   const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  await check('expired_worker_is_visible_as_stalled_without_losing_saved_progress',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','stalled-worker');
+    const rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+    await rr.set({status:'preparing',initialized:true,phase:'Reading saved company research',leaseOwner:'interrupted-worker',leaseUntil:now-1000,lastHeartbeatAtMs:now-100000,scenarioCursor:17,spentNano:123},{merge:true});
+    let view=await svc.overview({owner:'operator',batchId:b.batchId});assert.equal(view.runs[0].activity,'stalled');assert.equal(view.runs[0].scenarioCursor,17);assert.equal(view.runs[0].spentNano,123);
+    await svc.control({runId:b.runIds[0],command:'pause'},'operator');view=await svc.overview({owner:'operator',batchId:b.batchId});assert.equal(view.runs[0].activity,'paused');
+  });
   await check('simulation_controls_pass_real_request_validation_and_reject_invalid_envelopes',()=>{
     const S=require('./_investorApiSchemas'),base={apiVersion:'investor.v2',requestId:'req_sim_controls',action:'simulationControl',idempotencyKey:'k'.repeat(24),csrfToken:'c'.repeat(24)};
     for(const params of [{batchId:BID,command:'retry_repository'},{runId:RID,command:'retry'},...['pause','resume'].flatMap(command=>[{batchId:BID,command},{runId:RID,command}])]) {
@@ -6319,7 +6326,12 @@ async function simulatorAdversarial() {
       state=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(state.status,'ready',JSON.stringify(state.errors));
       const firstPages=[...requests].filter(([key])=>key.startsWith('5Min|')&&key.includes('|first|'));assert(firstPages.every(([,count])=>count===1),'a saved provider page was downloaded again after retry');
       assert([...requests].filter(([key])=>key.startsWith('1Day|')).every(([,count])=>count===1),'daily baseline was downloaded per simulation');
-      const early=(await svc.repositoryPackets(await svc.getRun(b.runIds[0]),config,state)).packets.find(p=>p.symbol==='A');
+      const loading=[];
+      const early=(await svc.repositoryPackets(await svc.getRun(b.runIds[0]),config,state,{onProgress:async work=>loading.push(work)})).packets.find(p=>p.symbol==='A');
+      assert.equal(loading[0].stage,'load_prices');assert.equal(loading[1].done,0);assert.equal(loading[1].current,'A');
+      assert.equal(loading.at(-1).done,state.companies);assert.equal(loading.at(-1).total,state.companies);
+      let checked=0;const loadingRun=await svc.getRun(b.runIds[0]);
+      await assert.rejects(()=>svc.repositoryPackets(loadingRun,config,state,{shouldPause:async()=>++checked===3}),e=>e.code==='SIMULATION_PREPARATION_YIELD');assert.equal(checked,3);
       const late=(await svc.repositoryPackets(await svc.getRun(b.runIds[1]),config,state)).packets.find(p=>p.symbol==='A');
       assert(!early.data.some(x=>x.collection===A.COL.financialFacts&&x.data.periodEnd==='2026-06-30'));
       assert(late.data.some(x=>x.collection===A.COL.financialFacts&&x.data.periodEnd==='2026-06-30'));
@@ -6381,7 +6393,13 @@ async function simulatorAdversarial() {
       const repository=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(repository.status,'ready',JSON.stringify(repository.errors));assert.equal(submitted,0);assert.equal(priceRequests,repository.companies+repository.dates+1);prepared=true;
       const preview=await svc.repositoryPackets(await svc.getRun(b.runIds[0]),config,repository);const packet=preview.packets.find(p=>p.symbol==='A');assert.equal(packet.coverage.regular,76);assert.equal(packet.coverage.missing,2);assert.equal(packet.coverage.outsideSession,1);assert(packet.bars.every(b=>b.c===100));
 
+      const stages=[],transaction=fake.runTransaction;
+      fake.runTransaction=fn=>transaction(tx=>fn({...tx,set:(target,data,opts)=>{if(target.path===ref.path&&data.work){stages.push({...data.work});wall+=2100;}return tx.set(target,data,opts);}}));
       const result=await svc.execute(b.runIds[0]),run=await svc.getRun(b.runIds[0]);
+      for(const stage of ['load_prices','load_research','account','release','manager_freeze','manager_review','replay','finalize'])assert(stages.some(s=>s.stage===stage),'Missing progress for '+stage);
+      assert(stages.filter(s=>s.stage==='load_research').some(s=>s.done>0&&s.done<s.total));
+      assert(stages.filter(s=>s.stage==='replay').some(s=>s.done>0&&s.done<s.total));assert(run.aiActivity.checkedAtMs);assert.equal(run.aiActivity.status,'completed');
+      fake.runTransaction=transaction;
       assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(run.returnBps,0);assert.equal(run.progress,100);assert.equal(submitted,1);assert.equal(priceRequests,repository.companies+repository.dates+1);
       assert.deepEqual((await fake.col(A.COL.accounts).doc('paper-1').get()).data(),{untouched:true});assert.equal((await ref.collection('curve').get()).size,83);
       assert.equal(run.priceCoverage.symbolsWithGaps[0].symbol,'A');
