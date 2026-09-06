@@ -182,6 +182,29 @@ const Simulator = (() => {
     r.error?.code==='SIMULATION_MANAGER_INCOMPLETE'&&r.aiActivity?.stage==='manager_review'&&/schema_invalid/.test(r.error.message||'')||
     r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&(r.error.details?.failed||[]).every(x=>(x.error==='schema_invalid'||/^HANDOFF_/.test(x.error||''))&&x.responseId)||
     r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid');
+  // Card projections use recorded fills and observed prices, never AI estimates.
+  function tradeCards(fills,marks,marketTimeMs,prior=[]) {
+    const groups=new Map();
+    for(const f of fills||[]) {
+      if(!f.symbol||!['buy','sell'].includes(String(f.side).toLowerCase()))continue;
+      const row=groups.get(f.symbol)||[];row.push(f);groups.set(f.symbol,row);
+    }
+    return [...groups].map(([symbol,events])=>{
+      events.sort((a,b)=>a.eventAtMs-b.eventAtMs);
+      const buys=events.filter(f=>String(f.side).toLowerCase()==='buy'),sells=events.filter(f=>String(f.side).toLowerCase()==='sell');
+      const sum=(items,key)=>items.reduce((n,f)=>n+Number(f[key]||0),0),bought=sum(buys,'quantityUnits'),sold=sum(sells,'quantityUnits'),held=Math.max(0,bought-sold);
+      const entry=buys[0]?.eventAtMs??null,exit=held===0&&sells.length?sells.at(-1).eventAtMs:null;
+      const average=items=>{const qty=sum(items,'quantityUnits');return qty?Math.round(items.reduce((n,f)=>n+Number(f.priceMicros)*Number(f.quantityUnits),0)/qty):null;};
+      const mark=marks[symbol],entryPriceMicros=average(buys),exitPriceMicros=average(sells),priceMicros=mark?.priceMicros??null;
+      const investedMinor=sum(buys,'notionalMinor')+sum(buys,'feeMinor'),proceedsMinor=sum(sells,'notionalMinor')-sum(sells,'feeMinor');
+      const pnlMinor=held&&priceMicros==null?null:proceedsMinor+Math.round(held*Number(priceMicros||0)/10000)-investedMinor;
+      const previous=prior.find(r=>r.symbol===symbol),curve=(previous?.curve||[]).filter(p=>p.atMs!==mark?.atMs);
+      if(priceMicros!=null&&entryPriceMicros)curve.push({atMs:mark.atMs,priceMicros,returnBps:10000*(priceMicros/entryPriceMicros-1)});
+      return {symbol,boughtShares:bought,soldShares:sold,heldShares:held,investedMinor,entryPriceMicros,exitPriceMicros,priceMicros,
+        priceAsOfMs:mark?.atMs??null,entryAtMs:entry,exitAtMs:exit,heldMs:entry==null?null:Math.max(0,(exit??marketTimeMs)-entry),
+        pnlMinor,returnBps:pnlMinor==null||!investedMinor?null:10000*pnlMinor/investedMinor,status:held?'OPEN':'CLOSED',curve:curve.slice(-85)};
+    }).filter(r=>r.boughtShares>0).sort((a,b)=>a.entryAtMs-b.entryAtMs||a.symbol.localeCompare(b.symbol));
+  }
   function simulationRequestBody(body,stage) {
     const out=JSON.parse(JSON.stringify(body)),format=out.text?.format;
     const canonical=Object.entries({...P.SCHEMAS,...require('./_investorResearchHandoff').SCHEMAS}).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
@@ -1464,10 +1487,13 @@ const Simulator = (() => {
             for(const pos of positions) {const p=packets.find(x=>x.symbol===pos.symbol),bar=p?.bars.filter(b=>C.barTime(b)+20*60000<=run.clockMs).at(-1);if(bar)await collection(A.COL.positions).doc(pos.id).set({lastPriceUsd:bar.c,markMicros:String(Math.round(bar.c*1e6)),lastMarkUsd:bar.c},{merge:true});}
             const portfolio=await require('./_investorPortfolio').snapshot({accountId:runId,asOfMs:run.clockMs,admin:A});
             const fills=await rows(collection(A.COL.fills).where('accountId','==',runId)),nav=Number(portfolio.navMinor),pnl=nav-10000000;
+            const marketTimeMs=Math.min(run.clockMs-15*60000,M.sessionCloseMs(new Date(meta.cutoffMs)));
+            const cardMarks=Object.fromEntries(packets.map(p=>{const b=p.bars.filter(b=>C.barTime(b)+20*60000<=run.clockMs).at(-1);return [p.symbol,b?{priceMicros:Math.round(b.c*1e6),atMs:C.barTime(b)+5*60000}:null];}));
+            const investments=tradeCards(fills,cardMarks,marketTimeMs,run.investments||[]);
             const spy=packets.find(p=>p.symbol==='SPY'),spyBar=spy?.bars.filter(b=>C.barTime(b)+20*60000<=run.clockMs).at(-1),benchmarkReturnBps=spyBar?10000*(spyBar.c/spy.bars[0].o-1):null;
             const point={benchmarkReturnBps,atMs:run.clockMs,navMinor:nav,pnlMinor:pnl,returnBps:pnl/1000,positions:portfolio.positions,buys:fills.filter(f=>String(f.side).toLowerCase()==='buy').length,sells:fills.filter(f=>String(f.side).toLowerCase()==='sell').length};
             await ref.collection('curve').doc(String(run.clockMs)).set(point);
-            await save({phase:'Replaying the market',curvePreview:[...(run.curvePreview||[]).filter(p=>p.atMs!==point.atMs),{atMs:point.atMs,returnBps:point.returnBps}].slice(-85),peakNavMinor:Math.max(run.peakNavMinor||10000000,nav),maxDrawdownBps:Math.max(run.maxDrawdownBps||0,10000*(Math.max(run.peakNavMinor||10000000,nav)-nav)/Math.max(run.peakNavMinor||10000000,nav)),progress:Math.min(100,Math.max(0,100*(run.clockMs-M.nyWallClockToUtcMs(run.date,570))/(meta.endMs-M.nyWallClockToUtcMs(run.date,570)))),
+            await save({phase:'Replaying the market',marketTimeMs,investments,investedMinor:investments.reduce((n,x)=>n+x.investedMinor,0),curvePreview:[...(run.curvePreview||[]).filter(p=>p.atMs!==point.atMs),{atMs:point.atMs,returnBps:point.returnBps}].slice(-85),peakNavMinor:Math.max(run.peakNavMinor||10000000,nav),maxDrawdownBps:Math.max(run.maxDrawdownBps||0,10000*(Math.max(run.peakNavMinor||10000000,nav)-nav)/Math.max(run.peakNavMinor||10000000,nav)),progress:Math.min(100,Math.max(0,100*(run.clockMs-M.nyWallClockToUtcMs(run.date,570))/(meta.endMs-M.nyWallClockToUtcMs(run.date,570)))),
               benchmarkReturnBps,excessReturnBps:benchmarkReturnBps==null?null:point.returnBps-benchmarkReturnBps,returnBps:point.returnBps,pnlMinor:pnl,buys:point.buys,sells:point.sells,openPositions:portfolio.positions.length,portfolioRef:await saveJSON(ref,'portfolio',portfolio)});
             if(run.clockMs>=meta.endMs) {
               await report({stage:'finalize',label:'Checking costs and saving final results',done:null,total:null,unit:'',current:null});
@@ -1770,6 +1796,6 @@ const Simulator = (() => {
     }
     return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,startBatch,prepareShortlist,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
-  return {VERSION,TARGET,CEILING,TARGET_MS,AI_PLAN,BUDGET_VERSION,boostBudget,simulationRequestBody,shortlistProfiles,validateShortlist,shortlistedRoster,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,sharedEvidenceView,create};
+  return {VERSION,TARGET,CEILING,TARGET_MS,AI_PLAN,BUDGET_VERSION,boostBudget,tradeCards,simulationRequestBody,shortlistProfiles,validateShortlist,shortlistedRoster,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,sharedEvidenceView,create};
 })();
 module.exports.Simulator=Simulator;
