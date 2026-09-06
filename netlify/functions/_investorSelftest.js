@@ -6861,6 +6861,17 @@ async function simulatorAdversarial({only=null}={}) {
     const runId=batch.runIds[0],ref=fake.col('InvestorAI_Simulations').doc(runId);
     return {svc,runId,ref,fake,calls,toolRounds,finalists:()=>finalists,setValid:()=>{bad=null;},drive:async()=>{for(let i=0;i<8;i++){await svc.execute(runId);wall+=10000;const r=await svc.getRun(runId);if(transportErrors.length)throw Error(transportErrors.join('\n'));if(['complete','incomplete'].includes(r.status))return r;}throw Error('Pipeline failed to terminate: '+JSON.stringify({run:await svc.getRun(runId),calls:calls.map(b=>b.text.format.name)}));}};
   }
+  await check('simulation_cards_report_observed_prices_fills_costs_and_holding_time',()=>{
+    const at=Date.UTC(2026,8,3,13,30),buy={symbol:'AAA',side:'buy',eventAtMs:at,quantityUnits:'50',priceMicros:'100000000',notionalMinor:'500000',feeMinor:'25'};
+    const open=Sim.tradeCards([buy],{AAA:{priceMicros:102000000,atMs:at+300000}},at+600000);
+    assert.equal(open[0].investedMinor,500025);assert.equal(open[0].boughtShares,50);assert.equal(open[0].entryPriceMicros,100000000);assert.equal(open[0].priceMicros,102000000);
+    assert.equal(open[0].heldMs,600000);assert.equal(open[0].pnlMinor,9975);assert.equal(open[0].exitPriceMicros,null);
+    const sale={...buy,side:'sell',eventAtMs:at+3600000,priceMicros:'105000000',notionalMinor:'525000'};
+    const closed=Sim.tradeCards([sale,buy],{AAA:{priceMicros:110000000,atMs:at+7200000}},at+7200000,open);
+    assert.equal(closed[0].status,'CLOSED');assert.equal(closed[0].heldShares,0);assert.equal(closed[0].heldMs,3600000);assert.equal(closed[0].exitPriceMicros,105000000);assert.equal(closed[0].pnlMinor,24950);
+    assert.equal(closed[0].curve.length,2);assert.equal(Sim.tradeCards([sale,buy],{AAA:{priceMicros:110000000,atMs:at+7200000}},at+7200000,closed)[0].curve.length,2);
+    assert.equal(Sim.tradeCards([buy],{},at+600000)[0].priceMicros,null);assert.equal(Sim.tradeCards([buy],{},at+600000)[0].pnlMinor,null);
+  });
   await check('required_investment_execution_is_atomic_bounded_and_uses_real_prices_and_protection',async()=>{
     const E=require('./_investorExecution'),H=require('./_investorResearchHandoff'),C=require('./_investorDecisionContext'),M=require('./_investorMarket');
     const date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,535),open=M.nyWallClockToUtcMs(date,570);
@@ -6914,7 +6925,7 @@ async function simulatorAdversarial({only=null}={}) {
   });
   await check('required_investments_complete_real_pipeline_with_two_purchases_and_no_extra_ai',async()=>{
     const x=await researchPipeline({prepared:true,required:true,failure:'usage'}),r=await x.drive();
-    assert.equal(r.status,'complete',JSON.stringify(r.error));assert.equal(r.buys,2);assert.equal(r.progress,100);assert.equal(x.calls.length,5);
+    assert.equal(r.status,'complete',JSON.stringify(r.error));assert.equal(r.buys,2);assert.equal(r.progress,100);assert.equal(x.calls.length,5);assert.equal(r.investments.length,2);assert(r.investments.every(x=>x.boughtShares>0&&x.priceMicros>0&&x.heldMs>=0));assert(r.investedMinor>3400000);
     const fills=(await x.ref.collection(A.COL.fills).get()).docs.map(d=>d.data());
     const buys=fills.filter(f=>f.side==='buy');assert.equal(buys.length,2);
     assert.equal(buys[0].source,'historical_simulation');
