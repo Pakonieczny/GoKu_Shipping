@@ -1073,6 +1073,12 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     if(prior && prior.status === "submission_uncertain") return failure("model_submission_uncertain",{requestId});
     let st = prior && prior.toolStateId ? (await C.read({runId:prior.toolStateId,admin:DB})).state :
       {input:inputItems,round:0,responseId:null,usage:[],toolLog:[],calls:0,startedAtMs:now()};
+    if(prior?.error==='operator_retry_requested'&&st.responseId===prior.retryResponseId) {
+      st.responseId=null;
+      st.usageRounds=(st.usageRounds||[]).filter(round=>round!==st.round);
+      // Keep the failed answer's usage in totals. Only its final request is
+      // replaced; all earlier tool outputs remain pinned in st.input.
+    }
     const save = async () => {
       const stateId = `${requestId}_s_${C.hash(st).slice(0,24)}`;
       await C.freeze({runId:stateId,context:{state:st},admin:DB});
@@ -1089,7 +1095,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     // Background polling yields immediately while the provider is reasoning;
     // the job lease/checkpoint resumes without buying the same response again.
     while (st.round <= POLICY.TOOL_POLICY.maxCallsPerJob) {
-      const reservationId = `${requestId}_round_${st.round}`;
+      const reservationId = `${requestId}_round_${st.round}${prior?.retryGeneration?'_retry_'+prior.retryGeneration:''}`;
       let data;
       if (st.responseId) {
         let r;
@@ -1100,7 +1106,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       } else {
         const est = Number(POLICY.costMinor({model:role.model,ordinaryInputTokens:estimateTokens(JSON.stringify(st.input)),outputTokens:base.maxOutputTokens}).amountMinor);
         const reservation = await reserveMinor(reservationId,est,roleName);
-        if (!reservation.ok) return failure("daily_reservation_exhausted",{requestId,budgetBlocked:true});
+        if (!reservation.ok && !reservation.duplicate) return failure("daily_reservation_exhausted",{requestId,budgetBlocked:true});
         const body={model:role.model,store:false,background:true,include:["reasoning.encrypted_content"],max_output_tokens:base.maxOutputTokens,input:st.input,
           reasoning:role.reasoning,text:{format:{type:"json_schema",name:strict.name,strict:true,schema:strict.schema}},
           tools:toolDefinitions(tools),tool_choice:"auto",parallel_tool_calls:false};

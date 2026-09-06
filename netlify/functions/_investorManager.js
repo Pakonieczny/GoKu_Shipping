@@ -496,14 +496,29 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
         const persisted = await R.persistImmutable({ ...r, dossierVersionId: packet.dossierVersionId, dossierHash: packet.dossierHash }, { admin: deps.admin, managerRunId, directive: request.reviewDirective, cutoffMs: st.cutoff.cutoffMs });
         if (persisted.persisted && deps.claimVerifier) { try { await deps.claimVerifier.verifyAndPersist({ premises: persisted.factualPremises, sourceManifest: persisted.sourceManifest, admin: deps.admin }); } catch {} }
         return { ok: persisted.persisted === true, symbol: request.symbol, memoId: persisted.memoId || null, dossierVersionId:packet.dossierVersionId, proposedDecision: persisted.proposedDecision || null, reasonCode: persisted.reasonCode || null,
-          verifiedValuation:persisted.verifiedValuation || null, mandate: persisted.mandate || null, memo: persisted.memo || null, factualPremises: persisted.factualPremises || [], error: persisted.persisted ? null : persisted.reason, toolCalls: bound.log.length, costMinor: r.costMinor || "0" };
+          verifiedValuation:persisted.verifiedValuation || null, mandate: persisted.mandate || null, memo: persisted.memo || null, factualPremises: persisted.factualPremises || [], error: persisted.persisted ? null : persisted.reason, schemaErrors:r.schemaErrors||null, requestId:r.requestId||null, responseId:r.responseId||null, toolCalls: bound.log.length, costMinor: r.costMinor || "0" };
       };
-      const out = await pool.run({ requests, concurrency: policy.maxConcurrentResearchJobs, worker, deadlineMs: holdingDeadlineMs,
-        budgetRemaining: () => budget() > minStageMs, onResult: async (row) => { st.research = st.research || { completed: [], failed: [], deferred: [] }; if (row.ok) st.research.completed.push({ symbol: row.request.symbol, verifiedValuation:row.result.verifiedValuation || null, memoId: row.result.memoId, dossierVersionId:row.result.dossierVersionId, proposedDecision: row.result.proposedDecision, reasonCode: row.result.reasonCode, mandate: row.result.mandate, memo: row.result.memo, factualPremises: row.result.factualPremises, request: row.request }); await record({ research: { requested: requests.length, completed: new Set(st.research.completed.map(x => x.symbol)).size, failed: 0, deferred: 0 } }); } });
+      let out, researchCheckpoint=Promise.resolve();
+      try { out = await pool.run({ requests, concurrency: policy.maxConcurrentResearchJobs, worker, deadlineMs: holdingDeadlineMs,
+        propagateError: e => !!A.currentScope() && (/^SIMULATION_/.test(e.code||'') || ['10','ABORTED','FIRESTORE/ABORTED'].includes(String(e.code).toUpperCase())),
+        budgetRemaining: () => budget() > minStageMs, onResult: async (row) => {
+          st.research = st.research || { completed: [], failed: [], deferred: [] };
+          if (row.ok) {
+            st.research.completed=st.research.completed.filter(x=>x.symbol!==row.request.symbol);
+            st.research.completed.push({ symbol: row.request.symbol, verifiedValuation:row.result.verifiedValuation || null, memoId: row.result.memoId, dossierVersionId:row.result.dossierVersionId, proposedDecision: row.result.proposedDecision, reasonCode: row.result.reasonCode, mandate: row.result.mandate, memo: row.result.memo, factualPremises: row.result.factualPremises, request: row.request });
+            if(deps.checkpoint) { researchCheckpoint=researchCheckpoint.then(()=>deps.checkpoint({stage,data:st}));await researchCheckpoint; }
+          }
+          await record({ research: { requested: requests.length, completed: st.research.completed.length, failed: 0, deferred: 0 } });
+        } }); }
+      catch(e) { await researchCheckpoint; if(deps.checkpoint)await deps.checkpoint({stage,data:st});throw e; }
       st.research = { completed: out.completed.map((r) => ({ symbol: r.request.symbol, request: r.request, verifiedValuation:r.result.verifiedValuation || null, memoId: r.result.memoId, dossierVersionId:r.result.dossierVersionId, proposedDecision: r.result.proposedDecision, reasonCode: r.result.reasonCode, mandate: r.result.mandate, memo: r.result.memo, factualPremises: r.result.factualPremises })),
-        failed: out.failed.map((r) => ({ symbol: r.request.symbol, request: r.request, error: r.error || (r.result && r.result.error) || null })), deferred: out.deferred.map((r) => ({ symbol: r.symbol, request: r, reason: r.deferredReason })),
+        failed: out.failed.map((r) => ({ symbol: r.request.symbol, request: r.request, error: r.error || (r.result && r.result.error) || null, schemaErrors:r.result?.schemaErrors||null,requestId:r.result?.requestId||null,responseId:r.result?.responseId||null })), deferred: out.deferred.map((r) => ({ symbol: r.symbol, request: r, reason: r.deferredReason })),
         ranges: out.ranges, launchedOrder: out.launchedOrder, concurrency: out.concurrency, invalid: st.researchInvalid || null };
       if (out.failed.some(r=>r.result && r.result.pending) || out.deferred.some(r=>r.deferredReason === "budget")) return yieldNow("research_background_pending");
+      if(A.currentScope() && (st.research.failed.length||st.research.deferred.length||st.researchInvalid)) {
+        if(deps.checkpoint)await deps.checkpoint({stage,data:st});
+        throw Object.assign(new Error('Research did not complete: '+st.research.failed.map(r=>r.symbol+': '+r.error).concat(st.research.deferred.map(r=>r.symbol+': '+r.reason),st.researchInvalid?[st.researchInvalid.message]:[]).join('; ')),{code:'SIMULATION_RESEARCH_INCOMPLETE',details:{failed:st.research.failed,deferred:st.research.deferred,invalid:st.researchInvalid||null}});
+      }
       st.overrides = forceNonExecutableForIncompleteResearch({ researchRequests: requests, completed: out.completed, deferred: out.deferred, failed: out.failed });
       await record({ status: "running", research: { requested: requests.length, completed: st.research.completed.length, failed: st.research.failed.length, deferred: st.research.deferred.length, ranges: out.ranges } });
       stage = "synthesis";
@@ -528,7 +543,11 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       const claimsById = Object.fromEntries(candidates.flatMap((c) => (c.factualPremises || []).map((p) => [p.claimId, { claimId: p.claimId, documentVersionId: p.documentVersionId, text: p.text }])));
       const r = await deps.gateway.finalizePortfolio({ coverage: st.effective.coverage, researchResults: candidates.map((c) => ({ symbol: c.symbol, memo: c.memo, verifiedValuation:c.verifiedValuation })), holdings: holdingPackets.packets, portfolio, feasibleAlternatives: feasible, resynthesisFeedback:st.resynthesisFeedback || null, expansionBlocked:!!st.expansionBlocked, marketState:(await rebuildContext(st,deps,accountId)).marketState, policy: { policyHash: policy.policyHash, riskPolicyHash: policy.riskPolicyHash, riskMandate: policy.riskMandate }, contextManifestHash: sha({ c: st.contextManifestHash, memos: candidates.map((c) => c.memoId), attempt: st.synthesisAttempt || 0 }), waitMs: Math.max(30000, Math.min(budget() - minStageMs, 8 * 60 * 1000)) });
       if (r.pending) return { done: false, yielded: true, reason: "sol_background_pending", checkpoint: { stage, data: st }, resumeAtMs: now() + 60000 };
-      if (!r.ok) { st.synthesis = { ok: false, error: r.error, budgetBlocked: r.budgetBlocked === true }; stage = "activation"; continue; }
+      if (!r.ok) {
+        st.synthesis = { ok: false, error: r.error, schemaErrors:r.schemaErrors||null,requestId:r.requestId||null,responseId:r.responseId||null,budgetBlocked: r.budgetBlocked === true };
+        if(A.currentScope()) { if(deps.checkpoint)await deps.checkpoint({stage,data:st});throw Object.assign(new Error('Portfolio synthesis failed: '+r.error),{code:'SIMULATION_SYNTHESIS_INCOMPLETE',details:st.synthesis}); }
+        stage = "activation"; continue;
+      }
       addCost(r.costMinor);
       const synth = r.synthesis;
       /* claims of every BUY mandate must be supported by an independent verdict (§7.3, §17.4) */

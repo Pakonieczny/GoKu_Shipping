@@ -165,18 +165,29 @@ const Simulator = (() => {
   const fail = (code,message=code) => Object.assign(new Error(message),{code});
   const isContention = e => ['10','ABORTED','FIRESTORE/ABORTED'].includes(String(e?.code??'').toUpperCase())||/^10\s+ABORTED\b/i.test(String(e?.message||''));
   const canResumeContention = r => r.status==='incomplete'&&isContention(r.error);
-  const canResumeBudget = r => r.status==='incomplete'&&r.error?.code==='SIMULATION_BUDGET_INSUFFICIENT';
-  const canRetryAIStep = r => r.status==='incomplete'&&!r.reservedNano&&!r.pendingAiCount&&!!r.aiActivity?.responseId&&(
+  const canResumeBudget = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_BUDGET_INSUFFICIENT'||r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&r.budgetFailure?.code==='SIMULATION_BUDGET_INSUFFICIENT');
+  const failedResponseIds = r => r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE' ? [...new Set((r.error.details?.failed||[]).filter(x=>x.error==='schema_invalid'&&x.responseId).map(x=>x.responseId))] : r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid' ? [r.error.details.responseId].filter(Boolean) : [r.aiActivity?.responseId].filter(Boolean);
+  const canRetryAIStep = r => r.status==='incomplete'&&!r.reservedNano&&!r.pendingAiCount&&failedResponseIds(r).length>0&&(
     r.error?.code==='SIMULATION_AI_RESPONSE_FAILED'&&r.aiActivity?.stage==='shortlist'&&r.aiActivity.incompleteReason==='max_output_tokens'||
-    r.error?.code==='SIMULATION_MANAGER_INCOMPLETE'&&r.aiActivity?.stage==='manager_review'&&/schema_invalid/.test(r.error.message||''));
+    r.error?.code==='SIMULATION_SHORTLIST_INVALID'&&r.aiActivity?.stage==='shortlist'||
+    r.error?.code==='SIMULATION_MANAGER_INCOMPLETE'&&r.aiActivity?.stage==='manager_review'&&/schema_invalid/.test(r.error.message||'')||
+    r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&(r.error.details?.failed||[]).every(x=>x.error==='schema_invalid'&&x.responseId)||
+    r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid');
   function simulationRequestBody(body,stage) {
     const out=JSON.parse(JSON.stringify(body)),format=out.text?.format;
     const canonical=Object.entries(P.SCHEMAS).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
     if(canonical)format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
     if(stage==='shortlist') {
       out.reasoning={...out.reasoning,effort:'low'};
-      if(format?.schema?.properties?.selected?.items?.properties?.reason)format.schema.properties.selected.items.properties.reason.maxLength=120;
-      out.input=[...out.input,{role:'system',content:'This is a lightweight screening step. Compare the supplied profiles and return 50 choices directly. Keep each reason to 8–16 words, at most 120 characters. Leave deep investment analysis to the next manager stage.'}];
+      const symbols=format?.schema?.properties?.selected?.items?.properties?.symbol?.enum;
+      if(symbols?.length) {
+        // One required property per eligible symbol makes duplicate/omitted
+        // companies impossible in a schema-conforming answer. AI supplies the
+        // ranking; the application only takes its first 50 (symbol breaks ties).
+        const assessment={type:'object',additionalProperties:false,required:['rank','reason'],properties:{rank:{type:'integer',minimum:1,maximum:symbols.length},reason:{type:'string',minLength:1,maxLength:120}}};
+        format.schema={type:'object',additionalProperties:false,required:['assessments'],properties:{assessments:{type:'object',additionalProperties:false,required:symbols,properties:Object.fromEntries(symbols.map(symbol=>[symbol,assessment]))}}};
+        out.input=[...out.input,{role:'system',content:'Return one brief assessment for EVERY supplied symbol using the assessments object. Rank research priority from 1 (best) to '+symbols.length+' (least interesting), aiming for distinct ranks. Your 50 highest-priority companies become the shortlist; the application breaks any tied ranks by symbol. This replaces the selected-array output instruction. Each reason must explain the supplied evidence in at most 120 characters. Leave deep investment analysis to Astra.'}];
+      }
     }
     return out;
   }
@@ -223,9 +234,17 @@ const Simulator = (() => {
     });
   }
   function validateShortlist(output,roster,count) {
-    const selected=output?.selected,expected=Math.min(count,roster.symbols.length),allowed=new Set(roster.symbols);
-    if(!Array.isArray(selected)||selected.length!==expected||new Set(selected.map(x=>x.symbol)).size!==expected||selected.some(x=>!allowed.has(x.symbol)||typeof x.reason!=='string'||!x.reason.trim()||x.reason.length>240))
-      throw fail('SIMULATION_SHORTLIST_INVALID','AI shortlist must contain exactly '+expected+' distinct eligible companies, each with a brief reason. No investment decision was made.');
+    let selected=output?.selected;
+    const expected=Math.min(count,roster.symbols.length),allowed=new Set(roster.symbols);
+    if(output?.assessments && typeof output.assessments==='object'&&!Array.isArray(output.assessments)) {
+      const entries=Object.entries(output.assessments);
+      if(entries.length!==allowed.size||entries.some(([symbol,row])=>!allowed.has(symbol)||!row||!Number.isInteger(row.rank)||row.rank<1||row.rank>allowed.size||typeof row.reason!=='string'||!row.reason.trim()||row.reason.length>120))
+        throw Object.assign(fail('SIMULATION_SHORTLIST_INVALID','Ranked screening must assess every eligible company once, with a valid rank and brief reason.'),{details:{expectedAssessments:allowed.size,receivedAssessments:entries.length}});
+      selected=entries.map(([symbol,row])=>({symbol,rank:row.rank,reason:row.reason})).sort((a,b)=>a.rank-b.rank||(a.symbol<b.symbol?-1:a.symbol>b.symbol?1:0)).slice(0,expected);
+    }
+    const rows=Array.isArray(selected)?selected:[],symbols=rows.map(x=>x?.symbol),duplicates=[...new Set(symbols.filter((s,i)=>symbols.indexOf(s)!==i))],unknown=symbols.filter(s=>!allowed.has(s)),invalidReasons=rows.filter(x=>!x||typeof x.reason!=='string'||!x.reason.trim()||x.reason.length>240).map(x=>x?.symbol||null);
+    if(!Array.isArray(selected)||rows.length!==expected||duplicates.length||unknown.length||invalidReasons.length)
+      throw Object.assign(fail('SIMULATION_SHORTLIST_INVALID','AI shortlist requires '+expected+' distinct eligible companies; received '+rows.length+' rows, '+duplicates.length+' repeated symbols, '+unknown.length+' ineligible symbols and '+invalidReasons.length+' invalid reasons. Saved response retained.'),{details:{expected,received:rows.length,duplicates,unknown,invalidReasons}});
     return selected.map(x=>({symbol:x.symbol,reason:x.reason.trim()}));
   }
   function shortlistedRoster(roster,shortlist) {
@@ -464,18 +483,32 @@ const Simulator = (() => {
       if(command==='retry') {
         if(!runId)throw fail('BAD_REQUEST','Choose a simulation to retry');
         const r=await getRun(runId,owner),ref=runCol.doc(id(runId)),br=batchCol.doc(r.batchId);await getBatch(r.batchId,owner);
-        const retryRequests=canRetryAIStep(r)?await rows(ref.collection('requests').where('responseId','==',r.aiActivity.responseId).limit(1)):[];
-        const retryModels=retryRequests.length?await rows(ref.collection(admin.COL.modelRequests).where('responseId','==',r.aiActivity.responseId)):[];
+        const responseIds=canRetryAIStep(r)?failedResponseIds(r):[];
+        const retryRequests=(await Promise.all(responseIds.map(responseId=>rows(ref.collection('requests').where('responseId','==',responseId).limit(1))))).flat();
+        const retryModels=(await Promise.all(responseIds.map(responseId=>rows(ref.collection(admin.COL.modelRequests).where('responseId','==',responseId))))).flat();
+        // Older workers persisted "complete" after a research error. Resume at
+        // the saved research barrier, retaining successful memos and responses.
+        let resumeCheckpointRef=null;
+        if(canResumeBudget(r)&&r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&r.managerCheckpointRef) {
+          const cp=await readJSON(ref,r.managerCheckpointRef);
+          if(['synthesis','activation','persist','complete'].includes(cp.stage)&&cp.data?.research&&(cp.data.research.failed?.length||cp.data.research.deferred?.length)) {
+            cp.stage='research';cp.data.stage='research';
+            for(const key of ['synthesis','activation','decisions','noBuyReasons'])delete cp.data[key];
+            resumeCheckpointRef=await saveJSON(ref,'manager_checkpoint',cp);
+          }
+        }
         await rootTransaction(async tx=>{const snap=await tx.get(ref),batch=await tx.get(br),v=snap.data();
-          const retryRef=retryRequests.length?ref.collection('requests').doc(retryRequests[0].id):null,retry=retryRef?(await tx.get(retryRef)).data():null;
+          const retries=await Promise.all(retryRequests.map(q=>tx.get(ref.collection('requests').doc(q.id))));
           if(batch.data()?.resetAtMs||v.resetAtMs||v.leaseUntil>wallNow()||(!canResumeContention(v)&&!canResumeBudget(v)&&!canRetryAIStep(v)&&!canRecheckAI(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure, saved-response recovery, a budget-blocked request or an interrupted database transaction can be retried');
           if(canRetryAIStep(v)) {
-            if(retry?.status!=='settled'||retry.responseId!==v.aiActivity.responseId)throw fail('BAD_REQUEST','Resolve the saved request usage before buying a retry');
-            const originalKey=retry.originalKey||retry.key;
-            tx.set(ref,{aiRequestRetries:{...(v.aiRequestRetries||{}),[originalKey]:(v.aiRequestRetries?.[originalKey]||0)+1},aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
-            for(const model of retryModels)tx.set(ref.collection(admin.COL.modelRequests).doc(model.id),{status:'rejected',error:'operator_retry_requested'},{merge:true});
+            const wanted=failedResponseIds(v);
+            if(retries.length!==wanted.length||retries.some(s=>s.data()?.status!=='settled'||!wanted.includes(s.data().responseId)))throw fail('BAD_REQUEST','Resolve the saved request usage before buying a retry');
+            const attempts={...(v.aiRequestRetries||{})};for(const s of retries){const retry=s.data(),originalKey=retry.originalKey||retry.key;attempts[originalKey]=(attempts[originalKey]||0)+1;}
+            tx.set(ref,{aiRequestRetries:attempts,aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
+            for(const model of retryModels)tx.set(ref.collection(admin.COL.modelRequests).doc(model.id),{status:'rejected',error:'operator_retry_requested',retryResponseId:model.responseId,retryGeneration:(model.retryGeneration||0)+1},{merge:true});
           }
           if(canResumeBudget(v))tx.set(ref,{budgetFailure:null,targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION},{merge:true});
+          if(resumeCheckpointRef) { if(v.managerCheckpointRef!==r.managerCheckpointRef)throw fail('BAD_REQUEST','The saved checkpoint changed; refresh before resuming');tx.set(ref,{managerCheckpointRef:resumeCheckpointRef},{merge:true}); }
           if(canRecheckAI(v))tx.set(ref,{aiRecovery:true,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
           tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,...(missingXomResearch(v)&&!v.initialized?{repositoryPointersRef:null}:{}),phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
           tx.set(br,{status:'running',paused:false,completedAtMs:null,lastControlAtMs:wallNow()},{merge:true});
@@ -1142,12 +1175,13 @@ const Simulator = (() => {
           const holdbackNano=boostBudget(run.aiPlan?.holdbackNano?.[stage]||0),availableNano=Math.max(0,CEILING-r.spentNano-r.reservedNano-holdbackNano),room=availableNano-inputReserve;
           if(!Number.isSafeInteger(body.max_output_tokens)||body.max_output_tokens<=0)throw fail('SIMULATION_INVALID_OUTPUT_LIMIT');
           const maxOutput=Math.max(boostBudget(body.max_output_tokens),stage==='shortlist'?24000:0);
-          if(maxOutput*rates.output>room)return {blocked:true,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano,holdbackNano,requestedOutputTokens:maxOutput};
+          if(maxOutput*rates.output>room)return {blocked:true,pending:r.reservedNano>0&&inputReserve+Math.ceil(maxOutput*rates.output)<=CEILING-r.spentNano-holdbackNano,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano,holdbackNano,requestedOutputTokens:maxOutput};
           const nano=inputReserve+Math.ceil(maxOutput*rates.output);
           tx.set(ref,{reservedNano:r.reservedNano+nano,pendingAiCount:(r.pendingAiCount||0)+1,budgetFailure:null},{merge:true});
           tx.set(ref,{costUpdatedAtMs:wallNow(),aiActivity:{status:'submitting',model:body.model,stage,checkedAtMs:wallNow()}},{merge:true});
           tx.set(qref,{key,originalKey,attempt,effectiveReasoning:effectiveBody.reasoning?.effort||null,stage,status:'submitting',model:body.model,tier,reservation:nano,inputTokens:input,maxOutput,baseMaxOutput:body.max_output_tokens,budgetVersion:BUDGET_VERSION,requestRef,startedAtMs:wallNow(),rates,clockMs:run.clockMs});return {nano,maxOutput};});
         if(reservation.blocked){
+          if(reservation.pending)throw fail('SIMULATION_BUDGET_PENDING','Waiting for the other saved AI response to settle its reservation before starting this request. No replacement request was purchased.');
           const message='AI request not submitted: its configured response allowance needs $'+(reservation.requiredNano/1e9).toFixed(4)+', but $'+(reservation.availableNano/1e9).toFixed(4)+' is available for this step within the $'+(CEILING/1e9).toFixed(5)+' limit'+(reservation.holdbackNano?' ($'+(reservation.holdbackNano/1e9).toFixed(4)+' kept for later decisions)':'')+'. No tokens were purchased for this request. Review the AI workload or budget.';
           await ref.set({budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT',message,details:reservation}},{merge:true});
           throw fail('SIMULATION_BUDGET_INSUFFICIENT',message);
@@ -1170,7 +1204,7 @@ const Simulator = (() => {
         const all=await rows(ref.collection('requests'));
         if(recovery&&!all.some(q=>q.responseId))throw fail('SIMULATION_RESPONSE_UNKNOWN','No acknowledged AI response is saved; automatic resubmission is blocked.');
         for(const q of all.filter(q=>q.responseId&&['pending','awaiting_usage','uncertain'].includes(q.status)))await request({method:'GET',url:'https://api.openai.com/v1/responses/'+q.responseId});
-        if(recovery)for(const q of all.filter(q=>q.status==='settled')) {
+        if(recovery)for(const q of all.filter(q=>q.status==='settled'&&(q.attempt||0)>=(run.aiRequestRetries?.[q.originalKey||q.key]||0))) {
           const response=await readJSON(ref,q.responseRef);
           if(response.status!=='completed'||response.error)throw Object.assign(fail('SIMULATION_AI_RESPONSE_FAILED','Saved AI response '+response.status+': '+(response.error?.message||response.incomplete_details?.reason||'No completed answer')+'. No replacement request was purchased.'),{details:{responseId:q.responseId,responseStatus:response.status,providerError:response.error||null}});
         }
@@ -1349,7 +1383,7 @@ const Simulator = (() => {
       } catch(e) {
         const latest=await getRun(runId);
         if(latest.aiAccountingError&&e.code==='SIMULATION_MANAGER_INCOMPLETE')e=Object.assign(Error(latest.aiAccountingError.message),latest.aiAccountingError);
-        if(e.code==='SIMULATION_USAGE_PENDING') {
+        if(e.code==='SIMULATION_USAGE_PENDING'||e.code==='SIMULATION_BUDGET_PENDING') {
           const stopped=latest.paused||(await getBatch(run.batchId)).paused;
           await save({status:stopped?'paused':'queued',phase:e.message,aiRecovery:true,waitReason:'ai_usage',error:null,nextAttemptAtMs:wallNow()+5000});
           return {done:false,yielded:true};
@@ -1368,7 +1402,7 @@ const Simulator = (() => {
           return {done:false,yielded:true,nextAttemptAtMs};
         }
         if(e.code==='HISTORICAL_PROVIDER_BUSY'&&(latest.preparationRetries||0)>=3)e.message='Historical data provider remained unavailable after three retries. No result was produced.';
-        if(latest.budgetFailure&&['SIMULATION_MANAGER_INCOMPLETE','SIMULATION_BUDGET_INSUFFICIENT'].includes(e.code)){e=Object.assign(Error(latest.budgetFailure.message),latest.budgetFailure);}
+        if(latest.budgetFailure&&['SIMULATION_MANAGER_INCOMPLETE','SIMULATION_RESEARCH_INCOMPLETE','SIMULATION_BUDGET_INSUFFICIENT'].includes(e.code)){e=Object.assign(Error(latest.budgetFailure.message),latest.budgetFailure);}
         const status=latest.paused?'paused':/^HISTORICAL_|^SCENARIO_/.test(e.code||'')?'unavailable':'incomplete';
         if(e.code!=='SIMULATION_LEASE_LOST')await save({status,phase:status==='paused'?'Paused — progress saved':status==='unavailable'?'Historical data unavailable':'Needs review',error:{code:e.code||'SIMULATION_FAILED',message:String(e.message).slice(0,500),details:e.details||null},finishedAtMs:wallNow()});
         return {done:true,status,error:e.code||e.message};

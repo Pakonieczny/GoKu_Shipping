@@ -153,15 +153,15 @@ function deferSuffix(ordered, { maxJobs = Infinity, mustCompleteClasses = ["HOLD
   return { keep: ordered.slice(0, keepCount), deferred: ordered.slice(keepCount).map((r) => ({ ...r, deferredReason: "budget_or_deadline_suffix" })) };
 }
 function createPool({ now = A.now } = {}) {
-  async function run({ requests = [], concurrency = DEFAULT_CONCURRENCY, worker, maxJobs = Infinity, deadlineMs = null, mustCompleteClasses = ["HOLDING_REQUIRED"], onResult = null, budgetRemaining = null } = {}) {
+  async function run({ requests = [], concurrency = DEFAULT_CONCURRENCY, worker, maxJobs = Infinity, deadlineMs = null, mustCompleteClasses = ["HOLDING_REQUIRED"], onResult = null, budgetRemaining = null, propagateError = null } = {}) {
     const ordered = orderRequests(requests);
     const { keep, deferred } = deferSuffix(ordered, { maxJobs, mustCompleteClasses });
     const completed = [], failed = [], deferredLate = [];
     const startedOrder = [];
-    let next = 0;
+    let next = 0, fatal = null;
     const cap = Math.max(1, Math.min(Number(POLICY.TOOL_POLICY.maxResearchConcurrency) || DEFAULT_CONCURRENCY, Number(concurrency) || DEFAULT_CONCURRENCY));
     const launch = async () => {
-      while (next < keep.length) {
+      while (!fatal && next < keep.length) {
         const idx = next; next += 1;
         const request = keep[idx];
         /* pressure after all must-complete work: defer the remaining suffix, never the middle */
@@ -174,12 +174,18 @@ function createPool({ now = A.now } = {}) {
           const result = await worker(request);
           const row = { request, result, ok: !!(result && (result.ok === true || result.persisted === true)) };
           (row.ok ? completed : failed).push(row);
-          if (typeof onResult === "function") { try { await onResult(row); } catch {} }
-        } catch (e) { failed.push({ request, ok: false, error: String(e.code || e.message).slice(0, 160) }); }
+          if (typeof onResult === "function") { try { await onResult(row); } catch(e) { if(propagateError && propagateError(e))throw e; } }
+        } catch (e) {
+          if(propagateError && propagateError(e)) { if(!fatal)fatal=e; }
+          else failed.push({ request, ok: false, error: String(e.code || e.message).slice(0, 160) });
+        }
       }
     };
     /* the barrier: every lane drains before this resolves */
     await Promise.all(Array.from({ length: cap }, () => launch()));
+    // Drain already-started work before propagating; successful sibling results
+    // have reached onResult and their saved checkpoints must not be lost.
+    if(fatal)throw fatal;
     const allDeferred = [...deferred, ...deferredLate];
     return {
       completed, failed, deferred: allDeferred, launchedOrder: startedOrder, concurrency: cap,
