@@ -5931,6 +5931,28 @@ async function simulatorAdversarial() {
     assert.equal((await svc.readJSON(fixture.source,fixture.artifact)).data.length,450);assert.equal((await fixture.rr.collection('requests').doc('paid').get()).data().actualNano,456);assert.equal((await fixture.rr.collection(A.COL.accounts).doc(b.runIds[0]).get()).data().cash,10000000);
     const view=await svc.overview({owner:'operator'});assert.equal(view.cleanup.pendingBatches,0);assert.equal(view.cleanup.removed,450);assert((await svc.cleanupBatch(b.batchId)).done);
   });
+  await check('oversized_cleanup_groups_shrink_and_resume_without_skipping_or_double_counting',async()=>{
+    const fake=database();let wall=now;const svc=Sim.create({admin:fake,wallNow:()=>wall}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','large-copy-cleanup'),f=await legacyCopies(fake,svc,b,{count:17});
+    const raw=fake.batch,attempts=[];let committed=0;
+    fake.batch=()=>{const w=raw();let deletes=0;return {...w,delete:r=>{deletes++;return w.delete(r);},commit:async()=>{
+      if(deletes){attempts.push(deletes);if(deletes>3){assert.equal((await f.rr.get()).data().copyCleanup.removed,committed);throw Object.assign(Error('3 INVALID_ARGUMENT: Transaction too big. Decrease transaction size.'),{code:3});}}
+      await w.commit();committed+=deletes;if(deletes)wall+=2000;
+    }};};
+    const first=await svc.cleanupBatch(b.batchId,{deadlineMs:wall+1000});assert(first.yielded,JSON.stringify(first));
+    assert.deepEqual(attempts,[17,8,4,2]);const saved=(await f.rr.get()).data().copyCleanup;
+    assert.equal(saved.removed,2);assert.equal(saved.pageSize,2);assert.equal(saved.after,'copy_0001');assert.equal((await f.rr.collection(A.COL.claims).get()).size,15);
+    attempts.length=0;const second=await svc.cleanupBatch(b.batchId);assert(second.done,JSON.stringify(second));assert(attempts.every(n=>n<=2),'next worker must reuse the smaller group size');
+    assert.equal((await f.rr.get()).data().copyCleanup.removed,17);assert.equal((await f.rr.collection(A.COL.claims).get()).size,0);assert.equal((await svc.readJSON(f.source,f.artifact)).data.length,17);
+    const view=await svc.overview({owner:'operator'});assert.equal(view.cleanup.removed,17);assert.equal(view.cleanup.pendingBatches,0);assert.deepEqual(view.cleanup.errors,[]);
+  });
+  await check('cleanup_does_not_skip_single_oversized_records_or_retry_unrelated_errors',async()=>{
+    for(const message of ['3 INVALID_ARGUMENT: Transaction too big. Decrease transaction size.','3 INVALID_ARGUMENT: Invalid document field']){
+      const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator',message),f=await legacyCopies(fake,svc,b,{count:1});
+      const raw=fake.batch;let attempts=0;fake.batch=()=>{const w=raw();let deleting=false;return {...w,delete:r=>{deleting=true;return w.delete(r);},commit:async()=>{if(deleting){attempts++;throw Object.assign(Error(message),{code:3});}await w.commit();}};};
+      const result=await svc.cleanupBatch(b.batchId);assert.equal(result.done,false);assert.equal(result.error,3);assert.equal(attempts,message.includes('too big')?2:1);
+      assert.equal((await f.rr.collection(A.COL.claims).get()).size,1);assert.equal((await f.rr.get()).data().copyCleanup.removed,0);assert.equal((await svc.readJSON(f.source,f.artifact)).data.length,1);
+    }
+  });
   await check('cleanup_waits_for_live_workers_and_retains_unverified_or_changed_records',async()=>{
     const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','copy-safety'),f=await legacyCopies(fake,svc,b,{count:2});
     await f.rr.set({leaseUntil:now+60000},{merge:true});assert(!(await svc.cleanupBatch(b.batchId)).done);assert.equal((await f.rr.collection(A.COL.claims).get()).size,2);

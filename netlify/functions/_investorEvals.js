@@ -1390,12 +1390,25 @@ const Simulator = (() => {
             for(;;) {
               if(wallNow()>deadlineMs)return {yielded:true};
               const latest=(await rr.get()).data();if(latest.leaseUntil>wallNow()||latest.dispatchedUntil>wallNow()){waiting=true;break;}
-              let q=rr.collection(admin.COL[COPY_KEYS[index]]).orderBy('__name__').limit(200);if(after)q=q.startAfter(after);
+              const pageSize=Math.max(1,Math.min(200,progress.pageSize||200));
+              let q=rr.collection(admin.COL[COPY_KEYS[index]]).orderBy('__name__').limit(pageSize);if(after)q=q.startAfter(after);
               const page=await q.get(),write=rootBatch();let removed=0,retained=0;
               for(const d of page.docs){if(allowed.get(admin.COL[COPY_KEYS[index]]).get(d.id)?.has(signature(d.data()))){write.delete(d.ref);removed++;}else retained++;}
-              const complete=page.size<200;after=page.docs.at(-1)?.id||after;
-              Object.assign(progress,{index:complete?index+1:index,after:complete?null:after,removed:progress.removed+removed,retained:progress.retained+retained});
-              write.set(rr,{copyCleanup:{...progress}},{merge:true});await write.commit();
+              const complete=page.size<pageSize,nextAfter=page.docs.at(-1)?.id||after;
+              const next={...progress,index:complete?index+1:index,after:complete?null:nextAfter,removed:progress.removed+removed,retained:progress.retained+retained};
+              // Deletion size includes the stored documents and their indexes.
+              // Keep the cursor atomic with deletion; a rejected commit advances nothing.
+              write.set(rr,{copyCleanup:next},{merge:true});
+              try {await write.commit();}
+              catch(e) {
+                const tooLarge=/transaction too (?:big|large)|(?:maximum|exceeds?.*maximum) request size/i.test(String(e.message||''));
+                if(!tooLarge||pageSize===1)throw e;
+                progress.pageSize=Math.max(1,Math.floor(Math.min(pageSize,page.size)/2));
+                await rr.set({copyCleanup:{...progress}},{merge:true});
+                await save({cleanupPhase:'Reducing cleanup groups to '+progress.pageSize+' records · '+r.date,cleanupError:null});
+                continue;
+              }
+              Object.assign(progress,next);after=nextAfter;
               removedTotal+=removed;if(complete)checkedTotal++;await save({cleanupRemoved:removedTotal,cleanupChecked:checkedTotal});
               if(complete)break;
             }
