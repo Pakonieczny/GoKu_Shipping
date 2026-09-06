@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vrERHOsu2KRNFjoJUBWfs4kf8lKoLyYuWu6r+q9QFVk='; style-src 'self' 'sha256-DjkbSCG/8byKhyp9yiN2aJqhagpOVQGUOPJLdbeIao0='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-PLLi+VVxq7R32tk8orzlj4X1313eLEFwYJfTv43OQ3A='; style-src 'self' 'sha256-DjkbSCG/8byKhyp9yiN2aJqhagpOVQGUOPJLdbeIao0='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -2476,14 +2476,15 @@ function simSpark(points,label){var svg=document.createElementNS(SVG_NS,'svg');s
 function simEstimate(){var n=Number($('simCount').value)||0;setText('simEstimate',n+' simulations · target '+simMoney(n*950000000)+' · maximum '+simMoney(n*1045000000)+' USD');}
 async function simMutation(action,params){if(simUI.busy)return;simUI.busy=true;$('simStart').disabled=true;if(action==='simulationStart')setText('simStart','Creating simulations…');setText('simError','');try{var r=await api(action,params,{mutation:{idempotencyKey:newIdempotencyKey(),csrfToken:session.csrfToken}});if(action==='simulationStart'){simUI.batchId=r.data.batchId;simUI.page=0;setHash('simulation',{batch:simUI.batchId});}await loadSimulation();}catch(e){setText('simError',e.message||'Could not save this change.');}finally{simUI.busy=false;$('simStart').disabled=false;setText('simStart','Start simulations');}}
 async function loadSimulation(){
- if(simUI.loading||$('app').hidden||route.view!=='simulation'||document.hidden)return;
+ if($('app').hidden||route.view!=='simulation'||document.hidden)return;
+ if(simUI.loading){if(simUI.data)renderSimulation();return;}
  simUI.loading=true;var ctl=new AbortController(),timer=setTimeout(function(){ctl.abort();},12000),requestedBatch=route.params.batch||simUI.batchId||null;
  try{var params={};if(requestedBatch)params.batchId=requestedBatch;if(simUI.historyCursor)params.cursor=simUI.historyCursor;
   var r=await api('simulationOverview',params,{signal:ctl.signal});
   if(route.view!=='simulation'||requestedBatch!==(route.params.batch||simUI.batchId||null))return;
   simUI.data=r.data;simUI.batchId=r.data.batch&&r.data.batch.batchId;simUI.lastLoadedAt=Date.now();
-  if(simUI.pollError){setText('simError','');simUI.pollError=false;}renderSimulation();
- }catch(e){simUI.pollError=true;if(simUI.data)renderSimulation();setText('simError','Progress refresh delayed — retrying automatically. Last update: '+(simUI.lastLoadedAt?new Date(simUI.lastLoadedAt).toLocaleTimeString():'not received yet')+'.');}
+  if(simUI.pollError){setText('simError','');simUI.pollError=false;simUI.pollErrorDetail=null;}renderSimulation();
+ }catch(e){simUI.pollError=true;simUI.pollErrorDetail=e.name==='AbortError'?'The progress request exceeded 12 seconds.':[(e.status?'HTTP '+e.status:null),e.code,e.message].filter(Boolean).join(' · ').slice(0,400);if(simUI.data)renderSimulation();setText('simError','Progress refresh delayed — retrying automatically. '+simUI.pollErrorDetail+' Last update: '+(simUI.lastLoadedAt?new Date(simUI.lastLoadedAt).toLocaleTimeString():'not received yet')+'.');}
  finally{clearTimeout(timer);simUI.loading=false;}
  // A slow detail request must not block updates to the other simulation cards.
  if(simUI.selected)loadSimDetail();
@@ -2530,7 +2531,7 @@ function simRunFeedback(r,now,refreshAge){
  var beat=r.lastHeartbeatAtMs||r.workerLastSeenAtMs,beatAge=beat?Math.max(0,now-beat):null,advance=work.lastProgressAtMs||r.lastProgressAtMs||r.updatedAtMs||r.segmentStartedAtMs,advanceAge=advance?Math.max(0,now-advance):null;
  var waiting=['waiting_repository','waiting_shared','retrying','starting','queued'].includes(r.activity),health=terminal?'finished':paused?'paused':waiting?'waiting':'working',notice='';
  if(!terminal&&!paused){
-  if(refreshAge>15000){health='disconnected';notice='Progress updates are delayed. This card may be out of date; reconnecting automatically.';}
+  if(refreshAge>15000){health='disconnected';notice='The display has not refreshed for '+simTime(refreshAge)+'. The simulation may still be working; retrying the progress request.';}
   else if(!waiting&&beatAge>90000){health='stalled';notice='Worker has not reported for '+simTime(beatAge)+'. It may have stopped. '+(r.leaseUntil>now?'Automatic recovery waits for its lease to expire.':'Its lease has expired; a replacement worker can resume saved progress.');}
   else if(!waiting&&advanceAge>(r.pendingAiCount?300000:90000)){health='slow';notice='No completed step reported for '+simTime(advanceAge)+'. '+(beatAge!=null&&beatAge<60000?'The worker is still responding.':'Check the last worker update below.');}
   else if(r.activity==='retrying'){notice='Retry '+(r.nextAttemptAtMs>now?'eligible in '+simTime(r.nextAttemptAtMs-now):'queued')+'. '+(r.lastDispatchError||r.phase||'Saved progress is retained.');}
@@ -2549,9 +2550,9 @@ function simRunProgress(r){
  if(f.percent!=null)attrs.value=f.percent;else if(!f.moving)attrs.value=r.status==='complete'?100:0;
  var status=r.status==='complete'?'Completed':f.paused?'Paused — saved':f.detail||(['working','slow'].includes(f.health)?'Working…':'Waiting…');
  var times=[];if(f.elapsed!=null&&!f.terminal&&!f.paused)times.push('This step: '+simTime(f.elapsed));if(f.advanceAge!=null&&!f.terminal)times.push('Last progress '+simTime(f.advanceAge)+' ago');
- var debug=el('details',{'data-run-debug':r.runId},el('summary',{text:'Troubleshooting'}),el('p',{class:'tiny muted',text:'Simulation '+r.runId}),el('p',{class:'tiny muted',text:'Stage: '+(r.work&&r.work.stage||r.phase||r.status)}),el('p',{class:'tiny muted',text:'Last worker update: '+(r.lastHeartbeatAtMs?new Date(r.lastHeartbeatAtMs).toLocaleTimeString():'Not received')}),r.aiActivity?el('p',{class:'tiny muted',text:'AI: '+r.aiActivity.status+(r.aiActivity.responseId?' · '+r.aiActivity.responseId:'')+(r.aiActivity.httpStatus?' · HTTP '+r.aiActivity.httpStatus:'')}):null,r.error?el('p',{class:'sim-error',text:(r.error.code||'Error')+': '+r.error.message}):null,r.lastDispatchError?el('p',{class:'sim-error',text:r.lastDispatchError}):null);
+ var debug=el('details',{'data-run-debug':r.runId},el('summary',{text:'Troubleshooting'}),el('p',{class:'tiny muted',text:'Simulation '+r.runId}),el('p',{class:'tiny muted',text:'Stage: '+(r.work&&r.work.stage||r.phase||r.status)}),el('p',{class:'tiny muted',text:'Last worker update: '+(r.lastHeartbeatAtMs?new Date(r.lastHeartbeatAtMs).toLocaleTimeString():'Not received')}),r.aiActivity?el('p',{class:'tiny muted',text:'AI: '+r.aiActivity.status+(r.aiActivity.responseId?' · '+r.aiActivity.responseId:'')+(r.aiActivity.httpStatus?' · HTTP '+r.aiActivity.httpStatus:'')}):null,r.error?el('p',{class:'sim-error',text:(r.error.code||'Error')+': '+r.error.message}):null,r.lastDispatchError?el('p',{class:'sim-error',text:r.lastDispatchError}):null,simUI.pollErrorDetail?el('p',{class:'sim-error',text:'Progress request: '+simUI.pollErrorDetail}):null);
  debug.open=!!(simUI.openDiagnostics&&simUI.openDiagnostics[r.runId]);debug.addEventListener('toggle',function(){(simUI.openDiagnostics||(simUI.openDiagnostics={}))[r.runId]=debug.open;});
- return el('div',{class:'sim-run-progress'},el('div',{class:'sim-row tiny'},el('b',{text:f.title}),f.percent!=null?el('span',{text:Math.floor(f.percent)+'%'}):null),el('progress',attrs),el('p',{class:'tiny',text:status}),r.pendingAiCount?el('p',{class:'tiny muted',text:r.pendingAiCount+' AI '+(r.pendingAiCount===1?'request':'requests')+' pending · '+(r.aiActivity&&r.aiActivity.status||'waiting for response')}):null,
+ return el('div',{class:'sim-run-progress'},el('div',{class:'sim-row tiny'},el('b',{text:f.title}),f.percent!=null?el('span',{text:Math.floor(f.percent)+'%'}):null),el('progress',attrs),el('p',{class:'tiny',text:status}),r.work&&r.work.stage==='release'?el('p',{class:'tiny muted',text:r.evidenceStorage==='shared_read_only.v1'||r.work.unit==='simulation links / events'?'Filings and financial facts are read from the saved shared library. Only this simulation’s links and event state are saved.':'Saved evidence includes multiple facts and filing excerpts per company. These are not AI decisions.'}):null,r.pendingAiCount?el('p',{class:'tiny muted',text:r.pendingAiCount+' AI '+(r.pendingAiCount===1?'request':'requests')+' pending · '+(r.aiActivity&&r.aiActivity.status||'waiting for response')}):null,
   times.length?el('p',{class:'tiny muted',text:times.join(' · ')}):null,!f.terminal&&!f.paused?el('p',{class:'tiny muted',text:f.beatAge==null?'Waiting for first worker update':'Worker last reported '+simTime(f.beatAge)+' ago'}):null,
   f.remaining!=null?el('p',{class:'tiny muted',text:'Step ETA ~'+simTime(f.remaining)}):null,f.notice?el('p',{class:['stalled','slow','disconnected'].includes(f.health)?'sim-error':'tiny muted',role:'status',text:f.notice}):null,debug);
 }

@@ -5859,6 +5859,24 @@ async function simulatorAdversarial() {
     return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
   }
   const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  await check('shared_evidence_reads_over_9000_records_without_copies_and_hides_future_data',async()=>{
+    let clock=1000;const data=Array.from({length:10020},(_,i)=>({collection:A.COL.claims,id:'claim_'+i,knownAtMs:i<10000?900:2000,data:{kind:'claim',claimId:'claim_'+i,symbol:'A',claimType:i%2?'FACT':'GUIDANCE',publishedAtMs:i<10000?900:2000,firstSeenAtMs:i<10000?900:2000,text:'Saved evidence '+i}}));
+    const packets=[{symbol:'A',cutoff:1000,daily:{symbol:'A',date:['2025-01-01'],c:[100]},data}],view=Sim.sharedEvidenceView(packets,()=>clock),fake=database();
+    assert.equal(view.collection(A.COL.accounts),null,'account state must stay in Firestore');
+    const scoped=n=>view.collection(n)||fake.col('sim/'+RID+'/'+n);
+    await A.withSimulationScope({runId:RID,clock:()=>clock,collection:scoped},async()=>{
+      const q=A.col(A.COL.claims).where('symbol','==','A').where('claimType','in',['FACT','GUIDANCE']);assert.equal((await q.get()).size,10000);
+      assert.equal((await A.col(A.COL.claims).doc('claim_10000').get()).exists,false);
+      const E=require('./_investorEvidence'),claims=await E.claimsForCompany('A',{asOfMs:1000});assert.equal(claims.length,400);assert(claims.every(c=>c.firstSeenAtMs===900));
+      const snapshot=await A.col(A.COL.claims).doc('claim_0').get(),copy=snapshot.data();copy.text='mutated';assert.notEqual(snapshot.data().text,'mutated');
+      assert.throws(()=>A.col(A.COL.claims).doc('claim_0').set({text:'changed'}),e=>e.code==='SIMULATION_SHARED_EVIDENCE_READ_ONLY');
+      assert.throws(()=>A.col(A.COL.claims).where('publishedAtMs','>',0),e=>e.code==='SIMULATION_SHARED_QUERY_UNSUPPORTED');
+      clock=2000;assert.equal((await q.get()).size,10020);assert.equal((await A.col(A.COL.claims).doc('claim_10000').get()).exists,true);
+    });
+    assert.equal(fake.docs.size,0,'reading shared evidence must create no per-run copies');
+    clock=1000;const resumed=Sim.sharedEvidenceView(packets,()=>clock);assert.equal((await resumed.collection(A.COL.claims).get()).size,10000,'a new worker restores the same historical view');
+    assert.equal(data[0].data.text,'Saved evidence 0');
+  });
   await check('expired_worker_is_visible_as_stalled_without_losing_saved_progress',async()=>{
     const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','stalled-worker');
     const rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
@@ -6168,9 +6186,9 @@ async function simulatorAdversarial() {
     assert(data.some(x=>Number(x.data.cik)===2115436&&x.knownAtMs>cutoff));
     assert(sec.calls.some(u=>u.includes('/submissions/CIK0000034088.json')));assert(sec.calls.some(u=>u.includes('/Archives/edgar/data/34088/')));
     assert(sec.calls.some(u=>u.includes('/submissions/CIK0002115436.json')));assert(sec.calls.some(u=>u.includes('/Archives/edgar/data/2115436/')));
-    const col=name=>fake.col('xom_replay/'+RID+'/'+name);
+    const view=Sim.sharedEvidenceView([{symbol:'XOM',data,cutoff,daily:{}}],()=>cutoff),col=name=>view.collection(name)||fake.col('xom_replay/'+RID+'/'+name);
     await A.withSimulationScope({runId:RID,clock:()=>cutoff,collection:col,transaction:fake.runTransaction,batch:fake.batch},async()=>{
-      for(const x of visible)await col(x.collection).doc(x.id).set(Sim.replayRecord(x));
+      for(const x of visible.filter(x=>!view.has(x.collection)))await col(x.collection).doc(x.id).set(Sim.replayRecord(x));
       await col(A.COL.dossiers).doc('XOM').set({currentVersionId:dossier.id});
       const filings=await require('./_investorResearchTools').productionBindings({accountId:RID,admin:A}).filings({symbol:'XOM',asOfMs:cutoff,concepts:['Revenues']});
       assert.equal(Number(filings.cik),34088);assert(filings.facts.length);assert(filings.facts.every(f=>f.accession.startsWith('0000034088-')));
@@ -6466,9 +6484,24 @@ async function simulatorAdversarial() {
       const repository=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(repository.status,'ready',JSON.stringify(repository.errors));assert.equal(submitted,0);assert.equal(priceRequests,repository.companies+repository.dates+1);prepared=true;
       const preview=await svc.repositoryPackets(await svc.getRun(b.runIds[0]),config,repository);const packet=preview.packets.find(p=>p.symbol==='A');assert.equal(packet.coverage.regular,76);assert.equal(packet.coverage.missing,2);assert.equal(packet.coverage.outsideSession,1);assert(packet.bars.every(b=>b.c===100));
 
-      const stages=[],transaction=fake.runTransaction;
-      fake.runTransaction=fn=>transaction(tx=>fn({...tx,set:(target,data,opts)=>{if(target.path===ref.path&&data.work){stages.push({...data.work});wall+=2100;}return tx.set(target,data,opts);}}));
+      // Interrupt a multi-batch state release and prove that a replacement worker
+      // keeps the pinned library and resumes after the acknowledged commit.
+      const companyUnit=repository.units.find(u=>u.symbol==='A'),parent=fake.col('InvestorAI_SimulationScenarios').doc(companyUnit.pointer.cacheId),library=await svc.readJSON(parent,companyUnit.pointer.artifact);
+      library.data.push(...Array.from({length:205},(_,i)=>({collection:A.COL.evidenceDeltas,id:'resume_delta_'+i,knownAtMs:packet.cutoff,data:{symbol:'A',knownAtMs:packet.cutoff,managerMateriality:'reviewed',safetyClass:'routine'}})));
+      await repo.ref.collection('units').doc('company_A').set({pointer:{cacheId:parent.id,artifact:await svc.saveJSON(parent,'release_fixture',library)}},{merge:true});
+      const stages=[],transaction=fake.runTransaction,batchFactory=fake.batch,released=new Map();let pauseRelease=true;
+      fake.batch=()=>{const batch=batchFactory();return {...batch,set:(target,data,opts)=>{if(target.id.startsWith('resume_delta_'))released.set(target.id,(released.get(target.id)||0)+1);return batch.set(target,data,opts);}};};
+      fake.runTransaction=fn=>transaction(tx=>fn({...tx,set:(target,data,opts)=>{
+        if(target.path===ref.path&&data.work){stages.push({...data.work});wall+=2100;}
+        if(target.path===ref.path&&data.evidenceReleaseCursor?.done===100&&pauseRelease){pauseRelease=false;data={...data,paused:true};}
+        return tx.set(target,data,opts);
+      }}));
+      const interrupted=await svc.execute(b.runIds[0]),pausedRun=await svc.getRun(b.runIds[0]);assert(interrupted.yielded);assert(pausedRun.paused);assert.equal(pausedRun.evidenceReleaseCursor.done,100);assert.equal(submitted,0);
+      await svc.control({runId:b.runIds[0],command:'resume'},'operator');
       const result=await svc.execute(b.runIds[0]),run=await svc.getRun(b.runIds[0]);
+      assert.equal(run.repositoryPointersRef,pausedRun.repositoryPointersRef);assert.equal(released.size,205);assert([...released.values()].every(n=>n===1),'saved release pages must not be copied again after resume');
+      fake.batch=batchFactory;
+
       for(const stage of ['load_prices','load_research','account','release','manager_freeze','manager_review','replay','finalize'])assert(stages.some(s=>s.stage===stage),'Missing progress for '+stage);
       assert(stages.filter(s=>s.stage==='load_research').some(s=>s.done>0&&s.done<s.total));
       assert(stages.filter(s=>s.stage==='replay').some(s=>s.done>0&&s.done<s.total));assert(run.aiActivity.checkedAtMs);assert.equal(run.aiActivity.status,'completed');
@@ -6476,6 +6509,8 @@ async function simulatorAdversarial() {
       assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(run.returnBps,0);assert.equal(run.progress,100);assert.equal(submitted,1);assert.equal(priceRequests,repository.companies+repository.dates+1);
       assert.deepEqual((await fake.col(A.COL.accounts).doc('paper-1').get()).data(),{untouched:true});assert.equal((await ref.collection('curve').get()).size,83);
       assert.equal(run.priceCoverage.symbolsWithGaps[0].symbol,'A');
+      for(const key of ['financialFacts','documents','versions','claims','dossierVersions','marketDaily'])assert.equal((await ref.collection(A.COL[key]).get()).size,0,key+' must remain in the shared library');
+      assert.equal(run.evidenceStorage,'shared_read_only.v1');assert(stages.filter(s=>s.stage==='release').every(s=>s.total>0&&s.done<=s.total));
       // A second batch reuses the fully prepared scenario without downloading again.
       const prior=priceRequests,b2=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','reuse');
       const config2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef);await svc.ensureRepository(b2,config2);

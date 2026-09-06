@@ -263,6 +263,48 @@ const Simulator = (() => {
     if(record.collection===A.COL.financialFacts&&!data._codec)data=require('./_investorStorageCodec').encode(data);
     return data;
   }
+  // Immutable evidence stays in the pinned shared artifacts. This small read-only
+  // view implements the query operations used by the production research readers;
+  // account state, dossier pointers and reviewed events still use real Firestore.
+  function sharedEvidenceView(packets,clock) {
+    const names=new Set(['documents','versions','claims','financialFacts','dossierVersions','marketDaily'].map(k=>A.COL[k]));
+    const tables=new Map([...names].map(n=>[n,new Map()]));
+    const add=x=>{const table=tables.get(x.collection);if(!table)return;const versions=table.get(x.id)||[];versions.push(x);table.set(x.id,versions);};
+    for(const p of packets){for(const x of p.data)add(x);add({collection:A.COL.marketDaily,id:p.symbol,knownAtMs:p.cutoff,data:p.daily});}
+    for(const table of tables.values())for(const versions of table.values())versions.sort((a,b)=>a.knownAtMs-b.knownAtMs);
+    const readonly=()=>{throw fail('SIMULATION_SHARED_EVIDENCE_READ_ONLY','Shared historical evidence cannot be changed by a simulation');};
+    const field=(data,key)=>key.split('.').reduce((v,k)=>v?.[k],data);
+    const visible=versions=>{for(let i=versions.length-1;i>=0;i--)if(versions[i].knownAtMs<=clock())return versions[i];return null;};
+    const indexes=new Map();
+    function indexed(name,key,value) {
+      const indexKey=name+'/'+key;let index=indexes.get(indexKey);
+      if(!index){index=new Map();for(const [id,versions] of tables.get(name))for(const x of versions){const v=key==='__name__'?id:field(x.data,key);if(!index.has(v))index.set(v,new Set());index.get(v).add(id);}indexes.set(indexKey,index);}
+      return index.get(value)||new Set();
+    }
+    function collection(name) {
+      if(!names.has(name))return null;
+      const document=id=>({id,path:name+'/'+id,get:async()=>snapshot(id),set:readonly,update:readonly,create:readonly,delete:readonly});
+      const snapshot=id=>{const record=visible(tables.get(name).get(id)||[]);return {id,ref:document(id),exists:!!record,data:()=>record?structuredClone(replayRecord(record)):undefined};};
+      const query=(filters=[],limit=Infinity)=>({
+        doc:id=>document(String(id)),add:readonly,
+        where:(key,op,value)=>{if(!['==','in'].includes(op))throw fail('SIMULATION_SHARED_QUERY_UNSUPPORTED',`Unsupported historical evidence filter: ${op}`);return query([...filters,[key,op,value]],limit);},
+        limit:n=>query(filters,Math.max(0,Number(n)||0)),
+        get:async()=>{
+          let ids=null;
+          for(const [key,op,value] of filters){const matching=new Set((op==='in'?value:[value]).flatMap(v=>[...indexed(name,key,v)]));ids=ids===null?matching:new Set([...ids].filter(id=>matching.has(id)));}
+          const docs=[];
+          for(const id of [...(ids||tables.get(name).keys())].sort()) {
+            const record=visible(tables.get(name).get(id)||[]);if(!record)continue;
+            if(!filters.every(([key,op,value])=>{const v=key==='__name__'?id:field(record.data,key);return op==='in'?value.includes(v):v===value;}))continue;
+            if(docs.length>=limit)break;docs.push(snapshot(id));
+          }
+          return {docs,size:docs.length,empty:!docs.length,forEach:fn=>docs.forEach(fn)};
+        }
+      });
+      return query();
+    }
+    return {has:name=>names.has(name),collection};
+  }
   function create({admin=A,fetchImpl=globalThis.fetch,wallNow=Date.now,env=process.env,publicFetch=null}={}) {
     const defaultSourceSnapshotDate=new Date(wallNow()).toISOString().slice(0,10);
     // Capture root references outside replay scope; never dynamically fall back.
@@ -1001,7 +1043,8 @@ const Simulator = (() => {
           packets=await Promise.all(meta.symbols.map(async symbol=>{const p=await sr.collection('symbols').doc(symbol).get();return readJSON(sr,p.data().artifact);}));
         }
         run.clockMs=run.clockMs||meta.cutoffMs;
-        const collection=name=>{if(!String(name).startsWith('InvestorAI_')||String(name).includes('/'))throw fail('SIMULATION_NAMESPACE_ESCAPE');return ref.collection(name);};
+        const evidence=sharedEvidenceView(packets,()=>run.clockMs);
+        const collection=name=>{if(!String(name).startsWith('InvestorAI_')||String(name).includes('/'))throw fail('SIMULATION_NAMESPACE_ESCAPE');return evidence.collection(name)||ref.collection(name);};
         scope={runId,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest:async args=>{
           await save({aiActivity:{status:args.method==='GET'?'checking':'submitting',checkedAtMs:wallNow()}});
           const out=await cost.request(args);
@@ -1024,20 +1067,27 @@ const Simulator = (() => {
           async function release() {
             if(lastRelease===run.clockMs)return;
             const through=run.evidenceReleasedThroughMs??-Infinity,writes=[];
-            const initial=through===-Infinity;let savedRecords=0;
-            const releaseProgress=()=>report({stage:'release',label:initial?'Preparing evidence for the AI manager':'Releasing newly available evidence',done:savedRecords,total:null,unit:'records saved',current:null});
-            if(initial)await releaseProgress();
-            const flush=async()=>{if(!writes.length)return;if(await paused())throw fail('SIMULATION_PREPARATION_YIELD');if(!initial&&savedRecords===0)await releaseProgress();const batch=rootBatch();for(const [ref,data] of writes)batch.set(ref,data,{merge:true});await batch.commit();savedRecords+=writes.length;writes.length=0;await releaseProgress();};
-            const put=async(ref,data)=>{writes.push([ref,data]);if(writes.length>=100)await flush();};
+            const initial=through===-Infinity;
             for(const packet of packets) {
               const latest=packet.data.filter(x=>x.knownAtMs<=run.clockMs);
-              for(const x of latest.filter(x=>x.knownAtMs>through))await put(collection(x.collection).doc(x.id),replayRecord(x));
-              const versions=latest.filter(x=>x.collection===A.COL.dossierVersions).sort((a,b)=>a.knownAtMs-b.knownAtMs),v=versions.at(-1);
-              if(v&&v.knownAtMs>through)await put(collection(A.COL.dossiers).doc(packet.symbol),{symbol:packet.symbol,currentVersionId:v.id,asOfMs:v.data.asOfMs||v.knownAtMs,lastSourceAtMs:v.knownAtMs,dataQuality:v.data.dataQuality||{},lastMarketMarkAtMs:run.clockMs});
-              if(through===-Infinity)await put(collection(A.COL.marketDaily).doc(packet.symbol),packet.daily);
+              // Only mutable simulation state is copied. Facts, filing text and
+              // versions are read directly from the shared view above.
+              for(const x of latest.filter(x=>x.knownAtMs>through&&!evidence.has(x.collection)))writes.push({symbol:packet.symbol,ref:collection(x.collection).doc(x.id),data:replayRecord(x)});
+              const v=latest.filter(x=>x.collection===A.COL.dossierVersions).sort((a,b)=>a.knownAtMs-b.knownAtMs).at(-1);
+              if(v&&v.knownAtMs>through)writes.push({symbol:packet.symbol,ref:collection(A.COL.dossiers).doc(packet.symbol),data:{symbol:packet.symbol,currentVersionId:v.id,asOfMs:v.data.asOfMs||v.knownAtMs,lastSourceAtMs:v.knownAtMs,dataQuality:v.data.dataQuality||{},lastMarketMarkAtMs:run.clockMs}});
             }
-            await flush();await save({evidenceReleasedThroughMs:run.clockMs});lastRelease=run.clockMs;
+            // Resume partial commits instead of starting the same release again.
+            const start=run.evidenceReleaseCursor?.clockMs===run.clockMs?run.evidenceReleaseCursor.done:0;
+            const progress=done=>report({stage:'release',label:initial?'Connecting shared research to this simulation':'Releasing newly available evidence',done,total:writes.length,unit:'simulation links / events',current:writes[done]?.symbol||null});
+            if(initial||writes.length)await progress(start);
+            for(let i=start;i<writes.length;i+=100) {
+              if(await paused())throw fail('SIMULATION_PREPARATION_YIELD');await assertOwner();
+              const batch=rootBatch();for(const w of writes.slice(i,i+100))batch.set(w.ref,w.data,{merge:true});await batch.commit();
+              const done=Math.min(writes.length,i+100);await save({evidenceReleaseCursor:{clockMs:run.clockMs,done}});await progress(done);
+            }
+            await save({evidenceReleasedThroughMs:run.clockMs,evidenceReleaseCursor:null,evidenceStorage:'shared_read_only.v1'});lastRelease=run.clockMs;
           }
+
           async function checkpoint(cp) {
             const labels={freeze:'Preparing company research for the AI',review:'AI choosing companies',coverage:'Checking company coverage',maintenance:'Reviewing holdings',research:'AI researching chosen companies',synthesis:'AI deciding allocations',activation:'Checking investment plans',persist:'Saving investment decisions'};
             const research=cp.stage==='research',total=research?cp.data?.effective?.researchRequests?.length:null,done=research?cp.data?.research?.completed?.length||0:null;
@@ -1231,6 +1281,6 @@ const Simulator = (() => {
     }
     return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
-  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,create};
+  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,sharedEvidenceView,create};
 })();
 module.exports.Simulator=Simulator;
