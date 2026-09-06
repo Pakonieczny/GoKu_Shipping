@@ -242,7 +242,7 @@ const Simulator = (() => {
     }
     return out;
   }
-  const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.reservedNano>0&&(['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code)||r.error?.code==='SIMULATION_REQUEST_INCOMPLETE'&&r.work?.stage==='finalize'));
+  const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.error?.code==='SIMULATION_REQUEST_INCOMPLETE'&&r.work?.stage==='finalize'||r.reservedNano>0&&['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code));
   // XOM kept its ticker when the successor parent began trading on July 2, 2026.
   // Verified lineage: https://www.sec.gov/Archives/edgar/data/34088/000119312526291986/d70995d8k.htm
   const XOM_HISTORY_VERSION='xom-sec-predecessor.v1';

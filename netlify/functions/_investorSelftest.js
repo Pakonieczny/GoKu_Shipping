@@ -6913,7 +6913,7 @@ async function simulatorAdversarial({only=null}={}) {
     assert(done.costByStage.event.spentNano>0);assert(done.costByStage.portfolio_review.spentNano>0);
   });
   await check('finalization_settles_acknowledged_usage_and_recovers_old_finalize_failures_without_new_purchases',async()=>{
-    for(const legacy of [false,true]) {
+    for(const legacy of [false,'pending','settled']) {
       const x=await researchPipeline({prepared:true,measure:true});let expected,restored=false;
       function unsettle() {
         const run=x.fake.docs.get(x.ref.path),[path,q]=[...x.fake.docs.entries()].find(([path,q])=>path.startsWith(x.ref.path+'/requests/')&&q.stage==='manager_decision'&&q.status==='settled');expected=run.spentNano;
@@ -6931,7 +6931,7 @@ async function simulatorAdversarial({only=null}={}) {
       }
       let done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));
       if(legacy) {
-        unsettle();await x.ref.set({status:'incomplete',work:{stage:'finalize'},error:{code:'SIMULATION_REQUEST_INCOMPLETE',message:'A required AI request did not complete'}},{merge:true});
+        if(legacy==='pending')unsettle();else expected=done.spentNano;await x.ref.set({status:'incomplete',work:{stage:'finalize'},error:{code:'SIMULATION_REQUEST_INCOMPLETE',message:'A required AI request did not complete'}},{merge:true});
         const view=await x.svc.overview({owner:'operator'});assert(view.runs[0].canRecheckAI);assert(!view.runs[0].canRetryAIStep);
         await x.svc.control({runId:x.runId,command:'retry'},'operator');done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));
       }
