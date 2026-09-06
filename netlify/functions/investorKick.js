@@ -591,27 +591,30 @@ function decideManager(ctrl, session, nowMs) {
 /** Launch one due job: sign a single-use nonce bound to the next attempt and
  *  POST to the task's target function. A dispatch that never reached the
  *  worker leaves the job due for the next tick. */
-async function dispatchJob(job) {
-  const spec = JOBS.taskFor(job.task);
+async function dispatchJob(job, { admin = A, jobs = JOBS, fetchImpl = globalThis.fetch } = {}) {
+  const spec = jobs.taskFor(job.task);
   if (!spec) return { jobId: job.jobId, error: "unknown task" };
   const attempt = (Number(job.attempts) || 0) + 1;
-  const jref = A.col(A.COL.jobs).doc(job.jobId);
-  const nonce = await JOBS.issueWorkerNonce({ jobId: job.jobId, task: job.task, targetFunction: spec.targetFunction,
-    attempt, payloadHash: job.payloadHash || JOBS.payloadHash(job.payload || {}) });
-  await jref.set({ dispatchedAtMs: Date.now(), dispatchAttempts: A.FV.increment(1), lastNonceId: nonce.nonceId }, { merge: true });
+  const jref = admin.col(admin.COL.jobs).doc(job.jobId);
+  const nonce = await jobs.issueWorkerNonce({ jobId: job.jobId, task: job.task, targetFunction: spec.targetFunction,
+    attempt, payloadHash: job.payloadHash || jobs.payloadHash(job.payload || {}) });
+  await jref.set({ dispatchedAtMs: Date.now(), dispatchAttempts: admin.FV.increment(1), lastNonceId: nonce.nonceId }, { merge: true });
   let res;
   try {
-    res = await fetch(`${baseUrl()}/.netlify/functions/${spec.targetFunction}`, {
+    res = await fetchImpl(`${baseUrl()}/.netlify/functions/${spec.targetFunction}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(5000),
       body: JSON.stringify({ jobId: job.jobId, task: job.task, nonce: nonce.token, payload: job.payload || {} }),
     });
   } catch (e) { res = { ok: false, status: 0, thrown: String(e && e.message || e).slice(0, 120) }; }
+  // Never expose response bodies or the signed nonce. Keep the actual HTTP or
+  // transport failure so simulations do not misreport a worker failure as a data wait.
+  const error = res.ok ? null : `Worker ${spec.targetFunction}: ${res.status ? 'HTTP ' + res.status : res.thrown || 'connection failed'}`;
   if (!res.ok) {
     await jref.set({ lastDispatchError: { status: res.status, thrown: res.thrown || null, atMs: Date.now() },
       dueAtMs: Date.now() + 60000 }, { merge: true });
   }
-  return { jobId: job.jobId, task: job.task, targetFunction: spec.targetFunction, attempt, upstream: res.status };
+  return { jobId: job.jobId, task: job.task, targetFunction: spec.targetFunction, attempt, upstream: res.status, ...(error ? { error } : {}) };
 }
 
 async function runManagerEngine(ctrl, session, startedAt) {

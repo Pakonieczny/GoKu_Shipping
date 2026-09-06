@@ -6063,6 +6063,40 @@ async function simulatorAdversarial() {
     await fake.col('InvestorAI_Simulations').doc(first.runId).set({paused:false},{merge:true});
     await svc.schedule({dispatch:async()=>({upstream:503})});const failed=await svc.getRun(first.runId);assert.equal(failed.dispatchedUntil,0);assert.equal(failed.waitReason,'dispatch_retry');assert(failed.nextAttemptAtMs>wall);
   });
+  await check('preparation_dispatch_reports_real_transport_failures_and_keeps_signed_worker_claims',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),J=require('./_investorJobs').withAdmin(fake),kick=require('./investorKick'),key='dispatch-fixture-key-not-a-production-secret';
+    const jobs={...require('./_investorJobs'),...J,issueWorkerNonce:params=>J.issueWorkerNonce({...params,key})};
+    const b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','dispatch-failures');
+    let sent;
+    await svc.schedule({dispatch:job=>kick.dispatchJob(job,{admin:fake,jobs,fetchImpl:async(url,opts)=>{sent=JSON.parse(opts.body);assert(url.endsWith('/.netlify/functions/investorManager-background'));return {ok:false,status:503};}})});
+    const state=await svc.repositoryState(await svc.getBatch(b.batchId));
+    assert.equal(state.dispatchErrors.length,state.total);assert.equal(state.ready,0);
+    for(const section of state.sections)for(const item of section.items.filter(x=>x.state==='waiting')){assert.equal(item.waitReason,'dispatch_retry');assert.match(item.lastDispatchError,/HTTP 503/);assert(item.nextAttemptAtMs>now);}
+    assert(!JSON.stringify(state).includes(sent.nonce));
+    const job=(await fake.col(A.COL.jobs).doc(sent.jobId).get()).data();
+    const timeout=await kick.dispatchJob(job,{admin:fake,jobs,fetchImpl:async()=>{throw Error('request timed out');}});
+    assert.equal(timeout.upstream,0);assert.match(timeout.error,/request timed out/);
+    const accepted=await kick.dispatchJob(job,{admin:fake,jobs,fetchImpl:async(url,opts)=>{sent=JSON.parse(opts.body);return {ok:true,status:202};}});
+    assert.equal(accepted.upstream,202);assert.equal(accepted.error,undefined);
+    const claim=await J.claimOnce({jobId:sent.jobId,task:sent.task,targetFunction:'investorManager-background',token:sent.nonce,payload:sent.payload,key});assert(claim.claimed);
+    const replay=await J.claimOnce({jobId:sent.jobId,task:sent.task,targetFunction:'investorManager-background',token:sent.nonce,payload:sent.payload,key});assert(!replay.claimed);
+  });
+  await check('saved_repository_lookup_does_not_reuse_incompatible_or_unverified_artifacts',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),hash=require('./_investorDecisionContext').hash;
+    await seedSimulationArchive(fake);
+    const b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','cache-validation'),config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+    const cache=fake.col('InvestorAI_SimulationScenarios').doc('session_library_'+hash({v:'historical-repository.v1',universe:config.roster.universeHash,date:b.dates[0]}).slice(0,40));
+    const valid={status:'ready',version:'historical-repository.v1',artifact:'saved_prices',priceValidationVersion:'observed-bars.v2',failedSymbols:[],builtRefreshRevision:0,priceRefreshRevision:0};
+    await fake.col('InvestorAI_SimulationScenarios').doc('bad_company').set({kind:'company_library',symbol:'A',status:'ready',artifact:'wrong_identity',version:'historical-repository.v1',identityHash:'different',from:'2020-01-01',to:'2027-01-01'});
+    for(const invalid of [{priceValidationVersion:'old'},{failedSymbols:['A']},{priceRefreshRevision:1},{status:'retrying'},{failedSymbols:undefined}]){
+      await cache.set({...valid,...invalid});
+      for(const u of (await repo.ref.collection('units').get()).docs)await u.ref.set({dispatchedUntil:0,nextAttemptAtMs:0},{merge:true});
+      const jobs=[];await svc.schedule({dispatch:async j=>{jobs.push(j);return {upstream:202};}});
+      assert(jobs.some(j=>j.payload.unitId==='prices_'+b.dates[0]));assert(jobs.some(j=>j.payload.unitId==='company_A'));assert(!jobs.some(j=>j.task==='simulation'));
+    }
+    await cache.set(valid);const ur=repo.ref.collection('units').doc('prices_'+b.dates[0]);await ur.set({dispatchedUntil:0,nextAttemptAtMs:now+60000,waitReason:'dispatch_retry'},{merge:true});
+    await svc.schedule({dispatch:async()=>({upstream:202})});const reused=(await ur.get()).data();assert.equal(reused.status,'ready');assert(reused.reused);assert.equal(reused.nextAttemptAtMs,0);
+  });
   await check('shared_sec_reservations_do_not_burst_when_wait_exceeds_five_seconds',async()=>{
     const fake=database();let calls=0,checks=0;
     await fake.col('InvestorAI_SimulationScenarios').doc('sec_download_rate').set({nextMs:now+6500});
@@ -6298,10 +6332,13 @@ async function simulatorAdversarial() {
       // Different sampled dates, same requested range: existing company and session data are reused.
       wall+=86400000;
       const b2=await svc.createBatch({count:1,from:'2026-07-31',to:'2026-08-03'},'operator','repository-reuse'),config2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef),repo2=await svc.ensureRepository(b2,config2);
-      for(const u of (await repo2.ref.collection('units').get()).docs)await svc.prepareRepository(b2.batchId,u.id);
+      await svc.control({batchId:b.batchId,command:'pause'},'operator');
+      const reusedLaunches=[];await svc.schedule({dispatch:async j=>{reusedLaunches.push(j);return {upstream:202};}});
+      assert.equal(reusedLaunches.length,1);assert.equal(reusedLaunches[0].task,'simulation');assert.equal(reusedLaunches[0].runId,b2.runIds[0]);
       assert.equal((await svc.repositoryState(await svc.getBatch(b2.batchId))).status,'ready');assert.equal([...requests.values()].reduce((a,b)=>a+b,0),requestCount);assert.equal(sec.calls.length,secCount);assert.equal(paid,0);
       const b3=await svc.createBatch({count:1,from:'2026-08-03',to:'2026-08-03'},'operator','repository-narrow'),config3=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b3.batchId),b3.configRef),repo3=await svc.ensureRepository(b3,config3);
-      for(const u of (await repo3.ref.collection('units').get()).docs)await svc.prepareRepository(b3.batchId,u.id);
+      reusedLaunches.length=0;await svc.schedule({dispatch:async j=>{reusedLaunches.push(j);return {upstream:202};}});
+      assert.equal(reusedLaunches.length,1);assert.equal(reusedLaunches[0].runId,b3.runIds[0]);assert.equal(reusedLaunches[0].task,'simulation');
       assert.equal((await svc.repositoryState(await svc.getBatch(b3.batchId))).status,'ready');assert.equal([...requests.values()].reduce((a,b)=>a+b,0),requestCount);assert.equal(sec.calls.length,secCount);
       assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);assert.equal((await fake.col(A.COL.financialFacts).get()).size,0);
     }finally{M.loadMarketSettings=old.load;M.providerCredentials=old.credentials;}

@@ -648,6 +648,34 @@ const Simulator = (() => {
       if(batch.repositoryId!==repositoryId)await batchCol.doc(batch.batchId).set({repositoryId},{merge:true});
       return {repositoryId,ref};
     }
+    async function reuseRepositoryArtifacts(batch,config,ref) {
+      // Cache discovery belongs before worker dispatch: a completed library must not
+      // require hundreds of new background invocations just to become ready again.
+      const pending=(await rows(ref.collection('units'))).filter(u=>!['ready','failed'].includes(u.status)&&!(u.leaseUntil>wallNow())&&!(u.dispatchedUntil>wallNow()));
+      if(!pending.length)return;
+      const companies=pending.some(u=>u.kind==='company')?await rows(scenarioCol.where('kind','==','company_library')):[];
+      const reusable=await Promise.all(pending.map(async u=>{
+        let cache;
+        if(u.kind==='company') {
+          const identityHash=hash(repositoryRow(config,u.symbol)||{symbol:u.symbol});
+          cache=companies.filter(c=>c.status==='ready'&&c.artifact&&c.version===REPOSITORY_VERSION&&c.symbol===u.symbol&&c.identityHash===identityHash&&c.from<=batch.config.from&&c.to>=batch.config.to).sort((a,b)=>a.preparedAtMs-b.preparedAtMs)[0];
+        }else{
+          const cacheId='session_library_'+hash({v:REPOSITORY_VERSION,universe:config.roster.universeHash,date:u.date}).slice(0,40),s=await scenarioCol.doc(cacheId).get(),c=s.data();
+          if(c?.status==='ready'&&c.artifact&&c.version===REPOSITORY_VERSION&&c.priceValidationVersion===PRICE_VALIDATION_VERSION&&Array.isArray(c.failedSymbols)&&!c.failedSymbols.length&&(c.builtRefreshRevision||0)===(c.priceRefreshRevision||0))cache={...c,id:cacheId};
+        }
+        return cache?{unit:u,pointer:{cacheId:cache.id,artifact:cache.artifact}}:null;
+      }));
+      const found=reusable.filter(Boolean);
+      for(let i=0;i<found.length;i+=100)await rootTransaction(async tx=>{
+        const part=found.slice(i,i+100),snaps=await Promise.all(part.map(x=>tx.get(ref.collection('units').doc(x.unit.unitId))));
+        part.forEach((x,j)=>{
+          const u=snaps[j].data();
+          if(!u||['ready','failed'].includes(u.status)||u.leaseUntil>wallNow()||u.dispatchedUntil>wallNow())return;
+          tx.set(ref.collection('units').doc(u.unitId),{status:'ready',phase:'Reused saved shared data',pointer:x.pointer,
+            researchReady:u.kind==='company',dailyReady:u.kind==='company',reused:true,error:null,lastDispatchError:null,waitReason:null,nextAttemptAtMs:0,sourceReadyAtMs:0,completedAtMs:wallNow(),updatedAtMs:wallNow()},{merge:true});
+        });
+      });
+    }
     async function repositoryState(batch) {
       if(!batch.repositoryId)return {status:'queued',phase:'Preparing the shared data library',ready:0,total:0,companiesReady:0,datesReady:0,active:[],errors:[]};
       const ref=scenarioCol.doc(batch.repositoryId),meta=(await ref.get()).data(),units=await rows(ref.collection('units'));
@@ -660,13 +688,13 @@ const Simulator = (() => {
         (u.nextAttemptAtMs>now||u.waitReason==='sec_rate_limit'||/Waiting for SEC download|Waiting for a shared/i.test(u.phase||''))?'waiting':
         u.leaseUntil>now?'working':u.dispatchedUntil>now?'starting':'queued';
       const task=u=>({unitId:u.unitId,label:u.symbol||u.date,kind:u.kind,stage:stageOf(u),state:stateOf(u),phase:u.phase,
-        researchReady:!!u.researchReady,dailyReady:!!u.dailyReady,progress:u.kind==='prices'?u.pricesProgress||null:u.researchProgress||null,
+        researchReady:!!u.researchReady,dailyReady:!!u.dailyReady,waitReason:u.waitReason||null,lastDispatchError:u.lastDispatchError||null,progress:u.kind==='prices'?u.pricesProgress||null:u.researchProgress||null,
         nextAttemptAtMs:Math.max(u.nextAttemptAtMs||0,u.sourceReadyAtMs||0),updatedAtMs:u.updatedAtMs||u.createdAtMs||null,
         error:u.error?{code:u.error.code,message:u.error.message,url:u.error.details?.url||null}:null});
       const sections=[['research','Company research',units.filter(researchNeeded)],['daily','Daily price history',units.filter(u=>u.kind==='company')],['intraday','Historical session prices',units.filter(u=>u.kind==='prices')]].map(([id,label,list])=>{
         const items=list.map(u=>{const out=task(u),complete=u.status==='ready'||(id==='research'&&u.researchReady)||(id==='daily'&&u.dailyReady);
           if(complete)out.state='complete';
-          else if(stageOf(u)!==id){out.state=batch.paused?'paused':'pending';out.phase=id==='daily'?'Waiting for company research':'Waiting for this preparation step';out.error=null;}
+          else if(stageOf(u)!==id){out.state=batch.paused?'paused':'pending';out.phase=id==='daily'?'Waiting for company research':'Waiting for this preparation step';out.error=null;out.lastDispatchError=null;out.waitReason=null;}
           return {...out,progress:id==='research'?u.researchProgress||null:id==='intraday'?u.pricesProgress||null:null};});
         const counts=Object.fromEntries(['complete','working','waiting','queued','starting','pending','failed','paused'].map(key=>[key,items.filter(x=>x.state===key).length]));
         return {id,label,total:list.length,done:counts.complete,...counts,items};
@@ -676,6 +704,7 @@ const Simulator = (() => {
         companiesReady:units.filter(u=>u.kind==='company'&&u.status==='ready').length,companies:meta.companies,datesReady:units.filter(u=>u.kind==='prices'&&u.status==='ready').length,dates:meta.dates,
         working:tasks.filter(u=>u.state==='working').length,waiting:tasks.filter(u=>['waiting','queued','starting'].includes(u.state)).length,
         active:tasks.filter(u=>['working','waiting','starting'].includes(u.state)).slice(0,6),sections,
+        dispatchErrors:tasks.filter(u=>u.lastDispatchError&&u.state!=='complete'&&u.state!=='working').map(u=>({unitId:u.unitId,message:u.lastDispatchError})),
         failed:errors.length,errors:errors.map(u=>({unitId:u.unitId,message:u.error?.message||'Preparation needs attention',url:u.error?.details?.url||null})),units};
     }
 
@@ -1055,6 +1084,7 @@ const Simulator = (() => {
         for(const {b,runs} of sets) {
           if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)){await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
           const config=await readJSON(batchCol.doc(b.batchId),b.configRef),repo=await ensureRepository(b,config);
+          if(!b.paused)await reuseRepositoryArtifacts(b,config,repo.ref);
           const repository=await repositoryState({...b,repositoryId:repo.repositoryId});
           if(!b.paused&&repository.status!=='ready') {
             const due=(repository.units||[]).filter(u=>u.status!=='ready'&&u.status!=='failed'&&!(u.leaseUntil>wallNow())&&!(u.dispatchedUntil>wallNow())&&!(u.nextAttemptAtMs>wallNow()));
@@ -1062,9 +1092,9 @@ const Simulator = (() => {
               const ur=repo.ref.collection('units').doc(u.unitId),sequence=(u.dispatchSequence||0)+1;
               const out=await jobs.enqueueOnce({task:'simulation_prepare',dedupeId:repo.repositoryId+'_'+u.unitId+'_'+sequence,accountId:b.batchId,payload:{batchId:b.batchId,unitId:u.unitId},createdBy:'simulator',priority:900});
               const job=(await admin.col(admin.COL.jobs).doc(out.jobId).get()).data();
-              await ur.set({dispatchSequence:sequence,dispatchedUntil:wallNow()+90000,phase:'Starting shared preparation worker'},{merge:true});
+              await ur.set({dispatchSequence:sequence,dispatchedUntil:wallNow()+90000,phase:'Starting shared preparation worker',waitReason:'dispatch',lastDispatchError:null},{merge:true});
               try {const result=await dispatch(job);if(result?.error||result?.upstream>=300||result?.upstream===0)throw Error(result.error||'Worker returned '+result.upstream);return result;}
-              catch(e){await rootTransaction(async tx=>{const x=await tx.get(ur);if(x.data()?.dispatchSequence===sequence&&!(x.data()?.leaseUntil>wallNow()))tx.set(ur,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,phase:'Shared preparation dispatch will retry'},{merge:true});});return {unitId:u.unitId,error:String(e.message)};}
+              catch(e){await rootTransaction(async tx=>{const x=await tx.get(ur);if(x.data()?.dispatchSequence===sequence&&!(x.data()?.leaseUntil>wallNow()))tx.set(ur,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,phase:'Shared preparation worker could not start — retrying',waitReason:'dispatch_retry',lastDispatchError:String(e.message).slice(0,200),updatedAtMs:wallNow()},{merge:true});});return {unitId:u.unitId,error:String(e.message)};}
             }));
           }
           const eligible=runs.filter(r=>(repository.status==='ready'||r.initialized)&&(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
