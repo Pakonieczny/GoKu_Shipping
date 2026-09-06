@@ -969,10 +969,12 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     if (!env.OPENAI_API_KEY) return failure("OPENAI_API_KEY not configured");
     const identity = POLICY.policyIdentity();
     const strict = POLICY.strictOutputSchema(POLICY.SCHEMAS[schemaVersion], { name: schemaVersion.replace(/[^a-z0-9_]/gi, "_") });
-    const system = PROMPTS[fn].system + (extraRules ? `\n${extraRules}` : "");
+    const workload=A.currentScope()?.aiWorkload;
+    const simulationRules=workload ? `\nThis historical simulation uses a saved 50-company shortlist and a strict total AI budget. Keep prose concise and do not repeat input evidence. ${fn==='reviewUniverse'?'Review every supplied company, but request deep research for at most '+workload.maxResearchCompanies+' highest-priority finalists. All other rows must use reviewDirective NONE unless an existing researched holding can be reused. Keep each coverage reason under 15 words. Research requests must name only supplied shortlist symbols.':fn==='researchCompany'?'Write a compact, complete memo with short checklist entries. Use source identifiers and verified calculations; do not invent evidence to save tokens.':''}` : '';
+    const system = PROMPTS[fn].system + (extraRules ? `\n${extraRules}` : "") + simulationRules;
     const inputItems = [{ role: "system", content: system }, { role: "user", content: user }];
     const inputTokensEst = estimateTokens(system) + estimateTokens(user);
-    const maxOutputTokens = MAX_OUTPUT_TOKENS[fn];
+    const maxOutputTokens = workload?.outputTokens?.[fn] || MAX_OUTPUT_TOKENS[fn];
     const requestId = `mr_${sha({fn,key:requestKey || `${now()}|${Math.random()}`,model:role.model,reasoning:role.reasoning || null,prompt:sha(system),schema:strict.strictHash,policy:identity.policyHash,contextManifestHash,sourceManifestHash,userHash:sha(user),maxOutputTokens}).slice(0,40)}`;
     const base = { fn, role: roleName, model: role.model, reasoningEffort: role.reasoning ? role.reasoning.effort : null, schemaVersion,
       promptVersion: PROMPTS[fn].version, promptHash: promptHash(fn), schemaHash: strict.schemaHash, strictSchemaHash: strict.strictHash,
@@ -1332,6 +1334,8 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     const requests = results.flatMap((x) => (x.result.output.researchRequests || []).map((q) => ({ ...q, block: x.block })))
       .sort((a, b) => a.researchPriority - b.researchPriority || a.block - b.block || String(a.symbol).localeCompare(String(b.symbol)))
       .map((q, i) => ({ ...q, blockPriority: q.researchPriority, researchPriority: i + 1 }));
+    const workload=A.currentScope()?.aiWorkload;
+    if(workload && (requests.length>workload.maxResearchCompanies || requests.some(q=>!universeManifest.symbols.includes(q.symbol))))return failure('shortlist_research_plan_invalid',{requestIds:results.map(x=>x.result.requestId)});
     return { ok: true, plan: { mode: plan.mode, blocks: plan.blocks.length, estimatedTokens: plan.estimatedTokens, guardrailTokens: plan.guardrailTokens },
       coverage, holdingAnalysis, researchRequests: requests, managerNote: results.map((x) => x.result.output.managerNote).filter(Boolean).join("\n"),
       responseIds: results.map((x) => x.result.responseId), requestIds: results.map((x) => x.result.requestId),
@@ -1359,9 +1363,11 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     const symbol = String(dossier.symbol).toUpperCase();
     const allowedClaimIds = [...new Set([...(dossier.claimIds || []), ...(dossier.card && dossier.card.guidance ? [dossier.card.guidance.claimId] : []),
       ...(dossier.card && dossier.card.nextEarnings ? [dossier.card.nextEarnings.claimId] : []), ...(dossier.claims || []).map((c) => c.claimId)])].filter(Boolean);
+    // Delta/prior are already supplied separately; avoid sending duplicate evidence.
+    const promptDossier=A.currentScope()?.aiWorkload?Object.fromEntries(Object.entries(dossier).filter(([k])=>k!=='delta'&&k!=='prior')):dossier;
     const user = [`SYMBOL=${symbol}`, `DIRECTIVE=${directive}`, `CUTOFF=${cutoffMs ? new Date(cutoffMs).toISOString() : "unspecified"}`,
       `KNOWN_CLAIM_IDS=${JSON.stringify(allowedClaimIds.slice(0, 400))}`,
-      untrusted("dossier", dossier), untrusted("delta", delta || {}), untrusted("prior_memo", prior || {}), untrusted("portfolio", portfolio || {})].join("\n\n");
+      untrusted("dossier", promptDossier), untrusted("delta", delta || {}), untrusted("prior_memo", prior || {}), untrusted("portfolio", portfolio || {})].join("\n\n");
     let r, verifiedValuation, correction=null, totalCost=0n;
     for(let attempt=0;attempt<2;attempt++) {
       r=await invoke("researchCompany", {user:user+(correction ? "\nSERVER_VALIDATION_ERROR="+correction+"\nCorrect the preceding proposal using the same frozen evidence.\n"+untrusted("rejected_memo",r.output) : ""),tools,scope:{symbol,asOfMs:cutoffMs},allowedClaimIds,waitMs,

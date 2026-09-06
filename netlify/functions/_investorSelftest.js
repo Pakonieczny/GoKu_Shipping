@@ -6453,6 +6453,52 @@ async function simulatorAdversarial() {
   async function metered(script){const fake=database(),ref=fake.col('InvestorAI_Simulations').doc(RID),run={runId:RID,clockMs:1000,leaseOwner:'owner',owner:'operator',spentNano:0,reservedNano:0,paused:false,leaseUntil:now+1000000};await ref.set(run);let posts=0,counts=0;const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{if(url.endsWith('/input_tokens')){counts++;return {ok:true,status:200,json:async()=>({input_tokens:1000})};}if(opts.method==='POST')posts++;return script(url,opts,posts);}});const meter=svc.meter(run,ref,async()=>(await ref.get()).data().paused,async()=>{});return {fake,ref,run,svc,meter,posts:()=>posts,counts:()=>counts};}
   const body={model:'gpt-6-astra',input:[{role:'user',content:'fixture'}],max_output_tokens:4000,reasoning:{effort:'high'}};
   const completed={id:'resp_fixture',status:'completed',service_tier:'flex',model:'gpt-6-astra',output:[],usage:{input_tokens:1000,output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}};
+  await check('shortlist_uses_only_cutoff_evidence_validates_50_and_reuses_paid_response_after_pause',async()=>{
+    const cutoffMs=Date.UTC(2026,6,1,12,30),symbols=Array.from({length:55},(_,i)=>'S'+i),roster={symbols,eligibleCount:55,universeHash:'source55',members:symbols.map(symbol=>({symbol,company:symbol,sector:'Technology'})),excluded:[]};
+    const D=require('./_investorDossier'),packets=symbols.map(symbol=>({symbol,daily:{date:['2026-06-29','2026-06-30','2026-07-02'],c:[100,110,99999],v:[100,200,1]},data:[{collection:A.COL.dossierVersions,id:symbol,knownAtMs:cutoffMs-1000,data:D.composeVersion({symbol,identity:{symbol,name:symbol,sector:'Technology'},asOfMs:cutoffMs-1000})},{collection:A.COL.documents,id:symbol+'_future',knownAtMs:cutoffMs+1,data:{title:'FUTURE_SECRET'}},{collection:A.COL.documents,id:symbol+'_past',knownAtMs:cutoffMs-1000,data:{title:'Historical filing'}}]}));
+    const config={roster,aiPlan:Sim.AI_PLAN},selected=symbols.slice(0,50).map(symbol=>({symbol,reason:'Recent observed volume increased'}));let sent;
+    const x=await metered(async(url,opts)=>{if(opts.method==='POST'){sent=JSON.parse(opts.body);return {ok:true,status:200,json:async()=>({id:'shortlist_fixture',model:'gpt-5.6-luna',status:'in_progress'})};}return {ok:true,status:200,json:async()=>({...completed,id:'shortlist_fixture',model:'gpt-5.6-luna',service_tier:'default',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({selected})}]}]})};});
+    Object.assign(x.run,{clockMs:cutoffMs,aiPlan:Sim.AI_PLAN});await x.ref.set(x.run);
+    const save=async fields=>{await x.ref.set(fields,{merge:true});Object.assign(x.run,fields);},progress=[];
+    const opts={request:args=>x.meter.request({...args,stage:'shortlist'}),save,onProgress:async p=>progress.push(p)};
+    assert.equal(await x.svc.prepareShortlist(x.run,config,packets,opts),null);assert.equal(x.posts(),1);assert.equal(sent.model,'gpt-5.6-luna');assert.equal(sent.reasoning.effort,'medium');assert.equal(sent.service_tier,'default');assert(!JSON.stringify(sent).includes('FUTURE_SECRET'));assert(!JSON.stringify(sent).includes('99999'));
+    const pending=(await x.ref.get()).data();assert.equal(pending.spentNano,0);assert(pending.reservedNano>0);assert.equal(pending.pendingAiCount,1);
+    await x.ref.set({paused:true},{merge:true});await x.meter.drain();await x.ref.set({paused:false},{merge:true});
+    const result=await x.svc.prepareShortlist(x.run,config,packets,opts);assert.equal(result.selected.length,50);assert.equal(x.posts(),1);assert.equal(result.cutoffMs,cutoffMs);
+    const roster50=Sim.shortlistedRoster(roster,result);assert.equal(roster50.eligibleCount,50);assert.equal(roster50.members.length,50);assert.equal(roster50.excluded.length,5);assert.equal(roster.symbols.length,55);assert.notEqual(roster50.universeHash,roster.universeHash);
+    const again=await x.svc.prepareShortlist(x.run,config,[],opts);assert.deepEqual(again,result);assert.equal(x.posts(),1);
+    const settled=(await x.ref.get()).data();assert.equal(settled.reservedNano,0);assert.equal(settled.pendingAiCount,0);assert.equal(settled.spentNano,1400000);assert.equal(settled.costByStage.shortlist.spentNano,1400000);assert.equal(settled.costByStage.shortlist.requests,1);
+    for(const bad of [{selected:selected.slice(1)},{selected:[...selected.slice(1),selected[1]]},{selected:[...selected.slice(1),{symbol:'NOT_ELIGIBLE',reason:'bad'}]}])assert.throws(()=>Sim.validateShortlist(bad,roster,50),e=>e.code==='SIMULATION_SHORTLIST_INVALID');
+    const earlier=Sim.shortlistProfiles(packets,roster,cutoffMs-2000),later=Sim.shortlistProfiles(packets,roster,cutoffMs);assert.equal(earlier[0].researchAsOfMs,null);assert(later[0].recentFilings.length>0);assert.equal(later[0].price,110);assert.equal(later[0].volumeRatio,2);assert.equal(later[0].returnsBps['1d'],'1000');assert.notEqual(require('./_investorDecisionContext').hash(earlier),require('./_investorDecisionContext').hash(later));
+  });
+  await check('full_saved_universe_to_luna_50_to_astra_manager_replay_and_costs',async()=>{
+    const fake=database(),D=require('./_investorDossier'),M=require('./_investorMarket'),date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),calls=[];let selected;
+    const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{
+      if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:12000})};
+      assert.equal(opts.method,'POST');const b=JSON.parse(opts.body),user=b.input.find(x=>x.role==='user').content;calls.push(b);
+      let output;
+      if(b.model==='gpt-5.6-luna') {const input=JSON.parse(user);assert.equal(input.profiles.length,304);assert(input.profiles.every(row=>row[5]===100));selected=input.profiles.slice(0,50).map(row=>({symbol:row[0],reason:'Historical profile selected for deeper comparison'}));output={selected};}
+      else {assert.equal(b.model,'gpt-6-astra');assert.equal(b.max_output_tokens,8000);assert.equal(b.reasoning.effort,'high');const m=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]);assert.equal(m.symbols.length,50);assert.deepEqual([...m.symbols].sort(),selected.map(x=>x.symbol).sort());output={schemaVersion:'universe-review.v1',universeVersion:m.universeVersion,universeHash:m.universeHash,eligibleCount:50,coverage:m.symbols.map(symbol=>({symbol,reviewDirective:'NONE',provisionalDisposition:'IGNORE',reason:'No edge in fixture',changedSincePrior:false,reasonCode:null})),holdingAnalysis:[],researchRequests:[],managerNote:'No investment justified by fixture'};}
+      return {ok:true,status:200,json:async()=>({id:'resp_pipeline_'+calls.length,model:b.model,status:'completed',service_tier:b.service_tier,usage:{input_tokens:12000,output_tokens:3000,output_tokens_details:{reasoning_tokens:1000}},output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]})};
+    }}),batch=await svc.createBatch({count:1,from:date,to:date},'operator','full-shortlist-pipeline'),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config);
+    const units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
+    const daily=Array.from({length:30},(_,i)=>({date:new Date(Date.parse(date+'T00:00:00Z')-(30-i)*86400000).toISOString().slice(0,10),o:100,h:101,l:99,c:100,v:100000}));
+    for(const unit of units.filter(x=>x.data().kind==='company')) {const symbol=unit.data().symbol,parent=fake.col('InvestorAI_SimulationScenarios').doc('fixture_company_'+symbol),row=config.roster.members.find(x=>x.symbol===symbol),data=row?[{collection:A.COL.dossierVersions,id:symbol+'_fixture',knownAtMs:cutoff-1000,data:D.composeVersion({symbol,identity:{...row,name:row.company},asOfMs:cutoff-1000})}]:[];
+      const artifact=await svc.saveJSON(parent,'company',{data,daily,provenance:{provider:'fixture',adjustment:'split_only'}});await unit.ref.set({status:'ready',pointer:{cacheId:parent.id,artifact}},{merge:true});priceSymbols[symbol]={bars:providerSession(date,{extra:false}),coverage:{regular:78,expected:78,missing:0}};
+    }
+    const prices=fake.col('InvestorAI_SimulationScenarios').doc('fixture_session'),artifact=await svc.saveJSON(prices,'prices',{symbols:priceSymbols,provenance:{provider:'fixture'}});
+    await units.find(x=>x.data().kind==='prices').ref.set({status:'ready',pointer:{cacheId:prices.id,artifact}},{merge:true});
+    const result=await svc.execute(batch.runIds[0]),run=await svc.getRun(batch.runIds[0]);assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(calls.length,2);assert.equal(run.shortlist.count,50);assert.equal(run.shortlist.sourceCount,304);assert.equal(run.reservedNano,0);assert.equal(run.spentNano,141000000);assert.equal(run.costByStage.shortlist.spentNano,6000000);assert.equal(run.costByStage.manager_review.spentNano,135000000);
+    const detail=await svc.detail(run.runId,'operator');assert.equal(detail.shortlist.selected.length,50);assert.deepEqual(detail.shortlist.selected,selected);const view=await svc.overview({owner:'operator',batchId:batch.batchId});assert.equal(view.totals.spentNano,run.spentNano);assert.equal(view.history[0].spentNano,run.spentNano);
+    await svc.execute(run.runId);assert.equal(calls.length,2);assert.equal(Object.keys((await svc.readJSON(prices,artifact)).symbols).length,321,'master prices still cover the full universe');
+  });
+  await check('shortlist_stage_budget_preserves_later_decision_funds_and_actual_cost_uses_returned_tier',async()=>{
+    let postedBody;const x=await metered(async(url,opts)=>{postedBody=JSON.parse(opts.body);return {ok:true,status:200,json:async()=>({...completed,service_tier:'default',usage:{input_tokens:1000,input_tokens_details:{cached_tokens:400,cache_write_tokens:100},output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}})};});
+    x.run.aiPlan=Sim.AI_PLAN;
+    await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage:'manager_review',body:{...body,max_output_tokens:24000}}),e=>e.code==='SIMULATION_BUDGET_INSUFFICIENT');assert.equal(x.posts(),0);
+    await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage:'manager_review',body:{...body,max_output_tokens:8000}});assert.equal(postedBody.max_output_tokens,8000);
+    const r=(await x.ref.get()).data();assert.equal(r.spentNano,56650000);assert.equal(r.costByStage.manager_review.spentNano,r.spentNano);assert.equal(r.reportedOutputTokens,1000);assert.equal(r.reportedReasoningTokens,800);assert.equal(r.reservedNano,0);
+  });
   await check('contention_after_AI_response_preserves_identity_and_settles_cost_once',async()=>{
     const x=await metered(async()=>({ok:true,status:200,json:async()=>completed})),raw=x.fake.runTransaction;let collisions=0;
     x.fake.runTransaction=fn=>raw(tx=>fn({...tx,set:(ref,data,opts)=>{
@@ -6557,6 +6603,9 @@ async function simulatorAdversarial() {
       }});
       const b=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','engine');
       const ref=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+      const legacyConfig=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef);delete legacyConfig.aiPlan;
+      await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({configRef:await svc.saveJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),'legacy_config',legacyConfig)},{merge:true});await ref.set({aiPlan:null},{merge:true});
+      b.configRef=(await svc.getBatch(b.batchId)).configRef;
       const deferred=await svc.execute(b.runIds[0]);assert.equal(deferred.yielded,true);assert.equal((await svc.getRun(b.runIds[0])).status,'queued');assert.equal(submitted,0);
       const config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
       const units=(await repo.ref.collection('units').get()).docs.map(d=>d.id);
@@ -6609,7 +6658,7 @@ async function simulatorAdversarial() {
       // A second batch reuses the fully prepared scenario without downloading again.
       const prior=priceRequests,b2=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','reuse');
       const config2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef);await svc.ensureRepository(b2,config2);
-      assert.equal((await svc.execute(b2.runIds[0])).done,true);assert.equal((await svc.getRun(b2.runIds[0])).error.code,'SIMULATION_BUDGET_INSUFFICIENT');assert.equal(submitted,0);assert.equal(priceRequests,prior);assert(sec.calls.length>=4);assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);
+      assert.equal((await svc.execute(b2.runIds[0])).done,true);assert.equal((await svc.getRun(b2.runIds[0])).status,'complete');assert.equal((await svc.getRun(b2.runIds[0])).shortlist.count,1);assert.equal(submitted,1);assert.equal(priceRequests,prior);assert(sec.calls.length>=4);assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);
     } finally {M.loadMarketSettings=saved.load;M.providerCredentials=saved.credentials;}
   });
   return {pass:results.every(x=>x.pass),checks:results.length,results};
