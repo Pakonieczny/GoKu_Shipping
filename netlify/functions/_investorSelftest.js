@@ -6148,6 +6148,79 @@ async function simulatorAdversarial() {
       return {status:200,json,text:json?JSON.stringify(json):'<html><body><p>Revenue increased compared with the prior period, while cash flow supported ongoing business investment and debt repayment.</p></body></html>'};};
     return {publicFetch,calls,cik};
   }
+  function xomFixture({empty=false}={}) {
+    const calls=[];
+    const publicFetch=async url=>{
+      calls.push(url);const successor=url.includes('002115436')||url.includes('/2115436/'),cik=successor?2115436:34088;
+      const accession=successor?'0002115436-26-000006':'0000034088-25-000001',filed=successor?'2026-07-31':'2025-08-01';
+      let json=null;
+      if(url.includes('/companyfacts/'))json={cik,facts:empty?{}:{'us-gaap':{Revenues:{units:{USD:[{start:'2025-04-01',end:'2025-06-30',val:successor?999999:100,accn:accession,fy:2025,fp:'Q2',form:'10-Q',filed}]}}}}};
+      else if(url.includes('/submissions/'))json={cik,filings:{recent:{accessionNumber:empty?[]:[accession],filingDate:[filed],form:['10-Q'],primaryDocument:['report.htm'],acceptanceDateTime:[filed+'T20:00:00Z']},files:[]}};
+      return {status:200,json,text:json?JSON.stringify(json):'<html><p>Revenue and cash flow funded business investment, dividends and debt repayments during this reporting period.</p></html>'};
+    };
+    return {publicFetch,calls};
+  }
+  await check('XOM_predecessor_history_keeps_real_CIKs_and_hides_successor_restatements',async()=>{
+    const fake=database(),sec=xomFixture(),svc=Sim.create({admin:fake,publicFetch:sec.publicFetch}),row=require('./_investorUniverse').tradeTier.find(r=>r.symbol==='XOM'),M=require('./_investorMarket');
+    const cutoff=M.nyWallClockToUtcMs('2025-09-17',510),data=await svc.reconstructResearch('XOM',row,'2025-09-17',Date.parse('2026-08-31T23:59:59Z'),{rangeEndDate:'2026-08-31'});
+    const visible=data.filter(x=>x.knownAtMs<=cutoff),dossier=visible.find(x=>x.collection===A.COL.dossierVersions);
+    assert(dossier);assert.equal(Number(dossier.data.identity.cik),34088);assert(!JSON.stringify(visible).includes('999999'));
+    assert(data.some(x=>Number(x.data.cik)===2115436&&x.knownAtMs>cutoff));
+    assert(sec.calls.some(u=>u.includes('/submissions/CIK0000034088.json')));assert(sec.calls.some(u=>u.includes('/Archives/edgar/data/34088/')));
+    assert(sec.calls.some(u=>u.includes('/submissions/CIK0002115436.json')));assert(sec.calls.some(u=>u.includes('/Archives/edgar/data/2115436/')));
+    const col=name=>fake.col('xom_replay/'+RID+'/'+name);
+    await A.withSimulationScope({runId:RID,clock:()=>cutoff,collection:col,transaction:fake.runTransaction,batch:fake.batch},async()=>{
+      for(const x of visible)await col(x.collection).doc(x.id).set(Sim.replayRecord(x));
+      await col(A.COL.dossiers).doc('XOM').set({currentVersionId:dossier.id});
+      const filings=await require('./_investorResearchTools').productionBindings({accountId:RID,admin:A}).filings({symbol:'XOM',asOfMs:cutoff,concepts:['Revenues']});
+      assert.equal(Number(filings.cik),34088);assert(filings.facts.length);assert(filings.facts.every(f=>f.accession.startsWith('0000034088-')));
+    });
+  });
+  await check('shared_research_cannot_be_ready_without_a_dossier_before_the_first_session',async()=>{
+    const fake=database(),sec=xomFixture({empty:true});let prices=0;
+    const svc=Sim.create({admin:fake,publicFetch:sec.publicFetch,fetchImpl:async()=>{prices++;throw Error('Prices should not start before research validation');}});
+    const b=await svc.createBatch({count:1,from:'2025-09-17',to:'2025-09-17'},'operator','missing-baseline');
+    await svc.prepareRepository(b.batchId,'company_XOM');const state=await svc.repositoryState(await svc.getBatch(b.batchId)),u=state.units.find(u=>u.symbol==='XOM');
+    assert.equal(u.status,'failed');assert.equal(u.error.code,'HISTORICAL_EVIDENCE_MISSING');assert.equal(u.error.details.symbol,'XOM');assert.equal(prices,0);
+    assert(![...fake.docs.values()].some(d=>d.kind==='company_library'&&d.symbol==='XOM'&&d.status==='ready'));
+  });
+  await check('XOM_failed_batch_repairs_only_its_research_reuses_prices_and_dispatches_all_runs',async()=>{
+    const fake=database(),sec=xomFixture(),U=require('./_investorUniverse'),C=require('./_investorDecisionContext'),row=U.tradeTier.find(r=>r.symbol==='XOM');
+    await fake.col(A.COL.control).doc('control').set({universeRemovals:U.tradeTier.filter(r=>r.symbol!=='XOM').map(r=>r.symbol)});
+    let external=0;const svc=Sim.create({admin:fake,publicFetch:sec.publicFetch,fetchImpl:async()=>{external++;throw Error('No new prices or AI during repair');}});
+    const b=await svc.createBatch({count:10,from:'2025-09-01',to:'2025-09-30'},'operator','xom-repair'),config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+    const oldId='company_library_'+C.hash({v:'historical-repository.v1',symbol:'XOM',identityHash:C.hash(row),from:b.config.from,to:b.config.to}).slice(0,40),old=fake.col('InvestorAI_SimulationScenarios').doc(oldId);
+    const daily=[{date:'2025-08-29',o:100,h:101,l:99,c:100,v:1000}],artifact=await svc.saveJSON(old,'legacy',{kind:'company_library',data:[],daily});
+    await old.set({kind:'company_library',symbol:'XOM',status:'ready',artifact,version:'historical-repository.v1',identityHash:C.hash(row),from:b.config.from,to:b.config.to});
+    const units=(await repo.ref.collection('units').get()).docs,symbols=units.filter(u=>u.data().kind==='company').map(u=>u.data().symbol);
+    for(const u of units){
+      const parent=fake.col('InvestorAI_SimulationScenarios').doc('kept_'+u.id),data=u.data().kind==='prices'?{symbols:Object.fromEntries(symbols.map(symbol=>[symbol,Sim.regularSessionBars(providerSession(u.data().date,{extra:false}),symbol,u.data().date)])),provenance:{provider:'alpaca',feed:'sip',adjustment:'raw'}}:{data:[],daily};
+      const pointer=u.id==='company_XOM'?{cacheId:oldId,artifact}:{cacheId:parent.id,artifact:await svc.saveJSON(parent,'saved',data)};
+      await u.ref.set({status:'ready',pointer},{merge:true});
+    }
+    for(const runId of b.runIds)await fake.col('InvestorAI_Simulations').doc(runId).set({status:'unavailable',error:{code:'HISTORICAL_EVIDENCE_MISSING',message:'No company research for XOM was available before 2025-09-17'}},{merge:true});
+    await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({status:'incomplete'},{merge:true});
+    const launches=[];await svc.schedule({dispatch:async j=>{launches.push(j);return {upstream:202};}});
+    assert.equal(launches.length,1);assert.equal(launches[0].task,'simulation_prepare');assert.equal(launches[0].payload.unitId,'company_XOM');
+    await svc.prepareRepository(b.batchId,'company_XOM');const state=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(state.status,'ready',JSON.stringify(state.errors));assert.equal(external,0);
+    const repaired=state.units.find(u=>u.symbol==='XOM');assert.notEqual(repaired.pointer.cacheId,oldId);assert.equal((await old.get()).data().artifact,artifact);
+    assert.deepEqual((await svc.readJSON(fake.col('InvestorAI_SimulationScenarios').doc(repaired.pointer.cacheId),repaired.pointer.artifact)).daily,daily);
+    for(const runId of b.runIds){const run=await svc.getRun(runId),packets=await svc.repositoryPackets(run,config,state);assert(packets.packets.find(p=>p.symbol==='XOM').data.some(x=>x.collection===A.COL.dossierVersions));assert.equal(run.spentNano,0);}
+    launches.length=0;await svc.schedule({dispatch:async j=>{launches.push(j);return {upstream:202};}});assert.equal(launches.length,10);assert(launches.every(j=>j.task==='simulation'));
+    assert.equal(new Set(launches.map(j=>j.runId)).size,10);
+    for(const runId of b.runIds)await fake.col('InvestorAI_Simulations').doc(runId).set({status:'unavailable',dispatchedUntil:0,error:{code:'HISTORICAL_EVIDENCE_MISSING',details:{symbol:'XOM'}}},{merge:true});
+    await fake.col('InvestorAI_Simulations').doc(b.runIds[0]).set({paused:true,researchRecoveryVersion:null},{merge:true});
+    await fake.col('InvestorAI_Simulations').doc(b.runIds[1]).set({spentNano:1,researchRecoveryVersion:null},{merge:true});
+    await fake.col('InvestorAI_Simulations').doc(b.runIds[2]).set({initialized:true,researchRecoveryVersion:null},{merge:true});
+    await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({status:'incomplete'},{merge:true});
+    launches.length=0;await svc.schedule({dispatch:async j=>{launches.push(j);return {upstream:202};}});assert.equal(launches.length,0,'paused, paid, initialized and already-recovered runs must not restart automatically');
+    assert.equal((await svc.getRun(b.runIds[1])).spentNano,1);
+    await fake.col('InvestorAI_Simulations').doc(b.runIds[3]).set({researchRecoveryVersion:null},{merge:true});
+    const newer=await svc.createBatch({count:1,from:'2025-09-01',to:'2025-09-30'},'operator','newer-batch');
+    await fake.col('InvestorAI_SimulationBatches').doc(newer.batchId).set({status:'complete',createdAtMs:b.createdAtMs+1},{merge:true});
+    launches.length=0;await svc.schedule({dispatch:async j=>{launches.push(j);return {upstream:202};}});assert.equal(launches.length,0,'older incomplete batches stay archived');
+    assert.equal((await svc.getRun(b.runIds[3])).status,'unavailable');
+  });
   await check('sec_zero_font_archive_reuses_saved_source_and_reports_filing_progress',async()=>{
     const fake=database(),sec=secFixture(),row=require('./_investorUniverse').tradeTier.find(r=>r.symbol==='A'),M=require('./_investorMarket'),progress=[];
     const svc=Sim.create({admin:fake,publicFetch:async url=>{const r=await sec.publicFetch(url);if(!r.json)r.text='<html><body><div style="font-size:0">HIDDEN_PAYLOAD<span style="font-size:9pt">'+r.text+'</span></div></body></html>';return r;}});

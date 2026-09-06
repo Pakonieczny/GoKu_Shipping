@@ -155,6 +155,11 @@ const Simulator = (() => {
   const fail = (code,message=code) => Object.assign(new Error(message),{code});
   const isContention = e => ['10','ABORTED','FIRESTORE/ABORTED'].includes(String(e?.code??'').toUpperCase())||/^10\s+ABORTED\b/i.test(String(e?.message||''));
   const canResumeContention = r => r.status==='incomplete'&&isContention(r.error);
+  // XOM kept its ticker when the successor parent began trading on July 2, 2026.
+  // Verified lineage: https://www.sec.gov/Archives/edgar/data/34088/000119312526291986/d70995d8k.htm
+  const XOM_HISTORY_VERSION='xom-sec-predecessor.v1';
+  const hasXomSuccessor=row=>row?.symbol==='XOM'&&Number(row.cik)===2115436;
+  const missingXomResearch=r=>r.error?.code==='HISTORICAL_EVIDENCE_MISSING'&&(r.error.details?.symbol==='XOM'||/^No company research for XOM was available before /.test(r.error.message||''));
   const id = x => { if(!/^sim_[a-f0-9]{24}$/.test(String(x))) throw fail('BAD_REQUEST','Invalid simulation identifier'); return x; };
   const millis = x => x && typeof x.toMillis==='function' ? x.toMillis() : typeof x==='number' ? x : Date.parse(x || '');
   function knownAt(x) {
@@ -341,13 +346,17 @@ const Simulator = (() => {
         const r=await getRun(runId,owner),ref=runCol.doc(id(runId)),br=batchCol.doc(r.batchId);await getBatch(r.batchId,owner);
         await rootTransaction(async tx=>{const snap=await tx.get(ref),batch=await tx.get(br),v=snap.data();
           if(v.leaseUntil>wallNow()||(!canResumeContention(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure or interrupted database transaction can be retried');
-          tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
+          tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,...(missingXomResearch(v)&&!v.initialized?{repositoryPointersRef:null}:{}),phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
           tx.set(br,{status:'running',paused:false,completedAtMs:null,lastControlAtMs:wallNow()},{merge:true});
         });
         if(!r.initialized) {
           const b=await getBatch(r.batchId,owner),config=await readJSON(br,b.configRef),repo=await ensureRepository(b,config);
           if(/^HISTORICAL_BAR|^HISTORICAL_DATA/.test(r.error?.code||'')) {
             const u=(await repo.ref.collection('units').doc('prices_'+r.date).get()).data();
+            if(u)await retryRepositoryUnit(repo.ref,u);
+          }
+          if(missingXomResearch(r)) {
+            const u=(await repo.ref.collection('units').doc('company_XOM').get()).data();
             if(u)await retryRepositoryUnit(repo.ref,u);
           }
         }
@@ -429,7 +438,16 @@ const Simulator = (() => {
         return source;
       } finally {await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseOwner:null,leaseUntil:0},{merge:true});});}
     }
-    async function reconstructResearch(symbol,row,date,endMs,{onProgress=async()=>{},shouldPause=async()=>false,sourceSnapshotDate=null,rangeEndDate=null}={}) {
+    async function reconstructResearch(symbol,row,date,endMs,{onProgress=async()=>{},shouldPause=async()=>false,sourceSnapshotDate=null,rangeEndDate=null,issuerOnly=false}={}) {
+      if(!issuerOnly&&hasXomSuccessor(row)) {
+        const transition=M.nyWallClockToUtcMs('2026-07-02',0),options={onProgress,shouldPause,sourceSnapshotDate,issuerOnly:true};
+        // Keep each issuer's actual CIK, filing URLs and publication times. The
+        // successor's later filings must never stand in for pre-merger evidence.
+        const oldDate=date<'2026-07-02'?date:'2026-07-01',oldEnd=Math.min(endMs,transition-1);
+        const old=await reconstructResearch(symbol,{...row,cik:'34088',company:'Exxon Mobil Corporation'},oldDate,oldEnd,{...options,rangeEndDate:rangeEndDate&&rangeEndDate<'2026-07-02'?rangeEndDate:'2026-07-01'});
+        const current=endMs>=transition?await reconstructResearch(symbol,row,date<'2026-07-02'?'2026-07-02':date,endMs,{...options,rangeEndDate:rangeEndDate||date}):[];
+        return [...old,...current].sort((a,b)=>a.knownAtMs-b.knownAtMs);
+      }
       const F=require('./_investorFundamentals'),D=require('./_investorDossier'),E=require('./_investorEvidence');
       const cik=F.cik10Of(row?.cik);if(!cik)throw fail('HISTORICAL_IDENTITY_MISSING',`No SEC company identifier is available for ${symbol}.`);
       const cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),earliest=cutoff-180*86400000;
@@ -625,7 +643,10 @@ const Simulator = (() => {
     const REPOSITORY_VERSION='historical-repository.v1';
     const PRICE_VALIDATION_VERSION='observed-bars.v2';
     const repositorySymbols=config=>[...new Set([...config.roster.symbols,'SPY','QQQ','HYG','LQD','IEF','TLT','GLD','UUP',...Object.values(require('./_investorTemporal').DRIVER_BY_SECTOR||{})])];
-    const repositoryRow=(config,symbol)=>config.roster.symbols.includes(symbol)?[...require('./_investorUniverse').tradeTier,...require('./_investorUniverse').researchTier].find(r=>r.symbol===symbol):null;
+    const repositoryRow=(config,symbol)=>{
+      const row=config.roster.symbols.includes(symbol)?[...require('./_investorUniverse').tradeTier,...require('./_investorUniverse').researchTier].find(r=>r.symbol===symbol):null;
+      return hasXomSuccessor(row)?{...row,historicalIssuerVersion:XOM_HISTORY_VERSION}:row;
+    };
     async function ensureRepository(batch,config) {
       const repositoryId='repository_'+hash({version:REPOSITORY_VERSION,universe:config.roster.universeHash,from:batch.config.from,to:batch.config.to,dates:batch.dates,snapshot:config.sourceSnapshotDate}).slice(0,40);
       const ref=scenarioCol.doc(repositoryId),prior=await ref.get();
@@ -646,6 +667,10 @@ const Simulator = (() => {
         await ref.set({priceValidationVersion:PRICE_VALIDATION_VERSION},{merge:true});
       }
       if(batch.repositoryId!==repositoryId)await batchCol.doc(batch.batchId).set({repositoryId},{merge:true});
+      if(hasXomSuccessor(repositoryRow(config,'XOM')))await rootTransaction(async tx=>{
+        const ur=ref.collection('units').doc('company_XOM'),s=await tx.get(ur),u=s.data();
+        if(u?.pointer&&u.researchHistoryVersion!==XOM_HISTORY_VERSION&&!(u.leaseUntil>wallNow()))tx.set(ur,{status:'queued',phase:'Preparing XOM predecessor company history',researchReady:false,error:null,stage:'research',nextAttemptAtMs:0,dispatchedUntil:0,researchHistoryVersion:XOM_HISTORY_VERSION},{merge:true});
+      });
       return {repositoryId,ref};
     }
     async function reuseRepositoryArtifacts(batch,config,ref) {
@@ -672,7 +697,7 @@ const Simulator = (() => {
           const u=snaps[j].data();
           if(!u||['ready','failed'].includes(u.status)||u.leaseUntil>wallNow()||u.dispatchedUntil>wallNow())return;
           tx.set(ref.collection('units').doc(u.unitId),{status:'ready',phase:'Reused saved shared data',pointer:x.pointer,
-            researchReady:u.kind==='company',dailyReady:u.kind==='company',reused:true,error:null,lastDispatchError:null,waitReason:null,nextAttemptAtMs:0,sourceReadyAtMs:0,completedAtMs:wallNow(),updatedAtMs:wallNow()},{merge:true});
+            researchReady:u.kind==='company',dailyReady:u.kind==='company',...(u.symbol==='XOM'?{researchHistoryVersion:XOM_HISTORY_VERSION}:{}),reused:true,error:null,lastDispatchError:null,waitReason:null,nextAttemptAtMs:0,sourceReadyAtMs:0,completedAtMs:wallNow(),updatedAtMs:wallNow()},{merge:true});
         });
       });
     }
@@ -740,7 +765,7 @@ const Simulator = (() => {
         const value=await build(ref);
         if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
         const artifact=await saveJSON(ref,'data',value,async()=>{if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');});
-        await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{artifact,status:'ready',version:REPOSITORY_VERSION,...(value.kind==='company_library'?{kind:value.kind,symbol:value.symbol,from:value.from,to:value.to,identityHash:value.identityHash}:{}),...(value.kind==='session_library'?{priceValidationVersion:PRICE_VALIDATION_VERSION,failedSymbols:Object.keys(value.symbols).filter(k=>value.symbols[k].error),builtRefreshRevision:value.refreshRevision}:{}),preparedAtMs:wallNow(),leaseUntil:0,leaseOwner:null},{merge:true});});
+        await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{artifact,status:'ready',version:REPOSITORY_VERSION,...(value.kind==='company_library'?{kind:value.kind,symbol:value.symbol,from:value.from,to:value.to,identityHash:value.identityHash,researchReadyAtMs:value.researchReadyAtMs}:{}),...(value.kind==='session_library'?{priceValidationVersion:PRICE_VALIDATION_VERSION,failedSymbols:Object.keys(value.symbols).filter(k=>value.symbols[k].error),builtRefreshRevision:value.refreshRevision}:{}),preparedAtMs:wallNow(),leaseUntil:0,leaseOwner:null},{merge:true});});
         return {cacheId,artifact};
       }finally{clearInterval(timer);await renewal;await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:0,leaseOwner:null},{merge:true});});}
     }
@@ -796,7 +821,8 @@ const Simulator = (() => {
         if(unit.kind==='company') {
           const symbol=unit.symbol,row=repositoryRow(config,symbol),from=batch.config.from,to=batch.config.to;
           const identityHash=hash(row||{symbol}),cacheId='company_library_'+hash({v:REPOSITORY_VERSION,symbol,identityHash,from,to}).slice(0,40);
-          const covering=(await rows(scenarioCol.where('kind','==','company_library').where('symbol','==',symbol))).filter(c=>c.artifact&&c.version===REPOSITORY_VERSION&&c.identityHash===identityHash&&c.from<=from&&c.to>=to).sort((a,b)=>a.preparedAtMs-b.preparedAtMs)[0];
+          const libraries=(await rows(scenarioCol.where('kind','==','company_library').where('symbol','==',symbol))).filter(c=>c.artifact&&c.status==='ready'&&c.version===REPOSITORY_VERSION&&c.from<=from&&c.to>=to).sort((a,b)=>a.preparedAtMs-b.preparedAtMs);
+          const covering=libraries.find(c=>c.identityHash===identityHash);
           pointer=covering?{cacheId:covering.id,artifact:covering.artifact}:await cachedRepositoryArtifact(cacheId,async parent=>{
             const range=datesBetween(from,to),first=range[0],last=range.at(-1),endMs=M.sessionCloseMs(new Date(last+'T12:00:00Z'))+1200000;
             await progress(`Reading saved research for ${symbol}`,{stage:'research'});const data=await archivedCompanyData(symbol,row,endMs);
@@ -805,12 +831,14 @@ const Simulator = (() => {
               const extra=await reconstructResearch(symbol,row,first,endMs,{onProgress:progress,shouldPause:pause,sourceSnapshotDate:config.sourceSnapshotDate,rangeEndDate:last});
               const seen=new Set(data.map(x=>x.collection+'/'+x.id));data.push(...extra.filter(x=>!seen.has(x.collection+'/'+x.id)));
             }
+            const researchTimes=data.filter(x=>x.collection===admin.COL.dossierVersions&&Number.isFinite(x.knownAtMs)).map(x=>x.knownAtMs),researchReadyAtMs=researchTimes.length?Math.min(...researchTimes):null;
+            if(row&&(researchReadyAtMs==null||researchReadyAtMs>cutoff))throw Object.assign(fail('HISTORICAL_EVIDENCE_MISSING',`No company research for ${symbol} was available before ${first}`),{details:{symbol,date:first,cik:row.cik}});
             await progress(`Preparing shared daily prices for ${symbol}`,{stage:'daily',researchReady:true});
             const start=new Date(Date.parse(from+'T00:00:00Z')-550*86400000).toISOString(),end=to+'T23:59:59Z';
-            const prices=await bulkPriceHistory([symbol],start,end,'1Day',parent,progress,pause);
-            const daily=(prices[symbol]||[]).map(b=>({...b,date:M.nyParts(new Date(b.t)).date}));
+            const prior=hasXomSuccessor(row)&&libraries[0]?await readJSON(scenarioCol.doc(libraries[0].id),libraries[0].artifact):null;
+            const daily=Array.isArray(prior?.daily)?prior.daily:((await bulkPriceHistory([symbol],start,end,'1Day',parent,progress,pause))[symbol]||[]).map(b=>({...b,date:M.nyParts(new Date(b.t)).date}));
             await progress(`Saving research and daily prices for ${symbol}`,{dailyReady:true});
-            return {kind:'company_library',symbol,identityHash,data,daily,from,to,sourceSnapshotDate:config.sourceSnapshotDate,provenance:{provider:'alpaca',feed:'sip',adjustment:'raw'}};
+            return {kind:'company_library',symbol,identityHash,data,daily,from,to,researchReadyAtMs,sourceSnapshotDate:config.sourceSnapshotDate,provenance:{provider:'alpaca',feed:'sip',adjustment:'raw'}};
           },pause);
         } else {
           const symbols=repositorySymbols(config),date=unit.date,cacheId='session_library_'+hash({v:REPOSITORY_VERSION,universe:config.roster.universeHash,date}).slice(0,40);
@@ -835,7 +863,7 @@ const Simulator = (() => {
           await progress('Session price coverage checked',{pricesProgress:{done:Object.keys(data.symbols).length-bad.length,total:symbols.length}});
           if(bad.length)throw Object.assign(fail('HISTORICAL_PRICE_CHECK_FAILED',`${date}: price history could not be verified for ${bad.length} ${bad.length===1?'company':'companies'} (${bad.slice(0,5).map(([s])=>s).join(', ')}). Retry shared preparation to refresh those prices. Saved research is retained.`),{details:{date,failures:bad.map(([symbol,v])=>({symbol,...v.error}))}});
         }
-        await save({status:'ready',phase:'Saved in shared library',pointer,waitReason:null,sourceReadyAtMs:0,error:null,nextAttemptAtMs:0,completedAtMs:wallNow()});return {done:true};
+        await save({status:'ready',phase:'Saved in shared library',pointer,...(unit.symbol==='XOM'?{researchHistoryVersion:XOM_HISTORY_VERSION}:{}),waitReason:null,sourceReadyAtMs:0,error:null,nextAttemptAtMs:0,completedAtMs:wallNow()});return {done:true};
       }catch(e){
         if(e.code==='SIMULATION_LEASE_LOST')return {yielded:true};
         const retry=e.code==='SIMULATION_PREPARATION_YIELD'||e.code==='HISTORICAL_PROVIDER_BUSY'||isContention(e)||[4,8,14].includes(Number(e.code));
@@ -859,7 +887,7 @@ const Simulator = (() => {
         const price=prices.symbols[symbol];
         if(price?.error)throw Object.assign(fail(price.error.code,price.error.message),{details:price.error.details});if(!price)throw fail('HISTORICAL_BARS_MISSING');
         const data=company.data.filter(x=>x.knownAtMs<=endMs),series=company.daily.filter(b=>b.date<run.date).slice(-400);
-        if(config.roster.symbols.includes(symbol)&&!data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff))throw fail('HISTORICAL_EVIDENCE_MISSING',`No company research for ${symbol} was available before ${run.date}`);
+        if(config.roster.symbols.includes(symbol)&&!data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff))throw Object.assign(fail('HISTORICAL_EVIDENCE_MISSING',`No company research for ${symbol} was available before ${run.date}`),{details:{symbol,date:run.date,cacheId:unit.pointer.cacheId}});
         packets.push({symbol,data,bars:price.bars,coverage:price.coverage,cutoff,provenance:prices.provenance,daily:{symbol,...company.provenance,date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true}});
       }
       await check({stage:'load_research',label:'Saved company research loaded',done:packets.length,total:symbols.length,unit:'companies / indicators',current:null});
@@ -1111,9 +1139,26 @@ const Simulator = (() => {
       if(!locked)return [];
       const selected=[];
       try {
-        const batches=await rows(batchCol.where('status','==','running'));
+        const batches=await rows(batchCol.where('status','in',['running','incomplete']));
+        const latestByOwner=new Map(await Promise.all([...new Set(batches.filter(b=>b.status==='incomplete').map(b=>b.owner))].map(async owner=>{
+          const history=await rows(batchCol.where('owner','==',owner));return [owner,history.sort((a,b)=>b.createdAtMs-a.createdAtMs)[0]?.batchId];
+        })));
         const sets=await Promise.all(batches.map(async b=>({b,runs:await rows(runCol.where('batchId','==',b.batchId))})));
         for(const {b,runs} of sets) {
+          // Older finished batches stay archived unless the operator explicitly retries one.
+          if(b.status==='incomplete'&&latestByOwner.get(b.owner)!==b.batchId)continue;
+          let recovered=false;
+          // One-time recovery of the reported unpaid XOM failures, including batches
+          // already closed as incomplete. Never restart paid, initialized or paused runs.
+          if(!b.paused)for(const r of runs.filter(r=>!r.paused&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable'&&missingXomResearch(r)&&r.researchRecoveryVersion!==XOM_HISTORY_VERSION)) {
+            const rr=runCol.doc(r.runId),fields=await rootTransaction(async tx=>{
+              const s=await tx.get(rr),batchState=await tx.get(batchCol.doc(b.batchId)),v=s.data();if(batchState.data()?.paused||v.status!=='unavailable'||v.leaseUntil>wallNow()||v.paused||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount||v.researchRecoveryVersion===XOM_HISTORY_VERSION||!missingXomResearch(v))return null;
+              const fields={status:'queued',error:null,finishedAtMs:null,repositoryPointersRef:null,phase:'Repairing XOM historical research',waitReason:'repository',nextAttemptAtMs:0,dispatchedUntil:0,researchRecoveryVersion:XOM_HISTORY_VERSION};
+              tx.set(rr,fields,{merge:true});tx.set(batchCol.doc(b.batchId),{status:'running',completedAtMs:null},{merge:true});return fields;
+            });
+            if(fields){Object.assign(r,fields);recovered=true;}
+          }
+          if(b.status==='incomplete'&&!recovered)continue;
           if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)){await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
           const config=await readJSON(batchCol.doc(b.batchId),b.configRef),repo=await ensureRepository(b,config);
           if(!b.paused)await reuseRepositoryArtifacts(b,config,repo.ref);

@@ -95,7 +95,10 @@ function productionBindings({ accountId, admin = null, policy = POLICY.loadActiv
   const rosterRow = (s) => (U ? [...(U.tradeTier || []), ...(U.researchTier || [])].find((r) => r.symbol === s) : null) || null;
   return {
     filings: F ? async ({ symbol, asOfMs, concepts }) => {
-      const row = rosterRow(symbol);
+      // Replay uses the issuer identity in the released historical dossier. A
+      // successor can keep the ticker while its SEC CIK changes (for example XOM).
+      const historical = require('./_investorAdmin').currentScope() && D ? await D.versionAsOf(symbol,{cutoffMs:asOfMs,admin}) : null;
+      const row = historical?.identity?.cik ? historical.identity : rosterRow(symbol);
       if (!row || !row.cik) return { missing: true, reason: "no CIK resolved for symbol" };
       const r = await F.getFilingFactsAsOf({ cik: row.cik, concepts, asOfMs, limit: 400 });
       const visible=r.facts.filter(f=>Number(f.retrievedAtMs)>0 && Number(f.retrievedAtMs)<=asOfMs);
