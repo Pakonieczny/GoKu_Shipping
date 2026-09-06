@@ -6174,7 +6174,7 @@ async function simulatorAdversarial() {
   });
   await check('preparation_dispatch_reports_real_transport_failures_and_keeps_signed_worker_claims',async()=>{
     const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),J=require('./_investorJobs').withAdmin(fake),kick=require('./investorKick'),key='dispatch-fixture-key-not-a-production-secret';
-    const jobs={...require('./_investorJobs'),...J,issueWorkerNonce:params=>J.issueWorkerNonce({...params,key})};
+    const jobs={...J,issueWorkerNonce:params=>J.issueWorkerNonce({...params,key})};
     const b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','dispatch-failures');
     let sent;
     await svc.schedule({dispatch:job=>kick.dispatchJob(job,{admin:fake,jobs,fetchImpl:async(url,opts)=>{sent=JSON.parse(opts.body);assert(url.endsWith('/.netlify/functions/investorManager-background'));return {ok:false,status:503};}})});
@@ -6189,6 +6189,31 @@ async function simulatorAdversarial() {
     assert.equal(accepted.upstream,202);assert.equal(accepted.error,undefined);
     const claim=await J.claimOnce({jobId:sent.jobId,task:sent.task,targetFunction:'investorManager-background',token:sent.nonce,payload:sent.payload,key});assert(claim.claimed);
     const replay=await J.claimOnce({jobId:sent.jobId,task:sent.task,targetFunction:'investorManager-background',token:sent.nonce,payload:sent.payload,key});assert(!replay.claimed);
+  });
+  await check('bound_jobs_dispatch_100_with_expired_auth_cache_and_real_signed_claims',async()=>{
+    const AUTH=require('./_investorAuth'),kick=require('./investorKick'),fake=database(),jobs=require('./_investorJobs').withAdmin(fake);
+    const original={col:A.col,now:Date.now,secrets:AUTH.authSecrets(),passcode:process.env.INVESTOR_PASSCODE,sessionSecret:process.env.INVESTOR_SESSION_SECRET};
+    let wall=Date.now(),reads=0,stored={passcode:'fixture-passcode-0123456789',sessionSecret:'fixture-session-secret-0123456789abcdef0123456789'};
+    const sent=[];
+    try {
+      delete process.env.INVESTOR_PASSCODE;delete process.env.INVESTOR_SESSION_SECRET;Date.now=()=>wall;
+      A.col=name=>{assert.equal(name,A.COL.control);return {doc:id=>{assert.equal(id,AUTH.AUTH_SECRETS_DOC);return {get:async()=>{reads++;await new Promise(r=>setImmediate(r));return {exists:!!stored,data:()=>stored};}};}};};
+      await AUTH.loadAuthSecrets({force:true});wall+=61000;reads=0;
+      assert.equal(AUTH.mintBoundWorkerNonce({jobId:'expired',task:'simulation',targetFunction:'investorManager-background',nonceId:'fixture',expiresAtMs:wall+90000}),null,'expired cache has no environment key');
+      const queued=await Promise.all(Array.from({length:100},(_,i)=>jobs.enqueueOnce({task:i%2?'simulation':'simulation_prepare',dedupeId:'bound-'+i,runId:RID,payload:i%2?{runId:RID}:{batchId:BID,unitId:'prices_2025-10-31'}})));
+      await Promise.all(queued.map(async q=>{const job=(await fake.col(A.COL.jobs).doc(q.jobId).get()).data();delete job.payloadHash;
+        const out=await kick.dispatchJob(job,{admin:fake,jobs,fetchImpl:async(url,opts)=>{assert(url.endsWith('/investorManager-background'));sent.push(JSON.parse(opts.body));return {ok:true,status:202};}});assert.equal(out.upstream,202);
+      }));
+      assert.equal(reads,1,'all launches share one expired-key refresh');assert.equal(sent.length,100);
+      for(const body of sent){const claim=await jobs.claimOnce({jobId:body.jobId,task:body.task,targetFunction:'investorManager-background',token:body.nonce,payload:body.payload});assert(claim.claimed);}
+      const first=sent[0];assert(!(await jobs.claimOnce({jobId:first.jobId,task:first.task,targetFunction:'investorManager-background',token:first.nonce,payload:first.payload})).claimed,'nonce replay must be refused');
+      stored=null;wall+=61000;const nonceCount=(await fake.col(A.COL.workerNonces).get()).size;
+      await assert.rejects(()=>jobs.issueWorkerNonce({jobId:'missing',task:'simulation',targetFunction:'investorManager-background',attempt:1,payloadHash:jobs.payloadHash({})}),e=>e.code==='SIGNING_KEY_UNAVAILABLE');
+      assert.equal((await fake.col(A.COL.workerNonces).get()).size,nonceCount,'missing configured secrets must not issue an unsigned nonce');
+    } finally {
+      Date.now=original.now;for(const [key,value] of [['INVESTOR_PASSCODE',original.passcode],['INVESTOR_SESSION_SECRET',original.sessionSecret]]){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+      stored=original.secrets;await AUTH.loadAuthSecrets({force:true});A.col=original.col;
+    }
   });
   await check('saved_repository_lookup_does_not_reuse_incompatible_or_unverified_artifacts',async()=>{
     const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),hash=require('./_investorDecisionContext').hash;

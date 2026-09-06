@@ -193,6 +193,9 @@ function createJobs(A) {
   /** Sign the exact binding and store only the token hash, UNUSED, under the
    *  attempt. Returns the token to send in the invocation body. */
   async function issueWorkerNonce({ jobId, task, targetFunction, attempt, payloadHash: hash, ttlMs = NONCE_TTL_MS, key = null }) {
+    // Dispatch may happen after lengthy preparation or without the cron handler.
+    // Resolve the current configured key immediately before signing each nonce.
+    if (!key) await AUTH.loadAuthSecrets();
     const nonceId = crypto.randomBytes(16).toString("hex");
     const expiresAtMs = Date.now() + ttlMs;
     const token = AUTH.mintBoundWorkerNonce({ jobId, task, targetFunction, attempt, payloadHash: hash, nonceId, expiresAtMs }, key ? { key } : {});
@@ -390,6 +393,7 @@ function createJobs(A) {
 
 
   return {
+    taskFor, payloadHash,
     enqueueOnce, dueJobs, orderForDispatch, dispatchPlan,
     issueWorkerNonce, claimOnce,
     claimRunLease, renewRunLease, releaseRunLease,

@@ -93,6 +93,7 @@ const AUTH_SECRETS_TTL_MS = 60000;
 const AUTH_BUILD = "v8.6.5-firestore-secrets";
 let _authSecrets = null;
 let _authSecretsAtMs = 0;
+let _authSecretsLoading = null;
 
 /* Whether the Firestore driver is even loadable in this bundle. If
    @google-cloud/firestore is missing from package.json, or esbuild bundled it
@@ -145,6 +146,13 @@ async function loadAuthSecrets({ force = false } = {}) {
   if (!force && _authSecrets && Date.now() - _authSecretsAtMs <= AUTH_SECRETS_TTL_MS) {
     return _authSecrets;
   }
+  // Concurrent worker launches share one refresh, not one Firestore read each.
+  if (_authSecretsLoading) { await _authSecretsLoading; return loadAuthSecrets({ force }); }
+  _authSecretsLoading = refreshAuthSecrets();
+  try { return await _authSecretsLoading; }
+  finally { _authSecretsLoading = null; }
+}
+async function refreshAuthSecrets() {
   const fallback = envAuthSecrets();
   try {
     const snap = await A.col(A.COL.control).doc(AUTH_SECRETS_DOC).get();
