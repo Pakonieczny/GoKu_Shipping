@@ -1009,11 +1009,17 @@ const Simulator = (() => {
         const reservation=await rootTransaction(async tx=>{const [rs,qs]=await Promise.all([tx.get(ref),tx.get(qref)]);const r=rs.data();
           if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.resetAtMs || r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
           const room=CEILING-r.spentNano-r.reservedNano-inputReserve;
-          const maxOutput=Math.min(body.max_output_tokens,Math.floor(room/rates.output));
-          if(maxOutput<2048)throw fail('SIMULATION_BUDGET_EXHAUSTED','Remaining allowance cannot fund a useful AI response');
+          const maxOutput=body.max_output_tokens;
+          if(!Number.isSafeInteger(maxOutput)||maxOutput<=0)throw fail('SIMULATION_INVALID_OUTPUT_LIMIT');
+          if(maxOutput*rates.output>room)return {blocked:true,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano:Math.max(0,CEILING-r.spentNano-r.reservedNano),requestedOutputTokens:maxOutput};
           const nano=inputReserve+Math.ceil(maxOutput*rates.output);
-          tx.set(ref,{reservedNano:r.reservedNano+nano,pendingAiCount:(r.pendingAiCount||0)+1},{merge:true});
+          tx.set(ref,{reservedNano:r.reservedNano+nano,pendingAiCount:(r.pendingAiCount||0)+1,budgetFailure:null},{merge:true});
           tx.set(qref,{key,status:'submitting',model:body.model,tier,reservation:nano,inputTokens:input,maxOutput,requestRef,startedAtMs:wallNow(),rates,clockMs:run.clockMs});return {nano,maxOutput};});
+        if(reservation.blocked){
+          const message='AI request not submitted: its configured response allowance needs a reservation of $'+(reservation.requiredNano/1e9).toFixed(4)+', but only $'+(reservation.availableNano/1e9).toFixed(4)+' remains within the $1.045 simulation limit. No tokens were purchased for this request. Review the AI workload or budget.';
+          await ref.set({budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT',message,details:reservation}},{merge:true});
+          throw fail('SIMULATION_BUDGET_INSUFFICIENT',message);
+        }
         const submitted={...body,max_output_tokens:reservation.maxOutput,service_tier:tier,background:true,store:true};
         await qref.set({submittedRef:await saveJSON(ref,'submitted_request',submitted)},{merge:true});
         let r;
@@ -1129,7 +1135,7 @@ const Simulator = (() => {
             if(!run.managerDone) {
               const cp=run.managerCheckpointRef?await readJSON(ref,run.managerCheckpointRef):null;
               const out=await manager.runManagerMeeting({claim:{runId:'meeting_'+runId,payload:{accountId:runId,tradingDate:run.date},checkpoint:cp},control:ctrl,
-                deps:{admin:A,gateway:require('./_investorOpenai').createGateway({admin:A,env}),now:()=>run.clockMs,universe:{...require('./_investorUniverse'),freezeEligibleSnapshot:()=>config.roster},checkpoint,shouldYield:paused},budget:()=>Math.max(0,deadlineMs-wallNow()),minStageMs:5000});
+                deps:{admin:A,gateway:require('./_investorOpenai').createGateway({admin:A,env}),now:()=>run.clockMs,universe:{...require('./_investorUniverse'),freezeEligibleSnapshot:()=>config.roster},checkpoint,progress:async work=>{if(await paused())throw fail('SIMULATION_PREPARATION_YIELD');await report(work);},shouldYield:paused},budget:()=>Math.max(0,deadlineMs-wallNow()),minStageMs:5000});
               if(out.checkpoint)await checkpoint(out.checkpoint);
               if(out.failed)throw fail('SIMULATION_MANAGER_INCOMPLETE',JSON.stringify(out.summary?.noBuyReasons||out.reason));
               if(out.yielded) {if(await paused())break;await new Promise(r=>setTimeout(r,1200));continue;}
@@ -1200,6 +1206,7 @@ const Simulator = (() => {
           return {done:false,yielded:true,nextAttemptAtMs};
         }
         if(e.code==='HISTORICAL_PROVIDER_BUSY'&&(latest.preparationRetries||0)>=3)e.message='Historical data provider remained unavailable after three retries. No result was produced.';
+        if(latest.budgetFailure&&['SIMULATION_MANAGER_INCOMPLETE','SIMULATION_BUDGET_INSUFFICIENT'].includes(e.code)){e=Object.assign(Error(latest.budgetFailure.message),latest.budgetFailure);}
         const status=latest.paused?'paused':/^HISTORICAL_|^SCENARIO_/.test(e.code||'')?'unavailable':'incomplete';
         if(e.code!=='SIMULATION_LEASE_LOST')await save({status,phase:status==='paused'?'Paused — progress saved':status==='unavailable'?'Historical data unavailable':'Needs review',error:{code:e.code||'SIMULATION_FAILED',message:String(e.message).slice(0,500),details:e.details||null},finishedAtMs:wallNow()});
         return {done:true,status,error:e.code||e.message};

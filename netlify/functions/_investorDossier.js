@@ -545,24 +545,32 @@ async function marketInputs(symbol, sector, { cutoffMs, deps = {} } = {}) {
 /** §5.4 — one compact card per symbol at the cutoff; symbols without a
  *  dossier are reported, never silently dropped (the coverage gate needs
  *  to see them). */
-async function compactCards({ symbols = [], cutoff, admin = null, deps = {}, portfolioBySymbol = {}, standingViews = {} } = {}) {
+async function compactCards({ symbols = [], cutoff, admin = null, deps = {}, portfolioBySymbol = {}, standingViews = {}, pointerCache = new Map() } = {}) {
   const cutoffMs = Number(cutoff && cutoff.cutoffMs != null ? cutoff.cutoffMs : cutoff) || A.now();
   const cards = [], missing = [];
-  const marketCache = new Map();
-  for (const symbol of symbols) {
-    const sym = String(symbol).toUpperCase();
-    const pointer = await current(sym, { admin });
-    const version = await versionAsOf(sym, { cutoffMs, admin, pointer });
-    if (!version) { missing.push({ symbol: sym, reason: pointer ? "dossier_version_unreadable" : "no_dossier" }); continue; }
-    const key = `${sym}`;
-    if (!marketCache.has(key)) marketCache.set(key, await marketInputs(sym, version.identity.sector, { cutoffMs, deps }));
-    const mk = marketCache.get(key);
-    const changes = await pendingChanges(sym, { cutoffMs, admin }).catch(() => []);
-    const card = cardFromVersion(version, { cutoffMs, price: mk.price, sectorPrice: mk.sectorPrice, marketPrice: mk.marketPrice, changes,
-      standingView: standingViews[sym] || pointer.standingView || null, portfolio: portfolioBySymbol[sym] || null });
-    card.marketObservation = mk.observation || null;
-    card.freshness = freshnessMatrix(pointer, { nowMs: cutoffMs });
-    cards.push(card);
+  const progress = async done => { if (deps.progress) await deps.progress({stage:'manager_cards',label:'Preparing company summaries from saved research',done,total:symbols.length,unit:'companies',current:symbols[done] || null}); };
+  await progress(0);
+  // Independent database reads overlap; results retain the roster's order.
+  // This bounds reads within a meeting, not the number of simulations.
+  for (let offset = 0; offset < symbols.length; offset += 20) {
+    const results = await Promise.all(symbols.slice(offset, offset + 20).map(async symbol => {
+      const sym = String(symbol).toUpperCase();
+      const pointer = await current(sym, { admin });
+      pointerCache.set(sym, pointer);
+      const version = await versionAsOf(sym, { cutoffMs, admin, pointer });
+      if (!version) return { missing: {symbol:sym,reason:pointer ? 'dossier_version_unreadable' : 'no_dossier'} };
+      const [mk, changes] = await Promise.all([
+        marketInputs(sym, version.identity.sector, {cutoffMs, deps}),
+        pendingChanges(sym, {cutoffMs, admin}).catch(() => [])
+      ]);
+      const card = cardFromVersion(version, { cutoffMs, price:mk.price, sectorPrice:mk.sectorPrice, marketPrice:mk.marketPrice, changes,
+        standingView:standingViews[sym] || pointer.standingView || null, portfolio:portfolioBySymbol[sym] || null });
+      card.marketObservation = mk.observation || null;
+      card.freshness = freshnessMatrix(pointer, {nowMs:cutoffMs});
+      return {card};
+    }));
+    for (const result of results) { if (result.card) cards.push(result.card); else missing.push(result.missing); }
+    await progress(Math.min(symbols.length,offset+20));
   }
   return { cards, missing, cutoffMs, count: cards.length };
 }
@@ -602,11 +610,11 @@ async function expandedHoldingDeltas({ symbols = [], cutoff, admin = null, deps 
 }
 
 /* ── health ────────────────────────────────────────────────────────────── */
-async function dossierHealth({ symbols = [], admin = null, nowMs = A.now() } = {}) {
+async function dossierHealth({ symbols = [], admin = null, nowMs = A.now(), pointerCache = null } = {}) {
   /* pointer reads only: no market reads, so this is cheap for a full roster */
   const out = { total: symbols.length, present: 0, missing: [], stale: [], complete: 0, pendingDeltas: 0, oldestAsOfMs: null };
   for (const s of symbols) {
-    const p = await current(s, { admin });
+    const p = pointerCache && pointerCache.has(String(s).toUpperCase()) ? pointerCache.get(String(s).toUpperCase()) : await current(s, { admin });
     if (!p) { out.missing.push(s); continue; }
     out.present += 1;
     if (p.dataQuality && p.dataQuality.complete) out.complete += 1;

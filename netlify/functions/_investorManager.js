@@ -365,8 +365,11 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       const workset = deps.workset.buildManaged({ roster: snapshotRoster, positions: portfolio.positions.map((p) => ({ symbol: p.symbol, qty: Number(p.quantityUnits), open: true })), pending: portfolio.workingOrders.map((o) => ({ symbol: o.symbol, orderId: o.orderId, status: o.status, side: o.side })), nowMs: now() });
       const cutoff = freezeDecisionCutoff({ runStartedAtMs: st.startedAtMs, tradingDate, nowMs: now() });
       const portfolioBySymbol = Object.fromEntries(workset.rows.map((r) => [r.symbol, { held: r.held, pending: r.pending, activeMandate: portfolio.activeMandates.some((m) => m.symbol === r.symbol), position: portfolio.positions.find(p => p.symbol === r.symbol) || null, mandate: portfolio.activeMandates.find(m => m.symbol === r.symbol) || null }]));
-      const cards = await deps.dossier.compactCards({ symbols: snapshotRoster.symbols, cutoff, admin: deps.admin, portfolioBySymbol, deps });
-      const freshness = await deps.dossier.dossierHealth({ symbols: snapshotRoster.symbols, admin: deps.admin, nowMs: cutoff.cutoffMs });
+      const pointerCache = new Map();
+      const progress = async (stage,label) => { if(deps.progress) await deps.progress({stage,label,done:null,total:null,unit:'',current:null}); };
+      const cards = await deps.dossier.compactCards({ symbols: snapshotRoster.symbols, cutoff, admin: deps.admin, portfolioBySymbol, deps, pointerCache });
+      await progress('manager_health','Checking saved research freshness');
+      const freshness = await deps.dossier.dossierHealth({ symbols: snapshotRoster.symbols, admin: deps.admin, nowMs: cutoff.cutoffMs, pointerCache });
       let coverageInput;
       try { coverageInput = assertExactCoverageInput(cards, snapshotRoster); }
       catch (e) {
@@ -377,11 +380,14 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
         cards.cards = snapshotRoster.symbols.map(s=>by.get(s) || C.unavailableCard(s,cutoff.cutoffMs,"coverage_missing"));
         cards.count = cards.cards.length;
       }
+      await progress('manager_holdings','Preparing existing holding summaries');
       const holdingPackets = await deps.dossier.expandedHoldingDeltas({ symbols: workset.managedPositionSymbols, cutoff, admin: deps.admin, portfolioBySymbol, deps });
       const learning = deps.learning || lazy("./_investorLearning");
       st.independentSymbols = learning ? learning.antiAnchoringSample({ symbols:snapshotRoster.symbols, tradingDate, heldSymbols:workset.managedPositionSymbols }) : [];
       cards.cards = cards.cards.map(c => st.independentSymbols.includes(c.symbol) ? {...c,standingView:null,independentReview:true} : c);
+      await progress('manager_market','Preparing historical market context');
       const marketState = await C.marketState({ cards:cards.cards, cutoffMs:cutoff.cutoffMs, deps });
+      await progress('manager_freeze_save','Saving the AI input snapshot');
       const frozen = await C.freeze({ runId:managerRunId, context:{ cards, holdingPackets, portfolio:{...portfolio, observedAtMs:now()}, marketState, policy, cutoff, roster:snapshotRoster }, admin:deps.admin });
       const contextManifestHash = frozen.contentHash;
       st.policySnapshot = frozen.policy;
