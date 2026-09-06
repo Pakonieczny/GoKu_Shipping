@@ -128,9 +128,20 @@ function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false) 
 }
 // Versioned, simulation-only policy. It never grants authority to the paper desk.
 const INVESTMENT_POLICY = Object.freeze({version:'required-investment.v1',minUsd:5000,maxUsd:30000,maxCompanies:2,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
-function investmentSchema(documents) {
+const DIVERSIFIED_POLICY = Object.freeze({version:'required-investment.v2',minUsd:5000,maxUsd:30000,minCompanies:4,maxCompanies:7,maxTotalUsd:95000,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
+function supportedInvestmentPolicy(policy) {
+  return [INVESTMENT_POLICY,DIVERSIFIED_POLICY].find(p=>policy?.version===p.version&&C.hash(policy)===C.hash(p))||null;
+}
+function assertInvestmentAllocations(investments,policy) {
+  if(!supportedInvestmentPolicy(policy))fail('SIMULATION_INVESTMENT_POLICY_INVALID');
+  const rows=Object.values(investments||{});
+  if(rows.length<(policy.minCompanies||1)||rows.length>policy.maxCompanies)fail('SIMULATION_FINALISTS_INVALID');
+  if(rows.some(r=>!Number.isSafeInteger(r?.allocationUsd)||r.allocationUsd<policy.minUsd||r.allocationUsd>policy.maxUsd))fail('SIMULATION_ALLOCATION_INVALID');
+  if(rows.reduce((n,r)=>n+r.allocationUsd,0)>(policy.maxTotalUsd||policy.maxCompanies*policy.maxUsd))fail('SIMULATION_TOTAL_ALLOCATION_INVALID');
+}
+function investmentSchema(documents,policy=INVESTMENT_POLICY) {
   const investment=obj({allocationUsd:{type:'integer',minimum:5000,maximum:30000},conviction:{type:'string',enum:['LOW','MEDIUM','HIGH']},
-    sizingReason:text(600),assessment:obj(Object.fromEntries(SECTIONS.map(k=>[k,text(1200)]))),
+    sizingReason:text(600),assessment:obj(Object.fromEntries(SECTIONS.map(k=>[k,text(policy.version===DIVERSIFIED_POLICY.version?600:1200)]))),
     outlook:text(1200),takeProfitBps:{type:'integer',minimum:1,maximum:100000},stopLossBps:{type:'integer',minimum:1,maximum:9500},
     evidenceIds:array(text(200),24)});
   return obj({schemaVersion:{type:'string',enum:['simulation-investment-plan.v1']},comparisonNote:text(1200),
@@ -138,12 +149,14 @@ function investmentSchema(documents) {
       const ids=[...new Set([...d.evidence.map(e=>e.id),...Object.keys(d.baseline).map(k=>'baseline:'+k)])];
       row.properties.evidenceIds.items={type:'string',enum:ids};return [d.symbol,row];}))) });
 }
-function validateInvestmentPlan(output,documents) {
-  if(!documents.length||documents.length>2||new Set(documents.map(d=>d.symbol)).size!==documents.length)fail('SIMULATION_FINALISTS_INVALID');
+function validateInvestmentPlan(output,documents,policy=INVESTMENT_POLICY) {
+  if(documents.length<(policy.minCompanies||1)||documents.length>policy.maxCompanies||new Set(documents.map(d=>d.symbol)).size!==documents.length)fail('SIMULATION_FINALISTS_INVALID');
   documents.forEach(assertDocument);
-  if(P.validateAgainst(investmentSchema(documents),output).length)fail('SIMULATION_INVESTMENT_PLAN_INVALID');
-  const plan={...output,policy:INVESTMENT_POLICY,cutoffMs:documents[0].cutoffMs,
+  if(P.validateAgainst(investmentSchema(documents,policy),output).length)fail('SIMULATION_INVESTMENT_PLAN_INVALID');
+  assertInvestmentAllocations(output.investments,policy);
+  if(documents.some(d=>d.cutoffMs!==documents[0].cutoffMs))fail('HANDOFF_AS_OF_MISMATCH');
+  const plan={...output,policy,cutoffMs:documents[0].cutoffMs,
     documentHashes:Object.fromEntries(documents.map(d=>[d.symbol,d.documentHash]))};
   return {...plan,planHash:C.hash(plan)};
 }
-module.exports={VERSION,SECTIONS,SCHEMAS,sourcePacket,citationCatalog,preparationWire,bindDocument,assertDocument,validateJoint,INVESTMENT_POLICY,investmentSchema,validateInvestmentPlan};
+module.exports={VERSION,SECTIONS,SCHEMAS,sourcePacket,citationCatalog,preparationWire,bindDocument,assertDocument,validateJoint,INVESTMENT_POLICY,DIVERSIFIED_POLICY,supportedInvestmentPolicy,assertInvestmentAllocations,investmentSchema,validateInvestmentPlan};

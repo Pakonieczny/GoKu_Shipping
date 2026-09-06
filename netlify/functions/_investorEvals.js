@@ -159,8 +159,8 @@ const Simulator = (() => {
   // Explicit, pinned simulation workload. Ordinary paper meetings retain their full roster.
   // Base allowances remain stable in request identities. The meter applies the
   // approved 33% boost exactly once, only when purchasing a new request.
-  const AI_PLAN = Object.freeze({version:'shortlist-50.v1',shortlistModel:'gpt-5.6-luna',shortlistReasoning:'medium',shortlistCount:50,
-    preparedResearch:true,maxResearchCompanies:2,outputTokens:{prepareResearchDocument:6000,decidePreparedPortfolio:18000,reviewUniverse:8000,repairCoverageStructure:3000,researchCompany:6000,finalizePortfolio:6000,reviseEntry:4000,reviseHolding:4000,finalizeEventRevision:4000},
+  const AI_PLAN = Object.freeze({version:'shortlist-50-picks-4-7.v2',shortlistModel:'gpt-5.6-luna',shortlistReasoning:'medium',shortlistCount:50,
+    preparedResearch:true,maxResearchCompanies:7,outputTokens:{prepareResearchDocument:6000,decidePreparedPortfolio:27000,reviewUniverse:8000,repairCoverageStructure:3000,researchCompany:6000,finalizePortfolio:6000,reviseEntry:4000,reviseHolding:4000,finalizeEventRevision:4000},
     holdbackNano:{shortlist:550000000,manager_review:550000000,manager_coverage:500000000,manager_research:220000000}});
   const TERMINAL = ['complete','incomplete','unavailable','cancelled'];
   const uncappedRun = r => r.budgetMode==='measure_actual_cost'&&r.runIdsCount===1;
@@ -175,12 +175,13 @@ const Simulator = (() => {
   const canResumeBudget = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_BUDGET_INSUFFICIENT'||r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&r.budgetFailure?.code==='SIMULATION_BUDGET_INSUFFICIENT');
   const canRecoverHandoff = r => r.status==='incomplete'&&!r.reservedNano&&!r.pendingAiCount&&r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&r.error.details?.failed?.length>0&&r.error.details.failed.every(x=>x.error==='HANDOFF_UNKNOWN_EVIDENCE'&&x.responseId);
   const canResumePersistence = r => r.status==='incomplete'&&r.managerDone&&r.work?.stage==='portfolio_review'&&!r.reservedNano&&!r.pendingAiCount&&r.error?.code==='DECISION_CODEC_REJECTED'&&!!r.aiActivity?.responseId;
-  const failedResponseIds = r => r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE' ? [...new Set((r.error.details?.failed||[]).filter(x=>(x.error==='schema_invalid'||/^HANDOFF_/.test(x.error||''))&&x.responseId).map(x=>x.responseId))] : r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid' ? [r.error.details.responseId].filter(Boolean) : [r.aiActivity?.responseId].filter(Boolean);
+  const retryableResearchError = error => error==='schema_invalid'||/^HANDOFF_/.test(error||'')||['SIMULATION_INVESTMENT_PLAN_INVALID','SIMULATION_TOTAL_ALLOCATION_INVALID','SIMULATION_ALLOCATION_INVALID'].includes(error);
+  const failedResponseIds = r => r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE' ? [...new Set((r.error.details?.failed||[]).filter(x=>retryableResearchError(x.error)&&x.responseId).map(x=>x.responseId))] : r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid' ? [r.error.details.responseId].filter(Boolean) : [r.error?.details?.responseId||r.aiActivity?.responseId].filter(Boolean);
   const canRetryAIStep = r => !canRecoverHandoff(r)&&r.status==='incomplete'&&!r.reservedNano&&!r.pendingAiCount&&failedResponseIds(r).length>0&&(
-    r.error?.code==='SIMULATION_AI_RESPONSE_FAILED'&&r.aiActivity?.stage==='shortlist'&&r.aiActivity.incompleteReason==='max_output_tokens'||
+    !r.managerDone&&r.error?.code==='SIMULATION_AI_RESPONSE_FAILED'&&['shortlist','manager_review','manager_document','manager_decision','manager_research','manager_synthesis'].includes(r.error?.details?.stage||r.aiActivity?.stage)&&(r.error?.details?.incompleteReason||r.aiActivity?.incompleteReason)==='max_output_tokens'||
     r.error?.code==='SIMULATION_SHORTLIST_INVALID'&&r.aiActivity?.stage==='shortlist'||
     r.error?.code==='SIMULATION_MANAGER_INCOMPLETE'&&r.aiActivity?.stage==='manager_review'&&/schema_invalid/.test(r.error.message||'')||
-    r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&(r.error.details?.failed||[]).every(x=>(x.error==='schema_invalid'||/^HANDOFF_/.test(x.error||''))&&x.responseId)||
+    r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&(r.error.details?.failed||[]).every(x=>retryableResearchError(x.error)&&x.responseId)||
     r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid');
   // Card projections use recorded fills and observed prices, never AI estimates.
   function tradeCards(fills,marks,marketTimeMs,prior=[]) {
@@ -208,8 +209,8 @@ const Simulator = (() => {
   function simulationRequestBody(body,stage) {
     const out=JSON.parse(JSON.stringify(body)),format=out.text?.format;
     const canonical=Object.entries({...P.SCHEMAS,...require('./_investorResearchHandoff').SCHEMAS}).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
-    if(canonical){const minimum= format.schema?.properties?.researchRequests?.minItems;format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
-      if(minimum) {format.schema.properties.researchRequests.minItems=minimum;format.schema.properties.researchRequests.maxItems=2;}}
+    if(canonical){const minimum=format.schema?.properties?.researchRequests?.minItems,maximum=format.schema?.properties?.researchRequests?.maxItems;format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
+      if(minimum) {format.schema.properties.researchRequests.minItems=minimum;format.schema.properties.researchRequests.maxItems=maximum||2;}}
     if(stage==='manager_document'&&format?.name==='prepared_research_document_v1') {
       const item=out.input?.find(x=>x.role==='user'&&typeof x.content==='string'),pattern=/<untrusted_context name="source_packet">\n([\s\S]*?)\n<\/untrusted_context>/;
       const match=item?.content.match(pattern);if(!match)throw fail('SIMULATION_HANDOFF_SOURCE_MISSING');
@@ -266,7 +267,7 @@ const Simulator = (() => {
     }
     return out;
   }
-  const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.error?.code==='SIMULATION_REQUEST_INCOMPLETE'&&r.work?.stage==='finalize'||r.reservedNano>0&&['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code));
+  const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.managerDone&&['SIMULATION_REQUEST_INCOMPLETE','SIMULATION_AI_RESPONSE_FAILED'].includes(r.error?.code)||r.reservedNano>0&&['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code));
   // XOM kept its ticker when the successor parent began trading on July 2, 2026.
   // Verified lineage: https://www.sec.gov/Archives/edgar/data/34088/000119312526291986/d70995d8k.htm
   const XOM_HISTORY_VERSION='xom-sec-predecessor.v1';
@@ -513,7 +514,7 @@ const Simulator = (() => {
         status:'running',paused:false,cleanupVersion:CLEANUP_VERSION,cleanupState:'complete',createdAtMs:wallNow(),targetNano:unlimited?null:TARGET*count,ceilingNano:unlimited?null:CEILING*count,budgetVersion:BUDGET_VERSION,version:VERSION,
         model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:count,concurrencyMode:'all_requested',
         limitations:['Current eligible universe: survivorship-limited historical selection.','Missing research is reconstructed from SEC filings and financial statements. Broader historical news and confirmed earnings calendars may be unavailable.','SEC aggregates are retrieved today and filtered by filing availability; later provider corrections may remain. Original filing sources and retrieval timestamps are retained.','First-time preparation precedes the five-minute replay target.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
-      const savedConfig={investmentPolicy:require('./_investorResearchHandoff').INVESTMENT_POLICY,policy,roster,aiPlan:AI_PLAN,budgetMode,budgetVersion:BUDGET_VERSION,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES};
+      const savedConfig={investmentPolicy:require('./_investorResearchHandoff').DIVERSIFIED_POLICY,policy,roster,aiPlan:AI_PLAN,budgetMode,budgetVersion:BUDGET_VERSION,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES};
       const configRef=await saveJSON(ref,'configuration',savedConfig);
       // Publish the batch last so a partially-created batch is never dispatched.
       for(let offset=0;offset<runIds.length;offset+=150) {
@@ -592,7 +593,8 @@ const Simulator = (() => {
             const wanted=failedResponseIds(v);
             if(retries.length!==wanted.length||retries.some(s=>s.data()?.status!=='settled'||!wanted.includes(s.data().responseId)))throw fail('BAD_REQUEST','Resolve the saved request usage before buying a retry');
             const attempts={...(v.aiRequestRetries||{})};for(const s of retries){const retry=s.data(),originalKey=retry.originalKey||retry.key;attempts[originalKey]=(attempts[originalKey]||0)+1;}
-            tx.set(ref,{aiRequestRetries:attempts,aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
+            const outputLimits={...(v.aiRetryOutputTokens||{})};for(const s of retries){const q=s.data();if(q.incompleteReason==='max_output_tokens'&&Number.isSafeInteger(q.maxOutput))outputLimits[q.originalKey||q.key]=Math.ceil(q.maxOutput*1.5);}
+            tx.set(ref,{aiRequestRetries:attempts,aiRetryOutputTokens:outputLimits,aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
             for(const model of retryModels)tx.set(ref.collection(admin.COL.modelRequests).doc(model.id),{status:'rejected',error:'operator_retry_requested',retryResponseId:model.responseId,retryGeneration:(model.retryGeneration||0)+1},{merge:true});
           }
           if(canResumeBudget(v))tx.set(ref,{researchHandoffVersion:v.aiPlan?'luna-astra-handoff.v1':null,budgetFailure:null,...runBudget(v),budgetVersion:BUDGET_VERSION},{merge:true});
@@ -1228,10 +1230,10 @@ const Simulator = (() => {
       finally {clearTimeout(timer);}
     }
     function meter(run,ref,paused,assertOwner,onActivity=async()=>{}) {
-      async function settle(qref,q,response) {
+      async function settle(qref,q,response,{accountingOnly=false}={}) {
         const final=!['queued','in_progress'].includes(response.status);
         const responseRef=await saveJSON(ref,'response',response);
-        const diagnostic={responseStatus:response.status||'unknown',providerError:response.error||null,incompleteReason:response.incomplete_details?.reason||null};
+        const diagnostic={responseId:response.id||q.responseId||null,stage:q.stage||'legacy',responseStatus:response.status||'unknown',providerError:response.error||null,incompleteReason:response.incomplete_details?.reason||null};
         await qref.set({...diagnostic,responseId:response.id||q.responseId||null,responseRef},{merge:true});
         await ref.set({aiActivity:{status:response.status||'unknown',stage:q.stage||'legacy',model:q.model,responseId:response.id||q.responseId||null,httpStatus:200,checkedAtMs:wallNow(),...diagnostic}},{merge:true});
         if(!final) {await qref.set({status:'pending',...(response.usage?{reportedUsage:response.usage}:{})},{merge:true});return;}
@@ -1242,7 +1244,7 @@ const Simulator = (() => {
         if(!response.usage || !Number.isInteger(response.usage.input_tokens)||!Number.isInteger(response.usage.output_tokens)) {
           const checks=(q.usageChecks||0)+1;
           await qref.set({status:'awaiting_usage',usageChecks:checks,lastCheckedAtMs:wallNow()},{merge:true});
-          if(responseError)return stop(responseError);
+          if(responseError&&!accountingOnly)return stop(responseError);
           return stop(fail(checks<5?'SIMULATION_USAGE_PENDING':'SIMULATION_USAGE_UNKNOWN',checks<5?'AI answer saved; checking the same response for token usage. Reserved cost retained.':'AI answer is saved, but token usage is still missing after five checks. Recheck AI response to retrieve it again; no new AI request will be purchased.'));
         }
         const tier=response.service_tier==='flex'?'flex':q.tier==='flex' && !response.service_tier?'flex':'standard';
@@ -1253,9 +1255,9 @@ const Simulator = (() => {
           tx.set(ref,{costUpdatedAtMs:wallNow(),costByStage:{...(r.costByStage||{}),[stage]:{spentNano:(prior.spentNano||0)+actual,requests:(prior.requests||0)+1,inputTokens:(prior.inputTokens||0)+response.usage.input_tokens,outputTokens:(prior.outputTokens||0)+response.usage.output_tokens}}},{merge:true});
           tx.set(qref,{status:'settled',responseId:response.id,responseRef,actualNano:actual,usage:response.usage,tier,finishedAtMs:wallNow()},{merge:true});});
         await ref.set({aiAccountingError:null,aiRecheckRequired:false},{merge:true});
-        if(responseError)return stop(responseError);
+        if(responseError&&!accountingOnly)return stop(responseError);
       }
-      async function request({method,url,body,stage='legacy'}) {
+      async function request({method,url,body,stage='legacy',accountingOnly=false}) {
         await assertOwner();
         if(method==='GET') {
           const qs=await rows(ref.collection('requests').where('responseId','==',url.split('/').at(-1)).limit(1));if(!qs.length)throw fail('SIMULATION_RESPONSE_UNKNOWN');
@@ -1263,7 +1265,7 @@ const Simulator = (() => {
           await onActivity('checking',q.model,q.stage);let r;
           try {r=await rawHTTP(method,url);}catch(e){throw fail('SIMULATION_RESPONSE_FETCH_FAILED','Could not retrieve the saved AI response: '+e.message+'. Reservation retained; recheck without purchasing a new request.');}
           if(!r.ok)throw Object.assign(fail('SIMULATION_RESPONSE_FETCH_FAILED','Could not retrieve the saved AI response (HTTP '+r.status+'): '+(r.data?.error?.message||'Provider request failed')+'. Reservation retained.'),{details:{responseId:q.responseId,httpStatus:r.status,providerError:r.data?.error||null}});
-          await settle(qref,q,r.data);return {...r,requestReasoning:q.effectiveReasoning};
+          await settle(qref,q,r.data,{accountingOnly});return {...r,requestReasoning:q.effectiveReasoning};
         }
         if(method!=='POST')throw fail('SIMULATION_NETWORK_FORBIDDEN');
         const originalKey=hash({body,clock:run.clockMs}),attempt=run.aiRequestRetries?.[originalKey]||0,key=attempt?hash({originalKey,attempt}):originalKey,qref=ref.collection('requests').doc(key),old=await qref.get();
@@ -1288,7 +1290,7 @@ const Simulator = (() => {
           if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.resetAtMs || r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
           const unlimited=uncappedRun(r),holdbackNano=unlimited?0:boostBudget(run.aiPlan?.holdbackNano?.[stage]||0)+(EXTRA_HOLDBACK[stage]||0),availableNano=unlimited?null:Math.max(0,CEILING-r.spentNano-r.reservedNano-holdbackNano),room=unlimited?Infinity:availableNano-inputReserve;
           if(!Number.isSafeInteger(body.max_output_tokens)||body.max_output_tokens<=0)throw fail('SIMULATION_INVALID_OUTPUT_LIMIT');
-          const maxOutput=Math.max(boostBudget(body.max_output_tokens),stage==='shortlist'?24000:0);
+          const maxOutput=Math.max(boostBudget(body.max_output_tokens),stage==='shortlist'?24000:0,attempt?(run.aiRetryOutputTokens?.[originalKey]||0):0);
           if(maxOutput*rates.output>room)return {blocked:true,pending:r.reservedNano>0&&inputReserve+Math.ceil(maxOutput*rates.output)<=CEILING-r.spentNano-holdbackNano,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano,holdbackNano,requestedOutputTokens:maxOutput};
           const nano=inputReserve+Math.ceil(maxOutput*rates.output);
           tx.set(ref,{reservedNano:r.reservedNano+nano,pendingAiCount:(r.pendingAiCount||0)+1,budgetFailure:null},{merge:true});
@@ -1315,14 +1317,37 @@ const Simulator = (() => {
         const q=(await qref.get()).data();await settle(qref,q,r.data);return {...r,requestReasoning:q.effectiveReasoning};
       }
       async function drain({recovery=false}={}) {
-        const all=await rows(ref.collection('requests'));
+        let all=await rows(ref.collection('requests'));
         if(recovery&&!all.some(q=>q.responseId))throw fail('SIMULATION_RESPONSE_UNKNOWN','No acknowledged AI response is saved; automatic resubmission is blocked.');
-        for(const q of all.filter(q=>q.responseId&&['pending','awaiting_usage','uncertain'].includes(q.status)))await request({method:'GET',url:'https://api.openai.com/v1/responses/'+q.responseId});
-        if(recovery)for(const q of all.filter(q=>q.status==='settled'&&(q.attempt||0)>=(run.aiRequestRetries?.[q.originalKey||q.key]||0))) {
-          const response=await readJSON(ref,q.responseRef);
-          if(response.status!=='completed'||response.error)throw Object.assign(fail('SIMULATION_AI_RESPONSE_FAILED','Saved AI response '+response.status+': '+(response.error?.message||response.incomplete_details?.reason||'No completed answer')+'. No replacement request was purchased.'),{details:{responseId:q.responseId,responseStatus:response.status,providerError:response.error||null}});
+        const models=await rows(ref.collection(admin.COL.modelRequests)),nonRequired=new Map();
+        let cutoff=null;
+        if(run.managerDone&&run.managerSummaryRef) {
+          const summary=await readJSON(ref,run.managerSummaryRef);
+          if(summary.status==='complete') {
+            cutoff=run.shortlist?.cutoffMs;
+            if(!Number.isFinite(cutoff)&&run.preparationMetaRef)cutoff=(await readJSON(ref,run.preparationMetaRef)).cutoffMs;
+          }
         }
-        const remaining=(await rows(ref.collection('requests'))).filter(q=>!['settled','rejected'].includes(q.status)).length;
+        for(const q of all) {
+          const replacement=all.find(x=>x.id!==q.id&&(x.originalKey||x.key)===(q.originalKey||q.key)&&(x.attempt||0)>(q.attempt||0)&&x.status==='settled'&&x.responseStatus==='completed');
+          const superseded=models.find(m=>m.responseId===q.responseId&&m.status==='superseded'&&models.some(n=>n.id===m.supersededBy&&n.status==='complete'));
+          if(replacement)nonRequired.set(q.responseId,'replaced_by_completed_attempt');
+          else if(superseded)nonRequired.set(q.responseId,'superseded_by_completed_research');
+          else if(Number.isFinite(cutoff)&&Number.isFinite(q.clockMs)&&q.clockMs>cutoff)nonRequired.set(q.responseId,'intraday_request_after_completed_initial_plan');
+        }
+        for(const q of all.filter(q=>q.responseId&&['pending','awaiting_usage','uncertain'].includes(q.status)))
+          await request({method:'GET',url:'https://api.openai.com/v1/responses/'+q.responseId,accountingOnly:nonRequired.has(q.responseId)});
+        all=await rows(ref.collection('requests'));
+        for(const q of all.filter(q=>q.status==='settled')) {
+          const response=await readJSON(ref,q.responseRef),reason=nonRequired.get(q.responseId);
+          if(reason) {
+            await ref.collection('requests').doc(q.id).set({finalizationDisposition:'not_required',finalizationReason:reason},{merge:true});
+            for(const model of models.filter(m=>m.responseId===q.responseId))await ref.collection(admin.COL.modelRequests).doc(model.id).set({finalizationDisposition:'not_required',finalizationReason:reason},{merge:true});
+            continue;
+          }
+          if(response.status!=='completed'||response.error)throw Object.assign(fail('SIMULATION_AI_RESPONSE_FAILED','Saved AI response '+response.status+': '+(response.error?.message||response.incomplete_details?.reason||'No completed answer')+'. No replacement request was purchased.'),{details:{responseId:q.responseId,stage:q.stage,responseStatus:response.status,incompleteReason:response.incomplete_details?.reason||null,providerError:response.error||null}});
+        }
+        const remaining=all.filter(q=>!['settled','rejected'].includes(q.status)).length;
         await ref.set({pendingAiCount:remaining},{merge:true});return remaining;
       }
       return {request,drain};
@@ -1511,7 +1536,7 @@ const Simulator = (() => {
               const requests=await rows(ref.collection('requests'));
               if(requests.some(q=>q.status!=='settled'))throw fail('SIMULATION_REQUEST_INCOMPLETE','A required AI request did not complete');
               const responses=await rows(collection(A.COL.modelRequests));
-              if(responses.some(q=>['rejected','http_error','unreachable','submission_uncertain','budget_blocked'].includes(q.status)))throw fail('SIMULATION_REQUEST_INCOMPLETE','A required AI decision was not accepted');
+              if(responses.some(q=>q.finalizationDisposition!=='not_required'&&['rejected','http_error','unreachable','submission_uncertain','budget_blocked'].includes(q.status)))throw fail('SIMULATION_REQUEST_INCOMPLETE','A required AI decision was not accepted');
               if(config.investmentPolicy&&!point.buys)throw fail('HISTORICAL_NO_EXECUTABLE_PRICE','No funded purchase could execute on an observed session price. This run is unavailable, not a cash-only investment result.');
               await save({status:'complete',phase:'Complete',progress:100,completedAtMs:wallNow()});break;}
             if(await paused())break;

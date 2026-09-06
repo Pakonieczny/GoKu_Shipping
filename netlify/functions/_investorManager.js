@@ -472,7 +472,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       const R = deps.research;
       if(A.currentScope()?.aiWorkload?.preparedResearch && requests.length) {
         const H=require('./_investorResearchHandoff');
-        if(requests.length>2||st.researchInvalid)throw Object.assign(Error('Invalid prepared-research finalists'),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
+        if(requests.length>(A.currentScope().aiWorkload.investmentPolicy?.maxCompanies||2)||requests.length<(A.currentScope().aiWorkload.investmentPolicy?.minCompanies||1)||st.researchInvalid)throw Object.assign(Error('Invalid prepared-research finalists'),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
         st.handoff=st.handoff||{version:H.VERSION,phase:'documents',documents:{},packets:{},completedResearch:st.research?.completed||[]};
         if(st.handoff.version!==H.VERSION)throw Object.assign(Error('Research handoff version mismatch'),{code:'SIMULATION_STATE_CORRUPT'});
         const saveHandoff=async()=>{if(deps.checkpoint)await deps.checkpoint({stage,data:st});};

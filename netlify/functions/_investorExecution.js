@@ -561,12 +561,14 @@ async function tick({ admin = null, adapter, accountId, control = {}, barsBySymb
 // not discretionary desk authorization. Every write stays in the run namespace.
 function requireInvestmentScope(accountId) {
   const scope=A.currentScope(),H=require('./_investorResearchHandoff');
-  if(!scope||scope.runId!==accountId||scope.investmentPolicy?.version!==H.INVESTMENT_POLICY.version)
+  if(!scope||scope.runId!==accountId||!H.supportedInvestmentPolicy(scope.investmentPolicy))
     throw typed('SIMULATION_SCOPE_REQUIRED','Mandatory purchases are historical-simulation only');
   return scope;
 }
 async function saveRequiredSimulationPlan({plan,admin=null,accountId,managerRunId}) {
-  requireInvestmentScope(accountId);
+  const scope=requireInvestmentScope(accountId);
+  if(sha(plan.policy)!==sha(scope.investmentPolicy))throw typed('SIMULATION_INVESTMENT_POLICY_INVALID');
+  require('./_investorResearchHandoff').assertInvestmentAllocations(plan.investments,plan.policy);
   const {planHash,...content}=plan;
   if(sha(content)!==planHash)throw typed('SIMULATION_PLAN_CORRUPT','Investment plan hash mismatch');
   const D=db(admin),ref=D.col(D.COL.portfolioPlans).doc('required_investment');
@@ -583,6 +585,8 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
   if(!ps.exists)throw typed('SIMULATION_PLAN_MISSING','The AI investment plan has not been saved');
   const plan=ps.data(),{planHash,accountId:unusedAccount,managerRunId,createdAtMs,...content}=plan;
   if(sha(content)!==planHash)throw typed('SIMULATION_PLAN_CORRUPT','Saved investment plan changed');
+  if(sha(plan.policy)!==sha(scope.investmentPolicy))throw typed('SIMULATION_INVESTMENT_POLICY_INVALID');
+  require('./_investorResearchHandoff').assertInvestmentAllocations(plan.investments,plan.policy);
   const sessionDate=market.nyParts(new Date(plan.cutoffMs)).date,spread=BigInt(scope.executionSpreadBps||0),feeMicros=BigInt(scope.feePerShareMicros||0);
   for(const [symbol,investment] of Object.entries(plan.investments)) {
     for(const bar of [...(barsBySymbol[symbol]||[])].sort((a,b)=>Date.parse(a.t)-Date.parse(b.t))) {

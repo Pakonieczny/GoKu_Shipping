@@ -6657,6 +6657,19 @@ async function simulatorAdversarial({only=null}={}) {
     assert.equal(x.posts(),2);assert.equal((await x.ref.get()).data().spentNano,60000000);assert.equal((await x.ref.collection('requests').get()).size,2);assert.equal((await old.ref.get()).data().responseId,'resp_truncated');
     const retryMap=(await x.ref.get()).data().aiRequestRetries;await x.ref.set({status:'incomplete',reservedNano:100,pendingAiCount:1,error:{code:'SIMULATION_AI_RESPONSE_FAILED'}},{merge:true});await x.svc.control({runId:RID,command:'retry'},'operator');assert.equal((await x.ref.get()).data().aiRecovery,true);assert.deepEqual((await x.ref.get()).data().aiRequestRetries,retryMap);assert.equal(x.posts(),2);
   });
+  for(const stage of ['manager_document','manager_decision'])await check('truncated_required_'+stage+'_retry_increases_room_and_preserves_charges',async()=>{
+    let succeed=false,lastBody;const x=await metered(async(u,o)=>{lastBody=o.body?JSON.parse(o.body):lastBody;return {ok:true,status:200,json:async()=>succeed?{...completed,id:'resp_replacement'}:{...completed,id:'resp_truncated_required',status:'incomplete',incomplete_details:{reason:'max_output_tokens'}}};});
+    const b=await x.svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','required-truncated-'+stage);await x.ref.set({batchId:b.batchId},{merge:true});
+    await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body,stage}),e=>e.code==='SIMULATION_AI_RESPONSE_FAILED');
+    const originalMax=lastBody.max_output_tokens;
+    await x.ref.set({status:'incomplete',leaseUntil:0,initialized:true,error:{code:'SIMULATION_AI_RESPONSE_FAILED'}},{merge:true});
+    await assert.rejects(()=>x.meter.drain({recovery:true}),e=>e.code==='SIMULATION_AI_RESPONSE_FAILED','a required initial answer must never be ignored');
+    await x.svc.control({runId:RID,command:'retry'},'operator');Object.assign(x.run,(await x.ref.get()).data());succeed=true;
+    await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body,stage});
+    assert.equal(lastBody.max_output_tokens,Math.ceil(originalMax*1.5));assert.equal(x.posts(),2);
+    await x.meter.drain({recovery:true});assert.equal((await x.ref.get()).data().spentNano,60000000);assert.equal((await x.ref.get()).data().pendingAiCount,0);
+    await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body,stage});assert.equal(x.posts(),2);
+  });
   await check('invalid_paid_shortlist_can_retry_ranked_screening_without_discarding_old_charge',async()=>{
     const symbols=Array.from({length:51},(_,i)=>'S'+i),roster={symbols};let valid=false;
     const x=await metered(async()=>({ok:true,status:200,json:async()=>({...completed,id:valid?'resp_ranked':'resp_duplicate',model:'gpt-5.6-luna',service_tier:'default',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(valid?{assessments:Object.fromEntries(symbols.map((symbol,i)=>[symbol,{rank:i+1,reason:'Observed evidence'}]))}:{selected:Array(50).fill({symbol:'S0',reason:'Repeated choice'})})}]}]})}));
@@ -6792,7 +6805,7 @@ async function simulatorAdversarial({only=null}={}) {
     await x.ref.set({reservedNano:0,pendingAiCount:0},{merge:true});
     await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:research,stage:'manager_research'});assert.equal(x.posts(),1);
   });
-  async function researchPipeline({failure=null,prepared=false,measure=false,event=false,required=false}={}) {
+  async function researchPipeline({failure=null,prepared=false,measure=false,event=false,required=false,picks=2}={}) {
     const fake=database(),D=require('./_investorDossier'),M=require('./_investorMarket'),date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),calls=[],responses=new Map(),toolRounds=new Map();
     let finalists=[],bad=failure,missingUsage=failure==='usage',wall=Date.now();const transportErrors=[];
     const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{OPENAI_API_KEY:'fixture'},publicFetch:async()=>{throw Error('No live source access in pipeline test');},fetchImpl:async(url,opts)=>{try {
@@ -6804,7 +6817,7 @@ async function simulatorAdversarial({only=null}={}) {
         const profiles=JSON.parse(user).profiles;assert.equal(profiles.length,304);
         output={assessments:Object.fromEntries(profiles.map((row,i)=>[row[0],{rank:i+1,reason:'Historical profile evaluated for research priority'}]))};
       } else if(name==='universe_review_v1') {
-        const m=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]);assert.equal(m.symbols.length,50);finalists=m.symbols.slice(0,2);
+        const m=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]);assert.equal(m.symbols.length,50);finalists=m.symbols.slice(0,picks);
         output={schemaVersion:'universe-review.v1',universeVersion:m.universeVersion,universeHash:m.universeHash,eligibleCount:50,
           coverage:m.symbols.map(symbol=>({symbol,reviewDirective:finalists.includes(symbol)?'RESEARCH_NOW':'NONE',provisionalDisposition:finalists.includes(symbol)?'WATCH':'IGNORE',reason:'Historical research priority',changedSincePrior:false,reasonCode:null})),holdingAnalysis:[],
           researchRequests:finalists.map((symbol,i)=>({symbol,researchPriority:i+1,completionClass:'BUY_REQUIRED',reason:'Investigate the historical evidence',reviewDirective:'RESEARCH_NOW'})),managerNote:'Research both finalists before portfolio planning'};
@@ -6816,15 +6829,15 @@ async function simulatorAdversarial({only=null}={}) {
         if(bad==='document_citations')output.sections.business={summary:'Invented growth claim that must never reach Astra.',evidenceIds:['claim:not_in_the_source_packet'],missing:[]};
         else {const validate=new(require('ajv/dist/2020'))({strict:false}).compile(b.text.format.schema);assert(validate(output),JSON.stringify(validate.errors));}
       } else if(name==='prepared_investment_decision_v1'||name==='simulation_investment_plan_v1') {
-        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'high');assert(!b.tools);assert.equal(b.max_output_tokens,23940);
-        const docs=JSON.parse(user.match(/<untrusted_context name="prepared_documents">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);const prior=required?[]:JSON.parse(user.match(/<untrusted_context name="completed_research">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);assert.equal(docs.length+prior.length,2);assert(docs.every(d=>d.documentHash));
+        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'high');assert(!b.tools);assert.equal(b.max_output_tokens,picks>2?35910:23940);
+        const docs=JSON.parse(user.match(/<untrusted_context name="prepared_documents">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);const prior=required?[]:JSON.parse(user.match(/<untrusted_context name="completed_research">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);assert.equal(docs.length+prior.length,picks);assert(docs.every(d=>d.documentHash));
         assert(!JSON.stringify(docs).includes('Invented growth claim that must never reach Astra.'));
         for(const doc of docs){const ids=new Set(doc.evidence.map(e=>e.id));assert(Object.values(doc.sections).every(s=>s.evidenceIds.every(id=>ids.has(id))));assert(doc.evidence.some(e=>e.claimType==='RISK_FACTOR'),'adverse evidence must survive preparation');}
         const research=finalists.map(symbol=>({schemaVersion:'research-memo.v1',symbol,asOf:new Date(cutoff).toISOString(),checklist:Object.fromEntries(['business','whatChanged','agreementDisagreement','risks','valuationFramework','disconfirmingEvidence','returnAndHorizon','versusAlternatives','mandateOrAbstain'].map(k=>[k,'Evidence does not justify investment.'])),factualPremises:[],inferences:[],valuation:null,bearCase:'Uncertain return',thesisHealth:'UNKNOWN',proposedDecision:'WATCH',reasonCode:'UNCERTAINTY',mandate:null}));
         output={schemaVersion:'prepared-investment-decision.v1',research,allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:finalists.map(symbol=>({symbol,decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Retain cash after joint underwriting'})),expansionMandates:[],holdingAnalysis:[],comparisonNote:'Compared both finalists and cash in one decision'}};
         if(bad==='joint_schema')output.research[0].bearCase='x'.repeat(1201);
         if(required)output={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Best available candidates; allocate less to uncertainty.',
-          investments:Object.fromEntries(finalists.map((symbol,i)=>[symbol,{allocationUsd:i?30000:5000,conviction:i?'HIGH':'LOW',sizingReason:i?'Stronger relative conviction':'Missing forward evidence reduces allocation',
+          investments:Object.fromEntries(finalists.map((symbol,i)=>[symbol,{allocationUsd:picks>2?Math.floor(95000/picks):(i?30000:5000),conviction:i?'HIGH':'LOW',sizingReason:i?'Stronger relative conviction':'Missing forward evidence reduces allocation',
             assessment:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,'Dated evidence assessed; uncertainty remains.'])),
             outlook:'Bear: loss; base: flat; bull: upside. These are assumptions, not issuer guidance.',takeProfitBps:2000,stopLossBps:2000,evidenceIds:['baseline:symbol']}]))};
 
@@ -6856,11 +6869,52 @@ async function simulatorAdversarial({only=null}={}) {
       const artifact=await svc.saveJSON(parent,'company',{data,daily,provenance:{provider:'fixture',adjustment:'split_only'}});await unit.ref.set({status:'ready',pointer:{cacheId:parent.id,artifact}},{merge:true});priceSymbols[symbol]={bars:providerSession(date,{extra:false}),coverage:{regular:78,expected:78,missing:0}};
     }
     const prices=fake.col('InvestorAI_SimulationScenarios').doc('research_session'),artifact=await svc.saveJSON(prices,'prices',{symbols:priceSymbols,provenance:{provider:'fixture'}});await units.find(x=>x.data().kind==='prices').ref.set({status:'ready',pointer:{cacheId:prices.id,artifact}},{merge:true});
+    if(picks===2){config.aiPlan={...config.aiPlan,version:'shortlist-50.v1',maxResearchCompanies:2,outputTokens:{...config.aiPlan.outputTokens,decidePreparedPortfolio:18000}};config.investmentPolicy=require('./_investorResearchHandoff').INVESTMENT_POLICY;await br.set({configRef:await svc.saveJSON(br,'saved_legacy_config',config)},{merge:true});}
     if(!required){delete config.investmentPolicy;await br.set({configRef:await svc.saveJSON(br,'discretionary_config',config)},{merge:true});}
     if(!prepared){config.aiPlan={...config.aiPlan,preparedResearch:false};await br.set({configRef:await svc.saveJSON(br,'legacy_config',config)},{merge:true});}
     const runId=batch.runIds[0],ref=fake.col('InvestorAI_Simulations').doc(runId);
-    return {svc,runId,ref,fake,calls,toolRounds,finalists:()=>finalists,setValid:()=>{bad=null;},drive:async()=>{for(let i=0;i<8;i++){await svc.execute(runId);wall+=10000;const r=await svc.getRun(runId);if(transportErrors.length)throw Error(transportErrors.join('\n'));if(['complete','incomplete'].includes(r.status))return r;}throw Error('Pipeline failed to terminate: '+JSON.stringify({run:await svc.getRun(runId),calls:calls.map(b=>b.text.format.name)}));}};
+    return {svc,runId,ref,fake,calls,responses,toolRounds,finalists:()=>finalists,setValid:()=>{bad=null;},drive:async()=>{for(let i=0;i<8;i++){await svc.execute(runId);wall+=10000;const r=await svc.getRun(runId);if(transportErrors.length)throw Error(transportErrors.join('\n'));if(['complete','incomplete'].includes(r.status))return r;}throw Error('Pipeline failed to terminate: '+JSON.stringify({run:await svc.getRun(runId),calls:calls.map(b=>b.text.format.name)}));}};
   }
+  for(const picks of [4,7])await check('diversified_'+picks+'_picks_real_pipeline_caps_total_and_reuses_paid_plan',async()=>{
+    const x=await researchPipeline({prepared:true,required:true,picks}),run=await x.drive();
+    assert.equal(run.status,'complete',JSON.stringify(run.error));assert.equal(x.calls.length,picks+3);
+    const plan=(await x.ref.collection(A.COL.portfolioPlans).doc('required_investment').get()).data();
+    assert.equal(plan.policy.version,'required-investment.v2');assert.equal(Object.keys(plan.investments).length,picks);
+    assert(Object.values(plan.investments).reduce((n,p)=>n+p.allocationUsd,0)<=95000);
+    const fills=(await x.ref.collection(A.COL.fills).get()).docs.map(d=>d.data()).filter(f=>f.side==='buy');
+    assert.equal(fills.length,picks);const deployed=fills.reduce((n,f)=>n+Number(f.notionalMinor)+Number(f.feeMinor),0);
+    assert(deployed<=9500000&&deployed>9400000);assert(run.spentNano<Sim.CEILING);assert.equal(run.pendingAiCount,0);assert.equal(run.reservedNano,0);
+    await x.svc.execute(x.runId);assert.equal(x.calls.length,picks+3);
+  });
+  await check('diversified_policy_rejects_excess_cap_wrong_counts_and_policy_mismatch_before_fills',async()=>{
+    const H=require('./_investorResearchHandoff'),E=require('./_investorExecution'),C=require('./_investorDecisionContext');
+    const policy=H.DIVERSIFIED_POLICY,rows=n=>Object.fromEntries(Array.from({length:n},(_,i)=>['S'+i,{allocationUsd:20000}]));
+    H.assertInvestmentAllocations(rows(4),policy);
+    for(const n of [0,3,8])assert.throws(()=>H.assertInvestmentAllocations(rows(n),policy),/FINALISTS/);
+    assert.throws(()=>H.assertInvestmentAllocations(rows(5),policy),/TOTAL_ALLOCATION/);
+    const fake=database(),content={policy,investments:rows(5),cutoffMs:1000},plan={...content,planHash:C.hash(content)};
+    await A.withSimulationScope({runId:RID,investmentPolicy:policy,clock:()=>1000,collection:fake.col,transaction:fake.runTransaction,batch:fake.batch},async()=>{
+      await assert.rejects(()=>E.saveRequiredSimulationPlan({plan,admin:fake,accountId:RID}),/TOTAL_ALLOCATION/);
+      await fake.col(A.COL.portfolioPlans).doc('required_investment').set(plan);
+      await assert.rejects(()=>E.tickRequiredSimulation({admin:fake,accountId:RID}),/TOTAL_ALLOCATION/);
+      assert.equal((await fake.col(A.COL.fills).get()).size,0);
+    });
+  });
+  for(const settled of [false,true])await check('finalization_recovers_obsolete_truncated_intraday_answer_'+settled,async()=>{
+    const x=await researchPipeline({prepared:true}),done=await x.drive();assert.equal(done.status,'complete');
+    const ref=x.ref,qref=ref.collection('requests').doc('obsolete_intraday'),response={id:'resp_obsolete',status:'incomplete',incomplete_details:{reason:'max_output_tokens'},model:'gpt-6-astra',service_tier:'flex',usage:{input_tokens:1000,output_tokens:1000},output:[]};
+    const cost=Sim.price(response.model,response.usage,'flex'),responseRef=await x.svc.saveJSON(ref,'old_response',response);
+    // The provider identity and original request are retained even when unused.
+    await qref.set({key:'obsolete_intraday',originalKey:'obsolete_intraday',responseId:response.id,responseRef,responseStatus:'incomplete',incompleteReason:'max_output_tokens',model:response.model,tier:'flex',reservation:cost,clockMs:done.shortlist.cutoffMs+3600000,stage:'event',startedAtMs:Date.now(),status:settled?'settled':'pending',actualNano:settled?cost:null});
+    await ref.collection(A.COL.modelRequests).doc('obsolete_model').set({fn:'reviseHolding',responseId:response.id,status:'rejected',error:'incomplete'});
+    x.responses.set(response.id,response);
+    await ref.set({status:'incomplete',work:{stage:'finalize'},error:{code:'SIMULATION_AI_RESPONSE_FAILED',message:'AI response incomplete: max_output_tokens'},spentNano:done.spentNano+(settled?cost:0),reservedNano:settled?0:cost,pendingAiCount:settled?0:1},{merge:true});
+    assert((await x.svc.overview({owner:'operator'})).runs[0].canRecheckAI);
+    await x.svc.control({runId:x.runId,command:'retry'},'operator');const recovered=await x.drive();
+    assert.equal(recovered.status,'complete',JSON.stringify(recovered.error));assert.equal(recovered.spentNano,done.spentNano+cost);assert.equal(recovered.reservedNano,0);assert.equal(recovered.pendingAiCount,0);assert.equal(x.calls.length,5);
+    assert.equal((await qref.get()).data().finalizationDisposition,'not_required');assert.equal((await qref.get()).data().responseStatus,'incomplete');
+    assert.equal(recovered.buys,done.buys);assert.equal(recovered.pnlMinor,done.pnlMinor);
+  });
   await check('simulation_outcomes_fixed_comparison_costs_missing_bars_and_population',()=>{
     const I=require('./_investorSimulationInsights'),at=Date.UTC(2026,8,3,19,55),close=at+300000;
     const investment={symbol:'AAA',boughtShares:50,investedMinor:500025,entryPriceMicros:100000000,exitPriceMicros:105000000,entryAtMs:at-3600000,exitAtMs:at-1800000,heldMs:1800000,status:'CLOSED',pnlMinor:24950,returnBps:499};

@@ -983,13 +983,13 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     if(outputSchema)strict.name=outputSchema.properties.schemaVersion.enum[0].replace(/[^a-z0-9_]/gi,'_');
     const workload=A.currentScope()?.aiWorkload;
     const simulationRules=workload ? `\nThis historical simulation uses a saved 50-company shortlist and a strict total AI budget. Keep prose concise and do not repeat input evidence. ${fn==='reviewUniverse'?'Review every supplied company, but request deep research for at most '+workload.maxResearchCompanies+' highest-priority finalists. All other rows must use reviewDirective NONE unless an existing researched holding can be reused. Keep each coverage reason under 15 words. Research requests must name only supplied shortlist symbols.':fn==='researchCompany'?'Write a compact, complete memo with short checklist entries. Use source identifiers and verified calculations; do not invent evidence to save tokens.':''}` : '';
-    const requiredInvestment=workload?.investmentPolicy?.version===HANDOFF.INVESTMENT_POLICY.version;
+    const requiredInvestment=HANDOFF.supportedInvestmentPolicy(workload?.investmentPolicy);
     if(requiredInvestment && fn==='reviewUniverse') {
-      strict.schema.properties.researchRequests.minItems=1;
-      strict.schema.properties.researchRequests.maxItems=2;
+      strict.schema.properties.researchRequests.minItems=requiredInvestment.minCompanies||1;
+      strict.schema.properties.researchRequests.maxItems=requiredInvestment.maxCompanies;
       strict.strictHash=sha(strict.schema);strict.localSchema=strict.schema;
     }
-    const investmentRules=requiredInvestment && fn==='reviewUniverse'?'\nSIMULATION MANDATE: choose the best one or two candidates to INVEST in, not whether to hold cash. You must request RESEARCH_NOW for at least one entry-eligible candidate. Prefer complete dated evidence and available prices. Uncertainty affects subsequent position size. Do not exclude every company merely because cash looks better.':'';
+    const investmentRules=requiredInvestment?.version===HANDOFF.DIVERSIFIED_POLICY.version && fn==='reviewUniverse'?'\nSIMULATION MANDATE: choose 4–7 distinct, entry-eligible top picks for investment, ranked by the supplied dated evidence and available prices. Request RESEARCH_NOW for every pick. Consider relative conviction, catalysts, valuation, downside and sector concentration. Uncertainty affects size; do not invent evidence or select ineligible companies.':requiredInvestment && fn==='reviewUniverse'?'\nSIMULATION MANDATE: choose the best one or two candidates to INVEST in, not whether to hold cash. You must request RESEARCH_NOW for at least one entry-eligible candidate. Prefer complete dated evidence and available prices. Uncertainty affects subsequent position size. Do not exclude every company merely because cash looks better.':'';
     const system = PROMPTS[fn].system + (extraRules ? `\n${extraRules}` : "") + simulationRules + investmentRules;
     const inputItems = [{ role: "system", content: system }, { role: "user", content: user }];
     const inputTokensEst = estimateTokens(system) + estimateTokens(user);
@@ -1362,7 +1362,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       .sort((a, b) => a.researchPriority - b.researchPriority || a.block - b.block || String(a.symbol).localeCompare(String(b.symbol)))
       .map((q, i) => ({ ...q, blockPriority: q.researchPriority, researchPriority: i + 1 }));
     const workload=A.currentScope()?.aiWorkload;
-    if(workload && (requests.length>workload.maxResearchCompanies || requests.some(q=>!universeManifest.symbols.includes(q.symbol))))return failure('shortlist_research_plan_invalid',{requestIds:results.map(x=>x.result.requestId)});
+    if(workload && (requests.length<(workload.investmentPolicy?.minCompanies||0) || new Set(requests.map(q=>q.symbol)).size!==requests.length || requests.length>workload.maxResearchCompanies || requests.some(q=>!universeManifest.symbols.includes(q.symbol))))return failure('shortlist_research_plan_invalid',{requestIds:results.map(x=>x.result.requestId)});
     return { ok: true, plan: { mode: plan.mode, blocks: plan.blocks.length, estimatedTokens: plan.estimatedTokens, guardrailTokens: plan.guardrailTokens },
       coverage, holdingAnalysis, researchRequests: requests, managerNote: results.map((x) => x.result.output.managerNote).filter(Boolean).join("\n"),
       responseIds: results.map((x) => x.result.responseId), requestIds: results.map((x) => x.result.requestId),
@@ -1394,15 +1394,17 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
   }
   async function decidePreparedPortfolio({documents=[],packets=[],completedResearch=[],holdings=[],portfolio,marks,policy,marketState,expansionBlocked=false,contextManifestHash,waitMs=DEFAULT_WAIT_MS}={}) {
     try{documents.forEach(HANDOFF.assertDocument);}catch(e){return failure(e.code);}
-    if(A.currentScope()?.aiWorkload?.investmentPolicy?.version===HANDOFF.INVESTMENT_POLICY.version) {
-      const outputSchema=HANDOFF.investmentSchema(documents);
+    const investmentPolicy=HANDOFF.supportedInvestmentPolicy(A.currentScope()?.aiWorkload?.investmentPolicy);
+    if(investmentPolicy) {
+      const outputSchema=HANDOFF.investmentSchema(documents,investmentPolicy);
       const user=[untrusted('prepared_documents',documents),untrusted('historical_market',marketState),
-        untrusted('simulation_policy',HANDOFF.INVESTMENT_POLICY)].join('\n\n');
-      const extraRules=`SIMULATION POLICY OVERRIDE: This is a mandatory-investment historical experiment with $100,000 fictitious cash, not the discretionary desk. Use the supplied simulation schema instead of the earlier memo/mandate schema. Invest in EACH of the one or two supplied finalists. Choose an integer allocationUsd from 5000 through 30000 per company based on your conviction; low confidence and incomplete evidence should generally mean a smaller allocation. Explain the amount. Cash preference or a negative expected return is not grounds to omit a purchase in this experiment; report it honestly. No invented facts, sources, probabilities or promised returns. Complete every assessment section, including missingInformation, and provide a bear/base/bull outlook with assumptions clearly labelled. Cite only the supplied evidenceIds or baseline handles. Choose takeProfitBps and stopLossBps relative to the actual entry price; these control exits for the entire session. The simulator buys whole shares at the first available regular-session bar opening price plus spread and fees, rounding the allocation down to avoid exceeding it. It sells on your target or stop and otherwise marks the position at session end. No further AI calls or intraday reanalysis. The simulation policy replaces the earlier cash-abstention, positive-return, discretionary risk-sizing, LIMIT-mandate and valuation-calculator requirements; retain source honesty and the historical cutoff. Return the simulation schema only.`;
+        untrusted('simulation_policy',investmentPolicy)].join('\n\n');
+      let extraRules=`SIMULATION POLICY OVERRIDE: This is a mandatory-investment historical experiment with $100,000 fictitious cash, not the discretionary desk. Use the supplied simulation schema instead of the earlier memo/mandate schema. Invest in EACH of the one or two supplied finalists. Choose an integer allocationUsd from 5000 through 30000 per company based on your conviction; low confidence and incomplete evidence should generally mean a smaller allocation. Explain the amount. Cash preference or a negative expected return is not grounds to omit a purchase in this experiment; report it honestly. No invented facts, sources, probabilities or promised returns. Complete every assessment section, including missingInformation, and provide a bear/base/bull outlook with assumptions clearly labelled. Cite only the supplied evidenceIds or baseline handles. Choose takeProfitBps and stopLossBps relative to the actual entry price; these control exits for the entire session. The simulator buys whole shares at the first available regular-session bar opening price plus spread and fees, rounding the allocation down to avoid exceeding it. It sells on your target or stop and otherwise marks the position at session end. No further AI calls or intraday reanalysis. The simulation policy replaces the earlier cash-abstention, positive-return, discretionary risk-sizing, LIMIT-mandate and valuation-calculator requirements; retain source honesty and the historical cutoff. Return the simulation schema only.`;
+      if(investmentPolicy.version===HANDOFF.DIVERSIFIED_POLICY.version)extraRules=extraRules.replace('one or two supplied finalists','4–7 supplied finalists')+' The combined allocationUsd across ALL picks must be at most 95000 USD (95% of starting cash), including the budget for entry fees. Deploy up to this cap when conviction supports it; it is a ceiling, not a required minimum. Keep each assessment section concise (at most 600 characters). Compare all picks together and explain retained cash and concentration. Check the allocation sum before returning.';
       const r=await invoke('decidePreparedPortfolio',{user,outputSchema,extraRules,background:true,waitMs,contextManifestHash,
         requestKey:'required-investment|'+sha(user)});
       if(!r.ok)return r;
-      try{return {...r,simulationPlan:HANDOFF.validateInvestmentPlan(r.output,documents)};}
+      try{return {...r,simulationPlan:HANDOFF.validateInvestmentPlan(r.output,documents,investmentPolicy)};}
       catch(e){return {...r,ok:false,error:e.code||'SIMULATION_INVESTMENT_PLAN_INVALID'};}
     }
     const allowedClaimIds=[...new Set([...packets.flatMap(p=>(p.claims||[]).map(c=>c.claimId)),...holdings.flatMap(h=>(h.claims||[]).map(c=>c.claimId))])];
