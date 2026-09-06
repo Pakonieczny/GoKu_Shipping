@@ -242,7 +242,7 @@ const Simulator = (() => {
     }
     return out;
   }
-  const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.reservedNano>0&&['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code));
+  const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.reservedNano>0&&(['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code)||r.error?.code==='SIMULATION_REQUEST_INCOMPLETE'&&r.work?.stage==='finalize'));
   // XOM kept its ticker when the successor parent began trading on July 2, 2026.
   // Verified lineage: https://www.sec.gov/Archives/edgar/data/34088/000119312526291986/d70995d8k.htm
   const XOM_HISTORY_VERSION='xom-sec-predecessor.v1';
@@ -1487,6 +1487,10 @@ const Simulator = (() => {
               benchmarkReturnBps,excessReturnBps:benchmarkReturnBps==null?null:point.returnBps-benchmarkReturnBps,returnBps:point.returnBps,pnlMinor:pnl,buys:point.buys,sells:point.sells,openPositions:portfolio.positions.length,portfolioRef:await saveJSON(ref,'portfolio',portfolio)});
             if(run.clockMs>=meta.endMs) {
               await report({stage:'finalize',label:'Checking costs and saving final results',done:null,total:null,unit:'',current:null});
+              // A tool/event response may still be pending in the cost ledger
+              // after its caller advances. Retrieve acknowledged responses before
+              // deciding that the run is incomplete; never submit replacements.
+              if(await cost.drain())throw fail('SIMULATION_USAGE_PENDING','Waiting for saved AI responses to finish and report their usage');
               const requests=await rows(ref.collection('requests'));
               if(requests.some(q=>q.status!=='settled'))throw fail('SIMULATION_REQUEST_INCOMPLETE','A required AI request did not complete');
               const responses=await rows(collection(A.COL.modelRequests));
