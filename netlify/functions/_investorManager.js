@@ -470,6 +470,83 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       try { requests = validateUniqueResearchPriority(st.effective.researchRequests || []); }
       catch (e) { st.researchInvalid = { code: e.code, message: e.message }; requests = []; }
       const R = deps.research;
+      if(A.currentScope()?.aiWorkload?.preparedResearch && requests.length) {
+        const H=require('./_investorResearchHandoff');
+        if(requests.length>2||st.researchInvalid)throw Object.assign(Error('Invalid prepared-research finalists'),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
+        st.handoff=st.handoff||{version:H.VERSION,phase:'documents',documents:{},packets:{},completedResearch:st.research?.completed||[]};
+        if(st.handoff.version!==H.VERSION)throw Object.assign(Error('Research handoff version mismatch'),{code:'SIMULATION_STATE_CORRUPT'});
+        const saveHandoff=async()=>{if(deps.checkpoint)await deps.checkpoint({stage,data:st});};
+        const context=await rebuildContext(st,deps,accountId),packets=[],documents=[];
+        const marks=await liquidityMarks(requests.map(r=>r.symbol),deps,{policy,cutoffMs:st.cutoff.cutoffMs});
+        for(const request of requests) {
+          if(deps.shouldYield&&await deps.shouldYield())return yieldNow('simulation_paused');
+          const packetId=`${managerRunId}_research_${request.symbol}`;
+          let packet;
+          try{packet=(await C.read({runId:packetId,admin:deps.admin})).packet;}
+          catch(e){if(e.code!=='FROZEN_INPUTS_MISSING')throw e;packet=await R.buildPacket({symbol:request.symbol,cutoff:st.cutoff,directive:request.reviewDirective,admin:deps.admin,deps:{...deps,frozenMarketState:context.marketState,independentReview:(st.independentSymbols||[]).includes(request.symbol)}});await C.freeze({runId:packetId,context:{packet,marks},admin:deps.admin});}
+          if(!packet?.ok)throw Object.assign(Error('Prepared research has no historical dossier for '+request.symbol),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
+          st.handoff.packets[request.symbol]=packetId;
+          const prior=st.handoff.completedResearch.find(r=>r.symbol===request.symbol&&r.memo);
+          if(prior){packets.push(packet);continue;}
+          let document;
+          if(st.handoff.documents[request.symbol])document=(await C.read({runId:st.handoff.documents[request.symbol],admin:deps.admin})).document;
+          else {
+            const sourceId=packetId+'_preparation_source';let source;
+            try{source=(await C.read({runId:sourceId,admin:deps.admin})).source;}
+            catch(e){
+              if(e.code!=='FROZEN_INPUTS_MISSING')throw e;
+              const bound=deps.tools.allowlisted(deps.toolBindings||deps.tools.productionBindings({accountId,admin:deps.admin,policy,portfolio:context.portfolio,marks,decisionPacket:packet,sectorOf:sectorLookup(deps)}),policy.toolPolicy,{symbol:request.symbol,cutoffMs:st.cutoff.cutoffMs});
+              const args={symbol:request.symbol,asOfMs:st.cutoff.cutoffMs};
+              const [filings,decisionData]=await Promise.all([
+                bound.tools.getFilingFactsAsOf?.execute({...args,concepts:[]})||{missing:true,reason:'filings unavailable'},
+                bound.tools.searchDecisionData?.execute({...args,kinds:[],limit:50})||{missing:true,reason:'decision data unavailable'}]);
+              source=H.sourcePacket(packet,{filings,decisionData});await C.freeze({runId:sourceId,context:{source},admin:deps.admin});
+            }
+            await saveHandoff();
+            const prepared=await deps.gateway.prepareResearchDocument({source});
+            if(prepared.pending)return yieldNow('luna_document_pending');
+            if(!prepared.ok)throw Object.assign(Error('Luna research document failed: '+prepared.error),{code:'SIMULATION_RESEARCH_INCOMPLETE',details:{failed:[{symbol:request.symbol,error:prepared.error,responseId:prepared.responseId}]}});
+            document=prepared.document;
+            const documentId=packetId+'_prepared_'+document.documentHash.slice(0,24);
+            await C.freeze({runId:documentId,context:{document,requestId:prepared.requestId,responseId:prepared.responseId},admin:deps.admin});
+            st.handoff.documents[request.symbol]=documentId;addCost(prepared.costMinor);await saveHandoff();
+          }
+          H.assertDocument(document);documents.push(document);
+          // Astra can cite only source claims actually supplied in its document.
+          const claims=document.evidence.filter(e=>e.kind==='claim');
+          packets.push({...packet,claims,claimIds:claims.map(c=>c.claimId)});
+        }
+        st.handoff.phase='decision';await saveHandoff();
+        let joint;
+        if(st.handoff.resultRef)joint=(await C.read({runId:st.handoff.resultRef,admin:deps.admin})).joint;
+        else {
+          const {holdingPackets}=await rebuildContext(st,deps,accountId,{cardsNeeded:false});
+          joint=await deps.gateway.decidePreparedPortfolio({documents,packets,completedResearch:st.handoff.completedResearch,holdings:holdingPackets.packets,
+            portfolio:context.portfolio,marks,policy:{policyHash:policy.policyHash,riskPolicyHash:policy.riskPolicyHash,riskMandate:policy.riskMandate},marketState:context.marketState,expansionBlocked:!!st.expansionBlocked,contextManifestHash:st.contextManifestHash});
+          if(joint.pending)return yieldNow('astra_prepared_decision_pending');
+          if(!joint.ok)throw Object.assign(Error('Combined research and investment decision failed: '+joint.error),{code:'SIMULATION_RESEARCH_INCOMPLETE',details:{failed:[{error:joint.error,responseId:joint.responseId,requestId:joint.requestId}]}});
+          const resultId=`${managerRunId}_joint_${joint.requestId}`;await C.freeze({runId:resultId,context:{joint},admin:deps.admin});
+          st.handoff.resultRef=resultId;addCost(joint.costMinor);await saveHandoff();
+        }
+        const completed=[];
+        for(const memo of joint.research) {
+          const packet=packets.find(p=>p.symbol===memo.symbol);
+          const saved=await R.persistImmutable({ok:true,symbol:memo.symbol,memo,verifiedValuation:joint.verifiedValuations[memo.symbol],requestId:joint.requestId,responseId:joint.responseId,model:joint.model,costMinor:'0',dossierVersionId:packet.dossierVersionId,dossierHash:packet.dossierHash},{admin:deps.admin,managerRunId,directive:'PREPARED_JOINT_UNDERWRITING',cutoffMs:st.cutoff.cutoffMs});
+          if(!saved.persisted)throw Object.assign(Error('Joint memo was not saved'),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
+          completed.push({...saved,request:requests.find(r=>r.symbol===memo.symbol)});
+        }
+        // An accepted replacement covers legacy unfinished research. Keep its
+        // paid response ledger and original state for audit; do not present it
+        // as a new failure at the end of replay.
+        const DB=db(deps.admin),legacy=await DB.col(DB.COL.modelRequests).where('fn','==','researchCompany').get();
+        for(const old of legacy.docs) {
+          const q=old.data();
+          if(requests.some(r=>r.symbol===q.symbol)&&!['complete','superseded'].includes(q.status))await old.ref.set({status:'superseded',supersededStatus:q.status,supersededBy:joint.requestId,supersededAtMs:now()},{merge:true});
+        }
+        st.research={completed,failed:[],deferred:[],ranges:null,launchedOrder:requests.map(r=>r.researchPriority),concurrency:1};
+        st.handoff.phase='complete';st.overrides=forceNonExecutableForIncompleteResearch({researchRequests:requests,completed,failed:[],deferred:[]});
+        await saveHandoff();stage='synthesis';continue;
+      }
       const pool = R.createPool({ now });
       const holdingDeadlineMs = deps.market ? deps.market.nyWallClockToUtcMs(tradingDate, 20 * 60) : null;
       const frozenContext = await rebuildContext(st, deps, accountId);
@@ -541,14 +618,14 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       const feasible = deps.portfolioRisk && typeof deps.portfolioRisk.buildFeasibleAlternatives === "function"
         ? safeCall(() => deps.portfolioRisk.buildFeasibleAlternatives({ researchResults: candidates.map((c) => ({ symbol: c.symbol, memo: c.memo, mandate: c.mandate, liquidity:marks[c.symbol] })), holdings: holdingPackets.packets, portfolio, policy, ...C.riskInputs(marks,portfolio), sectorOf: sectorLookup(deps), clusterOf: null })) : null;
       const claimsById = Object.fromEntries(candidates.flatMap((c) => (c.factualPremises || []).map((p) => [p.claimId, { claimId: p.claimId, documentVersionId: p.documentVersionId, text: p.text }])));
-      const r = await deps.gateway.finalizePortfolio({ coverage: st.effective.coverage, researchResults: candidates.map((c) => ({ symbol: c.symbol, memo: c.memo, verifiedValuation:c.verifiedValuation })), holdings: holdingPackets.packets, portfolio, feasibleAlternatives: feasible, resynthesisFeedback:st.resynthesisFeedback || null, expansionBlocked:!!st.expansionBlocked, marketState:(await rebuildContext(st,deps,accountId)).marketState, policy: { policyHash: policy.policyHash, riskPolicyHash: policy.riskPolicyHash, riskMandate: policy.riskMandate }, contextManifestHash: sha({ c: st.contextManifestHash, memos: candidates.map((c) => c.memoId), attempt: st.synthesisAttempt || 0 }), waitMs: Math.max(30000, Math.min(budget() - minStageMs, 8 * 60 * 1000)) });
+      const r = st.handoff?.resultRef ? (await C.read({runId:st.handoff.resultRef,admin:deps.admin})).joint : await deps.gateway.finalizePortfolio({ coverage: st.effective.coverage, researchResults: candidates.map((c) => ({ symbol: c.symbol, memo: c.memo, verifiedValuation:c.verifiedValuation })), holdings: holdingPackets.packets, portfolio, feasibleAlternatives: feasible, resynthesisFeedback:st.resynthesisFeedback || null, expansionBlocked:!!st.expansionBlocked, marketState:(await rebuildContext(st,deps,accountId)).marketState, policy: { policyHash: policy.policyHash, riskPolicyHash: policy.riskPolicyHash, riskMandate: policy.riskMandate }, contextManifestHash: sha({ c: st.contextManifestHash, memos: candidates.map((c) => c.memoId), attempt: st.synthesisAttempt || 0 }), waitMs: Math.max(30000, Math.min(budget() - minStageMs, 8 * 60 * 1000)) });
       if (r.pending) return { done: false, yielded: true, reason: "sol_background_pending", checkpoint: { stage, data: st }, resumeAtMs: now() + 60000 };
       if (!r.ok) {
         st.synthesis = { ok: false, error: r.error, schemaErrors:r.schemaErrors||null,requestId:r.requestId||null,responseId:r.responseId||null,budgetBlocked: r.budgetBlocked === true };
         if(A.currentScope()) { if(deps.checkpoint)await deps.checkpoint({stage,data:st});throw Object.assign(new Error('Portfolio synthesis failed: '+r.error),{code:'SIMULATION_SYNTHESIS_INCOMPLETE',details:st.synthesis}); }
         stage = "activation"; continue;
       }
-      addCost(r.costMinor);
+      if(!st.handoff?.resultRef)addCost(r.costMinor);
       const synth = r.synthesis;
       /* claims of every BUY mandate must be supported by an independent verdict (§7.3, §17.4) */
       let claimGate = {}, claimBlocked = [];
@@ -576,7 +653,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
           ? await deps.mandate.stagePortfolioPlan({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION", decisions: st.synthesis.decisions, comparisonNote: st.synthesis.comparisonNote, planHash: sha(legal) }, proposals: legal, verifiedProposalClaims: st.verifiedProposalClaims || { byProposal: {} }, activationSnapshot: snap, accountId, cutoff: st.cutoff, policy, managerRunId, admin: deps.admin,
               eligibleSymbols: st.roster.symbols, sectorOf:sectorLookup(deps), lineage:{model:POLICY.ROLE_MODELS.manager.model,reasoningEffort:"high",contextManifestHash:st.contextManifestHash,promptHash:deps.gateway.promptHash?deps.gateway.promptHash("finalizePortfolio"):null,bySymbol:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,{researchVersionId:c.memoId,dossierVersionId:c.dossierVersionId}]))}, verifiedValuations:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,c.verifiedValuation])), marks: await liquidityMarks(legal.map((p) => p.symbol), deps, { policy, cutoffMs: st.cutoff.cutoffMs }), nowMs: now() })
           : { status: "NOT_COMMITTED", reason: "mandate_module_unavailable" };
-        if ((activation.status === "NEEDS_SOL_RESYNTHESIS" || ["BASKET_INFEASIBLE","ENVELOPE_REJECTED"].includes(activation.reason)) && !(st.synthesisAttempt >= 1)) {
+        if ((activation.status === "NEEDS_SOL_RESYNTHESIS" || ["BASKET_INFEASIBLE","ENVELOPE_REJECTED"].includes(activation.reason)) && !(st.synthesisAttempt >= 1) && !st.handoff?.resultRef) {
           st.synthesisAttempt = (st.synthesisAttempt || 0) + 1;
           st.resynthesisReason = activation.reason || "MATERIAL_ACTIVATION_CLAMP";
           st.resynthesisFeedback = {reason:st.resynthesisReason, rejectedBasket:legal, alternatives:activation.revisedFeasibleAlternatives || null, envelopes:activation.envelopes || [], rejected:activation.rejected || []};

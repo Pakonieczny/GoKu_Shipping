@@ -160,7 +160,7 @@ const Simulator = (() => {
   // Base allowances remain stable in request identities. The meter applies the
   // approved 33% boost exactly once, only when purchasing a new request.
   const AI_PLAN = Object.freeze({version:'shortlist-50.v1',shortlistModel:'gpt-5.6-luna',shortlistReasoning:'medium',shortlistCount:50,
-    maxResearchCompanies:2,outputTokens:{reviewUniverse:8000,repairCoverageStructure:3000,researchCompany:6000,finalizePortfolio:6000,reviseEntry:4000,reviseHolding:4000,finalizeEventRevision:4000},
+    preparedResearch:true,maxResearchCompanies:2,outputTokens:{prepareResearchDocument:6000,decidePreparedPortfolio:18000,reviewUniverse:8000,repairCoverageStructure:3000,researchCompany:6000,finalizePortfolio:6000,reviseEntry:4000,reviseHolding:4000,finalizeEventRevision:4000},
     holdbackNano:{shortlist:550000000,manager_review:550000000,manager_coverage:500000000,manager_research:220000000}});
   const TERMINAL = ['complete','incomplete','unavailable','cancelled'];
   const CLEANUP_VERSION='shared-evidence-copies.v1';
@@ -171,16 +171,16 @@ const Simulator = (() => {
   const isContention = e => ['10','ABORTED','FIRESTORE/ABORTED'].includes(String(e?.code??'').toUpperCase())||/^10\s+ABORTED\b/i.test(String(e?.message||''));
   const canResumeContention = r => r.status==='incomplete'&&isContention(r.error);
   const canResumeBudget = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_BUDGET_INSUFFICIENT'||r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&r.budgetFailure?.code==='SIMULATION_BUDGET_INSUFFICIENT');
-  const failedResponseIds = r => r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE' ? [...new Set((r.error.details?.failed||[]).filter(x=>x.error==='schema_invalid'&&x.responseId).map(x=>x.responseId))] : r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid' ? [r.error.details.responseId].filter(Boolean) : [r.aiActivity?.responseId].filter(Boolean);
+  const failedResponseIds = r => r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE' ? [...new Set((r.error.details?.failed||[]).filter(x=>(x.error==='schema_invalid'||/^HANDOFF_/.test(x.error||''))&&x.responseId).map(x=>x.responseId))] : r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid' ? [r.error.details.responseId].filter(Boolean) : [r.aiActivity?.responseId].filter(Boolean);
   const canRetryAIStep = r => r.status==='incomplete'&&!r.reservedNano&&!r.pendingAiCount&&failedResponseIds(r).length>0&&(
     r.error?.code==='SIMULATION_AI_RESPONSE_FAILED'&&r.aiActivity?.stage==='shortlist'&&r.aiActivity.incompleteReason==='max_output_tokens'||
     r.error?.code==='SIMULATION_SHORTLIST_INVALID'&&r.aiActivity?.stage==='shortlist'||
     r.error?.code==='SIMULATION_MANAGER_INCOMPLETE'&&r.aiActivity?.stage==='manager_review'&&/schema_invalid/.test(r.error.message||'')||
-    r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&(r.error.details?.failed||[]).every(x=>x.error==='schema_invalid'&&x.responseId)||
+    r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&(r.error.details?.failed||[]).every(x=>(x.error==='schema_invalid'||/^HANDOFF_/.test(x.error||''))&&x.responseId)||
     r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid');
   function simulationRequestBody(body,stage) {
     const out=JSON.parse(JSON.stringify(body)),format=out.text?.format;
-    const canonical=Object.entries(P.SCHEMAS).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
+    const canonical=Object.entries({...P.SCHEMAS,...require('./_investorResearchHandoff').SCHEMAS}).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
     if(canonical)format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
     if(stage==='shortlist') {
       out.reasoning={...out.reasoning,effort:'low'};
@@ -546,7 +546,7 @@ const Simulator = (() => {
             tx.set(ref,{aiRequestRetries:attempts,aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
             for(const model of retryModels)tx.set(ref.collection(admin.COL.modelRequests).doc(model.id),{status:'rejected',error:'operator_retry_requested',retryResponseId:model.responseId,retryGeneration:(model.retryGeneration||0)+1},{merge:true});
           }
-          if(canResumeBudget(v))tx.set(ref,{budgetFailure:null,targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION},{merge:true});
+          if(canResumeBudget(v))tx.set(ref,{researchHandoffVersion:v.aiPlan?'luna-astra-handoff.v1':null,budgetFailure:null,targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION},{merge:true});
           if(resumeCheckpointRef) { if(v.managerCheckpointRef!==r.managerCheckpointRef)throw fail('BAD_REQUEST','The saved checkpoint changed; refresh before resuming');tx.set(ref,{managerCheckpointRef:resumeCheckpointRef},{merge:true}); }
           if(canRecheckAI(v))tx.set(ref,{aiRecovery:true,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
           tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,...(missingXomResearch(v)&&!v.initialized?{repositoryPointersRef:null}:{}),phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
@@ -1309,6 +1309,10 @@ const Simulator = (() => {
           await save({aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null,error:null,status:run.paused||batch.paused?'paused':'queued',finishedAtMs:null});
         }
         if(run.resetAtMs||batch.resetAtMs||run.paused||batch.paused||TERMINAL.includes(run.status)) {await cost.drain();return {done:true,paused:!!run.paused};}
+        if(run.researchHandoffVersion&&run.pendingAiCount) {
+          const remaining=await cost.drain();
+          if(remaining){await save({status:'queued',phase:'Settling saved AI responses before prepared research',nextAttemptAtMs:wallNow()+5000});return {yielded:true};}
+        }
         let packets,meta;
         if(!run.initialized||run.repositoryId) {
           const freshBatch=await getBatch(run.batchId),repository=await repositoryState(freshBatch);
@@ -1348,7 +1352,7 @@ const Simulator = (() => {
         await new Promise(resolve=>setImmediate(resolve));
         const evidence=sharedEvidenceView(packets,()=>run.clockMs);
         const collection=name=>{if(!String(name).startsWith('InvestorAI_')||String(name).includes('/'))throw fail('SIMULATION_NAMESPACE_ESCAPE');return evidence.collection(name)||ref.collection(name);};
-        scope={runId,aiWorkload:config.aiPlan||null,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest,paused,executionSpreadBps:10,feePerShareMicros:5000,
+        scope={runId,aiWorkload:config.aiPlan?{...config.aiPlan,preparedResearch:config.aiPlan.preparedResearch||run.researchHandoffVersion==='luna-astra-handoff.v1'}:null,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest,paused,executionSpreadBps:10,feePerShareMicros:5000,
           marketBars:async(symbol,asOfMs)=>{const p=packets.find(x=>x.symbol===symbol),cutoff=Math.min(run.clockMs,Number(asOfMs)||run.clockMs);return {bars:(p?.bars||[]).filter(b=>C.barTime(b)+20*60000<=cutoff).map(b=>({...b,knownAtMs:C.barTime(b)+20*60000})),provenance:{...(p?.provenance||{}),feed:'delayed_sip',simulation:true}};}};
         await A.withSimulationScope(scope,async()=>{
           const control={engineMode:'manager',accountId:runId,accountMode:'PAPER_AI',mode:'PAPER_AI',writerEpoch:1,managerState:'ENABLED',executorState:'ENABLED',executorEnabled:true,buyState:'OPEN',emergencyState:'CLEAR',fixturesPass:true,
@@ -1389,8 +1393,14 @@ const Simulator = (() => {
 
           async function checkpoint(cp) {
             const labels={freeze:'Preparing company research for the AI',review:'AI choosing companies',coverage:'Checking company coverage',maintenance:'Reviewing holdings',research:'AI researching chosen companies',synthesis:'AI deciding allocations',activation:'Checking investment plans',persist:'Saving investment decisions'};
+            if(cp.stage==='research'&&cp.data?.handoff) {
+              const h=cp.data.handoff,total=cp.data.effective?.researchRequests?.length||0,done=Object.keys(h.documents||{}).length+(h.completedResearch||[]).length;
+              await report({stage:h.phase==='documents'?'manager_document':'manager_decision',label:h.phase==='documents'?'Luna preparing finalist research documents':'Astra researching finalists and deciding investments',done:h.phase==='documents'?done:null,total:h.phase==='documents'?total:null,unit:h.phase==='documents'?'documents':'',current:null});
+              await save({managerCheckpointRef:await saveJSON(ref,'manager_checkpoint',cp)});return;
+            }
+            if(cp.stage==='synthesis'&&cp.data?.handoff)labels.synthesis='Validating Astra investment decisions';
             const research=cp.stage==='research',total=research?cp.data?.effective?.researchRequests?.length:null,done=research?cp.data?.research?.completed?.length||0:null;
-            await report({stage:'manager_'+cp.stage,label:labels[cp.stage]||cp.stage,done,total:total||null,unit:research?'companies researched':'',current:null});
+            await report({stage:cp.stage==='synthesis'&&cp.data?.handoff?'manager_validation':'manager_'+cp.stage,label:labels[cp.stage]||cp.stage,done,total:total||null,unit:research?'companies researched':'',current:null});
             await save({managerCheckpointRef:await saveJSON(ref,'manager_checkpoint',cp)});
           }
           const manager=require('./_investorManager');
@@ -1691,7 +1701,13 @@ const Simulator = (() => {
       const run=await getRun(runId,owner),ref=runCol.doc(runId),allowed={curve:'curve',requests:'requests',fills:A.COL.fills,decisions:A.COL.managerDecisions,orders:A.COL.orders,events:A.COL.mandateEvents};
       if(!allowed[collection])throw fail('BAD_REQUEST');let q=ref.collection(allowed[collection]).orderBy('__name__').limit(100);
       if(after)q=q.startAfter(String(after));const items=await rows(q);
-      return {run:{...run,targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION},collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null,shortlist:run.shortlistRef?await readJSON(ref,run.shortlistRef):null};
+      const cp=run.managerCheckpointRef?await readJSON(ref,run.managerCheckpointRef):null;
+      const preparedDocuments=[];
+      if(cp?.data?.handoff)for(const documentId of Object.values(cp.data.handoff.documents||{})) {
+        const saved=await C.read({runId:documentId,admin:{...admin,col:name=>ref.collection(name)}});
+        preparedDocuments.push(saved.document);
+      }
+      return {preparedDocuments,run:{...run,targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION},collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null,shortlist:run.shortlistRef?await readJSON(ref,run.shortlistRef):null};
     }
     return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,startBatch,prepareShortlist,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }

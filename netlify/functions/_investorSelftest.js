@@ -6076,11 +6076,12 @@ async function simulatorAdversarial({only=null}={}) {
   });
   await check('higher_budget_resumes_existing_run_without_resetting_costs_or_checkpoints',async()=>{
     const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','budget-recovery'),rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
-    await rr.set({status:'incomplete',initialized:true,clockMs:123456,managerCheckpointRef:'saved',spentNano:900000000,reservedNano:1234,targetNano:1263500000,ceilingNano:1389850000,budgetVersion:'simulation-ai-plus33.v1',error:{code:'SIMULATION_BUDGET_INSUFFICIENT'},budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT'}},{merge:true});
+    const saved=await svc.saveJSON(rr,'checkpoint',{stage:'research',data:{}});
+    await rr.set({status:'incomplete',initialized:true,clockMs:123456,managerCheckpointRef:saved,spentNano:900000000,reservedNano:1234,targetNano:1263500000,ceilingNano:1389850000,budgetVersion:'simulation-ai-plus33.v1',error:{code:'SIMULATION_BUDGET_INSUFFICIENT'},budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT'}},{merge:true});
     const view=await svc.overview({owner:'operator',batchId:b.batchId});assert(view.runs[0].canResumeBudget);assert.equal(view.runs[0].ceilingNano,Sim.CEILING);assert.equal(view.batch.ceilingNano,Sim.CEILING);assert.equal(view.totals.targetNano,Sim.TARGET);
     await assert.rejects(()=>svc.control({runId:b.runIds[0],command:'retry'},'intruder'),/another operator/);
     await svc.control({runId:b.runIds[0],command:'retry'},'operator');const r=await svc.getRun(b.runIds[0]);
-    assert.equal(r.status,'queued');assert.equal(r.clockMs,123456);assert.equal(r.managerCheckpointRef,'saved');assert.equal(r.spentNano,900000000);assert.equal(r.reservedNano,1234);assert.equal(r.ceilingNano,Sim.CEILING);assert.equal(r.budgetFailure,null);assert.equal(r.error,null);
+    assert.equal(r.status,'queued');assert.equal(r.clockMs,123456);assert.equal(r.managerCheckpointRef,saved);assert.equal(r.spentNano,900000000);assert.equal(r.reservedNano,1234);assert.equal(r.ceilingNano,Sim.CEILING);assert.equal(r.budgetFailure,null);assert.equal(r.error,null);
     assert.equal((await svc.detail(r.runId,'operator')).run.ceilingNano,Sim.CEILING);
   });
   async function seedSimulationArchive(fake,asOfMs=Date.UTC(2026,6,1)) {
@@ -6527,7 +6528,7 @@ async function simulatorAdversarial({only=null}={}) {
   const body={model:'gpt-6-astra',input:[{role:'user',content:'fixture'}],max_output_tokens:4000,reasoning:{effort:'high'}};
   const completed={id:'resp_fixture',status:'completed',service_tier:'flex',model:'gpt-6-astra',output:[],usage:{input_tokens:1000,output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}};
   await check('simulation_output_boost_is_unchanged_and_extra_funds_are_reserved_for_later_stages',async()=>{
-    const cases=[['shortlist',8000,'gpt-5.6-luna'],...Object.entries(Sim.AI_PLAN.outputTokens).map(([name,tokens])=>[({reviewUniverse:'manager_review',repairCoverageStructure:'manager_coverage',researchCompany:'manager_research'})[name]||name,tokens,'gpt-6-astra']),['legacy',4000,'gpt-6-astra']];
+    const cases=[['shortlist',8000,'gpt-5.6-luna'],...Object.entries(Sim.AI_PLAN.outputTokens).map(([name,tokens])=>[({prepareResearchDocument:'manager_document',decidePreparedPortfolio:'manager_decision',reviewUniverse:'manager_review',repairCoverageStructure:'manager_coverage',researchCompany:'manager_research'})[name]||name,tokens,name==='prepareResearchDocument'?'gpt-5.6-luna':'gpt-6-astra']),['legacy',4000,'gpt-6-astra']];
     for(const [stage,tokens,model] of cases){
       let sent;const x=await metered(async(u,o)=>{sent=JSON.parse(o.body);return {ok:true,status:200,json:async()=>completed};});x.run.aiPlan=Sim.AI_PLAN;
       const requestBody={...body,model,max_output_tokens:tokens};await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage,body:requestBody});
@@ -6745,7 +6746,7 @@ async function simulatorAdversarial({only=null}={}) {
     await x.ref.set({reservedNano:0,pendingAiCount:0},{merge:true});
     await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:research,stage:'manager_research'});assert.equal(x.posts(),1);
   });
-  async function researchPipeline({failure=null}={}) {
+  async function researchPipeline({failure=null,prepared=false}={}) {
     const fake=database(),D=require('./_investorDossier'),M=require('./_investorMarket'),date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),calls=[],responses=new Map(),toolRounds=new Map();
     let finalists=[],bad=failure,missingUsage=failure==='usage',wall=Date.now();const transportErrors=[];
     const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{OPENAI_API_KEY:'fixture'},publicFetch:async()=>{throw Error('No live source access in pipeline test');},fetchImpl:async(url,opts)=>{try {
@@ -6761,6 +6762,16 @@ async function simulatorAdversarial({only=null}={}) {
         output={schemaVersion:'universe-review.v1',universeVersion:m.universeVersion,universeHash:m.universeHash,eligibleCount:50,
           coverage:m.symbols.map(symbol=>({symbol,reviewDirective:finalists.includes(symbol)?'RESEARCH_NOW':'NONE',provisionalDisposition:finalists.includes(symbol)?'WATCH':'IGNORE',reason:'Historical research priority',changedSincePrior:false,reasonCode:null})),holdingAnalysis:[],
           researchRequests:finalists.map((symbol,i)=>({symbol,researchPriority:i+1,completionClass:'BUY_REQUIRED',reason:'Investigate the historical evidence',reviewDirective:'RESEARCH_NOW'})),managerNote:'Research both finalists before portfolio planning'};
+      } else if(name==='prepared_research_document_v1') {
+        assert.equal(b.model,'gpt-5.6-luna');assert(!b.tools);
+        const source=JSON.parse(user.match(/<untrusted_context name="source_packet">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);
+        output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,{summary:'Available historical evidence is limited.',evidenceIds:[],missing:['Insufficient evidence for a firm investment thesis']}]))};
+      } else if(name==='prepared_investment_decision_v1') {
+        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'high');assert(!b.tools);assert.equal(b.max_output_tokens,23940);
+        const docs=JSON.parse(user.match(/<untrusted_context name="prepared_documents">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);const prior=JSON.parse(user.match(/<untrusted_context name="completed_research">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);assert.equal(docs.length+prior.length,2);assert(docs.every(d=>d.documentHash));
+        const research=finalists.map(symbol=>({schemaVersion:'research-memo.v1',symbol,asOf:new Date(cutoff).toISOString(),checklist:Object.fromEntries(['business','whatChanged','agreementDisagreement','risks','valuationFramework','disconfirmingEvidence','returnAndHorizon','versusAlternatives','mandateOrAbstain'].map(k=>[k,'Evidence does not justify investment.'])),factualPremises:[],inferences:[],valuation:null,bearCase:'Uncertain return',thesisHealth:'UNKNOWN',proposedDecision:'WATCH',reasonCode:'UNCERTAINTY',mandate:null}));
+        output={schemaVersion:'prepared-investment-decision.v1',research,allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:finalists.map(symbol=>({symbol,decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Retain cash after joint underwriting'})),expansionMandates:[],holdingAnalysis:[],comparisonNote:'Compared both finalists and cash in one decision'}};
+        if(bad==='joint_schema')output.research[0].bearCase='x'.repeat(1201);
       } else if(name==='research_memo_v1') {
         const symbol=user.match(/SYMBOL=(\S+)/)[1],round=toolRounds.get(symbol)||0;toolRounds.set(symbol,round+1);
         assert.equal(b.reasoning.effort,'high');assert(b.tools.some(t=>t.name==='getPortfolioSnapshot'));
@@ -6774,9 +6785,9 @@ async function simulatorAdversarial({only=null}={}) {
         assert(finalists.every(symbol=>toolRounds.get(symbol)>=2),'both research sessions must finish before synthesis');
         output={schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:finalists.map(symbol=>({symbol,decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Completed research does not justify a purchase'})),expansionMandates:[],holdingAnalysis:[],comparisonNote:bad==='synthesis'?'x'.repeat(1201):'Compared both completed research memos; retain cash'};
       } else throw Error('Unexpected paid stage '+name);
-      if(output && !(bad==='research'&&output.bearCase?.length>1200) && !(bad==='synthesis'&&name==='portfolio_synthesis_v1'))assert.deepEqual(P.validateAgainst(b.text.format.schema,output),[],'fixture must obey the actual submitted schema');
+      if(output && bad!=='joint_schema' && !(bad==='research'&&output.bearCase?.length>1200) && !(bad==='synthesis'&&name==='portfolio_synthesis_v1'))assert.deepEqual(P.validateAgainst(b.text.format.schema,output),[],'fixture must obey the actual submitted schema');
       const response={id:'resp_full_research_'+calls.length,model:b.model,status:'completed',service_tier:b.service_tier,usage:{input_tokens:12000,output_tokens:1500,output_tokens_details:{reasoning_tokens:1000}},output:items||[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]};responses.set(response.id,response);
-      if(missingUsage&&name==='research_memo_v1'){missingUsage=false;return {ok:true,status:200,json:async()=>({...response,usage:null})};}
+      if(missingUsage&&(name==='research_memo_v1'||name==='prepared_investment_decision_v1')){missingUsage=false;return {ok:true,status:200,json:async()=>({...response,usage:null})};}
       return {ok:true,status:200,json:async()=>response};
     } catch(e){transportErrors.push(e.stack);throw e;}}});
     const batch=await svc.createBatch({count:1,from:date,to:date},'operator','research-pipeline-'+failure),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config),units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
@@ -6786,9 +6797,63 @@ async function simulatorAdversarial({only=null}={}) {
       const artifact=await svc.saveJSON(parent,'company',{data,daily,provenance:{provider:'fixture',adjustment:'split_only'}});await unit.ref.set({status:'ready',pointer:{cacheId:parent.id,artifact}},{merge:true});priceSymbols[symbol]={bars:providerSession(date,{extra:false}),coverage:{regular:78,expected:78,missing:0}};
     }
     const prices=fake.col('InvestorAI_SimulationScenarios').doc('research_session'),artifact=await svc.saveJSON(prices,'prices',{symbols:priceSymbols,provenance:{provider:'fixture'}});await units.find(x=>x.data().kind==='prices').ref.set({status:'ready',pointer:{cacheId:prices.id,artifact}},{merge:true});
+    if(!prepared){config.aiPlan={...config.aiPlan,preparedResearch:false};await br.set({configRef:await svc.saveJSON(br,'legacy_config',config)},{merge:true});}
     const runId=batch.runIds[0],ref=fake.col('InvestorAI_Simulations').doc(runId);
     return {svc,runId,ref,fake,calls,toolRounds,finalists:()=>finalists,setValid:()=>{bad=null;},drive:async()=>{for(let i=0;i<8;i++){await svc.execute(runId);wall+=10000;const r=await svc.getRun(runId);if(transportErrors.length)throw Error(transportErrors.join('\n'));if(['complete','incomplete'].includes(r.status))return r;}throw Error('Pipeline failed to terminate: '+JSON.stringify({run:await svc.getRun(runId),calls:calls.map(b=>b.text.format.name)}));}};
   }
+  await check('prepared_document_binds_exact_sources_retains_risks_and_rejects_unknown_future_or_changed_evidence',()=>{
+    const H=require('./_investorResearchHandoff'),cutoff=Date.UTC(2026,8,3,12,55),claim={claimId:'c1',documentVersionId:'d1',claimType:'FACT',text:'Revenue increased.',quote:'Revenue increased.',publishedAtMs:cutoff-1000};
+    const risk={...claim,claimId:'risk',claimType:'RISK_FACTOR',text:'Debt covenant risk.'};
+    const packet={symbol:'AAA',cutoffMs:cutoff,dossierHash:'source',claims:[claim,risk],fundamentals:{revenueMinor:'12345'}};
+    const source=H.sourcePacket(packet,{filings:{facts:[{factId:'f1',filedDate:'2026-09-01',valueScaled:'12345',scale:2}],lineage:[]}});
+    const output={schemaVersion:'prepared-research-document.v1',symbol:'AAA',sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence summary',evidenceIds:['claim:c1','fact:f1'],missing:[]}]))};
+    const doc=H.bindDocument(output,source);assert.equal(doc.baseline.fundamentals.revenueMinor,'12345');assert.equal(doc.evidence.find(e=>e.id==='fact:f1').valueScaled,'12345');assert(doc.evidence.some(e=>e.claimId==='risk'),'mandatory adverse evidence cannot be omitted by Luna');H.assertDocument(doc);
+    assert.throws(()=>H.bindDocument({...output,symbol:'BBB'},source),/SYMBOL_MISMATCH/);
+    const bad=JSON.parse(JSON.stringify(output));bad.sections.business.evidenceIds=['claim:invented'];assert.throws(()=>H.bindDocument(bad,source),/UNKNOWN_EVIDENCE/);
+    doc.evidence[0].text='altered';assert.throws(()=>H.assertDocument(doc),/DOCUMENT_CORRUPT/);
+    assert.throws(()=>H.sourcePacket({...packet,claims:[{...claim,publishedAtMs:cutoff+1}]}),/FUTURE_EVIDENCE/);
+  });
+  await check('prepared_joint_buy_retains_verified_valuation_mandate_rank_and_source_gates',()=>{
+    const H=require('./_investorResearchHandoff'),mandate=JSON.parse(JSON.stringify(P.EXAMPLE_MANDATE_PROPOSAL)),cutoff=Date.parse(mandate.asOf);
+    const valuation={horizonTradingDays:mandate.forecast.horizonTradingDays,method:'comparable_multiples',methodRationale:'Forward scenario assumptions',forwardInputBasis:'assumption_only',guidanceClaimId:null,preferredValuationZone:null,
+      scenarios:mandate.forecast.outcomeBuckets.map(b=>({id:b.id,probabilityPpm:b.probabilityPpm,realizationPpm:'1000000',terminalPriceMicros:b.terminalPriceMicros,assumptions:[{name:'metricPerShareMicros',value:b.terminalPriceMicros,unit:'micros'},{name:'multipleMilli',value:'1000',unit:'milli'}]}))};
+    const memo={schemaVersion:'research-memo.v1',symbol:mandate.symbol,asOf:mandate.asOf,checklist:Object.fromEntries(['business','whatChanged','agreementDisagreement','risks','valuationFramework','disconfirmingEvidence','returnAndHorizon','versusAlternatives','mandateOrAbstain'].map(k=>[k,'Source-linked underwriting.'])),factualPremises:[],inferences:[],valuation,bearCase:'Loss scenario',thesisHealth:'INTACT',proposedDecision:'BUY',reasonCode:null,mandate};
+    const packet={symbol:mandate.symbol,cutoffMs:cutoff,claims:mandate.sourceManifest.map(m=>({claimId:m.claimId,documentVersionId:m.documentVersionId})),dossierHash:'frozen'};
+    const output={schemaVersion:'prepared-investment-decision.v1',research:[memo],allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:[{symbol:mandate.symbol,decision:'BUY',capitalRank:mandate.allocation.capitalRank,reasonCode:null,fundingState:'FUNDED',reason:'Positive verified forecast'}],expansionMandates:[mandate],holdingAnalysis:[],comparisonNote:'Selected against cash'}};
+    assert(H.validateJoint(output,[packet])[mandate.symbol].bindingHash);
+    for(const [mutate,error] of [
+      [x=>x.allocation.expansionMandates[0].action.entry.limitPriceMicros='1',/CONFLICTING_MANDATE/],
+      [x=>x.allocation.decisions[0].capitalRank=4,/RANK_MISMATCH/],
+      [x=>x.research[0].valuation.scenarios[0].terminalPriceMicros='1',/TERMINAL_PRICE_NOT_CALCULATOR_BOUND/],
+      [x=>x.research[0].mandate.sourceManifest[0].documentVersionId='invented',/SOURCE_MISMATCH/]]) {
+      const bad=JSON.parse(JSON.stringify(output));mutate(bad);assert.throws(()=>H.validateJoint(bad,[packet]),error);
+    }
+    assert.throws(()=>H.validateJoint(output,[packet],[],true),/EXPANSION_BLOCKED/);
+  });
+  await check('full_prepared_documents_joint_astra_decision_and_replay_reuses_paid_background_response',async()=>{
+    const x=await researchPipeline({prepared:true,failure:'usage'}),r=await x.drive();assert.equal(r.status,'complete',JSON.stringify(r.error));
+    assert.deepEqual(x.calls.map(b=>b.text.format.name),['historical_shortlist','universe_review_v1','prepared_research_document_v1','prepared_research_document_v1','prepared_investment_decision_v1']);
+    const cp=await x.svc.readJSON(x.ref,r.managerCheckpointRef);assert.equal(cp.data.research.completed.length,2);assert.equal(cp.data.synthesis.ok,true);assert.equal(r.progress,100);assert.equal(r.pendingAiCount,0);assert.equal(r.reservedNano,0);
+    assert.equal(r.costByStage.manager_document.requests,2);assert.equal(r.costByStage.manager_decision.requests,1);assert.equal(r.costByStage.manager_synthesis,undefined);
+    const requests=(await x.ref.collection('requests').get()).docs.map(d=>d.data());assert.equal(r.spentNano,requests.reduce((n,q)=>n+q.actualNano,0));
+    const detail=await x.svc.detail(x.runId,'operator');assert.equal(detail.preparedDocuments.length,2);
+    await x.svc.execute(x.runId);assert.equal(x.calls.length,5);
+  });
+  await check('prepared_budget_resume_keeps_old_paid_memo_and_replaces_only_unfinished_research',async()=>{
+    const x=await researchPipeline({failure:'research'}),r=await x.drive();assert.equal(r.status,'incomplete');
+    const cp=await x.svc.readJSON(x.ref,r.managerCheckpointRef);assert.equal(cp.data.research.completed.length,1);
+    const before=x.calls.length,spent=r.spentNano;
+    await x.ref.set({error:{code:'SIMULATION_BUDGET_INSUFFICIENT'},budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT'}},{merge:true});
+    await x.svc.control({runId:x.runId,command:'retry'},'operator');x.setValid();const done=await x.drive();
+    assert.equal(done.status,'complete',JSON.stringify(done.error));assert(done.spentNano>spent);assert.equal(x.calls.length,before+2);
+    assert.equal(x.calls.filter(b=>b.text.format.name==='prepared_research_document_v1').length,1);assert.equal(x.calls.filter(b=>b.text.format.name==='prepared_investment_decision_v1').length,1);
+    const old=(await x.ref.collection(A.COL.modelRequests).where('fn','==','researchCompany').get()).docs.map(d=>d.data());assert(old.some(q=>q.status==='superseded'&&q.supersededStatus==='rejected'));assert(old.some(q=>q.status==='complete'));
+  });
+  await check('prepared_joint_schema_retry_preserves_both_luna_documents_and_only_rebuys_failed_decision',async()=>{
+    const x=await researchPipeline({prepared:true,failure:'joint_schema'}),r=await x.drive();assert.equal(r.status,'incomplete');assert.equal(r.error.code,'SIMULATION_RESEARCH_INCOMPLETE');assert.equal(x.calls.length,5);
+    assert((await x.svc.overview({owner:'operator'})).runs[0].canRetryAIStep);await x.svc.control({runId:x.runId,command:'retry'},'operator');x.setValid();
+    const done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));assert.equal(x.calls.length,6);assert.equal(x.calls.filter(b=>b.text.format.name==='prepared_research_document_v1').length,2);
+  });
   await check('full_304_to_50_two_research_tool_sessions_synthesis_and_market_replay',async()=>{
     const x=await researchPipeline({failure:'usage'}),r=await x.drive();assert.equal(r.status,'complete',JSON.stringify(r.error));assert.equal(x.calls.length,7,'one shortlist, review, two calls per research company, synthesis');
     const cp=await x.svc.readJSON(x.ref,r.managerCheckpointRef);assert.equal(cp.data.research.completed.length,2);assert.equal(cp.data.synthesis.ok,true);assert.equal(r.progress,100);assert.equal(r.pendingAiCount,0);assert.equal(r.reservedNano,0);
