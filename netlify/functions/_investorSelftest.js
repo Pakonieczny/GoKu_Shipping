@@ -6912,6 +6912,33 @@ async function simulatorAdversarial({only=null}={}) {
     for(const row of rows){assert.equal(row.decision,'WATCH');assert.equal(row.held,false);assert.equal(row.eligible,true);assert.equal(row.offRoster,false);assert.equal(typeof row.changedSincePrior,'boolean');assert(row.reviewDirective===null||typeof row.reviewDirective==='string');assert.equal(row.source,'final_synthesis');}
     assert(done.costByStage.event.spentNano>0);assert(done.costByStage.portfolio_review.spentNano>0);
   });
+  await check('finalization_settles_acknowledged_usage_and_recovers_old_finalize_failures_without_new_purchases',async()=>{
+    for(const legacy of [false,true]) {
+      const x=await researchPipeline({prepared:true,measure:true});let expected,restored=false;
+      function unsettle() {
+        const run=x.fake.docs.get(x.ref.path),[path,q]=[...x.fake.docs.entries()].find(([path,q])=>path.startsWith(x.ref.path+'/requests/')&&q.stage==='manager_decision'&&q.status==='settled');expected=run.spentNano;
+        const stage=run.costByStage[q.stage],usage=q.usage;
+        x.fake.docs.set(path,{...q,status:'pending',actualNano:null,usage:null});
+        x.fake.docs.set(x.ref.path,{...run,spentNano:run.spentNano-q.actualNano,reservedNano:q.reservation,pendingAiCount:1,
+          reportedInputTokens:run.reportedInputTokens-usage.input_tokens,reportedOutputTokens:run.reportedOutputTokens-usage.output_tokens,
+          costByStage:{...run.costByStage,[q.stage]:{...stage,spentNano:stage.spentNano-q.actualNano,requests:stage.requests-1,inputTokens:stage.inputTokens-usage.input_tokens,outputTokens:stage.outputTokens-usage.output_tokens}}});
+      }
+      if(!legacy) {
+        const transaction=x.fake.runTransaction;x.fake.runTransaction=fn=>transaction(tx=>fn({...tx,set:(ref,data,options)=>{
+          if(!restored&&ref.path===x.ref.path&&data.work?.stage==='finalize'){restored=true;unsettle();}
+          return tx.set(ref,data,options);
+        }}));
+      }
+      let done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));
+      if(legacy) {
+        unsettle();await x.ref.set({status:'incomplete',work:{stage:'finalize'},error:{code:'SIMULATION_REQUEST_INCOMPLETE',message:'A required AI request did not complete'}},{merge:true});
+        const view=await x.svc.overview({owner:'operator'});assert(view.runs[0].canRecheckAI);assert(!view.runs[0].canRetryAIStep);
+        await x.svc.control({runId:x.runId,command:'retry'},'operator');done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));
+      }
+      assert.equal(x.calls.length,5,'settlement retrieves the paid answer, never submits a replacement');assert.equal(done.spentNano,expected);assert.equal(done.reservedNano,0);assert.equal(done.pendingAiCount,0);
+      assert((await x.ref.collection('requests').get()).docs.every(d=>d.data().status==='settled'));assert.equal(Object.values(done.costByStage).reduce((n,q)=>n+q.spentNano,0),expected);
+    }
+  });
   await check('single_uncapped_measurement_finishes_all_steps_above_normal_ceiling_and_reports_actual_costs',async()=>{
     const x=await researchPipeline({prepared:true,measure:true}),done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));assert(done.spentNano>Sim.CEILING);assert.equal(x.calls.length,5);assert.equal(done.ceilingNano,null);assert.equal(done.pricingViolation,false);
     const view=await x.svc.overview({owner:'operator'}),detail=await x.svc.detail(x.runId,'operator');assert.equal(view.totals.ceilingNano,null);assert.equal(view.totals.estimatedFinalNano,done.spentNano);assert.equal(detail.run.ceilingNano,null);assert.equal(done.reservedNano,0);assert.equal(done.pendingAiCount,0);
