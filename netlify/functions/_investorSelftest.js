@@ -204,6 +204,21 @@ function runFixtures() {
 
   const VT = require("./_investorVisibleText");
 
+  cases.push(fixture("sec_zero_size_page_preserves_visible_child_text", () => {
+    const text=VT.visibleText('<div style="font-size:0;position:relative">HIDDEN_DIRECT'
+      +'<div><span style="font-size:9pt">Visible SEC filing revenue.</span>HIDDEN_AFTER</div>'
+      +'<span style="font-size:120%">HIDDEN_RELATIVE</span><span style="font-size:1rem">Visible rem.</span>'
+      +'<span style="font-size:0!important;font-size:10pt">HIDDEN_IMPORTANT</span></div><p>Following disclosure.</p>');
+    return text==='Visible SEC filing revenue. Visible rem. Following disclosure.';
+  }));
+  cases.push(fixture("sec_font_override_never_reveals_hidden_subtrees", () => {
+    const text=VT.visibleText('<div style="font-size:0"><span style="font-size:10pt">Visible</span>'
+      +'<div style="display:none"><span style="font-size:20pt">LEAK_DISPLAY</span></div>'
+      +'<div style="opacity:0"><span style="font-size:20pt">LEAK_OPACITY</span></div>'
+      +'<ix:hidden><span style="font-size:20pt">LEAK_XBRL</span></ix:hidden></div>');
+    return text==='Visible';
+  }));
+
   cases.push(fixture("visible_text_unclosed_hidden_keeps_following_disclosure", () => {
     const out = VT.scan("<p>Q3</p><div hidden><span>nav</span>"
       + "<p>substantial doubt about going concern</p>");
@@ -6055,6 +6070,51 @@ async function simulatorAdversarial() {
       return {status:200,json,text:json?JSON.stringify(json):'<html><body><p>Revenue increased compared with the prior period, while cash flow supported ongoing business investment and debt repayment.</p></body></html>'};};
     return {publicFetch,calls,cik};
   }
+  await check('sec_zero_font_archive_reuses_saved_source_and_reports_filing_progress',async()=>{
+    const fake=database(),sec=secFixture(),row=require('./_investorUniverse').tradeTier.find(r=>r.symbol==='A'),M=require('./_investorMarket'),progress=[];
+    const svc=Sim.create({admin:fake,publicFetch:async url=>{const r=await sec.publicFetch(url);if(!r.json)r.text='<html><body><div style="font-size:0">HIDDEN_PAYLOAD<span style="font-size:9pt">'+r.text+'</span></div></body></html>';return r;}});
+    const date='2026-09-03',end=M.sessionCloseMs(new Date(date+'T12:00:00Z'));
+    const data=await svc.reconstructResearch('A',row,date,end,{onProgress:async(phase,detail)=>{if(detail?.researchProgress)progress.push(detail.researchProgress);}});
+    assert(data.some(x=>x.id.startsWith('sec_filing_')&&x.data.canonicalText?.includes('Revenue increased')));
+    assert(!JSON.stringify(data).includes('HIDDEN_PAYLOAD'));assert(progress.some(p=>p.done===p.total&&p.total>0));
+    const count=sec.calls.length;await svc.reconstructResearch('A',row,date,end);assert.equal(sec.calls.length,count,'saved HTML must be reparsed without another download');
+  });
+  await check('shared_progress_separates_working_waiting_failed_and_completed_subsections',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','progress-sections');
+    const config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config),units=(await repo.ref.collection('units').get()).docs;
+    const companies=units.filter(d=>d.data().researchRequired),prices=units.find(d=>d.data().kind==='prices');
+    await companies[0].ref.set({status:'preparing',stage:'research',leaseUntil:now+60000,phase:'Waiting for SEC download availability',waitReason:'sec_rate_limit',researchProgress:{done:3,total:10}},{merge:true});
+    await companies[1].ref.set({status:'preparing',stage:'daily',researchReady:true,leaseUntil:now+60000,phase:'Downloading daily prices'},{merge:true});
+    await companies[2].ref.set({status:'failed',stage:'research',error:{code:'HISTORICAL_SEC_EMPTY',message:'Unreadable',details:{url:'https://www.sec.gov/Archives/example.htm'}}},{merge:true});
+    await companies[3].ref.set({status:'ready'},{merge:true});await prices.ref.set({status:'ready'},{merge:true});
+    let state=await svc.repositoryState(await svc.getBatch(b.batchId)),[research,daily,intraday]=state.sections;
+    assert.equal(state.working,1);assert.equal(state.failed,1);assert.equal(research.waiting,1);assert.equal(research.done,2);assert.equal(daily.done,1);assert.equal(daily.working,1);assert.equal(intraday.done,1);
+    assert.equal(research.items.find(x=>x.unitId===companies[0].id).progress.done,3);
+    assert.equal(daily.items.find(x=>x.unitId===companies[2].id).state,'pending');assert(state.errors[0].url);
+    for(const section of state.sections)assert.equal(['complete','working','waiting','queued','starting','pending','failed','paused'].reduce((n,k)=>n+section[k],0),section.total);
+    await svc.control({batchId:b.batchId,command:'pause'},'operator');state=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(state.status,'paused');assert.equal(state.working,0);assert.equal(state.sections[0].done,2);
+    assert(state.sections[0].items.some(x=>x.state==='failed'));
+    // Legacy leases waiting on SEC must not be counted as active downloads.
+    await svc.control({batchId:b.batchId,command:'resume'},'operator');await companies[0].ref.set({waitReason:null},{merge:true});state=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(state.sections[0].waiting,1);
+  });
+  await check('unreadable_sec_retry_refreshes_only_failed_source_and_preserves_other_downloads',async()=>{
+    const fake=database(),sec=secFixture(),M=require('./_investorMarket'),old={load:M.loadMarketSettings,credentials:M.providerCredentials};let repaired=false;
+    M.loadMarketSettings=async()=>{};M.providerCredentials=()=>({keyId:'fixture',secretKey:'fixture'});
+    try {
+      const svc=Sim.create({admin:fake,publicFetch:async url=>{const r=await sec.publicFetch(url);return url.endsWith('/past.htm')&&!repaired?{...r,text:'<html><title>x</title></html>'}:r;},fetchImpl:async()=>({ok:true,status:200,json:async()=>({bars:{A:[]}})})});
+      const b=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','unreadable-retry');
+      await svc.prepareRepository(b.batchId,'company_A');let state=await svc.repositoryState(await svc.getBatch(b.batchId)),unit=state.units.find(u=>u.unitId==='company_A');
+      assert.equal(unit.status,'failed');assert.equal(unit.error.code,'HISTORICAL_SEC_EMPTY');assert(unit.error.details.url.endsWith('/past.htm'));assert.equal(unit.error.details.form,'10-Q');assert.equal(unit.error.details.textChars,1);
+      const before=sec.calls.length;repaired=true;await svc.control({batchId:b.batchId,command:'retry_repository'},'operator');await svc.prepareRepository(b.batchId,'company_A');
+      state=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(state.units.find(u=>u.unitId==='company_A').status,'ready',JSON.stringify(state.errors));
+      assert.equal(sec.calls.length,before+1);assert(sec.calls.at(-1).endsWith('/past.htm'));assert.equal(state.sections[0].done,1);assert.equal(state.sections[1].done,1);
+    }finally{M.loadMarketSettings=old.load;M.providerCredentials=old.credentials;}
+  });
+  await check('sec_antibot_response_is_resumable_and_not_cached_as_evidence',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,publicFetch:async()=>{throw Object.assign(Error('Blocked'),{code:'blocked_page'});}});
+    await assert.rejects(()=>svc.secSource('https://data.sec.gov/submissions/CIK0001090872.json'),e=>e.code==='HISTORICAL_PROVIDER_BUSY'&&e.retryAfterMs===60000);
+    assert(![...fake.docs.values()].some(d=>d.artifact));
+  });
   await check('empty_research_archive_starts_requested_dates_without_paid_preflight',async()=>{
     const fake=database();let requests=0;
     const svc=Sim.create({admin:fake,fetchImpl:async()=>{requests++;throw Error('network must not run');},publicFetch:async()=>{throw Error('start must enqueue preparation');}});

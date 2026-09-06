@@ -69,7 +69,7 @@ const HIDDEN_CLASSES = new Set([
   "screen-reader-only", "is-hidden", "u-hidden", "js-hidden",
 ]);
 
-function invisibleAttribute(attrs) {
+function invisibleAttribute(attrs, { ignoreFontSize = false } = {}) {
   const a = String(attrs || "");
   if (/\bhidden(?:\s*=\s*(?:"hidden"|'hidden'|hidden))?(?:\s|>|\/|$)/i.test(a)) return true;
   if (/\baria-hidden\s*=\s*(?:"true"|'true'|true\b)/i.test(a)) return true;
@@ -82,7 +82,8 @@ function invisibleAttribute(attrs) {
      as visible text. Reproduced against v8.4 before this was changed. */
   const styleMatch = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(a);
   const style = styleMatch ? (styleMatch[1] != null ? styleMatch[1] : styleMatch[2]) : "";
-  if (/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?:\.0+)?|font-size\s*:\s*0(?:\.0+)?(?:px|em|rem|pt|%)?)\s*(?:!\s*important\s*)?(?:;|$)/i.test(style)) return true;
+  if (/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?:\.0+)?)\s*(?:!\s*important\s*)?(?:;|$)/i.test(style)) return true;
+  if (!ignoreFontSize && /(?:^|;)\s*font-size\s*:\s*0(?:\.0+)?(?:px|em|rem|pt|%)?\s*(?:!\s*important\s*)?(?:;|$)/i.test(style)) return true;
 
   /* CSS class names are whitespace-separated tokens and are compared whole.
      A \b-anchored pattern also matched inside "hidden-menu-toggle", because
@@ -92,6 +93,22 @@ function invisibleAttribute(attrs) {
   const classes = classMatch ? (classMatch[1] != null ? classMatch[1] : classMatch[2]) : "";
   if (classes && classes.split(/\s+/).some((t) => HIDDEN_CLASSES.has(t.toLowerCase()))) return true;
   return false;
+}
+
+/* SEC page containers often use font-size:0 and restore a real size on their
+   child spans. Font size is inherited and overridable; display:none and
+   opacity:0 hide the entire subtree. Keep zero-size text out without deleting
+   visible descendants. Relative em/% sizes cannot restore a zero parent. */
+function zeroFontSize(attrs, inherited) {
+  const m = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
+  const declarations = [...String(m ? m[1] ?? m[2] : "").matchAll(/(?:^|;)\s*font-size\s*:\s*([^;]+)/gi)];
+  const declaration = declarations.filter(x => /!\s*important/i.test(x[1])).at(-1) || declarations.at(-1);
+  const value = declaration?.[1].replace(/!\s*important/gi, "").trim().toLowerCase();
+  if (!value || /^(inherit|unset)$/.test(value)) return inherited;
+  const size = /^(\d*\.?\d+)(px|pt|pc|in|cm|mm|q|rem|em|ex|ch|%|vw|vh|vmin|vmax)?$/.exec(value);
+  if (size) return Number(size[1]) === 0 || (inherited && /^(em|ex|ch|%)$/.test(size[2] || ""));
+  if (/^(initial|revert|xx-small|x-small|small|medium|large|x-large|xx-large)$/.test(value)) return false;
+  return inherited;
 }
 
 /* Read one markup construct starting at html[i] === "<".
@@ -189,27 +206,36 @@ function scan(value, { preserveBreaks = false } = {}) {
   const out = [];
   let unbalancedHidden = false;
   let hiddenRemoved = 0;
+  const fonts = [];
+  const textVisible = () => !fonts.at(-1)?.zero;
   let i = 0;
 
   while (i < html.length) {
     const lt = html.indexOf("<", i);
-    if (lt < 0) { out.push(decodeEntities(html.slice(i))); break; }
-    if (lt > i) out.push(decodeEntities(html.slice(i, lt)));
+    if (lt < 0) { if (textVisible()) out.push(decodeEntities(html.slice(i))); break; }
+    if (lt > i && textVisible()) out.push(decodeEntities(html.slice(i, lt)));
 
     const t = readTag(html, lt);
-    if (!t) { out.push("<"); i = lt + 1; continue; }
-    if (t.kind === "cdata") { out.push(decodeEntities(t.text)); i = t.end; continue; }
+    if (!t) { if (textVisible()) out.push("<"); i = lt + 1; continue; }
+    if (t.kind === "cdata") { if (textVisible()) out.push(decodeEntities(t.text)); i = t.end; continue; }
     if (t.kind !== "tag") { out.push(" "); i = t.end; continue; }
 
     if (!t.closing && RAW.has(t.name)) { out.push(" "); i = skipRaw(html, t); continue; }
 
-    if (!t.closing && !VOID.has(t.name) && !t.selfClosing && invisibleAttribute(t.attrs)) {
+    if (!t.closing && !VOID.has(t.name) && !t.selfClosing && invisibleAttribute(t.attrs, { ignoreFontSize: true })) {
       const r = skipHidden(html, t);
       unbalancedHidden = unbalancedHidden || r.unbalanced;
       hiddenRemoved += 1;
       out.push(" ");
       i = r.end;
       continue;
+    }
+
+    if (t.closing) {
+      const at = fonts.map(f => f.name).lastIndexOf(t.name);
+      if (at >= 0) fonts.length = at;
+    } else if (!VOID.has(t.name) && !t.selfClosing) {
+      fonts.push({ name: t.name, zero: zeroFontSize(t.attrs, !textVisible()) });
     }
 
     out.push(preserveBreaks && BREAK.has(t.name) ? "\n" : " ");
