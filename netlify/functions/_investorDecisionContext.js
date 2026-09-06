@@ -58,10 +58,21 @@ async function read({ runId, admin = null }) {
   return { ...JSON.parse(json), contentHash: manifest.contentHash };
 }
 
+// Session closes depend on the date/calendar, not the company or replay cutoff.
+// Bound this process-local cache; never cache whether a bar is visible at a cutoff.
+const dailySessionCloses = new Map();
 function completedDaily(series, cutoffMs) {
   const M = require("./_investorMarket");
-  return (series || []).filter(b => b && b.date && Number(b.c) > 0 &&
-    M.sessionCloseMs(new Date(`${b.date}T16:00:00Z`)) != null && M.sessionCloseMs(new Date(`${b.date}T16:00:00Z`)) + 20*60000 <= cutoffMs).sort((a,b) => a.date.localeCompare(b.date));
+  return (series || []).filter(b => {
+    if (!b || !b.date || !(Number(b.c) > 0)) return false;
+    if (!dailySessionCloses.has(b.date)) {
+      const close = M.sessionCloseMs(new Date(`${b.date}T16:00:00Z`));
+      if (dailySessionCloses.size >= 2048) dailySessionCloses.delete(dailySessionCloses.keys().next().value);
+      dailySessionCloses.set(b.date, close);
+    }
+    const close = dailySessionCloses.get(b.date);
+    return close != null && close + 20*60000 <= cutoffMs;
+  }).sort((a,b) => a.date.localeCompare(b.date));
 }
 function barTime(b) { const n = Number(b.t); return Number.isFinite(n) ? (n < 1e12 ? n * 1000 : n) : Date.parse(b.t || b.timestamp); }
 async function marketObservation(symbol, { cutoffMs, deps = {} }) {

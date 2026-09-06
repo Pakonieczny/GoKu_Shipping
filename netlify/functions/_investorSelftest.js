@@ -6166,6 +6166,11 @@ async function simulatorAdversarial() {
     await svc.schedule({dispatch});assert.equal(dispatched.length,101,'paused runs must not start');
     await fake.col('InvestorAI_Simulations').doc(first.runId).set({paused:false},{merge:true});
     await svc.schedule({dispatch:async()=>({upstream:503})});const failed=await svc.getRun(first.runId);assert.equal(failed.dispatchedUntil,0);assert.equal(failed.waitReason,'dispatch_retry');assert(failed.nextAttemptAtMs>wall);
+    const expired=dispatched[1],rr=fake.col('InvestorAI_Simulations').doc(expired.runId);
+    await rr.set({initialized:true,status:'running',leaseOwner:'stopped-worker',leaseUntil:wall-1,lastHeartbeatAtMs:wall-120000,dispatchedUntil:0,clockMs:1234,shortlistInputRef:'saved-profiles',spentNano:1200000,work:{stage:'shortlist',label:'Luna selecting 50 companies'}},{merge:true});
+    const recovered=[];await svc.schedule({dispatch:async j=>{recovered.push(j);return {upstream:202};}});
+    assert.equal(recovered.length,1);assert.equal(recovered[0].runId,expired.runId);assert.notEqual(recovered[0].jobId,expired.jobId);
+    const resumed=(await rr.get()).data();assert.equal(resumed.shortlistInputRef,'saved-profiles');assert.equal(resumed.clockMs,1234);assert.equal(resumed.spentNano,1200000);assert.equal(resumed.work.stage,'shortlist');
   });
   await check('preparation_dispatch_reports_real_transport_failures_and_keeps_signed_worker_claims',async()=>{
     const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),J=require('./_investorJobs').withAdmin(fake),kick=require('./investorKick'),key='dispatch-fixture-key-not-a-production-secret';
@@ -6453,6 +6458,34 @@ async function simulatorAdversarial() {
   async function metered(script){const fake=database(),ref=fake.col('InvestorAI_Simulations').doc(RID),run={runId:RID,clockMs:1000,leaseOwner:'owner',owner:'operator',spentNano:0,reservedNano:0,paused:false,leaseUntil:now+1000000};await ref.set(run);let posts=0,counts=0;const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{if(url.endsWith('/input_tokens')){counts++;return {ok:true,status:200,json:async()=>({input_tokens:1000})};}if(opts.method==='POST')posts++;return script(url,opts,posts);}});const meter=svc.meter(run,ref,async()=>(await ref.get()).data().paused,async()=>{});return {fake,ref,run,svc,meter,posts:()=>posts,counts:()=>counts};}
   const body={model:'gpt-6-astra',input:[{role:'user',content:'fixture'}],max_output_tokens:4000,reasoning:{effort:'high'}};
   const completed={id:'resp_fixture',status:'completed',service_tier:'flex',model:'gpt-6-astra',output:[],usage:{input_tokens:1000,output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}};
+  await check('daily_close_cache_reuses_calendar_work_without_leaking_future_or_closed_sessions',()=>{
+    const C=require('./_investorDecisionContext'),M=require('./_investorMarket'),original=M.sessionCloseMs;
+    const dates=['2025-03-07','2025-03-10','2025-07-03','2025-07-04','2025-07-05'],bars=dates.map(date=>({date,c:100}));let calls=0;
+    M.sessionCloseMs=d=>{calls++;return original(d);};
+    try {
+      for(const date of dates){const close=original(new Date(date+'T16:00:00Z')),cutoff=close||Date.parse(date+'T23:00:00Z');
+        for(const at of [cutoff,cutoff+1199999,cutoff+1200000]) {
+          const expected=bars.filter(b=>{const end=original(new Date(b.date+'T16:00:00Z'));return end!=null&&end+1200000<=at;});
+          assert.deepEqual(C.completedDaily(bars,at),expected);
+        }
+      }
+      assert(calls<=dates.length,'calendar work must be once per unique date, regardless of company/cutoff');
+    } finally {M.sessionCloseMs=original;}
+  });
+  await check('full_history_shortlist_yields_reports_company_progress_and_pauses_before_paid_request',async()=>{
+    const cutoffMs=Date.UTC(2026,8,3,12),symbols=Array.from({length:304},(_,i)=>'S'+i),roster={symbols,universeHash:'304_full_history'};
+    const daily={series:Array.from({length:400},(_,i)=>({date:new Date(cutoffMs-(401-i)*86400000).toISOString().slice(0,10),c:100,v:1000}))};
+    const packets=symbols.map(symbol=>({symbol,daily,data:[]})),fake=database(),svc=Sim.create({admin:fake}),run={runId:RID,clockMs:cutoffMs},progress=[];
+    let pause=true,turns=0,posts=0;
+    const opts={save:async fields=>Object.assign(run,fields),shouldPause:async()=>pause&&progress.some(p=>p.done===10),onProgress:async p=>{progress.push(p);setImmediate(()=>turns++);},request:async()=>{posts++;assert(turns>=30,'event loop must run during profile preparation');return {ok:true,status:200,data:{status:'in_progress'}};}};
+    await assert.rejects(()=>svc.prepareShortlist(run,{roster,aiPlan:Sim.AI_PLAN},packets,opts),e=>e.code==='SIMULATION_PREPARATION_YIELD');
+    assert.equal(posts,0);assert.equal(run.shortlistInputRef,undefined);assert(turns>0);
+    pause=false;progress.length=0;
+    assert.equal(await svc.prepareShortlist(run,{roster,aiPlan:Sim.AI_PLAN},packets,opts),null);
+    assert.equal(posts,1);assert(progress.some(p=>p.stage==='shortlist_profiles'&&p.done===304&&p.total===304));assert.equal(progress.at(-1).stage,'shortlist');
+    const input=await svc.readJSON(fake.col('InvestorAI_Simulations').doc(RID),run.shortlistInputRef);assert.equal(input.profiles.length,304);
+    progress.length=0;await svc.prepareShortlist(run,{roster,aiPlan:Sim.AI_PLAN},[],opts);assert(!progress.some(p=>p.stage==='shortlist_profiles'),'saved profiles must not be recomputed when polling');
+  });
   await check('shortlist_uses_only_cutoff_evidence_validates_50_and_reuses_paid_response_after_pause',async()=>{
     const cutoffMs=Date.UTC(2026,6,1,12,30),symbols=Array.from({length:55},(_,i)=>'S'+i),roster={symbols,eligibleCount:55,universeHash:'source55',members:symbols.map(symbol=>({symbol,company:symbol,sector:'Technology'})),excluded:[]};
     const D=require('./_investorDossier'),packets=symbols.map(symbol=>({symbol,daily:{date:['2026-06-29','2026-06-30','2026-07-02'],c:[100,110,99999],v:[100,200,1]},data:[{collection:A.COL.dossierVersions,id:symbol,knownAtMs:cutoffMs-1000,data:D.composeVersion({symbol,identity:{symbol,name:symbol,sector:'Technology'},asOfMs:cutoffMs-1000})},{collection:A.COL.documents,id:symbol+'_future',knownAtMs:cutoffMs+1,data:{title:'FUTURE_SECRET'}},{collection:A.COL.documents,id:symbol+'_past',knownAtMs:cutoffMs-1000,data:{title:'Historical filing'}}]}));
@@ -6482,7 +6515,7 @@ async function simulatorAdversarial() {
       return {ok:true,status:200,json:async()=>({id:'resp_pipeline_'+calls.length,model:b.model,status:'completed',service_tier:b.service_tier,usage:{input_tokens:12000,output_tokens:3000,output_tokens_details:{reasoning_tokens:1000}},output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]})};
     }}),batch=await svc.createBatch({count:1,from:date,to:date},'operator','full-shortlist-pipeline'),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config);
     const units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
-    const daily=Array.from({length:30},(_,i)=>({date:new Date(Date.parse(date+'T00:00:00Z')-(30-i)*86400000).toISOString().slice(0,10),o:100,h:101,l:99,c:100,v:100000}));
+    const daily=Array.from({length:400},(_,i)=>({date:new Date(Date.parse(date+'T00:00:00Z')-(400-i)*86400000).toISOString().slice(0,10),o:100,h:101,l:99,c:100,v:100000}));
     for(const unit of units.filter(x=>x.data().kind==='company')) {const symbol=unit.data().symbol,parent=fake.col('InvestorAI_SimulationScenarios').doc('fixture_company_'+symbol),row=config.roster.members.find(x=>x.symbol===symbol),data=row?[{collection:A.COL.dossierVersions,id:symbol+'_fixture',knownAtMs:cutoff-1000,data:D.composeVersion({symbol,identity:{...row,name:row.company},asOfMs:cutoff-1000})}]:[];
       const artifact=await svc.saveJSON(parent,'company',{data,daily,provenance:{provider:'fixture',adjustment:'split_only'}});await unit.ref.set({status:'ready',pointer:{cacheId:parent.id,artifact}},{merge:true});priceSymbols[symbol]={bars:providerSession(date,{extra:false}),coverage:{regular:78,expected:78,missing:0}};
     }

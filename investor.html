@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-CfXdIBiodWDUnLVwb2CSJ/kyWNCvAOSLNZCtSsPbocw='; style-src 'self' 'sha256-DjkbSCG/8byKhyp9yiN2aJqhagpOVQGUOPJLdbeIao0='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-cGBQ0Z3b8ue8ctSYK0AWWRemCbeC6hqdazg2PAIqPpw='; style-src 'self' 'sha256-DjkbSCG/8byKhyp9yiN2aJqhagpOVQGUOPJLdbeIao0='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -2575,6 +2575,7 @@ function simRunFeedback(r,now,refreshAge){
  }
  var known=Number(work.total)>0,done=Math.max(0,Number(work.done)||0),title=r.status==='complete'?'Simulation complete':work.label||r.phase||'Waiting to start';
  var detail=known?Math.min(done,work.total)+' / '+work.total+' '+(work.unit||'steps')+(work.current?' · '+work.current:''):work.done!=null?done+' '+(work.unit||'completed'):work.current||'';
+ if(!detail&&!terminal&&r.aiActivity&&r.aiActivity.stage===work.stage)detail=({counting_tokens:'Counting input tokens before purchasing AI work',reserving_budget:'Checking the budget and saving the request',submitting:'Sending the AI request',queued:'AI provider has queued the request',in_progress:'AI is processing the saved request',checking:'Checking the saved AI response'})[r.aiActivity.status]||'';
  var moving=['working','slow'].includes(health),percent=known?Math.min(100,100*done/work.total):null;
  return {health,notice,title,detail,percent,moving,terminal,paused,beatAge,advanceAge,elapsed:work.startedAtMs?Math.max(0,now-work.startedAtMs):null,
   remaining:known&&done>0&&done<work.total&&moving&&work.startedAtMs?Math.max(0,(now-work.startedAtMs)*(work.total-done)/done):null};
