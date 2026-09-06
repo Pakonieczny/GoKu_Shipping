@@ -174,6 +174,7 @@ const Simulator = (() => {
   const canResumeContention = r => r.status==='incomplete'&&isContention(r.error);
   const canResumeBudget = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_BUDGET_INSUFFICIENT'||r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&r.budgetFailure?.code==='SIMULATION_BUDGET_INSUFFICIENT');
   const canRecoverHandoff = r => r.status==='incomplete'&&!r.reservedNano&&!r.pendingAiCount&&r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE'&&r.error.details?.failed?.length>0&&r.error.details.failed.every(x=>x.error==='HANDOFF_UNKNOWN_EVIDENCE'&&x.responseId);
+  const canResumePersistence = r => r.status==='incomplete'&&r.managerDone&&r.work?.stage==='portfolio_review'&&!r.reservedNano&&!r.pendingAiCount&&r.error?.code==='DECISION_CODEC_REJECTED'&&!!r.aiActivity?.responseId;
   const failedResponseIds = r => r.error?.code==='SIMULATION_RESEARCH_INCOMPLETE' ? [...new Set((r.error.details?.failed||[]).filter(x=>(x.error==='schema_invalid'||/^HANDOFF_/.test(x.error||''))&&x.responseId).map(x=>x.responseId))] : r.error?.code==='SIMULATION_SYNTHESIS_INCOMPLETE'&&r.error.details?.error==='schema_invalid' ? [r.error.details.responseId].filter(Boolean) : [r.aiActivity?.responseId].filter(Boolean);
   const canRetryAIStep = r => !canRecoverHandoff(r)&&r.status==='incomplete'&&!r.reservedNano&&!r.pendingAiCount&&failedResponseIds(r).length>0&&(
     r.error?.code==='SIMULATION_AI_RESPONSE_FAILED'&&r.aiActivity?.stage==='shortlist'&&r.aiActivity.incompleteReason==='max_output_tokens'||
@@ -536,7 +537,7 @@ const Simulator = (() => {
       if(command==='retry') {
         if(!runId)throw fail('BAD_REQUEST','Choose a simulation to retry');
         const r=await getRun(runId,owner),ref=runCol.doc(id(runId)),br=batchCol.doc(r.batchId);await getBatch(r.batchId,owner);
-        const responseIds=canRetryAIStep(r)||canRecoverHandoff(r)?failedResponseIds(r):[];
+        const responseIds=canRetryAIStep(r)||canRecoverHandoff(r)||canResumePersistence(r)?failedResponseIds(r):[];
         const retryRequests=(await Promise.all(responseIds.map(responseId=>rows(ref.collection('requests').where('responseId','==',responseId).limit(1))))).flat();
         const retryModels=(await Promise.all(responseIds.map(responseId=>rows(ref.collection(admin.COL.modelRequests).where('responseId','==',responseId))))).flat();
         // Older workers persisted "complete" after a research error. Resume at
@@ -552,8 +553,12 @@ const Simulator = (() => {
         }
         await rootTransaction(async tx=>{const snap=await tx.get(ref),batch=await tx.get(br),v=snap.data();
           const retries=await Promise.all(retryRequests.map(q=>tx.get(ref.collection('requests').doc(q.id))));
-          if(batch.data()?.resetAtMs||v.resetAtMs||v.leaseUntil>wallNow()||(!canResumeContention(v)&&!canResumeBudget(v)&&!canRecoverHandoff(v)&&!canRetryAIStep(v)&&!canRecheckAI(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure, saved-response recovery, a budget-blocked request or an interrupted database transaction can be retried');
-          if(canRecoverHandoff(v)) {
+          if(batch.data()?.resetAtMs||v.resetAtMs||v.leaseUntil>wallNow()||(!canResumeContention(v)&&!canResumeBudget(v)&&!canRecoverHandoff(v)&&!canResumePersistence(v)&&!canRetryAIStep(v)&&!canRecheckAI(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure, saved-response recovery, a budget-blocked request or an interrupted database transaction can be retried');
+          if(canResumePersistence(v)) {
+            const responseId=v.aiActivity.responseId;
+            if(retries.length!==1||retries[0].data()?.status!=='settled'||retries[0].data()?.responseId!==responseId||!retryModels.some(m=>m.responseId===responseId&&m.fn==='finalizePortfolio'&&m.status==='complete'&&m.output))throw fail('BAD_REQUEST','The completed allocation response must be saved and settled before resuming');
+            tx.set(ref,{persistenceRecoveryAtMs:wallNow(),aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
+          } else if(canRecoverHandoff(v)) {
             const wanted=failedResponseIds(v);
             if(retries.length!==wanted.length||retries.some(s=>s.data()?.status!=='settled'||!wanted.includes(s.data().responseId)))throw fail('BAD_REQUEST','Settle the saved response before recovering its citations');
             if(!wanted.every(responseId=>retryModels.some(m=>m.responseId===responseId&&m.fn==='prepareResearchDocument'&&m.status==='complete'&&m.output)))throw fail('BAD_REQUEST','The saved Luna document is unavailable for recovery');
@@ -1451,7 +1456,7 @@ const Simulator = (() => {
             for(const e of pendingEvents) {
               const er=ref.collection('reviewedEvents').doc(e.id);if((await er.get()).exists)continue;
               await report({stage:'event',label:'AI reviewing new evidence',done:null,total:null,unit:'',current:e.data.symbol||null});
-              const out=await manager.runEventRevision({claim:{runId:'event_'+runId+'_'+e.id,payload:{accountId:runId,symbol:e.data.symbol,eventId:e.id,cutoff:run.clockMs}},control:ctrl,deps:{admin:A,now:()=>run.clockMs}});
+              const out=await manager.runEventRevision({claim:{runId:'event_'+runId+'_'+e.id,payload:{accountId:runId,symbol:e.data.symbol,eventId:e.id,cutoff:run.clockMs}},control:ctrl,deps:{admin:A,gateway:require('./_investorOpenai').createGateway({admin:A,env}),now:()=>run.clockMs}});
               if(out.pending){eventPending=true;break;}
               if(!out.ok)throw fail('SIMULATION_EVENT_INCOMPLETE',out.reason||'Material event review did not complete');
               await er.set({atMs:run.clockMs,resultRef:await saveJSON(ref,'event_result',out)});
@@ -1460,7 +1465,7 @@ const Simulator = (() => {
             const queuedSynthesis=await rows(collection(A.COL.jobs).where('task','==','portfolio_synthesis'));
             for(const job of queuedSynthesis.filter(j=>j.status!=='complete')) {
               await report({stage:'portfolio_review',label:'AI updating investment allocations',done:null,total:null,unit:'',current:null});
-              const result=await require('./investorManager-background').runPortfolioSynthesis({...job,jobId:job.id},ctrl,{admin:A,now:()=>run.clockMs});
+              const result=await require('./investorManager-background').runPortfolioSynthesis({...job,jobId:job.id},ctrl,{admin:A,gateway:require('./_investorOpenai').createGateway({admin:A,env}),now:()=>run.clockMs});
               if(result.pending){eventPending=true;break;}
               if(result.ok===false)throw fail('SIMULATION_EVENT_INCOMPLETE','Portfolio review could not finish');
               await collection(A.COL.jobs).doc(job.id).set({status:'complete',result},{merge:true});
@@ -1747,7 +1752,7 @@ const Simulator = (() => {
         const activity=terminal?r.status:r.paused?'paused':unresponsive?'stalled':!r.initialized&&repository?.status!=='ready'?'waiting_repository':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
         const activityLabel=active&&activity!=='waiting_repository'?r.phase:({waiting_repository:'Waiting for shared data preparation',paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
         const canRetryPreparation=!b.resetAtMs&&terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
-        return {...r,...runBudget(r),budgetVersion:BUDGET_VERSION,activity,activityLabel,canRetryPreparation,canRecoverHandoff:!b.resetAtMs&&canRecoverHandoff(r)&&!(r.leaseUntil>wallNow()),canRetryAIStep:!b.resetAtMs&&canRetryAIStep(r)&&!(r.leaseUntil>wallNow()),canResumeBudget:!b.resetAtMs&&canResumeBudget(r)&&!(r.leaseUntil>wallNow()),canRecheckAI:!b.resetAtMs&&canRecheckAI(r)&&!(r.leaseUntil>wallNow()),canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
+        return {...r,...runBudget(r),budgetVersion:BUDGET_VERSION,activity,activityLabel,canRetryPreparation,canResumePersistence:!b.resetAtMs&&canResumePersistence(r)&&!(r.leaseUntil>wallNow()),canRecoverHandoff:!b.resetAtMs&&canRecoverHandoff(r)&&!(r.leaseUntil>wallNow()),canRetryAIStep:!b.resetAtMs&&canRetryAIStep(r)&&!(r.leaseUntil>wallNow()),canResumeBudget:!b.resetAtMs&&canResumeBudget(r)&&!(r.leaseUntil>wallNow()),canRecheckAI:!b.resetAtMs&&canRecheckAI(r)&&!(r.leaseUntil>wallNow()),canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
           estimatedTotalNano:uncappedRun(r)?(TERMINAL.includes(r.status)?r.spentNano:null):Math.max(r.spentNano,Math.min(CEILING,r.progress>5?r.spentNano/(r.progress/100):TARGET)),
           estimatedRemainingMs:TERMINAL.includes(r.status)?0:r.paused?null:r.progress>5?Math.max(0,((r.activeMs||0)+(r.leaseUntil>wallNow()?wallNow()-(r.segmentStartedAtMs||wallNow()):0))*(100-r.progress)/r.progress):null};
       }));

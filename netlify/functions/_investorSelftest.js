@@ -6791,7 +6791,7 @@ async function simulatorAdversarial({only=null}={}) {
     await x.ref.set({reservedNano:0,pendingAiCount:0},{merge:true});
     await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:research,stage:'manager_research'});assert.equal(x.posts(),1);
   });
-  async function researchPipeline({failure=null,prepared=false,measure=false}={}) {
+  async function researchPipeline({failure=null,prepared=false,measure=false,event=false}={}) {
     const fake=database(),D=require('./_investorDossier'),M=require('./_investorMarket'),date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),calls=[],responses=new Map(),toolRounds=new Map();
     let finalists=[],bad=failure,missingUsage=failure==='usage',wall=Date.now();const transportErrors=[];
     const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{OPENAI_API_KEY:'fixture'},publicFetch:async()=>{throw Error('No live source access in pipeline test');},fetchImpl:async(url,opts)=>{try {
@@ -6832,7 +6832,7 @@ async function simulatorAdversarial({only=null}={}) {
           if(bad==='research'&&symbol===finalists[0])output.bearCase='x'.repeat(1201);
         }
       } else if(name==='portfolio_synthesis_v1') {
-        assert(finalists.every(symbol=>toolRounds.get(symbol)>=2),'both research sessions must finish before synthesis');
+        assert(event?toolRounds.get(finalists[0])>=2:finalists.every(symbol=>toolRounds.get(symbol)>=2),'required research sessions must finish before synthesis');
         output={schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:finalists.map(symbol=>({symbol,decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Completed research does not justify a purchase'})),expansionMandates:[],holdingAnalysis:[],comparisonNote:bad==='synthesis'?'x'.repeat(1201):'Compared both completed research memos; retain cash'};
       } else throw Error('Unexpected paid stage '+name);
       if(output && bad!=='joint_schema' && !(bad==='research'&&output.bearCase?.length>1200) && !(bad==='synthesis'&&name==='portfolio_synthesis_v1'))assert.deepEqual(P.validateAgainst(b.text.format.schema,output),[],'fixture must obey the actual submitted schema');
@@ -6844,6 +6844,7 @@ async function simulatorAdversarial({only=null}={}) {
     const daily=Array.from({length:400},(_,i)=>({date:new Date(Date.parse(date+'T00:00:00Z')-(400-i)*86400000).toISOString().slice(0,10),o:100,h:101,l:99,c:100,v:1000000}));
     for(const unit of units.filter(x=>x.data().kind==='company')) {
       const symbol=unit.data().symbol,parent=fake.col('InvestorAI_SimulationScenarios').doc('research_company_'+symbol),row=config.roster.members.find(x=>x.symbol===symbol),data=row?[{collection:A.COL.dossierVersions,id:symbol+'_fixture',knownAtMs:cutoff-1000,data:D.composeVersion({symbol,identity:{...row,name:row.company},asOfMs:cutoff-1000})}]:[];
+      if(event&&symbol===config.roster.symbols[0])data.push({collection:A.COL.evidenceDeltas,id:symbol+'_event',knownAtMs:cutoff+1000,data:{deltaId:symbol+'_event',symbol,eventClass:'NEW_8K',form:'8-K',safetyClass:'high_impact',managerMateriality:'pending',knownAtMs:cutoff+1000}});
       // Include citation-bearing evidence so the test cannot pass on empty lists.
       for(const claimType of ['FACT','RISK_FACTOR'])data.push({collection:A.COL.claims,id:symbol+'_'+claimType,knownAtMs:cutoff-1000,data:{kind:'claim',symbol,claimId:symbol+'_'+claimType,documentVersionId:symbol+'_source',claimType,text:claimType==='FACT'?'Historical business disclosure.':'Material uncertainty in the forecast.',quote:'Historical disclosure.',publishedAtMs:cutoff-1000,firstSeenAtMs:cutoff-1000}});
       const artifact=await svc.saveJSON(parent,'company',{data,daily,provenance:{provider:'fixture',adjustment:'split_only'}});await unit.ref.set({status:'ready',pointer:{cacheId:parent.id,artifact}},{merge:true});priceSymbols[symbol]={bars:providerSession(date,{extra:false}),coverage:{regular:78,expected:78,missing:0}};
@@ -6892,6 +6893,24 @@ async function simulatorAdversarial({only=null}={}) {
     assert.equal(JSON.stringify((await request.ref.get()).data()),saved,'paid request and usage remain unchanged');
     const detail=await x.svc.detail(x.runId,'operator');assert.equal(detail.preparedDocuments.length,2);assert(detail.preparedDocuments.some(d=>d.referenceRecovery?.discardedSections.includes('business')));
     assert.equal(done.costByStage.manager_document.requests,2);assert.equal(done.reservedNano,0);assert.equal(done.pendingAiCount,0);
+  });
+  await check('replay_allocation_persists_canonical_rows_and_recovers_paid_storage_failure_without_rebuying',async()=>{
+    const MGR=require('./_investorManager'),SC=require('./_investorStorageCodec'),persist=MGR.persistDecisionRows,x=await researchPipeline({prepared:true,measure:true,event:true});let failed;
+    // Reproduce the live raw-model-row persistence bug after the event response settles.
+    MGR.persistDecisionRows=async args=>{
+      if(!args.managerRunId.startsWith('meeting_'))throw Object.assign(Error('_investorStorageCodec: undefined at /reviewDirective'),{code:'DECISION_CODEC_REJECTED'});
+      return persist(args);
+    };
+    try{failed=await x.drive();}finally{MGR.persistDecisionRows=persist;}
+    assert.equal(failed.status,'incomplete',JSON.stringify(failed.error));assert.equal(failed.error.code,'DECISION_CODEC_REJECTED',JSON.stringify(failed.error));assert(failed.managerDone);assert.equal(failed.work.stage,'portfolio_review');
+    const view=await x.svc.overview({owner:'operator'});assert(view.runs[0].canResumePersistence);assert(!view.runs[0].canRetryAIStep);
+    const paid=x.calls.length,spent=failed.spentNano,requests=JSON.stringify((await x.ref.collection('requests').get()).docs.map(d=>d.data()));
+    await x.svc.control({runId:x.runId,command:'retry'},'operator');assert.equal((await x.svc.getRun(x.runId)).aiRequestRetries,undefined);
+    const done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));assert.equal(x.calls.length,paid,'all paid responses must be reused');assert.equal(done.spentNano,spent);assert.equal(done.reservedNano,0);assert.equal(done.pendingAiCount,0);
+    assert.equal(JSON.stringify((await x.ref.collection('requests').get()).docs.map(d=>d.data())),requests);
+    const rows=(await x.ref.collection(A.COL.managerDecisions).get()).docs.map(d=>SC.decode(d.data())).filter(d=>!d.managerRunId.startsWith('meeting_'));assert(rows.length>0);
+    for(const row of rows){assert.equal(row.decision,'WATCH');assert.equal(row.held,false);assert.equal(row.eligible,true);assert.equal(row.offRoster,false);assert.equal(typeof row.changedSincePrior,'boolean');assert(row.reviewDirective===null||typeof row.reviewDirective==='string');assert.equal(row.source,'final_synthesis');}
+    assert(done.costByStage.event.spentNano>0);assert(done.costByStage.portfolio_review.spentNano>0);
   });
   await check('single_uncapped_measurement_finishes_all_steps_above_normal_ceiling_and_reports_actual_costs',async()=>{
     const x=await researchPipeline({prepared:true,measure:true}),done=await x.drive();assert.equal(done.status,'complete',JSON.stringify(done.error));assert(done.spentNano>Sim.CEILING);assert.equal(x.calls.length,5);assert.equal(done.ceilingNano,null);assert.equal(done.pricingViolation,false);
