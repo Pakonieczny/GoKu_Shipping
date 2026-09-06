@@ -5883,6 +5883,18 @@ async function simulatorAdversarial({only=null}={}) {
     await svc.startBatch({count:100,from:'2025-01-01',to:'2025-12-31'},'operator','immediate-dispatch',dispatch);assert.equal(tasks.filter(j=>j.task==='simulation').length,100);
     await svc.startBatch({count:100,from:'2025-01-01',to:'2025-12-31'},'operator','immediate-dispatch',dispatch);assert.equal(tasks.filter(j=>j.task==='simulation').length,100);
   });
+  await check('ten_expired_screening_workers_are_replaced_once_without_losing_checkpoints',async()=>{
+    const fake=database();let wall=now;
+    const svc=Sim.create({admin:fake,wallNow:()=>wall}),b=await svc.createBatch({count:10,from:'2026-07-01',to:'2026-07-31'},'operator','ten-expired-workers');
+    const config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+    for(const d of (await repo.ref.collection('units').get()).docs)await d.ref.set({status:'ready'},{merge:true});
+    for(const runId of b.runIds)await fake.col('InvestorAI_Simulations').doc(runId).set({status:'preparing',leaseOwner:'stopped-worker',leaseUntil:wall+1000,screeningCheckpointRef:'checkpoint_'+runId,repositoryPointersRef:'pinned_'+runId,dispatchSequence:1},{merge:true});
+    const launched=[],dispatch=async job=>{if(job.task==='simulation')launched.push(job);return {upstream:202};};
+    await svc.schedule({dispatch,batchId:b.batchId});assert.equal(launched.length,0,'live leases cannot be replaced');
+    wall+=1001;await svc.schedule({dispatch,batchId:b.batchId});assert.equal(launched.length,10);assert.equal(new Set(launched.map(j=>j.runId)).size,10);
+    await svc.schedule({dispatch,batchId:b.batchId});assert.equal(launched.length,10,'accepted replacements cannot be dispatched twice');
+    for(const runId of b.runIds){const r=await svc.getRun(runId);assert.equal(r.screeningCheckpointRef,'checkpoint_'+runId);assert.equal(r.repositoryPointersRef,'pinned_'+runId);assert.equal(r.spentNano,0);assert.equal(r.dispatchSequence,2);}
+  });
   await check('reset_stops_owned_batches_clears_workspace_and_preserves_history_master_and_other_owner',async()=>{
     const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:2,from:'2026-04-20',to:'2026-04-24'},'operator','reset-owned'),other=await svc.createBatch({count:1,from:'2026-04-20',to:'2026-04-24'},'other','reset-other');
     const master=fake.col('InvestorAI_SimulationScenarios').doc('kept_master');await master.set({research:'keep'});await fake.col(A.COL.accounts).doc('paper-1').set({cash:123});
@@ -6835,12 +6847,27 @@ async function simulatorAdversarial({only=null}={}) {
     const run={runId:RID,date:'2026-01-06'},repository={status:'ready',units};
     const original=await svc.repositoryPackets(run,config,repository),selected=roster.symbols.slice(0,50),excluded=roster.symbols[50];
     const pinned=await svc.saveJSON(fake.col('InvestorAI_Simulations').doc(RID),'pointers',units);
+    const screeningRun={...run,repositoryPointersRef:pinned};let screeningCheckpoint;
+    await assert.rejects(()=>svc.repositoryPackets(screeningRun,config,repository,{screeningOnly:true,
+      onScreeningCheckpoint:async cp=>{screeningCheckpoint=cp;},
+      onProgress:async work=>{if(work.stage==='screening_profiles'&&work.done===25)throw Error('worker terminated');}}),/worker terminated/);
+    assert.equal(screeningCheckpoint.next,20);
+    const firstRef=source.collection('artifacts').doc(units[0].pointer.artifact),firstHeader=(await firstRef.get()).data();
+    await firstRef.delete(); // Completed groups must not be read again.
+    const screened=await svc.repositoryPackets(screeningRun,config,repository,{screeningOnly:true,screeningCheckpoint});
+    assert.equal(screened.packets.length,0,'screening must not retain full-universe raw evidence');
+    assert.deepEqual(screened.profiles,Sim.shortlistProfiles(original.packets,roster,cutoff));
+    assert.deepEqual(screened.meta,original.meta);
+    await assert.rejects(()=>svc.repositoryPackets(screeningRun,config,repository,{screeningOnly:true,screeningCheckpoint:{...screeningCheckpoint,key:'wrong-history'}}),e=>e.code==='SIMULATION_STATE_CORRUPT');
+    await firstRef.set(firstHeader);
     const recoveryRun={...run,repositoryPointersRef:pinned,initialized:true,shortlistRef:'saved',shortlist:{symbols:selected},evidenceReleasedThroughMs:cutoff,evidenceCoverage:original.meta.evidenceCoverage,priceCoverage:original.meta.priceCoverage};
     // An unavailable rejected company must not block already-paid research.
     await source.collection('artifacts').doc(units.find(u=>u.unitId==='company_'+excluded).pointer.artifact).delete();
     const resumed=await svc.repositoryPackets(recoveryRun,config,{status:'needs_attention',units:[]});
     assert.deepEqual(resumed.packets,original.packets.filter(p=>selected.includes(p.symbol)||!roster.symbols.includes(p.symbol)));
     assert.deepEqual(resumed.meta,original.meta);
+    const beforeAccount=await svc.repositoryPackets({...recoveryRun,initialized:false,evidenceReleasedThroughMs:null},config,repository);
+    assert.deepEqual(beforeAccount.packets,resumed.packets,'new accounts also load full evidence only after selection');
     await assert.rejects(()=>svc.repositoryPackets({...recoveryRun,shortlist:{symbols:[...selected.slice(1),selected[1]]}},config,repository),e=>e.code==='SIMULATION_STATE_CORRUPT');
     await assert.rejects(()=>svc.repositoryPackets(run,config,repository),e=>e.code==='SIMULATION_STATE_MISSING');
     await source.collection('artifacts').doc(units.find(u=>u.unitId==='company_'+selected[0]).pointer.artifact).delete();

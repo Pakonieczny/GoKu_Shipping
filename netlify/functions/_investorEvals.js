@@ -1069,7 +1069,7 @@ const Simulator = (() => {
         return {done:!retry,yielded:retry};
       }finally{clearInterval(timer);await pending;await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:0,leaseOwner:null},{merge:true});});}
     }
-    async function repositoryPackets(run,config,repository,{onProgress=async()=>{},shouldPause=async()=>false}={}) {
+    async function repositoryPackets(run,config,repository,{onProgress=async()=>{},shouldPause=async()=>false,screeningOnly=false,screeningCheckpoint=null,onScreeningCheckpoint=async()=>{}}={}) {
       const check=async work=>{if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');await onProgress(work);};
       if(repository.status!=='ready'&&!run.repositoryPointersRef)throw fail('SIMULATION_REPOSITORY_NOT_READY','Shared data preparation has not finished');
       await check({stage:'load_prices',label:'Loading saved session prices',done:null,total:null,unit:'',current:run.date});
@@ -1077,13 +1077,18 @@ const Simulator = (() => {
       // Once the complete universe has been screened and released, only the
       // pinned shortlist and market indicators can participate in this run.
       // Worker recovery must not reload hundreds of rejected dossiers first.
-      const resumeSelection=config.aiPlan&&run.initialized&&run.shortlistRef&&run.evidenceReleasedThroughMs!=null&&!run.evidenceReleaseCursor&&run.evidenceCoverage&&run.priceCoverage?run.shortlist?.symbols:null;
+      const resumeSelection=config.aiPlan&&run.shortlistRef&&(!run.initialized||run.evidenceReleasedThroughMs!=null&&!run.evidenceReleaseCursor)&&run.evidenceCoverage&&run.priceCoverage?run.shortlist?.symbols:null;
       if(resumeSelection&&(!Array.isArray(resumeSelection)||resumeSelection.length!==Math.min(config.aiPlan.shortlistCount,config.roster.symbols.length)||new Set(resumeSelection).size!==resumeSelection.length||resumeSelection.some(s=>!config.roster.symbols.includes(s))))throw fail('SIMULATION_STATE_CORRUPT','Saved shortlist is not a complete, distinct eligible selection');
       const symbols=resumeSelection?allSymbols.filter(s=>resumeSelection.includes(s)||!config.roster.symbols.includes(s)):allSymbols;
       if(!priceUnit?.pointer)throw fail('SIMULATION_STATE_MISSING');
       const prices=await readJSON(scenarioCol.doc(priceUnit.pointer.cacheId),priceUnit.pointer.artifact),endMs=M.sessionCloseMs(new Date(run.date+'T12:00:00Z'))+1200000,cutoff=M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin);
-      const packets=[];for(const symbol of symbols){
-        await check({stage:'load_research',label:'Reading saved company research',done:packets.length,total:symbols.length,unit:'companies / indicators',current:symbol});
+      const screeningKey=hash({pointers:run.repositoryPointersRef||units,cutoff,universe:config.roster.universeHash});
+      const cp=screeningOnly?screeningCheckpoint:null;
+      if(cp&&(cp.key!==screeningKey||!Number.isInteger(cp.next)||cp.next<0||cp.next>symbols.length||!Array.isArray(cp.profiles)||JSON.stringify(cp.profiles.map(p=>p.symbol))!==JSON.stringify(symbols.slice(0,cp.next).filter(s=>config.roster.symbols.includes(s)))||!Number.isInteger(cp.reconstructed)||cp.reconstructed<0||cp.reconstructed>cp.profiles.length))throw fail('SIMULATION_STATE_CORRUPT','Saved screening progress does not match the pinned historical inputs');
+      const packets=[],profiles=cp?[...cp.profiles]:[];let reconstructed=cp?.reconstructed||0;
+      for(let index=cp?.next||0;index<symbols.length;index++){
+        const symbol=symbols[index];
+        await check({stage:screeningOnly?'screening_profiles':'load_research',label:screeningOnly?'Preparing saved profiles for Luna':'Reading saved company research',done:index,total:symbols.length,unit:'companies / indicators',current:symbol});
         const unit=units.find(u=>u.unitId==='company_'+symbol);if(!unit?.pointer)throw fail('SIMULATION_STATE_MISSING');
         let company;
         try{company=await readJSON(scenarioCol.doc(unit.pointer.cacheId),unit.pointer.artifact);}
@@ -1092,11 +1097,20 @@ const Simulator = (() => {
         if(price?.error)throw Object.assign(fail(price.error.code,price.error.message),{details:price.error.details});if(!price)throw fail('HISTORICAL_BARS_MISSING');
         const data=company.data.filter(x=>x.knownAtMs<=endMs),series=company.daily.filter(b=>b.date<run.date).slice(-400);
         if(config.roster.symbols.includes(symbol)&&!data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff))throw Object.assign(fail('HISTORICAL_EVIDENCE_MISSING',`No company research for ${symbol} was available before ${run.date}`),{details:{symbol,date:run.date,cacheId:unit.pointer.cacheId}});
-        packets.push({symbol,data,bars:price.bars,coverage:price.coverage,cutoff,provenance:prices.provenance,daily:{symbol,...company.provenance,date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true}});
+        const packet={symbol,data,bars:price.bars,coverage:price.coverage,cutoff,provenance:prices.provenance,daily:{symbol,...company.provenance,date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true}};
+        if(config.roster.symbols.includes(symbol)&&data.some(x=>x.data.historicalImport))reconstructed++;
+        if(screeningOnly) {
+          if(config.roster.symbols.includes(symbol))profiles.push(...shortlistProfiles([packet],{...config.roster,symbols:[symbol]},cutoff));
+          // Keep only small screening summaries, never all 321 raw histories.
+          // A replacement worker resumes after the last saved group of ten.
+          if((index+1)%10===0||index+1===symbols.length)await onScreeningCheckpoint({key:screeningKey,next:index+1,profiles:[...profiles],reconstructed});
+          await new Promise(resolve=>setImmediate(resolve));
+        } else packets.push(packet);
       }
-      await check({stage:'load_research',label:'Saved company research loaded',done:packets.length,total:symbols.length,unit:'companies / indicators',current:null});
-      const reconstructed=packets.filter(p=>config.roster.symbols.includes(p.symbol)&&p.data.some(x=>x.data.historicalImport));
-      return {packets,meta:{cutoffMs:cutoff,endMs,symbols:allSymbols,evidenceCoverage:resumeSelection?run.evidenceCoverage:{mode:reconstructed.length?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies:reconstructed.length,totalCompanies:config.roster.symbols.length},priceCoverage:resumeSelection?run.priceCoverage:{symbolsWithGaps:packets.filter(p=>p.coverage.missing).map(p=>({symbol:p.symbol,missing:p.coverage.missing,expected:p.coverage.expected,verification:p.coverage.verification||null})),recoveredIntervals:packets.reduce((n,p)=>n+(p.coverage.verification?.recoveredIntervals||0),0),note:'Only observed bars are replayed. Larger gaps are checked against one-minute history. Remaining gaps have no fills; valuations use the latest observed price and may be stale.'}}};
+      await check({stage:screeningOnly?'screening_profiles':'load_research',label:screeningOnly?'Saved screening profiles ready':'Saved company research loaded',done:symbols.length,total:symbols.length,unit:'companies / indicators',current:null});
+      const coverage=allSymbols.map(symbol=>({symbol,coverage:prices.symbols[symbol]?.coverage}));
+      if(coverage.some(p=>!p.coverage))throw fail('HISTORICAL_BARS_MISSING');
+      return {packets,profiles,meta:{cutoffMs:cutoff,endMs,symbols:allSymbols,evidenceCoverage:resumeSelection?run.evidenceCoverage:{mode:reconstructed?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies:reconstructed,totalCompanies:config.roster.symbols.length},priceCoverage:resumeSelection?run.priceCoverage:{symbolsWithGaps:coverage.filter(p=>p.coverage.missing).map(p=>({symbol:p.symbol,missing:p.coverage.missing,expected:p.coverage.expected,verification:p.coverage.verification||null})),recoveredIntervals:coverage.reduce((n,p)=>n+(p.coverage.verification?.recoveredIntervals||0),0),note:'Only observed bars are replayed. Larger gaps are checked against one-minute history. Remaining gaps have no fills; valuations use the latest observed price and may be stale.'}}};
     }
 
     async function prepareShortlist(run,config,packets,{request,onProgress=async()=>{},shouldPause=async()=>false,save}={}) {
@@ -1273,6 +1287,12 @@ const Simulator = (() => {
       }
       const paused=async()=>{const [r,b]=await Promise.all([ref.get(),batchCol.doc(run.batchId).get()]);return r.data().resetAtMs || b.data().resetAtMs || r.data().paused || b.data().paused || wallNow()>deadlineMs;};
       const cost=meter(run,ref,paused,assertOwner,async(status,model,stage)=>save({aiActivity:{status,model,stage,checkedAtMs:wallNow()}}));let scope;
+      const modelRequest=async args=>{
+        const stage=run.work?.stage||'legacy';
+        await save({aiActivity:{status:args.method==='GET'?'checking':'submitting',stage,model:args.body?.model||run.aiActivity?.model||null,checkedAtMs:wallNow()}});
+        const out=await cost.request({...args,stage});
+        await save({aiActivity:{status:out.ok?out.data?.status||'responded':'http_error',stage,model:out.data?.model||args.body?.model||run.aiActivity?.model||null,httpStatus:out.status,responseId:out.data?.id||null,checkedAtMs:wallNow()}});return out;
+      };
       let heartbeatPending=Promise.resolve();
       const heartbeat=setInterval(()=>{heartbeatPending=heartbeatPending.then(()=>rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000,lastHeartbeatAtMs:wallNow()},{merge:true});})).catch(()=>{});},20000);
       if(heartbeat.unref)heartbeat.unref();
@@ -1289,22 +1309,41 @@ const Simulator = (() => {
           const freshBatch=await getBatch(run.batchId),repository=await repositoryState(freshBatch);
           if(repository.status!=='ready'&&!run.repositoryPointersRef) {await save({status:'queued',phase:'Waiting for shared data preparation',waitReason:'repository'});return {yielded:true};}
           await save({status:'preparing',phase:'Reading saved company research',repositoryId:freshBatch.repositoryId});
-          ({packets,meta}=await repositoryPackets(run,config,repository,{onProgress:report,shouldPause:paused}));
           if(!run.repositoryPointersRef)await save({repositoryPointersRef:await saveJSON(ref,'repository_pointers',repository.units.map(u=>({unitId:u.unitId,pointer:u.pointer})))});
+          const screeningOnly=!!config.aiPlan&&!run.shortlistRef&&!run.initialized;
+          if(screeningOnly&&run.shortlistInputRef&&run.preparationMetaRef) {
+            meta=await readJSON(ref,run.preparationMetaRef);packets=[];
+          } else {
+            const prepared=await repositoryPackets(run,config,repository,{onProgress:report,shouldPause:paused,screeningOnly,
+              screeningCheckpoint:screeningOnly&&run.screeningCheckpointRef?await readJSON(ref,run.screeningCheckpointRef):null,
+              onScreeningCheckpoint:async cp=>save({screeningCheckpointRef:await saveJSON(ref,'screening_progress',cp)})});
+            ({packets,meta}=prepared);
+            if(screeningOnly) {
+              const input={version:config.aiPlan.version,cutoffMs:meta.cutoffMs,universeHash:config.roster.universeHash,profiles:prepared.profiles};
+              await save({shortlistInputRef:run.shortlistInputRef||await saveJSON(ref,'shortlist_input',input),preparationMetaRef:await saveJSON(ref,'preparation_meta',meta)});
+            }
+          }
           await save({evidenceCoverage:meta.evidenceCoverage,priceCoverage:meta.priceCoverage,preparationTotal:meta.symbols.length,scenarioCursor:meta.symbols.length});
+          run.clockMs=run.clockMs||meta.cutoffMs;
+          if(screeningOnly) {
+            while(!run.shortlistRef) {
+              if(await paused())throw fail('SIMULATION_PREPARATION_YIELD');
+              await prepareShortlist(run,config,[],{request:modelRequest,onProgress:report,shouldPause:paused,save});
+              if(!run.shortlistRef)await new Promise(resolve=>setTimeout(resolve,1200));
+            }
+            // Only after Luna has saved its selection do we open full evidence.
+            ({packets,meta}=await repositoryPackets(run,config,repository,{onProgress:report,shouldPause:paused}));
+          }
         } else {
           const sr=scenarioCol.doc(run.scenarioId);meta=(await sr.get()).data();
           packets=await Promise.all(meta.symbols.map(async symbol=>{const p=await sr.collection('symbols').doc(symbol).get();return readJSON(sr,p.data().artifact);}));
         }
         run.clockMs=run.clockMs||meta.cutoffMs;
+        await report({stage:'evidence_view',label:'Opening selected company evidence',done:0,total:packets.length,unit:'companies / indicators',current:null});
+        await new Promise(resolve=>setImmediate(resolve));
         const evidence=sharedEvidenceView(packets,()=>run.clockMs);
         const collection=name=>{if(!String(name).startsWith('InvestorAI_')||String(name).includes('/'))throw fail('SIMULATION_NAMESPACE_ESCAPE');return evidence.collection(name)||ref.collection(name);};
-        scope={runId,aiWorkload:config.aiPlan||null,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest:async args=>{
-          const stage=run.work?.stage||'legacy';
-          await save({aiActivity:{status:args.method==='GET'?'checking':'submitting',stage,model:args.body?.model||run.aiActivity?.model||null,checkedAtMs:wallNow()}});
-          const out=await cost.request({...args,stage});
-          await save({aiActivity:{status:out.ok?out.data?.status||'responded':'http_error',stage,model:out.data?.model||args.body?.model||run.aiActivity?.model||null,httpStatus:out.status,responseId:out.data?.id||null,checkedAtMs:wallNow()}});return out;
-        },paused,executionSpreadBps:10,feePerShareMicros:5000,
+        scope={runId,aiWorkload:config.aiPlan||null,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest,paused,executionSpreadBps:10,feePerShareMicros:5000,
           marketBars:async(symbol,asOfMs)=>{const p=packets.find(x=>x.symbol===symbol),cutoff=Math.min(run.clockMs,Number(asOfMs)||run.clockMs);return {bars:(p?.bars||[]).filter(b=>C.barTime(b)+20*60000<=cutoff).map(b=>({...b,knownAtMs:C.barTime(b)+20*60000})),provenance:{...(p?.provenance||{}),feed:'delayed_sip',simulation:true}};}};
         await A.withSimulationScope(scope,async()=>{
           const control={engineMode:'manager',accountId:runId,accountMode:'PAPER_AI',mode:'PAPER_AI',writerEpoch:1,managerState:'ENABLED',executorState:'ENABLED',executorEnabled:true,buyState:'OPEN',emergencyState:'CLEAR',fixturesPass:true,
@@ -1593,7 +1632,7 @@ const Simulator = (() => {
               catch(e){await rootTransaction(async tx=>{const x=await tx.get(ur);if(x.data()?.dispatchSequence===sequence&&!(x.data()?.leaseUntil>wallNow()))tx.set(ur,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,phase:'Shared preparation worker could not start — retrying',waitReason:'dispatch_retry',lastDispatchError:String(e.message).slice(0,200),updatedAtMs:wallNow()},{merge:true});});return {unitId:u.unitId,error:String(e.message)};}
             }));
           }
-          const eligible=runs.filter(r=>(repository.status==='ready'||r.initialized)&&!r.aiRecheckRequired&&(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
+          const eligible=runs.filter(r=>(repository.status==='ready'||r.initialized||r.repositoryPointersRef)&&!r.aiRecheckRequired&&(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
             .sort((a,b)=>(a.lastDispatchedAtMs||0)-(b.lastDispatchedAtMs||0)||a.index-b.index);
           // Fan out every eligible run in this tick, including batches created under the old cap.
           selected.push(...eligible.map(async r=>{
