@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vmkrU6w7QaotOZ6OrMO8wqdBHaD65hw3k4E73c6UpAw='; style-src 'self' 'sha256-DjkbSCG/8byKhyp9yiN2aJqhagpOVQGUOPJLdbeIao0='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-7g3KBeaC/hwfjz+d59flJmNEYM965RQt7QmTRNlh+Ic='; style-src 'self' 'sha256-DjkbSCG/8byKhyp9yiN2aJqhagpOVQGUOPJLdbeIao0='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -2526,7 +2526,7 @@ function simPreparationItem(item){
 }
 function renderSimulationRepository(repository,library){
  var saved={};library.querySelectorAll('details[data-section]').forEach(function(d){saved[d.dataset.section]={open:d.open,scroll:d.querySelector('.sim-prep-list').scrollTop};});
- var done=repository.status==='ready',paused=repository.status==='paused',failed=repository.failed||0,total=repository.total||0,ready=repository.ready||0,dispatchErrors=repository.dispatchErrors||[];
+ var done=repository.status==='ready',paused=repository.status==='paused',failed=repository.failed||0,total=repository.total||0,ready=repository.ready||0,dispatchErrors=repository.dispatchErrors||[],knownTotal=Number.isFinite(repository.total)&&repository.total>0;
  var retry=failed?simButton('Retry shared preparation',function(){simMutation('simulationControl',{batchId:simUI.batchId,command:'retry_repository'});},'ghost'):null;
  var sections=(repository.sections||[]).map(function(section){
   var items=section.items||[],pct=section.total?Math.floor(section.done/section.total*100):0;
@@ -2542,12 +2542,13 @@ function renderSimulationRepository(repository,library){
    el('div',{class:'sim-prep-now'},active.length?active.map(simPreparationItem):el('p',{class:'tiny muted',text:section.done===section.total?'This section is complete.':paused?'Progress is saved. Resume the batch to continue.':section.failed?'Open the details below to see what needs attention.':'Waiting for a worker or an earlier preparation step.'})),details);
  });
  var failures=(repository.errors||[]).map(function(x){var url=/^https:\/\/(?:www\.|data\.)sec\.gov\//.test(x.url||'')?x.url:null;return el('div',{class:'sim-prep-failure'},el('p',{class:'sim-error',text:x.message}),url?el('a',{href:url,target:'_blank',rel:'noopener noreferrer',text:'Open the exact source filing'}):null);});
- setChildren(library,[el('div',{class:'sim-row'},el('h3',{text:done?'Shared data ready':paused?'Shared preparation paused':dispatchErrors.length?'Preparation workers could not start':failed?'Shared data needs attention':'Checking saved data and preparing missing history'}),retry),
+ setChildren(library,[el('div',{class:'sim-row'},el('h3',{text:!knownTotal?'Loading shared-library status':done?'Shared data ready':paused?'Shared preparation paused':dispatchErrors.length?'Preparation workers could not start':failed?'Shared data needs attention':'Checking saved data and preparing missing history'}),retry),
+  repository.setupError?el('p',{class:'sim-error',text:repository.setupError}):null,
   dispatchErrors.length?el('p',{class:'sim-error',text:dispatchErrors.length+' worker launches delayed. '+[...new Set(dispatchErrors.map(function(x){return x.message;}))].slice(0,3).join(' · ')+'. Automatic retries keep your saved data.'}):null,
   el('p',{class:'tiny muted',text:done?'All simulations use this saved library. Each sees only information available on its historical date.':'Research and prices are saved before simulations start together. Preparation uses no AI tokens. Completed downloads are reused.'}),
-  el('div',{class:'sim-row tiny'},el('b',{text:'Overall · '+ready+' / '+total+' data packages saved'}),el('span',{text:(total?Math.floor(ready/total*100):0)+'%'})),
-  el('progress',{class:'coverage-progress',max:Math.max(1,total),value:ready,'aria-label':'Shared library preparation'}),
-  sections.length?el('div',{class:'sim-prep-grid'},sections):el('p',{class:'tiny muted',text:'Loading preparation details… '+(repository.companiesReady||0)+' companies and '+(repository.datesReady||0)+' market days ready.'}),
+  el('div',{class:'sim-row tiny'},el('b',{text:knownTotal?'Overall · '+ready+' / '+total+' data packages saved':'Reading saved-data availability…'}),el('span',{text:knownTotal?Math.floor(ready/total*100)+'%':'Loading…'})),
+  el('progress',{class:'coverage-progress',max:Math.max(1,total),value:knownTotal?ready:null,'aria-label':'Shared library preparation'}),
+  sections.length?el('div',{class:'sim-prep-grid'},sections):el('p',{class:'tiny muted',text:repository.phase||'Reading saved company research and price availability. The existing shared library is retained.'}),
   failed?el('div',null,el('p',{class:'tiny',text:failed+' preparation '+(failed===1?'task needs':'tasks need')+' attention. Retry preserves completed research and prices.'}),failures):null]);
  library.querySelectorAll('details[data-section]').forEach(function(d){if(saved[d.dataset.section])d.querySelector('.sim-prep-list').scrollTop=saved[d.dataset.section].scroll;});
 }

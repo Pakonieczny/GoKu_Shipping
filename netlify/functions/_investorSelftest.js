@@ -5859,6 +5859,21 @@ async function simulatorAdversarial() {
     return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),delete:r=>writes.push(()=>r.delete()),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
   }
   const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  await check('new_batch_has_preparation_counts_before_any_scheduler_tick_or_provider_request',async()=>{
+    const fake=database();let external=0;const svc=Sim.create({admin:fake,fetchImpl:async()=>{external++;throw Error('Unexpected provider request');},publicFetch:async()=>{external++;throw Error('Unexpected source download');}});
+    const b=await svc.createBatch({count:10,from:'2026-04-01',to:'2026-04-30'},'operator','immediate-status');assert(b.repositoryId);
+    const view=await svc.overview({owner:'operator',batchId:b.batchId});assert(view.repository.total>10);assert.equal(view.repository.dates,10);assert.equal(view.repository.sections.length,3);assert.equal(view.repository.ready,0);assert.equal(external,0);
+    await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({repositoryId:null},{merge:true});assert.equal((await svc.overview({owner:'operator',batchId:b.batchId})).repository.total,null,'an unlinked legacy batch has unknown counts, not an empty database');
+  });
+  await check('start_dispatches_preparation_immediately_then_all_ready_runs_without_cron',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake}),tasks=[],dispatch=async j=>{tasks.push(j);return {upstream:202};};
+    const b=await svc.startBatch({count:100,from:'2025-01-01',to:'2025-12-31'},'operator','immediate-dispatch',dispatch);
+    assert(tasks.length>100);assert(tasks.every(j=>j.task==='simulation_prepare'));const n=tasks.length;
+    await svc.startBatch({count:100,from:'2025-01-01',to:'2025-12-31'},'operator','immediate-dispatch',dispatch);assert.equal(tasks.length,n,'repeated start must not duplicate dispatched jobs');
+    const units=await fake.col('InvestorAI_SimulationScenarios').doc(b.repositoryId).collection('units').get();for(const doc of units.docs)await doc.ref.set({status:'ready'},{merge:true});
+    await svc.startBatch({count:100,from:'2025-01-01',to:'2025-12-31'},'operator','immediate-dispatch',dispatch);assert.equal(tasks.filter(j=>j.task==='simulation').length,100);
+    await svc.startBatch({count:100,from:'2025-01-01',to:'2025-12-31'},'operator','immediate-dispatch',dispatch);assert.equal(tasks.filter(j=>j.task==='simulation').length,100);
+  });
   await check('reset_stops_owned_batches_clears_workspace_and_preserves_history_master_and_other_owner',async()=>{
     const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:2,from:'2026-04-20',to:'2026-04-24'},'operator','reset-owned'),other=await svc.createBatch({count:1,from:'2026-04-20',to:'2026-04-24'},'other','reset-other');
     const master=fake.col('InvestorAI_SimulationScenarios').doc('kept_master');await master.set({research:'keep'});await fake.col(A.COL.accounts).doc('paper-1').set({cash:123});
@@ -6490,6 +6505,7 @@ async function simulatorAdversarial() {
       // Different sampled dates, same requested range: existing company and session data are reused.
       wall+=86400000;
       const b2=await svc.createBatch({count:1,from:'2026-07-31',to:'2026-08-03'},'operator','repository-reuse'),config2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef),repo2=await svc.ensureRepository(b2,config2);
+      const immediate=await svc.overview({owner:'operator',batchId:b2.batchId});assert.equal(immediate.repository.status,'ready','existing research and prices should be visible before the next scheduler tick');assert.equal(immediate.repository.ready,immediate.repository.total);assert.equal([...requests.values()].reduce((a,b)=>a+b,0),requestCount);assert.equal(sec.calls.length,secCount);
       await svc.control({batchId:b.batchId,command:'pause'},'operator');
       const reusedLaunches=[];await svc.schedule({dispatch:async j=>{reusedLaunches.push(j);return {upstream:202};}});
       assert.equal(reusedLaunches.length,1);assert.equal(reusedLaunches[0].task,'simulation');assert.equal(reusedLaunches[0].runId,b2.runIds[0]);

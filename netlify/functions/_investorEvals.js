@@ -364,7 +364,8 @@ const Simulator = (() => {
         status:'running',paused:false,cleanupVersion:CLEANUP_VERSION,cleanupState:'complete',createdAtMs:wallNow(),targetNano:TARGET*count,ceilingNano:CEILING*count,version:VERSION,
         model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:count,concurrencyMode:'all_requested',
         limitations:['Current eligible universe: survivorship-limited historical selection.','Missing research is reconstructed from SEC filings and financial statements. Broader historical news and confirmed earnings calendars may be unavailable.','SEC aggregates are retrieved today and filtered by filing availability; later provider corrections may remain. Original filing sources and retrieval timestamps are retained.','First-time preparation precedes the five-minute replay target.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
-      const configRef=await saveJSON(ref,'configuration',{policy,roster,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES});
+      const savedConfig={policy,roster,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES};
+      const configRef=await saveJSON(ref,'configuration',savedConfig);
       // Publish the batch last so a partially-created batch is never dispatched.
       for(let offset=0;offset<runIds.length;offset+=150) {
         await rootTransaction(async tx=>{
@@ -376,7 +377,18 @@ const Simulator = (() => {
         });
       }
       await ref.create({...b,configRef}).catch(async e=>{if(!(await ref.get()).exists) throw e;});
+      // Connect saved metadata now, rather than leaving the first UI polls waiting
+      // for the next minute's scheduler tick. No source downloads or AI calls here.
+      try {
+        const published=await getBatch(batchId,owner);
+        if(!published.paused&&!published.resetAtMs){const repo=await ensureRepository(published,savedConfig);await reuseRepositoryArtifacts(published,savedConfig,repo.ref);}
+      }catch(e){await ref.set({repositorySetupError:'Saved-library lookup will retry: '+String(e.message).slice(0,300)},{merge:true});}
       return getBatch(batchId,owner);
+    }
+    async function startBatch(config,owner,key,dispatch) {
+      const batch=await createBatch(config,owner,key);
+      await schedule({dispatch,batchId:batch.batchId});
+      return getBatch(batch.batchId,owner);
     }
     async function reset(owner) {
       if(!owner)throw fail('FORBIDDEN');
@@ -710,19 +722,19 @@ const Simulator = (() => {
         const units=[...repositorySymbols(config).map(symbol=>({unitId:'company_'+symbol,kind:'company',symbol,researchRequired:!!repositoryRow(config,symbol)})),...batch.dates.map(date=>({unitId:'prices_'+date,kind:'prices',date}))];
         for(let i=0;i<units.length;i+=100)await rootTransaction(async tx=>{
           const part=units.slice(i,i+100),snaps=await Promise.all(part.map(u=>tx.get(ref.collection('units').doc(u.unitId))));
-          for(let j=0;j<part.length;j++)if(!snaps[j].exists)tx.set(ref.collection('units').doc(part[j].unitId),{...part[j],status:'queued',phase:'Waiting to prepare shared data',createdAtMs:wallNow()});
+          for(let j=0;j<part.length;j++)if(!snaps[j].exists)tx.set(ref.collection('units').doc(part[j].unitId),{...part[j],...(part[j].kind==='prices'?{priceValidationVersion:PRICE_VALIDATION_VERSION}:{}),status:'queued',phase:'Waiting to prepare shared data',createdAtMs:wallNow()});
         });
-        await ref.set({repositoryId,version:REPOSITORY_VERSION,total:units.length,companies:repositorySymbols(config).length,dates:batch.dates.length,createdAtMs:wallNow()},{merge:true});
+        await ref.set({repositoryId,version:REPOSITORY_VERSION,priceValidationVersion:PRICE_VALIDATION_VERSION,total:units.length,companies:repositorySymbols(config).length,dates:batch.dates.length,createdAtMs:wallNow()},{merge:true});
       }
       // Upgrade only price validation. Preserve expensive company archives and completed raw pages.
-      if(prior.data()?.priceValidationVersion!==PRICE_VALIDATION_VERSION) {
+      if(prior.exists&&prior.data()?.priceValidationVersion!==PRICE_VALIDATION_VERSION) {
         for(const date of batch.dates)await rootTransaction(async tx=>{
           const ur=ref.collection('units').doc('prices_'+date),s=await tx.get(ur);
           if(s.exists&&s.data().priceValidationVersion!==PRICE_VALIDATION_VERSION)tx.set(ur,{status:'queued',phase:'Checking saved price history',pointer:null,error:null,nextAttemptAtMs:0,dispatchedUntil:0,priceValidationVersion:PRICE_VALIDATION_VERSION},{merge:true});
         });
         await ref.set({priceValidationVersion:PRICE_VALIDATION_VERSION},{merge:true});
       }
-      if(batch.repositoryId!==repositoryId)await batchCol.doc(batch.batchId).set({repositoryId},{merge:true});
+      if(batch.repositoryId!==repositoryId||batch.repositorySetupError)await batchCol.doc(batch.batchId).set({repositoryId,repositorySetupError:null},{merge:true});
       if(hasXomSuccessor(repositoryRow(config,'XOM')))await rootTransaction(async tx=>{
         const ur=ref.collection('units').doc('company_XOM'),s=await tx.get(ur),u=s.data();
         if(u?.pointer&&u.researchHistoryVersion!==XOM_HISTORY_VERSION&&!(u.leaseUntil>wallNow()))tx.set(ur,{status:'queued',phase:'Preparing XOM predecessor company history',researchReady:false,error:null,stage:'research',nextAttemptAtMs:0,dispatchedUntil:0,researchHistoryVersion:XOM_HISTORY_VERSION},{merge:true});
@@ -758,9 +770,9 @@ const Simulator = (() => {
       });
     }
     async function repositoryState(batch) {
-      if(!batch.repositoryId)return {status:'queued',phase:'Preparing the shared data library',ready:0,total:0,companiesReady:0,datesReady:0,active:[],errors:[]};
-      const ref=scenarioCol.doc(batch.repositoryId),meta=(await ref.get()).data(),units=await rows(ref.collection('units'));
-      if(!meta||units.length!==meta.total)return {status:'queued',ready:0,total:meta?.total||0,active:[],errors:[]};
+      if(!batch.repositoryId)return {status:'queued',phase:'Connecting this batch to the saved shared library',setupError:batch.repositorySetupError||null,ready:0,total:null,active:[],errors:[]};
+      const ref=scenarioCol.doc(batch.repositoryId),[snapshot,units]=await Promise.all([ref.get(),rows(ref.collection('units'))]),meta=snapshot.data();
+      if(!meta||units.length!==meta.total)return {status:'queued',phase:'Loading shared-library preparation details',setupError:batch.repositorySetupError||null,ready:0,total:null,active:[],errors:[]};
       const now=wallNow(),ready=units.filter(u=>u.status==='ready').length,errors=units.filter(u=>u.status==='failed');
       const universe=new Set([...require('./_investorUniverse').tradeTier,...require('./_investorUniverse').researchTier].map(r=>r.symbol));
       const researchNeeded=u=>u.kind==='company'&&(u.researchRequired??universe.has(u.symbol));
@@ -781,7 +793,7 @@ const Simulator = (() => {
         return {id,label,total:list.length,done:counts.complete,...counts,items};
       });
       const tasks=units.map(task);
-      return {repositoryId:batch.repositoryId,status:ready===meta.total?'ready':batch.paused?'paused':errors.length?'needs_attention':'preparing',ready,total:meta.total,
+      return {repositoryId:batch.repositoryId,setupError:batch.repositorySetupError||null,status:ready===meta.total?'ready':batch.paused?'paused':errors.length?'needs_attention':'preparing',ready,total:meta.total,
         companiesReady:units.filter(u=>u.kind==='company'&&u.status==='ready').length,companies:meta.companies,datesReady:units.filter(u=>u.kind==='prices'&&u.status==='ready').length,dates:meta.dates,
         working:tasks.filter(u=>u.state==='working').length,waiting:tasks.filter(u=>['waiting','queued','starting'].includes(u.state)).length,
         active:tasks.filter(u=>['working','waiting','starting'].includes(u.state)).slice(0,6),sections,
@@ -1255,14 +1267,14 @@ const Simulator = (() => {
       }catch(e){await save({cleanupState:'needs_attention',cleanupError:String(e.message).slice(0,400),cleanupNextAtMs:wallNow()+300000});return {done:false,error:e.code||e.message};}
       finally{clearInterval(timer);await renewal;await rootTransaction(async tx=>{const snap=await tx.get(br);if(snap.data()?.cleanupTicket===ticket)tx.set(br,{cleanupTicket:null,cleanupLeaseUntil:0},{merge:true});});}
     }
-    async function schedule({dispatch=null}={}) {
+    async function schedule({dispatch=null,batchId=null}={}) {
       if(!dispatch)return [];
       const guard=batchCol.doc('dispatch_lock'),ticket=crypto.randomBytes(8).toString('hex');
       const locked=await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.exists&&s.data().until>wallNow())return false;tx.set(guard,{ticket,until:wallNow()+25000});return true;});
       if(!locked)return [];
       const selected=[];
       try {
-        const cleanup=(await rows(batchCol.where('repositoryMode','==','shared_first'))).filter(b=>b.cleanupVersion!==CLEANUP_VERSION&&!(b.cleanupLeaseUntil>wallNow())&&!(b.cleanupDispatchedUntil>wallNow())&&!(b.cleanupNextAtMs>wallNow()));
+        const cleanup=(batchId?[]:await rows(batchCol.where('repositoryMode','==','shared_first'))).filter(b=>b.cleanupVersion!==CLEANUP_VERSION&&!(b.cleanupLeaseUntil>wallNow())&&!(b.cleanupDispatchedUntil>wallNow())&&!(b.cleanupNextAtMs>wallNow()));
         selected.push(...cleanup.map(async b=>{
           const sequence=(b.cleanupSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation_cleanup',dedupeId:b.batchId+'_cleanup_'+sequence,accountId:b.batchId,payload:{batchId:b.batchId},createdBy:'simulator',priority:100});
           const job=(await admin.col(admin.COL.jobs).doc(out.jobId).get()).data();
@@ -1270,7 +1282,7 @@ const Simulator = (() => {
           try{const result=await dispatch(job);if(result?.error||result?.upstream>=300||result?.upstream===0)throw Error(result.error||'Cleanup worker returned '+result.upstream);return result;}
           catch(e){await batchCol.doc(b.batchId).set({cleanupDispatchedUntil:0,cleanupNextAtMs:wallNow()+15000,cleanupError:String(e.message).slice(0,300)},{merge:true});return {error:e.message};}
         }));
-        const batches=(await rows(batchCol.where('status','in',['running','incomplete','reset'])));
+        const batches=batchId?[await getBatch(batchId)]:await rows(batchCol.where('status','in',['running','incomplete','reset']));
         const latestByOwner=new Map(await Promise.all([...new Set(batches.filter(b=>b.status==='incomplete').map(b=>b.owner))].map(async owner=>{
           const history=await rows(batchCol.where('owner','==',owner));return [owner,history.sort((a,b)=>b.createdAtMs-a.createdAtMs)[0]?.batchId];
         })));
@@ -1374,7 +1386,7 @@ const Simulator = (() => {
       if(after)q=q.startAfter(String(after));const items=await rows(q);
       return {run,collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null};
     }
-    return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
+    return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,startBatch,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
   return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,sharedEvidenceView,create};
 })();

@@ -1012,7 +1012,7 @@ function checkVersion(expected, actual) { if (expected != null && String(expecte
 async function pointerEvent(D, p, kind, fields) { const MD = require("./_investorMandate"); try { await MD.appendEvent(D, p, kind, fields); } catch {} }
 
 const MUTATIONS = {
-  simulationStart:async(params,ctx,env)=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).createBatch(params,ctx.actorId,env.idempotencyKey)}),
+  simulationStart:async(params,ctx,env)=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).startBatch(params,ctx.actorId,env.idempotencyKey,job=>require("./investorKick").dispatchJob(job,{admin:ctx.admin,jobs:require("./_investorJobs").withAdmin(ctx.admin)}))}),
   simulationControl:async(params,ctx)=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).control(params,ctx.actorId)}),
   /* ── manager and global controls ─────────────────────────────────────── */
   async pauseManager(params, ctx, env) {
