@@ -285,7 +285,7 @@ const Simulator = (() => {
       const b={batchId,owner,count,dates,runIds,config:{from:config.from,to:config.to,count,initialCashMinor:'10000000',feedDelayMinutes:15,spreadBps:10,feePerShareMicros:5000},
         evidenceMode:'ARCHIVE_OR_SEC_RECONSTRUCTION',preparationIncludes:'Automatic dated SEC research and historical price downloads; cached across runs',
         status:'running',paused:false,createdAtMs:wallNow(),targetNano:TARGET*count,ceilingNano:CEILING*count,version:VERSION,
-        model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:Math.max(1,Math.min(12,Number(env.INVESTOR_SIM_CONCURRENCY)||3)),
+        model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:count,concurrencyMode:'all_requested',
         limitations:['Current eligible universe: survivorship-limited historical selection.','Missing research is reconstructed from SEC filings and financial statements. Broader historical news and confirmed earnings calendars may be unavailable.','SEC aggregates are retrieved today and filtered by filing availability; later provider corrections may remain. Original filing sources and retrieval timestamps are retained.','First-time preparation precedes the five-minute replay target.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
       const configRef=await saveJSON(ref,'configuration',{policy,roster,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES});
       // Publish the batch last so a partially-created batch is never dispatched.
@@ -359,7 +359,12 @@ const Simulator = (() => {
         // One shared reservation keeps concurrent preparation workers below SEC limits.
         const rateRef=scenarioCol.doc('sec_download_rate');
         const at=await rootTransaction(async tx=>{const s=await tx.get(rateRef),next=Math.max(wallNow(),s.data()?.nextMs||0);tx.set(rateRef,{nextMs:next+300});return next;});
-        if(at>wallNow())await new Promise(r=>setTimeout(r,Math.min(5000,at-wallNow())));
+        for(let remaining=Math.max(0,at-wallNow());remaining>0;) {
+          if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
+          await onSourceProgress('Waiting for SEC download availability');
+          await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{leaseUntil:wallNow()+180000},{merge:true});});
+          const delay=Math.min(5000,remaining);await new Promise(r=>setTimeout(r,delay));remaining-=delay;
+        }
         if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
         let response,lastProgress=0;
         const progress=async({bytes})=>{if(wallNow()-lastProgress<2000)return;lastProgress=wallNow();if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');await onSourceProgress(`Downloading SEC source · ${(bytes/1048576).toFixed(1)} MB`);};
@@ -774,25 +779,22 @@ const Simulator = (() => {
       if(!locked)return [];
       const selected=[];
       try {
-        const batches=await rows(batchCol.where('status','==','running').limit(20));
+        const batches=await rows(batchCol.where('status','==','running'));
         const sets=await Promise.all(batches.map(async b=>({b,runs:await rows(runCol.where('batchId','==',b.batchId))})));
-        let capacity=Math.max(0,Math.max(1,Math.min(12,Number(env.INVESTOR_SIM_CONCURRENCY)||3))-sets.flatMap(x=>x.runs).filter(r=>r.leaseUntil>wallNow()||r.dispatchedUntil>wallNow()).length);
         for(const {b,runs} of sets) {
           if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)){await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
-          if(runs.some(r=>r.rateLimitedAtMs>wallNow()-60000))capacity=Math.min(capacity,1);
           const eligible=runs.filter(r=>(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
             .sort((a,b)=>(a.lastDispatchedAtMs||0)-(b.lastDispatchedAtMs||0)||a.index-b.index);
-          for(const r of eligible.slice(0,capacity)) {
+          // Fan out every eligible run in this tick, including batches created under the old cap.
+          selected.push(...eligible.map(async r=>{
             // Every segment has its own identity. A yielded segment must never redispatch a completed job.
             const sequence=(r.dispatchSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_segment_'+sequence,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
-            const j=await admin.col(admin.COL.jobs).doc(out.jobId).get();if(!j.exists)continue;
+            const j=await admin.col(admin.COL.jobs).doc(out.jobId).get();if(!j.exists)return;
             const rr=runCol.doc(r.runId);
-            await rr.set({dispatchedUntil:wallNow()+90000,lastDispatchedAtMs:wallNow(),dispatchSequence:sequence,dispatchJobId:out.jobId,phase:'Starting worker',waitReason:'dispatch',lastDispatchError:null,updatedAtMs:wallNow()},{merge:true});capacity--;
-            selected.push((async()=>{
+            await rr.set({dispatchedUntil:wallNow()+90000,lastDispatchedAtMs:wallNow(),dispatchSequence:sequence,dispatchJobId:out.jobId,phase:'Starting worker',waitReason:'dispatch',lastDispatchError:null,updatedAtMs:wallNow()},{merge:true});
               try {const result=await dispatch(j.data());if(result?.error||result?.upstream>=300||result?.upstream===0)throw Error(result?.error||'Worker returned '+result.upstream);return result;}
               catch(e){await rootTransaction(async tx=>{const s=await tx.get(rr);if(s.data()?.dispatchSequence===sequence&&!(s.data()?.leaseUntil>wallNow()))tx.set(rr,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,waitReason:'dispatch_retry',phase:'Worker could not start — retrying',lastDispatchError:String(e.message).slice(0,200),updatedAtMs:wallNow()},{merge:true});});return {runId:r.runId,error:String(e.message)};}
-            })());
-          }
+          }));
         }
         return await Promise.allSettled(selected);
       }finally{await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.data()?.ticket===ticket)tx.set(guard,{until:0},{merge:true});});}
@@ -821,9 +823,9 @@ const Simulator = (() => {
       }));
       const unfinished=projected.filter(r=>!TERMINAL.includes(r.status)),measured=projected.filter(r=>r.status==='complete'&&r.activeMs>0).map(r=>r.activeMs);
       const typical=measured.length?measured.reduce((n,x)=>n+x,0)/measured.length:null;
-      const batchRemainingMs=unfinished.length===0?0:unfinished.some(r=>r.paused||r.status==='preparing'||(r.estimatedRemainingMs==null&&!typical))?null:Math.max(...unfinished.map(r=>r.estimatedRemainingMs||typical||0),unfinished.reduce((n,r)=>n+(r.estimatedRemainingMs||typical||0),0)/(b?.concurrency||1));
+      const batchRemainingMs=unfinished.length===0?0:unfinished.some(r=>r.paused||r.status==='preparing'||(r.estimatedRemainingMs==null&&!typical))?null:Math.max(...unfinished.map(r=>r.estimatedRemainingMs||typical||0),0);
       const displayedStatus=b&&runs.length&&runs.every(r=>TERMINAL.includes(r.status))?(runs.every(r=>r.status==='complete')?'complete':'incomplete'):b?.status;
-      return {asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,status:displayedStatus}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
+      return {asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,status:displayedStatus,concurrency:b.count||runs.length,concurrencyMode:'all_requested'}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
         statistics:distribution(runs),totals:{estimatedInFlightNano:projected.reduce((n,r)=>n+(r.estimatedInFlightNano||0),0),estimatedFinalNano:projected.reduce((n,r)=>n+(TERMINAL.includes(r.status)?r.spentNano:r.estimatedTotalNano),0),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),targetNano:runs.length*TARGET,ceilingNano:runs.length*CEILING},
         pricing:{version:VERSION,asOf:'2026-09-05',models:P.MODEL_RATES,serviceTier:'flex for Astra; standard for extraction',currency:'USD',includes:'AI tokens only; data and Firebase charges excluded'},targetMs:TARGET_MS};
     }

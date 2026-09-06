@@ -5882,23 +5882,36 @@ async function simulatorAdversarial() {
     cancelled=false;const stalled=new Response(new ReadableStream({start(){},cancel(){cancelled=true;}}));
     await assert.rejects(()=>readBoundedBody(stalled,{maxBytes:1024,timeoutMs:20}),e=>e.code==='timeout');assert(cancelled);
   });
-  await check('scheduler_starts_three_distinct_workers_recovers_slots_and_never_reuses_complete_job',async()=>{
+  await check('scheduler_dispatches_all_100_together_and_ignores_previous_concurrency_caps',async()=>{
     const fake=database();let wall=now;
     const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{INVESTOR_SIM_CONCURRENCY:'3'}});
-    const b=await svc.createBatch({count:10,from:'2026-08-01',to:'2026-08-31'},'operator','dispatch-test');
-    const dispatched=[];
-    const dispatch=async j=>{dispatched.push(j);await fake.col('InvestorAI_Simulations').doc(j.runId).set({status:'preparing',leaseUntil:wall+90000,dispatchedUntil:0,phase:'Loading actual source',scenarioCursor:2,preparationTotal:321,lastHeartbeatAtMs:wall},{merge:true});return {upstream:202};};
-    await Promise.all([svc.schedule({dispatch}),svc.schedule({dispatch})]);assert.equal(dispatched.length,3);assert.equal(new Set(dispatched.map(j=>j.runId)).size,3);
-    let overview=await svc.overview({owner:'operator',batchId:b.batchId});assert.equal(overview.runs.filter(r=>r.activity==='preparing').length,3);assert.equal(overview.runs.filter(r=>r.activity==='queued').length,7);
+    const b=await svc.createBatch({count:100,from:'2025-09-01',to:'2026-08-31'},'operator','dispatch-test');assert.equal(b.concurrency,100);
+    // Existing batches and an old environment setting must also lose their former cap.
+    await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({concurrency:3},{merge:true});
+    await fake.col('InvestorAI_Simulations').doc(b.runIds[0]).set({rateLimitedAtMs:wall},{merge:true});
+    const dispatched=[];let allStarted,finish;
+    const started=new Promise(resolve=>{allStarted=resolve;}),hold=new Promise(resolve=>{finish=resolve;});
+    const dispatch=async j=>{dispatched.push(j);await fake.col('InvestorAI_Simulations').doc(j.runId).set({status:'preparing',leaseUntil:wall+90000,dispatchedUntil:0,phase:'Loading actual source',scenarioCursor:2,preparationTotal:321,lastHeartbeatAtMs:wall},{merge:true});if(dispatched.length===100)allStarted();await hold;return {upstream:202};};
+    const schedules=Promise.all([svc.schedule({dispatch}),svc.schedule({dispatch})]);
+    let timer;try{await Promise.race([started,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Not all 100 dispatches started before any finished')),3000);})]);}finally{clearTimeout(timer);finish();await schedules;}
+    assert.equal(dispatched.length,100);assert.equal(new Set(dispatched.map(j=>j.runId)).size,100);
+    let overview=await svc.overview({owner:'operator',batchId:b.batchId});assert.equal(overview.batch.concurrency,100);assert.equal(overview.runs.filter(r=>r.activity==='preparing').length,100);
     const first=dispatched[0];await fake.col(A.COL.jobs).doc(first.jobId).set({status:'complete'},{merge:true});
     await fake.col('InvestorAI_Simulations').doc(first.runId).set({status:'queued',leaseUntil:0,waitReason:'shared_source',phase:'Waiting for shared historical download',nextAttemptAtMs:wall+5000},{merge:true});
     overview=await svc.overview({owner:'operator',batchId:b.batchId});assert.equal(overview.runs.find(r=>r.runId===first.runId).activity,'waiting_shared');
-    wall+=1000;await svc.schedule({dispatch});assert.equal(dispatched.length,4);assert.notEqual(dispatched[3].runId,first.runId,'a fresh queued run should receive the free slot');
-    // When the same run is due again within 90 seconds, its job must be new and claimable.
-    for(const r of b.runIds)if(r!==first.runId)await fake.col('InvestorAI_Simulations').doc(r).set({paused:true,leaseUntil:0,dispatchedUntil:0},{merge:true});
-    wall+=6000;await svc.schedule({dispatch});assert.equal(dispatched.length,5);assert.equal(dispatched[4].runId,first.runId);assert.notEqual(dispatched[4].jobId,first.jobId);
-    await fake.col('InvestorAI_Simulations').doc(first.runId).set({leaseUntil:0,dispatchedUntil:0,status:'queued'},{merge:true});
+    wall+=1000;await svc.schedule({dispatch});assert.equal(dispatched.length,100,'per-run retry timing still applies');
+    wall+=6000;await svc.schedule({dispatch});assert.equal(dispatched.length,101);assert.equal(dispatched[100].runId,first.runId);assert.notEqual(dispatched[100].jobId,first.jobId);
+    await fake.col('InvestorAI_Simulations').doc(first.runId).set({leaseUntil:0,dispatchedUntil:0,status:'queued',paused:true},{merge:true});
+    await svc.schedule({dispatch});assert.equal(dispatched.length,101,'paused runs must not start');
+    await fake.col('InvestorAI_Simulations').doc(first.runId).set({paused:false},{merge:true});
     await svc.schedule({dispatch:async()=>({upstream:503})});const failed=await svc.getRun(first.runId);assert.equal(failed.dispatchedUntil,0);assert.equal(failed.waitReason,'dispatch_retry');assert(failed.nextAttemptAtMs>wall);
+  });
+  await check('shared_sec_reservations_do_not_burst_when_wait_exceeds_five_seconds',async()=>{
+    const fake=database();let calls=0,checks=0;
+    await fake.col('InvestorAI_SimulationScenarios').doc('sec_download_rate').set({nextMs:now+6500});
+    const svc=Sim.create({admin:fake,wallNow:()=>now,publicFetch:async()=>{calls++;return {text:'{}',json:{}};}});
+    await assert.rejects(()=>svc.secSource('https://data.sec.gov/submissions/CIK0001090872.json',{shouldPause:async()=>++checks>=3}),e=>e.code==='SIMULATION_PREPARATION_YIELD');
+    assert.equal(calls,0,'a reserved provider slot cannot be shortened to five seconds');
   });
   await check('retry_preparation_keeps_date_artifacts_and_refuses_paid_or_initialized_runs',async()=>{
     const fake=database(),svc=Sim.create({admin:fake});
