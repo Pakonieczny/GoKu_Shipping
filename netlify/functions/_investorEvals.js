@@ -1377,7 +1377,7 @@ const Simulator = (() => {
         await new Promise(resolve=>setImmediate(resolve));
         const evidence=sharedEvidenceView(packets,()=>run.clockMs);
         const collection=name=>{if(!String(name).startsWith('InvestorAI_')||String(name).includes('/'))throw fail('SIMULATION_NAMESPACE_ESCAPE');return evidence.collection(name)||ref.collection(name);};
-        scope={runId,aiBudgetUncapped:uncappedRun(run),aiWorkload:config.aiPlan?{...config.aiPlan,preparedResearch:config.aiPlan.preparedResearch||run.researchHandoffVersion==='luna-astra-handoff.v1'}:null,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest,paused,executionSpreadBps:10,feePerShareMicros:5000,
+        scope={runId,executionEvidenceCutoffMs:meta.cutoffMs,aiBudgetUncapped:uncappedRun(run),aiWorkload:config.aiPlan?{...config.aiPlan,preparedResearch:config.aiPlan.preparedResearch||run.researchHandoffVersion==='luna-astra-handoff.v1'}:null,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest,paused,executionSpreadBps:10,feePerShareMicros:5000,
           marketBars:async(symbol,asOfMs)=>{const p=packets.find(x=>x.symbol===symbol),cutoff=Math.min(run.clockMs,Number(asOfMs)||run.clockMs);return {bars:(p?.bars||[]).filter(b=>C.barTime(b)+20*60000<=cutoff).map(b=>({...b,knownAtMs:C.barTime(b)+20*60000})),provenance:{...(p?.provenance||{}),feed:'delayed_sip',simulation:true}};}};
         await A.withSimulationScope(scope,async()=>{
           const control={engineMode:'manager',accountId:runId,accountMode:'PAPER_AI',mode:'PAPER_AI',writerEpoch:1,managerState:'ENABLED',executorState:'ENABLED',executorEnabled:true,buyState:'OPEN',emergencyState:'CLEAR',fixturesPass:true,
@@ -1450,27 +1450,9 @@ const Simulator = (() => {
               if(out.summary?.research && (out.summary.research.failed||out.summary.research.deferred))throw fail('SIMULATION_RESEARCH_INCOMPLETE','Required research did not complete');
               await save({managerDone:true,managerSummaryRef:await saveJSON(ref,'manager_summary',out.summary),phase:'Replaying the market',clockMs:M.nyWallClockToUtcMs(run.date,570)});
             }
-            // Release immutable material events as they become known; same event review authority.
-            const pendingEvents=packets.filter(p=>!config.aiPlan||run.shortlist?.symbols.includes(p.symbol)).flatMap(p=>p.data).filter(x=>x.collection===A.COL.evidenceDeltas&&x.knownAtMs<=run.clockMs&&x.knownAtMs>meta.cutoffMs&&x.data.safetyClass==='high_impact');
-            let eventPending=false;
-            for(const e of pendingEvents) {
-              const er=ref.collection('reviewedEvents').doc(e.id);if((await er.get()).exists)continue;
-              await report({stage:'event',label:'AI reviewing new evidence',done:null,total:null,unit:'',current:e.data.symbol||null});
-              const out=await manager.runEventRevision({claim:{runId:'event_'+runId+'_'+e.id,payload:{accountId:runId,symbol:e.data.symbol,eventId:e.id,cutoff:run.clockMs}},control:ctrl,deps:{admin:A,gateway:require('./_investorOpenai').createGateway({admin:A,env}),now:()=>run.clockMs}});
-              if(out.pending){eventPending=true;break;}
-              if(!out.ok)throw fail('SIMULATION_EVENT_INCOMPLETE',out.reason||'Material event review did not complete');
-              await er.set({atMs:run.clockMs,resultRef:await saveJSON(ref,'event_result',out)});
-            }
-            if(eventPending){await new Promise(r=>setTimeout(r,1200));continue;}
-            const queuedSynthesis=await rows(collection(A.COL.jobs).where('task','==','portfolio_synthesis'));
-            for(const job of queuedSynthesis.filter(j=>j.status!=='complete')) {
-              await report({stage:'portfolio_review',label:'AI updating investment allocations',done:null,total:null,unit:'',current:null});
-              const result=await require('./investorManager-background').runPortfolioSynthesis({...job,jobId:job.id},ctrl,{admin:A,gateway:require('./_investorOpenai').createGateway({admin:A,env}),now:()=>run.clockMs});
-              if(result.pending){eventPending=true;break;}
-              if(result.ok===false)throw fail('SIMULATION_EVENT_INCOMPLETE','Portfolio review could not finish');
-              await collection(A.COL.jobs).doc(job.id).set({status:'complete',result},{merge:true});
-            }
-            if(eventPending){await new Promise(r=>setTimeout(r,1200));continue;}
+            // The initial AI plan governs this entire historical session.
+            // Later evidence stays in the shared history; it cannot launch paid
+            // event research or allocation reruns during price replay.
             if(await paused())break;
             await report({stage:'replay',label:'Replaying prices and checking trade instructions',done:Math.max(0,Math.round((run.clockMs-M.nyWallClockToUtcMs(run.date,570))/300000)),total:Math.round((meta.endMs-M.nyWallClockToUtcMs(run.date,570))/300000),unit:'market steps',current:null});
             const barsBySymbol=Object.fromEntries(packets.map(p=>[p.symbol,p.bars.filter(b=>C.barTime(b)+20*60000===run.clockMs)]));
