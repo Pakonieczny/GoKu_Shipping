@@ -142,7 +142,12 @@ async function runPortfolioSynthesis(claim, ctrl, partial = {}) {
     }
     break;
   }
-  const decisions=(synthesis && synthesis.decisions || []).map(d=>d.decision === "BUY" && staged.status !== "COMMITTED" ? {...d,decision:"WATCH",fundingState:"UNFUNDED",reasonCode:"UNFUNDED",reason:`BUY not activated: ${staged.reason || staged.status}`} : d);
+  // Model allocations are not storage rows. Add the same coverage, holding,
+  // research and mandate context used by the morning manager before encoding.
+  const symbols=(synthesis && synthesis.decisions || []).map(d=>d.symbol),held=new Set(context.portfolio.positions.map(p=>p.symbol)),eligible=new Set(roster.symbols);
+  const canonical=MANAGER.composeFinalDecisionRows({roster,workset:{symbols,rows:symbols.map(symbol=>({symbol,held:held.has(symbol),eligible:eligible.has(symbol),offRoster:!eligible.has(symbol),entryEligible:eligible.has(symbol)&&!held.has(symbol)}))},
+    effective:{coverage},research:{completed:researchResults},synthesis});
+  const decisions=canonical.map(d=>d.decision === "BUY" && staged.status !== "COMMITTED" ? {...d,decision:"WATCH",fundingState:"UNFUNDED",reasonCode:"UNFUNDED",reason:`BUY not activated: ${staged.reason || staged.status}`,mandate:null} : d);
   await MANAGER.persistDecisionRows({managerRunId:claim.runId || claim.jobId,tradingDate:M.sessionState(new Date(cutoffMs)).date,accountId,decisions,contextManifestHash:context.contentHash,expansionPortfolioPlanId:staged.planId || null,cutoffMs,admin:D});
   return {ok:true,staged,decisions};
 }
