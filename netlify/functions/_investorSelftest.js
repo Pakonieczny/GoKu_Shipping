@@ -5859,6 +5859,43 @@ async function simulatorAdversarial() {
     return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
   }
   const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  await check('simulation_controls_pass_real_request_validation_and_reject_invalid_envelopes',()=>{
+    const S=require('./_investorApiSchemas'),base={apiVersion:'investor.v2',requestId:'req_sim_controls',action:'simulationControl',idempotencyKey:'k'.repeat(24),csrfToken:'c'.repeat(24)};
+    for(const params of [{batchId:BID,command:'retry_repository'},{runId:RID,command:'retry'},...['pause','resume'].flatMap(command=>[{batchId:BID,command},{runId:RID,command}])]) {
+      const result=S.validateRequest({...base,params});assert(result.ok,JSON.stringify(result.error));assert.equal(result.kind,'mutation');
+    }
+    for(const command of ['reset','delete','retry_all',''])assert(!S.validateRequest({...base,params:{batchId:BID,command}}).ok);
+    assert(!S.validateRequest({...base,params:{batchId:BID,command:'retry_repository',force:true}}).ok);
+    assert(!S.validateRequest({...base,csrfToken:undefined,params:{batchId:BID,command:'retry_repository'}}).ok);
+    assert(!S.validateRequest({...base,idempotencyKey:undefined,params:{runId:RID,command:'retry'}}).ok);
+  });
+  await check('shared_retry_through_api_dispatch_requeues_failures_keeps_saved_data_and_is_idempotent',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake}),V2=require('./_investorApiV2'),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','api-shared-retry');
+    const config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+    const failed=repo.ref.collection('units').doc('company_GEV'),ready=repo.ref.collection('units').doc('prices_2026-04-23');
+    await failed.set({status:'failed',error:{code:'HISTORICAL_SEC_EMPTY',message:'GEV has an unreadable archived filing.'},researchProgress:{done:3,total:10},leaseUntil:0},{merge:true});
+    await ready.set({status:'ready',pointer:{cacheId:'saved_session',artifact:'saved_prices'}},{merge:true});
+    const raw=fake.col('InvestorAI_SimulationScenarios').doc('saved_source');await raw.set({artifact:'saved_SEC_download'});
+    const ctrl=fake.col(A.COL.control).doc('control');await ctrl.set({fixturesPass:true,fixturesCommit:process.env.COMMIT_REF||process.env.DEPLOY_ID||'local'});
+    const body={apiVersion:'investor.v2',requestId:'req_api_shared_retry',action:'simulationControl',params:{batchId:b.batchId,command:'retry_repository'},idempotencyKey:'retry_repository_'+'k'.repeat(24),csrfToken:'c'.repeat(24)};
+    const send=authOverride=>V2.dispatch({body,admin:fake,authOverride});
+    const denied=await send({ok:false,code:'SESSION_EXPIRED',message:'Expired fixture session'});assert.equal(denied.statusCode,401);assert.equal((await failed.get()).data().status,'failed');
+    await ctrl.set({fixturesPass:false},{merge:true});const blocked=await send({ok:true,subject:'operator'});assert.equal(blocked.statusCode,503);assert.equal(blocked.body.error.code,'ATTESTATION_FAILED');assert.equal((await failed.get()).data().status,'failed');
+    await ctrl.set({fixturesPass:true},{merge:true});const out=await send({ok:true,subject:'operator'});assert.equal(out.statusCode,200,JSON.stringify(out.body.error));assert(out.body.ok);
+    const queued=(await failed.get()).data();assert.equal(queued.status,'queued');assert.equal(queued.error,null);assert.equal(queued.researchProgress.done,3);assert.equal(queued.nextAttemptAtMs,0);
+    assert.deepEqual((await ready.get()).data().pointer,{cacheId:'saved_session',artifact:'saved_prices'});assert.equal((await raw.get()).data().artifact,'saved_SEC_download');
+    await failed.set({phase:'Worker has continued'},{merge:true});const replay=await send({ok:true,subject:'operator'});assert.equal(replay.statusCode,200);assert(replay.body.replayed);assert.equal((await failed.get()).data().phase,'Worker has continued');
+    assert.equal((await svc.getRun(b.runIds[0])).spentNano,0);
+  });
+  await check('run_retry_pause_and_resume_through_api_dispatch_preserve_checkpoint_and_cost',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake}),V2=require('./_investorApiV2'),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','api-run-retry'),ref=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+    await fake.col(A.COL.control).doc('control').set({fixturesPass:true,fixturesCommit:process.env.COMMIT_REF||process.env.DEPLOY_ID||'local'});
+    await ref.set({status:'incomplete',initialized:true,clockMs:123456,spentNano:123,managerCheckpointRef:'saved_checkpoint',error:{code:10,message:'10 ABORTED: contention'},leaseUntil:0},{merge:true});
+    const send=(params,key)=>V2.dispatch({body:{apiVersion:'investor.v2',requestId:'req_api_'+key,action:'simulationControl',params,idempotencyKey:key+'k'.repeat(24),csrfToken:'c'.repeat(24)},admin:fake,authOverride:{ok:true,subject:'operator'}});
+    let out=await send({runId:b.runIds[0],command:'retry'},'retry');assert.equal(out.statusCode,200,JSON.stringify(out.body.error));assert.equal((await ref.get()).data().status,'queued');
+    for(const command of ['pause','resume']){out=await send({batchId:b.batchId,command},command);assert.equal(out.statusCode,200,JSON.stringify(out.body.error));assert.equal((await ref.get()).data().paused,command==='pause');}
+    const r=(await ref.get()).data();assert.equal(r.clockMs,123456);assert.equal(r.spentNano,123);assert.equal(r.managerCheckpointRef,'saved_checkpoint');assert.equal(r.error,null);
+  });
   await check('firestore_contention_codes_retry_only_aborted_transactions',async()=>{
     for(const code of [10,'10','ABORTED','aborted','firestore/aborted'])assert(Sim.isContention({code}));
     assert(Sim.isContention({message:'10 ABORTED: Aborted due to cross-transaction contention.'}));
