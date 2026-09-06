@@ -603,6 +603,7 @@ async function dispatchJob(job) {
   try {
     res = await fetch(`${baseUrl()}/.netlify/functions/${spec.targetFunction}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(5000),
       body: JSON.stringify({ jobId: job.jobId, task: job.task, nonce: nonce.token, payload: job.payload || {} }),
     });
   } catch (e) { res = { ok: false, status: 0, thrown: String(e && e.message || e).slice(0, 120) }; }
@@ -643,6 +644,9 @@ exports.handler = async (event) => {
   await loadAuthSecrets();
 
   const startedAt = Date.now();
+  // Launch the independent simulation scheduler before paper work can exhaust the invocation.
+  const simulationDispatch = require("./_investorEvals").Simulator.create().schedule({dispatch:dispatchJob})
+    .catch(error => { console.error("Simulation dispatch failed", String(error.code || error.message)); });
   try {
     await M.loadMarketSettings();
     const ctrl = await control();
@@ -679,7 +683,7 @@ exports.handler = async (event) => {
     console.error("investorKick failed", redact({ error: e.message }));
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(e.message).slice(0, 200) }) };
   } finally {
-    try { await require("./_investorEvals").Simulator.create().schedule({dispatch:dispatchJob}); } catch (error) { console.error("Simulation dispatch failed", String(error.code || error.message)); }
+    await simulationDispatch;
   }
 };
 

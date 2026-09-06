@@ -208,6 +208,33 @@ const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
  *   {string[]} opts.allowedHosts      internally resolved, call-scoped hosts
  * @returns {Promise<{status,notModified,bytes,text,json,sha256,contentType,etag,lastModified,finalUrl,fetchedAt,elapsedMs}>}
  */
+// Bound the decoded body as it arrives; a header-only timeout cannot stop a stalled download.
+async function readBoundedBody(res, {maxBytes, timeoutMs = 20000, onProgress = null} = {}) {
+  const reader = res.body?.getReader?.();
+  let timer, bytes = 0, stopped = false;
+  const cancel = () => { if (reader) reader.cancel().catch(() => {}); };
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => {
+    stopped = true; cancel(); reject(fail('timeout', 'Source body download timed out'));
+  }, timeoutMs); });
+  try {
+    return await Promise.race([timeout, (async () => {
+      const chunks = [];
+      do {
+        const part = reader ? await reader.read() : {value: new Uint8Array(await res.arrayBuffer()), done: false};
+        if (stopped) throw fail('timeout', 'Source body download timed out');
+        if (part.done) break;
+        bytes += part.value.byteLength;
+        if (bytes > maxBytes) throw fail('too_large', `Source body exceeds ${maxBytes} bytes`);
+        chunks.push(Buffer.from(part.value));
+        if (onProgress) await onProgress({bytes});
+        if (!reader) break;
+      } while (true);
+      return Buffer.concat(chunks, bytes);
+    })()]);
+  } catch (e) { stopped = true; cancel(); throw e; }
+  finally { clearTimeout(timer); }
+}
+
 async function fetchPublic(url, opts = {}) {
   if (require("./_investorAdmin").currentScope()) throw fail("SIMULATION_LIVE_FETCH_FORBIDDEN", "Historical replay cannot fetch live sources");
   const {
@@ -305,11 +332,11 @@ async function fetchPublic(url, opts = {}) {
   }
   const declared = Number(res.headers.get("content-length") || 0);
   if (declared && declared > maxBytes) {
+    if (res.body?.cancel) res.body.cancel().catch(() => {});
     throw fail("too_large", `${sourceId}: content-length ${declared} exceeds cap ${maxBytes}`);
   }
 
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length > maxBytes) throw fail("too_large", `${sourceId}: body ${buf.length} exceeds cap ${maxBytes}`);
+  const buf = await readBoundedBody(res, {maxBytes, timeoutMs, onProgress:opts.onProgress});
 
   const text = buf.toString("utf8");
   if (looksBlocked(text, contentType)) {
@@ -352,6 +379,6 @@ function normalizedHash(text) {
 }
 
 module.exports = {
-  fetchPublic, normalizedHash, assertSafeUrl,
+  fetchPublic, readBoundedBody, normalizedHash, assertSafeUrl,
   ALLOWED_HOSTS, DENY_HOSTS, scopedHosts, UA, acceptHeader,
 };

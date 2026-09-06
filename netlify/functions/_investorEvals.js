@@ -195,7 +195,7 @@ const Simulator = (() => {
     if(!Number.isInteger(count)||count<1||count>500||count>days.length) throw fail('BAD_REQUEST','Choose 1–500 simulations and a date range with enough distinct trading days');
     return [...days].sort((a,b)=>hash(seed+a).localeCompare(hash(seed+b))).slice(0,count).sort();
   }
-  function regularSessionBars(archive,symbol,date) {
+  function regularSessionBars(archive,symbol,date,{allowSparse=false}={}) {
     const open=M.nyWallClockToUtcMs(date,570),close=M.sessionCloseMs(new Date(date+'T12:00:00Z'));
     if(!close)throw fail('HISTORICAL_SESSION_CLOSED',`${date} is not a trading day`);
     const expected=(close-open)/300000,byTime=new Map();let outsideSession=0,duplicates=0;
@@ -219,7 +219,12 @@ const Simulator = (() => {
     }
     const missing=Array.from({length:expected},(_,i)=>open+i*300000).filter(t=>!byTime.has(t));
     const coverage={expected,received:archive.length,regular:byTime.size,outsideSession,duplicates,missing:missing.length,firstMissing:missing.slice(0,3).map(t=>new Date(t).toISOString())};
-    if(missing.length)throw Object.assign(fail('HISTORICAL_BAR_GAPS',`Price history for ${symbol} on ${date} has ${byTime.size} of ${expected} regular-session bars; ${missing.length} missing.`),{details:coverage});
+    coverage.missingTimes=missing.map(t=>new Date(t).toISOString());
+    let longest=0,streak=0;for(let t=open;t<close;t+=300000){streak=byTime.has(t)?0:streak+1;longest=Math.max(longest,streak);}
+    coverage.longestGap=longest;coverage.sparse=missing.length>0;
+    // A completed provider response may legitimately omit intervals with no eligible trades.
+    // Keep real bars only. Large outages are still unusable; no interpolation or synthetic fills.
+    if(missing.length&&(!allowSparse||missing.length>Math.floor(expected*.10)||longest>3))throw Object.assign(fail('HISTORICAL_BAR_GAPS',`Price history for ${symbol} on ${date} has ${byTime.size} of ${expected} regular-session bars; ${missing.length} missing.`),{details:coverage});
     return {bars:[...byTime.values()].sort((a,b)=>C.barTime(a)-C.barTime(b)),coverage};
   }
   function replayRecord(record) {
@@ -243,11 +248,14 @@ const Simulator = (() => {
     const rootBatch=admin===A?()=>A.rawDb().batch():()=>admin.batch();
     const rootCollection=name=>admin.col(name);
     const rows=async q=>(await q.get()).docs.map(d=>({id:d.id,...decode(d.data())}));
-    async function saveJSON(parent,name,value) {
+    async function saveJSON(parent,name,value,onProgress=null) {
       const json=JSON.stringify(value), digest=hash(json), ref=parent.collection('artifacts').doc(name+'_'+digest.slice(0,20));
       if((await ref.get()).exists) return ref.id;
       const size=120000, parts=Math.ceil(json.length/size);
-      for(let i=0;i<parts;i++) await ref.collection('chunks').doc(String(i)).set({text:json.slice(i*size,(i+1)*size)});
+      for(let i=0;i<parts;i+=25) {
+        const batch=rootBatch();for(let j=i;j<Math.min(parts,i+25);j++)batch.set(ref.collection('chunks').doc(String(j)),{text:json.slice(j*size,(j+1)*size)});
+        await batch.commit();if(onProgress)await onProgress(Math.min(parts,i+25),parts);
+      }
       await ref.set({hash:digest,parts,bytes:Buffer.byteLength(json),createdAtMs:wallNow()});
       return ref.id;
     }
@@ -294,7 +302,16 @@ const Simulator = (() => {
       return getBatch(batchId,owner);
     }
     async function control({batchId,runId,command},owner) {
-      if(!['pause','resume'].includes(command)) throw fail('BAD_REQUEST','Use pause or resume');
+      if(!['pause','resume','retry'].includes(command)) throw fail('BAD_REQUEST','Use pause, resume or retry');
+      if(command==='retry') {
+        if(!runId)throw fail('BAD_REQUEST','Choose a simulation to retry');
+        const r=await getRun(runId,owner),ref=runCol.doc(id(runId)),br=batchCol.doc(r.batchId);await getBatch(r.batchId,owner);
+        await rootTransaction(async tx=>{const snap=await tx.get(ref),batch=await tx.get(br),v=snap.data();
+          if(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount||v.leaseUntil>wallNow())throw fail('BAD_REQUEST','Only an unpaid preparation failure can be retried');
+          tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
+          tx.set(br,{status:'running',paused:false,completedAtMs:null,lastControlAtMs:wallNow()},{merge:true});
+        });return getRun(runId,owner);
+      }
       const pause=command==='pause';
       if(runId) {
         const ref=runCol.doc(id(runId));await getRun(runId,owner);
@@ -328,31 +345,39 @@ const Simulator = (() => {
       const earliest=missingSymbols.length?Infinity:Math.max(...firstKnown.values());
       return {days:days.filter(d=>cached.has(d)||M.nyWallClockToUtcMs(d,P.CUTOFFS_ET.evidenceFreezeMin)>=earliest),missingSymbols};
     }
-    async function secSource(url,{optional=false,shouldPause=async()=>false,snapshotDate=null}={}) {
+    async function secSource(url,{optional=false,shouldPause=async()=>false,snapshotDate=null,onSourceProgress=async()=>{}}={}) {
       if(A.currentScope())throw fail('SIMULATION_LIVE_FETCH_FORBIDDEN');
       if(!/^https:\/\/(?:data\.sec\.gov\/(?:submissions\/[A-Za-z0-9_.-]+\.json|api\/xbrl\/companyfacts\/CIK\d{10}\.json)|www\.sec\.gov\/Archives\/edgar\/data\/\d+\/\d{18}\/[A-Za-z0-9_.-]+)$/.test(url))throw fail('HISTORICAL_SOURCE_FORBIDDEN');
       if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
       const ref=scenarioCol.doc('source_'+hash(url+'|'+(snapshotDate||defaultSourceSnapshotDate)).slice(0,40));
       const prior=await ref.get();
-      if(prior.exists&&prior.data().artifact)return readJSON(ref,prior.data().artifact);
+      if(prior.exists&&prior.data().artifact){const source=await readJSON(ref,prior.data().artifact);if(url.endsWith('.json')&&source.json==null&&source.text)source.json=JSON.parse(source.text);return source;}
       const owner=crypto.randomBytes(12).toString('hex');
       const acquired=await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.artifact||s.data()?.leaseUntil>wallNow())return false;tx.set(ref,{url,leaseOwner:owner,leaseUntil:wallNow()+90000},{merge:true});return true;});
-      if(!acquired)throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Another simulation is preparing this shared source.'),{retryAfterMs:5000,sharedPreparation:true});
+      if(!acquired)throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Another simulation is preparing this shared source.'),{retryAfterMs:5000,sharedPreparation:true,sourceId:ref.id,sourceUrl:url});
       try {
         // One shared reservation keeps concurrent preparation workers below SEC limits.
         const rateRef=scenarioCol.doc('sec_download_rate');
         const at=await rootTransaction(async tx=>{const s=await tx.get(rateRef),next=Math.max(wallNow(),s.data()?.nextMs||0);tx.set(rateRef,{nextMs:next+300});return next;});
         if(at>wallNow())await new Promise(r=>setTimeout(r,Math.min(5000,at-wallNow())));
         if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
-        let response;
-        try {response=await (publicFetch||require('./_investorFetch').fetchPublic)(url,{sourceId:'sec.historical_reconstruction',accept:url.endsWith('.json')?['json']:['html','text','xml'],maxBytes:16000000,timeoutMs:20000});}
+        let response,lastProgress=0;
+        const progress=async({bytes})=>{if(wallNow()-lastProgress<2000)return;lastProgress=wallNow();if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');await onSourceProgress(`Downloading SEC source · ${(bytes/1048576).toFixed(1)} MB`);};
+        try {response=await (publicFetch||require('./_investorFetch').fetchPublic)(url,{sourceId:'sec.historical_reconstruction',accept:url.endsWith('.json')?['json']:['html','text','xml'],maxBytes:67108864,timeoutMs:60000,onProgress:progress});}
         catch(e) {
+          if(e.code==='SIMULATION_PREPARATION_YIELD')throw e;
           if(optional&&e.status===404)response={status:404,text:'',json:null};
           else if([403,429,500,502,503,504].includes(e.status)||['timeout','network','dns_failed'].includes(e.code))throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','SEC history is temporarily unavailable. Preparation will retry.'),{retryAfterMs:60000});
-          else throw fail('HISTORICAL_SEC_UNAVAILABLE',`Could not load historical SEC evidence (${e.code||e.status||'request failed'}).`);
+          else throw Object.assign(fail('HISTORICAL_SEC_UNAVAILABLE',e.code==='too_large'?'This SEC source exceeds the 64 MB download limit. Preparation was saved.':`Could not load historical SEC evidence (${e.code||e.status||'request failed'}).`),{details:{url,sourceCode:e.code||null}});
         }
         const text=String(response.text||''),source={url,status:response.status||200,text,json:response.json??(url.endsWith('.json')&&text?JSON.parse(text):null),sha256:crypto.createHash('sha256').update(text).digest('hex'),retrievedAtMs:wallNow()};
-        const artifact=await saveJSON(ref,'source',source);
+        await onSourceProgress('Saving shared SEC source');
+        // Preserve the original text once; parse JSON on read instead of storing a second copy.
+        const artifact=await saveJSON(ref,'source',{...source,json:null},async(done,total)=>{
+          if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
+          await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{leaseUntil:wallNow()+90000},{merge:true});});
+          await onSourceProgress(`Saving shared SEC source · ${Math.round(done/total*100)}%`);
+        });
         await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{artifact,status:'source_ready',leaseOwner:null,leaseUntil:0},{merge:true});});
         return source;
       } finally {await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseOwner:null,leaseUntil:0},{merge:true});});}
@@ -361,7 +386,7 @@ const Simulator = (() => {
       const F=require('./_investorFundamentals'),D=require('./_investorDossier'),E=require('./_investorEvidence');
       const cik=F.cik10Of(row?.cik);if(!cik)throw fail('HISTORICAL_IDENTITY_MISSING',`No SEC company identifier is available for ${symbol}.`);
       const cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),earliest=cutoff-180*86400000;
-      const sourceOptions={shouldPause,snapshotDate:sourceSnapshotDate};
+      const sourceOptions={onSourceProgress:phase=>onProgress(`${symbol} · ${phase}`),shouldPause,snapshotDate:sourceSnapshotDate};
       await onProgress(`Loading ${symbol} historical financial statements`);
       const rawFacts=await secSource(F.companyFactsUrl(cik),{...sourceOptions,optional:true});
       const submissions=await secSource(`https://data.sec.gov/submissions/CIK${cik}.json`,sourceOptions);
@@ -509,6 +534,7 @@ const Simulator = (() => {
         const existing=new Set(data.map(x=>x.collection+'/'+x.id));
         data.push(...reconstructed.filter(x=>!existing.has(x.collection+'/'+x.id)));
       }
+      await options.onProgress?.(`Loading ${symbol} daily price history`);
       const daily=await require('./_investorHistory').readDailyWithMetaFor(admin,symbol);
       let series=(daily.series || []).filter(b=>b.date<date).slice(-400);
       if(series.length<20 || !['raw','none','unadjusted'].includes(daily.provenance?.adjustment)) series=(await historicalBars(symbol,date,'1Day')).map(b=>({...b,date:M.nyParts(new Date(b.t)).date})).filter(b=>b.date<date).slice(-400);
@@ -520,13 +546,13 @@ const Simulator = (() => {
       }
       // A raw archive may contain only the bars collected while the app was open.
       // Fetch a full session before concluding that historical prices are missing.
-      if(!normalized) {normalized=regularSessionBars(await historicalBars(symbol,date,'5Min'),symbol,date);Object.assign(doc,{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min'});}
+      if(!normalized) {await options.onProgress?.(`Loading ${symbol} five-minute prices`);normalized=regularSessionBars(await historicalBars(symbol,date,'5Min'),symbol,date,{allowSparse:true});Object.assign(doc,{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min'});}
       return {symbol,data,daily:{symbol,provider:'alpaca',feed:'sip',adjustment:'raw',date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true},bars:normalized.bars,coverage:normalized.coverage,provenance:{provider:doc.provider || null,feed:doc.feed || null,adjustment:doc.adjustment || 'not_reported',timeframe:doc.timeframe || '5Min'},cutoff};
     }
     async function prepare(run,config,save,shouldPause) {
       const scenarioId=run.scenarioId || hash({date:run.date,universe:config.roster.universeHash,version:VERSION}).slice(0,40), sr=scenarioCol.doc(scenarioId);
       const st=await sr.get();
-      if(st.exists && st.data().status==='ready') {await save({scenarioId,status:'running',phase:'Preparing account',scenarioCursor:st.data().symbols.length,evidenceCoverage:st.data().evidenceCoverage||null});return true;}
+      if(st.exists && st.data().status==='ready') {await save({scenarioId,status:'running',phase:'Preparing account',scenarioCursor:st.data().symbols.length,evidenceCoverage:st.data().evidenceCoverage||null,priceCoverage:st.data().priceCoverage||null});return true;}
       const rowFor=s=>[...(require('./_investorUniverse').tradeTier||[]),...(require('./_investorUniverse').researchTier||[])].find(r=>r.symbol===s);
       const symbols=[...new Set([...config.roster.symbols,'SPY','QQQ','HYG','LQD','IEF','TLT','GLD','UUP',...Object.values(require('./_investorTemporal').DRIVER_BY_SECTOR || {})])];
       const endMs=M.sessionCloseMs(new Date(run.date+'T12:00:00Z'))+20*60000;
@@ -534,16 +560,17 @@ const Simulator = (() => {
         if(await shouldPause()) return false;
         const symbol=symbols[i], ptr=sr.collection('symbols').doc(symbol);
         if(!(await ptr.get()).exists) {
-          await save({scenarioId,scenarioCursor:i,preparationTotal:symbols.length,phase:`Preparing ${symbol} · company ${i+1} of ${symbols.length}`});
+          await save({status:'preparing',waitReason:null,waitingSourceId:null,scenarioId,scenarioCursor:i,currentSymbol:symbol,preparationTotal:symbols.length,phase:`Preparing ${symbol} · company ${i+1} of ${symbols.length}`});
           const packet=await prepareSymbol(symbol,config.roster.symbols.includes(symbol)?rowFor(symbol):null,run.date,endMs,{shouldPause,sourceSnapshotDate:config.sourceSnapshotDate||new Date(run.createdAtMs).toISOString().slice(0,10),onProgress:async phase=>save({phase})});
-          const artifact=await saveJSON(sr,'symbol_'+symbol,packet);await ptr.set({symbol,artifact,reconstructed:packet.data.some(x=>x.data.historicalImport?.version==='sec-reconstruction.v1')});
+          const artifact=await saveJSON(sr,'symbol_'+symbol,packet);await ptr.set({symbol,artifact,coverage:packet.coverage,reconstructed:packet.data.some(x=>x.data.historicalImport?.version==='sec-reconstruction.v1')});
         }
         await save({scenarioId,scenarioCursor:i+1,phase:`Preparing historical evidence · ${i+1} of ${symbols.length}`,preparationTotal:symbols.length,preparationRetries:0,nextAttemptAtMs:0});
       }
       const prepared=(await sr.collection('symbols').get()).docs.map(d=>d.data()),reconstructedCompanies=prepared.filter(p=>config.roster.symbols.includes(p.symbol)&&p.reconstructed).length;
+      const priceCoverage={symbolsWithGaps:prepared.filter(p=>p.coverage?.missing>0).map(p=>({symbol:p.symbol,missing:p.coverage.missing,expected:p.coverage.expected})),note:'Only observed bars are replayed. No fills occur in missing intervals; valuations use the latest available observed price.'};
       const evidenceCoverage={mode:reconstructedCompanies?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies,totalCompanies:config.roster.symbols.length};
-      await sr.set({scenarioId,status:'ready',date:run.date,symbols,evidenceCoverage,universeHash:config.roster.universeHash,cutoffMs:M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin),endMs,createdAtMs:wallNow(),version:VERSION});
-      await save({scenarioId,status:'running',phase:'Preparing account',evidenceCoverage});return true;
+      await sr.set({scenarioId,status:'ready',date:run.date,symbols,evidenceCoverage,priceCoverage,universeHash:config.roster.universeHash,cutoffMs:M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin),endMs,createdAtMs:wallNow(),version:VERSION});
+      await save({scenarioId,status:'running',phase:'Preparing account',evidenceCoverage,priceCoverage});return true;
     }
     async function rawHTTP(method,url,body) {
       if(!/^https:\/\/api\.openai\.com\/v1\/responses(?:\/[A-Za-z0-9_-]+)?$/.test(url)) throw fail('SIMULATION_NETWORK_FORBIDDEN');
@@ -614,7 +641,7 @@ const Simulator = (() => {
       const ref=runCol.doc(id(runId)),owner=crypto.randomBytes(12).toString('hex');let run;
       const claimed=await admin.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)return false;run=s.data();
         if((TERMINAL.includes(run.status)&&!run.pendingAiCount)||run.leaseUntil>wallNow()||run.nextAttemptAtMs>wallNow())return false;
-        tx.set(ref,{leaseOwner:owner,leaseUntil:wallNow()+90000,dispatchedUntil:0,segmentStartedAtMs:wallNow()},{merge:true});run.leaseOwner=owner;return true;});
+        tx.set(ref,{leaseOwner:owner,leaseUntil:wallNow()+90000,dispatchedUntil:0,segmentStartedAtMs:wallNow(),lastHeartbeatAtMs:wallNow(),waitReason:null,waitingSourceId:null},{merge:true});run.leaseOwner=owner;return true;});
       if(!claimed)return {done:true,reason:'already_running_or_finished'};
       let activeStarted=run.initialized&&!run.paused&&!TERMINAL.includes(run.status)?wallNow():null;
       const batch=await getBatch(run.batchId),config=await readJSON(batchCol.doc(run.batchId),batch.configRef);
@@ -623,12 +650,12 @@ const Simulator = (() => {
       const paused=async()=>{const [r,b]=await Promise.all([ref.get(),batchCol.doc(run.batchId).get()]);return r.data().paused || b.data().paused || wallNow()>deadlineMs;};
       const cost=meter(run,ref,paused,assertOwner);let scope;
       let heartbeatPending=Promise.resolve();
-      const heartbeat=setInterval(()=>{heartbeatPending=heartbeatPending.then(()=>admin.runTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000},{merge:true});})).catch(()=>{});},20000);
+      const heartbeat=setInterval(()=>{heartbeatPending=heartbeatPending.then(()=>admin.runTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000,lastHeartbeatAtMs:wallNow()},{merge:true});})).catch(()=>{});},20000);
       if(heartbeat.unref)heartbeat.unref();
       try {
         if(run.paused||batch.paused||TERMINAL.includes(run.status)) {await cost.drain();return {done:true,paused:!!run.paused};}
         await save({status:'preparing',phase:run.scenarioId?'Loading historical scenario':'Preparing historical scenario',preparationStartedAtMs:run.preparationStartedAtMs||wallNow()});
-        if(!await prepare(run,config,save,paused))return {yielded:true};
+        if(!await prepare(run,config,save,paused))throw fail('SIMULATION_PREPARATION_YIELD');
         const sr=scenarioCol.doc(run.scenarioId),meta=(await sr.get()).data();
         const packets=await Promise.all(meta.symbols.map(async symbol=>{const s=await sr.collection('symbols').doc(symbol).get();return readJSON(sr,s.data().artifact);}));
         run.clockMs=run.clockMs||meta.cutoffMs;
@@ -725,10 +752,10 @@ const Simulator = (() => {
         return {done:TERMINAL.includes(latest.status)||latest.paused,yielded:!TERMINAL.includes(latest.status)&&!latest.paused};
       } catch(e) {
         const latest=await getRun(runId);
-        if(e.code==='SIMULATION_PREPARATION_YIELD') {await save({status:latest.paused?'paused':'queued',phase:latest.paused?'Paused — preparation saved':'Preparation saved — continuing shortly'});return {done:false,yielded:true};}
+        if(e.code==='SIMULATION_PREPARATION_YIELD') {await save({status:latest.paused?'paused':'queued',phase:latest.paused?'Paused — preparation saved':'Preparation saved — queued to continue',waitReason:latest.paused?'paused':'worker',nextAttemptAtMs:0});return {done:false,yielded:true};}
         if(e.code==='HISTORICAL_PROVIDER_BUSY'&&!latest.paused&&(e.sharedPreparation||(latest.preparationRetries||0)<3)) {
           const nextAttemptAtMs=wallNow()+e.retryAfterMs;
-          await save({status:'queued',phase:e.sharedPreparation?'Waiting for shared historical download':'Historical data provider is busy — retrying shortly',nextAttemptAtMs,preparationRetries:(latest.preparationRetries||0)+(e.sharedPreparation?0:1),lastProviderError:{code:e.code,atMs:wallNow()},error:null});
+          await save({status:'queued',waitReason:e.sharedPreparation?'shared_source':'provider',waitingSourceId:e.sourceId||null,phase:e.sharedPreparation?'Waiting for shared historical download':'Historical data provider is busy — retrying shortly',nextAttemptAtMs,preparationRetries:(latest.preparationRetries||0)+(e.sharedPreparation?0:1),lastProviderError:{code:e.code,atMs:wallNow()},error:null});
           return {done:false,yielded:true,nextAttemptAtMs};
         }
         if(e.code==='HISTORICAL_PROVIDER_BUSY'&&(latest.preparationRetries||0)>=3)e.message='Historical data provider remained unavailable after three retries. No result was produced.';
@@ -741,8 +768,9 @@ const Simulator = (() => {
       }
     }
     async function schedule({dispatch=null}={}) {
+      if(!dispatch)return [];
       const guard=batchCol.doc('dispatch_lock'),ticket=crypto.randomBytes(8).toString('hex');
-      const locked=await admin.runTransaction(async tx=>{const s=await tx.get(guard);if(s.exists && s.data().until>wallNow())return false;tx.set(guard,{ticket,until:wallNow()+25000});return true;});
+      const locked=await admin.runTransaction(async tx=>{const s=await tx.get(guard);if(s.exists&&s.data().until>wallNow())return false;tx.set(guard,{ticket,until:wallNow()+25000});return true;});
       if(!locked)return [];
       const selected=[];
       try {
@@ -750,16 +778,24 @@ const Simulator = (() => {
         const sets=await Promise.all(batches.map(async b=>({b,runs:await rows(runCol.where('batchId','==',b.batchId))})));
         let capacity=Math.max(0,Math.max(1,Math.min(12,Number(env.INVESTOR_SIM_CONCURRENCY)||3))-sets.flatMap(x=>x.runs).filter(r=>r.leaseUntil>wallNow()||r.dispatchedUntil>wallNow()).length);
         for(const {b,runs} of sets) {
-          if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)) {await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
+          if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)){await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
           if(runs.some(r=>r.rateLimitedAtMs>wallNow()-60000))capacity=Math.min(capacity,1);
-          for(const r of runs.filter(r=>(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow())).slice(0,capacity)) {
-            const generation=Math.floor(wallNow()/90000),out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_'+generation,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
-            const j=await admin.col(admin.COL.jobs).doc(out.jobId).get();
-            if(j.exists&&dispatch) {await runCol.doc(r.runId).set({dispatchedUntil:wallNow()+90000},{merge:true});selected.push(dispatch(j.data()));capacity--;}
+          const eligible=runs.filter(r=>(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
+            .sort((a,b)=>(a.lastDispatchedAtMs||0)-(b.lastDispatchedAtMs||0)||a.index-b.index);
+          for(const r of eligible.slice(0,capacity)) {
+            // Every segment has its own identity. A yielded segment must never redispatch a completed job.
+            const sequence=(r.dispatchSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_segment_'+sequence,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
+            const j=await admin.col(admin.COL.jobs).doc(out.jobId).get();if(!j.exists)continue;
+            const rr=runCol.doc(r.runId);
+            await rr.set({dispatchedUntil:wallNow()+90000,lastDispatchedAtMs:wallNow(),dispatchSequence:sequence,dispatchJobId:out.jobId,phase:'Starting worker',waitReason:'dispatch',lastDispatchError:null,updatedAtMs:wallNow()},{merge:true});capacity--;
+            selected.push((async()=>{
+              try {const result=await dispatch(j.data());if(result?.error||result?.upstream>=300||result?.upstream===0)throw Error(result?.error||'Worker returned '+result.upstream);return result;}
+              catch(e){await rootTransaction(async tx=>{const s=await tx.get(rr);if(s.data()?.dispatchSequence===sequence&&!(s.data()?.leaseUntil>wallNow()))tx.set(rr,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,waitReason:'dispatch_retry',phase:'Worker could not start — retrying',lastDispatchError:String(e.message).slice(0,200),updatedAtMs:wallNow()},{merge:true});});return {runId:r.runId,error:String(e.message)};}
+            })());
           }
         }
         return await Promise.allSettled(selected);
-      }finally {await admin.runTransaction(async tx=>{const s=await tx.get(guard);if(s.data()?.ticket===ticket)tx.set(guard,{until:0},{merge:true});});}
+      }finally{await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.data()?.ticket===ticket)tx.set(guard,{until:0},{merge:true});});}
     }
     async function overview({batchId=null,owner,cursor=null}={}) {
       let q=batchCol.where('owner','==',owner).orderBy('createdAtMs','desc').limit(20);if(cursor)q=q.startAfter(Number(cursor));
@@ -775,7 +811,11 @@ const Simulator = (() => {
           const pending=await rows(runCol.doc(r.runId).collection('requests').where('status','==','pending'));
           estimatedInFlightNano=pending.reduce((sum,q)=>sum+Math.min(q.reservation,q.inputTokens*q.rates.input+Math.max(0,wallNow()-q.startedAtMs)/1000*throughput*q.rates.output),0);
         }
-        return {...r,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
+        const terminal=TERMINAL.includes(r.status),active=!terminal&&!r.paused&&r.leaseUntil>wallNow();
+        const activity=terminal?r.status:r.paused?'paused':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
+        const activityLabel=active?r.phase:({paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
+        const canRetryPreparation=terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
+        return {...r,activity,activityLabel,canRetryPreparation,workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
           estimatedTotalNano:Math.max(r.spentNano,Math.min(CEILING,r.progress>5?r.spentNano/(r.progress/100):TARGET)),
           estimatedRemainingMs:TERMINAL.includes(r.status)?0:r.paused?null:r.progress>5?Math.max(0,((r.activeMs||0)+(r.leaseUntil>wallNow()?wallNow()-(r.segmentStartedAtMs||wallNow()):0))*(100-r.progress)/r.progress):null};
       }));
@@ -783,7 +823,7 @@ const Simulator = (() => {
       const typical=measured.length?measured.reduce((n,x)=>n+x,0)/measured.length:null;
       const batchRemainingMs=unfinished.length===0?0:unfinished.some(r=>r.paused||r.status==='preparing'||(r.estimatedRemainingMs==null&&!typical))?null:Math.max(...unfinished.map(r=>r.estimatedRemainingMs||typical||0),unfinished.reduce((n,r)=>n+(r.estimatedRemainingMs||typical||0),0)/(b?.concurrency||1));
       const displayedStatus=b&&runs.length&&runs.every(r=>TERMINAL.includes(r.status))?(runs.every(r=>r.status==='complete')?'complete':'incomplete'):b?.status;
-      return {batchRemainingMs,batch:b?{...b,status:displayedStatus}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
+      return {asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,status:displayedStatus}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
         statistics:distribution(runs),totals:{estimatedInFlightNano:projected.reduce((n,r)=>n+(r.estimatedInFlightNano||0),0),estimatedFinalNano:projected.reduce((n,r)=>n+(TERMINAL.includes(r.status)?r.spentNano:r.estimatedTotalNano),0),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),targetNano:runs.length*TARGET,ceilingNano:runs.length*CEILING},
         pricing:{version:VERSION,asOf:'2026-09-05',models:P.MODEL_RATES,serviceTier:'flex for Astra; standard for extraction',currency:'USD',includes:'AI tokens only; data and Firebase charges excluded'},targetMs:TARGET_MS};
     }

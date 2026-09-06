@@ -5857,6 +5857,61 @@ async function simulatorAdversarial() {
     if(extra)bars.push({t:new Date(close).toISOString(),o:200,h:250,l:190,c:240,v:999999});
     return bars;
   }
+  await check('sparse_provider_bars_preserve_real_intervals_and_reject_large_outages',async()=>{
+    const date='2026-03-20',bars=providerSession(date,{extra:false});bars.splice(15,1);bars.splice(7,1);
+    const out=Sim.regularSessionBars(bars,'ACM',date,{allowSparse:true});
+    assert.equal(out.bars.length,76);assert.equal(out.coverage.missing,2);assert.equal(out.coverage.missingTimes.length,2);
+    assert(out.bars.every(b=>bars.some(source=>source.t===b.t)));assert(out.coverage.missingTimes.every(t=>!out.bars.some(b=>b.t===t)));
+    assert.throws(()=>Sim.regularSessionBars(bars,'ACM',date),e=>e.code==='HISTORICAL_BAR_GAPS','partial local caches must still trigger a full provider fetch');
+    const outage=providerSession(date,{extra:false});outage.splice(7,4);
+    assert.throws(()=>Sim.regularSessionBars(outage,'ACM',date,{allowSparse:true}),e=>e.code==='HISTORICAL_BAR_GAPS');
+    assert.throws(()=>Sim.regularSessionBars([],'ACM',date,{allowSparse:true}),e=>e.code==='HISTORICAL_BAR_GAPS');
+  });
+  await check('large_sec_body_streaming_is_bounded_timed_and_cached_without_duplicate_json',async()=>{
+    const {readBoundedBody}=require('./_investorFetch'),fake=database();let calls=0,progress=0;
+    const text=JSON.stringify({cik:1090872,description:'x'.repeat(17*1024*1024),facts:{}});
+    const url='https://data.sec.gov/api/xbrl/companyfacts/CIK0001090872.json';
+    const svc=Sim.create({admin:fake,publicFetch:async(u,opts)=>{calls++;assert.equal(opts.maxBytes,67108864);
+      const buf=await readBoundedBody(new Response(text),{...opts,onProgress:async()=>{progress++;}});return {status:200,text:buf.toString(),json:JSON.parse(buf.toString())};}});
+    const first=await svc.secSource(url),again=await svc.secSource(url);assert.equal(calls,1);assert(progress>0);assert.equal(first.text,again.text);assert.equal(again.json.description.length,17*1024*1024);
+    const saved=[...fake.docs.values()].find(x=>x.status==='source_ready');assert(saved);
+    assert([...fake.docs.values()].filter(x=>x.bytes).every(x=>x.bytes<text.length+2000),'source JSON must not be stored twice');
+    let cancelled=false;
+    const big=new Response(new ReadableStream({pull(c){c.enqueue(new Uint8Array(1024));},cancel(){cancelled=true;}}));
+    await assert.rejects(()=>readBoundedBody(big,{maxBytes:1500}),e=>e.code==='too_large');assert(cancelled);
+    cancelled=false;const stalled=new Response(new ReadableStream({start(){},cancel(){cancelled=true;}}));
+    await assert.rejects(()=>readBoundedBody(stalled,{maxBytes:1024,timeoutMs:20}),e=>e.code==='timeout');assert(cancelled);
+  });
+  await check('scheduler_starts_three_distinct_workers_recovers_slots_and_never_reuses_complete_job',async()=>{
+    const fake=database();let wall=now;
+    const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{INVESTOR_SIM_CONCURRENCY:'3'}});
+    const b=await svc.createBatch({count:10,from:'2026-08-01',to:'2026-08-31'},'operator','dispatch-test');
+    const dispatched=[];
+    const dispatch=async j=>{dispatched.push(j);await fake.col('InvestorAI_Simulations').doc(j.runId).set({status:'preparing',leaseUntil:wall+90000,dispatchedUntil:0,phase:'Loading actual source',scenarioCursor:2,preparationTotal:321,lastHeartbeatAtMs:wall},{merge:true});return {upstream:202};};
+    await Promise.all([svc.schedule({dispatch}),svc.schedule({dispatch})]);assert.equal(dispatched.length,3);assert.equal(new Set(dispatched.map(j=>j.runId)).size,3);
+    let overview=await svc.overview({owner:'operator',batchId:b.batchId});assert.equal(overview.runs.filter(r=>r.activity==='preparing').length,3);assert.equal(overview.runs.filter(r=>r.activity==='queued').length,7);
+    const first=dispatched[0];await fake.col(A.COL.jobs).doc(first.jobId).set({status:'complete'},{merge:true});
+    await fake.col('InvestorAI_Simulations').doc(first.runId).set({status:'queued',leaseUntil:0,waitReason:'shared_source',phase:'Waiting for shared historical download',nextAttemptAtMs:wall+5000},{merge:true});
+    overview=await svc.overview({owner:'operator',batchId:b.batchId});assert.equal(overview.runs.find(r=>r.runId===first.runId).activity,'waiting_shared');
+    wall+=1000;await svc.schedule({dispatch});assert.equal(dispatched.length,4);assert.notEqual(dispatched[3].runId,first.runId,'a fresh queued run should receive the free slot');
+    // When the same run is due again within 90 seconds, its job must be new and claimable.
+    for(const r of b.runIds)if(r!==first.runId)await fake.col('InvestorAI_Simulations').doc(r).set({paused:true,leaseUntil:0,dispatchedUntil:0},{merge:true});
+    wall+=6000;await svc.schedule({dispatch});assert.equal(dispatched.length,5);assert.equal(dispatched[4].runId,first.runId);assert.notEqual(dispatched[4].jobId,first.jobId);
+    await fake.col('InvestorAI_Simulations').doc(first.runId).set({leaseUntil:0,dispatchedUntil:0,status:'queued'},{merge:true});
+    await svc.schedule({dispatch:async()=>({upstream:503})});const failed=await svc.getRun(first.runId);assert.equal(failed.dispatchedUntil,0);assert.equal(failed.waitReason,'dispatch_retry');assert(failed.nextAttemptAtMs>wall);
+  });
+  await check('retry_preparation_keeps_date_artifacts_and_refuses_paid_or_initialized_runs',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake});
+    const b=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','retry-test'),rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+    await rr.set({status:'unavailable',scenarioCursor:8,scenarioId:'saved',error:{code:'HISTORICAL_BAR_GAPS'}},{merge:true});
+    await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({status:'incomplete'},{merge:true});
+    let view=await svc.overview({owner:'operator',batchId:b.batchId});assert(view.runs[0].canRetryPreparation);
+    await svc.control({runId:b.runIds[0],command:'retry'},'operator');const r=await svc.getRun(b.runIds[0]);assert.equal(r.scenarioCursor,8);assert.equal(r.scenarioId,'saved');assert.equal(r.date,'2026-09-03');assert.equal(r.status,'queued');assert.equal((await svc.getBatch(b.batchId)).status,'running');
+    await rr.set({status:'unavailable',initialized:true},{merge:true});await assert.rejects(()=>svc.control({runId:r.runId,command:'retry'},'operator'),/unpaid preparation/);
+    await rr.set({initialized:false,spentNano:1},{merge:true});await assert.rejects(()=>svc.control({runId:r.runId,command:'retry'},'operator'),/unpaid preparation/);
+    await assert.rejects(()=>svc.control({runId:r.runId,command:'retry'},'intruder'),/another operator/);
+  });
+
   await check('provider_inclusive_close_dst_half_days_and_duplicate_pages',()=>{
     for(const date of ['2025-09-22','2025-12-08','2025-11-28']) {
       const bars=providerSession(date);bars.unshift({...bars[0]});
@@ -5989,6 +6044,7 @@ async function simulatorAdversarial() {
           if(!daily)assert.equal(Date.parse(q.get('end')),M.sessionCloseMs(new Date(date+'T12:00:00Z'))-1);
           // Deliberately include an extra closing bar to exercise response filtering too.
           const bars=daily?Array.from({length:30},(_,i)=>({t:new Date(Date.parse(date+'T04:00:00Z')-(30-i)*86400000).toISOString(),o:100,h:101,l:99,c:100,v:100000})):providerSession(date);
+          if(!daily&&symbol==='A'){bars.splice(15,1);bars.splice(7,1);}
           return {ok:true,status:200,json:async()=>({bars:{[symbol]:bars}})};
         }
         if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:1000})};
@@ -6008,7 +6064,7 @@ async function simulatorAdversarial() {
       assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(run.returnBps,0);assert.equal(run.progress,100);assert.equal(submitted,1);assert(priceRequests>=18);
       assert.deepEqual((await fake.col(A.COL.accounts).doc('paper-1').get()).data(),{untouched:true});assert.equal((await ref.collection('curve').get()).size,83);
       const sr=fake.col('InvestorAI_SimulationScenarios').doc(run.scenarioId),ptr=(await sr.collection('symbols').doc('A').get()).data();
-      const packet=await svc.readJSON(sr,ptr.artifact);assert.equal(packet.coverage.regular,78);assert.equal(packet.coverage.outsideSession,1);assert(packet.bars.every(b=>b.c===100));
+      const packet=await svc.readJSON(sr,ptr.artifact);assert.equal(packet.coverage.regular,76);assert.equal(packet.coverage.missing,2);assert.equal(run.priceCoverage.symbolsWithGaps[0].symbol,'A');assert.equal(packet.coverage.outsideSession,1);assert(packet.bars.every(b=>b.c===100));
       // A second batch reuses the fully prepared scenario without downloading again.
       const prior=priceRequests,b2=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','reuse');
       assert.equal((await svc.execute(b2.runIds[0])).done,true);assert.equal((await svc.getRun(b2.runIds[0])).status,'complete');assert.equal(priceRequests,prior);assert(sec.calls.length>=4);assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);
