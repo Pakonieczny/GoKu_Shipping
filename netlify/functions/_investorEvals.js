@@ -418,7 +418,7 @@ const Simulator = (() => {
     const names=new Set(['documents','versions','claims','financialFacts','dossierVersions','marketDaily'].map(k=>A.COL[k]));
     const tables=new Map([...names].map(n=>[n,new Map()]));
     const add=x=>{const table=tables.get(x.collection);if(!table)return;const versions=table.get(x.id)||[];versions.push(x);table.set(x.id,versions);};
-    for(const p of packets){for(const x of p.data)add(x);add({collection:A.COL.marketDaily,id:p.symbol,knownAtMs:p.cutoff,data:p.daily});}
+    for(const p of packets){for(const x of p.data)add(x);if(p.daily)add({collection:A.COL.marketDaily,id:p.symbol,knownAtMs:p.cutoff,data:p.daily});}
     for(const table of tables.values())for(const versions of table.values())versions.sort((a,b)=>a.knownAtMs-b.knownAtMs);
     const readonly=()=>{throw fail('SIMULATION_SHARED_EVIDENCE_READ_ONLY','Shared historical evidence cannot be changed by a simulation');};
     const field=(data,key)=>key.split('.').reduce((v,k)=>v?.[k],data);
@@ -1136,6 +1136,12 @@ const Simulator = (() => {
       const symbols=resumeSelection?allSymbols.filter(s=>resumeSelection.includes(s)||!config.roster.symbols.includes(s)):allSymbols;
       if(!priceUnit?.pointer)throw fail('SIMULATION_STATE_MISSING');
       const prices=await readJSON(scenarioCol.doc(priceUnit.pointer.cacheId),priceUnit.pointer.artifact),endMs=M.sessionCloseMs(new Date(run.date+'T12:00:00Z'))+1200000,cutoff=M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin);
+      // Once the required investment plan is committed, replay needs prices only.
+      // Keep the original shared artifact pointer; never duplicate company dossiers.
+      if(run.managerDone&&config.investmentPolicy&&run.evidenceReleasedThroughMs!=null&&!run.evidenceReleaseCursor) {
+        const packets=symbols.map(symbol=>{const price=prices.symbols[symbol];if(!price||price.error)throw fail('HISTORICAL_BARS_MISSING');return {symbol,data:[],bars:price.bars,coverage:price.coverage,cutoff,provenance:prices.provenance};});
+        return {packets,meta:{cutoffMs:cutoff,endMs,symbols:allSymbols,evidenceCoverage:run.evidenceCoverage,priceCoverage:run.priceCoverage}};
+      }
       const screeningKey=hash({pointers:run.repositoryPointersRef||units,cutoff,universe:config.roster.universeHash});
       const cp=screeningOnly?screeningCheckpoint:null;
       if(cp&&(cp.key!==screeningKey||!Number.isInteger(cp.next)||cp.next<0||cp.next>symbols.length||!Array.isArray(cp.profiles)||JSON.stringify(cp.profiles.map(p=>p.symbol))!==JSON.stringify(symbols.slice(0,cp.next).filter(s=>config.roster.symbols.includes(s)))||!Number.isInteger(cp.reconstructed)||cp.reconstructed<0||cp.reconstructed>cp.profiles.length))throw fail('SIMULATION_STATE_CORRUPT','Saved screening progress does not match the pinned historical inputs');
@@ -1337,7 +1343,8 @@ const Simulator = (() => {
         // Fast loops publish at most once per two seconds, plus every stage boundary.
         if(!changed&&now-reportedAt<2000&&!(work.total>0&&work.done===work.total))return;
         const advanced=changed||work.done!==prior.done||work.current!==prior.current;
-        await save({work:{...work,startedAtMs:changed?now:prior.startedAtMs||now,lastProgressAtMs:advanced?now:prior.lastProgressAtMs||now},phase:work.label,lastProgressAtMs:advanced?now:run.lastProgressAtMs||now});reportedAt=now;
+        const overallProgress=require('./_investorSimulationInsights').progress(run,work);
+        await save({overallProgress,work:{...work,startedAtMs:changed?now:prior.startedAtMs||now,lastProgressAtMs:advanced?now:prior.lastProgressAtMs||now},phase:work.label,lastProgressAtMs:advanced?now:run.lastProgressAtMs||now});reportedAt=now;
       }
       const paused=async()=>{const [r,b]=await Promise.all([ref.get(),batchCol.doc(run.batchId).get()]);return r.data().resetAtMs || b.data().resetAtMs || r.data().paused || b.data().paused || wallNow()>deadlineMs;};
       const cost=meter(run,ref,paused,assertOwner,async(status,model,stage)=>save({aiActivity:{status,model,stage,checkedAtMs:wallNow()}}));let scope;
@@ -1749,6 +1756,20 @@ const Simulator = (() => {
         return await Promise.allSettled(selected);
       }finally{await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.data()?.ticket===ticket)tx.set(guard,{until:0},{merge:true});});}
     }
+    async function outcomeAnalysis(run) {
+      const I=require('./_investorSimulationInsights');
+      if(run.status!=='complete'||run.outcomeAnalysis?.version===I.VERSION||!run.investments?.length||!run.repositoryPointersRef)return run;
+      const ref=runCol.doc(run.runId),pointers=await readJSON(ref,run.repositoryPointersRef),p=pointers.find(u=>u.unitId==='prices_'+run.date)?.pointer;
+      if(!p)return run;
+      const cp=run.managerCheckpointRef?await readJSON(ref,run.managerCheckpointRef):null,plan=cp?.data?.simulationPlan;
+      if(!plan)return run;
+      const prices=await readJSON(scenarioCol.doc(p.cacheId),p.artifact),fills=await rows(ref.collection(A.COL.fills));
+      const analysis=I.analyze({run,plan,prices,fills,closeMs:M.sessionCloseMs(new Date(run.date+'T12:00:00Z'))});
+      // A separate deterministic analysis does not alter the immutable plan or fills.
+      const outcomeRef=await saveJSON(ref,'outcome_analysis',analysis);
+      await ref.set({outcomeRef,outcomeAnalysis:analysis},{merge:true});
+      return {...run,outcomeRef,outcomeAnalysis:analysis};
+    }
     async function overview({batchId=null,owner,cursor=null}={}) {
       let q=batchCol.where('owner','==',owner).orderBy('createdAtMs','desc').limit(20);if(cursor)q=q.startAfter(Number(cursor));
       // A single-field owner query avoids mandatory new composite indexes.
@@ -1758,6 +1779,7 @@ const Simulator = (() => {
       const runs=b?(await rows(runCol.where('batchId','==',b.batchId))).sort((a,b)=>a.index-b.index):[];
       const repository=b?await repositoryState(b):null;
       const projected=await Promise.all(runs.map(async r=>{
+        try{r=await outcomeAnalysis(r);}catch(e){r={...r,outcomeAnalysisError:'Outcome analysis is temporarily unavailable; recorded results are unchanged.'};}
         // Wall-clock duration is not token usage, especially across Luna/Astra.
         // Show reservations until the provider reports an actual charge.
         const throughput=null,estimatedInFlightNano=null;
@@ -1767,7 +1789,7 @@ const Simulator = (() => {
         const activity=terminal?r.status:r.paused?'paused':unresponsive?'stalled':!r.initialized&&repository?.status!=='ready'?'waiting_repository':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
         const activityLabel=active&&activity!=='waiting_repository'?r.phase:({waiting_repository:'Waiting for shared data preparation',paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
         const canRetryPreparation=!b.resetAtMs&&terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
-        return {...r,...runBudget(r),budgetVersion:BUDGET_VERSION,activity,activityLabel,canRetryPreparation,canResumePersistence:!b.resetAtMs&&canResumePersistence(r)&&!(r.leaseUntil>wallNow()),canRecoverHandoff:!b.resetAtMs&&canRecoverHandoff(r)&&!(r.leaseUntil>wallNow()),canRetryAIStep:!b.resetAtMs&&canRetryAIStep(r)&&!(r.leaseUntil>wallNow()),canResumeBudget:!b.resetAtMs&&canResumeBudget(r)&&!(r.leaseUntil>wallNow()),canRecheckAI:!b.resetAtMs&&canRecheckAI(r)&&!(r.leaseUntil>wallNow()),canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
+        return {...r,overallProgress:require('./_investorSimulationInsights').progress(r),...runBudget(r),budgetVersion:BUDGET_VERSION,activity,activityLabel,canRetryPreparation,canResumePersistence:!b.resetAtMs&&canResumePersistence(r)&&!(r.leaseUntil>wallNow()),canRecoverHandoff:!b.resetAtMs&&canRecoverHandoff(r)&&!(r.leaseUntil>wallNow()),canRetryAIStep:!b.resetAtMs&&canRetryAIStep(r)&&!(r.leaseUntil>wallNow()),canResumeBudget:!b.resetAtMs&&canResumeBudget(r)&&!(r.leaseUntil>wallNow()),canRecheckAI:!b.resetAtMs&&canRecheckAI(r)&&!(r.leaseUntil>wallNow()),canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
           estimatedTotalNano:uncappedRun(r)?(TERMINAL.includes(r.status)?r.spentNano:null):Math.max(r.spentNano,Math.min(CEILING,r.progress>5?r.spentNano/(r.progress/100):TARGET)),
           estimatedRemainingMs:TERMINAL.includes(r.status)?0:r.paused?null:r.progress>5?Math.max(0,((r.activeMs||0)+(r.leaseUntil>wallNow()?wallNow()-(r.segmentStartedAtMs||wallNow()):0))*(100-r.progress)/r.progress):null};
       }));
@@ -1779,7 +1801,7 @@ const Simulator = (() => {
       const cleanupBatches=all.filter(x=>x.repositoryMode==='shared_first'&&x.cleanupVersion!==CLEANUP_VERSION);
       const cleanup={pendingBatches:cleanupBatches.length,retained:all.reduce((n,x)=>n+(x.cleanupRetained||0),0),removed:all.reduce((n,x)=>n+(x.cleanupRemoved||0),0),checked:cleanupBatches.reduce((n,b)=>n+(b.cleanupChecked||0),0),total:cleanupBatches.reduce((n,b)=>n+(b.cleanupTotal||b.count*COPY_KEYS.length||0),0),errors:cleanupBatches.filter(x=>x.cleanupError).map(x=>x.cleanupError),phase:cleanupBatches.find(x=>x.cleanupPhase)?.cleanupPhase||'Waiting for cleanup worker'};
       return {cleanup,repository:repositorySummary,asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,targetNano:runs.some(uncappedRun)?null:TARGET*runs.length,ceilingNano:runs.some(uncappedRun)?null:CEILING*runs.length,budgetVersion:BUDGET_VERSION,status:displayedStatus,concurrency:b.count||runs.length,concurrencyMode:'all_requested'}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.batchId===b?.batchId?runs.reduce((n,r)=>n+(r.spentNano||0),0):x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
-        statistics:distribution(runs),totals:{estimatedInFlightNano:projected.reduce((n,r)=>n+(r.estimatedInFlightNano||0),0),estimatedFinalNano:projected.some(r=>r.estimatedTotalNano===null)?null:projected.reduce((n,r)=>n+(TERMINAL.includes(r.status)?r.spentNano:r.estimatedTotalNano),0),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),budgetMode:b?.budgetMode||'capped',targetNano:runs.some(uncappedRun)?null:runs.length*TARGET,ceilingNano:runs.some(uncappedRun)?null:runs.length*CEILING},
+        outcomes:require('./_investorSimulationInsights').summarize(projected),statistics:distribution(runs),totals:{estimatedInFlightNano:projected.reduce((n,r)=>n+(r.estimatedInFlightNano||0),0),estimatedFinalNano:projected.some(r=>r.estimatedTotalNano===null)?null:projected.reduce((n,r)=>n+(TERMINAL.includes(r.status)?r.spentNano:r.estimatedTotalNano),0),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),budgetMode:b?.budgetMode||'capped',targetNano:runs.some(uncappedRun)?null:runs.length*TARGET,ceilingNano:runs.some(uncappedRun)?null:runs.length*CEILING},
         pricing:{version:VERSION,asOf:'2026-09-05',models:P.MODEL_RATES,serviceTier:'flex for Astra; standard for Luna shortlist and extraction',currency:'USD',includes:'AI tokens only; data and Firebase charges excluded'},targetMs:TARGET_MS};
     }
     async function detail(runId,owner,{collection='curve',after=null}={}) {
