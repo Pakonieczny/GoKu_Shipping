@@ -5846,7 +5846,22 @@ async function runFixturesAsync() {
 }
 
 async function simulatorAdversarial({only=null}={}) {
-  const assert=require('assert/strict'),A=require('./_investorAdmin'),Sim=require('./_investorEvals').Simulator,P=require('./_investorPolicy');
+  const assert=require('assert/strict'),A=require('./_investorAdmin'),RealSim=require('./_investorEvals').Simulator,P=require('./_investorPolicy');
+  const Sim={...RealSim,create(options={}) {
+    let creating=false;const realNow=options.wallNow||Date.now;
+    const svc=RealSim.create({...options,wallNow:()=>creating?Math.max(realNow(),Date.UTC(2026,8,15)):realNow()}),create=svc.createBatch;
+    svc.createBatch=async(input,owner,key)=>{
+      creating=true;let b;try{b=await create({...input,companyRange:'range2'},owner,key);}finally{creating=false;}
+      const br=options.admin.col('InvestorAI_SimulationBatches').doc(b.batchId),config=await svc.readJSON(br,b.configRef);
+      config.investmentPolicy=require('./_investorResearchHandoff').DIVERSIFIED_POLICY;config.aiPlan=RealSim.AI_PLAN;
+      const configRef=await svc.saveJSON(br,'fixture_legacy_configuration',config),legacyConfig={...b.config};delete legacyConfig.companyRange;delete legacyConfig.maxHoldingSessions;
+      await br.set({configRef,config:legacyConfig,repositoryId:null},{merge:true});
+      for(const rid of b.runIds){const rr=options.admin.col('InvestorAI_Simulations').doc(rid),row=(await rr.get()).data();delete row.sessions;delete row.companyRange;await rr.set({...row,aiPlan:RealSim.AI_PLAN,configRef});}
+      b=await svc.getBatch(b.batchId);const repo=await svc.ensureRepository(b,config);await svc.reuseRepositoryArtifacts(b,config,repo.ref);return svc.getBatch(b.batchId);
+    };
+    svc.startBatch=async(input,owner,key,dispatch)=>{const b=await svc.createBatch(input,owner,key);await svc.schedule({dispatch,batchId:b.batchId});return svc.getBatch(b.batchId);};
+    return svc;
+  }};
   const results=[];
   async function check(name,fn){if(only&&!name.includes(only))return;try{await fn();results.push({name,pass:true});}catch(e){results.push({name,pass:false,error:e.message,stack:e.stack?.split('\n').slice(0,4).join('\n')});}}
   function database() {
@@ -6525,23 +6540,23 @@ async function simulatorAdversarial({only=null}={}) {
   });
   await check('cold_simulation_worker_loads_market_credentials_after_verified_claim',async()=>{
     const M=require('./_investorMarket'),AUTH=require('./_investorAuth'),J=require('./_investorJobs'),worker=require('./investorManager-background');
-    const originals={load:M.loadMarketSettings,auth:AUTH.loadAuthSecrets,claim:J.claimOnce,complete:J.complete,yield:J.yieldSegment,create:Sim.create};
+    const originals={load:M.loadMarketSettings,auth:AUTH.loadAuthSecrets,claim:J.claimOnce,complete:J.complete,yield:J.yieldSegment,create:RealSim.create};
     let loaded=false,accepted=true,executed=0,prepared=0,completed=0;
     try {
       AUTH.loadAuthSecrets=async()=>{};
       J.claimOnce=async()=>({claimed:accepted,claim:{jobId:'fixture'},httpStatus:403,reason:'invalid_nonce'});
       M.loadMarketSettings=async()=>{loaded=true;};
-      Sim.create=()=>({execute:async runId=>{assert(loaded,'saved market credentials were not loaded');assert.equal(runId,RID);executed++;return {done:true};},prepareRepository:async(batchId,unitId)=>{assert(loaded);assert.equal(batchId,BID);assert.equal(unitId,'company_A');prepared++;return {done:true};}});
+      RealSim.create=()=>({execute:async runId=>{assert(loaded,'saved market credentials were not loaded');assert.equal(runId,RID);executed++;return {done:true};},prepareRepository:async(batchId,unitId)=>{assert(loaded);assert.equal(batchId,BID);assert.equal(unitId,'company_A');prepared++;return {done:true};}});
       J.complete=async()=>{completed++;};
       const event={body:JSON.stringify({jobId:'fixture',task:'simulation',nonce:'fixture',payload:{runId:RID}})};
       assert.equal((await worker.handler(event)).statusCode,200);assert.equal(executed,1);assert.equal(completed,1);
       assert.equal((await worker.handler({body:JSON.stringify({jobId:'fixture',task:'simulation_prepare',nonce:'fixture',payload:{batchId:BID,unitId:'company_A'}})})).statusCode,200);assert.equal(prepared,1);assert.equal(completed,2);
       let yielded=0;J.yieldSegment=async(claim,args)=>{assert.equal(args.reason,'firestore_contention');yielded++;};
-      Sim.create=()=>({execute:async()=>{throw Object.assign(Error('10 ABORTED: contention'),{code:10});}});
+      RealSim.create=()=>({execute:async()=>{throw Object.assign(Error('10 ABORTED: contention'),{code:10});}});
       assert.equal((await worker.handler(event)).statusCode,202);assert.equal(yielded,1);
       accepted=false;loaded=false;
       assert.equal((await worker.handler(event)).statusCode,403);assert.equal(loaded,false);assert.equal(executed,1);
-    } finally {M.loadMarketSettings=originals.load;AUTH.loadAuthSecrets=originals.auth;J.claimOnce=originals.claim;J.complete=originals.complete;J.yieldSegment=originals.yield;Sim.create=originals.create;}
+    } finally {M.loadMarketSettings=originals.load;AUTH.loadAuthSecrets=originals.auth;J.claimOnce=originals.claim;J.complete=originals.complete;J.yieldSegment=originals.yield;RealSim.create=originals.create;}
   });
   await check('historical_preparation_refreshes_credentials_and_keeps_missing_data_closed',async()=>{
     const M=require('./_investorMarket'),originals={load:M.loadMarketSettings,credentials:M.providerCredentials};
@@ -6805,10 +6820,13 @@ async function simulatorAdversarial({only=null}={}) {
     await x.ref.set({reservedNano:0,pendingAiCount:0},{merge:true});
     await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:research,stage:'manager_research'});assert.equal(x.posts(),1);
   });
-  async function researchPipeline({failure=null,prepared=false,measure=false,event=false,required=false,picks=2}={}) {
-    const fake=database(),D=require('./_investorDossier'),M=require('./_investorMarket'),date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),calls=[],responses=new Map(),toolRounds=new Map();
+  function horizonFixture(chosen=3) {
+    return Object.fromEntries([1,2,3].map(n=>['session'+n,{expectedReturnBps:n<=chosen?100+(n-1)*130:0,downsideBps:100+(n-1)*20,opportunityCostBps:(n-1)*20,uncertaintyPenaltyBps:10,evidenceConfidence:n<=chosen?'MEDIUM':'LOW',reason:'Dated catalyst timing, adverse gaps and alternate uses of capital considered.'}]));
+  }
+  async function researchPipeline({failure=null,prepared=false,measure=false,event=false,required=false,picks=2,horizon=false}={}) {
+    const fake=database(),D=require('./_investorDossier'),M=require('./_investorMarket'),date=horizon?'2026-08-28':'2026-09-03',cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),calls=[],responses=new Map(),toolRounds=new Map();
     let finalists=[],bad=failure,missingUsage=failure==='usage',wall=Date.now();const transportErrors=[];
-    const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{OPENAI_API_KEY:'fixture'},publicFetch:async()=>{throw Error('No live source access in pipeline test');},fetchImpl:async(url,opts)=>{try {
+    const svc=(horizon?RealSim:Sim).create({admin:fake,wallNow:()=>wall,env:{OPENAI_API_KEY:'fixture'},publicFetch:async()=>{throw Error('No live source access in pipeline test');},fetchImpl:async(url,opts)=>{try {
       if(opts.method==='GET'){const response=responses.get(url.split('/').at(-1));assert(response,'poll must use a saved response');return {ok:true,status:200,json:async()=>response};}
       const b=JSON.parse(opts.body);
       if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:measure?400000:12000})};
@@ -6829,7 +6847,7 @@ async function simulatorAdversarial({only=null}={}) {
         if(bad==='document_citations')output.sections.business={summary:'Invented growth claim that must never reach Astra.',evidenceIds:['claim:not_in_the_source_packet'],missing:[]};
         else {const validate=new(require('ajv/dist/2020'))({strict:false}).compile(b.text.format.schema);assert(validate(output),JSON.stringify(validate.errors));}
       } else if(name==='prepared_investment_decision_v1'||name==='simulation_investment_plan_v1') {
-        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'high');assert(!b.tools);assert.equal(b.max_output_tokens,picks>2?35910:23940);
+        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'high');assert(!b.tools);assert.equal(b.max_output_tokens,horizon?(picks>5?47880:39900):picks>2?35910:23940);
         const docs=JSON.parse(user.match(/<untrusted_context name="prepared_documents">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);const prior=required?[]:JSON.parse(user.match(/<untrusted_context name="completed_research">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);assert.equal(docs.length+prior.length,picks);assert(docs.every(d=>d.documentHash));
         assert(!JSON.stringify(docs).includes('Invented growth claim that must never reach Astra.'));
         for(const doc of docs){const ids=new Set(doc.evidence.map(e=>e.id));assert(Object.values(doc.sections).every(s=>s.evidenceIds.every(id=>ids.has(id))));assert(doc.evidence.some(e=>e.claimType==='RISK_FACTOR'),'adverse evidence must survive preparation');}
@@ -6837,7 +6855,7 @@ async function simulatorAdversarial({only=null}={}) {
         output={schemaVersion:'prepared-investment-decision.v1',research,allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:finalists.map(symbol=>({symbol,decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Retain cash after joint underwriting'})),expansionMandates:[],holdingAnalysis:[],comparisonNote:'Compared both finalists and cash in one decision'}};
         if(bad==='joint_schema')output.research[0].bearCase='x'.repeat(1201);
         if(required)output={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Best available candidates; allocate less to uncertainty.',
-          investments:Object.fromEntries(finalists.map((symbol,i)=>[symbol,{allocationUsd:picks>2?Math.floor(95000/picks):(i?30000:5000),conviction:i?'HIGH':'LOW',sizingReason:i?'Stronger relative conviction':'Missing forward evidence reduces allocation',
+          investments:Object.fromEntries(finalists.map((symbol,i)=>[symbol,{...(horizon?{holdingSessions:i%3+1,holdingReason:'Evidence supports this horizon after downside and opportunity cost.',horizonAnalysis:horizonFixture(i%3+1)}:{}),allocationUsd:horizon?Math.min(30000,Math.floor(95000/picks)):picks>2?Math.floor(95000/picks):(i?30000:5000),conviction:i?'HIGH':'LOW',sizingReason:i?'Stronger relative conviction':'Missing forward evidence reduces allocation',
             assessment:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,'Dated evidence assessed; uncertainty remains.'])),
             outlook:'Bear: loss; base: flat; bull: upside. These are assumptions, not issuer guidance.',takeProfitBps:2000,stopLossBps:2000,evidenceIds:['baseline:symbol']}]))};
 
@@ -6859,22 +6877,85 @@ async function simulatorAdversarial({only=null}={}) {
       if(missingUsage&&(name==='research_memo_v1'||name==='prepared_investment_decision_v1'||name==='simulation_investment_plan_v1')){missingUsage=false;return {ok:true,status:200,json:async()=>({...response,usage:null})};}
       return {ok:true,status:200,json:async()=>response};
     } catch(e){transportErrors.push(e.stack);throw e;}}});
-    const batch=await svc.createBatch({count:1,from:date,to:date,budgetMode:measure?'measure_actual_cost':'capped'},'operator','research-pipeline-'+failure),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config),units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
+    const batch=await svc.createBatch({companyRange:picks<=2?'range1':picks<=5?'range2':'range3',count:1,from:date,to:date,budgetMode:measure?'measure_actual_cost':'capped'},'operator','research-pipeline-'+failure),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config),units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
     const daily=Array.from({length:400},(_,i)=>({date:new Date(Date.parse(date+'T00:00:00Z')-(400-i)*86400000).toISOString().slice(0,10),o:100,h:101,l:99,c:100,v:1000000}));
     for(const unit of units.filter(x=>x.data().kind==='company')) {
       const symbol=unit.data().symbol,parent=fake.col('InvestorAI_SimulationScenarios').doc('research_company_'+symbol),row=config.roster.members.find(x=>x.symbol===symbol),data=row?[{collection:A.COL.dossierVersions,id:symbol+'_fixture',knownAtMs:cutoff-1000,data:D.composeVersion({symbol,identity:{...row,name:row.company},asOfMs:cutoff-1000})}]:[];
       if(event&&symbol===config.roster.symbols[0])data.push({collection:A.COL.evidenceDeltas,id:symbol+'_event',knownAtMs:cutoff+1000,data:{deltaId:symbol+'_event',symbol,eventClass:'NEW_8K',form:'8-K',safetyClass:'high_impact',managerMateriality:'pending',knownAtMs:cutoff+1000}});
       // Include citation-bearing evidence so the test cannot pass on empty lists.
       for(const claimType of ['FACT','RISK_FACTOR'])data.push({collection:A.COL.claims,id:symbol+'_'+claimType,knownAtMs:cutoff-1000,data:{kind:'claim',symbol,claimId:symbol+'_'+claimType,documentVersionId:symbol+'_source',claimType,text:claimType==='FACT'?'Historical business disclosure.':'Material uncertainty in the forecast.',quote:'Historical disclosure.',publishedAtMs:cutoff-1000,firstSeenAtMs:cutoff-1000}});
+      if(horizon)data.push({collection:A.COL.claims,id:symbol+'_future',knownAtMs:cutoff+3600000,data:{symbol,text:'FUTURE_HORIZON_SECRET',publishedAtMs:cutoff+3600000}});
       const artifact=await svc.saveJSON(parent,'company',{data,daily,provenance:{provider:'fixture',adjustment:'split_only'}});await unit.ref.set({status:'ready',pointer:{cacheId:parent.id,artifact}},{merge:true});priceSymbols[symbol]={bars:providerSession(date,{extra:false}),coverage:{regular:78,expected:78,missing:0}};
     }
-    const prices=fake.col('InvestorAI_SimulationScenarios').doc('research_session'),artifact=await svc.saveJSON(prices,'prices',{symbols:priceSymbols,provenance:{provider:'fixture'}});await units.find(x=>x.data().kind==='prices').ref.set({status:'ready',pointer:{cacheId:prices.id,artifact}},{merge:true});
-    if(picks===2){config.aiPlan={...config.aiPlan,version:'shortlist-50.v1',maxResearchCompanies:2,outputTokens:{...config.aiPlan.outputTokens,decidePreparedPortfolio:18000}};config.investmentPolicy=require('./_investorResearchHandoff').INVESTMENT_POLICY;await br.set({configRef:await svc.saveJSON(br,'saved_legacy_config',config)},{merge:true});}
+    for(const unit of units.filter(x=>x.data().kind==='prices')) {
+      const sessionDate=unit.data().date,index=horizon?require('./_investorSimulationHorizon').sessions(date).findIndex(s=>s.date===sessionDate):0;
+      const symbols=horizon?Object.fromEntries(Object.keys(priceSymbols).map(symbol=>[symbol,{bars:providerSession(sessionDate,{extra:false}).map(b=>({...b,o:b.o+index*3,h:b.h+index*3,l:b.l+index*3,c:b.c+index*3})),coverage:{regular:78,expected:78,missing:0}}])):priceSymbols;
+      const prices=fake.col('InvestorAI_SimulationScenarios').doc('research_session_'+sessionDate),artifact=await svc.saveJSON(prices,'prices',{symbols,provenance:{provider:'fixture'}});
+      await unit.ref.set({status:'ready',pointer:{cacheId:prices.id,artifact}},{merge:true});
+    }
+    if(picks===2&&!horizon){config.aiPlan={...config.aiPlan,version:'shortlist-50.v1',maxResearchCompanies:2,outputTokens:{...config.aiPlan.outputTokens,decidePreparedPortfolio:18000}};config.investmentPolicy=require('./_investorResearchHandoff').INVESTMENT_POLICY;await br.set({configRef:await svc.saveJSON(br,'saved_legacy_config',config)},{merge:true});}
     if(!required){delete config.investmentPolicy;await br.set({configRef:await svc.saveJSON(br,'discretionary_config',config)},{merge:true});}
     if(!prepared){config.aiPlan={...config.aiPlan,preparedResearch:false};await br.set({configRef:await svc.saveJSON(br,'legacy_config',config)},{merge:true});}
     const runId=batch.runIds[0],ref=fake.col('InvestorAI_Simulations').doc(runId);
     return {svc,runId,ref,fake,calls,responses,toolRounds,finalists:()=>finalists,setValid:()=>{bad=null;},drive:async()=>{for(let i=0;i<8;i++){await svc.execute(runId);wall+=10000;const r=await svc.getRun(runId);if(transportErrors.length)throw Error(transportErrors.join('\n'));if(['complete','incomplete'].includes(r.status))return r;}throw Error('Pipeline failed to terminate: '+JSON.stringify({run:await svc.getRun(runId),calls:calls.map(b=>b.text.format.name)}));}};
   }
+  await check('horizon_ranges_required_dates_calendar_and_choice_validation',async()=>{
+    const H=require('./_investorSimulationHorizon'),Hand=require('./_investorResearchHandoff'),fake=database(),svc=RealSim.create({admin:fake});
+    const api=require('./_investorApiSchemas').compileAll().validators.params.simulationStart;
+    for(const companyRange of ['range1','range2','range3'])assert(api({count:1,from:'2026-08-01',to:'2026-08-31',companyRange}));
+    assert(!api({count:1,from:'2026-08-01',to:'2026-08-31'}));assert(!api({count:1,from:'2026-08-01',to:'2026-08-31',companyRange:'range4'}));
+    for(const range of [undefined,'','range4','__proto__'])await assert.rejects(()=>svc.createBatch({count:1,from:'2026-08-01',to:'2026-08-31',companyRange:range},'operator','bad-'+range),/company range/);
+    assert.deepEqual(H.sessions('2026-09-04').map(s=>s.date),['2026-09-04','2026-09-08','2026-09-09']);
+    const half=H.sessions('2025-11-26');assert.deepEqual(half.map(s=>s.date),['2025-11-26','2025-11-28','2025-12-01']);assert.equal(half[1].closeMs-half[1].openMs,210*60000);
+    const steps=H.replaySteps(half);assert(steps.every(t=>half.some(s=>t>=s.openMs&&t<=s.closeMs+1200000)));assert.equal(new Set(steps).size,steps.length);
+    for(const range of Object.keys(H.RANGES)) {
+      const policy=H.policyFor(range);assert(Hand.supportedInvestmentPolicy(policy));assert(!Hand.supportedInvestmentPolicy({...policy,maxHoldingSessions:4}));
+      const row={allocationUsd:5000,holdingSessions:1,holdingReason:'Short horizon',horizonAnalysis:horizonFixture(1)};
+      for(const n of [policy.minCompanies,policy.maxCompanies])Hand.assertInvestmentAllocations(Object.fromEntries(Array.from({length:n},(_,i)=>['S'+i,row])),policy);
+      for(const n of [policy.minCompanies-1,policy.maxCompanies+1])assert.throws(()=>Hand.assertInvestmentAllocations(Object.fromEntries(Array.from({length:n},(_,i)=>['S'+i,row])),policy),/FINALISTS/);
+    }
+    for(const n of [1,2,3]){assert.equal(H.choose(horizonFixture(n)),n);H.validate({holdingSessions:n,holdingReason:'Supported tradeoff',horizonAnalysis:horizonFixture(n)});}
+    const estimates=horizonFixture(1);estimates.session2={...estimates.session1,expectedReturnBps:125};assert.equal(H.choose(estimates),1,'25bps margin favors shorter duration');
+    estimates.session2.expectedReturnBps=126;assert.equal(H.choose(estimates),2);estimates.session2.evidenceConfidence='LOW';assert.equal(H.choose(estimates),1);
+    assert.throws(()=>H.validate({holdingSessions:3,holdingReason:'Hope of recovery',horizonAnalysis:horizonFixture(1)}),/HORIZON/);
+    const recent=RealSim.create({admin:database(),wallNow:()=>Date.UTC(2026,8,6)});await assert.rejects(()=>recent.createBatch({companyRange:'range2',count:1,from:'2026-09-04',to:'2026-09-04'},'operator','future'),/enough distinct/);
+  });
+  await check('horizon_deadlines_liquidity_gap_stop_resume_and_basis_protection',async()=>{
+    const H=require('./_investorSimulationHorizon'),E=require('./_investorExecution'),C=require('./_investorDecisionContext'),M=require('./_investorMarket');
+    async function setup(date='2025-11-26',holding=3) {
+      const fake=database(),policy=H.policyFor('range1'),schedule=H.sessions(date),content={policy,sessions:schedule,cutoffMs:M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),investments:{TEST:{allocationUsd:10000,holdingSessions:holding,holdingReason:'Supported timing',horizonAnalysis:horizonFixture(holding),conviction:'MEDIUM',sizingReason:'Controlled exposure',takeProfitBps:5000,stopLossBps:500}}},plan={...content,planHash:C.hash(content)};
+      const scope={runId:RID,investmentPolicy:policy,clock:()=>content.cutoffMs,collection:fake.col,transaction:fake.runTransaction,batch:fake.batch,executionSpreadBps:10,feePerShareMicros:5000};
+      await fake.col(A.COL.accounts).doc(RID).set({accountId:RID,startingNavCents:10000000,balanceCents:{cash:10000000,contributed_capital:-10000000}});
+      await A.withSimulationScope(scope,()=>E.saveRequiredSimulationPlan({plan,admin:fake,accountId:RID,managerRunId:'fixture'}));
+      const tick=(at,bar={o:100,h:101,l:99,c:100,v:100000})=>A.withSimulationScope(scope,()=>E.tickRequiredSimulation({admin:fake,accountId:RID,barsBySymbol:{TEST:bar?[{...bar,t:new Date(at).toISOString()}]:[]},nowMs:at+1200000}));
+      const fills=async()=>(await fake.col(A.COL.fills).get()).docs.map(d=>d.data());
+      return {fake,schedule,scope,tick,fills};
+    }
+    const x=await setup();await x.tick(x.schedule[0].openMs);await x.tick(x.schedule[0].closeMs-300000);assert.equal((await x.fills()).length,1);
+    // Recovery sees the same bar a second time: no duplicate debit or purchase.
+    await x.tick(x.schedule[0].closeMs-300000);await x.tick(x.schedule[1].openMs);await x.tick(x.schedule[1].closeMs-300000);assert.equal((await x.fills()).length,1);
+    await x.tick(x.schedule[2].closeMs-300000);const fills=await x.fills();assert.equal(fills.length,2);assert.equal(fills[1].role,'TIME_LIMIT');assert.equal(fills[1].eventAtMs,x.schedule[2].closeMs);
+    await x.tick(x.schedule[2].closeMs-300000);assert.equal((await x.fills()).length,2);
+    const half=await setup('2025-11-28',1);await half.tick(half.schedule[0].openMs);await half.tick(half.schedule[0].closeMs-300000);assert.equal((await half.fills())[1].eventAtMs,half.schedule[0].closeMs);
+    const gap=await setup();await gap.tick(gap.schedule[0].openMs);await gap.tick(gap.schedule[1].openMs,{o:90,h:101,l:89,c:100,v:100000});const stop=(await gap.fills())[1];assert.equal(stop.role,'STOP');assert(Number(stop.priceMicros)<90000000,'gap uses observed adverse opening bid and slippage');
+    for(const last of [null,{o:100,h:101,l:99,c:100,v:1},{o:100,h:101,l:99,c:100,v:100000,halted:true}]) {
+      const missing=await setup('2025-11-28',1);await missing.tick(missing.schedule[0].openMs);
+      await assert.rejects(()=>missing.tick(missing.schedule[0].closeMs-300000,last),/HISTORICAL_HOLD_EXIT_UNAVAILABLE|no sufficiently liquid/);assert.equal((await missing.fills()).length,1);
+    }
+    const late=await setup();await late.tick(late.schedule[1].openMs);assert.equal((await late.fills()).length,0,'entry cannot migrate to a future session');
+    const basis=await setup();await basis.tick(basis.schedule[0].openMs);await assert.rejects(()=>basis.tick(basis.schedule[1].openMs,{o:50,h:51,l:49,c:50,v:100000}),/share-basis/);assert.equal((await basis.fills()).length,1,'split-like changes cannot become false investment losses');
+  });
+  for(const picks of [1,3,8])await check('horizon_'+picks+'_picks_full_pipeline_fixed_deadlines_no_future_AI_or_rebuys',async()=>{
+    const x=await researchPipeline({prepared:true,required:true,picks,horizon:true}),run=await x.drive();
+    assert.equal(run.status,'complete',JSON.stringify(run.error));assert.equal(x.calls.length,picks+3);assert(!JSON.stringify(x.calls).includes('FUTURE_HORIZON_SECRET'));assert.equal(run.openPositions,0);assert.equal(run.sessionNumber,3);
+    const plan=(await x.ref.collection(A.COL.portfolioPlans).doc('required_investment').get()).data();assert.equal(plan.policy.version,'required-investment.v3');assert.equal(Object.keys(plan.investments).length,picks);
+    const fills=(await x.ref.collection(A.COL.fills).get()).docs.map(x=>x.data()),sells=fills.filter(f=>f.side==='sell');assert.equal(sells.length,picks);
+    for(const sell of sells){assert.equal(sell.role,'TIME_LIMIT');assert.equal(sell.eventAtMs,plan.sessions[plan.investments[sell.symbol].holdingSessions-1].closeMs);}
+    assert(run.investments.every(i=>i.holdingSessions&&i.holdingDeadlineMs));assert(run.spentNano<Sim.CEILING);assert.equal(run.pendingAiCount,0);assert.equal(run.reservedNano,0);
+    const curve=(await x.ref.collection('curve').get()).docs.map(d=>d.data());assert(curve.every(p=>plan.sessions.some(s=>p.atMs>=s.openMs&&p.atMs<=s.closeMs+1200000)));
+    const paid=(await x.ref.collection('requests').get()).docs.map(d=>d.data());assert(paid.every(q=>q.clockMs===plan.cutoffMs),'all purchased decisions precede replay');
+    const before=JSON.stringify(fills);await x.svc.execute(x.runId);assert.equal(JSON.stringify((await x.ref.collection(A.COL.fills).get()).docs.map(x=>x.data())),before);assert.equal(x.calls.length,picks+3);
+  });
   for(const picks of [4,7])await check('diversified_'+picks+'_picks_real_pipeline_caps_total_and_reuses_paid_plan',async()=>{
     const x=await researchPipeline({prepared:true,required:true,picks}),run=await x.drive();
     assert.equal(run.status,'complete',JSON.stringify(run.error));assert.equal(x.calls.length,picks+3);
@@ -7017,7 +7098,7 @@ async function simulatorAdversarial({only=null}={}) {
     const stages=[],packets=await x.svc.repositoryPackets(replayRun,config,{status:'ready',units:[]},{onProgress:async w=>stages.push(w.stage)});
     assert(packets.packets.every(p=>p.data.length===0));assert(packets.packets.some(p=>p.bars.length));assert(!stages.includes('load_research'));
     const overview=await x.svc.overview({batchId:r.batchId,owner:'operator'});
-    assert.equal(overview.outcomes.completed,1);assert.equal(overview.outcomes.positions.length,2);assert.equal(overview.runs[0].outcomeAnalysis.version,'simulation-outcomes.v1');
+    assert.equal(overview.outcomes.completed,1);assert.equal(overview.outcomes.positions.length,2);assert.equal(overview.runs[0].outcomeAnalysis.version,'simulation-outcomes.v2');
     assert.equal((await x.svc.getRun(x.runId)).outcomeAnalysis.investments.length,2);assert.equal(x.calls.length,5);
 
   });

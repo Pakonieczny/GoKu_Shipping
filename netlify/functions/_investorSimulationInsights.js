@@ -1,7 +1,7 @@
 'use strict';
 // Descriptive, reproducible summaries. No model calls or strategy promotion.
 const Money=require('./_investorMoney');
-const VERSION='simulation-outcomes.v1';
+const VERSION='simulation-outcomes.v2';
 function progress(run,work=run.work||{}) {
   if(run.status==='complete')return 100;
   const ranges={screening_profiles:[0,15],shortlist:[15,25],load_research:[25,35],account:[35,36],manager_freeze:[36,38],manager_review:[38,50],manager_coverage:[50,52],manager_document:[52,65],manager_decision:[65,78],manager_validation:[78,80],manager_complete:[80,80],replay:[80,99],finalize:[99,99]};
@@ -22,7 +22,7 @@ function analyze({run,plan,prices,fills=[],closeMs}) {
     const heldToCloseMinor=usable?Number(Money.divRound(quantity*bid,10000n,Money.ROUNDING.HALF_EVEN)-fee)-x.investedMinor:null;
     const exits=fills.filter(f=>f.symbol===x.symbol&&String(f.side).toLowerCase()==='sell');
     return {symbol:x.symbol,planHash:plan?.planHash||null,documentHash:plan?.documentHashes?.[x.symbol]||null,
-      conviction:p?.conviction||'UNKNOWN',allocationUsd:p?.allocationUsd??null,sizingReason:p?.sizingReason||null,outlook:p?.outlook||null,
+      holdingSessions:p?.holdingSessions||1,holdingReason:p?.holdingReason||null,horizonAnalysis:p?.horizonAnalysis||null,conviction:p?.conviction||'UNKNOWN',allocationUsd:p?.allocationUsd??null,sizingReason:p?.sizingReason||null,outlook:p?.outlook||null,
       takeProfitBps:p?.takeProfitBps??null,stopLossBps:p?.stopLossBps??null,evidenceIds:p?.evidenceIds||[],
       investedMinor:x.investedMinor,shares:qty,entryPriceMicros:x.entryPriceMicros,exitPriceMicros:x.exitPriceMicros,
       entryAtMs:x.entryAtMs,exitAtMs:x.exitAtMs,heldMs:x.heldMs,status:x.status,pnlMinor:x.pnlMinor,
@@ -32,7 +32,7 @@ function analyze({run,plan,prices,fills=[],closeMs}) {
   });
   return {version:VERSION,runId:run.runId,batchId:run.batchId,date:run.date,policyVersion:plan?.policy?.version||null,planHash:plan?.planHash||null,
     pnlMinor:run.pnlMinor||0,aiCostNano:run.spentNano||0,maxDrawdownBps:run.maxDrawdownBps||0,benchmarkReturnBps:run.benchmarkReturnBps??null,
-    investments,comparison:'Same entry and shares; remove both stop and target; exit at observed session close with 10 bps spread and $0.005/share fee. Hindsight comparison, not a recommended rule.'};
+    investments,comparison:'Same entry and shares; remove both stop and target; exit at observed first-session close with 10 bps spread and $0.005/share fee. Hindsight comparison, not a recommended rule.'};
 }
 function summarize(runs) {
   const completed=runs.filter(r=>r.status==='complete'),sum=(a,f)=>a.reduce((n,x)=>n+f(x),0);

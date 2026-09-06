@@ -149,7 +149,7 @@ const mutation = (params, { reauth = false, requiresReason = false, concurrency 
 const ACTIONS_V2 = Object.freeze({
   simulationOverview: read({batchId:T.ref("Id"),cursor:T.str({maxLength:30})}),
   simulationDetail: read({runId:T.ref("Id"),collection:T.str({enum:["curve","requests","fills","decisions","orders","events"]}),after:T.str({maxLength:160})}),
-  simulationStart: mutation({count:T.int({minimum:1,maximum:500}),from:T.ref("Date"),to:T.ref("Date"),budgetMode:T.str({enum:["capped","measure_actual_cost"]})},{concurrency:"none",required:["count","from","to"]}),
+  simulationStart: mutation({companyRange:T.str({enum:['range1','range2','range3']}),count:T.int({minimum:1,maximum:500}),from:T.ref("Date"),to:T.ref("Date"),budgetMode:T.str({enum:["capped","measure_actual_cost"]})},{concurrency:"none",required:["count","from","to","companyRange"]}),
   simulationControl: mutation({batchId:T.ref("Id"),runId:T.ref("Id"),command:T.str({enum:["pause","resume","retry","retry_repository","reset"]})},{concurrency:"none",required:["command"]}),
   /* reads */
   managerDashboard: read({ ...acct }),

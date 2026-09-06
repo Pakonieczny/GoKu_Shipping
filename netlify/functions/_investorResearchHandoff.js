@@ -130,20 +130,26 @@ function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false) 
 const INVESTMENT_POLICY = Object.freeze({version:'required-investment.v1',minUsd:5000,maxUsd:30000,maxCompanies:2,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
 const DIVERSIFIED_POLICY = Object.freeze({version:'required-investment.v2',minUsd:5000,maxUsd:30000,minCompanies:4,maxCompanies:7,maxTotalUsd:95000,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
 function supportedInvestmentPolicy(policy) {
-  return [INVESTMENT_POLICY,DIVERSIFIED_POLICY].find(p=>policy?.version===p.version&&C.hash(policy)===C.hash(p))||null;
+  return [INVESTMENT_POLICY,DIVERSIFIED_POLICY,...Object.keys(require('./_investorSimulationHorizon').RANGES).map(require('./_investorSimulationHorizon').policyFor)].find(p=>policy?.version===p.version&&C.hash(policy)===C.hash(p))||null;
 }
 function assertInvestmentAllocations(investments,policy) {
   if(!supportedInvestmentPolicy(policy))fail('SIMULATION_INVESTMENT_POLICY_INVALID');
   const rows=Object.values(investments||{});
+  if(policy.maxHoldingSessions)rows.forEach(require('./_investorSimulationHorizon').validate);
   if(rows.length<(policy.minCompanies||1)||rows.length>policy.maxCompanies)fail('SIMULATION_FINALISTS_INVALID');
   if(rows.some(r=>!Number.isSafeInteger(r?.allocationUsd)||r.allocationUsd<policy.minUsd||r.allocationUsd>policy.maxUsd))fail('SIMULATION_ALLOCATION_INVALID');
   if(rows.reduce((n,r)=>n+r.allocationUsd,0)>(policy.maxTotalUsd||policy.maxCompanies*policy.maxUsd))fail('SIMULATION_TOTAL_ALLOCATION_INVALID');
 }
 function investmentSchema(documents,policy=INVESTMENT_POLICY) {
   const investment=obj({allocationUsd:{type:'integer',minimum:5000,maximum:30000},conviction:{type:'string',enum:['LOW','MEDIUM','HIGH']},
-    sizingReason:text(600),assessment:obj(Object.fromEntries(SECTIONS.map(k=>[k,text(policy.version===DIVERSIFIED_POLICY.version?600:1200)]))),
+    sizingReason:text(600),assessment:obj(Object.fromEntries(SECTIONS.map(k=>[k,text(policy.version!==INVESTMENT_POLICY.version?600:1200)]))),
     outlook:text(1200),takeProfitBps:{type:'integer',minimum:1,maximum:100000},stopLossBps:{type:'integer',minimum:1,maximum:9500},
     evidenceIds:array(text(200),24)});
+  if(policy.maxHoldingSessions) {
+    const estimate=obj({expectedReturnBps:{type:'integer',minimum:-10000,maximum:100000},downsideBps:{type:'integer',minimum:0,maximum:10000},opportunityCostBps:{type:'integer',minimum:0,maximum:10000},uncertaintyPenaltyBps:{type:'integer',minimum:0,maximum:10000},evidenceConfidence:{type:'string',enum:['LOW','MEDIUM','HIGH']},reason:{type:'string',minLength:1,maxLength:300}});
+    Object.assign(investment.properties,{holdingSessions:{type:'integer',minimum:1,maximum:3},holdingReason:{type:'string',minLength:1,maxLength:600},horizonAnalysis:obj({session1:estimate,session2:estimate,session3:estimate})});
+    investment.required=Object.keys(investment.properties);
+  }
   return obj({schemaVersion:{type:'string',enum:['simulation-investment-plan.v1']},comparisonNote:text(1200),
     investments:obj(Object.fromEntries(documents.map(d=>{const row=JSON.parse(JSON.stringify(investment));
       const ids=[...new Set([...d.evidence.map(e=>e.id),...Object.keys(d.baseline).map(k=>'baseline:'+k)])];
@@ -155,7 +161,7 @@ function validateInvestmentPlan(output,documents,policy=INVESTMENT_POLICY) {
   if(P.validateAgainst(investmentSchema(documents,policy),output).length)fail('SIMULATION_INVESTMENT_PLAN_INVALID');
   assertInvestmentAllocations(output.investments,policy);
   if(documents.some(d=>d.cutoffMs!==documents[0].cutoffMs))fail('HANDOFF_AS_OF_MISMATCH');
-  const plan={...output,policy,cutoffMs:documents[0].cutoffMs,
+  const plan={...output,policy,cutoffMs:documents[0].cutoffMs,...(policy.maxHoldingSessions?{sessions:require('./_investorSimulationHorizon').sessions(require('./_investorMarket').nyParts(new Date(documents[0].cutoffMs)).date)}:{}),
     documentHashes:Object.fromEntries(documents.map(d=>[d.symbol,d.documentHash]))};
   return {...plan,planHash:C.hash(plan)};
 }
