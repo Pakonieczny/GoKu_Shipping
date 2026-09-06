@@ -195,10 +195,10 @@ const Simulator = (() => {
     if(!Number.isInteger(count)||count<1||count>500||count>days.length) throw fail('BAD_REQUEST','Choose 1–500 simulations and a date range with enough distinct trading days');
     return [...days].sort((a,b)=>hash(seed+a).localeCompare(hash(seed+b))).slice(0,count).sort();
   }
-  function regularSessionBars(archive,symbol,date,{allowSparse=false}={}) {
+  function regularSessionBars(archive,symbol,date,{allowSparse=false,verifiedSparse=false,intervalMs=300000}={}) {
     const open=M.nyWallClockToUtcMs(date,570),close=M.sessionCloseMs(new Date(date+'T12:00:00Z'));
     if(!close)throw fail('HISTORICAL_SESSION_CLOSED',`${date} is not a trading day`);
-    const expected=(close-open)/300000,byTime=new Map();let outsideSession=0,duplicates=0;
+    const expected=(close-open)/intervalMs,byTime=new Map();let outsideSession=0,duplicates=0;
     for(const source of archive) {
       const t=C.barTime(source);
       if(!Number.isFinite(t))throw fail('HISTORICAL_BAR_INVALID',`Invalid price timestamp for ${symbol} on ${date}`);
@@ -209,7 +209,7 @@ const Simulator = (() => {
         if(source[k]==null||source[k]===''||!Number.isFinite(Number(source[k])))throw fail('HISTORICAL_BAR_INVALID',`Invalid price or volume for ${symbol} on ${date}`);
         bar[k]=Number(source[k]);
       }
-      if((t-open)%300000||bar.o<=0||bar.c<=0||bar.l<=0||bar.v<0||bar.h<Math.max(bar.o,bar.c)||bar.l>Math.min(bar.o,bar.c)||bar.h<bar.l)
+      if((t-open)%intervalMs||bar.o<=0||bar.c<=0||bar.l<=0||bar.v<0||bar.h<Math.max(bar.o,bar.c)||bar.l>Math.min(bar.o,bar.c)||bar.h<bar.l)
         throw fail('HISTORICAL_BAR_INVALID',`Invalid five-minute price bar for ${symbol} on ${date}`);
       if(byTime.has(t)) {
         if(['o','h','l','c','v'].some(k=>byTime.get(t)[k]!==bar[k]))throw fail('HISTORICAL_BAR_CONFLICT',`Conflicting price bars for ${symbol} on ${date}`);
@@ -217,15 +217,32 @@ const Simulator = (() => {
       }
       byTime.set(t,bar);
     }
-    const missing=Array.from({length:expected},(_,i)=>open+i*300000).filter(t=>!byTime.has(t));
+    const missing=Array.from({length:expected},(_,i)=>open+i*intervalMs).filter(t=>!byTime.has(t));
     const coverage={expected,received:archive.length,regular:byTime.size,outsideSession,duplicates,missing:missing.length,firstMissing:missing.slice(0,3).map(t=>new Date(t).toISOString())};
     coverage.missingTimes=missing.map(t=>new Date(t).toISOString());
-    let longest=0,streak=0;for(let t=open;t<close;t+=300000){streak=byTime.has(t)?0:streak+1;longest=Math.max(longest,streak);}
+    let longest=0,streak=0;for(let t=open;t<close;t+=intervalMs){streak=byTime.has(t)?0:streak+1;longest=Math.max(longest,streak);}
     coverage.longestGap=longest;coverage.sparse=missing.length>0;
     // A completed provider response may legitimately omit intervals with no eligible trades.
-    // Keep real bars only. Large outages are still unusable; no interpolation or synthetic fills.
-    if(missing.length&&(!allowSparse||missing.length>Math.floor(expected*.10)||longest>3))throw Object.assign(fail('HISTORICAL_BAR_GAPS',`Price history for ${symbol} on ${date} has ${byTime.size} of ${expected} regular-session bars; ${missing.length} missing.`),{details:coverage});
+    // Large gaps require a separate, fully paginated minute-history check, not automatic rejection.
+    // Even verified sparse history must contain observed prices; never synthesize a session.
+    if(!byTime.size||(missing.length&&!verifiedSparse&&(!allowSparse||missing.length>Math.floor(expected*.10)||longest>3)))throw Object.assign(fail('HISTORICAL_BAR_GAPS',`Price history for ${symbol} on ${date} has ${byTime.size} of ${expected} regular-session bars; ${missing.length} missing.`),{details:{symbol,date,...coverage}});
     return {bars:[...byTime.values()].sort((a,b)=>C.barTime(a)-C.barTime(b)),coverage};
+  }
+  function verifySessionWithMinutes(bars,minutes,symbol,date) {
+    const minute=regularSessionBars(minutes,symbol,date,{verifiedSparse:true,intervalMs:60000}),groups=new Map();
+    for(const b of minute.bars) {
+      const t=Math.floor(C.barTime(b)/300000)*300000,old=groups.get(t);
+      if(old){old.h=Math.max(old.h,b.h);old.l=Math.min(old.l,b.l);old.c=b.c;old.v+=b.v;}
+      else groups.set(t,{t:new Date(t).toISOString(),o:b.o,h:b.h,l:b.l,c:b.c,v:b.v});
+    }
+    // Validate the original response too. Never let a second source mask malformed/conflicting bars.
+    const original=bars.length?regularSessionBars(bars,symbol,date,{verifiedSparse:true}):{bars:[]};
+    const merged=new Map(original.bars.map(b=>[C.barTime(b),b]));let recovered=0;
+    for(const [t,b] of groups)if(!merged.has(t)){merged.set(t,b);recovered++;}
+    const out=regularSessionBars([...merged.values()],symbol,date,{verifiedSparse:true});
+    out.coverage.verification={method:'paginated_sip_one_minute',observedMinuteBars:minute.bars.length,recoveredIntervals:recovered,
+      remainingGaps:'No bar returned by either timeframe; no synthetic prices or fills. This is provider coverage, not proof of no trading.'};
+    return out;
   }
   function replayRecord(record) {
     let data={...record.data};
@@ -304,7 +321,7 @@ const Simulator = (() => {
     async function control({batchId,runId,command},owner) {
       if(command==='retry_repository') {
         const b=await getBatch(batchId,owner);if(!b.repositoryId)throw fail('BAD_REQUEST','No shared preparation to retry');
-        const ref=scenarioCol.doc(b.repositoryId);for(const u of await rows(ref.collection('units').where('status','==','failed')))await ref.collection('units').doc(u.unitId).set({status:'queued',error:null,nextAttemptAtMs:0,dispatchedUntil:0},{merge:true});
+        const ref=scenarioCol.doc(b.repositoryId);for(const u of await rows(ref.collection('units').where('status','==','failed')))await retryRepositoryUnit(ref,u);
         await batchCol.doc(batchId).set({paused:false,status:'running'},{merge:true});return getBatch(batchId,owner);
       }
       if(!['pause','resume','retry'].includes(command)) throw fail('BAD_REQUEST','Use pause, resume or retry');
@@ -315,7 +332,13 @@ const Simulator = (() => {
           if(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount||v.leaseUntil>wallNow())throw fail('BAD_REQUEST','Only an unpaid preparation failure can be retried');
           tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
           tx.set(br,{status:'running',paused:false,completedAtMs:null,lastControlAtMs:wallNow()},{merge:true});
-        });return getRun(runId,owner);
+        });
+        const b=await getBatch(r.batchId,owner),config=await readJSON(br,b.configRef),repo=await ensureRepository(b,config);
+        if(/^HISTORICAL_BAR|^HISTORICAL_DATA/.test(r.error?.code||'')) {
+          const u=(await repo.ref.collection('units').doc('prices_'+r.date).get()).data();
+          if(u)await retryRepositoryUnit(repo.ref,u);
+        }
+        return getRun(runId,owner);
       }
       const pause=command==='pause';
       if(runId) {
@@ -415,7 +438,7 @@ const Simulator = (() => {
       };
       addRows(submissions.json.filings.recent);
       for(const file of submissions.json.filings.files||[]) {
-        if(file.filingFrom>date||file.filingTo<new Date(earliest-370*86400000).toISOString().slice(0,10))continue;
+        if(file.filingFrom>(rangeEndDate||date)||file.filingTo<new Date(earliest-370*86400000).toISOString().slice(0,10))continue;
         if(!/^CIK\d{10}-submissions-\d+\.json$/.test(file.name||''))continue;
         await onProgress(`Loading ${symbol} older SEC filings`);
         addRows((await secSource(`https://data.sec.gov/submissions/${file.name}`,sourceOptions)).json);
@@ -552,7 +575,12 @@ const Simulator = (() => {
       }
       // A raw archive may contain only the bars collected while the app was open.
       // Fetch a full session before concluding that historical prices are missing.
-      if(!normalized) {await options.onProgress?.(`Loading ${symbol} five-minute prices`);normalized=regularSessionBars(await historicalBars(symbol,date,'5Min'),symbol,date,{allowSparse:true});Object.assign(doc,{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min'});}
+      if(!normalized) {
+        await options.onProgress?.(`Loading ${symbol} five-minute prices`);const bars=await historicalBars(symbol,date,'5Min');
+        try{normalized=regularSessionBars(bars,symbol,date,{allowSparse:true});}
+        catch(e){if(e.code!=='HISTORICAL_BAR_GAPS')throw e;await options.onProgress?.(`Checking ${symbol} gaps against one-minute history`);normalized=verifySessionWithMinutes(bars,await historicalBars(symbol,date,'1Min'),symbol,date);}
+        Object.assign(doc,{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min'});
+      }
       return {symbol,data,daily:{symbol,provider:'alpaca',feed:'sip',adjustment:'raw',date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true},bars:normalized.bars,coverage:normalized.coverage,provenance:{provider:doc.provider || null,feed:doc.feed || null,adjustment:doc.adjustment || 'not_reported',timeframe:doc.timeframe || '5Min'},cutoff};
     }
     async function prepare(run,config,save,shouldPause) {
@@ -579,6 +607,7 @@ const Simulator = (() => {
       await save({scenarioId,status:'running',phase:'Preparing account',evidenceCoverage,priceCoverage});return true;
     }
     const REPOSITORY_VERSION='historical-repository.v1';
+    const PRICE_VALIDATION_VERSION='observed-bars.v2';
     const repositorySymbols=config=>[...new Set([...config.roster.symbols,'SPY','QQQ','HYG','LQD','IEF','TLT','GLD','UUP',...Object.values(require('./_investorTemporal').DRIVER_BY_SECTOR||{})])];
     const repositoryRow=(config,symbol)=>config.roster.symbols.includes(symbol)?[...require('./_investorUniverse').tradeTier,...require('./_investorUniverse').researchTier].find(r=>r.symbol===symbol):null;
     async function ensureRepository(batch,config) {
@@ -591,6 +620,14 @@ const Simulator = (() => {
           for(let j=0;j<part.length;j++)if(!snaps[j].exists)tx.set(ref.collection('units').doc(part[j].unitId),{...part[j],status:'queued',phase:'Waiting to prepare shared data',createdAtMs:wallNow()});
         });
         await ref.set({repositoryId,version:REPOSITORY_VERSION,total:units.length,companies:repositorySymbols(config).length,dates:batch.dates.length,createdAtMs:wallNow()},{merge:true});
+      }
+      // Upgrade only price validation. Preserve expensive company archives and completed raw pages.
+      if(prior.data()?.priceValidationVersion!==PRICE_VALIDATION_VERSION) {
+        for(const date of batch.dates)await rootTransaction(async tx=>{
+          const ur=ref.collection('units').doc('prices_'+date),s=await tx.get(ur);
+          if(s.exists&&s.data().priceValidationVersion!==PRICE_VALIDATION_VERSION)tx.set(ur,{status:'queued',phase:'Checking saved price history',pointer:null,error:null,nextAttemptAtMs:0,dispatchedUntil:0,priceValidationVersion:PRICE_VALIDATION_VERSION},{merge:true});
+        });
+        await ref.set({priceValidationVersion:PRICE_VALIDATION_VERSION},{merge:true});
       }
       if(batch.repositoryId!==repositoryId)await batchCol.doc(batch.batchId).set({repositoryId},{merge:true});
       return {repositoryId,ref};
@@ -606,18 +643,28 @@ const Simulator = (() => {
         active:units.filter(u=>u.leaseUntil>wallNow()).slice(0,6).map(u=>({unitId:u.unitId,phase:u.phase})),
         failed:errors.length,errors:errors.slice(0,8).map(u=>({unitId:u.unitId,message:u.error?.message||'Preparation needs attention'})),units};
     }
-    async function cachedRepositoryArtifact(cacheId,build,shouldPause) {
+    async function retryRepositoryUnit(repositoryRef,unit) {
+      const ur=repositoryRef.collection('units').doc(unit.unitId);
+      await rootTransaction(async tx=>{
+        const s=await tx.get(ur),u=s.data();if(!u||u.leaseUntil>wallNow())return;
+        const source=u.priceCacheId?scenarioCol.doc(u.priceCacheId):null,cache=source?await tx.get(source):null;
+        // Keep successful symbols and source pages. Refresh only failed symbols on a manual retry.
+        if(source&&cache.exists&&cache.data().failedSymbols?.length)tx.set(source,{priceRefreshRevision:(cache.data().priceRefreshRevision||0)+1},{merge:true});
+        tx.set(ur,{status:'queued',phase:'Retrying shared preparation',error:null,nextAttemptAtMs:0,dispatchedUntil:0},{merge:true});
+      });
+    }
+    async function cachedRepositoryArtifact(cacheId,build,shouldPause,{valid=()=>true}={}) {
       const ref=scenarioCol.doc(cacheId),old=await ref.get();
-      if(old.data()?.artifact)return {cacheId,artifact:old.data().artifact};
+      if(old.data()?.artifact&&valid(old.data()))return {cacheId,artifact:old.data().artifact};
       const owner=crypto.randomBytes(12).toString('hex');
-      const locked=await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.artifact||s.data()?.leaseUntil>wallNow())return false;tx.set(ref,{leaseOwner:owner,leaseUntil:wallNow()+90000},{merge:true});return true;});
+      const locked=await rootTransaction(async tx=>{const s=await tx.get(ref);if((s.data()?.artifact&&valid(s.data()))||s.data()?.leaseUntil>wallNow())return false;tx.set(ref,{leaseOwner:owner,leaseUntil:wallNow()+90000},{merge:true});return true;});
       if(!locked)throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Another batch is preparing this shared data.'),{retryAfterMs:5000,sharedPreparation:true});
       let renewal=Promise.resolve();const timer=setInterval(()=>{renewal=renewal.then(()=>rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000},{merge:true});})).catch(()=>{});},20000);timer.unref?.();
       try {
         const value=await build(ref);
         if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
         const artifact=await saveJSON(ref,'data',value,async()=>{if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');});
-        await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{artifact,status:'ready',version:REPOSITORY_VERSION,...(value.kind==='company_library'?{kind:value.kind,symbol:value.symbol,from:value.from,to:value.to,identityHash:value.identityHash}:{}),preparedAtMs:wallNow(),leaseUntil:0,leaseOwner:null},{merge:true});});
+        await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{artifact,status:'ready',version:REPOSITORY_VERSION,...(value.kind==='company_library'?{kind:value.kind,symbol:value.symbol,from:value.from,to:value.to,identityHash:value.identityHash}:{}),...(value.kind==='session_library'?{priceValidationVersion:PRICE_VALIDATION_VERSION,failedSymbols:Object.keys(value.symbols).filter(k=>value.symbols[k].error),builtRefreshRevision:value.refreshRevision}:{}),preparedAtMs:wallNow(),leaseUntil:0,leaseOwner:null},{merge:true});});
         return {cacheId,artifact};
       }finally{clearInterval(timer);await renewal;await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:0,leaseOwner:null},{merge:true});});}
     }
@@ -630,16 +677,16 @@ const Simulator = (() => {
       }
       return data;
     }
-    async function bulkPriceHistory(symbols,start,end,timeframe,parent,progress,shouldPause) {
+    async function bulkPriceHistory(symbols,start,end,timeframe,parent,progress,shouldPause,{revision=0}={}) {
       await M.loadMarketSettings();const credentials=M.providerCredentials('alpaca');
       if(!credentials.keyId||!credentials.secretKey)throw fail('HISTORICAL_BARS_MISSING','Alpaca historical-data credentials are required to prepare the shared price library.');
-      const pageKey=hash({symbols,start,end,timeframe}),pages=parent.collection('pricePages');let token=null,index=0;const output={};const seen=new Set();
+      const pageKey=hash({symbols,start,end,timeframe,...(revision?{revision}:{})}),pages=parent.collection('pricePages');let token=null,index=0;const output={};const seen=new Set();
       do {
         if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
         const ptr=pages.doc(pageKey+'_'+index),cached=await ptr.get();let response;
         if(cached.exists)response=await readJSON(parent,cached.data().artifact);
         else {
-          await progress(`Downloading ${timeframe==='1Day'?'daily':'session'} prices · page ${index+1}`);
+          await progress(`${timeframe==='1Min'?'Checking one-minute history':'Downloading '+(timeframe==='1Day'?'daily':'session')+' prices'} · page ${index+1}`);
           const qs=new URLSearchParams({symbols:symbols.join(','),timeframe,start,end,feed:'sip',adjustment:'raw',limit:'10000',sort:'asc'});if(token)qs.set('page_token',token);
           const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),20000);
           try {
@@ -690,24 +737,36 @@ const Simulator = (() => {
           },pause);
         } else {
           const symbols=repositorySymbols(config),date=unit.date,cacheId='session_library_'+hash({v:REPOSITORY_VERSION,universe:config.roster.universeHash,date}).slice(0,40);
+          await save({priceCacheId:cacheId});
           pointer=await cachedRepositoryArtifact(cacheId,async parent=>{
             const start=new Date(M.nyWallClockToUtcMs(date,570)).toISOString(),end=new Date(M.sessionCloseMs(new Date(date+'T12:00:00Z'))-1).toISOString();
-            const prices=await bulkPriceHistory(symbols,start,end,'5Min',parent,progress,pause),bySymbol={};
-            for(const symbol of symbols){try{bySymbol[symbol]=regularSessionBars(prices[symbol]||[],symbol,date,{allowSparse:true});}catch(e){bySymbol[symbol]={bars:[],error:{code:e.code,message:e.message,details:e.details||null}};}}
-            return {date,symbols:bySymbol,provenance:{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min'}};
-          },pause);
+            const saved=(await parent.get()).data()||{},revision=saved.priceRefreshRevision||0;
+            const prior=saved.artifact&&saved.priceValidationVersion===PRICE_VALIDATION_VERSION?await readJSON(parent,saved.artifact):null;
+            const wanted=symbols.filter(s=>!prior?.symbols[s]||prior.symbols[s].error),bySymbol={...(prior?.symbols||{})};
+            const prices=wanted.length?await bulkPriceHistory(wanted,start,end,'5Min',parent,progress,pause,{revision}):{},check=[];
+            const recordError=(symbol,e)=>{bySymbol[symbol]={bars:[],error:{code:e.code||'HISTORICAL_BAR_INVALID',message:e.message,details:{symbol,date,...(e.details||{})}}};};
+            for(const symbol of wanted){try{bySymbol[symbol]=regularSessionBars(prices[symbol]||[],symbol,date,{allowSparse:true});}catch(e){if(e.code==='HISTORICAL_BAR_GAPS')check.push(symbol);else recordError(symbol,e);}}
+            if(check.length) {
+              await progress(`Checking price gaps for ${check.length} companies against one-minute history`);
+              const minutes=await bulkPriceHistory(check,start,end,'1Min',parent,progress,pause,{revision});
+              for(const symbol of check)try{bySymbol[symbol]=verifySessionWithMinutes(prices[symbol]||[],minutes[symbol]||[],symbol,date);}catch(e){recordError(symbol,e);}
+            }
+            return {kind:'session_library',date,symbols:bySymbol,refreshRevision:revision,provenance:{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min',priceValidationVersion:PRICE_VALIDATION_VERSION}};
+          },pause,{valid:s=>s.priceValidationVersion===PRICE_VALIDATION_VERSION&&(s.builtRefreshRevision||0)===(s.priceRefreshRevision||0)});
+          const data=await readJSON(scenarioCol.doc(pointer.cacheId),pointer.artifact),bad=Object.entries(data.symbols).filter(([,v])=>v.error);
+          if(bad.length)throw Object.assign(fail('HISTORICAL_PRICE_CHECK_FAILED',`${date}: price history could not be verified for ${bad.length} ${bad.length===1?'company':'companies'} (${bad.slice(0,5).map(([s])=>s).join(', ')}). Retry shared preparation to refresh those prices. Saved research is retained.`),{details:{date,failures:bad.map(([symbol,v])=>({symbol,...v.error}))}});
         }
         await save({status:'ready',phase:'Saved in shared library',pointer,error:null,nextAttemptAtMs:0,completedAtMs:wallNow()});return {done:true};
       }catch(e){
         if(e.code==='SIMULATION_LEASE_LOST')return {yielded:true};
         const retry=e.code==='SIMULATION_PREPARATION_YIELD'||e.code==='HISTORICAL_PROVIDER_BUSY'||[4,8,10,14].includes(e.code);
-        await save({status:retry?'queued':'failed',phase:retry?'Preparation saved — waiting to continue':'Shared preparation needs attention',nextAttemptAtMs:retry?wallNow()+(e.retryAfterMs||5000):0,error:retry?null:{code:e.code||'REPOSITORY_FAILED',message:String(e.message).slice(0,500)}});
+        await save({status:retry?'queued':'failed',phase:retry?'Preparation saved — waiting to continue':'Shared preparation needs attention',nextAttemptAtMs:retry?wallNow()+(e.retryAfterMs||5000):0,error:retry?null:{code:e.code||'REPOSITORY_FAILED',message:String(e.message).slice(0,500),details:e.details||null}});
         return {done:!retry,yielded:retry};
       }finally{clearInterval(timer);await pending;await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:0,leaseOwner:null},{merge:true});});}
     }
     async function repositoryPackets(run,config,repository) {
-      if(repository.status!=='ready')throw fail('SIMULATION_REPOSITORY_NOT_READY','Shared data preparation has not finished');
-      const symbols=repositorySymbols(config),units=repository.units,priceUnit=units.find(u=>u.unitId==='prices_'+run.date);
+      if(repository.status!=='ready'&&!run.repositoryPointersRef)throw fail('SIMULATION_REPOSITORY_NOT_READY','Shared data preparation has not finished');
+      const symbols=repositorySymbols(config),units=run.repositoryPointersRef?await readJSON(runCol.doc(run.runId),run.repositoryPointersRef):repository.units,priceUnit=units.find(u=>u.unitId==='prices_'+run.date);
       if(!priceUnit?.pointer)throw fail('SIMULATION_STATE_MISSING');
       const prices=await readJSON(scenarioCol.doc(priceUnit.pointer.cacheId),priceUnit.pointer.artifact),endMs=M.sessionCloseMs(new Date(run.date+'T12:00:00Z'))+1200000,cutoff=M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin);
       const packets=[];for(const symbol of symbols){
@@ -719,7 +778,7 @@ const Simulator = (() => {
         packets.push({symbol,data,bars:price.bars,coverage:price.coverage,cutoff,provenance:prices.provenance,daily:{symbol,...company.provenance,date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true}});
       }
       const reconstructed=packets.filter(p=>config.roster.symbols.includes(p.symbol)&&p.data.some(x=>x.data.historicalImport));
-      return {packets,meta:{cutoffMs:cutoff,endMs,symbols,evidenceCoverage:{mode:reconstructed.length?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies:reconstructed.length,totalCompanies:config.roster.symbols.length},priceCoverage:{symbolsWithGaps:packets.filter(p=>p.coverage.missing).map(p=>({symbol:p.symbol,missing:p.coverage.missing,expected:p.coverage.expected})),note:'Only observed bars are replayed. No fills occur in missing intervals; valuations use the latest available observed price.'}}};
+      return {packets,meta:{cutoffMs:cutoff,endMs,symbols,evidenceCoverage:{mode:reconstructed.length?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies:reconstructed.length,totalCompanies:config.roster.symbols.length},priceCoverage:{symbolsWithGaps:packets.filter(p=>p.coverage.missing).map(p=>({symbol:p.symbol,missing:p.coverage.missing,expected:p.coverage.expected,verification:p.coverage.verification||null})),recoveredIntervals:packets.reduce((n,p)=>n+(p.coverage.verification?.recoveredIntervals||0),0),note:'Only observed bars are replayed. Larger gaps are checked against one-minute history. Remaining gaps have no fills; valuations use the latest observed price and may be stale.'}}};
     }
 
     async function rawHTTP(method,url,body) {
@@ -807,9 +866,10 @@ const Simulator = (() => {
         let packets,meta;
         if(!run.initialized||run.repositoryId) {
           const freshBatch=await getBatch(run.batchId),repository=await repositoryState(freshBatch);
-          if(repository.status!=='ready') {await save({status:'queued',phase:'Waiting for shared data preparation',waitReason:'repository'});return {yielded:true};}
+          if(repository.status!=='ready'&&!run.repositoryPointersRef) {await save({status:'queued',phase:'Waiting for shared data preparation',waitReason:'repository'});return {yielded:true};}
           await save({status:'preparing',phase:'Reading saved company research',repositoryId:freshBatch.repositoryId});
           ({packets,meta}=await repositoryPackets(run,config,repository));
+          if(!run.repositoryPointersRef)await save({repositoryPointersRef:await saveJSON(ref,'repository_pointers',repository.units.map(u=>({unitId:u.unitId,pointer:u.pointer})))});
           await save({evidenceCoverage:meta.evidenceCoverage,priceCoverage:meta.priceCoverage,preparationTotal:meta.symbols.length,scenarioCursor:meta.symbols.length});
         } else {
           const sr=scenarioCol.doc(run.scenarioId);meta=(await sr.get()).data();
@@ -1004,6 +1064,6 @@ const Simulator = (() => {
     }
     return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
-  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,replayRecord,create};
+  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,create};
 })();
 module.exports.Simulator=Simulator;

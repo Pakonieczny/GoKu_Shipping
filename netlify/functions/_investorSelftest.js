@@ -5867,6 +5867,69 @@ async function simulatorAdversarial() {
     assert.throws(()=>Sim.regularSessionBars(outage,'ACM',date,{allowSparse:true}),e=>e.code==='HISTORICAL_BAR_GAPS');
     assert.throws(()=>Sim.regularSessionBars([],'ACM',date,{allowSparse:true}),e=>e.code==='HISTORICAL_BAR_GAPS');
   });
+  function minuteSession(date,indices=null) {
+    return providerSession(date,{extra:false}).flatMap((b,i)=>indices&&!indices.has(i)?[]:Array.from({length:5},(_,j)=>({...b,t:new Date(Date.parse(b.t)+j*60000).toISOString(),v:b.v/5})));
+  }
+  await check('AZO_54_of_78_bars_recovers_observed_minutes_without_fabricated_intervals',()=>{
+    const date='2025-10-30',full=providerSession(date,{extra:false}),sparse=full.filter((b,i)=>i<54);
+    const repaired=Sim.verifySessionWithMinutes(sparse,minuteSession(date),'AZO',date);
+    assert.equal(repaired.bars.length,78);assert.equal(repaired.coverage.verification.recoveredIntervals,24);assert.deepEqual(repaired.bars,full);
+    const sameSparse=Sim.verifySessionWithMinutes(sparse,minuteSession(date,new Set(Array.from({length:54},(_,i)=>i))),'AZO',date);
+    assert.equal(sameSparse.bars.length,54);assert.equal(sameSparse.coverage.missing,24);assert.equal(sameSparse.coverage.verification.recoveredIntervals,0);
+    assert(sameSparse.coverage.missingTimes.every(t=>!sameSparse.bars.some(b=>b.t===t)));
+    const half='2025-11-28';assert.equal(Sim.verifySessionWithMinutes([],minuteSession(half),'AZO',half).bars.length,42);
+  });
+  await check('minute_repair_rejects_empty_invalid_and_conflicting_data',()=>{
+    const date='2025-10-30',full=providerSession(date,{extra:false}),sparse=full.slice(0,54),minutes=minuteSession(date);
+    assert.throws(()=>Sim.verifySessionWithMinutes(sparse,[],'AZO',date),e=>e.code==='HISTORICAL_BAR_GAPS');
+    assert.throws(()=>Sim.verifySessionWithMinutes(sparse,[...minutes,{...minutes[0],c:100.5}],'AZO',date),e=>e.code==='HISTORICAL_BAR_CONFLICT');
+    assert.throws(()=>Sim.verifySessionWithMinutes(sparse,[{...minutes[0],o:NaN}],'AZO',date),e=>e.code==='HISTORICAL_BAR_INVALID');
+    assert.throws(()=>Sim.verifySessionWithMinutes([{...sparse[0],v:-1}],minutes,'AZO',date),e=>e.code==='HISTORICAL_BAR_INVALID');
+  });
+  await check('shared_price_retry_refreshes_only_failed_symbols_and_preserves_saved_successes',async()=>{
+    const M=require('./_investorMarket'),old={load:M.loadMarketSettings,credentials:M.providerCredentials},fake=database(),date='2025-10-30';let repaired=false,paid=0;const requests=[];
+    try {
+      M.loadMarketSettings=async()=>{};M.providerCredentials=()=>({keyId:'fixture',secretKey:'fixture'});await seedSimulationArchive(fake,Date.UTC(2025,6,1));
+      const svc=Sim.create({admin:fake,fetchImpl:async url=>{
+        if(!url.startsWith('https://data.alpaca.markets/')){paid++;throw Error('No AI during preparation');}
+        const q=new URL(url).searchParams,symbols=q.get('symbols').split(','),minute=q.get('timeframe')==='1Min';requests.push({symbols,minute});
+        return {ok:true,status:200,json:async()=>({bars:Object.fromEntries(symbols.map(s=>[s,s==='A'&&!repaired?(minute?[]:providerSession(date,{extra:false}).slice(0,54)):(minute?minuteSession(date):providerSession(date,{extra:false}))]))})};
+      }});
+      const b=await svc.createBatch({count:1,from:date,to:date},'operator','targeted-retry'),config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+      const sentinel=repo.ref.collection('units').doc('company_A');await sentinel.set({status:'ready',pointer:{cacheId:'retained',artifact:'original-research'}},{merge:true});
+      await svc.prepareRepository(b.batchId,'prices_'+date);
+      let unit=(await repo.ref.collection('units').doc('prices_'+date).get()).data();assert.equal(unit.status,'failed');assert.equal(unit.error.code,'HISTORICAL_PRICE_CHECK_FAILED');
+      const state=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(state.status,'needs_attention');assert.equal((await svc.execute(b.runIds[0])).yielded,true);assert.equal(paid,0);
+      const before=requests.length;await svc.control({batchId:b.batchId,command:'pause'},'operator');await svc.prepareRepository(b.batchId,'prices_'+date);assert.equal(requests.length,before);
+      repaired=true;await svc.control({batchId:b.batchId,command:'retry_repository'},'operator');await svc.prepareRepository(b.batchId,'prices_'+date);
+      unit=(await repo.ref.collection('units').doc('prices_'+date).get()).data();assert.equal(unit.status,'ready',JSON.stringify(unit.error));
+      assert.deepEqual(requests.slice(before),[{symbols:['A'],minute:false}]);assert.deepEqual((await sentinel.get()).data().pointer,{cacheId:'retained',artifact:'original-research'});
+      const artifact=await svc.readJSON(fake.col('InvestorAI_SimulationScenarios').doc(unit.pointer.cacheId),unit.pointer.artifact);assert.equal(artifact.symbols.A.bars.length,78);assert.equal(artifact.symbols.SPY.bars.length,78);
+      const count=requests.length,b2=await svc.createBatch({count:1,from:date,to:date},'operator','targeted-reuse'),c2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef);await svc.ensureRepository(b2,c2);await svc.prepareRepository(b2.batchId,'prices_'+date);assert.equal(requests.length,count);assert.equal(paid,0);
+    }finally{M.loadMarketSettings=old.load;M.providerCredentials=old.credentials;}
+  });
+  await check('legacy_price_cache_rechecks_saved_pages_and_paginates_minute_recovery',async()=>{
+    const M=require('./_investorMarket'),C=require('./_investorDecisionContext'),old={load:M.loadMarketSettings,credentials:M.providerCredentials},fake=database(),date='2025-10-30';let wall=now,failSecond=true;const requests=[];
+    try {
+      M.loadMarketSettings=async()=>{};M.providerCredentials=()=>({keyId:'fixture',secretKey:'fixture'});await seedSimulationArchive(fake,Date.UTC(2025,6,1));
+      const svc=Sim.create({admin:fake,wallNow:()=>wall,fetchImpl:async url=>{
+        const q=new URL(url).searchParams;assert.equal(q.get('timeframe'),'1Min','saved five-minute page must be reused');assert.equal(q.get('symbols'),'A');requests.push(q.get('page_token')||'first');
+        if(q.get('page_token')&&failSecond){failSecond=false;return {ok:false,status:429,headers:{get:()=> '1'}};}
+        const all=minuteSession(date),second=!!q.get('page_token');return {ok:true,status:200,json:async()=>({bars:{A:second?all.slice(200):all.slice(0,200)},next_page_token:second?null:'second'})};
+      }});
+      const b=await svc.createBatch({count:1,from:date,to:date},'operator','legacy-price-cache'),config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+      const units=(await repo.ref.collection('units').get()).docs,symbols=units.filter(u=>u.id.startsWith('company_')).map(u=>u.data().symbol);
+      const cacheId='session_library_'+C.hash({v:'historical-repository.v1',universe:config.roster.universeHash,date}).slice(0,40),parent=fake.col('InvestorAI_SimulationScenarios').doc(cacheId);
+      const start=new Date(M.nyWallClockToUtcMs(date,570)).toISOString(),end=new Date(M.sessionCloseMs(new Date(date+'T12:00:00Z'))-1).toISOString(),response={bars:Object.fromEntries(symbols.map(s=>[s,providerSession(date,{extra:false}).slice(0,s==='A'?54:78)]))};
+      await parent.collection('pricePages').doc(C.hash({symbols,start,end,timeframe:'5Min'})+'_0').set({artifact:await svc.saveJSON(parent,'legacy_page',response)});
+      await parent.set({artifact:await svc.saveJSON(parent,'legacy_result',{symbols:{A:{error:{code:'HISTORICAL_BAR_GAPS'}}}})});
+      await repo.ref.set({priceValidationVersion:'old'},{merge:true});await repo.ref.collection('units').doc('prices_'+date).set({status:'ready',priceValidationVersion:'old',pointer:{cacheId,artifact:'old'}},{merge:true});
+      await svc.ensureRepository(await svc.getBatch(b.batchId),config);assert.equal((await repo.ref.collection('units').doc('prices_'+date).get()).data().status,'queued');
+      assert((await svc.prepareRepository(b.batchId,'prices_'+date)).yielded);wall+=61000;await svc.prepareRepository(b.batchId,'prices_'+date);
+      const u=(await repo.ref.collection('units').doc('prices_'+date).get()).data();assert.equal(u.status,'ready',JSON.stringify(u.error));assert.deepEqual(requests,['first','second','second']);
+      const data=await svc.readJSON(parent,u.pointer.artifact);assert.equal(data.symbols.A.bars.length,78);assert.equal(data.symbols.A.coverage.verification.recoveredIntervals,24);
+    }finally{M.loadMarketSettings=old.load;M.providerCredentials=old.credentials;}
+  });
   await check('large_sec_body_streaming_is_bounded_timed_and_cached_without_duplicate_json',async()=>{
     const {readBoundedBody}=require('./_investorFetch'),fake=database();let calls=0,progress=0;
     const text=JSON.stringify({cik:1090872,description:'x'.repeat(17*1024*1024),facts:{}});
@@ -6076,6 +6139,10 @@ async function simulatorAdversarial() {
       assert(!early.data.some(x=>x.collection===A.COL.financialFacts&&x.data.periodEnd==='2026-06-30'));
       assert(late.data.some(x=>x.collection===A.COL.financialFacts&&x.data.periodEnd==='2026-06-30'));
       assert(early.daily.date.every(d=>d<'2026-07-31'));assert(late.daily.date.every(d=>d<'2026-08-03'));assert(early.daily.c.every(v=>v===100));assert(late.daily.c.includes(999));
+      const frozenRun=await svc.getRun(b.runIds[0]);
+      frozenRun.repositoryPointersRef=await svc.saveJSON(fake.col('InvestorAI_Simulations').doc(frozenRun.runId),'pinned_repository',state.units.map(u=>({unitId:u.unitId,pointer:u.pointer})));
+      const resumed=await svc.repositoryPackets(frozenRun,config,{status:'needs_attention',units:[]});
+      assert.deepEqual(resumed.packets.find(p=>p.symbol==='A'),early,'resuming must retain original source pointers even if shared preparation changes');
       const requestCount=[...requests.values()].reduce((a,b)=>a+b,0),secCount=sec.calls.length;
       // Different sampled dates, same requested range: existing company and session data are reused.
       wall+=86400000;
