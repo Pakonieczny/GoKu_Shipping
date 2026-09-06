@@ -1275,7 +1275,7 @@ const Simulator = (() => {
     async function execute(runId,{deadlineMs=wallNow()+11*60000}={}) {
       const ref=runCol.doc(id(runId)),owner=crypto.randomBytes(12).toString('hex');let run;
       const claimed=await rootTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)return false;run=s.data();
-        if((TERMINAL.includes(run.status)&&!run.pendingAiCount)||run.leaseUntil>wallNow()||run.nextAttemptAtMs>wallNow())return false;
+        if((TERMINAL.includes(run.status)&&!run.pendingAiCount)||run.leaseUntil>wallNow()||run.copyCleanupLeaseUntil>wallNow()||run.nextAttemptAtMs>wallNow())return false;
         tx.set(ref,{targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION,leaseOwner:owner,leaseUntil:wallNow()+90000,dispatchedUntil:0,segmentStartedAtMs:wallNow(),lastHeartbeatAtMs:wallNow(),waitReason:null,waitingSourceId:null},{merge:true});run.leaseOwner=owner;return true;});
       if(!claimed)return {done:true,reason:'already_running_or_finished'};
       let activeStarted=run.initialized&&!run.paused&&!TERMINAL.includes(run.status)?wallNow():null;
@@ -1506,76 +1506,121 @@ const Simulator = (() => {
       }
     }
     async function cleanupBatch(batchId,{deadlineMs=wallNow()+8*60000}={}) {
-      const br=batchCol.doc(id(batchId)),ticket=crypto.randomBytes(12).toString('hex');
-      const claimed=await rootTransaction(async tx=>{const snap=await tx.get(br),b=snap.data();if(!b||b.cleanupVersion===CLEANUP_VERSION||b.cleanupLeaseUntil>wallNow())return false;tx.set(br,{cleanupTicket:ticket,cleanupLeaseUntil:wallNow()+90000,cleanupDispatchedUntil:0,cleanupError:null,cleanupPhase:'Checking duplicate evidence copies'},{merge:true});return true;});
+      const br=batchCol.doc(id(batchId)),ticket=crypto.randomBytes(12).toString('hex');let activeRun=null;
+      const claimed=await rootTransaction(async tx=>{const snap=await tx.get(br),b=snap.data();if(!b||b.cleanupVersion===CLEANUP_VERSION||b.cleanupLeaseUntil>wallNow())return false;tx.set(br,{cleanupTicket:ticket,cleanupLeaseUntil:wallNow()+90000,cleanupDispatchedUntil:0,cleanupError:null,cleanupState:'running',cleanupPhase:'Checking duplicate evidence copies'},{merge:true});return true;});
       if(!claimed)return {done:true};
-      const save=fields=>rootTransaction(async tx=>{const snap=await tx.get(br);if(snap.data()?.cleanupTicket!==ticket)throw fail('SIMULATION_LEASE_LOST');tx.set(br,{...fields,cleanupLeaseUntil:wallNow()+90000},{merge:true});});
+      const save=fields=>{const rr=activeRun;return rootTransaction(async tx=>{
+        const [batch,run]=await Promise.all([tx.get(br),rr?tx.get(rr):null]);
+        if(batch.data()?.cleanupTicket!==ticket)throw fail('SIMULATION_LEASE_LOST');
+        if(rr&&run.data()?.copyCleanupOwner!==ticket)throw fail('SIMULATION_LEASE_LOST');
+        tx.set(br,{...fields,cleanupLeaseUntil:wallNow()+90000},{merge:true});
+        if(rr)tx.set(rr,{copyCleanupLeaseUntil:wallNow()+90000},{merge:true});
+      });};
+      const releaseRun=async()=>{if(!activeRun)return;const rr=activeRun;await rootTransaction(async tx=>{const s=await tx.get(rr);if(s.data()?.copyCleanupOwner===ticket)tx.set(rr,{copyCleanupOwner:null,copyCleanupLeaseUntil:0},{merge:true});});activeRun=null;};
+      const saveRun=fields=>rootTransaction(async tx=>{const s=await tx.get(activeRun);if(s.data()?.copyCleanupOwner!==ticket||s.data()?.copyCleanupLeaseUntil<wallNow())throw fail('SIMULATION_LEASE_LOST');tx.set(activeRun,{...fields,copyCleanupLeaseUntil:wallNow()+90000},{merge:true});});
       let renewal=Promise.resolve();const timer=setInterval(()=>{renewal=renewal.then(()=>save({})).catch(()=>{});},20000);timer.unref?.();
       const signature=data=>hash(A.firestoreSafe(data));
+      const totals=async()=>{const runs=await rows(runCol.where('batchId','==',batchId));return {runs,cleanupRemoved:runs.reduce((n,r)=>n+(r.copyCleanup?.removed||0),0),cleanupRetained:runs.reduce((n,r)=>n+(r.copyCleanup?.retained||0),0),cleanupChecked:runs.reduce((n,r)=>n+(r.evidenceCleanupVersion===CLEANUP_VERSION?COPY_KEYS.length:r.copyCleanup?.index||0),0),cleanupTotal:runs.length*COPY_KEYS.length};};
       try {
-        const runs=await rows(runCol.where('batchId','==',batchId));let waiting=false,removedTotal=runs.reduce((n,r)=>n+(r.copyCleanup?.removed||0),0),checkedTotal=runs.reduce((n,r)=>n+(r.evidenceCleanupVersion===CLEANUP_VERSION?COPY_KEYS.length:r.copyCleanup?.index||0),0);
-        await save({cleanupRemoved:removedTotal,cleanupChecked:checkedTotal,cleanupTotal:runs.length*COPY_KEYS.length});
-        for(const r of runs) {
+        const initial=await totals();await save(Object.fromEntries(Object.entries(initial).filter(([k])=>k!=='runs')));const errors=[];
+        for(const r of initial.runs) {
           if(r.evidenceCleanupVersion===CLEANUP_VERSION)continue;
           if(wallNow()>deadlineMs)return {yielded:true};
-          const rr=runCol.doc(r.runId),fresh=(await rr.get()).data();
-          if(fresh.leaseUntil>wallNow()||fresh.dispatchedUntil>wallNow()){waiting=true;continue;}
-          const allowed=new Map(COPY_KEYS.map(k=>[admin.COL[k],new Map()]));
-          const add=(name,recordId,data)=>{const table=allowed.get(name);if(!table)return;const hashes=table.get(recordId)||new Set();hashes.add(signature(data));table.set(recordId,hashes);};
-          const progress={index:0,after:null,removed:0,retained:0,...fresh.copyCleanup};
-          // Verify immutable artifact hashes before authorizing any deletion. A
-          // missing master or a changed run-local record is retained, never guessed.
-          if(fresh.repositoryPointersRef) {
-            const pointers=(await readJSON(rr,fresh.repositoryPointersRef)).filter(u=>u.unitId.startsWith('company_'));let sourceIndex=0,lastSourceReport=0;
-            for(const u of pointers) {
-              if(!sourceIndex||wallNow()-lastSourceReport>=2000){await save({cleanupPhase:'Verifying shared master · '+u.unitId.slice(8)+' · '+(sourceIndex+1)+' / '+pointers.length+' companies / indicators'});lastSourceReport=wallNow();}sourceIndex++;
-              if(wallNow()>deadlineMs)return {yielded:true};
-              const symbol=u.unitId.slice(8),company=await readJSON(scenarioCol.doc(u.pointer.cacheId),u.pointer.artifact);
-              for(const x of company.data||[])if(allowed.has(x.collection))add(x.collection,x.id,replayRecord(x));
-              const series=(company.daily||[]).filter(x=>x.date<r.date).slice(-400);
-              add(admin.COL.marketDaily,symbol,{symbol,...company.provenance,date:series.map(x=>x.date),o:series.map(x=>x.o),h:series.map(x=>x.h),l:series.map(x=>x.l),c:series.map(x=>x.c),v:series.map(x=>x.v),volumeProvenanceHomogeneous:true});
+          const rr=runCol.doc(r.runId);
+          const fresh=await rootTransaction(async tx=>{const s=await tx.get(rr),v=s.data();if(!v||v.leaseUntil>wallNow()||v.dispatchedUntil>wallNow()||v.copyCleanupLeaseUntil>wallNow())return null;tx.set(rr,{copyCleanupOwner:ticket,copyCleanupLeaseUntil:wallNow()+90000},{merge:true});return v;});
+          if(!fresh)continue;activeRun=rr;
+          try {
+            const progress={index:0,after:null,removed:0,retained:0,...fresh.copyCleanup};
+            // No data means no source downloads or re-indexing are necessary.
+            const remaining=await Promise.all(COPY_KEYS.slice(progress.index).map(k=>rr.collection(admin.COL[k]).limit(1).get()));
+            if(remaining.every(p=>p.empty)) {
+              await saveRun({copyCleanup:{...progress,index:COPY_KEYS.length,after:null},evidenceCleanupVersion:CLEANUP_VERSION,copyCleanupError:null,copyCleanupOutcome:progress.retained?'complete_with_retained_records':'complete'});continue;
             }
-          }
-          await save({cleanupPhase:'Removing verified duplicate copies · '+r.date});
-          for(let index=progress.index;index<COPY_KEYS.length;index++) {
-            let after=index===progress.index?progress.after:null;
-            for(;;) {
+            const pointers=fresh.repositoryPointersRef?(await readJSON(rr,fresh.repositoryPointersRef)).filter(u=>u.unitId.startsWith('company_')):[];
+            const proofKey=hash({version:'cleanup-master-proof.v1',pointers,date:r.date});
+            if(progress.proofKey!==proofKey)Object.assign(progress,{proofKey,masterNext:0,masterProofs:[]});
+            const allowed=new Map(COPY_KEYS.map(k=>[admin.COL[k],new Map()]));
+            const add=(name,recordId,digest)=>{const table=allowed.get(name);if(!table)return;const hashes=table.get(recordId)||new Set();hashes.add(digest);table.set(recordId,hashes);};
+            for(let i=0;i<pointers.length;i++) {
               if(wallNow()>deadlineMs)return {yielded:true};
-              const latest=(await rr.get()).data();if(latest.leaseUntil>wallNow()||latest.dispatchedUntil>wallNow()){waiting=true;break;}
-              const pageSize=Math.max(1,Math.min(200,progress.pageSize||200));
-              let q=rr.collection(admin.COL[COPY_KEYS[index]]).orderBy('__name__').limit(pageSize);if(after)q=q.startAfter(after);
-              const page=await q.get(),write=rootBatch();let removed=0,retained=0;
-              for(const d of page.docs){if(allowed.get(admin.COL[COPY_KEYS[index]]).get(d.id)?.has(signature(d.data()))){write.delete(d.ref);removed++;}else retained++;}
-              const complete=page.size<pageSize,nextAfter=page.docs.at(-1)?.id||after;
-              const next={...progress,index:complete?index+1:index,after:complete?null:nextAfter,removed:progress.removed+removed,retained:progress.retained+retained};
-              // Deletion size includes the stored documents and their indexes.
-              // Keep the cursor atomic with deletion; a rejected commit advances nothing.
-              write.set(rr,{copyCleanup:next},{merge:true});
-              try {await write.commit();}
-              catch(e) {
-                const tooLarge=/transaction too (?:big|large)|(?:maximum|exceeds?.*maximum) request size/i.test(String(e.message||''));
-                if(!tooLarge||pageSize===1)throw e;
-                progress.pageSize=Math.max(1,Math.floor(Math.min(pageSize,page.size)/2));
-                await rr.set({copyCleanup:{...progress}},{merge:true});
-                await save({cleanupPhase:'Reducing cleanup groups to '+progress.pageSize+' records · '+r.date,cleanupError:null});
-                continue;
+              const u=pointers[i],symbol=u.unitId.slice(8),parent=scenarioCol.doc(u.pointer.cacheId),master=parent.collection('artifacts').doc(u.pointer.artifact);
+              let proof;
+              if(i<(progress.masterNext||0)) {
+                proof=await readJSON(rr,progress.masterProofs[i]);
+                if(proof.key!==proofKey||proof.unitId!==u.unitId)throw fail('SIMULATION_STATE_CORRUPT','Cleanup source checkpoint does not match the pinned master');
+                const header=await master.get();
+                // A cached proof never authorizes deletion if its master vanished or changed.
+                if(!header.exists||header.data().hash!==proof.masterHash)continue;
+              } else {
+                await save({cleanupPhase:'Verifying shared master · '+symbol+' · '+(i+1)+' / '+pointers.length+' companies / indicators'});
+                let header=await master.get(),shared=null;
+                if(header.data()?.cleanupIndexSourceHash===header.data()?.hash&&header.data()?.cleanupIndexVersion==='master-digests.v1') {
+                  try{shared=await readJSON(parent,header.data().cleanupIndexRef);if(shared.masterHash!==header.data().hash)shared=null;}
+                  catch(e){if(!['SIMULATION_STATE_MISSING','SIMULATION_STATE_CORRUPT'].includes(e.code))throw e;}
+                }
+                if(!shared) {
+                  const company=await readJSON(parent,u.pointer.artifact);header=await master.get();
+                  if(hash(JSON.stringify(company))!==header.data()?.hash)throw fail('SIMULATION_STATE_CORRUPT','Shared master changed during verification');
+                  const records=[];for(const x of company.data||[])if(allowed.has(x.collection))records.push([x.collection,x.id,signature(replayRecord(x))]);
+                  shared={masterHash:header.data().hash,records,daily:company.daily||[],provenance:company.provenance||{}};
+                  // Reuse the small verified digest index across historical runs;
+                  // each run still derives its own dated daily-price signature.
+                  const indexRef=await saveJSON(parent,'cleanup_index_'+ticket,shared);
+                  await rootTransaction(async tx=>{const h=await tx.get(master);if(h.data()?.hash!==shared.masterHash)throw fail('SIMULATION_STATE_CORRUPT');tx.set(master,{cleanupIndexVersion:'master-digests.v1',cleanupIndexSourceHash:shared.masterHash,cleanupIndexRef:indexRef},{merge:true});});
+                }
+                const records=[...shared.records],series=shared.daily.filter(x=>x.date<r.date).slice(-400);
+                records.push([admin.COL.marketDaily,symbol,signature({symbol,...shared.provenance,date:series.map(x=>x.date),o:series.map(x=>x.o),h:series.map(x=>x.h),l:series.map(x=>x.l),c:series.map(x=>x.c),v:series.map(x=>x.v),volumeProvenanceHomogeneous:true})]);
+                proof={key:proofKey,unitId:u.unitId,masterHash:shared.masterHash,records};
+                const proofRef=await saveJSON(rr,'cleanup_master_proof',proof),next={...progress,masterNext:i+1,masterProofs:[...(progress.masterProofs||[]),proofRef]};
+                await saveRun({copyCleanup:next});Object.assign(progress,next);
               }
-              Object.assign(progress,next);after=nextAfter;
-              removedTotal+=removed;if(complete)checkedTotal++;await save({cleanupRemoved:removedTotal,cleanupChecked:checkedTotal});
-              if(complete)break;
+              for(const [name,recordId,digest] of proof.records)add(name,recordId,digest);
             }
-            if(waiting&&progress.index===index)break;
-          }
-          if(progress.index===COPY_KEYS.length) {
-            if(progress.retained){await rr.set({copyCleanup:{...progress,index:0,after:null,retained:0}},{merge:true});throw fail('SIMULATION_COPY_CLEANUP_BLOCKED',r.date+': '+progress.retained+' records retained because an identical shared master was not verified.');}
-            await rr.set({evidenceCleanupVersion:CLEANUP_VERSION},{merge:true});
-          }
+            await save({cleanupPhase:'Removing verified duplicate copies · '+r.date});
+            for(let index=progress.index;index<COPY_KEYS.length;index++) {
+              let after=index===progress.index?progress.after:null;
+              for(;;) {
+                if(wallNow()>deadlineMs)return {yielded:true};
+                const pageSize=Math.max(1,Math.min(200,progress.pageSize||200));
+                let q=rr.collection(admin.COL[COPY_KEYS[index]]).orderBy('__name__').limit(pageSize);if(after)q=q.startAfter(after);
+                const page=await q.get();let next;
+                try {
+                  next=await rootTransaction(async tx=>{
+                    const [run,batch]=await Promise.all([tx.get(rr),tx.get(br)]),v=run.data();
+                    if(v?.copyCleanupOwner!==ticket||v.copyCleanupLeaseUntil<wallNow()||batch.data()?.cleanupTicket!==ticket)throw fail('SIMULATION_LEASE_LOST');
+                    if(v.leaseUntil>wallNow()||v.dispatchedUntil>wallNow())throw fail('SIMULATION_CLEANUP_WORKER_ACTIVE');
+                    // Re-read the records in the deletion transaction. A changed
+                    // record cannot be deleted using an earlier page's signature.
+                    const current=await Promise.all(page.docs.map(d=>tx.get(d.ref)));let removed=0,retained=0;
+                    for(const d of current)if(d.exists){if(allowed.get(admin.COL[COPY_KEYS[index]]).get(d.id)?.has(signature(d.data()))){tx.delete(d.ref);removed++;}else retained++;}
+                    const complete=page.size<pageSize,out={...progress,index:complete?index+1:index,after:complete?null:page.docs.at(-1)?.id||after,removed:progress.removed+removed,retained:progress.retained+retained};
+                    tx.set(rr,{copyCleanup:out,copyCleanupLeaseUntil:wallNow()+90000},{merge:true});return out;
+                  });
+                } catch(e) {
+                  const tooLarge=/transaction too (?:big|large)|(?:maximum|exceeds?.*maximum) request size/i.test(String(e.message||''));
+                  if(!tooLarge||pageSize===1)throw e;
+                  progress.pageSize=Math.max(1,Math.floor(Math.min(pageSize,page.size)/2));await saveRun({copyCleanup:{...progress}});
+                  await save({cleanupPhase:'Reducing cleanup groups to '+progress.pageSize+' records · '+r.date});continue;
+                }
+                Object.assign(progress,next);after=next.after;
+                const t=await totals();await save({cleanupRemoved:t.cleanupRemoved,cleanupRetained:t.cleanupRetained,cleanupChecked:t.cleanupChecked});
+                if(progress.index>index)break;
+              }
+            }
+            // Non-identical/unverified records are not proven duplicates. Keep
+            // them and finish the scan instead of resetting its cursor forever.
+            await saveRun({evidenceCleanupVersion:CLEANUP_VERSION,copyCleanupError:null,copyCleanupOutcome:progress.retained?'complete_with_retained_records':'complete'});
+          } catch(e) {
+            if(e.code==='SIMULATION_LEASE_LOST')throw e;
+            if(e.code!=='SIMULATION_CLEANUP_WORKER_ACTIVE') {errors.push({code:e.code||'SIMULATION_CLEANUP_FAILED',message:r.date+': '+e.message});await saveRun({copyCleanupError:String(e.message).slice(0,300)});}
+          } finally {await releaseRun();}
         }
-        const latest=await rows(runCol.where('batchId','==',batchId)),done=latest.every(r=>r.evidenceCleanupVersion===CLEANUP_VERSION);
-        await save({cleanupState:done?'complete':'waiting',cleanupPhase:done?'Duplicate cleanup complete':'Waiting for active workers to stop',cleanupRemoved:latest.reduce((n,r)=>n+(r.copyCleanup?.removed||0),0),cleanupNextAtMs:done?0:wallNow()+60000,...(done?{cleanupVersion:CLEANUP_VERSION}:{})});
-        return {done,yielded:!done};
-      }catch(e){await save({cleanupState:'needs_attention',cleanupError:String(e.message).slice(0,400),cleanupNextAtMs:wallNow()+300000});return {done:false,error:e.code||e.message};}
-      finally{clearInterval(timer);await renewal;await rootTransaction(async tx=>{const snap=await tx.get(br);if(snap.data()?.cleanupTicket===ticket)tx.set(br,{cleanupTicket:null,cleanupLeaseUntil:0},{merge:true});});}
+        const t=await totals(),done=t.runs.every(r=>r.evidenceCleanupVersion===CLEANUP_VERSION);
+        await save({cleanupState:done?'complete':errors.length?'needs_attention':'waiting',cleanupPhase:done?'Duplicate cleanup complete':errors.length?'Cleanup continued; some records could not be checked':'Waiting for active workers to stop',cleanupError:errors.length?errors.map(e=>e.message).join('; ').slice(0,400):null,
+          cleanupRemoved:t.cleanupRemoved,cleanupRetained:t.cleanupRetained,cleanupChecked:t.cleanupChecked,cleanupTotal:t.cleanupTotal,cleanupNextAtMs:done?0:wallNow()+(errors.length?300000:60000),...(done?{cleanupVersion:CLEANUP_VERSION}:{})});
+        return {done,yielded:!done,...(errors.length?{error:errors[0].code}:{})};
+      }catch(e){if(e.code!=='SIMULATION_LEASE_LOST')await save({cleanupState:'needs_attention',cleanupError:String(e.message).slice(0,400),cleanupNextAtMs:wallNow()+300000});return {done:false,error:e.code||e.message};}
+      finally{clearInterval(timer);await renewal;await releaseRun();await rootTransaction(async tx=>{const snap=await tx.get(br);if(snap.data()?.cleanupTicket===ticket)tx.set(br,{cleanupTicket:null,cleanupLeaseUntil:0},{merge:true});});}
     }
     async function schedule({dispatch=null,batchId=null}={}) {
       if(!dispatch)return [];
@@ -1647,7 +1692,7 @@ const Simulator = (() => {
               catch(e){await rootTransaction(async tx=>{const x=await tx.get(ur);if(x.data()?.dispatchSequence===sequence&&!(x.data()?.leaseUntil>wallNow()))tx.set(ur,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,phase:'Shared preparation worker could not start — retrying',waitReason:'dispatch_retry',lastDispatchError:String(e.message).slice(0,200),updatedAtMs:wallNow()},{merge:true});});return {unitId:u.unitId,error:String(e.message)};}
             }));
           }
-          const eligible=runs.filter(r=>(repository.status==='ready'||r.initialized||r.repositoryPointersRef)&&!r.aiRecheckRequired&&(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
+          const eligible=runs.filter(r=>(repository.status==='ready'||r.initialized||r.repositoryPointersRef)&&!r.aiRecheckRequired&&(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.copyCleanupLeaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
             .sort((a,b)=>(a.lastDispatchedAtMs||0)-(b.lastDispatchedAtMs||0)||a.index-b.index);
           // Fan out every eligible run in this tick, including batches created under the old cap.
           selected.push(...eligible.map(async r=>{
@@ -1656,7 +1701,7 @@ const Simulator = (() => {
             const sequence=(r.dispatchSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_segment_'+sequence,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
             const j=await admin.col(admin.COL.jobs).doc(out.jobId).get();if(!j.exists)return;
             const rr=runCol.doc(r.runId);
-            await rr.set({dispatchedUntil:wallNow()+90000,lastDispatchedAtMs:wallNow(),dispatchSequence:sequence,dispatchJobId:out.jobId,phase:'Starting worker',waitReason:'dispatch',lastDispatchError:null,updatedAtMs:wallNow()},{merge:true});
+            const ready=await rootTransaction(async tx=>{const s=await tx.get(rr),v=s.data();if(v.copyCleanupLeaseUntil>wallNow()||v.leaseUntil>wallNow()||v.dispatchedUntil>wallNow())return false;tx.set(rr,{dispatchedUntil:wallNow()+90000,lastDispatchedAtMs:wallNow(),dispatchSequence:sequence,dispatchJobId:out.jobId,phase:'Starting worker',waitReason:'dispatch',lastDispatchError:null,updatedAtMs:wallNow()},{merge:true});return true;});if(!ready)return;
               try {const result=await dispatch(j.data());if(result?.error||result?.upstream>=300||result?.upstream===0)throw Error(result?.error||'Worker returned '+result.upstream);return result;}
               catch(e){await rootTransaction(async tx=>{const s=await tx.get(rr);if(s.data()?.dispatchSequence===sequence&&!(s.data()?.leaseUntil>wallNow()))tx.set(rr,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,waitReason:'dispatch_retry',phase:'Worker could not start — retrying',lastDispatchError:String(e.message).slice(0,200),updatedAtMs:wallNow()},{merge:true});});return {runId:r.runId,error:String(e.message)};}
           }));
@@ -1692,7 +1737,7 @@ const Simulator = (() => {
       const displayedStatus=b?.resetAtMs?'reset':b&&runs.length&&runs.every(r=>TERMINAL.includes(r.status))?(runs.every(r=>r.status==='complete')?'complete':'incomplete'):b?.status;
       const repositorySummary=repository?Object.fromEntries(Object.entries(repository).filter(([key])=>key!=='units')):null;
       const cleanupBatches=all.filter(x=>x.repositoryMode==='shared_first'&&x.cleanupVersion!==CLEANUP_VERSION);
-      const cleanup={pendingBatches:cleanupBatches.length,removed:all.reduce((n,x)=>n+(x.cleanupRemoved||0),0),checked:cleanupBatches.reduce((n,b)=>n+(b.cleanupChecked||0),0),total:cleanupBatches.reduce((n,b)=>n+(b.cleanupTotal||b.count*COPY_KEYS.length||0),0),errors:cleanupBatches.filter(x=>x.cleanupError).map(x=>x.cleanupError),phase:cleanupBatches.find(x=>x.cleanupPhase)?.cleanupPhase||'Waiting for cleanup worker'};
+      const cleanup={pendingBatches:cleanupBatches.length,retained:all.reduce((n,x)=>n+(x.cleanupRetained||0),0),removed:all.reduce((n,x)=>n+(x.cleanupRemoved||0),0),checked:cleanupBatches.reduce((n,b)=>n+(b.cleanupChecked||0),0),total:cleanupBatches.reduce((n,b)=>n+(b.cleanupTotal||b.count*COPY_KEYS.length||0),0),errors:cleanupBatches.filter(x=>x.cleanupError).map(x=>x.cleanupError),phase:cleanupBatches.find(x=>x.cleanupPhase)?.cleanupPhase||'Waiting for cleanup worker'};
       return {cleanup,repository:repositorySummary,asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,targetNano:TARGET*runs.length,ceilingNano:CEILING*runs.length,budgetVersion:BUDGET_VERSION,status:displayedStatus,concurrency:b.count||runs.length,concurrencyMode:'all_requested'}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.batchId===b?.batchId?runs.reduce((n,r)=>n+(r.spentNano||0),0):x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
         statistics:distribution(runs),totals:{estimatedInFlightNano:projected.reduce((n,r)=>n+(r.estimatedInFlightNano||0),0),estimatedFinalNano:projected.reduce((n,r)=>n+(TERMINAL.includes(r.status)?r.spentNano:r.estimatedTotalNano),0),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),targetNano:runs.length*TARGET,ceilingNano:runs.length*CEILING},
         pricing:{version:VERSION,asOf:'2026-09-05',models:P.MODEL_RATES,serviceTier:'flex for Astra; standard for Luna shortlist and extraction',currency:'USD',includes:'AI tokens only; data and Firebase charges excluded'},targetMs:TARGET_MS};

@@ -5934,22 +5934,24 @@ async function simulatorAdversarial({only=null}={}) {
     for(const x of data)await rr.collection(x.collection).doc(x.id).set(x.data);
     return {rr,source,artifact,data};
   }
+  function observeCleanupDeletes(fake,{before=async()=>{},after=async()=>{}}={}) {
+    const raw=fake.runTransaction;
+    fake.runTransaction=async fn=>{let deleting=0;const result=await raw(async tx=>{const value=await fn({...tx,delete:r=>{deleting++;return tx.delete(r);}});if(deleting)await before(deleting);return value;});if(deleting)await after(deleting);return result;};
+    return ()=>{fake.runTransaction=raw;};
+  }
   await check('duplicate_cleanup_resumes_committed_pages_deletes_only_copies_and_keeps_shared_artifacts',async()=>{
     const fake=database();let wall=now;const svc=Sim.create({admin:fake,wallNow:()=>wall}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','copy-cleanup'),fixture=await legacyCopies(fake,svc,b);
     await fixture.rr.collection('requests').doc('paid').set({actualNano:456});await fixture.rr.collection(A.COL.accounts).doc(b.runIds[0]).set({cash:10000000});
-    const batch=fake.batch;fake.batch=()=>{const write=batch();let deleting=false;return {...write,delete:ref=>{deleting=true;return write.delete(ref);},commit:async()=>{await write.commit();if(deleting)wall+=2000;}};};
+    const restore=observeCleanupDeletes(fake,{after:async()=>{wall+=2000;}});
     const first=await svc.cleanupBatch(b.batchId,{deadlineMs:wall+1000});assert(first.yielded);assert.equal((await fixture.rr.collection(A.COL.claims).get()).size,250);assert.equal((await fixture.rr.get()).data().copyCleanup.removed,200);
-    fake.batch=batch;const second=await svc.cleanupBatch(b.batchId);assert(second.done,JSON.stringify(second));assert.equal((await fixture.rr.collection(A.COL.claims).get()).size,0);assert.equal((await fixture.rr.get()).data().copyCleanup.removed,450);
+    restore();const second=await svc.cleanupBatch(b.batchId);assert(second.done,JSON.stringify(second));assert.equal((await fixture.rr.collection(A.COL.claims).get()).size,0);assert.equal((await fixture.rr.get()).data().copyCleanup.removed,450);
     assert.equal((await svc.readJSON(fixture.source,fixture.artifact)).data.length,450);assert.equal((await fixture.rr.collection('requests').doc('paid').get()).data().actualNano,456);assert.equal((await fixture.rr.collection(A.COL.accounts).doc(b.runIds[0]).get()).data().cash,10000000);
     const view=await svc.overview({owner:'operator'});assert.equal(view.cleanup.pendingBatches,0);assert.equal(view.cleanup.removed,450);assert((await svc.cleanupBatch(b.batchId)).done);
   });
   await check('oversized_cleanup_groups_shrink_and_resume_without_skipping_or_double_counting',async()=>{
     const fake=database();let wall=now;const svc=Sim.create({admin:fake,wallNow:()=>wall}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','large-copy-cleanup'),f=await legacyCopies(fake,svc,b,{count:17});
-    const raw=fake.batch,attempts=[];let committed=0;
-    fake.batch=()=>{const w=raw();let deletes=0;return {...w,delete:r=>{deletes++;return w.delete(r);},commit:async()=>{
-      if(deletes){attempts.push(deletes);if(deletes>3){assert.equal((await f.rr.get()).data().copyCleanup.removed,committed);throw Object.assign(Error('3 INVALID_ARGUMENT: Transaction too big. Decrease transaction size.'),{code:3});}}
-      await w.commit();committed+=deletes;if(deletes)wall+=2000;
-    }};};
+    const attempts=[];let committed=0;
+    observeCleanupDeletes(fake,{before:async deletes=>{attempts.push(deletes);if(deletes>3){assert.equal((await f.rr.get()).data().copyCleanup.removed,committed);throw Object.assign(Error('3 INVALID_ARGUMENT: Transaction too big. Decrease transaction size.'),{code:3});}},after:async deletes=>{committed+=deletes;wall+=2000;}});
     const first=await svc.cleanupBatch(b.batchId,{deadlineMs:wall+1000});assert(first.yielded,JSON.stringify(first));
     assert.deepEqual(attempts,[17,8,4,2]);const saved=(await f.rr.get()).data().copyCleanup;
     assert.equal(saved.removed,2);assert.equal(saved.pageSize,2);assert.equal(saved.after,'copy_0001');assert.equal((await f.rr.collection(A.COL.claims).get()).size,15);
@@ -5960,7 +5962,7 @@ async function simulatorAdversarial({only=null}={}) {
   await check('cleanup_does_not_skip_single_oversized_records_or_retry_unrelated_errors',async()=>{
     for(const message of ['3 INVALID_ARGUMENT: Transaction too big. Decrease transaction size.','3 INVALID_ARGUMENT: Invalid document field']){
       const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator',message),f=await legacyCopies(fake,svc,b,{count:1});
-      const raw=fake.batch;let attempts=0;fake.batch=()=>{const w=raw();let deleting=false;return {...w,delete:r=>{deleting=true;return w.delete(r);},commit:async()=>{if(deleting){attempts++;throw Object.assign(Error(message),{code:3});}await w.commit();}};};
+      let attempts=0;observeCleanupDeletes(fake,{before:async()=>{attempts++;throw Object.assign(Error(message),{code:3});}});
       const result=await svc.cleanupBatch(b.batchId);assert.equal(result.done,false);assert.equal(result.error,3);assert.equal(attempts,message.includes('too big')?2:1);
       assert.equal((await f.rr.collection(A.COL.claims).get()).size,1);assert.equal((await f.rr.get()).data().copyCleanup.removed,0);assert.equal((await svc.readJSON(f.source,f.artifact)).data.length,1);
     }
@@ -5969,8 +5971,51 @@ async function simulatorAdversarial({only=null}={}) {
     const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','copy-safety'),f=await legacyCopies(fake,svc,b,{count:2});
     await f.rr.set({leaseUntil:now+60000},{merge:true});assert(!(await svc.cleanupBatch(b.batchId)).done);assert.equal((await f.rr.collection(A.COL.claims).get()).size,2);
     await f.rr.set({leaseUntil:0},{merge:true});await f.rr.collection(A.COL.claims).doc('copy_0001').set({text:'a different record'},{merge:true});
-    assert.equal((await svc.cleanupBatch(b.batchId)).error,'SIMULATION_COPY_CLEANUP_BLOCKED');assert.equal((await f.rr.collection(A.COL.claims).get()).size,1);assert.equal((await svc.readJSON(f.source,f.artifact)).data.length,2);
-    const b2=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','missing-copy-master'),f2=await legacyCopies(fake,svc,b2,{count:1,master:false});assert.equal((await svc.cleanupBatch(b2.batchId)).error,'SIMULATION_COPY_CLEANUP_BLOCKED');assert.equal((await f2.rr.collection(A.COL.claims).get()).size,1);
+    assert.equal((await svc.cleanupBatch(b.batchId)).done,true);assert.equal((await f.rr.collection(A.COL.claims).get()).size,1);assert.equal((await svc.readJSON(f.source,f.artifact)).data.length,2);
+    const b2=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','missing-copy-master'),f2=await legacyCopies(fake,svc,b2,{count:1,master:false});assert.equal((await svc.cleanupBatch(b2.batchId)).done,true);assert.equal((await f2.rr.collection(A.COL.claims).get()).size,1);
+  });
+  await check('cleanup_retained_records_finish_without_resetting_cursor_or_blocking_other_runs',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:2,from:'2026-04-22',to:'2026-04-23'},'operator','retained-cleanup');
+    const first=await legacyCopies(fake,svc,b,{count:2}),second=await legacyCopies(fake,svc,{...b,runIds:[b.runIds[1]]},{count:2});
+    await first.rr.collection(A.COL.claims).doc('copy_0001').set({text:'Keep distinct local evidence'},{merge:true});
+    const done=await svc.cleanupBatch(b.batchId);assert(done.done,JSON.stringify(done));
+    assert.equal((await first.rr.collection(A.COL.claims).get()).size,1);assert.equal((await second.rr.collection(A.COL.claims).get()).size,0);
+    const run=(await first.rr.get()).data();assert.equal(run.copyCleanup.index,6);assert.equal(run.copyCleanup.retained,1);assert.equal(run.copyCleanupOutcome,'complete_with_retained_records');
+    const view=await svc.overview({owner:'operator'});assert.equal(view.cleanup.pendingBatches,0);assert.equal(view.cleanup.retained,1);assert.equal(view.cleanup.removed,3);assert.deepEqual(view.cleanup.errors,[]);
+    const before=JSON.stringify((await first.rr.get()).data().copyCleanup);await svc.cleanupBatch(b.batchId);assert.equal(JSON.stringify((await first.rr.get()).data().copyCleanup),before);
+    const launched=[];await svc.schedule({dispatch:async j=>{launched.push(j);return {upstream:202};}});assert(!launched.some(j=>j.task==='simulation_cleanup'));
+  });
+  await check('cleanup_source_verification_checkpoint_resumes_and_skips_full_history_rereads',async()=>{
+    const fake=database();let wall=now;const svc=Sim.create({admin:fake,wallNow:()=>wall}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','cleanup-source-checkpoint'),f=await legacyCopies(fake,svc,b,{count:2});
+    const raw=fake.runTransaction;fake.runTransaction=async fn=>{let checkpoint=false;const out=await raw(async tx=>fn({...tx,set:(r,d,o)=>{if(d.copyCleanup?.masterNext===1)checkpoint=true;return tx.set(r,d,o);}}));if(checkpoint)wall+=2000;return out;};
+    const first=await svc.cleanupBatch(b.batchId,{deadlineMs:wall+1000});assert(first.yielded);assert.equal((await f.rr.get()).data().copyCleanup.masterNext,1);assert.equal((await f.rr.collection(A.COL.claims).get()).size,2);
+    fake.runTransaction=raw;
+    // The verified proof is resumed; a request to read the large source's chunks would fail.
+    const col=fake.col.bind(fake);let chunkReads=0;
+    const wrapped=ref=>({...ref,collection:name=>{const c=ref.collection(name);return {...c,doc:id=>wrapped(c.doc(id))};},get:async()=>{if(ref.path.includes(f.artifact+'/chunks/')){chunkReads++;throw Error('large history read repeated');}return ref.get();}});
+    fake.col=name=>{const c=col(name);return {...c,doc:id=>wrapped(c.doc(id))};};
+    const resumed=Sim.create({admin:fake,wallNow:()=>wall});assert((await resumed.cleanupBatch(b.batchId)).done);assert.equal(chunkReads,0);assert.equal((await f.rr.collection(A.COL.claims).get()).size,0);
+    const b2=await svc.createBatch({count:1,from:'2026-04-22',to:'2026-04-22'},'operator','cleanup-shared-index'),f2=await legacyCopies(fake,svc,b2,{count:2});
+    const pointers=await svc.saveJSON(f2.rr,'pinned',[{unitId:'company_A',pointer:{cacheId:f.source.id,artifact:f.artifact}}]);
+    await f2.rr.set({repositoryPointersRef:pointers},{merge:true});
+    assert((await resumed.cleanupBatch(b2.batchId)).done,'another run should reuse the shared digest index');assert.equal(chunkReads,0);assert.equal((await f2.rr.collection(A.COL.claims).get()).size,0);
+  });
+  await check('cleanup_transaction_rechecks_changed_record_and_worker_lease_before_deletion',async()=>{
+    for(const mode of ['changed','worker']) {
+      const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','cleanup-race-'+mode),f=await legacyCopies(fake,svc,b,{count:1});
+      const raw=fake.runTransaction;let injected=false;
+      fake.runTransaction=fn=>raw(async tx=>fn({...tx,get:async ref=>{
+        if(!injected&&ref.path===f.rr.path&&(await ref.get()).data().copyCleanup?.masterNext===1){injected=true;if(mode==='changed')await f.rr.collection(A.COL.claims).doc('copy_0000').set({text:'Updated after source proof'},{merge:true});else await f.rr.set({leaseUntil:now+60000},{merge:true});}
+        return tx.get(ref);
+      }}));
+      await svc.cleanupBatch(b.batchId);assert(injected);assert.equal((await f.rr.collection(A.COL.claims).get()).size,1);
+      assert.equal((await f.rr.get()).data().copyCleanupOwner,null);
+    }
+  });
+  await check('cleanup_lock_blocks_worker_claim_until_released',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','cleanup-worker-lock'),rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+    await rr.set({copyCleanupOwner:'cleanup',copyCleanupLeaseUntil:now+60000},{merge:true});
+    const out=await svc.execute(b.runIds[0]);assert.equal(out.reason,'already_running_or_finished');assert.equal((await rr.get()).data().leaseOwner,undefined);
   });
   await check('shared_evidence_reads_over_9000_records_without_copies_and_hides_future_data',async()=>{
     let clock=1000;const data=Array.from({length:10020},(_,i)=>({collection:A.COL.claims,id:'claim_'+i,knownAtMs:i<10000?900:2000,data:{kind:'claim',claimId:'claim_'+i,symbol:'A',claimType:i%2?'FACT':'GUIDANCE',publishedAtMs:i<10000?900:2000,firstSeenAtMs:i<10000?900:2000,text:'Saved evidence '+i}}));
