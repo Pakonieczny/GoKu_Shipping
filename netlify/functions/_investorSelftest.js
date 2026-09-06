@@ -5844,6 +5844,46 @@ async function simulatorAdversarial() {
     return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
   }
   const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  await check('firestore_contention_codes_retry_only_aborted_transactions',async()=>{
+    for(const code of [10,'10','ABORTED','aborted','firestore/aborted'])assert(Sim.isContention({code}));
+    assert(Sim.isContention({message:'10 ABORTED: Aborted due to cross-transaction contention.'}));
+    for(const code of [3,7,9,'SIMULATION_SUBMISSION_UNCERTAIN'])assert(!Sim.isContention({code,message:'Different failure'}));
+    const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','contention-control');
+    const raw=fake.runTransaction;let attempts=0;
+    fake.runTransaction=async fn=>{if(++attempts<3)throw Object.assign(Error('10 ABORTED: contention'),{code:10});return raw(fn);};
+    const before=await svc.getRun(b.runIds[0]);await svc.control({runId:before.runId,command:'pause'},'operator');
+    const after=await svc.getRun(before.runId);assert.equal(attempts,3);assert.equal(after.revision,before.revision+1);assert(after.paused);
+    attempts=0;fake.runTransaction=async()=>{attempts++;throw Object.assign(Error('Permission denied'),{code:7});};
+    await assert.rejects(()=>svc.control({runId:before.runId,command:'resume'},'operator'),e=>e.code===7);assert.equal(attempts,1);
+  });
+  await check('persistent_replay_contention_yields_without_losing_saved_progress',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','contention-replay'),rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+    const config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+    for(const d of (await repo.ref.collection('units').get()).docs)await d.ref.set({status:'ready'},{merge:true});
+    await rr.set({scenarioCursor:50,managerCheckpointRef:'saved-checkpoint'},{merge:true});
+    const raw=fake.runTransaction;let collisions=0;
+    fake.runTransaction=fn=>raw(tx=>fn({...tx,set:(ref,data,opts)=>{
+      if(data.phase==='Reading saved company research'){collisions++;throw Object.assign(Error('10 ABORTED: contention'),{code:'ABORTED'});}
+      return tx.set(ref,data,opts);
+    }}));
+    const out=await svc.execute(b.runIds[0]),r=await svc.getRun(b.runIds[0]);
+    assert.equal(collisions,3);assert(out.yielded);assert.equal(r.status,'queued');assert.equal(r.waitReason,'database_retry');assert(r.nextAttemptAtMs>now);assert.equal(r.error,null);assert.equal(r.leaseUntil,0);
+    assert.equal(r.scenarioCursor,50);assert.equal(r.managerCheckpointRef,'saved-checkpoint');assert.equal(r.spentNano,0);assert.equal(r.storageRetries,1);
+    await svc.control({runId:r.runId,command:'pause'},'operator');assert.equal((await svc.getRun(r.runId)).status,'paused');
+  });
+  await check('old_contention_failure_can_resume_without_resetting_clock_money_or_checkpoint',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','contention-recovery'),rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+    for(const initialized of [false,true]) {
+      await rr.set({status:'incomplete',initialized,clockMs:123456,managerCheckpointRef:'saved',scenarioCursor:50,spentNano:initialized?123:0,error:{code:'10',message:'10 ABORTED: contention'}},{merge:true});
+      const view=await svc.overview({owner:'operator',batchId:b.batchId});assert(view.runs[0].canResumeAfterContention);
+      await assert.rejects(()=>svc.control({runId:b.runIds[0],command:'retry'},'intruder'),/another operator/);
+      await svc.control({runId:b.runIds[0],command:'retry'},'operator');const r=await svc.getRun(b.runIds[0]);
+      assert.equal(r.status,'queued');assert.equal(r.initialized,initialized);assert.equal(r.clockMs,123456);assert.equal(r.managerCheckpointRef,'saved');assert.equal(r.scenarioCursor,50);assert.equal(r.spentNano,initialized?123:0);
+    }
+    await rr.set({status:'incomplete',error:{code:7,message:'Permission denied'}},{merge:true});
+    assert.equal((await svc.overview({owner:'operator',batchId:b.batchId})).runs[0].canResumeAfterContention,false);
+    await assert.rejects(()=>svc.control({runId:b.runIds[0],command:'retry'},'operator'),/Only an unpaid/);
+  });
   async function seedSimulationArchive(fake,asOfMs=Date.UTC(2026,6,1)) {
     const U=require('./_investorUniverse'),row=U.tradeTier.find(r=>r.symbol==='A');
     await fake.col(A.COL.control).doc('control').set({universeRemovals:U.tradeTier.filter(r=>r.symbol!=='A').map(r=>r.symbol)});
@@ -6058,7 +6098,7 @@ async function simulatorAdversarial() {
   });
   await check('cold_simulation_worker_loads_market_credentials_after_verified_claim',async()=>{
     const M=require('./_investorMarket'),AUTH=require('./_investorAuth'),J=require('./_investorJobs'),worker=require('./investorManager-background');
-    const originals={load:M.loadMarketSettings,auth:AUTH.loadAuthSecrets,claim:J.claimOnce,complete:J.complete,create:Sim.create};
+    const originals={load:M.loadMarketSettings,auth:AUTH.loadAuthSecrets,claim:J.claimOnce,complete:J.complete,yield:J.yieldSegment,create:Sim.create};
     let loaded=false,accepted=true,executed=0,prepared=0,completed=0;
     try {
       AUTH.loadAuthSecrets=async()=>{};
@@ -6069,9 +6109,12 @@ async function simulatorAdversarial() {
       const event={body:JSON.stringify({jobId:'fixture',task:'simulation',nonce:'fixture',payload:{runId:RID}})};
       assert.equal((await worker.handler(event)).statusCode,200);assert.equal(executed,1);assert.equal(completed,1);
       assert.equal((await worker.handler({body:JSON.stringify({jobId:'fixture',task:'simulation_prepare',nonce:'fixture',payload:{batchId:BID,unitId:'company_A'}})})).statusCode,200);assert.equal(prepared,1);assert.equal(completed,2);
+      let yielded=0;J.yieldSegment=async(claim,args)=>{assert.equal(args.reason,'firestore_contention');yielded++;};
+      Sim.create=()=>({execute:async()=>{throw Object.assign(Error('10 ABORTED: contention'),{code:10});}});
+      assert.equal((await worker.handler(event)).statusCode,202);assert.equal(yielded,1);
       accepted=false;loaded=false;
       assert.equal((await worker.handler(event)).statusCode,403);assert.equal(loaded,false);assert.equal(executed,1);
-    } finally {M.loadMarketSettings=originals.load;AUTH.loadAuthSecrets=originals.auth;J.claimOnce=originals.claim;J.complete=originals.complete;Sim.create=originals.create;}
+    } finally {M.loadMarketSettings=originals.load;AUTH.loadAuthSecrets=originals.auth;J.claimOnce=originals.claim;J.complete=originals.complete;J.yieldSegment=originals.yield;Sim.create=originals.create;}
   });
   await check('historical_preparation_refreshes_credentials_and_keeps_missing_data_closed',async()=>{
     const M=require('./_investorMarket'),originals={load:M.loadMarketSettings,credentials:M.providerCredentials};
@@ -6102,6 +6145,17 @@ async function simulatorAdversarial() {
   async function metered(script){const fake=database(),ref=fake.col('InvestorAI_Simulations').doc(RID),run={runId:RID,clockMs:1000,leaseOwner:'owner',owner:'operator',spentNano:0,reservedNano:0,paused:false,leaseUntil:now+1000000};await ref.set(run);let posts=0,counts=0;const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{if(url.endsWith('/input_tokens')){counts++;return {ok:true,status:200,json:async()=>({input_tokens:1000})};}if(opts.method==='POST')posts++;return script(url,opts,posts);}});const meter=svc.meter(run,ref,async()=>(await ref.get()).data().paused,async()=>{});return {fake,ref,run,svc,meter,posts:()=>posts,counts:()=>counts};}
   const body={model:'gpt-6-astra',input:[{role:'user',content:'fixture'}],max_output_tokens:4000,reasoning:{effort:'high'}};
   const completed={id:'resp_fixture',status:'completed',service_tier:'flex',model:'gpt-6-astra',output:[],usage:{input_tokens:1000,output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}};
+  await check('contention_after_AI_response_preserves_identity_and_settles_cost_once',async()=>{
+    const x=await metered(async()=>({ok:true,status:200,json:async()=>completed})),raw=x.fake.runTransaction;let collisions=0;
+    x.fake.runTransaction=fn=>raw(tx=>fn({...tx,set:(ref,data,opts)=>{
+      if(data.status==='settled'&&collisions++<3)throw Object.assign(Error('10 ABORTED: contention'),{code:10});
+      return tx.set(ref,data,opts);
+    }}));
+    await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body}),e=>e.code===10);
+    const saved=(await x.ref.collection('requests').get()).docs[0].data();assert.equal(saved.responseId,completed.id);assert.equal(saved.status,'pending');assert.equal(x.posts(),1);
+    await x.meter.drain();await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body});
+    const run=(await x.ref.get()).data();assert.equal(x.posts(),1);assert.equal(run.spentNano,30000000);assert.equal(run.reservedNano,0);assert.equal(run.pendingAiCount,0);
+  });
   await check('pause_during_request_settles_once_and_resume_reuses_response',async()=>{const x=await metered(async(u,o)=>({ok:true,status:200,json:async()=>o.method==='POST'?{id:'resp_fixture',status:'in_progress'}:completed}));const first=await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body});assert.equal(first.data.status,'in_progress');await x.ref.set({paused:true},{merge:true});await x.meter.drain();assert.equal((await x.ref.get()).data().spentNano,30000000);assert.equal((await x.ref.get()).data().reservedNano,0);await x.ref.set({paused:false},{merge:true});await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body});assert.equal(x.posts(),1);assert.equal((await x.ref.get()).data().spentNano,30000000);});
   await check('ambiguous_submission_retains_reservation_and_never_resubmits',async()=>{const x=await metered(async()=>{throw new Error('timeout after sending');});await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body}),e=>e.code==='SIMULATION_SUBMISSION_UNCERTAIN');const reserved=(await x.ref.get()).data().reservedNano;assert(reserved>0);await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body}),e=>e.code==='SIMULATION_SUBMISSION_UNCERTAIN');assert.equal(x.posts(),1);assert.equal((await x.ref.get()).data().reservedNano,reserved);});
   await check('budget_reservation_is_atomic_across_concurrent_calls',async()=>{const x=await metered(async()=>({ok:true,status:200,json:async()=>({id:'resp_fixture',status:'in_progress'})}));await x.ref.set({spentNano:950000000},{merge:true});await Promise.allSettled([1,2,3].map(i=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:{...body,input:'request '+i}})));const r=(await x.ref.get()).data();assert(r.spentNano+r.reservedNano<=Sim.CEILING);assert.equal(x.posts(),1);});

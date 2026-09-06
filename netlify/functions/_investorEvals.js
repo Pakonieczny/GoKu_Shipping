@@ -153,6 +153,8 @@ const Simulator = (() => {
   const DATA_KEYS = ['documents','dossierVersions','versions','claims','financialFacts','evidenceDeltas','corporateActions'];
   const hash = C.hash, decode = x => x && x._codec ? require('./_investorStorageCodec').decode(x) : x;
   const fail = (code,message=code) => Object.assign(new Error(message),{code});
+  const isContention = e => ['10','ABORTED','FIRESTORE/ABORTED'].includes(String(e?.code??'').toUpperCase())||/^10\s+ABORTED\b/i.test(String(e?.message||''));
+  const canResumeContention = r => r.status==='incomplete'&&isContention(r.error);
   const id = x => { if(!/^sim_[a-f0-9]{24}$/.test(String(x))) throw fail('BAD_REQUEST','Invalid simulation identifier'); return x; };
   const millis = x => x && typeof x.toMillis==='function' ? x.toMillis() : typeof x==='number' ? x : Date.parse(x || '');
   function knownAt(x) {
@@ -261,7 +263,16 @@ const Simulator = (() => {
     // Capture root references outside replay scope; never dynamically fall back.
     const batchCol=admin.col(BATCHES), runCol=admin.col(RUNS), scenarioCol=admin.col(SCENARIOS);
     const jobs=require('./_investorJobs').withAdmin(admin);
-    const rootTransaction=admin===A?fn=>A.rawDb().runTransaction(fn):fn=>admin.runTransaction(fn);
+    const rawTransaction=admin===A?fn=>A.rawDb().runTransaction(fn):fn=>admin.runTransaction(fn);
+    const rootTransaction=async fn=>{
+      // ABORTED means the transaction did not commit. Retry only that transaction,
+      // never the surrounding AI submission or trade operation. Persistent contention
+      // yields the worker below; it does not fail the simulation or cap concurrency.
+      for(let attempt=0;;attempt++)try{return await rawTransaction(fn);}catch(e){
+        if(!isContention(e)||attempt>=2)throw e;
+        await new Promise(resolve=>setTimeout(resolve,(150+Math.random()*250)*2**attempt));
+      }
+    };
     const rootBatch=admin===A?()=>A.rawDb().batch():()=>admin.batch();
     const rootCollection=name=>admin.col(name);
     const rows=async q=>(await q.get()).docs.map(d=>({id:d.id,...decode(d.data())}));
@@ -307,7 +318,7 @@ const Simulator = (() => {
       const configRef=await saveJSON(ref,'configuration',{policy,roster,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES});
       // Publish the batch last so a partially-created batch is never dispatched.
       for(let offset=0;offset<runIds.length;offset+=150) {
-        await admin.runTransaction(async tx=>{
+        await rootTransaction(async tx=>{
           const batchState=await tx.get(ref);if(batchState.exists)return;
           const ids=runIds.slice(offset,offset+150),existing=await Promise.all(ids.map(x=>tx.get(runCol.doc(x))));
           for(let j=0;j<ids.length;j++)if(!existing[j].exists){const i=offset+j;tx.set(runCol.doc(ids[j]),{runId:ids[j],batchId,owner,date:dates[i],status:'queued',phase:'Waiting for shared data preparation',createdAtMs:wallNow(),index:i,paused:false,revision:0,
@@ -329,21 +340,23 @@ const Simulator = (() => {
         if(!runId)throw fail('BAD_REQUEST','Choose a simulation to retry');
         const r=await getRun(runId,owner),ref=runCol.doc(id(runId)),br=batchCol.doc(r.batchId);await getBatch(r.batchId,owner);
         await rootTransaction(async tx=>{const snap=await tx.get(ref),batch=await tx.get(br),v=snap.data();
-          if(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount||v.leaseUntil>wallNow())throw fail('BAD_REQUEST','Only an unpaid preparation failure can be retried');
+          if(v.leaseUntil>wallNow()||(!canResumeContention(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure or interrupted database transaction can be retried');
           tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
           tx.set(br,{status:'running',paused:false,completedAtMs:null,lastControlAtMs:wallNow()},{merge:true});
         });
-        const b=await getBatch(r.batchId,owner),config=await readJSON(br,b.configRef),repo=await ensureRepository(b,config);
-        if(/^HISTORICAL_BAR|^HISTORICAL_DATA/.test(r.error?.code||'')) {
-          const u=(await repo.ref.collection('units').doc('prices_'+r.date).get()).data();
-          if(u)await retryRepositoryUnit(repo.ref,u);
+        if(!r.initialized) {
+          const b=await getBatch(r.batchId,owner),config=await readJSON(br,b.configRef),repo=await ensureRepository(b,config);
+          if(/^HISTORICAL_BAR|^HISTORICAL_DATA/.test(r.error?.code||'')) {
+            const u=(await repo.ref.collection('units').doc('prices_'+r.date).get()).data();
+            if(u)await retryRepositoryUnit(repo.ref,u);
+          }
         }
         return getRun(runId,owner);
       }
       const pause=command==='pause';
       if(runId) {
         const ref=runCol.doc(id(runId));await getRun(runId,owner);
-        await admin.runTransaction(async tx=>{const s=await tx.get(ref),r=s.data();if(TERMINAL.includes(r.status)) return;
+        await rootTransaction(async tx=>{const s=await tx.get(ref),r=s.data();if(TERMINAL.includes(r.status)) return;
           tx.set(ref,{paused:pause,status:pause?'paused':r.leaseUntil>wallNow()?'running':'queued',revision:r.revision+1,lastControlAtMs:wallNow()},{merge:true});});
         return getRun(runId,owner);
       }
@@ -759,7 +772,7 @@ const Simulator = (() => {
         await save({status:'ready',phase:'Saved in shared library',pointer,error:null,nextAttemptAtMs:0,completedAtMs:wallNow()});return {done:true};
       }catch(e){
         if(e.code==='SIMULATION_LEASE_LOST')return {yielded:true};
-        const retry=e.code==='SIMULATION_PREPARATION_YIELD'||e.code==='HISTORICAL_PROVIDER_BUSY'||[4,8,10,14].includes(e.code);
+        const retry=e.code==='SIMULATION_PREPARATION_YIELD'||e.code==='HISTORICAL_PROVIDER_BUSY'||isContention(e)||[4,8,14].includes(Number(e.code));
         await save({status:retry?'queued':'failed',phase:retry?'Preparation saved — waiting to continue':'Shared preparation needs attention',nextAttemptAtMs:retry?wallNow()+(e.retryAfterMs||5000):0,error:retry?null:{code:e.code||'REPOSITORY_FAILED',message:String(e.message).slice(0,500),details:e.details||null}});
         return {done:!retry,yielded:retry};
       }finally{clearInterval(timer);await pending;await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:0,leaseOwner:null},{merge:true});});}
@@ -797,7 +810,7 @@ const Simulator = (() => {
         }
         const tier=response.service_tier==='flex'?'flex':q.tier==='flex' && !response.service_tier?'flex':'standard';
         const actual=price(q.model,response.usage,tier,tier===q.tier?q.rates:null);
-        await admin.runTransaction(async tx=>{const [rs,qs]=await Promise.all([tx.get(ref),tx.get(qref)]);if(qs.data().status==='settled')return;
+        await rootTransaction(async tx=>{const [rs,qs]=await Promise.all([tx.get(ref),tx.get(qref)]);if(qs.data().status==='settled')return;
           const r=rs.data();tx.set(ref,{spentNano:r.spentNano+actual,reservedNano:Math.max(0,r.reservedNano-q.reservation),pendingAiCount:Math.max(0,(r.pendingAiCount||0)-1),reportedInputTokens:(r.reportedInputTokens||0)+response.usage.input_tokens,reportedOutputTokens:(r.reportedOutputTokens||0)+response.usage.output_tokens,reportedReasoningTokens:(r.reportedReasoningTokens||0)+(response.usage.output_tokens_details?.reasoning_tokens||0),measuredRequestMs:(r.measuredRequestMs||0)+Math.max(1,wallNow()-q.startedAtMs),lastUsageAtMs:wallNow(),pricingViolation:r.spentNano+actual>CEILING},{merge:true});
           tx.set(qref,{status:'settled',responseId:response.id,responseRef,actualNano:actual,usage:response.usage,tier,finishedAtMs:wallNow()},{merge:true});});
       }
@@ -824,7 +837,7 @@ const Simulator = (() => {
         const input=counted.data.input_tokens,tier=body.model==='gpt-6-astra'?'flex':'standard',rates=rate(body.model,tier,input);
         const inputReserve=Math.ceil(input*rates.write);
         const requestRef=await saveJSON(ref,'request',{...body,service_tier:tier});
-        const reservation=await admin.runTransaction(async tx=>{const [rs,qs]=await Promise.all([tx.get(ref),tx.get(qref)]);const r=rs.data();
+        const reservation=await rootTransaction(async tx=>{const [rs,qs]=await Promise.all([tx.get(ref),tx.get(qref)]);const r=rs.data();
           if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
           const room=CEILING-r.spentNano-r.reservedNano-inputReserve;
           const maxOutput=Math.min(body.max_output_tokens,Math.floor(room/rates.output));
@@ -838,9 +851,12 @@ const Simulator = (() => {
         try {r=await rawHTTP('POST',url,submitted);}
         catch(e){await qref.set({status:'uncertain',message:'Submission timed out; reservation retained'},{merge:true});throw fail('SIMULATION_SUBMISSION_UNCERTAIN');}
         if(!r.ok) {
-          await admin.runTransaction(async tx=>{const rs=await tx.get(ref);tx.set(ref,{reservedNano:Math.max(0,rs.data().reservedNano-reservation.nano),pendingAiCount:Math.max(0,(rs.data().pendingAiCount||0)-1)},{merge:true});tx.set(qref,{status:'rejected',httpStatus:r.status,message:String(r.data?.error?.message||'Request rejected').slice(0,500)},{merge:true});});
+          await rootTransaction(async tx=>{const rs=await tx.get(ref);tx.set(ref,{reservedNano:Math.max(0,rs.data().reservedNano-reservation.nano),pendingAiCount:Math.max(0,(rs.data().pendingAiCount||0)-1)},{merge:true});tx.set(qref,{status:'rejected',httpStatus:r.status,message:String(r.data?.error?.message||'Request rejected').slice(0,500)},{merge:true});});
           if(r.status===429)await ref.set({rateLimitedAtMs:wallNow()},{merge:true});return r;
         }
+        // Record an acknowledged response before accounting, so a later transaction
+        // collision resumes/polls the same response instead of losing its identity.
+        if(r.data?.id)await qref.set({responseId:r.data.id,status:'pending'},{merge:true});
         const q=(await qref.get()).data();await settle(qref,q,r.data);return r;
       }
       async function drain() {const pending=await rows(ref.collection('requests').where('status','==','pending'));for(const q of pending) await request({method:'GET',url:'https://api.openai.com/v1/responses/'+q.responseId});const remaining=(await rows(ref.collection('requests').where('status','==','pending'))).length;if(!remaining)await ref.set({pendingAiCount:0},{merge:true});return remaining;}
@@ -848,18 +864,18 @@ const Simulator = (() => {
     }
     async function execute(runId,{deadlineMs=wallNow()+11*60000}={}) {
       const ref=runCol.doc(id(runId)),owner=crypto.randomBytes(12).toString('hex');let run;
-      const claimed=await admin.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)return false;run=s.data();
+      const claimed=await rootTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)return false;run=s.data();
         if((TERMINAL.includes(run.status)&&!run.pendingAiCount)||run.leaseUntil>wallNow()||run.nextAttemptAtMs>wallNow())return false;
         tx.set(ref,{leaseOwner:owner,leaseUntil:wallNow()+90000,dispatchedUntil:0,segmentStartedAtMs:wallNow(),lastHeartbeatAtMs:wallNow(),waitReason:null,waitingSourceId:null},{merge:true});run.leaseOwner=owner;return true;});
       if(!claimed)return {done:true,reason:'already_running_or_finished'};
       let activeStarted=run.initialized&&!run.paused&&!TERMINAL.includes(run.status)?wallNow():null;
       const batch=await getBatch(run.batchId),config=await readJSON(batchCol.doc(run.batchId),batch.configRef);
       const assertOwner=async()=>{const r=(await ref.get()).data();if(r.leaseOwner!==owner||r.leaseUntil<wallNow())throw fail('SIMULATION_LEASE_LOST');};
-      const save=async fields=>{await admin.runTransaction(async tx=>{const s=await tx.get(ref);if(s.data().leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{...fields,...(s.data().paused && fields.status && !TERMINAL.includes(fields.status)?{status:'paused'}:{}),leaseUntil:wallNow()+90000,updatedAtMs:wallNow()},{merge:true});});Object.assign(run,fields);};
+      const save=async fields=>{await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data().leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{...fields,...(s.data().paused && fields.status && !TERMINAL.includes(fields.status)?{status:'paused'}:{}),leaseUntil:wallNow()+90000,updatedAtMs:wallNow()},{merge:true});});Object.assign(run,fields);};
       const paused=async()=>{const [r,b]=await Promise.all([ref.get(),batchCol.doc(run.batchId).get()]);return r.data().paused || b.data().paused || wallNow()>deadlineMs;};
       const cost=meter(run,ref,paused,assertOwner);let scope;
       let heartbeatPending=Promise.resolve();
-      const heartbeat=setInterval(()=>{heartbeatPending=heartbeatPending.then(()=>admin.runTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000,lastHeartbeatAtMs:wallNow()},{merge:true});})).catch(()=>{});},20000);
+      const heartbeat=setInterval(()=>{heartbeatPending=heartbeatPending.then(()=>rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000,lastHeartbeatAtMs:wallNow()},{merge:true});})).catch(()=>{});},20000);
       if(heartbeat.unref)heartbeat.unref();
       try {
         if(run.paused||batch.paused||TERMINAL.includes(run.status)) {await cost.drain();return {done:true,paused:!!run.paused};}
@@ -969,6 +985,12 @@ const Simulator = (() => {
         return {done:TERMINAL.includes(latest.status)||latest.paused,yielded:!TERMINAL.includes(latest.status)&&!latest.paused};
       } catch(e) {
         const latest=await getRun(runId);
+        if(isContention(e)) {
+          const stopped=latest.paused||(await getBatch(run.batchId)).paused,nextAttemptAtMs=wallNow()+5000+Math.floor(Math.random()*5000);
+          await save({status:stopped?'paused':'queued',phase:stopped?'Paused — progress saved':'Database busy — retrying automatically',waitReason:'database_retry',nextAttemptAtMs,error:null,
+            lastStorageError:{code:String(e.code||'10'),message:String(e.message).slice(0,500),atMs:wallNow()},storageRetries:(latest.storageRetries||0)+1});
+          return {done:false,yielded:true,nextAttemptAtMs};
+        }
         if(e.code==='SIMULATION_PREPARATION_YIELD') {await save({status:latest.paused?'paused':'queued',phase:latest.paused?'Paused — preparation saved':'Preparation saved — queued to continue',waitReason:latest.paused?'paused':'worker',nextAttemptAtMs:0});return {done:false,yielded:true};}
         if(e.code==='HISTORICAL_PROVIDER_BUSY'&&!latest.paused&&(e.sharedPreparation||(latest.preparationRetries||0)<3)) {
           const nextAttemptAtMs=wallNow()+e.retryAfterMs;
@@ -981,13 +1003,13 @@ const Simulator = (() => {
         return {done:true,status,error:e.code||e.message};
       } finally {
         clearInterval(heartbeat);await heartbeatPending;
-        await admin.runTransaction(async tx=>{const s=await tx.get(ref);if(s.data().leaseOwner===owner)tx.set(ref,{leaseOwner:null,leaseUntil:0,activeMs:(s.data().activeMs||0)+(activeStarted==null?0:wallNow()-activeStarted)},{merge:true});});
+        await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data().leaseOwner===owner)tx.set(ref,{leaseOwner:null,leaseUntil:0,activeMs:(s.data().activeMs||0)+(activeStarted==null?0:wallNow()-activeStarted)},{merge:true});});
       }
     }
     async function schedule({dispatch=null}={}) {
       if(!dispatch)return [];
       const guard=batchCol.doc('dispatch_lock'),ticket=crypto.randomBytes(8).toString('hex');
-      const locked=await admin.runTransaction(async tx=>{const s=await tx.get(guard);if(s.exists&&s.data().until>wallNow())return false;tx.set(guard,{ticket,until:wallNow()+25000});return true;});
+      const locked=await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.exists&&s.data().until>wallNow())return false;tx.set(guard,{ticket,until:wallNow()+25000});return true;});
       if(!locked)return [];
       const selected=[];
       try {
@@ -1043,7 +1065,7 @@ const Simulator = (() => {
         const activity=terminal?r.status:r.paused?'paused':!r.initialized&&repository?.status!=='ready'?'waiting_repository':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
         const activityLabel=active&&activity!=='waiting_repository'?r.phase:({waiting_repository:'Waiting for shared data preparation',paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
         const canRetryPreparation=terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
-        return {...r,activity,activityLabel,canRetryPreparation,workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
+        return {...r,activity,activityLabel,canRetryPreparation,canResumeAfterContention:canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
           estimatedTotalNano:Math.max(r.spentNano,Math.min(CEILING,r.progress>5?r.spentNano/(r.progress/100):TARGET)),
           estimatedRemainingMs:TERMINAL.includes(r.status)?0:r.paused?null:r.progress>5?Math.max(0,((r.activeMs||0)+(r.leaseUntil>wallNow()?wallNow()-(r.segmentStartedAtMs||wallNow()):0))*(100-r.progress)/r.progress):null};
       }));
@@ -1064,6 +1086,6 @@ const Simulator = (() => {
     }
     return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
-  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,create};
+  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,create};
 })();
 module.exports.Simulator=Simulator;

@@ -165,6 +165,12 @@ exports.handler = async (event) => {
       await JOBS.complete(claim,out);
       return {statusCode:200,body:JSON.stringify({ok:true,...out})};
     } catch(e) {
+      if(require("./_investorEvals").Simulator.isContention(e)) {
+        // A database collision can happen before the run lease is acquired or
+        // while releasing it. Leave saved work resumable for the next scheduler tick.
+        await JOBS.yieldSegment(claim,{reason:"firestore_contention",resumeAtMs:Date.now()+5000});
+        return {statusCode:202,body:JSON.stringify({ok:true,yielded:true,reason:"database_retry"})};
+      }
       await JOBS.failClosed(claim,{code:e.code || "SIMULATION_WORKER_FAILED",message:e.message,retryable:false});
       return {statusCode:500,body:JSON.stringify({ok:false,error:e.code || "SIMULATION_WORKER_FAILED"})};
     }
