@@ -283,7 +283,7 @@ const Simulator = (() => {
       const dates=selectedDates(days,count,batchId),runIds=dates.map((d,i)=>'sim_'+hash(batchId+'|'+i).slice(0,24));
       roster.tradingDate=dates[0];
       const b={batchId,owner,count,dates,runIds,config:{from:config.from,to:config.to,count,initialCashMinor:'10000000',feedDelayMinutes:15,spreadBps:10,feePerShareMicros:5000},
-        evidenceMode:'ARCHIVE_OR_SEC_RECONSTRUCTION',preparationIncludes:'Automatic dated SEC research and historical price downloads; cached across runs',
+        evidenceMode:'ARCHIVE_OR_SEC_RECONSTRUCTION',preparationIncludes:'Shared Firebase research and price library prepared before simulations start',repositoryMode:'shared_first',
         status:'running',paused:false,createdAtMs:wallNow(),targetNano:TARGET*count,ceilingNano:CEILING*count,version:VERSION,
         model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:count,concurrencyMode:'all_requested',
         limitations:['Current eligible universe: survivorship-limited historical selection.','Missing research is reconstructed from SEC filings and financial statements. Broader historical news and confirmed earnings calendars may be unavailable.','SEC aggregates are retrieved today and filtered by filing availability; later provider corrections may remain. Original filing sources and retrieval timestamps are retained.','First-time preparation precedes the five-minute replay target.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
@@ -293,7 +293,7 @@ const Simulator = (() => {
         await admin.runTransaction(async tx=>{
           const batchState=await tx.get(ref);if(batchState.exists)return;
           const ids=runIds.slice(offset,offset+150),existing=await Promise.all(ids.map(x=>tx.get(runCol.doc(x))));
-          for(let j=0;j<ids.length;j++)if(!existing[j].exists){const i=offset+j;tx.set(runCol.doc(ids[j]),{runId:ids[j],batchId,owner,date:dates[i],status:'queued',phase:'Waiting to start',createdAtMs:wallNow(),index:i,paused:false,revision:0,
+          for(let j=0;j<ids.length;j++)if(!existing[j].exists){const i=offset+j;tx.set(runCol.doc(ids[j]),{runId:ids[j],batchId,owner,date:dates[i],status:'queued',phase:'Waiting for shared data preparation',createdAtMs:wallNow(),index:i,paused:false,revision:0,
             spentNano:0,reservedNano:0,targetNano:TARGET,ceilingNano:CEILING,progress:0,activeMs:0,buys:0,sells:0,openPositions:0,returnBps:0,pnlMinor:0,scenarioCursor:0,
             simulation:true,resourceLimited:true,configRef,runIdsCount:count});}
         });
@@ -302,6 +302,11 @@ const Simulator = (() => {
       return getBatch(batchId,owner);
     }
     async function control({batchId,runId,command},owner) {
+      if(command==='retry_repository') {
+        const b=await getBatch(batchId,owner);if(!b.repositoryId)throw fail('BAD_REQUEST','No shared preparation to retry');
+        const ref=scenarioCol.doc(b.repositoryId);for(const u of await rows(ref.collection('units').where('status','==','failed')))await ref.collection('units').doc(u.unitId).set({status:'queued',error:null,nextAttemptAtMs:0,dispatchedUntil:0},{merge:true});
+        await batchCol.doc(batchId).set({paused:false,status:'running'},{merge:true});return getBatch(batchId,owner);
+      }
       if(!['pause','resume','retry'].includes(command)) throw fail('BAD_REQUEST','Use pause, resume or retry');
       if(command==='retry') {
         if(!runId)throw fail('BAD_REQUEST','Choose a simulation to retry');
@@ -387,7 +392,7 @@ const Simulator = (() => {
         return source;
       } finally {await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseOwner:null,leaseUntil:0},{merge:true});});}
     }
-    async function reconstructResearch(symbol,row,date,endMs,{onProgress=async()=>{},shouldPause=async()=>false,sourceSnapshotDate=null}={}) {
+    async function reconstructResearch(symbol,row,date,endMs,{onProgress=async()=>{},shouldPause=async()=>false,sourceSnapshotDate=null,rangeEndDate=null}={}) {
       const F=require('./_investorFundamentals'),D=require('./_investorDossier'),E=require('./_investorEvidence');
       const cik=F.cik10Of(row?.cik);if(!cik)throw fail('HISTORICAL_IDENTITY_MISSING',`No SEC company identifier is available for ${symbol}.`);
       const cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),earliest=cutoff-180*86400000;
@@ -426,7 +431,7 @@ const Simulator = (() => {
         const a=accessions.get(f.accession),nextDate=new Date(Date.parse(f.filedDate+'T12:00:00Z')+86400000).toISOString().slice(0,10);
         const at=a?.availableAtMs||M.nyWallClockToUtcMs(nextDate,0);
         return {...f,supersededByFactId:null,asOfAvailableMs:at,historicalImport:importMeta(rawFacts,at)};
-      }).filter(f=>f.asOfAvailableMs<=endMs&&f.periodEnd<=date&&Date.parse(f.periodEnd+'T12:00:00Z')>=cutoff-4*366*86400000);
+      }).filter(f=>f.asOfAvailableMs<=endMs&&f.periodEnd<=(rangeEndDate||date)&&Date.parse(f.periodEnd+'T12:00:00Z')>=cutoff-4*366*86400000);
       const factTimes=[cutoff,...new Set(historicalFacts.filter(f=>f.asOfAvailableMs>cutoff).map(f=>f.asOfAvailableMs))];
       const facts=[...new Map(factTimes.flatMap(asOfMs=>F.pointInTime(historicalFacts,{asOfMs})).map(f=>[f.factId,f])).values()];
       const data=facts.map(f=>({collection:admin.COL.financialFacts,id:f.factId,knownAtMs:f.asOfAvailableMs,data:f})),documents=[],claims=[];
@@ -456,7 +461,7 @@ const Simulator = (() => {
       const baseline=[...new Map(periodic.map(f=>[f.form.replace('/A',''),f])).values()];
       const recent=filings.filter(f=>f.availableAtMs>=earliest&&/^(8-K|6-K|10-K|10-Q|20-F|40-F)(\/A)?$/.test(f.form));
       const chosen=[...new Map([...baseline,...recent].map(f=>[f.accession,f])).values()].sort((a,b)=>a.availableAtMs-b.availableAtMs);
-      if(chosen.length>60)throw fail('HISTORICAL_SOURCE_LIMIT',`${symbol} has more than 60 material filings in this window; preparation needs a narrower filing window.`);
+      if(!rangeEndDate&&chosen.length>60)throw fail('HISTORICAL_SOURCE_LIMIT',`${symbol} has more than 60 material filings in this window; preparation needs a narrower filing window.`);
       for(let i=0;i<chosen.length;i++) {
         const f=chosen[i];await onProgress(`Loading ${symbol} SEC filings · ${i+1} of ${chosen.length}`);
         const base=`https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${f.accession.replace(/-/g,'')}/`;
@@ -484,10 +489,11 @@ const Simulator = (() => {
           }
         }
       }
-      if(!facts.some(f=>f.asOfAvailableMs<=cutoff)&&!documents.some(d=>d.decisionKnownAtMs<=cutoff))throw fail('HISTORICAL_EVIDENCE_MISSING',`SEC has no usable company evidence for ${symbol} before ${date}.`);
+      if(!rangeEndDate&&!facts.some(f=>f.asOfAvailableMs<=cutoff)&&!documents.some(d=>d.decisionKnownAtMs<=cutoff))throw fail('HISTORICAL_EVIDENCE_MISSING',`SEC has no usable company evidence for ${symbol} before ${date}.`);
       const events=[cutoff,...new Set(data.filter(x=>x.knownAtMs>cutoff&&x.knownAtMs<=endMs).map(x=>x.knownAtMs))].sort((a,b)=>a-b);let prior=null;
       for(const at of events) {
         const visibleFacts=facts.filter(f=>f.asOfAvailableMs<=at),visibleClaims=claims.filter(c=>c.knownAtMs<=at).map(c=>({...c,firstSeenAtMs:c.knownAtMs})),visibleDocs=documents.filter(d=>d.decisionKnownAtMs<=at);
+        if(!visibleFacts.length&&!visibleDocs.length)continue;
         const dossier=D.composeVersion({symbol,identity:{...row,name:row.company||symbol},asOfMs:at,facts:F.pointInTime(visibleFacts,{asOfMs:at}),fundamentals:F.deriveMetrics(visibleFacts,{asOfMs:at}),claims:visibleClaims,documents:visibleDocs,priorVersion:prior?.version||0,dataQuality:{missing:['broader_historical_news','structured_guidance_not_extracted','confirmed_earnings_calendar_unavailable'],sourceCoverage:{mode:'SEC_RECONSTRUCTED',filings:visibleDocs.length,facts:visibleFacts.length,priceHistory:'separate',currentInformationUsed:false}}});
         const id='reconstructed_'+D.versionDocId(dossier);dossier.historicalImport={version:'sec-reconstruction.v1',actualRetrievedAtMs:wallNow(),publicAtMs:at,sourceUrl:submissions.url,sourceSha256:submissions.sha256};
         data.push({collection:admin.COL.dossierVersions,id,knownAtMs:at,data:dossier});
@@ -527,12 +533,7 @@ const Simulator = (() => {
       return output;
     }
     async function prepareSymbol(symbol,row,date,endMs,options={}) {
-      const data=[];
-      for(const key of DATA_KEYS) {
-        const q=key==='financialFacts'?row && row.cik?rootCollection(admin.COL[key]).where('cik','==',String(row.cik).padStart(10,'0')):null:rootCollection(admin.COL[key]).where('symbol','==',symbol);
-        if(!q) continue;
-        for(const v of await queryAll(q)) {const at=knownAt(v.data);if(at<=endMs) {const clean={...v.data};for(const field of ['reviewedAtMs','reviewedBy','managerRunId','supersededBy','supersededByFactId','supersededAtMs','standingView','lastManagerReviewAtMs'])delete clean[field];data.push({collection:admin.COL[key],id:v.id,knownAtMs:at,data:clean});}}
-      }
+      const data=await archivedCompanyData(symbol,row,endMs);
       const cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin);
       if(row && !data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff)) {
         const reconstructed=await reconstructResearch(symbol,row,date,endMs,options);
@@ -577,6 +578,150 @@ const Simulator = (() => {
       await sr.set({scenarioId,status:'ready',date:run.date,symbols,evidenceCoverage,priceCoverage,universeHash:config.roster.universeHash,cutoffMs:M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin),endMs,createdAtMs:wallNow(),version:VERSION});
       await save({scenarioId,status:'running',phase:'Preparing account',evidenceCoverage,priceCoverage});return true;
     }
+    const REPOSITORY_VERSION='historical-repository.v1';
+    const repositorySymbols=config=>[...new Set([...config.roster.symbols,'SPY','QQQ','HYG','LQD','IEF','TLT','GLD','UUP',...Object.values(require('./_investorTemporal').DRIVER_BY_SECTOR||{})])];
+    const repositoryRow=(config,symbol)=>config.roster.symbols.includes(symbol)?[...require('./_investorUniverse').tradeTier,...require('./_investorUniverse').researchTier].find(r=>r.symbol===symbol):null;
+    async function ensureRepository(batch,config) {
+      const repositoryId='repository_'+hash({version:REPOSITORY_VERSION,universe:config.roster.universeHash,from:batch.config.from,to:batch.config.to,dates:batch.dates,snapshot:config.sourceSnapshotDate}).slice(0,40);
+      const ref=scenarioCol.doc(repositoryId),prior=await ref.get();
+      if(!prior.exists) {
+        const units=[...repositorySymbols(config).map(symbol=>({unitId:'company_'+symbol,kind:'company',symbol})),...batch.dates.map(date=>({unitId:'prices_'+date,kind:'prices',date}))];
+        for(let i=0;i<units.length;i+=100)await rootTransaction(async tx=>{
+          const part=units.slice(i,i+100),snaps=await Promise.all(part.map(u=>tx.get(ref.collection('units').doc(u.unitId))));
+          for(let j=0;j<part.length;j++)if(!snaps[j].exists)tx.set(ref.collection('units').doc(part[j].unitId),{...part[j],status:'queued',phase:'Waiting to prepare shared data',createdAtMs:wallNow()});
+        });
+        await ref.set({repositoryId,version:REPOSITORY_VERSION,total:units.length,companies:repositorySymbols(config).length,dates:batch.dates.length,createdAtMs:wallNow()},{merge:true});
+      }
+      if(batch.repositoryId!==repositoryId)await batchCol.doc(batch.batchId).set({repositoryId},{merge:true});
+      return {repositoryId,ref};
+    }
+    async function repositoryState(batch) {
+      if(!batch.repositoryId)return {status:'queued',phase:'Preparing the shared data library',ready:0,total:0,companiesReady:0,datesReady:0,active:[],errors:[]};
+      const ref=scenarioCol.doc(batch.repositoryId),meta=(await ref.get()).data(),units=await rows(ref.collection('units'));
+      if(!meta||units.length!==meta.total)return {status:'queued',ready:0,total:meta?.total||0,active:[],errors:[]};
+      const ready=units.filter(u=>u.status==='ready').length,errors=units.filter(u=>u.status==='failed');
+      return {repositoryId:batch.repositoryId,status:ready===meta.total?'ready':errors.length?'needs_attention':batch.paused?'paused':'preparing',ready,total:meta.total,
+        companiesReady:units.filter(u=>u.kind==='company'&&u.status==='ready').length,companies:meta.companies,datesReady:units.filter(u=>u.kind==='prices'&&u.status==='ready').length,dates:meta.dates,
+        working:units.filter(u=>u.leaseUntil>wallNow()).length,waiting:units.filter(u=>u.status==='queued').length,
+        active:units.filter(u=>u.leaseUntil>wallNow()).slice(0,6).map(u=>({unitId:u.unitId,phase:u.phase})),
+        failed:errors.length,errors:errors.slice(0,8).map(u=>({unitId:u.unitId,message:u.error?.message||'Preparation needs attention'})),units};
+    }
+    async function cachedRepositoryArtifact(cacheId,build,shouldPause) {
+      const ref=scenarioCol.doc(cacheId),old=await ref.get();
+      if(old.data()?.artifact)return {cacheId,artifact:old.data().artifact};
+      const owner=crypto.randomBytes(12).toString('hex');
+      const locked=await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.artifact||s.data()?.leaseUntil>wallNow())return false;tx.set(ref,{leaseOwner:owner,leaseUntil:wallNow()+90000},{merge:true});return true;});
+      if(!locked)throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Another batch is preparing this shared data.'),{retryAfterMs:5000,sharedPreparation:true});
+      let renewal=Promise.resolve();const timer=setInterval(()=>{renewal=renewal.then(()=>rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000},{merge:true});})).catch(()=>{});},20000);timer.unref?.();
+      try {
+        const value=await build(ref);
+        if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
+        const artifact=await saveJSON(ref,'data',value,async()=>{if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');});
+        await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{artifact,status:'ready',version:REPOSITORY_VERSION,...(value.kind==='company_library'?{kind:value.kind,symbol:value.symbol,from:value.from,to:value.to,identityHash:value.identityHash}:{}),preparedAtMs:wallNow(),leaseUntil:0,leaseOwner:null},{merge:true});});
+        return {cacheId,artifact};
+      }finally{clearInterval(timer);await renewal;await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:0,leaseOwner:null},{merge:true});});}
+    }
+    async function archivedCompanyData(symbol,row,endMs) {
+      const data=[];
+      for(const key of DATA_KEYS) {
+        const q=key==='financialFacts'?row?.cik?rootCollection(admin.COL[key]).where('cik','==',String(row.cik).padStart(10,'0')):null:rootCollection(admin.COL[key]).where('symbol','==',symbol);
+        if(!q)continue;
+        for(const v of await queryAll(q)){const at=knownAt(v.data);if(at<=endMs){const clean={...v.data};for(const field of ['reviewedAtMs','reviewedBy','managerRunId','supersededBy','supersededByFactId','supersededAtMs','standingView','lastManagerReviewAtMs'])delete clean[field];data.push({collection:admin.COL[key],id:v.id,knownAtMs:at,data:clean});}}
+      }
+      return data;
+    }
+    async function bulkPriceHistory(symbols,start,end,timeframe,parent,progress,shouldPause) {
+      await M.loadMarketSettings();const credentials=M.providerCredentials('alpaca');
+      if(!credentials.keyId||!credentials.secretKey)throw fail('HISTORICAL_BARS_MISSING','Alpaca historical-data credentials are required to prepare the shared price library.');
+      const pageKey=hash({symbols,start,end,timeframe}),pages=parent.collection('pricePages');let token=null,index=0;const output={};const seen=new Set();
+      do {
+        if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
+        const ptr=pages.doc(pageKey+'_'+index),cached=await ptr.get();let response;
+        if(cached.exists)response=await readJSON(parent,cached.data().artifact);
+        else {
+          await progress(`Downloading ${timeframe==='1Day'?'daily':'session'} prices · page ${index+1}`);
+          const qs=new URLSearchParams({symbols:symbols.join(','),timeframe,start,end,feed:'sip',adjustment:'raw',limit:'10000',sort:'asc'});if(token)qs.set('page_token',token);
+          const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),20000);
+          try {
+            const res=await fetchImpl('https://data.alpaca.markets/v2/stocks/bars?'+qs,{headers:{'APCA-API-KEY-ID':credentials.keyId,'APCA-API-SECRET-KEY':credentials.secretKey},signal:ac.signal});
+            if(res.status===429||res.status>=500)throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Historical price service is busy; shared preparation will retry.'),{retryAfterMs:Math.max(60000,(Number(res.headers?.get('retry-after'))||60)*1000)});
+            if(!res.ok)throw fail('HISTORICAL_DATA_UNAVAILABLE',`Historical price provider returned ${res.status}`);
+            response=await res.json();
+            if(!response.bars||typeof response.bars!=='object')throw fail('HISTORICAL_BAR_INVALID','Historical price response did not contain a bars object');
+          }catch(e){if(/^HISTORICAL_/.test(e.code||''))throw e;throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Historical price request did not finish; shared preparation will retry.'),{retryAfterMs:60000});}
+          finally{clearTimeout(timer);}
+          // Save each provider page before moving on. A restart resumes without downloading saved pages.
+          await ptr.set({artifact:await saveJSON(parent,'price_page_'+index,response),request:{symbols,start,end,timeframe,feed:'sip',adjustment:'raw',pageToken:token},retrievedAtMs:wallNow()});
+        }
+        for(const symbol of symbols)(output[symbol]||=[]).push(...(response.bars[symbol]||[]));
+        token=response.next_page_token||null;if(token&&seen.has(token))throw fail('HISTORICAL_BAR_INVALID','Historical price pagination repeated a page');if(token)seen.add(token);index++;
+      }while(token);
+      return output;
+    }
+    async function prepareRepository(batchId,unitId,{deadlineMs=wallNow()+11*60000}={}) {
+      const batch=await getBatch(batchId),config=await readJSON(batchCol.doc(batchId),batch.configRef),repo=await ensureRepository(batch,config);
+      if(!/^(?:company_[A-Za-z0-9.^-]+|prices_\d{4}-\d{2}-\d{2})$/.test(unitId))throw fail('BAD_REQUEST','Invalid shared preparation unit');
+      const ref=repo.ref.collection('units').doc(unitId),owner=crypto.randomBytes(12).toString('hex');let unit;
+      const locked=await rootTransaction(async tx=>{const s=await tx.get(ref),b=await tx.get(batchCol.doc(batchId));unit=s.data();if(!s.exists||b.data()?.paused||unit.status==='ready'||unit.status==='failed'||unit.leaseUntil>wallNow()||unit.nextAttemptAtMs>wallNow())return false;tx.set(ref,{status:'preparing',phase:'Preparing shared data',leaseOwner:owner,leaseUntil:wallNow()+90000,dispatchedUntil:0},{merge:true});return true;});
+      if(!locked)return {done:true,reason:'shared_unit_not_due'};
+      const pause=async()=>wallNow()>deadlineMs||(await getBatch(batchId)).paused;
+      const save=async fields=>rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{...fields,leaseUntil:wallNow()+90000,updatedAtMs:wallNow()},{merge:true});});
+      const progress=async phase=>{if(await pause())throw fail('SIMULATION_PREPARATION_YIELD');await save({phase});};
+      let pending=Promise.resolve();const timer=setInterval(()=>{pending=pending.then(()=>save({lastHeartbeatAtMs:wallNow()})).catch(()=>{});},20000);timer.unref?.();
+      try {
+        let pointer;
+        if(unit.kind==='company') {
+          const symbol=unit.symbol,row=repositoryRow(config,symbol),from=batch.config.from,to=batch.config.to;
+          const identityHash=hash(row||{symbol}),cacheId='company_library_'+hash({v:REPOSITORY_VERSION,symbol,identityHash,from,to}).slice(0,40);
+          const covering=(await rows(scenarioCol.where('kind','==','company_library').where('symbol','==',symbol))).filter(c=>c.artifact&&c.version===REPOSITORY_VERSION&&c.identityHash===identityHash&&c.from<=from&&c.to>=to).sort((a,b)=>a.preparedAtMs-b.preparedAtMs)[0];
+          pointer=covering?{cacheId:covering.id,artifact:covering.artifact}:await cachedRepositoryArtifact(cacheId,async parent=>{
+            const range=datesBetween(from,to),first=range[0],last=range.at(-1),endMs=M.sessionCloseMs(new Date(last+'T12:00:00Z'))+1200000;
+            await progress(`Reading saved research for ${symbol}`);const data=await archivedCompanyData(symbol,row,endMs);
+            const cutoff=M.nyWallClockToUtcMs(first,P.CUTOFFS_ET.evidenceFreezeMin);
+            if(row&&!data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff)) {
+              const extra=await reconstructResearch(symbol,row,first,endMs,{onProgress:progress,shouldPause:pause,sourceSnapshotDate:config.sourceSnapshotDate,rangeEndDate:last});
+              const seen=new Set(data.map(x=>x.collection+'/'+x.id));data.push(...extra.filter(x=>!seen.has(x.collection+'/'+x.id)));
+            }
+            await progress(`Preparing shared daily prices for ${symbol}`);
+            const start=new Date(Date.parse(from+'T00:00:00Z')-550*86400000).toISOString(),end=to+'T23:59:59Z';
+            const prices=await bulkPriceHistory([symbol],start,end,'1Day',parent,progress,pause);
+            const daily=(prices[symbol]||[]).map(b=>({...b,date:M.nyParts(new Date(b.t)).date}));
+            return {kind:'company_library',symbol,identityHash,data,daily,from,to,sourceSnapshotDate:config.sourceSnapshotDate,provenance:{provider:'alpaca',feed:'sip',adjustment:'raw'}};
+          },pause);
+        } else {
+          const symbols=repositorySymbols(config),date=unit.date,cacheId='session_library_'+hash({v:REPOSITORY_VERSION,universe:config.roster.universeHash,date}).slice(0,40);
+          pointer=await cachedRepositoryArtifact(cacheId,async parent=>{
+            const start=new Date(M.nyWallClockToUtcMs(date,570)).toISOString(),end=new Date(M.sessionCloseMs(new Date(date+'T12:00:00Z'))-1).toISOString();
+            const prices=await bulkPriceHistory(symbols,start,end,'5Min',parent,progress,pause),bySymbol={};
+            for(const symbol of symbols){try{bySymbol[symbol]=regularSessionBars(prices[symbol]||[],symbol,date,{allowSparse:true});}catch(e){bySymbol[symbol]={bars:[],error:{code:e.code,message:e.message,details:e.details||null}};}}
+            return {date,symbols:bySymbol,provenance:{provider:'alpaca',feed:'sip',adjustment:'raw',timeframe:'5Min'}};
+          },pause);
+        }
+        await save({status:'ready',phase:'Saved in shared library',pointer,error:null,nextAttemptAtMs:0,completedAtMs:wallNow()});return {done:true};
+      }catch(e){
+        if(e.code==='SIMULATION_LEASE_LOST')return {yielded:true};
+        const retry=e.code==='SIMULATION_PREPARATION_YIELD'||e.code==='HISTORICAL_PROVIDER_BUSY'||[4,8,10,14].includes(e.code);
+        await save({status:retry?'queued':'failed',phase:retry?'Preparation saved — waiting to continue':'Shared preparation needs attention',nextAttemptAtMs:retry?wallNow()+(e.retryAfterMs||5000):0,error:retry?null:{code:e.code||'REPOSITORY_FAILED',message:String(e.message).slice(0,500)}});
+        return {done:!retry,yielded:retry};
+      }finally{clearInterval(timer);await pending;await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:0,leaseOwner:null},{merge:true});});}
+    }
+    async function repositoryPackets(run,config,repository) {
+      if(repository.status!=='ready')throw fail('SIMULATION_REPOSITORY_NOT_READY','Shared data preparation has not finished');
+      const symbols=repositorySymbols(config),units=repository.units,priceUnit=units.find(u=>u.unitId==='prices_'+run.date);
+      if(!priceUnit?.pointer)throw fail('SIMULATION_STATE_MISSING');
+      const prices=await readJSON(scenarioCol.doc(priceUnit.pointer.cacheId),priceUnit.pointer.artifact),endMs=M.sessionCloseMs(new Date(run.date+'T12:00:00Z'))+1200000,cutoff=M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin);
+      const packets=[];for(const symbol of symbols){
+        const unit=units.find(u=>u.unitId==='company_'+symbol);if(!unit?.pointer)throw fail('SIMULATION_STATE_MISSING');
+        const company=await readJSON(scenarioCol.doc(unit.pointer.cacheId),unit.pointer.artifact),price=prices.symbols[symbol];
+        if(price?.error)throw Object.assign(fail(price.error.code,price.error.message),{details:price.error.details});if(!price)throw fail('HISTORICAL_BARS_MISSING');
+        const data=company.data.filter(x=>x.knownAtMs<=endMs),series=company.daily.filter(b=>b.date<run.date).slice(-400);
+        if(config.roster.symbols.includes(symbol)&&!data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff))throw fail('HISTORICAL_EVIDENCE_MISSING',`No company research for ${symbol} was available before ${run.date}`);
+        packets.push({symbol,data,bars:price.bars,coverage:price.coverage,cutoff,provenance:prices.provenance,daily:{symbol,...company.provenance,date:series.map(b=>b.date),o:series.map(b=>b.o),h:series.map(b=>b.h),l:series.map(b=>b.l),c:series.map(b=>b.c),v:series.map(b=>b.v),volumeProvenanceHomogeneous:true}});
+      }
+      const reconstructed=packets.filter(p=>config.roster.symbols.includes(p.symbol)&&p.data.some(x=>x.data.historicalImport));
+      return {packets,meta:{cutoffMs:cutoff,endMs,symbols,evidenceCoverage:{mode:reconstructed.length?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies:reconstructed.length,totalCompanies:config.roster.symbols.length},priceCoverage:{symbolsWithGaps:packets.filter(p=>p.coverage.missing).map(p=>({symbol:p.symbol,missing:p.coverage.missing,expected:p.coverage.expected})),note:'Only observed bars are replayed. No fills occur in missing intervals; valuations use the latest available observed price.'}}};
+    }
+
     async function rawHTTP(method,url,body) {
       if(!/^https:\/\/api\.openai\.com\/v1\/responses(?:\/[A-Za-z0-9_-]+)?$/.test(url)) throw fail('SIMULATION_NETWORK_FORBIDDEN');
       const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),25000);
@@ -659,10 +804,17 @@ const Simulator = (() => {
       if(heartbeat.unref)heartbeat.unref();
       try {
         if(run.paused||batch.paused||TERMINAL.includes(run.status)) {await cost.drain();return {done:true,paused:!!run.paused};}
-        await save({status:'preparing',phase:run.scenarioId?'Loading historical scenario':'Preparing historical scenario',preparationStartedAtMs:run.preparationStartedAtMs||wallNow()});
-        if(!await prepare(run,config,save,paused))throw fail('SIMULATION_PREPARATION_YIELD');
-        const sr=scenarioCol.doc(run.scenarioId),meta=(await sr.get()).data();
-        const packets=await Promise.all(meta.symbols.map(async symbol=>{const s=await sr.collection('symbols').doc(symbol).get();return readJSON(sr,s.data().artifact);}));
+        let packets,meta;
+        if(!run.initialized||run.repositoryId) {
+          const freshBatch=await getBatch(run.batchId),repository=await repositoryState(freshBatch);
+          if(repository.status!=='ready') {await save({status:'queued',phase:'Waiting for shared data preparation',waitReason:'repository'});return {yielded:true};}
+          await save({status:'preparing',phase:'Reading saved company research',repositoryId:freshBatch.repositoryId});
+          ({packets,meta}=await repositoryPackets(run,config,repository));
+          await save({evidenceCoverage:meta.evidenceCoverage,priceCoverage:meta.priceCoverage,preparationTotal:meta.symbols.length,scenarioCursor:meta.symbols.length});
+        } else {
+          const sr=scenarioCol.doc(run.scenarioId);meta=(await sr.get()).data();
+          packets=await Promise.all(meta.symbols.map(async symbol=>{const p=await sr.collection('symbols').doc(symbol).get();return readJSON(sr,p.data().artifact);}));
+        }
         run.clockMs=run.clockMs||meta.cutoffMs;
         const collection=name=>{if(!String(name).startsWith('InvestorAI_')||String(name).includes('/'))throw fail('SIMULATION_NAMESPACE_ESCAPE');return ref.collection(name);};
         scope={runId,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest:cost.request,paused,executionSpreadBps:10,feePerShareMicros:5000,
@@ -783,7 +935,20 @@ const Simulator = (() => {
         const sets=await Promise.all(batches.map(async b=>({b,runs:await rows(runCol.where('batchId','==',b.batchId))})));
         for(const {b,runs} of sets) {
           if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)){await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
-          const eligible=runs.filter(r=>(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
+          const config=await readJSON(batchCol.doc(b.batchId),b.configRef),repo=await ensureRepository(b,config);
+          const repository=await repositoryState({...b,repositoryId:repo.repositoryId});
+          if(!b.paused&&repository.status!=='ready') {
+            const due=(repository.units||[]).filter(u=>u.status!=='ready'&&u.status!=='failed'&&!(u.leaseUntil>wallNow())&&!(u.dispatchedUntil>wallNow())&&!(u.nextAttemptAtMs>wallNow()));
+            selected.push(...due.map(async u=>{
+              const ur=repo.ref.collection('units').doc(u.unitId),sequence=(u.dispatchSequence||0)+1;
+              const out=await jobs.enqueueOnce({task:'simulation_prepare',dedupeId:repo.repositoryId+'_'+u.unitId+'_'+sequence,accountId:b.batchId,payload:{batchId:b.batchId,unitId:u.unitId},createdBy:'simulator',priority:900});
+              const job=(await admin.col(admin.COL.jobs).doc(out.jobId).get()).data();
+              await ur.set({dispatchSequence:sequence,dispatchedUntil:wallNow()+90000,phase:'Starting shared preparation worker'},{merge:true});
+              try {const result=await dispatch(job);if(result?.error||result?.upstream>=300||result?.upstream===0)throw Error(result.error||'Worker returned '+result.upstream);return result;}
+              catch(e){await rootTransaction(async tx=>{const x=await tx.get(ur);if(x.data()?.dispatchSequence===sequence&&!(x.data()?.leaseUntil>wallNow()))tx.set(ur,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,phase:'Shared preparation dispatch will retry'},{merge:true});});return {unitId:u.unitId,error:String(e.message)};}
+            }));
+          }
+          const eligible=runs.filter(r=>(repository.status==='ready'||r.initialized)&&(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
             .sort((a,b)=>(a.lastDispatchedAtMs||0)-(b.lastDispatchedAtMs||0)||a.index-b.index);
           // Fan out every eligible run in this tick, including batches created under the old cap.
           selected.push(...eligible.map(async r=>{
@@ -806,6 +971,7 @@ const Simulator = (() => {
       const history=all.filter(b=>!cursor||b.createdAtMs<Number(cursor)).slice(0,20);
       const b=batchId?await getBatch(batchId,owner):history[0]||null;
       const runs=b?(await rows(runCol.where('batchId','==',b.batchId))).sort((a,b)=>a.index-b.index):[];
+      const repository=b?await repositoryState(b):null;
       const projected=await Promise.all(runs.map(async r=>{
         const throughput=r.measuredRequestMs ? (r.reportedOutputTokens||0)/(r.measuredRequestMs/1000):null;
         let estimatedInFlightNano=null;
@@ -814,8 +980,8 @@ const Simulator = (() => {
           estimatedInFlightNano=pending.reduce((sum,q)=>sum+Math.min(q.reservation,q.inputTokens*q.rates.input+Math.max(0,wallNow()-q.startedAtMs)/1000*throughput*q.rates.output),0);
         }
         const terminal=TERMINAL.includes(r.status),active=!terminal&&!r.paused&&r.leaseUntil>wallNow();
-        const activity=terminal?r.status:r.paused?'paused':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
-        const activityLabel=active?r.phase:({paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
+        const activity=terminal?r.status:r.paused?'paused':!r.initialized&&repository?.status!=='ready'?'waiting_repository':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
+        const activityLabel=active&&activity!=='waiting_repository'?r.phase:({waiting_repository:'Waiting for shared data preparation',paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
         const canRetryPreparation=terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
         return {...r,activity,activityLabel,canRetryPreparation,workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
           estimatedTotalNano:Math.max(r.spentNano,Math.min(CEILING,r.progress>5?r.spentNano/(r.progress/100):TARGET)),
@@ -825,7 +991,8 @@ const Simulator = (() => {
       const typical=measured.length?measured.reduce((n,x)=>n+x,0)/measured.length:null;
       const batchRemainingMs=unfinished.length===0?0:unfinished.some(r=>r.paused||r.status==='preparing'||(r.estimatedRemainingMs==null&&!typical))?null:Math.max(...unfinished.map(r=>r.estimatedRemainingMs||typical||0),0);
       const displayedStatus=b&&runs.length&&runs.every(r=>TERMINAL.includes(r.status))?(runs.every(r=>r.status==='complete')?'complete':'incomplete'):b?.status;
-      return {asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,status:displayedStatus,concurrency:b.count||runs.length,concurrencyMode:'all_requested'}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
+      const repositorySummary=repository?Object.fromEntries(Object.entries(repository).filter(([key])=>key!=='units')):null;
+      return {repository:repositorySummary,asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,status:displayedStatus,concurrency:b.count||runs.length,concurrencyMode:'all_requested'}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
         statistics:distribution(runs),totals:{estimatedInFlightNano:projected.reduce((n,r)=>n+(r.estimatedInFlightNano||0),0),estimatedFinalNano:projected.reduce((n,r)=>n+(TERMINAL.includes(r.status)?r.spentNano:r.estimatedTotalNano),0),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),targetNano:runs.length*TARGET,ceilingNano:runs.length*CEILING},
         pricing:{version:VERSION,asOf:'2026-09-05',models:P.MODEL_RATES,serviceTier:'flex for Astra; standard for extraction',currency:'USD',includes:'AI tokens only; data and Firebase charges excluded'},targetMs:TARGET_MS};
     }
@@ -835,7 +1002,7 @@ const Simulator = (() => {
       if(after)q=q.startAfter(String(after));const items=await rows(q);
       return {run,collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null};
     }
-    return {createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
+    return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
   return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,replayRecord,create};
 })();

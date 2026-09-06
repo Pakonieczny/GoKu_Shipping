@@ -5889,6 +5889,8 @@ async function simulatorAdversarial() {
     // Existing batches and an old environment setting must also lose their former cap.
     await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({concurrency:3},{merge:true});
     await fake.col('InvestorAI_Simulations').doc(b.runIds[0]).set({rateLimitedAtMs:wall},{merge:true});
+    const config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+    for(const u of (await repo.ref.collection('units').get()).docs)await u.ref.set({status:'ready'},{merge:true});
     const dispatched=[];let allStarted,finish;
     const started=new Promise(resolve=>{allStarted=resolve;}),hold=new Promise(resolve=>{finish=resolve;});
     const dispatch=async j=>{dispatched.push(j);await fake.col('InvestorAI_Simulations').doc(j.runId).set({status:'preparing',leaseUntil:wall+90000,dispatchedUntil:0,phase:'Loading actual source',scenarioCursor:2,preparationTotal:321,lastHeartbeatAtMs:wall},{merge:true});if(dispatched.length===100)allStarted();await hold;return {upstream:202};};
@@ -5994,15 +5996,16 @@ async function simulatorAdversarial() {
   await check('cold_simulation_worker_loads_market_credentials_after_verified_claim',async()=>{
     const M=require('./_investorMarket'),AUTH=require('./_investorAuth'),J=require('./_investorJobs'),worker=require('./investorManager-background');
     const originals={load:M.loadMarketSettings,auth:AUTH.loadAuthSecrets,claim:J.claimOnce,complete:J.complete,create:Sim.create};
-    let loaded=false,accepted=true,executed=0,completed=0;
+    let loaded=false,accepted=true,executed=0,prepared=0,completed=0;
     try {
       AUTH.loadAuthSecrets=async()=>{};
       J.claimOnce=async()=>({claimed:accepted,claim:{jobId:'fixture'},httpStatus:403,reason:'invalid_nonce'});
       M.loadMarketSettings=async()=>{loaded=true;};
-      Sim.create=()=>({execute:async runId=>{assert(loaded,'saved market credentials were not loaded');assert.equal(runId,RID);executed++;return {done:true};}});
+      Sim.create=()=>({execute:async runId=>{assert(loaded,'saved market credentials were not loaded');assert.equal(runId,RID);executed++;return {done:true};},prepareRepository:async(batchId,unitId)=>{assert(loaded);assert.equal(batchId,BID);assert.equal(unitId,'company_A');prepared++;return {done:true};}});
       J.complete=async()=>{completed++;};
       const event={body:JSON.stringify({jobId:'fixture',task:'simulation',nonce:'fixture',payload:{runId:RID}})};
       assert.equal((await worker.handler(event)).statusCode,200);assert.equal(executed,1);assert.equal(completed,1);
+      assert.equal((await worker.handler({body:JSON.stringify({jobId:'fixture',task:'simulation_prepare',nonce:'fixture',payload:{batchId:BID,unitId:'company_A'}})})).statusCode,200);assert.equal(prepared,1);assert.equal(completed,2);
       accepted=false;loaded=false;
       assert.equal((await worker.handler(event)).statusCode,403);assert.equal(loaded,false);assert.equal(executed,1);
     } finally {M.loadMarketSettings=originals.load;AUTH.loadAuthSecrets=originals.auth;J.claimOnce=originals.claim;J.complete=originals.complete;Sim.create=originals.create;}
@@ -6043,6 +6046,49 @@ async function simulatorAdversarial() {
   await check('incomplete_results_are_excluded_but_counted',()=>{const r=Sim.distribution([{status:'complete',date:'2026-01-02',returnBps:100},{status:'complete',date:'2026-01-05',returnBps:-50},{status:'incomplete',date:'2026-01-06',returnBps:5000}]);assert.equal(r.medianBps,25);assert.equal(r.incomplete,1);assert.equal(r.positive,.5);});
   await check('batch_creation_idempotence_ownership_pause_and_resume',async()=>{const fake=database(),svc=Sim.create({admin:fake});await seedSimulationArchive(fake);const b=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');const again=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');assert.equal(again.batchId,b.batchId);await assert.rejects(()=>svc.getBatch(b.batchId,'intruder'),/another operator/);await svc.control({batchId:b.batchId,command:'pause'},'operator');assert((await svc.getRun(b.runIds[0])).paused);await svc.control({batchId:b.batchId,command:'resume'},'operator');assert.equal((await svc.getRun(b.runIds[0])).paused,false);assert.equal((await svc.overview({owner:'operator'})).runs.length,2);});
   await check('bar_fills_apply_adverse_spread_never_violate_limit',async()=>{await A.withSimulationScope({runId:RID,clock:()=>1000,collection:()=>{},executionSpreadBps:10},async()=>{const E=require('./_investorExecution'),bar={o:100,h:102,l:99,c:101,v:100000};const r=E.simulateLegOnBar({leg:{role:'ENTRY',side:'buy',type:'LIMIT',priceMicros:'101000000',remainingUnits:'10'},bar});assert.equal(r.fill.priceMicros,'100050000');const n=E.simulateLegOnBar({leg:{role:'ENTRY',side:'buy',type:'LIMIT',priceMicros:'100000000',remainingUnits:'10'},bar});assert.equal(n.fill,null);});});
+  await check('shared_repository_batches_prices_and_reuses_company_history_without_future_leakage',async()=>{
+    const M=require('./_investorMarket'),old={load:M.loadMarketSettings,credentials:M.providerCredentials},fake=database(),sec=secFixture();let wall=now,paid=0,failPage=true;const requests=new Map();
+    try {
+      M.loadMarketSettings=async()=>{};M.providerCredentials=()=>({keyId:'fixture',secretKey:'fixture'});
+      await seedSimulationArchive(fake);await fake.col(A.COL.dossierVersions).doc('A_fixture').delete();
+      const svc=Sim.create({admin:fake,wallNow:()=>wall,publicFetch:sec.publicFetch,fetchImpl:async url=>{
+        if(!url.startsWith('https://data.alpaca.markets/')){paid++;throw Error('AI must not be called while preparing');}
+        const q=new URL(url).searchParams,symbols=q.get('symbols').split(','),daily=q.get('timeframe')==='1Day',date=M.nyParts(new Date(q.get('start'))).date,page=q.get('page_token')||'first',key=q.get('timeframe')+'|'+date+'|'+page+'|'+symbols.join(',');requests.set(key,(requests.get(key)||0)+1);
+        if(!daily&&date==='2026-07-31'&&page==='second'&&failPage){failPage=false;return {ok:false,status:429,headers:{get:()=> '60'}};}
+        const half=Math.ceil(symbols.length/2),subset=daily?symbols:page==='first'?symbols.slice(0,half):symbols.slice(half);
+        const bars=Object.fromEntries(subset.map(symbol=>[symbol,daily?Array.from({length:40},(_,i)=>{const d=new Date(Date.parse('2026-07-01T04:00:00Z')+i*86400000),value=i<30?100:999;return {t:d.toISOString(),o:value,h:value,l:value,c:value,v:10000};}):providerSession(date,{extra:false})]));
+        return {ok:true,status:200,json:async()=>({bars,next_page_token:!daily&&page==='first'?'second':null})};
+      }});
+      const b=await svc.createBatch({count:2,from:'2026-07-31',to:'2026-08-03'},'operator','repository-timing'),config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+      assert.deepEqual(b.dates,['2026-07-31','2026-08-03']);
+      const units=(await repo.ref.collection('units').get()).docs.map(d=>d.id);
+      for(const unit of units)await svc.prepareRepository(b.batchId,unit);
+      let state=await svc.repositoryState(await svc.getBatch(b.batchId));assert.notEqual(state.status,'ready');assert.equal(paid,0);
+      const launches=[];await svc.schedule({dispatch:async j=>{launches.push(j.task);return {upstream:202};}});assert(!launches.includes('simulation'));
+      await svc.control({batchId:b.batchId,command:'pause'},'operator');const before=[...requests.values()].reduce((a,b)=>a+b,0);wall+=61000;
+      await svc.prepareRepository(b.batchId,'prices_2026-07-31');assert.equal([...requests.values()].reduce((a,b)=>a+b,0),before);
+      await svc.control({batchId:b.batchId,command:'resume'},'operator');await svc.prepareRepository(b.batchId,'prices_2026-07-31');
+      state=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(state.status,'ready',JSON.stringify(state.errors));
+      const firstPages=[...requests].filter(([key])=>key.startsWith('5Min|')&&key.includes('|first|'));assert(firstPages.every(([,count])=>count===1),'a saved provider page was downloaded again after retry');
+      assert([...requests].filter(([key])=>key.startsWith('1Day|')).every(([,count])=>count===1),'daily baseline was downloaded per simulation');
+      const early=(await svc.repositoryPackets(await svc.getRun(b.runIds[0]),config,state)).packets.find(p=>p.symbol==='A');
+      const late=(await svc.repositoryPackets(await svc.getRun(b.runIds[1]),config,state)).packets.find(p=>p.symbol==='A');
+      assert(!early.data.some(x=>x.collection===A.COL.financialFacts&&x.data.periodEnd==='2026-06-30'));
+      assert(late.data.some(x=>x.collection===A.COL.financialFacts&&x.data.periodEnd==='2026-06-30'));
+      assert(early.daily.date.every(d=>d<'2026-07-31'));assert(late.daily.date.every(d=>d<'2026-08-03'));assert(early.daily.c.every(v=>v===100));assert(late.daily.c.includes(999));
+      const requestCount=[...requests.values()].reduce((a,b)=>a+b,0),secCount=sec.calls.length;
+      // Different sampled dates, same requested range: existing company and session data are reused.
+      wall+=86400000;
+      const b2=await svc.createBatch({count:1,from:'2026-07-31',to:'2026-08-03'},'operator','repository-reuse'),config2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef),repo2=await svc.ensureRepository(b2,config2);
+      for(const u of (await repo2.ref.collection('units').get()).docs)await svc.prepareRepository(b2.batchId,u.id);
+      assert.equal((await svc.repositoryState(await svc.getBatch(b2.batchId))).status,'ready');assert.equal([...requests.values()].reduce((a,b)=>a+b,0),requestCount);assert.equal(sec.calls.length,secCount);assert.equal(paid,0);
+      const b3=await svc.createBatch({count:1,from:'2026-08-03',to:'2026-08-03'},'operator','repository-narrow'),config3=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b3.batchId),b3.configRef),repo3=await svc.ensureRepository(b3,config3);
+      for(const u of (await repo3.ref.collection('units').get()).docs)await svc.prepareRepository(b3.batchId,u.id);
+      assert.equal((await svc.repositoryState(await svc.getBatch(b3.batchId))).status,'ready');assert.equal([...requests.values()].reduce((a,b)=>a+b,0),requestCount);assert.equal(sec.calls.length,secCount);
+      assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);assert.equal((await fake.col(A.COL.financialFacts).get()).size,0);
+    }finally{M.loadMarketSettings=old.load;M.providerCredentials=old.credentials;}
+  });
+
   await check('uncached_provider_preparation_through_real_manager_to_session_close',async()=>{
     const M=require('./_investorMarket'),saved={load:M.loadMarketSettings,credentials:M.providerCredentials};
     try {
@@ -6050,15 +6096,15 @@ async function simulatorAdversarial() {
       const fake=database();await seedSimulationArchive(fake);await fake.col(A.COL.dossierVersions).doc('A_fixture').delete();const sec=secFixture();await fake.col(A.COL.accounts).doc('paper-1').set({untouched:true});
       // A partial raw archive must be replaced by a full historical response.
       await fake.col(A.COL.marketLatest).doc(M.barDocId('A','2026-09-03')).set({adjustment:'raw',bars:providerSession('2026-09-03').slice(0,7)});
-      let submitted=0,priceRequests=0,wall=Date.now();
+      let submitted=0,priceRequests=0,prepared=false,wall=Date.now();
       const svc=Sim.create({admin:fake,wallNow:()=>wall,publicFetch:sec.publicFetch,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{
         if(url.startsWith('https://data.alpaca.markets/')) {
-          priceRequests++;if(priceRequests===1)return {ok:false,status:429,headers:{get:()=> '1'}};const q=new URL(url).searchParams,symbol=q.get('symbols'),date='2026-09-03',daily=q.get('timeframe')==='1Day';
+          assert(!prepared,'simulation must not download prices after shared preparation');priceRequests++;if(priceRequests===1)return {ok:false,status:429,headers:{get:()=> '1'}};const q=new URL(url).searchParams,symbols=q.get('symbols').split(','),date='2026-09-03',daily=q.get('timeframe')==='1Day';
           if(!daily)assert.equal(Date.parse(q.get('end')),M.sessionCloseMs(new Date(date+'T12:00:00Z'))-1);
           // Deliberately include an extra closing bar to exercise response filtering too.
           const bars=daily?Array.from({length:30},(_,i)=>({t:new Date(Date.parse(date+'T04:00:00Z')-(30-i)*86400000).toISOString(),o:100,h:101,l:99,c:100,v:100000})):providerSession(date);
-          if(!daily&&symbol==='A'){bars.splice(15,1);bars.splice(7,1);}
-          return {ok:true,status:200,json:async()=>({bars:{[symbol]:bars}})};
+          const bySymbol=Object.fromEntries(symbols.map(symbol=>{const copy=bars.map(b=>({...b}));if(!daily&&symbol==='A'){copy.splice(15,1);copy.splice(7,1);}return [symbol,copy];}));
+          return {ok:true,status:200,json:async()=>({bars:bySymbol})};
         }
         if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:1000})};
         const b=JSON.parse(opts.body||'{}');submitted++;const user=b.input?.find(x=>x.role==='user')?.content||'';
@@ -6069,17 +6115,24 @@ async function simulatorAdversarial() {
       const b=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','engine');
       const ref=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
       const deferred=await svc.execute(b.runIds[0]);assert.equal(deferred.yielded,true);assert.equal((await svc.getRun(b.runIds[0])).status,'queued');assert.equal(submitted,0);
-      let dispatched=0;await svc.schedule({dispatch:async()=>{dispatched++;}});assert.equal(dispatched,0);
-      await svc.control({runId:b.runIds[0],command:'pause'},'operator');wall+=61000;
-      await svc.execute(b.runIds[0]);assert.equal(priceRequests,1);assert.equal(submitted,0);
-      await svc.control({runId:b.runIds[0],command:'resume'},'operator');
+      const config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+      const units=(await repo.ref.collection('units').get()).docs.map(d=>d.id);
+      const first=await svc.prepareRepository(b.batchId,'company_A');assert(first.yielded);assert.equal(priceRequests,1);assert.equal(submitted,0);
+      const dispatched=[];await svc.schedule({dispatch:async j=>{dispatched.push(j);return {upstream:202};}});assert(dispatched.every(j=>j.task==='simulation_prepare'));assert(!dispatched.some(j=>j.task==='simulation'));
+      await svc.control({batchId:b.batchId,command:'pause'},'operator');wall+=61000;
+      await svc.prepareRepository(b.batchId,'company_A');await svc.execute(b.runIds[0]);assert.equal(priceRequests,1);assert.equal(submitted,0);
+      await svc.control({batchId:b.batchId,command:'resume'},'operator');
+      for(const unit of units)await svc.prepareRepository(b.batchId,unit);
+      const repository=await svc.repositoryState(await svc.getBatch(b.batchId));assert.equal(repository.status,'ready',JSON.stringify(repository.errors));assert.equal(submitted,0);assert.equal(priceRequests,repository.companies+repository.dates+1);prepared=true;
+      const preview=await svc.repositoryPackets(await svc.getRun(b.runIds[0]),config,repository);const packet=preview.packets.find(p=>p.symbol==='A');assert.equal(packet.coverage.regular,76);assert.equal(packet.coverage.missing,2);assert.equal(packet.coverage.outsideSession,1);assert(packet.bars.every(b=>b.c===100));
+
       const result=await svc.execute(b.runIds[0]),run=await svc.getRun(b.runIds[0]);
-      assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(run.returnBps,0);assert.equal(run.progress,100);assert.equal(submitted,1);assert(priceRequests>=18);
+      assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(run.returnBps,0);assert.equal(run.progress,100);assert.equal(submitted,1);assert.equal(priceRequests,repository.companies+repository.dates+1);
       assert.deepEqual((await fake.col(A.COL.accounts).doc('paper-1').get()).data(),{untouched:true});assert.equal((await ref.collection('curve').get()).size,83);
-      const sr=fake.col('InvestorAI_SimulationScenarios').doc(run.scenarioId),ptr=(await sr.collection('symbols').doc('A').get()).data();
-      const packet=await svc.readJSON(sr,ptr.artifact);assert.equal(packet.coverage.regular,76);assert.equal(packet.coverage.missing,2);assert.equal(run.priceCoverage.symbolsWithGaps[0].symbol,'A');assert.equal(packet.coverage.outsideSession,1);assert(packet.bars.every(b=>b.c===100));
+      assert.equal(run.priceCoverage.symbolsWithGaps[0].symbol,'A');
       // A second batch reuses the fully prepared scenario without downloading again.
       const prior=priceRequests,b2=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','reuse');
+      const config2=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b2.batchId),b2.configRef);await svc.ensureRepository(b2,config2);
       assert.equal((await svc.execute(b2.runIds[0])).done,true);assert.equal((await svc.getRun(b2.runIds[0])).status,'complete');assert.equal(priceRequests,prior);assert(sec.calls.length>=4);assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);
     } finally {M.loadMarketSettings=saved.load;M.providerCredentials=saved.credentials;}
   });

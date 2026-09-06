@@ -34,7 +34,7 @@ const MANAGER = require("./_investorManager");
 const { redact } = require("./_investorAuth");
 
 const FN_NAME = "investorManager-background";
-const TASKS = Object.freeze(["premarket_manager", "event_revision", "focused_research", "portfolio_synthesis", "simulation"]);
+const TASKS = Object.freeze(["premarket_manager", "event_revision", "focused_research", "portfolio_synthesis", "simulation", "simulation_prepare"]);
 const SEGMENT_SAFETY_MS = 45000;
 
 async function controlDoc() {
@@ -156,11 +156,12 @@ exports.handler = async (event) => {
   const claimed = await JOBS.claimOnce({ jobId, task, targetFunction: FN_NAME, token: nonce, payload });
   if (!claimed.claimed) return { statusCode: claimed.httpStatus || 409, body: JSON.stringify({ ok: false, reason: claimed.reason }) };
   const claim = claimed.claim;
-  if (task === "simulation") {
+  if (task === "simulation" || task === "simulation_prepare") {
     try {
       // Simulation workers cold-start independently of the paper manager.
       await M.loadMarketSettings();
-      const out=await require("./_investorEvals").Simulator.create().execute(payload.runId);
+      const simulator=require("./_investorEvals").Simulator.create();
+      const out=task==="simulation_prepare"?await simulator.prepareRepository(payload.batchId,payload.unitId):await simulator.execute(payload.runId);
       await JOBS.complete(claim,out);
       return {statusCode:200,body:JSON.stringify({ok:true,...out})};
     } catch(e) {
