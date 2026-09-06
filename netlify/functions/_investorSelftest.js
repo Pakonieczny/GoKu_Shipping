@@ -6535,6 +6535,27 @@ async function simulatorAdversarial({only=null}={}) {
     await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body});await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body});
     assert.equal(x.posts(),0);assert.equal(x.counts(),0);assert.equal((await qref.get()).data().maxOutput,4000);assert.equal((await x.ref.get()).data().spentNano,30000000);assert.equal((await x.ref.get()).data().reservedNano,0);
   });
+  await check('research_wire_compacts_baseline_inventory_and_preserves_evidence_and_tool_values',()=>{
+    const claim={claimId:'claim_1',text:'Revenue was 123 USD in the cited period.',quote:'Revenue was 123 USD in the cited period.',documentVersionId:'filing_1',publishedAtMs:100};
+    const dossier={symbol:'A',claims:[claim],fundamentals:{revenueTtmMinor:'12300',factIds:{revenue:['fact_1']}}};
+    const added=Array.from({length:1800},(_,i)=>({kind:'fact',id:'fact_'+String(i).padStart(64,'0')}));
+    const delta={fromVersionId:null,added:[...added,{kind:'claim',id:'claim_1'}],counts:{added:1801},claims:[{...claim,historicalImport:{sourceUrl:'https://www.sec.gov/fixture',publicAtMs:100}},{claimId:'different',text:'Separate evidence'}],revised:[],contradicted:[],expired:[]};
+    const facts=Array.from({length:400},(_,i)=>({factId:'fact_'+i,concept:'Revenue',valueScaled:String(i),scale:2,unit:'USD',period:'2025-Q1',filedDate:'2025-05-01',accession:'accession_1'}));
+    const lineage=facts.map(f=>({factId:f.factId,filedDate:f.filedDate,accession:f.accession,supersedesFactId:null}));
+    const user=`<untrusted_context name="dossier">\n${JSON.stringify(dossier)}\n</untrusted_context>\n<untrusted_context name="delta">\n${JSON.stringify(delta)}\n</untrusted_context>`;
+    const original={...body,max_output_tokens:6000,input:[{role:'user',content:user},{type:'reasoning',encrypted_content:'keep_exactly'},{type:'function_call',call_id:'call_1',name:'getFilingFactsAsOf',arguments:'{"symbol":"A"}'},{type:'function_call_output',call_id:'call_1',output:JSON.stringify({facts,lineage,truncated:false,asOfMs:100})}]},before=JSON.stringify(original);
+    const wire=Sim.simulationRequestBody(original,'manager_research'),blocks=Object.fromEntries([...wire.input[0].content.matchAll(/<untrusted_context name="(dossier|delta)">\n([\s\S]*?)\n<\/untrusted_context>/g)].map(m=>[m[1],JSON.parse(m[2])]));
+    assert.equal(JSON.stringify(original),before);assert.equal(wire.reasoning.effort,'high');assert.equal(wire.max_output_tokens,6000);
+    assert.deepEqual(blocks.dossier.fundamentals,dossier.fundamentals);assert.equal(blocks.dossier.claims[0].text,claim.quote);assert.equal(blocks.dossier.claims[0].documentVersionId,claim.documentVersionId);
+    assert.equal(blocks.delta.initialFactInventory.count,1800);assert.deepEqual(blocks.delta.added,[{kind:'claim',id:'claim_1'}]);assert.deepEqual(blocks.delta.counts,delta.counts);
+    assert.deepEqual(blocks.delta.claims[0].historicalImport,delta.claims[0].historicalImport);assert.deepEqual(blocks.delta.claims[1],delta.claims[1]);
+    const result=JSON.parse(wire.input[3].output),expand=t=>t.rows.map(r=>Object.fromEntries(t.columns.map((k,i)=>[k,r[i]])));
+    assert.deepEqual(expand(result.factsTable),facts);assert.deepEqual(expand(result.lineageTable),lineage);assert.equal(result.truncated,false);assert.equal(result.asOfMs,100);
+    assert.deepEqual(wire.input[1],original.input[1]);assert.deepEqual(wire.input[2],original.input[2]);assert(JSON.stringify(wire).length<before.length/2);
+    const revision={...original,input:[{role:'user',content:user.replace('"fromVersionId":null','"fromVersionId":"previous"')}]};
+    assert(Sim.simulationRequestBody(revision,'manager_research').input[0].content.includes(added[1799].id),'changed facts must remain explicit on a true revision');
+    assert.deepEqual(Sim.simulationRequestBody(original,'manager_review').input,original.input,'ordinary review input is unaffected');
+  });
   await check('simulation_wire_schema_keeps_canonical_limits_without_changing_saved_request_identity',()=>{
     const P=require('./_investorPolicy'),canonical=P.SCHEMAS['universe-review.v1'],legacy=P.strictOutputSchema(canonical,{name:'universe_review_v1'});
     const original={...body,text:{format:{type:'json_schema',name:legacy.name,strict:true,schema:legacy.schema}}},before=JSON.stringify(original),wire=Sim.simulationRequestBody(original,'manager_review');
@@ -6799,6 +6820,32 @@ async function simulatorAdversarial({only=null}={}) {
   await check('incomplete_results_are_excluded_but_counted',()=>{const r=Sim.distribution([{status:'complete',date:'2026-01-02',returnBps:100},{status:'complete',date:'2026-01-05',returnBps:-50},{status:'incomplete',date:'2026-01-06',returnBps:5000}]);assert.equal(r.medianBps,25);assert.equal(r.incomplete,1);assert.equal(r.positive,.5);});
   await check('batch_creation_idempotence_ownership_pause_and_resume',async()=>{const fake=database(),svc=Sim.create({admin:fake});await seedSimulationArchive(fake);const b=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');const again=await svc.createBatch({count:2,from:'2026-08-01',to:'2026-08-31'},'operator','same-key');assert.equal(again.batchId,b.batchId);await assert.rejects(()=>svc.getBatch(b.batchId,'intruder'),/another operator/);await svc.control({batchId:b.batchId,command:'pause'},'operator');assert((await svc.getRun(b.runIds[0])).paused);await svc.control({batchId:b.batchId,command:'resume'},'operator');assert.equal((await svc.getRun(b.runIds[0])).paused,false);assert.equal((await svc.overview({owner:'operator'})).runs.length,2);});
   await check('bar_fills_apply_adverse_spread_never_violate_limit',async()=>{await A.withSimulationScope({runId:RID,clock:()=>1000,collection:()=>{},executionSpreadBps:10},async()=>{const E=require('./_investorExecution'),bar={o:100,h:102,l:99,c:101,v:100000};const r=E.simulateLegOnBar({leg:{role:'ENTRY',side:'buy',type:'LIMIT',priceMicros:'101000000',remainingUnits:'10'},bar});assert.equal(r.fill.priceMicros,'100050000');const n=E.simulateLegOnBar({leg:{role:'ENTRY',side:'buy',type:'LIMIT',priceMicros:'100000000',remainingUnits:'10'},bar});assert.equal(n.fill,null);});});
+  await check('research_recovery_loads_only_selected_dossiers_and_preserves_full_coverage',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake}),M=require('./_investorMarket');
+    const roster=require('./_investorUniverse').freezeEligibleSnapshot({tradingDate:'2026-01-06',nowMs:now});
+    const config={roster,aiPlan:Sim.AI_PLAN},cutoff=M.nyWallClockToUtcMs('2026-01-06',P.CUTOFFS_ET.evidenceFreezeMin);
+    const symbols=[...new Set([...roster.symbols,'SPY','QQQ','HYG','LQD','IEF','TLT','GLD','UUP',...Object.values(require('./_investorTemporal').DRIVER_BY_SECTOR)])];
+    const source=fake.col('InvestorAI_SimulationScenarios').doc('recovery_sources'),units=[],prices={symbols:{},provenance:{fixture:true}};
+    for(const symbol of symbols){
+      const artifact=await svc.saveJSON(source,'company_'+symbol,{data:[{collection:A.COL.dossierVersions,id:symbol+'_v1',knownAtMs:cutoff-1,data:{symbol}}],daily:[],provenance:{fixture:true}});
+      units.push({unitId:'company_'+symbol,pointer:{cacheId:source.id,artifact}});
+      prices.symbols[symbol]={bars:[],coverage:{missing:symbol===symbols[60]?1:0,expected:78}};
+    }
+    units.push({unitId:'prices_2026-01-06',pointer:{cacheId:source.id,artifact:await svc.saveJSON(source,'prices',prices)}});
+    const run={runId:RID,date:'2026-01-06'},repository={status:'ready',units};
+    const original=await svc.repositoryPackets(run,config,repository),selected=roster.symbols.slice(0,50),excluded=roster.symbols[50];
+    const pinned=await svc.saveJSON(fake.col('InvestorAI_Simulations').doc(RID),'pointers',units);
+    const recoveryRun={...run,repositoryPointersRef:pinned,initialized:true,shortlistRef:'saved',shortlist:{symbols:selected},evidenceReleasedThroughMs:cutoff,evidenceCoverage:original.meta.evidenceCoverage,priceCoverage:original.meta.priceCoverage};
+    // An unavailable rejected company must not block already-paid research.
+    await source.collection('artifacts').doc(units.find(u=>u.unitId==='company_'+excluded).pointer.artifact).delete();
+    const resumed=await svc.repositoryPackets(recoveryRun,config,{status:'needs_attention',units:[]});
+    assert.deepEqual(resumed.packets,original.packets.filter(p=>selected.includes(p.symbol)||!roster.symbols.includes(p.symbol)));
+    assert.deepEqual(resumed.meta,original.meta);
+    await assert.rejects(()=>svc.repositoryPackets({...recoveryRun,shortlist:{symbols:[...selected.slice(1),selected[1]]}},config,repository),e=>e.code==='SIMULATION_STATE_CORRUPT');
+    await assert.rejects(()=>svc.repositoryPackets(run,config,repository),e=>e.code==='SIMULATION_STATE_MISSING');
+    await source.collection('artifacts').doc(units.find(u=>u.unitId==='company_'+selected[0]).pointer.artifact).delete();
+    await assert.rejects(()=>svc.repositoryPackets(recoveryRun,config,repository),e=>e.code==='SIMULATION_STATE_MISSING');
+  });
   await check('shared_repository_batches_prices_and_reuses_company_history_without_future_leakage',async()=>{
     const M=require('./_investorMarket'),old={load:M.loadMarketSettings,credentials:M.providerCredentials},fake=database(),sec=secFixture();let wall=now,paid=0,failPage=true;const requests=new Map();
     try {

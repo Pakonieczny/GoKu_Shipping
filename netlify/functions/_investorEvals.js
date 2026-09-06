@@ -189,6 +189,40 @@ const Simulator = (() => {
         out.input=[...out.input,{role:'system',content:'Return one brief assessment for EVERY supplied symbol using the assessments object. Rank research priority from 1 (best) to '+symbols.length+' (least interesting), aiming for distinct ranks. Your 50 highest-priority companies become the shortlist; the application breaks any tied ranks by symbol. This replaces the selected-array output instruction. Each reason must explain the supplied evidence in at most 120 characters. Leave deep investment analysis to Astra.'}];
       }
     }
+    if(stage==='manager_research'&&Array.isArray(out.input)) {
+      // Change only the wire representation, after the original request key is
+      // checked. Saved paid responses and tool continuations keep their identity.
+      const blocks=/<untrusted_context name="(dossier|delta)">\n([\s\S]*?)\n<\/untrusted_context>/g;
+      for(const item of out.input)if(item.role==='user'&&typeof item.content==='string') {
+        const parsed={};for(const match of item.content.matchAll(blocks))try{parsed[match[1]]=JSON.parse(match[2]);}catch{}
+        if(!parsed.dossier||!parsed.delta)continue;
+        const claims=new Map((parsed.dossier.claims||[]).map(c=>[c.claimId,c]));
+        parsed.dossier.claims=(parsed.dossier.claims||[]).map(c=>{if(typeof c.text!=='string'||c.quote!==c.text)return c;const {quote,...rest}=c;return {...rest,quoteIsText:true};});
+        const delta=parsed.delta;
+        if(delta.fromVersionId===null&&Array.isArray(delta.added)) {
+          const inventory=delta.added.filter(x=>x.kind==='fact'&&typeof x.id==='string');
+          if(inventory.length){delta.initialFactInventory={count:inventory.length,hash:hash(inventory),note:'Initial baseline fact identifiers are not repeated here. Financial values and their basis references remain in the dossier; retrieve additional dated facts with getFilingFactsAsOf. This is not a change since an earlier memo.'};delta.added=delta.added.filter(x=>x.kind!=='fact'||typeof x.id!=='string');}
+        }
+        if(Array.isArray(delta.claims))delta.claims=delta.claims.map(c=>{
+          const prior=claims.get(c.claimId);if(!prior)return c;
+          return {claimId:c.claimId,detailsFrom:'dossier.claims by claimId',...Object.fromEntries(Object.entries(c).filter(([k,v])=>k!=='claimId'&&JSON.stringify(v)!==JSON.stringify(prior[k])))};
+        });
+        item.content=item.content.replace(blocks,(whole,label)=>parsed[label]?`<untrusted_context name="${label}">\n${JSON.stringify(parsed[label])}\n</untrusted_context>`:whole);
+      }
+      const calls=new Map(out.input.filter(x=>x.type==='function_call').map(x=>[x.call_id,x.name]));
+      for(const item of out.input)if(item.type==='function_call_output'&&calls.get(item.call_id)==='getFilingFactsAsOf') {
+        let value;try{value=JSON.parse(item.output);}catch{continue;}
+        if(!value||typeof value!=='object'||Array.isArray(value))continue;
+        for(const key of ['facts','lineage']) {
+          const rows=value[key];if(!Array.isArray(rows)||rows.length<2||rows.some(r=>!r||typeof r!=='object'||Array.isArray(r)))continue;
+          const columns=Object.keys(rows[0]).sort();
+          if(!rows.every(r=>JSON.stringify(Object.keys(r).sort())===JSON.stringify(columns)))continue;
+          value[key+'Table']={columns,rows:rows.map(r=>columns.map(k=>r[k]))};delete value[key];
+        }
+        value.tableEncoding='Each table row uses its columns in order. Values, units, periods and source identifiers are unchanged.';
+        item.output=JSON.stringify(value);
+      }
+    }
     return out;
   }
   const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.reservedNano>0&&['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code));
@@ -1039,7 +1073,13 @@ const Simulator = (() => {
       const check=async work=>{if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');await onProgress(work);};
       if(repository.status!=='ready'&&!run.repositoryPointersRef)throw fail('SIMULATION_REPOSITORY_NOT_READY','Shared data preparation has not finished');
       await check({stage:'load_prices',label:'Loading saved session prices',done:null,total:null,unit:'',current:run.date});
-      const symbols=repositorySymbols(config),units=run.repositoryPointersRef?await readJSON(runCol.doc(run.runId),run.repositoryPointersRef):repository.units,priceUnit=units.find(u=>u.unitId==='prices_'+run.date);
+      const allSymbols=repositorySymbols(config),units=run.repositoryPointersRef?await readJSON(runCol.doc(run.runId),run.repositoryPointersRef):repository.units,priceUnit=units.find(u=>u.unitId==='prices_'+run.date);
+      // Once the complete universe has been screened and released, only the
+      // pinned shortlist and market indicators can participate in this run.
+      // Worker recovery must not reload hundreds of rejected dossiers first.
+      const resumeSelection=config.aiPlan&&run.initialized&&run.shortlistRef&&run.evidenceReleasedThroughMs!=null&&!run.evidenceReleaseCursor&&run.evidenceCoverage&&run.priceCoverage?run.shortlist?.symbols:null;
+      if(resumeSelection&&(!Array.isArray(resumeSelection)||resumeSelection.length!==Math.min(config.aiPlan.shortlistCount,config.roster.symbols.length)||new Set(resumeSelection).size!==resumeSelection.length||resumeSelection.some(s=>!config.roster.symbols.includes(s))))throw fail('SIMULATION_STATE_CORRUPT','Saved shortlist is not a complete, distinct eligible selection');
+      const symbols=resumeSelection?allSymbols.filter(s=>resumeSelection.includes(s)||!config.roster.symbols.includes(s)):allSymbols;
       if(!priceUnit?.pointer)throw fail('SIMULATION_STATE_MISSING');
       const prices=await readJSON(scenarioCol.doc(priceUnit.pointer.cacheId),priceUnit.pointer.artifact),endMs=M.sessionCloseMs(new Date(run.date+'T12:00:00Z'))+1200000,cutoff=M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin);
       const packets=[];for(const symbol of symbols){
@@ -1056,7 +1096,7 @@ const Simulator = (() => {
       }
       await check({stage:'load_research',label:'Saved company research loaded',done:packets.length,total:symbols.length,unit:'companies / indicators',current:null});
       const reconstructed=packets.filter(p=>config.roster.symbols.includes(p.symbol)&&p.data.some(x=>x.data.historicalImport));
-      return {packets,meta:{cutoffMs:cutoff,endMs,symbols,evidenceCoverage:{mode:reconstructed.length?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies:reconstructed.length,totalCompanies:config.roster.symbols.length},priceCoverage:{symbolsWithGaps:packets.filter(p=>p.coverage.missing).map(p=>({symbol:p.symbol,missing:p.coverage.missing,expected:p.coverage.expected,verification:p.coverage.verification||null})),recoveredIntervals:packets.reduce((n,p)=>n+(p.coverage.verification?.recoveredIntervals||0),0),note:'Only observed bars are replayed. Larger gaps are checked against one-minute history. Remaining gaps have no fills; valuations use the latest observed price and may be stale.'}}};
+      return {packets,meta:{cutoffMs:cutoff,endMs,symbols:allSymbols,evidenceCoverage:resumeSelection?run.evidenceCoverage:{mode:reconstructed.length?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies:reconstructed.length,totalCompanies:config.roster.symbols.length},priceCoverage:resumeSelection?run.priceCoverage:{symbolsWithGaps:packets.filter(p=>p.coverage.missing).map(p=>({symbol:p.symbol,missing:p.coverage.missing,expected:p.coverage.expected,verification:p.coverage.verification||null})),recoveredIntervals:packets.reduce((n,p)=>n+(p.coverage.verification?.recoveredIntervals||0),0),note:'Only observed bars are replayed. Larger gaps are checked against one-minute history. Remaining gaps have no fills; valuations use the latest observed price and may be stale.'}}};
     }
 
     async function prepareShortlist(run,config,packets,{request,onProgress=async()=>{},shouldPause=async()=>false,save}={}) {
@@ -1182,7 +1222,7 @@ const Simulator = (() => {
           tx.set(qref,{key,originalKey,attempt,effectiveReasoning:effectiveBody.reasoning?.effort||null,stage,status:'submitting',model:body.model,tier,reservation:nano,inputTokens:input,maxOutput,baseMaxOutput:body.max_output_tokens,budgetVersion:BUDGET_VERSION,requestRef,startedAtMs:wallNow(),rates,clockMs:run.clockMs});return {nano,maxOutput};});
         if(reservation.blocked){
           if(reservation.pending)throw fail('SIMULATION_BUDGET_PENDING','Waiting for the other saved AI response to settle its reservation before starting this request. No replacement request was purchased.');
-          const message='AI request not submitted: its configured response allowance needs $'+(reservation.requiredNano/1e9).toFixed(4)+', but $'+(reservation.availableNano/1e9).toFixed(4)+' is available for this step within the $'+(CEILING/1e9).toFixed(5)+' limit'+(reservation.holdbackNano?' ($'+(reservation.holdbackNano/1e9).toFixed(4)+' kept for later decisions)':'')+'. No tokens were purchased for this request. Review the AI workload or budget.';
+          const message='AI request not submitted: its configured response allowance needs $'+(reservation.requiredNano/1e9).toFixed(4)+', but $'+(reservation.availableNano/1e9).toFixed(4)+' is available for this step within the $'+(CEILING/1e9).toFixed(5)+' limit'+(reservation.holdbackNano?' ($'+(reservation.holdbackNano/1e9).toFixed(4)+' kept for later decisions)':'')+'. Input: '+input+' tokens. No tokens were purchased for this request. Review the AI workload or budget.';
           await ref.set({budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT',message,details:reservation}},{merge:true});
           throw fail('SIMULATION_BUDGET_INSUFFICIENT',message);
         }
