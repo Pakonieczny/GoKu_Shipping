@@ -1,28 +1,53 @@
-# Investor maintenance and releases
+# Investor maintenance and releases — read before making changes
 
-These instructions apply to `investor.html`, `investor/**`, and the investor-related files in `netlify/functions/`. This repository also hosts other applications; do not change them as part of investor maintenance.
+This is the canonical, persistent procedure for Investor work in `Pakonieczny/GoKu_Shipping`. Read it at the start of every new conversation or agent session involving this application. Do not reconstruct the release procedure from chat memory. The user's current instructions take precedence.
 
-## Source and scope
+Scope: `investor.html`, `investor/**`, and investor-related files in `netlify/functions/`. The repository and Netlify site also host other applications; preserve them.
 
-- Start from the latest `Pakonieczny/GoKu_Shipping` `main`. Fetch it and check for existing user changes before editing. Do not substitute an old ZIP or an earlier conversation checkout.
-- Make only the material changes needed for the requested investor task. Preserve filenames and the existing application structure.
-- Preserve simulations, shared Firestore research, saved AI answers, checkpoints, trades, and previously incurred charges. Never reset data or purchase replacement AI answers merely to get around a recoverable error.
+## Standing user preference
 
-## Standard release route
+Paul wants the same working release process in every conversation: make focused investor changes, push only the changed necessary files to GitHub, and publish through the established Netlify upload process. Complete authorized fixes and releases without repeatedly asking for permission. Never silently switch deployment routes. A request for review only does not authorize a release.
 
-1. Implement the requested changes and run focused checks that exercise the affected behavior. Verify the exact inline-script CSP hash whenever `investor.html` JavaScript changes.
-2. Inspect the diff and publish only the changed, necessary investor files to `main`, using a non-force update. The user wants authorized investor fixes completed and pushed without repeated permission requests. Follow any narrower instruction in the active conversation.
-3. Let the existing Git-connected Netlify deployment handle the release. Do not create a new site, upload a full source ZIP, switch to a manual/API/CLI deployment, or alter the release route unless the user explicitly requests that exception. An exception in one conversation is not the default for future releases.
-4. Do not change `package.json`, lockfiles, `.npmrc`, `netlify.toml`, build commands, environment variables, or unrelated applications for an investor code fix. A deployment-configuration repair requires a specific user request covering that work; diagnose the concrete failure first.
-5. Confirm the remote commit and report its link. If deployment status is accessible, check it. Distinguish pushed, building, published, and live-functionally-verified. Fixture tests do not prove live simulations complete.
-6. If automatic approval review rejects an action, do not bypass it. Finish the reviewable local work, explain the exact rejection, and request only the authorization that remains necessary.
+Only changed files means only those files change in the repository and deployed application. Netlify may require a complete source upload and rebuild function bundles; a seven-file source ZIP is NOT a safe replacement for this shared site.
 
-Instruction-only commits may use `[skip netlify]` to avoid an unnecessary application build. Keep deployment instructions in this file so future sessions do not depend on chat memory.
+## Fixed destination
 
-## Known deployment issue (2026-09-06)
+- Repository: `Pakonieczny/GoKu_Shipping`
+- Branch: `main`; never force-push
+- Netlify project: `gokushipping`
+- Netlify site ID: `a66782c3-88dd-424a-adf4-1c17d252983a`
+- Production URL: `https://goldenspike.app`
+- Investor page: `https://goldenspike.app/investor.html`
+- Use the existing site. Do not create a replacement site.
 
-- Git-triggered deployment of investor commit `46a96df91449ce8a469e43dadfa8b8e985ed4e77` failed during npm dependency installation with E401 for `@metavrse-inc/metavrse-lib`.
-- That package is used by the Cherry viewer. It is not an investor dependency and must not be removed to force an investor deploy through.
-- The existing `.npmrc` references `METAVRSE_NPM_TOKEN`. Do not assume a variable named `GITHUB_TOKEN` is an interchangeable fix, expose secrets, or enumerate unrelated credentials.
-- A previously successful production deploy was an uploaded build. That does not establish that Git-triggered builds have working package authentication.
-- Restoring reliable Git-triggered deployment remains a separate configuration task until it is verified. Do not claim these instructions alone fix E401, and do not repeat upload fallbacks as the standard release process.
+## Required release sequence
+
+1. Fetch current `main`, read this file, and check for existing user changes. Use a clean checkout when necessary. Never start from an old uploaded ZIP or assume a previous session's scratch directory still exists.
+2. Implement only the material requested changes. Preserve filenames, the existing UI conventions, and application structure. Preserve shared Firestore research, simulations, checkpoints, saved AI responses, trades, and all incurred charges. Never reset data or purchase replacement answers merely to bypass a recoverable failure.
+3. Run focused checks of the affected behavior. When changing inline JavaScript in `investor.html`, recompute its exact SHA-256 CSP hash and verify both syntax and hash.
+4. Review the changed-file list. Commit only the necessary changed files to `main` using a non-force update. Use `[skip netlify]` in the commit message so the Git push does not start the known failing Git-triggered installation route. Documentation-only changes stop after the verified Git push; they need no application deployment.
+5. Confirm the remote commit/tree. Prepare a clean deployment staging directory from that exact committed application source. Include the complete site's required assets, functions, and existing configuration, preserving unrelated applications. Compare against the existing deployment source when available; do not publish a partial directory. Exclude repository internals, secrets, local environment files, temporary logs, prior deploy archives, and development dependencies. Do not copy credentials into source. Preserve `.npmrc`'s environment-variable reference.
+6. Use the connected Netlify plugin's `deploy-site` operation for the fixed site ID to obtain fresh upload instructions. The proven route is the connector-issued source ZIP upload to Netlify's build service. Execute its advertised `@netlify/mcp` command from the clean staging directory. Its command has this shape:
+
+   `npx -y @netlify/mcp@latest --site-id a66782c3-88dd-424a-adf4-1c17d252983a --proxy-path "<fresh URL supplied by the Netlify connector>" --no-wait`
+
+   Follow the current connector instructions if the advertised syntax changes. Never save the temporary proxy URL/token in this file, Git, a report, or a reusable script. Do not substitute an unauthenticated Git build or a different deployment service. The upload starts a Netlify build; it is not proof that dependency installation is unnecessary.
+7. Capture the returned deploy ID. Poll that specific deployment with Netlify's `get-deploy` reader until `ready` with `published_at`, or a terminal error. Share concise progress during the wait. Do not treat upload acceptance, `building`, or `processing` as a completed release.
+8. Verify that the live investor HTML matches the committed file, and that relevant function bundles were updated. Confirm the existing site remains populated. Do not start paid simulations or reset user data as a deployment check.
+9. Report the Git commit, actual deployment outcome, and any live verification limits. Passing fixture tests does not prove live simulations complete.
+
+If a capability is unavailable or automatic approval review rejects an action, finish the safe local work, state the precise blocker, and request only what is necessary. Never bypass an approval rejection or repeatedly retry an unchanged failing deployment.
+
+## Do not change the deployment setup during ordinary investor fixes
+
+Do not edit `package.json`, lockfiles, `.npmrc`, `netlify.toml`, build commands, environment variables, or unrelated applications to force an investor release through. Diagnose a concrete deployment failure before proposing a separate configuration repair. Keep the working upload route unless Paul specifically requests a replacement and that replacement is verified.
+
+`AGENTS.md` instructs agents; it is not executable Netlify configuration. Do not delete application code, runtime prompt Markdown files, or Netlify configuration to make it the only file in the repository. Keep this as the single release-instruction document rather than creating competing handoffs.
+
+## Verified evidence and known limitation — 2026-09-06
+
+- Git-triggered deployment of commit `46a96df91449ce8a469e43dadfa8b8e985ed4e77` failed during dependency installation with E401 for `@metavrse-inc/metavrse-lib`.
+- The package is used by the Cherry viewer, not Investor. Do not remove it. Existing `.npmrc` references `METAVRSE_NPM_TOKEN`; do not assume `GITHUB_TOKEN` is interchangeable or enumerate unrelated secrets to diagnose it.
+- The same seven investor changes succeeded through the source-upload route in deploy `6a9ddbf6fd65e30166763514`, published at `2026-09-06T21:37:14.329Z`.
+- Netlify reported seven changed static files and 241 deployed functions, preserving 34 redirects and three header rules. The live `investor.html` matched the verified source byte-for-byte, and the investor manager/API function bundle digests changed.
+- Git-triggered package authentication was NOT repaired. Do not claim otherwise or use Git-triggered deployment as the default again simply because a Git push succeeds. Source uploads can also fail; inspect the actual result every time.
