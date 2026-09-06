@@ -6076,7 +6076,7 @@ async function simulatorAdversarial({only=null}={}) {
   });
   await check('higher_budget_resumes_existing_run_without_resetting_costs_or_checkpoints',async()=>{
     const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','budget-recovery'),rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
-    await rr.set({status:'incomplete',initialized:true,clockMs:123456,managerCheckpointRef:'saved',spentNano:900000000,reservedNano:1234,targetNano:950000000,ceilingNano:1045000000,error:{code:'SIMULATION_BUDGET_INSUFFICIENT'},budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT'}},{merge:true});
+    await rr.set({status:'incomplete',initialized:true,clockMs:123456,managerCheckpointRef:'saved',spentNano:900000000,reservedNano:1234,targetNano:1263500000,ceilingNano:1389850000,budgetVersion:'simulation-ai-plus33.v1',error:{code:'SIMULATION_BUDGET_INSUFFICIENT'},budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT'}},{merge:true});
     const view=await svc.overview({owner:'operator',batchId:b.batchId});assert(view.runs[0].canResumeBudget);assert.equal(view.runs[0].ceilingNano,Sim.CEILING);assert.equal(view.batch.ceilingNano,Sim.CEILING);assert.equal(view.totals.targetNano,Sim.TARGET);
     await assert.rejects(()=>svc.control({runId:b.runIds[0],command:'retry'},'intruder'),/another operator/);
     await svc.control({runId:b.runIds[0],command:'retry'},'operator');const r=await svc.getRun(b.runIds[0]);
@@ -6517,16 +6517,16 @@ async function simulatorAdversarial({only=null}={}) {
       await assert.rejects(()=>svc.prepareSymbol('SPY',null,date,end),e=>e.code==='HISTORICAL_BARS_MISSING');assert.equal(fetches,2);
     } finally {M.loadMarketSettings=originals.load;M.providerCredentials=originals.credentials;}
   });
-  await check('exact_cost_includes_reasoning_once_and_cache_categories',()=>{assert.equal(Sim.price('gpt-6-astra',{input_tokens:1000,output_tokens:100,input_tokens_details:{cached_tokens:200,cache_write_tokens:100},output_tokens_details:{reasoning_tokens:80}},'flex'),6725000);assert.equal(Sim.CEILING,1389850000);assert.equal(Sim.TARGET,1263500000);assert.throws(()=>Sim.price('gpt-6-astra',{input_tokens:-1}));assert.equal(Sim.price('gpt-5.6-luna',{input_tokens:1000,output_tokens:100}),320000);});
+  await check('exact_cost_includes_reasoning_once_and_cache_categories',()=>{assert.equal(Sim.price('gpt-6-astra',{input_tokens:1000,output_tokens:100,input_tokens_details:{cached_tokens:200,cache_write_tokens:100},output_tokens_details:{reasoning_tokens:80}},'flex'),6725000);assert.equal(Sim.CEILING,1889850000);assert.equal(Sim.TARGET,1763500000);assert.throws(()=>Sim.price('gpt-6-astra',{input_tokens:-1}));assert.equal(Sim.price('gpt-5.6-luna',{input_tokens:1000,output_tokens:100}),320000);});
   await check('unobserved_and_future_evidence_are_not_available',()=>{assert.equal(Sim.knownAt({}),Infinity);assert.equal(Sim.knownAt({publishedAtMs:1000,fetchedAtMs:2000}),2000);assert.equal(Sim.knownAt({asOfMs:1000,firstSeenAtMs:3000}),3000);});
   await check('distinct_dates_and_no_future_sessions',()=>{const d=Sim.datesBetween('2026-08-01','2026-09-04'),a=Sim.selectedDates(d,10,'seed');assert.equal(new Set(a).size,10);assert.deepEqual(a,Sim.selectedDates(d,10,'seed'));assert.throws(()=>Sim.selectedDates(d,500,'seed'));assert.throws(()=>Sim.selectedDates(d,0,'seed'));});
   await check('parallel_scopes_isolate_collections_clocks_and_paper',async()=>{const fake=database(),wall=A.now();await Promise.all([1000,2000].map((clock,i)=>A.withSimulationScope({runId:'sim_'+String(i+1).repeat(24),clock:()=>clock,collection:n=>fake.col('scope'+i+'/'+n)},async()=>{await new Promise(r=>setTimeout(r,3-i));assert.equal(A.now(),clock);await A.col(A.COL.accounts).doc('paper-1').set({clock});})));assert.equal(A.currentScope(),null);assert(A.now()>=wall);assert.equal(fake.docs.size,2);assert([...fake.docs.keys()].every(k=>k.startsWith('scope')));});
   await check('scope_forbids_live_source_fetch_and_namespace_escape',async()=>{await A.withSimulationScope({runId:RID,clock:()=>1000,collection:()=>{throw new Error('unexpected collection');}},async()=>{assert.throws(()=>A.col('OtherApp'));await assert.rejects(()=>require('./_investorFetch').fetchPublic('https://www.sec.gov/',{sourceId:'sec.latest'}));});});
   await check('immutable_chunks_detect_corruption_and_preserve_unicode',async()=>{const f=database(),svc=Sim.create({admin:f}),parent=f.col('Artifacts').doc('test');const a=await svc.saveJSON(parent,'data',{text:'🌟'.repeat(80000),nested:[[1,2],[3,4]]});assert.equal((await svc.readJSON(parent,a)).text.length,160000);await parent.collection('artifacts').doc(a).collection('chunks').doc('0').set({text:'tampered'});await assert.rejects(()=>svc.readJSON(parent,a),/CORRUPT/);});
-  async function metered(script){const fake=database(),ref=fake.col('InvestorAI_Simulations').doc(RID),run={runId:RID,clockMs:1000,leaseOwner:'owner',owner:'operator',spentNano:0,reservedNano:0,paused:false,leaseUntil:now+1000000};await ref.set(run);let posts=0,counts=0;const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{if(url.endsWith('/input_tokens')){counts++;return {ok:true,status:200,json:async()=>({input_tokens:1000})};}if(opts.method==='POST')posts++;return script(url,opts,posts);}});const meter=svc.meter(run,ref,async()=>(await ref.get()).data().paused,async()=>{});return {fake,ref,run,svc,meter,posts:()=>posts,counts:()=>counts};}
+  async function metered(script,inputTokens=1000){const fake=database(),ref=fake.col('InvestorAI_Simulations').doc(RID),run={runId:RID,clockMs:1000,leaseOwner:'owner',owner:'operator',spentNano:0,reservedNano:0,paused:false,leaseUntil:now+1000000};await ref.set(run);let posts=0,counts=0;const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{if(url.endsWith('/input_tokens')){counts++;return {ok:true,status:200,json:async()=>({input_tokens:inputTokens})};}if(opts.method==='POST')posts++;return script(url,opts,posts);}});const meter=svc.meter(run,ref,async()=>(await ref.get()).data().paused,async()=>{});return {fake,ref,run,svc,meter,posts:()=>posts,counts:()=>counts};}
   const body={model:'gpt-6-astra',input:[{role:'user',content:'fixture'}],max_output_tokens:4000,reasoning:{effort:'high'}};
   const completed={id:'resp_fixture',status:'completed',service_tier:'flex',model:'gpt-6-astra',output:[],usage:{input_tokens:1000,output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}};
-  await check('every_simulation_stage_gets_33_percent_more_output_and_holdback',async()=>{
+  await check('simulation_output_boost_is_unchanged_and_extra_funds_are_reserved_for_later_stages',async()=>{
     const cases=[['shortlist',8000,'gpt-5.6-luna'],...Object.entries(Sim.AI_PLAN.outputTokens).map(([name,tokens])=>[({reviewUniverse:'manager_review',repairCoverageStructure:'manager_coverage',researchCompany:'manager_research'})[name]||name,tokens,'gpt-6-astra']),['legacy',4000,'gpt-6-astra']];
     for(const [stage,tokens,model] of cases){
       let sent;const x=await metered(async(u,o)=>{sent=JSON.parse(o.body);return {ok:true,status:200,json:async()=>completed};});x.run.aiPlan=Sim.AI_PLAN;
@@ -6535,9 +6535,33 @@ async function simulatorAdversarial({only=null}={}) {
       const q=(await x.ref.collection('requests').get()).docs[0].data();assert.equal(q.baseMaxOutput,tokens);assert.equal(q.maxOutput,sent.max_output_tokens);assert.equal(q.budgetVersion,Sim.BUDGET_VERSION);
       const holdback=Sim.AI_PLAN.holdbackNano[stage];if(holdback){
         await x.ref.set({spentNano:Sim.CEILING},{merge:true});await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage,body:{...requestBody,input:'blocked'}}),e=>e.code==='SIMULATION_BUDGET_INSUFFICIENT');
-        assert.equal((await x.ref.get()).data().budgetFailure.details.holdbackNano,Math.ceil(holdback*133/100));
+        assert.equal((await x.ref.get()).data().budgetFailure.details.holdbackNano,Math.ceil(holdback*133/100)+(stage==='manager_research'?200000000:500000000));
       }
     }
+  });
+  await check('late_stage_top_up_covers_thirty_cent_research_gap_and_preserves_twenty_cents_for_final_decision',async()=>{
+    const input=40000,rates=Sim.rate('gpt-6-astra','flex',input),researchReserve=input*rates.write+7980*rates.output;
+    const previousCeiling=1389850000,previousHoldback=292600000;
+    const spent=previousCeiling-previousHoldback-researchReserve+300000000;
+    const x=await metered(async(u,o,n)=>{
+      const sent=JSON.parse(o.body);
+      return {ok:true,status:200,json:async()=>({...completed,id:'resp_headroom_'+n,usage:{input_tokens:input,input_tokens_details:{cache_write_tokens:input},output_tokens:sent.max_output_tokens}})};
+    },input);x.run.aiPlan=Sim.AI_PLAN;
+    await x.ref.set({spentNano:spent},{merge:true});
+    assert.equal(researchReserve-(previousCeiling-spent-previousHoldback),300000000);
+    const research={...body,max_output_tokens:6000,input:'saved research continuation'};
+    await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage:'manager_research',body:research});
+    const afterResearch=(await x.ref.get()).data();
+    assert.equal(afterResearch.spentNano,spent+researchReserve);assert.equal(afterResearch.reservedNano,0);
+    assert.equal(Sim.CEILING-afterResearch.spentNano,previousHoldback+200000000);
+    // Recovery must reuse this already-paid answer, preserving the full reserve.
+    await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage:'manager_research',body:research});assert.equal(x.posts(),1);
+    const final={...body,max_output_tokens:6000,input:'final portfolio decision'};
+    const finalReserve=input*rates.write+7980*rates.output;assert(finalReserve>previousHoldback);
+    await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage:'manager_synthesis',body:final});
+    const done=(await x.ref.get()).data();assert.equal(x.posts(),2);assert.equal(done.spentNano,spent+researchReserve+finalReserve);assert(done.spentNano<=Sim.CEILING);assert.equal(done.reservedNano,0);
+    const b=await x.svc.createBatch({count:10,from:'2026-07-01',to:'2026-07-31'},'operator','late-budget-ten');
+    assert.equal(b.ceilingNano,18898500000);assert.equal(b.targetNano,17635000000);
   });
   await check('pre_increase_saved_response_keeps_original_identity_and_reservation',async()=>{
     const x=await metered(async(u,o)=>{assert.equal(o.method,'GET');return {ok:true,status:200,json:async()=>completed};});
@@ -6714,7 +6738,7 @@ async function simulatorAdversarial({only=null}={}) {
   });
   await check('temporary_sibling_reservation_waits_without_spending_or_permanent_budget_failure',async()=>{
     const x=await metered(async()=>({ok:true,status:200,json:async()=>completed}));x.run.aiPlan=Sim.AI_PLAN;
-    await x.ref.set({spentNano:500000000,reservedNano:400000000,pendingAiCount:1},{merge:true});
+    await x.ref.set({spentNano:800000000,reservedNano:400000000,pendingAiCount:1},{merge:true});
     const research={...body,max_output_tokens:6000};
     await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:research,stage:'manager_research'}),e=>e.code==='SIMULATION_BUDGET_PENDING');
     assert.equal(x.posts(),0);assert.equal((await x.ref.get()).data().budgetFailure,undefined);

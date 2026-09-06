@@ -148,9 +148,14 @@ const Simulator = (() => {
   const crypto = require('crypto');
   const VERSION = 'simulator.v2.sec-reconstruction';
   const BATCHES = 'InvestorAI_SimulationBatches', RUNS = 'InvestorAI_Simulations', SCENARIOS = 'InvestorAI_SimulationScenarios';
-  const BUDGET_VERSION='simulation-ai-plus33.v1';
+  const BUDGET_VERSION='simulation-ai-plus33-late50.v2';
   const boostBudget = value => Math.ceil(value*133/100);
-  const TARGET = boostBudget(950000000), CEILING = boostBudget(1045000000), TARGET_MS = 300000;
+  const LATE_STAGE_HEADROOM = 500000000;
+  const TARGET = boostBudget(950000000)+LATE_STAGE_HEADROOM, CEILING = boostBudget(1045000000)+LATE_STAGE_HEADROOM, TARGET_MS = 300000;
+  // Protect the entire extra $0.50 through screening/review. Research may use
+  // $0.30; the remaining $0.20 joins the existing final-decision reserve.
+  // Apply outside the pinned AI plan so saved paid request identities stay stable.
+  const EXTRA_HOLDBACK = Object.freeze({shortlist:500000000,manager_review:500000000,manager_coverage:500000000,manager_research:200000000});
   // Explicit, pinned simulation workload. Ordinary paper meetings retain their full roster.
   // Base allowances remain stable in request identities. The meter applies the
   // approved 33% boost exactly once, only when purchasing a new request.
@@ -1226,7 +1231,7 @@ const Simulator = (() => {
         const requestRef=await saveJSON(ref,'request',{...body,service_tier:tier});
         const reservation=await rootTransaction(async tx=>{const [rs,qs]=await Promise.all([tx.get(ref),tx.get(qref)]);const r=rs.data();
           if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.resetAtMs || r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
-          const holdbackNano=boostBudget(run.aiPlan?.holdbackNano?.[stage]||0),availableNano=Math.max(0,CEILING-r.spentNano-r.reservedNano-holdbackNano),room=availableNano-inputReserve;
+          const holdbackNano=boostBudget(run.aiPlan?.holdbackNano?.[stage]||0)+(EXTRA_HOLDBACK[stage]||0),availableNano=Math.max(0,CEILING-r.spentNano-r.reservedNano-holdbackNano),room=availableNano-inputReserve;
           if(!Number.isSafeInteger(body.max_output_tokens)||body.max_output_tokens<=0)throw fail('SIMULATION_INVALID_OUTPUT_LIMIT');
           const maxOutput=Math.max(boostBudget(body.max_output_tokens),stage==='shortlist'?24000:0);
           if(maxOutput*rates.output>room)return {blocked:true,pending:r.reservedNano>0&&inputReserve+Math.ceil(maxOutput*rates.output)<=CEILING-r.spentNano-holdbackNano,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano,holdbackNano,requestedOutputTokens:maxOutput};
