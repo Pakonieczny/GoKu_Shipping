@@ -148,14 +148,10 @@ const Simulator = (() => {
   const crypto = require('crypto');
   const VERSION = 'simulator.v2.sec-reconstruction';
   const BATCHES = 'InvestorAI_SimulationBatches', RUNS = 'InvestorAI_Simulations', SCENARIOS = 'InvestorAI_SimulationScenarios';
-  const BUDGET_VERSION='simulation-ai-plus33-late50.v2';
+  const BUDGET_VERSION='simulation-ai-total-only.v3';
   const boostBudget = value => Math.ceil(value*133/100);
   const LATE_STAGE_HEADROOM = 500000000;
   const TARGET = boostBudget(950000000)+LATE_STAGE_HEADROOM, CEILING = boostBudget(1045000000)+LATE_STAGE_HEADROOM, TARGET_MS = 300000;
-  // Protect the entire extra $0.50 through screening/review. Research may use
-  // $0.30; the remaining $0.20 joins the existing final-decision reserve.
-  // Apply outside the pinned AI plan so saved paid request identities stay stable.
-  const EXTRA_HOLDBACK = Object.freeze({shortlist:500000000,manager_review:500000000,manager_coverage:500000000,manager_research:200000000});
   // Explicit, pinned simulation workload. Ordinary paper meetings retain their full roster.
   // Base allowances remain stable in request identities. The meter applies the
   // approved 33% boost exactly once, only when purchasing a new request.
@@ -1304,23 +1300,23 @@ const Simulator = (() => {
         const requestRef=await saveJSON(ref,'request',{...body,service_tier:tier});
         const reservation=await rootTransaction(async tx=>{const [rs,qs]=await Promise.all([tx.get(ref),tx.get(qref)]);const r=rs.data();
           if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.resetAtMs || r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
-          const unlimited=uncappedRun(r),holdbackNano=unlimited?0:boostBudget(run.aiPlan?.holdbackNano?.[stage]||0)+(EXTRA_HOLDBACK[stage]||0),availableNano=unlimited?null:Math.max(0,CEILING-r.spentNano-r.reservedNano-holdbackNano),room=unlimited?Infinity:availableNano-inputReserve;
+          const unlimited=uncappedRun(r),holdbackNano=0,availableNano=unlimited?null:Math.max(0,CEILING-r.spentNano-r.reservedNano-holdbackNano),room=unlimited?Infinity:availableNano-inputReserve;
           if(!Number.isSafeInteger(body.max_output_tokens)||body.max_output_tokens<=0)throw fail('SIMULATION_INVALID_OUTPUT_LIMIT');
           let maxOutput=Math.max(boostBudget(body.max_output_tokens),stage==='shortlist'?24000:0,attempt?(run.aiRetryOutputTokens?.[originalKey]||0):0);
-          // Fit an unsubmitted joint research decision to remaining cash without raising the ceiling.
-          // Keep a 20K floor; never shrink an explicit truncation retry or a sibling's reservation.
-          if(stage==='manager_decision'&&body.model==='gpt-6-astra'&&!attempt&&!unlimited&&!r.reservedNano) {
+          // All stages share the remaining total. Only actual in-flight requests reserve money.
+          // Wait for those requests before reducing output room; keep paid-request identities intact.
+          if(!unlimited&&!r.reservedNano) {
             const affordable=Math.floor(room/rates.output);
-            if(affordable>=20000)maxOutput=Math.min(maxOutput,affordable);
+            if(affordable>0)maxOutput=Math.min(maxOutput,affordable);
           }
-          if(maxOutput*rates.output>room)return {blocked:true,pending:r.reservedNano>0&&inputReserve+Math.ceil(maxOutput*rates.output)<=CEILING-r.spentNano-holdbackNano,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano,holdbackNano,requestedOutputTokens:maxOutput};
+          if(maxOutput*rates.output>room)return {blocked:true,pending:r.reservedNano>0&&inputReserve+rates.output<=CEILING-r.spentNano,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano,holdbackNano,requestedOutputTokens:maxOutput};
           const nano=inputReserve+Math.ceil(maxOutput*rates.output);
           tx.set(ref,{reservedNano:r.reservedNano+nano,pendingAiCount:(r.pendingAiCount||0)+1,budgetFailure:null},{merge:true});
           tx.set(ref,{costUpdatedAtMs:wallNow(),aiActivity:{status:'submitting',model:body.model,stage,checkedAtMs:wallNow()}},{merge:true});
           tx.set(qref,{key,originalKey,attempt,effectiveReasoning:effectiveBody.reasoning?.effort||null,stage,status:'submitting',model:body.model,tier,reservation:nano,inputTokens:input,maxOutput,baseMaxOutput:body.max_output_tokens,budgetVersion:BUDGET_VERSION,requestRef,startedAtMs:wallNow(),rates,clockMs:run.clockMs});return {nano,maxOutput};});
         if(reservation.blocked){
           if(reservation.pending)throw fail('SIMULATION_BUDGET_PENDING','Waiting for the other saved AI response to settle its reservation before starting this request. No replacement request was purchased.');
-          const message='AI request not submitted: its configured response allowance needs $'+(reservation.requiredNano/1e9).toFixed(4)+', but $'+(reservation.availableNano/1e9).toFixed(4)+' is available for this step within the $'+(CEILING/1e9).toFixed(5)+' limit'+(reservation.holdbackNano?' ($'+(reservation.holdbackNano/1e9).toFixed(4)+' kept for later decisions)':'')+'. Input: '+input+' tokens. No tokens were purchased for this request. Review the AI workload or budget.';
+          const message='AI request not submitted: its configured response allowance needs $'+(reservation.requiredNano/1e9).toFixed(4)+', but $'+(reservation.availableNano/1e9).toFixed(4)+' remains within the total $'+(CEILING/1e9).toFixed(5)+' limit'+(reservation.holdbackNano?' ($'+(reservation.holdbackNano/1e9).toFixed(4)+' kept for later decisions)':'')+'. Input: '+input+' tokens. No tokens were purchased for this request. Review the AI workload or budget.';
           await ref.set({budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT',message,details:reservation}},{merge:true});
           throw fail('SIMULATION_BUDGET_INSUFFICIENT',message);
         }

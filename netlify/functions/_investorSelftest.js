@@ -6587,6 +6587,19 @@ async function simulatorAdversarial({only=null}={}) {
   async function metered(script,inputTokens=1000){const fake=database(),ref=fake.col('InvestorAI_Simulations').doc(RID),run={runId:RID,clockMs:1000,leaseOwner:'owner',owner:'operator',spentNano:0,reservedNano:0,paused:false,leaseUntil:now+1000000};await ref.set(run);let posts=0,counts=0;const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{if(url.endsWith('/input_tokens')){counts++;return {ok:true,status:200,json:async()=>({input_tokens:inputTokens})};}if(opts.method==='POST')posts++;return script(url,opts,posts);}});const meter=svc.meter(run,ref,async()=>(await ref.get()).data().paused,async()=>{});return {fake,ref,run,svc,meter,posts:()=>posts,counts:()=>counts};}
   const body={model:'gpt-6-astra',input:[{role:'user',content:'fixture'}],max_output_tokens:4000,reasoning:{effort:'high'}};
   const completed={id:'resp_fixture',status:'completed',service_tier:'flex',model:'gpt-6-astra',output:[],usage:{input_tokens:1000,output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}};
+  await check('all_stages_use_total_budget_without_pinned_holdbacks',async()=>{
+    for(const stage of ['shortlist','manager_review','manager_coverage','manager_research','manager_document','manager_decision']){
+      let sent;const x=await metered(async(u,o)=>{sent=JSON.parse(o.body);return {ok:true,status:200,json:async()=>completed};},45097);
+      x.run.aiPlan=Sim.AI_PLAN;await x.ref.set({spentNano:354100000},{merge:true});
+      await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage,body:{...body,max_output_tokens:3000}});
+      assert(sent);assert.equal((await x.ref.get()).data().budgetFailure,null);
+    }
+    let sent;const x=await metered(async(u,o)=>{sent=JSON.parse(o.body);return {ok:true,status:200,json:async()=>completed};},1000);
+    await x.ref.set({spentNano:Sim.CEILING-100000000},{merge:true});
+    await x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage:'manager_coverage',body});
+    const q=(await x.ref.collection('requests').get()).docs[0].data();
+    assert.equal(sent.max_output_tokens,3750);assert.equal(q.reservation,100000000);
+  });
   await check('astra_medium_fits_remaining_budget_and_reuses_paid_decision',async()=>{
     let sent;const x=await metered(async(u,o)=>{sent=JSON.parse(o.body);return {ok:true,status:200,json:async()=>completed};},129409);
     await x.ref.set({spentNano:546200000},{merge:true});
@@ -6598,10 +6611,10 @@ async function simulatorAdversarial({only=null}={}) {
     assert(q.reservation+546200000<=Sim.CEILING);assert.equal(q.effectiveReasoning,'medium');
     await x.meter.request(request);assert.equal(x.posts(),1);assert.equal(x.counts(),1);
     const blocked=await metered(async()=>{throw new Error('must not purchase');},129409);
-    await blocked.ref.set({spentNano:1000000000},{merge:true});
+    await blocked.ref.set({spentNano:Sim.CEILING},{merge:true});
     await assert.rejects(()=>blocked.meter.request(request),e=>e.code==='SIMULATION_BUDGET_INSUFFICIENT');assert.equal(blocked.posts(),0);
   });
-  await check('simulation_output_boost_is_unchanged_and_extra_funds_are_reserved_for_later_stages',async()=>{
+  await check('simulation_output_boost_is_unchanged_and_only_total_budget_is_enforced',async()=>{
     const cases=[['shortlist',8000,'gpt-5.6-luna'],...Object.entries(Sim.AI_PLAN.outputTokens).map(([name,tokens])=>[({prepareResearchDocument:'manager_document',decidePreparedPortfolio:'manager_decision',reviewUniverse:'manager_review',repairCoverageStructure:'manager_coverage',researchCompany:'manager_research'})[name]||name,tokens,name==='prepareResearchDocument'?'gpt-5.6-luna':'gpt-6-astra']),['legacy',4000,'gpt-6-astra']];
     for(const [stage,tokens,model] of cases){
       let sent;const x=await metered(async(u,o)=>{sent=JSON.parse(o.body);return {ok:true,status:200,json:async()=>completed};});x.run.aiPlan=Sim.AI_PLAN;
@@ -6610,7 +6623,7 @@ async function simulatorAdversarial({only=null}={}) {
       const q=(await x.ref.collection('requests').get()).docs[0].data();assert.equal(q.baseMaxOutput,tokens);assert.equal(q.maxOutput,sent.max_output_tokens);assert.equal(q.budgetVersion,Sim.BUDGET_VERSION);
       const holdback=Sim.AI_PLAN.holdbackNano[stage];if(holdback){
         await x.ref.set({spentNano:Sim.CEILING},{merge:true});await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',stage,body:{...requestBody,input:'blocked'}}),e=>e.code==='SIMULATION_BUDGET_INSUFFICIENT');
-        assert.equal((await x.ref.get()).data().budgetFailure.details.holdbackNano,Math.ceil(holdback*133/100)+(stage==='manager_research'?200000000:500000000));
+        assert.equal((await x.ref.get()).data().budgetFailure.details.holdbackNano,0);
       }
     }
   });
@@ -6827,7 +6840,7 @@ async function simulatorAdversarial({only=null}={}) {
   });
   await check('temporary_sibling_reservation_waits_without_spending_or_permanent_budget_failure',async()=>{
     const x=await metered(async()=>({ok:true,status:200,json:async()=>completed}));x.run.aiPlan=Sim.AI_PLAN;
-    await x.ref.set({spentNano:800000000,reservedNano:400000000,pendingAiCount:1},{merge:true});
+    await x.ref.set({spentNano:1400000000,reservedNano:400000000,pendingAiCount:1},{merge:true});
     const research={...body,max_output_tokens:6000};
     await assert.rejects(()=>x.meter.request({method:'POST',url:'https://api.openai.com/v1/responses',body:research,stage:'manager_research'}),e=>e.code==='SIMULATION_BUDGET_PENDING');
     assert.equal(x.posts(),0);assert.equal((await x.ref.get()).data().budgetFailure,undefined);
