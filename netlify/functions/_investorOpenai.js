@@ -1192,7 +1192,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     const latencyMs = now() - startedAtMs;
     const common = { responseId: parsed.id, returnedModel: parsed.model, tokens: b.tokens, costMinor: b.costMinor, longContext: b.longContext, latencyMs, toolCalls: toolLog, retries, responseStatus: parsed.status };
     const reject = async (error, extra = {}) => {
-      await record(requestId, { ...common, status: "rejected", error });
+      await record(requestId, { ...common, status: "rejected", error, ...extra });
       return failure(error, { requestId, responseId: parsed.id, model: parsed.model, usage: b.tokens, costMinor: b.costMinor, latencyMs, toolCalls: toolLog, ...extra });
     };
     if (parsed.model && parsed.model !== role.model && !String(parsed.model).startsWith(`${role.model}-`)) return reject("model_substituted", { returnedModel: parsed.model });

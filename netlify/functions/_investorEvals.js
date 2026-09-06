@@ -166,6 +166,20 @@ const Simulator = (() => {
   const isContention = e => ['10','ABORTED','FIRESTORE/ABORTED'].includes(String(e?.code??'').toUpperCase())||/^10\s+ABORTED\b/i.test(String(e?.message||''));
   const canResumeContention = r => r.status==='incomplete'&&isContention(r.error);
   const canResumeBudget = r => r.status==='incomplete'&&r.error?.code==='SIMULATION_BUDGET_INSUFFICIENT';
+  const canRetryAIStep = r => r.status==='incomplete'&&!r.reservedNano&&!r.pendingAiCount&&!!r.aiActivity?.responseId&&(
+    r.error?.code==='SIMULATION_AI_RESPONSE_FAILED'&&r.aiActivity?.stage==='shortlist'&&r.aiActivity.incompleteReason==='max_output_tokens'||
+    r.error?.code==='SIMULATION_MANAGER_INCOMPLETE'&&r.aiActivity?.stage==='manager_review'&&/schema_invalid/.test(r.error.message||''));
+  function simulationRequestBody(body,stage) {
+    const out=JSON.parse(JSON.stringify(body)),format=out.text?.format;
+    const canonical=Object.entries(P.SCHEMAS).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
+    if(canonical)format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
+    if(stage==='shortlist') {
+      out.reasoning={...out.reasoning,effort:'low'};
+      if(format?.schema?.properties?.selected?.items?.properties?.reason)format.schema.properties.selected.items.properties.reason.maxLength=120;
+      out.input=[...out.input,{role:'system',content:'This is a lightweight screening step. Compare the supplied profiles and return 50 choices directly. Keep each reason to 8–16 words, at most 120 characters. Leave deep investment analysis to the next manager stage.'}];
+    }
+    return out;
+  }
   const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.reservedNano>0&&['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code));
   // XOM kept its ticker when the successor parent began trading on July 2, 2026.
   // Verified lineage: https://www.sec.gov/Archives/edgar/data/34088/000119312526291986/d70995d8k.htm
@@ -450,14 +464,23 @@ const Simulator = (() => {
       if(command==='retry') {
         if(!runId)throw fail('BAD_REQUEST','Choose a simulation to retry');
         const r=await getRun(runId,owner),ref=runCol.doc(id(runId)),br=batchCol.doc(r.batchId);await getBatch(r.batchId,owner);
+        const retryRequests=canRetryAIStep(r)?await rows(ref.collection('requests').where('responseId','==',r.aiActivity.responseId).limit(1)):[];
+        const retryModels=retryRequests.length?await rows(ref.collection(admin.COL.modelRequests).where('responseId','==',r.aiActivity.responseId)):[];
         await rootTransaction(async tx=>{const snap=await tx.get(ref),batch=await tx.get(br),v=snap.data();
-          if(batch.data()?.resetAtMs||v.resetAtMs||v.leaseUntil>wallNow()||(!canResumeContention(v)&&!canResumeBudget(v)&&!canRecheckAI(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure, saved-response recovery, a budget-blocked request or an interrupted database transaction can be retried');
+          const retryRef=retryRequests.length?ref.collection('requests').doc(retryRequests[0].id):null,retry=retryRef?(await tx.get(retryRef)).data():null;
+          if(batch.data()?.resetAtMs||v.resetAtMs||v.leaseUntil>wallNow()||(!canResumeContention(v)&&!canResumeBudget(v)&&!canRetryAIStep(v)&&!canRecheckAI(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure, saved-response recovery, a budget-blocked request or an interrupted database transaction can be retried');
+          if(canRetryAIStep(v)) {
+            if(retry?.status!=='settled'||retry.responseId!==v.aiActivity.responseId)throw fail('BAD_REQUEST','Resolve the saved request usage before buying a retry');
+            const originalKey=retry.originalKey||retry.key;
+            tx.set(ref,{aiRequestRetries:{...(v.aiRequestRetries||{}),[originalKey]:(v.aiRequestRetries?.[originalKey]||0)+1},aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
+            for(const model of retryModels)tx.set(ref.collection(admin.COL.modelRequests).doc(model.id),{status:'rejected',error:'operator_retry_requested'},{merge:true});
+          }
           if(canResumeBudget(v))tx.set(ref,{budgetFailure:null,targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION},{merge:true});
           if(canRecheckAI(v))tx.set(ref,{aiRecovery:true,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
           tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,...(missingXomResearch(v)&&!v.initialized?{repositoryPointersRef:null}:{}),phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
           tx.set(br,{status:'running',paused:false,completedAtMs:null,lastControlAtMs:wallNow()},{merge:true});
         });
-        if(!r.initialized&&!canRecheckAI(r)&&!canResumeBudget(r)) {
+        if(!r.initialized&&!canRecheckAI(r)&&!canResumeBudget(r)&&!canRetryAIStep(r)) {
           const b=await getBatch(r.batchId,owner),config=await readJSON(br,b.configRef),repo=await ensureRepository(b,config);
           if(/^HISTORICAL_BAR|^HISTORICAL_DATA/.test(r.error?.code||'')) {
             const u=(await repo.ref.collection('units').doc('prices_'+r.date).get()).data();
@@ -1023,7 +1046,7 @@ const Simulator = (() => {
         inputRef=await saveJSON(ref,'shortlist_input',input);await save({shortlistInputRef:inputRef});
       }
       const count=Math.min(plan.shortlistCount,config.roster.symbols.length),inputHash=hash(input);
-      let selected,responseId=null;
+      let selected,responseId=null,reasoning=plan.shortlistReasoning;
       if(config.roster.symbols.length<=count)selected=config.roster.symbols.map(symbol=>({symbol,reason:'Universe already fits the 50-company limit; retained for manager review.'}));
       else {
         const schema={type:'object',additionalProperties:false,required:['selected'],properties:{selected:{type:'array',minItems:count,maxItems:count,items:{type:'object',additionalProperties:false,required:['symbol','reason'],properties:{symbol:{type:'string',enum:config.roster.symbols},reason:{type:'string',maxLength:240}}}}}};
@@ -1037,7 +1060,7 @@ const Simulator = (() => {
         await onProgress({stage:'shortlist',label:'Luna selecting 50 companies for this historical date',done:null,total:null,unit:'',current:null});
         const response=await request({method:'POST',url:'https://api.openai.com/v1/responses',body});
         if(!response.ok)throw fail('SIMULATION_SHORTLIST_FAILED','Shortlist request failed: HTTP '+response.status);
-        const data=response.data;responseId=data?.id||null;
+        const data=response.data;responseId=data?.id||null;reasoning=response.requestReasoning||data?.reasoning?.effort||reasoning;
         if(['queued','in_progress'].includes(data?.status))return null;
         if(data?.status!=='completed')throw fail('SIMULATION_SHORTLIST_FAILED','Shortlist response did not complete: '+(data?.incomplete_details?.reason||data?.status||'unknown'));
         if(data.model&&data.model!==plan.shortlistModel&&!data.model.startsWith(plan.shortlistModel+'-'))throw fail('SIMULATION_SHORTLIST_FAILED','Shortlist model did not match the saved plan');
@@ -1045,7 +1068,7 @@ const Simulator = (() => {
         let output;try{output=JSON.parse(content.filter(x=>x.type==='output_text').map(x=>x.text).join(''));}catch{throw fail('SIMULATION_SHORTLIST_INVALID','Shortlist response was not valid JSON');}
         selected=validateShortlist(output,config.roster,plan.shortlistCount);
       }
-      const shortlist={version:plan.version,model:responseId?plan.shortlistModel:null,reasoning:plan.shortlistReasoning,inputHash,inputRef,cutoffMs,sourceUniverseHash:config.roster.universeHash,sourceCount:config.roster.symbols.length,selected,responseId};
+      const shortlist={version:plan.version,model:responseId?plan.shortlistModel:null,reasoning,inputHash,inputRef,cutoffMs,sourceUniverseHash:config.roster.universeHash,sourceCount:config.roster.symbols.length,selected,responseId};
       await save({shortlistRef:await saveJSON(ref,'shortlist',shortlist),shortlist:{model:shortlist.model,count:selected.length,sourceCount:shortlist.sourceCount,cutoffMs,symbols:selected.map(x=>x.symbol),inputHash}});
       await onProgress({stage:'shortlist',label:'Historical shortlist saved',done:selected.length,total:count,unit:'companies selected',current:null});
       return shortlist;
@@ -1082,30 +1105,31 @@ const Simulator = (() => {
           const stage=q.stage||'legacy',prior=r.costByStage?.[stage]||{};
           tx.set(ref,{costUpdatedAtMs:wallNow(),costByStage:{...(r.costByStage||{}),[stage]:{spentNano:(prior.spentNano||0)+actual,requests:(prior.requests||0)+1,inputTokens:(prior.inputTokens||0)+response.usage.input_tokens,outputTokens:(prior.outputTokens||0)+response.usage.output_tokens}}},{merge:true});
           tx.set(qref,{status:'settled',responseId:response.id,responseRef,actualNano:actual,usage:response.usage,tier,finishedAtMs:wallNow()},{merge:true});});
-        await ref.set({aiAccountingError:null},{merge:true});
+        await ref.set({aiAccountingError:null,aiRecheckRequired:false},{merge:true});
         if(responseError)return stop(responseError);
       }
       async function request({method,url,body,stage='legacy'}) {
         await assertOwner();
         if(method==='GET') {
           const qs=await rows(ref.collection('requests').where('responseId','==',url.split('/').at(-1)).limit(1));if(!qs.length)throw fail('SIMULATION_RESPONSE_UNKNOWN');
-          const q=qs[0],qref=ref.collection('requests').doc(q.id);if(q.status==='settled')return {ok:true,status:200,data:await readJSON(ref,q.responseRef)};
+          const q=qs[0],qref=ref.collection('requests').doc(q.id);if(q.status==='settled')return {ok:true,status:200,data:await readJSON(ref,q.responseRef),requestReasoning:q.effectiveReasoning};
           await onActivity('checking',q.model,q.stage);let r;
           try {r=await rawHTTP(method,url);}catch(e){throw fail('SIMULATION_RESPONSE_FETCH_FAILED','Could not retrieve the saved AI response: '+e.message+'. Reservation retained; recheck without purchasing a new request.');}
           if(!r.ok)throw Object.assign(fail('SIMULATION_RESPONSE_FETCH_FAILED','Could not retrieve the saved AI response (HTTP '+r.status+'): '+(r.data?.error?.message||'Provider request failed')+'. Reservation retained.'),{details:{responseId:q.responseId,httpStatus:r.status,providerError:r.data?.error||null}});
-          await settle(qref,q,r.data);return r;
+          await settle(qref,q,r.data);return {...r,requestReasoning:q.effectiveReasoning};
         }
         if(method!=='POST')throw fail('SIMULATION_NETWORK_FORBIDDEN');
-        const key=hash({body,clock:run.clockMs}),qref=ref.collection('requests').doc(key),old=await qref.get();
+        const originalKey=hash({body,clock:run.clockMs}),attempt=run.aiRequestRetries?.[originalKey]||0,key=attempt?hash({originalKey,attempt}):originalKey,qref=ref.collection('requests').doc(key),old=await qref.get();
         if(old.exists) {
-          const q=old.data();if(q.status==='settled')return {ok:true,status:200,data:await readJSON(ref,q.responseRef)};
+          const q=old.data();if(q.status==='settled')return {ok:true,status:200,data:await readJSON(ref,q.responseRef),requestReasoning:q.effectiveReasoning};
           if(q.responseId)return request({method:'GET',url:'https://api.openai.com/v1/responses/'+q.responseId});
           if(q.status==='rejected')throw fail('SIMULATION_PROVIDER_REJECTED',q.message);
           throw fail('SIMULATION_SUBMISSION_UNCERTAIN','Previous request may have been billed; automatic resubmission blocked');
         }
         if(await paused())throw fail('SIMULATION_PAUSED');
         if(!env.OPENAI_API_KEY)throw fail('SIMULATION_API_KEY_MISSING');
-        const countBody=Object.fromEntries(['model','input','instructions','tools','text','reasoning','tool_choice','parallel_tool_calls'].filter(k=>body[k]!==undefined).map(k=>[k,body[k]]));
+        const effectiveBody=simulationRequestBody(body,stage);
+        const countBody=Object.fromEntries(['model','input','instructions','tools','text','reasoning','tool_choice','parallel_tool_calls'].filter(k=>effectiveBody[k]!==undefined).map(k=>[k,effectiveBody[k]]));
         await onActivity('counting_tokens',body.model,stage);
         const counted=await rawHTTP('POST','https://api.openai.com/v1/responses/input_tokens',countBody);
         if(!counted.ok || !Number.isSafeInteger(counted.data.input_tokens))throw fail('SIMULATION_TOKEN_COUNT_UNAVAILABLE','Exact token count unavailable; no paid decision submitted');
@@ -1117,18 +1141,18 @@ const Simulator = (() => {
           if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.resetAtMs || r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
           const holdbackNano=boostBudget(run.aiPlan?.holdbackNano?.[stage]||0),availableNano=Math.max(0,CEILING-r.spentNano-r.reservedNano-holdbackNano),room=availableNano-inputReserve;
           if(!Number.isSafeInteger(body.max_output_tokens)||body.max_output_tokens<=0)throw fail('SIMULATION_INVALID_OUTPUT_LIMIT');
-          const maxOutput=boostBudget(body.max_output_tokens);
+          const maxOutput=Math.max(boostBudget(body.max_output_tokens),stage==='shortlist'?24000:0);
           if(maxOutput*rates.output>room)return {blocked:true,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano,holdbackNano,requestedOutputTokens:maxOutput};
           const nano=inputReserve+Math.ceil(maxOutput*rates.output);
           tx.set(ref,{reservedNano:r.reservedNano+nano,pendingAiCount:(r.pendingAiCount||0)+1,budgetFailure:null},{merge:true});
           tx.set(ref,{costUpdatedAtMs:wallNow(),aiActivity:{status:'submitting',model:body.model,stage,checkedAtMs:wallNow()}},{merge:true});
-          tx.set(qref,{key,stage,status:'submitting',model:body.model,tier,reservation:nano,inputTokens:input,maxOutput,baseMaxOutput:body.max_output_tokens,budgetVersion:BUDGET_VERSION,requestRef,startedAtMs:wallNow(),rates,clockMs:run.clockMs});return {nano,maxOutput};});
+          tx.set(qref,{key,originalKey,attempt,effectiveReasoning:effectiveBody.reasoning?.effort||null,stage,status:'submitting',model:body.model,tier,reservation:nano,inputTokens:input,maxOutput,baseMaxOutput:body.max_output_tokens,budgetVersion:BUDGET_VERSION,requestRef,startedAtMs:wallNow(),rates,clockMs:run.clockMs});return {nano,maxOutput};});
         if(reservation.blocked){
           const message='AI request not submitted: its configured response allowance needs $'+(reservation.requiredNano/1e9).toFixed(4)+', but $'+(reservation.availableNano/1e9).toFixed(4)+' is available for this step within the $'+(CEILING/1e9).toFixed(5)+' limit'+(reservation.holdbackNano?' ($'+(reservation.holdbackNano/1e9).toFixed(4)+' kept for later decisions)':'')+'. No tokens were purchased for this request. Review the AI workload or budget.';
           await ref.set({budgetFailure:{code:'SIMULATION_BUDGET_INSUFFICIENT',message,details:reservation}},{merge:true});
           throw fail('SIMULATION_BUDGET_INSUFFICIENT',message);
         }
-        const submitted={...body,max_output_tokens:reservation.maxOutput,service_tier:tier==='standard'?'default':tier,background:true,store:true};
+        const submitted={...effectiveBody,max_output_tokens:reservation.maxOutput,service_tier:tier==='standard'?'default':tier,background:true,store:true};
         await qref.set({submittedRef:await saveJSON(ref,'submitted_request',submitted)},{merge:true});
         let r;
         try {r=await rawHTTP('POST',url,submitted);}
@@ -1140,7 +1164,7 @@ const Simulator = (() => {
         // Record an acknowledged response before accounting, so a later transaction
         // collision resumes/polls the same response instead of losing its identity.
         if(r.data?.id)await qref.set({responseId:r.data.id,status:'pending'},{merge:true});
-        const q=(await qref.get()).data();await settle(qref,q,r.data);return r;
+        const q=(await qref.get()).data();await settle(qref,q,r.data);return {...r,requestReasoning:q.effectiveReasoning};
       }
       async function drain({recovery=false}={}) {
         const all=await rows(ref.collection('requests'));
@@ -1330,7 +1354,7 @@ const Simulator = (() => {
           await save({status:stopped?'paused':'queued',phase:e.message,aiRecovery:true,waitReason:'ai_usage',error:null,nextAttemptAtMs:wallNow()+5000});
           return {done:false,yielded:true};
         }
-        if(['SIMULATION_USAGE_UNKNOWN','SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED','SIMULATION_RESPONSE_UNKNOWN'].includes(e.code))await save({aiRecheckRequired:true,aiRecovery:false});
+        if(['SIMULATION_USAGE_UNKNOWN','SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED','SIMULATION_RESPONSE_UNKNOWN'].includes(e.code))await save({aiRecheckRequired:!!(latest.reservedNano||latest.pendingAiCount),aiRecovery:false});
         if(isContention(e)) {
           const stopped=latest.paused||(await getBatch(run.batchId)).paused,nextAttemptAtMs=wallNow()+5000+Math.floor(Math.random()*5000);
           await save({status:stopped?'paused':'queued',phase:stopped?'Paused — progress saved':'Database busy — retrying automatically',waitReason:'database_retry',nextAttemptAtMs,error:null,
@@ -1530,7 +1554,7 @@ const Simulator = (() => {
         const activity=terminal?r.status:r.paused?'paused':unresponsive?'stalled':!r.initialized&&repository?.status!=='ready'?'waiting_repository':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
         const activityLabel=active&&activity!=='waiting_repository'?r.phase:({waiting_repository:'Waiting for shared data preparation',paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
         const canRetryPreparation=!b.resetAtMs&&terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
-        return {...r,targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION,activity,activityLabel,canRetryPreparation,canResumeBudget:!b.resetAtMs&&canResumeBudget(r)&&!(r.leaseUntil>wallNow()),canRecheckAI:!b.resetAtMs&&canRecheckAI(r)&&!(r.leaseUntil>wallNow()),canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
+        return {...r,targetNano:TARGET,ceilingNano:CEILING,budgetVersion:BUDGET_VERSION,activity,activityLabel,canRetryPreparation,canRetryAIStep:!b.resetAtMs&&canRetryAIStep(r)&&!(r.leaseUntil>wallNow()),canResumeBudget:!b.resetAtMs&&canResumeBudget(r)&&!(r.leaseUntil>wallNow()),canRecheckAI:!b.resetAtMs&&canRecheckAI(r)&&!(r.leaseUntil>wallNow()),canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
           estimatedTotalNano:Math.max(r.spentNano,Math.min(CEILING,r.progress>5?r.spentNano/(r.progress/100):TARGET)),
           estimatedRemainingMs:TERMINAL.includes(r.status)?0:r.paused?null:r.progress>5?Math.max(0,((r.activeMs||0)+(r.leaseUntil>wallNow()?wallNow()-(r.segmentStartedAtMs||wallNow()):0))*(100-r.progress)/r.progress):null};
       }));
@@ -1553,6 +1577,6 @@ const Simulator = (() => {
     }
     return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,startBatch,prepareShortlist,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
-  return {VERSION,TARGET,CEILING,TARGET_MS,AI_PLAN,BUDGET_VERSION,boostBudget,shortlistProfiles,validateShortlist,shortlistedRoster,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,sharedEvidenceView,create};
+  return {VERSION,TARGET,CEILING,TARGET_MS,AI_PLAN,BUDGET_VERSION,boostBudget,simulationRequestBody,shortlistProfiles,validateShortlist,shortlistedRoster,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,sharedEvidenceView,create};
 })();
 module.exports.Simulator=Simulator;

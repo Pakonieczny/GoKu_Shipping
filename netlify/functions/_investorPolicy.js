@@ -612,16 +612,17 @@ function schemaHashes() {
  *  schema (§12.1: never hand-maintained alongside it). Every object lists
  *  every property as required with additionalProperties false; optional
  *  values are expressed as nullable types, which the canonical schemas
- *  already do. Keywords the strict mode does not accept are removed. */
+ *  already do. The legacy subset remains the default for saved identities.
+ *  Simulation submissions opt into the supported base-model value constraints. */
 const STRICT_UNSUPPORTED = new Set(["description", "$comment", "examples", "default", "minLength", "maxLength",
   "minItems", "maxItems", "pattern", "format", "minimum", "maximum", "multipleOf"]);
-function strictOutputSchema(schema, { name = "output" } = {}) {
+function strictOutputSchema(schema, { name = "output", preserveConstraints = false } = {}) {
   const walk = (node) => {
     if (Array.isArray(node)) return node.map(walk);
     if (!node || typeof node !== "object") return node;
     const out = {};
     for (const [k, v] of Object.entries(node)) {
-      if (STRICT_UNSUPPORTED.has(k)) continue;
+      if (STRICT_UNSUPPORTED.has(k) && !(preserveConstraints && ["minLength", "maxLength", "minItems", "maxItems", "pattern", "format", "minimum", "maximum", "multipleOf"].includes(k))) continue;
       out[k] = k === "properties"
         ? Object.fromEntries(Object.entries(v).map(([pk, pv]) => [pk, walk(pv)]))
         : walk(v);

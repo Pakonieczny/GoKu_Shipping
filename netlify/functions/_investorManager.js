@@ -404,8 +404,8 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       const r = await deps.gateway.reviewUniverse({ cards: cards.cards, universeManifest: st.roster, holdings: holdingPackets.packets, portfolio: portfolio, marketState, policy: { policyHash: policy.policyHash, riskPolicyHash: policy.riskPolicyHash, riskMandate: policy.riskMandate }, contextManifestHash: st.contextManifestHash, waitMs: Math.max(30000, Math.min(budget() - minStageMs, 8 * 60 * 1000)) });
       if (r.pending) { st.pendingRequest = r.requestId || null; return { done: false, yielded: true, reason: "sol_background_pending", checkpoint: { stage, data: st }, resumeAtMs: now() + 60000 }; }
       if (!r.ok) {
-        st.review = { ok: false, error: r.error, budgetBlocked: r.budgetBlocked === true };
-        st.noBuyReasons = [{ code: r.budgetBlocked ? "BUDGET_EXHAUSTED" : "MODEL_FAILURE", error: r.error }];
+        st.review = { ok: false, error: r.error, schemaErrors:r.schemaErrors||null, budgetBlocked: r.budgetBlocked === true };
+        st.noBuyReasons = [{ code: r.budgetBlocked ? "BUDGET_EXHAUSTED" : "MODEL_FAILURE", error: r.error, ...(r.schemaErrors?{schemaErrors:r.schemaErrors}:{}) }];
         await record({ status: "failed_closed", noBuyReasons: st.noBuyReasons, failure: { code: "REVIEW_FAILED", message: r.error } });
         return { done: true, failed: true, reason: "REVIEW_FAILED", checkpoint: { stage, data: st }, summary: { managerRunId, status: "failed_closed", noBuyReasons: st.noBuyReasons } };
       }
