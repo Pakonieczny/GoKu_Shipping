@@ -557,6 +557,101 @@ async function tick({ admin = null, adapter, accountId, control = {}, barsBySymb
   return summary;
 }
 
+// Mandatory-investment historical experiments use an explicit dollar policy,
+// not discretionary desk authorization. Every write stays in the run namespace.
+function requireInvestmentScope(accountId) {
+  const scope=A.currentScope(),H=require('./_investorResearchHandoff');
+  if(!scope||scope.runId!==accountId||scope.investmentPolicy?.version!==H.INVESTMENT_POLICY.version)
+    throw typed('SIMULATION_SCOPE_REQUIRED','Mandatory purchases are historical-simulation only');
+  return scope;
+}
+async function saveRequiredSimulationPlan({plan,admin=null,accountId,managerRunId}) {
+  requireInvestmentScope(accountId);
+  const {planHash,...content}=plan;
+  if(sha(content)!==planHash)throw typed('SIMULATION_PLAN_CORRUPT','Investment plan hash mismatch');
+  const D=db(admin),ref=D.col(D.COL.portfolioPlans).doc('required_investment');
+  await D.runTransaction(async tx=>{
+    const old=await tx.get(ref);
+    if(old.exists&&old.data().planHash!==planHash)throw typed('SIMULATION_PLAN_CONFLICT','A different plan is already saved');
+    if(!old.exists)tx.set(ref,{...plan,accountId,managerRunId,createdAtMs:A.now()});
+  });
+}
+async function tickRequiredSimulation({admin=null,accountId,control={},barsBySymbol={},nowMs=A.now()}={}) {
+  const scope=requireInvestmentScope(accountId),D=db(admin),market=require('./_investorMarket');
+  if(control.killSwitch||control.executorState==='PAUSED_SAFETY'||control.managerState==='PAUSED')return {conservation:await assertConservation(accountId,{admin:D})};
+  const ps=await D.col(D.COL.portfolioPlans).doc('required_investment').get();
+  if(!ps.exists)throw typed('SIMULATION_PLAN_MISSING','The AI investment plan has not been saved');
+  const plan=ps.data(),{planHash,accountId:unusedAccount,managerRunId,createdAtMs,...content}=plan;
+  if(sha(content)!==planHash)throw typed('SIMULATION_PLAN_CORRUPT','Saved investment plan changed');
+  const sessionDate=market.nyParts(new Date(plan.cutoffMs)).date,spread=BigInt(scope.executionSpreadBps||0),feeMicros=BigInt(scope.feePerShareMicros||0);
+  for(const [symbol,investment] of Object.entries(plan.investments)) {
+    for(const bar of [...(barsBySymbol[symbol]||[])].sort((a,b)=>Date.parse(a.t)-Date.parse(b.t))) {
+      const at=Date.parse(bar.t),session=Number.isFinite(at)?market.sessionState(new Date(at)):null;
+      if(!Number.isFinite(at)||at<plan.cutoffMs||at+20*60000>nowMs||market.nyParts(new Date(at)).date!==sessionDate||!session?.open)continue;
+      const o=micros(bar.o),h=micros(bar.h),l=micros(bar.l),c=micros(bar.c);
+      if(!o||!h||!l||!c||h<o||h<c||l>o||l>c||h<l||bar.halted||participationCap(bar,DEFAULT_PARTICIPATION_BPS)<=0n)continue;
+      const stateRef=D.col(D.COL.orderSets).doc('required_'+symbol),posRef=D.col(D.COL.positions).doc(positionDocId(accountId,symbol)),accountRef=D.col(D.COL.accounts).doc(accountId);
+      await D.runTransaction(async tx=>{
+        const [stateSnap,posSnap,accountSnap]=await Promise.all([tx.get(stateRef),tx.get(posRef),tx.get(accountRef)]);
+        const state=stateSnap.exists?stateSnap.data():{},account=accountSnap.data();
+        if(!account)throw typed('ACCOUNT_MISSING',accountId);
+        if(state.lastBarMs>=at||state.closed)return;
+        let position=posSnap.exists?posSnap.data():null,entered=false,balance={...account.balanceCents},fills=[];
+        const budget=BigInt(investment.allocationUsd)*100n;
+        if(budget<500000n||budget>3000000n)throw typed('SIMULATION_ALLOCATION_INVALID',symbol);
+        const entryPx=o+o*spread/20000n;
+        if(!state.entered) {
+          const quantity=budget*10000n/(entryPx+feeMicros);
+          // Whole shares; wait for sufficient observed liquidity, never invent volume.
+          if(quantity<=0n||quantity>participationCap(bar,DEFAULT_PARTICIPATION_BPS))return;
+          const notional=minorOf(quantity,entryPx),fee=(quantity*feeMicros+9999n)/10000n,total=notional+fee;
+          if(total>budget||total>BigInt(balance.cash||0))return;
+          position={accountId,symbol,open:true,quantityUnits:quantity.toString(),qty:Number(quantity),costBasisMinor:total.toString(),costBasisCents:Number(total),
+            entryPriceUsd:Number(entryPx)/1e6,avgCostMicros:(total*10000n/quantity).toString(),openedAt:bar.t,
+            positionLifecycleId:sha([accountId,planHash,symbol]).slice(0,32),schemaVersion:'position.v2',engineVersion:ENGINE_VERSION,
+            decisionAuthority:'ASTRA_REQUIRED_SIMULATION',mandateVersionId:planHash,orderSetId:'required_'+symbol,
+            takeProfitPriceMicros:(entryPx+entryPx*BigInt(investment.takeProfitBps)/10000n).toString(),
+            lossBoundaryPriceMicros:(entryPx-entryPx*BigInt(investment.stopLossBps)/10000n).toString(),protectionState:'SIMULATION_ACTIVE',
+            allocationUsd:investment.allocationUsd,conviction:investment.conviction,sizingReason:investment.sizingReason};
+          fills.push({side:'buy',role:'ENTRY',qty:quantity,px:entryPx,notional,fee,realized:0n,basis:'required_simulation_first_available_open',
+            legs:[{account:ACCT.CASH,amountCents:-Number(total)},{account:ACCT.POSITIONS,amountCents:Number(total)}]});
+          balance.cash=(balance.cash||0)-Number(total);balance.positions=(balance.positions||0)+Number(total);entered=true;
+        }
+        if(!position?.open)return;
+        const bid=x=>x-x*spread/20000n,stop=big(position.lossBoundaryPriceMicros),target=big(position.takeProfitPriceMicros);
+        const stopHit=bid(l)<=stop,targetHit=bid(h)>=target;
+        // Adverse ordering for ambiguous OHLC; never award a favourable entry-bar exit.
+        const sell=stopHit||(!entered&&targetHit&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS));
+        if(sell) {
+          const px=stopHit?(bid(o)<stop?bid(o):stop-stop*STOP_SLIPPAGE_BPS/10000n):(bid(o)>target?bid(o):target);
+          const qty=big(position.quantityUnits),notional=minorOf(qty,px),fee=(qty*feeMicros+9999n)/10000n,cost=big(position.costBasisMinor),proceeds=notional-fee,realized=proceeds-cost;
+          fills.push({side:'sell',role:stopHit?'STOP':'TARGET',qty,px,notional,fee,realized,basis:stopHit?'stop_adverse_or_gap':'target_observed',ambiguous:stopHit&&(entered||targetHit),
+            legs:[{account:ACCT.CASH,amountCents:Number(proceeds)},{account:ACCT.POSITIONS,amountCents:-Number(cost)},{account:ACCT.REALIZED_PL,amountCents:-Number(realized)}]});
+          balance.cash+=Number(proceeds);balance.positions-=Number(cost);balance.realized_pl=(balance.realized_pl||0)-Number(realized);
+          position={...position,open:false,quantityUnits:'0',qty:0,costBasisMinor:'0',costBasisCents:0,closedAt:bar.t,realizedMinor:realized.toString(),protectionState:'CLOSED'};
+        }
+        position={...position,lastMarkUsd:bar.c,lastPriceUsd:bar.c,markMicros:c.toString(),lastMarkAt:bar.t,updatedAtMs:nowMs};
+        // One transaction covers fills, cash, journal, position and replay cursor.
+        // A worker crash or concurrent retry cannot buy twice or lose a debit.
+        for(const f of fills) {
+          assertBalanced(f.legs);
+          const fillId='fill_'+sha([accountId,planHash,symbol,f.role,at]).slice(0,32);
+          tx.set(D.col(D.COL.fills).doc(fillId),{schemaVersion:'fill.v2',fillId,accountId,symbol,side:f.side,role:f.role,quantityUnits:f.qty.toString(),priceMicros:f.px.toString(),
+            notionalMinor:f.notional.toString(),feeMinor:f.fee.toString(),realizedMinor:f.realized.toString(),eventAtMs:at,receivedAtMs:nowMs,
+            source:'historical_simulation',basis:f.basis,bar,ambiguous:!!f.ambiguous,mandateVersionId:planHash,positionLifecycleId:position.positionLifecycleId,
+            orderSetId:'required_'+symbol,legId:'required_'+symbol+'_'+f.role,decisionAuthority:'ASTRA_REQUIRED_SIMULATION'});
+          tx.set(D.col(D.COL.ledger).doc(fillId),{txnId:fillId,accountId,kind:'manager_fill',legs:f.legs,meta:{fillId,symbol,planHash},postedAtMs:nowMs});
+          if(f.side==='sell')tx.set(D.col(D.COL.trades).doc(position.positionLifecycleId),{schemaVersion:'trade.v2',accountId,symbol,openedAt:position.openedAt,closedAt:bar.t,realizedMinor:f.realized.toString(),exitRole:f.role,mandateVersionId:planHash});
+        }
+        tx.set(accountRef,{balanceCents:balance,balanceRevision:(account.balanceRevision||0)+1,balanceUpdatedAtMs:nowMs},{merge:true});
+        tx.set(posRef,position);
+        tx.set(stateRef,{accountId,symbol,planHash,entered:true,closed:!position.open,lastBarMs:at,status:position.open?'PROTECTED':'CLOSED'});
+      });
+    }
+  }
+  return {conservation:await assertConservation(accountId,{admin:D})};
+}
+
 module.exports = { ENGINE_VERSION, DECISION_AUTHORITY, DEFAULT_PARTICIPATION_BPS, STOP_SLIPPAGE_BPS, PROTECTION_SLA_SECONDS, ACCT,
-  simulateLegOnBar, resolveBarCollisions, postJournal, assertConservation, recordFill, readOrderSet, releaseReservation,
+  saveRequiredSimulationPlan, tickRequiredSimulation, simulateLegOnBar, resolveBarCollisions, postJournal, assertConservation, recordFill, readOrderSet, releaseReservation,
   applyTransition, applyOutbox, simulatePaperFills, tick, positionDocId };

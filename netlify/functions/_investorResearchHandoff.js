@@ -126,4 +126,24 @@ function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false) 
   if(hs.length!==heldSymbols.length||new Set(hs).size!==hs.length||hs.some(s=>!heldSymbols.includes(s))||a.holdingAnalysis.some(h=>!a.decisions.some(d=>d.symbol===h.symbol&&d.decision===h.decision)))fail('FINAL_HOLDING_COVERAGE_INVALID');
   return verified;
 }
-module.exports={VERSION,SECTIONS,SCHEMAS,sourcePacket,citationCatalog,preparationWire,bindDocument,assertDocument,validateJoint};
+// Versioned, simulation-only policy. It never grants authority to the paper desk.
+const INVESTMENT_POLICY = Object.freeze({version:'required-investment.v1',minUsd:5000,maxUsd:30000,maxCompanies:2,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
+function investmentSchema(documents) {
+  const investment=obj({allocationUsd:{type:'integer',minimum:5000,maximum:30000},conviction:{type:'string',enum:['LOW','MEDIUM','HIGH']},
+    sizingReason:text(600),assessment:obj(Object.fromEntries(SECTIONS.map(k=>[k,text(1200)]))),
+    outlook:text(1200),takeProfitBps:{type:'integer',minimum:1,maximum:100000},stopLossBps:{type:'integer',minimum:1,maximum:9500},
+    evidenceIds:array(text(200),24)});
+  return obj({schemaVersion:{type:'string',enum:['simulation-investment-plan.v1']},comparisonNote:text(1200),
+    investments:obj(Object.fromEntries(documents.map(d=>{const row=JSON.parse(JSON.stringify(investment));
+      const ids=[...new Set([...d.evidence.map(e=>e.id),...Object.keys(d.baseline).map(k=>'baseline:'+k)])];
+      row.properties.evidenceIds.items={type:'string',enum:ids};return [d.symbol,row];}))) });
+}
+function validateInvestmentPlan(output,documents) {
+  if(!documents.length||documents.length>2||new Set(documents.map(d=>d.symbol)).size!==documents.length)fail('SIMULATION_FINALISTS_INVALID');
+  documents.forEach(assertDocument);
+  if(P.validateAgainst(investmentSchema(documents),output).length)fail('SIMULATION_INVESTMENT_PLAN_INVALID');
+  const plan={...output,policy:INVESTMENT_POLICY,cutoffMs:documents[0].cutoffMs,
+    documentHashes:Object.fromEntries(documents.map(d=>[d.symbol,d.documentHash]))};
+  return {...plan,planHash:C.hash(plan)};
+}
+module.exports={VERSION,SECTIONS,SCHEMAS,sourcePacket,citationCatalog,preparationWire,bindDocument,assertDocument,validateJoint,INVESTMENT_POLICY,investmentSchema,validateInvestmentPlan};

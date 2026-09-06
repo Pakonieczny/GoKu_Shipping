@@ -185,7 +185,8 @@ const Simulator = (() => {
   function simulationRequestBody(body,stage) {
     const out=JSON.parse(JSON.stringify(body)),format=out.text?.format;
     const canonical=Object.entries({...P.SCHEMAS,...require('./_investorResearchHandoff').SCHEMAS}).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
-    if(canonical)format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
+    if(canonical){const minimum= format.schema?.properties?.researchRequests?.minItems;format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
+      if(minimum) {format.schema.properties.researchRequests.minItems=minimum;format.schema.properties.researchRequests.maxItems=2;}}
     if(stage==='manager_document'&&format?.name==='prepared_research_document_v1') {
       const item=out.input?.find(x=>x.role==='user'&&typeof x.content==='string'),pattern=/<untrusted_context name="source_packet">\n([\s\S]*?)\n<\/untrusted_context>/;
       const match=item?.content.match(pattern);if(!match)throw fail('SIMULATION_HANDOFF_SOURCE_MISSING');
@@ -489,7 +490,7 @@ const Simulator = (() => {
         status:'running',paused:false,cleanupVersion:CLEANUP_VERSION,cleanupState:'complete',createdAtMs:wallNow(),targetNano:unlimited?null:TARGET*count,ceilingNano:unlimited?null:CEILING*count,budgetVersion:BUDGET_VERSION,version:VERSION,
         model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:count,concurrencyMode:'all_requested',
         limitations:['Current eligible universe: survivorship-limited historical selection.','Missing research is reconstructed from SEC filings and financial statements. Broader historical news and confirmed earnings calendars may be unavailable.','SEC aggregates are retrieved today and filtered by filing availability; later provider corrections may remain. Original filing sources and retrieval timestamps are retained.','First-time preparation precedes the five-minute replay target.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
-      const savedConfig={policy,roster,aiPlan:AI_PLAN,budgetMode,budgetVersion:BUDGET_VERSION,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES};
+      const savedConfig={investmentPolicy:require('./_investorResearchHandoff').INVESTMENT_POLICY,policy,roster,aiPlan:AI_PLAN,budgetMode,budgetVersion:BUDGET_VERSION,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES};
       const configRef=await saveJSON(ref,'configuration',savedConfig);
       // Publish the batch last so a partially-created batch is never dispatched.
       for(let offset=0;offset<runIds.length;offset+=150) {
@@ -1377,7 +1378,7 @@ const Simulator = (() => {
         await new Promise(resolve=>setImmediate(resolve));
         const evidence=sharedEvidenceView(packets,()=>run.clockMs);
         const collection=name=>{if(!String(name).startsWith('InvestorAI_')||String(name).includes('/'))throw fail('SIMULATION_NAMESPACE_ESCAPE');return evidence.collection(name)||ref.collection(name);};
-        scope={runId,executionEvidenceCutoffMs:meta.cutoffMs,aiBudgetUncapped:uncappedRun(run),aiWorkload:config.aiPlan?{...config.aiPlan,preparedResearch:config.aiPlan.preparedResearch||run.researchHandoffVersion==='luna-astra-handoff.v1'}:null,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest,paused,executionSpreadBps:10,feePerShareMicros:5000,
+        scope={runId,investmentPolicy:config.investmentPolicy||null,executionEvidenceCutoffMs:meta.cutoffMs,aiBudgetUncapped:uncappedRun(run),aiWorkload:config.aiPlan?{...config.aiPlan,investmentPolicy:config.investmentPolicy||null,preparedResearch:config.aiPlan.preparedResearch||run.researchHandoffVersion==='luna-astra-handoff.v1'}:null,clock:()=>run.clockMs,collection,transaction:rootTransaction,batch:rootBatch,modelRequest,paused,executionSpreadBps:10,feePerShareMicros:5000,
           marketBars:async(symbol,asOfMs)=>{const p=packets.find(x=>x.symbol===symbol),cutoff=Math.min(run.clockMs,Number(asOfMs)||run.clockMs);return {bars:(p?.bars||[]).filter(b=>C.barTime(b)+20*60000<=cutoff).map(b=>({...b,knownAtMs:C.barTime(b)+20*60000})),provenance:{...(p?.provenance||{}),feed:'delayed_sip',simulation:true}};}};
         await A.withSimulationScope(scope,async()=>{
           const control={engineMode:'manager',accountId:runId,accountMode:'PAPER_AI',mode:'PAPER_AI',writerEpoch:1,managerState:'ENABLED',executorState:'ENABLED',executorEnabled:true,buyState:'OPEN',emergencyState:'CLEAR',fixturesPass:true,
@@ -1456,7 +1457,8 @@ const Simulator = (() => {
             if(await paused())break;
             await report({stage:'replay',label:'Replaying prices and checking trade instructions',done:Math.max(0,Math.round((run.clockMs-M.nyWallClockToUtcMs(run.date,570))/300000)),total:Math.round((meta.endMs-M.nyWallClockToUtcMs(run.date,570))/300000),unit:'market steps',current:null});
             const barsBySymbol=Object.fromEntries(packets.map(p=>[p.symbol,p.bars.filter(b=>C.barTime(b)+20*60000===run.clockMs)]));
-            const result=await require('./_investorExecution').tick({admin:A,adapter:broker,accountId:runId,control:ctrl,barsBySymbol,nowMs:run.clockMs,metrics:{brokerTruthAgeSeconds:0,reconciliationUnresolved:false}});
+            const execution=require('./_investorExecution');
+            const result=await (config.investmentPolicy?execution.tickRequiredSimulation:execution.tick)({admin:A,adapter:broker,accountId:runId,control:ctrl,barsBySymbol,nowMs:run.clockMs,metrics:{brokerTruthAgeSeconds:0,reconciliationUnresolved:false}});
             if(!result.conservation?.pass)throw fail('SIMULATION_LEDGER_MISMATCH');
             const positions=await rows(collection(A.COL.positions).where('accountId','==',runId).where('open','==',true));
             for(const pos of positions) {const p=packets.find(x=>x.symbol===pos.symbol),bar=p?.bars.filter(b=>C.barTime(b)+20*60000<=run.clockMs).at(-1);if(bar)await collection(A.COL.positions).doc(pos.id).set({lastPriceUsd:bar.c,markMicros:String(Math.round(bar.c*1e6)),lastMarkUsd:bar.c},{merge:true});}
@@ -1477,6 +1479,7 @@ const Simulator = (() => {
               if(requests.some(q=>q.status!=='settled'))throw fail('SIMULATION_REQUEST_INCOMPLETE','A required AI request did not complete');
               const responses=await rows(collection(A.COL.modelRequests));
               if(responses.some(q=>['rejected','http_error','unreachable','submission_uncertain','budget_blocked'].includes(q.status)))throw fail('SIMULATION_REQUEST_INCOMPLETE','A required AI decision was not accepted');
+              if(config.investmentPolicy&&!point.buys)throw fail('HISTORICAL_NO_EXECUTABLE_PRICE','No funded purchase could execute on an observed session price. This run is unavailable, not a cash-only investment result.');
               await save({status:'complete',phase:'Complete',progress:100,completedAtMs:wallNow()});break;}
             if(await paused())break;
             await save({clockMs:Math.min(meta.endMs,run.clockMs+5*60000)});
@@ -1763,7 +1766,7 @@ const Simulator = (() => {
         const saved=await C.read({runId:documentId,admin:{...admin,col:name=>ref.collection(name)}});
         preparedDocuments.push(saved.document);
       }
-      return {preparedDocuments,run:{...run,...runBudget(run),budgetVersion:BUDGET_VERSION},collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null,shortlist:run.shortlistRef?await readJSON(ref,run.shortlistRef):null};
+      return {investmentPlan:cp?.data?.simulationPlan||null,preparedDocuments,run:{...run,...runBudget(run),budgetVersion:BUDGET_VERSION},collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null,shortlist:run.shortlistRef?await readJSON(ref,run.shortlistRef):null};
     }
     return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,startBatch,prepareShortlist,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
