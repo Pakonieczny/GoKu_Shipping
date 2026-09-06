@@ -5868,20 +5868,61 @@ async function simulatorAdversarial() {
     const conflict=providerSession(date);conflict.push({...conflict[0],c:100.5});assert.throws(()=>Sim.regularSessionBars(conflict,'A',date),e=>e.code==='HISTORICAL_BAR_CONFLICT');
     const invalid=providerSession(date);invalid[0].v=Infinity;assert.throws(()=>Sim.regularSessionBars(invalid,'A',date),e=>e.code==='HISTORICAL_BAR_INVALID');
   });
-  await check('start_rejects_missing_archives_without_creating_runs_or_spending',async()=>{
+  function secFixture() {
+    const cik=String(require('./_investorUniverse').tradeTier.find(r=>r.symbol==='A').cik).padStart(10,'0'),calls=[];
+    const table=(rows)=>Object.fromEntries(['accessionNumber','form','filingDate','primaryDocument','acceptanceDateTime'].map((k,i)=>[k,rows.map(r=>r[i])]));
+    const past='0001090872-26-000001',older='0001090872-25-000001',future='0001090872-26-000099';
+    const facts={cik:Number(cik),facts:{'us-gaap':{Revenues:{units:{USD:[
+      {start:'2025-04-01',end:'2025-06-30',val:100,accn:older,fy:2025,fp:'Q2',form:'10-Q',filed:'2025-08-01'},
+      {start:'2026-04-01',end:'2026-06-30',val:120,accn:past,fy:2026,fp:'Q2',form:'10-Q',filed:'2026-08-01'},
+      {start:'2026-04-01',end:'2026-06-30',val:999999,accn:future,fy:2026,fp:'Q2',form:'10-Q/A',filed:'2026-09-10'}]}}}}};
+    const submissions={cik,filings:{recent:table([[past,'10-Q','2026-08-01','past.htm','2026-08-01T20:00:00Z'],[future,'10-Q/A','2026-09-10','future.htm','2026-09-10T20:00:00Z']]),files:[{name:'CIK'+cik+'-submissions-001.json',filingFrom:'2025-01-01',filingTo:'2025-12-31'}]}};
+    const oldTable=table([[older,'10-Q','2025-08-01','older.htm','2025-08-01T20:00:00Z']]);
+    const publicFetch=async url=>{calls.push(url);assert(!url.includes('future.htm'),'future filing fetched');const json=url.includes('/companyfacts/')?facts:url.includes('-submissions-001.json')?oldTable:url.includes('/submissions/')?submissions:null;
+      return {status:200,json,text:json?JSON.stringify(json):'<html><body><p>Revenue increased compared with the prior period, while cash flow supported ongoing business investment and debt repayment.</p></body></html>'};};
+    return {publicFetch,calls,cik};
+  }
+  await check('empty_research_archive_starts_requested_dates_without_paid_preflight',async()=>{
     const fake=database();let requests=0;
-    const svc=Sim.create({admin:fake,fetchImpl:async()=>{requests++;throw Error('network must not run');}});
-    await assert.rejects(()=>svc.createBatch({count:10,from:'2025-09-01',to:'2025-12-31'},'operator','empty-archive'),e=>e.code==='PREFLIGHT_FAILED'&&e.message.includes('No simulations started'));
-    assert.equal(fake.docs.size,0);assert.equal(requests,0);
-    await seedSimulationArchive(fake,Date.UTC(2026,8,2,16));
-    const b=await svc.createBatch({count:1,from:'2026-09-01',to:'2026-09-03'},'operator','dated-archive');
-    assert.deepEqual(b.dates,['2026-09-03']);assert.equal(b.researchCoverage.excludedDays,2);
-    const before=fake.docs.size;
-    await assert.rejects(()=>svc.createBatch({count:2,from:'2026-09-01',to:'2026-09-03'},'operator','too-many'),e=>e.code==='PREFLIGHT_FAILED'&&e.message.includes('Only 1'));
-    assert.equal(fake.docs.size,before);assert.equal(requests,0);
-    const availability=await svc.researchAvailability({symbols:['A','B'],universeHash:'missing-B'},['2026-09-03']);assert.deepEqual(availability.days,[]);assert.deepEqual(availability.missingSymbols,['B']);
+    const svc=Sim.create({admin:fake,fetchImpl:async()=>{requests++;throw Error('network must not run');},publicFetch:async()=>{throw Error('start must enqueue preparation');}});
+    const b=await svc.createBatch({count:10,from:'2025-09-01',to:'2025-12-31'},'operator','empty-archive');
+    assert.equal(b.runIds.length,10);assert.equal(b.evidenceMode,'ARCHIVE_OR_SEC_RECONSTRUCTION');assert.equal(requests,0);
+    assert((await svc.overview({batchId:b.batchId,owner:'operator'})).runs.every(r=>r.status==='queued'));
+    // Old batches with all unavailable runs must never appear successfully complete.
+    for(const id of b.runIds)await fake.col('InvestorAI_Simulations').doc(id).set({status:'unavailable'},{merge:true});
+    await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({status:'complete'},{merge:true});
+    const overview=await svc.overview({batchId:b.batchId,owner:'operator'});assert.equal(overview.batch.status,'incomplete');assert.equal(overview.history[0].status,'incomplete');
+  });
+  await check('sec_reconstruction_excludes_future_restatements_preserves_retrieval_and_reuses_sources',async()=>{
+    const fake=database(),sec=secFixture(),svc=Sim.create({admin:fake,publicFetch:sec.publicFetch}),row=require('./_investorUniverse').tradeTier.find(r=>r.symbol==='A'),M=require('./_investorMarket');
+    const date='2026-09-03',cutoff=M.nyWallClockToUtcMs(date,510),end=M.sessionCloseMs(new Date(date+'T12:00:00Z'));
+    const data=await svc.reconstructResearch('A',row,date,end);assert(data.some(x=>x.collection===A.COL.dossierVersions));
+    assert(!JSON.stringify(data).includes('999999'));assert(data.every(x=>x.knownAtMs<=end));
+    const fact=data.find(x=>x.collection===A.COL.financialFacts);assert(fact.data.retrievedAtMs>cutoff);
+    const restored=require('./_investorStorageCodec').decode(Sim.replayRecord(fact));assert.equal(restored.retrievedAtMs,fact.knownAtMs);assert.equal(restored.historicalImport.actualRetrievedAtMs,fact.data.retrievedAtMs);
+    assert.throws(()=>Sim.replayRecord({...fact,knownAtMs:fact.knownAtMs-1}),/PROVENANCE/);
+    const calls=sec.calls.length;await svc.reconstructResearch('A',row,date,end);assert.equal(sec.calls.length,calls);
+    await assert.rejects(()=>svc.reconstructResearch('A',row,date,end,{shouldPause:async()=>true}),e=>e.code==='SIMULATION_PREPARATION_YIELD');assert.equal(sec.calls.length,calls);
+    const readCol=n=>fake.col('replay/'+RID+'/'+n);
+    await A.withSimulationScope({runId:RID,clock:()=>cutoff,collection:readCol,transaction:fake.runTransaction,batch:fake.batch},async()=>{
+      for(const x of data.filter(x=>x.knownAtMs<=cutoff))await readCol(x.collection).doc(x.id).set(Sim.replayRecord(x));
+      const bindings=require('./_investorResearchTools').productionBindings({accountId:RID,admin:A});
+      const visible=await bindings.filings({symbol:'A',asOfMs:cutoff,concepts:['Revenues']});assert(visible.facts.length>0);assert(visible.facts.every(f=>f.accession!=='0001090872-26-000099'));
+      const v=data.find(x=>x.collection===A.COL.versions),spans=await bindings.evidence({symbol:'A',asOfMs:cutoff,documentVersionIds:[v.id]});assert(spans.spans[v.id].canonicalText.length>0);
+      await assert.rejects(()=>svc.secSource('https://data.sec.gov/submissions/CIK'+sec.cik+'.json'),e=>e.code==='SIMULATION_LIVE_FETCH_FORBIDDEN');
+    });
+    assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);assert.equal((await fake.col(A.COL.financialFacts).get()).size,0);
   });
 
+  await check('concurrent_simulations_share_a_single_source_download',async()=>{
+    const fake=database();let entered,finish,calls=0;
+    const started=new Promise(r=>{entered=r;}),hold=new Promise(r=>{finish=r;});
+    const svc=Sim.create({admin:fake,publicFetch:async()=>{calls++;entered();await hold;return {status:200,text:'{"filings":{"recent":{}}}',json:{filings:{recent:{}}}};}});
+    const url='https://data.sec.gov/submissions/CIK0001090872.json';
+    const first=svc.secSource(url);await started;
+    await assert.rejects(()=>svc.secSource(url),e=>e.code==='HISTORICAL_PROVIDER_BUSY'&&e.sharedPreparation===true);
+    finish();await first;await svc.secSource(url);assert.equal(calls,1);
+  });
   await check('cold_simulation_worker_loads_market_credentials_after_verified_claim',async()=>{
     const M=require('./_investorMarket'),AUTH=require('./_investorAuth'),J=require('./_investorJobs'),worker=require('./investorManager-background');
     const originals={load:M.loadMarketSettings,auth:AUTH.loadAuthSecrets,claim:J.claimOnce,complete:J.complete,create:Sim.create};
@@ -5938,11 +5979,11 @@ async function simulatorAdversarial() {
     const M=require('./_investorMarket'),saved={load:M.loadMarketSettings,credentials:M.providerCredentials};
     try {
       M.loadMarketSettings=async()=>{};M.providerCredentials=()=>({keyId:'fixture-id',secretKey:'fixture-secret'});
-      const fake=database();await seedSimulationArchive(fake);await fake.col(A.COL.accounts).doc('paper-1').set({untouched:true});
+      const fake=database();await seedSimulationArchive(fake);await fake.col(A.COL.dossierVersions).doc('A_fixture').delete();const sec=secFixture();await fake.col(A.COL.accounts).doc('paper-1').set({untouched:true});
       // A partial raw archive must be replaced by a full historical response.
       await fake.col(A.COL.marketLatest).doc(M.barDocId('A','2026-09-03')).set({adjustment:'raw',bars:providerSession('2026-09-03').slice(0,7)});
       let submitted=0,priceRequests=0,wall=Date.now();
-      const svc=Sim.create({admin:fake,wallNow:()=>wall,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{
+      const svc=Sim.create({admin:fake,wallNow:()=>wall,publicFetch:sec.publicFetch,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{
         if(url.startsWith('https://data.alpaca.markets/')) {
           priceRequests++;if(priceRequests===1)return {ok:false,status:429,headers:{get:()=> '1'}};const q=new URL(url).searchParams,symbol=q.get('symbols'),date='2026-09-03',daily=q.get('timeframe')==='1Day';
           if(!daily)assert.equal(Date.parse(q.get('end')),M.sessionCloseMs(new Date(date+'T12:00:00Z'))-1);
@@ -5970,7 +6011,7 @@ async function simulatorAdversarial() {
       const packet=await svc.readJSON(sr,ptr.artifact);assert.equal(packet.coverage.regular,78);assert.equal(packet.coverage.outsideSession,1);assert(packet.bars.every(b=>b.c===100));
       // A second batch reuses the fully prepared scenario without downloading again.
       const prior=priceRequests,b2=await svc.createBatch({count:1,from:'2026-09-03',to:'2026-09-03'},'operator','reuse');
-      assert.equal((await svc.execute(b2.runIds[0])).done,true);assert.equal((await svc.getRun(b2.runIds[0])).status,'complete');assert.equal(priceRequests,prior);
+      assert.equal((await svc.execute(b2.runIds[0])).done,true);assert.equal((await svc.getRun(b2.runIds[0])).status,'complete');assert.equal(priceRequests,prior);assert(sec.calls.length>=4);assert.equal((await fake.col(A.COL.dossierVersions).get()).size,0);
     } finally {M.loadMarketSettings=saved.load;M.providerCredentials=saved.credentials;}
   });
   return {pass:results.every(x=>x.pass),checks:results.length,results};

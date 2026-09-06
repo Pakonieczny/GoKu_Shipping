@@ -146,11 +146,11 @@ const Simulator = (() => {
   const A = require('./_investorAdmin'), P = require('./_investorPolicy');
   const C = require('./_investorDecisionContext'), M = require('./_investorMarket');
   const crypto = require('crypto');
-  const VERSION = 'simulator.v1';
+  const VERSION = 'simulator.v2.sec-reconstruction';
   const BATCHES = 'InvestorAI_SimulationBatches', RUNS = 'InvestorAI_Simulations', SCENARIOS = 'InvestorAI_SimulationScenarios';
   const TARGET = 950000000, CEILING = 1045000000, TARGET_MS = 300000;
   const TERMINAL = ['complete','incomplete','unavailable','cancelled'];
-  const DATA_KEYS = ['dossierVersions','versions','claims','financialFacts','evidenceDeltas','corporateActions'];
+  const DATA_KEYS = ['documents','dossierVersions','versions','claims','financialFacts','evidenceDeltas','corporateActions'];
   const hash = C.hash, decode = x => x && x._codec ? require('./_investorStorageCodec').decode(x) : x;
   const fail = (code,message=code) => Object.assign(new Error(message),{code});
   const id = x => { if(!/^sim_[a-f0-9]{24}$/.test(String(x))) throw fail('BAD_REQUEST','Invalid simulation identifier'); return x; };
@@ -222,7 +222,20 @@ const Simulator = (() => {
     if(missing.length)throw Object.assign(fail('HISTORICAL_BAR_GAPS',`Price history for ${symbol} on ${date} has ${byTime.size} of ${expected} regular-session bars; ${missing.length} missing.`),{details:coverage});
     return {bars:[...byTime.values()].sort((a,b)=>C.barTime(a)-C.barTime(b)),coverage};
   }
-  function create({admin=A,fetchImpl=globalThis.fetch,wallNow=Date.now,env=process.env}={}) {
+  function replayRecord(record) {
+    let data={...record.data};
+    if(data.historicalImport?.version==='sec-reconstruction.v1') {
+      const at=Number(record.knownAtMs),proven=data.historicalImport;
+      if(!Number.isFinite(at)||at!==proven.publicAtMs||!/^https:\/\/(?:data\.sec\.gov|www\.sec\.gov)\//.test(proven.sourceUrl||''))throw fail('HISTORICAL_PROVENANCE_INVALID');
+      data={...data,simulatedReceiptAtMs:at,knownAtMs:at};
+      // These receipt fields belong to the simulated account, not to the downloaded original.
+      for(const key of ['retrievedAtMs','fetchedAtMs','firstSeenAtMs'])if(key in data)data[key]=at;
+    }
+    if(record.collection===A.COL.financialFacts&&!data._codec)data=require('./_investorStorageCodec').encode(data);
+    return data;
+  }
+  function create({admin=A,fetchImpl=globalThis.fetch,wallNow=Date.now,env=process.env,publicFetch=null}={}) {
+    const defaultSourceSnapshotDate=new Date(wallNow()).toISOString().slice(0,10);
     // Capture root references outside replay scope; never dynamically fall back.
     const batchCol=admin.col(BATCHES), runCol=admin.col(RUNS), scenarioCol=admin.col(SCENARIOS);
     const jobs=require('./_investorJobs').withAdmin(admin);
@@ -259,18 +272,14 @@ const Simulator = (() => {
       selectedDates(days,count,batchId); // Validate the request before archive reads.
       const control=(await admin.col(admin.COL.control).doc('control').get()).data() || {};
       const policy=P.loadActiveSync(control), roster=require('./_investorUniverse').freezeEligibleSnapshot({tradingDate:days[0],nowMs:wallNow(),removed:control.universeRemovals || []});
-      const coverage=await researchAvailability(roster,days);
-      if(coverage.days.length<count)throw fail('PREFLIGHT_FAILED',coverage.days.length
-        ? `Only ${coverage.days.length} trading days in this range have saved research for all ${roster.symbols.length} companies. Choose at most ${coverage.days.length} simulations or another date range. No simulations started.`
-        : `No trading days in this range have saved research for all ${roster.symbols.length} companies${coverage.missingSymbols.length?`; ${coverage.missingSymbols.length} companies have no dated research archive`:''}. Historical prices alone are insufficient. Historical company research must be loaded before these dates can be simulated. No simulations started.`);
-      const dates=selectedDates(coverage.days,count,batchId),runIds=dates.map((d,i)=>'sim_'+hash(batchId+'|'+i).slice(0,24));
+      const dates=selectedDates(days,count,batchId),runIds=dates.map((d,i)=>'sim_'+hash(batchId+'|'+i).slice(0,24));
       roster.tradingDate=dates[0];
       const b={batchId,owner,count,dates,runIds,config:{from:config.from,to:config.to,count,initialCashMinor:'10000000',feedDelayMinutes:15,spreadBps:10,feePerShareMicros:5000},
-        researchCoverage:{checkedAtMs:wallNow(),eligibleDays:coverage.days.length,excludedDays:days.length-coverage.days.length,firstEligibleDate:coverage.days[0],lastEligibleDate:coverage.days.at(-1)},
+        evidenceMode:'ARCHIVE_OR_SEC_RECONSTRUCTION',preparationIncludes:'Automatic dated SEC research and historical price downloads; cached across runs',
         status:'running',paused:false,createdAtMs:wallNow(),targetNano:TARGET*count,ceilingNano:CEILING*count,version:VERSION,
         model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:Math.max(1,Math.min(12,Number(env.INVESTOR_SIM_CONCURRENCY)||3)),
-        limitations:['Current eligible universe: survivorship-limited historical selection.','Dates are sampled only where saved company research exists; price availability is checked during preparation.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
-      const configRef=await saveJSON(ref,'configuration',{policy,roster,control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES});
+        limitations:['Current eligible universe: survivorship-limited historical selection.','Missing research is reconstructed from SEC filings and financial statements. Broader historical news and confirmed earnings calendars may be unavailable.','SEC aggregates are retrieved today and filtered by filing availability; later provider corrections may remain. Original filing sources and retrieval timestamps are retained.','First-time preparation precedes the five-minute replay target.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
+      const configRef=await saveJSON(ref,'configuration',{policy,roster,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES});
       // Publish the batch last so a partially-created batch is never dispatched.
       for(let offset=0;offset<runIds.length;offset+=150) {
         await admin.runTransaction(async tx=>{
@@ -319,6 +328,144 @@ const Simulator = (() => {
       const earliest=missingSymbols.length?Infinity:Math.max(...firstKnown.values());
       return {days:days.filter(d=>cached.has(d)||M.nyWallClockToUtcMs(d,P.CUTOFFS_ET.evidenceFreezeMin)>=earliest),missingSymbols};
     }
+    async function secSource(url,{optional=false,shouldPause=async()=>false,snapshotDate=null}={}) {
+      if(A.currentScope())throw fail('SIMULATION_LIVE_FETCH_FORBIDDEN');
+      if(!/^https:\/\/(?:data\.sec\.gov\/(?:submissions\/[A-Za-z0-9_.-]+\.json|api\/xbrl\/companyfacts\/CIK\d{10}\.json)|www\.sec\.gov\/Archives\/edgar\/data\/\d+\/\d{18}\/[A-Za-z0-9_.-]+)$/.test(url))throw fail('HISTORICAL_SOURCE_FORBIDDEN');
+      if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
+      const ref=scenarioCol.doc('source_'+hash(url+'|'+(snapshotDate||defaultSourceSnapshotDate)).slice(0,40));
+      const prior=await ref.get();
+      if(prior.exists&&prior.data().artifact)return readJSON(ref,prior.data().artifact);
+      const owner=crypto.randomBytes(12).toString('hex');
+      const acquired=await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.artifact||s.data()?.leaseUntil>wallNow())return false;tx.set(ref,{url,leaseOwner:owner,leaseUntil:wallNow()+90000},{merge:true});return true;});
+      if(!acquired)throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','Another simulation is preparing this shared source.'),{retryAfterMs:5000,sharedPreparation:true});
+      try {
+        // One shared reservation keeps concurrent preparation workers below SEC limits.
+        const rateRef=scenarioCol.doc('sec_download_rate');
+        const at=await rootTransaction(async tx=>{const s=await tx.get(rateRef),next=Math.max(wallNow(),s.data()?.nextMs||0);tx.set(rateRef,{nextMs:next+300});return next;});
+        if(at>wallNow())await new Promise(r=>setTimeout(r,Math.min(5000,at-wallNow())));
+        if(await shouldPause())throw fail('SIMULATION_PREPARATION_YIELD');
+        let response;
+        try {response=await (publicFetch||require('./_investorFetch').fetchPublic)(url,{sourceId:'sec.historical_reconstruction',accept:url.endsWith('.json')?['json']:['html','text','xml'],maxBytes:16000000,timeoutMs:20000});}
+        catch(e) {
+          if(optional&&e.status===404)response={status:404,text:'',json:null};
+          else if([403,429,500,502,503,504].includes(e.status)||['timeout','network','dns_failed'].includes(e.code))throw Object.assign(fail('HISTORICAL_PROVIDER_BUSY','SEC history is temporarily unavailable. Preparation will retry.'),{retryAfterMs:60000});
+          else throw fail('HISTORICAL_SEC_UNAVAILABLE',`Could not load historical SEC evidence (${e.code||e.status||'request failed'}).`);
+        }
+        const text=String(response.text||''),source={url,status:response.status||200,text,json:response.json??(url.endsWith('.json')&&text?JSON.parse(text):null),sha256:crypto.createHash('sha256').update(text).digest('hex'),retrievedAtMs:wallNow()};
+        const artifact=await saveJSON(ref,'source',source);
+        await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner!==owner)throw fail('SIMULATION_LEASE_LOST');tx.set(ref,{artifact,status:'source_ready',leaseOwner:null,leaseUntil:0},{merge:true});});
+        return source;
+      } finally {await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseOwner:null,leaseUntil:0},{merge:true});});}
+    }
+    async function reconstructResearch(symbol,row,date,endMs,{onProgress=async()=>{},shouldPause=async()=>false,sourceSnapshotDate=null}={}) {
+      const F=require('./_investorFundamentals'),D=require('./_investorDossier'),E=require('./_investorEvidence');
+      const cik=F.cik10Of(row?.cik);if(!cik)throw fail('HISTORICAL_IDENTITY_MISSING',`No SEC company identifier is available for ${symbol}.`);
+      const cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin),earliest=cutoff-180*86400000;
+      const sourceOptions={shouldPause,snapshotDate:sourceSnapshotDate};
+      await onProgress(`Loading ${symbol} historical financial statements`);
+      const rawFacts=await secSource(F.companyFactsUrl(cik),{...sourceOptions,optional:true});
+      const submissions=await secSource(`https://data.sec.gov/submissions/CIK${cik}.json`,sourceOptions);
+      if(!submissions.json?.filings)throw fail('HISTORICAL_SEC_INVALID',`SEC filing history for ${symbol} is invalid.`);
+      const filingRows=[];
+      const addRows=table=>{
+        for(let i=0;i<(table?.accessionNumber||[]).length;i++) {
+          const accession=table.accessionNumber[i],form=table.form?.[i],filed=table.filingDate?.[i],primary=table.primaryDocument?.[i];
+          if(!/^\d{10}-\d{2}-\d{6}$/.test(accession)||!/^\d{4}-\d{2}-\d{2}$/.test(filed||'')||!String(primary||'').match(/^[A-Za-z0-9_.-]+$/))continue;
+          const accepted=table.acceptanceDateTime?.[i];
+          // Without an exact acceptance timestamp, wait until the next NY day.
+          const nextDate=new Date(Date.parse(filed+'T12:00:00Z')+86400000).toISOString().slice(0,10);
+          const availableAtMs=typeof accepted==='string'&&/(?:Z|[+-]\d{2}:\d{2})$/.test(accepted)&&Number.isFinite(Date.parse(accepted))?Date.parse(accepted):M.nyWallClockToUtcMs(nextDate,0);
+          if(availableAtMs<=endMs)filingRows.push({accession,form,filed,primary,availableAtMs,exactAcceptance:!!accepted});
+        }
+      };
+      addRows(submissions.json.filings.recent);
+      for(const file of submissions.json.filings.files||[]) {
+        if(file.filingFrom>date||file.filingTo<new Date(earliest-370*86400000).toISOString().slice(0,10))continue;
+        if(!/^CIK\d{10}-submissions-\d+\.json$/.test(file.name||''))continue;
+        await onProgress(`Loading ${symbol} older SEC filings`);
+        addRows((await secSource(`https://data.sec.gov/submissions/${file.name}`,sourceOptions)).json);
+      }
+      const filings=[...new Map(filingRows.map(f=>[f.accession,f])).values()].sort((a,b)=>a.availableAtMs-b.availableAtMs);
+      const accessions=new Map(filings.map(f=>[f.accession,f]));
+      if(rawFacts.json?.cik!=null&&Number(rawFacts.json.cik)!==Number(cik))throw fail('HISTORICAL_IDENTITY_MISMATCH');
+      if(submissions.json.cik!=null&&Number(submissions.json.cik)!==Number(cik))throw fail('HISTORICAL_IDENTITY_MISMATCH');
+      const normalized=rawFacts.json?F.normalizeCompanyFacts(rawFacts.json,{cik,retrievedAtMs:rawFacts.retrievedAtMs,sourceUrl:rawFacts.url}).facts:[];
+      const importMeta=(source,at)=>({version:'sec-reconstruction.v1',sourceUrl:source.url,sourceSha256:source.sha256,actualRetrievedAtMs:source.retrievedAtMs,publicAtMs:at,timestampConvention:'SEC_PUBLIC_AVAILABILITY_WITH_SIMULATED_RECEIPT'});
+      const concepts=new Set([...F.DEFAULT_CONCEPTS,...Object.values(D.SECTOR_BLOCKS[D.sectorBlockFor(row.sector)].metrics).flatMap(m=>m.concepts||[])]);
+      const historicalFacts=normalized.filter(f=>concepts.has(f.concept)).map(f=>{
+        const a=accessions.get(f.accession),nextDate=new Date(Date.parse(f.filedDate+'T12:00:00Z')+86400000).toISOString().slice(0,10);
+        const at=a?.availableAtMs||M.nyWallClockToUtcMs(nextDate,0);
+        return {...f,supersededByFactId:null,asOfAvailableMs:at,historicalImport:importMeta(rawFacts,at)};
+      }).filter(f=>f.asOfAvailableMs<=endMs&&f.periodEnd<=date&&Date.parse(f.periodEnd+'T12:00:00Z')>=cutoff-4*366*86400000);
+      const factTimes=[cutoff,...new Set(historicalFacts.filter(f=>f.asOfAvailableMs>cutoff).map(f=>f.asOfAvailableMs))];
+      const facts=[...new Map(factTimes.flatMap(asOfMs=>F.pointInTime(historicalFacts,{asOfMs})).map(f=>[f.factId,f])).values()];
+      const data=facts.map(f=>({collection:admin.COL.financialFacts,id:f.factId,knownAtMs:f.asOfAvailableMs,data:f})),documents=[],claims=[];
+      const pushDocument=(documentId,body,source,at,form,accession,title,{derived=false}={})=>{
+        const versionId=documentId+'_'+hash(body).slice(0,20),meta=importMeta(source,at);
+        const doc={documentId,versionId,latestVersionId:versionId,symbol,sourceId:'sec.submissions',title,form,accession,link:source.url,source_published_at:new Date(at).toISOString(),firstSeenAtMs:source.retrievedAtMs,decisionKnownAtMs:at,historicalImport:meta,sourceClass:'company_primary',sourceTier:'primary',publisherGroup:'sec_edgar',publisherDomain:'sec.gov',sourceReliability:1};
+        const version={documentId,versionId,symbol,sourceId:doc.sourceId,canonicalText:body,canonical_content_sha256:hash(body),raw_sha256:source.sha256,sourcePublishedAt:doc.source_published_at,fetchedAtMs:source.retrievedAtMs,historicalImport:meta,derivedFromStructuredFacts:derived,permission_snapshot:{retention_rule:'government_public_domain_retain',full_text_allowed:true}};
+        data.push({collection:admin.COL.documents,id:documentId,knownAtMs:at,data:doc},{collection:admin.COL.versions,id:versionId,knownAtMs:at,data:version});documents.push(doc);
+        return version;
+      };
+      const pushClaim=(version,quote,at)=>{
+        const claimId=E.claimIdFor({symbol,documentVersionId:version.versionId,claimType:'FACT',quote});
+        const c={kind:'claim',claimId,symbol,documentId:version.documentId,documentVersionId:version.versionId,sourceId:version.sourceId,claimType:'FACT',text:quote,quote,publishedAtMs:at,firstSeenAtMs:version.fetchedAtMs,knownAtMs:at,historicalImport:version.historicalImport,extractedBy:'deterministic_verbatim_excerpt',requiresIndependentVerification:true};
+        claims.push(c);data.push({collection:admin.COL.claims,id:claimId,knownAtMs:at,data:c});
+      };
+      // Compact, exact numeric evidence provides claim IDs without a paid extraction sweep.
+      const numeric=F.pointInTime(facts,{asOfMs:cutoff}).filter(f=>F.DEFAULT_CONCEPTS.includes(f.concept)).sort((a,b)=>b.periodEnd.localeCompare(a.periodEnd));
+      const selected=[],perConcept=new Map();
+      for(const f of numeric){const n=perConcept.get(f.concept)||0;if(n>=2)continue;selected.push(f);perConcept.set(f.concept,n+1);if(selected.length>=60)break;}
+      for(const [accession,group] of Object.entries(selected.reduce((out,f)=>{(out[f.accession] ||= []).push(f);return out;},{}))) {
+        const at=Math.max(...group.map(f=>f.asOfAvailableMs));
+        const lines=group.map(f=>`${f.taxonomy}:${f.concept}; period ${f.period}; value ${f.valueScaled} / 10^${f.scale} ${f.unit}; SEC accession ${f.accession}.`);
+        const version=pushDocument('sec_facts_'+symbol+'_'+accession,lines.join('\n'),rawFacts,at,'XBRL',accession,`${symbol} historical financial facts`,{derived:true});
+        lines.forEach(line=>pushClaim(version,line,at));
+      }
+      const periodic=filings.filter(f=>/^(10-K|10-Q|20-F|40-F)(\/A)?$/.test(f.form)&&f.availableAtMs<=cutoff);
+      const baseline=[...new Map(periodic.map(f=>[f.form.replace('/A',''),f])).values()];
+      const recent=filings.filter(f=>f.availableAtMs>=earliest&&/^(8-K|6-K|10-K|10-Q|20-F|40-F)(\/A)?$/.test(f.form));
+      const chosen=[...new Map([...baseline,...recent].map(f=>[f.accession,f])).values()].sort((a,b)=>a.availableAtMs-b.availableAtMs);
+      if(chosen.length>60)throw fail('HISTORICAL_SOURCE_LIMIT',`${symbol} has more than 60 material filings in this window; preparation needs a narrower filing window.`);
+      for(let i=0;i<chosen.length;i++) {
+        const f=chosen[i];await onProgress(`Loading ${symbol} SEC filings · ${i+1} of ${chosen.length}`);
+        const base=`https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${f.accession.replace(/-/g,'')}/`;
+        const source=await secSource(base+f.primary,sourceOptions);
+        const fullText=require('./_investorVisibleText').visibleText(source.text),body=fullText.slice(0,40000);
+        if(body.trim().length<40)throw fail('HISTORICAL_SEC_EMPTY',`${symbol} has an unreadable archived filing.`);
+        const version=pushDocument('sec_filing_'+symbol+'_'+f.accession,body,source,f.availableAtMs,f.form,f.accession,`${symbol} ${f.form} filed ${f.filed}`);
+        version.textTruncated=fullText.length>body.length;version.originalTextChars=fullText.length;
+        // These are quoted issuer statements, not inferred guidance or confirmed event dates.
+        const excerpts=(body.match(/[^.!?\n]{60,550}[.!?\n]/g)||[]).map(x=>x.trim()).filter(x=>/revenue|cash flow|net income|earnings|dividend|guidance|expect|risk|acquisition|debt/i.test(x));
+        excerpts.slice(0,3).forEach(quote=>pushClaim(version,quote,f.availableAtMs));
+        // Earnings releases are often exhibits, not the 8-K cover document.
+        if(/^(8-K|6-K)/.test(f.form)) {
+          const links=[...source.text.matchAll(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+          const exhibits=[...new Set(links.flatMap(m=>{
+            try {const url=new URL(m[1],base),file=url.pathname.split('/').at(-1);
+              return url.href===base+file&&/^[A-Za-z0-9_.-]+\.html?$/i.test(file)&&/ex[-_]?99|exhibit[-_]?99|99\.1|earnings|release/i.test(file+' '+m[2])?[file]:[];
+            }catch{return [];}
+          }))].slice(0,4);
+          for(const file of exhibits) {
+            const exhibit=await secSource(base+file,sourceOptions);
+            const text=require('./_investorVisibleText').visibleText(exhibit.text).slice(0,40000);
+            const ev=pushDocument('sec_exhibit_'+symbol+'_'+f.accession+'_'+hash(file).slice(0,8),text,exhibit,f.availableAtMs,f.form,f.accession,`${symbol} filing exhibit ${file}`);
+            (text.match(/[^.!?\n]{60,550}[.!?\n]/g)||[]).map(x=>x.trim()).filter(x=>/revenue|earnings|cash flow|guidance|expect|dividend/i.test(x)).slice(0,3).forEach(quote=>pushClaim(ev,quote,f.availableAtMs));
+          }
+        }
+      }
+      if(!facts.some(f=>f.asOfAvailableMs<=cutoff)&&!documents.some(d=>d.decisionKnownAtMs<=cutoff))throw fail('HISTORICAL_EVIDENCE_MISSING',`SEC has no usable company evidence for ${symbol} before ${date}.`);
+      const events=[cutoff,...new Set(data.filter(x=>x.knownAtMs>cutoff&&x.knownAtMs<=endMs).map(x=>x.knownAtMs))].sort((a,b)=>a-b);let prior=null;
+      for(const at of events) {
+        const visibleFacts=facts.filter(f=>f.asOfAvailableMs<=at),visibleClaims=claims.filter(c=>c.knownAtMs<=at).map(c=>({...c,firstSeenAtMs:c.knownAtMs})),visibleDocs=documents.filter(d=>d.decisionKnownAtMs<=at);
+        const dossier=D.composeVersion({symbol,identity:{...row,name:row.company||symbol},asOfMs:at,facts:F.pointInTime(visibleFacts,{asOfMs:at}),fundamentals:F.deriveMetrics(visibleFacts,{asOfMs:at}),claims:visibleClaims,documents:visibleDocs,priorVersion:prior?.version||0,dataQuality:{missing:['broader_historical_news','structured_guidance_not_extracted','confirmed_earnings_calendar_unavailable'],sourceCoverage:{mode:'SEC_RECONSTRUCTED',filings:visibleDocs.length,facts:visibleFacts.length,priceHistory:'separate',currentInformationUsed:false}}});
+        const id='reconstructed_'+D.versionDocId(dossier);dossier.historicalImport={version:'sec-reconstruction.v1',actualRetrievedAtMs:wallNow(),publicAtMs:at,sourceUrl:submissions.url,sourceSha256:submissions.sha256};
+        data.push({collection:admin.COL.dossierVersions,id,knownAtMs:at,data:dossier});
+        if(prior){const delta=D.buildDelta(prior,dossier);delta.safetyClass='high_impact';delta.historicalReconstruction=true;data.push({collection:admin.COL.evidenceDeltas,id:'sec_event_'+symbol+'_'+at,knownAtMs:at,data:{...delta,knownAtMs:at}});}
+        prior=dossier;
+      }
+      return data;
+    }
     async function historicalBars(symbol,date,timeframe) {
       // Preparation can outlast the settings cache; refresh before each fetch.
       await M.loadMarketSettings();
@@ -349,7 +496,7 @@ const Simulator = (() => {
       }while(pageToken);
       return output;
     }
-    async function prepareSymbol(symbol,row,date,endMs) {
+    async function prepareSymbol(symbol,row,date,endMs,options={}) {
       const data=[];
       for(const key of DATA_KEYS) {
         const q=key==='financialFacts'?row && row.cik?rootCollection(admin.COL[key]).where('cik','==',String(row.cik).padStart(10,'0')):null:rootCollection(admin.COL[key]).where('symbol','==',symbol);
@@ -357,7 +504,11 @@ const Simulator = (() => {
         for(const v of await queryAll(q)) {const at=knownAt(v.data);if(at<=endMs) {const clean={...v.data};for(const field of ['reviewedAtMs','reviewedBy','managerRunId','supersededBy','supersededByFactId','supersededAtMs','standingView','lastManagerReviewAtMs'])delete clean[field];data.push({collection:admin.COL[key],id:v.id,knownAtMs:at,data:clean});}}
       }
       const cutoff=M.nyWallClockToUtcMs(date,P.CUTOFFS_ET.evidenceFreezeMin);
-      if(row && !data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff)) throw fail('HISTORICAL_EVIDENCE_MISSING',`No dated company research for ${symbol} before ${date}. Historical company research must be loaded for this session.`);
+      if(row && !data.some(x=>x.collection===admin.COL.dossierVersions&&x.knownAtMs<=cutoff)) {
+        const reconstructed=await reconstructResearch(symbol,row,date,endMs,options);
+        const existing=new Set(data.map(x=>x.collection+'/'+x.id));
+        data.push(...reconstructed.filter(x=>!existing.has(x.collection+'/'+x.id)));
+      }
       const daily=await require('./_investorHistory').readDailyWithMetaFor(admin,symbol);
       let series=(daily.series || []).filter(b=>b.date<date).slice(-400);
       if(series.length<20 || !['raw','none','unadjusted'].includes(daily.provenance?.adjustment)) series=(await historicalBars(symbol,date,'1Day')).map(b=>({...b,date:M.nyParts(new Date(b.t)).date})).filter(b=>b.date<date).slice(-400);
@@ -375,7 +526,7 @@ const Simulator = (() => {
     async function prepare(run,config,save,shouldPause) {
       const scenarioId=run.scenarioId || hash({date:run.date,universe:config.roster.universeHash,version:VERSION}).slice(0,40), sr=scenarioCol.doc(scenarioId);
       const st=await sr.get();
-      if(st.exists && st.data().status==='ready') {await save({scenarioId,status:'running',phase:'Preparing account',scenarioCursor:config.roster.symbols.length});return true;}
+      if(st.exists && st.data().status==='ready') {await save({scenarioId,status:'running',phase:'Preparing account',scenarioCursor:st.data().symbols.length,evidenceCoverage:st.data().evidenceCoverage||null});return true;}
       const rowFor=s=>[...(require('./_investorUniverse').tradeTier||[]),...(require('./_investorUniverse').researchTier||[])].find(r=>r.symbol===s);
       const symbols=[...new Set([...config.roster.symbols,'SPY','QQQ','HYG','LQD','IEF','TLT','GLD','UUP',...Object.values(require('./_investorTemporal').DRIVER_BY_SECTOR || {})])];
       const endMs=M.sessionCloseMs(new Date(run.date+'T12:00:00Z'))+20*60000;
@@ -383,13 +534,16 @@ const Simulator = (() => {
         if(await shouldPause()) return false;
         const symbol=symbols[i], ptr=sr.collection('symbols').doc(symbol);
         if(!(await ptr.get()).exists) {
-          const packet=await prepareSymbol(symbol,config.roster.symbols.includes(symbol)?rowFor(symbol):null,run.date,endMs);
-          const artifact=await saveJSON(sr,'symbol_'+symbol,packet);await ptr.set({symbol,artifact});
+          await save({scenarioId,scenarioCursor:i,preparationTotal:symbols.length,phase:`Preparing ${symbol} · company ${i+1} of ${symbols.length}`});
+          const packet=await prepareSymbol(symbol,config.roster.symbols.includes(symbol)?rowFor(symbol):null,run.date,endMs,{shouldPause,sourceSnapshotDate:config.sourceSnapshotDate||new Date(run.createdAtMs).toISOString().slice(0,10),onProgress:async phase=>save({phase})});
+          const artifact=await saveJSON(sr,'symbol_'+symbol,packet);await ptr.set({symbol,artifact,reconstructed:packet.data.some(x=>x.data.historicalImport?.version==='sec-reconstruction.v1')});
         }
         await save({scenarioId,scenarioCursor:i+1,phase:`Preparing historical evidence · ${i+1} of ${symbols.length}`,preparationTotal:symbols.length,preparationRetries:0,nextAttemptAtMs:0});
       }
-      await sr.set({scenarioId,status:'ready',date:run.date,symbols,universeHash:config.roster.universeHash,cutoffMs:M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin),endMs,createdAtMs:wallNow(),version:VERSION});
-      await save({scenarioId,status:'running',phase:'Preparing account'});return true;
+      const prepared=(await sr.collection('symbols').get()).docs.map(d=>d.data()),reconstructedCompanies=prepared.filter(p=>config.roster.symbols.includes(p.symbol)&&p.reconstructed).length;
+      const evidenceCoverage={mode:reconstructedCompanies?'SEC_RECONSTRUCTED':'OBSERVED_ARCHIVE',reconstructedCompanies,totalCompanies:config.roster.symbols.length};
+      await sr.set({scenarioId,status:'ready',date:run.date,symbols,evidenceCoverage,universeHash:config.roster.universeHash,cutoffMs:M.nyWallClockToUtcMs(run.date,P.CUTOFFS_ET.evidenceFreezeMin),endMs,createdAtMs:wallNow(),version:VERSION});
+      await save({scenarioId,status:'running',phase:'Preparing account',evidenceCoverage});return true;
     }
     async function rawHTTP(method,url,body) {
       if(!/^https:\/\/api\.openai\.com\/v1\/responses(?:\/[A-Za-z0-9_-]+)?$/.test(url)) throw fail('SIMULATION_NETWORK_FORBIDDEN');
@@ -492,16 +646,20 @@ const Simulator = (() => {
             await save({initialized:true,status:'running',segmentStartedAtMs:activeStarted,startedAtMs:run.startedAtMs||wallNow(),clockMs:run.clockMs,phase:'Choosing companies'});
           }
           const broker=require('./_investorBroker').createPaperAdapter({admin:A,now:()=>run.clockMs});
-          let lastRelease=-1;const released=new Set(),pointerVersions=new Map(),seededDaily=new Set();
+          let lastRelease=-1;
           async function release() {
-            if(lastRelease===run.clockMs)return;lastRelease=run.clockMs;
+            if(lastRelease===run.clockMs)return;
+            const through=run.evidenceReleasedThroughMs??-Infinity,writes=[];
+            const flush=async()=>{if(!writes.length)return;const batch=rootBatch();for(const [ref,data] of writes)batch.set(ref,data,{merge:true});await batch.commit();writes.length=0;};
+            const put=async(ref,data)=>{writes.push([ref,data]);if(writes.length>=100)await flush();};
             for(const packet of packets) {
               const latest=packet.data.filter(x=>x.knownAtMs<=run.clockMs);
-              for(const x of latest) {const key=x.collection+'/'+x.id;if(released.has(key))continue;const rr=collection(x.collection).doc(x.id);if(!(await rr.get()).exists)await rr.set(x.data);released.add(key);}
+              for(const x of latest.filter(x=>x.knownAtMs>through))await put(collection(x.collection).doc(x.id),replayRecord(x));
               const versions=latest.filter(x=>x.collection===A.COL.dossierVersions).sort((a,b)=>a.knownAtMs-b.knownAtMs),v=versions.at(-1);
-              if(v && pointerVersions.get(packet.symbol)!==v.id) {await collection(A.COL.dossiers).doc(packet.symbol).set({symbol:packet.symbol,currentVersionId:v.id,asOfMs:v.data.asOfMs||v.knownAtMs,lastSourceAtMs:v.knownAtMs,dataQuality:v.data.dataQuality || {},standingView:null,lastMarketMarkAtMs:run.clockMs},{merge:true});pointerVersions.set(packet.symbol,v.id);}
-              if(!seededDaily.has(packet.symbol)){await collection(A.COL.marketDaily).doc(packet.symbol).set(packet.daily);seededDaily.add(packet.symbol);}
+              if(v&&v.knownAtMs>through)await put(collection(A.COL.dossiers).doc(packet.symbol),{symbol:packet.symbol,currentVersionId:v.id,asOfMs:v.data.asOfMs||v.knownAtMs,lastSourceAtMs:v.knownAtMs,dataQuality:v.data.dataQuality||{},lastMarketMarkAtMs:run.clockMs});
+              if(through===-Infinity)await put(collection(A.COL.marketDaily).doc(packet.symbol),packet.daily);
             }
+            await flush();await save({evidenceReleasedThroughMs:run.clockMs});lastRelease=run.clockMs;
           }
           async function checkpoint(cp) {await save({managerCheckpointRef:await saveJSON(ref,'manager_checkpoint',cp),phase:({freeze:'Preparing company research',review:'Choosing companies',coverage:'Checking company coverage',maintenance:'Reviewing holdings',research:'Researching chosen companies',synthesis:'Deciding allocations',activation:'Checking investment plans',persist:'Saving investment decisions'})[cp.stage]||cp.stage});}
           const manager=require('./_investorManager');
@@ -567,12 +725,13 @@ const Simulator = (() => {
         return {done:TERMINAL.includes(latest.status)||latest.paused,yielded:!TERMINAL.includes(latest.status)&&!latest.paused};
       } catch(e) {
         const latest=await getRun(runId);
-        if(e.code==='HISTORICAL_PROVIDER_BUSY'&&!latest.paused&&(latest.preparationRetries||0)<3) {
+        if(e.code==='SIMULATION_PREPARATION_YIELD') {await save({status:latest.paused?'paused':'queued',phase:latest.paused?'Paused — preparation saved':'Preparation saved — continuing shortly'});return {done:false,yielded:true};}
+        if(e.code==='HISTORICAL_PROVIDER_BUSY'&&!latest.paused&&(e.sharedPreparation||(latest.preparationRetries||0)<3)) {
           const nextAttemptAtMs=wallNow()+e.retryAfterMs;
-          await save({status:'queued',phase:'Price provider is busy — retrying shortly',nextAttemptAtMs,preparationRetries:(latest.preparationRetries||0)+1,lastProviderError:{code:e.code,atMs:wallNow()},error:null});
+          await save({status:'queued',phase:e.sharedPreparation?'Waiting for shared historical download':'Historical data provider is busy — retrying shortly',nextAttemptAtMs,preparationRetries:(latest.preparationRetries||0)+(e.sharedPreparation?0:1),lastProviderError:{code:e.code,atMs:wallNow()},error:null});
           return {done:false,yielded:true,nextAttemptAtMs};
         }
-        if(e.code==='HISTORICAL_PROVIDER_BUSY'&&(latest.preparationRetries||0)>=3)e.message='Historical price provider remained unavailable after three retries. No result was produced.';
+        if(e.code==='HISTORICAL_PROVIDER_BUSY'&&(latest.preparationRetries||0)>=3)e.message='Historical data provider remained unavailable after three retries. No result was produced.';
         const status=latest.paused?'paused':/^HISTORICAL_|^SCENARIO_/.test(e.code||'')?'unavailable':'incomplete';
         if(e.code!=='SIMULATION_LEASE_LOST')await save({status,phase:status==='paused'?'Paused — progress saved':status==='unavailable'?'Historical data unavailable':'Needs review',error:{code:e.code||'SIMULATION_FAILED',message:String(e.message).slice(0,500),details:e.details||null},finishedAtMs:wallNow()});
         return {done:true,status,error:e.code||e.message};
@@ -591,7 +750,7 @@ const Simulator = (() => {
         const sets=await Promise.all(batches.map(async b=>({b,runs:await rows(runCol.where('batchId','==',b.batchId))})));
         let capacity=Math.max(0,Math.max(1,Math.min(12,Number(env.INVESTOR_SIM_CONCURRENCY)||3))-sets.flatMap(x=>x.runs).filter(r=>r.leaseUntil>wallNow()||r.dispatchedUntil>wallNow()).length);
         for(const {b,runs} of sets) {
-          if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)) {await batchCol.doc(b.batchId).set({status:'complete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
+          if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)) {await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
           if(runs.some(r=>r.rateLimitedAtMs>wallNow()-60000))capacity=Math.min(capacity,1);
           for(const r of runs.filter(r=>(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow())).slice(0,capacity)) {
             const generation=Math.floor(wallNow()/90000),out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_'+generation,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
@@ -623,7 +782,8 @@ const Simulator = (() => {
       const unfinished=projected.filter(r=>!TERMINAL.includes(r.status)),measured=projected.filter(r=>r.status==='complete'&&r.activeMs>0).map(r=>r.activeMs);
       const typical=measured.length?measured.reduce((n,x)=>n+x,0)/measured.length:null;
       const batchRemainingMs=unfinished.length===0?0:unfinished.some(r=>r.paused||r.status==='preparing'||(r.estimatedRemainingMs==null&&!typical))?null:Math.max(...unfinished.map(r=>r.estimatedRemainingMs||typical||0),unfinished.reduce((n,r)=>n+(r.estimatedRemainingMs||typical||0),0)/(b?.concurrency||1));
-      return {batchRemainingMs,batch:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
+      const displayedStatus=b&&runs.length&&runs.every(r=>TERMINAL.includes(r.status))?(runs.every(r=>r.status==='complete')?'complete':'incomplete'):b?.status;
+      return {batchRemainingMs,batch:b?{...b,status:displayedStatus}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
         statistics:distribution(runs),totals:{estimatedInFlightNano:projected.reduce((n,r)=>n+(r.estimatedInFlightNano||0),0),estimatedFinalNano:projected.reduce((n,r)=>n+(TERMINAL.includes(r.status)?r.spentNano:r.estimatedTotalNano),0),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),targetNano:runs.length*TARGET,ceilingNano:runs.length*CEILING},
         pricing:{version:VERSION,asOf:'2026-09-05',models:P.MODEL_RATES,serviceTier:'flex for Astra; standard for extraction',currency:'USD',includes:'AI tokens only; data and Firebase charges excluded'},targetMs:TARGET_MS};
     }
@@ -633,8 +793,8 @@ const Simulator = (() => {
       if(after)q=q.startAfter(String(after));const items=await rows(q);
       return {run,collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null};
     }
-    return {createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,meter};
+    return {createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
-  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,create};
+  return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,replayRecord,create};
 })();
 module.exports.Simulator=Simulator;
