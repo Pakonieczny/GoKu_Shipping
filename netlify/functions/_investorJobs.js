@@ -63,6 +63,7 @@ const MAX_SUMMARY_BYTES = 200000;
 
 /* ── THE TASK VOCABULARY (§11.1) ───────────────────────────────────────── */
 const TASKS = Object.freeze({
+  simulation_cleanup: {targetFunction:"investorManager-background",category:"simulation",heavy:false,engine:"simulation"},
   simulation_prepare: {targetFunction:"investorManager-background",category:"simulation",heavy:false,engine:"simulation"},
   simulation: {targetFunction:"investorManager-background",category:"simulation",heavy:false,engine:"simulation"},
   event_ingest: {targetFunction:"investorEvents-background",category:"ingest",heavy:true,engine:"manager"},

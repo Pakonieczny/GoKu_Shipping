@@ -1515,7 +1515,7 @@ async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), au
     }
   }
   /* mutation: attestation first, then the idempotency claim before any side effect */
-  if (!attestationOk(ctrl) && !(action === "simulationControl" && params.command === "pause") && action !== "freezeBuys" && action !== "emergencyStop" && action !== "acknowledgeAlert" && action !== "pauseManager") {
+  if (!attestationOk(ctrl) && !(action === "simulationControl" && ["pause","reset"].includes(params.command)) && action !== "freezeBuys" && action !== "emergencyStop" && action !== "acknowledgeAlert" && action !== "pauseManager") {
     return { statusCode: 503, body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape("ATTESTATION_FAILED", "the deployed build's fixtures are not attested; only freezeBuys, emergencyStop, pauseManager and acknowledgeAlert are accepted", { correlationId }) }) };
   }
   const env = { idempotencyKey: body.idempotencyKey, auditReason: body.auditReason || null, expectedResourceVersion: body.expectedResourceVersion, expectedAbsent: body.expectedAbsent, previewToken: body.previewToken };

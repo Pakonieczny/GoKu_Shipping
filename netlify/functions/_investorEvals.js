@@ -150,6 +150,8 @@ const Simulator = (() => {
   const BATCHES = 'InvestorAI_SimulationBatches', RUNS = 'InvestorAI_Simulations', SCENARIOS = 'InvestorAI_SimulationScenarios';
   const TARGET = 950000000, CEILING = 1045000000, TARGET_MS = 300000;
   const TERMINAL = ['complete','incomplete','unavailable','cancelled'];
+  const CLEANUP_VERSION='shared-evidence-copies.v1';
+  const COPY_KEYS=['documents','versions','claims','financialFacts','dossierVersions','marketDaily'];
   const DATA_KEYS = ['documents','dossierVersions','versions','claims','financialFacts','evidenceDeltas','corporateActions'];
   const hash = C.hash, decode = x => x && x._codec ? require('./_investorStorageCodec').decode(x) : x;
   const fail = (code,message=code) => Object.assign(new Error(message),{code});
@@ -359,7 +361,7 @@ const Simulator = (() => {
       roster.tradingDate=dates[0];
       const b={batchId,owner,count,dates,runIds,config:{from:config.from,to:config.to,count,initialCashMinor:'10000000',feedDelayMinutes:15,spreadBps:10,feePerShareMicros:5000},
         evidenceMode:'ARCHIVE_OR_SEC_RECONSTRUCTION',preparationIncludes:'Shared Firebase research and price library prepared before simulations start',repositoryMode:'shared_first',
-        status:'running',paused:false,createdAtMs:wallNow(),targetNano:TARGET*count,ceilingNano:CEILING*count,version:VERSION,
+        status:'running',paused:false,cleanupVersion:CLEANUP_VERSION,cleanupState:'complete',createdAtMs:wallNow(),targetNano:TARGET*count,ceilingNano:CEILING*count,version:VERSION,
         model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:count,concurrencyMode:'all_requested',
         limitations:['Current eligible universe: survivorship-limited historical selection.','Missing research is reconstructed from SEC filings and financial statements. Broader historical news and confirmed earnings calendars may be unavailable.','SEC aggregates are retrieved today and filtered by filing availability; later provider corrections may remain. Original filing sources and retrieval timestamps are retained.','First-time preparation precedes the five-minute replay target.','Historical recognition by pretrained models is possible.','Resource-limited reasoning; truncated or skipped required reviews are incomplete.','Single-day horizon; open positions are marked at the end.']};
       const configRef=await saveJSON(ref,'configuration',{policy,roster,sourceSnapshotDate:new Date(wallNow()).toISOString().slice(0,10),control:{riskMandate:control.riskMandate || null,universeRemovals:control.universeRemovals || []},rates:P.MODEL_RATES});
@@ -370,13 +372,25 @@ const Simulator = (() => {
           const ids=runIds.slice(offset,offset+150),existing=await Promise.all(ids.map(x=>tx.get(runCol.doc(x))));
           for(let j=0;j<ids.length;j++)if(!existing[j].exists){const i=offset+j;tx.set(runCol.doc(ids[j]),{runId:ids[j],batchId,owner,date:dates[i],status:'queued',phase:'Waiting for shared data preparation',createdAtMs:wallNow(),index:i,paused:false,revision:0,
             spentNano:0,reservedNano:0,targetNano:TARGET,ceilingNano:CEILING,progress:0,activeMs:0,buys:0,sells:0,openPositions:0,returnBps:0,pnlMinor:0,scenarioCursor:0,
-            simulation:true,resourceLimited:true,configRef,runIdsCount:count});}
+            simulation:true,resourceLimited:true,evidenceCleanupVersion:CLEANUP_VERSION,configRef,runIdsCount:count});}
         });
       }
       await ref.create({...b,configRef}).catch(async e=>{if(!(await ref.get()).exists) throw e;});
       return getBatch(batchId,owner);
     }
+    async function reset(owner) {
+      if(!owner)throw fail('FORBIDDEN');
+      const at=wallNow(),batches=(await rows(batchCol.where('owner','==',owner))).filter(b=>!b.resetAtMs);
+      // Stop at the batch boundary first: even old workers check this pause flag.
+      for(let i=0;i<batches.length;i+=200){const write=rootBatch();for(const b of batches.slice(i,i+200))write.set(batchCol.doc(b.batchId),{resetAtMs:at,paused:true,status:'reset'},{merge:true});await write.commit();}
+      for(const b of batches)for(let i=0;i<b.runIds.length;i+=200){const write=rootBatch();for(const runId of b.runIds.slice(i,i+200))write.set(runCol.doc(runId),{resetAtMs:at,paused:true,dispatchedUntil:0,nextAttemptAtMs:0},{merge:true});await write.commit();}
+      return {reset:true,batches:batches.length,resetAtMs:at,sharedLibraryRetained:true};
+    }
     async function control({batchId,runId,command},owner) {
+      if(command==='reset') {if(batchId||runId)throw fail('BAD_REQUEST','Reset applies to all your simulation batches');return reset(owner);}
+      const selected=runId?await getBatch((await getRun(runId,owner)).batchId,owner):await getBatch(batchId,owner);
+      if(selected.resetAtMs)throw fail('BAD_REQUEST','This batch was reset. Start a new batch; its saved history remains available.');
+
       if(command==='retry_repository') {
         const b=await getBatch(batchId,owner);if(!b.repositoryId)throw fail('BAD_REQUEST','No shared preparation to retry');
         const ref=scenarioCol.doc(b.repositoryId);for(const u of await rows(ref.collection('units').where('status','==','failed')))await retryRepositoryUnit(ref,u);
@@ -387,7 +401,7 @@ const Simulator = (() => {
         if(!runId)throw fail('BAD_REQUEST','Choose a simulation to retry');
         const r=await getRun(runId,owner),ref=runCol.doc(id(runId)),br=batchCol.doc(r.batchId);await getBatch(r.batchId,owner);
         await rootTransaction(async tx=>{const snap=await tx.get(ref),batch=await tx.get(br),v=snap.data();
-          if(v.leaseUntil>wallNow()||(!canResumeContention(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure or interrupted database transaction can be retried');
+          if(batch.data()?.resetAtMs||v.resetAtMs||v.leaseUntil>wallNow()||(!canResumeContention(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure or interrupted database transaction can be retried');
           tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,...(missingXomResearch(v)&&!v.initialized?{repositoryPointersRef:null}:{}),phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
           tx.set(br,{status:'running',paused:false,completedAtMs:null,lastControlAtMs:wallNow()},{merge:true});
         });
@@ -407,7 +421,7 @@ const Simulator = (() => {
       const pause=command==='pause';
       if(runId) {
         const ref=runCol.doc(id(runId));await getRun(runId,owner);
-        await rootTransaction(async tx=>{const s=await tx.get(ref),r=s.data();if(TERMINAL.includes(r.status)) return;
+        await rootTransaction(async tx=>{const s=await tx.get(ref),r=s.data();if(r.resetAtMs)throw fail('BAD_REQUEST','This batch was reset');if(TERMINAL.includes(r.status)) return;
           tx.set(ref,{paused:pause,status:pause?'paused':r.leaseUntil>wallNow()?'running':'queued',revision:r.revision+1,lastControlAtMs:wallNow()},{merge:true});});
         return getRun(runId,owner);
       }
@@ -981,7 +995,7 @@ const Simulator = (() => {
         const inputReserve=Math.ceil(input*rates.write);
         const requestRef=await saveJSON(ref,'request',{...body,service_tier:tier});
         const reservation=await rootTransaction(async tx=>{const [rs,qs]=await Promise.all([tx.get(ref),tx.get(qref)]);const r=rs.data();
-          if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
+          if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.resetAtMs || r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
           const room=CEILING-r.spentNano-r.reservedNano-inputReserve;
           const maxOutput=Math.min(body.max_output_tokens,Math.floor(room/rates.output));
           if(maxOutput<2048)throw fail('SIMULATION_BUDGET_EXHAUSTED','Remaining allowance cannot fund a useful AI response');
@@ -1023,13 +1037,13 @@ const Simulator = (() => {
         const advanced=changed||work.done!==prior.done||work.current!==prior.current;
         await save({work:{...work,startedAtMs:changed?now:prior.startedAtMs||now,lastProgressAtMs:advanced?now:prior.lastProgressAtMs||now},phase:work.label,lastProgressAtMs:advanced?now:run.lastProgressAtMs||now});reportedAt=now;
       }
-      const paused=async()=>{const [r,b]=await Promise.all([ref.get(),batchCol.doc(run.batchId).get()]);return r.data().paused || b.data().paused || wallNow()>deadlineMs;};
+      const paused=async()=>{const [r,b]=await Promise.all([ref.get(),batchCol.doc(run.batchId).get()]);return r.data().resetAtMs || b.data().resetAtMs || r.data().paused || b.data().paused || wallNow()>deadlineMs;};
       const cost=meter(run,ref,paused,assertOwner);let scope;
       let heartbeatPending=Promise.resolve();
       const heartbeat=setInterval(()=>{heartbeatPending=heartbeatPending.then(()=>rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000,lastHeartbeatAtMs:wallNow()},{merge:true});})).catch(()=>{});},20000);
       if(heartbeat.unref)heartbeat.unref();
       try {
-        if(run.paused||batch.paused||TERMINAL.includes(run.status)) {await cost.drain();return {done:true,paused:!!run.paused};}
+        if(run.resetAtMs||batch.resetAtMs||run.paused||batch.paused||TERMINAL.includes(run.status)) {await cost.drain();return {done:true,paused:!!run.paused};}
         let packets,meta;
         if(!run.initialized||run.repositoryId) {
           const freshBatch=await getBatch(run.batchId),repository=await repositoryState(freshBatch);
@@ -1182,6 +1196,65 @@ const Simulator = (() => {
         await rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data().leaseOwner===owner)tx.set(ref,{leaseOwner:null,leaseUntil:0,activeMs:(s.data().activeMs||0)+(activeStarted==null?0:wallNow()-activeStarted)},{merge:true});});
       }
     }
+    async function cleanupBatch(batchId,{deadlineMs=wallNow()+8*60000}={}) {
+      const br=batchCol.doc(id(batchId)),ticket=crypto.randomBytes(12).toString('hex');
+      const claimed=await rootTransaction(async tx=>{const snap=await tx.get(br),b=snap.data();if(!b||b.cleanupVersion===CLEANUP_VERSION||b.cleanupLeaseUntil>wallNow())return false;tx.set(br,{cleanupTicket:ticket,cleanupLeaseUntil:wallNow()+90000,cleanupDispatchedUntil:0,cleanupError:null,cleanupPhase:'Checking duplicate evidence copies'},{merge:true});return true;});
+      if(!claimed)return {done:true};
+      const save=fields=>rootTransaction(async tx=>{const snap=await tx.get(br);if(snap.data()?.cleanupTicket!==ticket)throw fail('SIMULATION_LEASE_LOST');tx.set(br,{...fields,cleanupLeaseUntil:wallNow()+90000},{merge:true});});
+      let renewal=Promise.resolve();const timer=setInterval(()=>{renewal=renewal.then(()=>save({})).catch(()=>{});},20000);timer.unref?.();
+      const signature=data=>hash(A.firestoreSafe(data));
+      try {
+        const runs=await rows(runCol.where('batchId','==',batchId));let waiting=false,removedTotal=runs.reduce((n,r)=>n+(r.copyCleanup?.removed||0),0),checkedTotal=runs.reduce((n,r)=>n+(r.evidenceCleanupVersion===CLEANUP_VERSION?COPY_KEYS.length:r.copyCleanup?.index||0),0);
+        await save({cleanupRemoved:removedTotal,cleanupChecked:checkedTotal,cleanupTotal:runs.length*COPY_KEYS.length});
+        for(const r of runs) {
+          if(r.evidenceCleanupVersion===CLEANUP_VERSION)continue;
+          if(wallNow()>deadlineMs)return {yielded:true};
+          const rr=runCol.doc(r.runId),fresh=(await rr.get()).data();
+          if(fresh.leaseUntil>wallNow()||fresh.dispatchedUntil>wallNow()){waiting=true;continue;}
+          const allowed=new Map(COPY_KEYS.map(k=>[admin.COL[k],new Map()]));
+          const add=(name,recordId,data)=>{const table=allowed.get(name);if(!table)return;const hashes=table.get(recordId)||new Set();hashes.add(signature(data));table.set(recordId,hashes);};
+          const progress={index:0,after:null,removed:0,retained:0,...fresh.copyCleanup};
+          // Verify immutable artifact hashes before authorizing any deletion. A
+          // missing master or a changed run-local record is retained, never guessed.
+          if(fresh.repositoryPointersRef) {
+            const pointers=(await readJSON(rr,fresh.repositoryPointersRef)).filter(u=>u.unitId.startsWith('company_'));let sourceIndex=0,lastSourceReport=0;
+            for(const u of pointers) {
+              if(!sourceIndex||wallNow()-lastSourceReport>=2000){await save({cleanupPhase:'Verifying shared master · '+u.unitId.slice(8)+' · '+(sourceIndex+1)+' / '+pointers.length+' companies / indicators'});lastSourceReport=wallNow();}sourceIndex++;
+              if(wallNow()>deadlineMs)return {yielded:true};
+              const symbol=u.unitId.slice(8),company=await readJSON(scenarioCol.doc(u.pointer.cacheId),u.pointer.artifact);
+              for(const x of company.data||[])if(allowed.has(x.collection))add(x.collection,x.id,replayRecord(x));
+              const series=(company.daily||[]).filter(x=>x.date<r.date).slice(-400);
+              add(admin.COL.marketDaily,symbol,{symbol,...company.provenance,date:series.map(x=>x.date),o:series.map(x=>x.o),h:series.map(x=>x.h),l:series.map(x=>x.l),c:series.map(x=>x.c),v:series.map(x=>x.v),volumeProvenanceHomogeneous:true});
+            }
+          }
+          await save({cleanupPhase:'Removing verified duplicate copies · '+r.date});
+          for(let index=progress.index;index<COPY_KEYS.length;index++) {
+            let after=index===progress.index?progress.after:null;
+            for(;;) {
+              if(wallNow()>deadlineMs)return {yielded:true};
+              const latest=(await rr.get()).data();if(latest.leaseUntil>wallNow()||latest.dispatchedUntil>wallNow()){waiting=true;break;}
+              let q=rr.collection(admin.COL[COPY_KEYS[index]]).orderBy('__name__').limit(200);if(after)q=q.startAfter(after);
+              const page=await q.get(),write=rootBatch();let removed=0,retained=0;
+              for(const d of page.docs){if(allowed.get(admin.COL[COPY_KEYS[index]]).get(d.id)?.has(signature(d.data()))){write.delete(d.ref);removed++;}else retained++;}
+              const complete=page.size<200;after=page.docs.at(-1)?.id||after;
+              Object.assign(progress,{index:complete?index+1:index,after:complete?null:after,removed:progress.removed+removed,retained:progress.retained+retained});
+              write.set(rr,{copyCleanup:{...progress}},{merge:true});await write.commit();
+              removedTotal+=removed;if(complete)checkedTotal++;await save({cleanupRemoved:removedTotal,cleanupChecked:checkedTotal});
+              if(complete)break;
+            }
+            if(waiting&&progress.index===index)break;
+          }
+          if(progress.index===COPY_KEYS.length) {
+            if(progress.retained){await rr.set({copyCleanup:{...progress,index:0,after:null,retained:0}},{merge:true});throw fail('SIMULATION_COPY_CLEANUP_BLOCKED',r.date+': '+progress.retained+' records retained because an identical shared master was not verified.');}
+            await rr.set({evidenceCleanupVersion:CLEANUP_VERSION},{merge:true});
+          }
+        }
+        const latest=await rows(runCol.where('batchId','==',batchId)),done=latest.every(r=>r.evidenceCleanupVersion===CLEANUP_VERSION);
+        await save({cleanupState:done?'complete':'waiting',cleanupPhase:done?'Duplicate cleanup complete':'Waiting for active workers to stop',cleanupRemoved:latest.reduce((n,r)=>n+(r.copyCleanup?.removed||0),0),cleanupNextAtMs:done?0:wallNow()+60000,...(done?{cleanupVersion:CLEANUP_VERSION}:{})});
+        return {done,yielded:!done};
+      }catch(e){await save({cleanupState:'needs_attention',cleanupError:String(e.message).slice(0,400),cleanupNextAtMs:wallNow()+300000});return {done:false,error:e.code||e.message};}
+      finally{clearInterval(timer);await renewal;await rootTransaction(async tx=>{const snap=await tx.get(br);if(snap.data()?.cleanupTicket===ticket)tx.set(br,{cleanupTicket:null,cleanupLeaseUntil:0},{merge:true});});}
+    }
     async function schedule({dispatch=null}={}) {
       if(!dispatch)return [];
       const guard=batchCol.doc('dispatch_lock'),ticket=crypto.randomBytes(8).toString('hex');
@@ -1189,12 +1262,29 @@ const Simulator = (() => {
       if(!locked)return [];
       const selected=[];
       try {
-        const batches=await rows(batchCol.where('status','in',['running','incomplete']));
+        const cleanup=(await rows(batchCol.where('repositoryMode','==','shared_first'))).filter(b=>b.cleanupVersion!==CLEANUP_VERSION&&!(b.cleanupLeaseUntil>wallNow())&&!(b.cleanupDispatchedUntil>wallNow())&&!(b.cleanupNextAtMs>wallNow()));
+        selected.push(...cleanup.map(async b=>{
+          const sequence=(b.cleanupSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation_cleanup',dedupeId:b.batchId+'_cleanup_'+sequence,accountId:b.batchId,payload:{batchId:b.batchId},createdBy:'simulator',priority:100});
+          const job=(await admin.col(admin.COL.jobs).doc(out.jobId).get()).data();
+          await batchCol.doc(b.batchId).set({cleanupSequence:sequence,cleanupDispatchedUntil:wallNow()+90000},{merge:true});
+          try{const result=await dispatch(job);if(result?.error||result?.upstream>=300||result?.upstream===0)throw Error(result.error||'Cleanup worker returned '+result.upstream);return result;}
+          catch(e){await batchCol.doc(b.batchId).set({cleanupDispatchedUntil:0,cleanupNextAtMs:wallNow()+15000,cleanupError:String(e.message).slice(0,300)},{merge:true});return {error:e.message};}
+        }));
+        const batches=(await rows(batchCol.where('status','in',['running','incomplete','reset'])));
         const latestByOwner=new Map(await Promise.all([...new Set(batches.filter(b=>b.status==='incomplete').map(b=>b.owner))].map(async owner=>{
           const history=await rows(batchCol.where('owner','==',owner));return [owner,history.sort((a,b)=>b.createdAtMs-a.createdAtMs)[0]?.batchId];
         })));
         const sets=await Promise.all(batches.map(async b=>({b,runs:await rows(runCol.where('batchId','==',b.batchId))})));
         for(const {b,runs} of sets) {
+          if(b.resetAtMs){
+            const spentNano=runs.reduce((n,r)=>n+(r.spentNano||0),0),reservedNano=runs.reduce((n,r)=>n+(r.reservedNano||0),0);
+            if(b.spentNano!==spentNano||b.reservedNano!==reservedNano)await batchCol.doc(b.batchId).set({spentNano,reservedNano},{merge:true});
+            selected.push(...runs.filter(r=>r.pendingAiCount&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())).map(async r=>{
+              const sequence=(r.dispatchSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_settlement_'+sequence,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
+              await runCol.doc(r.runId).set({paused:true,resetAtMs:b.resetAtMs,dispatchSequence:sequence,dispatchedUntil:wallNow()+90000},{merge:true});
+              return dispatch((await admin.col(admin.COL.jobs).doc(out.jobId).get()).data());
+            }));continue;
+          }
           // Older finished batches stay archived unless the operator explicitly retries one.
           if(b.status==='incomplete'&&latestByOwner.get(b.owner)!==b.batchId)continue;
           let recovered=false;
@@ -1216,6 +1306,7 @@ const Simulator = (() => {
           if(!b.paused&&repository.status!=='ready') {
             const due=(repository.units||[]).filter(u=>u.status!=='ready'&&u.status!=='failed'&&!(u.leaseUntil>wallNow())&&!(u.dispatchedUntil>wallNow())&&!(u.nextAttemptAtMs>wallNow()));
             selected.push(...due.map(async u=>{
+              if((await getBatch(b.batchId)).resetAtMs)return;
               const ur=repo.ref.collection('units').doc(u.unitId),sequence=(u.dispatchSequence||0)+1;
               const out=await jobs.enqueueOnce({task:'simulation_prepare',dedupeId:repo.repositoryId+'_'+u.unitId+'_'+sequence,accountId:b.batchId,payload:{batchId:b.batchId,unitId:u.unitId},createdBy:'simulator',priority:900});
               const job=(await admin.col(admin.COL.jobs).doc(out.jobId).get()).data();
@@ -1228,6 +1319,7 @@ const Simulator = (() => {
             .sort((a,b)=>(a.lastDispatchedAtMs||0)-(b.lastDispatchedAtMs||0)||a.index-b.index);
           // Fan out every eligible run in this tick, including batches created under the old cap.
           selected.push(...eligible.map(async r=>{
+            if((await getBatch(b.batchId)).resetAtMs)return;
             // Every segment has its own identity. A yielded segment must never redispatch a completed job.
             const sequence=(r.dispatchSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_segment_'+sequence,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
             const j=await admin.col(admin.COL.jobs).doc(out.jobId).get();if(!j.exists)return;
@@ -1245,7 +1337,7 @@ const Simulator = (() => {
       // A single-field owner query avoids mandatory new composite indexes.
       const all=(await rows(batchCol.where('owner','==',owner))).sort((a,b)=>b.createdAtMs-a.createdAtMs);
       const history=all.filter(b=>!cursor||b.createdAtMs<Number(cursor)).slice(0,20);
-      const b=batchId?await getBatch(batchId,owner):history[0]||null;
+      const b=batchId?await getBatch(batchId,owner):all.find(b=>!b.resetAtMs)||null;
       const runs=b?(await rows(runCol.where('batchId','==',b.batchId))).sort((a,b)=>a.index-b.index):[];
       const repository=b?await repositoryState(b):null;
       const projected=await Promise.all(runs.map(async r=>{
@@ -1255,21 +1347,24 @@ const Simulator = (() => {
           const pending=await rows(runCol.doc(r.runId).collection('requests').where('status','==','pending'));
           estimatedInFlightNano=pending.reduce((sum,q)=>sum+Math.min(q.reservation,q.inputTokens*q.rates.input+Math.max(0,wallNow()-q.startedAtMs)/1000*throughput*q.rates.output),0);
         }
+        if(b.resetAtMs)r={...r,paused:false,status:TERMINAL.includes(r.status)?r.status:'cancelled',phase:'Archived after reset'};
         const terminal=TERMINAL.includes(r.status),active=!terminal&&!r.paused&&r.leaseUntil>wallNow();
         const unresponsive=!terminal&&!r.paused&&r.leaseOwner&&r.lastHeartbeatAtMs&&wallNow()-r.lastHeartbeatAtMs>90000&&!(r.dispatchedUntil>wallNow());
         const activity=terminal?r.status:r.paused?'paused':unresponsive?'stalled':!r.initialized&&repository?.status!=='ready'?'waiting_repository':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
         const activityLabel=active&&activity!=='waiting_repository'?r.phase:({waiting_repository:'Waiting for shared data preparation',paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
-        const canRetryPreparation=terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
-        return {...r,activity,activityLabel,canRetryPreparation,canResumeAfterContention:canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
+        const canRetryPreparation=!b.resetAtMs&&terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
+        return {...r,activity,activityLabel,canRetryPreparation,canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
           estimatedTotalNano:Math.max(r.spentNano,Math.min(CEILING,r.progress>5?r.spentNano/(r.progress/100):TARGET)),
           estimatedRemainingMs:TERMINAL.includes(r.status)?0:r.paused?null:r.progress>5?Math.max(0,((r.activeMs||0)+(r.leaseUntil>wallNow()?wallNow()-(r.segmentStartedAtMs||wallNow()):0))*(100-r.progress)/r.progress):null};
       }));
       const unfinished=projected.filter(r=>!TERMINAL.includes(r.status)),measured=projected.filter(r=>r.status==='complete'&&r.activeMs>0).map(r=>r.activeMs);
       const typical=measured.length?measured.reduce((n,x)=>n+x,0)/measured.length:null;
       const batchRemainingMs=unfinished.length===0?0:unfinished.some(r=>r.paused||r.status==='preparing'||(r.estimatedRemainingMs==null&&!typical))?null:Math.max(...unfinished.map(r=>r.estimatedRemainingMs||typical||0),0);
-      const displayedStatus=b&&runs.length&&runs.every(r=>TERMINAL.includes(r.status))?(runs.every(r=>r.status==='complete')?'complete':'incomplete'):b?.status;
+      const displayedStatus=b?.resetAtMs?'reset':b&&runs.length&&runs.every(r=>TERMINAL.includes(r.status))?(runs.every(r=>r.status==='complete')?'complete':'incomplete'):b?.status;
       const repositorySummary=repository?Object.fromEntries(Object.entries(repository).filter(([key])=>key!=='units')):null;
-      return {repository:repositorySummary,asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,status:displayedStatus,concurrency:b.count||runs.length,concurrencyMode:'all_requested'}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
+      const cleanupBatches=all.filter(x=>x.repositoryMode==='shared_first'&&x.cleanupVersion!==CLEANUP_VERSION);
+      const cleanup={pendingBatches:cleanupBatches.length,removed:all.reduce((n,x)=>n+(x.cleanupRemoved||0),0),checked:cleanupBatches.reduce((n,b)=>n+(b.cleanupChecked||0),0),total:cleanupBatches.reduce((n,b)=>n+(b.cleanupTotal||b.count*COPY_KEYS.length||0),0),errors:cleanupBatches.filter(x=>x.cleanupError).map(x=>x.cleanupError),phase:cleanupBatches.find(x=>x.cleanupPhase)?.cleanupPhase||'Waiting for cleanup worker'};
+      return {cleanup,repository:repositorySummary,asOfMs:wallNow(),batchRemainingMs,batch:b?{...b,status:displayedStatus,concurrency:b.count||runs.length,concurrencyMode:'all_requested'}:b,runs:projected,history:history.map(x=>({batchId:x.batchId,count:x.count,createdAtMs:x.createdAtMs,status:x.batchId===b?.batchId?displayedStatus:x.status,spentNano:x.spentNano??null})),nextCursor:history.length===20?String(history.at(-1).createdAtMs):null,
         statistics:distribution(runs),totals:{estimatedInFlightNano:projected.reduce((n,r)=>n+(r.estimatedInFlightNano||0),0),estimatedFinalNano:projected.reduce((n,r)=>n+(TERMINAL.includes(r.status)?r.spentNano:r.estimatedTotalNano),0),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),targetNano:runs.length*TARGET,ceilingNano:runs.length*CEILING},
         pricing:{version:VERSION,asOf:'2026-09-05',models:P.MODEL_RATES,serviceTier:'flex for Astra; standard for extraction',currency:'USD',includes:'AI tokens only; data and Firebase charges excluded'},targetMs:TARGET_MS};
     }
@@ -1279,7 +1374,7 @@ const Simulator = (() => {
       if(after)q=q.startAfter(String(after));const items=await rows(q);
       return {run,collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null};
     }
-    return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,control,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
+    return {ensureRepository,repositoryState,prepareRepository,repositoryPackets,createBatch,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
   return {VERSION,TARGET,CEILING,TARGET_MS,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,sharedEvidenceView,create};
 })();

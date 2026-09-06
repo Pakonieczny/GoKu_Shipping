@@ -150,7 +150,7 @@ const ACTIONS_V2 = Object.freeze({
   simulationOverview: read({batchId:T.ref("Id"),cursor:T.str({maxLength:30})}),
   simulationDetail: read({runId:T.ref("Id"),collection:T.str({enum:["curve","requests","fills","decisions","orders","events"]}),after:T.str({maxLength:160})}),
   simulationStart: mutation({count:T.int({minimum:1,maximum:500}),from:T.ref("Date"),to:T.ref("Date")},{concurrency:"none",required:["count","from","to"]}),
-  simulationControl: mutation({batchId:T.ref("Id"),runId:T.ref("Id"),command:T.str({enum:["pause","resume","retry","retry_repository"]})},{concurrency:"none",required:["command"]}),
+  simulationControl: mutation({batchId:T.ref("Id"),runId:T.ref("Id"),command:T.str({enum:["pause","resume","retry","retry_repository","reset"]})},{concurrency:"none",required:["command"]}),
   /* reads */
   managerDashboard: read({ ...acct }),
   controlState: read({ ...acct }),

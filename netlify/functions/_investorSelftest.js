@@ -5856,9 +5856,64 @@ async function simulatorAdversarial() {
     function ref(path){return {id:path.split('/').at(-1),path,collection:n=>collection(path+'/'+n),get:async()=>snap(path),set:async(d,o)=>{docs.set(path,o?.merge?merge(docs.get(path),d):merge({},d));},create:async d=>{if(docs.has(path))throw new Error('exists');docs.set(path,d);},delete:async()=>docs.delete(path)};}
     function collection(path,filters=[],order=null,limit=Infinity,after=null){const q={path,doc:n=>ref(path+'/'+n),where:(...f)=>collection(path,[...filters,f],order,limit,after),orderBy:(f,dir='asc')=>collection(path,filters,[f,dir],limit,after),limit:n=>collection(path,filters,order,n,after),startAfter:v=>collection(path,filters,order,limit,typeof v==='object'?v.id:v),add:async d=>{const r=ref(path+'/'+Math.random().toString(36).slice(2));await r.set(d);return r;},get:async()=>{let items=[...docs.entries()].filter(([k,d])=>k.startsWith(path+'/')&&k.split('/').length===path.split('/').length+1&&filters.every(([f,op,v])=>op==='=='?d[f]===v:op==='in'?v.includes(d[f]):op==='>'?d[f]>v:op==='>='?d[f]>=v:op==='<'?d[f]<v:op==='<='?d[f]<=v:op==='!='?d[f]!==v:false)).map(([k])=>snap(k));if(order){const val=d=>order[0]==='__name__'?d.id:d.data()[order[0]];items.sort((a,b)=>(val(a)<val(b)?-1:val(a)>val(b)?1:0)*(order[1]==='desc'?-1:1));if(after!=null)items=items.filter(d=>order[1]==='desc'?val(d)<after:val(d)>after);}items=items.slice(0,limit);return {docs:items,size:items.length,empty:!items.length,forEach:fn=>items.forEach(fn)};}};return q;}
     function transaction(fn){const work=tail.then(async()=>{const writes=[];const value=await fn({get:r=>r.get(),set:(r,d,o)=>writes.push(()=>r.set(d,o)),update:(r,d)=>writes.push(()=>r.set(d,{merge:true})),create:(r,d)=>writes.push(()=>r.create(d)),delete:r=>writes.push(()=>r.delete())});for(const w of writes)await w();return value;});tail=work.catch(()=>{});return work;}
-    return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
+    return {docs,COL:A.COL,col:collection,doc:ref,runTransaction:transaction,batch:()=>{const writes=[];return {set:(r,d,o)=>writes.push(()=>r.set(d,o)),delete:r=>writes.push(()=>r.delete()),commit:()=>Promise.all(writes.map(w=>w()))};},envelope:()=>({}),FV:{increment:n=>({__inc:n}),serverTimestamp:()=>0}};
   }
   const RID='sim_'+ 'a'.repeat(24),BID='sim_'+'b'.repeat(24),now=Date.now();
+  await check('reset_stops_owned_batches_clears_workspace_and_preserves_history_master_and_other_owner',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake}),b=await svc.createBatch({count:2,from:'2026-04-20',to:'2026-04-24'},'operator','reset-owned'),other=await svc.createBatch({count:1,from:'2026-04-20',to:'2026-04-24'},'other','reset-other');
+    const master=fake.col('InvestorAI_SimulationScenarios').doc('kept_master');await master.set({research:'keep'});await fake.col(A.COL.accounts).doc('paper-1').set({cash:123});
+    const rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);await rr.set({spentNano:123,status:'running',leaseUntil:Date.now()+90000},{merge:true});
+    await svc.control({command:'reset'},'operator');
+    let view=await svc.overview({owner:'operator'});assert.equal(view.batch,null);assert.equal(view.runs.length,0);assert.equal(view.totals.spentNano,0);assert.equal(view.history[0].status,'reset');
+    const prior=await svc.getRun(b.runIds[0]);assert(prior.paused);assert.equal(prior.spentNano,123);assert(prior.leaseUntil>Date.now(),'reset must let an active worker stop before cleanup');
+    assert.equal((await master.get()).data().research,'keep');assert.equal((await fake.col(A.COL.accounts).doc('paper-1').get()).data().cash,123);assert.equal((await svc.getBatch(other.batchId)).paused,false);
+    await assert.rejects(()=>svc.control({batchId:b.batchId,command:'resume'},'operator'),e=>e.code==='BAD_REQUEST');await assert.rejects(()=>svc.control({runId:b.runIds[1],command:'retry'},'operator'),e=>e.code==='BAD_REQUEST');
+    const again=await svc.control({command:'reset'},'operator');assert.equal(again.batches,0);
+    const fresh=await svc.createBatch({count:10,from:'2026-04-01',to:'2026-04-30'},'operator','after-reset');view=await svc.overview({owner:'operator'});assert.equal(view.batch.batchId,fresh.batchId);assert.equal(view.runs.length,10);assert(view.runs.every(r=>r.spentNano===0&&r.progress===0&&!r.paused));assert.equal(fresh.config.initialCashMinor,'10000000');
+    const tasks=[];await svc.schedule({dispatch:async j=>{tasks.push(j);return {upstream:202};}});assert(tasks.every(j=>j.payload?.batchId!==b.batchId&&!b.runIds.includes(j.runId)),'reset batches cannot restart');
+  });
+  await check('reset_is_authenticated_idempotent_and_available_when_attestation_is_down',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake}),V2=require('./_investorApiV2'),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','reset-api');
+    await fake.col(A.COL.control).doc('control').set({fixturesPass:false});
+    const body={apiVersion:'investor.v2',requestId:'req_reset',action:'simulationControl',params:{command:'reset'},idempotencyKey:'reset_'+'k'.repeat(24),csrfToken:'c'.repeat(24)};
+    const denied=await V2.dispatch({body,admin:fake,authOverride:{ok:false,code:'SESSION_EXPIRED',message:'expired'}});assert.equal(denied.statusCode,401);assert(!(await svc.getBatch(b.batchId)).resetAtMs);
+    const authOverride={ok:true,subject:'operator'},first=await V2.dispatch({body,admin:fake,authOverride}),second=await V2.dispatch({body,admin:fake,authOverride});assert.equal(first.statusCode,200,JSON.stringify(first.body));assert.equal(second.statusCode,200);assert.equal(second.body.data.resetAtMs,first.body.data.resetAtMs);
+    assert(require('./_investorJobs').taskFor('simulation_cleanup'));assert(require('./investorManager-background').TASKS.includes('simulation_cleanup'));
+  });
+  await check('reset_settles_an_existing_AI_response_without_submitting_another_decision',async()=>{
+    const fake=database(),calls=[],svc=Sim.create({admin:fake,fetchImpl:async(url,opts)=>{calls.push({url,method:opts.method});return {ok:true,status:200,json:async()=>({id:'resp_reset_existing',status:'completed',service_tier:'default',usage:{input_tokens:100,output_tokens:100}})};}});
+    const b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','reset-pending'),rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]);
+    await rr.set({pendingAiCount:1,reservedNano:1000000000},{merge:true});await rr.collection('requests').doc('existing').set({status:'pending',responseId:'resp_reset_existing',model:'gpt-6-astra',tier:'standard',reservation:1000000000,startedAtMs:now});
+    await svc.reset('operator');const launches=[];await svc.schedule({dispatch:async j=>{launches.push(j);return {upstream:202};}});assert.equal(launches.length,1);assert.equal(launches[0].task,'simulation');
+    await svc.execute(b.runIds[0]);const run=await svc.getRun(b.runIds[0]);assert.equal(calls.length,1);assert.equal(calls[0].method,'GET');assert(calls[0].url.endsWith('/resp_reset_existing'));assert.equal(run.pendingAiCount,0);assert.equal(run.reservedNano,0);assert(run.spentNano>0);assert(!run.managerDone);
+    launches.length=0;await svc.schedule({dispatch:async j=>{launches.push(j);return {upstream:202};}});assert.equal(launches.length,0);assert.equal((await svc.getBatch(b.batchId)).spentNano,run.spentNano);
+  });
+  async function legacyCopies(fake,svc,b,{count=450,master=true}={}) {
+    const rr=fake.col('InvestorAI_Simulations').doc(b.runIds[0]),source=fake.col('InvestorAI_SimulationScenarios').doc('copy_master_'+b.batchId);
+    const data=Array.from({length:count},(_,i)=>({collection:A.COL.claims,id:'copy_'+String(i).padStart(4,'0'),knownAtMs:1000,data:{kind:'claim',symbol:'A',text:'saved fact '+i}}));
+    const artifact=await svc.saveJSON(source,'company',{data,daily:[],provenance:{}});
+    const pointers=master?await svc.saveJSON(rr,'pinned',[{unitId:'company_A',pointer:{cacheId:source.id,artifact}}]):null;
+    await rr.set({repositoryPointersRef:pointers,evidenceCleanupVersion:null,status:'paused',paused:true},{merge:true});
+    await fake.col('InvestorAI_SimulationBatches').doc(b.batchId).set({cleanupVersion:null,cleanupState:'queued'},{merge:true});
+    for(const x of data)await rr.collection(x.collection).doc(x.id).set(x.data);
+    return {rr,source,artifact,data};
+  }
+  await check('duplicate_cleanup_resumes_committed_pages_deletes_only_copies_and_keeps_shared_artifacts',async()=>{
+    const fake=database();let wall=now;const svc=Sim.create({admin:fake,wallNow:()=>wall}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','copy-cleanup'),fixture=await legacyCopies(fake,svc,b);
+    await fixture.rr.collection('requests').doc('paid').set({actualNano:456});await fixture.rr.collection(A.COL.accounts).doc(b.runIds[0]).set({cash:10000000});
+    const batch=fake.batch;fake.batch=()=>{const write=batch();let deleting=false;return {...write,delete:ref=>{deleting=true;return write.delete(ref);},commit:async()=>{await write.commit();if(deleting)wall+=2000;}};};
+    const first=await svc.cleanupBatch(b.batchId,{deadlineMs:wall+1000});assert(first.yielded);assert.equal((await fixture.rr.collection(A.COL.claims).get()).size,250);assert.equal((await fixture.rr.get()).data().copyCleanup.removed,200);
+    fake.batch=batch;const second=await svc.cleanupBatch(b.batchId);assert(second.done,JSON.stringify(second));assert.equal((await fixture.rr.collection(A.COL.claims).get()).size,0);assert.equal((await fixture.rr.get()).data().copyCleanup.removed,450);
+    assert.equal((await svc.readJSON(fixture.source,fixture.artifact)).data.length,450);assert.equal((await fixture.rr.collection('requests').doc('paid').get()).data().actualNano,456);assert.equal((await fixture.rr.collection(A.COL.accounts).doc(b.runIds[0]).get()).data().cash,10000000);
+    const view=await svc.overview({owner:'operator'});assert.equal(view.cleanup.pendingBatches,0);assert.equal(view.cleanup.removed,450);assert((await svc.cleanupBatch(b.batchId)).done);
+  });
+  await check('cleanup_waits_for_live_workers_and_retains_unverified_or_changed_records',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','copy-safety'),f=await legacyCopies(fake,svc,b,{count:2});
+    await f.rr.set({leaseUntil:now+60000},{merge:true});assert(!(await svc.cleanupBatch(b.batchId)).done);assert.equal((await f.rr.collection(A.COL.claims).get()).size,2);
+    await f.rr.set({leaseUntil:0},{merge:true});await f.rr.collection(A.COL.claims).doc('copy_0001').set({text:'a different record'},{merge:true});
+    assert.equal((await svc.cleanupBatch(b.batchId)).error,'SIMULATION_COPY_CLEANUP_BLOCKED');assert.equal((await f.rr.collection(A.COL.claims).get()).size,1);assert.equal((await svc.readJSON(f.source,f.artifact)).data.length,2);
+    const b2=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','missing-copy-master'),f2=await legacyCopies(fake,svc,b2,{count:1,master:false});assert.equal((await svc.cleanupBatch(b2.batchId)).error,'SIMULATION_COPY_CLEANUP_BLOCKED');assert.equal((await f2.rr.collection(A.COL.claims).get()).size,1);
+  });
   await check('shared_evidence_reads_over_9000_records_without_copies_and_hides_future_data',async()=>{
     let clock=1000;const data=Array.from({length:10020},(_,i)=>({collection:A.COL.claims,id:'claim_'+i,knownAtMs:i<10000?900:2000,data:{kind:'claim',claimId:'claim_'+i,symbol:'A',claimType:i%2?'FACT':'GUIDANCE',publishedAtMs:i<10000?900:2000,firstSeenAtMs:i<10000?900:2000,text:'Saved evidence '+i}}));
     const packets=[{symbol:'A',cutoff:1000,daily:{symbol:'A',date:['2025-01-01'],c:[100]},data}],view=Sim.sharedEvidenceView(packets,()=>clock),fake=database();
@@ -5886,10 +5941,10 @@ async function simulatorAdversarial() {
   });
   await check('simulation_controls_pass_real_request_validation_and_reject_invalid_envelopes',()=>{
     const S=require('./_investorApiSchemas'),base={apiVersion:'investor.v2',requestId:'req_sim_controls',action:'simulationControl',idempotencyKey:'k'.repeat(24),csrfToken:'c'.repeat(24)};
-    for(const params of [{batchId:BID,command:'retry_repository'},{runId:RID,command:'retry'},...['pause','resume'].flatMap(command=>[{batchId:BID,command},{runId:RID,command}])]) {
+    for(const params of [{command:'reset'},{batchId:BID,command:'retry_repository'},{runId:RID,command:'retry'},...['pause','resume'].flatMap(command=>[{batchId:BID,command},{runId:RID,command}])]) {
       const result=S.validateRequest({...base,params});assert(result.ok,JSON.stringify(result.error));assert.equal(result.kind,'mutation');
     }
-    for(const command of ['reset','delete','retry_all',''])assert(!S.validateRequest({...base,params:{batchId:BID,command}}).ok);
+    for(const command of ['delete','retry_all',''])assert(!S.validateRequest({...base,params:{batchId:BID,command}}).ok);
     assert(!S.validateRequest({...base,params:{batchId:BID,command:'retry_repository',force:true}}).ok);
     assert(!S.validateRequest({...base,csrfToken:undefined,params:{batchId:BID,command:'retry_repository'}}).ok);
     assert(!S.validateRequest({...base,idempotencyKey:undefined,params:{runId:RID,command:'retry'}}).ok);
