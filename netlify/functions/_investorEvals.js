@@ -161,6 +161,7 @@ const Simulator = (() => {
   const fail = (code,message=code) => Object.assign(new Error(message),{code});
   const isContention = e => ['10','ABORTED','FIRESTORE/ABORTED'].includes(String(e?.code??'').toUpperCase())||/^10\s+ABORTED\b/i.test(String(e?.message||''));
   const canResumeContention = r => r.status==='incomplete'&&isContention(r.error);
+  const canRecheckAI = r => r.status==='incomplete'&&(r.error?.code==='SIMULATION_USAGE_UNKNOWN'||r.reservedNano>0&&['SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED'].includes(r.error?.code));
   // XOM kept its ticker when the successor parent began trading on July 2, 2026.
   // Verified lineage: https://www.sec.gov/Archives/edgar/data/34088/000119312526291986/d70995d8k.htm
   const XOM_HISTORY_VERSION='xom-sec-predecessor.v1';
@@ -445,11 +446,12 @@ const Simulator = (() => {
         if(!runId)throw fail('BAD_REQUEST','Choose a simulation to retry');
         const r=await getRun(runId,owner),ref=runCol.doc(id(runId)),br=batchCol.doc(r.batchId);await getBatch(r.batchId,owner);
         await rootTransaction(async tx=>{const snap=await tx.get(ref),batch=await tx.get(br),v=snap.data();
-          if(batch.data()?.resetAtMs||v.resetAtMs||v.leaseUntil>wallNow()||(!canResumeContention(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure or interrupted database transaction can be retried');
+          if(batch.data()?.resetAtMs||v.resetAtMs||v.leaseUntil>wallNow()||(!canResumeContention(v)&&!canRecheckAI(v)&&(v.status!=='unavailable'||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount)))throw fail('BAD_REQUEST','Only an unpaid preparation failure, saved-response recovery or an interrupted database transaction can be retried');
+          if(canRecheckAI(v))tx.set(ref,{aiRecovery:true,aiRecheckRequired:false,aiAccountingError:null},{merge:true});
           tx.set(ref,{status:'queued',paused:false,error:null,finishedAtMs:null,...(missingXomResearch(v)&&!v.initialized?{repositoryPointersRef:null}:{}),phase:'Retry queued — saved data will be reused',waitReason:'worker',nextAttemptAtMs:0,dispatchedUntil:0,preparationRetries:0,revision:(v.revision||0)+1,updatedAtMs:wallNow()},{merge:true});
           tx.set(br,{status:'running',paused:false,completedAtMs:null,lastControlAtMs:wallNow()},{merge:true});
         });
-        if(!r.initialized) {
+        if(!r.initialized&&!canRecheckAI(r)) {
           const b=await getBatch(r.batchId,owner),config=await readJSON(br,b.configRef),repo=await ensureRepository(b,config);
           if(/^HISTORICAL_BAR|^HISTORICAL_DATA/.test(r.error?.code||'')) {
             const u=(await repo.ref.collection('units').doc('prices_'+r.date).get()).data();
@@ -1053,9 +1055,19 @@ const Simulator = (() => {
       async function settle(qref,q,response) {
         const final=!['queued','in_progress'].includes(response.status);
         const responseRef=await saveJSON(ref,'response',response);
-        if(!final) {await qref.set({responseId:response.id,responseRef,status:'pending',...(response.usage?{reportedUsage:response.usage}:{})},{merge:true});return;}
+        const diagnostic={responseStatus:response.status||'unknown',providerError:response.error||null,incompleteReason:response.incomplete_details?.reason||null};
+        await qref.set({...diagnostic,responseId:response.id||q.responseId||null,responseRef},{merge:true});
+        await ref.set({aiActivity:{status:response.status||'unknown',stage:q.stage||'legacy',model:q.model,responseId:response.id||q.responseId||null,httpStatus:200,checkedAtMs:wallNow(),...diagnostic}},{merge:true});
+        if(!final) {await qref.set({status:'pending',...(response.usage?{reportedUsage:response.usage}:{})},{merge:true});return;}
+        const providerFailure=response.status!=='completed'||response.error;
+        const responseError=providerFailure?Object.assign(fail(['failed','cancelled','incomplete'].includes(response.status)||response.error?'SIMULATION_AI_RESPONSE_FAILED':'SIMULATION_RESPONSE_INVALID',
+          'AI response '+(response.status||'has no valid status')+(response.error?.code?' ('+response.error.code+')':'')+': '+(response.error?.message||response.incomplete_details?.reason||'No completed answer was returned')+'. The saved request will not be purchased again.'),{details:diagnostic}):null;
+        const stop=async e=>{await ref.set({aiAccountingError:{code:e.code,message:e.message,details:e.details||diagnostic}},{merge:true});throw e;};
         if(!response.usage || !Number.isInteger(response.usage.input_tokens)||!Number.isInteger(response.usage.output_tokens)) {
-          await qref.set({responseId:response.id,responseRef,status:'uncertain'},{merge:true});throw fail('SIMULATION_USAGE_UNKNOWN','Provider did not report token usage; reserved cost retained');
+          const checks=(q.usageChecks||0)+1;
+          await qref.set({status:'awaiting_usage',usageChecks:checks,lastCheckedAtMs:wallNow()},{merge:true});
+          if(responseError)return stop(responseError);
+          return stop(fail(checks<5?'SIMULATION_USAGE_PENDING':'SIMULATION_USAGE_UNKNOWN',checks<5?'AI answer saved; checking the same response for token usage. Reserved cost retained.':'AI answer is saved, but token usage is still missing after five checks. Recheck AI response to retrieve it again; no new AI request will be purchased.'));
         }
         const tier=response.service_tier==='flex'?'flex':q.tier==='flex' && !response.service_tier?'flex':'standard';
         const actual=price(q.model,response.usage,tier,tier===q.tier?q.rates:null);
@@ -1064,13 +1076,18 @@ const Simulator = (() => {
           const stage=q.stage||'legacy',prior=r.costByStage?.[stage]||{};
           tx.set(ref,{costUpdatedAtMs:wallNow(),costByStage:{...(r.costByStage||{}),[stage]:{spentNano:(prior.spentNano||0)+actual,requests:(prior.requests||0)+1,inputTokens:(prior.inputTokens||0)+response.usage.input_tokens,outputTokens:(prior.outputTokens||0)+response.usage.output_tokens}}},{merge:true});
           tx.set(qref,{status:'settled',responseId:response.id,responseRef,actualNano:actual,usage:response.usage,tier,finishedAtMs:wallNow()},{merge:true});});
+        await ref.set({aiAccountingError:null},{merge:true});
+        if(responseError)return stop(responseError);
       }
       async function request({method,url,body,stage='legacy'}) {
         await assertOwner();
         if(method==='GET') {
           const qs=await rows(ref.collection('requests').where('responseId','==',url.split('/').at(-1)).limit(1));if(!qs.length)throw fail('SIMULATION_RESPONSE_UNKNOWN');
           const q=qs[0],qref=ref.collection('requests').doc(q.id);if(q.status==='settled')return {ok:true,status:200,data:await readJSON(ref,q.responseRef)};
-          await onActivity('checking',q.model,q.stage);const r=await rawHTTP(method,url);if(r.ok)await settle(qref,q,r.data);return r;
+          await onActivity('checking',q.model,q.stage);let r;
+          try {r=await rawHTTP(method,url);}catch(e){throw fail('SIMULATION_RESPONSE_FETCH_FAILED','Could not retrieve the saved AI response: '+e.message+'. Reservation retained; recheck without purchasing a new request.');}
+          if(!r.ok)throw Object.assign(fail('SIMULATION_RESPONSE_FETCH_FAILED','Could not retrieve the saved AI response (HTTP '+r.status+'): '+(r.data?.error?.message||'Provider request failed')+'. Reservation retained.'),{details:{responseId:q.responseId,httpStatus:r.status,providerError:r.data?.error||null}});
+          await settle(qref,q,r.data);return r;
         }
         if(method!=='POST')throw fail('SIMULATION_NETWORK_FORBIDDEN');
         const key=hash({body,clock:run.clockMs}),qref=ref.collection('requests').doc(key),old=await qref.get();
@@ -1119,7 +1136,17 @@ const Simulator = (() => {
         if(r.data?.id)await qref.set({responseId:r.data.id,status:'pending'},{merge:true});
         const q=(await qref.get()).data();await settle(qref,q,r.data);return r;
       }
-      async function drain() {const pending=await rows(ref.collection('requests').where('status','==','pending'));for(const q of pending) await request({method:'GET',url:'https://api.openai.com/v1/responses/'+q.responseId});const remaining=(await rows(ref.collection('requests').where('status','==','pending'))).length;if(!remaining)await ref.set({pendingAiCount:0},{merge:true});return remaining;}
+      async function drain({recovery=false}={}) {
+        const all=await rows(ref.collection('requests'));
+        if(recovery&&!all.some(q=>q.responseId))throw fail('SIMULATION_RESPONSE_UNKNOWN','No acknowledged AI response is saved; automatic resubmission is blocked.');
+        for(const q of all.filter(q=>q.responseId&&['pending','awaiting_usage','uncertain'].includes(q.status)))await request({method:'GET',url:'https://api.openai.com/v1/responses/'+q.responseId});
+        if(recovery)for(const q of all.filter(q=>q.status==='settled')) {
+          const response=await readJSON(ref,q.responseRef);
+          if(response.status!=='completed'||response.error)throw Object.assign(fail('SIMULATION_AI_RESPONSE_FAILED','Saved AI response '+response.status+': '+(response.error?.message||response.incomplete_details?.reason||'No completed answer')+'. No replacement request was purchased.'),{details:{responseId:q.responseId,responseStatus:response.status,providerError:response.error||null}});
+        }
+        const remaining=(await rows(ref.collection('requests'))).filter(q=>!['settled','rejected'].includes(q.status)).length;
+        await ref.set({pendingAiCount:remaining},{merge:true});return remaining;
+      }
       return {request,drain};
     }
     async function execute(runId,{deadlineMs=wallNow()+11*60000}={}) {
@@ -1146,6 +1173,12 @@ const Simulator = (() => {
       const heartbeat=setInterval(()=>{heartbeatPending=heartbeatPending.then(()=>rootTransaction(async tx=>{const s=await tx.get(ref);if(s.data()?.leaseOwner===owner)tx.set(ref,{leaseUntil:wallNow()+90000,lastHeartbeatAtMs:wallNow()},{merge:true});})).catch(()=>{});},20000);
       if(heartbeat.unref)heartbeat.unref();
       try {
+        if(run.aiRecovery&&!run.resetAtMs&&!batch.resetAtMs) {
+          await report({stage:'ai_accounting',label:'Rechecking saved AI response and token usage',done:null,total:null,unit:'',current:null});
+          const remaining=await cost.drain({recovery:true});
+          if(remaining){await save({status:run.paused||batch.paused?'paused':'queued',phase:'Waiting for the saved AI response',nextAttemptAtMs:wallNow()+5000});return {yielded:true};}
+          await save({aiRecovery:false,aiRecheckRequired:false,aiAccountingError:null,error:null,status:run.paused||batch.paused?'paused':'queued',finishedAtMs:null});
+        }
         if(run.resetAtMs||batch.resetAtMs||run.paused||batch.paused||TERMINAL.includes(run.status)) {await cost.drain();return {done:true,paused:!!run.paused};}
         let packets,meta;
         if(!run.initialized||run.repositoryId) {
@@ -1285,6 +1318,13 @@ const Simulator = (() => {
         return {done:TERMINAL.includes(latest.status)||latest.paused,yielded:!TERMINAL.includes(latest.status)&&!latest.paused};
       } catch(e) {
         const latest=await getRun(runId);
+        if(latest.aiAccountingError&&e.code==='SIMULATION_MANAGER_INCOMPLETE')e=Object.assign(Error(latest.aiAccountingError.message),latest.aiAccountingError);
+        if(e.code==='SIMULATION_USAGE_PENDING') {
+          const stopped=latest.paused||(await getBatch(run.batchId)).paused;
+          await save({status:stopped?'paused':'queued',phase:e.message,aiRecovery:true,waitReason:'ai_usage',error:null,nextAttemptAtMs:wallNow()+5000});
+          return {done:false,yielded:true};
+        }
+        if(['SIMULATION_USAGE_UNKNOWN','SIMULATION_AI_RESPONSE_FAILED','SIMULATION_RESPONSE_INVALID','SIMULATION_RESPONSE_FETCH_FAILED','SIMULATION_RESPONSE_UNKNOWN'].includes(e.code))await save({aiRecheckRequired:true,aiRecovery:false});
         if(isContention(e)) {
           const stopped=latest.paused||(await getBatch(run.batchId)).paused,nextAttemptAtMs=wallNow()+5000+Math.floor(Math.random()*5000);
           await save({status:stopped?'paused':'queued',phase:stopped?'Paused — progress saved':'Database busy — retrying automatically',waitReason:'database_retry',nextAttemptAtMs,error:null,
@@ -1390,7 +1430,7 @@ const Simulator = (() => {
           if(b.resetAtMs){
             const spentNano=runs.reduce((n,r)=>n+(r.spentNano||0),0),reservedNano=runs.reduce((n,r)=>n+(r.reservedNano||0),0);
             if(b.spentNano!==spentNano||b.reservedNano!==reservedNano)await batchCol.doc(b.batchId).set({spentNano,reservedNano},{merge:true});
-            selected.push(...runs.filter(r=>r.pendingAiCount&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())).map(async r=>{
+            selected.push(...runs.filter(r=>r.pendingAiCount&&!r.aiRecheckRequired&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())).map(async r=>{
               const sequence=(r.dispatchSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_settlement_'+sequence,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
               await runCol.doc(r.runId).set({paused:true,resetAtMs:b.resetAtMs,dispatchSequence:sequence,dispatchedUntil:wallNow()+90000},{merge:true});
               return dispatch((await admin.col(admin.COL.jobs).doc(out.jobId).get()).data());
@@ -1399,6 +1439,16 @@ const Simulator = (() => {
           // Older finished batches stay archived unless the operator explicitly retries one.
           if(b.status==='incomplete'&&latestByOwner.get(b.owner)!==b.batchId)continue;
           let recovered=false;
+          // Recover the old usage-unknown dead end by reading its saved response.
+          // Exhausted checks under the new code require the explicit recheck button.
+          if(!b.paused)for(const r of runs.filter(r=>!r.paused&&r.status==='incomplete'&&r.error?.code==='SIMULATION_USAGE_UNKNOWN'&&!r.aiRecheckRequired)) {
+            const rr=runCol.doc(r.runId),fields=await rootTransaction(async tx=>{
+              const s=await tx.get(rr),bs=await tx.get(batchCol.doc(b.batchId)),v=s.data();
+              if(bs.data()?.paused||v.paused||v.leaseUntil>wallNow()||v.status!=='incomplete'||v.error?.code!=='SIMULATION_USAGE_UNKNOWN'||v.aiRecheckRequired)return null;
+              const fields={status:'queued',aiRecovery:true,error:null,finishedAtMs:null,phase:'Rechecking saved AI response',nextAttemptAtMs:0,dispatchedUntil:0};
+              tx.set(rr,fields,{merge:true});tx.set(batchCol.doc(b.batchId),{status:'running',completedAtMs:null},{merge:true});return fields;
+            });if(fields){Object.assign(r,fields);recovered=true;}
+          }
           // One-time recovery of the reported unpaid XOM failures, including batches
           // already closed as incomplete. Never restart paid, initialized or paused runs.
           if(!b.paused)for(const r of runs.filter(r=>!r.paused&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable'&&missingXomResearch(r)&&r.researchRecoveryVersion!==XOM_HISTORY_VERSION)) {
@@ -1410,7 +1460,7 @@ const Simulator = (() => {
             if(fields){Object.assign(r,fields);recovered=true;}
           }
           if(b.status==='incomplete'&&!recovered)continue;
-          if(runs.every(r=>TERMINAL.includes(r.status)&&!r.pendingAiCount)){await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
+          if(runs.every(r=>TERMINAL.includes(r.status)&&(!r.pendingAiCount||r.aiRecheckRequired))){await batchCol.doc(b.batchId).set({status:runs.every(r=>r.status==='complete')?'complete':'incomplete',completedAtMs:wallNow(),spentNano:runs.reduce((n,r)=>n+r.spentNano,0),reservedNano:runs.reduce((n,r)=>n+r.reservedNano,0),statistics:distribution(runs)},{merge:true});continue;}
           const config=await readJSON(batchCol.doc(b.batchId),b.configRef),repo=await ensureRepository(b,config);
           if(!b.paused)await reuseRepositoryArtifacts(b,config,repo.ref);
           const repository=await repositoryState({...b,repositoryId:repo.repositoryId});
@@ -1426,7 +1476,7 @@ const Simulator = (() => {
               catch(e){await rootTransaction(async tx=>{const x=await tx.get(ur);if(x.data()?.dispatchSequence===sequence&&!(x.data()?.leaseUntil>wallNow()))tx.set(ur,{dispatchedUntil:0,nextAttemptAtMs:wallNow()+15000,phase:'Shared preparation worker could not start — retrying',waitReason:'dispatch_retry',lastDispatchError:String(e.message).slice(0,200),updatedAtMs:wallNow()},{merge:true});});return {unitId:u.unitId,error:String(e.message)};}
             }));
           }
-          const eligible=runs.filter(r=>(repository.status==='ready'||r.initialized)&&(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
+          const eligible=runs.filter(r=>(repository.status==='ready'||r.initialized)&&!r.aiRecheckRequired&&(!TERMINAL.includes(r.status)||r.pendingAiCount>0)&&((!r.paused&&!b.paused)||r.pendingAiCount>0)&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())&&!(r.nextAttemptAtMs>wallNow()))
             .sort((a,b)=>(a.lastDispatchedAtMs||0)-(b.lastDispatchedAtMs||0)||a.index-b.index);
           // Fan out every eligible run in this tick, including batches created under the old cap.
           selected.push(...eligible.map(async r=>{
@@ -1461,7 +1511,7 @@ const Simulator = (() => {
         const activity=terminal?r.status:r.paused?'paused':unresponsive?'stalled':!r.initialized&&repository?.status!=='ready'?'waiting_repository':active?(r.initialized?'running':'preparing'):r.dispatchedUntil>wallNow()?'starting':r.waitReason==='shared_source'?'waiting_shared':r.nextAttemptAtMs>wallNow()?'retrying':'queued';
         const activityLabel=active&&activity!=='waiting_repository'?r.phase:({waiting_repository:'Waiting for shared data preparation',paused:'Paused — saved',starting:'Starting worker',waiting_shared:'Waiting for a shared SEC download',retrying:r.phase,queued:r.scenarioCursor>0?'Preparation saved — waiting for a worker':'Queued for a worker'})[activity]||r.phase;
         const canRetryPreparation=!b.resetAtMs&&terminal&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable';
-        return {...r,activity,activityLabel,canRetryPreparation,canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
+        return {...r,activity,activityLabel,canRetryPreparation,canRecheckAI:!b.resetAtMs&&canRecheckAI(r)&&!(r.leaseUntil>wallNow()),canResumeAfterContention:!b.resetAtMs&&canResumeContention(r)&&!(r.leaseUntil>wallNow()),workerLastSeenAtMs:r.lastHeartbeatAtMs||r.updatedAtMs||null,curve:r.curvePreview||[],tokensPerSecond:throughput,estimatedInFlightNano,inFlight:r.pendingAiCount||0,
           estimatedTotalNano:Math.max(r.spentNano,Math.min(CEILING,r.progress>5?r.spentNano/(r.progress/100):TARGET)),
           estimatedRemainingMs:TERMINAL.includes(r.status)?0:r.paused?null:r.progress>5?Math.max(0,((r.activeMs||0)+(r.leaseUntil>wallNow()?wallNow()-(r.segmentStartedAtMs||wallNow()):0))*(100-r.progress)/r.progress):null};
       }));

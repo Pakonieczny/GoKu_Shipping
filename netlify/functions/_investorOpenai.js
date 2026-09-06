@@ -1011,6 +1011,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     let attempt = 0, res;
     try { res = await http("POST", RESPONSES_ENDPOINT, body, timeoutMs); }
     catch (e) {
+      if (A.currentScope() && /^SIMULATION_/.test(e.code || '')) throw e;
       await releaseMinor(reservationId).catch(() => {});
       await record(requestId, { status: "unreachable", error: String(e.message).slice(0, 120), latencyMs: now() - startedAtMs });
       return failure("model_unreachable", { requestId });
@@ -1093,7 +1094,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       if (st.responseId) {
         let r;
         try { r=await http("GET",`${RESPONSES_ENDPOINT}/${encodeURIComponent(st.responseId)}`,null,timeoutMs); }
-        catch { return pending(); }
+        catch (e) { if (A.currentScope() && /^SIMULATION_/.test(e.code || '')) throw e; return pending(); }
         if (!r.ok) { await record(requestId,{status:"http_error",httpStatus:r.status}); return failure(`openai_http_${r.status}`,{requestId}); }
         data=r.data || {};
       } else {
@@ -1105,7 +1106,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
           tools:toolDefinitions(tools),tool_choice:"auto",parallel_tool_calls:false};
         let r;
         try { r=await http("POST",RESPONSES_ENDPOINT,body,timeoutMs); }
-        catch { await record(requestId,{status:"submission_uncertain",reservationId}); return failure("model_submission_uncertain",{requestId}); }
+        catch (e) { if (A.currentScope() && /^SIMULATION_/.test(e.code || '')) throw e; await record(requestId,{status:"submission_uncertain",reservationId}); return failure("model_submission_uncertain",{requestId}); }
         if (!r.ok) { await releaseMinor(reservationId); await record(requestId,{status:"http_error",httpStatus:r.status}); return failure(`openai_http_${r.status}`,{requestId}); }
         data=r.data || {};
         st.responseId=data.id || null;
@@ -1163,7 +1164,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     while (true) {
       let res;
       try { res = await http("GET", `${RESPONSES_ENDPOINT}/${encodeURIComponent(responseId)}`, null, timeoutMs); }
-      catch (e) { await record(requestId, { status: "in_flight", pollError: String(e.message).slice(0, 120), lastPollAtMs: now() }); return { ok: false, pending: true, requestId, responseId, error: "poll_unreachable" }; }
+      catch (e) { if (A.currentScope() && /^SIMULATION_/.test(e.code || '')) throw e; await record(requestId, { status: "in_flight", pollError: String(e.message).slice(0, 120), lastPollAtMs: now() }); return { ok: false, pending: true, requestId, responseId, error: "poll_unreachable" }; }
       if (!res.ok) {
         await settleMinor(prior.reservationId || requestId, 0, {}, base.role).catch(() => {});
         await record(requestId, { status: "http_error", httpStatus: res.status, latencyMs: now() - (prior.startedAtMs || now()) });
