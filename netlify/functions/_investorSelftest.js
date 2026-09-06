@@ -6587,6 +6587,20 @@ async function simulatorAdversarial({only=null}={}) {
   async function metered(script,inputTokens=1000){const fake=database(),ref=fake.col('InvestorAI_Simulations').doc(RID),run={runId:RID,clockMs:1000,leaseOwner:'owner',owner:'operator',spentNano:0,reservedNano:0,paused:false,leaseUntil:now+1000000};await ref.set(run);let posts=0,counts=0;const svc=Sim.create({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{if(url.endsWith('/input_tokens')){counts++;return {ok:true,status:200,json:async()=>({input_tokens:inputTokens})};}if(opts.method==='POST')posts++;return script(url,opts,posts);}});const meter=svc.meter(run,ref,async()=>(await ref.get()).data().paused,async()=>{});return {fake,ref,run,svc,meter,posts:()=>posts,counts:()=>counts};}
   const body={model:'gpt-6-astra',input:[{role:'user',content:'fixture'}],max_output_tokens:4000,reasoning:{effort:'high'}};
   const completed={id:'resp_fixture',status:'completed',service_tier:'flex',model:'gpt-6-astra',output:[],usage:{input_tokens:1000,output_tokens:1000,output_tokens_details:{reasoning_tokens:800}}};
+  await check('astra_medium_fits_remaining_budget_and_reuses_paid_decision',async()=>{
+    let sent;const x=await metered(async(u,o)=>{sent=JSON.parse(o.body);return {ok:true,status:200,json:async()=>completed};},129409);
+    await x.ref.set({spentNano:546200000},{merge:true});
+    const original={...body,max_output_tokens:30000},request={method:'POST',url:'https://api.openai.com/v1/responses',stage:'manager_decision',body:original};
+    await x.meter.request(request);
+    assert.equal(sent.reasoning.effort,'medium');assert.equal(original.reasoning.effort,'high');
+    assert(sent.max_output_tokens>=20000&&sent.max_output_tokens<39900);
+    const q=(await x.ref.collection('requests').get()).docs[0].data();
+    assert(q.reservation+546200000<=Sim.CEILING);assert.equal(q.effectiveReasoning,'medium');
+    await x.meter.request(request);assert.equal(x.posts(),1);assert.equal(x.counts(),1);
+    const blocked=await metered(async()=>{throw new Error('must not purchase');},129409);
+    await blocked.ref.set({spentNano:1000000000},{merge:true});
+    await assert.rejects(()=>blocked.meter.request(request),e=>e.code==='SIMULATION_BUDGET_INSUFFICIENT');assert.equal(blocked.posts(),0);
+  });
   await check('simulation_output_boost_is_unchanged_and_extra_funds_are_reserved_for_later_stages',async()=>{
     const cases=[['shortlist',8000,'gpt-5.6-luna'],...Object.entries(Sim.AI_PLAN.outputTokens).map(([name,tokens])=>[({prepareResearchDocument:'manager_document',decidePreparedPortfolio:'manager_decision',reviewUniverse:'manager_review',repairCoverageStructure:'manager_coverage',researchCompany:'manager_research'})[name]||name,tokens,name==='prepareResearchDocument'?'gpt-5.6-luna':'gpt-6-astra']),['legacy',4000,'gpt-6-astra']];
     for(const [stage,tokens,model] of cases){
@@ -6847,7 +6861,7 @@ async function simulatorAdversarial({only=null}={}) {
         if(bad==='document_citations')output.sections.business={summary:'Invented growth claim that must never reach Astra.',evidenceIds:['claim:not_in_the_source_packet'],missing:[]};
         else {const validate=new(require('ajv/dist/2020'))({strict:false}).compile(b.text.format.schema);assert(validate(output),JSON.stringify(validate.errors));}
       } else if(name==='prepared_investment_decision_v1'||name==='simulation_investment_plan_v1') {
-        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'high');assert(!b.tools);assert.equal(b.max_output_tokens,horizon?(picks>5?47880:39900):picks>2?35910:23940);
+        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'medium');assert(!b.tools);assert.equal(b.max_output_tokens,horizon?(picks>5?47880:39900):picks>2?35910:23940);
         const docs=JSON.parse(user.match(/<untrusted_context name="prepared_documents">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);const prior=required?[]:JSON.parse(user.match(/<untrusted_context name="completed_research">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);assert.equal(docs.length+prior.length,picks);assert(docs.every(d=>d.documentHash));
         assert(!JSON.stringify(docs).includes('Invented growth claim that must never reach Astra.'));
         for(const doc of docs){const ids=new Set(doc.evidence.map(e=>e.id));assert(Object.values(doc.sections).every(s=>s.evidenceIds.every(id=>ids.has(id))));assert(doc.evidence.some(e=>e.claimType==='RISK_FACTOR'),'adverse evidence must survive preparation');}

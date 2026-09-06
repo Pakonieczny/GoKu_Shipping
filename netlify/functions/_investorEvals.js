@@ -208,6 +208,8 @@ const Simulator = (() => {
   }
   function simulationRequestBody(body,stage) {
     const out=JSON.parse(JSON.stringify(body)),format=out.text?.format;
+    // Apply only after the meter has checked the original request identity for paid answers.
+    if(stage==='manager_decision'&&out.model==='gpt-6-astra')out.reasoning={...out.reasoning,effort:'medium'};
     const canonical=Object.entries({...P.SCHEMAS,...require('./_investorResearchHandoff').SCHEMAS}).find(([name])=>name.replace(/[^a-z0-9_]/gi,'_')===format?.name)?.[1];
     if(canonical){const minimum=format.schema?.properties?.researchRequests?.minItems,maximum=format.schema?.properties?.researchRequests?.maxItems;format.schema=P.strictOutputSchema(canonical,{preserveConstraints:true}).schema;
       if(minimum) {format.schema.properties.researchRequests.minItems=minimum;format.schema.properties.researchRequests.maxItems=maximum||2;}}
@@ -1304,7 +1306,13 @@ const Simulator = (() => {
           if(qs.exists)throw fail('SIMULATION_DUPLICATE_REQUEST');if(r.resetAtMs || r.paused || r.leaseOwner!==run.leaseOwner)throw fail('SIMULATION_PAUSED');
           const unlimited=uncappedRun(r),holdbackNano=unlimited?0:boostBudget(run.aiPlan?.holdbackNano?.[stage]||0)+(EXTRA_HOLDBACK[stage]||0),availableNano=unlimited?null:Math.max(0,CEILING-r.spentNano-r.reservedNano-holdbackNano),room=unlimited?Infinity:availableNano-inputReserve;
           if(!Number.isSafeInteger(body.max_output_tokens)||body.max_output_tokens<=0)throw fail('SIMULATION_INVALID_OUTPUT_LIMIT');
-          const maxOutput=Math.max(boostBudget(body.max_output_tokens),stage==='shortlist'?24000:0,attempt?(run.aiRetryOutputTokens?.[originalKey]||0):0);
+          let maxOutput=Math.max(boostBudget(body.max_output_tokens),stage==='shortlist'?24000:0,attempt?(run.aiRetryOutputTokens?.[originalKey]||0):0);
+          // Fit an unsubmitted joint research decision to remaining cash without raising the ceiling.
+          // Keep a 20K floor; never shrink an explicit truncation retry or a sibling's reservation.
+          if(stage==='manager_decision'&&body.model==='gpt-6-astra'&&!attempt&&!unlimited&&!r.reservedNano) {
+            const affordable=Math.floor(room/rates.output);
+            if(affordable>=20000)maxOutput=Math.min(maxOutput,affordable);
+          }
           if(maxOutput*rates.output>room)return {blocked:true,pending:r.reservedNano>0&&inputReserve+Math.ceil(maxOutput*rates.output)<=CEILING-r.spentNano-holdbackNano,requiredNano:inputReserve+Math.ceil(maxOutput*rates.output),availableNano,holdbackNano,requestedOutputTokens:maxOutput};
           const nano=inputReserve+Math.ceil(maxOutput*rates.output);
           tx.set(ref,{reservedNano:r.reservedNano+nano,pendingAiCount:(r.pendingAiCount||0)+1,budgetFailure:null},{merge:true});
