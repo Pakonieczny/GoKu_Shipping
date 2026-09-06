@@ -18,12 +18,12 @@ function sourcePacket(packet, supplemental = {}) {
   const catalog=[];
   for(const claim of packet.claims||[]) if(claim.claimId && claim.documentVersionId) {
     if(claim.publishedAtMs && claim.publishedAtMs>packet.cutoffMs)fail('HANDOFF_FUTURE_EVIDENCE');
-    catalog.push({id:'claim:'+claim.claimId,kind:'claim',...claim});
+    catalog.push({...claim,id:'claim:'+claim.claimId,kind:'claim'});
   }
   for(const fact of supplemental.filings?.facts||[]) {
     if(!fact.factId)continue;
     if(fact.filedDate && fact.filedDate>new Date(packet.cutoffMs).toISOString().slice(0,10))fail('HANDOFF_FUTURE_EVIDENCE');
-    catalog.push({id:'fact:'+fact.factId,kind:'financial_fact',...fact,lineage:(supplemental.filings.lineage||[]).filter(l=>l.factId===fact.factId)});
+    catalog.push({...fact,id:'fact:'+fact.factId,kind:'financial_fact',lineage:(supplemental.filings.lineage||[]).filter(l=>l.factId===fact.factId)});
   }
   const ids=new Set();for(const row of catalog){if(ids.has(row.id))fail('HANDOFF_DUPLICATE_EVIDENCE');ids.add(row.id);}
   const baseline=Object.fromEntries(['symbol','cutoffMs','dossierVersionId','dossierHash','identity','card','fundamentals','guidance','nextEarnings','sectorBlock','marketObservation','freshness','dataQuality','pendingChanges','learning','prior','documents'].map(k=>[k,packet[k]??null]));
@@ -31,16 +31,61 @@ function sourcePacket(packet, supplemental = {}) {
   for(const [key,value] of Object.entries(supplemental))if(!value||value.missing||value.error||value.truncated)missing.push({source:key,reason:value?.reason||value?.error||'Unavailable or incomplete',truncated:!!value?.truncated});
   return {version:VERSION,baseline,catalog,decisionData:supplemental.decisionData||null,missing};
 }
-function bindDocument(output, source) {
+// Citation handles are deterministic for the frozen packet. Baseline entries
+// point to data already attached to both models; they do not manufacture claims.
+function citationCatalog(source) {
+  const catalog=[...source.catalog];
+  for(const [key,value] of Object.entries(source.baseline))if(value!==null&&value!==undefined)
+    catalog.push({id:'baseline:'+key,kind:'baseline',path:'baseline.'+key});
+  if(source.decisionData)catalog.push({id:'supplemental:decisionData',kind:'supplemental',path:'decisionData'});
+  if(new Set(catalog.map(x=>x.id)).size!==catalog.length)fail('HANDOFF_DUPLICATE_EVIDENCE');
+  return catalog.map((row,i)=>({...row,citationId:'source:'+i}));
+}
+function preparationWire(source) {
+  const catalog=citationCatalog(source),ids=catalog.map(x=>x.citationId),schema=JSON.parse(JSON.stringify(SCHEMAS['prepared-research-document.v1']));
+  // One shared definition avoids repeating hundreds of enum values nine times.
+  // Keep long original IDs in the packet, outside the constrained schema.
+  schema.$defs={evidenceId:ids.length<999?{type:'string',enum:ids.length?ids:['no_source_available']}:{type:'string',pattern:'^(?:'+ids.join('|')+')$'}};
+  for(const section of Object.values(schema.properties.sections.properties)) {
+    section.properties.evidenceIds.items={$ref:'#/$defs/evidenceId'};
+    if(!ids.length)section.properties.evidenceIds.maxItems=0;
+  }
+  schema.properties.symbol={type:'string',enum:[source.baseline.symbol]};
+  return {source:{...source,catalog},schema,instructions:'In every evidenceIds array, select only the exact citationId values (source:0, source:1, etc.) from this packet. Never write raw claimId, factId, document IDs or invented names there. Baseline and supplemental entries point to the attached fields. Leave evidenceIds empty when no supplied record supports the summary, and describe the missing information. This citation format supersedes the earlier catalog-id instruction.'};
+}
+function bindDocument(output, source, {recoverReferences=false}={}) {
   const errors=P.validateAgainst(SCHEMAS['prepared-research-document.v1'],output);
   if(errors.length)fail('HANDOFF_SCHEMA_INVALID');
   if(output.symbol!==source.baseline.symbol)fail('HANDOFF_SYMBOL_MISMATCH');
-  const byId=new Map(source.catalog.map(x=>[x.id,x])),ids=[...new Set([...Object.values(output.sections).flatMap(x=>x.evidenceIds),...source.catalog.filter(x=>x.kind==='claim'&&['GUIDANCE','EARNINGS_DATE','RISK_FACTOR','CONTRADICTION'].includes(x.claimType)).map(x=>x.id)])];
-  if(ids.some(id=>!byId.has(id)))fail('HANDOFF_UNKNOWN_EVIDENCE');
+  const catalog=citationCatalog(source),byId=new Map(catalog.map(x=>[x.id,x])),aliases=new Map();
+  const alias=(key,id)=>{if(!key)return;const matches=aliases.get(key)||new Set();matches.add(id);aliases.set(key,matches);};
+  for(const row of catalog) {
+    alias(row.id,row.id);alias(row.citationId,row.id);
+    if(recoverReferences){alias(row.claimId,row.id);alias(row.factId,row.id);if(row.kind==='baseline'){alias(row.path,row.id);alias(row.path.slice(9),row.id);}}
+  }
+  const recovery={version:'citation-recovery.v1',normalizedReferences:[],discardedSections:[],unknownEvidenceIds:[]},sections={};
+  for(const [key,section] of Object.entries(output.sections)) {
+    const ids=[],unknown=[];
+    for(const original of section.evidenceIds) {
+      const token=recoverReferences?original.trim():original,matches=aliases.get(token);
+      if(matches?.size!==1){unknown.push(original);continue;}
+      const id=[...matches][0];ids.push(id);
+      if(id!==original&&!token.startsWith('source:'))recovery.normalizedReferences.push({from:original,to:id});
+    }
+    if(unknown.length&&!recoverReferences)fail('HANDOFF_UNKNOWN_EVIDENCE');
+    if(unknown.length) {
+      recovery.discardedSections.push(key);recovery.unknownEvidenceIds.push(...unknown);
+      // Never keep unsupported prose while silently removing its bad citations.
+      sections[key]={summary:'Summary omitted because its source references could not be verified. Analyze the attached original evidence directly.',evidenceIds:[...new Set(ids)],missing:['The original source records require direct assessment by Astra.']};
+    } else sections[key]={...section,evidenceIds:[...new Set(ids)]};
+  }
+  const recovered=recovery.discardedSections.length>0;
+  const ids=[...new Set([...Object.values(sections).flatMap(x=>x.evidenceIds),...catalog.filter(x=>recovered||x.kind==='claim'&&['GUIDANCE','EARNINGS_DATE','RISK_FACTOR','CONTRADICTION'].includes(x.claimType)).map(x=>x.id)])];
   const document={version:VERSION,symbol:output.symbol,cutoffMs:source.baseline.cutoffMs,
     preparationLabel:'Luna summaries are navigation and interpretation, not independently verified evidence. Use the attached exact source records.',
-    sections:output.sections,baseline:source.baseline,evidence:ids.map(id=>byId.get(id)),missing:source.missing,
+    sections,baseline:source.baseline,evidence:ids.map(id=>byId.get(id)),missing:source.missing,
     decisionData:source.decisionData,sourceHash:C.hash(source)};
+  if(recovered||recovery.normalizedReferences.length)document.referenceRecovery=recovery;
   document.documentHash=C.hash(document);return document;
 }
 function assertDocument(document) {
@@ -81,4 +126,4 @@ function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false) 
   if(hs.length!==heldSymbols.length||new Set(hs).size!==hs.length||hs.some(s=>!heldSymbols.includes(s))||a.holdingAnalysis.some(h=>!a.decisions.some(d=>d.symbol===h.symbol&&d.decision===h.decision)))fail('FINAL_HOLDING_COVERAGE_INVALID');
   return verified;
 }
-module.exports={VERSION,SECTIONS,SCHEMAS,sourcePacket,bindDocument,assertDocument,validateJoint};
+module.exports={VERSION,SECTIONS,SCHEMAS,sourcePacket,citationCatalog,preparationWire,bindDocument,assertDocument,validateJoint};

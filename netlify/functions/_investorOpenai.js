@@ -866,7 +866,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       if (r.exists) return { ok: r.data().status === "reserved", duplicate: true };
       const d = s.exists ? s.data() : {};
       const spent = Number(d.spentMinor) || 0, reserved = Number(d.reservedMinor) || 0, ceiling = await ceilingMinor();
-      if (spent + reserved + estMinor > ceiling) {
+      if (!A.currentScope()?.aiBudgetUncapped && spent + reserved + estMinor > ceiling) {
         return { ok: false, reason: "daily_reservation_exhausted", spentMinor: spent, reservedMinor: reserved, ceilingMinor: ceiling, estMinor };
       }
       tx.set(ref, { day: day(), reservedMinor: reserved + estMinor, updatedAtMs: now() }, { merge: true });
@@ -1380,7 +1380,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     const r=await invoke("prepareResearchDocument",{user:untrusted("source_packet",source),background:true,waitMs,
       scope:{symbol:source.baseline.symbol,asOfMs:source.baseline.cutoffMs},contextManifestHash:sha(source),requestKey:`prepare|${HANDOFF.VERSION}|${sha(source)}`});
     if(!r.ok)return r;
-    try{return {...r,document:HANDOFF.bindDocument(r.output,source)};}
+    try{return {...r,document:HANDOFF.bindDocument(r.output,source,{recoverReferences:true})};}
     catch(e){return {...r,ok:false,error:e.code||"HANDOFF_INVALID"};}
   }
   async function decidePreparedPortfolio({documents=[],packets=[],completedResearch=[],holdings=[],portfolio,marks,policy,marketState,expansionBlocked=false,contextManifestHash,waitMs=DEFAULT_WAIT_MS}={}) {
