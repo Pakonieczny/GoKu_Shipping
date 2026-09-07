@@ -7,7 +7,7 @@
 // or parameters estimated by that paper. FINRA stop-order guidance informs
 // adverse gap execution; NYSE calendars govern regular-session deadlines.
 const M=require('./_investorMarket');
-const RANGES=Object.freeze({range1:{min:1,max:2},range2:{min:3,max:5},range3:{min:6,max:8}});
+const RANGES=Object.freeze({top1:{min:1,max:1},range1:{min:1,max:2},range2:{min:3,max:5},range3:{min:6,max:8}});
 const VERSION='required-investment.v3';
 const fail=(code,message=code)=>{throw Object.assign(Error(message),{code});};
 function policyFor(range) {

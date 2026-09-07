@@ -6904,7 +6904,7 @@ async function simulatorAdversarial({only=null}={}) {
       if(missingUsage&&(name==='research_memo_v1'||name==='prepared_investment_decision_v1'||name==='simulation_investment_plan_v1')){missingUsage=false;return {ok:true,status:200,json:async()=>({...response,usage:null})};}
       return {ok:true,status:200,json:async()=>response};
     } catch(e){transportErrors.push(e.stack);throw e;}}});
-    const batch=await svc.createBatch({companyRange:picks<=2?'range1':picks<=5?'range2':'range3',count:1,from:date,to:date,budgetMode:measure?'measure_actual_cost':'capped'},'operator','research-pipeline-'+failure),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config),units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
+    const batch=await svc.createBatch({companyRange:picks===1?'top1':picks<=2?'range1':picks<=5?'range2':'range3',count:1,from:date,to:date,budgetMode:measure?'measure_actual_cost':'capped'},'operator','research-pipeline-'+failure),br=fake.col('InvestorAI_SimulationBatches').doc(batch.batchId),config=await svc.readJSON(br,batch.configRef),repo=await svc.ensureRepository(batch,config),units=(await repo.ref.collection('units').get()).docs,priceSymbols={};
     const daily=Array.from({length:400},(_,i)=>({date:new Date(Date.parse(date+'T00:00:00Z')-(400-i)*86400000).toISOString().slice(0,10),o:100,h:101,l:99,c:100,v:1000000}));
     for(const unit of units.filter(x=>x.data().kind==='company')) {
       const symbol=unit.data().symbol,parent=fake.col('InvestorAI_SimulationScenarios').doc('research_company_'+symbol),row=config.roster.members.find(x=>x.symbol===symbol),data=row?[{collection:A.COL.dossierVersions,id:symbol+'_fixture',knownAtMs:cutoff-1000,data:D.composeVersion({symbol,identity:{...row,name:row.company},asOfMs:cutoff-1000})}]:[];
@@ -6929,7 +6929,7 @@ async function simulatorAdversarial({only=null}={}) {
   await check('horizon_ranges_required_dates_calendar_and_choice_validation',async()=>{
     const H=require('./_investorSimulationHorizon'),Hand=require('./_investorResearchHandoff'),fake=database(),svc=RealSim.create({admin:fake});
     const api=require('./_investorApiSchemas').compileAll().validators.params.simulationStart;
-    for(const companyRange of ['range1','range2','range3'])assert(api({count:1,from:'2026-08-01',to:'2026-08-31',companyRange}));
+    for(const companyRange of ['top1','range1','range2','range3'])assert(api({count:1,from:'2026-08-01',to:'2026-08-31',companyRange}));
     assert(!api({count:1,from:'2026-08-01',to:'2026-08-31'}));assert(!api({count:1,from:'2026-08-01',to:'2026-08-31',companyRange:'range4'}));
     for(const range of [undefined,'','range4','__proto__'])await assert.rejects(()=>svc.createBatch({count:1,from:'2026-08-01',to:'2026-08-31',companyRange:range},'operator','bad-'+range),/company range/);
     assert.deepEqual(H.sessions('2026-09-04').map(s=>s.date),['2026-09-04','2026-09-08','2026-09-09']);
