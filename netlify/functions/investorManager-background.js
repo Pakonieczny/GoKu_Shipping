@@ -166,7 +166,7 @@ exports.handler = async (event) => {
       // Simulation workers cold-start independently of the paper manager.
       if(task!=="simulation_cleanup"&&task!=="simulation_analysis")await M.loadMarketSettings();
       const simulator=require("./_investorEvals").Simulator.create();
-      const out=task==="simulation_analysis"?await require("./_investorSimulationLearning").create().execute(payload.analysisId):task==="simulation_cleanup"?await simulator.cleanupBatch(payload.batchId):task==="simulation_prepare"?await simulator.prepareRepository(payload.batchId,payload.unitId):await simulator.execute(payload.runId);
+      const out=task==="simulation_analysis"?await require("./_investorSimulationLearning").create().executeBatch(payload.analysisId):task==="simulation_cleanup"?await simulator.cleanupBatch(payload.batchId):task==="simulation_prepare"?await simulator.prepareRepository(payload.batchId,payload.unitId):await simulator.execute(payload.runId);
       await JOBS.complete(claim,out);
       return {statusCode:200,body:JSON.stringify({ok:true,...out})};
     } catch(e) {
