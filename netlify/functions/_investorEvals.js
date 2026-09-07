@@ -502,7 +502,9 @@ const Simulator = (() => {
       const b=s.data();if(owner&&b.owner!==owner) throw fail('FORBIDDEN','Batch belongs to another operator');return b;
     }
     async function createBatch(config,owner,key) {
-      const H=require('./_investorSimulationHorizon'),investmentPolicy=H.policyFor(config.companyRange);
+      const H=require('./_investorSimulationHorizon');H.policyFor(config.companyRange);
+      const existingId='sim_'+hash(owner+'|'+key).slice(0,24);if((await batchCol.doc(existingId).get()).exists)return getBatch(existingId,owner);
+      const strategy=await require('./_investorSimulationLearning').create({admin}).resolve(owner,config.strategyVersionId),investmentPolicy=H.policyFor(config.companyRange,strategy);
       const count=Number(config.count),days=datesBetween(config.from,config.to).filter(date=>H.sessions(date).at(-1).closeMs+1200000<wallNow());
       const aiPlan={...AI_PLAN,version:'shortlist-50-selectable-horizon.v3',maxResearchCompanies:investmentPolicy.maxCompanies,outputTokens:{...AI_PLAN.outputTokens,decidePreparedPortfolio:investmentPolicy.maxCompanies>5?36000:30000}};
       const budgetMode=config.budgetMode||'capped';
@@ -515,7 +517,7 @@ const Simulator = (() => {
       const policy=P.loadActiveSync(control), roster=require('./_investorUniverse').freezeEligibleSnapshot({tradingDate:days[0],nowMs:wallNow(),removed:control.universeRemovals || []});
       const dates=selectedDates(days,count,batchId),runIds=dates.map((d,i)=>'sim_'+hash(batchId+'|'+i).slice(0,24));
       roster.tradingDate=dates[0];
-      const b={batchId,owner,count,dates,runIds,budgetMode,config:{from:config.from,to:config.to,count,companyRange:config.companyRange,maxHoldingSessions:3,budgetMode,initialCashMinor:'10000000',feedDelayMinutes:15,spreadBps:10,feePerShareMicros:5000},
+      const b={batchId,owner,count,dates,runIds,budgetMode,config:{strategyVersionId:strategy?.versionId||'baseline',from:config.from,to:config.to,count,companyRange:config.companyRange,maxHoldingSessions:3,budgetMode,initialCashMinor:'10000000',feedDelayMinutes:15,spreadBps:10,feePerShareMicros:5000},
         evidenceMode:'ARCHIVE_OR_SEC_RECONSTRUCTION',preparationIncludes:'Shared Firebase research and price library prepared before simulations start',repositoryMode:'shared_first',
         status:'running',paused:false,cleanupVersion:CLEANUP_VERSION,cleanupState:'complete',createdAtMs:wallNow(),targetNano:unlimited?null:TARGET*count,ceilingNano:unlimited?null:CEILING*count,budgetVersion:BUDGET_VERSION,version:VERSION,
         model:P.ROLE_MODELS.manager,policyHash:policy.policyHash,codeVersion:env.COMMIT_REF || 'local',concurrency:count,concurrencyMode:'all_requested',
@@ -527,7 +529,7 @@ const Simulator = (() => {
         await rootTransaction(async tx=>{
           const batchState=await tx.get(ref);if(batchState.exists)return;
           const ids=runIds.slice(offset,offset+150),existing=await Promise.all(ids.map(x=>tx.get(runCol.doc(x))));
-          for(let j=0;j<ids.length;j++)if(!existing[j].exists){const i=offset+j;tx.set(runCol.doc(ids[j]),{runId:ids[j],batchId,owner,date:dates[i],companyRange:config.companyRange,sessions:H.sessions(dates[i]),status:'queued',phase:'Waiting for shared data preparation',createdAtMs:wallNow(),index:i,paused:false,revision:0,
+          for(let j=0;j<ids.length;j++)if(!existing[j].exists){const i=offset+j;tx.set(runCol.doc(ids[j]),{runId:ids[j],batchId,owner,strategy,strategyVersionId:strategy?.versionId||'baseline',strategyRulesHash:strategy?.rulesHash||null,executionVersion:'observed-exits.v2',evaluationMode:strategy?(dates[i]<=strategy.trainingThroughDate?'training_replay':'out_of_sample'):'baseline',date:dates[i],companyRange:config.companyRange,sessions:H.sessions(dates[i]),status:'queued',phase:'Waiting for shared data preparation',createdAtMs:wallNow(),index:i,paused:false,revision:0,
             spentNano:0,reservedNano:0,targetNano:unlimited?null:TARGET,ceilingNano:unlimited?null:CEILING,budgetMode,budgetVersion:BUDGET_VERSION,progress:0,activeMs:0,buys:0,sells:0,openPositions:0,returnBps:0,pnlMinor:0,scenarioCursor:0,
             simulation:true,resourceLimited:!unlimited,aiPlan,evidenceCleanupVersion:CLEANUP_VERSION,configRef,runIdsCount:count});}
         });
@@ -1302,6 +1304,7 @@ const Simulator = (() => {
         if(await paused())throw fail('SIMULATION_PAUSED');
         if(!env.OPENAI_API_KEY)throw fail('SIMULATION_API_KEY_MISSING');
         const effectiveBody=simulationRequestBody(body,stage);
+        if(run.strategy){const instruction=require('./_investorSimulationStrategy').instructions(run.strategy);effectiveBody.instructions=[effectiveBody.instructions,instruction].filter(Boolean).join('\n');}
         const countBody=Object.fromEntries(['model','input','instructions','tools','text','reasoning','tool_choice','parallel_tool_calls'].filter(k=>effectiveBody[k]!==undefined).map(k=>[k,effectiveBody[k]]));
         await onActivity('counting_tokens',body.model,stage);
         const counted=await rawHTTP('POST','https://api.openai.com/v1/responses/input_tokens',countBody);
@@ -1569,7 +1572,7 @@ const Simulator = (() => {
               const responses=await rows(collection(A.COL.modelRequests));
               if(responses.some(q=>q.finalizationDisposition!=='not_required'&&['rejected','http_error','unreachable','submission_uncertain','budget_blocked'].includes(q.status)))throw fail('SIMULATION_REQUEST_INCOMPLETE','A required AI decision was not accepted');
               if(config.investmentPolicy?.maxHoldingSessions&&portfolio.positions.length)throw fail('HISTORICAL_HOLD_EXIT_UNAVAILABLE','A holding could not exit at its fixed deadline on an observed, sufficiently liquid closing bar. No extra session or sale was invented.');
-              if(config.investmentPolicy&&!point.buys)throw fail('HISTORICAL_NO_EXECUTABLE_PRICE','No funded purchase could execute on an observed session price. This run is unavailable, not a cash-only investment result.');
+              if(config.investmentPolicy&&!point.buys){const entryStates=config.investmentPolicy.strategy?await rows(collection(A.COL.orderSets)):[];const plan=config.investmentPolicy.strategy&&run.managerCheckpointRef?(await readJSON(ref,run.managerCheckpointRef))?.data?.simulationPlan:null;const expired=plan&&Object.keys(plan.investments).every(symbol=>entryStates.some(x=>x.symbol===symbol&&x.entryExpired));if(!expired)throw fail('HISTORICAL_NO_EXECUTABLE_PRICE','No funded purchase could execute on an observed session price. This run is unavailable, not a cash-only investment result.');await save({noEntryReason:'All strategy entry windows expired on observed bars; capital remained in cash.'});}
               await save({status:'complete',phase:'Complete',progress:100,completedAtMs:wallNow()});break;}
             if(await paused())break;
             await save({clockMs:replaySteps?(replaySteps.find(t=>t>run.clockMs)||meta.endMs):Math.min(meta.endMs,run.clockMs+5*60000)});
@@ -1878,7 +1881,7 @@ const Simulator = (() => {
       }
       return {investmentPlan:cp?.data?.simulationPlan||null,preparedDocuments,run:{...run,...runBudget(run),budgetVersion:BUDGET_VERSION},collection,items,nextCursor:items.length===100?items.at(-1).id:null,portfolio:run.portfolioRef?await readJSON(ref,run.portfolioRef):null,shortlist:run.shortlistRef?await readJSON(ref,run.shortlistRef):null};
     }
-    return {ensureRepository,reuseRepositoryArtifacts,repositoryState,prepareRepository,repositoryPackets,createBatch,startBatch,prepareShortlist,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
+    return {outcomeAnalysis,ensureRepository,reuseRepositoryArtifacts,repositoryState,prepareRepository,repositoryPackets,createBatch,startBatch,prepareShortlist,control,reset,cleanupBatch,execute,schedule,overview,detail,getRun,getBatch,saveJSON,readJSON,prepareSymbol,researchAvailability,reconstructResearch,secSource,meter};
   }
   return {VERSION,TARGET,CEILING,TARGET_MS,AI_PLAN,BUDGET_VERSION,boostBudget,tradeCards,simulationRequestBody,shortlistProfiles,validateShortlist,shortlistedRoster,TERMINAL,isContention,knownAt,rate,price,distribution,datesBetween,selectedDates,regularSessionBars,verifySessionWithMinutes,replayRecord,sharedEvidenceView,create};
 })();

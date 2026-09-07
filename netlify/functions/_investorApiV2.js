@@ -1012,6 +1012,9 @@ function checkVersion(expected, actual) { if (expected != null && String(expecte
 async function pointerEvent(D, p, kind, fields) { const MD = require("./_investorMandate"); try { await MD.appendEvent(D, p, kind, fields); } catch {} }
 
 const MUTATIONS = {
+  simulationAnalysisStart:async(params,ctx,env)=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).start(ctx.actorId,env.idempotencyKey,params)}),
+  simulationAnalysisControl:async(params,ctx)=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).control(ctx.actorId,params.analysisId,params.command,params.spendLimitUsd)}),
+  simulationStrategySelect:async(params,ctx)=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).select(ctx.actorId,params.versionId)}),
   simulationStart:async(params,ctx,env)=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).startBatch(params,ctx.actorId,env.idempotencyKey,job=>require("./investorKick").dispatchJob(job,{admin:ctx.admin,jobs:require("./_investorJobs").withAdmin(ctx.admin)}))}),
   simulationControl:async(params,ctx)=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).control(params,ctx.actorId)}),
   /* ── manager and global controls ─────────────────────────────────────── */
@@ -1476,6 +1479,7 @@ const MUTATIONS = {
 
 /* ═══ DISPATCH ════════════════════════════════════════════════════════════ */
 const READS = {
+  simulationAnalysisOverview:async({params,ctx})=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).view(ctx.actorId,params)}),
   simulationOverview:async({params,ctx})=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).overview({...params,owner:ctx.actorId})}),
   simulationDetail:async({params,ctx})=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).detail(params.runId,ctx.actorId,params)}), managerDashboard: readManagerDashboard, controlState: readControlState, companies: readCompanies, companyDossier: readCompanyDossier, portfolio: readPortfolio, mandates: readMandates, orderSets: readOrderSets, executionEvents: readExecutionEvents,
   managerRuns: readManagerRuns, jobs: readJobs, decisionJournal: readDecisionJournal, decisionAnalytics: readDecisionAnalytics, performance: readPerformance, materialEvents: readMaterialEvents, corporateActions: readCorporateActions, systemHealth: readSystemHealth,
@@ -1515,7 +1519,7 @@ async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), au
     }
   }
   /* mutation: attestation first, then the idempotency claim before any side effect */
-  if (!attestationOk(ctrl) && !(action === "simulationControl" && ["pause","reset"].includes(params.command)) && action !== "freezeBuys" && action !== "emergencyStop" && action !== "acknowledgeAlert" && action !== "pauseManager") {
+  if (!attestationOk(ctrl) && !(action === "simulationControl" && ["pause","reset"].includes(params.command)) && !(action === "simulationAnalysisControl" && params.command === "pause") && action !== "freezeBuys" && action !== "emergencyStop" && action !== "acknowledgeAlert" && action !== "pauseManager") {
     return { statusCode: 503, body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape("ATTESTATION_FAILED", "the deployed build's fixtures are not attested; only freezeBuys, emergencyStop, pauseManager and acknowledgeAlert are accepted", { correlationId }) }) };
   }
   const env = { idempotencyKey: body.idempotencyKey, auditReason: body.auditReason || null, expectedResourceVersion: body.expectedResourceVersion, expectedAbsent: body.expectedAbsent, previewToken: body.previewToken };

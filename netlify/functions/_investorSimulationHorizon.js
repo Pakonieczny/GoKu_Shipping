@@ -10,9 +10,10 @@ const M=require('./_investorMarket');
 const RANGES=Object.freeze({top1:{min:1,max:1},range1:{min:1,max:2},range2:{min:3,max:5},range3:{min:6,max:8}});
 const VERSION='required-investment.v3';
 const fail=(code,message=code)=>{throw Object.assign(Error(message),{code});};
-function policyFor(range) {
+function policyFor(range,strategy=null) {
   if(typeof range!=='string'||!Object.hasOwn(RANGES,range))fail('BAD_REQUEST','Choose a company range before starting simulations.');
-  return {version:VERSION,companyRange:range,minUsd:5000,maxUsd:30000,minCompanies:RANGES[range].min,maxCompanies:RANGES[range].max,maxTotalUsd:95000,maxHoldingSessions:3,entry:'FIRST_AVAILABLE_SESSION_PRICE',horizonMarginBps:'25',downsideWeightBps:'5000'};
+  if(strategy){require('./_investorSimulationStrategy').validate(strategy.rules);if(strategy.rulesHash!==require('./_investorSimulationStrategy').hash(strategy.rules))fail('SIMULATION_INVESTMENT_POLICY_INVALID');}
+  return {...(strategy?{strategy}:{}),version:strategy?'required-investment.v4':VERSION,companyRange:range,minUsd:5000,maxUsd:30000,minCompanies:RANGES[range].min,maxCompanies:RANGES[range].max,maxTotalUsd:95000,maxHoldingSessions:3,entry:'FIRST_AVAILABLE_SESSION_PRICE',horizonMarginBps:'25',downsideWeightBps:'5000'};
 }
 function sessions(date,count=3) {
   const out=[];
@@ -25,7 +26,8 @@ function sessions(date,count=3) {
 }
 function replaySteps(schedule) {return schedule.flatMap(s=>Array.from({length:(s.closeMs-s.openMs)/300000+5},(_,i)=>s.openMs+i*300000));}
 function score(x) {return x.expectedReturnBps-x.opportunityCostBps-Math.ceil(x.downsideBps/2)-x.uncertaintyPenaltyBps;}
-function choose(horizons) {
+function choose(horizons,policy=null) {
+  if(policy?.strategy)return require('./_investorSimulationStrategy').choose(horizons,policy.strategy.rules);
   let best=1;
   for(let n=2;n<=3;n++) {
     const h=horizons['session'+n];
@@ -33,7 +35,7 @@ function choose(horizons) {
   }
   return best;
 }
-function validate(investment) {
+function validate(investment,policy=null) {
   const h=investment.horizonAnalysis;
   if(!h||![1,2,3].includes(investment.holdingSessions))fail('SIMULATION_HORIZON_INVALID');
   for(let n=1;n<=3;n++) {
@@ -42,6 +44,6 @@ function validate(investment) {
       ['downsideBps','opportunityCostBps','uncertaintyPenaltyBps'].some(k=>!Number.isInteger(x[k])||x[k]<0||x[k]>10000)||
       !['LOW','MEDIUM','HIGH'].includes(x.evidenceConfidence)||!x.reason?.trim())fail('SIMULATION_HORIZON_INVALID');
   }
-  if(h.session1.opportunityCostBps!==0||investment.holdingSessions!==choose(h)||!investment.holdingReason?.trim())fail('SIMULATION_HORIZON_INVALID');
+  if(h.session1.opportunityCostBps!==0||investment.holdingSessions!==choose(h,policy)||!investment.holdingReason?.trim())fail('SIMULATION_HORIZON_INVALID');
 }
 module.exports={RANGES,VERSION,policyFor,sessions,replaySteps,score,choose,validate};

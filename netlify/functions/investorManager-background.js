@@ -34,7 +34,7 @@ const MANAGER = require("./_investorManager");
 const { redact } = require("./_investorAuth");
 
 const FN_NAME = "investorManager-background";
-const TASKS = Object.freeze(["premarket_manager", "event_revision", "focused_research", "portfolio_synthesis", "simulation", "simulation_prepare", "simulation_cleanup"]);
+const TASKS = Object.freeze(["premarket_manager", "event_revision", "focused_research", "portfolio_synthesis", "simulation", "simulation_prepare", "simulation_cleanup", "simulation_analysis"]);
 const SEGMENT_SAFETY_MS = 45000;
 
 async function controlDoc() {
@@ -161,12 +161,12 @@ exports.handler = async (event) => {
   const claimed = await JOBS.claimOnce({ jobId, task, targetFunction: FN_NAME, token: nonce, payload });
   if (!claimed.claimed) return { statusCode: claimed.httpStatus || 409, body: JSON.stringify({ ok: false, reason: claimed.reason }) };
   const claim = claimed.claim;
-  if (task === "simulation" || task === "simulation_prepare" || task === "simulation_cleanup") {
+  if (task === "simulation_analysis" || task === "simulation" || task === "simulation_prepare" || task === "simulation_cleanup") {
     try {
       // Simulation workers cold-start independently of the paper manager.
-      if(task!=="simulation_cleanup")await M.loadMarketSettings();
+      if(task!=="simulation_cleanup"&&task!=="simulation_analysis")await M.loadMarketSettings();
       const simulator=require("./_investorEvals").Simulator.create();
-      const out=task==="simulation_cleanup"?await simulator.cleanupBatch(payload.batchId):task==="simulation_prepare"?await simulator.prepareRepository(payload.batchId,payload.unitId):await simulator.execute(payload.runId);
+      const out=task==="simulation_analysis"?await require("./_investorSimulationLearning").create().execute(payload.analysisId):task==="simulation_cleanup"?await simulator.cleanupBatch(payload.batchId):task==="simulation_prepare"?await simulator.prepareRepository(payload.batchId,payload.unitId):await simulator.execute(payload.runId);
       await JOBS.complete(claim,out);
       return {statusCode:200,body:JSON.stringify({ok:true,...out})};
     } catch(e) {

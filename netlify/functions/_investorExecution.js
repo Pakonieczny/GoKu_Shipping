@@ -601,13 +601,22 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
         const [stateSnap,posSnap,accountSnap]=await Promise.all([tx.get(stateRef),tx.get(posRef),tx.get(accountRef)]);
         const state=stateSnap.exists?stateSnap.data():{},account=accountSnap.data();
         if(!account)throw typed('ACCOUNT_MISSING',accountId);
-        if(state.lastBarMs>=at||state.closed)return;
+        if(state.lastBarMs>=at||state.closed||state.entryExpired)return;
         let position=posSnap.exists?posSnap.data():null,entered=false,balance={...account.balanceCents},fills=[];
-        const budget=BigInt(investment.allocationUsd)*100n;
+        const rules=plan.policy.strategy?.rules;
+        const allocationUsd=rules?Math.max(5000,Math.floor(investment.allocationUsd*rules.allocationScalePct/100)):investment.allocationUsd;
+        const stopLossBps=rules?Math.min(9500,Math.max(1,Math.round(investment.stopLossBps*rules.stopScalePct/100))):investment.stopLossBps;
+        const takeProfitBps=rules?Math.min(100000,Math.max(1,Math.round(investment.takeProfitBps*rules.targetScalePct/100))):investment.takeProfitBps;
+        const budget=BigInt(allocationUsd)*100n;
         if(budget<500000n||budget>3000000n)throw typed('SIMULATION_ALLOCATION_INVALID',symbol);
         const entryPx=o+o*spread/20000n;
         if(!state.entered) {
           if(schedule&&market.nyParts(new Date(at)).date!==sessionDate)return;
+          if(rules){
+            const firstOpen=state.firstOpenMicros||o.toString(),open=schedule[0].openMs,expiry=Math.min(schedule[0].closeMs,open+rules.entryWindowMinutes*60000);
+            const wait=at<open+rules.entryDelayMinutes*60000||o>BigInt(firstOpen)*(10000n-BigInt(rules.pullbackBps))/10000n;
+            if(at>=expiry||wait){tx.set(stateRef,{...state,accountId,symbol,planHash,entered:false,firstOpenMicros:firstOpen,lastBarMs:at,entryExpired:at>=expiry||at+300000>=expiry,status:at>=expiry||at+300000>=expiry?'ENTRY_EXPIRED':'AWAITING_STRATEGY_ENTRY'});return;}
+          }
           const quantity=budget*10000n/(entryPx+feeMicros);
           // Whole shares; wait for sufficient observed liquidity, never invent volume.
           if(quantity<=0n||quantity>participationCap(bar,DEFAULT_PARTICIPATION_BPS))return;
@@ -617,10 +626,10 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
             entryPriceUsd:Number(entryPx)/1e6,avgCostMicros:(total*10000n/quantity).toString(),openedAt:bar.t,
             positionLifecycleId:sha([accountId,planHash,symbol]).slice(0,32),schemaVersion:'position.v2',engineVersion:ENGINE_VERSION,
             decisionAuthority:'ASTRA_REQUIRED_SIMULATION',mandateVersionId:planHash,orderSetId:'required_'+symbol,
-            takeProfitPriceMicros:(entryPx+entryPx*BigInt(investment.takeProfitBps)/10000n).toString(),
-            lossBoundaryPriceMicros:(entryPx-entryPx*BigInt(investment.stopLossBps)/10000n).toString(),protectionState:'SIMULATION_ACTIVE',
-            ...(schedule?{holdingSessions:investment.holdingSessions,holdingDeadlineMs:deadline}:{}),allocationUsd:investment.allocationUsd,conviction:investment.conviction,sizingReason:investment.sizingReason};
-          fills.push({side:'buy',role:'ENTRY',qty:quantity,px:entryPx,notional,fee,realized:0n,basis:'required_simulation_first_available_open',
+            takeProfitPriceMicros:(entryPx+entryPx*BigInt(takeProfitBps)/10000n).toString(),
+            lossBoundaryPriceMicros:(entryPx-entryPx*BigInt(stopLossBps)/10000n).toString(),protectionState:'SIMULATION_ACTIVE',
+            ...(schedule?{holdingSessions:investment.holdingSessions,holdingDeadlineMs:deadline}:{}),allocationUsd,baseAllocationUsd:investment.allocationUsd,stopLossBps,takeProfitBps,strategyVersionId:plan.policy.strategy?.versionId||'baseline',conviction:investment.conviction,sizingReason:investment.sizingReason};
+          fills.push({side:'buy',role:'ENTRY',qty:quantity,px:entryPx,notional,fee,realized:0n,basis:rules?'required_simulation_strategy_open':'required_simulation_first_available_open',
             legs:[{account:ACCT.CASH,amountCents:-Number(total)},{account:ACCT.POSITIONS,amountCents:Number(total)}]});
           balance.cash=(balance.cash||0)-Number(total);balance.positions=(balance.positions||0)+Number(total);entered=true;
         }

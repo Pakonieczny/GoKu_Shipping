@@ -648,6 +648,7 @@ exports.handler = async (event) => {
 
   const startedAt = Date.now();
   // Launch the independent simulation scheduler before paper work can exhaust the invocation.
+  const learningDispatch=require("./_investorSimulationLearning").create().schedule(dispatchJob).catch(e=>console.error("Simulation analysis dispatch failed",e.code||"INTERNAL"));
   const simulationDispatch = require("./_investorEvals").Simulator.create().schedule({dispatch:dispatchJob})
     .catch(error => { console.error("Simulation dispatch failed", String(error.code || error.message)); });
   try {
@@ -686,7 +687,7 @@ exports.handler = async (event) => {
     console.error("investorKick failed", redact({ error: e.message }));
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(e.message).slice(0, 200) }) };
   } finally {
-    await simulationDispatch;
+    await Promise.all([simulationDispatch,learningDispatch]);
   }
 };
 

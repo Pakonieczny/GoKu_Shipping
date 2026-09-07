@@ -147,9 +147,13 @@ const mutation = (params, { reauth = false, requiresReason = false, concurrency 
   ({ kind: "mutation", params: T.obj(params, required), reauth, requiresReason, concurrency, immediate, confirmationKind: confirmationKind || (reauth ? "reauth" : requiresReason ? "confirm_with_reason" : "confirm") });
 
 const ACTIONS_V2 = Object.freeze({
+  simulationAnalysisOverview: read({analysisId:T.ref("Id"),after:T.str({maxLength:100}),versionAfter:T.str({maxLength:100}),evidencePage:T.int({minimum:0,maximum:100000})}),
+  simulationAnalysisStart: mutation({spendLimitUsd:T.int({minimum:1,maximum:500})},{concurrency:"none",required:["spendLimitUsd"]}),
+  simulationAnalysisControl: mutation({analysisId:T.ref("Id"),command:T.str({enum:["pause","resume"]}),spendLimitUsd:T.int({minimum:1,maximum:500})},{concurrency:"none",required:["analysisId","command"]}),
+  simulationStrategySelect: mutation({versionId:T.str({minLength:1,maxLength:100})},{concurrency:"none",required:["versionId"]}),
   simulationOverview: read({batchId:T.ref("Id"),cursor:T.str({maxLength:30})}),
   simulationDetail: read({runId:T.ref("Id"),collection:T.str({enum:["curve","requests","fills","decisions","orders","events"]}),after:T.str({maxLength:160})}),
-  simulationStart: mutation({companyRange:T.str({enum:['top1','range1','range2','range3']}),count:T.int({minimum:1,maximum:500}),from:T.ref("Date"),to:T.ref("Date"),budgetMode:T.str({enum:["capped","measure_actual_cost"]})},{concurrency:"none",required:["count","from","to","companyRange"]}),
+  simulationStart: mutation({strategyVersionId:T.str({maxLength:100}),companyRange:T.str({enum:['top1','range1','range2','range3']}),count:T.int({minimum:1,maximum:500}),from:T.ref("Date"),to:T.ref("Date"),budgetMode:T.str({enum:["capped","measure_actual_cost"]})},{concurrency:"none",required:["count","from","to","companyRange"]}),
   simulationControl: mutation({batchId:T.ref("Id"),runId:T.ref("Id"),command:T.str({enum:["pause","resume","retry","retry_repository","reset"]})},{concurrency:"none",required:["command"]}),
   /* reads */
   managerDashboard: read({ ...acct }),

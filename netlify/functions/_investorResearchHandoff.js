@@ -130,12 +130,13 @@ function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false) 
 const INVESTMENT_POLICY = Object.freeze({version:'required-investment.v1',minUsd:5000,maxUsd:30000,maxCompanies:2,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
 const DIVERSIFIED_POLICY = Object.freeze({version:'required-investment.v2',minUsd:5000,maxUsd:30000,minCompanies:4,maxCompanies:7,maxTotalUsd:95000,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
 function supportedInvestmentPolicy(policy) {
-  return [INVESTMENT_POLICY,DIVERSIFIED_POLICY,...Object.keys(require('./_investorSimulationHorizon').RANGES).map(require('./_investorSimulationHorizon').policyFor)].find(p=>policy?.version===p.version&&C.hash(policy)===C.hash(p))||null;
+  if(policy?.version==='required-investment.v4'){try{const canonical=require('./_investorSimulationHorizon').policyFor(policy.companyRange,policy.strategy);return C.hash(canonical)===C.hash(policy)?canonical:null;}catch{return null;}}
+  return [INVESTMENT_POLICY,DIVERSIFIED_POLICY,...Object.keys(require('./_investorSimulationHorizon').RANGES).map(r=>require('./_investorSimulationHorizon').policyFor(r))].find(p=>policy?.version===p.version&&C.hash(policy)===C.hash(p))||null;
 }
 function assertInvestmentAllocations(investments,policy) {
   if(!supportedInvestmentPolicy(policy))fail('SIMULATION_INVESTMENT_POLICY_INVALID');
   const rows=Object.values(investments||{});
-  if(policy.maxHoldingSessions)rows.forEach(require('./_investorSimulationHorizon').validate);
+  if(policy.maxHoldingSessions)rows.forEach(r=>require('./_investorSimulationHorizon').validate(r,policy));
   if(rows.length<(policy.minCompanies||1)||rows.length>policy.maxCompanies)fail('SIMULATION_FINALISTS_INVALID');
   if(rows.some(r=>!Number.isSafeInteger(r?.allocationUsd)||r.allocationUsd<policy.minUsd||r.allocationUsd>policy.maxUsd))fail('SIMULATION_ALLOCATION_INVALID');
   if(rows.reduce((n,r)=>n+r.allocationUsd,0)>(policy.maxTotalUsd||policy.maxCompanies*policy.maxUsd))fail('SIMULATION_TOTAL_ALLOCATION_INVALID');
