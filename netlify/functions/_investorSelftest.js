@@ -7201,6 +7201,10 @@ async function simulatorAdversarial({only=null}={}) {
     const half=await setup('2025-11-28',1);await half.tick(half.schedule[0].openMs);await half.tick(half.schedule[0].closeMs-300000);assert.equal((await half.fills())[1].eventAtMs,half.schedule[0].closeMs);
     const earlyStop=await setup();await earlyStop.tick(earlyStop.schedule[0].openMs,{o:100,h:101,l:90,c:99,v:100000});
     const es=(await earlyStop.fills())[1];assert.equal(es.role,'STOP');assert.equal(es.exitTiming,'WITHIN_BAR');assert.equal(es.eventAtMs,earlyStop.schedule[0].openMs+300000);
+    // A drop inside the planned stop but short of the emergency stop does not end the trade during the 30-minute grace window; the same bar afterwards does.
+    const grace=await setup();await grace.tick(grace.schedule[0].openMs,{o:100,h:101,l:94,c:99,v:100000});assert.equal((await grace.fills()).length,1,'planned stop is not judged during the grace window');
+    await grace.tick(grace.schedule[0].openMs+1500000,{o:100,h:101,l:94,c:99,v:100000});assert.equal((await grace.fills()).length,1,'still inside the grace window');
+    await grace.tick(grace.schedule[0].openMs+1800000,{o:100,h:101,l:94,c:99,v:100000});const gs=(await grace.fills())[1];assert.equal(gs.role,'STOP','planned stop applies once the grace window ends');assert.equal(gs.eventAtMs,grace.schedule[0].openMs+2100000);
     const earlyTarget=await setup();await earlyTarget.tick(earlyTarget.schedule[0].openMs,{o:100,h:160,l:99,c:150,v:100000});assert.equal((await earlyTarget.fills())[1].role,'TARGET','target protection is active after entry open');
     const openingTarget=await setup();await openingTarget.tick(openingTarget.schedule[0].openMs);await openingTarget.tick(openingTarget.schedule[0].openMs+300000,{o:160,h:165,l:90,c:100,v:100000});
     const ot=(await openingTarget.fills())[1];assert.equal(ot.role,'TARGET','known opening target precedes a later low');assert.equal(ot.exitTiming,'BAR_OPEN');

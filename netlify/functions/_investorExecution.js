@@ -41,6 +41,10 @@ const ENGINE_VERSION = "manager";
 const DECISION_AUTHORITY = "SOL";
 const DEFAULT_PARTICIPATION_BPS = 1000n;     // fill at most 10% of a bar's volume
 const STOP_SLIPPAGE_BPS = 10n;               // modelled adverse print past a triggered stop
+// Simulation stops are not judged on opening noise: for STOP_GRACE_MS after entry only an
+// emergency stop at STOP_GRACE_MULTIPLE times the planned distance applies; the target is live throughout.
+const STOP_GRACE_MS = 30 * 60000;
+const STOP_GRACE_MULTIPLE = 2n;
 const PROTECTION_SLA_SECONDS = 300;
 const MICROS = 1000000n;
 
@@ -632,7 +636,8 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
             positionLifecycleId:sha([accountId,planHash,symbol]).slice(0,32),schemaVersion:'position.v2',engineVersion:ENGINE_VERSION,
             decisionAuthority:'ASTRA_REQUIRED_SIMULATION',mandateVersionId:planHash,orderSetId:'required_'+symbol,
             takeProfitPriceMicros:(entryPx+entryPx*BigInt(takeProfitBps)/10000n).toString(),
-            lossBoundaryPriceMicros:(entryPx-entryPx*BigInt(stopLossBps)/10000n).toString(),protectionState:'SIMULATION_ACTIVE',
+            lossBoundaryPriceMicros:(entryPx-entryPx*BigInt(stopLossBps)/10000n).toString(),
+            emergencyStopPriceMicros:(entryPx-entryPx*BigInt(Math.min(9500,stopLossBps*Number(STOP_GRACE_MULTIPLE)))/10000n).toString(),stopGraceUntilMs:at+STOP_GRACE_MS,protectionState:'SIMULATION_ACTIVE',
             ...(schedule?{holdingSessions:investment.holdingSessions,holdingDeadlineMs:deadline}:{}),allocationUsd,baseAllocationUsd:investment.allocationUsd,stopLossBps,takeProfitBps,strategyVersionId:plan.policy.strategy?.versionId||'baseline',conviction:investment.conviction,sizingReason:investment.sizingReason};
           fills.push({side:'buy',role:'ENTRY',qty:quantity,px:entryPx,notional,fee,realized:0n,basis:rules?'required_simulation_strategy_open':'required_simulation_first_available_open',
             legs:[{account:ACCT.CASH,amountCents:-Number(total)},{account:ACCT.POSITIONS,amountCents:Number(total)}]});
@@ -642,16 +647,19 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
         if(schedule&&!entered&&position.lastMarkAt&&market.nyParts(new Date(Date.parse(position.lastMarkAt))).date!==session.date&&require('./_investorCorporateActions').assessPositionMark({position,currentPrice:bar.o}).quarantine)
           throw typed('HISTORICAL_CORPORATE_ACTION_UNRESOLVED',symbol+': an overnight share-basis change cannot be treated as an investment return.');
         const timedExit=!!deadline&&at+300000===deadline&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS);
-        const bid=x=>x-x*spread/20000n,stop=big(position.lossBoundaryPriceMicros),target=big(position.takeProfitPriceMicros);
+        const bid=x=>x-x*spread/20000n,target=big(position.takeProfitPriceMicros);
+        // During the grace window after entry only the wider emergency stop is checked, so ordinary opening volatility cannot end the trade.
+        const inGrace=Number.isFinite(position.stopGraceUntilMs)&&at<position.stopGraceUntilMs&&position.emergencyStopPriceMicros;
+        const stop=inGrace?big(position.emergencyStopPriceMicros):big(position.lossBoundaryPriceMicros);
         const openStop=bid(o)<=stop,openTarget=bid(o)>=target&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS),stopHit=openStop||(!openTarget&&bid(l)<=stop),targetHit=openTarget||bid(h)>=target;
-        // Entry is at the bar open: both protections are active afterwards.
+        // Entry is at the bar open: the target is active immediately; the planned stop after the grace window.
         // If the open already triggers an exit it precedes later extrema; otherwise stop-first is conservative.
         const sell=stopHit||(targetHit&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS))||timedExit;
         if(sell) {
           const targetExit=targetHit&&big(position.quantityUnits)<=participationCap(bar,DEFAULT_PARTICIPATION_BPS);
           const px=stopHit?(bid(o)<stop?bid(o)-(schedule?bid(o)*STOP_SLIPPAGE_BPS/10000n:0n):stop-stop*STOP_SLIPPAGE_BPS/10000n):targetExit?(bid(o)>target?bid(o):target):bid(c);
           const qty=big(position.quantityUnits),notional=minorOf(qty,px),fee=(qty*feeMicros+9999n)/10000n,cost=big(position.costBasisMinor),proceeds=notional-fee,realized=proceeds-cost;
-          fills.push({side:'sell',role:stopHit?'STOP':targetExit?'TARGET':'TIME_LIMIT',qty,px,notional,fee,realized,basis:stopHit?'stop_adverse_or_gap':targetExit?'target_observed':'holding_deadline_observed_close',ambiguous:stopHit&&(entered||targetHit),
+          fills.push({side:'sell',role:stopHit?'STOP':targetExit?'TARGET':'TIME_LIMIT',qty,px,notional,fee,realized,basis:stopHit?(inGrace?'emergency_stop_in_grace_window':'stop_adverse_or_gap'):targetExit?'target_observed':'holding_deadline_observed_close',ambiguous:stopHit&&(entered||targetHit),
             legs:[{account:ACCT.CASH,amountCents:Number(proceeds)},{account:ACCT.POSITIONS,amountCents:-Number(cost)},{account:ACCT.REALIZED_PL,amountCents:-Number(realized)}]});
           balance.cash+=Number(proceeds);balance.positions-=Number(cost);balance.realized_pl=(balance.realized_pl||0)-Number(realized);
           position={...position,open:false,quantityUnits:'0',qty:0,costBasisMinor:'0',costBasisCents:0,closedAt:new Date(openStop||openTarget?at:at+300000).toISOString(),realizedMinor:realized.toString(),protectionState:'CLOSED'};
@@ -683,6 +691,6 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
   return {conservation:await assertConservation(accountId,{admin:D})};
 }
 
-module.exports = { ENGINE_VERSION, DECISION_AUTHORITY, DEFAULT_PARTICIPATION_BPS, STOP_SLIPPAGE_BPS, PROTECTION_SLA_SECONDS, ACCT,
+module.exports = { ENGINE_VERSION, DECISION_AUTHORITY, DEFAULT_PARTICIPATION_BPS, STOP_SLIPPAGE_BPS, STOP_GRACE_MS, STOP_GRACE_MULTIPLE, PROTECTION_SLA_SECONDS, ACCT,
   saveRequiredSimulationPlan, tickRequiredSimulation, simulateLegOnBar, resolveBarCollisions, postJournal, assertConservation, recordFill, readOrderSet, releaseReservation,
   applyTransition, applyOutbox, simulatePaperFills, tick, positionDocId };
