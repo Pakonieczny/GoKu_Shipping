@@ -6319,6 +6319,20 @@ async function simulatorAdversarial({only=null}={}) {
       stored=original.secrets;await AUTH.loadAuthSecrets({force:true});A.col=original.col;
     }
   });
+  await check('firebase_archive_reused_for_sampled_dates_despite_calendar_rollover_and_failed_download',async()=>{
+    const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now,fetchImpl:async()=>{throw Error('must not download');},publicFetch:async()=>{throw Error('must not reconstruct');}});
+    await seedSimulationArchive(fake);
+    const b=await svc.createBatch({count:1,from:'2026-04-23',to:'2026-04-23'},'operator','reuse-rollover'),config=await svc.readJSON(fake.col('InvestorAI_SimulationBatches').doc(b.batchId),b.configRef),repo=await svc.ensureRepository(b,config);
+    const C=require('./_investorDecisionContext'),U=require('./_investorUniverse'),symbol=config.roster.symbols[0],row=[...U.tradeTier,...U.researchTier].find(r=>r.symbol===symbol),cache=fake.col('InvestorAI_SimulationScenarios').doc('saved_company');
+    const artifact=await svc.saveJSON(cache,'saved',{data:[],daily:[]});
+    await cache.set({kind:'company_library',symbol,status:'ready',artifact,version:'historical-repository.v1',identityHash:C.hash(row||{symbol}),from:'2026-04-01',to:'2026-04-24'});
+    const ref=repo.ref.collection('units').doc('company_'+symbol);
+    await ref.set({status:'failed',error:{code:'HISTORICAL_DATA_UNAVAILABLE',message:'Historical price provider returned 403'},leaseUntil:0,dispatchedUntil:0},{merge:true});
+    await svc.reuseRepositoryArtifacts({...b,config:{...b.config,from:'2026-03-01',to:'2026-04-26'}},config,repo.ref);
+    const restored=(await ref.get()).data();assert.equal(restored.status,'ready');assert.equal(restored.pointer.artifact,artifact);assert.equal(restored.error,null);assert(restored.reused);
+    await ref.set({status:'queued',pointer:null},{merge:true});
+    await svc.reuseRepositoryArtifacts({...b,dates:['2026-04-27']},config,repo.ref);assert.equal((await ref.get()).data().status,'queued','a genuinely uncovered trading date cannot reuse the archive');
+  });
   await check('saved_repository_lookup_does_not_reuse_incompatible_or_unverified_artifacts',async()=>{
     const fake=database(),svc=Sim.create({admin:fake,wallNow:()=>now}),hash=require('./_investorDecisionContext').hash;
     await seedSimulationArchive(fake);

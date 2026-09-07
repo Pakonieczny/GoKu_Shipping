@@ -934,17 +934,23 @@ const Simulator = (() => {
       });
       return {repositoryId,ref};
     }
+    // Research is consumed at the sampled starting-session cutoffs. Unused calendar
+    // margins (including weekends and a new UTC day) do not invalidate saved coverage.
+    function companyArchiveCovers(c,batch) {
+      const dates=[...batch.dates].sort();
+      return c.from<=dates[0]&&c.to>=dates.at(-1);
+    }
     async function reuseRepositoryArtifacts(batch,config,ref) {
       // Cache discovery belongs before worker dispatch: a completed library must not
       // require hundreds of new background invocations just to become ready again.
-      const pending=(await rows(ref.collection('units'))).filter(u=>!['ready','failed'].includes(u.status)&&!(u.leaseUntil>wallNow())&&!(u.dispatchedUntil>wallNow()));
+      const pending=(await rows(ref.collection('units'))).filter(u=>u.status!=='ready'&&!(u.leaseUntil>wallNow())&&!(u.dispatchedUntil>wallNow()));
       if(!pending.length)return;
       const companies=pending.some(u=>u.kind==='company')?await rows(scenarioCol.where('kind','==','company_library')):[];
       const reusable=await Promise.all(pending.map(async u=>{
         let cache;
         if(u.kind==='company') {
           const identityHash=hash(repositoryRow(config,u.symbol)||{symbol:u.symbol});
-          cache=companies.filter(c=>c.status==='ready'&&c.artifact&&c.version===REPOSITORY_VERSION&&c.symbol===u.symbol&&c.identityHash===identityHash&&c.from<=batch.config.from&&c.to>=batch.config.to).sort((a,b)=>a.preparedAtMs-b.preparedAtMs)[0];
+          cache=companies.filter(c=>c.status==='ready'&&c.artifact&&c.version===REPOSITORY_VERSION&&c.symbol===u.symbol&&c.identityHash===identityHash&&companyArchiveCovers(c,batch)).sort((a,b)=>a.preparedAtMs-b.preparedAtMs)[0];
         }else{
           const cacheId='session_library_'+hash({v:REPOSITORY_VERSION,universe:config.roster.universeHash,date:u.date}).slice(0,40),s=await scenarioCol.doc(cacheId).get(),c=s.data();
           if(c?.status==='ready'&&c.artifact&&c.version===REPOSITORY_VERSION&&c.priceValidationVersion===PRICE_VALIDATION_VERSION&&Array.isArray(c.failedSymbols)&&!c.failedSymbols.length&&(c.builtRefreshRevision||0)===(c.priceRefreshRevision||0))cache={...c,id:cacheId};
@@ -956,7 +962,7 @@ const Simulator = (() => {
         const part=found.slice(i,i+100),snaps=await Promise.all(part.map(x=>tx.get(ref.collection('units').doc(x.unit.unitId))));
         part.forEach((x,j)=>{
           const u=snaps[j].data();
-          if(!u||['ready','failed'].includes(u.status)||u.leaseUntil>wallNow()||u.dispatchedUntil>wallNow())return;
+          if(!u||u.status==='ready'||u.leaseUntil>wallNow()||u.dispatchedUntil>wallNow())return;
           tx.set(ref.collection('units').doc(u.unitId),{status:'ready',phase:'Reused saved shared data',pointer:x.pointer,
             researchReady:u.kind==='company',dailyReady:u.kind==='company',...(u.symbol==='XOM'?{researchHistoryVersion:XOM_HISTORY_VERSION}:{}),reused:true,error:null,lastDispatchError:null,waitReason:null,nextAttemptAtMs:0,sourceReadyAtMs:0,completedAtMs:wallNow(),updatedAtMs:wallNow()},{merge:true});
         });
@@ -1082,7 +1088,7 @@ const Simulator = (() => {
         if(unit.kind==='company') {
           const symbol=unit.symbol,row=repositoryRow(config,symbol),from=batch.config.from,to=batch.config.to;
           const identityHash=hash(row||{symbol}),cacheId='company_library_'+hash({v:REPOSITORY_VERSION,symbol,identityHash,from,to}).slice(0,40);
-          const libraries=(await rows(scenarioCol.where('kind','==','company_library').where('symbol','==',symbol))).filter(c=>c.artifact&&c.status==='ready'&&c.version===REPOSITORY_VERSION&&c.from<=from&&c.to>=to).sort((a,b)=>a.preparedAtMs-b.preparedAtMs);
+          const libraries=(await rows(scenarioCol.where('kind','==','company_library').where('symbol','==',symbol))).filter(c=>c.artifact&&c.status==='ready'&&c.version===REPOSITORY_VERSION&&companyArchiveCovers(c,batch)).sort((a,b)=>a.preparedAtMs-b.preparedAtMs);
           const covering=libraries.find(c=>c.identityHash===identityHash);
           pointer=covering?{cacheId:covering.id,artifact:covering.artifact}:await cachedRepositoryArtifact(cacheId,async parent=>{
             const range=datesBetween(from,to),first=range[0],last=range.at(-1),endMs=M.sessionCloseMs(new Date(last+'T12:00:00Z'))+1200000;
@@ -1095,7 +1101,7 @@ const Simulator = (() => {
             const researchTimes=data.filter(x=>x.collection===admin.COL.dossierVersions&&Number.isFinite(x.knownAtMs)).map(x=>x.knownAtMs),researchReadyAtMs=researchTimes.length?Math.min(...researchTimes):null;
             if(row&&(researchReadyAtMs==null||researchReadyAtMs>cutoff))throw Object.assign(fail('HISTORICAL_EVIDENCE_MISSING',`No company research for ${symbol} was available before ${first}`),{details:{symbol,date:first,cik:row.cik}});
             await progress(`Preparing shared daily prices for ${symbol}`,{stage:'daily',researchReady:true});
-            const start=new Date(Date.parse(from+'T00:00:00Z')-550*86400000).toISOString(),end=to+'T23:59:59Z';
+            const start=new Date(Date.parse(from+'T00:00:00Z')-550*86400000).toISOString(),end=new Date(M.sessionCloseMs(new Date(last+'T12:00:00Z'))).toISOString();
             const prior=hasXomSuccessor(row)&&libraries[0]?await readJSON(scenarioCol.doc(libraries[0].id),libraries[0].artifact):null;
             const daily=Array.isArray(prior?.daily)?prior.daily:((await bulkPriceHistory([symbol],start,end,'1Day',parent,progress,pause))[symbol]||[]).map(b=>({...b,date:M.nyParts(new Date(b.t)).date}));
             await progress(`Saving research and daily prices for ${symbol}`,{dailyReady:true});
