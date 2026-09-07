@@ -108,7 +108,8 @@ async function marketObservation(symbol, { cutoffMs, deps = {} }) {
       realizedVolatility20dBps: vol == null ? null : String(Math.round(vol*10000)),
       latestDailyVolumeRatioMilli: avgVolume && last ? String(Math.round(Number(last.v)/avgVolume*1000)) : null,
       provenance: usableTick ? recent.provenance || null : daily.provenance || null,
-      returns: require("./_investorDossier").returnsBps(bars, { asOfMs: cutoffMs }), bars: bars.slice(-60) };
+      returns: require("./_investorDossier").returnsBps(bars, { asOfMs: cutoffMs }),
+      technicals: require("./_investorTechnicals").summarize(bars), bars: bars.slice(-260) };
   })();
   if (cache) cache.set(key, task);
   return task;
@@ -119,7 +120,8 @@ async function marketState({ cards = [], cutoffMs, deps = {} }) {
   let macro=[];
   try {macro=await (deps.evidence || require("./_investorEvidence")).documentsForCompany("SPY",cutoffMs,30,8,{admin:deps.admin});} catch {}
   const measured = cards.map(c => c.marketObservation).filter(x => x && x.intradayReturnBps != null && x.freshness === "DELAYED_INTRADAY");
-  return { schemaVersion: "market-state.v1", cutoffMs, observations: observations.map(({ bars, ...x }) => x),
+  // Only the SPY benchmark keeps its technical block: the run record stores this state and must stay compact.
+  return { schemaVersion: "market-state.v1", cutoffMs, observations: observations.map(({ bars, technicals, ...x }) => (x.symbol === "SPY" ? { ...x, technicals } : x)),
     breadth: { universeCount: cards.length, observedCount: measured.length, advancing: measured.filter(x=>BigInt(x.intradayReturnBps)>0n).length,
       declining: measured.filter(x=>BigInt(x.intradayReturnBps)<0n).length, basis: "available_delayed_intraday_only", missingCount: cards.length-measured.length },
     macroEvidence: [...macro.filter(d=>Number(d.decisionKnownAtMs)<=cutoffMs).map(d=>({sourceId:d.sourceId,documentVersionId:d.versionId,publishedAt:d.source_published_at || null,knownAtMs:d.decisionKnownAtMs,title:d.title || null,summary:String(d.canonicalText || d.summary || "").slice(0,3000),link:d.link || null})), ...cards.flatMap(c => (c.changes || []).filter(x => /MACRO|RATE|CREDIT/i.test(x.eventClass || x.type || "")).map(x => ({symbol:c.symbol,...x})))].slice(0,12),

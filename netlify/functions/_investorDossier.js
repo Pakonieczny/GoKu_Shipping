@@ -333,9 +333,12 @@ function cardFromVersion(version, { cutoffMs, price = null, sectorPrice = null, 
   const fu = version.fundamentals || {};
   const g = (version.guidance || [])[0] || null;
   const asOf = new Date(Number(cutoffMs || version.asOfMs)).toISOString();
+  const diff = (a, b, k) => (a && a.ok && b && b.ok && a.bps[k] != null && b.bps[k] != null ? String(BigInt(a.bps[k]) - BigInt(b.bps[k])) : null);
   const rel = {
     sector5dBps: sectorPrice && sectorPrice.ok ? sectorPrice.bps["5d"] : null,
     market5dBps: marketPrice && marketPrice.ok ? marketPrice.bps["5d"] : null,
+    market3mBps: marketPrice && marketPrice.ok ? marketPrice.bps["3m"] : null,
+    relativeToSector5dBps: diff(price, sectorPrice, "5d"), relativeToMarket5dBps: diff(price, marketPrice, "5d"), relativeToMarket3mBps: diff(price, marketPrice, "3m"),
     drawdownBps: price && price.ok ? price.drawdownBps : null,
   };
   const missing = [...(version.dataQuality && version.dataQuality.missing || [])];
@@ -538,8 +541,10 @@ async function marketInputs(symbol, sector, { cutoffMs, deps = {} } = {}) {
   const C = require("./_investorDecisionContext"), T = deps.temporal || require("./_investorTemporal");
   const driver = (T.DRIVER_BY_SECTOR || {})[sector] || MARKET_SYMBOL;
   const [own, sec, market] = await Promise.all([symbol, driver, MARKET_SYMBOL].map(s => C.marketObservation(s, { cutoffMs, deps })));
+  // Technical context is market-relative here so Astra sees relative strength against SPY, not just raw returns.
+  const technicals = require("./_investorTechnicals").summarize(own.bars, { market: market.bars });
   return { price: own.returns, sectorPrice: sec.returns, marketPrice: market.returns, driver,
-    observation: (({ bars, ...x }) => x)(own) };
+    observation: { ...(({ bars, ...x }) => x)(own), technicals } };
 }
 
 /** §5.4 — one compact card per symbol at the cutoff; symbols without a
