@@ -64,6 +64,11 @@ function simulateLegOnBar({ leg, bar, participationBps = DEFAULT_PARTICIPATION_B
   const o = micros(bar.o), h = micros(bar.h), l = micros(bar.l);
   const remaining = big(leg.remainingUnits != null ? leg.remainingUnits : leg.quantityUnits);
   const none = (reason, extra = {}) => ({ touch: false, fill: null, reason, triggered: false, ...extra });
+  if(leg.role==='ENTRY'&&(leg.validFromMs!=null||leg.expiresAtMs!=null)){
+    const at=Date.parse(bar.t);
+    if(!Number.isFinite(at)||leg.validFromMs!=null&&at<leg.validFromMs)return none('entry_not_yet_authorized');
+    if(leg.expiresAtMs!=null&&at>=leg.expiresAtMs)return none('entry_authorization_expired');
+  }
   if (o == null || h == null || l == null) return none("bar_unpriced");
   if (remaining <= 0n) return none("nothing_remaining");
   const halted = !(Number(bar.v) > 0) || bar.halted === true;

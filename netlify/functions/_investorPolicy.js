@@ -76,8 +76,9 @@ const ROLE_MODELS = deepFreeze({
     authority: "investment_decision_and_standing_mandate" },
   postmortem: { model: "gpt-5.6-sol", reasoning: { effort: "medium" }, authority: "offline_evaluation_only" },
 });
-/* Terra is removed from the investment path (§3). Ordinary paper meetings do not allow cheaper-model roster filtering.
-   Historical simulations explicitly opt into the pinned Luna shortlist in _investorEvals.js. */
+/* Terra is removed from the investment path (§3). Versioned paper meetings and
+   historical simulations opt into Luna screening/preparation followed by Astra
+   medium joint underwriting; legacy checkpoints retain the routing above. */
 const FORBIDDEN_INVESTMENT_MODELS = Object.freeze(["gpt-5.6-terra"]);
 const ROSTER_FILTER_MODELS_ALLOWED = Object.freeze([]);
 

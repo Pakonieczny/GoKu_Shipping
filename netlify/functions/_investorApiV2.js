@@ -190,6 +190,7 @@ function runView(run) {
     managerRunId: run.managerRunId, state: runState(run), tradingDate: run.tradingDate || null, accountId: run.accountId || null, universeVersion: run.universeVersion || null, universeHash: run.universeHash || null,
     contextManifestHash: run.contextManifestHash || null, policyHash: run.policyHash || null, portfolioVersion: run.activation && run.activation.activationSnapshotId ? run.activation.activationSnapshotId : null,
     startedAt: iso(run.startedAtMs), updatedAt: iso(run.updatedAtMs), cutoffAt: iso(run.cutoffMs), deadlineAt: iso(run.deadlineMs || run.hardDeadlineMs), completedAt: iso(run.completedAtMs),
+    decisionProcess:run.decisionProcess||null, shortlist:run.shortlist||null,
     investmentNote: run.investmentNote ? clip(run.investmentNote,1600) : null, stage: run.stage || null, checkpoints: (run.checkpoints || run.lineage || []).slice(0, 40), segments: Number(run.segments) || null,
     coverage: { eligibleCount: Number(cov.eligibleCount ?? run.eligibleCount) || 0, completedCount: Number(cov.completedCount) || 0, missing: list(cov.missing).slice(0, 400), missingCount: Array.isArray(cov.missing) ? cov.missing.length : Number(cov.missing) || 0, duplicates: list(cov.duplicates).slice(0, 100), unknown: list(cov.unknown).slice(0, 100), ok: cov.ok === true, repaired: Number(cov.repaired) || 0 },
     countsByDecision: run.byDecision || {}, decisionCount: Number(run.decisionCount) || 0, buys: (run.buys || []).slice(0, 40),
@@ -278,12 +279,12 @@ function laneAsOf(ctrl) {
 function workflowOf(ctrl, run) {
   const ingest = ctrl.lastIngestPass || null, tick = ctrl.lastExecutionTick || null;
   const stage = run ? String(run.stage || "") : "";
-  const after = (s) => ["freeze", "review", "coverage", "maintenance", "research", "synthesis", "activation", "persist", "complete"].indexOf(stage) > ["freeze", "review", "coverage", "maintenance", "research", "synthesis", "activation", "persist", "complete"].indexOf(s);
+  const after = (s) => ["freeze", "shortlist", "review", "coverage", "maintenance", "research", "synthesis", "activation", "persist", "complete"].indexOf(stage) > ["freeze", "shortlist", "review", "coverage", "maintenance", "research", "synthesis", "activation", "persist", "complete"].indexOf(s);
   const st = (s, done, running) => (done ? "complete" : running ? "running" : "pending");
   const failed = run && run.status === "failed_closed";
   return [
     { step: "evidence", state: ingest ? (ingest.error ? "failed" : "complete") : "pending", detail: ingest ? `${ingest.companies || ingest.refreshed || 0} companies refreshed` : "overnight ingest pending", at: iso(ingest && (ingest.finishedAtMs || ingest.atMs)) },
-    { step: "coverage", state: !run ? "pending" : failed && !after("coverage") ? "failed" : st("coverage", after("coverage") || run.status === "complete", ["freeze", "review", "coverage"].includes(stage)), detail: run && run.coverage ? `${run.coverage.completedCount}/${run.coverage.eligibleCount} reviewed` : "not started", at: iso(run && run.cutoffMs) },
+    { step: "coverage", state: !run ? "pending" : failed && !after("coverage") ? "failed" : st("coverage", after("coverage") || run.status === "complete", ["freeze", "shortlist", "review", "coverage"].includes(stage)), detail: run && run.coverage ? `${run.coverage.completedCount}/${run.coverage.eligibleCount} reviewed` : "not started", at: iso(run && run.cutoffMs) },
     { step: "research", state: !run ? "pending" : failed && !after("research") ? "failed" : st("research", after("research") || run.status === "complete", stage === "research"), detail: run && run.research ? `${run.research.completed} completed, ${run.research.deferred} deferred, ${run.research.failed} failed` : "no research yet", at: null },
     { step: "revisions", state: !run ? "pending" : st("maintenance", after("maintenance") || run.status === "complete", stage === "maintenance"), detail: run && run.maintenance ? `${run.maintenance.actionable} actionable, ${(run.maintenance.actionRequired || []).length} action required` : "no holdings reviewed", at: null },
     { step: "synthesis", state: !run ? "pending" : failed && stage === "synthesis" ? "failed" : st("synthesis", after("synthesis") || run.status === "complete", stage === "synthesis"), detail: "Portfolio comparison and quantity review", at: null },
@@ -338,12 +339,12 @@ async function readManagerDashboard({ params, ctx }) {
       holdings: snap.positions.map(p => ({ symbol: p.symbol, name: names.get(p.symbol) || p.symbol, quantity: qty(p.quantityUnits), marketValue: money(p.marketValueMinor), pnl: p.markAt ? money(p.unrealisedMinor) : null, markAt: p.markAt,
         returnBps: p.markAt && big(p.costBasisMinor) > 0n ? String(big(p.unrealisedMinor) * 10000n / big(p.costBasisMinor)) : null,
         reason: clip((decisions.find(d => d.symbol === p.symbol) || {}).reason, 180) })),
-      chosenCompanies: decisions.filter(d => !d.held && ["BUY", "WATCH"].includes(d.decision)).sort((a,b) => (a.decision === "BUY" ? 0 : 1) - (b.decision === "BUY" ? 0 : 1) || (a.capitalRank || 999) - (b.capitalRank || 999)).slice(0,6).map(d => ({ symbol:d.symbol, name:names.get(d.symbol) || d.symbol, decision:d.decision, reason:clip(d.reason,180), state:(pointers.find(p => p.symbol === d.symbol) || {}).status || null })),
+      chosenCompanies: decisions.filter(d => !d.held && ["BUY", "WATCH"].includes(d.decision) && (!run?.decisionProcess || d.source==="final_synthesis" && run.shortlist?.symbols?.includes(d.symbol))).sort((a,b) => (a.decision === "BUY" ? 0 : 1) - (b.decision === "BUY" ? 0 : 1) || (a.capitalRank || 999) - (b.capitalRank || 999)).slice(0,8).map(d => ({ symbol:d.symbol, name:names.get(d.symbol) || d.symbol, decision:d.decision, reason:clip(d.reason,180), state:(pointers.find(p => p.symbol === d.symbol) || {}).status || null })),
       nextReview: nextReviewWindow(ctrl, nowMs),
       cadence: { reviewMinuteEt: POLICY.CUTOFFS_ET.managerStartMin, holdingDeadlineMinuteEt: POLICY.CUTOFFS_ET.holdingHardDeadlineMin, newsCheckMinutes:10, orderCheckMinutes:1 }
     },
     market: { open:session.open, phase:session.phase, sessionDate:session.date, tradingDay:session.tradingDay },
-    models: { investment: { snapshot: POLICY.ROLE_MODELS.manager.model, reasoningEffort: POLICY.ROLE_MODELS.manager.reasoning.effort }, extraction: { snapshot: POLICY.ROLE_MODELS.facts.model, reasoningEffort: "none" } },
+    models: { investment: { snapshot: POLICY.ROLE_MODELS.manager.model, reasoningEffort: run?.decisionProcess?"medium":POLICY.ROLE_MODELS.manager.reasoning.effort }, extraction: { snapshot: POLICY.ROLE_MODELS.facts.model, reasoningEffort: run?.decisionProcess?"medium":"none" } },
     identity: { policyHash: policy.policyHash || null, policyVersion: policy.policyVersion || POLICY.POLICY_VERSION, schemaHashes: POLICY.schemaHashes(), promptHashes, universeVersion: run ? run.universeVersion || null : null, universeHash: run ? run.universeHash || null : null, commit: commitId() },
     marketContext: run && run.marketContext || null, latestRun: runView(run), coverage: run && run.coverage ? { ...runView(run).coverage, universeVersion: run.universeVersion || null, universeHash: run.universeHash || null, tradingDate: run.tradingDate || null } : null,
     holdingReview: run && run.maintenance ? { total: decisions.filter((d) => d.held).length, revised: decisions.filter((d) => d.held && d.source === "holding_analysis").length, actionRequired: (Array.isArray(run.maintenance.actionRequired) ? run.maintenance.actionRequired : []).slice(0, 40), deadlineMissed: run.maintenance.deadlineMissed === true } : null,
@@ -1012,6 +1013,7 @@ function checkVersion(expected, actual) { if (expected != null && String(expecte
 async function pointerEvent(D, p, kind, fields) { const MD = require("./_investorMandate"); try { await MD.appendEvent(D, p, kind, fields); } catch {} }
 
 const MUTATIONS = {
+  paperDecisionSettingsSave:async(params,ctx)=>({data:await require("./_investorPaperProcess").create({admin:ctx.admin}).save(ctx.actorId,params)}),
   simulationAnalysisStart:async(params,ctx,env)=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).start(ctx.actorId,env.idempotencyKey,params)}),
   simulationAnalysisControl:async(params,ctx)=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).control(ctx.actorId,params.analysisId,params.command,params.spendLimitUsd)}),
   simulationStrategySelect:async(params,ctx)=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).select(ctx.actorId,params.versionId)}),
@@ -1479,6 +1481,7 @@ const MUTATIONS = {
 
 /* ═══ DISPATCH ════════════════════════════════════════════════════════════ */
 const READS = {
+  paperDecisionSettings:async({ctx})=>{const store=require("./_investorPaperProcess").create({admin:ctx.admin}),settings=await store.settings(),resolved=await store.resolve(settings);return {data:{settings:{companyRange:settings.companyRange,strategyVersionId:settings.strategyVersionId,revision:settings.revision,updatedAtMs:settings.updatedAtMs||null},resolved}};},
   simulationAnalysisOverview:async({params,ctx})=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).view(ctx.actorId,params)}),
   simulationOverview:async({params,ctx})=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).overview({...params,owner:ctx.actorId})}),
   simulationDetail:async({params,ctx})=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).detail(params.runId,ctx.actorId,params)}), managerDashboard: readManagerDashboard, controlState: readControlState, companies: readCompanies, companyDossier: readCompanyDossier, portfolio: readPortfolio, mandates: readMandates, orderSets: readOrderSets, executionEvents: readExecutionEvents,

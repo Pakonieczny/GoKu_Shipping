@@ -93,10 +93,15 @@ function assertDocument(document) {
   if(document.version!==VERSION||C.hash(content)!==documentHash)fail('HANDOFF_DOCUMENT_CORRUPT');
   return document;
 }
-function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false) {
-  if(P.validateAgainst(SCHEMAS['prepared-investment-decision.v1'],output).length)fail('HANDOFF_DECISION_SCHEMA_INVALID');
+function jointSchema(count) {
+  if(!Number.isInteger(count)||count<1||count>304)fail("HANDOFF_RESEARCH_COVERAGE_INVALID");
+  const schema=JSON.parse(JSON.stringify(SCHEMAS["prepared-investment-decision.v1"]));
+  schema.properties.research.minItems=count;schema.properties.research.maxItems=count;return schema;
+}
+function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false, schema=null) {
+  if(P.validateAgainst(schema||SCHEMAS['prepared-investment-decision.v1'],output).length)fail('HANDOFF_DECISION_SCHEMA_INVALID');
   const symbols=packets.map(p=>p.symbol),got=output.research.map(m=>m.symbol);
-  if(!symbols.length||symbols.length>2||new Set(got).size!==got.length||got.length!==symbols.length||got.some(s=>!symbols.includes(s)))fail('HANDOFF_RESEARCH_COVERAGE_INVALID');
+  if(!symbols.length||symbols.length>(schema?304:2)||new Set(got).size!==got.length||got.length!==symbols.length||got.some(s=>!symbols.includes(s)))fail('HANDOFF_RESEARCH_COVERAGE_INVALID');
   const V=require('./_investorDecisionValidation'),verified={};
   for(const memo of output.research) {
     const packet=packets.find(p=>p.symbol===memo.symbol),claims=new Map((packet.claims||[]).map(c=>[c.claimId,c]));
@@ -166,4 +171,4 @@ function validateInvestmentPlan(output,documents,policy=INVESTMENT_POLICY) {
     documentHashes:Object.fromEntries(documents.map(d=>[d.symbol,d.documentHash]))};
   return {...plan,planHash:C.hash(plan)};
 }
-module.exports={VERSION,SECTIONS,SCHEMAS,sourcePacket,citationCatalog,preparationWire,bindDocument,assertDocument,validateJoint,INVESTMENT_POLICY,DIVERSIFIED_POLICY,supportedInvestmentPolicy,assertInvestmentAllocations,investmentSchema,validateInvestmentPlan};
+module.exports={jointSchema,VERSION,SECTIONS,SCHEMAS,sourcePacket,citationCatalog,preparationWire,bindDocument,assertDocument,validateJoint,INVESTMENT_POLICY,DIVERSIFIED_POLICY,supportedInvestmentPolicy,assertInvestmentAllocations,investmentSchema,validateInvestmentPlan};

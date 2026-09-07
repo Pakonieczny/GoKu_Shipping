@@ -4181,9 +4181,86 @@ function runFixtures() {
       fake.docs.set(`${fake.COL.accounts}/paper-1`, { accountId: "paper-1", balanceCents: { cash: 1000000, reserved: 0, positions: 42000 }, balanceRevision: 7 });
       fake.docs.set(`${fake.COL.positions}/paper-1_BBB`, { accountId: "paper-1", symbol: "BBB", open: true, qty: 10, entryPriceUsd: 40, lastMarkUsd: 42, lastMarkAt: new Date(t0 - 60e3).toISOString(), costBasisCents: 40000 });
     };
-    const deps = { admin: fake, gateway, universe, claimVerifier, mandate, history, tools: null, now: () => t0, reconcile: null };
+    const deps = { decisionProcess:null, admin: fake, gateway, universe, claimVerifier, mandate, history, tools: null, now: () => t0, reconcile: null };
     return { fake, deps, calls, t0, symbols, seed, snapshotRoster };
   }
+
+  cases.push(fixture("paper_process_range_strategy_pinning_and_permissions", async()=>{
+    const assert=require('assert/strict'),Paper=require('./_investorPaperProcess'),S=require('./_investorSimulationStrategy'),H=require('./_investorSimulationHorizon');
+    const fake=fakeAdmin(),store=Paper.create({admin:fake,now:()=>12345});
+    assert.equal((await store.settings()).companyRange,'range2');
+    await store.save('owner',{companyRange:'top1',strategyVersionId:'baseline',revision:0});
+    const pinned=await store.resolve(await store.settings());
+    assert.equal(pinned.max,1);assert.equal(pinned.strategy,null);
+    await assert.rejects(()=>store.save('owner',{companyRange:'range3',strategyVersionId:'baseline',revision:0}),e=>e.code==='VERSION_CONFLICT');
+    const rules={...S.DEFAULT,entryDelayMinutes:10,allocationScalePct:75},version={versionId:'strategy_paper',owner:'owner',rules,rulesHash:S.hash(rules),createdAtMs:123,trainingThroughDate:'2026-08-01',status:'experimental'};
+    await fake.col('InvestorAI_SimulationStrategyVersions').doc(version.versionId).set(version);
+    await fake.col('InvestorAI_SimulationLearningPreferences').doc(S.hash('owner')).set({activeVersionId:version.versionId});
+    await store.save('owner',{companyRange:'range3',strategyVersionId:'active',revision:1});
+    const next=await store.resolve(await store.settings());assert.equal(next.max,8);assert.equal(next.strategy.rules.entryDelayMinutes,10);assert.equal(pinned.max,1);
+    await assert.rejects(()=>store.save('another-owner',{companyRange:'top1',strategyVersionId:version.versionId,revision:2}));
+    const prompt=Paper.instructions(next,'decidePreparedPortfolio');assert(prompt.includes('strategy_paper')&&prompt.includes('allocationScalePct')&&prompt.includes('75'));
+    for(const [range,{min,max}] of Object.entries(H.RANGES)){
+      const p={...pinned,companyRange:range,min,max},eligible=Array.from({length:8},(_,i)=>'C'+i),requests=eligible.slice(0,min).map(symbol=>({symbol}));
+      Paper.researchBounds([...requests,{symbol:'HELD'},{symbol:'PENDING'}],p,eligible,['HELD','PENDING']);
+      assert.throws(()=>Paper.researchBounds([...requests,requests[0]],p,eligible,[]));
+      assert.throws(()=>Paper.researchBounds([{symbol:'UNKNOWN'}],p,eligible,[]));
+      if(max<8)assert.throws(()=>Paper.researchBounds(eligible.slice(0,max+1).map(symbol=>({symbol})),p,eligible,[]));
+    }
+    const mandate=structuredClone(require('./_investorPolicy').EXAMPLE_MANDATE_PROPOSAL);mandate.action.entry.authorizedSessionDates=['2026-09-04'];mandate.action.entry.validFrom='2026-09-04T13:30:00Z';
+    const execution=require('./_investorExecution'),timing=Paper.entryTiming(mandate,next);assert.equal(timing.validFromMs,Date.parse('2026-09-04T13:40:00Z'));
+    const leg={role:'ENTRY',type:'LIMIT',side:'buy',priceMicros:'100000000',quantityUnits:'10',...timing},bar={t:'2026-09-04T13:35:00Z',o:90,h:91,l:89,c:90,v:100000};
+    assert.equal(execution.simulateLegOnBar({leg,bar}).reason,'entry_not_yet_authorized');
+    assert(execution.simulateLegOnBar({leg,bar:{...bar,t:'2026-09-04T13:40:00Z'}}).fill);
+    assert.equal(execution.simulateLegOnBar({leg,bar:{...bar,t:new Date(timing.expiresAtMs).toISOString()}}).reason,'entry_authorization_expired');
+    assert.equal(Paper.entryTiming(mandate),null);
+    const orders=Paper.withProcess(next,()=>require('./_investorMandate').desiredOrderSet({proposal:mandate,envelope:{authorizedQuantityUnits:'10'},mandateVersionId:'timing',accountId:'paper-1',reservationId:'timing'}));
+    assert.equal(orders.legs.find(l=>l.role==='ENTRY').validFromMs,timing.validFromMs);
+    assert.equal(require('./_investorAdmin').currentScope(),null);return true;
+  }));
+
+  cases.push(fixture("paper_joint_schema_supports_eight_finalists_and_rejects_missing_or_duplicate_memos",()=>{
+    const assert=require('assert/strict'),H=require('./_investorResearchHandoff'),cutoff=Date.parse('2026-09-04T12:30:00Z');
+    const symbols=Array.from({length:8},(_,i)=>'C'+i),packets=symbols.map(symbol=>({symbol,cutoffMs:cutoff,claims:[]}));
+    const research=symbols.map(symbol=>({schemaVersion:'research-memo.v1',symbol,asOf:new Date(cutoff).toISOString(),checklist:Object.fromEntries(['business','whatChanged','agreementDisagreement','risks','valuationFramework','disconfirmingEvidence','returnAndHorizon','versusAlternatives','mandateOrAbstain'].map(k=>[k,'Insufficient evidence'])),factualPremises:[],inferences:[],valuation:null,bearCase:'Uncertain',thesisHealth:'UNKNOWN',proposedDecision:'WATCH',reasonCode:'UNCERTAINTY',mandate:null}));
+    const output={schemaVersion:'prepared-investment-decision.v1',research,allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:symbols.map(symbol=>({symbol,decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Insufficient evidence'})),expansionMandates:[],holdingAnalysis:[],comparisonNote:'All eight compared; no forced unsupported purchases.'}};
+    H.validateJoint(output,packets,[],false,H.jointSchema(8));
+    assert.throws(()=>H.validateJoint({...output,research:research.slice(0,7)},packets,[],false,H.jointSchema(8)));
+    assert.throws(()=>H.validateJoint({...output,research:[research[0],...research.slice(0,7)]},packets,[],false,H.jointSchema(8)));
+    assert.throws(()=>H.validateJoint(output,packets));return true;
+  }));
+
+  cases.push(fixture("paper_meeting_real_gateway_joint_research_resume_keeps_holdings_and_costs",async()=>{
+    const assert=require('assert/strict'),Paper=require('./_investorPaperProcess'),O=require('./_investorOpenai'),H=require('./_investorResearchHandoff'),G=require('./_investorManager');
+    const W=meetingWorld({reviewMissing:[],synthesisBuy:false});await W.seed();
+    W.deps.decisionProcess={version:Paper.VERSION,companyRange:'top1',min:1,max:1,strategy:null,settingsRevision:0,preparedResearch:true};
+    const calls=[],baseReview=W.deps.gateway.reviewUniverse;
+    const gateway=O.withDeps({admin:W.fake,env:{OPENAI_API_KEY:'fixture'},now:()=>W.t0,fetchImpl:async(url,opts)=>{
+      assert.equal(require('./_investorAdmin').currentScope(),null);assert.equal(opts.method,'POST');const b=JSON.parse(opts.body),name=b.text.format.name,user=b.input.find(x=>x.role==='user').content;calls.push(b);
+      const data=label=>JSON.parse(user.match(new RegExp('<untrusted_context name="'+label+'">\\n([\\s\\S]*?)\\n</untrusted_context>'))[1]);let output;
+      if(name==='paper_shortlist_v1'){assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');assert.deepEqual(data('eligible_source_cards').map(x=>x.symbol),['AAA','CCC']);output={schemaVersion:'paper-shortlist.v1',selected:['AAA','CCC']};}
+      else if(name==='universe_review_v1'){const m=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]),r=await baseReview({cards:data('universe_cards'),universeManifest:m,holdings:data('holding_packets')});output={schemaVersion:'universe-review.v1',universeVersion:m.universeVersion,universeHash:m.universeHash,eligibleCount:3,coverage:r.coverage,holdingAnalysis:r.holdingAnalysis,researchRequests:r.researchRequests,managerNote:'One top finalist; existing holding retained.'};}
+      else if(name==='prepared_research_document_v1'){const source=data('source_packet');assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence incomplete',evidenceIds:[],missing:['Insufficient evidence']}]))};}
+      else if(name==='prepared_investment_decision_v1'){
+        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'medium');assert(!b.tools);assert.equal(data('prepared_documents').length,1);assert.equal(data('holdings')[0].symbol,'BBB');
+        const memo={schemaVersion:'research-memo.v1',symbol:'AAA',asOf:new Date(data('prepared_documents')[0].cutoffMs).toISOString(),checklist:Object.fromEntries(['business','whatChanged','agreementDisagreement','risks','valuationFramework','disconfirmingEvidence','returnAndHorizon','versusAlternatives','mandateOrAbstain'].map(k=>[k,'Insufficient dated evidence.'])),factualPremises:[],inferences:[],valuation:null,bearCase:'Uncertain return',thesisHealth:'UNKNOWN',proposedDecision:'WATCH',reasonCode:'UNCERTAINTY',mandate:null};
+        const held=data('holdings').map(h=>({symbol:h.symbol,decision:'HOLD',reasonCode:null,revisionResult:'UNCHANGED',researchDirective:'NONE',thesisHealth:'INTACT',emergency:{emergencyReductionRank:1,emergencyRankAsOf:new Date(W.t0).toISOString(),emergencyRankExpiresAfterSession:'2026-09-08',rationale:'Protected'},rationale:'Retain existing protection',mandate:null}));
+        output={schemaVersion:'prepared-investment-decision.v1',research:[memo],allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:[{symbol:'AAA',decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Evidence insufficient'},{symbol:'BBB',decision:'HOLD',capitalRank:null,reasonCode:null,fundingState:'NOT_APPLICABLE',reason:'Retain protection'}],expansionMandates:[],holdingAnalysis:held,comparisonNote:'Cash preferable to unsupported purchase; retain existing holding.'}};
+      } else throw Error('Unexpected model stage '+name);
+      const errors=require('./_investorPolicy').validateAgainst(b.text.format.schema,output);assert.equal(errors.length,0,JSON.stringify(errors));
+      return {ok:true,status:200,json:async()=>({id:'resp_paper_'+calls.length,model:b.model,status:'completed',output_text:JSON.stringify(output),usage:{input_tokens:1000,output_tokens:500}})};
+    }});
+    let pauseOnce=true;W.deps.gateway={...gateway,decidePreparedPortfolio:async args=>{if(pauseOnce){pauseOnce=false;return {pending:true};}return gateway.decidePreparedPortfolio(args);}};
+    W.deps.tools=require('./_investorResearchTools');W.deps.toolBindings={getFilingFactsAsOf:async()=>({facts:[],lineage:[]}),searchDecisionData:async()=>({items:[]})};
+    const claim={runId:'paper_parity',payload:{accountId:'paper-1',tradingDate:'2026-09-04'}};
+    const first=await G.runManagerMeeting({claim,deps:W.deps,control:{engineMode:'manager'}});assert(first.yielded);assert.equal(first.checkpoint.data.handoff.phase,'decision');
+    const resume=structuredClone(first.checkpoint);await Paper.create({admin:W.fake}).save('owner',{companyRange:'range3',strategyVersionId:'baseline',revision:0});delete W.deps.decisionProcess;
+    const last=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
+    assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,4);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
+    assert.equal(W.calls.research,0);assert.equal(W.calls.synthesis,0);assert.equal(last.checkpoint.data.synthesis.holdingAnalysis[0].symbol,'BBB');
+    const charged=await gateway.spendToday();assert(charged.spentMinor>0);assert.equal(Number(last.summary.costMinor),charged.spentMinor);
+    assert.equal([...W.fake.docs.keys()].filter(k=>k.startsWith('InvestorAI_SimulationRuns/')).length,0);return true;
+  }));
 
   cases.push(fixture("manager_meeting_covers_the_frozen_roster_exactly_repairs_missing_rows_once_and_persists_one_decision_per_symbol", async () => {
     const MGR = require("./_investorManager");
@@ -5061,7 +5138,7 @@ function runFixtures() {
     const S = require("./_investorApiSchemas");
     const c = S.compileAll();
     if (!c || c.count < 60) throw new Error(`compiled ${c && c.count}`);
-    if (S.READ_ACTIONS.length !== 30 || S.MUTATION_ACTIONS.length !== 36) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
+    if (S.READ_ACTIONS.length !== 31 || S.MUTATION_ACTIONS.length !== 37) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
     const req = (body) => S.validateRequest(body);
     const base = { apiVersion: "investor.v2", requestId: "req_0000000001" };
     if (!req({ ...base, action: "companies", params: { pageSize: 200, bucket: "eligible" } }).ok) throw new Error("valid read rejected");

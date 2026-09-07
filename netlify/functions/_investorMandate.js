@@ -67,6 +67,8 @@ function sessionCloseMs(date) {
 }
 /** PURE. An entry authorization ends at the close of its last authorized session. */
 function entryExpiresAtMs(proposal) {
+  const paperTiming=require('./_investorPaperProcess').entryTiming(proposal);
+  if(paperTiming)return paperTiming.expiresAtMs;
   const dates = proposal && proposal.action && proposal.action.entry && proposal.action.entry.authorizedSessionDates || [];
   if (!dates.length) return null;
   return sessionCloseMs([...dates].sort().pop());
@@ -242,7 +244,8 @@ function desiredOrderSet({ proposal, envelope, mandateVersionId, accountId, rese
   const act = proposal.action;
   if (proposal.decision === "BUY") {
     legs.push({ legId: `${orderSetId}_ENTRY`, role: "ENTRY", side: "buy", type: "LIMIT", priceMicros: act.entry.limitPriceMicros, quantityUnits: qty, timeInForce: "DAY",
-      sessionDates: act.entry.authorizedSessionDates, regularSessionOnly: true, restageEachAuthorizedSession: act.entry.restageEachAuthorizedSession === true });
+      sessionDates: act.entry.authorizedSessionDates, regularSessionOnly: true, restageEachAuthorizedSession: act.entry.restageEachAuthorizedSession === true,
+      ...(require('./_investorPaperProcess').entryTiming(proposal)||{}) });
     legs.push({ legId: `${orderSetId}_TARGET`, role: "TARGET", side: "sell", type: "LIMIT", priceMicros: act.protection.takeProfitPriceMicros, quantityUnits: qty, timeInForce: "GTC", ocoGroup: `${orderSetId}_OCO`, activatesOn: "ENTRY_FILL" });
     legs.push({ legId: `${orderSetId}_STOP`, role: "STOP", side: "sell", type: act.protection.lossOrderType, stopMicros: act.protection.lossBoundaryPriceMicros, quantityUnits: qty, timeInForce: "GTC", ocoGroup: `${orderSetId}_OCO`, activatesOn: "ENTRY_FILL",
       trailing: act.protection.trailing && act.protection.trailing.enabled ? act.protection.trailing : null });
@@ -361,6 +364,7 @@ async function stagePortfolioPlan({ planClass, portfolioPlanProposal = {}, propo
           expectedActiveVersion: Number(pointer.desiredVersion) || 0, proposalId, proposalHash, portfolioPlanId: planId, planClass, managerRunId, accountId, symbol: p.symbol, decision: p.decision,
           dossierVersionId: lineage.dossierVersionId || (lineage.bySymbol && lineage.bySymbol[p.symbol] && lineage.bySymbol[p.symbol].dossierVersionId) || null,
           researchVersionId: (lineage.bySymbol && lineage.bySymbol[p.symbol] && lineage.bySymbol[p.symbol].researchVersionId) || null,
+          strategyVersionId:lineage.strategyVersionId||null, strategyRulesHash:require("./_investorPaperProcess").current()?.strategy?.rulesHash||null,
           model: lineage.model || POLICY.ROLE_MODELS.manager.model, reasoningEffort: lineage.reasoningEffort || POLICY.ROLE_MODELS.manager.reasoning.effort, promptHash: lineage.promptHash || null, schemaHash: POLICY.schemaHash("mandate-proposal.v1"),
           policyHash: (policy && policy.policyHash) || null, contextManifestHash: lineage.contextManifestHash || null, sourceManifestHash: sha(p.sourceManifest || []),
           verifiedValuation:verifiedValuations[p.symbol] || null,

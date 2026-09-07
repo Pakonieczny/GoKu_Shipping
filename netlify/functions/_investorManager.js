@@ -35,10 +35,11 @@ const A = require("./_investorAdmin");
 const POLICY = require("./_investorPolicy");
 
 const C = require("./_investorDecisionContext");
+const PAPER = require("./_investorPaperProcess");
 const MANAGER_VERSION = "manager.v2";
 const RUN_SCHEMA = "manager-run.v1";
 const DECISION_SCHEMA = "manager-decision.v1";
-const STAGES = Object.freeze(["freeze", "review", "coverage", "maintenance", "research", "synthesis", "activation", "persist", "complete"]);
+const STAGES = Object.freeze(["freeze", "shortlist", "review", "coverage", "maintenance", "research", "synthesis", "activation", "persist", "complete"]);
 const CANONICAL = new Set(["BUY", "WATCH", "IGNORE", "HOLD", "REDUCE", "SELL", "ABSTAIN"]);
 const REVIEW_DIRECTIVES = new Set(["RESEARCH_NOW", "UPDATE_EXISTING", "REUSE_CURRENT", "NONE"]);
 const PROVISIONAL = new Set(["WATCH", "IGNORE", "ABSTAIN", "HOLD_CANDIDATE", "REDUCE_CANDIDATE", "SELL_CANDIDATE"]);
@@ -326,7 +327,17 @@ async function liquidityMarks(symbols, deps, { policy = null, cutoffMs = A.now()
 
 /** Run the meeting from its checkpoint. Returns { done, yielded, checkpoint,
  *  summary }. `budget()` says how many ms of invocation time remain. */
-async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 * 60 * 1000, minStageMs = 90 * 1000, control = null } = {}) {
+async function runManagerMeeting(args={}) {
+  if(A.currentScope()||args.deps?.decisionProcess===null)return runMeetingProcess(args);
+  const cp=args.claim?.checkpoint?.data;
+  // Old paid checkpoints retain their original process until they complete.
+  if(cp&&!cp.paperProcess)return runMeetingProcess(args);
+  const store=PAPER.create({admin:args.deps?.admin||A});
+  const paper=cp?.paperProcess||args.deps?.decisionProcess||await store.resolve(await store.settings());
+  PAPER.assertSnapshot(paper);
+  return PAPER.withProcess(paper,()=>runMeetingProcess(args));
+}
+async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 * 60 * 1000, minStageMs = 90 * 1000, control = null } = {}) {
   const deps = { ...defaultDeps(partial.admin || null), ...partial, decisionMarketCache: new Map() };
   const now = deps.now;
   const payload = claim.payload || {};
@@ -334,7 +345,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
   const tradingDate = payload.tradingDate || (deps.market ? deps.market.sessionState(new Date(now())).date : new Date(now()).toISOString().slice(0, 10));
   const managerRunId = claim.runId || `run_premarket_manager_${accountId}_${tradingDate}`;
   const cp = claim.checkpoint && claim.checkpoint.stage && claim.checkpoint.data ? claim.checkpoint : null;
-  const st = cp ? cp.data : { managerRunId, accountId, tradingDate, startedAtMs: now(), stage: "freeze", costMinor: "0", requestIds: [] };
+  const st = cp ? cp.data : { managerRunId, accountId, tradingDate, startedAtMs: now(), stage: "freeze", costMinor: "0", requestIds: [], ...(PAPER.current()?{paperProcess:PAPER.current()}:{}) };
   let stage = cp ? cp.stage : "freeze";
   const ctrl = control || {};
   const policy = st.policySnapshot || POLICY.loadActiveSync(ctrl);
@@ -342,7 +353,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
   const addCost = (c) => { st.costMinor = (BigInt(st.costMinor || "0") + BigInt(c || "0")).toString(); };
   let recordQueue = Promise.resolve();
   const record = (fields) => {
-    const saved = { managerRunId, admin: deps.admin, tradingDate, accountId, status: fields.status || "running", stage, costMinor: st.costMinor, ...fields };
+    const saved = { managerRunId, admin: deps.admin, tradingDate, accountId, status: fields.status || "running", stage, costMinor: st.costMinor, ...(st.paperProcess?{decisionProcess:{version:st.paperProcess.version,companyRange:st.paperProcess.companyRange,strategyVersionId:st.paperProcess.strategy?.versionId||"baseline",rulesHash:st.paperProcess.strategy?.rulesHash||require("./_investorSimulationStrategy").hash(require("./_investorSimulationStrategy").DEFAULT),reasoningEffort:"medium",settingsRevision:st.paperProcess.settingsRevision}}:{}), ...fields };
     recordQueue = recordQueue.then(() => writeRun(saved)).catch(e => { console.error("manager run record", e.message); });
     return recordQueue;
   };
@@ -396,18 +407,36 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
         cutoff, contextManifestHash, policyHash: policy.policyHash, cardsCount: cards.count, coverageInput, freshness: { stale: freshness.stale, missing: freshness.missing, complete: freshness.complete, present: freshness.present },
         portfolioHash: portfolio.contentHash, holdingPacketCount: holdingPackets.packets.length, priorMandates: Object.fromEntries(portfolio.activeMandates.map((m) => [m.symbol, m])) });
       await record({ status: "running", universeVersion: st.roster.universeVersion, universeHash: st.roster.universeHash, eligibleCount: st.roster.eligibleCount, contextManifestHash, cutoffMs: cutoff.cutoffMs, policyHash: policy.policyHash, cardsCount: cards.count, heldCount: workset.managedPositionSymbols.length, marketContext: { cutoffMs:frozen.marketState.cutoffMs, breadth:frozen.marketState.breadth, observations:(frozen.marketState.observations || []).map(({returns, adjustmentAnchor, ...observation})=>observation), macroEvidence:(frozen.marketState.macroEvidence || []).slice(0,8).map(x=>({title:x.title || null,link:x.link || null,summary:String(x.summary || "").slice(0,600),publishedAt:x.publishedAt || null,knownAtMs:x.knownAtMs || null})) } });
-      stage = "review";
+      stage = st.paperProcess ? "shortlist" : "review";
       continue;
+    }
+    if(stage==='shortlist') {
+      const {cards}=await rebuildContext(st,deps,accountId);
+      const eligible=new Set(st.workset.rows.filter(r=>r.entryEligible&&!r.held&&!r.pending).map(r=>r.symbol));
+      const r=await deps.gateway.shortlistCandidates({cards:cards.cards.filter(c=>eligible.has(c.symbol)),count:50,contextManifestHash:st.contextManifestHash});
+      if(r.pending)return yieldNow('luna_shortlist_pending');
+      if(!r.ok)throw typed('PAPER_SHORTLIST_FAILED',r.error);
+      if(r.selected.length!==Math.min(50,eligible.size)||new Set(r.selected).size!==r.selected.length||r.selected.some(s=>!eligible.has(s)))throw typed('PAPER_SHORTLIST_INVALID');
+      st.shortlist=r.selected;addCost(r.costMinor);if(r.requestId)st.requestIds.push(r.requestId);
+      await record({shortlist:{symbols:st.shortlist,count:st.shortlist.length,screened:eligible.size,model:r.model||null}});
+      stage='review';continue;
     }
     if (stage === "review") {
       const { cards, holdingPackets, portfolio, marketState } = await rebuildContext(st, deps, accountId);
-      const r = await deps.gateway.reviewUniverse({ cards: cards.cards, universeManifest: st.roster, holdings: holdingPackets.packets, portfolio: portfolio, marketState, policy: { policyHash: policy.policyHash, riskPolicyHash: policy.riskPolicyHash, riskMandate: policy.riskMandate }, contextManifestHash: st.contextManifestHash, waitMs: Math.max(30000, Math.min(budget() - minStageMs, 8 * 60 * 1000)) });
+      const reviewed=st.paperProcess?cards.cards.filter(c=>st.shortlist.includes(c.symbol)||st.workset.rows.some(r=>r.symbol===c.symbol&&(r.held||r.pending))):cards.cards;
+      const manifest=st.paperProcess?{...st.roster,symbols:reviewed.map(c=>c.symbol),eligibleCount:reviewed.length}:st.roster;
+      const r = await deps.gateway.reviewUniverse({ cards: reviewed, universeManifest: manifest, holdings: holdingPackets.packets, portfolio: portfolio, marketState, policy: { policyHash: policy.policyHash, riskPolicyHash: policy.riskPolicyHash, riskMandate: policy.riskMandate }, contextManifestHash: st.contextManifestHash, waitMs: Math.max(30000, Math.min(budget() - minStageMs, 8 * 60 * 1000)) });
       if (r.pending) { st.pendingRequest = r.requestId || null; return { done: false, yielded: true, reason: "sol_background_pending", checkpoint: { stage, data: st }, resumeAtMs: now() + 60000 }; }
       if (!r.ok) {
         st.review = { ok: false, error: r.error, schemaErrors:r.schemaErrors||null, budgetBlocked: r.budgetBlocked === true };
         st.noBuyReasons = [{ code: r.budgetBlocked ? "BUDGET_EXHAUSTED" : "MODEL_FAILURE", error: r.error, ...(r.schemaErrors?{schemaErrors:r.schemaErrors}:{}) }];
         await record({ status: "failed_closed", noBuyReasons: st.noBuyReasons, failure: { code: "REVIEW_FAILED", message: r.error } });
         return { done: true, failed: true, reason: "REVIEW_FAILED", checkpoint: { stage, data: st }, summary: { managerRunId, status: "failed_closed", noBuyReasons: st.noBuyReasons } };
+      }
+      if(st.paperProcess) {
+        PAPER.researchBounds(r.researchRequests,st.paperProcess,st.shortlist,st.workset.rows.filter(r=>r.held||r.pending).map(r=>r.symbol));
+        const reviewedSet=new Set(reviewed.map(c=>c.symbol));
+        r.coverage=[...r.coverage,...cards.cards.filter(c=>!reviewedSet.has(c.symbol)).map(c=>({symbol:c.symbol,reviewDirective:'NONE',provisionalDisposition:'IGNORE',changedSincePrior:false,reasonCode:null,reason:'Not shortlisted by Luna for this meeting; no Astra underwriting.'}))];
       }
       addCost(r.costMinor);
       st.requestIds = [...(st.requestIds || []), ...(r.requestIds || [])];
@@ -450,7 +479,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
           const activation = await deps.portfolio.captureActivationSnapshot({ accountId, reason: "RISK_MAINTENANCE", admin: deps.admin, reconcile: deps.reconcile || null });
           staged = deps.mandate && typeof deps.mandate.stagePortfolioPlan === "function"
             ? await deps.mandate.stagePortfolioPlan({ planClass: "RISK_MAINTENANCE", portfolioPlanProposal: { ...plan, actionableMandates: accepted }, proposals: accepted, verifiedProposalClaims: claims, activationSnapshot: activation, accountId, cutoff: st.cutoff, policy, managerRunId, admin: deps.admin,
-              eligibleSymbols: st.roster.symbols, sectorOf:sectorLookup(deps), lineage:{model:POLICY.ROLE_MODELS.manager.model,reasoningEffort:"high",contextManifestHash:st.contextManifestHash,promptHash:deps.gateway.promptHash?deps.gateway.promptHash("finalizePortfolio"):null,bySymbol:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,{researchVersionId:c.memoId,dossierVersionId:c.dossierVersionId}]))}, verifiedValuations:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,c.verifiedValuation])), marks: await liquidityMarks(accepted.map((p) => p.symbol), deps, { policy, cutoffMs: st.cutoff.cutoffMs }), nowMs: now() })
+              eligibleSymbols: st.roster.symbols, sectorOf:sectorLookup(deps), lineage:{model:POLICY.ROLE_MODELS.manager.model,reasoningEffort:"high",strategyVersionId:st.paperProcess?.strategy?.versionId||null,contextManifestHash:st.contextManifestHash,promptHash:deps.gateway.promptHash?deps.gateway.promptHash("finalizePortfolio"):null,bySymbol:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,{researchVersionId:c.memoId,dossierVersionId:c.dossierVersionId}]))}, verifiedValuations:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,c.verifiedValuation])), marks: await liquidityMarks(accepted.map((p) => p.symbol), deps, { policy, cutoffMs: st.cutoff.cutoffMs }), nowMs: now() })
             : { status: "NOT_COMMITTED", reason: "mandate_module_unavailable" };
         }
         if (staged.status !== "COMMITTED" && staged.status !== "EMPTY") {
@@ -470,9 +499,10 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
       try { requests = validateUniqueResearchPriority(st.effective.researchRequests || []); }
       catch (e) { st.researchInvalid = { code: e.code, message: e.message }; requests = []; }
       const R = deps.research;
-      if(A.currentScope()?.aiWorkload?.preparedResearch && requests.length) {
+      if((A.currentScope()?.aiWorkload?.preparedResearch || st.paperProcess?.preparedResearch) && requests.length) {
         const H=require('./_investorResearchHandoff');
-        if(requests.length>(A.currentScope().aiWorkload.investmentPolicy?.maxCompanies||2)||requests.length<(A.currentScope().aiWorkload.investmentPolicy?.minCompanies||1)||st.researchInvalid)throw Object.assign(Error('Invalid prepared-research finalists'),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
+        if(st.paperProcess)PAPER.researchBounds(requests,st.paperProcess,st.shortlist,st.workset.rows.filter(r=>r.held||r.pending).map(r=>r.symbol));
+        if(!st.paperProcess && (requests.length>(A.currentScope().aiWorkload.investmentPolicy?.maxCompanies||2)||requests.length<(A.currentScope().aiWorkload.investmentPolicy?.minCompanies||1)||st.researchInvalid))throw Object.assign(Error('Invalid prepared-research finalists'),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
         st.handoff=st.handoff||{version:H.VERSION,phase:'documents',documents:{},packets:{},completedResearch:st.research?.completed||[]};
         if(st.handoff.version!==H.VERSION)throw Object.assign(Error('Research handoff version mismatch'),{code:'SIMULATION_STATE_CORRUPT'});
         const saveHandoff=async()=>{if(deps.checkpoint)await deps.checkpoint({stage,data:st});};
@@ -550,12 +580,12 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
           const packet=packets.find(p=>p.symbol===memo.symbol);
           const saved=await R.persistImmutable({ok:true,symbol:memo.symbol,memo,verifiedValuation:joint.verifiedValuations[memo.symbol],requestId:joint.requestId,responseId:joint.responseId,model:joint.model,costMinor:'0',dossierVersionId:packet.dossierVersionId,dossierHash:packet.dossierHash},{admin:deps.admin,managerRunId,directive:'PREPARED_JOINT_UNDERWRITING',cutoffMs:st.cutoff.cutoffMs});
           if(!saved.persisted)throw Object.assign(Error('Joint memo was not saved'),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
-          completed.push({...saved,request:requests.find(r=>r.symbol===memo.symbol)});
+          completed.push({...saved,symbol:memo.symbol,memo,mandate:memo.mandate,verifiedValuation:joint.verifiedValuations[memo.symbol],factualPremises:memo.factualPremises,dossierVersionId:packet.dossierVersionId,request:requests.find(r=>r.symbol===memo.symbol)});
         }
         // An accepted replacement covers legacy unfinished research. Keep its
         // paid response ledger and original state for audit; do not present it
         // as a new failure at the end of replay.
-        const DB=db(deps.admin),legacy=await DB.col(DB.COL.modelRequests).where('fn','==','researchCompany').get();
+        const DB=db(deps.admin),legacy=A.currentScope()?await DB.col(DB.COL.modelRequests).where('fn','==','researchCompany').get():{docs:[]};
         for(const old of legacy.docs) {
           const q=old.data();
           if(requests.some(r=>r.symbol===q.symbol)&&!['complete','superseded'].includes(q.status))await old.ref.set({status:'superseded',supersededStatus:q.status,supersededBy:joint.requestId,supersededAtMs:now()},{merge:true});
@@ -668,7 +698,7 @@ async function runManagerMeeting({ claim, deps: partial = {}, budget = () => 10 
         const snap = await deps.portfolio.captureActivationSnapshot({ accountId, reason: "EXPANSION", admin: deps.admin, reconcile: deps.reconcile || null });
         activation = deps.mandate && typeof deps.mandate.stagePortfolioPlan === "function"
           ? await deps.mandate.stagePortfolioPlan({ planClass: "EXPANSION", portfolioPlanProposal: { planClass: "EXPANSION", decisions: st.synthesis.decisions, comparisonNote: st.synthesis.comparisonNote, planHash: sha(legal) }, proposals: legal, verifiedProposalClaims: st.verifiedProposalClaims || { byProposal: {} }, activationSnapshot: snap, accountId, cutoff: st.cutoff, policy, managerRunId, admin: deps.admin,
-              eligibleSymbols: st.roster.symbols, sectorOf:sectorLookup(deps), lineage:{model:POLICY.ROLE_MODELS.manager.model,reasoningEffort:"high",contextManifestHash:st.contextManifestHash,promptHash:deps.gateway.promptHash?deps.gateway.promptHash("finalizePortfolio"):null,bySymbol:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,{researchVersionId:c.memoId,dossierVersionId:c.dossierVersionId}]))}, verifiedValuations:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,c.verifiedValuation])), marks: await liquidityMarks(legal.map((p) => p.symbol), deps, { policy, cutoffMs: st.cutoff.cutoffMs }), nowMs: now() })
+              eligibleSymbols: st.roster.symbols, sectorOf:sectorLookup(deps), lineage:{model:POLICY.ROLE_MODELS.manager.model,reasoningEffort:st.paperProcess?"medium":"high",strategyVersionId:st.paperProcess?.strategy?.versionId||null,contextManifestHash:st.contextManifestHash,promptHash:deps.gateway.promptHash?deps.gateway.promptHash("finalizePortfolio"):null,bySymbol:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,{researchVersionId:c.memoId,dossierVersionId:c.dossierVersionId}]))}, verifiedValuations:Object.fromEntries((st.research && st.research.completed || []).map(c=>[c.symbol,c.verifiedValuation])), marks: await liquidityMarks(legal.map((p) => p.symbol), deps, { policy, cutoffMs: st.cutoff.cutoffMs }), nowMs: now() })
           : { status: "NOT_COMMITTED", reason: "mandate_module_unavailable" };
         if ((activation.status === "NEEDS_SOL_RESYNTHESIS" || ["BASKET_INFEASIBLE","ENVELOPE_REJECTED"].includes(activation.reason)) && !(st.synthesisAttempt >= 1) && !st.handoff?.resultRef) {
           st.synthesisAttempt = (st.synthesisAttempt || 0) + 1;

@@ -194,9 +194,18 @@ exports.handler = async (event) => {
         await JOBS.yieldSegment(claim, { reason: `run_in_flight:${lease.heldBy || "unknown"}`, resumeAtMs: Date.now() + 60000 });
         return { statusCode: 202, body: JSON.stringify({ ok: true, yielded: true, reason: "run_in_flight" }) };
       }
-      const out = await MANAGER.runManagerMeeting({ claim: { ...claim, runId }, budget: budgetFor(claim), control: ctrl });
+      const context=require('./_investorDecisionContext');
+      const savedCheckpoint=claim.checkpoint?.data?.paperCheckpointRef?await context.read({runId:claim.checkpoint.data.paperCheckpointRef,admin:A}):claim.checkpoint;
+      const checkpoint=async cp=>{
+        const id=runId+'_checkpoint_'+context.hash(cp).slice(0,24);
+        await context.freeze({runId:id,context:cp,admin:A});
+        const saved=await JOBS.checkpoint(claim,{stage:cp.stage,data:{paperCheckpointRef:id}});
+        if(!saved.ok)throw Object.assign(Error('Paper review lease lost; saved progress retained.'),{code:'PAPER_LEASE_LOST'});
+      };
+      const out = await MANAGER.runManagerMeeting({ claim: { ...claim, runId, checkpoint:savedCheckpoint }, deps:{checkpoint}, budget: budgetFor(claim), control: ctrl });
       if (out.yielded) {
-        await JOBS.yieldSegment(claim, { reason: out.reason, checkpoint: out.checkpoint, resumeAtMs: out.resumeAtMs || Date.now() + 5000 });
+        await checkpoint(out.checkpoint);
+        await JOBS.yieldSegment(claim, { reason: out.reason, checkpoint: claim.checkpoint, resumeAtMs: out.resumeAtMs || Date.now() + 5000 });
         return { statusCode: 202, body: JSON.stringify({ ok: true, yielded: true, stage: out.checkpoint.stage, reason: out.reason }) };
       }
       if (out.failed) {
