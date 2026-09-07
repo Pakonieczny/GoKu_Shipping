@@ -1575,16 +1575,16 @@ const Simulator = (() => {
               const responses=await rows(collection(A.COL.modelRequests));
               if(responses.some(q=>q.finalizationDisposition!=='not_required'&&['rejected','http_error','unreachable','submission_uncertain','budget_blocked'].includes(q.status)))throw fail('SIMULATION_REQUEST_INCOMPLETE','A required AI decision was not accepted');
               if(config.investmentPolicy?.maxHoldingSessions&&portfolio.positions.length)throw fail('HISTORICAL_HOLD_EXIT_UNAVAILABLE','A holding could not exit at its fixed deadline on an observed, sufficiently liquid closing bar. No extra session or sale was invented.');
-              if(config.investmentPolicy&&!point.buys){const entryStates=config.investmentPolicy.strategy?await rows(collection(A.COL.orderSets)):[];const plan=config.investmentPolicy.strategy&&run.managerCheckpointRef?(await readJSON(ref,run.managerCheckpointRef))?.data?.simulationPlan:null;const expired=plan&&Object.keys(plan.investments).every(symbol=>entryStates.some(x=>x.symbol===symbol&&x.entryExpired));if(!expired)throw fail('HISTORICAL_NO_EXECUTABLE_PRICE','No funded purchase could execute on an observed session price. This run is unavailable, not a cash-only investment result.');await save({noEntryReason:'All strategy entry windows expired on observed bars; capital remained in cash.'});}
+              if(config.investmentPolicy&&!point.buys){const entryStates=config.investmentPolicy.strategy?await rows(collection(A.COL.orderSets)):[];const plan=config.investmentPolicy.strategy&&run.managerCheckpointRef?(await readJSON(ref,run.managerCheckpointRef))?.data?.simulationPlan:null;const passedAll=!!plan&&Object.values(plan.investments).every(x=>x.decision==='PASS');const expired=plan&&Object.keys(plan.investments).every(symbol=>plan.investments[symbol].decision==='PASS'||entryStates.some(x=>x.symbol===symbol&&x.entryExpired));if(!passedAll&&!expired)throw fail('HISTORICAL_NO_EXECUTABLE_PRICE','No funded purchase could execute on an observed session price. This run is unavailable, not a cash-only investment result.');await save({noEntryReason:passedAll?'Astra chose to hold cash: no finalist offered a positive expected return net of costs.':'All strategy entry windows expired on observed bars; capital remained in cash.'});}
               await save({status:'complete',phase:'Complete',progress:100,completedAtMs:wallNow()});break;}
             if(await paused())break;
             // Once every holding is closed and no planned entry can still execute, the rest of the
             // observation window is a flat line: jump to its end instead of replaying idle bars.
             let settled=false;
-            if(config.investmentPolicy?.maxHoldingSessions&&point.buys>0&&!portfolio.positions.length&&meta.sessions?.length){
+            if(config.investmentPolicy?.maxHoldingSessions&&!portfolio.positions.length&&meta.sessions?.length){
               if(run.clockMs>=meta.sessions[0].closeMs)settled=true;
               else{const plan=run.managerCheckpointRef?(await readJSON(ref,run.managerCheckpointRef))?.data?.simulationPlan:null,states=plan?await rows(collection(A.COL.orderSets)):[];
-                settled=!!plan&&Object.keys(plan.investments).every(symbol=>states.some(x=>x.symbol===symbol&&(x.closed||x.entryExpired)));}
+                settled=!!plan&&Object.entries(plan.investments).every(([symbol,x])=>x.decision==='PASS'||states.some(s=>s.symbol===symbol&&(s.closed||s.entryExpired)));}
             }
             if(settled&&run.clockMs<meta.endMs){await save({clockMs:meta.endMs,phase:'All holdings closed — finishing the observation window'});continue;}
             await save({clockMs:replaySteps?(replaySteps.find(t=>t>run.clockMs)||meta.endMs):Math.min(meta.endMs,run.clockMs+5*60000)});

@@ -599,6 +599,7 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
   const sessionDate=market.nyParts(new Date(plan.cutoffMs)).date,schedule=plan.policy.maxHoldingSessions?require('./_investorSimulationHorizon').sessions(sessionDate):null,spread=BigInt(scope.executionSpreadBps||0),feeMicros=BigInt(scope.feePerShareMicros||0);
   if(schedule&&sha(schedule)!==sha(plan.sessions))throw typed('SIMULATION_PLAN_CORRUPT','Session schedule mismatch');
   for(const [symbol,investment] of Object.entries(plan.investments)) {
+    if(investment.decision==='PASS')continue; // Astra chose cash for this finalist.
     const deadline=schedule?.[investment.holdingSessions-1]?.closeMs;
     for(const bar of [...(barsBySymbol[symbol]||[])].sort((a,b)=>Date.parse(a.t)-Date.parse(b.t))) {
       const at=Date.parse(bar.t),session=Number.isFinite(at)?market.sessionState(new Date(at)):null;

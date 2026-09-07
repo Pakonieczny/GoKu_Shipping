@@ -140,9 +140,13 @@ function supportedInvestmentPolicy(policy) {
 }
 function assertInvestmentAllocations(investments,policy) {
   if(!supportedInvestmentPolicy(policy))fail('SIMULATION_INVESTMENT_POLICY_INVALID');
-  const rows=Object.values(investments||{});
-  if(policy.maxHoldingSessions)rows.forEach(r=>require('./_investorSimulationHorizon').validate(r,policy));
-  if(rows.length<(policy.minCompanies||1)||rows.length>policy.maxCompanies)fail('SIMULATION_FINALISTS_INVALID');
+  const all=Object.values(investments||{}),cashAllowed=policy.minCompanies===0;
+  if(policy.maxHoldingSessions)all.forEach(r=>require('./_investorSimulationHorizon').validate(r,policy));
+  // With a cash-allowed policy every finalist carries an explicit BUY or PASS; PASS rows reserve nothing.
+  if(cashAllowed&&all.some(r=>!['BUY','PASS'].includes(r?.decision)||(r.decision==='PASS'&&r.allocationUsd!==0)))fail('SIMULATION_ALLOCATION_INVALID');
+  if(all.length>policy.maxCompanies)fail('SIMULATION_FINALISTS_INVALID');
+  const rows=cashAllowed?all.filter(r=>r.decision==='BUY'):all;
+  if(rows.length<(cashAllowed?0:(policy.minCompanies||1)))fail('SIMULATION_FINALISTS_INVALID');
   if(rows.some(r=>!Number.isSafeInteger(r?.allocationUsd)||r.allocationUsd<policy.minUsd||r.allocationUsd>policy.maxUsd))fail('SIMULATION_ALLOCATION_INVALID');
   if(rows.reduce((n,r)=>n+r.allocationUsd,0)>(policy.maxTotalUsd||policy.maxCompanies*policy.maxUsd))fail('SIMULATION_TOTAL_ALLOCATION_INVALID');
 }
@@ -154,6 +158,7 @@ function investmentSchema(documents,policy=INVESTMENT_POLICY) {
   if(policy.maxHoldingSessions) {
     const estimate=obj({expectedReturnBps:{type:'integer',minimum:-10000,maximum:100000},downsideBps:{type:'integer',minimum:0,maximum:10000},opportunityCostBps:{type:'integer',minimum:0,maximum:10000},uncertaintyPenaltyBps:{type:'integer',minimum:0,maximum:10000},evidenceConfidence:{type:'string',enum:['LOW','MEDIUM','HIGH']},reason:{type:'string',minLength:1,maxLength:300}});
     Object.assign(investment.properties,{holdingSessions:{type:'integer',minimum:1,maximum:3},holdingReason:{type:'string',minLength:1,maxLength:600},horizonAnalysis:obj({session1:estimate,session2:estimate,session3:estimate})});
+    if(policy.minCompanies===0){investment.properties.allocationUsd={type:'integer',minimum:0,maximum:30000};Object.assign(investment.properties,{decision:{type:'string',enum:['BUY','PASS']},decisionReason:{type:'string',minLength:1,maxLength:400}});}
     investment.required=Object.keys(investment.properties);
   }
   return obj({schemaVersion:{type:'string',enum:['simulation-investment-plan.v1']},comparisonNote:text(1200),

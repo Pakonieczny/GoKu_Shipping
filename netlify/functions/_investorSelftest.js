@@ -7170,11 +7170,18 @@ async function simulatorAdversarial({only=null}={}) {
     assert.deepEqual(H.sessions('2026-09-04').map(s=>s.date),['2026-09-04','2026-09-08','2026-09-09']);
     const half=H.sessions('2025-11-26');assert.deepEqual(half.map(s=>s.date),['2025-11-26','2025-11-28','2025-12-01']);assert.equal(half[1].closeMs-half[1].openMs,210*60000);
     const steps=H.replaySteps(half);assert(steps.every(t=>half.some(s=>t>=s.openMs&&t<=s.closeMs+1200000)));assert.equal(new Set(steps).size,steps.length);
-    for(const range of Object.keys(H.RANGES)) {
+    for(const range of Object.keys(H.RANGES).filter(r=>H.RANGES[r].min>0)) { // cash-allowed ranges are covered below
       const policy=H.policyFor(range);assert(Hand.supportedInvestmentPolicy(policy));assert(!Hand.supportedInvestmentPolicy({...policy,maxHoldingSessions:4}));
       const row={allocationUsd:5000,holdingSessions:1,holdingReason:'Short horizon',horizonAnalysis:horizonFixture(1)};
       for(const n of [policy.minCompanies,policy.maxCompanies])Hand.assertInvestmentAllocations(Object.fromEntries(Array.from({length:n},(_,i)=>['S'+i,row])),policy);
-      for(const n of [policy.minCompanies-1,policy.maxCompanies+1])assert.throws(()=>Hand.assertInvestmentAllocations(Object.fromEntries(Array.from({length:n},(_,i)=>['S'+i,row])),policy),/FINALISTS/);
+      for(const n of [policy.minCompanies-1,policy.maxCompanies+1].filter(n=>n>=0))assert.throws(()=>Hand.assertInvestmentAllocations(Object.fromEntries(Array.from({length:n},(_,i)=>['S'+i,row])),policy),/FINALISTS/);
+    }
+    { // Cash-allowed policy: explicit BUY/PASS per finalist, PASS reserves nothing, all-PASS is valid, and BUY rows keep the normal limits.
+      const policy=H.policyFor('flex3');assert(Hand.supportedInvestmentPolicy(policy));assert.equal(policy.minCompanies,0);assert.equal(policy.maxCompanies,3);const base={holdingSessions:1,holdingReason:'Short horizon',horizonAnalysis:horizonFixture(1)},buy={...base,decision:'BUY',decisionReason:'Positive net score',allocationUsd:5000},pass={...base,decision:'PASS',decisionReason:'Nonpositive net score',allocationUsd:0};
+      Hand.assertInvestmentAllocations({A:pass,B:pass,C:pass},policy);Hand.assertInvestmentAllocations({A:buy,B:pass,C:buy},policy);Hand.assertInvestmentAllocations({A:buy,B:buy,C:buy},policy);
+      assert.throws(()=>Hand.assertInvestmentAllocations({A:{...pass,allocationUsd:5000}},policy),/ALLOCATION/);assert.throws(()=>Hand.assertInvestmentAllocations({A:{...buy,allocationUsd:0}},policy),/ALLOCATION/);
+      assert.throws(()=>Hand.assertInvestmentAllocations({A:{...base,allocationUsd:5000}},policy),/ALLOCATION/);assert.throws(()=>Hand.assertInvestmentAllocations({A:buy,B:buy,C:buy,D:buy},policy),/FINALISTS/);
+      const schema=Hand.investmentSchema([{symbol:'A',evidence:[],baseline:{card:{}}}],policy);assert.deepEqual(schema.properties.investments.properties.A.properties.decision.enum,['BUY','PASS']);assert.equal(schema.properties.investments.properties.A.properties.allocationUsd.minimum,0);
     }
     for(const n of [1,2,3]){assert.equal(H.choose(horizonFixture(n)),n);H.validate({holdingSessions:n,holdingReason:'Supported tradeoff',horizonAnalysis:horizonFixture(n)});}
     const estimates=horizonFixture(1);estimates.session2={...estimates.session1,expectedReturnBps:125};assert.equal(H.choose(estimates),1,'25bps margin favors shorter duration');
