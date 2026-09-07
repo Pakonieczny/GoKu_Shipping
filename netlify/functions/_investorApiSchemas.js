@@ -149,9 +149,9 @@ const mutation = (params, { reauth = false, requiresReason = false, concurrency 
 const ACTIONS_V2 = Object.freeze({
   paperDecisionSettings: read({}),
   paperDecisionSettingsSave: mutation({companyRange:T.str({enum:["top1","range1","range2","range3"]}),strategyVersionId:T.str({minLength:1,maxLength:100}),revision:T.int({minimum:0})},{concurrency:"none",required:["companyRange","strategyVersionId","revision"]}),
-  simulationAnalysisOverview: read({analysisId:T.ref("Id"),after:T.str({maxLength:100}),versionAfter:T.str({maxLength:100}),evidencePage:T.int({minimum:0,maximum:100000})}),
+  simulationAnalysisOverview: read({includeInventory:T.bool(),analysisId:T.ref("Id"),after:T.str({maxLength:100}),versionAfter:T.str({maxLength:100}),evidencePage:T.int({minimum:0,maximum:100000})}),
   simulationAnalysisStart: mutation({spendLimitUsd:T.int({minimum:1,maximum:500})},{concurrency:"none",required:["spendLimitUsd"]}),
-  simulationAnalysisControl: mutation({analysisId:T.ref("Id"),command:T.str({enum:["pause","resume"]}),spendLimitUsd:T.int({minimum:1,maximum:500})},{concurrency:"none",required:["analysisId","command"]}),
+  simulationAnalysisControl: mutation({analysisId:T.ref("Id"),command:T.str({enum:["pause","resume","remove_failed_evidence"]}),spendLimitUsd:T.int({minimum:1,maximum:500})},{concurrency:"none",required:["analysisId","command"]}),
   simulationStrategySelect: mutation({versionId:T.str({minLength:1,maxLength:100})},{concurrency:"none",required:["versionId"]}),
   simulationOverview: read({batchId:T.ref("Id"),cursor:T.str({maxLength:30})}),
   simulationDetail: read({runId:T.ref("Id"),collection:T.str({enum:["curve","requests","fills","decisions","orders","events"]}),after:T.str({maxLength:160})}),
