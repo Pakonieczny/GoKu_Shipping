@@ -3364,9 +3364,13 @@ function metalToBadge(label){
         );
         if (!stillCurrent()) return;
         if (!resp.ok) {
+          const failure = await resp.json().catch(() => ({}));
           if (!stillCurrent()) return;
-          box.value = "SHIP TO:\n(Not found)";
-          box.style.color = "";
+          const message = resp.status === 404
+            ? "Order not found in ShipStation"
+            : (failure.error || `ShipStation lookup failed (HTTP ${resp.status})`);
+          box.value = "SHIP TO:\n" + message;
+          box.style.color = resp.status === 404 ? "" : "#b91c1c";
           return;
         }
 
@@ -3461,14 +3465,20 @@ function metalToBadge(label){
 
       /* ===== ShipStation — Gift Message (orderNumber) ===================== */
       async function loadGiftMessage(orderNumber) {
+        const stillCurrent = () => orderNumber ===
+          (document.getElementById("etsyOrderNumber")?.value || "").trim();
         try {
           const resp = await fetch(
             "/.netlify/functions/ssGetGiftMessage?orderNumber=" +
             encodeURIComponent(orderNumber)
           );
-          if (!resp.ok) throw new Error("ShipStation response " + resp.status);
+          if (!resp.ok) {
+            const failure = await resp.json().catch(() => ({}));
+            throw new Error(failure.error || `ShipStation gift lookup failed (HTTP ${resp.status})`);
+          }
 
           const data = await resp.json();
+          if (!stillCurrent()) return;
           window.receiptGiftMessage     = (data.giftMessage || "").trim();
           window.receiptGiftMessageFrom = (data.giftFrom    || "").trim();
 
@@ -3479,6 +3489,7 @@ function metalToBadge(label){
             if (!Number.isNaN(idx)) showItemDetails(idx);
           }
         } catch (err) {
+          if (!stillCurrent()) return;
           console.error("loadGiftMessage:", err);
           window.receiptGiftMessage     = "";
           window.receiptGiftMessageFrom = "";

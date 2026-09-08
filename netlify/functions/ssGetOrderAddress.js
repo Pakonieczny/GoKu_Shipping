@@ -11,10 +11,14 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: "Missing orderNumber" }) };
     }
 
-    const key    = process.env.SS_API_KEY || "";
-    const secret = process.env.SS_API_SECRET || "";
+    const key    = (process.env.SS_API_KEY || "").trim();
+    const secret = (process.env.SS_API_SECRET || "").trim();
     if (!key || !secret) {
-      return { statusCode: 500, body: JSON.stringify({ error: "ShipStation credentials not configured" }) };
+      return {
+        statusCode: 503,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: "SHIPSTATION_NOT_CONFIGURED", error: "ShipStation connection is not configured. Check SS_API_KEY and SS_API_SECRET in Netlify." })
+      };
     }
 
     const baseURL = "https://ssapi.shipstation.com";
@@ -27,8 +31,16 @@ exports.handler = async (event) => {
     const listURL  = `${baseURL}/orders?orderNumber=${encodeURIComponent(orderNumber)}`;
     const listResp = await fetch(listURL, { headers });
     if (!listResp.ok) {
-      const text = await listResp.text();
-      return { statusCode: listResp.status, body: text };
+      const error = listResp.status === 401 || listResp.status === 403
+        ? "ShipStation rejected the connection. Check the V1 API key, secret, and account API access."
+        : listResp.status === 429
+          ? "ShipStation request limit reached. Please try again shortly."
+          : `ShipStation lookup failed (HTTP ${listResp.status}). Please try again.`;
+      return {
+        statusCode: listResp.status,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error })
+      };
     }
     const orders = await listResp.json();
 
@@ -165,6 +177,11 @@ exports.handler = async (event) => {
       })
     };
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    console.error("[ssGetOrderAddress] lookup failed");
+    return {
+      statusCode: 502,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: "Unable to load ShipStation order details. Please try again." })
+    };
   }
 };
