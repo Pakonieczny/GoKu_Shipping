@@ -555,7 +555,10 @@ function revalidateOperationalLimits({ portfolio, control = {}, riskMandate = nu
       if (exposures.grossExposureBps != null && big(exposures.grossExposureBps) > big(rm.weights.maxGrossExposureBps)) { reasons.push("GROSS_EXPOSURE_BREACH"); hardBreach = true; }
       if (exposures.plannedLossAggregateBps != null && big(exposures.plannedLossAggregateBps) > big(rm.losses.maxAggregatePlannedLossBps)) reasons.push("PLANNED_LOSS_AGGREGATE_BREACH");
       if (exposures.stressedLossAggregateBps != null && big(exposures.stressedLossAggregateBps) > big(rm.losses.maxAggregateStressedLossBps)) { reasons.push("STRESSED_LOSS_AGGREGATE_BREACH"); hardBreach = true; }
-      if (Array.isArray(exposures.unprotectedSymbols) && exposures.unprotectedSymbols.length) reasons.push("UNPROTECTED_POSITIONS");
+      // Only held shares can be unprotected. A working entry order attaches its protection on fill,
+      // so a pending buy must never freeze the account it is trying to build.
+      const unprotectedHeld = (exposures.unprotectedSymbols || []).filter((s) => !String(s).endsWith("(entry)"));
+      if (unprotectedHeld.length) reasons.push("UNPROTECTED_POSITIONS");
     }
   } catch (e) { reasons.push("EXPOSURE_EVALUATION_FAILED:" + String(e.code || e.message).slice(0, 40)); }
   return { allowExpansion: reasons.length === 0, hardBreach, reasons, reason: reasons[0] || null, exposures, evaluatedAtMs: nowMs };

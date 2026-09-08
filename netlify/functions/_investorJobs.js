@@ -144,21 +144,25 @@ function createJobs(A) {
   /** Retire queued jobs that belong to an engine which no longer holds the writer epoch.
    *  They can never dispatch, they only clutter the queue and the operator's activity view. */
   async function retireQueuedJobs({ engine, nowMs = Date.now(), limit = 100, reason = "engine_retired" } = {}) {
-    const tasks = tasksForEngine(engine).slice(0, 30);
+    const tasks = tasksForEngine(engine);
     if (!tasks.length) return { retired: 0 };
-    const snap = await A.col(A.COL.jobs).where("status", "==", "queued").where("task", "in", tasks).limit(limit).get();
     let retired = 0;
-    for (const d of snap.docs) { await d.ref.set({ status: "cancelled", cancelledAtMs: nowMs, cancelReason: reason }, { merge: true }); retired += 1; }
+    for (const task of tasks) {
+      const snap = await A.col(A.COL.jobs).where("status", "==", "queued").where("task", "==", task).limit(limit).get();
+      for (const d of snap.docs) { await d.ref.set({ status: "cancelled", cancelledAtMs: nowMs, cancelReason: reason }, { merge: true }); retired += 1; }
+    }
     return { retired };
   }
   async function dueJobs({ nowMs = Date.now(), limit = 50, engine = null } = {}) {
     const rows = [];
     for (const status of ["queued", "yielded_resumable"]) {
       // Scope the read to this engine's tasks: a backlog of another engine's queued jobs must
-      // never crowd a due job out of the bounded page.
-      let q = A.col(A.COL.jobs).where("status", "==", status);
-      if (engine) q = q.where("task", "in", tasksForEngine(engine).slice(0, 30));
-      const snap = await q.limit(limit).get();
+      // never crowd a due job out of the bounded page. One equality query per task needs no
+      // composite index, unlike a combined status + task-in query.
+      const snaps = engine
+        ? await Promise.all(tasksForEngine(engine).map((task) => A.col(A.COL.jobs).where("status", "==", status).where("task", "==", task).limit(limit).get()))
+        : [await A.col(A.COL.jobs).where("status", "==", status).limit(limit).get()];
+      const snap = { forEach: (fn) => snaps.forEach((s) => s.forEach(fn)) };
       snap.forEach((d) => {
         const j = d.data();
         if (!j || !TASKS[j.task]) return;

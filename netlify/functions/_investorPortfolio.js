@@ -130,7 +130,9 @@ async function snapshot({ accountId, asOfMs = A.now(), admin = null, sectorOf = 
   const mandateBySymbol = Object.fromEntries(mandates.map((m) => [m.symbol, m]));
   const sector = sectorOf || defaultSectorOf();
   const pos = positions.map((p) => ({ ...positionView(p, mandateBySymbol), sector: p.sector || sector(p.symbol) }));
-  const open = orders.map(orderView).map((o) => ({ ...o, sector: sector(o.symbol) }));
+  // A working entry carries its mandate's loss boundary so risk checks see the protection that attaches on fill.
+  const boundaryFor = (symbol) => { const m = mandateBySymbol[symbol]; return (m && (m.lossBoundaryPriceMicros || (m.action && m.action.protection && m.action.protection.lossBoundaryPriceMicros))) || null; };
+  const open = orders.map(orderView).map((o) => ({ ...o, sector: sector(o.symbol), lossBoundaryPriceMicros: o.lossBoundaryPriceMicros || boundaryFor(o.symbol) }));
   const investedMinor = pos.reduce((n, p) => n + BigInt(p.marketValueMinor), 0n);
   const navMinor = BigInt(balances.cashMinor) + BigInt(balances.reservedMinor) + investedMinor;
   const workingBuyNotionalMinor = open.filter((o) => o.side === "buy").reduce((n, o) => n + (o.limitPriceMicros ? BigInt(o.limitPriceMicros) * BigInt(o.remainingUnits) / 10000n : 0n), 0n);
