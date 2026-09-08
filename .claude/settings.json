@@ -2,7 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(curl:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
       "Bash(node /tmp/claude-0/*)"
     ]
   }
