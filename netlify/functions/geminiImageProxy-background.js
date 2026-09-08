@@ -9632,11 +9632,41 @@ async function studioFailRender(vRef, error, renderRunId) {
    greyscale picture on screen visibly changed for no reason.
 
    Computed here, in one place, used by both. */
+const STUDIO_PREVIEW_FILL = 0.82;
+/* Deterministic presentation only. Classify the original drawing and its
+   coordinate-based zones first, then fit the finished material map. Nearest
+   neighbour preserves the three manufacturing tones; no model or prompt is
+   involved. The hoop and every metal island are included in the bounds. */
+async function studioFrameDeterministic(sharp, buf) {
+  const { data, info } = await sharp(buf).flatten({ background: "#ffffff" })
+    .toColourspace("srgb").removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width, H = info.height, ch = info.channels;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = (y * W + x) * ch;
+    if (Math.min(data[p], data[p + 1], data[p + 2]) < 245) {
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+  }
+  if (x1 < x0 || y1 < y0) return buf;
+  const width = x1 - x0 + 1, height = y1 - y0 + 1;
+  const scale = Math.min(W * STUDIO_PREVIEW_FILL / width, H * STUDIO_PREVIEW_FILL / height);
+  const dw = Math.max(1, Math.round(width * scale));
+  const dh = Math.max(1, Math.round(height * scale));
+  const subject = await sharp(buf).extract({ left: x0, top: y0, width, height })
+    .resize(dw, dh, { fit: "fill", kernel: "nearest" }).png().toBuffer();
+  return sharp({ create: { width: W, height: H, channels: 3, background: "#ffffff" } })
+    .composite([{ input: subject, left: Math.round((W - dw) / 2), top: Math.round((H - dh) / 2) }])
+    .png().toBuffer();
+}
+
 function studioSpecKey(drawingBuffer, zones, floorPx) {
   return require("crypto").createHash("sha256")
     .update(drawingBuffer)
     .update("\u0000" + JSON.stringify(studioZoneList(zones, "specKey")))
     .update("\u0000" + String(floorPx))
+    .update("\u0000frame-" + STUDIO_PREVIEW_FILL)
     .digest("hex").slice(0, 32);
 }
 
@@ -9651,6 +9681,7 @@ async function studioStoreSpecForVersion({ uid, sessionId, n, metal, drawingBuff
   if (!plan) return null;
   let spec = await studioMaterialSpec(sharpMod, plan, metal, planZones);
   if (!spec?.buf) return null;
+  spec.buf = await studioFrameDeterministic(sharpMod, spec.buf);
   /* Same refinement the render applies, or the preview would show softer
      edges than the picture the model is handed — AND, now that the render
      reuses this map rather than rebuilding it, different bytes here would
@@ -9904,6 +9935,7 @@ async function handleStudioRender({ body, event, origin }) {
     /* Smoothed and resampled to the working resolution. Runs AFTER the
        cut/engrave/polish decisions, never before, so nothing is reclassified. */
     if (materialSpec && materialSpec.buf && !reusedSpec) {
+      materialSpec.buf = await studioFrameDeterministic(sharpMod, materialSpec.buf);
       const floor = studioMaskMinPx(cfg);
       if (floor) {
         try {
@@ -12734,6 +12766,7 @@ async function handleStudioSpecFromGold({ body, event, origin }) {
         continue;
       }
 
+      spec.buf = await studioFrameDeterministic(sharpMod, spec.buf);
       const bucket = getBucket();
       const base = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}`;
       const lineToken = newDownloadToken(), specToken = newDownloadToken();

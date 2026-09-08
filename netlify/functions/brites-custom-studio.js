@@ -2852,10 +2852,15 @@ function mkComposeBodyPath(sil, S) {
    and a blank compose: the pictures simply were not there yet. Every other
    exporter in the studio awaits this; so does this one now. */
 async function mkComposeDrawing(S) {
-  const items = mkItemsOf((state.markups || {}).draw)
+  let items = mkItemsOf((state.markups || {}).draw)
     .filter((it) => !it.hid && it.t !== "note").map(mkPack);
   if (!items.length) return null;
   try { await mkAwaitImages(items, 12000); } catch (e) { /* paint what we have */ }
+  /* Construct the automatic outline/hoop around consistently sized artwork.
+     Leave room for that hardware before fitting the complete charm below. */
+  const prepared = await mkItemsToDataUrl(items, S, 0.60);
+  if (!prepared) return null;
+  items = prepared.items;
   const sil = mkComposeSilhouette(items, S);
   if (!sil) return null;
   const cv = document.createElement("canvas");
@@ -2880,7 +2885,7 @@ async function mkComposeDrawing(S) {
      and on failure the sheet is re-composed without the pictures: their
      geometry is gone, but every engraving instruction, every drawn shape and
      the silhouette all survive, and the customer is told which happened. */
-  let url = "", tainted = false;
+  let url = "", tainted = prepared.tainted;
   try {
     url = cv.toDataURL("image/png");
   } catch (e) {
@@ -2895,13 +2900,50 @@ async function mkComposeDrawing(S) {
     try { mkPaint(ctx, S, S, safe, { export: true }); } catch (e2) { return null; }
     try { url = cv.toDataURL("image/png"); } catch (e2) { return null; }
   }
-  return { cv, items, url, tainted };
+  return mkFrameDeterministic({ cv, items, url, tainted });
+}
+
+/* Preview framing is independent of the editor's millimetres, zoom and sheet
+   margins. Fit ALL visible artwork, including its hoop, inside an 82% box.
+   Measure painted pixels so rotated layers, text and raster whitespace count
+   correctly. Apply the same uniform transform to the saved editable layers;
+   their local eraser/mask coordinates and relative proportions stay intact. */
+const MK_PREVIEW_FILL = 0.82;
+function mkFrameDeterministic(made, fill = MK_PREVIEW_FILL) {
+  const { cv } = made, W = cv.width, H = cv.height;
+  const d = cv.getContext("2d").getImageData(0, 0, W, H).data;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = (y * W + x) * 4;
+    if (d[p + 3] && Math.min(d[p], d[p + 1], d[p + 2]) < 245) {
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+  }
+  if (x1 < x0 || y1 < y0) return made;
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+  const scale = Math.min(W * fill / bw, H * fill / bh);
+  const tx = (W - bw * scale) / 2 - x0 * scale;
+  const ty = (H - bh * scale) / 2 - y0 * scale;
+  const out = document.createElement("canvas");
+  out.width = W; out.height = H;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(cv, x0, y0, bw, bh,
+    (W - bw * scale) / 2, (H - bh * scale) / 2, bw * scale, bh * scale);
+  const items = made.items.map((it) => {
+    const one = mkPack(it);
+    one.p = one.p.map((v, i) => v * scale + (i % 2 ? ty / H : tx / W));
+    one.w *= scale; one.fs *= scale;
+    return one;
+  });
+  return { cv: out, items, url: out.toDataURL("image/png"), tainted: made.tainted };
 }
 
 /* A deterministic export of ANY studio sheet. Used when a marked-up drawing
    is in “Exactly as drawn” mode: the updated drawing itself becomes the next
    B/W version, with no model involved and no opportunity to reinterpret it. */
-async function mkItemsToDataUrl(items, SIZE) {
+async function mkItemsToDataUrl(items, SIZE, fill = MK_PREVIEW_FILL) {
   const list = (items || []).map(mkPack);
   if (!list.length) return null;
   try { await mkAwaitImages(list, 12000); } catch (e) { /* paint what we have */ }
@@ -2913,12 +2955,12 @@ async function mkItemsToDataUrl(items, SIZE) {
   try { mkPaint(ctx, SIZE, SIZE, list, { export: true }); }
   catch (e) { return null; }
   try {
-    return { cv, items: list, url: cv.toDataURL("image/png"), tainted: false };
+    return mkFrameDeterministic({ cv, items: list, url: cv.toDataURL("image/png"), tainted: false }, fill);
   } catch (e) {
     const safe = list.filter((it) => it.t !== "img");
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, SIZE, SIZE);
     try { mkPaint(ctx, SIZE, SIZE, safe, { export: true }); } catch (e2) { return null; }
-    try { return { cv, items: safe, url: cv.toDataURL("image/png"), tainted: true }; }
+    try { return mkFrameDeterministic({ cv, items: safe, url: cv.toDataURL("image/png"), tainted: true }, fill); }
     catch (e2) { return null; }
   }
 }
@@ -15604,7 +15646,7 @@ if (window.MutationObserver) {
 syncMenuButton();
 /* the Playwright menu suite drives these two directly, the same way the
    pricing suite reads window.__itemPrice */
-window.__studioBuild   = "2026-08-18.09";
+window.__studioBuild   = "2026-09-08.82";
   window.__studioState   = state;
 window.__renderCredits = renderCredits;
 window.__measureBar    = measureBar;
