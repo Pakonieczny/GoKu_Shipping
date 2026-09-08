@@ -5179,7 +5179,7 @@ function runFixtures() {
     if (cs.data.resourceVersion !== "3" || cs.data.mutationsEnabled !== true || cs.data.writerEpoch !== 1) throw new Error(`control ${JSON.stringify(cs.data).slice(0, 200)}`);
     const cap = (a) => cs.data.availableActions.find((c) => c.action === a);
     if (!cap("freezeBuys").enabled || cap("resumeBuys").enabled || !cap("runManagerReview").enabled || cap("activateAccountMode").enabled || !cap("deactivateAccountMode").enabled || !cap("emergencyStop").enabled || cap("resumeSystem").enabled) throw new Error(`capabilities ${JSON.stringify(cs.data.availableActions.map((c) => [c.action, c.enabled]))}`);
-    if (!cap("resumeBuys").requiresReauth || cap("freezeBuys").requiresReauth || !cap("freezeBuys").requiresReason) throw new Error("capability flags must mirror the contract");
+    if (cap("resumeBuys").requiresReauth || cap("freezeBuys").requiresReauth || !cap("freezeBuys").requiresReason) throw new Error("capability flags must mirror the contract (re-authentication removed)");
     /* companies: the complete book, paginated with a bound cursor */
     const p1 = check(await read("companies", { pageSize: 100, sort: "symbol" }), "companies");
     if (p1.data.collectionState !== "READY" || p1.data.items.length !== 100 || !p1.nextCursor || p1.data.totalCount < 304) throw new Error(`page1 ${p1.data.items.length}/${p1.data.totalCount}`);
@@ -5275,11 +5275,9 @@ function runFixtures() {
     if (cs.body.data.buyState.applied !== "FROZEN" || cs.body.data.availableActions.find((x) => x.action === "resumeBuys").enabled !== true) throw new Error("resumeBuys must be offered once frozen");
     const resumed = await mutate("resumeBuys", {}, { version: 4, reauthed: true });
     if (resumed.statusCode !== 200 || ctrl().buyState !== "OPEN" || ctrl().freezeNewBuys !== false) throw new Error(`resume ${resumed.statusCode} ${JSON.stringify(resumed.body.error)}`);
-    /* the budget: an increase needs reauthentication, a decrease does not */
+    /* the budget: re-authentication is no longer demanded, so an increase succeeds on the signed-in session */
     const up = await mutate("setBudget", { dailyReservationMinor: "999999" }, { version: 5 });
-    if (up.statusCode !== 403 || up.body.error.code !== "REAUTH_REQUIRED") throw new Error(`budget increase ${up.statusCode}`);
-    const down = await mutate("setBudget", { dailyReservationMinor: "100" }, { version: 5 });
-    if (down.statusCode !== 200 || ctrl().budget.dailyReservationMinor !== "100" || ctrl().budget.version !== 1) throw new Error(`budget decrease ${down.statusCode} ${JSON.stringify(down.body.error)}`);
+    if (up.statusCode !== 200 || ctrl().budget.dailyReservationMinor !== "999999" || ctrl().budget.version !== 1) throw new Error(`budget increase ${up.statusCode} ${JSON.stringify(up.body.error)}`);
     /* the risk mandate: bounded, versioned, an over-limit book freezes expansion instead of liquidating */
     const oob = await mutate("setRiskMandate", { overrides: { "weights.maxSingleNameWeightBps": "9999" } }, { version: 6, reauthed: true });
     if (oob.statusCode !== 422 || oob.body.error.code !== "RISK_BOUND_EXCEEDED") throw new Error(`bounds ${oob.statusCode} ${JSON.stringify(oob.body.error)}`);

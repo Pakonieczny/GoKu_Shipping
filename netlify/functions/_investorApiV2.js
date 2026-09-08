@@ -1292,7 +1292,6 @@ const MUTATIONS = {
     const D = ctx.admin, ctrl = ctx.control;
     const currentMinor = big((ctrl.budget && ctrl.budget.dailyReservationMinor) || ctx.policy.budget.dailyReservationMinor || 0);
     const next = big(params.dailyReservationMinor);
-    if (next > currentMinor && !ctx.auth.reauthed) throw typed("REAUTH_REQUIRED", "raising the daily reservation requires reauthentication");
     if (next < 0n || next > 100000000n) throw typed("SEMANTIC_REJECTED", "daily reservation must be between 0 and $1,000,000");
     const budget = { dailyReservationMinor: next.toString(), byRoleMinor: params.byRoleMinor ? { investment: params.byRoleMinor.investment ? canon(params.byRoleMinor.investment) : null, extraction: params.byRoleMinor.extraction ? canon(params.byRoleMinor.extraction) : null } : null, alertThresholdPpm: params.alertThresholdPpm ? canon(params.alertThresholdPpm) : "800000", version: (Number(ctrl.budget && ctrl.budget.version) || 0) + 1, setBy: ctx.actorId, setAtMs: ctx.nowMs };
     const out = await transitionControl(D, { expectedVersion: env.expectedResourceVersion, patch: { budget }, action: "setBudget", actorId: ctx.actorId, reason: env.auditReason, nowMs: ctx.nowMs, correlationId: ctx.correlationId, mutationId: ctx.mutationId });

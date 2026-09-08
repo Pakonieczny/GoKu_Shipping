@@ -143,8 +143,9 @@ function errorShape(code, message, { fieldIssues = [], correlationId = null, sev
 const page = { cursor: T.ref("Cursor"), pageSize: T.ref("PageSize") };
 const acct = { accountId: T.ref("Id") };
 const read = (params, extra = {}) => ({ kind: "read", params: T.obj(params), ...extra });
+// Re-authentication was removed at the operator's request: the signed-in session is sufficient for every action.
 const mutation = (params, { reauth = false, requiresReason = false, concurrency = "version", confirmationKind = null, required = null, immediate = false } = {}) =>
-  ({ kind: "mutation", params: T.obj(params, required), reauth, requiresReason, concurrency, immediate, confirmationKind: confirmationKind || (reauth ? "reauth" : requiresReason ? "confirm_with_reason" : "confirm") });
+  ({ kind: "mutation", params: T.obj(params, required), reauth: false, requiresReason, concurrency, immediate, confirmationKind: confirmationKind || (requiresReason ? "confirm_with_reason" : "confirm") });
 
 const ACTIONS_V2 = Object.freeze({
   paperDecisionSettings: read({}),
