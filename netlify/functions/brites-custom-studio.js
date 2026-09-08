@@ -130,9 +130,9 @@ const CONFIG = {
     { id:"p250", handle:"studio-pack-250", name:"Bulk",     credits:250, price:124.99, per:"50¢ / design", flag:"Best value", feats:["250 design credits","Perfect for gifting sprees & events","Priority generation queue","Dedicated email support"] },
   ],
   plans: [
-    { id:"m40",  handle:"studio-plan-hobbyist", name:"Hobbyist", credits:40,  price:7.99,  per:"40 designs / month", feats:["40 credits refreshed monthly","Unused credits roll 1 month","Priority generation queue","Member-only seasonal drops"] },
-    { id:"m150", handle:"studio-plan-designer", name:"Designer", credits:150, price:19.99, per:"150 designs / month", featured:true, flag:"Most popular", feats:["150 credits refreshed monthly","Unused credits roll 1 month","Fastest queue + HD previews","10% off all charm orders"] },
-    { id:"m500", handle:"studio-plan-atelier",  name:"Atelier",  credits:500, price:49.99, per:"500 designs / month", feats:["500 credits refreshed monthly","For resellers & power creators","Bulk design export","15% off all charm orders + support line"] },
+    { id:"m40",  handle:"studio-plan-hobbyist", name:"Hobbyist", credits:40,  price:19.99,  per:"50¢ / design", feats:["40 credits refreshed monthly","Unused credits roll 1 month","Priority generation queue","Member-only seasonal drops"] },
+    { id:"m150", handle:"studio-plan-designer", name:"Designer", credits:150, price:59.99,  per:"40¢ / design", featured:true, flag:"Most popular", feats:["150 credits refreshed monthly","Unused credits roll 1 month","Fastest queue + HD previews","10% off all charm orders"] },
+    { id:"m500", handle:"studio-plan-atelier",  name:"Atelier",  credits:500, price:149.99, per:"30¢ / design", feats:["500 credits refreshed monthly","For resellers & power creators","Bulk design export","15% off all charm orders + support line"] },
   ],
 };
 
