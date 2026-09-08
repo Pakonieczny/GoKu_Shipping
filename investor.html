@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-FMD/jhkyazo+HWi67T6zLXOFYEwaYnEHquJns5T2XKc='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-9ECifm1grokijFN20egRt0uNylwdKXcomqzm6uMzAw8='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -857,6 +857,8 @@ function bindWorkspaces() {
 }
 function minuteEt(n) { if(n==null)return 'Time not reported';var h=Math.floor(n/60);return (h%12||12)+':'+String(n%60).padStart(2,'0')+(h>=12?' pm':' am')+' ET'; }
 function shortCopy(text,limit) { text=String(text||'');return text.length>(limit||190)?text.slice(0,(limit||190)-1).replace(/\s+\S*$/,'')+'…':text; }
+var FREEZE_REASONS={STALE_BROKER_TRUTH:'the broker snapshot is older than 10 minutes',RECONCILIATION_UNRESOLVED:'the account records are not reconciled',UNPROTECTED_POSITIONS:'a holding has no protective stop working',DAILY_LOSS_FREEZE:'today’s loss limit was reached',GROSS_EXPOSURE_BREACH:'gross exposure is above the limit',STRESSED_LOSS_AGGREGATE_BREACH:'aggregate stressed loss is above the limit',PLANNED_LOSS_AGGREGATE_BREACH:'aggregate planned loss is above the limit',EMERGENCY_STATE:'an emergency stop is engaged',MANAGER_PAUSED:'reviews are paused',EXECUTOR_PAUSED_SAFETY:'the executor is paused for safety',BUYS_FROZEN:'buys were frozen by an earlier check',operator:'you paused buys',emergency_stop:'an emergency stop was used',account_mode_deactivated:'AI investing was turned off'};
+function freezeReasonText(ctrl){var c=ctrl&&(ctrl.blockingConditions||[]).find(function(x){return x.conditionId==='buys_frozen';}),d=c&&c.detail;if(!d)return '';var key=String(d).split(/[\s:]/)[0];return ' Reason: '+(FREEZE_REASONS[key]||FREEZE_REASONS[d]||String(d))+'.';}
 function dailyControl(ctrl,action,label,cls) { var cap=ctrl&&capOf(ctrl,action);return cap&&cap.enabled?capButton(ctrl,action,label,{icon:action==='activateAccountMode'||action==='resumeBuys'?'play':action==='runManagerReview'?'refresh':'pause',cls:cls||'sm'}):null; }
 function progressRow(label,done,total,active) {
   var known=done!=null&&total!=null&&Number.isFinite(Number(done))&&Number.isFinite(Number(total))&&Number(total)>0;
@@ -873,7 +875,7 @@ function renderManagerBrief(dash,ctrl) {
   var reviewNow=!observe&&!active&&!emergency?dailyControl(ctrl,'runManagerReview','Review now','sm gold'):null,resumeBuys=frozen&&!observe&&!emergency?dailyControl(ctrl,'resumeBuys','Resume buys','sm'):null;
   if(emergency){title='Emergency stop is on';copy='New purchases are stopped. Existing protection is handled separately.';action=el('a',{class:'btn sm',href:'#/system',text:'Review safety settings'});}
   else if(paused&&!observe&&!active){title='AI reviews are paused';copy='Resume when you are ready. Existing orders and protection are managed separately.';}
-  else if(frozen&&!observe){copy+=' New purchases are currently paused.';}
+  else if(frozen&&!observe){copy+=' New purchases are currently paused.'+freezeReasonText(ctrl);}
   var blocked=(ctrl&&ctrl.blockingConditions||[]).filter(function(b){return b.conditionId!=='observe_mode'&&b.conditionId!=='manager_paused'&&b.conditionId!=='buys_frozen';});
   if(observe&&!action){copy='The account is not ready to start. Check the setup status in Advanced.';action=el('a',{class:'btn sm',href:'#/system',text:'Check setup'});}
   var cov=r&&r.coverage,research=r&&r.researchJobs,reason=r&&((r.noBuyReasons||[])[0]),sp=dash.spend;
@@ -1810,7 +1812,7 @@ function liveActivityChildren(){
   var frozen=!!(ctrl&&ctrl.buyState&&ctrl.buyState.applied==='FROZEN'),paused=!!(ctrl&&ctrl.managerState&&ctrl.managerState.applied==='PAUSED'),emergency=!!(ctrl&&ctrl.emergencyState&&ctrl.emergencyState.applied!=='CLEAR');
   var LIVE_TASKS={premarket_manager:'AI investment review',focused_research:'In-depth company research',portfolio_synthesis:'Portfolio comparison',event_revision:'Reviewing a news event',execute:'Checking planned orders',ingest:'Refreshing company evidence',event_ingest:'Checking the news'};
   var activeJobs=(jobs&&jobs.items||[]).filter(function(j){return LIVE_TASKS[j.task]&&isActiveJob(j);}),sp=dash.spend,acct=dash.account;
-  var now=observe?'AI investing is off. Turn it on to start the first review.':emergency?'Emergency stop is on. Nothing new will be bought.':active?(r.state==='QUEUED'?'Review queued · waiting for a worker to start':LIVE_STAGES[r.stage]||'Review in progress'):activeJobs.length?'Working: '+activeJobs.map(function(j){return LIVE_TASKS[j.task]||plainLabel(j.task);}).join(', '):paused?'Reviews are paused.':frozen?'Watching. New purchases are paused until buys are resumed.':'Watching your investments. Planned orders are checked every minute during trading hours.';
+  var now=observe?'AI investing is off. Turn it on to start the first review.':emergency?'Emergency stop is on. Nothing new will be bought.':active?(r.state==='QUEUED'?'Review queued · waiting for a worker to start':LIVE_STAGES[r.stage]||'Review in progress'):activeJobs.length?'Working: '+activeJobs.map(function(j){return LIVE_TASKS[j.task]||plainLabel(j.task);}).join(', '):paused?'Reviews are paused.':frozen?'Watching. New purchases are paused until buys are resumed.'+freezeReasonText(ctrl):'Watching your investments. Planned orders are checked every minute during trading hours.';
   var waiting=observe?null:active?'Progress updates as work is recorded. Last update '+fmtAgo(r.updatedAt||r.startedAt)+'.':o.nextReview?(o.nextReview.due?'Next review is due in this morning’s window.':'Next scheduled review · '+fmtTimeFull(o.nextReview.startsAt)+'. Use Review now to start one immediately.'):r&&r.completedAt?'Last review finished '+fmtAgo(r.completedAt)+'. Use Review now to run another.':'No review has run yet. Use Review now to start one.';
   var tone=emergency?'bad':active||activeJobs.length?'gold':frozen||paused?'warn':'ok';
   var head=el("div",{class:"tl__i"},el("span",{class:"tl__dot "+tone}),el("div",{class:"tl__b"},el("b",{text:'Now: '+now}),waiting?el("div",{class:"tiny muted",text:waiting}):null),el("span",{class:"tl__t",text:'Updated '+fmtTime(new Date().toISOString())}));
