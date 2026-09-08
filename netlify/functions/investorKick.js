@@ -624,6 +624,10 @@ async function runManagerEngine(ctrl, session, startedAt) {
     try { enqueued.push(await JOBS.enqueueOnce({ ...item, createdBy: "investorKick" })); }
     catch (e) { enqueued.push({ task: item.task, error: String(e.message).slice(0, 120) }); }
   }
+  // The legacy engine no longer holds the writer epoch: its queued jobs can never run, so retire them
+  // a page at a time rather than letting them crowd the queue and the operator's activity view.
+  let retiredLegacy = 0;
+  try { retiredLegacy = (await JOBS.retireQueuedJobs({ engine: "legacy", nowMs: Date.now() })).retired; } catch (e) { console.error("legacy job retirement failed", String(e.message).slice(0, 120)); }
   const due = await JOBS.dueJobs({ nowMs: Date.now(), engine: "manager" });
   const plan = JOBS.dispatchPlan(due, { nowMs: Date.now(), startedAtMs: startedAt });
   const dispatched = [];
@@ -632,7 +636,7 @@ async function runManagerEngine(ctrl, session, startedAt) {
     try { dispatched.push(await dispatchJob(job)); }
     catch (e) { dispatched.push({ jobId: job.jobId, error: String(e.message).slice(0, 160) }); }
   }
-  return { engine: "manager", enqueued, dispatched, deferred: plan.deferred, due: due.length, reasons: decided.reasons };
+  return { engine: "manager", enqueued, dispatched, deferred: plan.deferred, due: due.length, retiredLegacy, reasons: decided.reasons };
 }
 
 exports.handler = async (event) => {
