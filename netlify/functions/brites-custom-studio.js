@@ -124,10 +124,10 @@ const CONFIG = {
   extenderHeartFee: 20.00,
   maxInstruction: 400,
   packs: [
-    { id:"p10",  handle:"studio-pack-10",  name:"Starter",  credits:10,  price:4.99,  per:"50¢ / design",  feats:["10 design credits","Credits never expire","All metals & formats","Designs saved to your account"] },
-    { id:"p25",  handle:"studio-pack-25",  name:"Creator",  credits:25,  price:9.99,  per:"40¢ / design", featured:true, flag:"Most popular", feats:["25 design credits","Credits never expire","Priority generation queue","Designs saved to your account"] },
-    { id:"p60",  handle:"studio-pack-60",  name:"Studio",   credits:60,  price:19.99, per:"33¢ / design", feats:["60 design credits","Credits never expire","Priority generation queue","Early access to new formats"] },
-    { id:"p150", handle:"studio-pack-150", name:"Bulk",     credits:150, price:39.99, per:"27¢ / design", flag:"Best value", feats:["150 design credits","Perfect for gifting sprees & events","Priority generation queue","Dedicated email support"] },
+    { id:"p15",  handle:"studio-pack-15",  name:"Starter",  credits:15,  price:9.99,   per:"67¢ / design", feats:["15 design credits","Credits never expire","All metals & formats","Designs saved to your account"] },
+    { id:"p40",  handle:"studio-pack-40",  name:"Creator",  credits:40,  price:24.99,  per:"62¢ / design", featured:true, flag:"Most popular", feats:["40 design credits","Credits never expire","Priority generation queue","Designs saved to your account"] },
+    { id:"p100", handle:"studio-pack-100", name:"Studio",   credits:100, price:54.99,  per:"55¢ / design", feats:["100 design credits","Credits never expire","Priority generation queue","Early access to new formats"] },
+    { id:"p250", handle:"studio-pack-250", name:"Bulk",     credits:250, price:124.99, per:"50¢ / design", flag:"Best value", feats:["250 design credits","Perfect for gifting sprees & events","Priority generation queue","Dedicated email support"] },
   ],
   plans: [
     { id:"m40",  handle:"studio-plan-hobbyist", name:"Hobbyist", credits:40,  price:7.99,  per:"40 designs / month", feats:["40 credits refreshed monthly","Unused credits roll 1 month","Priority generation queue","Member-only seasonal drops"] },
