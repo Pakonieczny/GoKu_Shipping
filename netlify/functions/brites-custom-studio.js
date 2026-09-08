@@ -13138,12 +13138,56 @@ $$(".pricing-tab").forEach((t) => t.addEventListener("click", () => {
   $("#pricingPacks").style.display = t.dataset.ptab === "packs" ? "grid" : "none";
   $("#pricingPlans").style.display = t.dataset.ptab === "plans" ? "grid" : "none";
 }));
-function buyTier(id, kind) {
-  const t = (kind === "pack" ? CONFIG.packs : CONFIG.plans).find((x) => x.id === id);
+/* Resolving a tier to a Shopify variant. BJ_STUDIO_VARIANTS is built by the
+   Liquid section from the handles IT knows about; the packs and plans come
+   from config/customStudio, which can be retuned with no theme deploy. The two
+   drift — a pack renamed in Firestore, a handle typed differently in the
+   theme, a plan the section never listed — and every drift used to surface
+   as "That pack isn't available right now" on a product that is very much for
+   sale. So the lookup degrades in three steps: the injected map by exact
+   handle, then the map by the credit count in the handle (studio-pack-40 is
+   studio-pack-40 whatever the config calls it), then Shopify's own
+   /products/<handle>.js at click time, which is the storefront's source of
+   truth and needs no theme change at all. Credits are still granted by the
+   webhook on the STUDIO-PACK-<n> SKU, so nothing here can over-grant. */
+const _tierVariantCache = new Map();
+function tierHandle(t, kind) {
+  if (t.handle) return String(t.handle).trim();
+  return kind === "pack" ? `studio-pack-${t.credits}` : `studio-plan-${String(t.id || "").replace(/^m/, "")}`;
+}
+async function resolveTierVariant(t, kind) {
+  const handle = tierHandle(t, kind);
+  const direct = variantFor(handle, []);
+  if (direct) return direct;
+  if (kind === "pack") {
+    const key = Object.keys(VARIANTS).find((h) => new RegExp(`(^|-)pack-${t.credits}$`, "i").test(h));
+    const byCredits = key ? variantFor(key, []) : null;
+    if (byCredits) return byCredits;
+  }
+  if (_tierVariantCache.has(handle)) return _tierVariantCache.get(handle);
+  let found = null;
+  try {
+    const r = await fetch(`/products/${encodeURIComponent(handle)}.js`, { headers: { Accept: "application/json" } });
+    if (r.ok) {
+      const p = await r.json();
+      const v = (p && Array.isArray(p.variants) ? p.variants : []).find((x) => x.available) ||
+                (p && p.variants && p.variants[0]) || null;
+      if (v && v.id) found = { id: v.id, o: v.options || [] };
+    }
+  } catch (e) { /* offline or not a Shopify host — fall through to the toast */ }
+  _tierVariantCache.set(handle, found);
+  return found;
+}
+async function buyTier(id, kind) {
+  const t = (kind === "pack" ? CONFIG.packs : CONFIG.plans).find((x) => String(x.id) === String(id));
   if (!t) return;
   if (!state.uid) { toast("One moment — still setting up your studio", "err"); return; }
-  const variant = variantFor(t.handle, []);
+  const btn = $(`[data-buy="${CSS.escape(String(id))}"][data-kind="${kind}"]`);
+  if (btn) btn.disabled = true;
+  const variant = await resolveTierVariant(t, kind);
+  if (btn) btn.disabled = false;
   if (!variant) {
+    console.warn("[studio] no variant for tier", kind, tierHandle(t, kind), "known handles:", Object.keys(VARIANTS));
     toast(kind === "plan"
       ? "Memberships open shortly — design packs are available now"
       : "That pack isn't available right now — please try another", "err");
