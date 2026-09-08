@@ -1116,9 +1116,11 @@ const MUTATIONS = {
     if (accountModeOf(ctrl) !== "OBSERVE") throw typed("STATE_CONFLICT", `account mode is ${accountModeOf(ctrl)}`);
     const preflight = [];
     if (!attestationOk(ctrl)) preflight.push("fixtures_not_attested_for_this_build");
-    if (params.policyHash !== ctx.policy.policyHash) preflight.push("policy_hash_mismatch");
+    // Hashes are optional: when the caller supplies them they must match, otherwise the current identities bind the activation.
+    if (params.policyHash && params.policyHash !== ctx.policy.policyHash) preflight.push("policy_hash_mismatch");
     const snapshot = await rosterSnapshot(D, ctrl, { accountId: ctx.accountId, nowMs: ctx.nowMs });
-    if (params.universeHash !== snapshot.universeHash) preflight.push("universe_hash_mismatch");
+    if (params.universeHash && params.universeHash !== snapshot.universeHash) preflight.push("universe_hash_mismatch");
+    params = { ...params, policyHash: ctx.policy.policyHash, universeHash: snapshot.universeHash };
     const acct = await D.col(D.COL.accounts).doc(ctx.accountId).get();
     if (!acct.exists) preflight.push("paper_account_missing");
     const X = lazy("./_investorExecution");

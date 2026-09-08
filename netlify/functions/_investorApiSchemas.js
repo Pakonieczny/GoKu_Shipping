@@ -203,7 +203,7 @@ const ACTIONS_V2 = Object.freeze({
   resumeBuys: mutation({ ...acct }, { reauth: true }),
   emergencyStop: mutation({ ...acct }, { immediate: true, concurrency: "none", confirmationKind: "confirm_with_reason", requiresReason: true }),
   resumeSystem: mutation({ ...acct }, { reauth: true }),
-  activateAccountMode: mutation({ ...acct, targetMode: T.str({ enum: ["PAPER_AI"] }), policyHash: T.ref("Hash"), universeHash: T.ref("Hash") }, { required: ["targetMode", "policyHash", "universeHash"], reauth: true }),
+  activateAccountMode: mutation({ ...acct, targetMode: T.str({ enum: ["PAPER_AI"] }), policyHash: T.ref("Hash"), universeHash: T.ref("Hash") }, { required: ["targetMode"], confirmationKind: "none" }),
   deactivateAccountMode: mutation({ ...acct, targetMode: T.str({ enum: ["OBSERVE"] }) }, { required: ["targetMode"], reauth: true, requiresReason: true }),
   setBudget: mutation({ dailyReservationMinor: canonicalInt(), byRoleMinor: T.obj({ investment: canonicalInt(), extraction: canonicalInt() }), alertThresholdPpm: T.ref("Ppm") }, { required: ["dailyReservationMinor"], reauth: false, confirmationKind: "confirm" }),
   setRiskMandate: mutation({ overrides: T.obj(Object.fromEntries(Object.keys(POLICY.RISK_MANDATE_BOUNDS).map((k) => [k, canonicalInt()]))), note: T.str({ maxLength: REASON_MAX }) }, { required: ["overrides"], reauth: true }),
