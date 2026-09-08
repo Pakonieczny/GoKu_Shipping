@@ -169,7 +169,22 @@ async function latestRunDoc(D, ctrl) {
   const MG = lazy("./_investorManager");
   let doc = null;
   try { doc = MG ? await MG.readRun(id, { admin: D }) : null; } catch { doc = null; }
-  return { ...((ctrl.lastManagerRun || {}).managerRunId === id ? ctrl.lastManagerRun : {}), ...(doc || {}), managerRunId: id };
+  const run = { ...((ctrl.lastManagerRun || {}).managerRunId === id ? ctrl.lastManagerRun : {}), ...(doc || {}), managerRunId: id };
+  // The job is authoritative for worker liveness. A worker that throws or is
+  // terminated can leave the last progress document saying "running" forever.
+  if (!['complete','failed_closed','failed','cancelled'].includes(run.status)) {
+    const jobs = rows(await D.col(D.COL.jobs).where('runId','==',id).limit(50).get())
+      .filter(j=>j.task==='premarket_manager').sort((a,b)=>Number(b.segmentStartedAtMs||b.enqueuedAtMs||0)-Number(a.segmentStartedAtMs||a.enqueuedAtMs||0));
+    const job=jobs[0];
+    if(job){
+      run.worker={state:job.status,leaseExpiresAt:iso(job.workerLeaseExpiresAt),heartbeatAt:iso(job.lastHeartbeatAtMs),resumeAt:iso(job.resumeAtMs),reason:job.yieldReason||null};
+      if(['failed','dead','cancelled'].includes(job.status)){
+        run.status=job.status==='cancelled'?'cancelled':'failed_closed';
+        run.failureReason=job.lastError?.message||job.lastError?.code||'Review worker stopped';
+      }
+    }
+  }
+  return run;
 }
 function runState(run) {
   const s = String((run && run.status) || "").toLowerCase();
@@ -190,7 +205,7 @@ function runView(run) {
     managerRunId: run.managerRunId, state: runState(run), tradingDate: run.tradingDate || null, accountId: run.accountId || null, universeVersion: run.universeVersion || null, universeHash: run.universeHash || null,
     contextManifestHash: run.contextManifestHash || null, policyHash: run.policyHash || null, portfolioVersion: run.activation && run.activation.activationSnapshotId ? run.activation.activationSnapshotId : null,
     startedAt: iso(run.startedAtMs), updatedAt: iso(run.updatedAtMs), cutoffAt: iso(run.cutoffMs), deadlineAt: iso(run.deadlineMs || run.hardDeadlineMs), completedAt: iso(run.completedAtMs),
-    decisionProcess:run.decisionProcess||null, shortlist:run.shortlist||null,
+    decisionProcess:run.decisionProcess||null, shortlist:run.shortlist||null, worker:run.worker||null,
     investmentNote: run.investmentNote ? clip(run.investmentNote,1600) : null, stage: run.stage || null, checkpoints: (run.checkpoints || run.lineage || []).slice(0, 40), segments: Number(run.segments) || null,
     coverage: { eligibleCount: Number(cov.eligibleCount ?? run.eligibleCount) || 0, completedCount: Number(cov.completedCount) || 0, missing: list(cov.missing).slice(0, 400), missingCount: Array.isArray(cov.missing) ? cov.missing.length : Number(cov.missing) || 0, duplicates: list(cov.duplicates).slice(0, 100), unknown: list(cov.unknown).slice(0, 100), ok: cov.ok === true, repaired: Number(cov.repaired) || 0 },
     countsByDecision: run.byDecision || {}, decisionCount: Number(run.decisionCount) || 0, buys: (run.buys || []).slice(0, 40),
@@ -285,7 +300,7 @@ function workflowOf(ctrl, run) {
   return [
     { step: "evidence", state: ingest ? (ingest.error ? "failed" : "complete") : "pending", detail: ingest ? `${ingest.companies || ingest.refreshed || 0} companies refreshed` : "overnight ingest pending", at: iso(ingest && (ingest.finishedAtMs || ingest.atMs)) },
     { step: "coverage", state: !run ? "pending" : failed && !after("coverage") ? "failed" : st("coverage", after("coverage") || run.status === "complete", ["freeze", "shortlist", "review", "coverage"].includes(stage)), detail: run && run.coverage ? `${run.coverage.completedCount}/${run.coverage.eligibleCount} reviewed` : "not started", at: iso(run && run.cutoffMs) },
-    { step: "research", state: !run ? "pending" : failed && !after("research") ? "failed" : st("research", after("research") || run.status === "complete", stage === "research"), detail: run && run.research ? `${run.research.completed} completed, ${run.research.deferred} deferred, ${run.research.failed} failed` : "no research yet", at: null },
+    { step: "research", state: !run ? "pending" : failed && !after("research") ? "failed" : st("research", after("research") || run.status === "complete", stage === "research"), detail: run && run.research ? run.research.detail || `${run.research.completed} completed, ${run.research.deferred} deferred, ${run.research.failed} failed` : "no research yet", at: null },
     { step: "revisions", state: !run ? "pending" : st("maintenance", after("maintenance") || run.status === "complete", stage === "maintenance"), detail: run && run.maintenance ? `${run.maintenance.actionable} actionable, ${(run.maintenance.actionRequired || []).length} action required` : "no holdings reviewed", at: null },
     { step: "synthesis", state: !run ? "pending" : failed && stage === "synthesis" ? "failed" : st("synthesis", after("synthesis") || run.status === "complete", stage === "synthesis"), detail: "Portfolio comparison and quantity review", at: null },
     { step: "mandates", state: !run ? "pending" : run.activation ? (run.activation.status === "COMMITTED" ? "complete" : run.activation.status === "EMPTY" ? "skipped" : "failed") : st("activation", after("activation"), stage === "activation"), detail: run && run.activation ? `${run.activation.status}${run.activation.planId ? ` plan ${run.activation.planId}` : ""}` : "no plan staged", at: iso(run && run.completedAtMs) },

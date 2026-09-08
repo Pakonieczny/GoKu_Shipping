@@ -505,7 +505,12 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
         if(!st.paperProcess && (requests.length>(A.currentScope().aiWorkload.investmentPolicy?.maxCompanies||2)||requests.length<(A.currentScope().aiWorkload.investmentPolicy?.minCompanies||1)||st.researchInvalid))throw Object.assign(Error('Invalid prepared-research finalists'),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
         st.handoff=st.handoff||{version:H.VERSION,phase:'documents',documents:{},packets:{},completedResearch:st.research?.completed||[]};
         if(st.handoff.version!==H.VERSION)throw Object.assign(Error('Research handoff version mismatch'),{code:'SIMULATION_STATE_CORRUPT'});
-        const saveHandoff=async()=>{if(deps.checkpoint)await deps.checkpoint({stage,data:st});};
+        const saveHandoff=async()=>{
+          if(deps.checkpoint)await deps.checkpoint({stage,data:st});
+          await record({research:{requested:requests.length,completed:st.handoff.phase==='complete'?st.research.completed.length:st.handoff.completedResearch.length,
+            failed:0,deferred:0,documentsPrepared:Object.keys(st.handoff.documents).length,phase:st.handoff.phase,
+            detail:st.handoff.phase==='complete'?'Research and investment decision saved':st.handoff.phase==='decision'?'Astra is comparing the prepared research':`Luna prepared ${Object.keys(st.handoff.documents).length} of ${requests.length} research documents`}});
+        };
         const context=await rebuildContext(st,deps,accountId),packets=[],documents=[];
         const marks=await liquidityMarks(requests.map(r=>r.symbol),deps,{policy,cutoffMs:st.cutoff.cutoffMs});
         for(const request of requests) {

@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-9ECifm1grokijFN20egRt0uNylwdKXcomqzm6uMzAw8='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-S3pDKQTmVmQ0X4i0KOoKeq532s80YvkA2/7utOxH+UM='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -859,6 +859,13 @@ function minuteEt(n) { if(n==null)return 'Time not reported';var h=Math.floor(n/
 function shortCopy(text,limit) { text=String(text||'');return text.length>(limit||190)?text.slice(0,(limit||190)-1).replace(/\s+\S*$/,'')+'…':text; }
 var FREEZE_REASONS={STALE_BROKER_TRUTH:'the broker snapshot is older than 10 minutes',RECONCILIATION_UNRESOLVED:'the account records are not reconciled',UNPROTECTED_POSITIONS:'a holding has no protective stop working',DAILY_LOSS_FREEZE:'today’s loss limit was reached',GROSS_EXPOSURE_BREACH:'gross exposure is above the limit',STRESSED_LOSS_AGGREGATE_BREACH:'aggregate stressed loss is above the limit',PLANNED_LOSS_AGGREGATE_BREACH:'aggregate planned loss is above the limit',EMERGENCY_STATE:'an emergency stop is engaged',MANAGER_PAUSED:'reviews are paused',EXECUTOR_PAUSED_SAFETY:'the executor is paused for safety',BUYS_FROZEN:'buys were frozen by an earlier check',operator:'you paused buys',emergency_stop:'an emergency stop was used',account_mode_deactivated:'AI investing was turned off'};
 function freezeReasonText(ctrl){var c=ctrl&&(ctrl.blockingConditions||[]).find(function(x){return x.conditionId==='buys_frozen';}),d=c&&c.detail;if(!d)return '';var key=String(d).split(/[\s:]/)[0];return ' Reason: '+(FREEZE_REASONS[key]||FREEZE_REASONS[d]||String(d))+'.';}
+function reviewDelayText(run,nowMs){
+  if(!run||!['RUNNING','QUEUED'].includes(run.state))return '';
+  var now=nowMs==null?Date.now():nowMs,w=run.worker||{},lease=Date.parse(w.leaseExpiresAt),last=Date.parse(run.updatedAt||run.startedAt);
+  if(w.state==='running'&&Number.isFinite(lease)&&lease<=now)return 'The review worker stopped responding. Saved work is waiting for scheduler recovery.';
+  if(Number.isFinite(last)&&now-last>20*60000)return 'Last recorded review progress: '+fmtAgo(run.updatedAt||run.startedAt)+'. Check job details; refreshing this page does not restart the review.';
+  return '';
+}
 function dailyControl(ctrl,action,label,cls) { var cap=ctrl&&capOf(ctrl,action);return cap&&cap.enabled?capButton(ctrl,action,label,{icon:action==='activateAccountMode'||action==='resumeBuys'?'play':action==='runManagerReview'?'refresh':'pause',cls:cls||'sm'}):null; }
 function progressRow(label,done,total,active) {
   var known=done!=null&&total!=null&&Number.isFinite(Number(done))&&Number.isFinite(Number(total))&&Number(total)>0;
@@ -869,7 +876,9 @@ function renderManagerBrief(dash,ctrl) {
   var r=dash.latestRun,o=dash.overview||{},cad=o.cadence||{},observe=dash.account.accountMode==='OBSERVE',active=!!(r&&['RUNNING','QUEUED'].includes(r.state)),paused=ctrl&&ctrl.managerState.applied==='PAUSED',emergency=ctrl&&ctrl.emergencyState.applied!=='CLEAR',frozen=ctrl&&ctrl.buyState.applied==='FROZEN';
   var stages={freeze:'Gathering the evidence',shortlist:'Luna selecting 50 research candidates',review:'Reviewing companies',coverage:'Checking company coverage',maintenance:'Reviewing what you own',research:'Researching the strongest ideas',synthesis:'Choosing the investment plan',activation:'Checking prices and share quantities',persist:'Saving the investment plan',complete:'Review complete'};
   var title=observe?'Ready when you are':active?(stages[r.stage]||'Review in progress'):!r?'Waiting for the first scheduled review':r.state==='FAILED'?'The review could not finish':r.state==='PARTIAL'?'Review finished with some work incomplete':'Watching your investments';
+  var delay=reviewDelayText(r);
   var copy=observe?'Start with simulated money. The AI will research companies and manage the paper account.':active?'The AI is checking the evidence before deciding what to buy, keep or sell.':!r?'The AI starts its daily review on trading mornings. No manual review is needed.':r.state==='FAILED'?'New decisions are not ready. Check the review details before trying again.':r.state==='PARTIAL'?'Some work is unfinished. Check the review details for what was completed and what is still blocked.':'The AI follows its investment plan and checks for important news. You do not need to approve each trade.';
+  if(delay&&!observe){title='Review delayed';copy=delay;}
   if(paused&&active)copy+=' Future reviews are paused.';
   var action=observe?dailyControl(ctrl,'activateAccountMode','Start AI investing','sm gold'):dailyControl(ctrl,paused?'resumeManager':'pauseManager',paused?'Resume reviews':active?'Pause future reviews':'Pause reviews');
   var reviewNow=!observe&&!active&&!emergency?dailyControl(ctrl,'runManagerReview','Review now','sm gold'):null,resumeBuys=frozen&&!observe&&!emergency?dailyControl(ctrl,'resumeBuys','Resume buys','sm'):null;
@@ -883,7 +892,8 @@ function renderManagerBrief(dash,ctrl) {
   var next=active?'Last progress update '+fmtAgo(r.updatedAt||r.startedAt):o.nextReview?(o.nextReview.due?'Next review · due in this morning’s window':'Next review · '+fmtTimeFull(o.nextReview.startsAt)):r&&r.completedAt?'Last review '+fmtAgo(r.completedAt):'First review pending';
   setChildren($('managerBrief'),[
     el('div',{class:'ai-head'},el('div',null,el('div',{class:'eyebrow',text:'YOUR AI MANAGER'}),el('h3',{class:'brief-title',text:title}),el('p',{class:'brief-copy',text:copy})),el('div',{class:'actions'},reviewNow,resumeBuys,action)),
-    active?el('div',{class:'ai-progress'},progressRow(r.decisionProcess?'Company coverage · Luna + Astra':'Companies reviewed',cov&&cov.completedCount,cov&&cov.eligibleCount,r.stage==='review'),progressRow('In-depth research finished',research&&research.completed,research&&research.requested,r.stage==='research')):null,
+    active?el('div',{class:'ai-progress'},progressRow(r.decisionProcess?'Company coverage · Luna + Astra':'Companies reviewed',cov&&cov.completedCount,cov&&cov.eligibleCount,!delay&&r.stage==='review'),progressRow('In-depth research finished',research&&research.completed,research&&research.requested,!delay&&r.stage==='research')):null,
+    r&&r.failure&&r.failure.reason?el('p',{class:'warnline',text:r.failure.reason}):null,
     active?el('p',{class:'daily-foot',text:'Progress shows recorded work, not a time estimate. '+next+'.'}):null,
     r&&r.decisionProcess?el('p',{class:'daily-foot',text:'This review: '+({flex3:'0–3 finalists, cash allowed',top1:'exactly 1 finalist',range1:'1–2 finalists',range2:'3–5 finalists',range3:'6–8 finalists'}[r.decisionProcess.companyRange]||r.decisionProcess.companyRange)+' · Astra medium · Strategy '+r.decisionProcess.strategyVersionId}):null,
     reason?el('p',{class:'ai-reason',text:plainPlanBlock(reason.code||reason)}):!active&&r&&r.investmentNote?el('p',{class:'ai-reason',text:shortCopy(r.investmentNote,220)}):null,
@@ -1814,6 +1824,7 @@ function liveActivityChildren(){
   var activeJobs=(jobs&&jobs.items||[]).filter(function(j){return LIVE_TASKS[j.task]&&isActiveJob(j);}),sp=dash.spend,acct=dash.account;
   var now=observe?'AI investing is off. Turn it on to start the first review.':emergency?'Emergency stop is on. Nothing new will be bought.':active?(r.state==='QUEUED'?'Review queued · waiting for a worker to start':LIVE_STAGES[r.stage]||'Review in progress'):activeJobs.length?'Working: '+activeJobs.map(function(j){return LIVE_TASKS[j.task]||plainLabel(j.task);}).join(', '):paused?'Reviews are paused.':frozen?'Watching. New purchases are paused until buys are resumed.'+freezeReasonText(ctrl):'Watching your investments. Planned orders are checked every minute during trading hours.';
   var waiting=observe?null:active?'Progress updates as work is recorded. Last update '+fmtAgo(r.updatedAt||r.startedAt)+'.':o.nextReview?(o.nextReview.due?'Next review is due in this morning’s window.':'Next scheduled review · '+fmtTimeFull(o.nextReview.startsAt)+'. Use Review now to start one immediately.'):r&&r.completedAt?'Last review finished '+fmtAgo(r.completedAt)+'. Use Review now to run another.':'No review has run yet. Use Review now to start one.';
+  var delay=reviewDelayText(r);if(delay&&!observe&&!emergency){now='Review delayed';waiting=delay;}else if(r&&r.state==='FAILED'&&!observe&&!emergency){now='The review could not finish';waiting=r.failure&&r.failure.reason||'Check the saved run details for the failure reason.';}
   var tone=emergency?'bad':active||activeJobs.length?'gold':frozen||paused?'warn':'ok';
   var head=el("div",{class:"tl__i"},el("span",{class:"tl__dot "+tone}),el("div",{class:"tl__b"},el("b",{text:'Now: '+now}),waiting?el("div",{class:"tiny muted",text:waiting}):null),el("span",{class:"tl__t",text:'Updated '+fmtTime(new Date().toISOString())}));
   var reviewNow=!observe&&!active&&!emergency&&ctrl?dailyControl(ctrl,'runManagerReview','Review now','sm gold'):null,resumeBuys=frozen&&!observe&&!emergency&&ctrl?dailyControl(ctrl,'resumeBuys','Resume buys','sm'):null;

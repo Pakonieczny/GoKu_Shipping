@@ -3305,6 +3305,55 @@ function runFixtures() {
       runTransaction: async (fn) => fn({ get: (r) => r.get(), set: (r, d, o) => r.set(d, o) }) };
   }
 
+  cases.push(fixture("scheduler_recovers_expired_workers_with_the_same_paid_checkpoint_and_fences_live_owners", async () => {
+    const assert=require('assert'),J0=require('./_investorJobs'),fake=fakeAdmin(),J=J0.withAdmin(fake),key=Buffer.alloc(32,7);
+    const payload={accountId:'paper-1',tradingDate:'2026-09-08'},runId='saved_review';
+    const enq=await J.enqueueOnce({task:'premarket_manager',dedupeId:runId,runId,payload});
+    const nonce=await J.issueWorkerNonce({jobId:enq.jobId,task:'premarket_manager',targetFunction:'investorManager-background',attempt:1,payloadHash:J.payloadHash(payload),key});
+    const first=await J.claimOnce({jobId:enq.jobId,task:'premarket_manager',targetFunction:'investorManager-background',token:nonce.token,payload,key});
+    const cp={stage:'research',data:{paperCheckpointRef:'already_paid_research'}};
+    await J.checkpoint(first.claim,cp);
+    assert(!(await J.dueJobs({engine:'manager'})).some(j=>j.jobId===enq.jobId),'live worker must not be dispatched');
+    await first.claim.jobRef.set({workerLeaseExpiresAt:Date.now()-1},{merge:true});
+    assert(!(await J.dueJobs({engine:'manager'})).some(j=>j.jobId===enq.jobId),'expired lease must not overlap a worker still inside the platform cap');
+    await first.claim.jobRef.set({segmentStartedAtMs:Date.now()-16*60000},{merge:true});
+    const due=await J.dueJobs({engine:'manager'}),job=due.find(j=>j.jobId===enq.jobId);
+    assert(job,'expired running job must re-enter dispatch');assert.deepEqual(job.checkpoint.data,cp.data);
+    assert.equal(J.dispatchPlan(due).chosen[0].jobId,enq.jobId);
+    const next=await J.issueWorkerNonce({jobId:job.jobId,task:job.task,targetFunction:'investorManager-background',attempt:2,payloadHash:J.payloadHash(payload),key});
+    // A heartbeat racing the dispatcher keeps its lease; the stale read grants no authority.
+    await first.claim.jobRef.set({workerLeaseExpiresAt:Date.now()+60000},{merge:true});
+    assert.equal((await J.claimOnce({jobId:job.jobId,task:job.task,targetFunction:'investorManager-background',token:next.token,payload,key})).claimed,false);
+    await first.claim.jobRef.set({workerLeaseExpiresAt:Date.now()-1},{merge:true});
+    const resumed=await J.claimOnce({jobId:job.jobId,task:job.task,targetFunction:'investorManager-background',token:next.token,payload,key});
+    assert(resumed.claimed);assert.equal(resumed.claim.runId,runId);assert.deepEqual(resumed.claim.checkpoint.data,cp.data);
+    assert.equal((await J.checkpoint(first.claim,{stage:'freeze'})).ok,false,'old worker must lose write authority');
+    await J.complete(resumed.claim,{saved:true});assert.equal((await J.dueJobs({engine:'manager'})).length,0);
+    return true;
+  }));
+
+  cases.push(fixture("execution_backlog_cannot_starve_a_saved_review", () => {
+    const assert=require('assert'),J=require('./_investorJobs');
+    const jobs=Array.from({length:30},(_,i)=>({jobId:'execute_'+i,task:'execute',status:'queued',dueAtMs:i,priority:10}));
+    jobs.push({jobId:'saved_review',task:'premarket_manager',status:'running',workerLeaseExpiresAt:1,dueAtMs:0,priority:200});
+    const plan=J.dispatchPlan(jobs,{nowMs:100,startedAtMs:100,maxJobs:4,budgetMs:20000});
+    assert.equal(plan.chosen.filter(j=>j.task==='execute').length,1);
+    assert(plan.chosen.some(j=>j.jobId==='saved_review'));assert(plan.deferred.some(j=>j.reason==='one_execute_per_tick'));
+    return true;
+  }));
+
+  cases.push(fixture("pausing_future_reviews_preserves_execution_but_not_buy_freezes_or_emergency_stops", () => {
+    const assert=require('assert'),R=require('./_investorRisk');
+    const portfolio={navMinor:'10000000',settledCashMinor:'10000000',reservedMinor:'0',positions:[],workingOrders:[]};
+    const check=control=>R.revalidateOperationalLimits({portfolio,control,brokerTruthAgeSeconds:30});
+    assert.equal(check({managerState:'PAUSED'}).allowExpansion,true);
+    assert.equal(check({managerState:'PAUSED',buyState:'FROZEN'}).allowExpansion,false);
+    assert.equal(check({freezeNewBuys:true}).allowExpansion,false);
+    assert.equal(check({emergencyState:'ENGAGED'}).allowExpansion,false);
+    assert.equal(check({executorState:'PAUSED_SAFETY'}).allowExpansion,false);
+    return true;
+  }));
+
   cases.push(fixture("run_scoped_lease_spans_segments_yields_immediately_and_reclaims_a_dead_segment_inside_the_cap", async () => {
     const JOBS0 = require("./_investorJobs");
     const P = require("./_investorPolicy");
@@ -5130,6 +5179,23 @@ function runFixtures() {
     if(!next || next.tradingDate!=="2026-09-08" || next.due) throw Error("weekend/Labor Day schedule incorrect");
     live.ctrl().managerState="PAUSED";
     if(live.V2.nextReviewWindow(live.ctrl(),live.nowMs)!==null) throw Error("paused account promised automatic review");
+    return true;
+  }));
+
+  cases.push(fixture("dashboard_reports_worker_failure_and_saved_research_instead_of_an_endless_spinner", async () => {
+    const assert=require('assert'),W=apiWorld(),id='interrupted_review';
+    W.ctrl().activeManagerRunId=id;
+    await require('./_investorManager').writeRun({admin:W.fake,managerRunId:id,status:'running',stage:'research',accountId:'paper-1',startedAtMs:W.nowMs,universeVersion:'fixture',universeHash:'fixture',eligibleCount:304,
+      research:{requested:2,completed:0,failed:0,deferred:0,detail:'Luna prepared 2 of 2 research documents'}});
+    const ref=W.fake.col(W.fake.COL.jobs).doc('interrupted_job');
+    await ref.set({jobId:'interrupted_job',runId:id,task:'premarket_manager',status:'running',workerLeaseExpiresAt:W.nowMs-1,lastHeartbeatAtMs:W.nowMs-900000});
+    let d=(await W.read('managerDashboard')).body.data;
+    assert.equal(d.latestRun.worker.state,'running');assert.equal(Date.parse(d.latestRun.worker.leaseExpiresAt),W.nowMs-1);
+    assert.equal(d.workflow.find(s=>s.step==='research').detail,'Luna prepared 2 of 2 research documents');
+    await ref.set({status:'dead',lastError:{code:'PROVIDER_FAILURE',message:'Saved response could not be retrieved'}},{merge:true});
+    d=(await W.read('managerDashboard')).body.data;
+    assert.equal(d.latestRun.state,'FAILED');assert.equal(d.latestRun.failure.reason,'Saved response could not be retrieved');
+    assert.equal(d.workflow.find(s=>s.step==='research').state,'failed');
     return true;
   }));
 

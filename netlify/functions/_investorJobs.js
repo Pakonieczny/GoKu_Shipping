@@ -155,7 +155,7 @@ function createJobs(A) {
   }
   async function dueJobs({ nowMs = Date.now(), limit = 50, engine = null } = {}) {
     const rows = [];
-    for (const status of ["queued", "yielded_resumable"]) {
+    for (const status of ["queued", "yielded_resumable", "running"]) {
       // Scope the read to this engine's tasks: a backlog of another engine's queued jobs must
       // never crowd a due job out of the bounded page. One equality query per task needs no
       // composite index, unlike a combined status + task-in query.
@@ -167,6 +167,13 @@ function createJobs(A) {
         const j = d.data();
         if (!j || !TASKS[j.task]) return;
         if (engine && TASKS[j.task].engine !== engine) return;
+        // A hard platform timeout cannot yield. Re-dispatch the SAME job and
+        // saved checkpoint once its worker lease expires; claimOnce fences
+        // a still-live owner transactionally before any work can resume.
+        if (j.status === "running") {
+          const capEndsAt=Number(j.segmentStartedAtMs||j.startedAtMs||0)+POLICY.CUTOFFS_ET.platform.functionCapSeconds*1000;
+          if (!Number(j.workerLeaseExpiresAt) || Math.max(Number(j.workerLeaseExpiresAt),capEndsAt) > nowMs) return;
+        }
         if (Number(j.dueAtMs) > nowMs) return;
         if (j.status === "yielded_resumable" && Number(j.resumeAtMs) > nowMs) return;
         rows.push(j);
@@ -179,7 +186,7 @@ function createJobs(A) {
   function orderForDispatch(jobs) {
     const rank = (j) => {
       const spec = TASKS[j.task] || { category: "legacy" };
-      const cat = j.status === "yielded_resumable" && spec.category !== "execute" && spec.category !== "event"
+      const cat = ["yielded_resumable", "running"].includes(j.status) && spec.category !== "execute" && spec.category !== "event"
         ? "continuation" : spec.category;
       return DISPATCH_ORDER.indexOf(cat) < 0 ? 99 : DISPATCH_ORDER.indexOf(cat);
     };
@@ -194,16 +201,21 @@ function createJobs(A) {
     maxJobs = MAX_JOBS_PER_TICK, perDispatchMs = 2500 } = {}) {
     const ordered = orderForDispatch(jobs);
     const chosen = [], deferred = [], heavySeen = new Set();
+    let executeSeen = false;
     let projected = nowMs - startedAtMs;
     for (const j of ordered) {
       const spec = TASKS[j.task] || { category: "legacy", heavy: true };
-      const continuation = j.status === "yielded_resumable";
+      const continuation = ["yielded_resumable", "running"].includes(j.status);
       if (chosen.length >= maxJobs) { deferred.push({ jobId: j.jobId, reason: "tick_full" }); continue; }
       if (projected + perDispatchMs > budgetMs) { deferred.push({ jobId: j.jobId, reason: "dispatch_budget" }); continue; }
+      // Execution reads current broker/ledger state. A backlog of minute jobs
+      // must not consume every slot and starve the review that creates plans.
+      if (spec.category === "execute" && executeSeen) { deferred.push({ jobId: j.jobId, reason: "one_execute_per_tick" }); continue; }
       /* "At most one NEW heavy job per category per tick": a resumable
          continuation is existing work and does not take the slot. */
       if (spec.heavy && !continuation && heavySeen.has(spec.category)) { deferred.push({ jobId: j.jobId, reason: "one_heavy_per_category" }); continue; }
       if (spec.heavy && !continuation) heavySeen.add(spec.category);
+      if (spec.category === "execute") executeSeen = true;
       chosen.push(j);
       projected += perDispatchMs;
     }

@@ -539,7 +539,8 @@ function revalidateOperationalLimits({ portfolio, control = {}, riskMandate = nu
   const big = (v) => BigInt(String(v == null ? 0 : v));
   if (control.killSwitch || control.emergencyState === "ENGAGED") { reasons.push("EMERGENCY_STATE"); hardBreach = hardBreach || control.emergencyState === "ENGAGED"; }
   if (control.freezeNewBuys || control.buyState === "FROZEN") reasons.push("BUYS_FROZEN");
-  if (control.managerState === "PAUSED") reasons.push("MANAGER_PAUSED");
+  // Pausing future reviews is not a buy freeze. Already approved plans and
+  // their executor remain governed by the independent buy/emergency controls.
   if (control.executorState === "PAUSED_SAFETY") reasons.push("EXECUTOR_PAUSED_SAFETY");
   if (brokerTruthAgeSeconds != null && Number(brokerTruthAgeSeconds) > 600) { reasons.push("STALE_BROKER_TRUTH"); hardBreach = true; }
   if (reconciliationUnresolved) { reasons.push("RECONCILIATION_UNRESOLVED"); hardBreach = true; }
