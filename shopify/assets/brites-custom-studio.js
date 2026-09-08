@@ -47,6 +47,12 @@ const $  = (s) => ROOT.querySelector(s);
 const $$ = (s) => Array.from(ROOT.querySelectorAll(s));
 
 /* ── Everything Liquid handed us ──────────────────────────────────────────── */
+/* OUR OWN URL, captured while the script is still executing. This is the
+   only fully reliable way to find a sibling asset: document.currentScript
+   is valid during synchronous execution and null forever afterwards, and
+   matching a <script> tag by filename breaks the moment anybody renames
+   or bundles the file. The tag search is kept only as a fallback. */
+const SELF_SCRIPT = (document.currentScript && document.currentScript.src) || "";
 const D              = ROOT.dataset;
 const FN_BASE        = D.fnBase || "https://goldenspike.app/.netlify/functions";
 const FN_BASE_IMAGE  = D.fnBaseImage || FN_BASE;      // geminiImageProxy host
@@ -80,14 +86,83 @@ const sized = (url, w) => {
   return url + (url.includes("?") ? "&" : "?") + "width=" + w;
 };
 
+/* ── AN ABSOLUTE URL, AT THE SIZE THE WORKSHOP ACTUALLY NEEDS ────────────
+   `item.image` is whatever the source handed us, and the three sources do
+   not agree: predictive search returns featured_image.url as a PATH
+   ("/cdn/shop/files/x.jpg?v=1"), the products JSON returns an absolute
+   https URL, and the compact form can be protocol-relative
+   ("//cdn.shopify.com/..."). Two of those three are not URLs, which is why
+   adopting a charm from the catalogue answered bad_image_url.
+
+   The RESOLUTION matters too, and separately. Everywhere else in the studio
+   this image is decoration and the browse grid's 540px is generous; the
+   moment one is chosen it becomes the customer's actual charm — it is what
+   they look at full size, what the model edits, and what a manufacturing
+   map is derived from. So no width is requested at all.
+
+   That is not the same as requesting a large one. Shopify's CDN serves the
+   ORIGINAL master when the width parameter is absent and resamples DOWN to
+   whatever number is present, so `?width=2048` on a 4000px master silently
+   throws away half of it — and any width already on the URL from the search
+   response does the same. Every width is stripped rather than replaced, and
+   what comes back is the largest file that exists. */
+/* The base a relative path is resolved against. location.href is the honest
+   answer and is what a browser would use — but it is not always a usable
+   base (a file:// page reports an origin of the string "null"), and giving
+   up there means silently serving a 540px thumbnail where a 2048px charm
+   was asked for. The store is the fallback, because that is where a
+   /cdn/shop/ path lives whatever page is asking. */
+const CATALOG_BASE = "https://britesjewelry.com";
+function catalogBase() {
+  try {
+    if (/^https?:$/.test(location.protocol) && location.origin && location.origin !== "null") {
+      return location.href;
+    }
+  } catch (e) {}
+  return CATALOG_BASE;
+}
+function catalogImageUrl(item) {
+  let u = String((item && item.image) || "").trim();
+  if (!u) return "";
+  if (u.startsWith("//")) u = "https:" + u;
+  try { u = new URL(u, catalogBase()).href; }
+  catch (e) { try { u = new URL(u, CATALOG_BASE).href; } catch (e2) { return ""; } }
+  if (!/^https:/i.test(u)) return "";
+  /* strip, never replace — see above. Also drops the sizing Shopify puts in
+     the PATH on some themes (".../charm_540x.jpg"), which no query
+     parameter can undo. */
+  u = u.replace(/([?&])(width|height)=\d+/g, "$1")
+       .replace(/[?&]+$/, "")
+       .replace(/([?&])&+/g, "$1")
+       .replace(/_(\d{2,4}x\d{0,4}|\d{0,4}x\d{2,4})(?=\.(jpe?g|png|webp|gif)\b)/i, "");
+  return u;
+}
+
 /* Catalogue items now come from predictive search, so `image` is a real URL. */
 const productMedia = (item, loading = "lazy", w = 540) =>
   assetImg(sized(item && item.image, w) || ASSETS.startSearch,
            (item && item.title) || "Brites handcrafted jewelry", loading);
 /* A version is a generated 2K PNG in Storage; its download URL is the media. */
-const versionMedia = (version) =>
-  assetImg((version && version.url) || ASSETS.customPreview || "",
-           "Your custom charm design", "eager");
+/* ── A VERSION'S PICTURE IS NOT ALWAYS ITS DRAWING ───────────────────────
+   `url` is the production drawing, and for every version the studio makes
+   itself that is the right thumbnail — it exists first and the metal comes
+   later. A charm adopted from our own catalogue has no drawing at all and
+   never will, so reading `url` gave an empty string, fell through to an
+   asset that may not be set, and rendered as a broken image in the version
+   strip, in the conversation and in the timeline alike.
+
+   So: the drawing when there is one, the metal when there is not. Callers
+   that specifically want one or the other still say so by passing an
+   explicit { url } — the pair thumbnails on the order step depend on it. */
+const versionMedia = (version) => {
+  const src = (version && (version.url || version.renderUrl)) || ASSETS.customPreview || "";
+  /* An <img> with an empty src is a broken-image icon in every browser, and
+     that is what a version with no picture yet was rendering as — in the
+     version strip, in the conversation and in the timeline at once. A
+     placeholder that says "not yet" is not much, but it is not a fault. */
+  if (!src) return '<span class="asset-img asset-img--none" aria-hidden="true"></span>';
+  return assetImg(src, "Your custom charm design", "eager");
+};
 const approvedMedia = versionMedia;
 
 /* =============================================================================
@@ -99,40 +174,81 @@ const CONFIG = {
   guestFreeCredits: 3,
   signupBonusCredits: 7,
   refineCost: 1,
-  guestFreeUploads: 3,
-  signupBonusUploads: 7,
+  /* Aug 2026: 5 for anyone who walks in, 10 more the moment they make an
+     account — 15 in total. The guest number moved 3 → 5 so the wall arrives
+     later, and the bonus 7 → 10 so signing up is visibly worth doing rather
+     than merely restoring what they had. Both are still overridable from
+     config/customStudio without a deploy. */
+  guestFreeUploads: 5,
+  /* how many DISTINCT reference images a free account may start designs
+     from — uploads and repository charms together. See refLimit. */
+  freeReferences: 3,
+  signupBonusUploads: 10,
   maxUploadPx: 2048,
   maxUploadBytes: 15 * 1024 * 1024,
+  /* ONE PRICE, BECAUSE THERE IS ONE RENDERER. The metal render briefly
+     offered a second, double-priced model (gpt-image-2) behind a Model
+     toggle, so this file carried renderHighCost and renderQualityTiers to
+     price that toggle honestly. The toggle is gone and the server refuses
+     the tier, so a render costs generateCost and nothing else. */
   generateCost: 1,
-  /* The metal render offers two renderers. "Standard" is the Gemini path the
-     studio has always used and costs generateCost; "High" routes to
-     gpt-image-2 and costs this instead. The server holds the same two numbers
-     in config/customStudio and is the only thing that actually charges — this
-     copy exists so the buttons can price themselves honestly. */
-  renderHighCost: 2,
-  /* Whether the Standard/High choice exists at all. The server holds the same
-     key and is the only thing that decides what a press actually costs; this
-     copy exists so the control is never on screen offering a tier the server
-     would silently downgrade. Default false — see renderTiersOn(). */
-  renderQualityTiers: false,
-  /* The Full/Short prompt control. Hidden unless this is true — the same
-     value the server reads before it will honour a promptMode from the
-     browser, so the button can never offer a mode the server ignores. */
-  renderPromptModeUI: false,
   designFee: 9.99,
   engravingFee: 5.00,
   extenderHeartFee: 20.00,
   maxInstruction: 400,
+  /* ── THE PACK LADDER, AND THE THREE PLACES IT HAS TO AGREE WITH ────────
+     Aug 2026: 15 / 40 / 100 / 250 credits at $9.99 / $24.99 / $54.99 /
+     $124.99 — every one an ordinary X4.99/X9.99 shelf price, because the
+     first cut priced them at $26.99 and $57.99 and those read as arithmetic
+     rather than as prices. Per design the ladder falls the whole way —
+     66.6, 62.5, 55.0, 50.0 — which is the only property that makes a
+     four-tier ladder worth having.
+
+     NOTHING HERE CHARGES ANYBODY. These numbers are what the pricing panel
+     PRINTS. Three other things decide what actually happens, and all three
+     live outside this file:
+
+       1. the money — buyTier() builds a cart permalink from
+          variantFor(handle), so the customer pays the SHOPIFY VARIANT
+          price. A product priced differently to the `price` below means the
+          panel and the checkout disagree, which is the failure §10.10 was
+          written about.
+       2. the credits — shopifyOrderWebhook grants them from the order, so
+          its handle→credits table decides what lands in the wallet. The
+          `credits` below is a label until that table says the same thing.
+       3. the override — loadRemoteConfig() replaces CONFIG.packs wholesale
+          if config/customStudio carries a `packs` array. A stale document
+          there silently outranks every line of this.
+
+     The handles were renamed with the counts (studio-pack-10 → -15, and so
+     on) deliberately. Keeping the old handle on a new count would have left
+     a product called "10" granting 15 and charging the old $4.99 — wrong
+     money, quietly. With a new handle the pack simply reports itself
+     unavailable until the product exists, which is a failure somebody can
+     see. */
   packs: [
-    { id:"p10",  handle:"studio-pack-10",  name:"Starter",  credits:10,  price:4.99,  per:"50¢ / design",  feats:["10 design credits","Credits never expire","All metals & formats","Designs saved to your account"] },
-    { id:"p25",  handle:"studio-pack-25",  name:"Creator",  credits:25,  price:9.99,  per:"40¢ / design", featured:true, flag:"Most popular", feats:["25 design credits","Credits never expire","Priority generation queue","Designs saved to your account"] },
-    { id:"p60",  handle:"studio-pack-60",  name:"Studio",   credits:60,  price:19.99, per:"33¢ / design", feats:["60 design credits","Credits never expire","Priority generation queue","Early access to new formats"] },
-    { id:"p150", handle:"studio-pack-150", name:"Bulk",     credits:150, price:39.99, per:"27¢ / design", flag:"Best value", feats:["150 design credits","Perfect for gifting sprees & events","Priority generation queue","Dedicated email support"] },
+    { id:"p15",  handle:"studio-pack-15",  name:"Starter",  credits:15,  price:9.99,   per:"67¢ / design",  feats:["15 design credits","Credits never expire","All metals & formats","Designs saved to your account"] },
+    { id:"p40",  handle:"studio-pack-40",  name:"Creator",  credits:40,  price:24.99,  per:"62¢ / design", featured:true, flag:"Most popular", feats:["40 design credits","Credits never expire","Priority generation queue","Designs saved to your account"] },
+    { id:"p100", handle:"studio-pack-100", name:"Studio",   credits:100, price:54.99,  per:"55¢ / design", feats:["100 design credits","Credits never expire","Priority generation queue","Early access to new formats"] },
+    { id:"p250", handle:"studio-pack-250", name:"Bulk",     credits:250, price:124.99, per:"50¢ / design", flag:"Best value", feats:["250 design credits","Perfect for gifting sprees & events","Priority generation queue","Dedicated email support"] },
   ],
+  /* ── AND THE MEMBERSHIPS, WHICH HAVE TO SIT UNDER THE PACKS ────────────
+     They were $7.99 / $19.99 / $49.99 for 40 / 150 / 500 — 20¢, 13.3¢ and
+     10¢ a design, against packs at 66.6¢ down to 50¢. Five to seven times
+     cheaper is not a subscription incentive, it is a reason never to buy a
+     pack: the smallest membership beat the largest pack on rate, so the
+     whole left-hand tab was dead stock.
+
+     A membership should undercut the comparable pack by enough to be worth
+     committing to and no more. 50¢ / 40¢ / 30¢ does that — 20% under the
+     40-credit pack, 27% under the 100, 40% under the 250 — and every price
+     is an ordinary shelf point. The `per` line now prints the RATE rather
+     than repeating the credit count from the tag above it, because the rate
+     is the only thing a shopper is on this tab to compare. */
   plans: [
-    { id:"m40",  handle:"studio-plan-hobbyist", name:"Hobbyist", credits:40,  price:7.99,  per:"40 designs / month", feats:["40 credits refreshed monthly","Unused credits roll 1 month","Priority generation queue","Member-only seasonal drops"] },
-    { id:"m150", handle:"studio-plan-designer", name:"Designer", credits:150, price:19.99, per:"150 designs / month", featured:true, flag:"Most popular", feats:["150 credits refreshed monthly","Unused credits roll 1 month","Fastest queue + HD previews","10% off all charm orders"] },
-    { id:"m500", handle:"studio-plan-atelier",  name:"Atelier",  credits:500, price:49.99, per:"500 designs / month", feats:["500 credits refreshed monthly","For resellers & power creators","Bulk design export","15% off all charm orders + support line"] },
+    { id:"m40",  handle:"studio-plan-hobbyist", name:"Hobbyist", credits:40,  price:19.99,  per:"50¢ / design", feats:["40 credits refreshed monthly","Unused credits roll 1 month","Priority generation queue","Member-only seasonal drops"] },
+    { id:"m150", handle:"studio-plan-designer", name:"Designer", credits:150, price:59.99,  per:"40¢ / design", featured:true, flag:"Most popular", feats:["150 credits refreshed monthly","Unused credits roll 1 month","Fastest queue + HD previews","10% off all charm orders"] },
+    { id:"m500", handle:"studio-plan-atelier",  name:"Atelier",  credits:500, price:149.99, per:"30¢ / design", feats:["500 credits refreshed monthly","For resellers & power creators","Bulk design export","15% off all charm orders + support line"] },
   ],
 };
 
@@ -169,6 +285,7 @@ const postAuthed = async (fn, body, base) => {
    for it.
    ========================================================================== */
 let fbApp = null, auth = null, db = null, fbReady = null;
+let authPersistenceMode = "pending", authInitialStateSettled = false;
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const s = document.createElement("script");
@@ -194,11 +311,78 @@ async function bootFirebase() {
       ? window.firebase.app()
       : window.firebase.initializeApp(FB_CFG);
     auth = window.firebase.auth();
+    /* A member account belongs to this browser until that customer explicitly
+       signs out. LOCAL stores the refresh credential on this origin, so the
+       SDK can renew its short-lived ID token after refresh, browser Back, a
+       closed tab, or a later visit. This is deliberately established before
+       ANY sign-in path (anonymous, Google, email-code or handoff) can run. */
+    try {
+      const P = window.firebase.auth.Auth && window.firebase.auth.Auth.Persistence;
+      if (auth.setPersistence && P && P.LOCAL) {
+        await auth.setPersistence(P.LOCAL);
+        authPersistenceMode = "local";
+      } else {
+        /* Compat normally defaults to LOCAL. Record the older-SDK path rather
+           than failing the whole studio if that API is not exposed. */
+        authPersistenceMode = "sdk-default";
+      }
+    } catch (e) {
+      /* Storage can be refused by a locked-down/private browser. The state
+         restoration gate below still prevents us from replacing an account
+         that Firebase did manage to recover. */
+      authPersistenceMode = "unavailable";
+      console.warn("[studio] durable auth persistence:", (e && e.message) || e);
+    }
     db = window.firebase.firestore();
     db.settings({ ignoreUndefinedProperties: true });
     return fbApp;
   })();
   return fbReady;
+}
+/* currentUser is allowed to be null while Firebase is still reading its
+   persisted credential. Treating that temporary null as "new visitor" was
+   the lockout: boot immediately signed in anonymously and replaced the saved
+   member. The first auth-state callback is the SDK's authoritative answer.
+   A warm local session normally settles in a few milliseconds. If the SDK
+   itself fails to answer, fail boot rather than overwrite a possibly saved
+   member credential with a new anonymous identity. */
+function waitForInitialAuthState(timeoutMs = 12000) {
+  if (!auth) return Promise.resolve(null);
+  if (authInitialStateSettled) return Promise.resolve(auth.currentUser || null);
+  return new Promise((resolve, reject) => {
+    let done = false, unsubscribe = null;
+    const clean = () => {
+      clearTimeout(timer);
+      try { if (unsubscribe) unsubscribe(); } catch (e) {}
+    };
+    const finish = (u) => {
+      if (done) return;
+      done = true;
+      authInitialStateSettled = true;
+      clean();
+      resolve(u || auth.currentUser || null);
+    };
+    const fail = (e) => {
+      if (done) return;
+      if (auth.currentUser) { finish(auth.currentUser); return; }
+      done = true;
+      clean();
+      reject(e instanceof Error ? e : new Error(String(e || "Authentication restore failed")));
+    };
+    const timer = setTimeout(() => fail(new Error("Firebase authentication did not finish restoring")), timeoutMs);
+    try {
+      unsubscribe = auth.onAuthStateChanged(
+        (u) => finish(u),
+        (e) => {
+          console.warn("[studio] initial auth restore:", (e && e.message) || e);
+          fail(e);
+        }
+      );
+    } catch (e) {
+      console.warn("[studio] initial auth restore:", (e && e.message) || e);
+      fail(e);
+    }
+  });
 }
 async function idToken(force) {
   try {
@@ -244,9 +428,11 @@ const state = {
   approved: false,
   unlimited: false,                 // users/{uid}.wallet.unlimited — staff/testing accounts
   stageView: "bw",                  // 'bw' | 'spec' | 'charm' — which stage preview the studio shows
-  renderQuality: "low",             // 'low' (Gemini, 1 credit) | 'high' (gpt-image-2, 2 credits)
-  promptMode: "full",               // 'full' | 'short' — diagnostic, no price difference
-  markups: {},                      // {versionN|"draw": {items:[], mode, crop, …}} — the drawing studio's vector data
+  /* renderQuality, renderInput and promptDraft used to live here, one per
+     operator control. The controls are gone and the render has no choices
+     left to persist: it is always Gemini, always the grey map, always the
+     prompt the server builds. */
+  markups: {},                    // {versionN|"draw": {items:[], mode, crop, …}} — the drawing studio's vector data
   refPlan: [],                      // the three instructions read off the reference's own pixels
   refPlanKey: "",                   // …and which reference they were read from
   signatures: [],                   // reusable hand signatures, kept on the design session
@@ -285,6 +471,19 @@ function asDate(v) {
   return new Date(v);
 }
 const now = () => Date.now();
+/* the same value as a number, for cache keys and cheap change-detection —
+   asDate() allocates a Date on every call and these run per session, per pass */
+function asMs(v) {
+  if (!v) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v === "object") {
+    if (typeof v.seconds === "number") return v.seconds * 1000;
+    if (typeof v.getTime === "function") return v.getTime();
+    if (typeof v.toDate === "function") { try { return v.toDate().getTime(); } catch (e) { return 0; } }
+  }
+  const t = new Date(v).getTime();
+  return t === t ? t : 0;
+}
 const tFmt = (d) => asDate(d).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 /* credits — cosmetic readout of the server-owned wallet */
@@ -319,43 +518,13 @@ function spendCredit() { renderCredits(true); }
    success. The server charges independently from config/customStudio and is
    the only authority — if the two ever disagree the balance the wallet
    snapshot pushes back wins, which is exactly the right way round. */
-const RENDER_QUALITIES = ["low", "high"];
-/* ── IS THERE A CHOICE AT ALL? ────────────────────────────────────────────
-   Mirrored from config/customStudio, the same key the server reads. Default
-   FALSE: while the control is off screen there is one renderer, and the
-   default has to be the safe answer for the case where the config read fails
-   — a studio that quietly offers a two-credit tier nobody can see is worse
-   than one that never offers it. */
-function renderTiersOn() { return CONFIG.renderQualityTiers === true; }
-/* Always visible. It was gated behind a Firestore boolean, which meant
-   reaching a UI toggle required opening the Firebase console — the exact
-   thing the toggle exists to avoid. */
-function promptModeOn() { return true; }
-/* Read here rather than sanitised at every call site, and forced to "full"
-   while the control is hidden: a stale session doc must not keep sending a
-   mode nobody can see. The stored value is left alone so flipping the config
-   restores each design's own choice. */
-function promptMode() {
-  if (!promptModeOn()) return "full";
-  return state.promptMode === "short" ? "short" : "full";
-}
-function renderQuality() {
-  /* Read HERE rather than sanitised at every call site. state.renderQuality
-     is persisted per design, so sessions saved while the control existed still
-     carry "high" — and every one of those would otherwise price a button, send
-     a request and expect a charge for a tier that is not on offer. With the
-     tier parked this returns "low" for all of them, matching what the server
-     will actually do with the request. The stored value is left alone, so
-     turning the tier back on restores each design's own choice. */
-  if (!renderTiersOn()) return "low";
-  return state.renderQuality === "high" ? "high" : "low";
-}
-function renderCostFor(q) {
-  const base = Number(CONFIG.generateCost) || 1;
-  if (q !== "high") return base;
-  return Math.max(base, Number(CONFIG.renderHighCost) || base * 2);
-}
-function renderCost() { return renderCostFor(renderQuality()); }
+/* ── ONE RENDERER, ONE PRICE ──────────────────────────────────────────────
+   There was a tier here — RENDER_QUALITIES, renderTiersOn(), renderQuality()
+   and renderCostFor(q) — because the Model toggle could route a render to
+   gpt-image-2 for double. The toggle is gone and the server refuses "high"
+   outright, so every render costs the same one number and there is nothing
+   left to choose between. */
+function renderCost() { return Number(CONFIG.generateCost) || 1; }
 const creditWord = (n) => n + (n === 1 ? " credit" : " credits");
 
 
@@ -402,13 +571,14 @@ async function loadRemoteConfig() {
     if (!snap.exists) return;
     const c = snap.data() || {};
     ["guestFreeCredits","signupBonusCredits","guestFreeUploads","signupBonusUploads",
-     "maxUploadPx","maxUploadBytes","generateCost","renderHighCost","designFee","engravingFee",
+     "maxUploadPx","maxUploadBytes","generateCost","designFee","engravingFee",
      "extenderHeartFee","maxInstruction"].forEach((k) => {
       if (typeof c[k] === "number") CONFIG[k] = c[k];
     });
-    /* booleans, which the numeric loop above would silently drop */
-    if (typeof c.renderQualityTiers === "boolean") CONFIG.renderQualityTiers = c.renderQualityTiers;
-    if (typeof c.renderPromptModeUI === "boolean") CONFIG.renderPromptModeUI = c.renderPromptModeUI;
+    /* renderHighCost and renderQualityTiers were read here for the Model
+       toggle. Both are ignored now: there is one renderer at one price, and
+       a config document that still carries the old keys cannot bring a
+       two-credit tier back on to a screen that has no control for it. */
     if (Array.isArray(c.sizes) && c.sizes.length) {
       SIZES.length = 0; c.sizes.forEach((s) => SIZES.push(s));
     }
@@ -535,6 +705,11 @@ function rebaseOnReference(next, opts) {
   state.currentVersion = -1;
   state.approved = false;
   state.maxStep = Math.min(state.maxStep || 1, 2);
+  /* the drawing belonged to the charm being left behind. The key check in
+     refLineArtFresh would catch it anyway; dropping it here as well means
+     the field is never even momentarily describing the wrong reference. */
+  state.refLineArt = null;
+  try { MK_TRACED.clear(); } catch (e) {}
   state.reference = next;
   ensureSession();
   logEvent("reference", "Started fresh from a new reference");
@@ -557,6 +732,14 @@ function setReference(next, label, opts) {
   /* Been to step 2 already? Then choosing a reference IS the answer to the
      only question step 1 asks, and sitting still afterwards reads as broken. */
   if (state.step === 1 && (state.maxStep || 1) >= 2) {
+    /* ── AND LEAVING STEP 1 IS LEAVING STEP 1, BY WHATEVER DOOR ──────────
+       The drawing is kicked off by the Next button's handler, on the
+       reasoning that leaving step 1 is the customer saying "this one". This
+       shortcut leaves step 1 without touching that handler — so the one
+       path a returning customer actually takes, choosing a different charm
+       and being carried forward, was the one path that never started a
+       drawing. Same moment, same commitment, same kick. */
+    kickRefLineArt().catch(() => {});
     setTimeout(() => gotoStep(2), 260);
   } else {
     $("#navNext").focus();
@@ -621,7 +804,7 @@ function refForDoc(r) {
            /* the customer's own account of every filled area, captured when
               the sketch was flattened — small, flat, and the only thing that
               survives the picture becoming a picture */
-           zones: Array.isArray(r.zones) ? r.zones.slice(0, 40) : [] };
+           zones: zoneList(r.zones, "sessionLoad") };
 }
 
 /* whatever is in the brief box right now, sent or not */
@@ -631,13 +814,17 @@ function descDraft() {
 }
 let _saveTimer = null, _savePending = false, _flushBusy = false, _flushAgain = false;
 function saveSession(immediate) {
+  /* THE PENDING EDIT GOES IN FIRST. mkTouch defers the persist by 90ms so the
+     canvas can paint; a save that ran inside that window would write the
+     sheet as it was one edit ago. Re-entrant by design — mkTouchFlush clears
+     its own timer before running, so the mkPersist it triggers lands back
+     here and finds nothing pending. */
+  try { mkTouchFlush(); } catch (e) {}
   const s = activeSession(); if (!s) return;
   s.uid = state.uid;
   s.startMode = state.startMode;
   s.reference = refForDoc(state.reference);
   s.metal = state.metal;
-  s.renderQuality = state.renderQuality;
-  s.promptMode = state.promptMode;
   s.desc = state.desc;
   /* ── TYPED BUT NOT SENT IS STILL PROGRESS ───────────────────────────────
      state.desc only ever grows when Send is pressed, so a paragraph sitting
@@ -656,7 +843,13 @@ function saveSession(immediate) {
   s.step = state.step;
   s.maxStep = state.maxStep;
   if (s.status !== "ordered") s.status = state.approved ? "approved" : "draft";
-  s.name = designName();
+  /* THE LINE THAT USED TO EAT THE NAME. It ran on every write — roughly
+     twice a second while somebody types a brief — so any name a customer
+     entered was gone before they finished reading it back. The derivation
+     is still right for a design nobody has named; s.named is the whole
+     difference between a suggestion and an instruction. */
+  if (!s.named) s.name = designName();
+  s.named = !!s.named;
   s.updatedAt = now();
   if ($("#designsDrawer").classList.contains("is-open")) renderDrawer();
   _savePending = true;
@@ -704,24 +897,169 @@ function packHistory(h) {
 
    The debounced flushSession() keeps exactly the behaviour it had; it just
    calls them now. */
+/* ═══════════ A NUMBER COSTS EIGHT BYTES, HOWEVER SMALL ═══════════════════
+   Reported: "session save failed … its size (1,093,819 bytes) exceeds the
+   maximum allowed size of 1,048,576" — on every save, for ever, while the
+   outbox reshelved the same unwritable document in a loop.
+
+   The shedder was already doing its job; the weight it could not shed was
+   the customer's own design, and the reason that design weighs a megabyte
+   is Firestore's arithmetic: EVERY number in a document costs 8 bytes, no
+   matter how small or how rounded. A freehand stroke of 500 points is 1,000
+   numbers — 8 KB. An intricate fill kept as run lengths is tens of
+   thousands of numbers. Eighty eraser strokes at 2,400 numbers each would
+   be 1.5 MB on their own. Rounding to 1e-4 (which the serializer already
+   does) saves JSON characters and not one Firestore byte.
+
+   A STRING costs its UTF-8 length + 1. So the numeric arrays are packed:
+   coordinates as Int16 at the serializer's own 1e-4 grid (16 bytes/point
+   down to ~5.3), counts and run lengths as LEB128 varints (8 bytes down to
+   1–2 for the small values they almost all are). Packing happens on the
+   OUTGOING COPY only — the live objects the editor is holding never change
+   shape — and unpacking happens at the one place documents become session
+   objects. An old document with plain arrays passes through untouched, so
+   nothing already saved changes meaning. */
+const MK_PACK_SCALE = 1e4;
+const MK_PACK_MIN = 8;            /* arrays shorter than this stay plain */
+
+function mkPackBytesB64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 4096) {
+    s += String.fromCharCode.apply(null, bytes.subarray
+      ? bytes.subarray(i, i + 4096) : bytes.slice(i, i + 4096));
+  }
+  return btoa(s);
+}
+function mkUnpackBytesB64(str) {
+  const bin = atob(str);
+  const b = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+  return b;
+}
+/* coordinates: the serializer already rounds to 1e-4, so Int16 at that grid
+   is LOSSLESS for everything on or near the sheet (±3.2767 covers three
+   canvases off-screen; beyond that is clamped, and nothing drawable lives
+   there) */
+function mkPackI16(arr) {
+  const a = new Int16Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    const v = Math.round((Number(arr[i]) || 0) * MK_PACK_SCALE);
+    a[i] = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
+  }
+  return mkPackBytesB64(new Uint8Array(a.buffer));
+}
+function mkUnpackI16(str) {
+  const b = mkUnpackBytesB64(str);
+  const a = new Int16Array(b.buffer, 0, b.length >> 1);
+  const out = new Array(a.length);
+  for (let i = 0; i < a.length; i++) out[i] = a[i] / MK_PACK_SCALE;
+  return out;
+}
+/* non-negative integers (contour lengths, mask run lengths): LEB128 */
+function mkPackVar(arr) {
+  const bytes = [];
+  for (let i = 0; i < arr.length; i++) {
+    let v = Math.max(0, Math.round(Number(arr[i]) || 0));
+    do { const b7 = v & 127; v = Math.floor(v / 128); bytes.push(v ? b7 | 128 : b7); } while (v);
+  }
+  return mkPackBytesB64(bytes);
+}
+function mkUnpackVar(str) {
+  const b = mkUnpackBytesB64(str);
+  const out = [];
+  let v = 0, shift = 1;
+  for (let i = 0; i < b.length; i++) {
+    v += (b[i] & 127) * shift;
+    if (b[i] & 128) shift *= 128;
+    else { out.push(v); v = 0; shift = 1; }
+  }
+  return out;
+}
+
+/* pz/kz carry coordinates, qz/mz carry counts, erz carries packed strokes.
+   Presence of the packed field is the only marker needed: the plain field is
+   omitted when its packed twin is written, and restored on unpack. */
+function mkPackItem(it) {
+  if (!it || typeof it !== "object") return it;
+  const out = Object.assign({}, it);
+  const coord = [["p", "pz"], ["k", "kz"]], count = [["q", "qz"], ["m", "mz"]];
+  for (const [f, z] of coord) {
+    if (Array.isArray(out[f]) && out[f].length >= MK_PACK_MIN) {
+      out[z] = mkPackI16(out[f]); delete out[f];
+    }
+  }
+  for (const [f, z] of count) {
+    if (Array.isArray(out[f]) && out[f].length >= MK_PACK_MIN) {
+      out[z] = mkPackVar(out[f]); delete out[f];
+    }
+  }
+  if (Array.isArray(out.er) && out.er.length) {
+    out.erz = out.er.map((st) => ({
+      r: Number(st && st.r) || 0.02,
+      pz: mkPackI16(Array.isArray(st && st.p) ? st.p : []),
+    }));
+    delete out.er;
+  }
+  return out;
+}
+function mkUnpackItem(it) {
+  if (!it || typeof it !== "object") return it;
+  if (it.pz == null && it.kz == null && it.qz == null && it.mz == null && it.erz == null) return it;
+  const out = Object.assign({}, it);
+  if (out.pz != null) { out.p = mkUnpackI16(out.pz); delete out.pz; }
+  if (out.kz != null) { out.k = mkUnpackI16(out.kz); delete out.kz; }
+  if (out.qz != null) { out.q = mkUnpackVar(out.qz); delete out.qz; }
+  if (out.mz != null) { out.m = mkUnpackVar(out.mz); delete out.mz; }
+  if (out.erz != null) {
+    out.er = (Array.isArray(out.erz) ? out.erz : []).map((st) => ({
+      r: Number(st && st.r) || 0.02,
+      p: mkUnpackI16(String((st && st.pz) || "")),
+    }));
+    delete out.erz;
+  }
+  return out;
+}
+function mkPackMarkups(map) {
+  const out = {};
+  Object.keys(map || {}).forEach((k) => {
+    const v = map[k];
+    out[k] = (v && Array.isArray(v.items))
+      ? Object.assign({}, v, { items: v.items.map(mkPackItem) })
+      : v;               /* delete sentinels and tombstones pass through */
+  });
+  return out;
+}
+function mkUnpackMarkups(map) {
+  Object.keys(map || {}).forEach((k) => {
+    const v = map[k];
+    if (v && Array.isArray(v.items)) v.items = v.items.map(mkUnpackItem);
+  });
+  return map;
+}
+
 function buildSessionDoc(s, plain) {
   /* A plain document is for the outbox, which is JSON on a shelf and cannot
      hold a Firestore sentinel. The marker is swapped back for a real delete
      when the shelf is drained. */
   const DEL = plain ? OUTBOX_DEL : svDelete();
   const doc = {
-    uid: s.uid || state.uid, name: s.name, status: s.status, step: s.step, maxStep: s.maxStep,
+    uid: s.uid || state.uid, name: s.name,
+    /* the flag has to travel with the name or the name does not survive a
+       reload: loadSession spreads the whole document back onto the session,
+       but a field this builder never writes simply is not there, and
+       saveSession would go straight back to deriving over the top of it */
+    named: !!s.named,
+    status: s.status, step: s.step, maxStep: s.maxStep,
     startMode: s.startMode, reference: s.reference, desc: s.desc,
     /* typed but not sent — see saveSession */
     draftText: String(s.draftText || ""),
     metal: s.metal,
-    /* NEVER PERSISTED UNTIL NOW. saveSession set it and loadSession read it,
-       but the document omitted it, so High reverted to Standard on reopen. */
-    renderQuality: s.renderQuality === "high" ? "high" : "low",
-    promptMode: s.promptMode === "short" ? "short" : "full",
+    /* renderQuality, renderInput and promptDraft were written here, one per
+       operator control. They are not written any more, and an older document
+       that still carries them is simply not read — see loadSession. */
     currentVersion: s.currentVersion, approved: s.approved,
     thread: s.thread, versions: s.versions, history: s.history,
-    markups: withDeletes(s.markups, "markups", s.id, DEL),
+    markups: mkPackMarkups(withDeletes(s.markups, "markups", s.id, DEL)),
     signatures: s.signatures || [],
     assets: s.assets || [],
     mkHistory: withDeletes(packHistory(s.mkHistory), "mkHistory", s.id, DEL),
@@ -788,6 +1126,15 @@ function buildSessionDoc(s, plain) {
         if (live && state.markups) delete state.markups[k];
       }
       s.mkHistory = {};
+      /* ── AND THEN THE CONVERSATION'S TAIL ─────────────────────────────
+         The next rung down, taken only when everything above it was not
+         enough. The oldest messages go — in the DOCUMENT only, and the
+         merge write replaces the whole array, so nothing half-trims. The
+         live thread on screen is untouched; what is lost is old chat from
+         the reload, never a mark or a version. */
+      if (JSON.stringify(doc).length > LIMIT && Array.isArray(doc.thread) && doc.thread.length > 50) {
+        doc.thread = doc.thread.slice(-50);
+      }
       if (live && (!buildSessionDoc._shedAt || Date.now() - buildSessionDoc._shedAt > 60000)) {
         buildSessionDoc._shedAt = Date.now();
         toast("This design is very full, so we've let go of its undo history and " +
@@ -799,7 +1146,8 @@ function buildSessionDoc(s, plain) {
   return doc;
 }
 
-/* one attempt, and an honest boolean */
+/* one attempt, and an honest answer: true, false, or "toobig" — because the
+   caller must not treat those two failures the same way */
 async function writeSessionDoc(s, doc) {
   if (!db || !state.uid || !s) return false;
   try {
@@ -810,6 +1158,10 @@ async function writeSessionDoc(s, doc) {
     return true;
   } catch (e) {
     console.warn("[studio] session save failed:", e && e.message);
+    /* an oversized document is not a flaky network: the identical bytes will
+       fail identically for ever, and retrying them is how the console filled
+       with the same error eleven times in one minute */
+    if (/exceeds the maximum allowed size/i.test(String(e && e.message || ""))) return "toobig";
     return false;
   }
 }
@@ -821,7 +1173,24 @@ async function writeSessionDoc(s, doc) {
 async function writeSessionDocHard(s) {
   if (!s) return false;
   for (let i = 0; i < 3; i++) {
-    if (await writeSessionDoc(s, buildSessionDoc(s))) return true;
+    const got = await writeSessionDoc(s, buildSessionDoc(s));
+    if (got === true) return true;
+    /* ── TOO BIG IS NOT WORTH THREE GOES OR A SHELF ─────────────────────
+       The retry loop and the outbox both exist for the write that would
+       have succeeded on a healthier network. A document past the size
+       ceiling is not that write: the shedder has already given everything
+       it may give, the same bytes will be refused every time, and shelving
+       them just schedules the refusal to happen again on the next drain.
+       Say it to the customer ONCE, plainly, and stop. */
+    if (got === "toobig") {
+      if (!writeSessionDocHard._bigAt || Date.now() - writeSessionDocHard._bigAt > 120000) {
+        writeSessionDocHard._bigAt = Date.now();
+        toast("This design has grown past what a project can hold, so changes are " +
+              "not syncing. Deleting some hidden or unused layers will let it save again.",
+              "note");
+      }
+      return false;
+    }
     /* shelved after the FIRST failure rather than the third: two more
        attempts take three seconds, and a tab can close in one. A successful
        write drops the shelf copy again (see writeSessionDoc). */
@@ -848,6 +1217,9 @@ async function flushSessionNow(sOpt) {
 }
 
 async function flushSession() {
+  /* the belt to saveSession's brace: every server write is preceded by the
+     pending sheet edit, whichever door the write came through */
+  try { mkTouchFlush(); } catch (e) {}
   clearTimeout(_saveTimer);
   if (!_savePending || !db || !state.uid) return;
   if (_flushBusy) { _flushAgain = true; return; }
@@ -856,7 +1228,19 @@ async function flushSession() {
   _flushBusy = true;
   try {
     const ok = await writeSessionDoc(s, buildSessionDoc(s));
-    if (!ok) {
+    if (ok === "toobig") {
+      /* not a network wobble: the same bytes fail for ever, so no shelf and
+         no "we'll keep retrying" promise the code cannot keep. The next
+         MUTATION rebuilds and retries naturally — smaller, if they deleted
+         something. writeSessionDocHard owns the once-in-a-while toast. */
+      _savePending = true;
+      if (!writeSessionDocHard._bigAt || Date.now() - writeSessionDocHard._bigAt > 120000) {
+        writeSessionDocHard._bigAt = Date.now();
+        toast("This design has grown past what a project can hold, so changes are " +
+              "not syncing. Deleting some hidden or unused layers will let it save again.",
+              "note");
+      }
+    } else if (!ok) {
       /* A silent failure here already cost real work once (a nested array made
          every write fail while the UI carried on as if saved). Say so — once a
          minute at most — keep the dirty flag so the next mutation retries, and
@@ -946,7 +1330,16 @@ async function outboxDrain() {
         await db.collection("customSessions").doc(sid).set(outboxHydrate(e.doc), { merge: true });
         outboxDrop(sid);
         SD("outbox: recovered", sid);
-      } catch (err) { /* leave it on the shelf and try again later */ }
+      } catch (err) {
+        /* an OVERSIZED shelf copy can never land — every 30 s drain would
+           refuse the identical bytes for ever. Off the shelf it comes; the
+           design in Firestore stays whatever it last successfully was. */
+        if (/exceeds the maximum allowed size/i.test(String(err && err.message || ""))) {
+          outboxDrop(sid);
+          SD("outbox: dropped an oversized copy of", sid);
+        }
+        /* anything else stays shelved for the next drain */
+      }
     }
   } finally { _drainBusy = false; }
 }
@@ -1044,6 +1437,7 @@ async function deleteDesign(sid) {
   if (wasActive && typeof startOverStudio === "function") startOverStudio(false);
   /* unconditionally, not only while the drawer is open: a list that still
      shows a row for a document that no longer exists is a list that lies */
+  if (typeof mkLibForget === "function") mkLibForget();
   renderDrawer();
   if (typeof mkLibRefresh === "function") mkLibRefresh();
   if (typeof refreshLibraryEntry === "function") refreshLibraryEntry();
@@ -1125,6 +1519,7 @@ async function deleteLibraryImage(entry) {
     toast("That image couldn't be deleted — " + ((e && e.message) || "try again"), "err");
     return false;
   }
+  if (typeof mkLibForget === "function") mkLibForget();
   if (typeof mkLibRefresh === "function") mkLibRefresh();
   if (typeof refreshLibraryEntry === "function") refreshLibraryEntry();
   renderDrawer();
@@ -1153,38 +1548,219 @@ document.addEventListener("visibilitychange", () => {
    buy nothing this query does not already deliver in real time. The window
    starts small and widens only when somebody actually asks for older work. */
 let _sessionsUnsub = null, _sessionUid = null;
+/* The first query is narrow on purpose: it is the one a person is waiting
+   on. Everything past it is fetched afterwards, when nobody is watching. */
+const SESSION_WINDOW_FIRST = 16;
 const SESSION_WINDOW_STEP = 60;
+/* Coalesced: ten snapshots in a second repaint once, in idle time, and never
+   while something is animating. */
+let _viewsQueued = false;
+function sessionsViewsSoon() {
+  if (_viewsQueued) return;
+  _viewsQueued = true;
+  bjIdle(() => {
+    _viewsQueued = false;
+    /* the data underneath changed; the derived list has to be built again.
+       It is only the BUILD that repeats — no thumbnail is drawn twice. */
+    try { if (typeof mkLibForget === "function") mkLibForget(); } catch (e) {}
+    try {
+      const dd = $("#designsDrawer");
+      if (dd && dd.classList.contains("is-open")) renderDrawer();
+    } catch (e) {}
+    /* the library is a view over exactly this data, so it refreshes here
+       and nowhere else — one source, one moment of truth */
+    try { if (typeof mkLibRefresh === "function") mkLibRefresh(); } catch (e) {}
+    try { if (typeof refreshLibraryEntry === "function") refreshLibraryEntry(); } catch (e) {}
+  }, 600);
+}
+/* ═══════════ SIGNING IN SHOULD NOT COST TEN SECONDS ══════════════════════
+   A snapshot does not hand you objects. Every document arrives in the SDK's
+   own wire representation, and `.data()` is the call that walks it and BUILDS
+   a JavaScript object — every array, every stroke, every one of the tens of
+   thousands of coordinates in a drawing. It is not a read; it is the most
+   expensive thing in this file.
+
+   Signing in did it sixty times in a row, inside one callback, with nothing
+   between them: a design's whole vector sheet, its versions, its
+   conversation, its history, materialised for a list that only wanted the
+   name and the date. That is a single task the length of the download, and
+   a page in the middle of one task cannot paint, scroll or animate — which
+   is exactly the ten to twenty seconds after a sign-in.
+
+   Two changes, and neither of them makes the studio know less:
+
+     · A DOCUMENT IS BUILT ONCE. The snapshot says which documents actually
+       changed; the rest are the objects we already built. Autosaving used to
+       rebuild the entire account on every echo of your own keystroke.
+     · WHAT IS LEFT IS BUILT IN SLICES. The first sign-in genuinely has
+       sixty documents to build, so they are built a few at a time, with the
+       thread handed back between slices, and the list is published as it
+       fills. The work takes the same total time; the page stays alive
+       through all of it, and the first designs are there immediately.
+   ═══════════════════════════════════════════════════════════════════════ */
+let _sessDocs = new Map();      /* id → { s, ts } — objects already built */
+let _sessPending = new Map();   /* id → snapshot — built, but not yet */
+let _sessJob = null;            /* the slice loop currently draining it */
+let _sessOrder = [], _sessWindow = 0;
+const SESSION_SLICE = 4;        /* documents per slice */
+
+function sessionsReset() {
+  _sessDocs = new Map(); _sessPending = new Map();
+  if (_sessJob) { _sessJob.cancelled = true; _sessJob = null; }
+}
+
+/* ordering, the live session's precedence and the "is that everything?" flag
+   are one decision, applied after every slice so the list is never a lie */
+function sessionsPublish() {
+  const live = activeSession();
+  const out = [];
+  for (let i = 0; i < _sessOrder.length; i++) {
+    const hit = _sessDocs.get(_sessOrder[i]);
+    if (!hit) continue;                       /* not built yet — next slice */
+    out.push(live && hit.s.id === live.id ? live : hit.s);
+  }
+  if (live && !out.some((s) => s.id === live.id)) out.unshift(live);
+  state.sessions = out;
+  state.sessionsComplete = _sessOrder.length < _sessWindow;
+  sessionsViewsSoon();
+}
+
+function sessionsMaterialise(d) {
+  const s = Object.assign({ id: d.id }, d.data());
+  s.versions = s.versions || [];
+  s.thread   = s.thread   || [];
+  s.history  = s.history  || [];
+  /* the wire format is packed (see mkPackMarkups); the session OBJECT is
+     always plain arrays — this is the one door documents come through */
+  try { mkUnpackMarkups(s.markups); } catch (e) {
+    console.warn("[studio] could not unpack a stroke — leaving it packed:", e && e.message);
+  }
+  _sessDocs.set(d.id, { s, ts: asMs(s.updatedAt) });
+  _sessPending.delete(d.id);
+}
+
+/* ── THE QUEUE SURVIVES THE NEXT SNAPSHOT ────────────────────────────────
+   Building sixty documents takes a couple of seconds, and a couple of
+   seconds is plenty of time for another snapshot to arrive — an autosave
+   echo, a generation landing, another tab. That snapshot's docChanges()
+   describes only what changed in IT, so a build list rebuilt from scratch
+   each time would silently abandon whatever the previous one had not
+   reached yet, and those designs would never appear at all. So what is
+   still owed is kept in one place, added to by every snapshot and drained
+   by one loop. A newer snapshot simply replaces its own document's entry
+   with the newer version of it. */
+function sessionsDrain() {
+  if (_sessJob || !_sessPending.size) return;
+  const job = { cancelled: false };
+  _sessJob = job;
+  const slice = () => {
+    if (job.cancelled) return;
+    let n = 0;
+    for (const d of _sessPending.values()) {
+      sessionsMaterialise(d);
+      if (++n >= SESSION_SLICE) break;
+    }
+    sessionsPublish();
+    if (_sessPending.size) requestAnimationFrame(slice);
+    else if (_sessJob === job) _sessJob = null;
+  };
+  requestAnimationFrame(slice);
+}
+
 function watchSessions(uid) {
   if (_sessionsUnsub) { _sessionsUnsub(); _sessionsUnsub = null; }
+  if (_sessJob) { _sessJob.cancelled = true; _sessJob = null; }
+  if (_sessionUid !== uid) {                  /* a different person entirely */
+    sessionsReset();
+    state.sessionWindow = SESSION_WINDOW_FIRST;
+    _autoWidened = false;
+  }
   _sessionUid = uid;
-  if (!state.sessionWindow) state.sessionWindow = SESSION_WINDOW_STEP;
+  if (!state.sessionWindow) state.sessionWindow = SESSION_WINDOW_FIRST;
+  let primed = false;
   _sessionsUnsub = db.collection("customSessions")
     .where("uid", "==", uid).orderBy("updatedAt", "desc").limit(state.sessionWindow)
     .onSnapshot((qs) => {
-      const remote = qs.docs.map((d) => Object.assign({ id: d.id }, d.data()))
-        .map((s) => Object.assign(s, {
-          versions: s.versions || [], thread: s.thread || [], history: s.history || [],
-        }));
-      state.sessionsComplete = qs.docs.length < state.sessionWindow;
-      // the session being edited in this tab always wins over its own echo
-      const live = activeSession();
-      state.sessions = remote.map((s) => (live && s.id === live.id) ? live : s);
-      if (live && !state.sessions.some((s) => s.id === live.id)) state.sessions.unshift(live);
-      if ($("#designsDrawer").classList.contains("is-open")) renderDrawer();
-      /* the library is a view over exactly this data, so it refreshes here
-         and nowhere else — one source, one moment of truth */
-      if (typeof mkLibRefresh === "function") mkLibRefresh();
-      if (typeof refreshLibraryEntry === "function") refreshLibraryEntry();
+      _sessOrder = qs.docs.map((d) => d.id);
+      _sessWindow = state.sessionWindow;
+
+      /* WHICH DOCUMENTS ARE ACTUALLY NEW WORK.
+         An established listener is asked directly — docChanges() is the
+         snapshot's own answer and cannot be wrong. A listener that has just
+         been created reports everything as added, including the documents a
+         previous listener on this same account already built, so those are
+         checked against one field instead: `updatedAt` is the field this
+         query orders by, so a write that did not touch it could not have
+         moved the document either. Reading one field does not build the
+         document. */
+      const fresh = [];
+      const consider = (d) => {
+        const had = _sessDocs.get(d.id);
+        if (had) {
+          let ts = null;
+          try { ts = asMs(d.get("updatedAt")); } catch (e) { ts = null; }
+          if (ts !== null && ts === had.ts) { _sessPending.delete(d.id); return; }
+        }
+        _sessPending.set(d.id, d);            /* a newer copy replaces an older */
+        fresh.push(d);
+      };
+      let changes = null;
+      try { changes = primed ? qs.docChanges() : null; } catch (e) { changes = null; }
+      if (changes) {
+        changes.forEach((c) => {
+          if (c.type === "removed") {
+            _sessDocs.delete(c.doc.id); _sessPending.delete(c.doc.id); return;
+          }
+          consider(c.doc);
+        });
+      } else {
+        qs.docs.forEach(consider);
+      }
+      primed = true;
+      /* documents that fell out of the window are not worth remembering */
+      const keep = new Set(_sessOrder);
+      if (_sessDocs.size > _sessWindow * 2) {
+        _sessDocs.forEach((_, k) => { if (!keep.has(k)) _sessDocs.delete(k); });
+      }
+      _sessPending.forEach((_, k) => { if (!keep.has(k)) _sessPending.delete(k); });
+
+      /* a handful — an autosave echo, one generation finishing — is not worth
+         waiting a frame for, and doing it here keeps those instantaneous */
+      if (!_sessJob && fresh.length && fresh.length <= SESSION_SLICE) {
+        fresh.forEach(sessionsMaterialise);
+      }
+      sessionsPublish();
+      sessionsDrain();
     }, (e) => console.warn("[studio] sessions listener:", e.message));
 }
 /* "Load older designs" — a wider window on the SAME query, swapped in place.
-   Costs one re-subscription, only when a customer asks for it, never on load. */
-async function widenSessionWindow() {
+   Costs one re-subscription, and the documents already built are kept: only
+   the older ones the wider window newly reaches are built at all. */
+async function widenSessionWindow(to) {
   if (!db || !_sessionUid || state.sessionsComplete) return false;
-  state.sessionWindow = (state.sessionWindow || SESSION_WINDOW_STEP) + SESSION_WINDOW_STEP * 2;
+  const cur = state.sessionWindow || SESSION_WINDOW_FIRST;
+  state.sessionWindow = to ? Math.max(cur, to) : cur + SESSION_WINDOW_STEP;
+  if (state.sessionWindow === cur) return false;
   watchSessions(_sessionUid);
   await new Promise((r) => setTimeout(r, 700));
   return true;
+}
+/* ── AND THE REST OF THEM, QUIETLY ───────────────────────────────────────
+   The first window is deliberately narrow, because the seconds right after a
+   sign-in are the ones somebody is watching. The rest of the account is
+   fetched once the page has gone quiet — the same widening the "load older"
+   button does, just nobody had to ask for it. */
+let _autoWidened = false;
+function widenSessionsWhenQuiet() {
+  if (_autoWidened) return;
+  _autoWidened = true;
+  const go = () => {
+    if (!_sessionUid || state.sessionsComplete) return;
+    if ((state.sessionWindow || 0) >= SESSION_WINDOW_STEP) return;   /* the old reach */
+    if (_sessJob || _sessPending.size) { setTimeout(go, 900); return; }
+    widenSessionWindow(SESSION_WINDOW_STEP);
+  };
+  setTimeout(() => bjIdle(go, 4000), 2200);
 }
 
 function restoreStartModeUI() {
@@ -1210,8 +1786,10 @@ function loadSession(id) {
   state.startMode = s.startMode;
   state.reference = s.reference ? JSON.parse(JSON.stringify(s.reference)) : null;
   state.metal = s.metal || "gold";
-  state.renderQuality = s.renderQuality === "high" ? "high" : "low";
-  state.promptMode = s.promptMode === "short" ? "short" : "full";
+  /* A design saved while the Model / Send / prompt-lab controls existed may
+     still carry renderQuality, renderInput and promptDraft. None of them is
+     read back: reopening such a design must not be a way to render it with a
+     model, an input image or a prompt the studio no longer offers. */
   state.desc = s.desc || "";
   state.versions = (s.versions || []).map((v) => Object.assign({}, v));
   state.thread = (s.thread || []).map((m) => Object.assign({}, m));
@@ -1230,7 +1808,7 @@ function loadSession(id) {
   $("#descInput").value = String(s.draftText || "");
   $("#charCount").textContent = String(($("#descInput").value || "").length);
   try { MK_TRACED.clear(); } catch (e) {}
-  try { __mkClip = null; } catch (e) {}
+  try { mkClipSet(null); } catch (e) {}
   try { __mkPrev = { key: "", frame: 0, at: null, cv: null }; } catch (e) {}
   try { mkRegionForget(); } catch (e) {}
   try { _gone.markups.clear(); _gone.mkHistory.clear(); _gone.sid = ""; } catch (e) {}
@@ -1253,9 +1831,14 @@ function loadSession(id) {
    re-clamp. Works on <img> or <svg> media; queries at event time so re-rendered
    stages keep working with one attachment.               [prototype, verbatim]
    ========================================================================== */
-function attachZoomPan(box, mediaSel = "img, svg") {
+/* opts.wheelZoom === false turns the WHEEL off and leaves click-to-zoom and
+   drag-to-pan exactly as they are — see the note on the wheel handler and on
+   the library grid, which is where a thumbnail that ate the page's scroll
+   made the whole catalogue unbrowsable. */
+function attachZoomPan(box, mediaSel = "img, svg", opts) {
   if (!box || box.dataset.zoomAttached) return;
   box.dataset.zoomAttached = "1";
+  const wheelZoom = !(opts && opts.wheelZoom === false);
   box.style.cursor = "zoom-in";
   const getMedia = () => {
     const m = box.querySelector(mediaSel);
@@ -1293,13 +1876,31 @@ function attachZoomPan(box, mediaSel = "img, svg") {
     });
     ro.observe(box);
   }
-  box.addEventListener("wheel", (ev) => {
+  /* ── THE PAGE'S SCROLL IS NOT THIS BOX'S TO TAKE ────────────────────────
+     This called ev.preventDefault() on the first line, unconditionally, for
+     as long as the box contained an image. Hovering one swallowed the wheel
+     whole — and since every card in the reference library gets one of these,
+     resting the pointer anywhere over the catalogue stopped the page dead.
+
+     Two rules now, and between them the scroll can never be trapped:
+
+       1. A box that has opted out of wheel zoom never registers a wheel
+          handler at all. Nothing to preventDefault, nothing to go wrong.
+       2. A box that HAS wheel zoom only claims the event when it can
+          actually act on it. Already at fit and scrolling out, or already
+          at maximum and scrolling in, there is no zoom left to give — so
+          the notch is left alone and the page takes it, which is also how
+          the pointer gets out of a stage in the middle of a long page. */
+  if (wheelZoom) box.addEventListener("wheel", (ev) => {
     const img = getMedia(); if (!img) return;
+    const scale0 = parseFloat(img.dataset.scale) || 1;
+    const zoomingIn = ev.deltaY < 0;
+    if ((!zoomingIn && scale0 <= 1) || (zoomingIn && scale0 >= MAX_SCALE)) return;
     ev.preventDefault();
-    let currentScale = parseFloat(img.dataset.scale) || 1;
+    let currentScale = scale0;
     let offX = parseFloat(img.dataset.offsetX) || 0;
     let offY = parseFloat(img.dataset.offsetY) || 0;
-    if (ev.deltaY < 0) { currentScale *= 1.1; }
+    if (zoomingIn) { currentScale *= 1.1; }
     else {
       currentScale /= 1.1;
       if (currentScale <= 1) { currentScale = 1; offX = 0; offY = 0; }
@@ -1372,11 +1973,33 @@ function updateDesignMode() {
     if (showSub) renderSubStepper();
   }
   updateNavArrows();
+  /* the name rides the same switch: it belongs to a design, and on the
+     landing page there is no design to name */
+  if (typeof renderProjectName === "function") renderProjectName();
   /* the bar only exists in designing mode, so its height must be re-measured
      the moment the mode flips — the menu button centres against it */
   if (typeof measureBar === "function") requestAnimationFrame(() => measureBar());
 }
-function beginDesign() { state.designing = true; gotoStep(1, true); }
+/* ── EVERY NEW DESIGN GETS ASKED ITS NAME, ONCE ────────────────────────────
+   The prompt goes BEFORE the wizard rather than after it, because that is
+   when the customer has the idea in their head — by step 2 they are thinking
+   about the charm, not about filing. It is a prompt and not a gate: Enter,
+   Esc, Skip and the scrim all get through it, three of them taking the
+   suggestion, so nobody can be stuck here.
+
+   `quiet` exists for the doors that already know the name — resuming a
+   design from My designs, for instance — and for any future caller that
+   should not be interrupted. */
+/* Naming used to be hooked here and in startNewProject. It is not any more:
+   the studio can be entered from the landing button, three menu rows, three
+   start cards and the Proof Room, and hanging the prompt off each door meant
+   maintaining a list of doors. It now lives at the ONE place the editor
+   actually opens — see openCompose. */
+function beginDesign(opts) {
+  state.designing = true;
+  gotoStep(1, true);
+  renderProjectName();
+}
 function renderSubStepper() {
   const mode = state.startMode;
   const picked = START_MODES.indexOf(mode) >= 0;
@@ -1384,8 +2007,13 @@ function renderSubStepper() {
     ? `<span class="sub is-done"><i>✓</i>Source</span><span class="sub-line is-done"></span><span class="sub is-active"><i>2</i>Your pick</span>`
     : `<span class="sub is-active"><i>1</i>Source</span><span class="sub-line"></span><span class="sub"><i>2</i>Your pick</span>`;
 }
+const CRUMB_STEPS = ["Inspire", "Design", "Order"];
 function renderStepper() {
   const n = state.step, max = state.maxStep || 1;
+  /* the last crumb is the only one that changes, and it changes here because
+     this runs on every step move already */
+  const here = $("#crumbHere");
+  if (here) here.textContent = CRUMB_STEPS[n - 1] || CRUMB_STEPS[0];
   const showSub = ROOT.classList.contains("is-designing") && n === 1 && (state.maxStep || 1) === 1;
   $("#stepper").style.display = showSub ? "none" : "";
   $("#subStepperBar").hidden = !showSub;
@@ -1406,7 +2034,21 @@ function gotoStep(n, force = false) {
   const s = activeSession(); if (s) { s.step = n; s.maxStep = state.maxStep; s.updatedAt = now(); }
   $$(".step-view").forEach((v) => v.classList.remove("is-visible"));
   $("#view-" + n).classList.add("is-visible");
-  if (n === 2) requestAnimationFrame(() => { autoGrow(); if (!genBusy) $("#descInput").focus(); });
+  if (n === 2) requestAnimationFrame(() => {
+    autoGrow();
+    if (!genBusy) $("#descInput").focus();
+    /* ── ARRIVING AT STEP 2 IS THE ANSWER TO STEP 2's QUESTION ───────────
+       The composer has always said "or just press send", because the
+       reference on its own is a complete brief. Pressing Next IS that press:
+       there is nothing a customer could add here that they were not already
+       free to add afterwards, and asking them to press a second button to
+       start the thing they just asked for is a confirmation dialog wearing
+       a text field.
+
+       So the relay starts. It does nothing at all if this design already has
+       a drawing, which is what makes Back-then-Next safe. */
+    setTimeout(() => { try { runRelay(); } catch (e) { SD("relay:", e && e.message); } }, 240);
+  });
   if (n === 3 && state.versions[state.currentVersion]) {
     if (!state.approved) {
       state.approved = true;
@@ -1422,7 +2064,9 @@ function gotoStep(n, force = false) {
   /* the wizard owns the viewport: return to the top of the studio, not of the
      document, so the theme header stays put */
   const top = ROOT.getBoundingClientRect().top + window.scrollY - headerOffset();
-  window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  const reduceMotion = !!(window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  window.scrollTo({ top: Math.max(0, top), behavior: reduceMotion ? "auto" : "smooth" });
 }
 function headerOffset() {
   const cs = getComputedStyle(document.documentElement);
@@ -1458,6 +2102,12 @@ $("#navPrev").addEventListener("click", () => {
   if (state.step === 1) { setStartMode(null); return; }
   gotoStep(state.step - 1);
 });
+/* Guarded, unlike the two arrows above: they have existed since the first
+   build and their absence is a broken page worth throwing over. This crumb
+   is new, and a section deployed a moment behind this script must not take
+   the whole IIFE down with it. */
+const crumbHome = $("#crumbHome");
+if (crumbHome) crumbHome.addEventListener("click", exitToLanding);
 $("#navNext").addEventListener("click", () => {
   if (!canGoNext()) {
     if (state.step === 1 && !state.startMode) toast("Choose how you'd like to start", "err");
@@ -1469,6 +2119,12 @@ $("#navNext").addEventListener("click", () => {
     }
     return;
   }
+  /* ── COMMITTING TO A REFERENCE IS WHAT STARTS THE DRAWING ──────────────
+     Leaving step 1 is the customer saying "this one". That is the moment to
+     begin turning the catalogue PHOTOGRAPH into the line drawing they will
+     actually edit — see kickRefLineArt. It runs in the background, costs
+     them no waiting, and happens exactly once per charm. */
+  if (state.step === 1) kickRefLineArt();
   gotoStep(state.step + 1);
 });
 
@@ -1495,6 +2151,103 @@ $("#startUpload").addEventListener("click", () => setStartMode("upload"));
    generator and the order all keep treating it as an uploaded image. */
 $("#startDraw").addEventListener("click", () => { setStartMode("draw"); openCompose(); });
 $("#beginBtn").addEventListener("click", beginDesign);
+/* ── SEE INSPIRATION ──────────────────────────────────────────────────────
+   The landing's second call to action. There is no separate gallery page to
+   send anyone to, and there does not need to be one: the Brites design
+   library IS the inspiration, and it is already step 1's first source. So
+   this opens the studio straight onto it — the same destination "From our
+   designs" reaches from the studio menu, by the same function, so there is
+   one way in rather than two that can drift apart.
+
+   Guarded, unlike #beginBtn above: that button has existed since the first
+   build and its absence would be a broken page worth throwing over. This
+   one is new, and a stale section deploying against a fresh script must not
+   take the whole IIFE down with it. */
+const inspoBtn = $("#inspoBtn");
+if (inspoBtn) inspoBtn.addEventListener("click", () => startNewProject("search"));
+
+/* =============================================================================
+   THE PROOF ROOM
+   One charm, twice: the colour-coded studio drawing and the finished 14k gold
+   piece, with a divider dragged between them.
+
+   Almost all of this is CSS. The interaction is a full-stage
+   <input type="range"> at opacity 0 laid over both images, so dragging,
+   tapping, arrow keys, Home/End, page-up/down and the screen-reader
+   announcement are the browser's job, not ours — the script below copies its
+   value into --p and does nothing else.
+
+   The section ships with the `hidden` attribute set and only ever unhides
+   once BOTH images exist. A reveal missing one of its halves is not a
+   degraded reveal, it is a broken picture on the landing page, so the
+   failure mode is "the section was never there".
+   ========================================================================== */
+function renderProofRoom() {
+  const sec = $("#proofRoom");
+  if (!sec) return;
+  const stage = $("#proofStage"), before = $("#proofBefore"),
+        after = $("#proofAfter"), range = $("#proofRange");
+  if (!stage || !before || !after || !range) return;
+
+  const markup = ASSETS.proofMarkup, gold = ASSETS.proofGold;
+  if (!markup || !gold) return;                    /* stays hidden */
+
+  const art = (src, alt, cls) =>
+    '<span class="proof-art' + (cls || "") + '">' +
+      assetImg(sized(src, 1200), alt, "lazy") +
+    "</span>";
+
+  before.innerHTML = art(markup,
+    "The ram charm as a studio drawing: black engraving, blue cut-through and a green markup line");
+  const afterLayer = after.querySelector(".proof-layer");
+  if (afterLayer) afterLayer.innerHTML = art(gold,
+    "The same ram charm finished in 14k gold", " proof-art--gold");
+
+  /* Only now is there something to look at. If either file 404s the picture
+     is still wrong, so the section also stands down on a load error — one
+     listener per image, and whichever fails first wins. */
+  let failed = false;
+  /* $$ is rooted at .bj-studio and takes no second argument, so the scope
+     goes in the selector rather than in a parameter that does not exist */
+  $$("#proofRoom img").forEach((img) => {
+    img.addEventListener("error", () => {
+      if (failed) return;
+      failed = true;
+      sec.hidden = true;
+      console.warn("[studio] proof room: an image failed to load, section hidden");
+    }, { once: true });
+  });
+
+  const apply = () => stage.style.setProperty("--p", range.value + "%");
+  range.addEventListener("input", apply);
+  apply();
+
+  sec.hidden = false;
+
+  /* ── INTO THE EDITOR, NOT INTO THE FOYER ──────────────────────────────
+     This was beginDesign(), which only flips the studio into designing mode
+     and lands on step 1's "How would you like to start?" — three cards and
+     another decision, when the customer has just spent thirty seconds
+     watching a drawing turn into gold and pressed a button that says Open
+     the Design Studio.
+
+     startNewProject("draw") is the whole journey in one call, and it is the
+     SAME call the menu's "Your Custom Design" row makes, so there is one
+     path into the sketchpad rather than two that can drift: it leaves any
+     current project cleanly, resets to a blank one, sets the source to
+     draw, and openCompose() puts the editor on screen on a fresh sheet.
+     resetProjectState() runs gotoStep(1, true) on the way through, which
+     scrolls to the top of the studio — so when the editor is closed the
+     customer is at the wizard, not stranded down at the Proof Room. */
+  const cta = $("#proofStudioBtn");
+  if (cta) cta.addEventListener("click", () => {
+    try { startNewProject("draw"); }
+    catch (e) {
+      console.warn("[studio] proof room CTA:", e && e.message);
+      try { beginDesign(); } catch (e2) {}
+    }
+  });
+}
 
 /* ── The Charm Only catalogue ──────────────────────────────────────────────
    Three Shopify facts shape this.
@@ -1768,7 +2521,16 @@ function mountGridBatch() {
   Array.from(holder.children).forEach((card) => {
     const item = _gridItems[Number(card.dataset.idx)];
     card.querySelector(".cc-use").addEventListener("click", () => selectCatalogRef(item));
-    attachZoomPan(card.querySelector(".charm-card__img"));
+    /* ── A THUMBNAIL IN A SCROLLING GRID DOES NOT OWN THE WHEEL ──────────
+       These are 120px tiles in a list of twelve hundred, and the only thing
+       anybody does with a wheel here is go down the page. Every card used to
+       carry a wheel-zoom that called preventDefault on sight, so the scroll
+       stopped wherever the pointer happened to be resting — which, in a
+       grid, is over a card almost all of the time.
+
+       Click-to-zoom and drag-to-pan stay: a peek at a charm is worth having,
+       and neither of them is a gesture the page also wants. */
+    attachZoomPan(card.querySelector(".charm-card__img"), "img, svg", { wheelZoom: false });
     grid.appendChild(card);
   });
   _gridShown += next.length;
@@ -1850,6 +2612,106 @@ let _pumpRetry = 0;
 const yield_ = () => new Promise((r) =>
   (window.requestAnimationFrame || window.setTimeout)(() => r(), 0));
 
+/* =============================================================================
+   THE FRAME BUDGET — one scheduler, and a rule about who may use it.
+
+   A browser has one thread for script, style, layout and paint, and a CSS
+   animation is not exempt from it: a keyframe that should take 170ms takes
+   170ms only if the thread is free to produce frames while it runs. Every
+   long task lands on that animation as a dropped frame, which is what
+   "choppy" means. It got worse as the repository grew because the work was
+   O(designs) and it ran on the same thread as the menu that was opening —
+   the library derives itself from every session on the account, and drawing
+   a thumbnail for a sketch that was never uploaded meant painting it and
+   PNG-encoding it, synchronously, once per tile, while the menu tried to
+   slide open behind it.
+
+   A Web Worker cannot fix this by itself: a worker has no DOM, so it can
+   neither build a list nor put a picture in one. What actually fixes it is
+   taking the work OFF the frames that matter — so the rules here are:
+
+     · nothing expensive runs while something is animating (bjBusy)
+     · what is left runs one slice at a time, in idle time, and gives the
+       thread back the moment a frame is due (bjIdle / bjSlice)
+     · the one genuinely thread-free part — PNG encoding — is handed to the
+       browser's own off-thread encoder (OffscreenCanvas.convertToBlob)
+     · results are cached and, when they arrive late, patched into the tile
+       that is already on screen rather than rebuilding the list
+
+   Together those turn a 300ms stall into work nobody can see happening.
+   ========================================================================== */
+let __bjBusyUntil = 0;
+/* Called by anything that starts an animation. It does not block the
+   animation — it blocks the background work that would ruin it. */
+function bjBusy(ms) {
+  const t = (window.performance && performance.now ? performance.now() : Date.now()) + (ms || 260);
+  if (t > __bjBusyUntil) __bjBusyUntil = t;
+}
+function bjBusyNow() {
+  return (window.performance && performance.now ? performance.now() : Date.now()) < __bjBusyUntil;
+}
+/* requestIdleCallback where it exists, a frame-aligned timeout where it does
+   not, and never DURING an animation — a deadline the caller can rely on. */
+function bjIdle(fn, timeout) {
+  /* A ceiling on the waiting, because "never while something is animating"
+     must not become "never" on a screen that always has something moving —
+     a progress bar, a spinner, a shuttle. After this long the work runs
+     regardless: a single dropped frame beats a thumbnail that never draws. */
+  const giveUp = (window.performance && performance.now ? performance.now() : Date.now()) + 1600;
+  const go = () => {
+    const t = window.performance && performance.now ? performance.now() : Date.now();
+    if (bjBusyNow() && t < giveUp) { setTimeout(go, 90); return; }
+    fn();
+  };
+  if (window.requestIdleCallback) window.requestIdleCallback(go, { timeout: timeout || 900 });
+  else setTimeout(go, 24);
+}
+
+/* ── ONE LISTENER, EVERY ANIMATION ───────────────────────────────────────
+   Rather than teach thirty call sites to declare themselves busy — and miss
+   the thirty-first — the page is asked directly. Every CSS animation and
+   every transition announces itself when it starts, so the quiet period is
+   automatic and nothing new has to remember to opt in. Capture phase, and
+   passive, so it costs nothing but a timestamp. */
+(function bjWatchMotion() {
+  const mark = () => bjBusy(300);
+  ["animationstart", "transitionstart", "transitionrun"].forEach((t) => {
+    document.addEventListener(t, mark, { capture: true, passive: true });
+  });
+})();
+/* ── PNG without the stall ───────────────────────────────────────────────
+   toDataURL() encodes a PNG and base64s it, on this thread, before it
+   returns — tens of milliseconds for a 320px tile and the single most
+   expensive thing the library did. OffscreenCanvas hands the encode to the
+   browser's own worker pool; the FileReader that follows is asynchronous
+   too. The synchronous path is kept as the floor, so an old browser is
+   slower rather than broken. */
+function bjBlobToDataURL(blob) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result || ""));
+    fr.onerror = () => rej(fr.error || new Error("read_failed"));
+    fr.readAsDataURL(blob);
+  });
+}
+async function bjRasterPNG(size, paintInto) {
+  if (typeof OffscreenCanvas === "function") {
+    try {
+      const oc = new OffscreenCanvas(size, size);
+      paintInto(oc.getContext("2d"), oc);
+      if (oc.convertToBlob) {
+        const blob = await oc.convertToBlob({ type: "image/png" });
+        const u = await bjBlobToDataURL(blob);
+        if (u && u.indexOf("data:image") === 0) return u;
+      }
+    } catch (e) { /* fall through to the canvas every browser has */ }
+  }
+  const cv = document.createElement("canvas");
+  cv.width = size; cv.height = size;
+  paintInto(cv.getContext("2d"), cv);
+  try { return cv.toDataURL("image/png"); } catch (e) { return ""; }
+}
+
 function armGridSentinel() {
   const s = gridSentinel(); if (!s) return;
   s.hidden = _gridShown >= _gridItems.length && _feedDone;
@@ -1903,7 +2765,10 @@ window.addEventListener("resize", wakePump, { passive: true });
 function selectCatalogRef(item) {
   /* Only the product GID + image URL are stored; custom_charm_generate fetches
      the image server-side rather than trusting a client-supplied URL (§10.9). */
-  setReference({ type: "catalog", item }, `Reference: ${item.title}`);
+  const next = { type: "catalog", item };
+  /* a repository charm counts against the same three an upload does */
+  if (refLimitBlocks(next)) return;
+  setReference(next, `Reference: ${item.title}`);
   renderCharmGrid();
 }
 
@@ -1958,6 +2823,114 @@ function uploadLimit() {
     + (state.purchasedCredits || 0);
 }
 function uploadsLeft() { return Math.max(0, uploadLimit() - (state.uploadsUsed || 0)); }
+
+/* ═══════════ HOW MANY CHARMS A FREE ACCOUNT MAY START FROM ═══════════════
+   Uploads were already metered; picking from our own repository was free and
+   unlimited, so "three images" meant three uploads and any number of
+   catalogue charms. The rule is N REFERENCES, however they arrive — and as
+   of Aug 2026 N is the image allowance itself (5 as a guest, 15 with an
+   account) rather than a separate 3, because the two numbers being allowed
+   to disagree is how you advertise five images and stop somebody on their
+   fourth. See refLimit.
+
+   COUNTED AS DISTINCT REFERENCES, NOT AS CLICKS. The thing being rationed is
+   how many charms an account starts a design from, so going back to step 1
+   and re-choosing something already used costs nothing — you are returning
+   to a design you have already paid for, not starting a fourth. That also
+   makes the check idempotent: a customer who picks the same charm twice by
+   accident is not charged for their own double-click.
+
+   The count comes from the account's own saved designs, which every session
+   already carries a reference on. Nothing new is written and there is no
+   counter to drift out of step with the truth — the designs ARE the record.
+   The one weakness is honest and deliberate: the designs list is paged, so
+   an account with a very long history could be counted short. It fails OPEN,
+   which is the right direction for a customer and the wrong one for the
+   business, and the durable place to close it is the same cloud function
+   that already counts uploads. */
+/* ── WHAT MAKES AN ACCOUNT A FREE ONE ────────────────────────────────────
+   The first version of this asked HOW the credits arrived rather than
+   WHETHER the account has any, and shut out a customer holding nine
+   thousand of them. state.purchasedCredits is w.purchasedAllowance — the
+   record of packs bought through this page — so an account credited any
+   other way (an admin grant, a promotion, a migration, a refund, support
+   putting things right) reads as having purchased nothing, and every one of
+   those is a customer we have already said yes to.
+
+   The balance itself is the honest test, because the FREE grants are
+   bounded and known: three for a visitor, seven more for signing up. A
+   balance above that sum cannot have come from free grants alone, whatever
+   field happens to record where it came from. So the tier is inferred from
+   the money, not from the bookkeeping.
+
+   AND IT FAILS OPEN. Every branch that cannot answer confidently returns
+   "not limited" — a wallet still loading, a field missing, a shape nobody
+   expected. Wrongly refusing a paying customer at the door is a far worse
+   error than wrongly letting a free one take a fourth charm, and the first
+   one is what just happened. */
+function refFreeGrantMax() {
+  return (Number(CONFIG.guestFreeCredits) || 0) + (Number(CONFIG.signupBonusCredits) || 0);
+}
+function refLimit() {
+  if (state.unlimited || state.isMember) return Infinity;
+  if ((state.purchasedCredits || 0) > 0) return Infinity;
+  /* a balance the free grants could not have produced.
+
+     ABSENT IS NOT ZERO, and Number() will not tell you the difference:
+     Number(null) is 0, which reads as a spent-out free account and locks the
+     door on somebody whose wallet simply has not arrived yet. The same
+     confusion of "no record" with "a record saying none" is what put a
+     customer with nine thousand credits behind a paywall in the first
+     place, one field along. */
+  if (state.credits == null) return Infinity;        /* unknown: fail open */
+  const c = Number(state.credits);
+  if (!isFinite(c)) return Infinity;                 /* unreadable: likewise */
+  if (c > refFreeGrantMax()) return Infinity;
+  /* ── AND IT CANNOT BE TIGHTER THAN THE UPLOAD ALLOWANCE ────────────────
+     Every upload becomes a reference, so a reference cap below the upload
+     cap makes the upload number a lie: raising guests to 5 images while
+     this still returned 3 would have stopped them on the fourth, having
+     just been told they had five. Free references now track whatever the
+     image allowance is — 5 for a guest, 15 once they have an account —
+     with CONFIG.freeReferences kept as an independent floor so the old
+     knob can still only ever RAISE it. */
+  return Math.max(1, Number(CONFIG.freeReferences) || 3, uploadLimit());
+}
+function refUsedKeys() {
+  const seen = Object.create(null);
+  (state.sessions || []).forEach((s) => {
+    const k = refKey(s && s.reference);
+    if (k && k !== "u:" && k !== "c:") seen[k] = 1;
+  });
+  const live = refKey(state.reference);
+  if (live && live !== "u:" && live !== "c:") seen[live] = 1;
+  return seen;
+}
+function refsUsed() { return Object.keys(refUsedKeys()).length; }
+function refsLeft() {
+  const lim = refLimit();
+  return lim === Infinity ? Infinity : Math.max(0, lim - refsUsed());
+}
+/* True when this reference may be taken up. Already-used references always
+   may be; a new one only while there is room. */
+function refPickAllowed(next) {
+  const lim = refLimit();
+  if (lim === Infinity) return true;
+  const k = refKey(next);
+  if (k && refUsedKeys()[k]) return true;
+  return refsUsed() < lim;
+}
+/* The gate every entry point calls. Returns true when it has BLOCKED the
+   pick — the caller does nothing further — and says why on the way past,
+   because a paywall that appears without a sentence reads as a fault. */
+function refLimitBlocks(next) {
+  if (refPickAllowed(next)) return false;
+  const lim = refLimit();
+  toast(`Free designs start from ${lim} reference images — you have used all ${lim}. ` +
+        `Add credits to start from a new one, or carry on with a design you have already begun.`, "err");
+  if (!state.user) openAuth("outOfCredits"); else openPricing("refs");
+  return true;
+}
 function renderUploadAllowance() {
   const el = $("#upAllowance"); if (!el) return;
   const left = uploadsLeft();
@@ -2179,9 +3152,15 @@ async function readUpload(file) {
     toast("That image is over 15 MB — try a smaller file", "err"); return;
   }
   if (uploadsLeft() <= 0) {
-    if (!state.user) openAuth("outOfCredits"); else openPricing("out");
+    if (!state.user) openAuth("outOfUploads"); else openPricing("out");
     return;
   }
+  /* ── AND THE REFERENCE ALLOWANCE, CHECKED BEFORE A BYTE MOVES ─────────
+     A new file is always a new reference, so it always costs one. Asked
+     here rather than after the upload: spending somebody's bandwidth and
+     then telling them they cannot use what it produced is the rudest
+     possible order to do these two things in. */
+  if (refLimitBlocks({ type: "upload", url: "", path: "new:" + Date.now() })) return;
 
   const lbl = $("#upLabel"), fill = $("#upBarFill"), pct = $("#upPct");
   const setBar = (v, note) => { fill.style.width = v + "%"; pct.textContent = note || (Math.round(v) + "%"); };
@@ -2299,7 +3278,7 @@ function renderDrawStage() {
   const chips = $("#drawModeChips");
   if (chips) {
     chips.hidden = !has;
-    const mode = (((state.markups || {}).draw || {}).mode === "exact") ? "exact" : "interpret";
+    const mode = mkModeNorm(((state.markups || {}).draw || {}).mode);
     $$("#drawModeChips .mk-mode").forEach((b) => {
       const on = b.dataset.mode === mode;
       b.classList.toggle("is-on", on);
@@ -2318,7 +3297,7 @@ function renderDrawStage() {
 }
 $$("#drawModeChips .mk-mode").forEach((b) => b.addEventListener("click", () => {
   if (!state.markups) state.markups = {};
-  if (!state.markups.draw) state.markups.draw = { items: [], mode: "interpret" };
+  if (!state.markups.draw) state.markups.draw = { items: [], mode: mkModeNorm(null) };
   state.markups.draw.mode = b.dataset.mode === "exact" ? "exact" : "interpret";
   saveSession();
   renderDrawStage();
@@ -2341,9 +3320,15 @@ async function submitComposedDrawing() {
   if (!shot.count) { toast("Draw something first — anything at all", "err"); return; }
   if (shot.tainted) toast("One picture couldn't be included — everything else is here", "err");
   if (uploadsLeft() <= 0) {
-    if (!state.user) openAuth("outOfCredits"); else openPricing("out");
+    if (!state.user) openAuth("outOfUploads"); else openPricing("out");
     return;
   }
+  /* ── AND THE REFERENCE ALLOWANCE, CHECKED BEFORE A BYTE MOVES ─────────
+     A new file is always a new reference, so it always costs one. Asked
+     here rather than after the upload: spending somebody's bandwidth and
+     then telling them they cannot use what it produced is the rudest
+     possible order to do these two things in. */
+  if (refLimitBlocks({ type: "upload", url: "", path: "new:" + Date.now() })) return;
   composeBusy = true;
   const ep = epochNow();
   const btn = $("#markupUseDrawing");
@@ -2413,28 +3398,38 @@ async function submitComposedDrawing() {
    exactly why it belongs beside the dropzone rather than behind it.
    ========================================================================== */
 let _libPickFilter = "all", _libPickQ = "";
-function libPickList() {
+function libPickList(src) {
   const q = _libPickQ.trim().toLowerCase();
-  let list = mkLibraryItems();
+  let list = (src || mkLibraryItems()).slice();      /* its own copy — see mkLibFiltered */
   if (_libPickFilter !== "all") list = list.filter((a) => a.kind === _libPickFilter);
   if (q) list = list.filter((a) => (a.title + " " + a.sub).toLowerCase().indexOf(q) >= 0);
   return list.sort((a, b) => b.at - a.at);
 }
+function libPickTile(a, i) {
+  const watch = (!a.pairUrl && a.thumbKey) ? ` data-thumb="${attrText(a.thumbKey)}"` : "";
+  return `<figure class="mk-asset" data-p="${i}" tabindex="0" role="button"
+        aria-label="${attrText("Use " + a.title + " as the reference")}">
+      <span class="mk-asset__img"><img src="${attrText(a.pairUrl || a.url)}"${watch} alt="" loading="lazy" decoding="async" draggable="false"></span>
+      ${a.pairUrl ? '<span class="mk-asset__pair">PAIR</span>' : ""}
+      <figcaption><b>${escapeHtml(a.title)}</b><span>${escapeHtml(a.sub)}${a.at ? " · " + mkLibDate(a.at) : ""}</span></figcaption>
+    </figure>`;
+}
 let _libPick = [];
+let _libPickJob = null;
 function renderLibPick() {
   const host = $("#libPickGrid"); if (!host) return;
-  _libPick = libPickList();
-  const total = mkLibraryItems().length;
+  const all = mkLibraryItems();
+  const prev = _libPick;
+  _libPick = libPickList(all);
+  const total = all.length;
   $("#libPickCount").textContent = _libPick.length === total
     ? `${total} image${total === 1 ? "" : "s"}` : `${_libPick.length} of ${total}`;
-  host.innerHTML = _libPick.length
-    ? _libPick.map((a, i) => `<figure class="mk-asset" data-p="${i}" tabindex="0" role="button"
-          aria-label="${attrText("Use " + a.title + " as the reference")}">
-        <span class="mk-asset__img"><img src="${attrText(a.pairUrl || a.url)}" alt="" loading="lazy" draggable="false"></span>
-        ${a.pairUrl ? '<span class="mk-asset__pair">PAIR</span>' : ""}
-        <figcaption><b>${escapeHtml(a.title)}</b><span>${escapeHtml(a.sub)}${a.at ? " · " + mkLibDate(a.at) : ""}</span></figcaption>
-      </figure>`).join("")
-    : `<p class="mk-lib__empty">${total ? "Nothing matches that." : "Nothing here yet — your uploads and finished charms collect here as you go."}</p>`;
+  if (_libPickJob) { _libPickJob.cancel(); _libPickJob = null; }
+  if (!_libPick.length) {
+    host.innerHTML = `<p class="mk-lib__empty">${total ? "Nothing matches that." : "Nothing here yet — your uploads and finished charms collect here as you go."}</p>`;
+    return;
+  }
+  _libPickJob = mkGridPaint(host, _libPick, libPickTile, prev);
 }
 function refreshLibraryEntry() {
   const btn = $("#upFromLibrary"); if (!btn) return;
@@ -2481,6 +3476,9 @@ $("#libPickGrid").addEventListener("click", async (e) => {
      server-side BY PATH, so a picture that exists only in this tab is a
      reference the AI can never actually see. So it is uploaded first, once,
      and the reference points at the file like every other one. */
+  /* a tile still showing the waiting square is not a reference — draw it for
+     real first, then upload what was drawn */
+  if (a.thumbKey) { try { await mkAssetSettle(a); } catch (e) {} }
   let url = a.url, path = a.path || "";
   /* the test is whether a FILE exists, which is what `path` means — not what
      the url happens to look like. An entry with a path is already in storage
@@ -2501,9 +3499,11 @@ $("#libPickGrid").addEventListener("click", async (e) => {
   }
   /* picking from the library can involve an upload, which awaits */
   if (!sameProject(ep)) return;
-  setReference({ type: "upload", url, path,
-                 name: a.title, w: 0, h: 0, resized: false,
-                 drawn: a.kind === "sketch", marks: 0 });
+  const nextRef = { type: "upload", url, path,
+                    name: a.title, w: 0, h: 0, resized: false,
+                    drawn: a.kind === "sketch", marks: 0 };
+  if (refLimitBlocks(nextRef)) { _libPickBusy = false; return; }
+  setReference(nextRef);
   setStartMode("upload");
   resetUploadStage(false);
   toast("That's your reference — no upload needed ✦", "gold");
@@ -2546,26 +3546,13 @@ $("#descInput").addEventListener("input", () => {
   updateDesignMode();
 });
 function syncBrief() {
-  const r = state.reference;
-  const stage = $("#refPreviewStage");
-  if (stage) {
-    const link = $("#refPreviewLink");
-    if (r && r.type === "catalog") {
-      $("#refPreviewCap").textContent = "Your reference — " + r.item.title;
-      link.href = listingUrl(r.item); link.hidden = false;
-      stage.innerHTML = productMedia(r.item, "eager", 900);
-    } else if (r && r.type === "upload") {
-      $("#refPreviewCap").textContent = "Your reference — " + r.name;
-      link.hidden = true;
-      stage.innerHTML = `<img src="${attrText(r.url)}" alt="Your reference image">`;
-    } else {
-      $("#refPreviewCap").textContent = "Your reference";
-      link.hidden = true;
-      stage.innerHTML = `<div class="ref-preview__empty">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="3" y="5" width="18" height="15"/><circle cx="9" cy="10" r="1.8"/><path d="m4.5 18 5-5 3.5 3.5L17 12l2.5 2.5"/></svg>
-        <span>Pick a reference on the previous step</span></div>`;
-    }
-  }
+  /* THE BIG REFERENCE PREVIEW IS GONE. #refPreviewStage, #refPreviewLink and
+     #refPreviewCap were a full-width panel on step two; the framed reference
+     in the step's own layout replaced it long ago and none of those three ids
+     exist in the section any more. The block that painted them survived
+     behind an `if (stage)` that can never be true — dead by construction, and
+     the kind of dead that reads as live when someone greps for it. The dock
+     below (renderRefDock) is what actually shows the reference now. */
   const name = refName();
   const railRef = $("#railRef"); if (railRef) railRef.textContent = name;
   renderRefDock(name);
@@ -2618,13 +3605,46 @@ const GEN_STAGES = [
 const STAGE_INDEX = { queued: 0, planning: 1, generating: 2, engraving: 3, polishing: 4, done: 4 };
 /* The render step has its own narration — it is a different act: the approved
    drawing is being manufactured, not designed. */
+/* ── FIVE STEPS, BECAUSE THERE ARE NOW FIVE ──────────────────────────────
+   The render gained a real final act: after the metal is polished, the
+   declared cut-outs are opened in the finished piece. It is measured work —
+   a few seconds on its own, more on a large render — and a bar that has
+   already reached 96% before it starts reads as a studio that has finished
+   and then hangs. So the four steps make room and the opening gets its own,
+   with the same shape as before: even spacing, the last one at 96, and
+   finish() taking it to 100.
+
+   The server writes "cutting" the moment that act begins, which does two
+   things at once — it moves the bar honestly, and it breaks the silence the
+   render watcher would otherwise be counting (see MK_RENDER_IDLE_MS). */
 const RENDER_STAGES = [
-  ["Reading your drawing…", 16],
-  ["Cutting the flat metal…", 44],
-  ["Engraving your lines…", 72],
-  ["Polishing under the lights…", 96],
+  ["Reading your drawing…", 14],
+  ["Cutting the flat metal…", 38],
+  ["Engraving your lines…", 62],
+  ["Polishing under the lights…", 84],
+  ["Opening the cut-outs…", 96],
 ];
-const RENDER_INDEX = { queued: 0, planning: 0, rendering: 1, engraving: 2, polishing: 3, done: 3 };
+const RENDER_INDEX = { queued: 0, planning: 0, rendering: 1, engraving: 2, polishing: 3, cutting: 4, done: 4 };
+/* ── AND THE GOLD EDIT HAS ITS OWN AGAIN ──────────────────────────────────
+   It streams through the render's fields, so it must use the render's stage
+   NAMES — RENDER_INDEX is what turns "polishing" into a position on the bar,
+   and a stage name with no entry never moves it. What it does not have to
+   share is the WORDS. "Cutting the flat metal" is a lie during a gold edit:
+   nothing is being cut, one area of an existing charm is being changed, and
+   a customer who asked for slightly longer wings should not watch the studio
+   narrate building their charm from scratch. Same index, different sentences. */
+/* Five rows here too, because it shares RENDER_INDEX and a map whose last
+   index is 4 would otherwise read stages[4] off the end of a four-row table.
+   The gold edit never emits "cutting" — it changes one area of a charm that
+   already exists and composites nothing — so the fifth row is only ever
+   reached by `done`, on its way to 100. It is worded for that. */
+const GOLD_EDIT_STAGES = [
+  ["Reading your change…", 18],
+  ["Working just that part…", 48],
+  ["Matching the metal and the light…", 74],
+  ["Polishing under the lights…", 88],
+  ["Finishing the piece…", 96],
+];
 let genBusy = false;
 let renderBusy = false;
 const vSVG = (v) => versionMedia(v);
@@ -2645,7 +3665,15 @@ function abortLiveProgress() {
   _liveProgs.clear();
   const ov = $("#genOverlay"); if (ov) ov.classList.remove("is-visible");
 }
-function genProgress(stages = GEN_STAGES, index = STAGE_INDEX) {
+/* opts.silent  — narrate and report, but leave the big overlay alone. The
+                   overlay belongs to the DRAWING; once a drawing is on screen,
+                   covering it to make the metal is covering the thing the
+                   customer is waiting to compare against.
+   opts.onPct(p, label) — where the progress goes instead: the relay pipes it
+                   into the bar inside whichever button is working. */
+function genProgress(stages = GEN_STAGES, index = STAGE_INDEX, opts) {
+  opts = opts || {};
+  const silent = !!opts.silent, onPct = typeof opts.onPct === "function" ? opts.onPct : null;
   const ov = $("#genOverlay"), fill = $("#genBarFill"), pct = $("#genPct"), lbl = $("#genStageLbl");
   let i = -1, timer = null, done = false;
   /* THE BAR BELONGS TO A PROJECT. paint() writes into state.thread — the
@@ -2656,7 +3684,8 @@ function genProgress(stages = GEN_STAGES, index = STAGE_INDEX) {
     if (done || idx <= i || !sameProject(ep)) return;
     i = Math.min(idx, stages.length - 1);
     const [txt, p] = stages[i];
-    lbl.textContent = txt; fill.style.width = p + "%"; pct.textContent = p + "%";
+    if (onPct) onPct(p, txt);
+    if (!silent) { lbl.textContent = txt; fill.style.width = p + "%"; pct.textContent = p + "%"; }
     const think = state.thread[state.thread.length - 1];
     if (think && think.role === "thinking") { think.text = txt; setThinkingText(txt); }
   };
@@ -2664,7 +3693,7 @@ function genProgress(stages = GEN_STAGES, index = STAGE_INDEX) {
     start() {
       if (!sameProject(ep)) return;
       _liveProgs.add(self);
-      ov.classList.add("is-visible");
+      if (!silent) ov.classList.add("is-visible");
       paint(0);
       /* the bar advances on its own between real status pushes so it never
          reads as stalled; a real push always wins because paint() only ever
@@ -2678,13 +3707,16 @@ function genProgress(stages = GEN_STAGES, index = STAGE_INDEX) {
       /* the overlay is shared, and after a switch it belongs to whatever is
          on screen now — a finished old run must not touch it at all */
       if (!sameProject(ep)) return Promise.resolve();
+      if (onPct) onPct(100, "");
+      if (silent) return Promise.resolve();
       fill.style.width = "100%"; pct.textContent = "100%";
       return new Promise((r) => setTimeout(() => { ov.classList.remove("is-visible"); r(); }, 350));
     },
     abort() {
       done = true; clearInterval(timer);
       _liveProgs.delete(self);
-      ov.classList.remove("is-visible");
+      if (onPct) onPct(0, "");
+      if (!silent) ov.classList.remove("is-visible");
     },
   };
   return self;
@@ -2702,6 +3734,28 @@ function directionLog() {
 /* How long to wait for the version doc to settle before telling the customer
    something went wrong. Generation normally lands well inside this. */
 const GEN_TIMEOUT_MS = 180000;
+/* The RENDER watcher's two clocks — see the note inside watchRender's poll.
+   IDLE is comfortably longer than the server's own per-call timeout, so a
+   run that is alive always moves the document again before it expires. */
+/* ── HOW LONG THE DOCUMENT MAY GO QUIET ──────────────────────────────────
+   The render watcher gives up on SILENCE, not on length, and the invariant
+   it rests on is that an alive run always writes to the document again
+   inside this window. That held while the gold charm rendered on flash and
+   the longest single gap was one image call plus one judge call.
+
+   The render moved to gemini-3-pro-image, whose call may now run to a 180s
+   ceiling, so the window has to clear 180s or a working render is reported
+   as stalled. 240s does, with room for the write itself. The proxy also
+   writes an "engraving" stage the moment the image lands, which is what
+   keeps the gap bounded by the LONGER of the image and judge calls rather
+   than by their sum — without that write, no window short enough to be
+   useful would be safe.
+
+   The cost of the raise is honest and worth stating: a render that dies
+   silently now takes 240s to be reported instead of 150s. The hard cap
+   below is unchanged and still ends every run at 480s. */
+const MK_RENDER_IDLE_MS = 240000;
+const MK_RENDER_HARD_MS = 480000;
 
 /* geminiImageProxy is deployed as a Netlify BACKGROUND function: it answers
    202 immediately and Netlify discards the function's return value. So the
@@ -2724,7 +3778,8 @@ function watchVersion(sessionId, n, prog) {
     if (!d) return;
     if (d.stage) prog.stage(d.stage);
     else if (d.status) prog.stage(d.status);
-    if (d.status === "done") finish({ ok: true, n, downloadURL: d.downloadURL, storagePath: d.storagePath });
+    if (d.status === "done") finish({ ok: true, n, downloadURL: d.downloadURL, storagePath: d.storagePath,
+                                      specURL: d.specURL || "", specPath: d.specPath || "" });
     if (d.status === "failed") finish({ ok: false, error: d.error || "generation_failed" });
   };
   try {
@@ -2758,10 +3813,77 @@ function watchVersion(sessionId, n, prog) {
    The AI keeps the two jobs judgement is actually wanted for: "for what I
    mean" redraws, and the gold render. */
 
-function mkComposeEligible() {
-  if (!state.reference || !state.reference.drawn) return false;
+/* ── ONE LINE DECIDES HOW A DRAWING IS READ BY DEFAULT ────────────────────
+   "Exactly as drawn" is the default, and it is the honest one: what the
+   customer drew is what gets made, wobbles and all — nothing is added and
+   nothing is restyled behind their back. It is also the only one of the two
+   that can take the compose route above, which spends no generation credit
+   and cannot drift. "For what I mean" is the deliberate opt-in for a sketch
+   that is a rough idea of something rather than the finished shape.
+
+   EVERY read of a stored mode goes through here. A value that was never set
+   — a fresh sheet, an import, a trace, a session from before this build —
+   lands on the default; an explicit "interpret" is always honoured. That is
+   why the default can live in exactly one line, and why flipping it later is
+   a one-line change rather than a hunt through fifteen ternaries. */
+function mkModeNorm(v) {
+  return v === "interpret" ? "interpret" : "exact";
+}
+
+/* ── WHEN ARE THE SHEET'S ITEMS THE WHOLE PICTURE? ────────────────────────
+   That is the real question behind composing, and `reference.drawn` was a
+   proxy for it: true of the sketchpad, where the customer placed every
+   object themselves, and false of everything else — because until the
+   catalogue photograph started becoming an editable line drawing, there was
+   nothing else it could be true of.
+
+   There is now. A traced reference is vectors with the bitmap turned off:
+   the studio placed every item, knows every engraving instruction on it, and
+   can paint the colour-coded drawing itself, exactly as it does for a
+   sketch. Asking a model to redraw it is asking for judgement about a
+   picture that needs none, and spending a credit and a round of drift to get
+   an approximation of what the customer is already looking at. */
+function mkRefSheetIsVector() {
+  if (state.reference && state.reference.drawn) return true;
   const m = (state.markups || {}).draw || {};
-  if (m.mode !== "exact") return false;
+  return !!(m.traced && !m.showBitmap && mkItemsOf(m).length);
+}
+/* ── WHEN "RE-DRAW" HAS NOTHING TO RE-DRAW ────────────────────────────────
+   True when the press should make the metal alone: the drawing on file is
+   still the drawing the customer is looking at, so re-commissioning it and
+   the greyscale map derived from it would produce the same two pictures at
+   the cost of two extra model calls and a visible flicker on both.
+
+   Every clause is a reason NOT to take the shortcut, so the default answer
+   is "no, run the relay" and each one has to be argued for:
+
+     · the sheet is the REFERENCE, not the drawing — changing the reference
+       is a request to draw again from it, whatever else is true
+     · the sheet has unsaved changes (`dirty`) — the marks ARE the message
+     · there is no drawing on file yet — there is nothing to re-cut
+     · the version has never been rendered — the "re" in re-render is a
+       claim about something that already happened
+   A sheet that was never traced is a customer's own composition, and an
+   untouched one of those is as unchanged as an untouched trace. */
+function mkRegenIsMetalOnly() {
+  if (__mkSrc === "ref") return false;
+  if (__mk && __mk.dirty) return false;
+  const v = state.versions[state.currentVersion];
+  if (!v || !v.url) return false;
+  if (!v.renderUrl) return false;
+  const sheet = (state.markups || {})[mkVersionKey(v)] || {};
+  if (sheet.dirty) return false;
+  return true;
+}
+
+function mkComposeEligible() {
+  if (!mkRefSheetIsVector()) return false;
+  const m = (state.markups || {}).draw || {};
+  /* NOT `m.mode !== "exact"`. With exact as the default, a sketch that has
+     never touched the toggle has no stored mode at all — and that read sent
+     every such drawing down the AI path, spending a credit to interpret a
+     drawing nobody asked to have interpreted. */
+  if (mkModeNorm(m.mode) !== "exact") return false;
   return mkItemsOf(m).some((it) => !it.hid && it.t !== "note");
 }
 
@@ -2770,48 +3892,168 @@ function mkComposeEligible() {
    the outside, and everything not outside is the body — holes filled by
    construction. Exact, and it uses only the painter the sheet itself uses. */
 function mkComposeSilhouette(items, S) {
-  const M = 280;                                  /* mask resolution: shape, not detail */
+  /* 280 was "shape, not detail" — and at 280 the traced outline of a real
+     cartoon deviates a couple of grid cells from the ink it was traced
+     from, which at display scale is ±10px of weave. Twice the grid halves
+     the weave; the margin below finishes the job. */
+  const M = 560;                                  /* mask resolution */
+  const R_FAT = Math.max(2, Math.round(0.026 * M));    /* the gap-sealing reach */
+  const R_MARGIN = Math.max(2, Math.round(0.010 * M)); /* the cut edge's stand-off */
+
+  /* ── THE INK, AT ITS OWN WEIGHT, ONCE ──────────────────────────────────
+     There used to be a second pass here that painted every item with an
+     extra 0.052 of stroke, to seal the gaps a hand leaves in a sketched
+     loop. It sealed nothing. `w` is a STROKE width, and mkPaint does not
+     stroke a traced fill — it fills the contour and skips the stroke
+     entirely (`seam = !it.tr`, and a black fill is not the outline intent).
+     Every item a traced reference is made of is exactly that kind of fill,
+     so the fattened mask came out byte-identical to this one: measured on a
+     traced ribbon, 5376 ink pixels both ways.
+
+     What followed was the fox. Nothing sealed, so the flood reached every
+     gap in the sketch, so NOTHING was enclosed, so the body collapsed to
+     the ink itself — and the margin was dilated around every individual
+     stroke. The customer got a blue cut-line looped around each leg, each
+     tuft and each whisker, which is not a charm, it is a diagram of the
+     bug.
+
+     The sealing is morphological now: the ink is grown by R_FAT with an
+     exact Euclidean distance field, which is uniform across fills, strokes,
+     pictures and masked areas alike and cannot be quietly skipped by a
+     branch inside the painter. One paint pass, at natural weight, with the
+     eraser at ITS natural radius — the old half-margin grow existed only to
+     compensate for the stroke fatten, and goes with it. */
   const cv = document.createElement("canvas");
   cv.width = M; cv.height = M;
   const ctx = cv.getContext("2d", { willReadFrequently: true });
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, M, M);
-  const fat = items.map((it) => {
+  const nat = items.map((it) => {
     const one = mkPack(it);
     one.c = "#000"; if (one.f !== "none") one.f = "#000";
     one.o = 1;
-    one.w = (Number(one.w) || 0.006) + 0.052;     /* the offset margin, as stroke */
     return one;
   });
-  try { mkPaint(ctx, M, M, fat, { export: true }); } catch (e) { return null; }
+  try { mkPaint(ctx, M, M, nat, { export: true }); } catch (e) { return null; }
   let d;
   try { d = ctx.getImageData(0, 0, M, M).data; } catch (e) { return null; }
-  const ink = new Uint8Array(M * M);
-  for (let i = 0; i < M * M; i++) ink[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2] < 690) ? 1 : 0;
-  /* outside = white reachable from the border */
+  const inkNat = new Uint8Array(M * M);
+  let inked = 0;
+  for (let i = 0; i < M * M; i++) {
+    if (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2] < 690) { inkNat[i] = 1; inked++; }
+  }
+  if (!inked) return null;
+
+  /* grow it, so a hand-drawn gap seals and the flood cannot get in */
+  const invInk = new Uint8Array(M * M);
+  for (let i = 0; i < M * M; i++) invInk[i] = inkNat[i] ? 0 : 1;
+  const dToInk = mkEdt(invInk, M, M);
+  const fat = new Uint8Array(M * M);
+  for (let i = 0; i < M * M; i++) fat[i] = (inkNat[i] || dToInk[i] <= R_FAT) ? 1 : 0;
+
+  /* outside = white reachable from the border, walking the SEALED mask */
   const outside = new Uint8Array(M * M);
   const st = [];
   for (let x = 0; x < M; x++) { st.push(x, (M - 1) * M + x); }
   for (let y = 0; y < M; y++) { st.push(y * M, y * M + M - 1); }
   while (st.length) {
     const q = st.pop();
-    if (q < 0 || q >= M * M || outside[q] || ink[q]) continue;
+    if (q < 0 || q >= M * M || outside[q] || fat[q]) continue;
     outside[q] = 1;
     const x = q % M;
     if (x > 0) st.push(q - 1);
     if (x < M - 1) st.push(q + 1);
     st.push(q - M, q + M);
   }
-  const body = new Uint8Array(M * M);
-  let minY = M, cx = 0, cy = 0, area = 0;
+
+  /* ── THE MARGIN BELONGS TO THE BODY, NOT TO EVERY STROKE ────────────────
+     The sealed mask is the right shape to FIND the body and the wrong one to
+     keep: every stroke is inflated by the sealing reach, so a mark near the
+     boundary pokes through the outline as a lobe. So the enclosed region is
+     eroded by the same reach — stripping the inflation off its rim — and
+     unioned with the ink at its true weight, which puts back every real edge
+     the erosion touched. One uniform margin is then dilated on around the
+     whole body. Both level sets are exact Euclidean, so the edge is round. */
+  const enclosed = new Uint8Array(M * M);
+  for (let i = 0; i < M * M; i++) enclosed[i] = outside[i] ? 0 : 1;
+  const dIn = mkEdt(enclosed, M, M);
+  const bodyNat = new Uint8Array(M * M);
+  for (let i = 0; i < M * M; i++) bodyNat[i] = (inkNat[i] || dIn[i] > R_FAT) ? 1 : 0;
+
+  /* ── AND A CRUMB IS NOT A CHARM ────────────────────────────────────────
+     A stray dot the size of a full stop gets its own closed cut-line and
+     travels to the workshop as a piece to be cut, which is how a speck
+     below the fox arrived in a production drawing. Anything under a
+     thousandth of the sheet cannot be made and is dropped.
+
+     Judged BEFORE the margin goes on, deliberately: a speck plus a margin
+     all round is several times the speck, so a filter applied afterwards
+     measures the margin and rescues exactly the crumbs it exists to drop. */
+  const MIN_PIECE = Math.max(24, Math.round(M * M * 0.001));
+  const seen = new Uint8Array(M * M);
   for (let i = 0; i < M * M; i++) {
-    if (!outside[i]) {
-      body[i] = 1;
-      const y = (i / M) | 0;
-      if (y < minY) minY = y;
+    if (!bodyNat[i] || seen[i]) continue;
+    const run = [i]; seen[i] = 1; let n = 0;
+    const cell = [];
+    while (run.length) {
+      const k = run.pop(); n++; cell.push(k);
+      const x = k % M;
+      if (x > 0 && bodyNat[k - 1] && !seen[k - 1]) { seen[k - 1] = 1; run.push(k - 1); }
+      if (x < M - 1 && bodyNat[k + 1] && !seen[k + 1]) { seen[k + 1] = 1; run.push(k + 1); }
+      if (k >= M && bodyNat[k - M] && !seen[k - M]) { seen[k - M] = 1; run.push(k - M); }
+      if (k + M < M * M && bodyNat[k + M] && !seen[k + M]) { seen[k + M] = 1; run.push(k + M); }
     }
-    if (ink[i]) { cx += i % M; cy += (i / M) | 0; area++; }
+    if (n < MIN_PIECE) for (let j = 0; j < cell.length; j++) bodyNat[cell[j]] = 0;
   }
-  if (!area) return null;
+
+  const invBody = new Uint8Array(M * M);
+  for (let i = 0; i < M * M; i++) invBody[i] = bodyNat[i] ? 0 : 1;
+  const dOut = mkEdt(invBody, M, M);
+
+  /* ── THE MARGIN MUST NOT BRIDGE A CREVICE ──────────────────────────────
+     The stand-off is a level set: every point within R_MARGIN of the body.
+     Against a flat or convex edge that is exactly the hair mk21 asked for.
+     Against a CONCAVE one it is not — the two walls' level sets meet above
+     the corner, and the line bridges the notch instead of entering it. The
+     error is not R_MARGIN, it is R_MARGIN / sin(half-angle), so it grows
+     without bound as the crevice sharpens. Measured on a V-notch at this
+     grid: 9px lost at 45°, 12px at 30°, 17px at 20°, 29px at 12°, 43px at
+     8° — 7.7% of the sheet — each within 0.5px of that closed form. That is
+     the cut-line sailing straight over the crevices where a hoop meets the
+     body, which is what it was reported doing.
+
+     A crevice always carries the exterior's own medial axis down to its
+     apex, so the ridge of dOut is exactly the set of points that must stay
+     outside. Protect it and the margin can approach from both walls without
+     ever meeting: the line follows the notch to its base. Away from a
+     concavity the ridge is further off than R_MARGIN and nothing changes.
+
+     Both mk21 invariants re-measured with this in place: stand-off on an
+     ordinary convex boundary still 6px, and the wiggly blob still yields
+     ONE visible-blue component. Notch penetration goes to full depth at
+     every angle above. */
+  const ridge = new Uint8Array(M * M);
+  for (let y = 1; y < M - 1; y++) for (let x = 1; x < M - 1; x++) {
+    const i = y * M + x;
+    if (bodyNat[i] || dOut[i] <= 0.5) continue;
+    let mx = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const v = dOut[(y + dy) * M + x + dx];
+      if (v > mx) mx = v;
+    }
+    if (dOut[i] >= mx - 0.001) ridge[i] = 1;
+  }
+  const body = new Uint8Array(M * M);
+  for (let i = 0; i < M * M; i++) {
+    body[i] = (bodyNat[i] || (dOut[i] <= R_MARGIN && !ridge[i])) ? 1 : 0;
+  }
+
+  let minY = M, cx = 0, cy = 0, area = 0, kept = 0;
+  for (let i = 0; i < M * M; i++) {
+    if (body[i]) { kept++; const y = (i / M) | 0; if (y < minY) minY = y; }
+    if (inkNat[i]) { cx += i % M; cy += (i / M) | 0; area++; }
+  }
+  if (!area || !kept) return null;
   return { body, M, top: minY / M, cx: cx / area / M, cy: cy / area / M };
 }
 
@@ -2819,17 +4061,50 @@ function mkComposeSilhouette(items, S) {
    already trusts (marching squares + RDP), with a light corner-cut so the
    offset reads as a cut edge rather than a traced blob */
 function mkComposeBodyPath(sil, S) {
+  /* GENTLER THAN IT WAS, ON PURPOSE. At the old 280 grid this simplified at
+     eps 1.4 and cut corners twice, and that heavy hand UNDERCUT every sharp
+     feature of the body — the smoothed line dived inside the ink at each
+     bump, the artwork covered it there, and the cut-line surfaced as broken
+     arcs and little blue dots. The grid is finer now, so the staircase the
+     smoothing existed to hide is half the size: a lighter pass keeps the
+     curve AND keeps the line outside the ink it is offset from. */
   const cs = mkTraceMask(sil.body, sil.M).filter((c) => c.length >= 12)
-    .map((c) => mkRdp(c, 1.4));
+    .map((c) => mkRdp(c, 0.8));
   if (!cs.length) return null;
   const path = new Path2D();
   cs.forEach((c0) => {
-    /* Chaikin corner cutting, twice: the mask's staircase becomes a curve */
+    /* ── CHAIKIN, BUT NEVER ACROSS A CORNER THE DESIGN MEANT ──────────────
+       Chaikin replaces every vertex with two points a quarter in from each
+       side. On a shallow turn that is the staircase-smoothing this exists
+       for. On a SHARP one it amputates the feature: measured on a five-point
+       star at this grid, the cut line missed the true points by up to 31.8px
+       and 14.1px on average — the outline crossing the star instead of going
+       round it. That is not smoothing, it is a different shape.
+
+       So a vertex is only cut when the path actually turns gently through
+       it. Sharp vertices are carried through untouched. Measured: a circle's
+       residual jitter is 0.201px either way — identical to cutting every
+       corner — while the star's worst point error falls from 31.84px to
+       1.44px. The smoothing is unchanged; only the amputation is gone.
+
+       60° is where those two measurements meet. RDP above has already
+       removed the pixel staircase, so what survives to here is either a real
+       corner or a gentle bend, and nothing in between needs arbitrating. */
+    const KEEP_SHARP_DEG = 60;
     let p = c0;
-    for (let r = 0; r < 2; r++) {
+    for (let r = 0; r < 1; r++) {
       const q = [];
       for (let i = 0; i < p.length; i += 2) {
         const j = (i + 2) % p.length;
+        const hi = (i - 2 + p.length) % p.length;
+        const ax = p[i] - p[hi], ay = p[i + 1] - p[hi + 1];
+        const bx = p[j] - p[i],  by = p[j + 1] - p[i + 1];
+        const na = Math.hypot(ax, ay), nb = Math.hypot(bx, by);
+        if (na > 0 && nb > 0) {
+          const turn = Math.acos(Math.max(-1, Math.min(1, (ax * bx + ay * by) / (na * nb))))
+                     * 180 / Math.PI;
+          if (turn > KEEP_SHARP_DEG) { q.push(p[i], p[i + 1]); continue; }
+        }
         q.push(p[i] * .75 + p[j] * .25, p[i + 1] * .75 + p[j + 1] * .25,
                p[i] * .25 + p[j] * .75, p[i + 1] * .25 + p[j + 1] * .75);
       }
@@ -2843,6 +4118,126 @@ function mkComposeBodyPath(sil, S) {
   return path;
 }
 
+/* ── IS THIS ITEM A CLAIMED PERIMETER LINE? ───────────────────────────────
+   Same line-predicate mkInkInstruction uses: the pen's strokes, the line and
+   arrow, and any closed primitive that is not filled. EXACT colour match,
+   deliberately — only the perimeter control writes this green. */
+function mkIsPerimLine(it) {
+  if (!it || it.hid) return false;
+  /* what can carry the claim: the pen's strokes, the line and arrow, any
+     unfilled primitive — and a CONTOUR FILL, because a traced outline (the
+     way most real designs' outer edge actually exists on the sheet) is a
+     fill whose region is a thin closed band. Masked fills stay out: their
+     edge renderer does not speak the claim's colour. */
+  const line = it.t === "ink" || it.t === "line" || it.t === "arrow" ||
+    (it.t === "fill" && !(it.m && it.m.length)) ||
+    (MK_SHAPE_TOOLS.indexOf(it.t) >= 0 && mkFillIntent(it.f) === "none");
+  return line && String(it.c || "").toLowerCase() === MK_PERIM;
+}
+
+/* ── THE CLAIM IS HONOURED, AND HEALED WHERE IT NEEDS TO BE ───────────────
+   Light green says "this is the outer cut edge", said by the one person who
+   can say it. The first version of this check treated that claim with
+   suspicion — one sealing radius, refuse on any gap it could not close, and
+   refuse the moment 5% of the ink sat outside the loop — and a real charm
+   walked straight into both: a hand-drawn loop whose line crossed the
+   elephant's feet was told "not fully enclosed" and got the studio's blue
+   edge drawn OVER the customer's green one, which is the single outcome the
+   whole feature exists to prevent.
+
+   So the posture is reversed. The claim is followed, and the check's job is
+   to make following it POSSIBLE:
+
+   1. GAPS ARE AUTO-CLOSED, PROGRESSIVELY. The seal starts at the same reach
+      the silhouette uses for hand-drawn gaps and, if the loop still leaks,
+      widens twice more — closing gaps up to ~15% of the sheet's width by
+      the last pass. Each pass is the same arithmetic, only braver; the
+      first one that traps a region wins, so a clean loop never pays for a
+      leaky one's bridging.
+
+   2. INK OUTSIDE THE LOOP DOES NOT VETO IT. The customer's line crossing a
+      foot means the cut runs through the foot — their call, followed. The
+      one refusal left on this axis is a loop that misses MOST of the design
+      (under half the ink inside): that is a circle around one element, not
+      a perimeter, and honouring it would silently cut away the rest of the
+      charm.
+
+   The verdict says what it did — `healed` when a wider seal was needed,
+   `partial` when ink was left outside — so the compose can tell the
+   customer in words instead of doing either silently. */
+function mkPerimVerdict(perimInk, otherInk, M) {
+  const n = M * M;
+  const R0 = Math.max(2, Math.round(0.026 * M));
+  const inv = new Uint8Array(n);
+  for (let i = 0; i < n; i++) inv[i] = perimInk[i] ? 0 : 1;
+  const d = mkEdt(inv, M, M);
+  const flood = (radius) => {
+    const fat = new Uint8Array(n);
+    for (let i = 0; i < n; i++) fat[i] = (perimInk[i] || d[i] <= radius) ? 1 : 0;
+    const outside = new Uint8Array(n);
+    const st = [];
+    for (let x = 0; x < M; x++) { st.push(x, (M - 1) * M + x); }
+    for (let y = 0; y < M; y++) { st.push(y * M, y * M + M - 1); }
+    while (st.length) {
+      const q = st.pop();
+      if (q < 0 || q >= n || outside[q] || fat[q]) continue;
+      outside[q] = 1;
+      const x = q % M;
+      if (x > 0) st.push(q - 1);
+      if (x < M - 1) st.push(q + 1);
+      st.push(q - M, q + M);
+    }
+    let enclosed = 0, inkPx = 0, inkIn = 0;
+    for (let i = 0; i < n; i++) {
+      const inside = !outside[i] && !fat[i];
+      if (inside) enclosed++;
+      if (otherInk[i]) { inkPx++; if (inside || fat[i]) inkIn++; }
+    }
+    return { enclosed, inkPx, inkIn };
+  };
+  const radii = [R0, Math.round(R0 * 1.8), Math.round(R0 * 3)];
+  for (let k = 0; k < radii.length; k++) {
+    const r = flood(radii[k]);
+    /* a loop that traps less than 1% of the sheet has not closed yet —
+       try the next, braver seal */
+    if (r.enclosed < n * 0.01) continue;
+    const cover = r.inkPx ? r.inkIn / r.inkPx : 1;
+    if (cover < 0.5) return { ok: false, why: "spill" };
+    return { ok: true, why: "", healed: k > 0, partial: cover < 0.95 };
+  }
+  return { ok: false, why: "open" };
+}
+function mkPerimeterEncloses(items, perimItems) {
+  const M = 280;
+  const paintBlack = (list) => {
+    const cv = document.createElement("canvas");
+    cv.width = M; cv.height = M;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, M, M);
+    const nat = list.map((it) => {
+      const one = mkPack(it);
+      one.c = "#000"; if (one.f !== "none") one.f = "#000";
+      one.o = 1;
+      return one;
+    });
+    try { mkPaint(ctx, M, M, nat, { export: true }); } catch (e) { return null; }
+    let d;
+    try { d = ctx.getImageData(0, 0, M, M).data; } catch (e) { return null; }
+    const ink = new Uint8Array(M * M);
+    for (let i = 0; i < M * M; i++) {
+      if (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2] < 690) ink[i] = 1;
+    }
+    return ink;
+  };
+  const perimSet = new Set(perimItems);
+  const pInk = paintBlack(perimItems);
+  const oInk = paintBlack(items.filter((it) => !perimSet.has(it) && it.t !== "note"));
+  if (!pInk || !oInk) return { ok: false, why: "paint" };
+  /* the whole verdict travels up — ok, why, healed, partial — so the
+     compose can say what actually happened instead of a bare yes or no */
+  return mkPerimVerdict(pInk, oInk, M);
+}
+
 /* the whole drawing: silhouette + hoop + the items themselves.
    ASYNC, AND IT HAS TO BE. Placed pictures live in Firebase Storage on a
    bucket with no CORS rule, so a plain cross-origin <img> is refused
@@ -2852,15 +4247,53 @@ function mkComposeBodyPath(sil, S) {
    and a blank compose: the pictures simply were not there yet. Every other
    exporter in the studio awaits this; so does this one now. */
 async function mkComposeDrawing(S) {
-  let items = mkItemsOf((state.markups || {}).draw)
+  const items = mkItemsOf((state.markups || {}).draw)
     .filter((it) => !it.hid && it.t !== "note").map(mkPack);
   if (!items.length) return null;
   try { await mkAwaitImages(items, 12000); } catch (e) { /* paint what we have */ }
-  /* Construct the automatic outline/hoop around consistently sized artwork.
-     Leave room for that hardware before fitting the complete charm below. */
-  const prepared = await mkItemsToDataUrl(items, S, 0.60);
-  if (!prepared) return null;
-  items = prepared.items;
+  /* ── THE CUSTOMER'S OWN PERIMETER, IF THE CLAIM HOLDS ──────────────────
+     Verified BEFORE the sheet is painted, because two things hang on the
+     verdict: whether the studio's generated blue edge is drawn at all, and
+     what colour the green line itself goes out in. On a verified perimeter
+     the line is recoloured to the instruction blue on this OUTGOING COPY
+     only (items here are mkPack copies; the editor's own objects keep their
+     green), so the production drawing carries one blue cut edge exactly
+     where the customer put it and light green never leaves the studio. On a
+     refused claim nothing changes: the studio draws its own edge as it
+     always has and the green line ships as annotation ink. */
+  const perimItems = items.filter(mkIsPerimLine);
+  let perimOwn = false;
+  if (perimItems.length) {
+    let verdict = { ok: false, why: "paint" };
+    try { verdict = mkPerimeterEncloses(items, perimItems); } catch (e) {}
+    perimOwn = !!(verdict && verdict.ok);
+    if (perimOwn) {
+      /* honoured: the claim goes out in the instruction blue. Lines take it
+         through their stroke colour; contour fills through the `pm` flag the
+         painter reads (their look never comes from `c`). Outgoing copies
+         only — the editor keeps its green. And what the verifier had to DO
+         to honour it is said out loud: a healed gap or ink left outside are
+         both things the customer may have meant — or may want to fix — and
+         either way they should hear it from us, not discover it in gold. */
+      perimItems.forEach((it) => { it.c = MK_CUTOUT; it.pm = 1; });
+      try {
+        if (verdict.partial) {
+          toast("Using your outline as the cut edge. Part of the design sits outside " +
+                "it and will be cut away — move the line if that's not what you meant.", "gold");
+        } else if (verdict.healed) {
+          toast("Using your outline as the cut edge — we closed a small gap in the loop for you.", "gold");
+        }
+      } catch (e) {}
+    } else {
+      try {
+        toast(verdict.why === "spill"
+          ? "Your light-green loop only goes around part of the design, so we drew the " +
+            "cut line ourselves. Draw it around everything to use your own."
+          : "Your light-green line doesn't close into a loop — even after bridging its " +
+            "gaps — so we drew the cut line ourselves.", "err");
+      } catch (e) {}
+    }
+  }
   const sil = mkComposeSilhouette(items, S);
   if (!sil) return null;
   const cv = document.createElement("canvas");
@@ -2869,13 +4302,46 @@ async function mkComposeDrawing(S) {
   ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, S, S);
   const LW = Math.max(3, S * 0.0044);
   const body = mkComposeBodyPath(sil, S);
-  /* the hoop: on the body's top edge, directly above the centre of mass */
+  /* ── THE HOOP IS ADDED ONLY TO A CHARM THAT HAS NOT GOT ONE ────────────
+     A sketch is a shape the customer drew. It needs somewhere to hang from,
+     and the studio puts it there: an annulus on the body's top edge, above
+     the centre of mass so the charm hangs level. That is right for
+     everything this studio designs from nothing.
+
+     It is wrong for a charm out of our own repository. That is a finished
+     piece, and its hanging hardware is already in the drawing — traced from
+     the photograph along with everything else. Adding a second one puts two
+     hoops on the production drawing, one above the other, which is exactly
+     what the workshop would then cut.
+
+     ── AND IT IS THE CUSTOMER'S ANSWER NOW, NOT A GUESS ─────────────────
+     This read `!refFromCatalogue()`: a hoop was drawn on everything that
+     did not come out of our own repository. That inference was wrong for a
+     whole class of designs — a charm traced from the customer's own
+     photograph, a hand drawing with a ring already on it, an imported piece
+     with a bail — because "not from the catalogue" says nothing at all
+     about whether the drawing already has somewhere to hang from. Every one
+     of those came back with a second loop above the first.
+
+     The switch on the head row asks the one person who can answer, and it
+     starts OFF, so no drawing gains a hoop nobody asked for. Read from the
+     SAVED design rather than the open editor wherever possible, because the
+     answer belongs to the design; the live editor wins only while it is the
+     one holding this sheet, so a toggle flipped a moment ago is honoured
+     before its save has landed. */
+  const savedDraw = (state.markups || {}).draw || {};
+  const addHoop = (__mk && __mk.key === "draw") ? !!__mk.hoop : !!savedDraw.hoop;
   const R = S * 0.055, hy = sil.top * S - R * 0.55, hx = sil.cx * S;
+  const drawHoop = () => {
+    if (!addHoop) return;
+    ctx.beginPath(); ctx.arc(hx, hy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(hx, hy, R * 0.46, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff"; ctx.fill(); ctx.stroke();
+  };
   ctx.lineWidth = LW; ctx.strokeStyle = MK_CUTOUT; ctx.lineJoin = "round";
-  if (body) ctx.stroke(body);
-  ctx.beginPath(); ctx.arc(hx, hy, R, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath(); ctx.arc(hx, hy, R * 0.46, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff"; ctx.fill(); ctx.stroke();
+  /* a verified customer perimeter IS the cut edge — the generated one stays off */
+  if (body && !perimOwn) ctx.stroke(body);
+  drawHoop();
   /* the artwork itself — the painter already speaks the three colours */
   try { mkPaint(ctx, S, S, items, { export: true }); } catch (e) { return null; }
   /* ── AND IF ONE PICTURE STILL TAINTED THE CANVAS ────────────────────────
@@ -2885,7 +4351,7 @@ async function mkComposeDrawing(S) {
      and on failure the sheet is re-composed without the pictures: their
      geometry is gone, but every engraving instruction, every drawn shape and
      the silhouette all survive, and the customer is told which happened. */
-  let url = "", tainted = prepared.tainted;
+  let url = "", tainted = false;
   try {
     url = cv.toDataURL("image/png");
   } catch (e) {
@@ -2893,57 +4359,20 @@ async function mkComposeDrawing(S) {
     const safe = items.filter((it) => it.t !== "img");
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, S, S);
     ctx.lineWidth = LW; ctx.strokeStyle = MK_CUTOUT; ctx.lineJoin = "round";
-    if (body) ctx.stroke(body);
-    ctx.beginPath(); ctx.arc(hx, hy, R, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(hx, hy, R * 0.46, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff"; ctx.fill(); ctx.stroke();
+    if (body && !perimOwn) ctx.stroke(body);
+    drawHoop();
     try { mkPaint(ctx, S, S, safe, { export: true }); } catch (e2) { return null; }
     try { url = cv.toDataURL("image/png"); } catch (e2) { return null; }
   }
-  return mkFrameDeterministic({ cv, items, url, tainted });
-}
-
-/* Preview framing is independent of the editor's millimetres, zoom and sheet
-   margins. Fit ALL visible artwork, including its hoop, inside an 82% box.
-   Measure painted pixels so rotated layers, text and raster whitespace count
-   correctly. Apply the same uniform transform to the saved editable layers;
-   their local eraser/mask coordinates and relative proportions stay intact. */
-const MK_PREVIEW_FILL = 0.82;
-function mkFrameDeterministic(made, fill = MK_PREVIEW_FILL) {
-  const { cv } = made, W = cv.width, H = cv.height;
-  const d = cv.getContext("2d").getImageData(0, 0, W, H).data;
-  let x0 = W, y0 = H, x1 = -1, y1 = -1;
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const p = (y * W + x) * 4;
-    if (d[p + 3] && Math.min(d[p], d[p + 1], d[p + 2]) < 245) {
-      x0 = Math.min(x0, x); y0 = Math.min(y0, y);
-      x1 = Math.max(x1, x); y1 = Math.max(y1, y);
-    }
-  }
-  if (x1 < x0 || y1 < y0) return made;
-  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-  const scale = Math.min(W * fill / bw, H * fill / bh);
-  const tx = (W - bw * scale) / 2 - x0 * scale;
-  const ty = (H - bh * scale) / 2 - y0 * scale;
-  const out = document.createElement("canvas");
-  out.width = W; out.height = H;
-  const ctx = out.getContext("2d");
-  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
-  ctx.drawImage(cv, x0, y0, bw, bh,
-    (W - bw * scale) / 2, (H - bh * scale) / 2, bw * scale, bh * scale);
-  const items = made.items.map((it) => {
-    const one = mkPack(it);
-    one.p = one.p.map((v, i) => v * scale + (i % 2 ? ty / H : tx / W));
-    one.w *= scale; one.fs *= scale;
-    return one;
-  });
-  return { cv: out, items, url: out.toDataURL("image/png"), tainted: made.tainted };
+  /* addHoop travels with the picture so the version document can record the
+     SAME answer the sheet was drawn with — see builtInHoop at the filing */
+  return { cv, items, url, tainted, addHoop };
 }
 
 /* A deterministic export of ANY studio sheet. Used when a marked-up drawing
    is in “Exactly as drawn” mode: the updated drawing itself becomes the next
    B/W version, with no model involved and no opportunity to reinterpret it. */
-async function mkItemsToDataUrl(items, SIZE, fill = MK_PREVIEW_FILL) {
+async function mkItemsToDataUrl(items, SIZE) {
   const list = (items || []).map(mkPack);
   if (!list.length) return null;
   try { await mkAwaitImages(list, 12000); } catch (e) { /* paint what we have */ }
@@ -2955,12 +4384,12 @@ async function mkItemsToDataUrl(items, SIZE, fill = MK_PREVIEW_FILL) {
   try { mkPaint(ctx, SIZE, SIZE, list, { export: true }); }
   catch (e) { return null; }
   try {
-    return mkFrameDeterministic({ cv, items: list, url: cv.toDataURL("image/png"), tainted: false }, fill);
+    return { cv, items: list, url: cv.toDataURL("image/png"), tainted: false };
   } catch (e) {
     const safe = list.filter((it) => it.t !== "img");
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, SIZE, SIZE);
     try { mkPaint(ctx, SIZE, SIZE, safe, { export: true }); } catch (e2) { return null; }
-    try { return mkFrameDeterministic({ cv, items: safe, url: cv.toDataURL("image/png"), tainted: true }, fill); }
+    try { return { cv, items: safe, url: cv.toDataURL("image/png"), tainted: true }; }
     catch (e2) { return null; }
   }
 }
@@ -2971,7 +4400,7 @@ async function runComposedGeneration(ctx) {
   if (genBusy) { SD("compose: BLOCKED — genBusy"); return; }
   if (uploadsLeft() <= 0) {
     SD("compose: BLOCKED — no upload slots left");
-    if (!state.user) openAuth("outOfCredits"); else openPricing("out");
+    if (!state.user) openAuth("outOfUploads"); else openPricing("out");
     return;
   }
   const sess = ensureSession();
@@ -2987,7 +4416,9 @@ async function runComposedGeneration(ctx) {
   try {
     $("#sendBtn").disabled = true;
     const se = $("#stageEmpty"); if (se) se.style.display = "none";
-    prog = genProgress();
+    prog = genProgress(GEN_STAGES, STAGE_INDEX,
+                       { onPct: (p, t) => { relayMark("bw", "work", p);
+                       if (__relay.on) relayBar(1, t || "Drawing your charm", p); } });
     prog.start();
     SD("compose: painting the sheet");
     const made = (ctx && Array.isArray(ctx.items) && ctx.items.length)
@@ -3022,9 +4453,22 @@ async function runComposedGeneration(ctx) {
        So this call is made explicitly rather than through the shared
        transport: its URL is logged, it is aborted after 45 seconds, and the
        raw status and body are reported whatever happens. */
+    /* ── THE FILL PLAN GOES WITH THE DRAWING, NOT AFTER IT ────────────────
+       This was computed a few lines below, when the version object was
+       built, and never sent. It did not matter while the render rebuilt the
+       greyscale map from the plan riding on its own request; it matters now,
+       because the map filed here is the map the render sends.
+
+       Composing is the one route where the studio KNOWS every cut-out
+       exactly — it placed the items itself — so sending nothing was the
+       worst possible silence: studioSpecCutMask fell through to its
+       image-only fill detector on the drawing whose fills were the least
+       ambiguous in the whole studio. Same list, computed once, used for both
+       the request and the version. */
+    const composedZones = zoneList(mkZonesPayload(made.items), "compose");
     const url = `${FN_BASE_IMAGE}/${IMAGE_FN}`;
     SD("compose: filing version", n, "→ POST", url,
-       "(" + Math.round(made.url.length / 1024) + " KB)");
+       "(" + Math.round(made.url.length / 1024) + " KB, zones=" + composedZones.length + ")");
     const tok = await idToken();
     const ctl = new AbortController();
     const abort = setTimeout(() => ctl.abort(), 45000);
@@ -3039,6 +4483,7 @@ async function runComposedGeneration(ctx) {
           sessionId: sess.id,
           versionNumber: n,
           dataUrl: made.url,
+          zones: composedZones,
         }),
         signal: ctl.signal,
       });
@@ -3067,8 +4512,40 @@ async function runComposedGeneration(ctx) {
     }
     const v = {
       n, kind: "bw", composed: 1,
-      zones: mkZonesPayload(made.items).slice(0, 40),
+      zones: composedZones,
+      /* ── THE HOOP ANSWER, RECORDED WHERE IT WAS DECIDED ────────────────
+         mkComposeDrawing asked refFromCatalogue() to decide whether to draw
+         a hanging loop, and runRender asks it AGAIN, later, to decide which
+         hoop sentence the renderer is given. Two live reads of mutable
+         state, so a customer who changes their reference between drawing
+         and rendering gets a drawing with a studio hoop on it and a prompt
+         insisting the hardware is already on the piece — or the reverse.
+         The picture and the words about it then disagree, which is exactly
+         what the one-pipeline rule set out to make impossible.
+
+         The answer belongs to the DRAWING, so it is written down with the
+         drawing and the render reads it from there.
+
+         AND IT IS THE SAME ANSWER THE PICTURE WAS DRAWN WITH. It used to be
+         a second live read of refFromCatalogue(), which could differ from
+         what mkComposeDrawing had just decided. It now comes back from the
+         compose itself: if the studio drew a hoop, the hardware is OURS and
+         integrated (builtInHoop false); if it drew none, whatever hangs off
+         this charm is already in the drawing and must be reproduced as
+         found (true). The picture and the words about it cannot disagree.
+
+         "Exactly as drawn" composes through mkItemsToDataUrl, which adds no
+         hoop of its own and reports none — so it lands on `true`, which is
+         the right reading of a sheet the studio did not touch. */
+      builtInHoop: !(made && made.addHoop),
       url: up.downloadURL, path: up.storagePath || "",
+      /* The Greyscale Mask, which this route is the only one that has to ask
+         for by hand: composing files the drawing synchronously, so there is
+         no version-doc snapshot for watchVersion to read specURL off. It was
+         being built and filed server-side and then never mentioned, and a
+         composed design showed no Greyscale Mask tab at all. */
+      renderSpecUrl: up.specURL || "",
+      renderSpecPath: up.specPath || "",
       src: (ctx && ctx.fromMarkup) ? "ai" : "ref",
       label: (ctx && ctx.label) || "Generated",
       instructions: state.desc,
@@ -3088,7 +4565,7 @@ async function runComposedGeneration(ctx) {
       if (!sess.markups) sess.markups = {};
       sess.markups[String(n)] = {
         items: made.items.map(mkPack), traced: 1, dirty: 0,
-        plan: v.zones.slice(0, 40), mode: "exact",
+        plan: zoneList(v.zones, "markupPlan"), mode: "exact",
         crop: [], baseRot: 0, guides: 0, gridN: 12, groups: [],
       };
       await orphanVersion(sess, v, msg);
@@ -3125,7 +4602,7 @@ async function runComposedGeneration(ctx) {
     if (!state.markups) state.markups = {};
     state.markups[String(n)] = {
       items: made.items.map(mkPack), traced: 1, dirty: 0,
-      plan: v.zones.slice(0, 40), mode: "exact",
+      plan: zoneList(v.zones, "markupPlan"), mode: "exact",
       crop: [], baseRot: 0, guides: 0, gridN: 12, groups: [],
     };
     saveSession();
@@ -3169,7 +4646,354 @@ async function runComposedGeneration(ctx) {
   }
 }
 
+/* ═══════════════ THE RELAY ═══════════════════════════════════════════════
+   A charm is made in three passes and they always ran as three separate
+   decisions: press send, wait, look, press "see it in metal", wait, look.
+   Two of those presses were the customer being asked to confirm something
+   they had already asked for by pressing Next.
+
+   So Next starts the relay and the relay runs itself: the drawing, then the
+   greyscale mask the workshop is actually instructed with, then the metal.
+   Nothing is hidden — each pass says what it is doing IN the button that
+   will hold its result, so the customer watches three things fill up rather
+   than one spinner spinning three times.
+
+   WHAT THE BUTTONS SAY:
+     wait   the pass has not started — the button is there, and quiet
+     work   this pass is running — a translucent bar fills across the button
+            behind its label, so the name never goes away
+     ready  the picture exists — the button lights and becomes pressable
+
+   The big overlay belongs to the DRAWING and to nothing else. Once a drawing
+   is on screen, covering it to make the metal covers the very thing the
+   customer is waiting to compare the metal against.
+
+   HONESTY ABOUT PASS TWO. The greyscale mask is built by the server inside
+   the drawing's own pass — that is deliberate, it is what lets somebody see
+   both pictures before paying for a render — so it finishes a beat after the
+   drawing rather than after a wait of its own. Its button reports what is
+   actually true rather than performing a delay that isn't. */
+const MK_RELAY_KEYS = { bw: "#toggleBW", spec: "#toggleSpec", gold: "#toggleCharm" };
+const __relay = { on: false, bw: "wait", spec: "wait", gold: "wait",
+                  pct: { bw: 0, spec: 0, gold: 0 },
+                  wait: { bw: false, spec: false, gold: false } };
+
+function relayMark(key, st, pct) {
+  if (!MK_RELAY_KEYS[key]) return;
+  __relay[key] = st;
+  /* a "work" with no percentage is a pass with nothing honest to count — the
+     greyscale, which the browser waits for rather than measures. Its button
+     shuttles, the same answer the strip gives, instead of sitting at 0% and
+     looking like a pass that never started. */
+  __relay.wait[key] = (st === "work" && typeof pct !== "number");
+  if (typeof pct === "number") __relay.pct[key] = Math.max(0, Math.min(100, pct));
+  if (st !== "work") __relay.pct[key] = st === "ready" ? 100 : 0;
+  relayPaint();
+}
+
+/* ── WHICH OF THE THREE PICTURES EXIST ───────────────────────────────────
+   ONE test, used by the relay AND by renderStage, because the first version
+   of this had its own copy and the copy was wrong: it looked for `specURL`
+   and `renderURL` when the stage reads `renderSpecUrl` and `renderUrl`. The
+   fields are real — they are just not these ones — so nothing threw. The
+   greyscale and the charm simply never became ready, sat greyed out next to
+   a Drawing button that was, and read as one dead button with the drawing
+   attached to it. Meanwhile renderStage, using the RIGHT fields, went ahead
+   and put the render on the stage — so the picture changed and the controls
+   said it hadn't.
+
+   A second copy of a rule is a second chance to get it wrong. There is one
+   copy now and both callers read it. */
+function mkViewHave(v) {
+  v = v || state.versions[state.currentVersion] || null;
+  return {
+    bw:   !!(v && v.url),
+    spec: !!(v && (v.renderSpecUrl || v.renderSpecURL)),
+    gold: !!(v && v.renderUrl),
+  };
+}
+
+/* The truth comes off the version, not off the flags: a picture that exists
+   is READY whatever the relay believed, so a reload, a version switch or a
+   design opened from My Designs all show the right thing without the relay
+   having run at all. */
+function relayPaint() {
+  const have = mkViewHave();
+  Object.keys(MK_RELAY_KEYS).forEach((k) => {
+    const el = $(MK_RELAY_KEYS[k]);
+    if (!el) return;
+    const st = have[k] ? "ready" : (__relay[k] === "work" ? "work" : "wait");
+    el.dataset.relay = st;
+    el.classList.toggle("is-waiting", st === "work" && !!__relay.wait[k]);
+    el.style.setProperty("--p", (have[k] ? 100 : __relay.pct[k] || 0) + "%");
+    /* not disabled — a disabled button loses its tooltip and its focus ring.
+       aria-disabled says the same thing and the click handler honours it. */
+    el.setAttribute("aria-disabled", st === "ready" ? "false" : "true");
+  });
+}
+
+function relayReady(key) {
+  return !!mkViewHave()[key];
+}
+
+/* ── the sequence itself ─────────────────────────────────────────────────
+   Guarded three ways: one at a time, only on step 2, and only when there is
+   nothing already drawn — pressing Back and Next again must not spend a
+   second credit on a design that already has its drawing. */
+/* ── THE STRIP ALONG THE BOTTOM OF THE FRAME ─────────────────────────────
+   pct === null means "working, with nothing honest to count" — the bar
+   shuttles rather than inventing a number. See .gen-relay.is-waiting. */
+/* `of` is the denominator and defaults to the relay's three passes. A step
+   of 0 or null hides the counter altogether — some jobs are one job, and
+   "1 / 1" beside a bar is a number that answers nothing. */
+function relayBar(step, what, pct, of) {
+  const el = $("#genRelay"); if (!el) return;
+  el.hidden = false;
+  const st = $("#genRelayStep"), wh = $("#genRelayWhat"),
+        pc = $("#genRelayPct"), fi = $("#genRelayFill");
+  if (st) {
+    st.hidden = !step;
+    if (step) st.textContent = step + " / " + (Number(of) || 3);
+  }
+  if (wh) wh.textContent = what;
+  const waiting = (pct == null);
+  el.classList.toggle("is-waiting", waiting);
+  if (pc) pc.textContent = waiting ? "" : Math.round(pct) + "%";
+  if (fi && !waiting) fi.style.width = Math.max(0, Math.min(100, pct)) + "%";
+}
+function relayBarHide() {
+  const el = $("#genRelay"); if (!el) return;
+  el.hidden = true; el.classList.remove("is-waiting");
+  const st = $("#genRelayStep"); if (st) st.hidden = false;
+  const fi = $("#genRelayFill"); if (fi) fi.style.width = "0%";
+}
+
+/* ── THE MASK THE SERVER ALREADY BUILT ───────────────────────────────────
+   The greyscale is filed during the DRAWING's pass, not the render's — that
+   is deliberate, it is what lets somebody see both pictures before paying
+   for metal. But the compose route files its drawing synchronously and the
+   reply it gets back does not always carry the mask's URL, so the browser
+   ended up with an empty renderSpecUrl and the Greyscale segment stayed dark
+   until the render happened to fill it in. Which is exactly what was seen:
+   two of the three pictures arriving together, at the end.
+
+   The picture is already there. This asks the version doc for it — briefly,
+   and only when it is missing — and lights the segment the moment it lands. */
+async function mkSpecCatchUp(v, ep) {
+  if (!v) return false;
+  if (v.renderSpecUrl || v.renderSpecURL) return true;
+  const sess = activeSession(); if (!sess) return false;
+  for (let i = 0; i < 6; i++) {
+    await new Promise((r) => setTimeout(r, i ? 900 : 2500));
+    if (!sameProject(ep)) return false;
+    let d = null;
+    try {
+      const r = await postAuthed(IMAGE_FN,
+        { kind: "custom_session_status", sessionId: sess.id, versionNumber: v.n }, FN_BASE_IMAGE);
+      d = r && r.version;
+    } catch (e) { continue; }
+    const u = d && (d.specURL || d.renderSpecURL);
+    if (u) {
+      v.renderSpecUrl = u;
+      v.renderSpecPath = (d.specPath || d.renderSpecPath || "");
+      SD("relay: greyscale mask caught up on v" + v.n);
+      saveSession();
+      return true;
+    }
+  }
+  return false;
+}
+
+let __relayRunning = false;
+async function runRelay(opts) {
+  opts = opts || {};
+  /* opts.redraw — a function that produces the NEW drawing. Pressing Re-draw
+     in the mark-up modal is the same act as pressing Next: a new version is
+     being made, and a new version needs all three pictures, not one. The
+     caller hands the relay its first pass and the other two follow exactly
+     as they do on the way in. */
+  const redraw = typeof opts.redraw === "function" ? opts.redraw : null;
+  if (__relayRunning || genBusy || renderBusy) return;
+  if (state.step !== 2 || !state.reference) return;
+  /* ── "FROM OUR DESIGNS" STARTS BY DOING NOTHING AT ALL ─────────────────
+     A charm chosen from the catalogue is already a charm, so pressing Next
+     has nothing to make. Running the relay on it would draw a production
+     drawing of a photograph of a charm the workshop already makes, derive a
+     map from that drawing and render the metal back — three model calls and
+     two credits to arrive at an approximation of what the customer was
+     already looking at.
+
+     It does not adopt it either. The design the customer picked is simply
+     shown on the stage, and NOTHING is written, spent or generated until
+     they ask for a change with the gold arrow. Somebody who chose one of
+     ours, looked at it on the big preview and went back to browse should
+     cost the workshop precisely nothing. */
+  if (!redraw && state.reference.type === "catalog") return;
+  /* the "already drawn" guard is for the ARRIVAL relay only — a re-draw is
+     asking for a new version precisely because one already exists */
+  if (!redraw && state.versions.length) return;
+
+  __relayRunning = true;
+  __relay.on = true;
+  const ep = epochNow();
+  try {
+    /* ── pass one: the drawing ── */
+    if (redraw) {
+      relayMark("bw", "work", 0);
+      relayMark("spec", "wait"); relayMark("gold", "wait");
+      relayBar(1, "Re-drawing your charm", 0);
+      try { renderStage(); } catch (e) {}
+      await redraw();
+      if (!sameProject(ep)) return;
+    } else if (!state.versions.length) {
+      relayMark("bw", "work", 0);
+      relayBar(1, "Drawing your charm", 0);
+      try { renderStage(); } catch (e) {}
+      pushMsg({ role: "thinking", text: "Reading your inspiration…" });
+      renderThread(); saveSession();
+      logEvent("generate", "Generated from the reference");
+      await runGeneration("Generated", "");
+      if (!sameProject(ep)) return;
+    }
+    relayMark("bw", relayReady("bw") ? "ready" : "wait");
+    if (!relayReady("bw")) return;             /* the drawing failed; stop here */
+    try { renderStage(); } catch (e) {}        /* the drawing lands NOW, alone */
+
+    /* ── pass two: the greyscale mask ──
+       Already built by the server; the browser is waiting for it to appear,
+       not measuring it — so the bar shuttles rather than counting. */
+    if (!relayReady("spec")) {
+      relayMark("spec", "work");
+      relayBar(2, "Building the greyscale mask", null);
+      await mkSpecCatchUp(state.versions[state.currentVersion], ep);
+      if (!sameProject(ep)) return;
+    }
+    relayMark("spec", relayReady("spec") ? "ready" : "wait");
+    try { renderStage(); } catch (e) {}        /* and now the mask, on its own */
+
+    /* ── pass three: the metal ──
+       It costs a credit, so it is the one pass the relay will decline to
+       start on somebody's behalf. Out of credits means the button lights up
+       and waits to be pressed rather than the paywall arriving unasked in
+       the middle of a sequence nobody chose to pay for. */
+    if (relayReady("gold")) return;
+    const cost = renderCost();
+    if (!state.unlimited && state.credits < cost) {
+      relayMark("gold", "wait");
+      toast("Your drawing is ready — press “See it in metal” when you have a credit.", "gold");
+      return;
+    }
+    relayMark("gold", "work", 0);
+    relayBar(3, "Cutting the metal", 0);
+    await runRender();
+    if (!sameProject(ep)) return;
+    relayMark("gold", relayReady("gold") ? "ready" : "wait");
+    if (relayReady("gold")) {
+      state.stageView = "charm";
+      try { renderStage(); } catch (e) {}
+    }
+  } finally {
+    __relayRunning = false;
+    __relay.on = false;
+    relayBarHide();
+    /* whatever happened, the buttons tell the truth about what exists */
+    relayMark("bw", "wait"); relayMark("spec", "wait"); relayMark("gold", "wait");
+    try { renderStage(); } catch (e) {}
+  }
+}
+
+/* ── the catalogue charm becomes version 1 ────────────────────────────────
+   No model, no credit, no drawing and no map. The map is derived later,
+   backwards, from whatever gold the customer finally approves — which is
+   the whole reason it is not derived now: a design that is going to be
+   edited four more times would pay for five of them. */
+async function runAdoptCatalog(opts) {
+  /* ── SILENT WHEN IT IS THE FIRST HALF OF SOMETHING ELSE ───────────────
+     Adopting is a step the customer never asked for: it happens inside
+     their first "change the gold" request. Run with its own progress bar
+     and its own repaint it finished, revealed the unedited charm for a
+     moment, and then the gold edit's overlay came back down over it — a
+     flicker that reads as the studio changing its mind. Silent, the whole
+     thing is one operation with one bar, which is what it is. */
+  const silent = !!(opts && opts.silent);
+  const r = state.reference;
+  if (!r || r.type !== "catalog" || !r.item) return;
+  const imageUrl = catalogImageUrl(r.item);
+  if (!imageUrl) {
+    SD("adopt: unusable catalogue image", JSON.stringify(String(r.item.image || "").slice(0, 120)));
+    toast("That design has no picture we can use — pick another.", "err"); return;
+  }
+  SD("adopt: catalogue image →", imageUrl.slice(0, 140));
+  if (genBusy || renderBusy) return;
+  genBusy = true;
+  const ep = epochNow();
+  const sess = ensureSession();
+  let prog = null;
+  try {
+    if (!silent) {
+      prog = genProgress([["Fetching your chosen design…", 40],
+                          ["Setting it up to change…", 90]], 0, {});
+      prog.start();
+    }
+    await flushSession();
+    if (!sameProject(ep)) return;
+    const res = await postAuthed(IMAGE_FN, {
+      kind: "custom_charm_adopt",
+      sessionId: sess.id,
+      versionNumber: (state.versions.length || 0) + 1,
+      imageUrl,
+      title: r.item.title || "",
+      productGid: r.item.gid || r.item.id || "",
+      metal: state.metal,
+    }, FN_BASE_IMAGE);
+    if (!res || !res.ok) throw new Error((res && res.error) || "adopt_failed");
+    if (!sameProject(ep)) return;
+    const v = {
+      n: res.n,
+      /* deliberately empty: there is no production drawing behind a
+         catalogue charm, and renderStage reads the absence */
+      url: "", storagePath: "",
+      renderUrl: res.renderURL, renderPath: res.renderPath,
+      renderSpecUrl: "", renderSpecPath: "",
+      renderMetal: res.renderMetal || state.metal,
+      renderCost: 0,
+      source: "catalog",
+      src: "catalog",
+      label: r.item.title || "From our designs",
+      instructions: "",
+      at: now(),
+    };
+    state.versions.push(v);
+    state.currentVersion = state.versions.length - 1;
+    state.stageView = "charm";
+    if (prog) await prog.finish();
+    /* No message in the thread. This is not a step the customer asked for
+       or should have to read about — it happens inside their first request,
+       and the answer to that request is the one thing worth saying. */
+    logEvent("adopt", `Started from our design: ${r.item.title || ""}`, v.n);
+    saveSession();
+    /* silent: no repaint either. The charm about to be edited must not be
+       shown and then covered again — the next thing on screen should be the
+       edit's own progress, and after it the edited charm. */
+    if (!silent) renderStage();
+    return true;
+  } catch (e) {
+    SD("adopt: FAILED —", (e && e.message) || e);
+    if (prog) { try { prog.abort(); } catch (_e) {} }
+    toast("We couldn't open that design just now — try it again.", "err");
+    return false;
+  } finally {
+    genBusy = false;
+    if (!silent) { try { renderStage(); } catch (e) {} }
+  }
+}
+
 async function runGeneration(label, extraDesc = "", opts) {
+  /* mkComposeEligible below reads state.markups, and mkTouch defers writing
+     it — so the deferred write lands BEFORE the route is chosen rather than
+     after it, which is the difference between composing the drawing that is
+     on the sheet and composing the one that was there a moment ago. */
+  try { mkTouchFlush(); } catch (e) {}
   SD("runGeneration:", label, "fromReference=" + !!(opts && opts.fromReference));
   if (genBusy) {
     SD("runGeneration: BLOCKED — genBusy already true");
@@ -3205,7 +5029,9 @@ async function runGeneration(label, extraDesc = "", opts) {
      model the very output it is meant to be replacing. */
   const fromRef = !!(opts && opts.fromReference);
   const refine = !fromRef && label === "Refined" && state.versions.length > 0;
-  const prog = genProgress();
+  const prog = genProgress(GEN_STAGES, STAGE_INDEX,
+                          { onPct: (p, t) => { relayMark("bw", "work", p);
+                       if (__relay.on) relayBar(1, t || "Drawing your charm", p); } });
   prog.start();
 
   const watch = watchVersion(sess.id, n, prog);
@@ -3229,7 +5055,7 @@ async function runGeneration(label, extraDesc = "", opts) {
     /* when the reference is the customer's OWN sketch, their exact/interpret
        choice from the sketchpad travels with the generation */
     const refMode = (state.reference && state.reference.drawn)
-      ? ((((state.markups || {}).draw || {}).mode === "exact") ? "exact" : "interpret")
+      ? mkModeNorm(((state.markups || {}).draw || {}).mode)
       : undefined;
     /* ── THE FILL LAW HAS TO TRAVEL WITH THE SKETCH ────────────────────
        When the customer draws their own charm, "use this as my reference"
@@ -3253,7 +5079,7 @@ async function runGeneration(label, extraDesc = "", opts) {
        the plan of the drawing this one is replacing */
     planZones = fromRef ? ((state.reference && Array.isArray(state.reference.zones)
                             && state.reference.zones.length)
-                             ? state.reference.zones.slice(0, 40)
+                             ? zoneList(state.reference.zones, "refZones")
                              : mkFillPlan(null))
                         : mkFillPlan(state.versions[state.currentVersion]);
     if (!planZones.length && state.reference && !state.reference.drawn) {
@@ -3341,9 +5167,19 @@ async function runGeneration(label, extraDesc = "", opts) {
     kind: "bw",                     // the design step draws; the render step manufactures
     /* THE FILL PLAN TRAVELS WITH THE DRAWING IT MADE. This is what stops the
        three instructions dying at the moment a design becomes black ink. */
-    zones: (planZones || []).slice(0, 40),
+    zones: zoneList(planZones, "drawingRequest"),
+    /* what was true about the hoop when this drawing was made — see the note
+       in runComposedGeneration; the render reads it from here rather than
+       asking the live reference again minutes later */
+    builtInHoop: refFromCatalogue(),
     url: result.downloadURL || result.url,
     path: result.storagePath || result.path,
+    /* The Greyscale Mask is now built when the DRAWING is, not when the
+       render is, so both pictures exist before anyone pays for metal. The
+       stored field keeps its renderSpec* name — that is the data key, not
+       the label, and renaming it would orphan every version doc. */
+    renderSpecUrl: result.specURL || result.renderSpecURL || "",
+    renderSpecPath: result.specPath || result.renderSpecPath || "",
     metal: state.metal,
     label,
     instructions: state.desc,
@@ -3397,12 +5233,17 @@ async function runGeneration(label, extraDesc = "", opts) {
   $("#descInput").focus();
 }
 
-/* The gold-mask segment lives in the section markup. This exists only for a
-   browser holding a CACHED copy of the older liquid, which had two segments
-   and no third: without it the mask would be unreachable on that page rather
-   than merely unstyled. It uses the SAME class as its siblings — an earlier
-   version built it with a class the stylesheet has never contained, so it
-   rendered as unstyled body text between two segmented buttons. */
+/* The Greyscale Mask segment lives in the section markup. This exists only
+   for a browser holding a CACHED copy of the older liquid, which had two
+   segments and no third: without it the mask would be unreachable on that
+   page rather than merely unstyled. It uses the SAME class as its siblings —
+   an earlier version built it with a class the stylesheet has never
+   contained, so it rendered as unstyled body text between two segmented
+   buttons.
+
+   THE LABEL IS DUPLICATED HERE ON PURPOSE, and it is the one place a rename
+   can be missed: a cached page never gets the new liquid, so this fallback
+   is what that visitor reads. It must say what the markup says. */
 function ensureSpecToggle() {
   const wrap = $("#pairToggle");
   if (!wrap || $("#toggleSpec")) return;
@@ -3412,8 +5253,8 @@ function ensureSpecToggle() {
   b.className = "pair-toggle__b";
   b.setAttribute("role", "tab");
   b.setAttribute("aria-selected", "false");
-  b.title = "The gold mask — the exact instruction image sent to the renderer.";
-  b.innerHTML = "Gold&nbsp;mask";
+  b.title = "The Greyscale Mask — the exact instruction image sent to the renderer.";
+  b.innerHTML = "Greyscale";
   b.hidden = true;
   const bw = $("#toggleBW");
   if (bw && bw.nextSibling) wrap.insertBefore(b, bw.nextSibling);
@@ -3421,7 +5262,96 @@ function ensureSpecToggle() {
   b.addEventListener("click", () => { state.stageView = "spec"; renderStage(); });
 }
 
+/* ═══════════ WHAT THE ARROW DOES RIGHT NOW ═══════════════════════════════
+   The composer's send button has two jobs and the customer has to be able to
+   tell which one is loaded without pressing it. One function decides, and
+   both the routing in sendMessage and the paint below read it — a mode the
+   screen describes differently from the way it behaves is worse than a mode
+   with no description at all.
+
+   THE RULE: metal on this version means the arrow edits the metal.
+
+   THE ONE CARVE-OUT: marks THE CUSTOMER PUT THERE. A marked-up sheet is an
+   unambiguous instruction aimed at the DRAWING — they drew on it, in the
+   drawing's own language, about the drawing's own geometry — and quietly
+   feeding that to a gold edit would throw the marks away. It is also what
+   keeps the design step reachable at all once a charm exists: mark up, send,
+   and the studio draws again.
+
+   AND markupHasContent IS NOT THAT TEST. Every drawing is taken apart into
+   layers a second or two after it arrives — traceVersionSoon — so
+   state.markups[v.n] is populated with items on EVERY version whether or not
+   anybody has touched it, and markupHasContent is true from then on. Written
+   against that, the carve-out would swallow the whole feature: the arrow
+   would never once enter gold mode, the gold button and the mode line would
+   never appear, and the customer's "make the wings a little longer" would go
+   straight back through the design step — the exact outcome this exists to
+   stop, and silently.
+
+   `traced && !dirty` is the studio's existing name for a sheet nobody has
+   touched: regenerateFromMarkup refuses on it, mkAuditNote returns null on
+   it, and mkFillPlan calls it not meaningful. Same test here. */
+function markupIsCustomerDirected(m) {
+  if (!markupHasContent(m)) return false;
+  if (m && m.traced && !m.dirty) return false;      // an untouched auto-trace
+  return true;
+}
+function goldEditMode() {
+  /* ── ONE OF OUR OWN DESIGNS IS ALWAYS A GOLD EDIT ─────────────────────
+     Nothing is filed when the customer arrives with a catalogue charm, so
+     there is no version to read metal off — but the arrow's job is already
+     decided: the only thing it can do to a finished charm is change it.
+     Saying so from the moment they land is what makes the gold arrow and
+     the "Change the gold" placeholder correct on the first screen rather
+     than after the first press. */
+  if (state.reference && state.reference.type === "catalog" && !state.versions.length) return true;
+  const v = state.versions[state.currentVersion];
+  if (!v || !v.renderUrl) return false;
+  /* ── THE MARK-UP CARVE-OUT NEEDS A DRAWING TO CARVE OUT TO ────────────
+     Marks normally mean "change the design", which is why they send the
+     arrow back to the drawing step. That is only an option when there IS a
+     drawing. On a charm adopted from our own catalogue there is nothing to
+     redraw, so marks are not a different job — they are direction for the
+     same one, and they ride along with the gold edit. */
+  if (v.url && markupIsCustomerDirected((state.markups || {})[v.n])) return false;
+  return true;
+}
+
+/* ensureComposerNote() used to build the "Editing the gold" note when a
+   cached page had no element for it. Both the note and its builder are gone:
+   the mode is said by the gold arrow, the placeholder and .bj-gold-edit, and
+   a fourth telling was costing three lines of the conversation's column. */
+
+function paintComposerMode() {
+  const t = $("#descInput"); if (!t) return;
+  const gold = goldEditMode();
+  ROOT.classList.toggle("bj-gold-edit", gold);
+  const sb = $("#sendBtn");
+  if (sb) {
+    sb.classList.toggle("is-gold", gold);
+    sb.title = gold ? "Change the gold (Enter)" : "Send (Enter)";
+    sb.setAttribute("aria-label", gold ? "Change the gold charm" : "Send");
+  }
+  t.placeholder = gold
+    ? "Change the gold — e.g. “make the wings a little longer”"
+    : "Describe your charm — or just press send";
+  /* ── THE PARAGRAPH IS GONE ────────────────────────────────────────────
+     Three lines under the composer explaining that the arrow now edits the
+     gold — in a column where every line costs the conversation above it.
+     The mode was already being said three other ways at the same time: the
+     send arrow turns gold, the placeholder says "Change the gold" with an
+     example in it, and the root carries .bj-gold-edit. A fourth telling, in
+     the most expensive space on the panel, was the one that could go.
+
+     The element is still emptied rather than merely hidden, so a cached page
+     that has one in its markup does not keep a stale sentence on screen. */
+  const note = $("#composerMode");
+  if (note) { note.hidden = true; note.innerHTML = ""; }
+}
+
 function renderStage() {
+  /* the scores follow whichever version is on the stage */
+  try { qaPaint(); } catch (e) {}
   const stage = $("#stage");
   /* the reference chip sits on the stage now, so the stage refreshes it —
      one owner, and no path that changes the reference can leave it stale */
@@ -3436,19 +5366,33 @@ function renderStage() {
        didn't take"; the reference itself, faded behind the invitation, says
        plainly which image the next generation will be built on. */
     const ref = state.reference;
-    const refImg = ref ? (ref.type === "catalog" ? (ref.item && ref.item.image) : ref.url) : "";
+    /* ── ONE OF OURS IS NOT A REFERENCE, IT IS THE DESIGN ─────────────────
+       A photograph a customer uploaded is something the studio will DESIGN
+       from, so it sits faded behind an invitation to describe what they
+       want — the picture is context, not the product. A charm chosen from
+       our own catalogue is the opposite: it is the finished piece, and the
+       only thing being asked is what to change about it. Fading it and
+       captioning it "designing from this" would be describing work that is
+       not going to happen. It is shown properly, at full strength, because
+       it IS the answer until the customer asks for a different one. */
+    const isOurs = !!(ref && ref.type === "catalog");
+    const refImg = ref ? (isOurs ? catalogImageUrl(ref.item) || (ref.item && ref.item.image) : ref.url) : "";
     if (refImg) {
       const holder0 = document.createElement("div");
-      holder0.className = "result stage-refpreview";
+      holder0.className = "result stage-refpreview" + (isOurs ? " stage-refpreview--ours" : "");
       holder0.innerHTML = `<img src="${attrText(refImg)}" alt="${attrText(refName() || "Your reference")}">`;
       stage.appendChild(holder0);
     }
     stage.classList.toggle("stage--refonly", !!refImg);
+    stage.classList.toggle("stage--ours", !!refImg && isOurs);
     $("#stageEmpty").style.display = "block";
-    $("#stageEmptyMsg").textContent = refImg ? "Designing from this" : "Your charm appears here";
-    $("#stageEmptySub").textContent = state.reference
-      ? "Describe it in the conversation to begin"
-      : "Pick a reference to begin";
+    $("#stageEmptyMsg").textContent = isOurs ? (refName() || "Your design")
+                                    : refImg ? "Designing from this" : "Your charm appears here";
+    $("#stageEmptySub").textContent = isOurs
+      ? "Tell us what to change about the gold"
+      : state.reference
+        ? "Describe it in the conversation to begin"
+        : "Pick a reference to begin";
     flag.classList.remove("is-visible");
     $("#railVersion").innerHTML = "";
     $("#versionStrip").innerHTML = "";
@@ -3460,21 +5404,60 @@ function renderStage() {
       if (grid0) grid0.classList.remove("has-rail");
     }
     stage.classList.remove("stage--paper");
+    paintComposerMode();
     updateNavArrows();
     return;
   }
 
   $("#stageEmpty").style.display = "none";
   stage.classList.remove("stage--refonly");
-  const hasRender = !!v.renderUrl;
-  const hasSpec = !!(v.renderSpecUrl || v.renderSpecURL);
+  const __have = mkViewHave(v);
+  const hasRender = __have.gold;
+  const hasSpec = __have.spec;
   ensureSpecToggle();
+  /* ── "bw" WAS THE UNCONDITIONAL FALLBACK, AND IT IS NOT ALWAYS THERE ──
+     Every version the studio makes itself starts as a production drawing,
+     so falling back to it was always safe and the code said so by not
+     asking. A charm adopted from our own catalogue has no drawing and never
+     will, so that fallback painted an empty frame under a flag reading
+     "PRODUCTION DRAWING — the gold has been changed since", which is a
+     caption on nothing.
+
+     The fallback now walks the pictures that actually exist, in the order
+     they are worth showing. Only if a version has none of the three does it
+     land on "bw", and then the empty-stage branch above has already run. */
+  const hasBW = __have.bw;
   if (state.stageView === "charm" && !hasRender) state.stageView = hasSpec ? "spec" : "bw";
   if (state.stageView === "spec" && !hasSpec) state.stageView = hasRender ? "charm" : "bw";
+  if (state.stageView === "bw" && !hasBW) state.stageView = hasRender ? "charm" : hasSpec ? "spec" : "bw";
   const view = state.stageView === "charm" && hasRender ? "charm"
              : state.stageView === "spec" && hasSpec ? "spec"
+             : hasBW ? "bw"
+             : hasRender ? "charm"
+             : hasSpec ? "spec"
              : "bw";
 
+  /* ── BOTH PICTURES, BEFORE ANY METAL IS PAID FOR ─────────────────────
+     Until a render exists, the drawing and the Greyscale Mask are shown side by
+     side rather than behind a toggle. The mask is the image the renderer is
+     actually handed, so approving a drawing without seeing it was approving
+     something you had not been shown.
+
+     Once a render exists the stage goes back to one picture at a time — by
+     then there are three, and three side by side is too small to judge. */
+  /* ── ONE PICTURE, THE ONE THAT WAS ASKED FOR ─────────────────────────
+     This used to put the drawing and the Greyscale Mask on the stage side by
+     side whenever a mask existed and metal did not — so through the whole
+     metal pass the customer was looking at two pictures at once, neither at
+     a size worth judging, and neither of them the one whose button was lit.
+     Three segmented buttons saying which picture is on screen, above a stage
+     showing two of them, is an interface arguing with itself.
+
+     The reason it existed was sound — nobody should approve a drawing
+     without having seen the mask the renderer is handed — and it survives
+     intact: the Greyscale segment lights the moment the mask exists and
+     stays one press away for as long as the drawing is on screen. */
+  stage.classList.remove("stage--duo");
   const holder = document.createElement("div");
   holder.innerHTML = versionMedia({ url: pairUrl(v) });
   const el = holder.firstElementChild;
@@ -3487,10 +5470,19 @@ function renderStage() {
      white-backed now, so the stage is one surface throughout. */
   stage.classList.add("stage--paper");
   void view;
+  /* ── A DRAWING THE GOLD HAS MOVED ON FROM SAYS SO ─────────────────────
+     A gold edit changes the charm and deliberately leaves the drawing and
+     the mask alone, so after one the two halves of the pair no longer
+     describe the same object. Approval is of the PAIR and both halves go
+     into the cart, so this cannot be a state the customer has to notice for
+     themselves — the flag on the picture names it, on the two tabs where it
+     is actually true. */
+  const outrun = !!v.goldEdited;
   flag.textContent = view === "bw"
-    ? "Production drawing"
+    ? (outrun ? "Production drawing — the gold has been changed since" : "Production drawing")
     : view === "spec"
-      ? "Gold mask — what the renderer was told"
+      ? (outrun ? "Greyscale Mask — as it was before the gold was changed"
+                : "Greyscale Mask — what the renderer was told")
       : (state.approved ? "✓ Approved" : "Your charm");
   flag.classList.toggle("stage-flag--approved", view === "charm" && state.approved);
   flag.classList.add("is-visible");
@@ -3504,84 +5496,100 @@ function renderStage() {
     const grid = rail.closest(".gen-grid");
     if (grid) grid.classList.add("has-rail");
     const tog = $("#pairToggle");
-    tog.hidden = !(hasRender || hasSpec);
+    /* ALL THREE, FROM THE FIRST PASS. They used to appear one at a time as
+       their picture arrived, so the customer could not see what was coming —
+       and a control that materialises mid-wait reads as the interface
+       changing its mind. They are here from the start, quiet until they have
+       something, and each one says in itself when it is being made. */
+    tog.hidden = !(hasRender || hasSpec || __relay.on);
+    /* ── A CATALOGUE CHARM HAS NO DRAWING AND NO MAP TO SHOW ──────────────
+       Not "not yet" — there is no production drawing behind one of our own
+       designs, and its greyscale map is not derived until the design is
+       approved. Offering the two tabs anyway would be offering two pictures
+       that will never arrive. When the map does land, its tab appears on
+       its own; the Drawing tab never does. */
+    const adopted = v.source === "catalog" || v.src === "catalog";
+    $("#toggleBW").hidden = adopted && !v.url;
     $("#toggleBW").classList.toggle("is-on", view === "bw");
     $("#toggleBW").setAttribute("aria-selected", view === "bw" ? "true" : "false");
     const tSpec = $("#toggleSpec");
     if (tSpec) {
-      tSpec.hidden = !hasSpec;
+      tSpec.hidden = !(hasSpec || __relay.on);
       tSpec.classList.toggle("is-on", view === "spec");
       tSpec.setAttribute("aria-selected", view === "spec" ? "true" : "false");
     }
     $("#toggleCharm").classList.toggle("is-on", view === "charm");
     $("#toggleCharm").setAttribute("aria-selected", view === "charm" ? "true" : "false");
-    $("#toggleCharm").hidden = !hasRender;
+    $("#toggleCharm").hidden = !(hasRender || __relay.on);
+    relayPaint();
 
     /* ALWAYS visible. It used to hide itself whenever the metal render was on
        screen, on the reasoning that marks apply to the drawing — true, but the
        cure for that is to switch to the drawing when it is pressed, not to
        take the control away and leave people hunting for it. */
+    /* ── MARK UP WORKS ON WHATEVER PICTURE THE VERSION HAS ────────────────
+       It used to open on the production drawing and nothing else, so a charm
+       adopted from our own catalogue — which has no drawing — opened it on
+       an empty <img>. The sheet does not care what is underneath it: marks
+       are marks. On a design with a drawing it opens on the drawing, and on
+       one of ours it opens on the metal, which is the only picture there is
+       and the one the customer is looking at anyway. */
     const marked = markupHasContent((state.markups || {})[v.n]);
     const mkBtn = $("#markupBtn");
     mkBtn.hidden = false;
     mkBtn.classList.toggle("is-marked", marked);
-    $("#markupBtnTxt").textContent = marked ? "Marks saved" : "Mark up";
+    $("#markupBtnTxt").textContent = marked ? "Edit Charm" : "Mark up";
 
+
+    /* ── "SEE IT IN 14K GOLD" IS NOT A PRESS ANY MORE ─────────────────────
+       It was the way in to the metal, and it has not been since the relay
+       started making all three pictures by itself: by the time anybody could
+       read it, the charm was already being cut — so it sat directly under a
+       progress bar saying CUTTING THE METAL, offering to do the thing that
+       was happening. A call to action for work already underway is noise,
+       and it is gone.
+
+       THE BUTTON ITSELF STAYS, for the two jobs only it can do:
+         · RE-RENDER — a charm exists and the customer wants another cut of
+           it. This is the press that must remain, in the same place.
+         · THE WAY BACK — a drawing exists, nothing is running, and there is
+           still no metal. That is what happens when the gold pass declined
+           to spend a credit the customer did not have (the relay says so in
+           a toast, in these exact words) or when the pass failed outright.
+           Hiding the button then would leave a design that can never be
+           rendered at all, which is a worse fault than the one being fixed.
+
+       So it is hidden in exactly the case that prompted this: a relay in
+       flight, or a render already under way. */
     const rBtn = $("#renderBtn");
-    rBtn.hidden = false;
+    const coming = __relay.on || renderBusy || genBusy;   /* metal is on its way */
+    rBtn.hidden = !hasRender && coming;
+    /* The row exists only to hold this one button, and a flex row with
+       nothing in it still takes its share of a rail whose height is a fixed
+       budget. Hide the container too, or removing the button leaves a band
+       of empty gold-coloured nothing where it used to be. */
+    const rRow = rBtn.closest(".pair-rail__row--act");
+    if (rRow) rRow.hidden = rBtn.hidden;
     rBtn.disabled = renderBusy || genBusy;
     $("#renderBtnTxt").innerHTML = hasRender
       ? "Re-render&nbsp;✦"
       : `See it in ${escapeHtml((METAL_LABELS[state.metal] || "metal").replace(/ Filled$/, ""))}&nbsp;✦`;
-    /* The button's price follows the chosen renderer, so the number on the
-       button and the number the server will actually charge are the same
-       number. */
-    /* ── ONE RENDERER, SO NO CHOICE IS OFFERED ────────────────────────────
-       The Standard/High control is hidden while the render pipeline is being
-       corrected, and hidden is not the same as absent: it stays in the DOM,
-       priced and wired, so bringing it back is a Firestore value rather than
-       a deploy. `renderQualityTiers` is the SAME value the server reads to
-       decide whether it will honour quality:"high" — one switch for both, so
-       the button can never offer a tier the server would refuse, and the
-       server can never charge for a tier the button never showed. */
-    const q = renderQuality();
+    /* ── ONE RENDERER, SO NO CHOICE IS PAINTED ────────────────────────────
+       The Model radiogroup used to be repainted here — priced from
+       renderCostFor() and toggled against the persisted choice. It is out of
+       the DOM entirely now, so all that is left is the button's own price
+       tag, and it can only ever be the one number the server charges. */
     $("#renderBtnCost").textContent = creditWord(renderCost());
-    const qWrap = $("#renderQuality");
-    if (qWrap) {
-      qWrap.hidden = !renderTiersOn();
-      const lo = $("#rqLow"), hi = $("#rqHigh"), loC = $("#rqLowCost"), hiC = $("#rqHighCost");
-      if (loC) loC.textContent = creditWord(renderCostFor("low"));
-      if (hiC) hiC.textContent = creditWord(renderCostFor("high"));
-      [[lo, "low"], [hi, "high"]].forEach(([b, val]) => {
-        if (!b) return;
-        b.classList.toggle("is-on", q === val);
-        b.setAttribute("aria-checked", q === val ? "true" : "false");
-        b.disabled = renderBusy || genBusy;
-      });
-    }
-    /* Same shape as the tier control above, and inert mid-render for the same
-       reason: changing what a render in flight was asked for would be a lie
-       about what is happening. */
-    const pmWrap = $("#renderPromptMode");
-    if (pmWrap) {
-      pmWrap.hidden = false;
-      const pm = promptMode();
-      [[$("#pmFull"), "full"], [$("#pmShort"), "short"]].forEach(([b, val]) => {
-        if (!b) return;
-        b.classList.toggle("is-on", pm === val);
-        b.setAttribute("aria-checked", pm === val ? "true" : "false");
-        b.disabled = renderBusy || genBusy;
-      });
-    }
   }
 
   /* Approval is of the PAIR — drawing plus rendered charm — so it waits for
      the render. The disabled button says why rather than just refusing. */
   const ab = $("#approveBtn");
   ab.hidden = false;
+  ab.classList.toggle("is-approved", !!state.approved);
   if (state.approved) {
-    ab.disabled = false;
-    ab.innerHTML = "✓&nbsp; Approved — press Next to order";
+    ab.disabled = true;
+    ab.innerHTML = "✓&nbsp; Design approved";
   } else if (hasRender) {
     ab.disabled = false;
     ab.innerHTML = "♥&nbsp; Approve this design";
@@ -3595,6 +5603,7 @@ function renderStage() {
       ${vSVG(ver)}${ver.renderUrl ? '<span class="v-gold" title="Rendered in metal"></span>' : ""}<span class="v-num">v${ver.n}</span>
     </button>`).join("");
   $$("#versionStrip .version-thumb").forEach((b) => b.addEventListener("click", () => selectVersion(+b.dataset.i)));
+  paintComposerMode();
   renderThread();
   updateNavArrows();
 }
@@ -3605,47 +5614,44 @@ function selectVersion(i) {
   state.stageView = state.versions[i].renderUrl ? "charm" : ((state.versions[i].renderSpecUrl || state.versions[i].renderSpecURL) ? "spec" : "bw");
   renderStage(); saveSession();
 }
-$("#toggleBW").addEventListener("click", () => { state.stageView = "bw"; renderStage(); });
-if ($("#toggleSpec")) $("#toggleSpec").addEventListener("click", () => { state.stageView = "spec"; renderStage(); });
-$("#toggleCharm").addEventListener("click", () => { state.stageView = "charm"; renderStage(); });
+/* aria-disabled rather than disabled — see relayPaint — so the guard lives
+   here: a picture that is still being made cannot be switched to. */
+const relayPick = (key, view) => (e) => {
+  const el = e.currentTarget;
+  if (el.getAttribute("aria-disabled") === "true") {
+    toast(key === "gold" ? "The metal is still being cut — one moment."
+        : key === "spec" ? "The greyscale mask is still being built."
+        : "Your drawing is still being made.", "err");
+    return;
+  }
+  state.stageView = view; renderStage();
+};
+$("#toggleBW").addEventListener("click", relayPick("bw", "bw"));
+if ($("#toggleSpec")) $("#toggleSpec").addEventListener("click", relayPick("spec", "spec"));
+$("#toggleCharm").addEventListener("click", relayPick("gold", "charm"));
 $("#renderBtn").addEventListener("click", () => runRender());
-/* ── the renderer choice ─────────────────────────────────────────────────
-   It is a preference, not a property of one drawing: it persists on the
-   session and survives version switches, so a customer who has decided they
-   want the better renderer does not have to re-decide on every press. It is
-   inert mid-render — changing the price of a render already being paid for
-   would be a lie about what is happening. */
-RENDER_QUALITIES.forEach((q) => {
-  const b = $(q === "high" ? "#rqHigh" : "#rqLow");
-  if (!b) return;
-  b.addEventListener("click", () => {
-    if (renderBusy || genBusy) return;
-    if (renderQuality() === q) return;
-    state.renderQuality = q;
-    saveSession();
-    renderStage();
-    toast(q === "high"
-      ? `High quality on — each render now costs ${creditWord(renderCostFor("high"))}.`
-      : `Standard quality on — each render costs ${creditWord(renderCostFor("low"))}.`, "gold");
-  });
-});
-/* ── the prompt-mode choice ──────────────────────────────────────────────
-   A diagnostic, so it says what it is when pressed rather than pretending to
-   be a quality setting. It costs the same either way. */
-[["#pmFull", "full"], ["#pmShort", "short"]].forEach(([sel, val]) => {
-  const b = $(sel);
-  if (!b) return;
-  b.addEventListener("click", () => {
-    if (renderBusy || genBusy) return;
-    if (promptMode() === val) return;
-    state.promptMode = val;
-    saveSession();
-    renderStage();
-    toast(val === "short"
-      ? "Short prompt on — the three greyscale rules only. Same credit."
-      : "Full prompt on — the complete instruction set. Same credit.", "gold");
-  });
-});
+/* ═══════════ THE OPERATOR CONTROLS, AND WHY THEY ARE GONE ════════════════
+   Three things used to sit here and all three are removed:
+
+     · the RENDERER CHOICE — a Model toggle that routed a render to
+       gpt-image-2 for two credits instead of Gemini for one;
+     · the INPUT SWITCH — a Send toggle choosing between the greyscale
+       material spec and the colour-coded production drawing;
+     · the PROMPT LAB — promptLoad/promptPaint/promptEdited and their
+       Reload, Discard and Re-Generate presses, which fetched the exact
+       prompt from custom_charm_prompt, let it be edited in place and sent
+       the edit back as promptOverride on the next render.
+
+   They were diagnostic instruments and they did their job, but each was a
+   way for the charm on screen to have been made by something other than the
+   shipping pipeline — and the prompt box in particular meant arbitrary text
+   from a storefront page reached the image model on a paid call. There is
+   now exactly one render path: Gemini, the grey map, the prompt the server
+   builds. The server refuses the other three even if something asks.
+
+   custom_charm_prompt is no longer called from anywhere in this file; the
+   kind has been dropped from the proxy and from the kick's SYNC_KINDS.
+   ======================================================================== */
 $("#markupBtn").addEventListener("click", () => openMarkup());
 
 /* ═══════════ CONVERSATION — persistent thread per design session ══════════
@@ -3741,14 +5747,910 @@ window.__studioDiag = function () {
     currentVersion: state.currentVersion,
     referenceType: state.reference ? state.reference.type : null,
     referenceDrawn: !!(state.reference && state.reference.drawn),
+    /* which job the arrow is loaded with, and the two facts that decide it */
+    goldEditMode: (function () { try { return goldEditMode(); } catch (e) { return "threw: " + e.message; } })(),
+    hasRender: !!((state.versions[state.currentVersion] || {}).renderUrl),
+    goldEdited: !!((state.versions[state.currentVersion] || {}).goldEdited),
     sketchMode: (((state.markups || {}).draw) || {}).mode || null,
     sketchItems: mkItemsOf((state.markups || {}).draw).length,
     composeEligible: (function () { try { return mkComposeEligible(); }
                                     catch (e) { return "threw: " + e.message; } })(),
     uploadsLeft: (function () { try { return uploadsLeft(); } catch (e) { return "?"; } })(),
+    /* how much of the account is in memory, and whether it is still arriving —
+       the first question worth asking when the studio feels slow after a
+       sign-in, and the one this build changed the answer to */
+    sessions: (state.sessions || []).length,
+    sessionWindow: state.sessionWindow,
+    sessionsComplete: !!state.sessionsComplete,
+    sessionsBuilding: !!_sessJob,
   };
   console.log(d);
   return d;
+};
+/* the same three numbers without the console noise, for automated checks */
+window.__studioSessions = () => ({
+  sessions: (state.sessions || []).length,
+  window: state.sessionWindow,
+  complete: !!state.sessionsComplete,
+  building: !!_sessJob,
+});
+
+/* The QA read-out, reachable from the console. __qaShow() forces the panel on
+   for this browser whatever the account is and __qaHide() puts it back, so it
+   can be looked at without touching a user document; __qaNote(n, doc) paints
+   an arbitrary version document into it, which is how the panel is checked
+   without spending a render. */
+window.__setStageViewForTest = (v) => { state.stageView = v; };
+window.__stageViewForTest = () => state.stageView;
+window.__versionMedia = (v) => versionMedia(v);
+window.__vSVG = (v) => vSVG(v);
+window.__setVersionsForTest = (vs, cur) => { state.versions = vs; state.currentVersion = cur || 0; };
+window.__renderThreadForTest = (msgs) => { state.thread = msgs; renderThread(); };
+window.__setRefForTest = (r) => { state.reference = r; };
+window.__gotoStepForTest = (n) => gotoStep(n, true);
+window.__renderStageForTest = () => renderStage();
+window.__relayBar = (step, what, pct, of) => relayBar(step, what, pct, of);
+window.__relayBarHide = () => relayBarHide();
+window.__specNeeded = (v) => specNeeded(v);
+window.__qaNote  = (n, d) => qaNote(n, d);
+window.__qaPaint = () => qaPaint();
+window.__qaShow  = () => { try { localStorage.setItem("bj_qa", "1"); } catch (e) {} qaPaint(); return true; };
+window.__qaHide  = () => { try { localStorage.removeItem("bj_qa"); } catch (e) {} const el = document.getElementById("bjQa"); if (el) el.hidden = true; return false; };
+window.__goldEditMode = () => goldEditMode();
+
+/* ═══════════ THE RASTER EDITOR — LOADING AND OPENING ═════════════════════
+   The engine is a SECOND ASSET, and deliberately so: it is a few hundred
+   kilobytes that most visits never need, and putting it in this file would
+   make every page load pay for a tool only a retoucher opens.
+
+   IT FINDS ITSELF. Rather than requiring a second <script> tag in the Liquid
+   section — which is one more thing to forget, and we have just spent a day
+   discovering an asset that was never deployed — it derives its sibling's URL
+   from this file's own script tag. Upload brites-raster.js beside
+   brites-custom-studio.js and it works; no theme edit at all.               */
+let __rasterLoad = null;
+function rasterAssetUrl() {
+  /* ── ASK LIQUID FIRST ────────────────────────────────────────────────
+     Shopify fingerprints every asset separately, and deriving the sibling's
+     URL from this file's own meant handing brites-raster.js a ?v= belonging
+     to a different file — which is at best pointless and at worst a miss.
+     `{{ 'brites-raster.js' | asset_url }}` is the canonical answer, computed
+     by the platform that owns the fingerprints. The derivation below is the
+     fallback for a theme section older than this asset. */
+  if (D.rasterUrl && /\.js/i.test(D.rasterUrl)) return D.rasterUrl;
+  let base = SELF_SCRIPT;
+  if (!base) {
+    /* fallback for a cached page whose script tag we can still recognise */
+    const tags = Array.from(document.querySelectorAll("script[src]"));
+    const me = tags.find((t) => /brites[-_]custom[-_]studio.*\.js/i.test(t.src)) ||
+               tags.find((t) => /custom[-_]?studio.*\.js/i.test(t.src));
+    base = me ? me.src : "";
+  }
+  if (!base) return null;
+  /* Swap the FILENAME, keep everything else — including the ?v= fingerprint,
+     which Shopify changes on upload. Inheriting it means the editor can never
+     be served stale while the studio is fresh. Working on the last path
+     segment rather than on the word "custom-studio" makes this survive a
+     rename or a bundler that changes the name. */
+  const q = base.indexOf("?");
+  const path = q < 0 ? base : base.slice(0, q);
+  const slash = path.lastIndexOf("/");
+  if (slash < 0) return null;
+  /* NO INHERITED QUERY. The studio's fingerprint is not the engine's, and
+     passing one file's version stamp on another file's URL buys nothing. */
+  return path.slice(0, slash + 1) + "brites-raster.js";
+}
+function loadRaster() {
+  /* BJRaster, not BJRasterUI. The engine used to ship its own modal and this
+     waited for that; the modal is gone — the mark-up sheet is the editor — so
+     waiting for it meant every successful load was reported as a failure. */
+  if (window.BJRaster) return Promise.resolve(window.BJRaster);
+  if (__rasterLoad) return __rasterLoad;
+  const url = rasterAssetUrl();
+  if (!url) return Promise.reject(new Error("no_asset_url"));
+  __rasterLoad = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = url;
+    s.async = true;
+    s.onload = () => window.BJRaster ? resolve(window.BJRaster) : reject(new Error("loaded_but_absent"));
+    s.onerror = () => {
+      __rasterLoad = null;
+      console.warn("[studio] brites-raster.js did not load from " + url +
+                   " — upload it to the theme's Assets folder, beside " +
+                   "brites-custom-studio.js, with exactly that filename.");
+      reject(new Error("load_failed"));
+    };
+    document.head.appendChild(s);
+  });
+  return __rasterLoad;
+}
+
+/* ═══════════ THE REFERENCE BECOMES A DRAWING ═════════════════════════════
+   A charm chosen from our catalogue is a photograph: gold, lit, shadowed, and
+   captioned "Charm Only". It is a fine thing to look at and a poor thing to
+   edit — there is nothing in it to take hold of, and every tool on the mark-up
+   rail is built for line work.
+
+   So pressing Next hands that photograph to the same conversion the studio
+   already uses to derive a greyscale map at approval, and what comes back is
+   the black line drawing of the same charm. From that moment the DRAWING is
+   the reference: it is what the customer marks up, what the design is made
+   from, and what travels with the order.
+
+   NOTHING WAITS. The work happens in a background function and the customer
+   walks straight on to step 2. When it lands, the edit button appears — that
+   is the only thing that changes on screen, and it changes by arriving rather
+   than by making anybody watch a bar. */
+function refLineArtNeeded() {
+  const r = state.reference;
+  if (!r || r.type !== "catalog" || !r.item) return false;
+  if (r.lineArtUrl) return false;                  /* already drawn, once */
+  return true;
+}
+function refLineArtKey() {
+  const r = state.reference;
+  if (!r || !r.item) return "";
+  return String(r.item.gid || r.item.id || catalogImageUrl(r.item) || "");
+}
+/* ── AND THE KEY IS THERE TO BE READ ──────────────────────────────────────
+   Every one of the ten places that writes state.refLineArt stamps it with
+   the reference it belongs to. Not one place ever compared that stamp
+   against the reference actually loaded — so the field was a record of which
+   charm the drawing was for, kept perfectly, and consulted never.
+
+   That is the whole of the reported bug. Go back to step 1, choose a
+   different charm, and rebaseOnReference correctly starts a fresh session —
+   new versions, new thread, new markups — but leaves state.refLineArt behind
+   saying "done", stamped with the charm you just walked away from. The Edit
+   Charm button reads "done", shows itself ready, and opens the studio on a
+   reference that was never drawn.
+
+   Asking the question is the fix, and asking it HERE means every reader gets
+   it for nothing: a record that does not belong to the reference in hand is
+   not a stale record to be reasoned about, it is no record at all. */
+function refLineArtFresh() {
+  const rl = state.refLineArt;
+  if (!rl) return null;
+  /* an upload has no item and so no key; its own url is its identity, and a
+     record stamped for a catalogue charm cannot describe it */
+  if (String(rl.key || "") !== refLineArtKey()) return null;
+  return rl;
+}
+/* the record for the reference in hand, or nothing — and the stale one is
+   dropped as it is found, so it cannot be read by anything that asks the
+   raw field before this does */
+function refLineArtState() {
+  const rl = refLineArtFresh();
+  if (!rl && state.refLineArt) state.refLineArt = null;
+  return rl || {};
+}
+/* ── DID THIS DESIGN BEGIN IN OUR OWN REPOSITORY? ─────────────────────────
+   It matters to the renderer, which otherwise works from the rule that every
+   charm's hanging hoop is a flat annulus cut from the same sheet. That is
+   true of everything the studio draws and false of every piece we already
+   make: those carry their own hardware, frequently a real round jump ring.
+
+   `type === "catalog"` only answers it up to the moment the customer edits
+   the drawing — replaceReferenceInPlace then files an upload, and the
+   catalogue origin would be lost exactly when the render needs it. So the
+   origin is carried on the reference itself and survives the swap. */
+function refFromCatalogue() {
+  const r = state.reference;
+  if (!r) return false;
+  return r.type === "catalog" || !!r.fromCatalog || !!r.lineArt;
+}
+async function kickRefLineArt(force) {
+  if (!force && !refLineArtNeeded()) return false;
+  const r = state.reference;
+  const imageUrl = catalogImageUrl(r.item);
+  if (!imageUrl) { SD("refLineArt: no usable catalogue image"); return false; }
+  /* ── SIGNED OUT, NOTHING TO QUEUE ────────────────────────────────────
+     Every piece of this pipeline needs an account: the function refuses an
+     unauthenticated request, the session document cannot be written, and
+     the watcher cannot read one. Queueing anyway produced the worst
+     possible shape — a kick that says 202, a background 403 nobody sees,
+     and a watcher dying with "Missing or insufficient permissions" while
+     the studio shows "pending" for ever. The kick now waits its turn:
+     completeAuth re-fires it the moment an account exists. */
+  if (!state.uid) {
+    SD("refLineArt: waiting for sign-in — nothing queued");
+    state.refLineArt = { status: "await-auth", key: refLineArtKey() };
+    renderRefEditBtn();
+    return false;
+  }
+  const sess = ensureSession();
+  state.refLineArt = { status: "pending", key: refLineArtKey() };
+  renderRefEditBtn();
+  try {
+    /* the HARD write, not the polite one: flushSession() silently returns
+       when nothing is marked dirty — and on a brand-new project nothing is,
+       so the session document simply never existed. The function then had
+       no document to check ownership against, refused in the background
+       where nobody could see it, and the watcher opened on a document that
+       was never going to appear. */
+    await flushSessionNow(sess);
+    await postAuthed(IMAGE_FN, {
+      kind: "custom_charm_ref_lineart",
+      sessionId: sess.id,
+      imageUrl,
+      productGid: refLineArtKey(),
+      title: r.item.title || "",
+      force: !!force,
+    }, FN_BASE_IMAGE);
+    SD("refLineArt: queued for", r.item.title || refLineArtKey());
+    watchRefLineArt(sess.id);
+    return true;
+  } catch (e) {
+    SD("refLineArt: could not queue —", (e && e.message) || "");
+    state.refLineArt = { status: "failed", key: refLineArtKey() };
+    renderRefEditBtn();
+    return false;
+  }
+}
+/* the session document is where the answer lands, because there is no version
+   yet — the customer has not asked for anything to be made */
+let __refLineWatch = null, __refLinePoll = null;
+function refLineWatchStop() {
+  if (__refLineWatch) { try { __refLineWatch(); } catch (e) {} __refLineWatch = null; }
+  if (__refLinePoll) { clearInterval(__refLinePoll); __refLinePoll = null; }
+}
+function watchRefLineArt(sessionId) {
+  refLineWatchStop();
+  const ep = epochNow();
+  const t0 = Date.now();
+  const HARD_MS = 240000;
+
+  const settle = (d) => {
+    if (!sameProject(ep)) { refLineWatchStop(); return true; }
+    const st = String((d && d.refLineArtStatus) || "");
+    if (st === "done" && d.refLineArtURL) {
+      adoptRefLineArt(d.refLineArtURL, d.refLineArtPath || "");
+      refLineWatchStop();
+      return true;
+    }
+    if (st === "failed") {
+      state.refLineArt = { status: "failed", key: refLineArtKey() };
+      renderRefEditBtn();
+      SD("refLineArt: failed —", (d && d.refLineArtError) || "");
+      refLineWatchStop();
+      return true;
+    }
+    return false;
+  };
+
+  /* ── THE LISTENER IS THE FAST PATH, NOT THE ONLY PATH ─────────────────
+     A snapshot listener on a document that does not exist yet — the exact
+     state of a brand-new project in its first seconds — is refused by the
+     security rules, and a refused listener never recovers on its own: it
+     died once with "Missing or insufficient permissions" and the drawing's
+     arrival went unwatched for ever. So a listener error RE-OPENS the
+     listener with backoff (the document usually exists moments later), and
+     a poll through the studio's own function — which reads with admin
+     credentials and answers only the owner — runs underneath as the channel
+     that no security rule can refuse. */
+  let attempt = 0;
+  const openListener = () => {
+    if (!sameProject(ep) || __refLinePoll === "done") return;
+    const db = window.firebase && firebase.firestore && firebase.firestore();
+    if (!db) return;
+    try {
+      __refLineWatch = db.collection("customSessions").doc(sessionId)
+        .onSnapshot((snap) => {
+          if (!snap.exists) return;
+          settle(snap.data() || {});
+        }, (err) => {
+          SD("refLineArt: watcher —", err && err.message,
+             "(retrying; the poll carries it meanwhile)");
+          __refLineWatch = null;
+          attempt++;
+          if (Date.now() - t0 < HARD_MS && attempt < 6) {
+            setTimeout(openListener, Math.min(30000, 2000 * Math.pow(2, attempt)));
+          }
+        });
+    } catch (e) { SD("refLineArt: cannot watch —", e && e.message); }
+  };
+  openListener();
+
+  __refLinePoll = setInterval(async () => {
+    if (!sameProject(ep)) { refLineWatchStop(); return; }
+    if (Date.now() - t0 > HARD_MS) {
+      SD("refLineArt: gave up after " + Math.round(HARD_MS / 1000) + "s of silence");
+      state.refLineArt = { status: "failed", key: refLineArtKey() };
+      renderRefEditBtn();
+      refLineWatchStop();
+      return;
+    }
+    try {
+      const r = await postAuthed(IMAGE_FN, { kind: "custom_session_status",
+        sessionId, versionNumber: 1 }, FN_BASE_IMAGE);
+      if (r && r.ok && r.session) settle(r.session);
+    } catch (e) { /* the next tick tries again */ }
+  }, 7000);
+}
+/* THE DRAWING IS THE REFERENCE NOW. Not an extra picture filed beside the
+   photograph — the thing the rest of the studio reads when it says "the
+   reference", so a generation, a mark-up and the order all see the same one. */
+function adoptRefLineArt(url, path) {
+  if (!state.reference) return;
+  state.reference.lineArtUrl = url;
+  state.reference.lineArtPath = path;
+  /* the origin, carried on the reference so it survives the customer
+     editing the drawing — see refFromCatalogue */
+  state.reference.fromCatalog = true;
+  state.reference.url = url;
+  state.reference.path = path;
+  state.reference.lineArt = true;
+  state.refLineArt = { status: "layering", key: refLineArtKey() };
+  saveSession();
+  try { syncBrief(); } catch (e) {}
+  try { renderStage(); } catch (e) {}
+  renderRefEditBtn();
+  SD("refLineArt: ready — the drawing is now the reference");
+  /* and take it apart, immediately and off the critical path — the customer
+     should never meet this drawing as a flat picture */
+  traceRefLineArtSoon();
+}
+
+/* ═══════════ AND NOW TAKE THE DRAWING APART ══════════════════════════════
+   A line drawing you cannot get hold of is a photograph with the colour
+   taken out of it. The whole reason for making one is that line work can be
+   EDITED — so the moment it lands it goes through exactly the pipeline a
+   JPEG or PNG dropped on the sheet goes through, and comes out the same way:
+   one editable engraving layer per component.
+
+       rasterShapesBlack     every visible mark becomes black on transparent,
+                             anti-aliasing tapered rather than snapped
+       mkTraceImportedRaster those marks become closed vector contours, at
+                             the source's own resolution, forced to engrave
+       state.markups.draw    the sheet the edit button opens
+
+   NOT GROUPED, deliberately. mkReachOf selects a whole group from a click on
+   any member, and being able to take hold of one component at a time is the
+   entire point of doing this — so each part stands alone in Layers, exactly
+   as a traced version's parts do.
+
+   AND NOTHING HERE TOUCHES openMarkup. Once the parts exist they ARE the
+   drawing, and mkApplyBase's ghost rule (`traced && !showBitmap`) hides the
+   bitmap underneath on its own — which is what stops a moved eye leaving the
+   original eye sitting behind it.
+
+   The coordinates line up for free. mkInkComponents letterboxes the source
+   into its square working raster at the source's own aspect ratio, and
+   .markup-base is `object-fit:contain` inside a square stage — the same
+   letterbox, so a traced contour lands exactly on the mark it came from.
+   That is why the parts are used as they arrive rather than being placed
+   with mkPlaceItemsGroup, which exists to drop imported artwork at 62% in
+   the middle of somebody else's sheet. */
+const MK_REF_SHEET = "draw";
+let __refTraceJob = null, __refTraceQueued = false;
+
+/* ── A PHONE IS NOT A DESKTOP RASTER WORKSTATION ─────────────────────────
+   The catalogue drawing itself is made by the server. What happens here is
+   the SECOND act: taking that finished black-line PNG apart into editable
+   vectors. At 2,600px the stroke segmenter holds several full-size RGBA and
+   Int32 buffers at once; that is comfortable on desktop and can cross a
+   mobile tab's memory ceiling. The visible symptom is exact and misleading:
+   the server has finished, `adoptRefLineArt` has advanced to `layering`, and
+   the Edit Charm button sits at its deliberate 96% ceiling for ever.
+
+   Detect the device by its input contract, not by layout width. That covers
+   ordinary phones and an unfolded Pixel Fold while leaving a desktop at any
+   window width on the existing high-resolution path. userAgentData is only
+   a corroborating fast path; browsers without it use coarse + no-hover. */
+/* One device answer for both the low-memory trace path and the touch-native
+   editor shell. Width is deliberately absent: an unfolded Pixel Fold and an
+   iPad are still mobile workspaces, while a desktop window narrowed to 700px
+   is still a desktop workspace. iPadOS can identify as Macintosh, hence the
+   maxTouchPoints check; Windows touch laptops keep the desktop editor. */
+function mkMobileDevice() {
+  if (navigator.userAgentData && navigator.userAgentData.mobile) return true;
+  const ua = String(navigator.userAgent || "");
+  if (/Android|iPhone|iPod|iPad|Mobile/i.test(ua)) return true;
+  return /Macintosh/i.test(ua) && Number(navigator.maxTouchPoints || 0) > 1;
+}
+function mkMobileWorkspaceActive() {
+  const modal = document.getElementById("markupModal");
+  return !!(modal && modal.classList.contains("is-mobile-workspace"));
+}
+function refLineArtMobileTrace() { return mkMobileDevice(); }
+
+/* has this drawing already been taken apart? */
+function refLineArtTraced() {
+  const m = (state.markups || {})[MK_REF_SHEET];
+  return !!(m && m.traced && mkItemsOf(m).length);
+}
+
+/* ── HOW A DRAWING IS TAKEN APART, versus how a photograph is ──────────────
+   The import tuning was the right starting point and the wrong segmenter. A
+   dropped JPEG is a picture of separate things and comes apart on
+   connectivity; a line drawing is a net of strokes where everything touches,
+   and connectivity hands back the whole charm as one object. Same tracer,
+   same fidelity settings, same forced engrave — `strokes: true` is the only
+   difference, and it is the difference between three layers and fifty.
+
+   The part ceiling goes up to match: a charm with a stitched baseball on it
+   is legitimately fifty marks, and a busy one is more. Anything under the
+   merge floor is folded into its neighbour rather than dropped, so raising
+   the ceiling cannot cost the drawing any ink. */
+async function mkTraceLineArtRaster(img) {
+  const nativeMax = Math.max(img.naturalWidth || img.width || 0,
+                             img.naturalHeight || img.height || 0);
+  const mobile = refLineArtMobileTrace();
+  /* The mobile raster is still well above the editor's rendered size, but it
+     cuts peak typed-array memory to roughly one fifth of the desktop pass.
+     A cooperative deadline is the final guard: the black-line bitmap is a
+     valid editable reference on its own, so vector separation may gracefully
+     decline instead of holding the whole studio at 96%. */
+  const traceSize = mobile
+    ? Math.max(900, Math.min(1200, nativeMax || 1100))
+    : Math.max(1100, Math.min(2600, nativeMax || 2200));
+  const tune = {
+    size: traceSize,
+    eps: mobile ? 0.00035 : 0.00018,
+    budget: mobile ? 24000 : 42000,
+    partMax: mobile ? 16000 : 30000,
+    maxParts: mobile ? 420 : 700,
+    minAreaFraction: mobile ? 0.000035 : 0.00002,
+    maxInkFraction: 0.985,
+    maxMidFraction: 0.42,
+    highFidelity: true,
+    forceEngrave: true,
+    strokes: true,
+    deadlineAt: mobile ? Date.now() + 20000 : 0,
+  };
+  let res = null;
+  try {
+    /* segmented first, in slices, so the studio keeps painting while it runs */
+    const pre = await mkStrokeComponents(img, tune.size, tune);
+    if (pre) res = mkTraceImage(img, MK_ENGRAVE, Object.assign({ pre }, tune));
+  } catch (e) {
+    if (e && e.message === "trace_budget_exceeded") throw e;
+    res = null;
+  }
+  if (res && res.items && res.items.length) return res;
+  /* A drawing that will not separate into strokes — a solid silhouette with
+     no line work in it at all — is still a drawing, and connectivity is the
+     honest reading of that one. */
+  try {
+    res = mkTraceImage(img, MK_ENGRAVE, Object.assign({}, tune, {
+      strokes: false, maxParts: 420, minAreaFraction: 0.00006, eps: 0.00026,
+    }));
+  } catch (e) {
+    if (e && e.message === "trace_budget_exceeded") throw e;
+    res = null;
+  }
+  return res && res.items && res.items.length ? res : null;
+}
+
+async function traceRefLineArt(opts) {
+  const force = !!(opts && opts.force);
+  const r = state.reference;
+  if (!r || !r.lineArtUrl) return null;
+  /* NEVER OVER-WRITE WORK. state.markups.draw is also the sketchpad's key —
+     a customer who drew their own charm by hand has their drawing in here,
+     and a catalogue reference arriving beside it must not flatten it. The
+     same guard covers a drawing already taken apart and one already marked
+     up. */
+  const saved = (state.markups || {})[MK_REF_SHEET];
+  if (!force && saved && (mkItemsOf(saved).length || saved.dirty)) return null;
+  if (__refTraceJob) return __refTraceJob;
+
+  const ep = epochNow();
+  const job = (async () => {
+    /* mkImageFor has already done the hard part: Storage sends no CORS
+       headers, so a plain <img> of a download URL taints every canvas it
+       touches. Its same-origin asset_fetch route is what makes these pixels
+       readable at all — which is why this starts from the cache rather than
+       from a fresh Image(). */
+    const item = { t: "img", u: r.lineArtUrl, sp: r.lineArtPath || "" };
+    let img = mkImageFor(item);
+    if (!img) { await mkAwaitImages([item], 20000); img = mkImageFor(item); }
+    if (!img || !img.width) throw new Error("lineart_unreadable");
+    if (!sameProject(ep)) throw new Error("moved_on");
+
+    /* the import pipeline starts from a data URL, so meet it there. White
+       ground painted in first: a drawing delivered with transparency would
+       otherwise read as ink everywhere it is see-through. */
+    const nw = img.naturalWidth || img.width, nh = img.naturalHeight || img.height;
+    /* Do not create a 2,600px RGBA canvas only to downsample it to the mobile
+       trace size one function later. This conversion owns several copies of
+       the pixels plus a PNG data URL, so capping it here is the largest part
+       of the memory reduction. Desktop retains its original 2,600px ceiling. */
+    const prepMax = refLineArtMobileTrace() ? 1200 : 2600;
+    const sc = Math.max(nw, nh) > prepMax ? prepMax / Math.max(nw, nh) : 1;
+    const cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(nw * sc));
+    cv.height = Math.max(1, Math.round(nh * sc));
+    const g2 = cv.getContext("2d", { willReadFrequently: true });
+    g2.fillStyle = "#ffffff";
+    g2.fillRect(0, 0, cv.width, cv.height);
+    g2.drawImage(img, 0, 0, cv.width, cv.height);
+    let src;
+    try { src = cv.toDataURL("image/png"); }
+    catch (e) { throw new Error("lineart_tainted"); }
+
+    const shaped = await rasterShapesBlack(src);
+    if (!shaped || !shaped.kept) throw new Error("lineart_blank");
+    const shapedImg = await mkLoadImageUrl(shaped.dataUrl);
+    if (!sameProject(ep)) throw new Error("moved_on");
+    const traced = await mkTraceLineArtRaster(shapedImg);
+    if (!traced) throw new Error("lineart_trace_failed");
+    if (!sameProject(ep)) throw new Error("moved_on");
+    return traced;
+  })();
+
+  __refTraceJob = job;
+  let traced = null;
+  try { traced = await job; }
+  catch (e) {
+    if (__refTraceJob === job) __refTraceJob = null;
+    /* A DRAWING THAT WILL NOT COME APART IS STILL A DRAWING. The sheet opens
+       on the bitmap, every tool still works on top of it, and the customer
+       is told nothing — because from where they are sitting nothing failed. */
+    SD("refLineArt: not taken apart —", (e && e.message) || "");
+    { const rl = refLineArtFresh(); if (rl) rl.status = "done"; }
+    renderRefEditBtn();
+    return null;
+  }
+  if (__refTraceJob === job) __refTraceJob = null;
+  /* the await let the world move: the design they were on is not necessarily
+     the design they are on now */
+  if (!sameProject(ep) || !state.reference || !state.reference.lineArtUrl) return null;
+
+  if (!state.markups) state.markups = {};
+  const prev = state.markups[MK_REF_SHEET] || {};
+  state.markups[MK_REF_SHEET] = {
+    items: traced.items,
+    mode: mkModeNorm(prev.mode),
+    crop: prev.crop || [],
+    baseRot: prev.baseRot || 0,
+    guides: prev.guides || 0,
+    gridN: prev.gridN || 12,
+    groups: [],
+    /* nothing here claims to know which areas are holes: the drawing was
+       derived from a photograph, and a plan invented from bare contours
+       would be instructions nobody gave */
+    plan: [],
+    traced: 1,
+    fromGold: 0,
+    /* THE PARTS ARE THE DRAWING — see the ghost rule in mkApplyBase */
+    showBitmap: 0,
+    /* untouched by hand, so a re-generate is still a plain re-generate */
+    dirty: 0,
+    updatedAt: now(),
+  };
+  state.reference.lineArtParts = traced.items.length;
+  state.refLineArt = { status: "done", key: refLineArtKey() };
+  saveSession();
+
+  /* the sheet, if the customer is already standing in it */
+  if (__mk && __mk.key === MK_REF_SHEET && !__mk.items.length) {
+    __mk.items = traced.items.map(mkPack);
+    __mk.traced = true;
+    __mk.showBitmap = false;
+    __mk.fromGold = false;
+    __mk.dirty = false;
+    mkApplyBase();
+    mkTouch();
+    mkRenderLayers();
+  }
+  renderRefEditBtn();
+  if (typeof mkLibRefresh === "function") { try { mkLibRefresh(); } catch (e) {} }
+  SD("refLineArt: " + traced.items.length + " editable parts");
+  return traced;
+}
+
+/* off the critical path, the same way a version's trace is: this is real
+   work on a big raster and it must never make the drawing's arrival feel
+   like something the customer is waiting through */
+function traceRefLineArtSoon() {
+  if (__refTraceQueued || __refTraceJob || refLineArtTraced()) return;
+  __refTraceQueued = true;
+  const go = () => {
+    __refTraceQueued = false;
+    traceRefLineArt().catch(() => {});
+  };
+  /* Mobile Chrome may keep an animated, scrollable studio from becoming
+     "idle" for a long time. Start this bounded job directly there; retain the
+     desktop idle scheduling exactly as it was. */
+  if (refLineArtMobileTrace()) setTimeout(go, 80);
+  else if (window.requestIdleCallback) window.requestIdleCallback(go, { timeout: 2500 });
+  else setTimeout(go, 400);
+}
+
+/* THE EDIT BUTTON. It does not exist until there is something worth editing,
+   which is the whole signal: its arrival is how the customer learns the
+   drawing is ready. Built here rather than in the Liquid so a theme section
+   older than this asset still gets it. */
+function refEditBtnEl() {
+  let b = document.getElementById("refEditBtn");
+  if (b) return b;
+  /* beside the reference chip in the conversation's header, which is where
+     the customer already looks to see WHICH picture this design is about */
+  const host = $("#refChip");
+  if (!host || !host.parentNode) return null;
+  b = document.createElement("button");
+  b.type = "button";
+  b.id = "refEditBtn";
+  b.className = "ref-edit";
+  b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M4 20h5.5L20.2 9.3a2.1 2.1 0 0 0 0-3l-2.5-2.5a2.1 2.1 0 0 0-3 0L4 14.5V20Z"/>' +
+    '<path d="M13.5 5.5 18.5 10.5"/></svg>' +
+    '<span class="ref-edit__txt">Edit Charm</span>' +
+    '<b class="ref-edit__pct" hidden>0%</b>';
+  b.hidden = true;
+  /* one dispatcher, three answers: working ignores the press (the button
+     says why), failed re-kicks the drawing, ready opens the editor */
+  b.addEventListener("click", () => {
+    if (b.getAttribute("aria-disabled") === "true") return;
+    if (String(refLineArtState().status || "") === "failed") {
+      kickRefLineArt(true).catch(() => {});
+      return;
+    }
+    openReferenceMarkup();
+  });
+  host.parentNode.insertBefore(b, host.nextSibling);
+  return b;
+}
+
+/* ═══════════ ONE NUMBER FOR THE WHOLE WAIT ═══════════════════════════════
+   The drawing pass reports no percentage — one model call, then the trace —
+   so the number is DRIVEN the same way genProgress drives its stages:
+   forward on a clock between real events, jumped by them, never backward.
+   pending eases toward 82% (the drawing itself, measured at 20–60s),
+   layering toward 96% (the take-apart), done snaps to 100. Asymptotic, so
+   a slow pass reads as slowing, never as stuck; the sheen on the fill is
+   the sign of life meanwhile.
+
+   ONE controller feeds every reader — the Edit Charm button's fill and
+   figure, and the locked composer's line — so the two can never disagree
+   about how far along the same job is. */
+let __refLineTick = null;
+function refLineProgressPct() {
+  const rl = refLineArtState();
+  return Math.round(rl.pct || 0);
+}
+function refLineProgressRun() {
+  if (__refLineTick) return;
+  __refLineTick = setInterval(() => {
+    const rl = refLineArtFresh();
+    const st = String((rl || {}).status || "");
+    if (!rl || (st !== "pending" && st !== "layering")) {
+      clearInterval(__refLineTick); __refLineTick = null;
+      return;
+    }
+    const target = st === "pending" ? 82 : 96;
+    const now = rl.pct || (st === "pending" ? 3 : 84);
+    /* 6% of the remaining distance every 400ms — quick early, patient late */
+    rl.pct = Math.min(target, now + Math.max(0.12, (target - now) * 0.06));
+    paintRefLineUi();
+  }, 400);
+}
+/* ── EVERYTHING THE WAIT TOUCHES, PAINTED FROM ONE PLACE ─────────────────
+   The button (label, fill, figure, enabled-ness), the composer (locked and
+   grey with its own spinner and the same figure), and the one-shot ready
+   flourish. Called by renderRefEditBtn — which every state transition
+   already calls — and by the ticker between them. */
+function paintRefLineUi() {
+  const b = document.getElementById("refEditBtn");
+  const rl = refLineArtState();
+  const st = String(rl.status || "");
+  const working = st === "pending" || st === "layering";
+  const pct = refLineProgressPct();
+  if (b && !b.hidden) {
+    const t = b.querySelector(".ref-edit__txt");
+    const pc = b.querySelector(".ref-edit__pct");
+    b.classList.toggle("is-working", working);
+    b.classList.toggle("is-failed", st === "failed");
+    b.setAttribute("aria-disabled", working ? "true" : "false");
+    b.style.setProperty("--p", (working ? pct : 100) + "%");
+    if (pc) { pc.hidden = !working; pc.textContent = pct + "%"; }
+    if (t) t.textContent = st === "failed" ? "Try again" : "Edit Charm";
+    b.title = st === "pending" ? "Drawing your charm for the editor — " + pct + "%"
+            : st === "layering" ? "Separating the drawing into layers — " + pct + "%"
+            : st === "failed" ? "The drawing could not be made — press to try again"
+            : "Edit this charm in the studio";
+  }
+  /* the composer: locked and grey for exactly as long as the button works.
+     pointer-events and the disabled textarea both — one stops the click,
+     the other stops the keyboard and the focus ring. Only THIS lock's own
+     disable is undone on release, so genBusy's hold on the send button is
+     never trodden on. */
+  const comp = document.querySelector(".chat__composer");
+  const lock = document.getElementById("composerLock");
+  const ta = document.getElementById("descInput");
+  if (comp) comp.classList.toggle("is-locked", working);
+  if (lock) {
+    lock.hidden = !working;
+    const lp = document.getElementById("composerLockPct");
+    const lt = document.getElementById("composerLockTxt");
+    if (lp) lp.textContent = pct + "%";
+    if (lt) lt.textContent = st === "layering"
+      ? "Preparing your charm's layers…"
+      : "Drawing your charm for the editor…";
+  }
+  if (ta) {
+    if (working && !ta.disabled) { ta.disabled = true; ta.dataset.refLock = "1"; }
+    else if (!working && ta.dataset.refLock) { ta.disabled = false; delete ta.dataset.refLock; }
+  }
+}
+function renderRefEditBtn() {
+  const b = refEditBtnEl();
+  if (!b) return;
+  const r = state.reference;
+  const rl = refLineArtState();
+  const st = String(rl.status || "");
+  const working = st === "pending" || st === "layering";
+  /* `layering` is recorded before the client-side trace begins. If a phone
+     was backgrounded while that handoff was queued, the callback can be
+     delayed or discarded while the visible state remains at 96%. Re-arm the
+     one guarded job whenever this state is painted again. */
+  if (st === "layering" && r && r.lineArtUrl && !refLineArtTraced() &&
+      !__refTraceJob && !__refTraceQueued) {
+    traceRefLineArtSoon();
+  }
+  /* VISIBLE FOR THE WHOLE WAIT, not only once the drawing exists. This is
+     the gate to the editor, and a gate that appears out of nowhere when it
+     happens to open is a gate nobody was told they were waiting at. It
+     stands greyed with its fill advancing from the first moment. */
+  const ready = !!(r && r.lineArtUrl);
+  const wasHidden = b.hidden;
+  b.hidden = !(ready || working || st === "failed");
+  if (working) refLineProgressRun();
+  /* the finish: snap to full, then one quiet pop — a single scale pulse and
+     a gold ring that fades — so the eye is told "this is ready now" without
+     a toast shouting it. Only when a live pipeline actually completed
+     (state.refLineArt exists with pct short of 100): a design REOPENED with
+     its drawing long since made must not pop on every repaint. */
+  if (rl.status && !working && st !== "failed" && ready && rl.pct !== 100) {
+    rl.pct = 100;
+    if (!wasHidden && !b.classList.contains("is-ready-pop")) {
+      b.classList.add("is-ready-pop");
+      setTimeout(() => b.classList.remove("is-ready-pop"), 1400);
+    }
+  }
+  paintRefLineUi();
+}
+window.__kickRefLineArt = kickRefLineArt;
+window.__adoptRefLineArt = adoptRefLineArt;
+window.__renderRefEditBtn = renderRefEditBtn;
+window.__refLineArtNeeded = refLineArtNeeded;
+window.__traceRefLineArt = traceRefLineArt;
+window.__mkComposeEligible = () => mkComposeEligible();
+window.__mkRegenIsMetalOnly = () => mkRegenIsMetalOnly();
+/* ── the File menu, for the suite that proves every row is wired ── */
+window.__mkZipBlob      = (files) => mkZipBlob(files);
+window.__mkCrc32        = (b) => mkCrc32(b);
+window.__mkPictureSet   = () => mkPictureSet();
+window.__mkShareSubject = () => mkShareSubject();
+window.__mkShareUrl     = () => mkShareUrl();
+window.__mkShareText    = () => mkShareText();
+window.__mkShareTo      = (n) => mkShareTo(n);
+window.__mkShareNative  = () => mkShareNative();
+window.__mkCopyLink     = () => mkCopyLink();
+window.__mkCopyImage    = () => mkCopyImage();
+window.__mkCutPathsSvg  = (s) => mkCutPathsSvg(s);
+window.__mkSheetPngBlob = (s) => mkSheetPngBlob(s);
+window.__mkFileSync     = () => mkFileSync();
+window.__mkFileStem     = () => mkFileStem();
+window.__mkPrintSheet   = () => mkPrintSheet();
+window.__mkSrcForTest = (v) => { if (v != null) __mkSrc = v; return __mkSrc; };
+window.__mkRefSheetIsVector = () => mkRefSheetIsVector();
+window.__refFromCatalogue = () => refFromCatalogue();
+window.__runComposedGenerationSource = String(runComposedGeneration);
+window.__mkComposeDrawing = (S) => mkComposeDrawing(S || 1400);
+window.__mkComposeSilhouette = (items, S) => mkComposeSilhouette(items, S);
+window.__mkInkInstruction = (it) => mkInkInstruction(it);
+window.__watchRenderSource = () => watchRender.toString();
+window.__watchRefLineArt = (sid) => watchRefLineArt(sid);
+window.__mkItemIntent = (it) => mkItemIntent(it);
+/* __mkMetalTally already exists further down and reads the open sheet;
+   this one takes the list it is handed, so a test can ask about items that
+   are not on any sheet */
+window.__mkMetalTallyOf = (items) => mkMetalTally(items);
+window.__mkZonesPayload = (items) => mkZonesPayload(items);
+window.__refLineArtTraced = refLineArtTraced;
+/* the flattened reference a re-draw sends — exposed because the one thing
+   that can go wrong here is invisible on screen: a bitmap painted underneath
+   vectors that have replaced it */
+window.__mkRefComposite = (n) => mkRefCompositeDataUrl(n || 1400);
+/* the export's own text, so a guard can assert on the shipped predicate
+   rather than on a restatement of it */
+window.__mkRefCompositeSource = String(mkRefCompositeDataUrl);
+
+/* Read the picture the customer is looking at into raw pixels. Goes through
+   mkImageFor so it takes the SAME same-origin route the mark-up composite
+   does — the bucket sends no CORS headers, and a canvas that cannot be read
+   is a retoucher that cannot start. */
+async function rasterPixelsFor(v) {
+  const item = v.url ? { t: "img", u: v.url, sp: v.path || "" }
+                     : { t: "img", u: v.renderUrl || "", sp: v.renderPath || "" };
+  if (!item.u) return null;
+  await mkAwaitImages([item], 15000);
+  const img = mkImageFor(item);
+  if (!img || !img.width) return null;
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  let data;
+  try { data = ctx.getImageData(0, 0, w, h).data; }
+  catch (e) { SD("retouch: canvas tainted —", e && e.message); return null; }
+  return { rgba: data, w, h };
+}
+
+window.__setMarkupsForTest = (m) => { state.markups = m || {}; };
+window.__openMarkupForTest = () => openMarkup();
+
+/* ── THE MARK-UP SHEET, EXPLAINED TO THE CONSOLE ───────────────────────────
+   Everything openMarkup decides lives inside this closure, so when the sheet
+   comes up blank there is no way from a console to tell WHICH of the six or
+   seven reasons it was. This says so, in one call, and it is strictly
+   read-only: it opens nothing, spends nothing and writes nothing.
+
+   It reports the picture each branch WOULD use rather than the one on screen,
+   because the interesting failures are the ones where the element is fine and
+   the URL handed to it was empty all along. */
+window.__mkDiag = function () {
+  const v = state.versions[state.currentVersion] || null;
+  const r = state.reference || null;
+  const el = document.getElementById("markupBase");
+  const cs = el ? getComputedStyle(el) : null;
+  const rect = el ? el.getBoundingClientRect() : null;
+  const m = v ? (state.markups || {})[v.n] : null;
+  const pick = (o, keys) => { const out = {}; keys.forEach((k) => {
+    const val = o ? o[k] : undefined;
+    out[k] = typeof val === "string" ? (val ? val.slice(0, 160) : "(EMPTY STRING)")
+           : val === undefined ? "(ABSENT)" : val; }); return out; };
+  return {
+    build: window.__studioBuild,
+    /* WHICH SHEET the modal would open on, and why */
+    branch: !v ? "REFUSED — openMarkup returns early when there is no version"
+               : (__mkSrc === "ref" ? "reference sheet" : "version sheet"),
+    mkSrc: __mkSrc,
+    refSheetOffered: (function () { try { return mkRefSheetAvailable(); }
+                                    catch (e) { return "threw: " + e.message; } })(),
+    /* THE VERSION BRANCH: the two lines that used to read v.url only */
+    version: v ? pick(v, ["n", "url", "storagePath", "renderUrl", "renderURL",
+                          "renderPath", "renderSpecUrl", "source", "src",
+                          "goldEdited", "goldEditCount", "specStatus"]) : null,
+    versionBaseWouldBe: v ? {
+      url: (v.url || v.renderUrl || "") || "(EMPTY — nothing to show)",
+      path: (v.url ? (v.path || "") : (v.renderPath || "")) || "(none)",
+      from: v.url ? "the production drawing" : v.renderUrl ? "the gold charm" : "NOTHING",
+    } : null,
+    /* THE REFERENCE BRANCH: a catalogue pick carries item.image, not .url */
+    reference: r ? Object.assign(pick(r, ["type", "url", "path", "drawn"]), {
+      itemImage: r.item ? String(r.item.image || "") .slice(0, 160) || "(EMPTY)" : "(no item)",
+      catalogImageUrl: (function () { try { return r.item ? (catalogImageUrl(r.item) || "(RESOLVED EMPTY)") : "(no item)"; }
+                                      catch (e) { return "threw: " + e.message; } })(),
+    }) : null,
+    /* THE ELEMENT ITSELF: fine element + empty src is the classic shape */
+    markupBase: el ? {
+      src: el.getAttribute("src") || "(NO src ATTRIBUTE)",
+      currentSrc: el.currentSrc || "(none)",
+      complete: el.complete,
+      natural: (el.naturalWidth || 0) + "x" + (el.naturalHeight || 0),
+      hiddenAttr: el.hidden,
+      display: cs.display, visibility: cs.visibility, opacity: cs.opacity,
+      transform: (el.style.transform || "").slice(0, 120) || "(none)",
+      box: rect ? Math.round(rect.width) + "x" + Math.round(rect.height) : "(none)",
+    } : "(#markupBase is not in the DOM)",
+    /* THE GHOST RULE, which hides the bitmap once a sheet has been traced */
+    sheet: __mk ? { key: __mk.key, items: (__mk.items || []).length,
+                    traced: !!__mk.traced, showBitmap: !!__mk.showBitmap,
+                    compose: !!__mk.compose, baseFade: __mk.baseFade,
+                    url: String(__mk.url || "") || "(EMPTY)",
+                    baseRef: __mk.baseRef || null,
+                    wouldHideBitmap: !!__mk.compose || (!!__mk.traced && !__mk.showBitmap) }
+                : "(no sheet is open — open Mark up first)",
+    savedMarkup: m ? { items: mkItemsOf(m).length, traced: !!m.traced, dirty: !!m.dirty,
+                       mode: m.mode || null } : null,
+    goldEditMode: (function () { try { return goldEditMode(); }
+                                 catch (e) { return "threw: " + e.message; } })(),
+  };
 };
 
 async function sendMessage() {
@@ -3766,6 +6668,42 @@ async function sendMessage() {
   if (!state.reference) {
     SD("sendMessage: BLOCKED — no reference on the design");
     toast("Pick a reference on the previous step first", "err"); gotoStep(1); return;
+  }
+  /* ── THE ARROW'S SECOND JOB ────────────────────────────────────────────
+     Once this version has metal, the arrow edits the metal. See the header
+     over runGoldEdit for why, and goldEditMode() for the exact rule and its
+     one carve-out — marks on the drawing still go to the drawing.
+
+     This sits AFTER the reference check and BEFORE the empty-text branch on
+     purpose. A gold edit has nothing to say without words: the empty branch
+     below regenerates from the reference or from marks, and neither is a
+     surgical change to a finished charm. */
+  /* ── THE FIRST CHANGE TO ONE OF OUR OWN DESIGNS ───────────────────────
+     A catalogue charm has no version yet, deliberately — nothing was filed
+     when the customer arrived here. The gold edit needs something to edit,
+     so the first press files the chosen design as version 1's gold (free,
+     no model) and then edits it. Every press after that is an ordinary gold
+     edit, because by then there IS metal and goldEditMode says so. */
+  if (state.reference.type === "catalog" && !state.versions.length) {
+    if (!text) {
+      toast("Tell us what to change about this design — “make the wings a little longer”.", "err");
+      t.focus(); return;
+    }
+    const got = await runAdoptCatalog({ silent: true });
+    if (!got) return;
+    await runGoldEdit(text);
+    return;
+  }
+  if (goldEditMode()) {
+    SD("sendMessage: routing to GOLD EDIT (v" +
+       state.versions[state.currentVersion].n + ")");
+    if (!text) {
+      toast("Tell us what to change about the gold — “make the wings a little longer”. " +
+            "To change the design itself, mark the drawing up.", "err");
+      t.focus(); return;
+    }
+    await runGoldEdit(text);
+    return;
   }
   /* Words are OPTIONAL. The reference is the only mandatory input: an empty
      first send translates it faithfully, and an empty send on a marked-up
@@ -3805,6 +6743,14 @@ $("#descInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 function designName() {
+  /* ── A CHOSEN NAME OUTRANKS A DERIVED ONE, AND THIS IS THE ONLY PLACE
+     THAT HAS TO KNOW IT ─────────────────────────────────────────────────
+     Everything downstream — the cart line, the PDF title, the cut-path
+     file, the export filename, the leaving toast — already routes through
+     designName(). Answering here means all of them show the customer's own
+     words without a single one of them being edited. */
+  const named = activeSession();
+  if (named && named.named && (named.name || "").trim()) return named.name.trim();
   const base = state.reference
     ? (state.reference.type === "catalog" ? state.reference.item.title
        : state.reference.drawn ? "My sketch" : "Custom upload")
@@ -3814,11 +6760,24 @@ function designName() {
        || (markupHasContent((state.markups || {}).draw) ? "My sketch" : "Custom charm"));
   return `${base} — custom`;
 }
+/* ── APPROVING IS NOT AN ACCOUNT ACTION ────────────────────────────────────
+   This used to raise the sign-up panel for anybody without an account, which
+   made a free trial that promised 3 designs and 5 images stop dead at the
+   moment those designs were finished. The customer had spent nothing they
+   were not given, done nothing that needs an account, and was asked to
+   register to look at their own work.
+
+   Nothing in approveNow() needs one either: it sets a flag, writes the
+   session and redraws. Sessions already ride the anonymous uid every visitor
+   is given at boot — that is the same uid the generate and render calls have
+   been accepting all along, and the same one the cart carries as studio_uid
+   so the order can be matched afterwards. Guests check out here exactly as
+   they check out everywhere else on the store. */
 $("#approveBtn").addEventListener("click", () => {
+  if (state.approved) { gotoStep(3); return; }
   if (!state.versions.length) return;
   const v = state.versions[state.currentVersion];
   if (v && !v.renderUrl) { toast("See it in metal first — approval is of the finished pair", "err"); return; }
-  if (!state.user) { openAuth("approve"); return; }
   approveNow();
 });
 let _orderView = "charm";
@@ -3844,26 +6803,234 @@ function refreshApproveStage() {
       $("#pairBWT").innerHTML = versionMedia({ url: v.url });
       $("#pairCharmT").classList.toggle("is-on", _orderView === "charm");
       $("#pairBWT").classList.toggle("is-on", _orderView === "bw");
+      $("#pairCharmT").setAttribute("aria-pressed", _orderView === "charm" ? "true" : "false");
+      $("#pairBWT").setAttribute("aria-pressed", _orderView === "bw" ? "true" : "false");
     } else {
       pair.hidden = true;
     }
   }
   updateOrder();
 }
-$("#pairCharmT").addEventListener("click", () => { _orderView = "charm"; refreshApproveStage(); });
-$("#pairBWT").addEventListener("click", () => { _orderView = "bw"; refreshApproveStage(); });
+function chooseOrderPreview(kind) {
+  _orderView = kind;
+  refreshApproveStage();
+  /* On touch layouts the configurator intentionally comes before the large
+     preview. Tapping either approved thumbnail is an explicit request to see
+     it larger, so carry the customer to that stage; desktop already shows it
+     alongside the card and stays still. */
+  const touchLayout = !!(window.matchMedia &&
+    (window.matchMedia("(max-width:760px)").matches ||
+     window.matchMedia("(hover:none) and (pointer:coarse)").matches));
+  if (touchLayout) requestAnimationFrame(() => {
+    const head = $(".order-preview-head") || $("#finalStage");
+    const reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches);
+    if (head) head.scrollIntoView({ behavior:reduce ? "auto" : "smooth", block:"start" });
+  });
+}
+$("#pairCharmT").addEventListener("click", () => chooseOrderPreview("charm"));
+$("#pairBWT").addEventListener("click", () => chooseOrderPreview("bw"));
+/* ═══════════ PREPARING THE ORDER ═════════════════════════════════════════
+   Approving a charm that came from our own designs leaves one thing owed:
+   the greyscale map the workshop cuts from, which has to be derived
+   backwards from the gold because there was never a drawing to derive it
+   forwards from. It costs a model call and takes the better part of a
+   minute.
+
+   That used to be fired and forgotten. It reads better as what it actually
+   is — the order being put together — so it gets the same strip along the
+   bottom of the frame that the three-image relay uses, and step three waits
+   for it.
+
+   IT WAITS, IT DOES NOT TRAP. A customer must never be held out of checkout
+   by the workshop's own record-keeping. If the derivation fails, or takes
+   longer than anyone should stare at a bar, the studio moves on anyway and
+   the version document keeps specStatus:"failed" for a sweep to find. The
+   alternative — a paying customer stuck behind a bar because a model was
+   busy — is worse than a map that has to be rebuilt later. */
+const SPEC_WAIT_MS = 150000;
+
+function specNeeded(v) {
+  /* A design that came from a drawing had its map built deterministically
+     at drawing time; there is nothing to derive and nothing to wait for.
+
+     BOTH SPELLINGS, AND THE PATH TOO. The server files renderSpecURL and
+     the client's own writes use renderSpecUrl — every other reader in this
+     file already accepts either, and this one gate did not: a version whose
+     map arrived under the capital spelling read as "map owed", and pressing
+     Approve derived a SECOND greyscale from the gold — a model call and a
+     minute of bar, spent duplicating a file the design already had. */
+  if (!v || !v.renderUrl) return false;
+  return !(v.renderSpecUrl || v.renderSpecURL || v.renderSpecPath);
+}
+
+/* Watches the version document for specStatus. Same plumbing as the render
+   watcher — snapshot first, poll as the fallback for browsers where the
+   listener cannot open. */
+function watchSpec(sessionId, n) {
+  let settle = null, unsub = null, poll = null, settled = false;
+  const done = new Promise((r) => { settle = r; });
+  const finish = (v) => {
+    if (settled) return;
+    settled = true;
+    if (unsub) { try { unsub(); } catch (e) {} }
+    if (poll) clearInterval(poll);
+    settle(v);
+  };
+  const apply = (d) => {
+    if (!d || settled) return;
+    if (d.specStatus === "done" && d.renderSpecURL) {
+      finish({ ok: true, renderSpecURL: d.renderSpecURL, renderSpecPath: d.renderSpecPath || "" });
+    } else if (d.specStatus === "failed") {
+      finish({ ok: false, error: d.specError || "spec_failed" });
+    }
+  };
+  try {
+    unsub = db.collection("customSessions").doc(sessionId).collection("versions").doc(String(n))
+      .onSnapshot((snap) => { if (snap.exists) apply(snap.data()); }, () => {});
+  } catch (e) {}
+  poll = setInterval(async () => {
+    try {
+      const r = await postAuthed(IMAGE_FN, { kind: "custom_session_status", sessionId, versionNumber: n }, FN_BASE_IMAGE);
+      if (r && r.version) apply(r.version);
+    } catch (e) {}
+  }, 5000);
+  return { done, finish, cancel: () => finish(null) };
+}
+
+async function prepareOrder() {
+  const v = state.versions[state.currentVersion];
+  const sess = activeSession();
+  if (!v || !sess || !specNeeded(v)) return true;      /* nothing owed */
+
+  const ep = epochNow();
+  const nav = $("#navNext"); if (nav) nav.disabled = true;
+  /* No counter: this is one job, and "1 / 1" beside a bar answers nothing. */
+  relayBar(0, "Preparing your order — putting your design pack together", null);
+
+  let watch = null, timer = null;
+  try {
+    watch = watchSpec(sess.id, v.n);
+    timer = setTimeout(() => watch.finish({ ok: false, error: "timeout" }), SPEC_WAIT_MS);
+    SD("spec: requesting the greyscale map for v" + v.n);
+    try {
+      await postAuthed(IMAGE_FN, {
+        kind: "custom_charm_spec_from_gold",
+        sessionId: sess.id,
+        versionNumber: v.n,
+      }, FN_BASE_IMAGE);
+    } catch (e) {
+      SD("spec: request failed —", (e && e.message) || e);
+      watch.finish({ ok: false, error: "queue_failed" });
+    }
+    const res = await watch.done;
+    clearTimeout(timer);
+    if (!sameProject(ep)) return false;
+    if (res && res.ok) {
+      v.renderSpecUrl = res.renderSpecURL;
+      v.renderSpecPath = res.renderSpecPath;
+      relayBar(0, "Your design pack is ready", 100);
+      await new Promise((r) => setTimeout(r, 700));
+      saveSession();
+    } else {
+      /* Deliberately quiet. The customer did nothing wrong, nothing they can
+         do would help, and the order is not affected — specStatus on the
+         document is where this is recorded and retried from. */
+      SD("spec: not ready —", (res && res.error) || "no answer", "— continuing anyway");
+    }
+  } catch (e) {
+    SD("spec: prepare threw —", (e && e.message) || e);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (watch) watch.cancel();
+    relayBarHide();
+    const nb = $("#navNext"); if (nb) nb.disabled = false;
+    try { renderStage(); } catch (e) {}
+  }
+  return true;
+}
+
+let _approvalHandoffRun = 0;
+function playApprovalHandoff() {
+  const overlay = $("#approvalHandoff");
+  const nav = $("#navNext");
+  const reduceMotion = !!(window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const hold = reduceMotion ? 560 : 940;
+  const run = ++_approvalHandoffRun;
+  if (nav) nav.disabled = true;                 // there is no second decision
+  if (overlay) {
+    overlay.hidden = false;
+    overlay.classList.remove("is-visible");
+    void overlay.offsetWidth;
+    requestAnimationFrame(() => {
+      if (run === _approvalHandoffRun) overlay.classList.add("is-visible");
+    });
+  }
+  return new Promise((resolve) => setTimeout(() => {
+    if (overlay && run === _approvalHandoffRun) {
+      overlay.classList.remove("is-visible");
+      setTimeout(() => {
+        if (run === _approvalHandoffRun) overlay.hidden = true;
+      }, reduceMotion ? 0 : 240);
+    }
+    resolve(run);
+  }, hold));
+}
+function openApprovedOrder() {
+  ROOT.classList.remove("is-order-arrival");
+  void ROOT.offsetWidth;
+  ROOT.classList.add("is-order-arrival");
+  gotoStep(3);
+  setTimeout(() => ROOT.classList.remove("is-order-arrival"), 1100);
+}
 function approveNow() {
   state.approved = true;
+
   _orderView = "charm";
-  pushMsg({ role: "studio", text: `Version ${state.versions[state.currentVersion] ? state.versions[state.currentVersion].n : ""} approved ♥ — press Next to choose how to wear it.` });
+  pushMsg({ role: "studio", text: `Version ${state.versions[state.currentVersion] ? state.versions[state.currentVersion].n : ""} approved ♥.` });
   renderStage(); renderThread();
   ensureSession();
   logEvent("approve", "Design approved ♥", state.versions[state.currentVersion] && state.versions[state.currentVersion].n);
   saveSession();
   refreshApproveStage();
   updateNavArrows();
-  $("#navNext").focus();
-  toast("Design approved — press Next to order it ♥", "gold");
+  /* ── APPROVAL IS THE HANDOFF ──────────────────────────────────────────
+     Asking for another click on a newly-lit Next button made approval look
+     as though nothing happened. The proof now confirms in place and carries
+     the customer directly to the ordering controls. A catalogue charm may
+     still owe the workshop its greyscale map; after the same confirmation,
+     its existing preparation strip runs and the handoff completes when the
+     pack is ready. */
+  const cur = state.versions[state.currentVersion];
+  const approvedN = cur && cur.n;
+  playApprovalHandoff().then(() => {
+    const nowV = state.versions[state.currentVersion];
+    const stillCurrent = state.approved && state.step === 2 && nowV && nowV.n === approvedN;
+    if (!stillCurrent) { updateNavArrows(); return; }
+    if (specNeeded(nowV)) {
+      prepareOrder().then((go) => {
+        const latest = state.versions[state.currentVersion];
+        if (go && state.approved && state.step === 2 && latest && latest.n === approvedN) openApprovedOrder();
+      });
+      return;
+    }
+    openApprovedOrder();
+    nudgeGuestToSave();
+  });
+}
+/* The one true thing a guest gives up is that the design lives on THIS
+   browser: the order is safe in Shopify either way, but the studio copy is
+   tied to an anonymous uid that clearing cookies throws away. So say it —
+   once, quietly, well after the approval toast, and never as a door they
+   have to get through. */
+let _guestSaveNudged = false;
+function nudgeGuestToSave() {
+  if (state.user || _guestSaveNudged) return;
+  _guestSaveNudged = true;
+  setTimeout(() => {
+    if (state.user) return;
+    toast("Approved. A free account keeps this design on every device — the menu has it whenever you want it.");
+  }, 4200);
 }
 /* ═════════════════════════════════════════════════════════════════════════
    LEAVING A PROJECT, AND STARTING A NEW ONE
@@ -3941,7 +7108,10 @@ function sessionIsBlank(s) {
   const m = s.markups || {};
   return !Object.keys(m).some((k) => {
     const e = m[k] || {};
-    return (e.items || []).length || e.crop || e.baseRot || e.mode === "exact";
+    /* the test is "was a NON-DEFAULT choice made here", not "is it exact" —
+       exact is what a blank sheet already is, so reading it as a choice made
+       every untouched session look like work worth keeping */
+    return (e.items || []).length || e.crop || e.baseRot || e.mode === "interpret";
   });
 }
 
@@ -4000,8 +7170,9 @@ function resetProjectState() {
   state.startMode = null;
   state.reference = null;
   state.metal = "gold";                   // what ensureSession gives a new one
-  state.renderQuality = "low";            // never inherit a 2-credit setting
-  state.promptMode = "full";              // a diagnostic never leaks into a new design
+  /* renderQuality, promptDraft and renderInput were cleared here so a
+     two-credit tier, a prompt edit or an input choice could not bleed into
+     the next design. None of the three exists any more. */
   state.desc = "";
   state.versions = [];
   state.thread = [];
@@ -4030,7 +7201,7 @@ function resetProjectState() {
      would open with no layers at all — a bug that would have looked like
      the tracer failing at random. */
   try { MK_TRACED.clear(); } catch (e) {}
-  try { __mkClip = null; } catch (e) {}
+  try { mkClipSet(null); } catch (e) {}
   try { __mkPrev = { key: "", frame: 0, at: null, cv: null }; } catch (e) {}
   try { mkRegionForget(); } catch (e) {}
   try { _gone.markups.clear(); _gone.mkHistory.clear(); _gone.sid = ""; } catch (e) {}
@@ -4038,6 +7209,8 @@ function resetProjectState() {
   try {
     orderState.metal = "silver"; orderState.qty = 1; orderState.mm = DEFAULT_MM;
   } catch (e) {}
+  const orderFormat = $("#orderFormat"); if (orderFormat) orderFormat.value = "charm";
+  const personalize = $("#personalizeBlock"); if (personalize) personalize.open = false;
 
   /* ── AND THE SCREEN ────────────────────────────────────────────────────*/
   const dI = $("#descInput"); if (dI) dI.value = "";
@@ -4092,10 +7265,298 @@ function startNewProject(mode) {
     setStartMode(mode);
     /* the sketchpad opens on a blank sheet, because state.markups.draw was
        just cleared and openCompose loads from it */
+    /* openCompose does the naming now — see the note in beginDesign */
     if (mode === "draw") openCompose();
     SD("start: ready — epoch", epochNow(), "session", state.activeSessionId || "(none yet)");
   } catch (e) {
     console.warn("[studio] start a design:", e && (e.stack || e.message));
+  } finally {
+    _switchBusy = false;
+  }
+}
+
+/* =============================================================================
+   PROJECT NAMES
+   Until now a design's name was DERIVED — designName() read the reference or
+   the first four words of the brief and made something up. That is a fine
+   fallback and it stays as one, but it is not a name: two wolf uploads were
+   both "Custom upload — custom", and nothing the customer typed could ever
+   survive, because saveSession() rewrote s.name from the derivation on every
+   single write.
+
+   So a design now has two fields instead of one:
+
+     s.name   the string that gets shown, everywhere, unchanged
+     s.named  true once a human chose it — the flag that stops the
+              derivation overwriting their words
+
+   Everything else follows from those two. designName() returns the chosen
+   name when there is one, so the cart line, the PDF title, the cut-path file
+   and the export filename all pick it up without knowing this feature exists.
+   ========================================================================== */
+const NAME_MAX = 60;
+
+/* Nine tenths of the time nobody wants to think of a name, so the field is
+   never empty: it opens with a dated suggestion, already selected, and Enter
+   accepts it. A date beats "Untitled 3" because My designs is a list sorted
+   by time — the name and the row then say the same thing. */
+function suggestedDesignName() {
+  const d = new Date();
+  const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+  const base = "Charm design · " + d.getDate() + " " + mon;
+  /* three designs on one afternoon should not all be called the same thing */
+  const taken = new Set((state.sessions || []).map((s) => (s.name || "").trim().toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; n < 99; n++) {
+    const t = base + " (" + n + ")";
+    if (!taken.has(t.toLowerCase())) return t;
+  }
+  return base;
+}
+/* One space between words, nothing at the ends, never longer than the field
+   allows. Returns "" for anything that was only whitespace, which the callers
+   read as "they did not name it". */
+function cleanDesignName(v) {
+  return String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, NAME_MAX);
+}
+
+/* The name, in every chip that shows it — the breadcrumb rail and the
+   editor's head bar. Written as a LIST rather than as two ids because the
+   editor was added second and the first version quietly only updated the
+   rail: a renamed design kept its old name inside the sketchpad until the
+   page was reloaded. A third chip should need no change here. */
+/* ONE surface shows the name now: the editor's File menu, as the heading
+   over its own Rename item. There were two others and both were in the way —
+   the editor's TOOLBAR chip shunted Design Interpretation and the close
+   cross sideways, and the breadcrumb rail's chip sat at the far right of a
+   full-width bar that has itself been removed. This list is what remains of
+   the mechanism: it is EMPTY on purpose, and a future chip is a one-line
+   addition rather than a rewrite. */
+const PROJECT_NAME_CHIPS = [];
+function renderProjectName() {
+  const s = activeSession();
+  const show = ROOT.classList.contains("is-designing") && !!s;
+  const nm = show ? ((s.name || "").trim() || suggestedDesignName()) : "";
+  PROJECT_NAME_CHIPS.forEach(([bSel, tSel]) => {
+    const btn = $(bSel), txt = $(tSel);
+    if (!btn || !txt) return;
+    btn.hidden = !show;
+    if (!show) return;
+    txt.textContent = nm;
+    btn.setAttribute("aria-label", "Rename this design — currently " + nm);
+    btn.title = nm + " — click to rename";
+  });
+  /* the File menu's heading is plain text, not a control — the Rename item
+     under it is the control */
+  const fn = $("#mkFileName");
+  if (fn) fn.textContent = nm || "Untitled";
+}
+
+/* ── THE DIALOG ────────────────────────────────────────────────────────────
+   Two jobs, one box: naming a design that has just been started, and renaming
+   one that already exists. The only differences are the words and what
+   happens on accept, so both are parameters. */
+let _nameOnAccept = null;
+function openNameModal(opts) {
+  const o = opts || {};
+  const m = $("#nameModal"), input = $("#nameInput");
+  if (!m || !input) { if (o.onDone) o.onDone(); return; }
+
+  $("#nameEyebrow").textContent = o.eyebrow || "New design";
+  $("#nameTitle").textContent   = o.title   || "Name this design";
+  $("#nameSub").textContent     = o.sub     || "So you can find it again in My designs. You can rename it any time.";
+  $("#nameGoBtn").textContent   = o.cta     || "Start designing";
+  $("#nameSkipBtn").hidden      = !!o.hideSkip;
+  const hint = $("#nameHint");
+  hint.classList.remove("is-warn");
+  hint.textContent = o.hint || "Press Enter to start · names are saved to your account";
+
+  input.value = o.value || "";
+  input.placeholder = o.placeholder || suggestedDesignName();
+  _nameOnAccept = o.onAccept || null;
+
+  m.classList.add("is-open");
+  syncNameCount();
+  /* select rather than just focus: the suggestion is a suggestion, and the
+     first keystroke should replace it, not append to it */
+  requestAnimationFrame(() => { try { input.focus(); input.select(); } catch (e) {} });
+}
+function closeNameModal() {
+  const m = $("#nameModal");
+  if (m) m.classList.remove("is-open");
+  _nameOnAccept = null;
+}
+/* Leaving without answering is a legitimate way through: the design keeps the
+   suggestion promptNewProjectName already wrote on it. */
+function dismissNameModal() {
+  closeNameModal();
+  renderProjectName();
+}
+function syncNameCount() {
+  const input = $("#nameInput"), c = $("#nameCount");
+  if (input && c) c.textContent = input.value.length + "/" + NAME_MAX;
+}
+/* Accept is deliberately forgiving: an empty field is not an error, it means
+   "use the suggestion". There is no way to fail this dialog.
+
+   And accepting the suggestion counts as CHOOSING it. The first cut treated
+   an untouched field as "not named" so the old derivation could keep
+   improving the name from the reference later — which meant Skip showed the
+   customer "Charm design · 26 Aug" and then silently filed the design as
+   "Custom charm — custom" on the next save. A dialog that renames your work
+   behind you the moment you look away is worse than a plain name. What it
+   said on screen is what it is called. */
+function acceptName() {
+  const input = $("#nameInput");
+  const chosen = cleanDesignName(input && input.value);
+  const fn = _nameOnAccept;
+  const name = chosen || cleanDesignName(input && input.placeholder) || suggestedDesignName();
+  closeNameModal();
+  if (fn) fn(name, true);
+}
+
+/* Write a name onto the open design and make it stick. `explicit` records
+   whether a human chose it — that is the flag designName() and saveSession()
+   both read. */
+function setProjectName(name, explicit) {
+  const s = ensureSession();
+  const nm = cleanDesignName(name) || suggestedDesignName();
+  s.name = nm;
+  if (explicit) s.named = true;
+  s.updatedAt = now();
+  renderProjectName();
+  if ($("#designsDrawer") && $("#designsDrawer").classList.contains("is-open")) renderDrawer();
+  saveSession(true);
+  return nm;
+}
+
+/* Called by every door into a new design. The session is created here rather
+   than inside the callback so the name lands on the right document even if the
+   customer takes a while over it. */
+function promptNewProjectName(after) {
+  const s = ensureSession();
+  /* The suggestion is written on before the dialog opens, not after it is
+     answered. Esc, the scrim, the close cross, a reload, a closed laptop —
+     every one of those ends with a design that already has a sensible name
+     instead of the literal string "New design" that ensureSession stamps.
+     Accepting the dialog just overwrites it, and marks it chosen. */
+  if (!s.named) { s.name = suggestedDesignName(); renderProjectName(); }
+  /* The placeholder is the name that was just written on, NOT a fresh call
+     to suggestedDesignName() — that call de-duplicates against every session
+     including this one, so asking twice offered "Charm design · 26 Aug" in
+     the rail and "Charm design · 26 Aug (2)" in the field, for one design. */
+  const suggestion = s.name || suggestedDesignName();
+  openNameModal({
+    eyebrow: "New design",
+    title: "Name this design",
+    sub: "So you can find it again in My designs. You can rename it any time.",
+    cta: "Start designing",
+    value: "",
+    placeholder: suggestion,
+    hint: "Press Enter to start · names are saved to your account",
+    onAccept: (name, explicit) => {
+      setProjectName(name, explicit);
+      if (typeof after === "function") after();
+    },
+    onDone: after,
+  });
+}
+function promptRenameProject() {
+  const s = activeSession();
+  if (!s) return;
+  openNameModal({
+    eyebrow: "Rename",
+    title: "Rename this design",
+    sub: "Only you see this — it is how the design is listed in My designs.",
+    cta: "Save name",
+    hideSkip: true,
+    value: s.name || "",
+    placeholder: suggestedDesignName(),
+    hint: "Press Enter to save",
+    onAccept: (name) => { setProjectName(name, true); toast("Renamed"); },
+  });
+}
+
+/* ── wiring ─────────────────────────────────────────────────────────────── */
+(function wireNaming() {
+  const input = $("#nameInput");
+  if (input) {
+    input.addEventListener("input", syncNameCount);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); acceptName(); }
+    });
+  }
+  const go = $("#nameGoBtn");
+  if (go) go.addEventListener("click", acceptName);
+  /* Skip is not "cancel" — it accepts the suggestion, which is the whole
+     point of the suggestion being there. */
+  const skip = $("#nameSkipBtn");
+  if (skip) skip.addEventListener("click", () => {
+    const i = $("#nameInput"); if (i) i.value = "";
+    acceptName();
+  });
+  /* Esc and the scrim close the box through the studio's generic modal
+     wiring, which does not know about _nameOnAccept — so the design keeps
+     whatever ensureSession gave it and the customer is left designing. That
+     is the correct outcome for a prompt nobody has to answer. */
+  const m = $("#nameModal");
+  if (m) m.addEventListener("click", (e) => { if (e.target === m) dismissNameModal(); });
+  /* The scrim and the cross go through the studio's own generic [data-close]
+     wiring, which knows nothing about this dialog; these listeners ride
+     alongside it purely to repaint the rail. Escape is handled globally too,
+     so it is watched rather than intercepted. */
+  $$('[data-close="nameModal"]').forEach((el) => el.addEventListener("click", dismissNameModal));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") requestAnimationFrame(renderProjectName);
+  });
+  PROJECT_NAME_CHIPS.forEach(([bSel]) => {
+    const rename = $(bSel);
+    if (rename) rename.addEventListener("click", promptRenameProject);
+  });
+  /* File → Rename design. The menu is closed first so it is not left
+     hanging open behind the dialog. */
+  const fileRename = $("#mkRename");
+  if (fileRename) fileRename.addEventListener("click", () => {
+    try { mkCloseAllDrops(); } catch (e) {}
+    promptRenameProject();
+  });
+})();
+
+/* ── THE WAY OUT ──────────────────────────────────────────────────────────
+   startNewProject leaves a design for another design. This leaves the studio
+   altogether and puts the landing page back — the Charm Studio crumb, and the
+   first thing on this page that has ever led home.
+
+   It reuses the same two calls as every other exit, in the same order, so a
+   design in progress is treated identically however the customer leaves it:
+   leaveCurrentProject() commits the open sketchpad, saves the session into My
+   designs (dropping it if it is blank), freezes anything still generating,
+   and toasts what it kept; resetProjectState() empties every per-design field.
+
+   Then the one line neither of them does. resetProjectState ends with
+   `state.designing = true`, because its five other callers are all starting
+   something. updateDesignMode() reads six signals — designing, step, start
+   mode, reference, description, versions — and resetProjectState has just
+   cleared the other five, so setting this one false is enough to hand the
+   page back to the landing. Setting it false WITHOUT the reset would not
+   work: a live reference or a single version would out-vote it. */
+function exitToLanding() {
+  if (_switchBusy) { SD("exit: ignored — a switch is already running"); return; }
+  _switchBusy = true;
+  try {
+    SD("exit: leaving the studio for the landing page");
+    closeMenu(false);
+    leaveCurrentProject();
+    resetProjectState();
+    state.designing = false;
+    updateDesignMode();
+    renderStepper();
+    /* the same idiom gotoStep uses: the top of the studio, not of the
+       document, so the theme header stays where it is */
+    const top = ROOT.getBoundingClientRect().top + window.scrollY - headerOffset();
+    window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  } catch (e) {
+    console.warn("[studio] exit to landing:", e && (e.stack || e.message));
   } finally {
     _switchBusy = false;
   }
@@ -4144,8 +7605,89 @@ function orphanFail(s, msg) {
    renderStage / renderURL — so the listener plumbing is watchVersion's,
    pointed at the render fields.
    ========================================================================== */
+/* ══════════ HOW MANY IMAGES THIS CHARM TOOK ══════════════════════════════
+   A render can spend up to three model calls reaching the picture on screen —
+   the first one, plus two re-rolls bought by the geometric gates when they
+   measure that the model drew the wrong shape, a contact sheet, or two metals
+   in one piece. Until now the only trace of that was a line in a server log,
+   so a charm that took three goes and one that took one looked identical.
+
+   IT LIVES ON document.body, NOT INSIDE #bjStudio, for the reason the QA
+   panel's own note gives: `position:fixed` resolves against the nearest
+   transformed ancestor, and the studio root can become one. On the body it
+   is always the viewport's corner.
+
+   ONE HOOK, EVERY PATHWAY. Every route to a gold charm — the Re-render
+   button, the relay's third pass, "Re-draw" when only the metal changed, a
+   gold edit typed into the bar, a gold edit on a just-adopted catalogue
+   charm — reaches the server through runRender or runGoldEdit, and BOTH call
+   watchRender before the request goes out. So the reset lives there rather
+   than at five call sites where the sixth would be forgotten. */
+let __genCountEl = null;
+function genCountHost() {
+  if (__genCountEl && document.body.contains(__genCountEl)) return __genCountEl;
+  const el = document.createElement("div");
+  el.className = "bj-gen-count";
+  el.id = "bjGenCount";
+  el.hidden = true;
+  el.innerHTML = '<i class="bj-gen-count__dot" aria-hidden="true"></i>' +
+                 '<span class="bj-gen-count__n"></span>';
+  document.body.appendChild(el);
+  __genCountEl = el;
+  return el;
+}
+/* A NEW RENDER CLEARS IT, ALWAYS. The count belongs to the run on screen and
+   to nothing else, so the previous run's number never survives into the next
+   one — not for the moment before the first document write lands, and not at
+   all if the new run fails before it makes anything. */
+function genCountReset() {
+  try { const el = genCountHost(); el.hidden = true; el.classList.remove("is-done"); }
+  catch (e) {}
+}
+function genCountSet(made, max, running, flag) {
+  try {
+    const el = genCountHost();
+    const n = Math.max(1, Number(made) || 1);
+    const cap = Number(max) > 0 ? Number(max) : 0;
+    /* ── "1/3" READ TWO WAYS ──────────────────────────────────────────────
+       It was meant as "one image made, of at most three" and was just as
+       easily read as "image one OF three that were made" — which is the
+       opposite claim about what the studio just spent. A number and a noun
+       cannot be read the other way round, so the ceiling moves into the
+       tooltip where it is context rather than half of an ambiguous ratio. */
+    el.querySelector(".bj-gen-count__n").textContent = n + (n === 1 ? " image" : " images");
+    el.title = (n === 1 ? "1 image was generated for this charm"
+                        : n + " images were generated for this charm — the earlier " +
+                          (n === 2 ? "one was" : "ones were") + " rejected and re-rolled") +
+               (cap ? " (up to " + cap + " allowed)" : "");
+    /* ── A RENDER THAT FAILED EVERY ATTEMPT IS NOT A RENDER THAT PASSED ──
+       Three images were made, all three were measured and rejected, and the
+       least-bad one shipped — and the customer was shown exactly what a
+       first-time pass looks like, having paid the same credit. The count was
+       the only hint and it reads as diligence rather than as a warning. */
+    el.classList.toggle("is-done", !running);
+    el.classList.toggle("is-flagged", !running && !!flag);
+    if (!running && flag) {
+      el.title = "This render did not pass the studio's own checks (" + flag +
+                 "). " + el.title + " — press Re-render to try again.";
+    }
+    el.hidden = false;
+  } catch (e) {}
+}
+/* the run is over however it ended: stop the pulse and leave the number
+   standing. A cancelled watcher means the ack carried the result and nothing
+   was generated, so that clears it instead. */
+function genCountSettle(v) {
+  try {
+    const el = genCountHost();
+    if (!v) genCountReset();
+    else if (!el.hidden) el.classList.add("is-done");
+  } catch (e) {}
+}
+
 function watchRender(sessionId, n, prog, renderRunId) {
   let settle = null, unsub = null, poll = null, settled = false;
+  genCountReset();
   SD("render: watching", sessionId + "/versions/" + n, "runId=" + renderRunId);
   /* Elapsed seconds since the click, on every line. Render time is dominated
      by one upstream 2048² model call and varies by a factor of three or more
@@ -4154,6 +7696,7 @@ function watchRender(sessionId, n, prog, renderRunId) {
   const t0 = Date.now();
   const secs = () => Math.round((Date.now() - t0) / 100) / 10 + "s";
   let lastStage = "", lastSnapAt = 0, warnedRunId = false;
+  let lastAttempt = null, lastChangeAt = Date.now();
   const done = new Promise((resolve) => { settle = resolve; });
   const finish = (v) => {
     if (settled) return;
@@ -4162,6 +7705,7 @@ function watchRender(sessionId, n, prog, renderRunId) {
        "after", secs());
     if (unsub) { try { unsub(); } catch (e) {} }
     if (poll) clearInterval(poll);
+    genCountSettle(v);
     settle(v);
   };
   const apply = (d, src) => {
@@ -4194,13 +7738,29 @@ function watchRender(sessionId, n, prog, renderRunId) {
        time. Only movement is movement. */
     if (d.renderStage && d.renderStage !== lastStage) {
       lastStage = d.renderStage;
+      lastChangeAt = Date.now();
       SD("render: stage", d.renderStage, "(" + src + ", " + secs() + ")");
       prog.stage(d.renderStage);
     }
+    /* a retry is also a sign of life, even though the stage name repeats */
+    if (d.renderAttempt != null && d.renderAttempt !== lastAttempt) {
+      lastAttempt = d.renderAttempt;
+      lastChangeAt = Date.now();
+    }
+    /* the QA read-out, when it is switched on and this account may see it */
+    try { qaNote(n, d); } catch (e) {}
+    /* and the counter, which is always on. renderAttempts ticks on every
+       retry and is written again when the run settles, so this reads the one
+       field; the floor of 1 covers the paths that make exactly one image and
+       never file a count — a gold edit does not re-roll. */
+    genCountSet(Math.max(Number(d.renderAttempts) || 0, Number(d.renderAttempt) || 0, 1),
+                Number(d.renderMaxAttempts) || 0,
+                d.renderStatus !== "done" && d.renderStatus !== "failed",
+                d.renderQualityFlag || "");
     if (d.renderStatus === "done" && d.renderURL) {
       finish({ ok: true, n, renderURL: d.renderURL, renderPath: d.renderPath,
                renderSpecURL: d.renderSpecURL || "", renderSpecPath: d.renderSpecPath || "",
-               renderMetal: d.renderMetal, renderQuality: d.renderQuality,
+               renderMetal: d.renderMetal,
                renderModel: d.renderModel, renderCost: d.renderCost,
                renderRunId: d.renderRunId });
     }
@@ -4219,6 +7779,26 @@ function watchRender(sessionId, n, prog, renderRunId) {
      length, alongside a listener that was already delivering. It now stands
      down while snapshots are arriving and picks up the moment they stop. */
   poll = setInterval(async () => {
+    /* ── THE CLOCK WATCHES FOR SILENCE, NOT FOR LENGTH ───────────────────
+       The old rule was one flat deadline: 180 seconds from the click,
+       however alive the pipeline was. It abandoned slow-but-working renders
+       (a retrying run legitimately spends longer than that) and it kept the
+       customer waiting the FULL three minutes when the function had already
+       died at twelve seconds. What actually distinguishes the two is the
+       document: an alive render moves it — stage changes, attempt numbers —
+       and a dead one leaves it frozen. So the watcher now gives up when the
+       document has been SILENT too long, with one long hard cap as the
+       final backstop. The server's own per-call timeouts guarantee that an
+       alive run always moves the document again inside the silence window,
+       so the two clocks cannot disagree about a healthy render. */
+    if (!settled && Date.now() - t0 > MK_RENDER_HARD_MS) {
+      finish({ ok: false, error: "timeout" });
+      return;
+    }
+    if (!settled && lastStage && Date.now() - lastChangeAt > MK_RENDER_IDLE_MS) {
+      finish({ ok: false, error: "stalled" });
+      return;
+    }
     if (Date.now() - lastSnapAt < 15000) return;
     try {
       const r = await postAuthed(IMAGE_FN, { kind: "custom_session_status", sessionId, versionNumber: n }, FN_BASE_IMAGE);
@@ -4229,6 +7809,484 @@ function watchRender(sessionId, n, prog, renderRunId) {
   return { done, finish, cancel: () => finish(null) };
 }
 
+/* ═══════════ THE QA READ-OUT ═════════════════════════════════════════════
+   The workshop scores every gold render against the deterministic greyscale
+   map and will render again, up to twice, when the score is not good enough
+   — see renderAdjudicate in geminiImageProxy-background.js. This is the only
+   place any of that is visible: how many images were actually generated, what
+   each one scored in each category, and which one you are looking at.
+
+   IT IS NOT FOR CUSTOMERS. A shopper being told their charm scored 91 out of
+   100 has been handed a doubt they cannot act on, about a judgement they did
+   not ask for. So it appears only for an account carrying the studio's own
+   `unlimited` flag — the same marker that already exempts staff from the
+   credit meter — or when ?qa=1 is on the URL, which is how it can be looked
+   at from any browser without changing an account.
+
+   IT READS, IT NEVER DECIDES. Every number comes off the version document.
+   Nothing here can change a render, and with the subsystem switched off
+   there are no fields, so the panel never appears at all. */
+/* key, full name, and the column head — spelled out rather than sliced, so
+   the table never grows a header that reads "CUT-" */
+const QA_CATS = [
+  ["geometry",     "Geometry",     "Geom"],
+  ["cutouts",      "Cut-outs",     "Cuts"],
+  ["engraving",    "Engraving",    "Engr"],
+  ["fidelity",     "No invention", "Fid"],
+  ["tone",         "Gold tone",    "Tone"],
+  ["presentation", "Presentation", "Pres"],
+];
+/* Only ever a FALLBACK for a doc that carries no threshold — every scored
+   render files the mark it was actually judged against, and that number wins.
+   It tracks renderScoreThreshold in the proxy's STUDIO_CFG_DEFAULTS; the two
+   drifting apart would mislabel old versions, not misjudge new ones. */
+const QA_DEFAULT_THRESHOLD = 80;
+/* ── THE JUDGE'S FAILURE REASONS, IN WORDS ───────────────────────────────
+   These arrive as the proxy's own short codes. "no_object" and
+   "incomplete_twice" are precise and mean nothing to anybody reading the
+   panel; anything not listed falls through unchanged, which is what an HTTP
+   error or a timeout message should do. */
+const QA_WHY_WORDS = {
+  miscounted_spec:  "it miscounted the map's openings",
+  uncounted_spec:   "it never counted the map",
+  uniform_perfect:  "six near-perfect scores with nothing to check them against",
+  no_observations:  "it reported nothing it had looked at",
+  no_description:   "it never said what it was looking at",
+  image_model_judge:"the judge is an image-generation model",
+  no_object:        "the reply contained no JSON object",
+  no_object_twice:  "the reply contained no JSON object, twice",
+  unparsable:       "the reply was not valid JSON",
+  unparsable_twice: "the reply was not valid JSON, twice",
+  incomplete:       "the reply was missing one of the six scores",
+  incomplete_twice: "the reply was missing one of the six scores, twice",
+  no_api_key:       "no API key is configured for the judge",
+  "no answer":      "the judge returned an empty reply",
+};
+function qaWhyWords(why) {
+  const k = String(why == null ? "" : why);
+  return QA_WHY_WORDS[k] || k;
+}
+const __qa = {};            /* version number → the last summary seen for it */
+let __qaOpen = false;
+let __qaLastN = null;       /* the version most recently scored */
+
+/* ═══════════ ⏸ GOLD CHARM VERIFICATION READ-OUT — TEMPORARILY PAUSED ══════
+   The storefront half of the pause. Set to false to bring the panel back:
+
+       const STUDIO_VERIFICATION_PAUSED = false;
+
+   Its twin lives in geminiImageProxybackground.js under the same name and
+   turns the checks themselves off. THE TWO ARE FLIPPED TOGETHER. Leaving
+   this one true with the backend un-paused hides a running check rather than
+   pausing it; leaving it false with the backend paused is worse — the panel
+   would open on a run that has no verdict and paint a "…" that never
+   resolves, because renderScoreMode is still written as "off" and qaNote's
+   gate accepts it while renderScore never arrives.
+
+   Nothing else changes: qaNote still records what it is given, qaPaint still
+   knows how to draw it, and no markup or CSS was removed. The panel is built
+   on first use, so while this is true it is never constructed at all.      */
+const STUDIO_VERIFICATION_PAUSED = true;
+
+/* ═══════════ HOW MANY DECLARED ZONES A DESIGN MAY SEND ═══════════════════
+   Was the literal 40, hand-written at eight call sites here with no comment
+   at any of them. It silently dropped a customer's 41st zone before the
+   request ever left the browser, so the server could not have honoured it
+   even in principle — and the server then grew a fallback to guess back what
+   this had thrown away, which punched charm bodies out as holes.
+
+   The list is not truncated any more. 400 zones send all 400. The number is
+   a runaway guard set far above any real design, it matches
+   STUDIO_ZONE_LIMIT in geminiImageProxybackground.js, and the two move
+   together. If it ever bites it says so in the console rather than quietly
+   shortening the design. */
+const STUDIO_ZONE_LIMIT = 2000;
+function zoneList(zones, where) {
+  const all = Array.isArray(zones) ? zones : [];
+  if (all.length <= STUDIO_ZONE_LIMIT) return all;
+  console.error("[studio] ZONE LIST TRUNCATED at " + where + ": " + all.length +
+                " zones exceeds STUDIO_ZONE_LIMIT " + STUDIO_ZONE_LIMIT +
+                " — declared areas will be missing from this design.");
+  return all.slice(0, STUDIO_ZONE_LIMIT);
+}
+
+function qaAllowed() {
+  if (STUDIO_VERIFICATION_PAUSED) return false;
+  try {
+    if (/[?&]qa=1/.test(location.search || "")) return true;
+    if (localStorage.getItem("bj_qa") === "1") return true;
+  } catch (e) {}
+  return !!state.unlimited;
+}
+
+/* Built on first use rather than in the section markup: a read-out that only
+   staff ever see should not be markup every shopper downloads, and a feature
+   that may be turned off should leave nothing behind when it is. */
+/* document.getElementById, NOT $. The studio's $ is scoped to ROOT and this
+   panel lives on document.body — outside it — so $ could never find what
+   this function had just built, and every call appended another copy while
+   the "nothing to show" path hid an element that was not there. It sits on
+   the body deliberately: `position:fixed` inside a container with a
+   transform resolves against that container rather than the window, which
+   is the trap the drop-down menus already had to be rescued from. */
+function qaEl() { return document.getElementById("bjQa"); }
+function qaHost() {
+  let el = qaEl();
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = "bjQa";
+  el.className = "bj-qa";
+  el.hidden = true;
+  el.innerHTML =
+    '<button class="bj-qa__chip" type="button" aria-expanded="false" aria-controls="bjQaBody">' +
+      '<span class="bj-qa__dot" aria-hidden="true"></span>' +
+      '<span class="bj-qa__score">–</span>' +
+      '<span class="bj-qa__count"></span>' +
+    '</button>' +
+    '<div class="bj-qa__body" id="bjQaBody" hidden></div>';
+  document.body.appendChild(el);
+  el.querySelector(".bj-qa__chip").addEventListener("click", () => {
+    __qaOpen = !__qaOpen;
+    qaPaint();
+  });
+  return el;
+}
+
+/* Called from the render watcher on every snapshot, so the count climbs while
+   the attempts are still happening rather than all appearing at the end. */
+function qaNote(n, d) {
+  if (!d) return;
+  /* renderScoreMode is on every adjudicated run's record now — INCLUDING an
+     unscored one. A run whose judge answered nothing used to write no fields
+     at all, this gate then refused the doc, and the readout silently
+     vanished — which read as "the panel is gone", not as the judge failing. */
+  const has = d.renderScore != null || d.renderScoreAttempts || d.renderAttempt ||
+              d.renderScoreMode != null;
+  if (!has) return;
+  /* ── EVERY RUN STARTS FROM NOTHING ────────────────────────────────────
+     This merged each snapshot into whatever it had for this version, and
+     carried the count forward with a running maximum — so a re-render
+     showed the PREVIOUS run's table until the new verdict arrived, and the
+     number of images could only ever climb. A run id is what makes one
+     render distinguishable from the next, and the watcher is already
+     matching on it, so it decides here too: a different id is a different
+     render and nothing about the last one survives it. */
+  const prev = (__qa[n] && __qa[n].runId === (d.renderRunId || "")) ? __qa[n] : {};
+  __qa[n] = {
+    runId: d.renderRunId || "",
+    mode: d.renderScoreMode || prev.mode || "",
+    total: d.renderScore != null ? d.renderScore : prev.total,
+    threshold: d.renderScoreThreshold != null ? d.renderScoreThreshold : prev.threshold,
+    pass: d.renderScorePass != null ? d.renderScorePass : prev.pass,
+    chosen: d.renderScoreChosen != null ? d.renderScoreChosen : prev.chosen,
+    /* renderAttempt climbs live during the run; renderAttempts is the final
+       count. Both belong to THIS run now, so the max is safe. */
+    /* the table's own length counts too — the heading and the table are
+       drawn from different fields, and a heading that says fewer images than
+       the table lists is the same lie as the one that said more */
+    made: Math.max(Number(d.renderAttempts) || 0, Number(d.renderAttempt) || 0,
+                   (Array.isArray(d.renderScoreAttempts) ? d.renderScoreAttempts.length : 0),
+                   Number(prev.made) || 0, 1),
+    attempts: Array.isArray(d.renderScoreAttempts) ? d.renderScoreAttempts : prev.attempts,
+    worst: d.renderScoreWorst != null ? d.renderScoreWorst : prev.worst,
+    fabricated: d.renderScoreFabricated || prev.fabricated,
+    floorFails: d.renderScoreFloorFails || prev.floorFails,
+    /* the evidence behind the numbers */
+    judge: d.renderScoreJudgeModel != null ? d.renderScoreJudgeModel : prev.judge,
+    suspect: d.renderScoreSuspect != null ? d.renderScoreSuspect : prev.suspect,
+    suspectWhy: d.renderScoreSuspectWhy || prev.suspectWhy,
+    uniform: d.renderScoreUniform != null ? d.renderScoreUniform : prev.uniform,
+    caps: d.renderScoreCaps || prev.caps,
+    /* ── HALF A PAPER IS NOT A FAILED PAPER ──────────────────────────────
+       The map asks the check two questions it can be marked on. Getting one
+       wrong used to void the whole verdict — which is how v7 shipped with
+       five openings merged into one large cut-out that the check had
+       measured and named. A missed question now costs only the category it
+       belongs to: `examWrong` is which question, `unmarked` is which
+       category nobody graded as a result, and the rest of the verdict
+       gated the render normally. */
+    examWrong: d.renderScoreExamWrong || prev.examWrong,
+    unmarked: d.renderScoreUnmarked || prev.unmarked,
+    obs: d.renderScoreObservations != null ? d.renderScoreObservations : prev.obs,
+    /* WHAT THE MAP CONTAINS. Not the judge's opinion of it — the count this
+       studio's own code took off the greyscale map it built. It is on the
+       panel so the judge's first two answers can be read against the right
+       ones without leaving the page. */
+    specOpenings: d.renderScoreSpecOpenings != null ? d.renderScoreSpecOpenings : prev.specOpenings,
+    specEngraved: d.renderScoreSpecEngraved != null ? d.renderScoreSpecEngraved : prev.specEngraved,
+    corroborated: d.renderScoreCorroborated != null ? d.renderScoreCorroborated : prev.corroborated,
+    /* the run finished with NO verdict at all — and said why */
+    unscoredWhy: d.renderScoreCount === 0
+      ? String(d.renderScoreUnscoredWhy || "no usable verdict")
+      : (d.renderScoreCount != null ? null : prev.unscoredWhy),
+    /* what the judge actually replied. On a run nobody could score this is
+       the only evidence there is, and it used to be written only alongside
+       a verdict — so the panel could say "unusable answer" and not one word
+       about what the answer was. */
+    reply: d.renderScoreReply != null ? d.renderScoreReply : prev.reply,
+    running: d.renderStatus === "rendering",
+  };
+  /* the chosen attempt's six categories, filed flat on the doc as well as
+     inside the per-attempt list, so the panel still has something to show if
+     the list is ever missing */
+  QA_CATS.forEach(([k]) => {
+    const field = "renderScore" + k.charAt(0).toUpperCase() + k.slice(1);
+    const v = d[field] != null ? d[field] : prev["cat_" + k];
+    if (v != null) __qa[n]["cat_" + k] = v;
+  });
+  __qaLastN = n;
+  qaPaint(n);
+}
+
+function qaPaint(only) {
+  if (!qaAllowed()) { const e = qaEl(); if (e) e.hidden = true; return; }
+  /* THE VERSION ON THE STAGE, OR THE LAST ONE SCORED. Reading
+     state.currentVersion alone was wrong from the panel's own click handler:
+     it repaints with no argument, and a design whose current version has no
+     score — every version before this subsystem existed, and any version the
+     customer has switched to since — emptied the panel out from under the
+     click that opened it. */
+  const n = only != null ? only
+          : (__qa[state.currentVersion] ? state.currentVersion : __qaLastN);
+  const q = n == null ? null : __qa[n];
+  const el = qaHost();
+  if (!q) { el.hidden = true; return; }
+  el.hidden = false;
+
+  const score = q.total != null ? q.total : null;
+  const unscored = score == null && q.unscoredWhy != null && !q.running;
+  /* ── A DISTRUSTED NUMBER IS NOT A GRADE ──────────────────────────────
+     When the audit throws a verdict out, the number left behind is the
+     judge's arithmetic after penalty caps — a mark against the JUDGE, not
+     the charm. Painting it in the score slot, red bands and all, told Paul
+     twice that a flawless charm "scored 62/77". A verdict that did not
+     gate paints as unverified: the same n/a the unscored path earned,
+     with the evidence and the reason in the body for anyone who opens it. */
+  const distrusted = !!q.suspect && score != null && !q.running;
+  /* "near" is measured FROM THE PASS MARK, not from a hardcoded 85. With the
+     mark at 80 a fixed 85 painted a failing 84 amber and a passing 82 green,
+     which reads as the panel contradicting itself. Ten points short of the
+     mark is near; further than that is bad, whatever the mark happens to be. */
+  const mark = Number(q.threshold) > 0 ? Number(q.threshold) : QA_DEFAULT_THRESHOLD;
+  const band = unscored || distrusted ? "wait" : score == null ? "wait"
+             : q.pass ? "ok" : score >= mark - 10 ? "near" : "bad";
+  el.dataset.band = band;
+  el.classList.toggle("is-open", __qaOpen);
+  /* an ellipsis means "still coming"; a finished run with no verdict says so */
+  el.querySelector(".bj-qa__score").textContent =
+    unscored || distrusted ? "n/a" : score == null ? "…" : score + "%";
+  el.querySelector(".bj-qa__count").textContent =
+    (q.running ? "rendering " : "") + "×" + q.made;
+  const chip = el.querySelector(".bj-qa__chip");
+  chip.setAttribute("aria-expanded", __qaOpen ? "true" : "false");
+  chip.title = score == null
+    ? "Scoring this render…"
+    : distrusted
+    ? "This render shipped unverified — the check's verdict couldn't be trusted. Click for why."
+    : `Scored ${score}% against ${q.threshold ?? QA_DEFAULT_THRESHOLD}% — ${q.made} image${q.made === 1 ? "" : "s"} generated. Click for the breakdown.`;
+
+  const body = el.querySelector(".bj-qa__body");
+  body.hidden = !__qaOpen;
+  if (!__qaOpen) return;
+
+  const rows = Array.isArray(q.attempts) && q.attempts.length ? q.attempts : null;
+  let html = `<div class="bj-qa__head"><b>v${n} · ${escapeHtml(q.mode || "off")}</b>` +
+             `<span>${q.made} image${q.made === 1 ? "" : "s"} generated` +
+             (q.chosen ? ` · showing #${q.chosen}` : "") + `</span></div>`;
+  /* the run nobody could score: name the judge and the reason, and the one
+     setting that fixes it — the readout must never just disappear */
+  if (unscored) {
+    html += `<p class="bj-qa__warn">⚠ No image could be scored — the judge` +
+            (q.judge ? ` (${escapeHtml(q.judge)})` : "") +
+            ` answered nothing: ${escapeHtml(qaWhyWords(q.unscoredWhy))}.</p>` +
+            `<p class="bj-qa__note">The render shipped unjudged. Check ` +
+            `<code>renderScoreModel</code> on <code>config/customStudio</code> ` +
+            `if this keeps happening.</p>`;
+    /* ── AND WHAT IT SAID, VERBATIM ────────────────────────────────────
+       "unusable answer" is a verdict on the reply, not the reply. Reading
+       the thing itself is how "the model refused", "the model wrote prose"
+       and "the model dropped a score" tell themselves apart, and there is
+       nowhere else in the storefront to see it. */
+    if (q.reply) {
+      html += `<p class="bj-qa__note bj-qa__note--dim">It replied: ` +
+              `“${escapeHtml(String(q.reply).slice(0, 400))}”</p>`;
+    }
+  }
+  /* the distrusted body carries the evidence and the reason, never the
+     arithmetic — no table, no floors, no caps: those numbers are the
+     penalty applied to the judge, and printing them is how a flawless
+     charm reads as a failing one */
+  if (rows && !distrusted) {
+    html += '<table class="bj-qa__tbl"><thead><tr><th>#</th>' +
+            QA_CATS.map(([, , sh]) => `<th>${sh}</th>`).join("") +
+            "<th>Total</th></tr></thead><tbody>" +
+            rows.map((r) => {
+              const on = Number(r.n) === Number(q.chosen);
+              /* ── AN IMAGE NOBODY SCORED STILL GETS ITS ROW ──────────────
+                 The table used to be built from the scored attempts alone,
+                 so a run that made two images and could score one printed
+                 one row under a heading reading "2 images generated" — the
+                 second render existed, cost a model call, and had nowhere
+                 on the panel to appear. It has a row now, and that row says
+                 "not scored" rather than showing six blanks and a total of
+                 zero: an unmeasured render is not the worst render of the
+                 run, and must not be painted as one.
+                 `judged` is absent on versions rendered before this existed,
+                 so the test is explicitly === false and those read as they
+                 always did. */
+              if (r.judged === false) {
+                const why = qaWhyWords(r.unscoredWhy || "not scored");
+                return `<tr class="bj-qa__tr--unscored${on ? " is-chosen" : ""}"` +
+                  ` title="${escapeHtml(why)}"><td>${Number(r.n) || "?"}</td>` +
+                  `<td colspan="${QA_CATS.length}">not scored — ${escapeHtml(why)}</td>` +
+                  `<td><b>–</b></td></tr>`;
+              }
+              return `<tr${on ? ' class="is-chosen"' : ""}><td>${Number(r.n) || "?"}</td>` +
+                QA_CATS.map(([k]) => {
+                  const v = Number(r[k]);
+                  return `<td${Number.isFinite(v) && v < 70 ? ' class="is-low"' : ""}>${Number.isFinite(v) ? v : "–"}</td>`;
+                }).join("") +
+                `<td><b>${Number.isFinite(Number(r.total)) ? Number(r.total) : "–"}</b></td></tr>`;
+            }).join("") +
+            "</tbody></table>";
+    /* the full names, once, under the abbreviated header */
+    html += '<div class="bj-qa__key">' +
+            QA_CATS.map(([, lbl, sh]) => `<span>${sh} = ${lbl}</span>`).join("") +
+            "</div>";
+    /* ── AND THE COUNT HAS TO ADD UP ─────────────────────────────────────
+       The heading says how many images were made and the table says how
+       many are listed. When they disagree the panel is lying about one of
+       them, so say which is missing rather than leaving the customer to
+       count rows. This should be unreachable now; it is here because it
+       was reachable for every run before today. */
+    const listed = rows.length;
+    if (q.made && listed && q.made > listed) {
+      html += `<p class="bj-qa__note bj-qa__note--dim">${q.made - listed} of the ` +
+              `${q.made} images made are missing from this table — the run recorded ` +
+              `only the ones a judge answered on.</p>`;
+    }
+  } else if (score != null && !distrusted) {
+    html += '<table class="bj-qa__tbl"><tbody>' +
+            QA_CATS.map(([k, lbl]) => {
+              const v = q["cat_" + k];
+              return `<tr><td>${lbl}</td><td><b>${v == null ? "–" : v}</b></td></tr>`;
+            }).join("") + "</tbody></table>";
+  }
+  const fab = Array.isArray(q.fabricated) ? q.fabricated : [];
+  const floors = Array.isArray(q.floorFails) ? q.floorFails : [];
+  const caps = Array.isArray(q.caps) ? q.caps : [];
+  /* THE WARNING COMES FIRST. A verdict nobody should act on is the most
+     important thing on this panel, so it is not buried under the table —
+     and it says what actually happened to the customer's charm: it
+     SHIPPED, unverified, because the check disqualified itself. */
+  if (q.suspect) {
+    /* ── OBJECTED, OR SIMPLY NOT BELIEVED? ──────────────────────────────
+       A distrusted verdict is no longer inert. It cannot approve a render —
+       that is what trust buys and it has not earned it — but if it wants to
+       REJECT one it is allowed a retry, because a wrong rejection costs a
+       render and a wrong approval costs a customer. So the banner has two
+       things to say and used to say only the pessimistic one, on runs where
+       the check had in fact done its job. `made > 1` is the tell: another
+       image exists because this verdict asked for it. */
+    const objected = Number(q.made) > 1;
+    const why = Array.isArray(q.suspectWhy) && q.suspectWhy.length
+      ? ` (${escapeHtml(q.suspectWhy.map(qaWhyWords).join(", ").replace(/_/g, " "))})` : "";
+    html = (objected
+      ? `<p class="bj-qa__warn">The check couldn't be trusted to approve this render${why}, ` +
+        `so it wasn't allowed to — but it objected to the first attempt and that ` +
+        `objection was acted on: another image was made. What shipped is the best ` +
+        `of them. This is about the check, not your charm.</p>`
+      : `<p class="bj-qa__warn">This render shipped unverified — the check's verdict ` +
+        `couldn't be trusted and was not used${why}. This is about the check, ` +
+        `not your charm.</p>`) + html;
+  }
+  if (floors.length && !distrusted) html += `<p class="bj-qa__note bj-qa__note--bad">Below floor: ${escapeHtml(floors.join(", "))}</p>`;
+  if (caps.length && !distrusted) html += `<p class="bj-qa__note bj-qa__note--bad">Capped by its own observations: ${escapeHtml(caps.join(", ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase())}</p>`;
+  /* ── WHICH HALF OF THE VERDICT WAS USED ──────────────────────────────
+     Said plainly, because the alternative is a table with one category
+     silently missing from the arithmetic. This is NOT the "shipped
+     unverified" warning: the verdict was used, and it gated the render on
+     every question the check proved it could answer. */
+  const unmarked = Array.isArray(q.unmarked) ? q.unmarked : [];
+  if (unmarked.length && !distrusted) {
+    const missed = Array.isArray(q.examWrong) && q.examWrong.length
+      ? q.examWrong.join(" and ") : "one";
+    html += `<p class="bj-qa__note">The check miscounted the map's ${escapeHtml(missed)} ` +
+            `and so was not believed about <b>${escapeHtml(unmarked.join(", "))}</b> — ` +
+            `that category was left out of the total and neither passed nor failed this ` +
+            `render. Everything else was marked against the map and did gate it.</p>`;
+  }
+  if (fab.length) html += `<p class="bj-qa__note bj-qa__note--bad">Invented: ${escapeHtml(fab.join("; "))}</p>`;
+  if (q.worst) html += `<p class="bj-qa__note">${escapeHtml(q.worst)}</p>`;
+  /* WHAT THE JUDGE SAID IT SAW. Six numbers with nothing behind them are
+     what made the first verdicts impossible to argue with; these are the
+     counts they are supposed to follow from. */
+  const o = q.obs;
+  /* ── THE ANSWER SHEET, PRINTED BESIDE THE ANSWERS ────────────────────
+     The judge's count of the map used to sit here with nothing to read it
+     against, so "openings 1 → 1" looked like corroboration when it was two
+     invented numbers agreeing with each other. The map's own count goes
+     first now, and any claim that disagrees with it is marked. */
+  const tOpen = q.specOpenings, tEng = q.specEngraved;
+  const haveTruth = tOpen != null || tEng != null;
+  if (haveTruth) {
+    const tb = [];
+    if (tOpen != null) tb.push(`${tOpen} opening${tOpen === 1 ? "" : "s"}`);
+    if (tEng != null) tb.push(`${tEng} engraved field${tEng === 1 ? "" : "s"}`);
+    html += `<p class="bj-qa__note">Map contains: ${escapeHtml(tb.join(" · "))}` +
+            (tEng != null
+              ? ` <span class="bj-qa__dim">(the engraved count is this code's ` +
+                `own region census — it is not what the check is marked on)</span>`
+              : "") + `</p>`;
+  }
+  if (o) {
+    const bits = [];
+    let clashed = false;
+    const mark = (claim, truthVal) => {
+      if (claim == null || truthVal == null || Number(claim) === Number(truthVal)) return "";
+      clashed = true;
+      return " ✗";
+    };
+    if (o.charmsVisible != null) bits.push(`${o.charmsVisible} charm${o.charmsVisible === 1 ? "" : "s"} visible`);
+    if (o.openingsInSpec != null || o.openingsInRender != null)
+      bits.push(`openings ${o.openingsInSpec ?? "?"}${mark(o.openingsInSpec, tOpen)}` +
+                ` → ${o.openingsInRender ?? "?"}${mark(o.openingsInRender, tOpen)}`);
+    /* ── THE ENGRAVED COUNTS ARE SHOWN, NOT MARKED ──────────────────────
+       They carry no ✗ because nothing grades them any more: this code and
+       a pair of eyes count different objects there — fifteen 4-connected
+       components against one butterfly wing pattern — so a disagreement is
+       the two definitions differing, not the judge failing. Marking them
+       printed a red cross beside a number nobody was being tested on, which
+       is how the butterfly read as a broken check. Engraving is still
+       scored and still floored; it is judged by eye, not by census. */
+    if (o.engravedRegionsInSpec != null || o.engravedRegionsInRender != null)
+      bits.push(`engraved ${o.engravedRegionsInSpec ?? "?"}` +
+                ` → ${o.engravedRegionsInRender ?? "?"}`);
+    if (o.groundIsWhite != null) bits.push(o.groundIsWhite ? "white ground" : "ground NOT white");
+    if (o.shadowPresent != null) bits.push(o.shadowPresent ? "shadow" : "NO shadow");
+    /* the legend only when there is a mark to explain — a permanent "✗ means
+       disagrees" prints the symbol on every panel and makes a clean run look
+       like a failing one */
+    if (bits.length) html += `<p class="bj-qa__note">Judge said: ${escapeHtml(bits.join(" · "))}` +
+      (clashed ? ` <span class="bj-qa__dim">(✗ = disagrees with the map)</span>` : "") + `</p>`;
+    if (o.describeRender) html += `<p class="bj-qa__note">“${escapeHtml(o.describeRender)}”</p>`;
+  }
+  if (q.uniform && !q.suspect) html += `<p class="bj-qa__note bj-qa__note--bad">Near-perfect across all six — corroborated by a count it got right, but worth a look.</p>`;
+  /* the one misconfiguration that makes every verdict on this panel
+     worthless, said in the place where somebody will act on it */
+  if (Array.isArray(q.suspectWhy) && q.suspectWhy.indexOf("image_model_judge") >= 0) {
+    html += `<p class="bj-qa__note bj-qa__note--bad">The judge is an image-generation model, which fills in templates rather than grading. Set <code>renderScoreModel</code> on <code>config/customStudio</code> to a text/vision model.</p>`;
+  }
+  if (q.judge) html += `<p class="bj-qa__note bj-qa__note--dim">judged by ${escapeHtml(q.judge)}</p>`;
+  body.innerHTML = html;
+}
+
+/* ── ONE RENDER PATH, AND NOW ONE CALLER ──────────────────────────────────
+   This took an options object so the prompt lab's Re-Generate could reuse
+   every guard — the credit check, the debit, the run id, the ownership
+   check, the watcher, the version doc write — while sending one extra field,
+   promptOverride, in the POST body. The lab is gone, that field is gone, and
+   "See it in metal" is the only press that reaches here. */
 async function runRender() {
   SD("render: clicked");
   if (genBusy || renderBusy) {
@@ -4242,30 +8300,40 @@ async function runRender() {
     return;
   }
   const cost = renderCost();
-  const quality = renderQuality();
-  const pMode = promptMode();
   if (!state.unlimited && state.credits < cost) {
-    SD("render: BLOCKED — credits=" + state.credits + " cost=" + cost + " quality=" + quality);
-    toast(cost > 1
-      ? `High-quality rendering costs ${creditWord(cost)} — you have ${creditWord(state.credits)}. Switch to Standard, or top up.`
-      : "You're out of design credits — top up and we'll cut this straight away.", "err");
+    SD("render: BLOCKED — credits=" + state.credits + " cost=" + cost);
+    toast("You're out of design credits — top up and we'll cut this straight away.", "err");
     openPricing("out"); return;
   }
   const sess = ensureSession();
   /* which project this belongs to, read once, before anything can await */
   const ep = epochNow();
-  SD("render: v" + v.n, "metal=" + state.metal, "quality=" + quality, "prompt=" + pMode, "cost=" + cost,
+  SD("render: v" + v.n, "metal=" + state.metal, "cost=" + cost,
      "session=" + sess.id, "signedIn=" + !!state.user);
   await flushSession();                       // the server reads the session doc
   if (!sameProject(ep)) return;               // left before it even started
 
   renderBusy = true;
   $("#renderBtn").disabled = true;
-  const prog = genProgress(RENDER_STAGES, RENDER_INDEX);
+  /* ── WHO IS DRIVING DECIDES WHAT THE STAGE DOES ──────────────────────
+     Inside the relay this pass is silent: the strip along the frame is
+     already saying which of three is being made, and covering the drawing
+     would hide the very thing the metal is about to be compared against.
+
+     A LONE PRESS of Re-render is a different act. Nothing else is narrating,
+     the picture on the stage is about to be REPLACED rather than joined, and
+     the customer has just spent a credit on it — so it takes the full-stage
+     overlay back, exactly as it had before the relay existed. */
+  const prog = genProgress(RENDER_STAGES, RENDER_INDEX,
+                          { silent: __relayRunning,
+                            onPct: (p, t) => { relayMark("gold", "work", p);
+                                     if (__relay.on) relayBar(3, t || "Cutting the metal", p); } });
   prog.start();
   const renderRunId = "rr_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
   const watch = watchRender(sess.id, v.n, prog, renderRunId);
-  const timer = setTimeout(() => watch.finish({ ok: false, error: "timeout" }), GEN_TIMEOUT_MS);
+  /* the hard backstop only — the watcher's own idle clock fires first when
+     the document goes silent, which is the failure that actually happens */
+  const timer = setTimeout(() => watch.finish({ ok: false, error: "timeout" }), MK_RENDER_HARD_MS);
 
   let ack = null, error = null;
   try {
@@ -4282,15 +8350,35 @@ async function runRender() {
     let zones = [];
     try { zones = mkFillPlan(v); } catch (e) { zones = []; }
     SD("render: queueing → POST", `${FN_BASE_IMAGE}/${IMAGE_FN}`, "zones=" + zones.length);
+    /* `quality`, `renderInput` and `promptOverride` used to ride along here,
+       one per operator control. The body is back to what it carried before
+       any of them existed, and the server ignores all three even when an
+       older tab still sends them. */
     ack = await postAuthed(IMAGE_FN, {
       kind: "custom_charm_render",
       sessionId: sess.id,
       versionNumber: v.n,
       metal: state.metal,
-      quality,
-      promptMode: promptMode(),
       zones,
       renderRunId,
+      /* ── THIS CHARM CAME WITH ITS OWN HOOP ─────────────────────────────
+         A design that began in our own repository is a finished piece, and
+         its hanging hardware — often a real round jump ring rather than a
+         flat integrated hoop — is already on it. The renderer otherwise
+         works from the rule that every charm's hoop is cut from the same
+         sheet, which is true of everything the studio draws and false of
+         these. Only the storefront knows which kind this is, so it says so
+         here rather than leaving the server to infer it.
+
+         READ OFF THE VERSION FIRST. This used to ask refFromCatalogue()
+         again, here, at render time — a second live read of state.reference,
+         minutes after the drawing was made from the first one. A reference
+         changed in between gave a drawing with a studio hoop on it and a
+         prompt saying the hardware was already there. The version records
+         what was true when it was drawn (see runComposedGeneration); the
+         live read stays as the answer for versions made before this build
+         and for the routes that do not compose. */
+      builtInHoop: typeof v.builtInHoop === "boolean" ? v.builtInHoop : refFromCatalogue(),
     }, FN_BASE_IMAGE);
     SD("render: queue answered", JSON.stringify(ack || null).slice(0, 300));
   } catch (e) {
@@ -4329,18 +8417,24 @@ async function runRender() {
        Re-render dead. */
     const rb = $("#renderBtn"); if (rb) rb.disabled = false;
     const msg = String(why) === "402" || String(why).includes("out_of_credits")
-      ? `That render costs ${creditWord(cost)} and your balance didn't cover it — top up, or switch to Standard.`
+      ? `That render costs ${creditWord(cost)} and your balance didn't cover it — top up and we'll cut it straight away.`
       : String(why) === "401"
         ? "Your session timed out — sign in again and we'll carry on."
         : String(why) === "429" || String(why).includes("rate_limited")
           ? "That's a lot of metal in one go — give it a minute and try again."
-          /* The server refuses BEFORE debiting when a renderer's key is
+          /* The server refuses BEFORE debiting when the renderer's key is
              missing, so this is the one failure with a real remedy the
              customer can act on themselves. */
-          : String(why).includes("high_unavailable")
-            ? "High-quality rendering isn't available right now — Standard is, and it costs less."
-            : String(why).includes("render_unavailable")
-              ? "The renderer isn't available right now. Nothing was charged — try again shortly."
+          : String(why).includes("render_unavailable")
+            ? "The renderer isn't available right now. Nothing was charged — try again shortly."
+            /* ── NO GREY MAP, NO RENDER ────────────────────────────────────
+               The colour-coded drawing used to be sent instead whenever the
+               deterministic mask could not be built. That fallback is gone:
+               it produced a charm from a picture the prompt does not
+               describe, which is a worse outcome than not rendering. The
+               credit is refunded server-side before this arrives. */
+            : String(why).includes("mask_unavailable")
+              ? "We couldn't build the metal map for this drawing, so nothing was rendered and nothing was charged. Adjust the design a little and try again."
               : "That render didn't come through. Nothing was charged — try it again.";
     if (String(why) === "402") openPricing("out");
     else if (String(why) === "401") openAuth("default");
@@ -4351,7 +8445,6 @@ async function runRender() {
   }
 
   SD("render: DONE v" + v.n, result.renderMetal || state.metal,
-     "quality=" + (result.renderQuality || quality),
      "model=" + (result.renderModel || "?"),
      String(result.renderURL || result.renderUrl || "").slice(0, 120));
   await prog.finish();
@@ -4369,7 +8462,9 @@ async function runRender() {
       ov.renderSpecUrl = result.renderSpecURL || result.renderSpecUrl || "";
       ov.renderSpecPath = result.renderSpecPath || "";
       ov.renderMetal = result.renderMetal || sess.metal || "gold";
-      ov.renderQuality = result.renderQuality || quality;
+      /* back in step with its drawing — see the note on the in-project path */
+      ov.goldEdited = false;
+      ov.goldEditCount = 0;
       ov.renderModel = result.renderModel || "";
       ov.renderCost = Number(result.renderCost) || cost;
       ov.renderRunId = result.renderRunId || renderRunId;
@@ -4386,20 +8481,326 @@ async function runRender() {
   v.renderSpecUrl = result.renderSpecURL || result.renderSpecUrl || "";
   v.renderSpecPath = result.renderSpecPath || "";
   v.renderMetal = result.renderMetal || state.metal;
-  /* Which renderer made THIS picture, kept on the version rather than read
-     back off the live toggle: the customer can switch quality afterwards and
-     the record of what they are looking at must not switch with it. */
-  v.renderQuality = result.renderQuality || quality;
+  /* Which model made THIS picture, as the server reported it. renderQuality
+     is no longer kept beside it: there is one renderer, so a tier recorded
+     on the version could only ever say the same word. */
   v.renderModel = result.renderModel || "";
   v.renderCost = Number(result.renderCost) || cost;
   v.renderRunId = result.renderRunId || renderRunId;
+  /* ── A RENDER IS THE UNDO FOR A GOLD EDIT ─────────────────────────────
+     This charm was just made from the grey map, so it is what the drawing
+     describes again and the pair is back in step. The studio tells customers
+     exactly this when a gold edit lands — "Re-render puts the charm back to
+     what the drawing says" — so the flag that makes the stage say the two
+     have diverged has to come down, or the sentence is a lie the moment they
+     act on it. Cleared on the version doc in the same breath, server-side. */
+  v.goldEdited = false;
+  v.goldEditCount = 0;
   state.stageView = "charm";
-  logEvent("render", `Rendered in ${METAL_LABELS[state.metal] || state.metal}` +
-                     (v.renderQuality === "high" ? " — high quality" : ""), v.n);
+  logEvent("render", `Rendered in ${METAL_LABELS[state.metal] || state.metal}`, v.n);
   pushMsg({ role: "studio", vn: v.n, text: "Here it is in metal — your drawing, made real. Approve the pair when you love it." });
   saveSession();
   renderStage();
   refreshWallet();
+}
+
+/* =============================================================================
+   GOLD EDIT — custom_charm_gold_edit: change one thing about the finished
+   charm and nothing else.
+
+   ── WHY THE ARROW CHANGES JOBS ────────────────────────────────────────────
+   Up to the moment a charm exists, every press of this button is a design
+   instruction: it redraws the production drawing, and the drawing is what
+   the whole pipeline descends from. That is right while the design is being
+   decided. It stops being right the moment it has been.
+
+   What a customer types once they are looking at their charm in gold is
+   almost never "design me a different charm". It is "the wings could be a
+   little longer" — one small change to a piece they have already approved
+   the rest of. Sending that back through the design step regenerates the
+   drawing, re-derives the greyscale map and re-renders the metal, and returns
+   something that differs in a dozen ways nobody asked about. The request was
+   surgical and the pipeline had no surgical answer.
+
+   So once a version has metal, the arrow edits the metal. One image-model
+   call on the charm itself, one sentence, everything else preserved.
+
+   ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────
+   It never regenerates the production drawing and it never rebuilds the
+   greyscale mask. Those belong to the design step. The consequence is worth
+   stating plainly rather than hiding: after a gold edit the drawing on the
+   Drawing tab is the drawing the charm STARTED from, not a drawing of the
+   charm as it now stands, and the stage says so. Re-render remains the way
+   back — it reads the stored greyscale map and produces the charm the drawing
+   actually describes, discarding the edits.
+
+   ── AND HOW TO GET BACK TO THE DRAWING ────────────────────────────────────
+   Mark-up. A marked-up sheet is an unambiguous instruction aimed at the
+   drawing, so sendMessage still routes it there even when metal exists; that
+   is the one carve-out, and it is what keeps the design step reachable
+   instead of stranding the customer in metal forever.
+   ========================================================================== */
+async function runGoldEdit(text) {
+  SD("goldEdit: clicked");
+  if (genBusy || renderBusy) {
+    SD("goldEdit: BLOCKED — genBusy=" + genBusy + " renderBusy=" + renderBusy);
+    return;
+  }
+  const v = state.versions[state.currentVersion];
+  if (!v || !v.renderUrl) {
+    SD("goldEdit: BLOCKED — no metal on v" + (v ? v.n : "?"));
+    toast("See it in metal first — this changes the gold charm itself.", "err");
+    return;
+  }
+  const instruction = String(text || "").trim();
+  if (!instruction) {
+    toast("Tell us what to change about the gold — “make the wings a little longer”.", "err");
+    $("#descInput").focus();
+    return;
+  }
+  const cost = renderCost();
+  if (!state.unlimited && state.credits < cost) {
+    SD("goldEdit: BLOCKED — credits=" + state.credits + " cost=" + cost);
+    toast("You're out of design credits — top up and we'll make that change straight away.", "err");
+    openPricing("out"); return;
+  }
+
+  const sess = ensureSession();
+  const ep = epochNow();
+  const t = $("#descInput");
+  /* NOT added to state.desc. That string is the running brief the DESIGN step
+     sends as `instructions`, and a gold edit is not a brief for a drawing —
+     folding it in there is how "shorten the hoop" ends up redesigning a charm
+     three versions later. It goes into the thread, which is the record of
+     what was actually asked, and nowhere else. */
+  pushMsg({ role: "me", text: instruction, gold: true });
+  pushMsg({ role: "thinking", text: "Reading your change…" });
+  t.value = ""; $("#charCount").textContent = "0"; autoGrow();
+  renderThread(); saveSession();
+  logEvent("gold_edit", `Gold edit: “${instruction}”`, v.n);
+
+  SD("goldEdit: v" + v.n, "session=" + sess.id, "cost=" + cost);
+  await flushSession();                       // the server reads the session doc
+  if (!sameProject(ep)) return;
+
+  /* renderBusy, not genBusy: this occupies the render channel — the same
+     version-doc fields, the same watcher — and the render button must be
+     dead while it runs for exactly the reason a second render must be. */
+  renderBusy = true;
+  $("#sendBtn").disabled = true;
+  const rb0 = $("#renderBtn"); if (rb0) rb0.disabled = true;
+
+  /* ── NOTHING UNGUARDED BETWEEN THE FLAG AND THE WATCHER ────────────────
+     This press disables BOTH the arrow and Re-render, so a throw in the
+     three lines below — a missing #genOverlay on a cached page, a progress
+     controller that cannot find its bar — would latch renderBusy true and
+     leave the customer with a studio in which nothing at all can be pressed,
+     silently, until they open a different design. runComposedGeneration
+     carries the same guard for the same reason, in its own words: "a studio
+     that has stopped working and will not say why is this exact shape". */
+  const renderRunId = "ge_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+  let prog = null, watch = null, timer = null;
+  try {
+    /* Same rule as runRender: silent only while the relay is narrating. A
+       gold edit is always a lone press — the customer typed a sentence and
+       spent a credit on it — so it gets the full-stage overlay, and the
+       picture it is about to replace is covered while it is replaced. */
+    prog = genProgress(GOLD_EDIT_STAGES, RENDER_INDEX,
+                       { silent: __relayRunning,
+                         onPct: (p, t) => { relayMark("gold", "work", p);
+                                     if (__relay.on) relayBar(3, t || "Cutting the metal", p); } });
+    prog.start();
+    watch = watchRender(sess.id, v.n, prog, renderRunId);
+    timer = setTimeout(() => watch.finish({ ok: false, error: "timeout" }), MK_RENDER_HARD_MS);
+  } catch (e) {
+    SD("goldEdit: could not start —", e && e.message);
+    try { if (prog) prog.abort(); } catch (_e) {}
+    try { if (watch) watch.cancel(); } catch (_e) {}
+    if (timer) clearTimeout(timer);
+    renderBusy = false;
+    $("#sendBtn").disabled = false;
+    const rbE = $("#renderBtn"); if (rbE) rbE.disabled = false;
+    const lastE = state.thread[state.thread.length - 1];
+    const m = "Something went wrong before that change was sent. Nothing was charged — try it again.";
+    if (lastE && lastE.role === "thinking") { lastE.role = "studio"; lastE.text = m; }
+    renderThread(); saveSession();
+    toast(m, "err");
+    return;
+  }
+
+  /* ── MARKS ARE POINTING, NOT PAINTING ─────────────────────────────────
+     A charm adopted from our own catalogue has no drawing to send the arrow
+     back to, so marks made on it are not a request to redesign anything —
+     they are the customer saying WHERE on this charm they mean. That is the
+     most valuable half of "make the wings longer", and until now it was
+     drawn, saved, and then thrown away at the door.
+
+     It rides along as a composite the same way a generation's does, and the
+     server is told in as many words that the sheet is direction: the ink
+     locates the change and must never itself appear in the metal. If the
+     sheet cannot be built — nothing on it, or an untouched auto-trace —
+     buildMarkupPayload says so by returning null and the edit goes as the
+     plain sentence it always was. A failure here never costs the press. */
+  let goldMarkup = null;
+  try { goldMarkup = await buildMarkupPayload(v); }
+  catch (e) { SD("goldEdit: markup skipped —", (e && e.message) || ""); }
+  if (goldMarkup) SD("goldEdit: sending marks", "mode=" + goldMarkup.mode,
+                     "image=" + (goldMarkup.image ? "yes" : "no"),
+                     "zones=" + ((goldMarkup.zones || []).length));
+  if (!sameProject(ep)) { try { prog.abort(); } catch (_e) {} watch.cancel();
+                          clearTimeout(timer); return; }
+
+  let ack = null, error = null;
+  try {
+    SD("goldEdit: queueing → POST", `${FN_BASE_IMAGE}/${IMAGE_FN}`);
+    ack = await postAuthed(IMAGE_FN, Object.assign({
+      kind: "custom_charm_gold_edit",
+      sessionId: sess.id,
+      versionNumber: v.n,
+      instruction,
+      metal: state.metal,
+      renderRunId,
+      /* the same answer the render was given, from the same place — an edit
+         that re-asserted the integrated hoop would undo, on its first pass,
+         the one thing the render had just been told was false of this piece */
+      builtInHoop: typeof v.builtInHoop === "boolean" ? v.builtInHoop : refFromCatalogue(),
+    }, goldMarkup ? { markupImage: goldMarkup.image, markupNotes: goldMarkup.notes,
+                      markupMode: goldMarkup.mode, markupZones: goldMarkup.zones } : {}),
+    FN_BASE_IMAGE);
+    SD("goldEdit: queue answered", JSON.stringify(ack || null).slice(0, 300));
+  } catch (e) {
+    error = e;
+    SD("goldEdit: queue THREW", (e && e.status) || "", (e && e.message) || "");
+  }
+  /* A request that never landed cannot arrive later — settle at once rather
+     than watching a document nobody will write for three minutes. */
+  if (error) {
+    watch.finish({ ok: false, error: String((error.payload && error.payload.error) ||
+                                            error.status || error.message || "queue_failed") });
+  }
+
+  const result = (ack && ack.ok && ack.renderURL &&
+                  String(ack.renderRunId || "") === renderRunId) ? ack : await watch.done;
+  clearTimeout(timer);
+  watch.cancel();
+  if (sameProject(ep)) renderBusy = false;
+
+  if (!result || !result.ok) {
+    prog.abort();
+    const why = (error && error.status) || (result && result.error) || "";
+    SD("goldEdit: FAILED —", String(why) || "(no reason given)");
+    if (!sameProject(ep)) {
+      await orphanFail(sess, "That change didn't come through. Nothing was charged — try it again.");
+      return;
+    }
+    $("#sendBtn").disabled = false;
+    const rb = $("#renderBtn"); if (rb) rb.disabled = false;
+    const msg = String(why) === "402" || String(why).includes("out_of_credits")
+      ? `That change costs ${creditWord(cost)} and your balance didn't cover it — top up and we'll make it straight away.`
+      : String(why) === "401"
+        ? "Your session timed out — sign in again and we'll carry on."
+        : String(why) === "429" || String(why).includes("rate_limited")
+          ? "That's a lot of changes in one go — give it a minute and try again."
+          /* ── A TIMEOUT IS NOT A FAILURE, AND MUST NOT CLAIM TO BE ────────
+             Every other branch here names something the server DECIDED, and
+             a decision that costs nothing has already refunded by the time
+             it arrives. A timeout is the browser giving up at three minutes
+             on work that is still running: it will very likely finish, keep
+             its credit and write the new charm to the version doc. Telling
+             the customer "nothing was charged" would be a guess, and the
+             wrong one more often than not. */
+          : String(why) === "timeout"
+            ? "That change is taking longer than it should. It may still land — " +
+              "reopen this design in a minute and check the charm before trying again."
+          /* The one refusal with a remedy the customer can act on: there is
+             no metal on this version, so there is nothing to edit yet. */
+          : String(why).includes("no_gold_yet")
+            ? "There's no metal on this version yet — press See it in metal first, then tell us what to change."
+            /* The marked-up sheet did not fit the request. It is capped well
+               below the ceiling and so should never happen, but if it does
+               the remedy is in the customer's hands and worth naming: fewer
+               marks, or none, and the sentence alone still works. */
+            : String(why).includes("request_too_large") || String(why) === "413"
+              ? "There's too much on your mark-up for us to send in one go — clear a few marks, or just describe the change in words, and try again."
+            /* The server strips control characters and stray markup out of
+               every instruction before it reads one, so a short message made
+               entirely of those arrives empty even though the box was not.
+               Saying "we couldn't read that" is the truth; "something went
+               wrong" would send them to press the same button again. */
+            : String(why).includes("missing_instruction")
+              ? "We couldn't read a change in that — say it in plain words, like “make the wings a little longer”."
+              : String(why).includes("render_unavailable")
+                ? "The renderer isn't available right now. Nothing was charged — try again shortly."
+                : "That change didn't come through. Nothing was charged — try it again.";
+    const last = state.thread[state.thread.length - 1];
+    if (last && last.role === "thinking") { last.role = "studio"; last.text = msg; delete last.vn; }
+    else pushMsg({ role: "studio", text: msg });
+    renderThread(); saveSession();
+    if (String(why) === "402") openPricing("out");
+    else if (String(why) === "401") openAuth("default");
+    else toast(msg, "err");
+    refreshWallet();
+    renderStage();
+    return;
+  }
+
+  SD("goldEdit: DONE v" + v.n, String(result.renderURL || "").slice(0, 120));
+  await prog.finish();
+
+  /* Arrived after they moved on — file it on the design it belongs to, the
+     same way a late render is filed. Only the metal fields move; the drawing
+     and the mask on that version are not this handler's to touch. */
+  if (!sameProject(ep)) {
+    const ov = (sess.versions || []).find((x) => x && x.n === v.n);
+    if (ov) {
+      ov.renderUrl = result.renderURL || result.renderUrl;
+      ov.renderPath = result.renderPath || ov.renderPath || "";
+      ov.goldEdited = true;
+      ov.goldEditCount = (Number(ov.goldEditCount) || 0) + 1;
+      /* ── AN EDITED CHARM IS NOT THE CHARM THEY APPROVED ────────────────
+         Approval is of the PAIR and both halves go into the cart, so a
+         design left in `approved` while its gold quietly changes underneath
+         would send a customer a charm they never saw. orphanVersion demotes
+         for exactly this reason; so does the in-project path below. The
+         `ordered` guard is orphanVersion's too — a design already through
+         checkout is history, not a draft. */
+      sess.approved = false;
+      if (sess.status !== "ordered") sess.status = "draft";
+      sess.history = (sess.history || []).concat([{ type: "gold_edit",
+        label: "Changed the gold after you started something else", vn: v.n, at: now() }]);
+      orphanThread(sess, "Done — that change is in the gold. The production drawing is unchanged, " +
+                         "so have another look at the pair before you order it.", v.n);
+    }
+    await saveOrphan(sess);
+    return;
+  }
+
+  spendCredit();
+  v.renderUrl = result.renderURL || result.renderUrl;
+  v.renderPath = result.renderPath || v.renderPath || "";
+  v.renderMetal = result.renderMetal || v.renderMetal || state.metal;
+  v.renderModel = result.renderModel || v.renderModel || "";
+  v.renderRunId = result.renderRunId || renderRunId;
+  /* THE PAIR HAS COME APART, AND THE STUDIO SAYS SO. The drawing on this
+     version is the drawing this charm was cut from, not a drawing of the
+     charm as it now stands. Approval is of the pair and the order carries
+     both halves, so this cannot be a silent state — renderStage() reads this
+     flag and labels the Drawing tab with it. */
+  v.goldEdited = true;
+  v.goldEditCount = (Number(v.goldEditCount) || 0) + 1;
+  state.approved = false;                     // the pair changed; re-approve it
+  state.stageView = "charm";
+  const last = state.thread[state.thread.length - 1];
+  const done = "Done — that change is in the gold. The production drawing behind it is unchanged; " +
+               "Re-render puts the charm back to what the drawing says.";
+  if (last && last.role === "thinking") { last.role = "studio"; last.vn = v.n; last.text = done; }
+  else pushMsg({ role: "studio", vn: v.n, text: done });
+  $("#sendBtn").disabled = false;
+  saveSession();
+  renderStage();
+  renderThread();
+  refreshWallet();
+  $("#descInput").focus();
 }
 
 
@@ -4496,6 +8897,28 @@ const MK_CUTOUT  = "#00b4ff";
    and every note in every design ever saved carries f:"none", and a colour
    is what that instruction LOOKS like, never what it is. */
 const MK_OUTLINE = "#e00000";
+/* ── THE FOURTH RESERVED COLOUR: THE PERIMETER IS YOURS TO DRAW ───────────
+   Until now the outer cut edge was always OURS: the deterministic offset
+   line mkComposeDrawing strokes around the body. A customer who drew their
+   own perimeter got it ENGRAVED — it was black ink like any other line —
+   and the studio then drew a second, generated edge around it, which is not
+   what they meant and gave them no way to mean it.
+
+   A line in this LIGHT GREEN says: THIS line is the charm's outer cut edge.
+   At compose time, when a light-green line verifiably encloses the design
+   (see mkPerimeterEncloses), the studio's own generated blue silhouette
+   line is NOT drawn, and the customer's green line is recoloured to the
+   instruction blue on the outgoing sheet — so everything downstream (the
+   backend plan, the prompts, the greyscale map) sees a standard blue cut
+   perimeter and nothing downstream changes at all. Light green never
+   reaches a production drawing; like red and blue it is a reserved word,
+   and its meaning is spent at compose.
+
+   When the green line does NOT enclose the design — an open curve, an
+   interior doodle — the claim is refused: the studio draws its own blue
+   edge exactly as it always has, and the green line stays annotation ink,
+   nothing to the metal. The customer is told which happened. */
+const MK_PERIM = "#00d24a";
 const MK_FILL_MODES = [
   { id: "engrave", f: MK_ENGRAVE, label: "Engrave",
     say: "This area is engraved — cut into the surface, hatched solid. The metal stays." },
@@ -4524,7 +8947,36 @@ function mkFillIntent(f) {
    PICTURE never learned that, so the sheet drew an outline while the list
    beside it said "cut clean through". One reading, used by the painter, the
    tally and the payload alike, so they cannot disagree again. */
+/* ── A LINE'S COLOUR IS ITS INSTRUCTION ─────────────────────────────────
+   The ink palette came out of the studio years ago because "colour never
+   meant anything on a line". It means something now, by request: the pen
+   carries the three reserved engraving colours, and a line drawn in one of
+   them is that instruction — a black line is engraved, a blue line is cut
+   clean through along its path, a red line is an outline. Any other colour
+   on a line is what it always was: annotation, a note to the designer,
+   nothing to the metal.
+
+   EXACT match, deliberately. A hand-picked dark grey must not quietly
+   become an engraving instruction — only the studio's own three colours
+   carry meaning, and the pen menu is the one place that writes them. */
+function mkInkInstruction(it) {
+  if (!it || it.hid) return null;
+  /* which items are LINES as far as an instruction is concerned: the pen's
+     strokes, the line and arrow, and any closed primitive that is not
+     filled — an unfilled circle is its boundary, and recolouring that
+     boundary is how the customer says what the boundary IS. A filled shape
+     is an area and keeps area semantics untouched. */
+  const line = it.t === "ink" || it.t === "line" || it.t === "arrow" ||
+    (MK_SHAPE_TOOLS.indexOf(it.t) >= 0 && mkFillIntent(it.f) === "none");
+  if (!line) return null;
+  const c = String(it.c || "").toLowerCase();
+  return c === MK_ENGRAVE ? "engrave"
+       : c === MK_CUTOUT ? "cutout"
+       : c === MK_OUTLINE ? "none" : null;
+}
 function mkItemIntent(it) {
+  const ln = mkInkInstruction(it);
+  if (ln) return ln;
   const i = mkFillIntent(it && it.f);
   if (i === "none" && it && (it.t === "ring" || it.t === "bail")) return "cutout";
   return i;
@@ -4582,7 +9034,14 @@ function mkMetalTally(items) {
   const t = { engrave: 0, cutout: 0, none: 0 };
   (items || []).forEach((it) => {
     if (it.hid) return;
-    if (it.t === "img" || mkIsText(it) || it.t === "ink" || it.t === "hl" || it.t === "sign") return;
+    if (it.t === "img" || mkIsText(it) || it.t === "hl" || it.t === "sign") return;
+    /* a pen line in a reserved colour is an instruction and is counted as
+       one; a pen line in any other colour is annotation and is not */
+    if (it.t === "ink" && !mkInkInstruction(it)) return;
+    /* the perimeter line is the charm's edge, not one of the three area
+       instructions — counting it as an "outline" here would be a lie the
+       zones list was already caught telling */
+    if (mkIsPerimLine(it)) return;
     t[mkItemIntent(it)]++;
   });
   return t;
@@ -4598,7 +9057,8 @@ const MK_FONTS = {
   sans: '"Nunito Sans", system-ui, sans-serif',
 };
 const MK_HINTS = {
-  select:    "Click a mark to move, resize or rotate it · ⌫ deletes",
+  select:    "",
+  marquee:   "Drag a box over the artwork — then Copy, Cut or Delete just the piece inside it",
   draw:      "Click and drag to draw · scroll to zoom",
   highlight: "Drag a wide highlight over an area",
   sign:      "Sign across the sheet — we'll keep it for next time",
@@ -4665,6 +9125,18 @@ function mkPack(it) {
     ff: "sans",                                    // the one face we engrave
     fs: Number(it.fs) || 0.036,
     r:  Number(it.r) || 0,
+    /* ── THE MIRROR, AS A FLAG RATHER THAN AS MIRRORED POINTS ────────────
+       Flip used to be written straight into `p` — every point reflected
+       about the selection's box. That is only the whole answer for a layer
+       whose points ARE the drawing, and most layers here are not: a picture,
+       a run-length area and a two-corner shape all keep just a BOX in `p`,
+       so reflecting it gave back the same box and nothing moved; and every
+       layer carrying its own turn came out at +r where the mirror needs -r,
+       which is what tore a grouped drawing apart on one press.
+       So the mirror lives beside the turn, in the same two fields the
+       painter already reads, and every kind of layer inherits it at once. */
+    fx: it.fx ? 1 : 0,
+    fy: it.fy ? 1 : 0,
     /* ── layer state ── */
     n:   String(it.n || "").slice(0, 48),          // the customer's own name
     o:   isFinite(o) ? Math.min(1, Math.max(0, o)) : 1,
@@ -4709,11 +9181,25 @@ function mkPack(it) {
     /* manual eraser: non-destructive local-coordinate brush strokes. Each
        stroke keeps one radius plus a flat [u,v...] path inside the layer's
        own box, so moving/resizing/rotating the layer moves the erase with it. */
-    er: (Array.isArray(it.er) ? it.er : []).slice(-80).map((st) => ({
-      r: Math.max(0.001, Math.min(1, Number(st && st.r) || 0.02)),
-      p: (Array.isArray(st && st.p) ? st.p : []).slice(-2400)
-           .map((n) => Math.round((Number(n) || 0) * 1e4) / 1e4),
-    })).filter((st) => st.p.length >= 2),
+    /* AND THE MARQUEE'S RECTANGLES, in the same field for the same reason.
+       A box cut out of a picture is a mask on the layer, not a change to the
+       picture — so it belongs exactly where the brush's masks already live,
+       and it inherits their painter, their Undo and their behaviour under
+       move, resize and rotate for nothing. `q` is a polygon in the layer's
+       own box coordinates (four corners, and it is a QUAD rather than a box
+       because the marquee is drawn on the sheet and the layer may be turned);
+       `v` inverts it, which is how "keep only this piece" is written. */
+    er: (Array.isArray(it.er) ? it.er : []).slice(-80).map((st) => {
+      if (st && Array.isArray(st.q) && st.q.length >= 6) {
+        return { q: st.q.slice(0, 64).map((n) => Math.round((Number(n) || 0) * 1e4) / 1e4),
+                 v: st.v ? 1 : 0 };
+      }
+      return {
+        r: Math.max(0.001, Math.min(1, Number(st && st.r) || 0.02)),
+        p: (Array.isArray(st && st.p) ? st.p : []).slice(-2400)
+             .map((n) => Math.round((Number(n) || 0) * 1e4) / 1e4),
+      };
+    }).filter((st) => (st.q ? st.q.length >= 6 : st.p.length >= 2)),
   };
 }
 let _mkSeq = 0;
@@ -4925,7 +9411,227 @@ function mkWandCanvas(it, img) {
 }
 /* what the painter should draw for this picture: the cut version if it has
    been cut, the picture itself if it has not */
+/* ═══════════ PIXELS, INSIDE THE SHEET THAT ALREADY EXISTS ════════════════
+   A placed picture has always been a parametric object: a box, a rotation, a
+   list of wand seeds, a set of eraser strokes. Everything the studio could do
+   to one was a NUMBER, and a number cannot express a destructive edit: the
+   eraser's result is not derivable from a seed and a tolerance, and neither
+   is a gap closed by content-aware fill. There was nowhere to put the answer.
+
+   MK_PX is the somewhere. A picture that has been edited destructively gets a
+   tile-backed pixel buffer, and from that moment `mkPictureFor` serves the
+   pixels instead of the original file. Nothing else in the studio changes:
+   the item is still an item, it still drags and rotates and sits in Layers,
+   the export still paints it, the composite still ships it.
+
+   IT HAPPENS BY ITSELF. The customer never converts anything and is never
+   asked to. They drag the eraser across their picture and it becomes
+   pixel-backed underneath them — the same way a smart object rasterises the
+   first time you paint on it. There is no second editor, no mode and no
+   button, because "this is an imported photograph" is not a fact anybody
+   should have to hold in their head while they work.                        */
+const MK_PX = new Map();               /* item id → { doc, seq, cv, cvSeq }  */
+
+/* THE SHEET'S OWN BASE IS A PICTURE TOO. When a customer imports a PNG it
+   becomes the sheet's base bitmap rather than a placed item — it is the thing
+   they are drawing ON — so the pixel tools have to reach it or "retouch my
+   imported photo" would be the one case they did not cover. It is given the
+   same treatment under a reserved id, and from that moment mkRedraw paints
+   the pixels and the <img> underneath stands down. */
+const MK_PX_BASE = "__base__";
+/* The CSS transform mkApplyBase writes, as a matrix, so the canvas draw and
+   the hit-test use ONE definition of where the base sits rather than two that
+   can drift apart. Order matches the stylesheet exactly:
+     scale(s) translate(tx%,ty%) translate(50%,50%) rotate(deg) translate(-50%,-50%)
+   Returns null when there is nothing to apply, so the common case costs
+   nothing and an old browser without DOMMatrix degrades to no transform
+   rather than to a wrong one. */
+function mkBaseMatrix(W, H) {
+  if (!__mk) return null;
+  const c = __mk.crop, rot = Number(__mk.baseRot) || 0;
+  if (!c && !rot) return null;
+  if (typeof DOMMatrix !== "function") return null;
+  const sc = c ? 1 / c.w : 1;
+  const tx = c ? -c.x * W : 0, ty = c ? -c.y * H : 0;
+  try {
+    return new DOMMatrix()
+      .scaleSelf(sc, sc)
+      .translateSelf(tx, ty)
+      .translateSelf(W / 2, H / 2)
+      .rotateSelf(rot)
+      .translateSelf(-W / 2, -H / 2);
+  } catch (e) { return null; }
+}
+function mkPxBaseRec() { return MK_PX.get(MK_PX_BASE) || null; }
+
+/* ── THE GHOST RULE, AS ONE QUESTION ──────────────────────────────────────
+   True when the bitmap under the sheet is NOT part of the drawing: a sheet
+   that has been taken apart is its vectors, and a composed sketch has no
+   bitmap at all. mkApplyBase has enforced this on the <img> since the
+   layering work; it is asked here too because the pixel tools reach the
+   bitmap by a completely different route and never asked. */
+function mkBaseIsGhosted() {
+  if (!__mk) return true;
+  return !!__mk.compose || (!!__mk.traced && !__mk.showBitmap);
+}
+
+function mkPxBaseEnsure() {
+  /* ── AN ERASER MUST NOT REACH A PICTURE NOBODY CAN SEE ─────────────────
+     The eraser deliberately engages wherever it is put down: you rest the
+     rubber on blank paper beside the mark and sweep across it, which is how
+     the tool is documented and why the "must start on the ink" guard was
+     removed. When that first point misses every layer the stroke falls
+     through to the sheet's BASE — correct for a photograph, and catastrophic
+     for a drawing that has been taken apart:
+
+       · this rasterises the bitmap the ghost rule is hiding, and mkRedraw
+         then paints it. The whole original charm reappears underneath the
+         traced parts — in no layer row, selectable by nothing, because it is
+         not an item and never was.
+       · the stroke then LOCKS to the base for its whole length (see
+         mkEraseTouch), so every sweep after it eats holes in that reappeared
+         picture while the layer the customer was aiming at is untouched.
+
+     Measured on a traced catalogue charm: four layers on the sheet, two
+     sweeps, and every one of the four still had zero erase strokes on it.
+     What the customer sees is their drawing duplicating itself and then
+     being destroyed, which is exactly what was reported.
+
+     So: no bitmap on screen, no bitmap for the pixel tools. */
+  if (mkBaseIsGhosted()) return null;
+  const have = mkPxBaseRec();
+  if (have) return have;
+  if (!window.BJRaster || !__mk || !__mk.baseRef) return null;
+  const fake = { id: MK_PX_BASE, t: "img", u: __mk.baseRef.u || "", sp: __mk.baseRef.sp || "", n: "Picture" };
+  const rec = mkPxEnsure(fake);
+  if (rec) {
+    const b = $("#markupBase");
+    if (b) b.hidden = true;                    /* the pixels are the picture now */
+  }
+  return rec;
+}
+function mkPxGet(it) { return it && it.id ? MK_PX.get(it.id) || null : null; }
+function mkPxHas(it) { return !!mkPxGet(it); }
+
+/* Rasterise on demand, from the picture AS IT CURRENTLY LOOKS — through the
+   wand and the eraser, so a background already taken away stays away and the
+   customer never loses work by picking up a different tool. */
+function mkPxEnsure(it) {
+  const have = mkPxGet(it);
+  if (have) return have;
+  if (!window.BJRaster) return null;
+  const img = mkImageFor(it);
+  /* mkImageFor answers NULL the first time it is asked for a picture and only
+     returns the bitmap once its own cache has settled. Reading that as "this
+     picture cannot be edited" is why the very first alt-click on a freshly
+     opened sheet did nothing at all — the tool was fine, the picture simply
+     had not arrived yet. Callers warm it and come back. */
+  if (!img || !img.width) return null;
+  let src = img;
+  try { if (it.k && it.k.length) src = mkWandCanvas(it, img); } catch (e) {}
+  const w = src.width || src.naturalWidth, h = src.height || src.naturalHeight;
+  if (!w || !h) return null;
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(src, 0, 0);
+  /* ── AND THE ERASER'S WORK TOO ───────────────────────────────────────
+     The manual eraser is a paint-time overlay, not part of the bitmap, so
+     rasterising without it baked in meant the flush uploaded the UN-erased
+     picture and then cleared it.er — every stroke of manual erasing on that
+     picture was destroyed the first time anything rasterised it — so the
+     rasterisation has to carry the erasing forward, not walk past it. */
+  const strokes = Array.isArray(it.er) ? it.er : [];
+  if (strokes.length) {
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.strokeStyle = "#000";
+    for (const st of strokes) {
+      if (st && Array.isArray(st.q) && st.q.length >= 6) {
+        ctx.fillStyle = "#000";
+        ctx.beginPath();
+        if (st.v) {
+          ctx.moveTo(-2 * w, -2 * h); ctx.lineTo(3 * w, -2 * h);
+          ctx.lineTo(3 * w, 3 * h);   ctx.lineTo(-2 * w, 3 * h);
+          ctx.closePath();
+        }
+        ctx.moveTo(st.q[0] * w, st.q[1] * h);
+        for (let k = 2; k + 1 < st.q.length; k += 2) ctx.lineTo(st.q[k] * w, st.q[k + 1] * h);
+        ctx.closePath();
+        ctx.fill("evenodd");
+        continue;
+      }
+      const pts = (st && st.p) || st;
+      if (!pts || pts.length < 2) continue;
+      ctx.lineWidth = Math.max(1, (Number(st && st.w) || 0.035) * Math.max(w, h));
+      ctx.beginPath();
+      ctx.moveTo(pts[0] * w, pts[1] * h);
+      for (let k = 2; k + 1 < pts.length; k += 2) ctx.lineTo(pts[k] * w, pts[k + 1] * h);
+      if (pts.length === 2) ctx.lineTo(pts[0] * w + 0.01, pts[1] * h);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  let data;
+  try { data = ctx.getImageData(0, 0, w, h).data; }
+  catch (e) { SD("px: canvas tainted, cannot edit pixels —", e && e.message); return null; }
+  const R = window.BJRaster;
+  const doc = R.docNew(w, h);
+  R.docAddLayer(doc, R.layerFromRGBA(it.n || "Picture", data, w, h));
+  const rec = { doc, seq: 1, cv: null, cvSeq: -1, id: it.id };
+  MK_PX.set(it.id, rec);
+  return rec;
+}
+/* the pixels as something canvas can draw, rebuilt only when they change */
+function mkPxCanvas(rec) {
+  if (rec.cv && rec.cvSeq === rec.seq) return rec.cv;
+  const R = window.BJRaster;
+  const d = rec.doc;
+  const rgba = R.compositeRGBA(d);
+  /* THE STROKE IN PROGRESS, painted over the committed pixels but not INTO
+     them. The customer watches the erase open up as they sweep, and the whole
+     gesture is still one undo step because nothing is written to the layer
+     until the pointer lifts. */
+  const live = rec.live;
+  if (live && live.S && live.S.x1 >= 0) {
+    const S = live.S;
+    for (let y = S.y0; y <= S.y1; y++) {
+      for (let x = S.x0; x <= S.x1; x++) {
+        const i = y * d.w + x;
+        const a = S.a[i] / 255;
+        if (a <= 0) continue;
+        const j = i * 3, k = i * 4;
+        const da = rgba[k+3] / 255;
+        const oa = a + da * (1 - a);
+        if (oa <= 0) continue;
+        rgba[k]   = Math.round((S.rgb[j]   * a + rgba[k]   * da * (1 - a)) / oa);
+        rgba[k+1] = Math.round((S.rgb[j+1] * a + rgba[k+1] * da * (1 - a)) / oa);
+        rgba[k+2] = Math.round((S.rgb[j+2] * a + rgba[k+2] * da * (1 - a)) / oa);
+        rgba[k+3] = Math.round(oa * 255);
+      }
+    }
+  }
+  const cv = rec.cv || document.createElement("canvas");
+  cv.width = d.w; cv.height = d.h;
+  const ctx = cv.getContext("2d");
+  const img = ctx.createImageData(d.w, d.h);
+  img.data.set(rgba);
+  ctx.putImageData(img, 0, 0);
+  rec.cv = cv; rec.cvSeq = rec.seq;
+  return cv;
+}
+function mkPxTouch(it) {
+  const rec = it && it.id === MK_PX_BASE ? mkPxBaseRec() : mkPxGet(it);
+  if (rec) { rec.seq++; if (it && it.id !== MK_PX_BASE) it.px = rec.seq; }
+}
+function mkPxForget(id) { MK_PX.delete(id); }
+
 function mkPictureFor(it, onReady) {
+  /* PIXELS WIN. Once a picture has been edited destructively its buffer is
+     the truth, and the file it came from is only history. */
+  const rec = mkPxGet(it);
+  if (rec) { try { return mkPxCanvas(rec); } catch (e) {} }
   const img = mkImageFor(it, onReady);
   if (!img || !img.width) return img;
   if (!it.k || !it.k.length) return img;
@@ -4954,15 +9660,53 @@ async function mkAwaitImages(items, ms) {
    is painted into its own temporary canvas, then the saved brush path is
    composited out with destination-out. This keeps Undo exact and makes the
    same erasure appear on screen, in exports and after reload. */
-function mkErasePaintMask(ctx, W, H, it) {
+/* `win` is optional and is only ever an OPTIMISATION: a rectangle in sheet
+   pixels outside which nothing needs drawing, used by the pixel-exact hit
+   test so that querying one pixel of a layer somebody has erased eighty
+   strokes into does not walk a hundred thousand points to draw a mask nobody
+   will read. The window is carried back into the layer's own frame once, and
+   a stroke whose own extent misses it is skipped. Absent — every caller that
+   is actually painting the sheet — the behaviour is exactly as it was. */
+function mkErasePaintMask(ctx, W, H, it, win) {
   const strokes = Array.isArray(it && it.er) ? it.er : [];
   if (!strokes.length) return;
   const bb = mkBBox(it);
   const maxDim = Math.max(1e-6, bb.w, bb.h);
+  let lim = null;
+  if (win) {
+    let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
+    const corner = (sx, sy) => {
+      const [ux, uy] = mkUnrotate(it, sx / W, sy / H);
+      const u = (ux - bb.x) / (bb.w || 1e-6), v = (uy - bb.y) / (bb.h || 1e-6);
+      if (u < u0) u0 = u; if (u > u1) u1 = u;
+      if (v < v0) v0 = v; if (v > v1) v1 = v;
+    };
+    corner(win.x0, win.y0); corner(win.x1, win.y0);
+    corner(win.x1, win.y1); corner(win.x0, win.y1);
+    lim = { u0, v0, u1, v1 };
+  }
+  const reach = (st) => {
+    /* the stroke's own extent in the layer's units, cached against its point
+       count so a query during a sweep pays for the new points only */
+    if (!st.__n || st.__n !== ((st.p && st.p.length) || (st.q && st.q.length) || 0)) {
+      const a = Array.isArray(st.p) ? st.p : (Array.isArray(st.q) ? st.q : []);
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let k = 0; k + 1 < a.length; k += 2) {
+        if (a[k] < x0) x0 = a[k]; if (a[k] > x1) x1 = a[k];
+        if (a[k + 1] < y0) y0 = a[k + 1]; if (a[k + 1] > y1) y1 = a[k + 1];
+      }
+      st.__n = a.length;
+      st.__bb = isFinite(x0) ? { x0, y0, x1, y1 } : null;
+    }
+    return st.__bb;
+  };
   ctx.save();
-  if (it.r) {
+  /* the same transform mkPaint used to draw the layer this mask belongs to —
+     scale then rotate — or the hole lands somewhere the picture is not */
+  if (it.r || it.fx || it.fy) {
     ctx.translate((bb.x + bb.w / 2) * W, (bb.y + bb.h / 2) * H);
-    ctx.rotate(it.r);
+    if (it.fx || it.fy) ctx.scale(it.fx ? -1 : 1, it.fy ? -1 : 1);
+    if (it.r) ctx.rotate(it.r);
     ctx.translate(-(bb.x + bb.w / 2) * W, -(bb.y + bb.h / 2) * H);
   }
   ctx.globalCompositeOperation = "destination-out";
@@ -4970,6 +9714,35 @@ function mkErasePaintMask(ctx, W, H, it) {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   strokes.forEach((st) => {
+    const sxq = (u) => (bb.x + u * bb.w) * W;
+    const syq = (v) => (bb.y + v * bb.h) * H;
+    if (lim && !(Array.isArray(st.q) && st.q.length >= 6 && st.v)) {
+      /* an inverted marquee reaches the whole layer by definition, so it is
+         never skipped; everything else is skipped when its own extent, grown
+         by its own pen, cannot reach the window */
+      const e = reach(st);
+      if (!e) return;
+      const pad = Math.max(0.0005, Number(st.r) || 0.02) * (maxDim / Math.max(1e-6, Math.min(bb.w, bb.h))) + 0.002;
+      if (e.x1 + pad < lim.u0 || e.x0 - pad > lim.u1 ||
+          e.y1 + pad < lim.v0 || e.y0 - pad > lim.v1) return;
+    }
+    /* the marquee's polygon: erase inside it, or — inverted — everything
+       outside it, which is the whole box with the polygon as a hole */
+    if (Array.isArray(st.q) && st.q.length >= 6) {
+      ctx.beginPath();
+      if (st.v) {
+        ctx.moveTo(sxq(-2), syq(-2));
+        ctx.lineTo(sxq(3), syq(-2));
+        ctx.lineTo(sxq(3), syq(3));
+        ctx.lineTo(sxq(-2), syq(3));
+        ctx.closePath();
+      }
+      ctx.moveTo(sxq(st.q[0]), syq(st.q[1]));
+      for (let k = 2; k + 1 < st.q.length; k += 2) ctx.lineTo(sxq(st.q[k]), syq(st.q[k + 1]));
+      ctx.closePath();
+      ctx.fill("evenodd");
+      return;
+    }
     const pts = Array.isArray(st.p) ? st.p : [];
     if (pts.length < 2) return;
     const radiusSheet = Math.max(0.0005, Number(st.r) || 0.02) * maxDim;
@@ -4998,6 +9771,344 @@ function mkPaintErasedLayer(ctx, W, H, it, opt) {
   mkPaint(x, W, H, [clean], { export: true, _erasePass: true, onImage: opt && opt.onImage });
   mkErasePaintMask(x, W, H, it);
   ctx.drawImage(cv, 0, 0);
+}
+
+/* ═══════════ ONE LINE, NOT TWO — THE SPINE OF A STROKE ══════════════════
+   OUTLINE draws the boundary of an area. That is the right answer when the
+   area IS an area — a filled disc, a shield, a panel — and it is the wrong
+   answer for the thing the customer actually points it at most of the time.
+
+   A traced drawing is not made of areas. It is made of STROKES: the bat's
+   silhouette, each stitch, the ring at the cap. A stroke is a long thin
+   region, and the boundary of a long thin region is TWO lines, one down each
+   side, exactly the width of the stroke apart. So pressing Outline on a
+   drawing turned every line in it into a pair of tramlines — "2 side by side
+   lines which are the equivalent distance from each other as the thickness
+   of the original line", in the customer's words, and there is no reading of
+   "outline this" under which that is what was asked for.
+
+   What was asked for is one line where the line was. That is the region's
+   MEDIAL AXIS — the set of points equidistant from two walls — and it is the
+   only answer that is right for both shapes at once, because the medial axis
+   of a genuine area is a stub in the middle of it while the medial axis of a
+   stroke is the stroke. So the shape is asked which it is, and answers with
+   its own numbers: skeleton length squared over ink area is the length-to-
+   width ratio, 1.6 for a rounded panel and 30 for a ring. Above 3 it is a
+   line and gets its spine; below, it is an area and keeps its boundary.
+
+   AND THE SPINE HAS TO REACH THE JUNCTIONS. A skeleton retracts from the
+   ends of a stroke by about its own half-width, so two parts that met before
+   would come back as two lines with a gap where they used to join — which is
+   the same complaint in a smaller font. Every free end is therefore walked
+   back out along its own direction until it leaves the region, so a spine
+   ends where its stroke ends and meets whatever the stroke met.
+
+   Everything here is in the item's own bounding-box units and cached against
+   the shape rather than the position, so dragging, scaling and turning a
+   part are free and only an actual edit pays for it again.                  */
+
+const MK_SPINE_CACHE = new Map();
+const MK_SPINE_GRID = 560;       /* longest side of the working grid, px      */
+const MK_SPINE_DPI = 1200;       /* grid px per sheet width — small parts stay small */
+const MK_SPINE_RIBBON = 3.0;     /* length ÷ width above which an area is a line */
+/* doubled from 0.0034 by request — "the Red Outline red lines are 50% too
+   thin", and 50% too thin means half the weight it should carry */
+const MK_OUTLINE_W = 0.0068;     /* "medium": a fraction of the sheet's width  */
+
+/* exact squared Euclidean distance, Felzenszwalb & Huttenlocher — O(n) and
+   isotropic, where a chamfer is neither. The level set of a chamfer field is
+   faintly octagonal, and this one is used to place an edge. */
+function mkEdt1d(f, n, d, v, z) {
+  let k = 0;
+  v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (s <= z[k]) {
+      k--;
+      s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    }
+    k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++;
+    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+  }
+}
+function mkEdt(mask, w, h) {
+  const INF = 1e12, n = w * h;
+  const g = new Float64Array(n);
+  for (let i = 0; i < n; i++) g[i] = mask[i] ? INF : 0;
+  const m = Math.max(w, h);
+  const f = new Float64Array(m), d = new Float64Array(m);
+  const v = new Int32Array(m), z = new Float64Array(m + 1);
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) f[y] = g[y * w + x];
+    mkEdt1d(f, h, d, v, z);
+    for (let y = 0; y < h; y++) g[y * w + x] = d[y];
+  }
+  for (let y = 0; y < h; y++) {
+    const o = y * w;
+    for (let x = 0; x < w; x++) f[x] = g[o + x];
+    mkEdt1d(f, w, d, v, z);
+    for (let x = 0; x < w; x++) g[o + x] = Math.sqrt(d[x]);
+  }
+  return g;
+}
+
+/* Zhang–Suen: peel the mask a layer at a time, never removing a pixel whose
+   loss would break the shape apart or shorten a limb. What is left is one
+   pixel wide and has the topology the region arrived with. */
+function mkThinMask(mask, w, h) {
+  const m = Uint8Array.from(mask);
+  const kill = [];
+  for (let pass = 0; pass < 220; pass++) {
+    let cut = 0;
+    for (let step = 0; step < 2; step++) {
+      kill.length = 0;
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const i = y * w + x;
+          if (!m[i]) continue;
+          const p2 = m[i - w], p3 = m[i - w + 1], p4 = m[i + 1], p5 = m[i + w + 1],
+                p6 = m[i + w], p7 = m[i + w - 1], p8 = m[i - 1], p9 = m[i - w - 1];
+          const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+          if (B < 2 || B > 6) continue;
+          let A = 0;
+          const s = [p2, p3, p4, p5, p6, p7, p8, p9, p2];
+          for (let k = 0; k < 8; k++) if (!s[k] && s[k + 1]) A++;
+          if (A !== 1) continue;
+          if (step === 0) { if ((p2 && p4 && p6) || (p4 && p6 && p8)) continue; }
+          else { if ((p2 && p4 && p8) || (p2 && p6 && p8)) continue; }
+          kill.push(i);
+        }
+      }
+      for (let k = 0; k < kill.length; k++) m[kill[k]] = 0;
+      cut += kill.length;
+    }
+    if (!cut) break;
+  }
+  return m;
+}
+
+const MK_N8 = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
+
+/* the skeleton as lines: walk every run of degree-2 pixels between one
+   junction (or free end) and the next, then whatever closed loops are left */
+function mkSkelPaths(sk, w, h) {
+  const n = w * h;
+  const deg = new Uint8Array(n);
+  const nb = (i) => {
+    const x = i % w, y = (i / w) | 0, out = [];
+    for (let k = 0; k < 8; k++) {
+      const nx = x + MK_N8[k][0], ny = y + MK_N8[k][1];
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const j = ny * w + nx;
+      if (sk[j]) out.push(j);
+    }
+    return out;
+  };
+  for (let i = 0; i < n; i++) if (sk[i]) deg[i] = nb(i).length;
+
+  const used = new Set();
+  const mark = (a, b) => used.add(a < b ? a * n + b : b * n + a);
+  const seen = (a, b) => used.has(a < b ? a * n + b : b * n + a);
+  const paths = [];
+
+  const walk = (from, to) => {
+    const pts = [from];
+    let cur = from, nxt = to;
+    for (let guard = 0; guard < n; guard++) {
+      mark(cur, nxt);
+      pts.push(nxt);
+      if (deg[nxt] !== 2 || nxt === from) break;
+      const opts = nb(nxt).filter((j) => !seen(nxt, j));
+      if (!opts.length) break;
+      cur = nxt; nxt = opts[0];
+    }
+    if (pts.length >= 2) paths.push(pts);
+  };
+
+  for (let i = 0; i < n; i++) {
+    if (!sk[i] || deg[i] === 2) continue;
+    nb(i).forEach((j) => { if (!seen(i, j)) walk(i, j); });
+  }
+  /* anything untouched is a closed loop with no junction anywhere on it */
+  for (let i = 0; i < n; i++) {
+    if (!sk[i] || deg[i] !== 2) continue;
+    const opts = nb(i).filter((j) => !seen(i, j));
+    if (opts.length) walk(i, opts[0]);
+  }
+  return { paths, deg };
+}
+
+/* the medial form of a binary mask: spine pixels, whether it is a line at
+   all, and how wide it is — all measured on the mask itself */
+function mkMaskSpine(mask, w, h) {
+  let area = 0;
+  for (let i = 0; i < w * h; i++) if (mask[i]) area++;
+  if (area < 6) return null;
+  const dist = mkEdt(mask, w, h);
+  const sk = mkThinMask(mask, w, h);
+  const { paths, deg } = mkSkelPaths(sk, w, h);
+  let len = 0;
+  paths.forEach((pts) => {
+    for (let k = 1; k < pts.length; k++) {
+      const a = pts[k - 1], b = pts[k];
+      len += ((a % w) === (b % w) || ((a / w) | 0) === ((b / w) | 0)) ? 1 : 1.41421356;
+    }
+  });
+  const wid = len > 0 ? area / len : Math.sqrt(area);
+  const ratio = len > 0 ? (len * len) / area : 0;
+  return { sk, dist, paths, deg, area, len, wid, ratio, ribbon: ratio >= MK_SPINE_RIBBON };
+}
+
+/* push a free end back out to the end of its own stroke, so a spine finishes
+   where the ink finishes and meets whatever the ink met */
+function mkSpineExtend(pts, deg, dist, mask, w, h) {
+  const end = (head) => {
+    const i = head ? pts[0] : pts[pts.length - 1];
+    if (deg[i] !== 1) return null;
+    const j = head ? pts[Math.min(4, pts.length - 1)] : pts[Math.max(0, pts.length - 5)];
+    let dx = (i % w) - (j % w), dy = ((i / w) | 0) - ((j / w) | 0);
+    const L = Math.hypot(dx, dy);
+    if (!L) return null;
+    dx /= L; dy /= L;
+    let x = i % w, y = (i / w) | 0, last = null;
+    const reach = Math.max(1, dist[i]) + 1.5;
+    for (let t = 0.5; t <= reach; t += 0.5) {
+      const nx = (i % w) + dx * t, ny = ((i / w) | 0) + dy * t;
+      const gx = Math.round(nx), gy = Math.round(ny);
+      if (gx < 0 || gy < 0 || gx >= w || gy >= h || !mask[gy * w + gx]) break;
+      x = nx; y = ny; last = [nx, ny];
+    }
+    return last;
+  };
+  const a = end(true), b = end(false);
+  const out = pts.map((i) => [i % w, (i / w) | 0]);
+  if (a) out.unshift(a);
+  if (b) out.push(b);
+  return out;
+}
+
+/* ── THE STAIRS COME OFF BEFORE ANYONE SEES THE LINE ─────────────────────
+   A spine is walked over a pixel grid, so raw it is a staircase: every
+   segment either axis-aligned or at 45°, with a corner at each grid cell.
+   The canvas anti-aliases each SEGMENT beautifully and the line still looks
+   terrible, because the geometry itself is jagged — "terribly aliased", in
+   the customer's words, and they were photographing the geometry, not the
+   rasteriser. Chaikin corner-cutting, twice, replaces every corner with two
+   points a quarter of the way along its edges: the staircase becomes a
+   curve, endpoints stay EXACTLY where they were (an open spine must still
+   reach the junction mkSpineExtend walked it out to), and a closed loop is
+   cut all the way round. The same smoothed points feed the painter and the
+   SVG the workshop gets, so the two can never disagree about the shape. */
+function mkChaikin(flat, closed, rounds) {
+  let p = flat;
+  for (let r = 0; r < (rounds || 2); r++) {
+    const n = p.length / 2;
+    if (n < 3) return p;
+    const q = [];
+    if (!closed) q.push(p[0], p[1]);
+    const last = closed ? n : n - 1;
+    for (let i = 0; i < last; i++) {
+      const j = (i + 1) % n;
+      const x0 = p[i * 2], y0 = p[i * 2 + 1], x1 = p[j * 2], y1 = p[j * 2 + 1];
+      q.push(x0 * 0.75 + x1 * 0.25, y0 * 0.75 + y1 * 0.25,
+             x0 * 0.25 + x1 * 0.75, y0 * 0.25 + y1 * 0.75);
+    }
+    if (!closed) q.push(p[p.length - 2], p[p.length - 1]);
+    p = q;
+  }
+  return p;
+}
+
+/* a cheap signature of the SHAPE, not of where it sits — so a part that is
+   dragged, scaled or turned reuses its spine and only a real edit pays */
+function mkSpineSig(it) {
+  const p = it.p || [], q = it.q || [];
+  const b = mkBBox(it);
+  const sx = 4096 / Math.max(1e-9, b.w), sy = 4096 / Math.max(1e-9, b.h);
+  let hsh = 2166136261;
+  for (let k = 0; k + 1 < p.length; k += 2) {
+    hsh = Math.imul(hsh ^ Math.round((p[k] - b.x) * sx), 16777619);
+    hsh = Math.imul(hsh ^ Math.round((p[k + 1] - b.y) * sy), 16777619);
+  }
+  return p.length + "|" + q.length + "|" + (hsh >>> 0);
+}
+
+/* the spine of a contour item, in its own bounding-box units (0..1), so the
+   painter maps it through whatever box the item has now */
+function mkSpineOf(it) {
+  if (!it || it.t !== "fill" || (it.m && it.m.length)) return null;
+  const p = it.p || [];
+  if (p.length < 6) return null;
+  const sig = mkSpineSig(it);
+  const hit = MK_SPINE_CACHE.get(it.id);
+  if (hit && hit.sig === sig) return hit.val;
+
+  let val = null;
+  try {
+    const b = mkBBox(it);
+    const ext = Math.max(b.w, b.h);
+    if (ext > 1e-6) {
+      const PAD = 3;
+      const G = Math.max(20, Math.min(MK_SPINE_GRID, Math.round(ext * MK_SPINE_DPI)));
+      const gw = Math.max(1, Math.round(G * (b.w / ext))) + PAD * 2;
+      const gh = Math.max(1, Math.round(G * (b.h / ext))) + PAD * 2;
+      const cv = document.createElement("canvas");
+      cv.width = gw; cv.height = gh;
+      const ctx = cv.getContext("2d", { willReadFrequently: true });
+      ctx.fillStyle = "#000";
+      const path = new Path2D();
+      const q = (it.q && it.q.length) ? it.q : [Math.floor(p.length / 2)];
+      let k = 0;
+      q.forEach((len) => {
+        for (let j = 0; j < len && k * 2 + 1 < p.length; j++, k++) {
+          const X = PAD + ((p[k * 2] - b.x) / Math.max(1e-9, b.w)) * (gw - PAD * 2);
+          const Y = PAD + ((p[k * 2 + 1] - b.y) / Math.max(1e-9, b.h)) * (gh - PAD * 2);
+          if (j === 0) path.moveTo(X, Y); else path.lineTo(X, Y);
+        }
+        path.closePath();
+      });
+      ctx.fill(path, "evenodd");
+      const px = ctx.getImageData(0, 0, gw, gh).data;
+      const mask = new Uint8Array(gw * gh);
+      for (let i = 0; i < gw * gh; i++) mask[i] = px[i * 4 + 3] >= 128 ? 1 : 0;
+
+      const s = mkMaskSpine(mask, gw, gh);
+      /* AN AREA IS A VERDICT, NOT A FAILURE. Returning null for a disc made
+         "this shape is not a line" indistinguishable from "the raster went
+         wrong", which cost the cache — every repaint skeletonised every blob
+         on the sheet again — and cost the tests their teeth: a check that a
+         disc keeps its boundary passes just as well when nothing ran at all. */
+      if (s) val = { paths: [], wid: s.wid / G, ratio: s.ratio, ribbon: !!s.ribbon };
+      if (s && s.ribbon && s.paths.length) {
+        const ux = (gw - PAD * 2), uy = (gh - PAD * 2);
+        const out = [];
+        s.paths.forEach((pts) => {
+          if (pts.length < 2) return;
+          const closed = pts[0] === pts[pts.length - 1];
+          const grid = closed ? pts.map((i) => [i % gw, (i / gw) | 0])
+                              : mkSpineExtend(pts, s.deg, s.dist, mask, gw, gh);
+          const flat = [];
+          grid.forEach((g) => flat.push((g[0] - PAD) / ux, (g[1] - PAD) / uy));
+          /* RDP strips collinear stair points; Chaikin rounds what is left.
+             The eps is a whisker over one grid cell, so genuine features
+             survive and only the staircase is treated as noise. */
+          const simp = mkRdp(flat, 1.2 / Math.max(ux, uy));
+          if (simp.length >= 4) {
+            out.push({ u: mkChaikin(simp, closed, 2), cl: closed ? 1 : 0 });
+          }
+        });
+        if (out.length) val = { paths: out, wid: s.wid / G, ratio: s.ratio, ribbon: true };
+      }
+    }
+  } catch (e) { val = null; }
+
+  if (MK_SPINE_CACHE.size > 500) MK_SPINE_CACHE.clear();
+  MK_SPINE_CACHE.set(it.id, { sig, val });
+  return val;
 }
 
 /* ═══════════ the painter — one function, screen and export alike ══════════
@@ -5049,11 +10160,16 @@ function mkPaint(ctx, W, H, items, opt) {
 
     const p = it.p || [];
     const bb = mkBBox(it);
-    /* rotation is about the item's own centre, so a rotated item still lives
-       where it was put */
-    if (it.r) {
+    /* rotation and mirroring are both about the item's own centre, so a
+       turned or flipped item still lives where it was put. The mirror is
+       applied OUTSIDE the turn — scale then rotate — because that is the
+       order the flip arithmetic in mkFlipItems assumes when it decides what
+       a flip does to `r`, and the two have to agree or a flipped, turned
+       layer lands at twice its angle. */
+    if (it.r || it.fx || it.fy) {
       ctx.translate((bb.x + bb.w / 2) * W, (bb.y + bb.h / 2) * H);
-      ctx.rotate(it.r);
+      if (it.fx || it.fy) ctx.scale(it.fx ? -1 : 1, it.fy ? -1 : 1);
+      if (it.r) ctx.rotate(it.r);
       ctx.translate(-(bb.x + bb.w / 2) * W, -(bb.y + bb.h / 2) * H);
     }
 
@@ -5074,8 +10190,19 @@ function mkPaint(ctx, W, H, items, opt) {
            ENGRAVE  → the area, solid, in the engraving ink.
            CUT OUT  → the area, solid, in the reserved blue.
            OUTLINE  → the boundary line only; the inside is plain metal. */
-      const intent = mkFillIntent(it.f);
-      const ink = mkIntentInk(intent);
+      /* ── A FILL CLAIMED AS THE PERIMETER PAINTS AS ITS EDGE ────────────
+         A traced outline is a FILL — a thin closed band — and fills take
+         their look from their instruction, never from `c`. So the perimeter
+         claim rides in on `c` (the editor's light green) or on `pm` (set at
+         compose, where a verified claim goes out in the instruction blue),
+         and either one turns the fill into what the claim means: no area
+         instruction at all, just its boundary drawn in the claim's colour.
+         The spine/boundary machinery below is exactly the "none" path, so a
+         band that measures as a line paints as one line, not tramlines. */
+      const pmc = it.pm ? MK_CUTOUT
+                : String(it.c || "").toLowerCase() === MK_PERIM ? MK_PERIM : null;
+      const intent = pmc ? "none" : mkFillIntent(it.f);
+      const ink = pmc || mkIntentInk(intent);
 
       if (it.m && it.m.length) {
         /* a masked fill: drawn into its own box, so moving or scaling the
@@ -5122,7 +10249,33 @@ function mkPaint(ctx, W, H, items, opt) {
            half-pixel seam a traced contour leaves, so a traced object (whose
            contours sit exactly on the pixels they came from) does without. */
         const seam = !it.tr;
-        if (intent === "none" || seam) {
+        /* ── AND WHEN THE AREA IS A LINE, DRAW THE LINE ────────────────────
+           See mkSpineOf. Stroking the contour of a stroke draws both of its
+           walls, which is where the tramlines came from. A shape that
+           measures as a line gets its spine instead — one line, medium
+           weight, running where the stroke ran and reaching the same
+           junctions. A shape that measures as an area gets its boundary,
+           unchanged, because for an area the boundary is the right answer. */
+        const spine = intent === "none" ? mkSpineOf(it) : null;
+        if (spine && spine.paths.length) {
+          ctx.strokeStyle = ink;
+          ctx.lineCap = "round"; ctx.lineJoin = "round";
+          const hair = Math.max(0.75, W / 900);
+          /* never fatter than the stroke it replaces: a hairline detail must
+             not come back as a rope that swallows its neighbours */
+          const own = spine.wid * Math.max(bb.w * W, bb.h * H);
+          ctx.lineWidth = Math.max(hair, Math.min(W * MK_OUTLINE_W, own));
+          spine.paths.forEach((pl) => {
+            const u = pl.u;
+            ctx.beginPath();
+            for (let k = 0; k + 1 < u.length; k += 2) {
+              const X = (bb.x + u[k] * bb.w) * W, Y = (bb.y + u[k + 1] * bb.h) * H;
+              if (k === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+            }
+            if (pl.cl) ctx.closePath();
+            ctx.stroke();
+          });
+        } else if (intent === "none" || seam) {
           ctx.strokeStyle = ink;
           /* A HAIRLINE FOR ANYTHING THIS BUILD MADE — but an old fill was
              traced from a flood that had NOT been grown back to the true
@@ -5238,7 +10391,6 @@ function mkPaintShape(ctx, it, bb, W, H) {
      stroked in the cut-out blue rather than the outline red — the list sent
      to the workshop has said so all along */
   const intent = mkItemIntent(it);
-  const ink = mkIntentInk(intent);
   /* WHETHER IT IS FILLED IS THE INSTRUCTION, NOT THE SHAPE. `filled = closed`
      flooded every closed primitive in whatever ink its instruction had
      chosen, so an outline-only body came out solid red — and `intent` sat one
@@ -5246,6 +10398,22 @@ function mkPaintShape(ctx, it, bb, W, H) {
      still an OUTLINE on the page: mkItemIntent changes its colour, never its
      hollowness, so the promotion is read off `it.f` here, not off intent. */
   const filled = closed && mkFillIntent(it.f) !== "none";
+  /* ── AND A PRIMITIVE CLAIMED AS THE PERIMETER PAINTS IN ITS OWN GREEN ──
+     The fill branch above learned this and mkPaintShape never did. Perimeter
+     is a claim carried on `c`, and the three-instruction vocabulary has no
+     entry for it — so mkInkInstruction returns null for the green,
+     mkItemIntent falls through to the shape's own fill, which on the
+     unfilled boundary the claim is always made on is "none", and
+     mkIntentInk paints that OUTLINE RED.
+
+     Select a circle, press Perimeter, watch it turn red. The click handler
+     wrote MK_PERIM onto the item correctly and did exactly what it was
+     asked; the painter threw the answer away one function later. A drawn
+     primitive is every bit as able to be the charm's outer cut edge as a
+     traced band is, and mkIsPerimLine has always agreed — this is the only
+     place that did not. */
+  const perim = !filled && String(it.c || "").toLowerCase() === MK_PERIM;
+  const ink = perim ? MK_PERIM : mkIntentInk(intent);
   const path = new Path2D();
   switch (it.t) {
     case "line":
@@ -5270,6 +10438,11 @@ function mkPaintShape(ctx, it, bb, W, H) {
     case "ellipse": path.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); break;
     case "ring":
       path.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      /* WITHOUT THE MOVE, THE PEN STAYS DOWN. ellipse() draws a connecting
+         line from wherever the current point is to the arc's start — so the
+         two circles arrived joined by a horizontal bar from the outer rim
+         to the inner, which no one drew and the customer photographed. */
+      path.moveTo(x + w * 0.75, y + h / 2);
       path.ellipse(x + w / 2, y + h / 2, w / 4, h / 4, 0, 0, Math.PI * 2);
       break;
     case "tri": path.moveTo(x + w / 2, y); path.lineTo(x + w, y + h); path.lineTo(x, y + h); path.closePath(); break;
@@ -5327,12 +10500,18 @@ function mkBBox(it) {
   if (!isFinite(x0)) return { x: 0, y: 0, w: 0, h: 0 };
   return { x: x0, y: y0, w: Math.max(1e-4, x1 - x0), h: Math.max(1e-4, y1 - y0) };
 }
-/* a point, brought back into an item's own unrotated frame */
+/* A POINT, BROUGHT BACK INTO AN ITEM'S OWN UNTURNED, UNMIRRORED FRAME.
+   Every point hit test in the studio comes through here — mkHitItem,
+   mkFillHit, mkPictureLocal, mkEraseLocalPoint, mkPxLocal — which is why the
+   mirror is undone here and nowhere else. The painter does scale then
+   rotate, so the inverse undoes the scale first and the turn second. */
 function mkUnrotate(it, x, y) {
-  if (!it.r) return [x, y];
+  const fx = it.fx ? -1 : 1, fy = it.fy ? -1 : 1;
+  if (!it.r && fx > 0 && fy > 0) return [x, y];
   const bb = mkBBox(it), cx = bb.x + bb.w / 2, cy = bb.y + bb.h / 2;
+  const dx = (x - cx) * fx, dy = (y - cy) * fy;
+  if (!it.r) return [cx + dx, cy + dy];
   const c = Math.cos(-it.r), s = Math.sin(-it.r);
-  const dx = x - cx, dy = y - cy;
   return [cx + dx * c - dy * s, cy + dx * s + dy * c];
 }
 /* Where a picture is actually drawn inside its box. mkPaint letterboxes it,
@@ -5365,12 +10544,167 @@ function mkHitPicture(x, y) {
   }
   return -1;
 }
+/* ═══════════ WHICH PICTURE A PIXEL TOOL IS AIMING AT ═════════════════════
+   Shared by the eraser and the magic eraser: the arithmetic that turns a
+   point on the sheet into a pixel inside whichever picture is under it — a
+   placed one if the pointer is over it, otherwise the sheet's own base.
+
+   Clone and Heal used these too and have been removed in full. What is left
+   is only what the tools that remain actually need. */
+function mkPxTarget(x, y) {
+  const i = mkHitPicture(x, y);
+  if (i >= 0) { const it = __mk.items[i]; const rec = mkPxEnsure(it); if (rec) return { it, rec }; }
+  const rec = mkPxBaseEnsure();
+  if (!rec) return null;
+  return { it: { id: MK_PX_BASE, t: "img", p: [0, 0, 1, 1], r: 0 }, rec, base: true };
+}
+function mkPxLocal(t, x, y) {
+  if (!t.base) return mkPictureLocal(t.it, x, y);
+  const d = t.rec.doc;
+  /* undo the crop and rotation first, in sheet-normalised space, using the
+     inverse of the very matrix mkRedraw drew with */
+  let sx = x, sy = y;
+  const m = mkBaseMatrix(1, 1);
+  if (m) {
+    try {
+      const inv = m.inverse();
+      const q = inv.transformPoint(new DOMPoint(x, y));
+      sx = q.x; sy = q.y;
+    } catch (e) { return null; }
+  }
+  const sc = Math.min(1 / d.w, 1 / d.h);
+  const dw = d.w * sc, dh = d.h * sc;
+  const ox = (1 - dw) / 2, oy = (1 - dh) / 2;
+  const u = (sx - ox) / dw, v = (sy - oy) / dh;
+  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+  return [u, v];
+}
+
+/* REMOVE AND FILL — take out whatever has been cut away from a picture and
+   close the background behind it. Not a fill OPTION: the studio has exactly
+   three of those and they are the engraving instructions. This is a repair,
+   and it reads the eraser's and the magic eraser's work rather than needing a
+   selection of its own. */
+async function mkRemoveAndFill() {
+  if (!__mk || !window.BJRaster) return false;
+  let i = __mk.sel;
+  let it = null, rec = null;
+  if (i >= 0 && __mk.items[i] && __mk.items[i].t === "img") it = __mk.items[i];
+  if (!it) {
+    i = __mk.items.findIndex((o) => o.t === "img" && !o.hid);
+    if (i >= 0) it = __mk.items[i];
+  }
+  rec = it ? mkPxEnsure(it) : mkPxBaseEnsure();
+  if (!rec) { toast("Select a picture first — then this closes the gap behind whatever you removed", "err"); return false; }
+  if (!it) it = { id: MK_PX_BASE };
+  const R = window.BJRaster;
+  const d = rec.doc;
+  const rgba = R.compositeRGBA(d);
+  const hole = new Uint8Array(d.w * d.h);
+  let n = 0;
+  for (let k = 0; k < d.w * d.h; k++) if (rgba[k * 4 + 3] < 128) { hole[k] = 1; n++; }
+  if (!n) { toast("Nothing has been taken out of this picture yet — erase something first", "err"); return false; }
+  if (n > d.w * d.h * 0.6) { toast("Too much of this picture is missing to fill it back in", "err"); return false; }
+  toast("Closing the gap…", "gold");
+  await new Promise((r) => setTimeout(r, 30));
+  try {
+    const filled = R.inpaintPatchMatch(rgba, d.w, d.h, hole, { patch: 7, iters: 5 });
+    const L = R.layerFromRGBA(it.n || "Picture", filled, d.w, d.h);
+    const entry = R.histBegin(d, "remove and fill");
+    d.layers[0] = L;
+    R.histCommit(d, entry);
+    __mk.dirty = true;
+    mkLogPush("px:" + it.id);
+    mkPxTouch(it);
+    mkTouch();
+    toast("Filled in.", "gold");
+    return true;
+  } catch (e) {
+    SD("removeAndFill:", e && e.message);
+    toast("That didn't work — undo and try erasing a smaller area", "err");
+    return false;
+  }
+}
+
+window.__mkRemoveAndFill = mkRemoveAndFill;
+
+/* CLOSE THE GAP, WHATEVER THE THEME IS SERVING. It belongs in the Liquid and
+   that is where it is — but the section template and this asset do not have
+   to land at the same moment, and a customer whose theme still has
+   yesterday's menu should still get it. Built here only if absent.
+
+   (This function also used to build Clone and Heal. Both were removed at the
+   customer's request; only the menu item is left.) */
+function mkEnsureRailTools() {
+  if (document.getElementById("mkFillGap")) return;
+  const more = document.querySelector("#mkMore + .mk-drop__menu") ||
+               (document.getElementById("mkMore") &&
+                document.getElementById("mkMore").parentNode.querySelector(".mk-drop__menu"));
+  if (!more) return;
+  const b = document.createElement("button");
+  b.type = "button"; b.id = "mkFillGap"; b.className = "mk-item";
+  b.setAttribute("role", "menuitem");
+  b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+    'stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 6.4 9.6a7.4 7.4 0 1 0 11.2 0Z"/>' +
+    '<path d="M8.6 14.4h6.8"/></svg>Close the gap';
+  more.insertBefore(b, more.firstChild ? more.firstChild.nextSibling : null);
+}
+
+/* the magic eraser, applied to a pixel buffer: flood from the clicked colour
+   and clear those pixels, which is exactly what the seed-and-tolerance version
+   computes — only written down instead of recomputed on every paint. */
+function mkPxWandCut(it, rec, uv) {
+  if (!window.BJRaster) return false;
+  const R = window.BJRaster;
+  const d = rec.doc;
+  const sx = Math.max(0, Math.min(d.w - 1, Math.round(uv[0] * d.w)));
+  const sy = Math.max(0, Math.min(d.h - 1, Math.round(uv[1] * d.h)));
+  const rgba = R.compositeRGBA(d);
+  const tol = (Number(it.kt) || MK_WAND_DEFAULT_TOL);
+  const mask = R.magicWand(rgba, d.w, d.h, sx, sy, tol, true);
+  let n = 0;
+  for (let k = 0; k < mask.length; k++) if (mask[k]) n++;
+  if (!n) { toast("Nothing matching that colour is connected to where you clicked", "err"); return false; }
+  const L = R.docActive(d);
+  const entry = R.histBegin(d, "magic eraser");
+  const soft = R.selFeather(mask, d.w, d.h, 1);
+  for (let ty = 0; ty <= ((d.h - 1) >> 8); ty++) {
+    for (let tx = 0; tx <= ((d.w - 1) >> 8); tx++) {
+      R.histTouch(entry, L, tx, ty);
+      const t = R.tileForWrite(L, tx, ty);
+      for (let y = 0; y < R.TILE; y++) {
+        const dy = ty * R.TILE + y; if (dy >= d.h) break;
+        for (let x = 0; x < R.TILE; x++) {
+          const dx = tx * R.TILE + x; if (dx >= d.w) break;
+          const m = soft[dy * d.w + dx];
+          if (!m) continue;
+          const di = ((y << 8) + x) << 2;
+          t.data[di + 3] = Math.round(t.data[di + 3] * (1 - m / 255));
+        }
+      }
+    }
+  }
+  R.histCommit(d, entry);
+  __mk.dirty = true;
+  mkLogPush("px:" + it.id);
+  mkPxTouch(it);
+  mkTouch();
+  return true;
+}
 const MK_WAND_DEFAULT_TOL = 18;
 function mkWandAt(x, y) {
   const i = mkHitPicture(x, y);
   if (i < 0) { toast("Click on a picture — this tool cuts a picture's background away", "err"); return false; }
   const it = __mk.items[i];
   const uv = mkPictureLocal(it, x, y);
+  /* ── ONCE A PICTURE IS PIXELS, THE SEEDS STOP BEING READ ─────────────
+     mkPictureFor serves the pixel buffer and never looks at it.k again, so
+     this quietly stopped doing anything the moment the picture became
+     pixel-backed: the seeds updated, no error appeared, and the tool was
+     simply dead. It cuts the pixels directly instead — same gesture, same
+     result, and it is undoable through the same shared log. */
+  const rec = mkPxGet(it);
+  if (rec) return mkPxWandCut(it, rec, uv);
   mkPushUndo();
   it.k = (it.k || []).concat([uv[0], uv[1]]).slice(-64);
   if (!it.kt) it.kt = MK_WAND_DEFAULT_TOL;
@@ -5438,27 +10772,321 @@ function mkEditItem(i) {
   mkOpenEditor(it);
   return true;
 }
+/* ═══════════ PIXEL-EXACT PICKING — ASK THE PAINTER, NOT THE BOX ══════════
+   Two complaints, one cause. "Sometimes I click on a line and the line
+   beside it gets selected." "Some things I have to click many times to
+   erase, some get erased just outside the eraser, and changing the eraser
+   size makes it work." Both are the same bug wearing different clothes:
+   nothing in the studio was asking where the INK is.
+
+   What the two hit tests actually did:
+     · mkHitItem, for a drawn stroke, measured the distance to the stroke's
+       VERTICES — never to the segments between them — with a tolerance of
+       0.02, which is two per cent of the sheet. A straight line stored as
+       two points therefore had no hit region along its length at all, and a
+       click anywhere near it landed on whichever NEIGHBOUR happened to have
+       a vertex within 2%. That is the wrong line getting selected, exactly.
+     · everything else — every shape, every primitive, every traced part —
+       was a BOUNDING BOX with a pad. A diagonal line's box is mostly empty.
+       A ring's box is a disc. Clicking the hole in the middle of an O
+       grabbed the O.
+     · mkEraseHit was the same box test, and its pad was
+       `max(0.008, eraseSize/2)` — THE PAD GREW WITH THE ERASER. So changing
+       the eraser size changed which object the box test picked, which is
+       precisely the customer's "I have to change the size to make it work".
+       And because it returned only the TOPMOST box, an object whose empty
+       box lay over the mark you were rubbing swallowed the whole stroke and
+       the mark underneath was never touched: "I have to click many times."
+
+   The fix is not a better approximation of the geometry. There is already
+   something in this file that knows exactly where every object's ink is,
+   down to the pixel, for every type, through every rotation, mirror, mask,
+   letterbox and erase stroke — THE PAINTER. So the hit test asks it.
+
+   A query renders the candidate ALONE into a scratch canvas the size of the
+   query itself — one pixel for a click, the eraser's disc for a sweep — with
+   the same mkPaint call, the same transform and the same erase mask the
+   visible sheet uses, and then reads the alpha. If the painter put ink
+   there, it is a hit; if it did not, it is not. There is no tolerance to
+   tune and no geometry to keep in step, because there is no second
+   description of the shape to drift from the first.
+
+   WHY NOT A RAY CASTER. A ray cast is the right tool when the scene is a
+   set of analytic primitives and you must intersect them — 3D, or a 2D
+   scene with no rasteriser. Here the exact rasteriser already exists and is
+   the definition of what the customer sees, so casting rays at a
+   reconstruction of the shapes would be strictly less accurate than reading
+   the shapes themselves, and would need a new closed-form intersection for
+   every item type — fills with holes, RLE masks, letterboxed photographs,
+   outline-only bands, spines — each one a fresh chance to disagree with the
+   picture. Reading the painter cannot disagree with the picture.
+
+   WHY IT IS NOT EXPENSIVE. Nothing builds a full-screen id buffer and
+   nothing is cached, so there is nothing to invalidate. Every query first
+   throws out candidates by bounding box — the cheap test is still the right
+   FIRST test, it is only the wrong LAST one — and then rasterises the two or
+   three survivors into a window that is one pixel across for a click and at
+   most 96 for the largest eraser. A big eraser is rendered at a reduced
+   scale rather than a bigger window, so the cost of a query is bounded by
+   the window and not by the size of the brush or the size of the sheet.  */
+const MK_PICK_INK  = 16;    /* alpha at or above this is ink, not a fringe    */
+const MK_PICK_GRAB = 3.5;   /* SCREEN px of forgiveness — SELECTION only      */
+const MK_PICK_MAXW = 96;    /* widest window a single query may rasterise     */
+let _mkPickCv = null;
+
+function mkPickCtx(w, h) {
+  if (!_mkPickCv) _mkPickCv = document.createElement("canvas");
+  if (_mkPickCv.width < w) _mkPickCv.width = w;
+  if (_mkPickCv.height < h) _mkPickCv.height = h;
+  let ctx = null;
+  try { ctx = _mkPickCv.getContext("2d", { willReadFrequently: true }); } catch (e) {}
+  return ctx || _mkPickCv.getContext("2d");
+}
+
+/* the sheet's own bitmap size — the pixels the customer is actually looking
+   at, so "pixel perfect" means perfect in the pixels they can see */
+function mkPickSheet() {
+  const cv = markupCanvas();
+  if (cv && cv.width) {
+    const p = mkPad(cv);
+    const W = cv.width - p.x * 2, H = cv.height - p.y * 2;
+    if (W > 8 && H > 8) return { W, H };
+  }
+  return { W: 1000, H: 1000 };
+}
+/* sheet pixels per SCREEN pixel, so a grab tolerance quoted in screen pixels
+   feels the same at every zoom instead of shrinking as you zoom in */
+function mkPickScale() {
+  const s = mkPickSheet(), box = mkSheetBox();
+  const z = (__mk && __mk.z) || 1;
+  const cssW = (box && box.width) || 0;
+  return cssW > 8 ? s.W / (cssW * z) : 1;
+}
+/* the box the item is DRAWN in — mkBBox turned by `r`, plus the half-width
+   the stroke hangs outside its own points. Only ever used to throw
+   candidates away, so it errs outwards. */
+function mkPickAabb(it) {
+  const b = mkBBox(it);
+  let x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h;
+  if (it.r) {
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    const c = Math.cos(it.r), s = Math.sin(it.r);
+    let nx0 = Infinity, ny0 = Infinity, nx1 = -Infinity, ny1 = -Infinity;
+    const corner = (px, py) => {
+      const dx = px - cx, dy = py - cy;
+      const rx = cx + dx * c - dy * s, ry = cy + dx * s + dy * c;
+      if (rx < nx0) nx0 = rx; if (rx > nx1) nx1 = rx;
+      if (ry < ny0) ny0 = ry; if (ry > ny1) ny1 = ry;
+    };
+    corner(x0, y0); corner(x1, y0); corner(x1, y1); corner(x0, y1);
+    x0 = nx0; y0 = ny0; x1 = nx1; y1 = ny1;
+  }
+  const g = Math.max(0.004, (Number(it.w) || 0) * 0.75);
+  return { x0: x0 - g, y0: y0 - g, x1: x1 + g, y1: y1 + g };
+}
+/* topmost first, and only the ones whose box could possibly reach the query */
+function mkPickCands(x, y, rad, keep) {
+  const out = [];
+  if (!__mk || !__mk.items) return out;
+  for (let i = __mk.items.length - 1; i >= 0; i--) {
+    const it = __mk.items[i];
+    if (!it || it.hid) continue;
+    if (keep && !keep(it, i)) continue;
+    const a = mkPickAabb(it);
+    if (x + rad < a.x0 || x - rad > a.x1 || y + rad < a.y0 || y - rad > a.y1) continue;
+    out.push(i);
+  }
+  return out;
+}
+/* ONE item, painted alone into a w×h window whose top-left corner is
+   (rx, ry) in a sheet of W×H — the same call mkRedraw makes, so whatever
+   appears on the sheet appears here and nothing else does.
+
+   `o` is forced to 1 because opacity is a question about how an object
+   LOOKS, not about whether it is there: a layer faded to 10% is still the
+   layer under your cursor, and it must still be grabbable and erasable.
+   `_erasePass` stops mkPaint taking the mkPaintErasedLayer branch, which
+   allocates a full-sheet canvas — the mask is applied here instead, to the
+   window, which is the same picture for a fraction of the work. */
+function mkPickInk(it, rx, ry, w, h, W, H) {
+  const ctx = mkPickCtx(w, h);
+  if (!ctx) return null;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, -rx, -ry);
+  const solo = (it.o == null || it.o >= 1) ? it : Object.assign({}, it, { o: 1 });
+  /* A PICTURE THAT HAS NOT DECODED YET IS STILL SOMETHING YOU CAN GRAB.
+     mkPaint draws nothing for an image it does not have, and no onImage
+     callback is handed over on purpose — a hit test must never kick off a
+     download. So until the bitmap arrives the picture stands in for itself
+     as the rectangle it will occupy, which is exactly what the old box test
+     gave and is replaced by the real pixels the moment it loads. */
+  let stood = false;
+  if (it.t === "img") {
+    let img = null;
+    try { img = mkPictureFor(it); } catch (e) {}
+    if (!img || !img.width) {
+      const r = mkBBox(it);
+      ctx.save();                       /* its own turn, not the mask's */
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#000";
+      if (it.r || it.fx || it.fy) {
+        ctx.translate((r.x + r.w / 2) * W, (r.y + r.h / 2) * H);
+        if (it.fx || it.fy) ctx.scale(it.fx ? -1 : 1, it.fy ? -1 : 1);
+        if (it.r) ctx.rotate(it.r);
+        ctx.translate(-(r.x + r.w / 2) * W, -(r.y + r.h / 2) * H);
+      }
+      ctx.fillRect(r.x * W, r.y * H, r.w * W, r.h * H);
+      ctx.restore();
+      stood = true;
+    }
+  }
+  if (!stood) mkPaint(ctx, W, H, [solo], { export: true, _erasePass: true });
+  if (Array.isArray(it.er) && it.er.length) {
+    mkErasePaintMask(ctx, W, H, it, { x0: rx, y0: ry, x1: rx + w, y1: ry + h });
+  }
+  ctx.restore();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  try { return ctx.getImageData(0, 0, w, h).data; } catch (e) { return null; }
+}
+/* is there ink of THIS item under this exact point. `s` is the sheet size,
+   passed in by any caller in a loop so that walking two hundred layers does
+   not mean two hundred DOM lookups for a number that cannot change during
+   the walk. */
+function mkPickOne(it, x, y, s) {
+  const a = mkPickAabb(it);
+  if (x < a.x0 || x > a.x1 || y < a.y0 || y > a.y1) return false;
+  s = s || mkPickSheet();
+  const d = mkPickInk(it, Math.round(x * s.W), Math.round(y * s.H), 1, 1, s.W, s.H);
+  return !!d && d[3] >= MK_PICK_INK;
+}
+/* the item whose ink comes CLOSEST to the point, within radPx sheet pixels.
+   Distance rather than stacking order is what fixes "the line beside it got
+   selected": when two things are both inside the grab radius, the one the
+   cursor is actually nearer to is the one that was being pointed at. Ties go
+   to the topmost, because candidates arrive topmost first and the compare
+   is strict. */
+function mkPickNear(x, y, radPx, keep) {
+  const s = mkPickSheet(), W = s.W, H = s.H;
+  /* capped for the same reason the disc is: a query's cost belongs to the
+     query, not to how far out the sheet happens to be zoomed */
+  const r = Math.max(0, Math.min(MK_PICK_MAXW, Math.round(radPx)));
+  const radN = r / Math.max(1, Math.min(W, H));
+  const cands = mkPickCands(x, y, radN, keep);
+  if (!cands.length) return -1;
+  const w = r * 2 + 1, h = w;
+  const rx = Math.round(x * W) - r, ry = Math.round(y * H) - r;
+  let best = -1, bestD = Infinity;
+  for (let n = 0; n < cands.length; n++) {
+    const d = mkPickInk(__mk.items[cands[n]], rx, ry, w, h, W, H);
+    if (!d) continue;
+    let m = Infinity;
+    for (let py = 0; py < h; py++) {
+      for (let px = 0; px < w; px++) {
+        if (d[(py * w + px) * 4 + 3] < MK_PICK_INK) continue;
+        const dx = px - r, dy = py - r, q = dx * dx + dy * dy;
+        if (q < m) m = q;
+      }
+    }
+    if (m < bestD) { bestD = m; best = cands[n]; }
+    if (bestD === 0) break;                   /* nothing can beat dead centre */
+  }
+  return bestD <= r * r ? best : -1;
+}
+/* every item with ink inside a disc — what an eraser needs, because a rubber
+   takes away everything it passes over and not merely the topmost thing
+   whose bounding box it happened to be inside.
+
+   A large brush is rendered SMALLER rather than into a larger window: the
+   question is "is any of this item's ink inside the circle", and shrinking
+   the whole drawing keeps a hairline visible in a way that sampling every
+   fourth pixel of a full-size window would not. */
+function mkPickDisc(x, y, radN, keep) {
+  const s = mkPickSheet();
+  const rFull = Math.max(0.75, radN * Math.max(s.W, s.H));
+  const k = Math.min(1, MK_PICK_MAXW / (2 * rFull));
+  const W = Math.max(8, Math.round(s.W * k)), H = Math.max(8, Math.round(s.H * k));
+  const r = Math.max(0.75, rFull * k), ri = Math.ceil(r);
+  const cands = mkPickCands(x, y, radN, keep);
+  const out = [];
+  if (!cands.length) return out;
+  const cx = x * W, cy = y * H;
+  const rx = Math.floor(cx) - ri, ry = Math.floor(cy) - ri, w = ri * 2 + 1, h = w;
+  const ox = cx - rx, oy = cy - ry, r2 = r * r;
+  for (let n = 0; n < cands.length; n++) {
+    const d = mkPickInk(__mk.items[cands[n]], rx, ry, w, h, W, H);
+    if (!d) continue;
+    let got = false;
+    for (let py = 0; py < h && !got; py++) {
+      const dy = py + 0.5 - oy;
+      if (dy * dy > r2) continue;
+      for (let px = 0; px < w; px++) {
+        const dx = px + 0.5 - ox;
+        if (dx * dx + dy * dy > r2) continue;
+        if (d[(py * w + px) * 4 + 3] >= MK_PICK_INK) { got = true; break; }
+      }
+    }
+    if (got) out.push(cands[n]);
+  }
+  return out;
+}
+/* Text, callouts and labels are grabbed by their BOX and always were, on
+   purpose: the object a customer is pointing at is the note, not the three
+   strokes of the letter g their cursor happens to be over, and a box you can
+   grab anywhere inside is the whole affordance of a text frame. Everything
+   that is artwork rather than furniture is picked by its ink. */
+function mkGrabsByBox(it) {
+  return !!it && (it.t === "text" || it.t === "callout" || it.t === "label");
+}
+function mkBoxHit(it, x, y, pad) {
+  const [ux, uy] = mkUnrotate(it, x, y), b = mkBBox(it);
+  return ux >= b.x - pad && ux <= b.x + b.w + pad &&
+         uy >= b.y - pad && uy <= b.y + b.h + pad;
+}
+
 function mkHitItem(x, y) {
+  if (!__mk || !__mk.items) return -1;
   /* topmost first — the thing you can see is the thing you grab. A hidden
      layer is not there to be grabbed; a locked one is deliberately out of
      reach, which is the whole point of locking it. */
-  for (let i = __mk.items.length - 1; i >= 0; i--) {
-    const it = __mk.items[i];
-    if (it.hid || it.lok) continue;
-    const [ux, uy] = mkUnrotate(it, x, y);
-    if (it.t === "ink" || it.t === "hl" || it.t === "sign") {
-      const p = it.p || [], tol = Math.max(0.02, (it.w || 0.008) * 1.6);
-      for (let k = 0; k + 1 < p.length; k += 2) {
-        const dx = p[k] - ux, dy = p[k + 1] - uy;
-        if (dx * dx + dy * dy < tol * tol) return i;
-      }
-      continue;
+  const live = (it) => !!it && !it.hid && !it.lok;
+  /* ── PASS ONE: DEAD ON ────────────────────────────────────────────────
+     If the cursor is on an object's ink, that object is the answer and the
+     stack decides between overlaps — no distances, no tolerances, no chance
+     for a neighbour to win. This is the pass that answers almost every
+     click, and it is the one the old vertex-and-box test never had. */
+  try {
+    const s = mkPickSheet();
+    for (let i = __mk.items.length - 1; i >= 0; i--) {
+      const it = __mk.items[i];
+      if (!live(it)) continue;
+      if (mkGrabsByBox(it)) { if (mkBoxHit(it, x, y, 0.012)) return i; continue; }
+      if (mkPickOne(it, x, y, s)) return i;
     }
-    const bb = mkBBox(it), pad = 0.012;
-    if (ux >= bb.x - pad && ux <= bb.x + bb.w + pad &&
-        uy >= bb.y - pad && uy <= bb.y + bb.h + pad) return i;
+    /* ── PASS TWO: A FEW PIXELS OF FORGIVENESS, GIVEN TO THE NEAREST ─────
+       A hairline at low zoom is genuinely hard to land on, so a miss looks
+       again within a few SCREEN pixels — but it awards the click to whatever
+       the cursor is CLOSEST to, not to whatever is highest in the stack.
+       That is the difference between a forgiving hit test and a wrong one,
+       and it is why the line beside the one you pointed at can no longer
+       take the selection. */
+    const grab = MK_PICK_GRAB * mkPickScale();
+    const near = mkPickNear(x, y, grab, (it) => live(it) && !mkGrabsByBox(it));
+    if (near >= 0) return near;
+    return -1;
+  } catch (e) {
+    /* no canvas, no 2D context, a browser that refuses getImageData on this
+       surface: fall back to the box test rather than to no hit test at all */
+    for (let i = __mk.items.length - 1; i >= 0; i--) {
+      const it = __mk.items[i];
+      if (!live(it)) continue;
+      if (mkBoxHit(it, x, y, 0.012)) return i;
+    }
+    return -1;
   }
-  return -1;
 }
 
 /* ═══════════ SELECTION — a SET, not an index ═════════════════════════════
@@ -5641,6 +11269,105 @@ function mkCanUngroup() { return mkSelIdx().some((i) => !!mkGroupOf(__mk.items[i
    With one object selected this is its own bounds, exactly as before. With
    several it is their union, which is what makes the marquee grow to
    encompass the whole selection.                                          */
+/* ═══════════ TURNING A SELECTION ═════════════════════════════════════════
+   Rotation lives in two places on an item and they do different jobs:
+
+     `it.r`  the painter's own turn, applied about the item's CURRENT
+             bounding-box centre — this is what makes a shape look rotated
+     `it.p`  where the item is
+
+   Turning a group means both: every part keeps its own spin AND its centre
+   swings round the selection's centre. This used to be written as "add dr to
+   r, and rotate all the POINTS about the selection centre" — which turns the
+   geometry a second time, because rotating a polygon's points IS a rotation
+   and the painter then applies `r` on top of it. One quarter turn asked for,
+   two delivered, each part about a different origin: the drawing comes apart
+   and the pieces sit at angles nobody chose. On a traced charm — where every
+   part is a polygon and there are a hundred of them — it is spectacular.
+
+   So: the POINTS are only ever TRANSLATED, which moves the part's centre
+   round the selection, and `r` does all the turning. That composes to a true
+   rotation about the selection centre for every kind of item alike — a
+   polygon, a two-point ellipse, a picture, a note — because none of them has
+   to express the turn in its own coordinates any more.
+
+   `p0`/`r0` are the geometry the gesture STARTED from, so a live drag is
+   always computed from one origin rather than accumulating rounding. Called
+   without them it turns from wherever the items are now. */
+/* ── AND THE PIVOT HAS TO SURVIVE THE TURN ────────────────────────────────
+   The obvious pivot is the centre of the selection box, and it is wrong for
+   anything but a single press: mkUnionBBox is the axis-aligned union of the
+   members' UNROTATED boxes, so the moment the parts carry a turn of their
+   own it stops describing what is on screen and its centre wanders. Three
+   presses of Rotate left, or a turn and its exact reverse, and the drawing
+   has crept several per cent across the sheet — visibly out of register on a
+   charm made of a hundred parts. Using the DRAWN union instead is worse, not
+   better: the bounding box of a rotated set is not the rotated bounding box,
+   so it wobbles on every step.
+
+   The one point that cannot move is the members' own balance point. Each
+   part's box keeps its size through a rotation — only its centre travels —
+   so the area-weighted mean of those centres rotates exactly onto itself.
+   Turn about it and repeated rotations compose perfectly; turn back and the
+   drawing lands where it started, to the last decimal.
+
+   It is also the honest pivot to look at: a shape turns about its balance
+   point, which is where a hand expects it to turn. */
+/* WHICH WAY ROUND A MIRRORED LAYER TURNS. The painter draws scale then
+   rotate, and a single-axis mirror reverses the sense of the turn that
+   follows it: S·R(r) is the mirrored shape turned by MINUS r. So a layer
+   that has been flipped once must have dr SUBTRACTED from its `r` to turn
+   the way the hand is moving — and a layer flipped on both axes is not
+   mirrored at all (mkFlipItems folds that case into a half turn), so it
+   turns the ordinary way. Without this the rotate handle runs backwards on
+   anything that has been flipped, which is a thing you can only discover by
+   flipping something and then trying to turn it. */
+function mkMirrorSgn(it) {
+  return ((it.fx ? 1 : 0) ^ (it.fy ? 1 : 0)) ? -1 : 1;
+}
+
+function mkRotatePivot(list) {
+  let ax = 0, ay = 0, wsum = 0;
+  (list || []).forEach((it) => {
+    const b = mkBBox(it);
+    /* every part counts for something, so a hairline stroke still anchors */
+    const w = Math.max(1e-6, b.w * b.h) + 1e-5;
+    ax += (b.x + b.w / 2) * w; ay += (b.y + b.h / 2) * w; wsum += w;
+  });
+  if (!wsum) return null;
+  return [ax / wsum, ay / wsum];
+}
+
+function mkRotateItems(list, dr, cx, cy, p0, r0) {
+  if (!list || !list.length || !dr) return;
+  const c = Math.cos(dr), s = Math.sin(dr);
+  const many = list.length > 1;
+  if (many) {
+    /* p0 means a live drag: restore the starting geometry first, so the pivot
+       is measured from where the gesture began rather than from halfway
+       through it */
+    if (p0) list.forEach((it, n) => { if (p0[n]) it.p = p0[n].slice(); });
+    const piv = mkRotatePivot(list);
+    if (piv) { cx = piv[0]; cy = piv[1]; }
+  }
+  list.forEach((it, n) => {
+    /* start from the gesture's own beginning, so a drag never compounds */
+    if (p0 && p0[n]) it.p = p0[n].slice();
+    it.r = (r0 && r0[n] != null ? r0[n] : (it.r || 0)) + dr * mkMirrorSgn(it);
+    if (!many) return;                 /* one object turns about its own centre */
+    const b = mkBBox(it);
+    const ox = b.x + b.w / 2, oy = b.y + b.h / 2;
+    const tx = (cx + (ox - cx) * c - (oy - cy) * s) - ox;
+    const ty = (cy + (ox - cx) * s + (oy - cy) * c) - oy;
+    const p = it.p || [];
+    for (let k = 0; k + 1 < p.length; k += 2) { p[k] += tx; p[k + 1] += ty; }
+    /* a note's box is measured in sheet coordinates and cached, so it has to
+       travel with the note or mkBBox answers for where the note used to be */
+    if (it._bx != null) it._bx += tx;
+    if (it._by != null) it._by += ty;
+  });
+}
+
 function mkUnionBBox(items) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   (items || []).forEach((it) => {
@@ -5657,18 +11384,53 @@ function mkSelBBox() { return mkUnionBBox(mkSelItems()); }
    Called after EVERY mutation. Repaints, refreshes the chrome, and writes the
    session. There is deliberately no other way for work to reach storage, and
    deliberately no commit step — a note typed and abandoned is already saved.  */
+/* ── WHY UNDO TOOK SECONDS ────────────────────────────────────────────────
+   mkTouch ran four things in one synchronous block: redraw the sheet, repaint
+   the chrome, persist the sheet, rebuild the layer list. The browser cannot
+   paint until a block like that finishes — so on a traced drawing, where the
+   sheet can hold a couple of thousand objects, pressing undo re-packed every
+   one of them, re-serialised the session around them and re-rendered a 96px
+   thumbnail for each layer BEFORE the canvas the customer was watching had
+   changed by a single pixel.
+
+   The two halves are now separated by what they are for. The ANSWER — the
+   sheet and the buttons — stays synchronous, because that is what the press
+   was asking for. The BOOKKEEPING — the save, the composer's mode line, the
+   layer list — trails it on a short timer, and a burst of edits (a drag, an
+   erase sweep, typing into a note) collapses into one pass instead of one
+   per event.
+
+   Nothing may read the persisted sheet before that timer fires, so
+   mkTouchFlush() runs it early, and every save goes through it. */
+let _mkTailTimer = 0;
+function mkTouchTail() {
+  _mkTailTimer = 0;
+  if (!__mk) return;
+  mkPersist();
+  /* ── THE FIRST MARK CHANGES WHAT THE ARROW DOES ───────────────────────
+     Marks the customer put on this drawing route the send button back to the
+     design step (goldEditMode), and the button, the placeholder and the mode
+     line under the composer are the only things saying which job is loaded. */
+  try { paintComposerMode(); } catch (e) {}
+  /* Every path that adds, removes, reorders or edits an item ends here, so
+     the layer list is repainted from here too and can never lag the sheet. */
+  mkRenderLayersSoon();
+}
+/* Safe to call from anywhere, including from inside the tail itself: the
+   timer id is cleared before the work starts, so the re-entry a save makes
+   through saveSession() finds nothing pending and returns. */
+function mkTouchFlush() {
+  if (!_mkTailTimer) return;
+  clearTimeout(_mkTailTimer);
+  mkTouchTail();
+}
 function mkTouch(skipUndoButtons) {
   if (!__mk) return;
   /* the composed sheet the region engine works from is now out of date */
   mkRegionForget();
   mkRedraw();
   if (!skipUndoButtons) mkChrome();
-  mkPersist();
-  /* Every path that adds, removes, reorders or edits an item ends here, so
-     the layer list is repainted from here too and can never lag the sheet.
-     Coalesced to one frame: typing into a note calls mkTouch per keystroke,
-     and rebuilding a dozen thumbnails per letter would be absurd. */
-  mkRenderLayersSoon();
+  if (!_mkTailTimer) _mkTailTimer = setTimeout(mkTouchTail, 90);
 }
 let _mkLayerFrame = 0;
 function mkRenderLayersSoon() {
@@ -5681,18 +11443,23 @@ function mkRenderLayersSoon() {
 }
 function mkPersist() {
   if (!__mk) return;
+  /* the derived library is memoised on the sessions it is built from, and
+     the sheet being drawn on right now is one of them */
+  __mkPersistTick++;
   const key = __mk.key;
   if (!state.markups) state.markups = {};
   const items = __mk.items.map(mkPack);
-  /* A blank sheet with a CHOICE made on it is not nothing: pick "exactly as
-     drawn" before drawing a line and that choice must still be there when you
-     do. Storing only when items exist quietly threw it away. */
+  /* A blank sheet with a CHOICE made on it is not nothing: pick the
+     non-default reading before drawing a line and that choice must still be
+     there when you do. Storing only when items exist quietly threw it away.
+     The choice worth storing is the one that departs from the default, which
+     is now "for what I mean" — see mkModeNorm. */
   const changed = !!(items.length || __mk.crop || __mk.baseRot ||
-                     __mk.mode === "exact" || mkGuidesChosen());
+                     __mk.mode === "interpret" || __mk.hoop || mkGuidesChosen());
   if (changed) {
     state.markups[key] = {
       items,
-      mode: __mk.mode === "exact" ? "exact" : "interpret",
+      mode: mkModeNorm(__mk.mode),
       crop: __mk.crop ? [__mk.crop.x, __mk.crop.y, __mk.crop.w] : [],
       baseRot: __mk.baseRot || 0,
       /* a flat list of {id,n}: Firestore refuses an array inside an array,
@@ -5701,11 +11468,22 @@ function mkPersist() {
       /* the sheet IS the drawing, taken apart — so the bitmap underneath is
          not painted, and an untouched trace is not a mark-up */
       traced: __mk.traced ? 1 : 0,
+      /* the hoop answer belongs to the DESIGN, so it is stored with it and
+         read back by the compose — not asked again of mutable state later */
+      hoop: __mk.hoop ? 1 : 0,
       /* CARRIED, NOT REBUILT. The account of which areas are holes belongs to
          the design, not to this save: dropping it here would mean the first
          time anybody nudged a layer, the plan the drawing was made from
          disappeared and the render went back to guessing. */
-      plan: ((state.markups[key] || {}).plan || []).slice(0, 40),
+      plan: zoneList((state.markups[key] || {}).plan, "markupSave"),
+      /* CARRIED FOR THE SAME REASON THE PLAN IS. These two say the sheet was
+         traced from a PHOTOGRAPH rather than a drawing, which is what stops
+         the ghost rule turning the customer's charm off the next time the
+         sheet opens. Rebuilding the record without them meant the very first
+         save — which happens during the trace itself — undid the trace's own
+         decision, and the charm vanished on reopen. */
+      fromGold: __mk.fromGold ? 1 : ((state.markups[key] || {}).fromGold ? 1 : 0),
+      showBitmap: __mk.showBitmap ? 1 : 0,
       dirty: __mk.dirty ? 1 : 0,
       guides: mkGuideFlags(),
       gridN: Math.max(4, Math.min(48, __mk.gridN || 12)),
@@ -5757,6 +11535,44 @@ function mkSnapshot() {
     groups: mkGroupList(),
   });
 }
+/* ═══════ ONE UNDO, WHATEVER KIND OF EDIT IT WAS ══════════════════════════
+   The sheet's history is a stack of JSON snapshots of the items. Pixels are
+   not items and never will be — a 2K photograph does not belong in a JSON
+   snapshot pushed on every stroke — so the pixel buffers keep their own tile
+   history, which is what makes them cheap.
+
+   Two histories would mean two undos, and a customer pressing ⌘Z does not
+   know or care which kind of edit they just made. So a LOG records the order
+   the two kinds happened in, and Undo consults it: "sheet" pops the JSON
+   stack, "px:<id>" steps that buffer's tile history back. One key, one
+   expectation, whatever it was they just did. */
+const __mkLog = { back: [], fwd: [] };
+function mkLogPush(kind) {
+  __mkLog.back.push(kind);
+  /* A NEW EDIT INVALIDATES BOTH FUTURES. Clearing only the log's left
+     __mk.redo holding a snapshot the log no longer knows about: Undo a move,
+     then erase the picture once, then press Redo, and mkRedoAny fell through
+     to that stale entry and resurrected an edit the customer had abandoned. */
+  __mkLog.fwd.length = 0;
+  if (__mk) __mk.redo = [];
+  if (__mkLog.back.length > 120) __mkLog.back.shift();
+}
+function mkLogClear() { __mkLog.back.length = 0; __mkLog.fwd.length = 0; }
+/* ── A SHEET STARTS EMPTY, INCLUDING ITS PIXELS ──────────────────────────
+   __mkLog and MK_PX are module-level and outlive every openMarkup, and the
+   base's key is the literal string "__base__" — SHARED by every design in the
+   account. Left alone that means: a fresh sheet shows Undo enabled because a
+   previous sheet left entries; pressing it pops a dead step and does nothing;
+   and a base buffer orphaned by closing with Escape paints itself onto a
+   completely different customer's design the next time the sheet opens.
+
+   One call, at the one moment a sheet becomes a different sheet. */
+function mkPxResetForSheet() {
+  MK_PX.clear();
+  mkLogClear();
+  const b = $("#markupBase");
+  if (b) b.hidden = false;
+}
 function mkPushUndo() {
   /* every user mutation comes through here, which makes it the honest place
      to record that a traced drawing has actually been touched */
@@ -5764,7 +11580,57 @@ function mkPushUndo() {
   __mk.undo.push(mkSnapshot());
   if (__mk.undo.length > 60) __mk.undo.shift();
   __mk.redo = [];
+  mkLogPush("sheet");
 }
+/* the pixel half: step one buffer's tile history, and repaint */
+function mkPxUndoOne(id, redo) {
+  const rec = MK_PX.get(id);
+  if (!rec || !window.BJRaster) return false;
+  const R = window.BJRaster;
+  const moved = redo ? R.redo(rec.doc) : R.undo(rec.doc);
+  if (!moved) return false;
+  rec.seq++;
+  mkRedraw();
+  mkTouch();
+  return true;
+}
+function mkUndoAny() {
+  if (!__mk) return false;
+  const kind = __mkLog.back.pop();
+  if (kind && kind.indexOf("px:") === 0) {
+    if (mkPxUndoOne(kind.slice(3), false)) { __mkLog.fwd.push(kind); return true; }
+    return mkUndoAny();                        /* nothing there: fall through */
+  }
+  if (!__mk.undo.length) { if (kind) __mkLog.back.push(kind); return false; }
+  __mk.redo.push(mkSnapshot());
+  mkRestore(__mk.undo.pop());
+  __mkLog.fwd.push("sheet");
+  return true;
+}
+function mkRedoAny() {
+  if (!__mk) return false;
+  const kind = __mkLog.fwd.pop();
+  if (kind && kind.indexOf("px:") === 0) {
+    if (mkPxUndoOne(kind.slice(3), true)) { __mkLog.back.push(kind); return true; }
+    return mkRedoAny();
+  }
+  if (!__mk.redo.length) { if (kind) __mkLog.fwd.push(kind); return false; }
+  __mk.undo.push(mkSnapshot());
+  mkRestore(__mk.redo.pop());
+  __mkLog.back.push("sheet");
+  return true;
+}
+window.__loadRaster = loadRaster;
+window.__rasterAssetUrl = rasterAssetUrl;
+window.__mkPxHas = (id) => MK_PX.has(id);
+window.__mkPxDiagKeys = () => Array.from(MK_PX.keys());
+window.__mkPxProbe = (id) => {
+  const rec = MK_PX.get(id || "__base__");
+  return rec ? { seq: rec.seq, history: rec.doc.history.length, future: rec.doc.future.length,
+                 w: rec.doc.w, h: rec.doc.h, log: __mkLog.back.slice(-6) } : null;
+};
+window.__mkUndoAny = mkUndoAny;
+window.__mkRedoAny = mkRedoAny;
 function mkRestore(snap) {
   const s = JSON.parse(snap);
   __mk.items = s.items.map(mkPack);
@@ -5786,11 +11652,22 @@ function mkRestore(snap) {
 /* ── the chrome that reflects the model ──────────────────────────────────── */
 function mkChrome() {
   if (!__mk) return;
-  $("#mkUndo").disabled = !__mk.undo.length;
-  $("#mkRedo").disabled = !__mk.redo.length;
+  /* the marquee's box and its little bar are chrome like anything else: the
+     one function every change passes through is the one place that can keep
+     the size read-out honest when the ruler switches between mm and inches */
+  try { mkPaintMarqSel(); } catch (e) {}
+  /* the buttons follow the SHARED log, not the JSON stack alone: a pixel
+     stroke is recorded in the buffer's own tile history, so gating Undo
+     on __mk.undo left the button greyed out after a perfectly real edit — the
+     tool worked and the way to take it back did not. */
+  $("#mkUndo").disabled = !(__mkLog.back.length || __mk.undo.length);
+  $("#mkRedo").disabled = !(__mkLog.fwd.length || __mk.redo.length);
   const sel = __mk.items[__mk.sel] || null;
   const nsel = mkSelCount();
-  $("#mkDelete").disabled = !nsel;
+  /* Delete does not consume a properties-row slot. On a phone it follows the
+     selection as a contextual pill; desktop keeps ⌫, the object menu and the
+     Layers-panel trash control. Every route reads this same selection. */
+  { const del = $("#mkDelete"); if (del) del.disabled = !nsel; }
 
   let marks = 0, notes = 0;
   __mk.items.forEach((it) => {
@@ -5800,7 +11677,7 @@ function mkChrome() {
      one place on screen that is always visible on every layout */
   mkPaintTally();
   $("#markupCount").textContent = nsel > 1
-    ? `${nsel} layers selected${mkCanUngroup() ? " · grouped" : ""}`
+    ? `${nsel} selected${mkCanUngroup() ? " · grouped" : ""}`
     : ((marks || notes)
       ? `${marks} mark${marks === 1 ? "" : "s"}${notes ? ` · ${notes} note${notes === 1 ? "" : "s"}` : ""}`
       : (__mk.compose ? "Blank sheet — draw anything" : "No marks yet"));
@@ -5825,7 +11702,11 @@ function mkChrome() {
      hole through the charm while the bar said "engrave". */
   const intent = mkFillIntent(filling ? __mk.fill : f);
   $$("#mkMetal .mk-metal__b").forEach((b) => {
-    const on = b.dataset.fill === intent;
+    /* the perimeter chip lights while the pen holds the perimeter green —
+       it is a line control and never mirrors the fill intent */
+    const on = b.dataset.fill === "perim"
+      ? (__mk.color === MK_PERIM && !filling)
+      : b.dataset.fill === intent;
     b.classList.toggle("is-on", on);
     b.setAttribute("aria-checked", on ? "true" : "false");
     /* all three arm — see the control's own note. Outline was excluded here
@@ -5874,6 +11755,7 @@ function mkChrome() {
     if (lbl) lbl.textContent = String(v);
   }
   mkPaintMode();
+  mkHoopChrome();
   mkRenderSelection();
   /* the layer list is the model rendered, so it is refreshed wherever the
      model's chrome is — never on its own timer */
@@ -5881,6 +11763,10 @@ function mkChrome() {
   if (typeof mkPaintLayerSel === "function") mkPaintLayerSel();
   const lc = $("#mkLayersCount");
   if (lc) lc.textContent = String(__mk.items.length);
+  /* The phone/tablet shell is only a view of this same model. Keeping its
+     labels, contextual shelf and proxy controls inside mkChrome means every
+     mutation updates both surfaces in the same frame. */
+  try { mkMobileChrome(); } catch (e) {}
 }
 
 /* What the workshop has been told, on screen at all times. Three numbers is
@@ -5897,6 +11783,10 @@ function mkMetalCoachSeen() {
   saveSession();
 }
 function mkMetalCoach() {
+  /* The touch workspace already introduces this choice inside a labelled
+     Settings sheet. A floating desktop coach on top of that sheet would be
+     duplicate instruction and, while the sheet is closed, has no anchor. */
+  if (mkMobileWorkspaceActive()) return;
   if (state.metalCoach) return;
   const host = $("#mkMetal");
   if (!host || document.getElementById("mkMetalCoach")) return;
@@ -5954,6 +11844,40 @@ async function mkMetalCheck(key) {
   return yes;
 }
 
+/* the pen button wears the ink it is holding — a dot in the line's own
+   colour, and a tick on the menu row it came from */
+function mkPenChrome() {
+  if (!__mk) return;
+  const sw = $("#mkPenSw");
+  if (sw) {
+    sw.style.background = __mk.color || "";
+    /* the perimeter ink is an instruction too — the dot wears the ring */
+    sw.classList.toggle("mk-pen__sw--live",
+      !!mkInkInstruction({ t: "ink", c: __mk.color }) || __mk.color === MK_PERIM);
+  }
+  $$('.mk-drop[data-drop="pen"] .mk-item[data-ink]').forEach((b) => {
+    const kind = b.dataset.ink;
+    const c = kind === "engrave" ? MK_ENGRAVE : kind === "cutout" ? MK_CUTOUT
+            : kind === "none" ? MK_OUTLINE
+            : kind === "perimeter" ? MK_PERIM : null;
+    b.classList.toggle("is-on", c ? __mk.color === c
+                                  : !mkInkInstruction({ t: "ink", c: __mk.color }) &&
+                                    __mk.color !== MK_PERIM);
+  });
+}
+
+/* the switch wears its own state — aria-checked is the single source, so the
+   CSS, the screen reader and the flag can never say three different things */
+function mkHoopChrome() {
+  const b = $("#mkHoopToggle");
+  if (!b || !__mk) return;
+  const on = !!__mk.hoop;
+  b.setAttribute("aria-checked", on ? "true" : "false");
+  b.title = on
+    ? "A hanging hoop will be added above your design — click to leave it off"
+    : "Add a hanging hoop to this design — off unless your charm needs one";
+}
+
 function mkPaintTally() {
   const el = $("#markupMetal");
   if (!el || !__mk) return;
@@ -5961,15 +11885,22 @@ function mkPaintTally() {
   const total = t.engrave + t.cutout + t.none;
   if (!total) { el.hidden = true; el.textContent = ""; return; }
   el.hidden = false;
+  /* THE SWATCH IS THE WORD. "1 engraved · 1 cut out · 5 outlines" spelled
+     out was three phrases on a line that had to hold a selection count too,
+     so it wrapped — and a footer that changes height as you select things
+     moves the two buttons under it while you are reaching for them. The
+     swatches already carry the meaning everywhere else in the studio; here
+     they carry it alone, with the words on the hover. */
   const bit = (n, cls, word) => n
-    ? `<span class="markup-metal__b"><i class="mk-metal__sw mk-metal__sw--${cls}"></i>${n} ${word}</span>` : "";
+    ? `<span class="markup-metal__b" title="${attrText(n + " " + word)}">` +
+      `<i class="mk-metal__sw mk-metal__sw--${cls}"></i>${n}</span>` : "";
   el.innerHTML = bit(t.engrave, "engrave", "engraved") +
                  bit(t.cutout, "cutout", "cut out") +
                  bit(t.none, "none", t.none === 1 ? "outline" : "outlines");
 }
 
 function mkPaintMode() {
-  const mode = (__mk && __mk.mode) || "interpret";
+  const mode = mkModeNorm(__mk && __mk.mode);
   $$("#markupMode .mk-mode").forEach((b) => {
     const on = b.dataset.mode === mode;
     b.classList.toggle("is-on", on);
@@ -5979,20 +11910,134 @@ function mkPaintMode() {
 
 /* ── redraw ──────────────────────────────────────────────────────────────── */
 function markupCanvas() { return $("#markupCanvas"); }
+/* the most bitmap one live canvas is allowed, in pixels. Reached only on a
+   very wide screen, where the parking area either side can be larger than
+   the sheet itself; past it the oversampling steps down rather than the
+   parking area shrinking, because a slightly softer halo is a better trade
+   than one that stops before the edge of the room. */
+const MK_CANVAS_BUDGET = 14e6;
+
+/* the halo, in device pixels, as this canvas was actually built */
+function mkPad(cv) {
+  return { x: +(cv && cv.dataset.padx) || 0, y: +(cv && cv.dataset.pady) || 0 };
+}
+
+/* how far outside the sheet a coordinate is allowed to go — exactly as far
+   as there is canvas to draw it on, so nothing can be dragged somewhere it
+   would not be visible */
+function mkHaloRange() {
+  const cv = markupCanvas();
+  if (!cv || !cv.width) return { x: 0, y: 0 };
+  const p = mkPad(cv);
+  const w = cv.width - p.x * 2, h = cv.height - p.y * 2;
+  return { x: w > 1 ? p.x / w : 0, y: h > 1 ? p.y / h : 0 };
+}
+
+/* The grid, on its own canvas behind the base picture. Built on demand so a
+   theme section older than this asset needs no change, and sized and placed
+   to match #markupCanvas exactly — one pixel of drift would read as a wobble. */
+function mkGridEl(cv) {
+  let g = document.getElementById("markupGrid");
+  if (!g) {
+    const view = document.getElementById("markupView");
+    const base = document.getElementById("markupBase");
+    if (!view) return null;
+    g = document.createElement("canvas");
+    g.id = "markupGrid";
+    g.className = "markup-grid";
+    g.setAttribute("aria-hidden", "true");
+    view.insertBefore(g, base || view.firstChild);
+  }
+  if (cv) {
+    if (g.width !== cv.width || g.height !== cv.height) { g.width = cv.width; g.height = cv.height; }
+    /* match the painted canvas's box, whatever the stage has done to it */
+    const cs = cv.style;
+    g.style.width = cs.width; g.style.height = cs.height;
+    g.style.left = cs.left; g.style.top = cs.top;
+    g.style.transform = cs.transform;
+  }
+  return g;
+}
+function mkPaintGridLayer(cv, p) {
+  const g = mkGridEl(cv);
+  if (!g) return;
+  const gx = g.getContext("2d");
+  gx.setTransform(1, 0, 0, 1, 0, 0);
+  gx.clearRect(0, 0, g.width, g.height);
+  if (!(__mk.guides && __mk.guides.grid)) return;
+  const W = cv.width - p.x * 2, H = cv.height - p.y * 2;
+  gx.setTransform(1, 0, 0, 1, p.x, p.y);
+  gx.strokeStyle = "rgba(28,29,29,.10)";
+  gx.lineWidth = 1;
+  const gn = Math.max(4, Math.min(48, __mk.gridN || 12));
+  for (let i = 1; i < gn; i++) {
+    const t = i / gn;
+    gx.beginPath(); gx.moveTo(t * W, 0); gx.lineTo(t * W, H); gx.stroke();
+    gx.beginPath(); gx.moveTo(0, t * H); gx.lineTo(W, t * H); gx.stroke();
+  }
+  gx.setTransform(1, 0, 0, 1, 0, 0);
+}
 function mkRedraw() {
   const cv = markupCanvas(); if (!cv || !__mk) return;
+  /* the size fields are a read-out of the selection, and this is the one
+     function every change passes through — including every frame of a drag,
+     which is what makes the numbers move while the hand does */
+  try { mkSizeSync(); } catch (e) {}
   const ctx = cv.getContext("2d");
+  const p = mkPad(cv);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cv.width, cv.height);
+  /* THE ORIGIN MOVES, THE SCALE DOES NOT. mkPaint multiplies every
+     normalised coordinate by the width it is handed, so it must be handed
+     the SHEET's width and then be told where the sheet starts — hand it the
+     canvas's width instead and the whole drawing grows by the halo. */
+  /* ── THE GRID BELONGS UNDER THE ARTWORK ────────────────────────────────
+     It used to be painted by mkPaint onto this canvas, and the base picture
+     is an <img> BEHIND this canvas — so every imported photograph appeared
+     to be lying underneath the graph paper, which is not what a drafting aid
+     is for. It now has its own surface, inserted behind the base, and mkPaint
+     is told not to draw it. Centre and mirror lines stay on top: those are
+     live guides you align to while you draw, not stationery. */
+  mkPaintGridLayer(cv, p);
+  ctx.setTransform(1, 0, 0, 1, p.x, p.y);
+  /* the edited base, beneath every mark — letterboxed exactly the way the
+     <img> it replaced was, so nothing shifts at the moment it takes over */
+  /* the SAME question mkApplyBase asks of the <img>. Without it a sheet that
+     already had a rasterised base — from a retouch before it was traced, or
+     from Show the original being switched on and off again — carries on
+     painting the bitmap here long after the ghost rule has hidden it. */
+  const baseRec = mkBaseIsGhosted() ? null : mkPxBaseRec();
+  if (baseRec) {
+    try {
+      const bcv = mkPxCanvas(baseRec);
+      const W = cv.width - p.x * 2, H = cv.height - p.y * 2;
+      /* THROUGH THE SAME CROP AND ROTATION THE <img> HAD. Drawing a naive
+         centred letterbox meant a customer who had cropped or rotated their
+         imported picture watched the full uncropped original snap back the
+         instant a pixel tool touched it — and then every stroke landed at
+         the wrong place, because the hit-test had the same blind spot. */
+      const m = mkBaseMatrix(W, H);
+      ctx.save();
+      if (m) ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+      const sc = Math.min(W / bcv.width, H / bcv.height);
+      const dw = bcv.width * sc, dh = bcv.height * sc;
+      ctx.drawImage(bcv, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      ctx.restore();
+    } catch (e) {}
+  }
   const items = __mk.items.slice();
   if (__mk.live) items.push(__mk.live);
-  mkPaint(ctx, cv.width, cv.height, items,
-          Object.assign({}, __mk.guides || {}, { gridN: __mk.gridN || 12 }));
+  mkPaint(ctx, cv.width - p.x * 2, cv.height - p.y * 2, items,
+          Object.assign({}, __mk.guides || {}, { gridN: __mk.gridN || 12, grid: false }));
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   mkRenderSelection();
 }
 
 /* ── selection furniture: a dashed box, four corners and a rotate grip ───── */
 function mkRenderSelection() {
   const host = $("#markupOverlay"); if (!host) return;
+  const mobileDel = $("#mkDelete");
+  if (mobileDel) mobileDel.hidden = true;
   host.querySelectorAll(".mk-sel, .mk-handle, .mk-selone").forEach((e) => e.remove());
   if (!__mk || __mk.tool !== "select" || __mk.cropping) return;
   const list = mkSelItems();
@@ -6003,7 +12048,15 @@ function mkRenderSelection() {
      than one thing is that it then behaves as one thing. Each member also
      gets a thin outline of its own, so it stays obvious WHAT is in the
      selection and not merely how far it reaches. */
-  const bb = many ? mkUnionBBox(list) : mkBBox(it);
+  /* ── THE BOX HAS TO COVER WHAT IS SELECTED ──────────────────────────
+     mkUnionBBox is the union of the members' UNROTATED boxes, so on a
+     drawing that has been turned the dashed box sat where the parts used to
+     be — it neither contained them nor pointed at them, and the corner
+     handles hung off it in mid-air. mkUnionDrawn asks the same question of
+     the parts as they are actually drawn, which is what an axis-aligned box
+     round a set of turned things should be. The per-member outlines below
+     have always carried each part's own turn; now the box agrees with them. */
+  const bb = many ? mkUnionDrawn(list) : mkBBox(it);
   const pad = 0.008;
   if (many) {
     list.forEach((o) => {
@@ -6044,6 +12097,44 @@ function mkRenderSelection() {
   rot.style.left = ((bb.x + bb.w / 2) * 100) + "%";
   rot.style.top = ((bb.y - pad - 0.055) * 100) + "%";
   host.appendChild(rot);
+
+  /* A contextual mobile action, positioned in pixels so its 44px touch target
+     never shrinks with a tiny layer. Prefer below the selection, move above
+     when the lower edge is crowded, and clamp both axes to the visible sheet.
+     It acts on mkSelIdx(), so one object, a multi-selection, and a whole group
+     all follow the exact same deletion path. */
+  const mobileDeleteMode = mkMobileWorkspaceActive();
+  if (mobileDel && mobileDeleteMode) {
+    const vw = Math.max(1, host.clientWidth || 320);
+    const vh = Math.max(1, host.clientHeight || vw);
+    const bw = 88, bh = 44, edge = 8, clear = 18;
+    const cx = (bb.x + bb.w / 2) * vw;
+    const x = Math.max(bw / 2 + edge, Math.min(vw - bw / 2 - edge, cx));
+    const below = (bb.y + bb.h) * vh + clear;
+    const above = bb.y * vh - clear;
+    let y, isAbove;
+    if (below >= edge && below + bh <= vh - edge) {
+      y = below; isAbove = false;
+    } else if (above - bh >= edge && above <= vh - edge) {
+      y = above; isAbove = true;
+    } else {
+      /* A selection filling nearly the whole sheet has no outside edge. Keep
+         the pill inside its lower-right area rather than letting it clip. */
+      y = Math.max(bh + edge, Math.min(vh - edge, (bb.y + bb.h) * vh - edge));
+      isAbove = true;
+    }
+    const groupIds = {};
+    list.forEach((o) => { const g = mkGroupOf(o); if (g) groupIds[g] = 1; });
+    const gs = Object.keys(groupIds);
+    const wholeGroup = gs.length === 1 && mkGroupIdx(gs[0]).length === list.length;
+    mobileDel.style.left = x + "px";
+    mobileDel.style.top = y + "px";
+    mobileDel.classList.toggle("is-above", isAbove);
+    mobileDel.setAttribute("aria-label", wholeGroup
+      ? "Delete selected group"
+      : (list.length > 1 ? `Delete ${list.length} selected layers` : `Delete ${mkLayerName(it)}`));
+    mobileDel.hidden = false;
+  }
 }
 
 /* ── the rubber band ─────────────────────────────────────────────────────
@@ -6068,18 +12159,124 @@ function mkPaintMarquee() {
   el.style.width = (r.w * 100) + "%"; el.style.height = (r.h * 100) + "%";
   host.appendChild(el);
 }
+/* ═══════════ WHERE A LAYER ACTUALLY IS, FOR THE BOX THAT SWEEPS IT ═══════
+   Every point hit-test in the studio unrotates before it asks — mkHitItem,
+   mkFillHit, mkPictureLocal, mkEraseHit all do it, and mkFillHit carries a
+   note saying so. The marquee did not. It tested mkBBox, which is the box a
+   layer occupied BEFORE it was turned, so the moment a drawing has been
+   rotated the box sweeps one place and selects another: parts plainly inside
+   it are missed, parts nowhere near it are taken. On a traced charm, where a
+   hundred small parts sit tightly packed, that is the difference between
+   selecting what you meant and selecting its neighbour.
+
+   Two things are wrong with the old test and both are fixed here.
+
+   IT IGNORED THE TURN. The outline below is the layer as DRAWN — its points
+   turned by its own `r` about its own centre, which is exactly what mkPaint
+   does — so the answer is about the shape on screen rather than a memory of
+   where it used to be.
+
+   AND A BOUNDING BOX IS TOO FAT. Turning a bounding box and taking the box
+   of THAT is worse than useless for a thin diagonal part: the axis-aligned
+   box of a rotated bar is enormous, and every neighbour inside it would be
+   swept up. So a layer with real geometry — a traced contour, a pen stroke,
+   a line — is tested against its own outline, contour by contour, and only a
+   box-shaped primitive falls back to four corners. */
+const MK_PATH_GEOM = { fill: 1, ink: 1, hl: 1, sign: 1, line: 1, arrow: 1 };
+
+function mkDrawnOutline(it) {
+  const b = mkBBox(it);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const r = it.r || 0, c = Math.cos(r), s = Math.sin(r);
+  const fx = it.fx ? -1 : 1, fy = it.fy ? -1 : 1;
+  /* turn, then mirror — the painter's own order */
+  const turn = (x, y) => {
+    const rx = cx + (x - cx) * c - (y - cy) * s;
+    const ry = cy + (x - cx) * s + (y - cy) * c;
+    return [cx + (rx - cx) * fx, cy + (ry - cy) * fy];
+  };
+  const p = it.p || [];
+  if (MK_PATH_GEOM[it.t] && p.length >= 4) {
+    /* a fill's points are its contours laid end to end, and `q` says how many
+       belong to each — walked separately so the ring of an O is not joined to
+       its outside by an edge that was never drawn */
+    const runs = [];
+    const q = Array.isArray(it.q) && it.q.length ? it.q : [p.length / 2];
+    let at = 0;
+    q.forEach((n) => {
+      const pts = [];
+      for (let k = 0; k < n && (at + k) * 2 + 1 < p.length; k++) {
+        pts.push(turn(p[(at + k) * 2], p[(at + k) * 2 + 1]));
+      }
+      at += n;
+      if (pts.length >= 2) runs.push(pts);
+    });
+    if (at * 2 < p.length) {                 /* anything q did not account for */
+      const pts = [];
+      for (let k = at * 2; k + 1 < p.length; k += 2) pts.push(turn(p[k], p[k + 1]));
+      if (pts.length >= 2) runs.push(pts);
+    }
+    if (runs.length) return { runs, closed: it.t === "fill" };
+  }
+  return { runs: [[turn(b.x, b.y), turn(b.x + b.w, b.y),
+                   turn(b.x + b.w, b.y + b.h), turn(b.x, b.y + b.h)]], closed: true };
+}
+
+/* does an outline meet an axis-aligned rectangle — touched, not enclosed */
+function mkOutlineMeetsRect(o, r) {
+  const x1 = r.x + r.w, y1 = r.y + r.h;
+  const seg = (a, b) => {
+    /* Liang–Barsky: the segment against the box, without building anything */
+    let t0 = 0, t1 = 1;
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const P = [-dx, dx, -dy, dy];
+    const Q = [a[0] - r.x, x1 - a[0], a[1] - r.y, y1 - a[1]];
+    for (let i = 0; i < 4; i++) {
+      if (P[i] === 0) { if (Q[i] < 0) return false; continue; }
+      const t = Q[i] / P[i];
+      if (P[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+      else { if (t < t0) return false; if (t < t1) t1 = t; }
+    }
+    return true;
+  };
+  for (const pts of o.runs) {
+    for (let i = 0; i < pts.length; i++) {
+      const j = i + 1;
+      if (j >= pts.length) { if (!o.closed) break; if (seg(pts[i], pts[0])) return true; break; }
+      if (seg(pts[i], pts[j])) return true;
+    }
+  }
+  /* a box entirely inside a filled shape still selects it */
+  if (o.closed) {
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    let inside = false;
+    for (const pts of o.runs) {
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+        if ((yi > cy) !== (yj > cy) &&
+            cx < (xj - xi) * (cy - yi) / ((yj - yi) || 1e-9) + xi) inside = !inside;
+      }
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
 function mkMarqueeSelect() {
   const m = __mk && __mk.marq; if (!m) return;
   const r = mkMarqRect();
   const hit = [];
   __mk.items.forEach((it, i) => {
     if (it.hid || it.lok) return;
-    const b = mkBBox(it);
+    /* the cheap question first: the drawn bounding box rejects almost
+       everything on a busy sheet, so the outline walk below is only paid for
+       by the handful of parts the box could plausibly be touching */
+    const b = mkDrawnBox(it);
+    if (!(b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y)) return;
     /* touched, not enclosed — sweeping a box across a drawing to catch the
        strokes it crosses is what the hand expects */
-    if (b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y) {
-      mkReachOf(i, false).forEach((k) => { if (hit.indexOf(k) < 0) hit.push(k); });
-    }
+    if (!mkOutlineMeetsRect(mkDrawnOutline(it), r)) return;
+    mkReachOf(i, false).forEach((k) => { if (hit.indexOf(k) < 0) hit.push(k); });
   });
   if (m.add) { mkSelSet(m.base || []); mkSelAdd(hit); }
   else mkSelSet(hit);
@@ -6087,6 +12284,546 @@ function mkMarqueeSelect() {
   mkPaintLayerSel(true);
   const cnt = $("#markupCount");
   if (cnt) cnt.textContent = hit.length ? `${mkSelCount()} layers selected` : "Drag to select";
+}
+
+/* ═══════════ THE MARQUEE ═════════════════════════════════════════════════
+   A rectangle drawn over the artwork, and then Copy, Cut or Delete of
+   EXACTLY the piece inside it — Photoshop's rectangular marquee, with the
+   one difference that matters here: this studio's artwork is not pixels, it
+   is instructions. A blue line means "saw through along this path". A blue
+   area means "this is a hole". Rasterising a cut piece would turn every line
+   in it into an area and quietly rewrite what the workshop is told to do.
+
+   So the marquee CLIPS GEOMETRY rather than pixels, and every piece it
+   produces is an ordinary layer of the same kind as the layer it came from:
+   a clipped pen stroke is a pen stroke, in the same ink, at the same weight;
+   a clipped area is an area carrying the same instruction. Which is also
+   what "no restrictions in terms of editability" has to mean — the piece
+   that lands is not a picture of a mark, it IS a mark, and everything the
+   studio can do to a mark it can do to that one.
+
+   WHAT IT ACTS ON. Everything visible and unlocked that the box touches —
+   one layer, forty layers, whole groups, all in the same gesture, and a
+   clipped piece keeps its group so a cut group pastes back as a group. If
+   layers ARE selected when the box is drawn, only those are cut: that is the
+   escape hatch for a crowded sheet, and it costs nothing when unused.
+
+   WHAT IT DOES NOT TOUCH. The reference photograph under the sheet is the
+   base bitmap, not a layer, and the eraser is the tool that reaches it. Say
+   so plainly when a box catches nothing rather than appearing to fail.
+
+   Per kind, and none of this is a special case for its own sake:
+     · pen / highlight / signature / line / arrow — the polyline is clipped
+       segment by segment, so a stroke crossing the box becomes the run
+       inside and the runs outside, all still strokes.
+     · outline-only shapes — the outline is sampled to a path and clipped the
+       same way, landing as pen strokes in the shape's own ink and weight.
+     · filled shapes and areas — clipped as a MASK and re-emitted as an area,
+       because an area's boundary can be concave, can have holes, and the
+       mask is the only representation that is exact for all three.
+     · notes and lettering — whole or not at all. Half a word is not a thing
+       anybody wants, and the anchor decides which side it falls.
+     · pictures — the rectangle becomes a non-destructive mask entry on the
+       layer, so a cut picture is still the same picture file, still movable,
+       still resizable, and Undo is exact.                                  */
+
+const MK_MS_MASK = 1100;      /* the working resolution for an area's mask */
+const MK_MS_MIN  = 0.006;     /* below this a drag was a click, not a box */
+
+/* the live box while one is being drawn, the committed one otherwise */
+function mkMsRect() {
+  if (!__mk) return null;
+  const d = __mk.msDrag;
+  if (d && d.mode === "new") {
+    return { x: Math.min(d.x0, d.x), y: Math.min(d.y0, d.y),
+             w: Math.abs(d.x - d.x0), h: Math.abs(d.y - d.y0) };
+  }
+  return __mk.msel || null;
+}
+function mkMarqClear() {
+  if (!__mk) return;
+  __mk.msel = null; __mk.msDrag = null;
+  mkPaintMarqSel();
+}
+function mkMarqLive() {
+  const r = __mk && __mk.msel;
+  return !!(r && r.w >= MK_MS_MIN && r.h >= MK_MS_MIN);
+}
+
+/* ── the clipper's arithmetic ──────────────────────────────────────────── */
+
+/* Liang–Barsky: the parameter range of a segment that lies inside the box,
+   or null. The same routine mkOutlineMeetsRect uses to answer yes/no — this
+   one keeps the numbers, because the numbers are where the cut goes. */
+function mkSegClip(ax, ay, bx, by, r) {
+  let t0 = 0, t1 = 1;
+  const dx = bx - ax, dy = by - ay;
+  const P = [-dx, dx, -dy, dy];
+  const Q = [ax - r.x, r.x + r.w - ax, ay - r.y, r.y + r.h - ay];
+  for (let i = 0; i < 4; i++) {
+    if (P[i] === 0) { if (Q[i] < 0) return null; continue; }
+    const t = Q[i] / P[i];
+    if (P[i] < 0) { if (t > t1) return null; if (t > t0) t0 = t; }
+    else { if (t < t0) return null; if (t < t1) t1 = t; }
+  }
+  return [t0, t1];
+}
+function mkPtIn(x, y, r) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+/* a polyline against the box: the runs kept, as flat point arrays. A run
+   ends wherever the line leaves the side it was on, which is what makes one
+   stroke crossing the box come back as three. */
+function mkClipPolyline(p, r, inside) {
+  const out = [];
+  const EPS = 1e-9;
+  let cur = null;
+  const push = (x, y) => {
+    if (!cur) { cur = []; out.push(cur); }
+    const n = cur.length;
+    if (n >= 2 && Math.abs(cur[n - 2] - x) < 1e-7 && Math.abs(cur[n - 1] - y) < 1e-7) return;
+    cur.push(x, y);
+  };
+  const end = () => { cur = null; };
+  for (let k = 0; k + 3 < p.length; k += 2) {
+    const ax = p[k], ay = p[k + 1], bx = p[k + 2], by = p[k + 3];
+    const hit = mkSegClip(ax, ay, bx, by, r);
+    const spans = [];
+    if (inside) { if (hit) spans.push(hit); }
+    else if (!hit) spans.push([0, 1]);
+    else {
+      if (hit[0] > EPS) spans.push([0, hit[0]]);
+      if (hit[1] < 1 - EPS) spans.push([hit[1], 1]);
+    }
+    if (!spans.length) { end(); continue; }
+    for (let s = 0; s < spans.length; s++) {
+      const t0 = spans[s][0], t1 = spans[s][1];
+      if (t1 - t0 < 1e-7) continue;
+      if (t0 > EPS) end();                    /* starts mid-segment: a new run */
+      push(ax + (bx - ax) * t0, ay + (by - ay) * t0);
+      push(ax + (bx - ax) * t1, ay + (by - ay) * t1);
+      if (t1 < 1 - EPS) end();                /* stops short of the vertex */
+    }
+  }
+  return out.filter((a) => a.length >= 4);
+}
+
+/* the item's points AS DRAWN — its own turn baked in, so the clip is against
+   the shape on screen and the pieces need no rotation of their own. Every
+   other hit test in the studio unrotates the QUESTION instead; that cannot
+   work here, because the answer has to come back as geometry. */
+function mkTurnedPts(p, it) {
+  const q = (p || []).slice();
+  const fx = it.fx ? -1 : 1, fy = it.fy ? -1 : 1;
+  if (!it.r && fx > 0 && fy > 0) return q;
+  const b = mkBBox(it);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const c = Math.cos(it.r || 0), s = Math.sin(it.r || 0);
+  for (let k = 0; k + 1 < q.length; k += 2) {
+    const dx = q[k] - cx, dy = q[k + 1] - cy;
+    q[k] = cx + (dx * c - dy * s) * fx;
+    q[k + 1] = cy + (dx * s + dy * c) * fy;
+  }
+  return q;
+}
+
+/* A CLOSED SHAPE, AS POINTS. Sampled from the same numbers mkPaintShape
+   draws from — one source for the geometry, so an outline that is clipped
+   and an outline that is painted cannot come back different shapes. */
+function mkShapeContours(it) {
+  const b = mkBBox(it);
+  const x = b.x, y = b.y, w = b.w, h = b.h;
+  const cs = [];
+  const rectPts = (X, Y, W, H) => [X, Y, X + W, Y, X + W, Y + H, X, Y + H, X, Y];
+  const ell = (cx, cy, rx, ry, n) => {
+    const a = [];
+    for (let i = 0; i <= n; i++) { const t = (i / n) * Math.PI * 2; a.push(cx + Math.cos(t) * rx, cy + Math.sin(t) * ry); }
+    return a;
+  };
+  const cube = (a, out, n) => {
+    for (let i = 1; i <= n; i++) {
+      const t = i / n, u = 1 - t;
+      out.push(u * u * u * a[0] + 3 * u * u * t * a[2] + 3 * u * t * t * a[4] + t * t * t * a[6],
+               u * u * u * a[1] + 3 * u * u * t * a[3] + 3 * u * t * t * a[5] + t * t * t * a[7]);
+    }
+  };
+  switch (it.t) {
+    case "rect": cs.push(rectPts(x, y, w, h)); break;
+    case "round": {
+      const r = Math.min(w, h) * 0.22, a = [], N = 10;
+      const arc = (cx, cy, a0) => { for (let i = 0; i <= N; i++) { const t = a0 + (i / N) * (Math.PI / 2); a.push(cx + Math.cos(t) * r, cy + Math.sin(t) * r); } };
+      arc(x + w - r, y + h - r, 0);
+      arc(x + r, y + h - r, Math.PI / 2);
+      arc(x + r, y + r, Math.PI);
+      arc(x + w - r, y + r, Math.PI * 1.5);
+      a.push(a[0], a[1]);
+      cs.push(a);
+      break;
+    }
+    case "ellipse": cs.push(ell(x + w / 2, y + h / 2, w / 2, h / 2, 96)); break;
+    case "ring":
+      cs.push(ell(x + w / 2, y + h / 2, w / 2, h / 2, 96));
+      cs.push(ell(x + w / 2, y + h / 2, w / 4, h / 4, 72));
+      break;
+    case "tri": cs.push([x + w / 2, y, x + w, y + h, x, y + h, x + w / 2, y]); break;
+    case "star": {
+      const a = [], cx = x + w / 2, cy = y + h / 2;
+      for (let i = 0; i < 10; i++) {
+        const rr = i % 2 ? 0.42 : 1, t = -Math.PI / 2 + (i * Math.PI) / 5;
+        a.push(cx + Math.cos(t) * (w / 2) * rr, cy + Math.sin(t) * (h / 2) * rr);
+      }
+      a.push(a[0], a[1]);
+      cs.push(a);
+      break;
+    }
+    case "heart": {
+      const cx = x + w / 2, a = [cx, y + h];
+      cube([cx, y + h, x - w * 0.12, y + h * 0.55, x + w * 0.08, y - h * 0.10, cx, y + h * 0.28], a, 40);
+      cube([cx, y + h * 0.28, x + w * 0.92, y - h * 0.10, x + w * 1.12, y + h * 0.55, cx, y + h], a, 40);
+      cs.push(a);
+      break;
+    }
+    case "bail": {
+      const br = Math.min(w, h) * 0.13;
+      cs.push(rectPts(x, y + br * 2, w, h - br * 2));
+      cs.push(ell(x + w / 2, y + br, br, br, 64));
+      break;
+    }
+    default: cs.push(rectPts(x, y, w, h));
+  }
+  return cs.map((c) => mkTurnedPts(c, it));
+}
+
+/* AN AREA, AS A MASK. Painted from the item's own geometry rather than
+   through mkPaint, because mkPaint answers "what does this look like" — an
+   area set to Outline paints as a boundary, and the boundary is not the
+   thing being cut. The area is what is being cut, whichever way it is drawn. */
+let __mkMaskCv = null;
+function mkAreaMask(it, S) {
+  /* ONE canvas for the whole operation. A box dragged across a traced charm
+     can touch fifty filled areas, and a fresh 1100x1100 canvas for each of
+     them is fifty allocations of five megabytes that the collector then has
+     to find — the difference between a cut that lands instantly and one that
+     stutters. The same surface is cleared and reused instead. */
+  if (!__mkMaskCv || __mkMaskCv.width !== S) {
+    __mkMaskCv = document.createElement("canvas");
+    __mkMaskCv.width = S; __mkMaskCv.height = S;
+  }
+  const cv = __mkMaskCv;
+  const x = cv.getContext("2d", { willReadFrequently: true });
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.clearRect(0, 0, S, S);
+  const bb = mkBBox(it);
+  x.save();
+  if (it.r || it.fx || it.fy) {
+    const cx = (bb.x + bb.w / 2) * S, cy = (bb.y + bb.h / 2) * S;
+    x.translate(cx, cy);
+    if (it.fx || it.fy) x.scale(it.fx ? -1 : 1, it.fy ? -1 : 1);
+    if (it.r) x.rotate(it.r);
+    x.translate(-cx, -cy);
+  }
+  x.fillStyle = "#000"; x.strokeStyle = "#000";
+  x.lineWidth = Math.max(1, (it.w || 0.008) * S);
+  if (it.t === "fill") {
+    if (it.m && it.m.length && it.ms) {
+      const w = Math.max(1, (it.ms[0] | 0)), h = Math.max(1, (it.ms[1] | 0));
+      const m = mkRleDecode(it.m, w, h);
+      const tmp = document.createElement("canvas");
+      tmp.width = w; tmp.height = h;
+      const tc = tmp.getContext("2d");
+      const img = tc.createImageData(w, h);
+      const d = img.data;
+      for (let i = 0; i < w * h; i++) if (m[i]) { d[i * 4 + 3] = 255; }
+      tc.putImageData(img, 0, 0);
+      x.imageSmoothingEnabled = false;
+      x.drawImage(tmp, bb.x * S, bb.y * S, Math.max(1, bb.w * S), Math.max(1, bb.h * S));
+    } else {
+      const p = it.p || [];
+      const q = (Array.isArray(it.q) && it.q.length) ? it.q : [p.length / 2];
+      x.beginPath();
+      let at = 0;
+      q.forEach((n) => {
+        for (let k = 0; k < n && (at + k) * 2 + 1 < p.length; k++) {
+          const px = p[(at + k) * 2] * S, py = p[(at + k) * 2 + 1] * S;
+          if (k) x.lineTo(px, py); else x.moveTo(px, py);
+        }
+        x.closePath();
+        at += n;
+      });
+      x.fill("evenodd");
+    }
+  } else {
+    /* the shape's own painter, told to fill — so a ring's hole and a bail's
+       loop come out of the same evenodd path they are drawn with */
+    mkPaintShape(x, Object.assign({}, it, { f: MK_ENGRAVE, c: MK_ENGRAVE }), bb, S, S);
+  }
+  x.restore();
+  const d = x.getImageData(0, 0, S, S).data;
+  const m = new Uint8Array(S * S);
+  for (let i = 0, N = S * S; i < N; i++) if (d[i * 4 + 3] > 40) m[i] = 1;
+  return m;
+}
+function mkMaskByRect(m, S, r, inside) {
+  const x0 = Math.max(0, Math.floor(r.x * S)), x1 = Math.min(S - 1, Math.ceil((r.x + r.w) * S) - 1);
+  const y0 = Math.max(0, Math.floor(r.y * S)), y1 = Math.min(S - 1, Math.ceil((r.y + r.h) * S) - 1);
+  const o = new Uint8Array(S * S);
+  if (inside) {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) o[y * S + x] = m[y * S + x];
+  } else {
+    o.set(m);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) o[y * S + x] = 0;
+  }
+  return o;
+}
+/* the mask back into the document's own vocabulary: a run-length area, which
+   is a first-class fill here and has been since the bucket learned to take
+   a photograph's region */
+function mkFillFromMask(m, S, src) {
+  let x0 = S, y0 = S, x1 = -1, y1 = -1;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      if (!m[y * S + x]) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return null;
+  let cropped = mkMaskCrop(m, S, { x0, y0, x1, y1 });
+  let runs = mkRleEncode(cropped.m, cropped.w, cropped.h);
+  let guard = 0;
+  while (runs.length > MK_RLE_MAX && guard++ < 4) {
+    cropped = mkMaskHalve(cropped.m, cropped.w, cropped.h);
+    runs = mkRleEncode(cropped.m, cropped.w, cropped.h);
+  }
+  return mkPack({
+    id: mkId(), t: "fill", c: src.c, f: src.f, w: src.w || 0.0015, gr: 1,
+    bk: src.bk ? 1 : 0, o: src.o, n: src.n, g: src.g, r: 0,
+    p: [x0 / S, y0 / S, (x1 + 1) / S, (y1 + 1) / S],
+    m: runs, ms: [cropped.w, cropped.h],
+  });
+}
+
+/* A PICTURE, WITHOUT REWRITING ONE PIXEL OF IT. The box is carried into the
+   layer's own frame — where a turned picture turns it into a quad, which is
+   exactly right — and stored as a mask entry beside the eraser's strokes.
+   Same field, same painter, same Undo, and the file behind the layer is
+   untouched, so a cut piece of a photograph is still that photograph. */
+function mkImgClip(it, r, inside) {
+  const bb = mkBBox(it);
+  const q = [];
+  [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].forEach((c) => {
+    const u = mkUnrotate(it, c[0], c[1]);
+    q.push((u[0] - bb.x) / Math.max(1e-6, bb.w), (u[1] - bb.y) / Math.max(1e-6, bb.h));
+  });
+  const er = (Array.isArray(it.er) ? it.er : []).concat([{ q, v: inside ? 1 : 0 }]);
+  return mkPack(Object.assign({}, it, { id: mkId(), er }));
+}
+
+/* ── one layer against the box ─────────────────────────────────────────── */
+function mkClipItem(it, r) {
+  const box = mkDrawnBox(it);
+  const touches = box.x < r.x + r.w && box.x + box.w > r.x &&
+                  box.y < r.y + r.h && box.y + box.h > r.y;
+  if (!touches) return { in: [], out: [it] };
+
+  if (it.t === "text" || it.t === "callout" || it.t === "label") {
+    const p = it.p || [];
+    return mkPtIn(p[0] || 0, p[1] || 0, r) ? { in: [it], out: [] } : { in: [], out: [it] };
+  }
+
+  if (it.t === "img") {
+    const whole = box.x >= r.x && box.y >= r.y &&
+                  box.x + box.w <= r.x + r.w && box.y + box.h <= r.y + r.h;
+    if (whole) return { in: [it], out: [] };
+    return { in: [mkImgClip(it, r, true)], out: [mkImgClip(it, r, false)] };
+  }
+
+  const stroke = it.t === "ink" || it.t === "hl" || it.t === "sign" ||
+                 it.t === "line" || it.t === "arrow";
+  if (stroke) {
+    const p = mkTurnedPts(it.p, it);
+    if (p.length < 4) {                                       /* a single dot */
+      return mkPtIn(p[0] || 0, p[1] || 0, r) ? { in: [it], out: [] } : { in: [], out: [it] };
+    }
+    const A = mkClipPolyline(p, r, true);
+    if (!A.length) return { in: [], out: [it] };
+    const B = mkClipPolyline(p, r, false);
+    if (!B.length) return { in: [it], out: [] };
+    /* an arrow that has been cut is no longer pointing at anything with a
+       head the geometry can still derive, so the pieces are plain lines */
+    const t = it.t === "arrow" ? "line" : it.t;
+    /* the turn AND the mirror are already baked into these points by
+       mkTurnedPts, so the pieces must carry neither — a piece that kept its
+       parent's flags would be transformed a second time */
+    const mk = (runs) => runs.map((pts) => mkPack(Object.assign({}, it,
+      { id: mkId(), t, r: 0, fx: 0, fy: 0, p: pts })));
+    return { in: mk(A), out: mk(B) };
+  }
+
+  const area = it.t === "fill" ? true : (mkFillIntent(it.f) !== "none");
+  if (!area) {
+    const cs = mkShapeContours(it);
+    const A = [], B = [];
+    cs.forEach((c) => {
+      mkClipPolyline(c, r, true).forEach((x) => A.push(x));
+      mkClipPolyline(c, r, false).forEach((x) => B.push(x));
+    });
+    if (!A.length) return { in: [], out: [it] };
+    if (!B.length) return { in: [it], out: [] };
+    const mk = (runs) => runs.map((pts) => mkPack(Object.assign({}, it,
+      { id: mkId(), t: "ink", r: 0, fx: 0, fy: 0, q: [], m: [], ms: [], p: pts })));
+    return { in: mk(A), out: mk(B) };
+  }
+
+  const S = MK_MS_MASK;
+  const m = mkAreaMask(it, S);
+  const A = mkFillFromMask(mkMaskByRect(m, S, r, true), S, it);
+  if (!A) return { in: [], out: [it] };
+  const B = mkFillFromMask(mkMaskByRect(m, S, r, false), S, it);
+  if (!B) return { in: [it], out: [] };
+  return { in: [A], out: [B] };
+}
+
+/* ── the three verbs ───────────────────────────────────────────────────── */
+function mkMarqTargets() {
+  const sel = mkSelIdx();
+  const pool = sel.length ? sel : __mk.items.map((_, i) => i);
+  return pool.filter((i) => { const it = __mk.items[i]; return it && !it.hid && !it.lok; });
+}
+function mkMarqApply(mode) {
+  if (!__mk) return;
+  const r = __mk.msel;
+  if (!r || r.w < MK_MS_MIN || r.h < MK_MS_MIN) { toast("Drag a box over the artwork first", "err"); return; }
+
+  /* ── PASTE INTO THE BOX ─────────────────────────────────────────────────
+     The box has already said where: the piece arrives centred on it. Then
+     the box has done its job and gets out of the way — it is put away, the
+     Select tool comes up and the pasted layers are handed over already
+     selected, with their handles on, so the very next thing the hand does
+     is move or resize what just arrived rather than hunt for it.
+     The tool changes BEFORE the paste, because the selection furniture is
+     only drawn for the Select tool and mkTouch is what draws it. */
+  if (mode === "paste") {
+    if (!(__mkClip && __mkClip.length)) {
+      toast("Nothing copied yet — Copy or Cut a piece first", "err");
+      return;
+    }
+    const at = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    mkSetTool("select");
+    mkMarqClear();
+    const n = mkPasteClip(at).length;
+    mkChrome();
+    toast(n === 1 ? "Pasted into the box" : `Pasted ${n} layers into the box`, "gold");
+    return;
+  }
+  const idxs = mkMarqTargets();
+  const taken = [];
+  const repl = new Map();
+  idxs.forEach((i) => {
+    const it = __mk.items[i];
+    let res = null;
+    try { res = mkClipItem(it, r); } catch (err) { SD("marquee:", err && err.message); return; }
+    if (!res || !res.in.length) return;
+    res.in.forEach((o) => taken.push(o === it ? mkPack(it) : o));
+    if (mode !== "copy") repl.set(i, res.out);
+  });
+  if (!taken.length) {
+    toast("Nothing of yours inside the box — the marquee cuts your marks, not the picture underneath", "err");
+    return;
+  }
+  if (mode !== "del") {
+    /* the studio's own clipboard, so ⌘V, the Paste button and the
+       right-click menu all reach this piece without knowing it came from
+       a marquee. Group ids ride along and mkLayerAct remaps them, so a cut
+       group pastes back as a group. */
+    mkClipSet(taken.map(mkPack));
+  }
+  if (mode === "copy") {
+    toast(taken.length === 1 ? "Piece copied — ⌘V to place it" : taken.length + " pieces copied — ⌘V to place them", "gold");
+    return;
+  }
+  mkPushUndo();
+  const out = [];
+  __mk.items.forEach((it, i) => {
+    if (!repl.has(i)) { out.push(it); return; }
+    repl.get(i).forEach((o) => out.push(o));
+  });
+  __mk.items = out;
+  mkSelSet([]);
+  mkTouch();
+  try { mkRenderLayers(); } catch (e) {}
+  mkChrome();
+  mkPaintMarqSel();
+  toast(mode === "cut"
+    ? (taken.length === 1 ? "Piece cut — ⌘V to place it" : taken.length + " pieces cut — ⌘V to place them")
+    : "Deleted", mode === "cut" ? "gold" : "");
+}
+
+/* ── the box on screen, and what you can do to it ──────────────────────── */
+function mkPaintMarqSel() {
+  const host = $("#markupOverlay");
+  if (!host) return;
+  host.querySelectorAll(".mk-msel").forEach((e) => e.remove());
+  if (!__mk) { const b = host.querySelector(".mk-msbar"); if (b) b.remove(); return; }
+  const r = __mk ? mkMsRect() : null;
+  if (!r || r.w <= 0 || r.h <= 0) { mkMarqBar(null); return; }
+  const el = document.createElement("div");
+  el.className = "mk-msel" + (__mk.msDrag ? " is-live" : "");
+  el.style.left = (r.x * 100) + "%";
+  el.style.top = (r.y * 100) + "%";
+  el.style.width = (r.w * 100) + "%";
+  el.style.height = (r.h * 100) + "%";
+  host.appendChild(el);
+  mkMarqBar(__mk.msDrag ? null : r);
+}
+function mkMarqBar(r) {
+  const host = $("#markupOverlay");
+  if (!host) return;
+  let bar = host.querySelector(".mk-msbar");
+  if (!r || r.w < MK_MS_MIN || r.h < MK_MS_MIN) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.className = "mk-msbar";
+    bar.innerHTML =
+      '<button type="button" data-ms="copy">Copy</button>' +
+      '<button type="button" data-ms="cut">Cut</button>' +
+      /* Paste, not Delete. Deleting the piece inside the box is still ⌫ and
+         still the right-click menu; what the box could not do until now was
+         receive, and cut-here-paste-there is the whole reason anybody draws
+         two boxes in a row. */
+      '<button type="button" data-ms="paste" class="mk-msbar__p">Paste</button>' +
+      '<b class="mk-msbar__n"></b>' +
+      '<button type="button" data-ms="off" class="mk-msbar__x" aria-label="Deselect">&#215;</button>';
+    /* the bar sits inside the sheet, so a press on it must not also reach
+       the sheet underneath and start a second box on top of the first */
+    bar.addEventListener("pointerdown", (e) => e.stopPropagation());
+    bar.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-ms]");
+      if (!b) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (b.dataset.ms === "off") mkMarqClear();
+      else mkMarqApply(b.dataset.ms);
+    });
+    host.appendChild(bar);
+  }
+  /* nothing to paste is a dimmed word, not a button that answers with a
+     complaint — the state is visible before the click, which is the only
+     time it is any use */
+  const pb = bar.querySelector(".mk-msbar__p");
+  if (pb) pb.disabled = !(__mkClip && __mkClip.length);
+  const n = bar.querySelector(".mk-msbar__n");
+  if (n) {
+    n.textContent = mkSizeFmt(mkSizeToUnit(r.w)) + " × " + mkSizeFmt(mkSizeToUnit(r.h)) +
+                    " " + (__mkUnit === "in" ? "in" : "mm");
+  }
+  /* above the box, unless the box is at the top of the sheet */
+  const below = r.y < 0.11;
+  bar.classList.toggle("is-below", below);
+  bar.style.left = (Math.max(0.02, Math.min(0.98, r.x + r.w / 2)) * 100) + "%";
+  bar.style.top = (Math.max(0, Math.min(1, below ? r.y + r.h : r.y)) * 100) + "%";
 }
 
 /* ═══════════ the single text editor ══════════════════════════════════════
@@ -6110,7 +12847,7 @@ function mkOpenEditor(it) {
   ta.style.top  = (Math.min(0.86, Math.max(0.01, bb.y)) * 100) + "%";
   ta.style.width = "28%";
   ta.style.fontFamily = MK_FONTS[it.ff] || MK_FONTS.sans;
-  ta.style.fontSize = Math.max(11, size * ($("#markupStage").getBoundingClientRect().width || 400)) + "px";
+  ta.style.fontSize = Math.max(11, size * (mkSheetBox().width || 400)) + "px";
   host.appendChild(ta);
   __mk.editing = { it, ta };
 
@@ -6171,20 +12908,153 @@ function mkApplyView() {
   const view = $("#markupView");
   if (!view || !__mk) return;
   view.style.transform = `translate(${__mk.px}px, ${__mk.py}px) scale(${__mk.z})`;
+  /* the rulers read off the sheet as DRAWN, so every zoom and every pan is a
+     redraw — coalesced onto one frame, so a pinch does not queue thirty */
+  mkRulerQueue();
+  /* the scrollbars are a read-out of this transform, so they are repainted
+     by the act of applying it — no caller has to remember them. Guarded:
+     mkApplyView sits under zoom, pan, pinch and open, and a read-out must
+     never be able to take any of those down with it. */
+  try { mkScrollSync(); } catch (e) {}
   const reset = $("#mkZoomReset");
   if (reset) {
     reset.hidden = __mk.z <= 1.01;
     reset.textContent = "⤾ " + Math.round(__mk.z * 100) + "%";
   }
 }
+/* ── THE SHEET'S OWN BOX ──────────────────────────────────────────────────
+   The stage is the room now and the sheet is centred inside it, so "where
+   the drawing starts" and "where the stage starts" are two different points
+   and every piece of pan/zoom arithmetic wants the first one.
+
+   offsetLeft/offsetWidth, NOT getBoundingClientRect(): px, py and z are the
+   sheet's own transform, and a client rect has that transform already baked
+   into it. Feeding a zoomed rect back into the equation that computes the
+   next zoom compounds it — the sheet would drift a little further off the
+   cursor with every notch of the wheel. These four numbers are the sheet's
+   LAYOUT box, which is the fixed frame all three values are measured from. */
+function mkSheetBox() {
+  const v = $("#markupView"), st = $("#markupStage");
+  if (!v || !st) return { left: 0, top: 0, width: 0, height: 0 };
+  const r = st.getBoundingClientRect();
+  return { left: r.left + v.offsetLeft, top: r.top + v.offsetTop,
+           width: v.offsetWidth, height: v.offsetHeight };
+}
 function mkClampView() {
-  const r = $("#markupStage").getBoundingClientRect();
+  const r = mkSheetBox();
   const minX = r.width - r.width * __mk.z, minY = r.height - r.height * __mk.z;
   __mk.px = Math.min(0, Math.max(minX, __mk.px));
   __mk.py = Math.min(0, Math.max(minY, __mk.py));
 }
+/* ── PANNING BY THE PIXEL ─────────────────────────────────────────────────
+   The one place that moves the sheet without changing its zoom. Everything
+   that scrolls the work area — Shift+wheel, Ctrl+wheel, the scrollbars —
+   comes through here, so the clamp is applied once and the rulers and the
+   zoom read-out cannot be left describing a view nobody is looking at.
+
+   At z=1 the clamp collapses the range to a single point, so a stray notch
+   on an un-zoomed sheet is a no-op rather than a drift. */
+function mkPanBy(dx, dy) {
+  if (!__mk) return;
+  __mk.px += dx;
+  __mk.py += dy;
+  mkClampView();
+  mkApplyView();
+}
+/* ── HOW FAR THE SHEET CAN TRAVEL ON EACH AXIS ────────────────────────────
+   The one definition of the scrollable span, so the bars, their drag
+   arithmetic and mkClampView can never disagree about the range. Zero at
+   100%, which is what makes every scroll path a no-op there. */
+function mkPanSpan() {
+  const r = mkSheetBox();
+  return { x: Math.max(0, r.width * __mk.z - r.width),
+           y: Math.max(0, r.height * __mk.z - r.height) };
+}
+/* ── THE BARS ARE A READ-OUT OF THE TRANSFORM ─────────────────────────────
+   Called from mkApplyView, so every route that moves the sheet — wheel,
+   drag-pan, pinch, the zoom reset, a fresh open — repaints them by virtue of
+   having moved it. Nothing else has to remember to.
+
+   thumb LENGTH is the visible fraction (1/z); thumb POSITION is how far
+   through the span the sheet has travelled, laid along the track's leftover
+   room (1 - 1/z). Both in per cent, so the bars need no pixel measurement of
+   their own and stay correct through a window resize. */
+function mkScrollSync() {
+  const bx = $("#mkSbarX"), by = $("#mkSbarY");
+  if (!bx || !by || !__mk) return;
+  const on = __mk.z > 1.01;
+  bx.hidden = !on; by.hidden = !on;
+  if (!on) return;
+  const span = mkPanSpan(), ratio = 1 / __mk.z;
+  const tx = $("#mkSbarThumbX"), ty = $("#mkSbarThumbY");
+  if (tx) {
+    tx.style.width = (ratio * 100) + "%";
+    tx.style.left = (span.x ? (-__mk.px / span.x) * (1 - ratio) * 100 : 0) + "%";
+  }
+  if (ty) {
+    ty.style.height = (ratio * 100) + "%";
+    ty.style.top = (span.y ? (-__mk.py / span.y) * (1 - ratio) * 100 : 0) + "%";
+  }
+}
+/* Dragging a thumb: the pointer's travel along the track is converted to
+   sheet travel by the same two factors the sync uses, read backwards. The
+   pointer is captured so a fast drag that leaves the rail keeps scrolling,
+   which is the behaviour every native bar has and the thing that makes a
+   thin one usable. */
+function mkWireScrollbars() {
+  [["#mkSbarX", "#mkSbarThumbX", "x"], ["#mkSbarY", "#mkSbarThumbY", "y"]]
+    .forEach(([railSel, thumbSel, axis]) => {
+      const rail = $(railSel), thumb = $(thumbSel);
+      if (!rail || !thumb) return;
+      let from = null;
+      thumb.addEventListener("pointerdown", (e) => {
+        if (!__mk) return;
+        e.preventDefault(); e.stopPropagation();
+        thumb.setPointerCapture(e.pointerId);
+        rail.classList.add("is-drag");
+        from = { p: axis === "x" ? e.clientX : e.clientY,
+                 v: axis === "x" ? __mk.px : __mk.py };
+      });
+      thumb.addEventListener("pointermove", (e) => {
+        if (!from || !__mk) return;
+        e.preventDefault();
+        const railPx = axis === "x" ? rail.clientWidth : rail.clientHeight;
+        const room = railPx * (1 - 1 / __mk.z);
+        if (room <= 0) return;
+        const span = mkPanSpan()[axis];
+        const moved = (axis === "x" ? e.clientX : e.clientY) - from.p;
+        const want = from.v - (moved / room) * span;
+        if (axis === "x") { __mk.px = want; } else { __mk.py = want; }
+        mkClampView();
+        mkApplyView();
+      });
+      const done = (e) => {
+        if (!from) return;
+        from = null;
+        rail.classList.remove("is-drag");
+        try { thumb.releasePointerCapture(e.pointerId); } catch (err) {}
+      };
+      thumb.addEventListener("pointerup", done);
+      thumb.addEventListener("pointercancel", done);
+      /* a press on the bare rail jumps one screenful toward the press —
+         the same courtesy a native bar pays, and the reason a thin thumb is
+         not a precision-only control */
+      rail.addEventListener("pointerdown", (e) => {
+        if (!__mk || e.target === thumb) return;
+        e.preventDefault(); e.stopPropagation();
+        const r = rail.getBoundingClientRect();
+        const at = axis === "x" ? (e.clientX - r.left) / r.width
+                                : (e.clientY - r.top) / r.height;
+        const here = axis === "x" ? -__mk.px : -__mk.py;
+        const span = mkPanSpan()[axis];
+        const page = span * (1 / __mk.z);
+        mkPanBy(axis === "x" ? -(at * span > here ? page : -page) : 0,
+                axis === "y" ? -(at * span > here ? page : -page) : 0);
+      });
+    });
+}
 function mkZoomAt(clientX, clientY, factor) {
-  const r = $("#markupStage").getBoundingClientRect();
+  const r = mkSheetBox();
   const cx = clientX - r.left, cy = clientY - r.top;
   const z2 = Math.min(8, Math.max(1, __mk.z * factor));
   if (z2 === __mk.z) return;
@@ -6211,17 +13081,49 @@ function mkApplyBase() {
   /* THE GHOST RULE. Once the drawing has been taken apart, the vectors ARE
      the drawing — painting the bitmap as well would leave the original eye
      sitting there the moment you moved the traced one. */
-  img.hidden = !!__mk.compose || (!!__mk.traced && !__mk.showBitmap);
+  /* ── AND IT MUST NOT FIGHT THE PIXEL TAKEOVER ──────────────────────
+     mkApplyBase runs on every sheet Undo/Redo, every crop confirm and every
+     rotate. Recomputing `hidden` from the ghost rule alone meant the very
+     next Undo after a retouch un-hid the ORIGINAL, unedited <img> in front of
+     the customer's work. Once the pixels are the picture, they stay it. */
+  img.hidden = mkBaseIsGhosted() || !!mkPxBaseRec();
 }
 
 /* ── the tool ────────────────────────────────────────────────────────────── */
 function mkSetTool(tool) {
   if (!__mk) return;
   mkCloseEditor();
+  /* ── A GESTURE THAT NEVER FINISHED MUST NOT OUTLIVE ITS TOOL ───────────
+     A shape being dragged lives in `__mk.live` until pointerup files it into
+     __mk.items, and mkRedraw paints it alongside them. If that pointerup
+     never arrives — a pointercancel, a lost capture, a finger that leaves the
+     stage — the half-drawn shape stays live, and the next gesture's commit()
+     returns on ITS branch long before reaching the code that clears it. The
+     eraser's branch is the one that returns earliest.
+
+     What the customer sees then is a shape that is on the sheet but in no
+     layer row, that no click will select and no Delete will remove, sitting
+     over the real work while they rub the real work out. Picking up a
+     different tool is unambiguously the end of whatever the last one was
+     doing, so it is abandoned here — the one place every tool change passes
+     through. */
+  if (tool !== __mk.tool && (__mk.live || __mk.liveFrom)) {
+    __mk.live = null; __mk.liveFrom = null;
+    try { mkRedraw(); } catch (e) {}
+  }
   /* so that choosing Outline puts the bucket down and hands back whatever
      was in the customer's hand before they reached for it */
   if (tool === "bucket" && __mk.tool && __mk.tool !== "bucket") __mk.lastDrawTool = __mk.tool;
   __mk.tool = tool;
+  /* THE ENGINE ARRIVES WHEN A PIXEL TOOL IS PICKED UP, not on page load: it
+     is a second asset that most visits never need. Fetching it here means it
+     is almost always ready by the time the first stroke is drawn, and the
+     customer is never made to wait for a progress bar to use a brush. */
+  if (tool === "erase" && !window.BJRaster) {
+    /* quietly, and without an alarm if it is not installed: the eraser still
+       rubs out marks perfectly well without it */
+    loadRaster().then(() => mkPxWarm()).catch(() => {});
+  }
   if (tool !== "select") __mk.sel = -1;
   $$(".mk-tool").forEach((b) => b.classList.toggle("is-on", b.dataset.tool === tool));
   /* a nested menu's button wears the sub-tool it is currently holding */
@@ -6251,6 +13153,7 @@ function mkSetTool(tool) {
   if (magicBtn) magicBtn.classList.toggle("is-on", tool === "wand");
   const eraseBtn = $("#mkEraser");
   if (eraseBtn) eraseBtn.classList.toggle("is-on", tool === "erase");
+  mkPenChrome();
   if (tool !== "erase") mkEraserCursorClear();
   if (tool !== "bucket") mkFillPreviewClear();
   /* the bucket's hint names the instruction it is about to give, because
@@ -6261,6 +13164,10 @@ function mkSetTool(tool) {
         : "Move over the sheet — the area that will be ENGRAVED lights up. Click to take it, click again to undo")
     : (MK_HINTS[tool] || "");
   $("#markupStage").dataset.tool = tool;
+  /* THE BOX OUTLIVES THE TOOL, as it does in every editor that has one:
+     draw it with the marquee, then reach for anything else and it is still
+     there to Copy or Cut from. Only Deselect, Escape or a click on bare
+     sheet with the marquee in hand puts it away. mkChrome repaints it. */
   mkChrome();
 }
 
@@ -6279,6 +13186,78 @@ function mkApplyProp(patch) {
   mkTouch();
 }
 
+/* ═══════════ MIRRORING A SELECTION ═══════════════════════════════════════
+   The same lesson mkRotateItems had to learn, in the other transform.
+
+   Flip was written as "reflect every point about the selection's box", and
+   that is wrong three times over:
+
+     IT DID NOT MOVE HALF THE LAYERS. A picture, a run-length area and every
+     two-corner shape keep only a BOX in `p`. Reflecting a box about a line
+     gives back a box, so those layers came through a flip completely
+     unchanged while their neighbours moved — which is most of what "it
+     messed up the grouped object" looks like.
+
+     IT LEFT THE TURN ALONE. The painter applies `r` about the layer's own
+     centre AFTER the points. Reflect the points and leave `r` at +r and the
+     layer is drawn at the mirror of its position but the original of its
+     angle: every turned part in a group swings out to twice its own angle,
+     which is the drawing coming apart at the seams.
+
+     AND IT MEASURED THE AXIS WITH THE WRONG RULER. mkUnionBBox is the union
+     of the members' UNROTATED boxes, so on a group whose parts carry turns
+     it does not describe what is on screen and its centre sits off to one
+     side. The whole drawing therefore slides sideways as it flips.
+
+   So a flip does what a flip is: it moves each layer's centre to the mirror
+   of where it was, and tells the painter to draw that layer mirrored. The
+   points are only ever TRANSLATED — no layer has to express the mirror in
+   its own coordinates, so a polygon, a two-corner ellipse, a masked area, a
+   photograph and a note all flip by the same arithmetic and land together.
+
+   `fx`/`fy` and `r` compose the way the matrices do. Mirroring on one axis
+   toggles that flag. Mirroring on BOTH is not two mirrors, it is a half
+   turn — so when both flags come on they are cleared and π is added to `r`
+   instead, which is the same picture written the way the rest of the studio
+   can read it.
+
+   THE AXIS IS THE DRAWN UNION'S MIDDLE. Unlike a rotation, a reflection maps
+   an axis-aligned box onto itself, so this axis survives its own transform
+   exactly: flip twice and the drawing is back where it started, to the last
+   decimal, however many turned parts it is made of.
+
+   LETTERING IS THE ONE EXCEPTION and it is not really one: words written
+   backwards are not a flip of anything anybody wants. A note moves to its
+   mirrored position and stays readable — reflected points, negated turn,
+   which for a shape with no interior is the same transform said differently. */
+function mkFlipItems(list, horiz, axis) {
+  (list || []).forEach((it) => {
+    const p = it.p || [];
+    const words = it.t === "text" || it.t === "callout" || it.t === "label";
+    if (words) {
+      for (let k = 0; k + 1 < p.length; k += 2) {
+        if (horiz) p[k] = axis * 2 - p[k];
+        else p[k + 1] = axis * 2 - p[k + 1];
+      }
+      /* a note's box is measured on the sheet and cached, so it has to be
+         reflected too or mkBBox answers for where the note used to be */
+      if (horiz && it._bx != null) it._bx = axis * 2 - it._bx - (it._w || 0);
+      if (!horiz && it._by != null) it._by = axis * 2 - it._by - (it._h || 0);
+      if (it.r) it.r = -it.r;
+      return;
+    }
+    const b = mkBBox(it);
+    const c0 = horiz ? b.x + b.w / 2 : b.y + b.h / 2;
+    const d = (axis * 2 - c0) - c0;              /* how far its centre travels */
+    for (let k = 0; k + 1 < p.length; k += 2) {
+      if (horiz) p[k] += d; else p[k + 1] += d;
+    }
+    if (horiz) it.fx = it.fx ? 0 : 1;
+    else       it.fy = it.fy ? 0 : 1;
+    if (it.fx && it.fy) { it.fx = 0; it.fy = 0; it.r = (it.r || 0) + Math.PI; }
+  });
+}
+
 function mkArrange(what) {
   if (!__mk) return;
   const canvasOp = what === "canvasL" || what === "canvasR" || what === "canvasFlip";
@@ -6291,28 +13270,17 @@ function mkArrange(what) {
   if (what === "rotL" || what === "rotR") {
     /* several objects turn about the SELECTION's centre, one about its own —
        which is the same thing when the selection is one object */
-    const dr = (what === "rotL" ? -1 : 1) * Math.PI / 12;
-    const cx = bb.x + bb.w / 2, cy = bb.y + bb.h / 2;
-    const c = Math.cos(dr), sn = Math.sin(dr);
-    list.forEach((it) => {
-      it.r = (it.r || 0) + dr;
-      if (list.length > 1) {
-        const p = it.p || [];
-        for (let k = 0; k + 1 < p.length; k += 2) {
-          const dx = p[k] - cx, dy = p[k + 1] - cy;
-          p[k] = cx + dx * c - dy * sn;
-          p[k + 1] = cy + dx * sn + dy * c;
-        }
-      }
-    });
+    /* 90°, not 15°. The menu's two entries are the quarter-turn everybody
+     reaches a context menu for; fifteen degrees is a nudge, and a nudge is
+     what the rotate handle and the arrow keys are already for. */
+  const dr = (what === "rotL" ? -1 : 1) * Math.PI / 2;
+    mkRotateItems(list, dr, bb.x + bb.w / 2, bb.y + bb.h / 2);
   } else if (what === "flipH" || what === "flipV") {
-    list.forEach((it) => {
-      const p = it.p || [];
-      for (let k = 0; k + 1 < p.length; k += 2) {
-        if (what === "flipH") p[k] = bb.x * 2 + bb.w - p[k];
-        else p[k + 1] = bb.y * 2 + bb.h - p[k + 1];
-      }
-    });
+    /* the DRAWN union, not mkUnionBBox: see mkFlipItems for why the box a
+       layer occupied before it was turned is the wrong ruler here */
+    const D = mkUnionDrawn(list);
+    const horiz = what === "flipH";
+    mkFlipItems(list, horiz, horiz ? D.x + D.w / 2 : D.y + D.h / 2);
   } else if (what === "front" || what === "back") {
     /* by block, so a group arrives at the front intact */
     const blocks = mkBlocks();
@@ -6325,16 +13293,21 @@ function mkArrange(what) {
     return;                                  /* it touches and repaints itself */
   } else if (canvasOp) {
     /* the whole sheet turns: every point AND the drawing underneath */
-    __mk.items.forEach((o) => {
-      const p = o.p || [];
-      for (let k = 0; k + 1 < p.length; k += 2) {
-        const x = p[k], y = p[k + 1];
-        if (what === "canvasL")      { p[k] = y;     p[k + 1] = 1 - x; }
-        else if (what === "canvasR") { p[k] = 1 - y; p[k + 1] = x; }
-        else                          { p[k] = 1 - x; }
-      }
-      if (what !== "canvasFlip") o.r = (o.r || 0) + (what === "canvasL" ? -Math.PI / 2 : Math.PI / 2);
-    });
+    if (what === "canvasFlip") {
+      /* the whole sheet mirrors about its own middle, by the same arithmetic
+         a selection does — the sheet is just the largest selection there is */
+      mkFlipItems(__mk.items, true, 0.5);
+    } else {
+      __mk.items.forEach((o) => {
+        const p = o.p || [];
+        for (let k = 0; k + 1 < p.length; k += 2) {
+          const x = p[k], y = p[k + 1];
+          if (what === "canvasL") { p[k] = y; p[k + 1] = 1 - x; }
+          else                    { p[k] = 1 - y; p[k + 1] = x; }
+        }
+        o.r = (o.r || 0) + (what === "canvasL" ? -Math.PI / 2 : Math.PI / 2);
+      });
+    }
     if (what === "canvasL") __mk.baseRot = ((__mk.baseRot || 0) - 90 + 360) % 360;
     else if (what === "canvasR") __mk.baseRot = ((__mk.baseRot || 0) + 90) % 360;
     else __mk.baseFlip = !__mk.baseFlip;
@@ -6385,6 +13358,34 @@ function mkDeleteSelected() {
    what makes this feature impossible to get wrong.
    ====================================================================== */
 const MK_FILL_TOL = 0.016;            /* the gap a hand is forgiven, of sheet */
+/* ── WHAT COUNTS AS EMPTY PAPER, AND WHO DECIDES ─────────────────────────
+   690 of a possible 765 — a mean channel of 230 — was the single hardcoded
+   answer to "is this pixel empty?", and it is the answer the bucket has
+   given on a drawn sheet since the day it was written.
+
+   Meanwhile the slider above the bar says "How close a shade counts", and it
+   reached the PICTURE branch of mkRegionAt and nothing else. Click inside a
+   room on the sheet — which is what the bucket is for — and the number the
+   customer had just moved was not consulted by any line of code. That is the
+   report, and it is exact: a control that moves and changes nothing.
+
+   It is the same question in both places, so it gets the same answer. The
+   default, 18, reproduces 690 to the level, so every sheet that fills today
+   fills identically tomorrow. Raising it lets a DARKER pixel still count as
+   empty, which is what a small enclosed space needs: at the sheet's working
+   resolution a gap two strokes wide can be entirely antialiased grey, with
+   nothing in it bright enough to clear 690, so the room reads as solid metal
+   and the click does nothing at all. Lowering it makes the faintest grey a
+   wall, for a design that wants its hairlines respected.
+
+   It moves the FILLABLE mask only. The void flood — what is outside the
+   charm — keeps the fixed threshold on purpose, so no setting of this slider
+   can redirect a fill into painting the background. */
+const MK_PAPER_SUM = 690;
+function mkPaperSum(tol) {
+  const t = Math.max(2, Math.min(70, Number(tol) || MK_WAND_DEFAULT_TOL));
+  return 765 - (765 - MK_PAPER_SUM) * (t / MK_WAND_DEFAULT_TOL);
+}
 /* TWO RESOLUTIONS, AND THE REASON FOR BOTH.
 
    The preview redraws on every mouse move, so it runs at a size a flood fill
@@ -6402,13 +13403,19 @@ const MK_REG_CACHE = new Map();       /* size → the composed sheet at that siz
 /* everything visible, painted flat, with a note of WHICH object owns each
    inked pixel — that ownership is what lets a fill know which group it
    belongs to and what it must sit on top of */
-function mkRegionSheet(size) {
+function mkRegionSheet(size, tol) {
   if (!__mk) return null;
   const S = Math.max(64, Math.round(Number(size) || MK_REG_S));
+  /* the paper mask below is built from this, so it belongs in the signature:
+     without it the first sheet built at one setting is handed back at every
+     other setting and the slider is dead through the cache instead of dead
+     through the threshold */
+  const paperSum = mkPaperSum(tol);
   const vis = __mk.items.filter((it) => !it.hid);
   const sig = vis.map((it) => it.id + ":" + (it.p || []).length + ":" + it.f + ":" + it.o +
                               ":" + (it.k || []).length + ":" + (it.m || []).length).join("|") +
-              "#" + (__mk.baseRef && !__mk.traced ? __mk.baseRef.u : "") + "#" + S;
+              "#" + (__mk.baseRef && !__mk.traced ? __mk.baseRef.u : "") + "#" + S +
+              "#" + Math.round(paperSum);
   const MK_REG = MK_REG_CACHE.get(S) || { sig: "", data: null, S };
   MK_REG_CACHE.set(S, MK_REG);
   if (MK_REG.sig === sig && MK_REG.data) return MK_REG;
@@ -6420,10 +13427,35 @@ function mkRegionSheet(size) {
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, S, S);
     if (withBase && __mk.baseRef && !__mk.traced) {
-      const img = mkImageFor(__mk.baseRef);
+      /* ── A PICTURE THAT HAD NOT DECODED YET IS NOT WHITE PAPER ─────────
+         mkImageFor returns null while a picture is still loading, and this
+         call used to ignore that: the sheet was composed with nothing where
+         the photograph belongs and then CACHED, with a signature that
+         cannot tell the difference — the URL, the item ids and their point
+         counts are all identical before and after the bytes arrive. Nothing
+         then invalidated it, because only mkTouch does and no edit had
+         happened.
+
+         The cost is not a stale preview. The sheet is what the flood runs
+         on, so a region bounded by the photograph read as open paper: the
+         highlight ran across the picture, and the COMMIT ran across it too
+         and stored the result as a layer. Wrong fills, not slow ones.
+
+         mkImageFor has always taken a waiter. Passing one turns the arrival
+         into exactly what it is — a change to the sheet — and mkRegionForget
+         is the one thing that has to happen. */
+      const img = mkImageFor(__mk.baseRef, () => {
+        mkRegionForget();
+        if (__mk && __mk.tool === "bucket") { __mkPrev.key = ""; mkRedraw(); }
+      });
       if (img && img.width) { try { ctx.drawImage(img, 0, 0, S, S); } catch (e) {} }
     }
-    try { mkPaint(ctx, S, S, list, { export: true }); } catch (e) {}
+    /* the same hazard for a PLACED picture: mkPaint resolves each one through
+       mkPictureFor, which returns null while it loads unless it is handed a
+       waiter. Without this a sheet composed mid-load is cached with the
+       pictures missing and every fill over them is unbounded. */
+    try { mkPaint(ctx, S, S, list, { export: true, onImage: () => mkRegionForget() }); }
+    catch (e) {}
     try { return ctx.getImageData(0, 0, S, S); } catch (e) { return null; }
   };
   /* the widened copy is what forgives a hand: a sketched loop almost never
@@ -6487,12 +13519,65 @@ function mkRegionSheet(size) {
   const outside = flood(d);
   const outsideTrue = flood(td);
 
+  /* ── THE PAPER, AND ITS ROOMS, WORKED OUT ONCE ─────────────────────────
+     mkRegionAt used to build this mask itself — a fresh Uint8Array(N) and a
+     full pass over every pixel — on EVERY call. That was affordable while a
+     call meant a click. It stopped being affordable when the hover preview
+     started calling it: mkRegionNear probes sixty-four points around the
+     cursor, so one mouse move rebuilt the same mask sixty-five times, at
+     270,000 pixels a go. Seventeen million pixel reads and seventeen
+     megabytes of allocation, to answer a question about a cursor that had
+     not moved a millimetre in sheet coordinates.
+
+     It depends on the SHEET and nothing else, so it belongs here, beside the
+     void it is computed from. Nobody may write to it — see the copy in
+     mkRegionAt's true-paper fallback, which is the one path that needs to. */
+  const open = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    const j = i * 4;
+    open[i] = (d[j] + d[j + 1] + d[j + 2] > paperSum) ? 1 : 0;
+  }
+  /* ── AND WHICH ROOM EACH PIXEL IS IN ───────────────────────────────────
+     The expensive floods were exactly the ones being thrown away. Most of a
+     sheet is the space around the charm — on a long thin charm like a bat,
+     four fifths of it — so most of those sixty-five probes flooded the whole
+     void, all 216,000 pixels of it, and were then discarded for touching the
+     edge. Labelling the rooms once turns "is this the void?" into one array
+     read, and only a genuinely enclosed room is ever flooded. */
+  const lab = new Int32Array(N);
+  const labEdge = [0], labArea = [0];
+  let nextLab = 0;
+  const lst = [];
+  for (let s0 = 0; s0 < N; s0++) {
+    if (!open[s0] || lab[s0]) continue;
+    nextLab++;
+    let area = 0, edge = false;
+    lst.length = 0; lst.push(s0); lab[s0] = nextLab;
+    while (lst.length) {
+      const i = lst.pop();
+      area++;
+      const cx = i % S, cy = (i / S) | 0;
+      if (cx === 0 || cy === 0 || cx === S - 1 || cy === S - 1) edge = true;
+      if (cx > 0 && open[i - 1] && !lab[i - 1]) { lab[i - 1] = nextLab; lst.push(i - 1); }
+      if (cx < S - 1 && open[i + 1] && !lab[i + 1]) { lab[i + 1] = nextLab; lst.push(i + 1); }
+      if (cy > 0 && open[i - S] && !lab[i - S]) { lab[i - S] = nextLab; lst.push(i - S); }
+      if (cy < S - 1 && open[i + S] && !lab[i + S]) { lab[i + S] = nextLab; lst.push(i + S); }
+    }
+    labArea[nextLab] = area;
+    labEdge[nextLab] = edge ? 1 : 0;
+  }
+
   MK_REG.sig = sig;
   MK_REG.S = S;
   MK_REG.data = d;
   MK_REG.truth = trueData.data;
   MK_REG.outside = outside;
   MK_REG.outsideTrue = outsideTrue;
+  MK_REG.open = open;
+  MK_REG.paperSum = paperSum;
+  MK_REG.lab = lab;
+  MK_REG.labEdge = labEdge;
+  MK_REG.labArea = labArea;
   MK_REG.items = vis;
   return MK_REG;
 }
@@ -6515,12 +13600,24 @@ function mkRegionPictureAt(x, y) {
    genuinely nothing there. */
 function mkRegionAt(x, y, opts) {
   const o = opts || {};
-  const sheet = mkRegionSheet(o.S || MK_REG_S);
+  /* ONE tolerance for the whole call, resolved before the sheet is asked
+     for, because the sheet's own paper mask is built from it. Same ladder
+     the picture branch below uses, so the two branches can never be reading
+     different numbers off the same slider. */
+  const askTol = Math.max(2, Math.min(70,
+    Number(o.tol) || Number(__mk.tol) || MK_WAND_DEFAULT_TOL));
+  const sheet = mkRegionSheet(o.S || MK_REG_S, askTol);
   if (!sheet) return null;
   const S = sheet.S, d = sheet.data, truth = sheet.truth;
   const N = S * S;
+  const paperSum = sheet.paperSum;
 
-  const isPaper = (i) => { const j = i * 4; return d[j] + d[j + 1] + d[j + 2] > 690; };
+  /* WHICH BRANCH TO TAKE stays on the fixed threshold. It is not asking "may
+     I flood here", it is asking "did the finger land on blank paper or on a
+     picture", and that answer must not move when the fill's forgiveness
+     does — or a slider meant to change how far a fill spreads would change
+     which kind of fill it is. */
+  const isPaper = (i) => { const j = i * 4; return d[j] + d[j + 1] + d[j + 2] > MK_PAPER_SUM; };
   let sx = Math.min(S - 1, Math.max(0, Math.round(x * S)));
   let sy = Math.min(S - 1, Math.max(0, Math.round(y * S)));
   let si = sy * S + sx;
@@ -6531,11 +13628,11 @@ function mkRegionAt(x, y, opts) {
   const picIdx = mkRegionPictureAt(x, y);
   const onPicture = picIdx >= 0 && !isPaper(si);
 
-  let open;
+  let open, ownOpen = false;
   if (onPicture) {
     const pic = __mk.items[picIdx];
-    const tol = Math.max(2, Math.min(70, Number(o.tol) || Number(__mk.tol) ||
-                                          Number(pic && pic.kt) || MK_WAND_DEFAULT_TOL));
+    const tol = (Number(o.tol) || Number(__mk.tol)) ? askTol
+              : Math.max(2, Math.min(70, Number(pic && pic.kt) || MK_WAND_DEFAULT_TOL));
     const lim = (tol / 100) * 441.673;
     const j0 = si * 4;
     const r0 = truth[j0], g0 = truth[j0 + 1], b0 = truth[j0 + 2];
@@ -6546,8 +13643,8 @@ function mkRegionAt(x, y, opts) {
       open[i] = (dr * dr + dg * dg + db * db) <= lim * lim ? 1 : 0;
     }
   } else {
-    open = new Uint8Array(N);
-    for (let i = 0; i < N; i++) open[i] = isPaper(i) ? 1 : 0;
+    /* the sheet's own paper mask — SHARED, never written to */
+    open = sheet.open;
     /* ON A LINE? Step off it — and step INWARDS. Nobody should be told to
        aim better at a stroke they can barely see, and nobody who clicks the
        edge of a charm means the empty space beyond it. So the search prefers
@@ -6584,12 +13681,19 @@ function mkRegionAt(x, y, opts) {
          still refuses it if the slot turns out to leak off the sheet. */
       if (pick < 0) {
         const jt = si * 4;
-        const truePaper = truth[jt] + truth[jt + 1] + truth[jt + 2] > 690;
+        const truePaper = truth[jt] + truth[jt + 1] + truth[jt + 2] > paperSum;
         const inVoid = sheet.outsideTrue && sheet.outsideTrue[si];
         if (truePaper && !inVoid) {
+          /* THE ONE PATH THAT NEEDS ITS OWN MASK. It floods the sheet's TRUE
+             colours instead of the sealed ones, so it writes — and the mask
+             it would write to is now shared with every other call. Copy
+             first. This is rare by construction: it only runs for a slot
+             narrower than the gap tolerance. */
+          open = new Uint8Array(N);
+          ownOpen = true;
           for (let i = 0; i < N; i++) {
             const j = i * 4;
-            open[i] = (truth[j] + truth[j + 1] + truth[j + 2] > 690 &&
+            open[i] = (truth[j] + truth[j + 1] + truth[j + 2] > paperSum &&
                        !(sheet.outsideTrue && sheet.outsideTrue[i])) ? 1 : 0;
           }
           pick = si;
@@ -6601,8 +13705,31 @@ function mkRegionAt(x, y, opts) {
   }
   if (!open[si]) return null;
 
+  /* ── THE VOID, REFUSED WITHOUT BEING FLOODED ─────────────────────────────
+     Every caller throws an open region away — mkBucketFill returns the bare
+     flag, the preview clears and says "that's the space around the charm" —
+     so flooding a fifth of a megapixel to produce a mask nobody reads was
+     the single most expensive thing a hover did. The labelling done with the
+     sheet answers it in one read. Skipped when this call built its own mask,
+     because then the labels describe a different sheet. */
+  if (!onPicture && !ownOpen && sheet.lab) {
+    const L = sheet.lab[si];
+    if (L && sheet.labEdge[L]) {
+      return { S, mask: null, area: sheet.labArea[L] || 0, openRegion: true,
+               onPicture: false, picIdx: -1, frac: (sheet.labArea[L] || 0) / N,
+               box: { x0: 0, y0: 0, x1: S - 1, y1: S - 1 },
+               seed: [sx / S, sy / S], walls: [] };
+    }
+  }
+
   /* the flood */
   const mask = new Uint8Array(N);
+  /* every cell the flood takes, kept as it is taken. The grow-back pass
+     below needs exactly this list and used to rediscover it by scanning all
+     270,000 cells of the sheet — a second full pass to learn something the
+     first pass already knew, on the one hover probe per frame that reaches
+     here. */
+  const cells = [];
   const stack = [si];
   mask[si] = 1;
   let area = 0, x0 = S, y0 = S, x1 = -1, y1 = -1;
@@ -6610,6 +13737,7 @@ function mkRegionAt(x, y, opts) {
   while (stack.length) {
     const i = stack.pop();
     area++;
+    cells.push(i);
     const cx = i % S, cy = (i / S) | 0;
     if (cx === 0 || cy === 0 || cx === S - 1 || cy === S - 1) touchesEdge = true;
     if (cx < x0) x0 = cx;
@@ -6639,11 +13767,10 @@ function mkRegionAt(x, y, opts) {
   const seedInVoid = !!(sheet.outside && sheet.outside[si]);
   if (!onPicture && !seedInVoid) {
     const grow = Math.ceil(MK_FILL_TOL * S) + 2;
-    let frontier = [];
-    for (let i = 0; i < N; i++) if (mask[i]) frontier.push(i);
+    let frontier = cells.slice();
     const isTruePaper = (i) => {
       const j = i * 4;
-      return truth[j] + truth[j + 1] + truth[j + 2] > 690;
+      return truth[j] + truth[j + 1] + truth[j + 2] > paperSum;
     };
     for (let step = 0; step < grow && frontier.length; step++) {
       const next = [];
@@ -6767,6 +13894,7 @@ function mkRegionWalls(mask, S, x0, y0, x1, y1, picIdx) {
 
    It costs one flood fill per animation frame at 400×400 over a cached
    sheet, which is a fraction of a millisecond. */
+const MK_PREVIEW_OPTS = { noWalls: true };
 let __mkPrev = { key: "", frame: 0, at: null, cv: null };
 
 function mkFillPreviewClear() {
@@ -6829,8 +13957,18 @@ function mkFillPreviewPaint(x, y) {
     return;
   }
 
-  let reg = mkRegionAt(x, y);
-  if (!reg || reg.openRegion) reg = mkRegionNear(x, y);
+  /* ── A HOVER DOES NOT NEED TO KNOW WHAT WALLS THE REGION IN ────────────
+     mkRegionWalls answers "which objects form this region's edge", and it
+     answers it by painting every candidate object ALONE onto its own
+     canvas and reading the pixels back. At this working size that is a
+     270,000-pixel canvas per object — and the preview was asking for it
+     sixty-five times per mouse move, once per probe, for fifty-eight
+     objects. A billion pixel reads to light up a highlight.
+
+     The answer is only ever used by the COMMIT, to decide where in the
+     layer stack the new fill sits. Nothing about a highlight depends on it. */
+  let reg = mkRegionAt(x, y, MK_PREVIEW_OPTS);
+  if (!reg || reg.openRegion) reg = mkRegionNear(x, y, MK_PREVIEW_OPTS);
   if (!reg || reg.openRegion) {
     mkFillPreviewClear();
     if (reg && reg.openRegion) mkPreviewTag("That's the space around the charm");
@@ -6857,7 +13995,13 @@ function mkFillPreviewPaint(x, y) {
   const tint = want === "cutout" ? "rgba(31,111,224," : want === "none" ? "rgba(216,31,42," : "rgba(28,29,29,";
   let vector = false;
   try {
-    const cs = mkTraceMask(reg.mask, S).filter((c) => c.length >= 8)
+    /* ── SCAN THE REGION, NOT THE SHEET ────────────────────────────────
+       mkTraceMask has taken a bounding box since the tracer was fixed, and
+       reg.box has always been on the region — this call and the commit's
+       simply never passed it, so a fill covering 2% of the sheet still
+       marched all 270,400 cells of it, on every repaint of a hover. The
+       box is the region's own, so the contour is identical either way. */
+    const cs = mkTraceMask(reg.mask, S, reg.box).filter((c) => c.length >= 8)
       .map((c) => mkRdp(c, 0.9));                 /* < half a mask pixel */
     if (cs.length) {
       const path = new Path2D();
@@ -7027,7 +14171,7 @@ function mkRegionToItem(reg, colour, name) {
      may stray from the truth" means the same thing at any resolution: a
      quarter of a thousandth of the drawing, which on a 12 mm charm is a
      third of the width of a human hair. */
-  let contours = mkTraceMask(reg.mask, S).filter((c) => c.length >= 8);
+  let contours = mkTraceMask(reg.mask, S, reg.box).filter((c) => c.length >= 8);
   const EPS_STEPS = [0.00025, 0.0005, 0.001, 0.002, 0.004];
   let r = null;
   for (let k = 0; k < EPS_STEPS.length; k++) {
@@ -7103,10 +14247,47 @@ function mkRleCanvas(it, mode) {
      mask is just pixels, so its boundary is computed the only way pixels
      have one: a pixel is on the edge when it is set and one of its four
      neighbours is not. Cached on the same key as the solid form, so
-     switching an area between engraved and outline costs nothing. */
+     switching an area between engraved and outline costs nothing.
+
+     AND THE SAME QUESTION IS ASKED FIRST. A masked area is no less likely to
+     be a stroke than a traced one — a flood down a drawn line is a stroke —
+     and the boundary of a stroke is the pair of tramlines mkSpineOf exists
+     to end. So a mask that measures as a line is painted as its spine, and
+     only a mask that measures as an AREA gets its outline walked. */
+  let band = null;
+  if (edge) {
+    const sp = mkMaskSpine(m, w, h);
+    if (sp && sp.ribbon && sp.paths.length) {
+      band = new Uint8Array(w * h);
+      const stamp = (cx, cy) => {
+        for (let dy = -R; dy <= R; dy++) {
+          for (let dx = -R; dx <= R; dx++) {
+            if (dx * dx + dy * dy > R * R) continue;
+            const x = Math.round(cx) + dx, y = Math.round(cy) + dy;
+            if (x < 0 || y < 0 || x >= w || y >= h) continue;
+            band[y * w + x] = 1;
+          }
+        }
+      };
+      sp.paths.forEach((pts) => {
+        const closed = pts[0] === pts[pts.length - 1];
+        const g = closed ? pts.map((i) => [i % w, (i / w) | 0])
+                         : mkSpineExtend(pts, sp.deg, sp.dist, m, w, h);
+        for (let k = 1; k < g.length; k++) {
+          const ax = g[k - 1][0], ay = g[k - 1][1], bx = g[k][0], by = g[k][1];
+          const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * 2));
+          for (let s = 0; s <= steps; s++) {
+            stamp(ax + ((bx - ax) * s) / steps, ay + ((by - ay) * s) / steps);
+          }
+        }
+      });
+    }
+  }
   for (let i = 0; i < m.length; i++) {
-    if (!m[i]) continue;
-    if (edge) {
+    if (band) {
+      if (!band[i]) continue;
+    } else if (!m[i]) continue;
+    else if (edge) {
       const x = i % w, y = (i / w) | 0;
       const on = (xx, yy) => (xx < 0 || yy < 0 || xx >= w || yy >= h) ? 0 : m[yy * w + xx];
       if (on(x - R, y) && on(x + R, y) && on(x, y - R) && on(x, y + R) &&
@@ -7331,7 +14512,19 @@ function mkFillHit(it, x, y) {
          inPoly(ux, uy - tol) || inPoly(ux, uy + tol);
 }
 
-function mkTraceMask(mask, S) {
+/* ── `box` IS NOT AN OPTIMISATION, IT IS THE DIFFERENCE BETWEEN USABLE AND NOT ──
+   This walked the WHOLE canvas for every part it was given, which was fine
+   for as long as a drawing came apart into a handful of blobs: ten parts at
+   1100² is twelve million cell visits and nobody notices. Line art comes
+   apart into HUNDREDS of strokes, and at 2K that same loop is two hundred
+   parts × four million cells — thirteen SECONDS of frozen main thread, on a
+   charm the customer is trying to type a description next to.
+
+   A part's boundary can only lie inside its own bounding box, which the
+   segmenter has already computed, so the caller passes it and the scan costs
+   the part's own area instead of the canvas's. The coordinates are absolute
+   either way, so nothing downstream changes. */
+function mkTraceMask(mask, S, box) {
   const val = (x, y) => (x >= 0 && y >= 0 && x < S && y < S && mask[y * S + x]) ? 1 : 0;
   /* directed segments per 2×2 case, in half-pixel units so keys stay ints */
   const segs = new Map();                 /* "x,y" start → [ex, ey] */
@@ -7340,8 +14533,12 @@ function mkTraceMask(mask, S) {
     if (!segs.has(k)) segs.set(k, []);
     segs.get(k).push([x2, y2]);
   };
-  for (let y = -1; y < S; y++) {
-    for (let x = -1; x < S; x++) {
+  const y0 = box ? Math.max(-1, (box.y0 | 0) - 1) : -1;
+  const x0 = box ? Math.max(-1, (box.x0 | 0) - 1) : -1;
+  const y1 = box ? Math.min(S - 1, box.y1 | 0) : S - 1;
+  const x1 = box ? Math.min(S - 1, box.x1 | 0) : S - 1;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
       const tl = val(x, y), tr = val(x + 1, y), br = val(x + 1, y + 1), bl = val(x, y + 1);
       const c = tl * 8 + tr * 4 + br * 2 + bl;
       if (c === 0 || c === 15) continue;
@@ -7513,6 +14710,16 @@ function mkInkComponents(img, S, opts) {
   }
   if (!inked || inked > N * maxInkFraction) return null;
 
+  /* THE INK MASK, WITHOUT THE FLOOD. mkStrokeComponents wants the pixels and
+     the letterbox and nothing else — it does its own segmenting — and the
+     flood below is both wasted work and, on line art, wasted in a way that
+     matters: it is the very answer being replaced. */
+  if (cfg.inkOnly) {
+    return { ink, d, lab: null, comps: [], S, inked, mid: mid / N,
+             frame: { x: dx / S, y: dy / S, w: dw / S, h: dh / S },
+             sourceW: iw, sourceH: ih };
+  }
+
   const lab = new Int32Array(N);
   const comps = [];
   const stack = [];
@@ -7552,11 +14759,419 @@ function mkInkComponents(img, S, opts) {
   };
 }
 
+/* ═══════════ LINE ART IS NOT A SET OF BLOBS ══════════════════════════════
+   mkInkComponents labels 8-connected regions of ink. That is exactly right
+   for a drawing made of separate filled shapes, and exactly wrong for line
+   work, because on a line drawing everything touches: the ball seam runs
+   into the bat's outline, every stitch crosses the seam, the bail meets the
+   neck. A baseball bat charm with forty engraved marks on it came back as
+   ONE component holding 91% of the ink plus two strays — three layers, with
+   the whole engraving welded into the silhouette.
+
+   What a person means by "a part" in line work is a STROKE. So:
+
+     1. thin the ink to a one-pixel skeleton              (Zhang–Suen)
+     2. cut that skeleton where lines meet                (crossing number ≥ 3)
+     3. re-join the cuts that are really one line         (tangent continuity)
+     4. give every ink pixel back to its nearest stroke   (multi-source BFS)
+     5. fold strokes too small to be a layer into their neighbour
+
+   STEP 4 IS WHAT KEEPS THE DRAWING HONEST. Every ink pixel is assigned to
+   exactly one stroke, so the layers add back up to precisely the drawing
+   they were cut from: nothing is dropped, nothing is drawn twice, and the
+   engraving detail survives being taken apart. Step 3 is what stops the
+   bat's outline arriving as eleven fragments, one per stitch that lands on
+   it — a place where one line crosses another is not a place a line ends. */
+
+/* ── AND IT MUST NOT HOLD THE THREAD WHILE IT DOES ANY OF THIS ─────────────
+   Taking a 2K drawing apart is real work — half a second of it — and half a
+   second of frozen main thread is half a second in which a click does
+   nothing, a hover shows nothing and the studio reads as broken. Nobody is
+   waiting on this: it runs in the background while the customer writes their
+   description. So every long loop in the segmenter stops at a deadline,
+   hands the thread back so the browser can paint, and carries on where it
+   left off. The arithmetic is unchanged; only the interruptions are new. */
+const MK_SLICE_MS = 12;
+function mkTraceCheck(opts) {
+  if (opts && opts.deadlineAt && Date.now() >= opts.deadlineAt) {
+    throw new Error("trace_budget_exceeded");
+  }
+}
+function mkYield(opts) {
+  mkTraceCheck(opts);
+  return new Promise((resolve, reject) => setTimeout(() => {
+    try { mkTraceCheck(opts); resolve(); }
+    catch (e) { reject(e); }
+  }, 0));
+}
+/* true when this slice has run long enough that the frame is owed back */
+function mkSliceDue(t0) { return performance.now() - t0 > MK_SLICE_MS; }
+
+/* Zhang–Suen thinning: two sub-iterations a pass, walked over the pixels
+   still standing rather than the whole canvas, so the cost tracks the ink. */
+async function mkSkeletonize(ink, S, opts) {
+  mkTraceCheck(opts);
+  const sk = Uint8Array.from(ink);
+  let live = [];
+  for (let i = 0; i < sk.length; i++) if (sk[i]) live.push(i);
+  const doomed = [];
+  let t0 = performance.now();
+  for (let pass = 0; pass < 64; pass++) {
+    let changed = 0;
+    for (let sub = 0; sub < 2; sub++) {
+      /* a pass boundary is the natural place to breathe: the algorithm is
+         defined pass by pass, so stopping between them changes nothing */
+      if (mkSliceDue(t0)) { await mkYield(opts); t0 = performance.now(); }
+      doomed.length = 0;
+      for (let k = 0; k < live.length; k++) {
+        const i = live[k];
+        if (!sk[i]) continue;
+        const x = i % S, y = (i / S) | 0;
+        if (x < 1 || y < 1 || x > S - 2 || y > S - 2) continue;
+        const p2 = sk[i - S], p3 = sk[i - S + 1], p4 = sk[i + 1], p5 = sk[i + S + 1];
+        const p6 = sk[i + S], p7 = sk[i + S - 1], p8 = sk[i - 1], p9 = sk[i - S - 1];
+        const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+        if (B < 2 || B > 6) continue;
+        const A = (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
+                  (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+        if (A !== 1) continue;
+        if (sub === 0) { if (p2 * p4 * p6) continue; if (p4 * p6 * p8) continue; }
+        else           { if (p2 * p4 * p8) continue; if (p2 * p6 * p8) continue; }
+        doomed.push(i);
+      }
+      for (let k = 0; k < doomed.length; k++) sk[doomed[k]] = 0;
+      changed += doomed.length;
+    }
+    if (!changed) break;
+    if (live.length > 4096) {
+      const next = [];
+      for (let k = 0; k < live.length; k++) if (sk[live[k]]) next.push(live[k]);
+      live = next;
+    }
+  }
+  return sk;
+}
+/* 0→1 transitions round the eight neighbours: 1 at an end or along a line,
+   2 inside a loop, 3 or more where lines meet */
+function mkCrossing(sk, i, S) {
+  const p2 = sk[i - S], p3 = sk[i - S + 1], p4 = sk[i + 1], p5 = sk[i + S + 1];
+  const p6 = sk[i + S], p7 = sk[i + S - 1], p8 = sk[i - 1], p9 = sk[i - S - 1];
+  return (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
+         (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+}
+
+async function mkStrokeSegment(ink, S, opts) {
+  const cfg = opts || {};
+  mkTraceCheck(cfg);
+  let t0 = performance.now();
+  /* only join across a meeting when the two arms are very nearly a straight
+     line through it — about 148°. Looser than this and the bat's outline
+     starts swallowing the seams it merely touches. */
+  const joinCos = cfg.joinCos == null ? -0.85 : Number(cfg.joinCos);
+  const tangentRun = cfg.tangentRun == null ? 7 : Math.round(cfg.tangentRun);
+  const N8 = [-S - 1, -S, -S + 1, -1, 1, S - 1, S, S + 1];
+  const sk = await mkSkeletonize(ink, S, cfg);
+  t0 = performance.now();
+
+  /* ── 2. cut where the lines meet — AND CUT WIDE ENOUGH TO ACTUALLY CUT ──
+     Deleting the single pixel where three lines meet does not separate them:
+     the arms stay diagonally 8-adjacent round the hole, the label flood walks
+     straight across it, and the drawing comes back as one stroke — the very
+     symptom this exists to fix, reached by a subtler route. Removing the
+     junction's neighbourhood leaves the arms two pixels apart, which no
+     8-connected walk can bridge. The few skeleton pixels it costs are handed
+     back in step 4, which gives every ink pixel to the nearest stroke. */
+  const junction = new Uint8Array(S * S);
+  const skPix = [];
+  for (let i = 0; i < sk.length; i++) {
+    if (!sk[i]) continue;
+    const x = i % S, y = (i / S) | 0;
+    if (x < 1 || y < 1 || x > S - 2 || y > S - 2) { skPix.push(i); continue; }
+    if (mkCrossing(sk, i, S) >= 3) junction[i] = 1;
+    skPix.push(i);
+  }
+  const removed = new Uint8Array(S * S);
+  for (let k = 0; k < skPix.length; k++) {
+    if (!(k & 8191) && mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    const i = skPix[k];
+    if (junction[i]) { removed[i] = 1; continue; }
+    const x = i % S;
+    for (let d = 0; d < 8; d++) {
+      const r = i + N8[d];
+      if (r < 0 || r >= removed.length) continue;
+      if (Math.abs((r % S) - x) > 1) continue;
+      if (junction[r]) { removed[i] = 1; break; }
+    }
+  }
+
+  /* one label per surviving run of skeleton */
+  const lab = new Int32Array(S * S);
+  let n = 0;
+  const stack = [];
+  for (let s0 = 0; s0 < skPix.length; s0++) {
+    if (!(s0 & 8191) && mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    const seed = skPix[s0];
+    if (removed[seed] || lab[seed]) continue;
+    n++;
+    stack.length = 0; stack.push(seed); lab[seed] = n;
+    while (stack.length) {
+      const q = stack.pop();
+      const x = q % S;
+      for (let d = 0; d < 8; d++) {
+        const r = q + N8[d];
+        if (r < 0 || r >= lab.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        if (sk[r] && !removed[r] && !lab[r]) { lab[r] = n; stack.push(r); }
+      }
+    }
+  }
+
+  /* ── 3. re-join the cuts that are really one line ─────────────────────── */
+  const par = new Int32Array(n + 1);
+  for (let i = 0; i <= n; i++) par[i] = i;
+  const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  const union = (a, b) => { a = find(a); b = find(b); if (a !== b) par[b] = a; };
+  /* walk a few pixels back into the stroke to read the heading it arrives on */
+  const heading = (endPix, myLab) => {
+    let cur = endPix, prev = -1;
+    for (let s2 = 0; s2 < tangentRun; s2++) {
+      let nxt = -1;
+      const x = cur % S;
+      for (let d = 0; d < 8; d++) {
+        const r = cur + N8[d];
+        if (r < 0 || r >= lab.length || r === prev) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        if (lab[r] === myLab) { nxt = r; break; }
+      }
+      if (nxt < 0) break;
+      prev = cur; cur = nxt;
+    }
+    const dx2 = (endPix % S) - (cur % S);
+    const dy2 = ((endPix / S) | 0) - ((cur / S) | 0);
+    const m = Math.hypot(dx2, dy2) || 1;
+    return [dx2 / m, dy2 / m];
+  };
+  /* the removed pixels form CLUSTERS, so a meeting is considered whole
+     rather than one pixel of it at a time */
+  const seenJ = new Uint8Array(S * S);
+  const jstack = [];
+  for (let j0 = 0; j0 < removed.length; j0++) {
+    if (!(j0 & 65535) && mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    if (!removed[j0] || seenJ[j0]) continue;
+    const cluster = [];
+    jstack.length = 0; jstack.push(j0); seenJ[j0] = 1;
+    while (jstack.length) {
+      const q = jstack.pop();
+      cluster.push(q);
+      const x = q % S;
+      for (let d = 0; d < 8; d++) {
+        const r = q + N8[d];
+        if (r < 0 || r >= removed.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        if (removed[r] && !seenJ[r]) { seenJ[r] = 1; jstack.push(r); }
+      }
+    }
+    const ends = [];
+    for (let c = 0; c < cluster.length; c++) {
+      const i = cluster[c];
+      const x = i % S;
+      for (let d = 0; d < 8; d++) {
+        const r = i + N8[d];
+        if (r < 0 || r >= lab.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        const L = lab[r];
+        if (!L) continue;
+        let seen = false;
+        for (let e = 0; e < ends.length; e++) if (ends[e].lab === L) { seen = true; break; }
+        if (!seen) ends.push({ lab: L, dir: heading(r, L) });
+      }
+    }
+    if (ends.length < 2) continue;
+    const pairs = [];
+    for (let a = 0; a < ends.length; a++) {
+      for (let b2 = a + 1; b2 < ends.length; b2++) {
+        pairs.push({ a, b: b2,
+          c: ends[a].dir[0] * ends[b2].dir[0] + ends[a].dir[1] * ends[b2].dir[1] });
+      }
+    }
+    pairs.sort((u, v) => u.c - v.c);
+    const used = {};
+    for (let k = 0; k < pairs.length; k++) {
+      const pr = pairs[k];
+      if (pr.c > joinCos) break;
+      if (used[pr.a] || used[pr.b]) continue;
+      used[pr.a] = used[pr.b] = 1;
+      union(ends[pr.a].lab, ends[pr.b].lab);
+    }
+  }
+  const remap = new Int32Array(n + 1);
+  let m = 0;
+  for (let i = 1; i <= n; i++) {
+    const r = find(i);
+    if (!remap[r]) remap[r] = ++m;
+    remap[i] = remap[r];
+  }
+  for (let i = 0; i < lab.length; i++) if (lab[i]) lab[i] = remap[lab[i]];
+
+  /* ── 4. give every ink pixel back to its nearest stroke ───────────────── */
+  const out = new Int32Array(S * S);
+  const queue = new Int32Array(S * S);
+  let head = 0, tail = 0;
+  for (let i = 0; i < lab.length; i++) {
+    if (lab[i] && ink[i]) { out[i] = lab[i]; queue[tail++] = i; }
+  }
+  while (head < tail) {
+    if (!(head & 32767) && mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    const q = queue[head++];
+    const x = q % S;
+    for (let d = 0; d < 8; d++) {
+      const r = q + N8[d];
+      if (r < 0 || r >= out.length) continue;
+      if (Math.abs((r % S) - x) > 1) continue;
+      if (ink[r] && !out[r]) { out[r] = out[q]; queue[tail++] = r; }
+    }
+  }
+  /* a speck the thinner ate whole is its own mark, not a hole in the drawing */
+  for (let i = 0; i < ink.length; i++) {
+    if (!ink[i] || out[i]) continue;
+    m++;
+    head = tail = 0; queue[tail++] = i; out[i] = m;
+    while (head < tail) {
+      const q = queue[head++];
+      const x = q % S;
+      for (let d = 0; d < 8; d++) {
+        const r = q + N8[d];
+        if (r < 0 || r >= out.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        if (ink[r] && !out[r]) { out[r] = m; queue[tail++] = r; }
+      }
+    }
+  }
+  return { lab: out, n: m };
+}
+
+/* ── 5. fold away the strokes too small to be worth a layer ────────────────
+   DROPPING them is not an option: their ink would leave the drawing, and a
+   drawing that loses marks by being taken apart is worse than one that was
+   never taken apart. Each is given to whichever neighbour it shares the most
+   border with. */
+async function mkStrokeMergeSmall(lab, ink, S, minArea, opts) {
+  const cfg = opts || {};
+  mkTraceCheck(cfg);
+  let t0 = performance.now();
+  let n = 0;
+  for (let i = 0; i < lab.length; i++) if (lab[i] > n) n = lab[i];
+  if (!n) return 0;
+  const N8 = [-S - 1, -S, -S + 1, -1, 1, S - 1, S, S + 1];
+  const A = new Int32Array(n + 1);
+  for (let i = 0; i < lab.length; i++) if (lab[i]) A[lab[i]]++;
+  for (let guard = 0; guard < 12; guard++) {
+    if (mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    let small = 0;
+    for (let L = 1; L <= n; L++) if (A[L] && A[L] < minArea) small++;
+    if (!small) break;
+    const touch = new Array(n + 1);
+    for (let i = 0; i < lab.length; i++) {
+      const L = lab[i];
+      if (!L || A[L] >= minArea) continue;
+      const x = i % S;
+      for (let d = 0; d < 8; d++) {
+        const r = i + N8[d];
+        if (r < 0 || r >= lab.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        const K = lab[r];
+        if (!K || K === L) continue;
+        if (!touch[L]) touch[L] = {};
+        touch[L][K] = (touch[L][K] || 0) + 1;
+      }
+    }
+    const into = new Int32Array(n + 1);
+    let any = 0;
+    for (let L = 1; L <= n; L++) {
+      if (!A[L] || A[L] >= minArea || !touch[L]) continue;
+      let best = 0, bn = -1;
+      const keys = Object.keys(touch[L]);
+      for (let k = 0; k < keys.length; k++) {
+        const K = +keys[k];
+        /* never merge into something even smaller — that just moves the
+           problem and can ping-pong two specks between each other */
+        if (A[K] < minArea && A[K] <= A[L]) continue;
+        if (touch[L][keys[k]] > bn) { bn = touch[L][keys[k]]; best = K; }
+      }
+      if (best) { into[L] = best; any++; }
+    }
+    if (!any) break;
+    for (let i = 0; i < lab.length; i++) {
+      const L = lab[i];
+      if (L && into[L]) lab[i] = into[L];
+    }
+    A.fill(0);
+    for (let i = 0; i < lab.length; i++) if (lab[i]) A[lab[i]]++;
+  }
+  const remap = new Int32Array(n + 1);
+  let k = 0;
+  for (let i = 0; i < lab.length; i++) {
+    const L = lab[i];
+    if (!L) continue;
+    if (!remap[L]) remap[L] = ++k;
+    lab[i] = remap[L];
+  }
+  return k;
+}
+
+/* the same shape mkInkComponents hands back, so mkTraceImage cannot tell the
+   difference and every line below it is untouched */
+async function mkStrokeComponents(img, S, opts) {
+  const cfg = opts || {};
+  const base = mkInkComponents(img, S, Object.assign({}, cfg, { inkOnly: true }));
+  if (!base) return null;
+  const minAreaFraction = Math.max(0.000002, Number(cfg.minAreaFraction) || 0.00006);
+  const minArea = Math.max(8, Math.round(S * S * minAreaFraction));
+  const seg = await mkStrokeSegment(base.ink, S, cfg);
+  if (!seg || !seg.n) return null;
+  const n = await mkStrokeMergeSmall(seg.lab, base.ink, S, minArea, cfg);
+  if (!n || n > 4000) return null;
+  const lab = seg.lab, d = base.d;
+  const area = new Int32Array(n + 1);
+  const x0 = new Int32Array(n + 1).fill(S), y0 = new Int32Array(n + 1).fill(S);
+  const x1 = new Int32Array(n + 1).fill(-1), y1 = new Int32Array(n + 1).fill(-1);
+  const sr = new Float64Array(n + 1), sg = new Float64Array(n + 1), sb = new Float64Array(n + 1);
+  for (let i = 0; i < lab.length; i++) {
+    const L = lab[i];
+    if (!L) continue;
+    area[L]++;
+    const px = i % S, py = (i / S) | 0;
+    if (px < x0[L]) x0[L] = px; if (px > x1[L]) x1[L] = px;
+    if (py < y0[L]) y0[L] = py; if (py > y1[L]) y1[L] = py;
+    const j = i * 4;
+    sr[L] += d[j]; sg[L] += d[j + 1]; sb[L] += d[j + 2];
+  }
+  const comps = [];
+  for (let L = 1; L <= n; L++) {
+    if (!area[L]) continue;
+    comps.push({ id: L, area: area[L], x0: x0[L], y0: y0[L], x1: x1[L], y1: y1[L],
+                 r: sr[L] / area[L], g: sg[L] / area[L], b: sb[L] / area[L] });
+  }
+  return { lab, comps, S, inked: base.inked, mid: base.mid,
+           frame: base.frame, sourceW: base.sourceW, sourceH: base.sourceH };
+}
+
 /* what a part looks like, in the terms a person would use about it */
 function mkNamePart(p, all, S) {
   const w = p.w, h = p.h, cx = p.cx, cy = p.cy;
   if (p.isOutline) return "Charm outline";
   if (p.isHoop) return "Hoop ring";
+  /* ── A STITCH IS NOT AN EYE ────────────────────────────────────────────
+     Everything below this line reads a drawing as a FACE — two matching
+     blobs level with each other are eyes, a wide low one is a mouth — which
+     is a good guess about a character charm and a bad one about line work,
+     where the two "matching blobs level with each other" are the third pair
+     of stitches down a baseball seam. A stroke gets named for what it is:
+     a ring, a line, or a mark. */
+  if (p.stroke) {
+    if (p.holes) return "Ring";
+    return Math.max(w, h) >= 0.28 ? "Line" : "Mark";
+  }
   if (p.eye) return p.eye;
   /* wide, low, and thin for its width: a mouth */
   if (cy > 0.52 && w > 0.16 && w > h * 1.6) return "Mouth";
@@ -7600,6 +15215,7 @@ function mkFindEyes(parts) {
    the picture is not linework — the caller then leaves the bitmap alone. */
 function mkTraceImage(img, colour, tune) {
   const cfg = tune || {};
+  mkTraceCheck(cfg);
   const S = Math.max(420, Math.round(cfg.size || MK_TRACE_S));
   const eps0 = Math.max(0.00008, Number(cfg.eps) || MK_TRACE_EPS_STEPS[0]);
   const maxParts = Math.max(8, Math.round(cfg.maxParts || MK_TRACE_MAXPARTS));
@@ -7609,7 +15225,16 @@ function mkTraceImage(img, colour, tune) {
   const highFidelity = !!cfg.highFidelity;
   const coordScale = highFidelity ? 1e5 : 1e4;
   const forceEngrave = !!cfg.forceEngrave;
-  const cc = mkInkComponents(img, S, cfg);
+  /* ── THE SEGMENTING MAY ALREADY BE DONE ───────────────────────────────
+     Line work is segmented into strokes rather than blobs, and that pass now
+     hands the thread back while it runs, so a 2K drawing cannot freeze the
+     studio for half a second at a time. Handing the thread back makes it
+     async — and this function is called synchronously by the import path and
+     by every version trace, so it stays synchronous and accepts the finished
+     segmentation as an argument instead. mkTraceLineArtRaster is the one
+     caller that supplies it. `cfg.strokes` still travels, because it decides
+     how the parts are NAMED and stops a row of stitches being read as a face. */
+  const cc = cfg.pre || mkInkComponents(img, S, cfg);
   if (!cc) return null;
   if (cc.mid != null && cc.mid > (cfg.maxMidFraction == null ? 0.30 : Number(cfg.maxMidFraction))) return null;
   const minArea = Math.max(8, Math.round(S * S * minAreaFraction));
@@ -7626,6 +15251,7 @@ function mkTraceImage(img, colour, tune) {
     x: c.x0 / S, y: c.y0 / S,
     w: (c.x1 - c.x0 + 1) / S, h: (c.y1 - c.y0 + 1) / S,
     cx: (c.x0 + c.x1 + 1) / 2 / S, cy: (c.y0 + c.y1 + 1) / 2 / S,
+    stroke: !!cfg.strokes,
     intent: mkPixelIntent(c.r || 0, c.g || 0, c.b || 0) || "engrave",
   }));
   const big = parts[0];
@@ -7634,25 +15260,41 @@ function mkTraceImage(img, colour, tune) {
     if (p.isOutline) return;
     if (p.cy < 0.16 && p.w < 0.4 && Math.abs(p.cx - 0.5) < 0.22) p.isHoop = true;
   });
-  mkFindEyes(parts);
+  /* the face reading belongs to the blob tracer — see mkNamePart */
+  if (!cfg.strokes) mkFindEyes(parts);
 
+  /* ONE scratch mask for every part, not one PER part. A fresh Uint8Array(S*S)
+     inside this loop is four megabytes at 2K, and two hundred strokes made it
+     eight hundred megabytes of allocation and collection on the main thread
+     before a single contour was walked. The buffer is now reused and only the
+     part's own rectangle is written and wiped, so the cost of the loop is the
+     sum of the parts' areas rather than the canvas area times the part count. */
   const raw = [];
+  const mask = new Uint8Array(S * S);
   for (const p of parts) {
-    const mask = new Uint8Array(S * S);
+    if (!(raw.length & 15)) mkTraceCheck(cfg);
     const id = p.src.id;
     for (let y = p.src.y0; y <= p.src.y1; y++) {
       const row = y * S;
       for (let x = p.src.x0; x <= p.src.x1; x++) if (cc.lab[row + x] === id) mask[row + x] = 1;
     }
-    raw.push({ p, cs: mkTraceMask(mask, S).filter((c) => c.length >= 8) });
+    raw.push({ p, cs: mkTraceMask(mask, S, p.src).filter((c) => c.length >= 8) });
+    /* wipe exactly what was written — a stale 1 from the previous stroke
+       would be traced as part of the next one */
+    for (let y = p.src.y0; y <= p.src.y1; y++) {
+      const row = y * S;
+      mask.fill(0, row + p.src.x0, row + p.src.x1 + 1);
+    }
   }
 
   const traced = [];
   let eps = eps0;
   const traceAll = () => {
+    mkTraceCheck(cfg);
     traced.length = 0;
     let total = 0;
     for (const r0 of raw) {
+      if (!(traced.length & 31)) mkTraceCheck(cfg);
       let contours = r0.cs.map((c) => mkRdp(c, eps * S)).filter((c) => c.length >= 6);
       if (!contours.length) continue;
       let own = contours.reduce((t, c) => t + c.length, 0);
@@ -7723,7 +15365,23 @@ function mkVersionKey(v) { return String((v && v.n) != null ? v.n : ""); }
 
 async function traceVersion(v, opts) {
   const force = !!(opts && opts.force);
-  if (!v || !v.url) return null;
+  /* ── A CHARM WITH NO DRAWING IS STILL A THING WITH PARTS ───────────────
+     This used to refuse outright on `!v.url`, and refusing was the whole of
+     why a charm adopted from our catalogue sat in the mark-up sheet like a
+     photograph pinned to a wall: nothing to select, nothing in Layers,
+     nothing to drag, and every tool that works on an OBJECT quietly doing
+     nothing because there was no object — only a backdrop.
+
+     The tracer never needed the drawing. mkInkComponents already counts a
+     saturated pixel as ink (`sat > 70 && lum < 214`), which is exactly what
+     gold is and exactly what the white ground and its grey shadow are not,
+     so a charm photograph segments on the same rule that separates it from
+     its background everywhere else in this studio. What it CANNOT do is
+     tell an engraved line from a polished one — that separates at 0.037 and
+     is not recoverable from a photograph — so it does not try, and what it
+     returns is the silhouette and the genuine openings, as outlines. */
+  const fromGold = !!(v && !v.url && v.renderUrl);
+  if (!v || (!v.url && !v.renderUrl)) return null;
   /* a trace writes state.markups[versionNumber] — the one key shape that is
      GUARANTEED to collide between two designs */
   const ep = epochNow();
@@ -7736,7 +15394,8 @@ async function traceVersion(v, opts) {
   if (!force && MK_TRACED.has(key)) return null;
   MK_TRACED.add(key);
 
-  const ref = { u: v.url, sp: v.path || "" };
+  const ref = fromGold ? { u: v.renderUrl, sp: v.renderPath || "" }
+                       : { u: v.url, sp: v.path || "" };
   let img = mkImageFor(ref);
   if (!img) {
     await mkAwaitImages([{ t: "img", u: ref.u, sp: ref.sp }], 12000);
@@ -7750,14 +15409,41 @@ async function traceVersion(v, opts) {
   const res = mkTraceImage(img, "#1c1d1d");
   if (!res) return null;
 
+  if (fromGold) {
+    /* ── OUTLINES, NOT INK ───────────────────────────────────────────────
+       Every part comes back from the tracer saying ENGRAVE, which on a
+       DRAWING is right — the black on the page is the engraving. On a
+       PHOTOGRAPH it is a lie twice over: the tracer read the whole gold
+       body as one saturated region, and filling that region with ink would
+       drop a black charm-shaped slab over the customer's charm. So the
+       parts become boundaries: the shape is there to be selected, dragged,
+       scaled and filled deliberately, and the photograph underneath stays
+       the thing you are looking at.
+
+       And nothing here claims to know what is engraved. If the customer
+       wants an area engraved or cut they say so with the bucket, on top of
+       a real contour — which is the whole point of having contours. */
+    res.items.forEach((it) => {
+      it.f = "none";
+      it.c = MK_OUTLINE;
+      if (!/^Outline · /.test(String(it.n || ""))) it.n = "Outline · " + (it.n || "Charm");
+    });
+  }
+
   /* ── AND NOW GIVE THE PARTS BACK THEIR INSTRUCTIONS ────────────────────
      The trace can only see ink, so every part of it arrives saying ENGRAVE.
      The customer's own account of which areas are holes is carried on the
      version this drawing came from — so it is projected back on here, at the
      one moment the layers come into existence, and the sheet opens showing
-     blue where they said blue. */
-  const plan = mkFillPlan(v);
-  try { mkApplyPlanToTrace(res.items, plan); } catch (e) { /* never blocks a trace */ }
+     blue where they said blue.
+
+     Skipped for a charm traced from its own photograph: there is no drawing
+     the plan could describe, and re-colouring bare outlines from a plan that
+     was never about them would be inventing instructions. */
+  const plan = fromGold ? [] : mkFillPlan(v);
+  if (!fromGold) {
+    try { mkApplyPlanToTrace(res.items, plan); } catch (e) { /* never blocks a trace */ }
+  }
 
   /* ── THE RECEIPT ─────────────────────────────────────────────────────────
      The rulebook travels with every generation and is stored on every
@@ -7777,14 +15463,24 @@ async function traceVersion(v, opts) {
     items: res.items,
     /* kept beside the layers so a re-trace, a re-render and another device
        all start from the same account of the design */
-    plan: (plan || []).slice(0, 40),
-    mode: prev.mode === "exact" ? "exact" : "interpret",
+    plan: zoneList(plan, "planSave"),
+    mode: mkModeNorm(prev.mode),
     crop: prev.crop || [],
     baseRot: prev.baseRot || 0,
     guides: prev.guides || 0,
     gridN: prev.gridN || 12,
     groups: [],
     traced: 1,
+    /* ── THE GHOST RULE DOES NOT APPLY TO A PHOTOGRAPH ──────────────────
+       Once a DRAWING is taken apart the vectors ARE the drawing, so the
+       bitmap is hidden and moving a traced eye does not leave the original
+       eye sitting behind it. A charm is the other way round: the vectors
+       are a boundary around a photograph, and hiding the photograph would
+       replace the customer's charm with a red outline of it. So the
+       bitmap stays shown, and it is recorded so re-opening the sheet on
+       another day does not turn the charm off. */
+    fromGold: fromGold ? 1 : 0,
+    showBitmap: fromGold ? 1 : (prev.showBitmap ? 1 : 0),
     /* untouched by hand, so a re-generate is still a plain re-generate and
        not "here is a marked-up sheet" — see buildMarkupPayload */
     dirty: 0,
@@ -7795,6 +15491,7 @@ async function traceVersion(v, opts) {
   if (__mk && __mk.key === key && !__mk.items.length) {
     __mk.items = res.items.map(mkPack);
     __mk.traced = true;
+    if (fromGold) { __mk.showBitmap = true; __mk.fromGold = true; }
     __mk.dirty = false;
     mkApplyBase();
     mkTouch();
@@ -7865,6 +15562,11 @@ function mkBlank(key, compose) {
   return mkDefineSel({
     key, compose: !!compose,
     selIds: [], groups: {},
+    /* the marquee's box, and the drag that is drawing or moving it. Named
+       here rather than left to appear on first use, so a fresh sheet cannot
+       inherit the last one's box — the overlay is reused between opens and
+       the furniture in it would otherwise outlive the design it belonged to. */
+    msel: null, msDrag: null,
     tool: "draw", live: null, editing: null, cropping: null,
     /* NOT RED ANY MORE. Red is now one of the three engraving instructions,
        and a pen that draws in it would put the reserved colour on the sheet
@@ -7873,7 +15575,7 @@ function mkBlank(key, compose) {
        as well as red did. */
     color: compose ? "#1c1d1d" : "#0f7a4a",
     fill: "none", w: compose ? 0.006 : 0.008, ff: "sans", fs: 0.036,
-    mode: "interpret",
+    mode: mkModeNorm(null),
     items: [], undo: [], redo: [],
     crop: null, baseRot: 0, baseFade: 1,
     /* The grid is BACK, and off until asked for — it was removed along with
@@ -7882,6 +15584,11 @@ function mkBlank(key, compose) {
        only appear while something is actually being dragged. */
     guides: { grid: true, mirror: false, snap: false, align: true, dims: true },
     gridN: 48,
+    /* OFF, and off is the answer for most designs: a drawing that already
+       shows a ring, a bail or a hole to thread through gets a second one
+       the moment this is true, and the workshop cuts both. Nothing is added
+       to anybody's charm until they ask for it. */
+    hoop: 0,
     eraseSize: 0.035,
     eraseDraw: null,
     z: 1, px: 0, py: 0,
@@ -7898,12 +15605,23 @@ function mkLoadInto(mk, saved) {
   }
   if (!saved) return mk;
   mk.items = mkItemsOf(saved).map(mkPack);
-  mk.mode = saved.mode === "exact" ? "exact" : "interpret";
+  mk.mode = mkModeNorm(saved.mode);
   if (Array.isArray(saved.crop) && saved.crop.length === 3) {
     mk.crop = { x: saved.crop[0], y: saved.crop[1], w: saved.crop[2] };
   }
   mk.baseRot = Number(saved.baseRot) || 0;
   mk.traced = !!saved.traced;
+  /* absent on every design saved before the switch existed, and absent must
+     read as OFF — the old behaviour added a hoop by guessing at the
+     reference, and inheriting that guess as a stored "yes" would put one on
+     drawings whose owner never chose it */
+  mk.hoop = saved.hoop ? 1 : 0;
+  /* A sheet traced from a photograph must come back with the photograph
+     still on. Without this the ghost rule reads `traced && !showBitmap` on
+     the next open and turns the charm off, which is the same blank sheet by
+     a longer route. */
+  mk.showBitmap = !!saved.showBitmap || !!saved.fromGold;
+  mk.fromGold = !!saved.fromGold;
   mk.dirty = !!saved.dirty;
   /* group names come back with the groups — an "Eyes" group that reloaded as
      "Group" would be a group you have to identify all over again */
@@ -7967,8 +15685,9 @@ function mkRefSheetAvailable() {
 }
 function mkSrcSay() {
   const btn = $("#markupRegenLbl");
-  if (btn) btn.textContent = __mkSrc === "ref"
-    ? "Re-generate from my reference" : "Re-generate from marks";
+  /* two words, not seven — the button sits beside a cost chip in a footer
+     that also has to hold the mark count and the metal tally */
+  if (btn) btn.textContent = __mkSrc === "ref" ? "Re-draw" : "Re-draw from marks";
   const box = $("#markupSrc");
   if (!box) return;
   box.hidden = !mkRefSheetAvailable();
@@ -7999,13 +15718,37 @@ function mkSrcSet(which, quiet) {
   }
 }
 
-function openMarkup(keepSrc) {
+/* ── EDITING THE REFERENCE, BEFORE ANYTHING HAS BEEN MADE ──────────────────
+   The line drawing arrives while the customer is still on step 2 with no
+   version to their name, and it is precisely then that they want to change
+   it — that is the whole point of turning the photograph into line work.
+   openMarkup has always refused without a version, for the good reason that
+   there was nothing to mark up. There is now. */
+function openReferenceMarkup() {
+  const r = state.reference;
+  if (!r || !r.url) { toast("The drawing isn't ready yet — one moment", "err"); return; }
+  openMarkup(false, { refOnly: true });
+}
+function openMarkup(keepSrc, opts) {
+  const refOnly = !!(opts && opts.refOnly);
   const v = state.versions[state.currentVersion];
-  if (!v) { toast("Generate a design first — then you can mark it up", "err"); return; }
-  if (state.stageView !== "bw") { state.stageView = "bw"; renderStage(); }
+  if (!v && !refOnly) { toast("Generate a design first — then you can mark it up", "err"); return; }
+  /* a different sheet starts with a clean pixel world — see mkPxResetForSheet
+     for why the shared "__base__" key makes this load-bearing rather than
+     merely tidy. keepSrc means the SAME sheet, switching which picture it
+     shows, so the buffers stay. */
+  if (!keepSrc) mkPxResetForSheet();
+  if (v && state.stageView !== "bw") { state.stageView = "bw"; renderStage(); }
   ensureSession();
-  if (!keepSrc) __mkSrc = (v.src === "ref" && mkRefSheetAvailable()) ? "ref" : "ai";
+  /* THE REFERENCE, WHENEVER THERE IS ONE. The choice used to be stored per
+     version and restored here; it is not a choice any more. The reference is
+     the picture that is right — it is what the customer made — and every
+     correction they were reaching for was a correction to that. The drawing
+     is the fallback for a design that has no reference sheet to open. */
+  if (!keepSrc) __mkSrc = mkRefSheetAvailable() ? "ref" : "ai";
   if (__mkSrc === "ref" && !mkRefSheetAvailable()) __mkSrc = "ai";
+  /* with no version there is only one sheet it can possibly be */
+  if (!v) __mkSrc = "ref";
 
   const base = $("#markupBase");
   /* NO crossOrigin here. Firebase Storage download URLs serve fine to a plain
@@ -8026,6 +15769,7 @@ function openMarkup(keepSrc) {
        bitmap and marks go on top of it. */
     const drawn = !!(state.reference && state.reference.drawn);
     __mk = mkLoadInto(mkBlank("draw", drawn), (state.markups || {}).draw);
+    try { mkPaintMarqSel(); } catch (e) {}
     __mk.url = state.reference.url || "";
     if (!drawn) {
       __mk.baseRef = { u: state.reference.url || "", sp: state.reference.path || "" };
@@ -8040,31 +15784,59 @@ function openMarkup(keepSrc) {
     $("#markupActions").hidden = false;
     $("#markupComposeActions").hidden = true;
     $("#markupMode").hidden = false;
-    const lblR = document.querySelector("#markupMode .markup-mode__lbl");
-    if (lblR) lblR.textContent = "Read my reference";
+    /* One control, one name, in all three of the places that set it — it was
+     "Image Processing" here, "Read my marks" on a version and "Read my
+     sketch" on a drawing, which read as three different settings. */
+  const lblR = document.querySelector("#markupMode .markup-mode__lbl");
+    if (lblR) lblR.textContent = "Design Interpretation";
     $("#mkEditSketch").hidden = true;
     mkSrcSay();
     mkShow(drawn);
+    /* ── THE SAME BELT THE VERSION SHEET HAS ─────────────────────────────
+       A line drawing that landed before this build, or one whose trace was
+       interrupted by a reload, comes apart the moment it is opened. Without
+       this the customer meets exactly the thing they reported: a picture
+       pinned to the sheet with nothing in it to take hold of. */
+    if (!drawn && !__mk.items.length && !__mk.traced &&
+        state.reference && state.reference.lineArtUrl) {
+      traceRefLineArt().then((res) => {
+        if (!res || !__mk || __mk.key !== MK_REF_SHEET) return;
+        toast(`Taken apart into ${res.items.length} objects — every one of them ` +
+              `is in Layers, and yours to move`, "gold");
+      }).catch(() => {});
+    }
     return;
   }
 
+  /* ── THE PICTURE UNDERNEATH IS WHICHEVER ONE EXISTS ───────────────────
+     `v.url` is the production drawing, and reading it unconditionally is why
+     this modal opened blank on a charm adopted from our own catalogue:
+     those have no drawing and never will. The metal is the picture in that
+     case — it is what the customer is looking at and what their marks are
+     about. */
+  const mkBaseUrl = v.url || v.renderUrl || "";
+  const mkBasePath = v.url ? (v.path || "") : (v.renderPath || "");
   __mk = mkLoadInto(mkBlank(String(v.n), false), (state.markups || {})[v.n]);
-  __mk.url = v.url;
-  /* the drawing underneath, addressable the CORS-safe way — see mkBucketFill */
-  __mk.baseRef = { u: v.url, sp: v.path || "" };
+  try { mkPaintMarqSel(); } catch (e) {}
+  __mk.url = mkBaseUrl;
+  /* the picture underneath, addressable the CORS-safe way — see mkBucketFill */
+  __mk.baseRef = { u: mkBaseUrl, sp: mkBasePath };
   base.hidden = false;
-  $("#markupEyebrow").textContent = "Show us, right on the drawing";
-  $("#markupTitle").textContent = `Mark up drawing v${v.n}`;
+  const onGold = !v.url && !!v.renderUrl;
+  $("#markupEyebrow").textContent = onGold ? "Show us, right on the charm"
+                                           : "Show us, right on the drawing";
+  $("#markupTitle").textContent = onGold ? `Mark up charm v${v.n}`
+                                         : `Mark up drawing v${v.n}`;
   $("#markupActions").hidden = false;
   $("#markupComposeActions").hidden = true;
   $("#markupMode").hidden = false;
   const lbl0 = document.querySelector("#markupMode .markup-mode__lbl");
-  if (lbl0) lbl0.textContent = "Read my marks";
+  if (lbl0) lbl0.textContent = "Design Interpretation";
   /* a design that began as a hand drawing keeps every component live —
      this is the way back to them */
   $("#mkEditSketch").hidden = !(state.reference && state.reference.drawn &&
                                 markupHasContent((state.markups || {}).draw));
-  base.src = v.url;
+  base.src = mkBaseUrl;
   mkSrcSay();
   mkShow();
   /* the belt to the generation's braces: a drawing made before this build,
@@ -8093,6 +15865,7 @@ function openCompose() {
   __mkSrc = "ai";
   if ($("#markupSrc")) $("#markupSrc").hidden = true;
   __mk = mkLoadInto(mkBlank("draw", true), (state.markups || {}).draw);
+  try { mkPaintMarqSel(); } catch (e) {}
   $("#markupEyebrow").textContent = "Your own hand";
   $("#markupTitle").textContent = "Draw your charm";
   $("#markupActions").hidden = true;
@@ -8101,7 +15874,7 @@ function openCompose() {
      sketch is vectorized faithfully or read as a brief for the real thing */
   $("#markupMode").hidden = false;
   const lbl = document.querySelector("#markupMode .markup-mode__lbl");
-  if (lbl) lbl.textContent = "Read my sketch";
+  if (lbl) lbl.textContent = "Design Interpretation";
   $("#mkEditSketch").hidden = true;
   const base = $("#markupBase");
   base.removeAttribute("src");
@@ -8111,9 +15884,45 @@ function openCompose() {
      There is not any more, so ruling the paper permanently would be handing
      everybody a grid they cannot put away. Clean paper it is. */
   mkShow(true);
+
+  /* ── AND HERE IS WHERE THE DESIGN GETS ITS NAME ────────────────────────
+     One place, because openCompose is the one function that opens the
+     editor — whichever of the eight entry points got here. Hooking the
+     doors instead meant a list to keep up to date, and it put the dialog up
+     a frame BEFORE this modal, which paints over it: same z-index, later in
+     the document. Nobody saw the prompt on the way in; it was sitting
+     underneath the sketchpad and surfaced when they saved and closed. The
+     modal--name z-index is raised for the same reason.
+
+     Only for a design that is actually new: unnamed, nothing drawn from,
+     nothing generated. Reopening the sketchpad on work in progress asks
+     nothing, and neither does a second visit within the same page life. */
+  maybePromptNameOnOpen();
+}
+
+/* Deliberately narrow, and deliberately not clever. Anything that already
+   has a name, a reference or a version is not a new project; the id set
+   stops a design that was dismissed from asking again on every reopen. */
+const _namePrompted = new Set();
+function maybePromptNameOnOpen() {
+  const s = activeSession();
+  if (!s || s.named) return;
+  if (_namePrompted.has(s.id)) return;
+  if (state.reference || (state.versions || []).length) return;
+  _namePrompted.add(s.id);
+  /* a frame, so the editor has painted behind it */
+  requestAnimationFrame(() => promptNewProjectName(renderProjectName));
 }
 
 function mkShow(full) {
+  /* Establish the device shell before the modal is painted. Doing this one
+     frame later is visible as the old desktop rows flashing and then jumping
+     out of the way on a phone. */
+  try { mkMobileWorkspaceSync(); } catch (e) {}
+  /* every path into the editor comes through here, so this is where the name
+     chip is refreshed — the same reasoning that put the naming prompt in
+     openCompose rather than on each of the doors */
+  try { renderProjectName(); } catch (e) {}
   setTimeout(mkMetalCoach, 500);
   $("#markupModal").classList.add("is-open");
   const inner = document.querySelector("#markupModal .markup__inner");
@@ -8125,14 +15934,53 @@ function mkShow(full) {
   mkSignList();
 
   const size = () => {
-    const stage = $("#markupStage"), cv = markupCanvas();
-    const r = stage.getBoundingClientRect();
-    if (r.width < 2) return;                   /* still laying out */
+    const cv = markupCanvas(), st = $("#markupStage");
+    /* the SHEET's box, not the room's — the room is wider than the drawing
+       and a bitmap cut to the room would paint every normalised coordinate
+       across a rectangle, which is exactly how a square charm comes back
+       stretched */
+    const r = mkSheetBox();
+    if (r.width < 2 || !st) return;            /* still laying out */
+
+    /* ── THE HALO ────────────────────────────────────────────────────────
+       The canvas reaches PAST the sheet, into as much of the room as there
+       is, so a thing dragged off the edge is still somewhere rather than
+       nowhere. That is the whole of the parking area: coordinates outside
+       0..1 land in the halo, are painted, are hit-testable and are dragged
+       back the same way they went out.
+
+       They are also, by construction, not on the charm. Every export paints
+       the same normalised coordinates onto a square 0..1 canvas, so anything
+       in the halo falls off the edge of it and is cropped — no rule to
+       write, no flag to keep in step. The halo is toned rather than white,
+       because the sheet's white comes from #markupView underneath and the
+       halo hangs over the room; you can see where the charm stops.
+
+       It reaches exactly as far as the ROOM does — no further, because
+       nobody can see past that, and no less, because a fraction of the sheet
+       stopped short of the edge and clipped whatever was parked there. */
+    const room = st.getBoundingClientRect();
+    const padX = Math.round(Math.max(0, (room.width  - r.width)  / 2));
+    const padY = Math.round(Math.max(0, (room.height - r.height) / 2));
     /* bitmap at 2× the CSS box: the canvas is transformed with the view when
-       zooming, and a 1× bitmap goes soft the moment it is scaled */
-    cv.width = Math.max(2, Math.round(r.width * 2));
-    cv.height = Math.max(2, Math.round(r.height * 2));
+       zooming, and a 1× bitmap goes soft the moment it is scaled. On a very
+       wide screen the halo can double the canvas's area, so the multiplier
+       steps down rather than letting the bitmap grow without a ceiling —
+       a slightly softer parking area beats a browser reclaiming the canvas
+       mid-drag, which is what happens when one gets too big. */
+    const wCss = r.width + padX * 2, hCss = r.height + padY * 2;
+    let D = 2;
+    while (D > 1 && wCss * hCss * D * D > MK_CANVAS_BUDGET) D -= 0.25;
+    cv.style.left = (-padX) + "px";  cv.style.top = (-padY) + "px";
+    cv.style.right = "auto";         cv.style.bottom = "auto";
+    cv.style.width  = (r.width  + padX * 2) + "px";
+    cv.style.height = (r.height + padY * 2) + "px";
+    cv.dataset.padx = String(Math.round(padX * D));
+    cv.dataset.pady = String(Math.round(padY * D));
+    cv.width  = Math.max(2, Math.round(wCss * D));
+    cv.height = Math.max(2, Math.round(hCss * D));
     mkRedraw();
+    mkRulerQueue();
   };
   __mk.resize = size;
   const base = $("#markupBase");
@@ -8148,22 +15996,116 @@ function mkShow(full) {
   /* the sketchpad opens with the library showing: on a blank sheet, "what
      have I already got" is the first question, and hunting for the answer is
      the difference between using the library and forgetting it exists */
-  /* the sketchpad opens on the library, everything else on the layers —
-     but it OPENS either way, because the panel is part of the room now */
+  /* Pick the destination that will open first. Desktop renders it now;
+     touch keeps the choice ready behind its one-tap destination. */
   mkDockSet(true, (__mk.compose && !__mk.items.length) ? "library" : __mkDock.tab);
-  /* ON A PHONE IT STARTS FOLDED. There is no room beside the sheet, so the
-     panel is a sheet across the bottom — and a bottom sheet at full height
-     is the whole screen. Folded, its tab bar is still perpetually there and
-     one tap from full size, which is the point: nothing to find, nothing to
-     remember, and the drawing you came to make is not underneath it. */
+  /* ON TOUCH IT STARTS ABSENT. Layers and Library remain labelled one-tap
+     destinations in the quick dock, while the canvas keeps every pixel until
+     one is requested. Phones reveal a bottom sheet; folds/tablets reveal the
+     same inspector on the right. */
   mkDockAutoFold();
   /* the footer's height is not settled on the first frame */
   setTimeout(mkDockFoot, 80);
   setTimeout(mkDockFoot, 400);
 }
 
+/* ═══════════ PIXELS HAVE TO SURVIVE THE RELOAD ══════════════════════════
+   Everything else on the sheet is parameters, and parameters fit in the
+   session document. Pixels do not, and Firestore must not be asked to hold
+   them — so when a picture has been edited destructively it is flattened,
+   uploaded through the SAME door every other customer picture goes through,
+   and the item is repointed at the new file.
+
+   That is what a raster edit IS: the picture becomes a different picture.
+   Within the session the tile history still undoes every stroke; once it is
+   saved, the edit is the picture, exactly as it would be in Photoshop after
+   Save. The flush runs on close rather than on every touch, because
+   uploading on every dab would be absurd. */
+let __mkPxFlushing = false;
+async function mkPxFlushAll() {
+  if (__mkPxFlushing || !MK_PX.size || !window.BJRaster) return 0;
+  __mkPxFlushing = true;
+  let saved = 0;
+  try {
+    const sess = ensureSession();
+    for (const [id, rec] of Array.from(MK_PX.entries())) {
+      /* an untouched buffer is one nobody edited — rasterising is not an edit */
+      if (!rec.doc.history.length) { MK_PX.delete(id); continue; }
+
+      /* ── THE BASE IS NOT AN ITEM AND STILL HAS TO BE SAVED ───────────
+         It is the customer's own reference picture, not a placed object, so
+         there is nothing in __mk.items to repoint. Looking for one meant
+         every edit made directly on an imported photograph was thrown away
+         at close, silently, with no upload even attempted. */
+      if (id === MK_PX_BASE) {
+        let durl;
+        try { durl = mkPxCanvas(rec).toDataURL("image/png"); }
+        catch (e) { SD("px flush: base canvas unreadable —", e && e.message); continue; }
+        try {
+          const rb = await mkUploadPicture(sess.id, "edited-reference.png", durl);
+          const upb = rb && rb.up;
+          if (!upb || !upb.path) throw new Error("no_path");
+          if (__mk) __mk.baseRef = { u: upb.url || "", sp: upb.path };
+          /* the reference IS what was edited, so the design's reference moves
+             with it — the next generation draws from the retouched picture */
+          if (state.reference) {
+            state.reference.url = upb.url || state.reference.url;
+            state.reference.path = upb.path;
+          }
+          const bEl = $("#markupBase");
+          if (bEl) { bEl.src = upb.url || bEl.src; bEl.hidden = false; }
+          MK_PX.delete(id);
+          saved++;
+        } catch (e) { SD("px flush: base upload failed —", (e && e.message) || ""); }
+        continue;
+      }
+
+      const it = ((__mk && __mk.items) || []).find((o) => o.id === id) ||
+                 mkFindItemAnywhere(id);
+      if (!it) { MK_PX.delete(id); continue; }
+      let dataUrl;
+      try { dataUrl = mkPxCanvas(rec).toDataURL("image/png"); }
+      catch (e) { SD("px flush: could not read the canvas —", e && e.message); continue; }
+      try {
+        const r = await mkUploadPicture(sess.id, "edited-" + String(id).slice(0, 12) + ".png", dataUrl);
+        const up = r && r.up;
+        if (!up || !up.path) throw new Error("no_path");
+        it.u = up.url || it.u;
+        it.sp = up.path;
+        /* the wand seeds and eraser strokes are BAKED IN now — leaving them
+           would apply the same cut twice, once in the pixels and once again
+           on top of them */
+        it.k = []; it.kt = 0; it.er = [];
+        MK_PX.delete(id);
+        saved++;
+      } catch (e) {
+        SD("px flush: upload failed —", (e && e.message) || "");
+        /* keep the buffer: the customer's work is still on screen and still
+           in memory, and the next close will try again */
+      }
+    }
+    if (saved) { mkPersist(); saveSession(); }
+  } finally { __mkPxFlushing = false; }
+  return saved;
+}
+/* an item may have been persisted out of __mk already */
+function mkFindItemAnywhere(id) {
+  const all = state.markups || {};
+  for (const k of Object.keys(all)) {
+    const list = mkItemsOf(all[k]);
+    const hit = list.find((o) => o.id === id);
+    if (hit) return hit;
+  }
+  return null;
+}
+window.__mkPxFlushAll = mkPxFlushAll;
+
 function closeMarkup() {
+  try { mkMobileSettingsSet(false); } catch (e) {}
   mkCloseEditor(true);
+  /* flush before the persist, so the item that gets saved is the repointed
+     one; it is fire-and-forget because nobody should watch a modal close */
+  mkPxFlushAll().catch(() => {});
   mkPersist();
   $("#markupModal").classList.remove("is-open");
   mkCloseAllDrops();
@@ -8178,6 +16120,7 @@ function closeMarkup() {
   __mkDock.open = false;
   const inner = document.querySelector("#markupModal .markup__inner");
   if (inner) inner.classList.remove("has-dock");
+  try { mkMobileBackdropSync(); } catch (e) {}
   /* …and the composed sheets it cached, which are megabytes */
   mkRegionForget();
   __mk = null;
@@ -8307,6 +16250,204 @@ function mkDrawnBox(it) {
     });
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
+/* ═══════════ THE SELECTION'S SIZE, READ AND WRITTEN ══════════════════════
+   Every mark is stored normalised against the sheet, so a size in the
+   customer's own unit is one multiplication away — mkSheetSpan() is how much
+   of that unit the sheet spans end to end, and it already follows the
+   ruler's mm/inch corner. One conversion, used in both directions, so the
+   number the field shows and the number it accepts cannot drift apart. */
+function mkSizeToUnit(n) { return n * mkSheetSpan(); }
+function mkSizeFromUnit(n) { const s = mkSheetSpan(); return s ? n / s : 0; }
+function mkSizeFmt(n) {
+  return __mkUnit === "in" ? (+n.toFixed(3)).toString() : (+n.toFixed(2)).toString();
+}
+/* Painted from mkRedraw, which is the one function every change goes
+   through — a drag on the sheet redraws on every frame, so the fields tick
+   along with the hand for free and no drag path has to remember them.
+
+   A field being EDITED is never overwritten: typing "1" on the way to "12"
+   would otherwise be snatched away and rounded the instant the sheet
+   repainted underneath. */
+function mkSizeSync() {
+  const box = $("#mkSizeBox"), fx = $("#mkSizeX"), fy = $("#mkSizeY"),
+        un = $("#mkSizeUnit");
+  if (!box || !fx || !fy || !__mk) return;
+  const list = mkSelItems();
+  box.hidden = false;
+  if (un) un.textContent = __mkUnit;
+  if (!list.length) {
+    fx.disabled = fy.disabled = true;
+    if (document.activeElement !== fx) fx.value = "";
+    if (document.activeElement !== fy) fy.value = "";
+    return;
+  }
+  fx.disabled = fy.disabled = false;
+  const bb = mkUnionDrawn(list);
+  if (document.activeElement !== fx) fx.value = mkSizeFmt(mkSizeToUnit(bb.w));
+  if (document.activeElement !== fy) fy.value = mkSizeFmt(mkSizeToUnit(bb.h));
+  mkAngleSync(list);
+}
+/* ── THE ANGLE, READ AND WRITTEN ──────────────────────────────────────────
+   Rotation is stored in RADIANS on each item; the field speaks degrees,
+   because nobody turns anything by 0.7854 of anything.
+
+   Normalised to 0–359 so a mark turned all the way round reads 0 rather
+   than 360, and a turn the other way reads 315 rather than -45 — the same
+   number the customer would say out loud.
+
+   A MIXED SELECTION HAS NO ONE ANGLE. Several marks at different rotations
+   are shown as an empty field rather than the first one's value, which
+   would be a number that describes one item and would rotate all of them
+   the moment it was committed. Typing into it still turns the whole
+   selection — the field is empty because there is nothing true to show,
+   not because it is unusable. */
+function mkAngleOf(list) {
+  if (!list.length) return null;
+  /* the angle the customer can SEE, which on a mirrored layer is the
+     opposite of the number stored — see mkMirrorSgn */
+  const deg = (it) => {
+    let d = ((it.r || 0) * mkMirrorSgn(it) * 180 / Math.PI) % 360;
+    if (d < 0) d += 360;
+    return d;
+  };
+  const first = deg(list[0]);
+  for (let i = 1; i < list.length; i++) {
+    if (Math.abs(deg(list[i]) - first) > 0.05) return null;   /* mixed */
+  }
+  return first;
+}
+function mkAngleSync(list) {
+  const fr = $("#mkSizeR");
+  if (!fr) return;
+  list = list || mkSelItems();
+  if (!list.length) {
+    fr.disabled = true;
+    if (document.activeElement !== fr) fr.value = "";
+    return;
+  }
+  fr.disabled = false;
+  if (document.activeElement === fr) return;
+  const a = mkAngleOf(list);
+  fr.value = a == null ? "" : String(+a.toFixed(1));
+}
+/* Typing an angle turns the selection TO it — an absolute bearing, not a
+   nudge — about the same pivot the rotate grip uses, so the two agree about
+   what "turn this" means. A mixed selection is turned by the difference
+   from its first member, which is the only reading that leaves the typed
+   number true of something. */
+function mkAngleCommit() {
+  const fr = $("#mkSizeR");
+  const list = mkSelItems();
+  if (!fr || !list.length) return;
+  const raw = String(fr.value).replace(",", ".").replace(/[^\d.\-]/g, "");
+  const typed = parseFloat(raw);
+  if (!isFinite(typed)) { mkAngleSync(list); return; }
+  let want = typed % 360;
+  if (want < 0) want += 360;
+  const now = mkAngleOf(list);
+  const from = now == null
+    ? (((list[0].r || 0) * mkMirrorSgn(list[0]) * 180 / Math.PI) % 360 + 360) % 360
+    : now;
+  let dr = (want - from) * Math.PI / 180;
+  if (Math.abs(dr) < 1e-6) { mkAngleSync(list); return; }
+  const bb = mkUnionDrawn(list);
+  mkPushUndo();
+  mkRotateItems(list, dr, bb.x + bb.w / 2, bb.y + bb.h / 2, null, null);
+  mkTouch();
+  mkAngleSync(list);
+}
+/* Typing a size resizes the selection ABOUT ITS OWN CENTRE, so fine-tuning a
+   number never also moves the object — the same anchor Ctrl+drag uses, so
+   the two ways of resizing agree. The other axis is left alone unless the
+   selection holds a picture, which is locked in proportion for the same
+   reason a stretched photograph is never what was meant. */
+function mkSizeCommit(axis) {
+  if (!__mk) return;
+  const el = $(axis === "x" ? "#mkSizeX" : "#mkSizeY");
+  const list = mkSelItems();
+  if (!el || !list.length) return;
+  const typed = parseFloat(String(el.value).replace(",", "."));
+  const bb = mkUnionDrawn(list);
+  const now = axis === "x" ? bb.w : bb.h;
+  if (!isFinite(typed) || typed <= 0 || !now) { mkSizeSync(); return; }
+  const want = mkSizeFromUnit(typed);
+  let sx = axis === "x" ? want / now : 1;
+  let sy = axis === "y" ? want / now : 1;
+  if (list.some((o) => o.t === "img")) { const k = axis === "x" ? sx : sy; sx = k; sy = k; }
+  if (!isFinite(sx) || !isFinite(sy) || sx <= 0 || sy <= 0 || sx > 60 || sy > 60) {
+    mkSizeSync(); return;
+  }
+  if (Math.abs(sx - 1) < 1e-6 && Math.abs(sy - 1) < 1e-6) return;
+  const ax = bb.x + bb.w / 2, ay = bb.y + bb.h / 2;
+  mkPushUndo();
+  list.forEach((it) => {
+    const p = it.p;
+    for (let k = 0; k + 1 < p.length; k += 2) {
+      p[k] = ax + (p[k] - ax) * sx;
+      p[k + 1] = ay + (p[k + 1] - ay) * sy;
+    }
+    if (it.t === "label" || it.t === "text" || it.t === "callout") {
+      it.fs = Math.min(0.4, Math.max(0.012, (it.fs || 0.036) * ((sx + sy) / 2)));
+    }
+  });
+  mkTouch();
+  mkSizeSync();
+}
+function mkWireSizeFields() {
+  /* the angle field: same keyboard contract as X and Y — arrows nudge,
+     Enter and blur commit, Escape puts the real value back — with the step
+     in degrees rather than millimetres */
+  const fr = $("#mkSizeR");
+  if (fr) {
+    fr.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const step = e.shiftKey ? 15 : 1;
+        const list = mkSelItems();
+        const cur = parseFloat(String(fr.value).replace(",", "."));
+        const base = isFinite(cur) ? cur : (mkAngleOf(list) || 0);
+        let next = base + (e.key === "ArrowUp" ? step : -step);
+        next = ((next % 360) + 360) % 360;
+        fr.value = String(+next.toFixed(1));
+        mkAngleCommit();
+        return;
+      }
+      if (e.key === "Enter") { e.preventDefault(); fr.blur(); }
+      if (e.key === "Escape") { e.preventDefault(); mkAngleSync(); fr.blur(); }
+      e.stopPropagation();
+    });
+    fr.addEventListener("change", mkAngleCommit);
+    fr.addEventListener("blur", mkAngleCommit);
+    fr.addEventListener("focus", () => fr.select());
+  }
+  [["#mkSizeX", "x"], ["#mkSizeY", "y"]].forEach(([sel, axis]) => {
+    const el = $(sel);
+    if (!el) return;
+    el.addEventListener("keydown", (e) => {
+      /* the arrows nudge by a step of the unit rather than walking the
+         caret — a size field people fine-tune deserves the same treatment
+         the sheet's own arrow-key nudge gets */
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const step = (e.shiftKey ? 10 : 1) * (__mkUnit === "in" ? 0.01 : 0.1);
+        const v = parseFloat(String(el.value).replace(",", "."));
+        if (!isFinite(v)) return;
+        el.value = mkSizeFmt(Math.max(0, v + (e.key === "ArrowUp" ? step : -step)));
+        mkSizeCommit(axis);
+        return;
+      }
+      if (e.key === "Enter") { e.preventDefault(); el.blur(); }
+      if (e.key === "Escape") { e.preventDefault(); mkSizeSync(); el.blur(); }
+      /* the sheet's own shortcuts must not fire while a number is being
+         typed — ⌫ would delete the selection out from under the field */
+      e.stopPropagation();
+    });
+    el.addEventListener("change", () => mkSizeCommit(axis));
+    el.addEventListener("blur", () => mkSizeCommit(axis));
+    el.addEventListener("focus", () => el.select());
+  });
+}
+
 function mkUnionDrawn(list) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   list.forEach((it) => {
@@ -8614,21 +16755,47 @@ function mkAlignApply(list, mode, suspended, edgesX, edgesY) {
   return res;
 }
 
-/* Manual eraser hit-testing is deliberately exact for traced fills: imported
-   artwork is a stack of overlapping bounding boxes, so bbox-only hit testing
-   would erase the oval frame while the pointer was actually on the bull. */
-function mkEraseHit(x, y) {
-  if (!__mk) return -1;
-  for (let i = __mk.items.length - 1; i >= 0; i--) {
-    const it = __mk.items[i];
-    if (!it || it.hid || it.lok || it.t === "text" || it.t === "callout" || it.t === "label") continue;
-    if (it.t === "fill") { if (mkFillHit(it, x, y)) return i; continue; }
-    if (it.t === "img") { if (mkPictureLocal(it, x, y)) return i; continue; }
-    const [ux, uy] = mkUnrotate(it, x, y);
-    const b = mkBBox(it), pad = Math.max(0.008, (__mk.eraseSize || 0.035) / 2);
-    if (ux >= b.x - pad && ux <= b.x + b.w + pad && uy >= b.y - pad && uy <= b.y + b.h + pad) return i;
+/* ── WHAT A RUBBER TOUCHES ────────────────────────────────────────────────
+   Everything whose ink is inside the circle — not the topmost object whose
+   BOUNDING BOX the circle is inside, which is what this used to answer and
+   which produced all three of the reported symptoms at once:
+
+     · the pad was `max(0.008, eraseSize/2)`, so the eraser's SIZE decided
+       which object the box test picked. Making the circle bigger or smaller
+       until something finally rubbed out was not superstition; it really was
+       the control that changed the answer.
+     · only one index came back, so an object with an empty box lying over
+       your mark absorbed the whole sweep and the mark underneath was never
+       reached — "I have to click many times".
+     · and the box reaches wherever the box reaches, which is why things well
+       clear of the circle came away with it.
+
+   Now the circle is the circle. The disc is rasterised, every candidate is
+   painted into it by the real painter, and an object is touched exactly when
+   the painter put ink inside the radius. Already-erased areas paint nothing,
+   so a second pass over a hole falls through to whatever is under it, which
+   is what a rubber does on paper. */
+function mkEraseErasable(it) {
+  return !!it && !it.hid && !it.lok &&
+         it.t !== "text" && it.t !== "callout" && it.t !== "label";
+}
+function mkEraseHits(x, y) {
+  if (!__mk) return [];
+  const rad = Math.max(0.0015, (Number(__mk.eraseSize) || 0.035) / 2);
+  try { return mkPickDisc(x, y, rad, mkEraseErasable); }
+  catch (e) {
+    /* the old test, kept only for a browser that cannot give us a pixel */
+    for (let i = __mk.items.length - 1; i >= 0; i--) {
+      const it = __mk.items[i];
+      if (!mkEraseErasable(it)) continue;
+      if (mkBoxHit(it, x, y, rad)) return [i];
+    }
+    return [];
   }
-  return -1;
+}
+function mkEraseHit(x, y) {
+  const h = mkEraseHits(x, y);
+  return h.length ? h[0] : -1;
 }
 function mkEraseLocalPoint(it, x, y) {
   const [ux, uy] = mkUnrotate(it, x, y);
@@ -8638,34 +16805,136 @@ function mkEraseLocalPoint(it, x, y) {
     Math.max(-0.5, Math.min(1.5, (uy - b.y) / Math.max(1e-6, b.h))),
   ];
 }
+/* One point of an erase sweep, with the undo step taken at the moment the
+   sweep first reaches something rather than at the press. Two things fall
+   out of that: a stroke can start on blank sheet and still work, and a press
+   that never touches ink does not push an undo step that would restore a
+   sheet nobody changed. */
+/* ── THE ERASER ON A PICTURE THE CUSTOMER IMPORTED ────────────────────────
+   mkEraseHit searches __mk.items, and an imported photograph is the sheet's
+   BASE, not an item — so dragging the eraser across it did nothing at all,
+   which is exactly what a customer means by "the eraser doesn't work".
+
+   Marks still win where there are marks: the eraser rubs out ink first, and
+   only falls through to the picture when there is no ink under it. That is
+   the order a person expects, and it keeps every existing sheet behaving as
+   it did. */
+function mkErasePxTouch(x, y) {
+  if (!window.BJRaster) {
+    /* fetch the engine on first need and let the next stroke bite; a 64KB
+       download must not be paid by everyone who picks up the eraser */
+    if (!__mk.__erasePxAsked) {
+      __mk.__erasePxAsked = true;
+      loadRaster().then(() => mkPxWarm()).catch(() => {});
+    }
+    return false;
+  }
+  const t = mkPxTarget(x, y);
+  if (!t) return false;
+  const uv = mkPxLocal(t, x, y);
+  if (!uv) return false;
+  const rec = t.rec, R = window.BJRaster;
+  const p = [uv[0] * rec.doc.w, uv[1] * rec.doc.h];
+  const rad = Math.max(1, (__mk.eraseSize || 0.035) * Math.max(rec.doc.w, rec.doc.h) * 0.5);
+  if (!rec.live || rec.live.kind !== "erase") {
+    rec.live = { S: R.strokeNew(rec.doc), kind: "erase", it: t.it,
+                 opt: { radius: rad, hardness: 0.8, flow: 1, opacity: 1 } };
+    __mk.pxErase = { id: t.it.id };
+  }
+  rec.live.opt.radius = rad;
+  R.strokeTo(rec.doc, rec.live.S, p[0], p[1], rec.live.opt);
+  rec.seq++;
+  mkRedraw();
+  return true;
+}
+function mkErasePxEnd() {
+  const st = __mk && __mk.pxErase;
+  __mk.pxErase = null;
+  if (!st) return false;
+  const rec = MK_PX.get(st.id);
+  if (!rec || !rec.live) return false;
+  const R = window.BJRaster;
+  const live = rec.live;
+  rec.live = null;
+  const entry = R.histBegin(rec.doc, "erase");
+  const wrote = R.strokeCommit(rec.doc, R.docActive(rec.doc), live.S, entry,
+                               live.opt.opacity, "erase");
+  if (wrote) {
+    R.histCommit(rec.doc, entry);
+    __mk.dirty = true;
+    mkLogPush("px:" + st.id);
+    mkPxTouch(live.it);
+    mkTouch();
+  } else { rec.seq++; mkRedraw(); }
+  return wrote;
+}
+function mkEraseTouch(x, y) {
+  if (!__mk || !__mk.eraseDraw) return false;
+  if (!__mk.eraseDraw.marked) {
+    if (!mkEraseHits(x, y).length) return mkErasePxTouch(x, y);  /* no ink: the picture */
+    mkPushUndo();                                 /* BEFORE the first removal */
+    __mk.eraseDraw.marked = true;
+  }
+  /* a stroke that began on the picture stays on the picture for its whole
+     length — switching target mid-drag would erase two different things from
+     one gesture and leave two different undo steps behind it */
+  if (__mk.pxErase) return mkErasePxTouch(x, y);
+  return mkEraseAddPoint(x, y);
+}
+
+/* ── ONE SWEEP TAKES AWAY EVERYTHING IT PASSES OVER ───────────────────────
+   This used to append the sample to a single item — whichever the box test
+   named — so rubbing across two crossing lines rubbed out one of them and
+   left the other whole, and there was no size or angle of stroke that could
+   take both. A rubber does not choose.
+
+   Each touched item keeps its OWN open stroke, held by id in
+   `eraseDraw.open`, so the sweep writes one continuous path per object and
+   an object the circle has left is closed rather than joined across the gap
+   by a straight line back to wherever it is re-entered. Ids rather than
+   indices, for the same reason the selection uses them: an index is not the
+   same object after a reorder. */
 function mkEraseAddPoint(x, y) {
   if (!__mk || !__mk.eraseDraw) return false;
-  const hit = mkEraseHit(x, y);
-  if (hit < 0) { __mk.eraseDraw.last = -1; return false; }
-  const it = __mk.items[hit];
-  const b = mkBBox(it), maxDim = Math.max(1e-6, b.w, b.h);
-  const radiusLocal = ((__mk.eraseSize || 0.035) / 2) / maxDim;
-  const pt = mkEraseLocalPoint(it, x, y);
-  if (!Array.isArray(it.er)) it.er = [];
-  let st = null;
-  if (__mk.eraseDraw.last === hit && it.er.length) st = it.er[it.er.length - 1];
-  if (!st || Math.abs((Number(st.r) || 0) - radiusLocal) > 0.002) {
-    st = { r: radiusLocal, p: [] };
-    it.er.push(st);
-    if (it.er.length > 80) it.er.shift();
-  }
-  const q = st.p;
-  if (q.length >= 2) {
-    const du = pt[0] - q[q.length - 2], dv = pt[1] - q[q.length - 1];
-    /* enough samples for a smooth stroke, without writing hundreds of almost
-       identical points into Firestore during a slow finger drag */
-    const minStep = Math.max(0.0012, radiusLocal * 0.12);
-    if (du * du + dv * dv < minStep * minStep) return true;
-  }
-  q.push(pt[0], pt[1]);
-  if (q.length > 2400) q.splice(0, q.length - 2400);
-  __mk.eraseDraw.last = hit;
-  return true;
+  const hits = mkEraseHits(x, y);
+  const open = __mk.eraseDraw.open || (__mk.eraseDraw.open = {});
+  const seen = Object.create(null);
+  hits.forEach((hit) => {
+    const it = __mk.items[hit];
+    if (!it) return;
+    seen[it.id] = 1;
+    const b = mkBBox(it), maxDim = Math.max(1e-6, b.w, b.h);
+    const radiusLocal = ((__mk.eraseSize || 0.035) / 2) / maxDim;
+    const pt = mkEraseLocalPoint(it, x, y);
+    if (!Array.isArray(it.er)) it.er = [];
+    let st = open[it.id] || null;
+    /* an undo, or the 80-stroke cap, can take the open stroke out from under
+       us — if it is no longer on the item it is not ours to append to */
+    if (st && it.er.indexOf(st) < 0) st = null;
+    if (!st || Math.abs((Number(st.r) || 0) - radiusLocal) > 0.002) {
+      st = { r: radiusLocal, p: [] };
+      it.er.push(st);
+      if (it.er.length > 80) it.er.shift();
+    }
+    open[it.id] = st;
+    const q = st.p;
+    if (q.length >= 2) {
+      const du = pt[0] - q[q.length - 2], dv = pt[1] - q[q.length - 1];
+      /* enough samples for a smooth stroke, without writing hundreds of almost
+         identical points into Firestore during a slow finger drag */
+      const minStep = Math.max(0.0012, radiusLocal * 0.12);
+      if (du * du + dv * dv < minStep * minStep) return;
+    }
+    q.push(pt[0], pt[1]);
+    if (q.length > 2400) q.splice(0, q.length - 2400);
+    /* the extent cache in mkErasePaintMask is keyed on point count, and this
+       just changed it — clearing it here keeps that honest without the mask
+       painter having to know who edits its strokes */
+    st.__n = 0;
+  });
+  Object.keys(open).forEach((id) => { if (!seen[id]) delete open[id]; });
+  __mk.eraseDraw.last = hits.length ? hits[0] : -1;
+  return hits.length > 0;
 }
 function mkEraserCursorAt(x, y) {
   const host = $("#markupOverlay");
@@ -8696,18 +16965,71 @@ function mkEraserCursorClear() {
        corner lands 3% off every grid line for ever. What gets snapped is the
        OBJECT — its edges and its centre — and that happens in mkAlignApply
        once the drag knows what it is moving. */
-    return [Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y))];
+    /* CLAMPED TO THE HALO, NOT TO THE SHEET. Clamping at 0 and 1 is what
+       made a drag stop dead at the edge and the thing being dragged vanish:
+       every coordinate past the border collapsed onto the border. The limit
+       is now the edge of the canvas — as far out as there is somewhere to
+       draw, and not one pixel further. */
+    const h = mkHaloRange();
+    return [Math.min(1 + h.x, Math.max(-h.x, x)),
+            Math.min(1 + h.y, Math.max(-h.y, y))];
   };
 
+  /* ── THE WHEEL HAS THREE JOBS ──────────────────────────────────────────
+     bare  → zoom about the cursor, as it always has
+     SHIFT → pan the sheet left and right
+     CTRL  → pan the sheet up and down
+
+     WHICH AXIS THE NOTCH ARRIVES ON IS NOT OURS TO ASSUME. Most browsers
+     already turn shift+wheel into deltaX before it reaches us, while a
+     mouse with only a vertical wheel still reports deltaY; a horizontal
+     trackpad swipe sends deltaX with no modifier at all. So the larger of
+     the two axes is taken as "the notch" and the modifier alone decides
+     which way the sheet moves. Reading deltaY only would have made
+     Shift+wheel dead on half the trackpads in use.
+
+     The sheet moves OPPOSITE the notch, which is what every scrollable
+     surface does: wheel down looks further down the page, so the artwork
+     travels up. mkPanBy clamps, so at 100% none of this can nudge anything.
+
+     Ctrl+wheel used to mean "zoom, but three times faster" — a trackpad
+     pinch arrives that way. Pinch-to-zoom on the trackpad is unchanged
+     because a pinch is a gesture event to the stage's own two-finger
+     handler below; what changes is the ctrl-key WHEEL, which is now a pan
+     by request. */
   stage.addEventListener("wheel", (e) => {
     if (!__mk) return;
     e.preventDefault();
-    mkZoomAt(e.clientX, e.clientY, Math.pow(1.0018, -e.deltaY * (e.ctrlKey ? 3 : 1)));
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      const notch = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (e.shiftKey) mkPanBy(-notch, 0);
+      else mkPanBy(0, -notch);
+      return;
+    }
+    mkZoomAt(e.clientX, e.clientY, Math.pow(1.0018, -e.deltaY));
   }, { passive: false });
   $("#mkZoomReset").addEventListener("click", () => {
     if (!__mk) return;
     __mk.z = 1; __mk.px = 0; __mk.py = 0;
     mkApplyView();
+  });
+  mkWireScrollbars();
+  mkWireSizeFields();
+  /* ── THE HOOP SWITCH ────────────────────────────────────────────────────
+     A property of the DESIGN, not of the selection, so it is not on the
+     bucket's path and touches nothing that is selected — it flips a flag,
+     saves it with the sheet and says what it means. It does not push undo:
+     it changes no geometry, and burying a settings toggle in the drawing's
+     undo stack would make ⌘Z do something nobody expects. */
+  const hoopBtn = $("#mkHoopToggle");
+  if (hoopBtn) hoopBtn.addEventListener("click", () => {
+    if (!__mk) return;
+    __mk.hoop = __mk.hoop ? 0 : 1;
+    mkHoopChrome();
+    mkTouch();
+    toast(__mk.hoop
+      ? "We'll add a hanging hoop above your design"
+      : "No hoop added — your charm is cut exactly as drawn", "gold");
   });
 
   /* ══════════ two fingers ═══════════════════════════════════════════════
@@ -8727,6 +17049,7 @@ function mkEraserCursorClear() {
     if (!__mk) return;
     __mk.live = null; __mk.liveFrom = null;
     if (__mk.marq) { __mk.marq = null; mkPaintMarquee(); }
+    if (__mk.msDrag) { __mk.msDrag = null; mkPaintMarqSel(); }
     if (__mk.drag) { __mk.drag = null; mkAlignClear(); }
     __mk.panFrom = null;
     if (__mk.cropFrom) { __mk.cropFrom = null; __mk.cropping && (__mk.cropping.rect = null); mkPaintCropRect(); }
@@ -8735,8 +17058,14 @@ function mkEraserCursorClear() {
 
   stage.addEventListener("pointerdown", (e) => {
     if (!__mk) return;
+    /* A SECONDARY BUTTON NEVER STARTS A GESTURE. Right-clicking a resize
+       handle used to begin a resize AND open the menu, so the object moved
+       while the customer was reading it. Touch and pen both report button 0,
+       so nothing about a finger changes here. */
+    if (e.button != null && e.button > 0) return;
     if (e.target.closest(".markup-zoom-reset")) return;
     if (e.target.closest(".mk-editor")) return;
+    if (e.target.closest(".mk-mobile-delete")) return;
     PTRS.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (twoFinger()) {
       e.preventDefault();
@@ -8761,7 +17090,10 @@ function mkEraserCursorClear() {
     if (handle && mkSelCount()) {
       e.preventDefault();
       const list = mkSelItems();
-      const bb = list.length > 1 ? mkUnionBBox(list) : mkBBox(list[0]);
+      /* the SAME box the handles were drawn on — see mkRenderSelection. A
+         drag that anchored on a different rectangle from the one under the
+         hand is a resize that runs away from the corner being held. */
+      const bb = list.length > 1 ? mkUnionDrawn(list) : mkBBox(list[0]);
       mkPushUndo();
       __mk.drag = {
         kind: handle.dataset.h === "rot" ? "rotate" : "resize",
@@ -8784,6 +17116,26 @@ function mkEraserCursorClear() {
       return;
     }
 
+    /* ── the marquee ────────────────────────────────────────────────────
+       Press inside the box that is already there and it moves; press
+       anywhere else and a new one is drawn. A press that never becomes a
+       drag puts the box away, which is what clicking off a selection means
+       everywhere else and what ⌘D does in Photoshop. */
+    if (__mk.tool === "marquee") {
+      e.preventDefault();
+      mkCloseEditor();
+      try { stage.setPointerCapture && stage.setPointerCapture(e.pointerId); } catch (err) {}
+      const r = __mk.msel;
+      if (r && mkPtIn(x, y, r)) {
+        __mk.msDrag = { mode: "move", ox: x - r.x, oy: y - r.y, moved: false };
+      } else {
+        __mk.msel = null;
+        __mk.msDrag = { mode: "new", x0: x, y0: y, x, y, moved: false };
+      }
+      mkPaintMarqSel();
+      return;
+    }
+
     if (__mk.tool === "select") {
       e.preventDefault();
       mkCloseEditor();
@@ -8799,6 +17151,23 @@ function mkEraserCursorClear() {
         const base = additive ? mkSelIdx() : [];
         if (!additive) mkSelSet([]);
         __mk.marq = { x0: x, y0: y, x, y, add: additive, live: false, base };
+        /* ── AND A HOLD BECOMES A HAND ──────────────────────────────────
+           Press on bare paper and keep still, and after a beat the gesture
+           turns into panning — the same press-and-hold that grabs the
+           canvas in every touch app, asked for here by name. The marquee
+           keeps the gesture if the hand moves before the beat; the timer
+           is cancelled the moment the rubber-band goes live or the press
+           ends. Space-drag and middle-drag still pan exactly as before. */
+        if (__mk.holdPan) clearTimeout(__mk.holdPan);
+        __mk.holdPan = setTimeout(() => {
+          __mk.holdPan = null;
+          if (!__mk.marq || __mk.marq.live) return;
+          __mk.marq = null;
+          __mk.panFrom = { x: e.clientX, y: e.clientY, px: __mk.px, py: __mk.py };
+          const st = $("#markupStage");
+          if (st) st.classList.add("is-panning");
+          mkRedraw();
+        }, 380);
         mkChrome();
         mkPaintLayerSel(true);
         return;
@@ -8810,8 +17179,19 @@ function mkEraserCursorClear() {
         return;                       /* a shift-click selects; it never drags */
       }
       /* already inside the selection? Then this is a drag of the WHOLE
-         selection, not a demand to start a new one from this object. */
-      if (!reach.every((i) => mkIsSelIdx(i))) mkSelSet(reach);
+         selection, not a demand to start a new one from this object.
+
+         THE TEST IS THE OBJECT UNDER THE HAND, NOT ITS WHOLE REACH. This
+         read `reach.every(isSelected)` — every member of the group had to
+         be selected for the press to count as "already selected". So with
+         ONE member isolated, pressing it failed that test and the group was
+         re-selected underneath the drag: the isolation the layer list had
+         just granted was thrown away by the first attempt to use it, and
+         the whole group moved. Asking only whether the pressed object is
+         selected preserves an isolated member, and is still true of every
+         member when the group is selected whole — so the group case drags
+         exactly as it always did. */
+      if (!mkIsSelIdx(hit)) mkSelSet(reach);
       const list = mkSelItems();
       if (list.length) {
         mkPushUndo();
@@ -8828,11 +17208,19 @@ function mkEraserCursorClear() {
     if (__mk.tool === "erase") {
       e.preventDefault();
       mkEraserCursorAt(x, y);
-      if (mkEraseHit(x, y) < 0) return;
+      /* ── THE ERASER USED TO REFUSE TO START OFF THE INK ─────────────────
+         `if (mkEraseHit(x, y) < 0) return;` meant the stroke only began if
+         the press landed ON something. But nobody erases that way: you put
+         the rubber down beside the mark and sweep across it, exactly as you
+         would on paper. Every one of those presses did nothing, which is
+         why it took two or three goes to get the tool to bite.
+
+         It engages wherever it is put down now, and the sweep does the work.
+         The undo snapshot moves with it — see mkEraseTouch — so a stroke
+         that never crosses any ink still leaves no step to undo. */
       try { stage.setPointerCapture && stage.setPointerCapture(e.pointerId); } catch (err) {}
-      mkPushUndo();
-      __mk.eraseDraw = { pointerId: e.pointerId, last: -1 };
-      mkEraseAddPoint(x, y);
+      __mk.eraseDraw = { pointerId: e.pointerId, last: -1, marked: false, open: {} };
+      mkEraseTouch(x, y);
       mkRedraw();
       return;
     }
@@ -8957,10 +17345,43 @@ function mkEraserCursorClear() {
     e.preventDefault();
     try { stage.setPointerCapture && stage.setPointerCapture(e.pointerId); } catch (err) {}
     const kind = MK_PATH_TOOLS[__mk.tool];
+    /* ── AN AREA TAKES ITS INSTRUCTION FROM THE BAR, NOT FROM THE PEN ────
+       `__mk.color` is the PEN'S ink, and a closed primitive was inheriting
+       it. That matters because on a closed primitive a reserved colour is
+       not decoration — mkInkInstruction reads it back as the instruction —
+       so one visit to the pen menu's "Cut-through line" silently made every
+       rectangle, circle, star and heart drawn afterwards a CUT-OUT, in blue,
+       until the pen was changed again. The customer's report was exactly
+       that: primitives arriving blue, from a control they had used to set a
+       line's colour.
+
+       The studio already draws the distinction everywhere else: the metal
+       bar says what an AREA becomes, the pen menu says what a LINE does. A
+       closed primitive is an area, so it reads the bar. A line and an arrow
+       enclose nothing and stay ink, exactly as mkPaintShape's own `closed`
+       test has always had it.
+
+       This is the same separation `f` got when a visit to Engrave started
+       making every circle arrive solid black — and for the same reason. It
+       is NOT a reversal of that fix: a primitive is still born an outline
+       (`f: "none"` below). Only its ink follows the armed instruction, so
+       what lands on the sheet is the chip the customer can see is lit.
+
+       RING AND BAIL ARE EXCLUDED, and that is not an oversight. Both are
+       named in the toolbar as holes — "Ring: a cut-out", "Charm + bail: the
+       hanging loop" — and mkItemIntent has promoted an unfilled one to
+       cut-out for as long as the promotion has existed. Giving them the bar's
+       ink would put a RESERVED colour on them, mkInkInstruction would read
+       that colour back as the instruction before the promotion is ever
+       reached, and a bail drawn with Engrave lit would arrive as engraved
+       metal instead of the hanging hole it is. */
+    const closedNew = !kind && MK_SHAPE_TOOLS.indexOf(__mk.tool) >= 0 &&
+                      __mk.tool !== "line" && __mk.tool !== "arrow" &&
+                      __mk.tool !== "ring" && __mk.tool !== "bail";
     __mk.live = mkPack({
       id: mkId(),
       t: kind || __mk.tool,
-      c: __mk.color,
+      c: closedNew ? mkIntentInk(mkFillIntent(__mk.fill)) : __mk.color,
       /* ── A PRIMITIVE IS BORN AN OUTLINE. ALWAYS. ─────────────────────────
          `__mk.fill` is the bucket's load, and it used to be this too — what
          a new shape came pre-filled with. Two jobs, one variable, and the
@@ -8986,7 +17407,10 @@ function mkEraserCursorClear() {
     if (__mk.gesture && twoFinger()) {
       e.preventDefault();
       const g = gestureFrom(), G = __mk.gesture;
-      const r = stage.getBoundingClientRect();
+      /* the SHEET's origin, not the room's — px/py translate the sheet, so
+         an anchor measured from the room would be off by however far the
+         sheet is inset in it, and a pinch would slide sideways as it zoomed */
+      const r = mkSheetBox();
       const z = Math.min(8, Math.max(1, G.z0 * (g.d / Math.max(8, G.d0))));
       /* keep the point between the fingers under the fingers, then add
          whatever the midpoint itself travelled */
@@ -9008,7 +17432,7 @@ function mkEraserCursorClear() {
         e.preventDefault();
         let evs = (typeof e.getCoalescedEvents === "function") ? e.getCoalescedEvents() : [e];
         if (!evs || !evs.length) evs = [e];
-        evs.forEach((ce) => { const q = norm(ce); mkEraseAddPoint(q[0], q[1]); });
+        evs.forEach((ce) => { const q = norm(ce); mkEraseTouch(q[0], q[1]); });
         mkRedraw();
         return;
       }
@@ -9035,11 +17459,35 @@ function mkEraserCursorClear() {
       return;
     }
 
+    /* ── the marquee, being drawn or being moved ── */
+    if (__mk.msDrag) {
+      const d = __mk.msDrag;
+      if (d.mode === "move") {
+        const r = __mk.msel;
+        if (r) { r.x = x - d.ox; r.y = y - d.oy; d.moved = true; }
+      } else {
+        d.x = x; d.y = y;
+        /* shift makes it square, the same promise every shape tool here
+           already makes with the same key */
+        if (e.shiftKey) {
+          const sq = Math.min(Math.abs(x - d.x0), Math.abs(y - d.y0));
+          d.x = d.x0 + Math.sign(x - d.x0 || 1) * sq;
+          d.y = d.y0 + Math.sign(y - d.y0 || 1) * sq;
+        }
+        if (Math.abs(d.x - d.x0) > 0.004 || Math.abs(d.y - d.y0) > 0.004) d.moved = true;
+      }
+      mkPaintMarqSel();
+      return;
+    }
+
     /* ── the rubber band ── */
     if (__mk.marq) {
       const m = __mk.marq;
       m.x = x; m.y = y;
-      if (!m.live && (Math.abs(x - m.x0) > 0.012 || Math.abs(y - m.y0) > 0.012)) m.live = true;
+      if (!m.live && (Math.abs(x - m.x0) > 0.012 || Math.abs(y - m.y0) > 0.012)) {
+        m.live = true;
+        if (__mk.holdPan) { clearTimeout(__mk.holdPan); __mk.holdPan = null; }
+      }
       if (m.live) { mkPaintMarquee(); mkMarqueeSelect(); }
       return;
     }
@@ -9063,13 +17511,33 @@ function mkEraserCursorClear() {
         if (nudge.dx || nudge.dy) put(dx + nudge.dx, dy + nudge.dy);
       } else if (d.kind === "resize") {
         const bb = d.bb;
-        /* the opposite corner is the anchor — the corner you are NOT holding
-           stays exactly where it is, which is what makes a resize feel like a
-           resize rather than a move */
-        const ax = d.h === "nw" || d.h === "sw" ? bb.x + bb.w : bb.x;
-        const ay = d.h === "nw" || d.h === "ne" ? bb.y + bb.h : bb.y;
-        let sx = Math.max(0.02, Math.abs(x - ax) / Math.max(1e-4, bb.w));
-        let sy = Math.max(0.02, Math.abs(y - ay) / Math.max(1e-4, bb.h));
+        /* ── CTRL RESIZES ABOUT THE CENTRE ─────────────────────────────────
+           Normally the opposite corner is the anchor: the corner you are NOT
+           holding stays exactly where it is, which is what makes a resize
+           feel like a resize rather than a move.
+
+           Hold CTRL and the anchor moves to the object's own centre instead,
+           so every side travels the same distance and the object grows and
+           shrinks evenly in all four directions about the point it is
+           already sitting on. The whole change is WHERE THE ANCHOR IS and
+           what the scale is measured against — the scaling loop below
+           already works about (ax, ay), so nothing downstream needs to know.
+
+           The reference length halves with it: from the centre the hand is
+           only ever crossing half the box, so dividing by the full width
+           would report half the scale the hand is actually asking for.
+
+           SHIFT still composes — ctrl+shift is "evenly from the centre AND
+           in proportion", which is the pair every editor offers together. */
+        const fromCentre = e.ctrlKey || e.metaKey;
+        const ax = fromCentre ? bb.x + bb.w / 2
+                 : (d.h === "nw" || d.h === "sw" ? bb.x + bb.w : bb.x);
+        const ay = fromCentre ? bb.y + bb.h / 2
+                 : (d.h === "nw" || d.h === "ne" ? bb.y + bb.h : bb.y);
+        const refW = fromCentre ? bb.w / 2 : bb.w;
+        const refH = fromCentre ? bb.h / 2 : bb.h;
+        let sx = Math.max(0.02, Math.abs(x - ax) / Math.max(1e-4, refW));
+        let sy = Math.max(0.02, Math.abs(y - ay) / Math.max(1e-4, refH));
         /* SHIFT — or a picture, or a two-finger pinch on a handle — holds the
            aspect ratio. One scale for both axes, taken from whichever the hand
            moved further, so the object follows the corner without distorting.
@@ -9077,7 +17545,21 @@ function mkEraserCursorClear() {
            what was meant; shift then RELEASES them, the same way it does in
            every editor people already know. */
         const anyImg = list.some((o) => o.t === "img");
-        const wantLock = anyImg ? !e.shiftKey : (e.shiftKey || !!d.lock);
+        /* ── CTRL ALONE IS THE WHOLE GESTURE ──────────────────────────────
+           "Equally in all directions from the centre" is TWO properties —
+           the anchor is the centre, AND the object keeps its shape — and
+           this line used to supply only the first, so plain Ctrl+drag moved
+           all four sides but by different amounts per axis and the object
+           came out a different shape. Getting what was asked for meant
+           adding Shift, which is exactly the second key the request said it
+           did not want to press.
+
+           Ctrl therefore locks the ratio by itself. Shift keeps its usual
+           job of RELEASING a lock — Ctrl+Shift is the escape hatch to a
+           centred but free-form resize — so nothing is lost and Shift is
+           never needed for the gesture as asked. */
+        const wantLock = fromCentre ? !e.shiftKey
+                       : (anyImg ? !e.shiftKey : (e.shiftKey || !!d.lock));
         if (wantLock) {
           const s = Math.abs(sx - 1) > Math.abs(sy - 1) ? sx : sy;
           sx = s; sy = s;
@@ -9101,7 +17583,14 @@ function mkEraserCursorClear() {
            exist, and the guide was painted through nothing. */
         const eX = (d.h === "nw" || d.h === "sw") ? "lo" : "hi";
         const eY = (d.h === "nw" || d.h === "ne") ? "lo" : "hi";
-        const nudge = mkAlignApply(list, "resize", e.altKey, [eX], [eY]);
+        /* ── AND A CENTRED RESIZE HAS NO FIXED EDGE TO SNAP ────────────────
+           The snap below nudges ONE end and then rescales about the anchor to
+           put that end on a guide — which is only meaningful while the other
+           end is nailed down. Resizing from the centre moves both ends at
+           once, so honouring a guide on one of them would drag the opposite
+           edge off by the same amount and the object would chase the guide
+           without ever arriving. Suspended exactly as ALT suspends it. */
+        const nudge = mkAlignApply(list, "resize", e.altKey || fromCentre, [eX], [eY]);
         if (nudge.dx || nudge.dy) {
           const bb2 = mkUnionDrawn(list);
           let nx = bb2.w ? (bb2.w + (eX === "hi" ? nudge.dx : -nudge.dx)) / bb2.w : 1;
@@ -9142,21 +17631,11 @@ function mkEraserCursorClear() {
         } else if (e.shiftKey) {
           dr = Math.round(dr / (Math.PI / 12)) * (Math.PI / 12);
         }
-        const c = Math.cos(dr), s = Math.sin(dr);
-        list.forEach((it, n) => {
-          it.r = d.r0[n] + dr;
-          /* several objects turn ABOUT THE SELECTION's centre, not each about
-             its own — otherwise a grouped face would spin its eyes in place
-             and leave them where they were */
-          if (list.length > 1) {
-            const p = it.p, s0 = d.p0[n];
-            for (let k = 0; k + 1 < p.length; k += 2) {
-              const dx = s0[k] - cx, dy = s0[k + 1] - cy;
-              p[k] = cx + dx * c - dy * s;
-              p[k + 1] = cy + dx * s + dy * c;
-            }
-          }
-        });
+        /* several objects turn ABOUT THE SELECTION's centre, not each about
+           its own — otherwise a grouped face would spin its eyes in place and
+           leave them where they were. One definition, shared with the menu's
+           own rotate, so the grip and the menu can never disagree. */
+        mkRotateItems(list, dr, cx, cy, d.p0, d.r0);
       }
       mkRedraw();
       mkRenderSelection();
@@ -9193,6 +17672,12 @@ function mkEraserCursorClear() {
     if (e && e.pointerId != null) PTRS.delete(e.pointerId);
     if (__mk.eraseDraw && (!e || e.pointerId == null || __mk.eraseDraw.pointerId === e.pointerId)) {
       __mk.eraseDraw = null;
+      /* belt and braces for the orphan described in mkSetTool: this branch
+         returns before the code at the foot of commit() that clears a live
+         shape, so anything still hanging from an unfinished draw would be
+         painted for ever. Nothing here can legitimately want it. */
+      __mk.live = null; __mk.liveFrom = null;
+      if (__mk.pxErase) { mkErasePxEnd(); return; }
       mkTouch();
       mkRedraw();
       return;
@@ -9204,12 +17689,50 @@ function mkEraserCursorClear() {
       return;
     }
     if (__mk.cropFrom) { __mk.cropFrom = null; return; }
-    if (__mk.panFrom) { __mk.panFrom = null; return; }
+    if (__mk.holdPan) { clearTimeout(__mk.holdPan); __mk.holdPan = null; }
+    if (__mk.panFrom) {
+      __mk.panFrom = null;
+      const stEl = $("#markupStage");
+      if (stEl) stEl.classList.remove("is-panning");
+      return;
+    }
+    if (__mk.msDrag) {
+      const d = __mk.msDrag;
+      if (d.mode === "new") {
+        const r = mkMsRect();
+        __mk.msel = (r && r.w >= MK_MS_MIN && r.h >= MK_MS_MIN)
+          ? { x: r.x, y: r.y, w: r.w, h: r.h } : null;
+      }
+      __mk.msDrag = null;
+      mkPaintMarqSel();
+      mkChrome();
+      return;
+    }
     if (__mk.marq) {
       const live = __mk.marq.live;
+      const add = __mk.marq.add;
       __mk.marq = null;
       mkPaintMarquee();
       if (live) { mkChrome(); mkRenderLayersSoon(); }
+      else if (!add && mkSelCount()) {
+        /* ── A CLICK ON BARE PAPER CLEARS THE SELECTION, FULL STOP ────────
+           The press already cleared it, so reaching here with something
+           still selected means the press was swallowed or overruled between
+           down and up — a handle taking the press, a repaint that put the
+           box back, a pointer captured elsewhere. Rather than leave the
+           customer holding a selection they have plainly just clicked away
+           from, the release states the outcome itself.
+
+           Deliberately at the END of the gesture and not in place of the
+           press: this fires only when the rubber-band never went live (a
+           click, not a drag) and no modifier was held, so it can neither
+           undo an additive shift-click nor cancel a marquee that selected
+           something. Cheap, and it makes the behaviour unconditional. */
+        mkSelSet([]);
+        mkChrome();
+        mkRedraw();
+        mkPaintLayerSel(true);
+      }
       return;
     }
     if (__mk.drag) { __mk.drag = null; mkAlignClear(); mkTouch(); return; }
@@ -9221,6 +17744,35 @@ function mkEraserCursorClear() {
     if (!kind && Math.hypot(live.p[2] - live.p[0], live.p[3] - live.p[1]) < 0.02) { mkRedraw(); return; }
     if (kind && live.p.length > 1200) live.p = live.p.filter((_, i) => Math.floor(i / 2) % 2 === 0);
     mkPushUndo();
+    /* ── A RING IS TWO CIRCLES, AND THE CUSTOMER OWNS BOTH ────────────────
+       Committed as one "ring" item, the two circles were welded: no way to
+       move the hole, no way to fatten the band. So the tool now lands TWO
+       ellipse layers — the rim and the hole, concentric, the hole at half
+       size — pre-grouped so they still move as one until the customer says
+       otherwise. Both are drawn in the reserved blue, which under the line
+       rules IS the cut-through instruction — the same thing the ring has
+       promised in its menu row all along. Old ring items in saved designs
+       still paint (see mkPaintShape), they just are not made any more. */
+    if (live.t === "ring") {
+      const b = mkBBox(live);
+      const gid = "g" + Math.random().toString(36).slice(2, 8);
+      const mkCircle = (fr, name) => mkPack({
+        id: mkId(), t: "ellipse", n: name, c: MK_CUTOUT, f: "none", w: live.w,
+        g: gid,
+        p: [b.x + b.w * (0.5 - fr / 2), b.y + b.h * (0.5 - fr / 2),
+            b.x + b.w * (0.5 + fr / 2), b.y + b.h * (0.5 + fr / 2)],
+      });
+      const rim = mkCircle(1, "Ring · rim");
+      const hole = mkCircle(0.5, "Ring · hole");
+      __mk.items.push(rim, hole);
+      if (!__mk.groups) __mk.groups = {};
+      __mk.groups[gid] = { n: "Ring", col: 0 };
+      mkSelSet([__mk.items.length - 2, __mk.items.length - 1]);
+      mkTouch();
+      mkRenderLayers();
+      mkChrome();
+      return;
+    }
     __mk.items.push(live);
     /* symmetry: one hand, two halves — the single most useful thing you can
        give someone drawing a charm freehand */
@@ -9253,6 +17805,7 @@ function mkEraserCursorClear() {
   });
 
   /* ── the toolbar ── */
+  mkEnsureRailTools();
   $$(".mk-tool").forEach((b) => b.addEventListener("click", (e) => {
     if (!__mk) return;
     if (e.target.closest("[data-caret]")) return;    /* the caret opens the menu */
@@ -9267,16 +17820,33 @@ function mkEraserCursorClear() {
     mkCloseAllDrops();
     if (__mk) mkSetTool(b.dataset.tool);
   }));
-  $("#mkUndo").addEventListener("click", () => {
-    if (!__mk || !__mk.undo.length) return;
-    __mk.redo.push(mkSnapshot());
-    mkRestore(__mk.undo.pop());
+  /* ── THE PEN'S INKS ──────────────────────────────────────────────────────
+     The one place in the studio that writes the three reserved colours onto
+     a line. Deliberately NOT mkApplyProp: that would also recolour whatever
+     happens to be selected, and turning a selected part's instruction over
+     because the customer chose their next pen colour is an edit nobody made. */
+  $$('.mk-drop[data-drop="pen"] .mk-item[data-ink]').forEach((b) => b.addEventListener("click", () => {
+    mkCloseAllDrops();
+    if (!__mk) return;
+    const kind = b.dataset.ink;
+    __mk.penInk = kind;
+    __mk.color = kind === "engrave" ? MK_ENGRAVE
+               : kind === "cutout" ? MK_CUTOUT
+               : kind === "none" ? MK_OUTLINE
+               : kind === "perimeter" ? MK_PERIM
+               : (__mk.compose ? "#1c1d1d" : "#0f7a4a");
+    mkSetTool("draw");
+    mkPenChrome();
+    mkChrome();
+  }));
+  const gapBtn = document.getElementById("mkFillGap");
+  if (gapBtn) gapBtn.addEventListener("click", () => {
+    mkCloseAllDrops();
+    loadRaster().then(() => mkRemoveAndFill())
+                .catch(() => toast("That tool didn't load. Refresh and try again.", "err"));
   });
-  $("#mkRedo").addEventListener("click", () => {
-    if (!__mk || !__mk.redo.length) return;
-    __mk.undo.push(mkSnapshot());
-    mkRestore(__mk.redo.pop());
-  });
+  $("#mkUndo").addEventListener("click", () => { mkUndoAny(); });
+  $("#mkRedo").addEventListener("click", () => { mkRedoAny(); });
   const eraseSize = $("#mkEraseSize");
   if (eraseSize) eraseSize.addEventListener("input", () => {
     if (!__mk) return;
@@ -9284,7 +17854,7 @@ function mkEraserCursorClear() {
     const out = $("#mkEraseSizeVal");
     if (out) out.textContent = Number(eraseSize.value).toFixed(1) + "%";
   });
-  $("#mkDelete").addEventListener("click", mkDeleteSelected);
+  { const del = $("#mkDelete"); if (del) del.addEventListener("click", mkDeleteSelected); }
   $("#mkEditSketch").addEventListener("click", () => {
     if (!__mk) return;
     closeMarkup();
@@ -9398,6 +17968,50 @@ function mkEraserCursorClear() {
      time, until the customer has seen each of the three at least once. */
   $$("#mkMetal .mk-metal__b").forEach((b) => b.addEventListener("click", () => {
     if (!__mk) return;
+    /* ── PERIMETER IS A LINE'S JOB, NOT AN AREA'S ─────────────────────────
+       The fourth chip never reaches the fill plumbing: an outer cut edge is
+       a property of a LINE, so with a live selection it recolours the
+       selected lines and unfilled boundaries to the perimeter green, and
+       with nothing selected it hands you the pen already dipped in it —
+       draw the edge you mean. Filled areas are refused by name rather than
+       silently skipped. Whether the green line then BECOMES the cut edge is
+       decided at compose, where the claim is verified (mkPerimeterEncloses);
+       this control only writes the colour. */
+    if (b.dataset.fill === "perim") {
+      const chosen = mkSelIdx();
+      if (chosen.length) {
+        const live = chosen.filter((i) => !__mk.items[i].lok);
+        if (!live.length) {
+          toast("That layer is locked — unlock it in Layers and try again", "err");
+          return;
+        }
+        const lines = live.filter((i) => {
+          const it = __mk.items[i];
+          return it.t === "ink" || it.t === "line" || it.t === "arrow" ||
+            (it.t === "fill" && !(it.m && it.m.length)) ||
+            (MK_SHAPE_TOOLS.indexOf(it.t) >= 0 && mkFillIntent(it.f) === "none");
+        });
+        if (!lines.length) {
+          toast("Perimeter needs an outline — select the line or traced outline that " +
+                "goes around your design, or draw one with the pen.", "err");
+          return;
+        }
+        mkPushUndo();
+        lines.forEach((i) => { __mk.items[i].c = MK_PERIM; });
+        mkTouch();
+        toast(lines.length === 1
+          ? "That line is your charm's outer cut edge — we won't draw our own."
+          : "Those lines are your charm's outer cut edge — we won't draw our own.", "gold");
+      } else {
+        __mk.penInk = "perimeter";
+        __mk.color = MK_PERIM;
+        mkSetTool("draw");
+        toast("Draw your charm's outer cut edge — close the loop around the whole design.", "gold");
+      }
+      mkPenChrome();
+      mkChrome();
+      return;
+    }
     const mode = mkFillMode(b.dataset.fill);
     const want = mkFillIntent(mode.f);
 
@@ -9412,16 +18026,82 @@ function mkEraserCursorClear() {
        and the result was a control that looked like a set of three and
        behaved like a set of two.
 
-       AND IT NEVER ACTS ON A SELECTION. Clicking a chip while something
-       was selected re-stated that object immediately, which meant the
-       gesture had two entirely different outcomes depending on a state the
-       customer may not have noticed they were in — and made it impossible
-       to simply pick up a colour and go hunting with it. Picking a chip now
-       does exactly one thing: it drops the selection, picks up that
-       instruction, and arms the hover. Changing an object that already has
-       an instruction is done the same way as everything else — hover it and
-       click, which the preview has always offered and now offers for all
-       three. */
+       WITH NOTHING SELECTED IT NEVER ACTS ON ONE. Clicking a chip while a
+       STRAY selection was live re-stated that object immediately, which
+       meant the gesture had two entirely different outcomes depending on a
+       state the customer may not have noticed they were in — and made it
+       impossible to simply pick up a colour and go hunting with it. On an
+       empty selection a chip therefore does exactly one thing: it picks up
+       that instruction and arms the hover. Changing an object that has an
+       instruction is then done the way everything else is — hover it and
+       click, which the preview offers for all three.
+
+       (This paragraph used to end "it drops the selection". It no longer
+       does; see directly below. Left standing as a description of the
+       no-selection branch, which is unchanged.) */
+    /* ── EXCEPT WHEN SOMETHING IS ALREADY SELECTED ────────────────────────
+       The paragraph above is right about a stray selection the customer had
+       forgotten they were in. It is wrong about one they have just
+       deliberately made — and a GROUP is exactly that: clicking any member
+       takes the whole group, which is this studio's own way of saying "all
+       of these, together". Having taken hold of forty stitches, being told
+       to re-state them one at a time with the bucket is not a safeguard, it
+       is forty clicks.
+
+       So a live selection is read as an instruction about those objects.
+       Every one is re-stated at once, the selection SURVIVES so the customer
+       can see what they just changed, and the toast counts them so this can
+       never be mistaken for the other gesture. The ambiguity the note above
+       was written against was between acting on a selection nobody
+       remembered and picking up a colour; saying plainly which one happened
+       is what resolves it. */
+    const chosen = mkSelIdx();
+    if (chosen.length) {
+      const locked = chosen.filter((i) => __mk.items[i].lok).length;
+      const live = chosen.filter((i) => !__mk.items[i].lok);
+      if (!live.length) {
+        toast(locked === 1 ? "That layer is locked — unlock it in Layers and try again"
+                           : "Those layers are locked — unlock them in Layers and try again", "err");
+        return;
+      }
+      mkPushUndo();
+      const ink = want === "cutout" ? MK_CUTOUT : want === "none" ? "none" : MK_ENGRAVE;
+      const lineInk = want === "cutout" ? MK_CUTOUT : want === "none" ? MK_OUTLINE : MK_ENGRAVE;
+      live.forEach((i) => {
+        const it = __mk.items[i];
+        /* ── A BOUNDARY IS RECOLOURED, NOT FLOODED ─────────────────────────
+           An unfilled primitive is its outline, and the customer selecting
+           one and choosing an instruction is talking about that line — so
+           the line takes the instruction's colour and the inside stays
+           empty. Filling it solid was answering a question about the
+           boundary with a statement about the area. The bucket still fills:
+           hover an enclosed area and click, exactly as before — and a shape
+           that is ALREADY filled is an area, so the chip keeps changing its
+           fill the way it always has. */
+        const asLine = mkFillIntent(it.f) === "none" &&
+          (it.t === "ink" || it.t === "line" || it.t === "arrow" ||
+           MK_SHAPE_TOOLS.indexOf(it.t) >= 0);
+        if (asLine) { it.c = lineInk; return; }
+        it.f = ink;
+        /* only the bucket's own regions are renamed by the bucket — an
+           imported shape keeps the name the customer finds it by */
+        if (it.bk) it.n = mkRegionName({ frac: 0, onPicture: false }, want);
+      });
+      __mk.fill = mode.f;
+      mkTouch();
+      mkRenderLayers();
+      mkChrome();
+      if (!state.metalSeen) state.metalSeen = {};
+      const firstOnSel = !state.metalSeen[mode.id];
+      state.metalSeen[mode.id] = 1;
+      saveSession();
+      const n = live.length;
+      toast(`${mode.label} — applied to ${n} layer${n === 1 ? "" : "s"}` +
+            (locked ? ` (${locked} locked, left alone)` : "") + ". " + mode.say, "gold");
+      if (firstOnSel) mkMetalCoachSeen();
+      return;
+    }
+
     mkSelSet([]);
     __mk.fill = mode.f;
     /* NOTHING TO FILL, NOTHING TO PICK UP. On an empty sheet the bucket has
@@ -9514,14 +18194,55 @@ function mkEraserCursorClear() {
       mkSetTool("select"); return;
     }
     SD("markupRegen: source =", __mkSrc);
+    /* ── NOTHING CHANGED? THEN ONLY THE METAL IS MADE AGAIN ──────────────
+       This button hands the whole press to the relay, and the relay makes a
+       NEW VERSION: it re-draws the black-line drawing, waits for a fresh
+       greyscale map to be derived from it, and only then cuts the metal.
+       That is right when the marks have changed — the drawing IS the marks,
+       so a changed sheet is a changed drawing.
+
+       It is wrong when nothing has been touched. Pressing this after only
+       looking at the sheet re-commissioned all three pictures to arrive at
+       the same drawing and the same map, and the customer watched their
+       black-line image and their greyscale image visibly regenerate for no
+       reason. regenerateFromMarkup already refuses that case — but it
+       refuses it with a toast telling the customer to go and press
+       Re-render instead, which is a correct diagnosis and an unhelpful
+       answer: the studio knows what they want and can simply do it.
+
+       So an unchanged sheet takes the same path Re-render takes. The
+       drawing on file stays exactly as it is, the greyscale map already
+       derived from it is reused by the server (see studioSpecKey), and the
+       only thing made again is the 14k gold charm. Same credit, one model
+       call instead of two or three, and the two pictures the customer has
+       already approved are left alone. */
+    if (mkRegenIsMetalOnly()) {
+      SD("markupRegen: sheet unchanged → gold only, drawing and greyscale reused");
+      mkPersist();
+      closeMarkup();
+      renderStage();
+      toast("Nothing on the drawing has changed — cutting the metal again from it ✦", "gold");
+      await runRender();
+      return;
+    }
     /* ON THE REFERENCE, "re-generate" means something different and better:
        the reference itself has been changed, so it is re-submitted as the
        reference and the drawing is made again FROM IT — not a refinement of
        a drawing that already went wrong. */
-    if (__mkSrc === "ref") { await regenerateFromReference(); return; }
+    /* ── RE-DRAW IS THE SAME ACT AS NEXT ────────────────────────────────
+       It makes a NEW version, and a new version needs all three pictures.
+       Handing the generation to the relay rather than running it alone is
+       what makes the greyscale and the metal follow it — with the same
+       strip, the same three segments and the same order they arrive in on
+       the way into step 2. There is one pipeline now, entered from two
+       buttons, instead of one pipeline and one lonely half of it. */
+    if (__mkSrc === "ref") {
+      await runRelay({ redraw: () => regenerateFromReference() });
+      return;
+    }
     closeMarkup();
     renderStage();
-    await regenerateFromMarkup();
+    await runRelay({ redraw: () => regenerateFromMarkup() });
   });
 
   /* ── compose actions ── */
@@ -9589,6 +18310,49 @@ function mkEraserCursorClear() {
     submitComposedDrawing();
   });
 
+  /* ── SCALE FROM THE CENTRE, MOVE BY A NUDGE ─────────────────────────────
+     Both act on the whole selection — a group included — as one rigid set:
+     one origin for the scale (the union's centre, so everything spreads
+     equally in all directions), one vector for the nudge. Text scales its
+     type with its box; the eraser strokes ride free, being stored in each
+     layer's own units. */
+  const mkScaleSelection = (f) => {
+    const list = mkSelItems();
+    if (!list.length || !isFinite(f) || f <= 0) return false;
+    mkPushUndo();
+    const bb = mkUnionBBox(list);
+    const cx = bb.x + bb.w / 2, cy = bb.y + bb.h / 2;
+    list.forEach((it) => {
+      const p = it.p || [];
+      for (let k = 0; k + 1 < p.length; k += 2) {
+        p[k] = cx + (p[k] - cx) * f;
+        p[k + 1] = cy + (p[k + 1] - cy) * f;
+      }
+      if (it.t === "label" || it.t === "text" || it.t === "callout") {
+        it.fs = Math.min(0.4, Math.max(0.012, (it.fs || 0.036) * f));
+      }
+      if (it._bx != null) it._bx = cx + (it._bx - cx) * f;
+      if (it._by != null) it._by = cy + (it._by - cy) * f;
+    });
+    mkTouch(); mkRedraw(); mkRenderSelection();
+    return true;
+  };
+  const mkNudgeSelection = (dx, dy) => {
+    const list = mkSelItems();
+    if (!list.length) return false;
+    mkPushUndo();
+    list.forEach((it) => {
+      const p = it.p || [];
+      for (let k = 0; k + 1 < p.length; k += 2) { p[k] += dx; p[k + 1] += dy; }
+      if (it._bx != null) it._bx += dx;
+      if (it._by != null) it._by += dy;
+    });
+    mkTouch(); mkRedraw(); mkRenderSelection();
+    return true;
+  };
+  window.__mkScaleSelection = mkScaleSelection;
+  window.__mkNudgeSelection = mkNudgeSelection;
+
   /* ── keyboard, the way an editor is expected to behave ── */
   document.addEventListener("keydown", (e) => {
     if (!__mk || !$("#markupModal").classList.contains("is-open")) return;
@@ -9613,17 +18377,37 @@ function mkEraserCursorClear() {
       mkSelSet(__mk.items.map((it, i) => (it.hid || it.lok) ? -1 : i).filter((i) => i >= 0));
       if (__mk.tool !== "select") mkSetTool("select");
       mkChrome(); mkPaintLayerSel();
+    } else if (/^Arrow(Left|Right|Up|Down)$/.test(e.key)) {
+      /* Photoshop's nudge, copied: arrows move the selection a little,
+         Shift-arrows ten times as far */
+      if (__mk.sel < 0 && !mkSelIdx().length) return;
+      e.preventDefault();
+      const step = (e.shiftKey ? 0.02 : 0.002);
+      const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+      const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+      mkNudgeSelection(dx, dy);
+    } else if (!meta && (e.key === "+" || e.key === "=" || e.key === "-" || e.key === "_")) {
+      /* grow and shrink about the centre: +/− a touch, Shift+/− a stride */
+      if (!mkSelIdx().length) return;
+      e.preventDefault();
+      const grow = e.key === "+" || e.key === "=";
+      const f = e.shiftKey ? (grow ? 1.10 : 1 / 1.10) : (grow ? 1.02 : 1 / 1.02);
+      mkScaleSelection(f);
     } else if (e.key === "Delete" || e.key === "Backspace") {
-      if (__mk.sel >= 0) { e.preventDefault(); mkDeleteSelected(); }
+      /* the box first: with a marquee down, ⌫ means "take out the piece
+         inside it", which is the one thing it can mean */
+      if (mkMarqLive()) { e.preventDefault(); mkMarqApply("del"); }
+      else if (__mk.sel >= 0) { e.preventDefault(); mkDeleteSelected(); }
     } else if (e.key === "Escape") {
       if (__mk.cropping) { e.preventDefault(); mkEndCrop(false); }
+      else if (mkMarqLive()) { e.preventDefault(); mkMarqClear(); }
       else if (__mk.sel >= 0) { e.preventDefault(); __mk.sel = -1; mkChrome(); }
-    } else if (!meta && /^[vpharts]$/i.test(e.key)) {
+    } else if (!meta && /^[vphartsm]$/i.test(e.key)) {
       /* no "n" and no "e": the pinned note and the eraser are both gone from
          the studio, and a shortcut to a tool with no button is a tool the
          customer can arm by accident and has no way to see they are holding */
       const map = { v: "select", p: "draw", h: "highlight", a: "arrow", r: "rect",
-                    t: "label", s: "sign" };
+                    t: "label", s: "sign", m: "marquee" };
       const t = map[e.key.toLowerCase()];
       if (t) { e.preventDefault(); mkSetTool(t); }
     }
@@ -9635,46 +18419,227 @@ function mkEraserCursorClear() {
    when they run out of room, and a scroll container clips its children on
    both axes however you write overflow-y. Out of flow is the only version
    that cannot be guillotined by anything.                                   */
+const __mkDropHomes = new WeakMap();
+function mkDropPortal(menu) {
+  if (!menu || __mkDropHomes.has(menu)) return;
+  const modal = document.getElementById("markupModal");
+  if (!modal || !menu.parentNode) return;
+  const mark = document.createComment("mk-menu-home");
+  menu.parentNode.insertBefore(mark, menu);
+  __mkDropHomes.set(menu, mark);
+  modal.appendChild(menu);
+}
+function mkDropUnportal(menu) {
+  const mark = menu && __mkDropHomes.get(menu);
+  if (!mark) return;
+  if (mark.parentNode) mark.parentNode.insertBefore(menu, mark);
+  if (mark.parentNode) mark.parentNode.removeChild(mark);
+  __mkDropHomes.delete(menu);
+}
 function mkCloseAllDrops() {
-  $$(".mk-drop__menu").forEach((m) => { m.hidden = true; });
+  $$(".mk-drop__menu").forEach((m) => {
+    m.hidden = true;
+    m.classList.remove("is-in", "is-in--right");   /* so it can run again */
+    /* A menu may have crossed between the touch shell and the desktop shell
+       after an orientation/device-mode change. Never let the last shell's
+       inline placement become the next shell's starting point. */
+    ["left", "right", "top", "bottom", "width", "max-width", "max-height",
+     "visibility"].forEach((p) => m.style.removeProperty(p));
+    mkDropUnportal(m);
+  });
   $$(".mk-drop").forEach((d) => d.classList.remove("is-open"));
   $$(".mk-drop__b").forEach((b) => b.setAttribute("aria-expanded", "false"));
 }
+/* ── THE "?" ON THE MODE TOGGLE ───────────────────────────────────────────
+   The exact/interpret toggle appears in two places — beside the finished
+   sketch on step one, and in the sketchpad's own head — and it decides
+   whether the customer's own lines survive into metal. One template in the
+   markup, cloned into every row, is the only arrangement in which those two
+   copies cannot drift apart.
+
+   It runs FIRST inside wireDrops so the clones are in the DOM before the
+   pass that wires every .mk-drop; the "?" is then an ordinary studio menu,
+   with the same placement, the same phone bottom-sheet and the same
+   click-outside-to-close as the rest. */
+function mkInstallModeHelp() {
+  const tpl = document.getElementById("mkReadHelpTpl");
+  if (!tpl || !tpl.content) return;
+  $$(".markup-mode").forEach((row) => {
+    if (row.querySelector('[data-drop="readhelp"]')) return;   /* idempotent */
+    try { row.appendChild(tpl.content.cloneNode(true)); } catch (e) {}
+  });
+}
+
 (function wireDrops() {
+  mkInstallModeHelp();
   $$(".mk-drop").forEach((drop) => {
     const btn = drop.querySelector(".mk-drop__b");
     const menu = drop.querySelector(".mk-drop__menu");
     if (!btn || !menu) return;
     btn.setAttribute("aria-haspopup", "true");
     btn.setAttribute("aria-expanded", "false");
-    btn.addEventListener("click", (e) => {
-      /* on a tool button the caret opens; on a property button the whole
-         thing opens, because a property button has nothing else to do */
-      const isTool = btn.classList.contains("mk-tool");
-      /* a button with no tool of its own is a menu, whole and entire */
-      const menuOnly = !btn.dataset.tool;
-      const wantMenu = !isTool || menuOnly || !!e.target.closest("[data-caret]") ||
-                       btn.classList.contains("is-on");
-      if (!wantMenu) return;
-      e.preventDefault();
-      e.stopPropagation();
+    /* ── FOUR WAYS INTO A FLYOUT, AND ONE OF THEM IS NOT A CLICK ─────────
+       Across the top of a screen a tool with more inside it could carry a
+       caret, and clicking the caret opened it. A rail has no width for a
+       caret, so it wears Photoshop's corner wedge instead — and a wedge
+       drawn as a pseudo-element is not a thing the pointer can land on, it
+       is paint. So the corner is a REGION of the button rather than a
+       target in it, and the two gestures every drawing application has
+       taught people to expect are wired beside it: press and hold, and
+       right-click. Clicking the tool still just picks the tool. */
+    const railBtn = () => !!btn.closest(".markup-rail");
+    const inCorner = (e) => {
+      if (!railBtn() || typeof e.clientX !== "number") return false;
+      const b = btn.getBoundingClientRect();
+      return (b.right - e.clientX) <= 13 && (b.bottom - e.clientY) <= 13;
+    };
+    const openMenu = (e) => {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
       const wasOpen = !menu.hidden;
       mkCloseAllDrops();
       if (wasOpen) return;
       menu.hidden = false;
       drop.classList.add("is-open");
       btn.setAttribute("aria-expanded", "true");
+      const mobile = mkMobileWorkspaceActive();
+      /* a rail flyout opens SIDEWAYS, like every vertical palette's does:
+         downward from a button in a column would cover the four tools under
+         it, which are exactly the ones you are choosing between */
+      const rail = !!btn.closest(".markup-rail") && !mobile;
+
+      /* TOUCH MENUS ARE SHEETS, NOT POPOVERS. CSS owns their phone-bottom /
+         tablet-side geometry, so no desktop anchor arithmetic is allowed to
+         write inline coordinates over it. This is also the functional fix
+         for the old mobile menus: they were positioned once as flyouts and
+         then partially restyled as sheets, leaving conflicting top/left,
+         max-size and animation values. One branch, one geometry. */
+      if (mobile) {
+        /* Lift the sheet to the modal root. Header/tool/property bars are
+           intentionally layered above the canvas; leaving a fixed menu
+           inside one traps it in that bar's stacking context and is the
+           reason old mobile dropdowns could appear behind another row or
+           not appear at all. The comment restores its exact DOM home on
+           close, so desktop structure is unchanged. */
+        mkDropPortal(menu);
+        ["left", "right", "top", "bottom", "width", "maxWidth", "maxHeight",
+         "visibility"].forEach((p) => menu.style.removeProperty(p.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())));
+        menu.classList.add("is-in");
+        bjBusy(260);
+        mkTipHide();
+        return;
+      }
       const r = btn.getBoundingClientRect();
+      /* clientWidth, NOT innerWidth: innerWidth counts the scrollbar, so on
+         every platform that reserves one the clamp thought it had 15px more
+         room than the page does and let a wide menu sit under it. */
+      const vw = document.documentElement.clientWidth || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
       menu.style.visibility = "hidden";
+      /* A CEILING THE STYLESHEET CANNOT MISS. The width of these menus is set
+         in CSS, and a rule that loses a breakpoint, a media query or a
+         specificity contest hands the placement code a box wider than the
+         screen — which it then dutifully positions, off the edge. Written
+         here it cannot be lost: whatever the stylesheet asked for, no menu is
+         ever wider or taller than the window it has to fit in.
+
+         ── BUT A CEILING IS NOT A WIDTH ────────────────────────────────────
+         Written as a bare `vw - 16` this inline rule did not back up the
+         stylesheet, it OVERRULED it: an inline declaration beats every
+         selector, so `max-width:min(340px, …)` in the sheet was dead and
+         every menu shrink-wrapped to whatever its widest child asked for,
+         all the way out to the window edge. On a wide screen the layer menu
+         came out seven hundred pixels across to hold one sentence.
+
+         The clamp has to be the SMALLER of the two: clear the inline value,
+         read what the stylesheet actually asked for, and take the lower.
+         Clearing first matters — otherwise the second open reads back the
+         inline value this line wrote on the first. */
+      menu.style.maxWidth = "";
+      const cssMax = parseFloat(getComputedStyle(menu).maxWidth);
+      menu.style.maxWidth = Math.min(vw - 16, isFinite(cssMax) ? cssMax : Infinity) + "px";
+      menu.style.maxHeight = (vh - 16) + "px";
       menu.style.left = "0px"; menu.style.top = "0px";
       const mr = menu.getBoundingClientRect();
-      let left = r.left, top = r.bottom + 5;
-      if (left + mr.width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - mr.width);
-      if (top + mr.height > window.innerHeight - 8) top = Math.max(8, r.top - 5 - mr.height);
+      /* ── WHICH WAY DOES IT GROW ─────────────────────────────────────────
+         Left-aligned to its button, a menu grows rightward — which is fine
+         in the middle of a window and wrong at the end of one, where it
+         spends its whole width heading for the edge and then has to be
+         dragged back by the clamp. A button in the right-hand third opens
+         its menu LEFTWARD instead, hanging from the button's right edge, so
+         the width it needs is width it already has. Nothing to clamp, and
+         nothing that changes with the screen's size or shape. */
+      let left = rail ? r.right + 6
+               : (r.left > vw * 0.62 ? r.right - mr.width : r.left);
+      let top  = rail ? r.top - 6   : r.bottom + 5;
+      if (left + mr.width > vw - 8) {
+        /* no room to the right of the rail: flip to its left rather than
+           letting the flyout hang off the window */
+        left = rail ? Math.max(8, r.left - 6 - mr.width)
+                    : Math.max(8, vw - 8 - mr.width);
+      }
+      if (top + mr.height > vh - 8) top = Math.max(8, vh - 8 - mr.height);
       menu.style.left = left + "px";
       menu.style.top = top + "px";
+
+      /* ── AND THEN CHECK WHERE IT ACTUALLY LANDED ────────────────────────
+         Everything above is arithmetic on viewport coordinates, and it is
+         right only while `position:fixed` means "against the viewport". Any
+         ancestor with a transform, a filter, a backdrop-filter or `contain`
+         quietly becomes the containing block instead — the modal's own
+         open animation is one — and the menu is then placed against a box
+         that is not the window, which is how a 416px panel ended up hanging
+         off the right-hand edge of a screen with a thousand pixels to spare.
+         So: read the rect it really occupies and slide it back inside. This
+         measures the outcome rather than trusting the model, which is the
+         only version that cannot be wrong for a reason nobody predicted. */
+      const got = menu.getBoundingClientRect();
+      const dx = (got.right > vw - 8) ? (vw - 8 - got.right)
+               : (got.left  < 8)      ? (8 - got.left) : 0;
+      const dy = (got.bottom > vh - 8) ? (vh - 8 - got.bottom)
+               : (got.top    < 8)     ? (8 - got.top) : 0;
+      if (dx) menu.style.left = (left + dx) + "px";
+      if (dy) menu.style.top = (top + dy) + "px";
       menu.style.visibility = "";
+      /* AFTER the numbers are in — see the keyframes' comment. An animation
+         that scales cannot run while the box is being measured. */
+      menu.classList.add(rail ? "is-in--right" : "is-in");
+      /* HANDS OFF THE THREAD WHILE THIS RUNS. The keyframe is ~170ms of
+         frames the browser has to actually produce; anything queued in the
+         background waits until it is done rather than eating them. */
+      bjBusy(320);
+      mkTipHide();
+    };
+
+    btn.addEventListener("click", (e) => {
+      /* a hold that already opened this menu must not be toggled shut by the
+         click that ends the hold — which is exactly what happened on the
+         buttons whose whole job IS their menu */
+      if (heldOpen) { heldOpen = false; e.preventDefault(); e.stopPropagation(); return; }
+      /* on a tool button the caret — or the corner — opens; on a property
+         button the whole thing opens, because it has nothing else to do */
+      const isTool = btn.classList.contains("mk-tool");
+      /* a button with no tool of its own is a menu, whole and entire */
+      const menuOnly = !btn.dataset.tool;
+      const wantMenu = mkMobileWorkspaceActive() || !isTool || menuOnly || inCorner(e) ||
+                       !!e.target.closest("[data-caret]") ||
+                       btn.classList.contains("is-on");
+      if (!wantMenu) return;
+      openMenu(e);
     });
+
+    /* press and hold, the way every tool palette since Photoshop 1.0 has
+       done it. 340ms is the shortest hold that a click cannot trip over. */
+    let hold = 0, heldOpen = false;
+    btn.addEventListener("pointerdown", (e) => {
+      if (mkMobileWorkspaceActive() || !railBtn() || e.button) return;
+      clearTimeout(hold); heldOpen = false;
+      hold = setTimeout(() => { hold = 0; heldOpen = true; openMenu(null); }, 340);
+    });
+    const dropHold = () => { clearTimeout(hold); hold = 0; };
+    btn.addEventListener("pointerup", dropHold);
+    btn.addEventListener("pointerleave", dropHold);
+    btn.addEventListener("pointercancel", dropHold);
+    btn.addEventListener("contextmenu", (e) => { if (railBtn() && !mkMobileWorkspaceActive()) openMenu(e); });
   });
   document.addEventListener("pointerdown", (e) => {
     /* On a phone the open menu is a bottom sheet with a scrim, and the scrim
@@ -9690,6 +18655,475 @@ function mkCloseAllDrops() {
   window.addEventListener("resize", mkCloseAllDrops);
 })();
 
+
+
+/* ═══════════════ THE RAIL: HOVER CARDS AND THE WAVE ══════════════════════
+   Two behaviours on one column of buttons.
+
+   THE CARD answers the same three questions the two help sheets answer —
+   what is this, what does it do, how do I reach it — in the same shapes: a
+   gold charm with the thing drawn on it, a name, one short line. The charm
+   is built from the button's OWN glyph rather than from a second set of
+   drawings, so the picture in the card and the picture on the button can
+   never disagree, and a tool added later gets a card for free.
+
+   THE WAVE is the dock magnification, and it scales the GLYPH rather than
+   the button. Scaling the button is what a dock does, but a dock also pushes
+   its neighbours aside to make room; scaling buttons in place without that
+   push just makes them collide at the peak. The glyph has 12px of clear air
+   around it inside a 42px button, so it can grow by three quarters and never
+   touch anything — same wave, no shove, and the hit targets never move under
+   the cursor mid-gesture.                                                   */
+const MK_RAIL_LIFT    = 0.78;   /* how much bigger the glyph under the cursor gets */
+const MK_RAIL_FALLOFF = 58;     /* px: how far the wave reaches either side */
+
+/* name · what it does in four words or fewer · the key that arms it */
+const MK_TIPS = {
+  mkSelect:      ["Select",       "Move, resize, rotate",        "V"],
+  mkMarquee:     ["Marquee",      "Cut out a piece",             "M"],
+  mkDraw:        ["Pen",          "Draw a freehand line",        "P"],
+  mkHighlight:   ["Highlight",    "A wide, soft stroke",         "H"],
+  mkShapes:      ["Shapes",       "Lines, boxes, hearts",        "R"],
+  mkText:        ["Words",        "Notes, letters, signature",   "T"],
+  /* Import is not here on purpose: it left the rail for the property bar,
+     where it is a labelled first-class button. A card explaining a button
+     that already says what it is would be the third tooltip on one control. */
+  mkMagicEraser: ["Magic eraser", "Lift a background colour",    ""],
+  mkEraser:      ["Eraser",       "Rub the artwork away",        ""],
+  mkMore:        ["More tools",   "Everything else",             ""],
+  mkUndo:        ["Undo",         "Take the last thing back",    "⌘Z"],
+  mkRedo:        ["Redo",         "Put it back",                 "⇧⌘Z"],
+};
+
+let __mkTipEl = null, __mkTipTimer = 0;
+/* set by the paste listener, read by the ⌘V fallback timer — see the keydown
+   handler for why a keystroke and a paste event have to agree about which of
+   them is doing the work */
+let __mkPasteSeen = false;
+
+/* The charm, with the button's own glyph engraved on it. The source icons
+   carry their paint on the <svg> element rather than on the paths inside it,
+   so copying the innards alone would strip it — the two attributes that
+   matter are read off the source and re-applied to the group. Without that
+   the three dots of "More", which are filled rather than stroked, come out
+   invisible. */
+function mkTipIcon(btn) {
+  const src = btn.querySelector("svg");
+  if (!src) return "";
+  const filled = (src.getAttribute("fill") || "none") !== "none";
+  const w = src.getAttribute("stroke-width") || "1.7";
+  const paint = filled ? "fill:#9a7c3e;stroke:none"
+                       : "fill:none;stroke:#9a7c3e;stroke-width:" + w +
+                         ";stroke-linecap:round;stroke-linejoin:round";
+  return '<svg class="mk-tip__ico mkh-ico" viewBox="0 0 56 56" aria-hidden="true">' +
+           '<circle class="mkh-bail" cx="28" cy="9" r="4.4"/>' +
+           '<circle class="mkh-body" cx="28" cy="32" r="18.5"/>' +
+           '<g transform="translate(15 19) scale(1.08)" style="' + paint + '">' +
+             src.innerHTML +
+           '</g>' +
+         '</svg>';
+}
+
+function mkTipHide() {
+  clearTimeout(__mkTipTimer);
+  if (__mkTipEl) __mkTipEl.classList.remove("is-in");
+}
+
+function mkTipShow(btn) {
+  const t = MK_TIPS[btn.id];
+  if (!t) return;
+  /* a card over an open menu is a card in front of the choice you opened the
+     menu to make */
+  if (document.querySelector(".mk-drop.is-open")) return;
+  if (!__mkTipEl) {
+    __mkTipEl = document.createElement("div");
+    __mkTipEl.className = "mk-tip";
+    (document.querySelector(".bj-studio") || document.body).appendChild(__mkTipEl);
+  }
+  __mkTipEl.innerHTML =
+    mkTipIcon(btn) +
+    '<span class="mk-tip__say"><b>' + escapeHtml(t[0]) +
+    (t[2] ? '<i>' + escapeHtml(t[2]) + '</i>' : '') + '</b>' +
+    '<span>' + escapeHtml(t[1]) + '</span></span>';
+  /* measured before it is shown, then clamped — the rail sits at the left
+     edge of a modal that can be full screen, so the card has to be able to
+     fall back to the other side of the button */
+  __mkTipEl.style.left = "0px"; __mkTipEl.style.top = "0px";
+  const r = btn.getBoundingClientRect(), c = __mkTipEl.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth || window.innerWidth;
+  const vh = document.documentElement.clientHeight || window.innerHeight;
+  let left = r.right + 9;
+  if (left + c.width > vw - 8) left = Math.max(8, r.left - 9 - c.width);
+  let top = r.top + r.height / 2 - c.height / 2;
+  top = Math.min(vh - 8 - c.height, Math.max(8, top));
+  __mkTipEl.style.left = left + "px";
+  __mkTipEl.style.top = top + "px";
+  /* and then check where it landed — see the menu placement for why the
+     arithmetic alone is not enough */
+  const got = __mkTipEl.getBoundingClientRect();
+  if (got.right > vw - 8) __mkTipEl.style.left = (left + (vw - 8 - got.right)) + "px";
+  else if (got.left < 8)  __mkTipEl.style.left = (left + (8 - got.left)) + "px";
+  __mkTipEl.classList.add("is-in");
+}
+
+(function wireRail() {
+  const rail = document.querySelector(".markup-rail");
+  if (!rail) return;
+
+  /* ── ONE TOOLTIP, NOT TWO ────────────────────────────────────────────
+     The browser's own tooltip comes from `title`, arrives on its own
+     schedule, cannot be styled and cannot be suppressed while the attribute
+     is there — so it turned up underneath the card and said the same thing
+     twice in two different voices. The attribute is moved to aria-label,
+     where the words still reach a screen reader and no second bubble is
+     drawn. Only buttons that HAVE a card lose their title; anything without
+     one keeps the browser's, because some tooltip beats none. */
+  Object.keys(MK_TIPS).forEach((id) => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    const t = b.getAttribute("title");
+    if (t && !b.getAttribute("aria-label")) b.setAttribute("aria-label", t);
+    b.removeAttribute("title");
+  });
+
+  /* A FLYOUT IS A DOM CHILD OF THE RAIL even though it is drawn beside it —
+     .mk-drop__menu lives inside .mk-drop, which lives inside .markup-tools.
+     So every pointer move inside an open menu BUBBLES to these two handlers,
+     and the icons went on rippling to a cursor that had left them. Worse,
+     pointerleave never fires on the way in, because the menu is a
+     descendant: as far as the rail is concerned the pointer never left.
+     Both handlers bail on anything that came from a menu. */
+  const fromMenu = (e) => !!(e.target.closest && e.target.closest(".mk-drop__menu"));
+
+  /* ── the cards ── */
+  rail.addEventListener("pointerover", (e) => {
+    if (fromMenu(e)) { mkTipHide(); return; }
+    const btn = e.target.closest(".mk-tool, .mk-hist");
+    if (!btn || !MK_TIPS[btn.id]) { mkTipHide(); return; }
+    clearTimeout(__mkTipTimer);
+    /* a short wait, so running the cursor down the rail to reach the tool at
+       the bottom does not flash nine cards on the way past */
+    __mkTipTimer = setTimeout(() => mkTipShow(btn), 260);
+  });
+  rail.addEventListener("pointerleave", mkTipHide);
+  rail.addEventListener("pointerdown", mkTipHide);
+
+  /* ── the wave ── */
+  let raf = 0, y = null;
+  const glyphs = () => Array.prototype.slice.call(rail.querySelectorAll(".mk-tool svg"));
+  const paint = () => {
+    raf = 0;
+    glyphs().forEach((g) => {
+      if (y == null) { g.style.transform = ""; return; }
+      const r = g.getBoundingClientRect();
+      /* the glyph's centre does not move when it is scaled about its own
+         centre, so this reading is stable frame to frame even mid-wave */
+      const d = (y - (r.top + r.height / 2)) / MK_RAIL_FALLOFF;
+      const k = Math.exp(-d * d);
+      g.style.transform = k > 0.012 ? "scale(" + (1 + MK_RAIL_LIFT * k).toFixed(4) + ")" : "";
+    });
+  };
+  const queue = () => { if (!raf) raf = requestAnimationFrame(paint); };
+  rail.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "touch") return;      /* a finger has no hover */
+    /* inside a flyout, or with one open anywhere: the rail is not what the
+       cursor is working on, so it holds still */
+    if (fromMenu(e) || document.querySelector(".mk-drop.is-open")) {
+      if (y !== null) { y = null; queue(); }
+      return;
+    }
+    y = e.clientY; queue();
+  });
+  rail.addEventListener("pointerleave", () => { y = null; queue(); });
+  /* opening or closing a menu settles the rail either way */
+  document.addEventListener("pointerdown", () => { y = null; queue(); }, true);
+})();
+
+
+
+/* ═══════════════ PLACE FROM YOUR LIBRARY ═════════════════════════════════
+   The dock's Library tab is for browsing WHILE you draw: a 300px column, two
+   tiles across, made for dragging one onto the sheet without losing your
+   place. It is the wrong surface for "show me everything I have made", which
+   is a looking task, and looking at a hundred and forty charms through a
+   two-tile slot is not looking.
+
+   This is the same library at a size where somebody can recognise their own
+   work. Choosing one drops it on the sheet and closes. It does NOT touch the
+   design's reference — that is what #libPickModal on step one is for, and
+   confusing the two would swap a customer's whole design for a decoration
+   they meant to place in a corner. Two libraries, two verbs, no overlap. */
+let __mkPlace = [], __mkPlaceQ = "", __mkPlaceFilter = "all", __mkPlaceSort = "new";
+
+function mkPlaceList(src) {
+  const q = String(__mkPlaceQ || "").trim().toLowerCase();
+  let list = (src || mkLibraryItems()).slice();      /* its own copy — see mkLibFiltered */
+  if (__mkPlaceFilter !== "all") list = list.filter((a) => a.kind === __mkPlaceFilter);
+  if (q) list = list.filter((a) => (a.title + " " + a.sub).toLowerCase().indexOf(q) >= 0);
+  return list.sort((a, b) => __mkPlaceSort === "old" ? a.at - b.at : b.at - a.at);
+}
+
+function mkPlaceTile(a, i) {
+  /* the DRAWING half of a pair, for the same reason the dock shows it:
+     a photograph of a finished charm is a picture of an answer, and the
+     line drawing is the thing another design can be built from */
+  const shown = a.pairUrl || a.url;
+  const watch = (!a.pairUrl && a.thumbKey) ? ` data-thumb="${attrText(a.thumbKey)}"` : "";
+  return `<figure class="mk-asset" data-pl="${i}" tabindex="0" role="button"
+                  aria-label="${attrText("Place " + a.title + " on the sheet")}">
+    <span class="mk-asset__img"><img src="${attrText(shown)}"${watch} alt="" loading="lazy" decoding="async" draggable="false"></span>
+    ${a.pairUrl ? '<span class="mk-asset__pair">PAIR</span>' : ""}
+    ${a.layers ? `<span class="mk-asset__layers" title="${a.layers} editable object${a.layers === 1 ? "" : "s"}">✦&nbsp;${a.layers}</span>` : ""}
+    <figcaption><b>${escapeHtml(a.title)}</b><span>${escapeHtml(a.sub)}${a.at ? " · " + mkLibDate(a.at) : ""}</span></figcaption>
+  </figure>`;
+}
+
+let __mkPlaceJob = null;
+function mkPlaceRender() {
+  const host = $("#mkPlaceGrid"); if (!host) return;
+  const all = mkLibraryItems();
+  const prev = __mkPlace;
+  __mkPlace = mkPlaceList(all);
+  const total = all.length;
+  const cnt = $("#mkPlaceCount");
+  if (cnt) {
+    cnt.textContent = __mkPlace.length === total
+      ? `${total} image${total === 1 ? "" : "s"}`
+      : `${__mkPlace.length} of ${total}`;
+  }
+  if (__mkPlaceJob) { __mkPlaceJob.cancel(); __mkPlaceJob = null; }
+  if (!__mkPlace.length) {
+    host.innerHTML = `<p class="mk-lib__empty">${total
+      ? "Nothing matches that."
+      : "Nothing here yet — every charm you finish and every picture you bring in collects here."}</p>`;
+    return;
+  }
+  __mkPlaceJob = mkGridPaint(host, __mkPlace, mkPlaceTile, prev);
+}
+
+function mkPlaceOpen() {
+  const m = $("#mkPlaceModal"); if (!m) return;
+  mkPlaceRender();
+  m.classList.add("is-open");
+  /* the search takes focus, because somebody with a hundred images came here
+     to find one rather than to scroll past ninety-nine */
+  setTimeout(() => { const q = $("#mkPlaceSearch"); if (q) q.focus(); }, 60);
+}
+
+(function wirePlaceLibrary() {
+  const grid = $("#mkPlaceGrid");
+  if (!grid) return;
+  const search = $("#mkPlaceSearch");
+  if (search) search.addEventListener("input", () => {
+    __mkPlaceQ = search.value; mkPlaceRender();
+  });
+  $$("#mkPlaceFilters .mk-chip").forEach((b) => b.addEventListener("click", () => {
+    __mkPlaceFilter = b.dataset.filter;
+    $$("#mkPlaceFilters .mk-chip").forEach((x) => x.classList.toggle("is-on", x === b));
+    mkPlaceRender();
+  }));
+  $$("#mkPlaceSortRow .mk-chip").forEach((b) => b.addEventListener("click", () => {
+    __mkPlaceSort = b.dataset.psort;
+    $$("#mkPlaceSortRow .mk-chip").forEach((x) => x.classList.toggle("is-on", x === b));
+    mkPlaceRender();
+  }));
+  /* one door out: choose, place, close. No confirm step — the thing lands
+     selected on the sheet, and undo is one key away if it was the wrong one. */
+  let busy = false;
+  const choose = (fig) => {
+    if (busy) return;
+    const a = __mkPlace[+fig.dataset.pl];
+    if (!a || !__mk) return;
+    busy = true; setTimeout(() => { busy = false; }, 600);
+    $("#mkPlaceModal").classList.remove("is-open");
+    mkPlaceAsset(a);
+  };
+  grid.addEventListener("click", (e) => {
+    const fig = e.target.closest("[data-pl]");
+    if (fig) choose(fig);
+  });
+  grid.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const fig = e.target.closest("[data-pl]");
+    if (fig) { e.preventDefault(); choose(fig); }
+  });
+})();
+
+
+/* ═══════════════ THE RULERS ══════════════════════════════════════════════
+   Two canvases welded to the top and left edges of the room, reading in the
+   charm's own units. Zero is the sheet's edge, not the room's, because the
+   sheet is the only thing here with a real size: it IS the charm's bounding
+   square, and the charm is 12 mm across until the customer says otherwise at
+   checkout — at which point these numbers follow.
+
+   They are drawn rather than marked up because their ticks change with the
+   zoom, the pan and the unit; a few hundred elements re-laid-out on every
+   mouse move is not a ruler, it is a stutter. Canvas, one path, no layout. */
+const MK_RULE_PX = 19;                      /* keep in step with --mk-rule */
+const MK_RULE_STEPS = {
+  mm: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50],
+  in: [0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2],
+};
+let __mkUnit = "mm";
+let __mkCursor = null;                      /* client coords, or null */
+let __mkRuleRaf = 0;
+
+/* how much of the customer's unit the sheet spans, end to end */
+function mkSheetSpan() {
+  let mm = 12;
+  try {
+    if (typeof orderState !== "undefined" && orderState && orderState.mm) mm = +orderState.mm || 12;
+  } catch (e) { /* the order state is declared further down the file */ }
+  return __mkUnit === "in" ? mm / 25.4 : mm;
+}
+
+/* the coarsest tick that still lands at least `minPx` apart — one ladder for
+   each unit, so the numbers on the ruler are always ones a person would
+   actually write down */
+function mkRuleStep(pxPerUnit, minPx) {
+  const ladder = MK_RULE_STEPS[__mkUnit] || MK_RULE_STEPS.mm;
+  for (let i = 0; i < ladder.length; i++) if (ladder[i] * pxPerUnit >= minPx) return ladder[i];
+  return ladder[ladder.length - 1];
+}
+
+function mkRuleFmt(v) {
+  const n = Math.abs(v) < 1e-9 ? 0 : v;
+  return __mkUnit === "in" ? String(+n.toFixed(3)) : String(+n.toFixed(2));
+}
+
+function mkRulerDraw() {
+  __mkRuleRaf = 0;
+  const rx = $("#mkRuleX"), ry = $("#mkRuleY");
+  const view = $("#markupView"), stage = $("#markupStage");
+  if (!rx || !ry || !view || !stage) return;
+  if (!rx.getClientRects().length) return;              /* hidden on a phone */
+  const v = view.getBoundingClientRect();                /* the sheet AS DRAWN */
+  const s = stage.getBoundingClientRect();
+  if (v.width < 4 || s.width < 4) return;
+
+  const span = mkSheetSpan();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const ink = "#1c1d1d", muted = "#8a8784", hair = "#d9d4ca", live = "#b8935a";
+
+  const setup = (cv, w, h) => {
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.max(1, Math.round(w * dpr));
+      cv.height = Math.max(1, Math.round(h * dpr));
+    }
+    const ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.font = '700 8px ' + (getComputedStyle(document.body).fontFamily || "sans-serif");
+    ctx.textBaseline = "top";
+    return ctx;
+  };
+
+  /* ONE routine, both axes. The only difference between a horizontal ruler
+     and a vertical one is which way the text is turned, and that is worth a
+     boolean rather than a second copy of the arithmetic. */
+  const draw = (cv, vertical) => {
+    const box = cv.getBoundingClientRect();
+    const len = vertical ? box.height : box.width;
+    const thick = vertical ? box.width : box.height;
+    if (len < 4) return;
+    const ctx = setup(cv, box.width, box.height);
+    const px = (vertical ? v.height : v.width) / span;   /* px per unit, zoom included */
+    if (!(px > 0.0001)) return;
+    const origin = (vertical ? v.top : v.left) - (vertical ? box.top : box.left);
+    const minor = mkRuleStep(px, 6);
+    const major = mkRuleStep(px, 44);
+    const u0 = (0 - origin) / px, u1 = (len - origin) / px;
+
+    ctx.strokeStyle = hair; ctx.fillStyle = muted; ctx.lineWidth = 1;
+    ctx.beginPath();
+    const first = Math.ceil(Math.min(u0, u1) / minor) * minor;
+    const last = Math.max(u0, u1);
+    /* a guard, not a limit: at a silly zoom the loop below could otherwise be
+       asked for a hundred thousand ticks nobody can see */
+    const count = Math.min(4000, Math.floor((last - first) / minor) + 1);
+    for (let i = 0; i < count; i++) {
+      const u = first + i * minor;
+      const p = Math.round(origin + u * px) + 0.5;
+      if (p < 0 || p > len) continue;
+      const big = Math.abs(u / major - Math.round(u / major)) < 1e-6;
+      const h = big ? thick - 1 : Math.min(4, thick * 0.28);
+      if (vertical) { ctx.moveTo(thick - h, p); ctx.lineTo(thick - 1, p); }
+      else          { ctx.moveTo(p, thick - h); ctx.lineTo(p, thick - 1); }
+    }
+    ctx.stroke();
+
+    /* the numbers, on the major ticks only */
+    const mFirst = Math.ceil(Math.min(u0, u1) / major) * major;
+    const mCount = Math.min(400, Math.floor((last - mFirst) / major) + 1);
+    for (let i = 0; i < mCount; i++) {
+      const u = mFirst + i * major;
+      const p = Math.round(origin + u * px);
+      if (p < -20 || p > len + 20) continue;
+      const txt = mkRuleFmt(u);
+      /* zero is the sheet's edge and worth saying so */
+      ctx.fillStyle = Math.abs(u) < 1e-9 ? ink : muted;
+      if (vertical) {
+        ctx.save(); ctx.translate(1.5, p + 2); ctx.rotate(-Math.PI / 2);
+        ctx.textAlign = "right"; ctx.fillText(txt, 0, 0); ctx.restore();
+      } else {
+        ctx.textAlign = "left"; ctx.fillText(txt, p + 2.5, 2);
+      }
+    }
+
+    /* WHERE THE CURSOR IS, RIGHT NOW. The one thing a ruler is for that a
+       printed scale is not, and the reason it has to be a canvas. */
+    if (__mkCursor) {
+      const p = Math.round((vertical ? __mkCursor.y - box.top : __mkCursor.x - box.left)) + 0.5;
+      if (p >= 0 && p <= len) {
+        ctx.strokeStyle = live; ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (vertical) { ctx.moveTo(0, p); ctx.lineTo(thick, p); }
+        else          { ctx.moveTo(p, 0); ctx.lineTo(p, thick); }
+        ctx.stroke();
+      }
+    }
+  };
+
+  draw(rx, false);
+  draw(ry, true);
+}
+
+function mkRulerQueue() {
+  if (!__mkRuleRaf) __mkRuleRaf = requestAnimationFrame(mkRulerDraw);
+}
+
+(function wireRulers() {
+  const corner = $("#mkRuleUnit"), stage = $("#markupStage");
+  if (corner) {
+    corner.addEventListener("click", () => {
+      __mkUnit = __mkUnit === "mm" ? "in" : "mm";
+      corner.textContent = __mkUnit;
+      corner.setAttribute("aria-label",
+        __mkUnit === "mm" ? "Millimetres — click for inches" : "Inches — click for millimetres");
+      try { toast(__mkUnit === "mm" ? "Ruler in millimetres" : "Ruler in inches", "gold"); } catch (e) {}
+      mkRulerQueue();
+      /* the size fields read in the same unit as the ruler, so they turn
+         over with it rather than sitting there in the old one */
+      try { mkSizeSync(); } catch (e) {}
+    });
+  }
+  if (stage) {
+    stage.addEventListener("pointermove", (e) => {
+      __mkCursor = { x: e.clientX, y: e.clientY };
+      mkRulerQueue();
+    }, { passive: true });
+    stage.addEventListener("pointerleave", () => { __mkCursor = null; mkRulerQueue(); });
+    /* THE RULERS OWN THIS, NOT THE SHEET. There is a resize observer on the
+       stage already, but it redraws through __mk.resize — which exists only
+       while a sheet is open. Full screen, a folded panel and a rotated phone
+       all change the room without touching __mk, and a ruler drawn for a
+       room that is no longer that size is worse than no ruler at all: it is
+       a wrong measurement, confidently printed. */
+    if (window.ResizeObserver) new ResizeObserver(mkRulerQueue).observe(stage);
+  }
+  window.addEventListener("resize", mkRulerQueue);
+})();
 
 /* ═══════════════════════════════════════════════════════════════════════════
    THE DOCK — layers, and everything this account has ever made
@@ -9714,11 +19148,32 @@ function mkCloseAllDrops() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 let __mkClip = null;                 /* the copy buffer — packed items */
-/* THE PANEL IS NOT A MODE. Layers and the library used to hide behind two
-   toggle buttons, which meant the answer to "what is on my sheet?" was a
-   click away at all times and the buttons were the second and third things
-   a customer had to learn. It is simply always there now — which is also
-   why those two buttons no longer exist. */
+/* ── THE CLIPBOARD HAS ONE OWNER ─────────────────────────────────────────
+   Three things on screen read this buffer and grey themselves out when it is
+   empty: the Paste button in the layer panel's bar, the Paste item behind
+   the ⋯, and Paste on the marquee's own toolbar. Nothing recomputes them on
+   a timer, so each of them is only as correct as the last person to write
+   __mkClip remembered to make it.
+
+   CUT REFRESHED THEM AND COPY DID NOT, which is exactly the bug that was
+   reported: Cut goes on to rewrite the sheet, and rewriting the sheet
+   repaints everything as a side effect, so its Paste lit up by luck. Copy
+   fills the buffer and returns — nothing repaints, and the marquee's Paste
+   stayed dimmed over a clipboard with something in it. Two more sites clear
+   the buffer when a session is torn down and refreshed nothing at all.
+
+   So the assignment lives here, with the refresh attached to it, and the
+   four call sites cannot disagree about what to update because they no
+   longer decide. */
+function mkClipSet(v) {
+  __mkClip = (v && v.length) ? v : null;
+  try { mkLayerChrome(); } catch (e) {}     /* the bar, and the ⋯ menu item */
+  try { mkPaintMarqSel(); } catch (e) {}    /* the marquee's own toolbar    */
+}
+/* THE PANEL IS NOT A MODE ON DESKTOP: it is continuously docked beside the
+   canvas. A touch screen has a different space budget, so the same panel is
+   revealed from the labelled Layers / Library destinations in its quick
+   tool dock and is absent at rest. */
 let __mkDock = { open: true, tab: "layers", filter: "all", sort: "new", q: "" };
 
 function mkDockEl() { return $("#mkDock"); }
@@ -9728,6 +19183,7 @@ function mkDockEl() { return $("#mkDock"); }
    where the sketchpad opens with the library covering the drawing. */
 const MK_DOCK_SHEET = 900;
 function mkDockIsSheet() {
+  if (mkMobileWorkspaceActive()) return true;
   return !!(window.matchMedia && window.matchMedia("(max-width: " + MK_DOCK_SHEET + "px)").matches);
 }
 function mkDockAutoFold() { mkDockMin(mkDockIsSheet()); }
@@ -9745,6 +19201,7 @@ function mkDockSet(open, tab) {
     p.classList.toggle("is-on", p.dataset.pane === __mkDock.tab));
   if (open && __mkDock.tab === "layers") mkRenderLayers();
   if (open && __mkDock.tab === "library") mkRenderLibrary();
+  try { mkMobileBackdropSync(); mkMobileChrome(); } catch (e) {}
   /* the stage is sized from the room left over, and the dock just took some */
   setTimeout(() => { if (__mk && __mk.resize) __mk.resize(); }, 60);
   setTimeout(() => { if (__mk && __mk.resize) __mk.resize(); }, 320);
@@ -9780,6 +19237,7 @@ function mkDockMin(on) {
     x.setAttribute("aria-label", on ? "Show the panel" : "Fold the panel down");
     x.textContent = on ? "⌃" : "⌄";
   }
+  try { mkMobileBackdropSync(); mkMobileChrome(); } catch (e) {}
   setTimeout(() => { if (__mk && __mk.resize) __mk.resize(); }, 60);
 }
 
@@ -9838,7 +19296,15 @@ const MK_LOCK_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 function mkLayerRow(i, inGroup) {
   const it = __mk.items[i];
   const on = mkIsSelIdx(i);
-  return `<div class="mk-layer${on ? " is-sel" : ""}${it.hid ? " is-hidden" : ""}${inGroup ? " mk-layer--child" : ""}" data-i="${i}" role="option" aria-selected="${on}" tabindex="0">
+  /* the child row says what clicking it does, because "this one, not the
+     group" is the whole point of the row existing and is not guessable */
+  const rowTip = inGroup
+    ? ' title="Work on this layer on its own — the rest of the group is left alone"'
+    : "";
+  /* data-id as well as data-i: an index is not the same object after a
+     reorder, and the reveal has to be able to find this row again across a
+     rebuild that may have renumbered everything */
+  return `<div class="mk-layer${on ? " is-sel" : ""}${it.hid ? " is-hidden" : ""}${inGroup ? " mk-layer--child" : ""}" data-i="${i}" data-id="${escapeHtml(String(it.id || ""))}" role="option" aria-selected="${on}" tabindex="0"${rowTip}>
        <span class="mk-layer__grip" aria-hidden="true" title="Drag to reorder"><i></i><i></i><i></i></span>
        <canvas class="mk-layer__thumb" width="96" height="96" aria-hidden="true"></canvas>
        <span class="mk-layer__body">
@@ -9868,12 +19334,77 @@ function mkGroupRow(g, idx) {
      </div>`;
 }
 
-function mkRenderLayers() {
+/* ═══════════ THE LIST IS BUILT ONCE PER CHANGE, NOT TWICE PER ACTION ═════
+   EVERY ACTION WAS RENDERING THE LIST TWICE. The pattern is all over this
+   file — `mkTouch(); mkRenderLayers();` — and the two are not alternatives:
+   mkRenderLayers rebuilds immediately, and mkTouch schedules a tail 90ms
+   later whose whole job is to call mkRenderLayersSoon. Nothing about the
+   sheet changes in between. So one click on an eye, or a name, or a
+   reorder, threw the entire list away and rebuilt it, twice, a tenth of a
+   second apart.
+
+   That is the flicker, and it is worse than a flicker for two reasons.
+   `innerHTML = …` destroys every thumbnail canvas, so both rebuilds repaint
+   every visible thumb — the list visibly blinks. And the SECOND rebuild
+   lands after a reveal has centred the row and restored the scroll from
+   `keepTop`, which is how the right row appears for a moment and then
+   relocates: the customer's words, and the exact sequence.
+
+   The fix is not to hunt down the forty-odd call sites and decide which one
+   is redundant — that is a judgement that has to be made again correctly
+   every time anyone adds a call. It is to make a rebuild that would produce
+   the SAME LIST cost nothing. The markup is a pure function of the items and
+   a handful of view flags, so it has a signature; if the signature has not
+   moved, neither has the list, and the whole rebuild is skipped. Calls
+   become idempotent, the second render of a pair is free, and the DOM — with
+   its painted thumbnails and its scroll position — is left alone.
+
+   Selection is deliberately NOT in the signature. It is applied by class,
+   by mkPaintLayerSel, on a list that is already correct; baking it in would
+   make every click on a layer a full rebuild for two class attributes.
+
+   O(n) per call on a list of n rows, which is the same order as the render
+   it is replacing and about a thousandth of the cost. */
+let _mkLayerSig = null;
+
+function mkLayerSig() {
+  if (!__mk) return "";
+  const it = __mk.items, n = it.length;
+  /* a separator that cannot occur in a name, an id or a group key: without
+     one, "ab" + "c" and "a" + "bc" sign the same, and two different lists
+     would be taken for the same list */
+  const F = "\u0001";
+  const out = new Array(n + 1);
+  out[0] = __mkLayerSort + F + n;
+  for (let i = 0; i < n; i++) {
+    const o = it[i];
+    const g = o.g || "";
+    /* everything mkLayerRow and mkGroupRow read, and nothing else */
+    out[i + 1] = [o.id, g, o.t, o.hid ? 1 : 0, o.lok ? 1 : 0,
+                  o.o == null ? 1 : o.o, o.tr ? 1 : 0, mkLayerName(o),
+                  g ? (mkGroupOpen(g) ? 1 : 0) + F + mkGroupName(g) : ""].join(F);
+  }
+  return out.join(F);
+}
+
+function mkRenderLayers(force) {
   const host = $("#mkLayers");
   if (!host || !__mk) return;
+  /* a render that is happening NOW makes a render scheduled for later
+     redundant — otherwise the pair still costs two frames of work even when
+     the second one turns out to be a no-op */
+  if (_mkLayerFrame) { cancelAnimationFrame(_mkLayerFrame); _mkLayerFrame = 0; }
   const items = __mk.items;
   const lc0 = $("#mkLayersCount");
   if (lc0) lc0.textContent = String(items.length);
+  const sig = mkLayerSig();
+  if (!force && sig === _mkLayerSig && host.querySelector(".mk-layer, .mk-layers__empty")) {
+    /* the same list. The rows are already right; only the things that live
+       outside the markup need saying again. */
+    mkLayerChrome();
+    return;
+  }
+  _mkLayerSig = sig;
   if (!items.length) {
     host.innerHTML = '<p class="mk-layers__empty">Nothing on the sheet yet.<br>Every mark you make appears here as its own layer — drag them to change what sits in front.<br><br>Shift-click to pick several, then group them so they move as one.</p>';
     mkLayerChrome();
@@ -9882,7 +19413,7 @@ function mkRenderLayers() {
   /* topmost first, the way every editor lists them and the way the sheet
      actually reads — the last thing painted is the thing you see */
   const rows = [];
-  const blocks = mkBlocks();
+  const blocks = mkLayerBlocks();
   for (let b = blocks.length - 1; b >= 0; b--) {
     const bl = blocks[b];
     if (!bl.g) { rows.push(mkLayerRow(bl.idx[0], false)); continue; }
@@ -9890,21 +19421,378 @@ function mkRenderLayers() {
     if (!mkGroupOpen(bl.g)) continue;
     for (let k = bl.idx.length - 1; k >= 0; k--) rows.push(mkLayerRow(bl.idx[k], true));
   }
+  /* ── A REBUILD IS NOT A REASON TO GO BACK TO THE TOP ─────────────────
+     This list is rebuilt at the end of every mark, and `innerHTML = …`
+     throws away the scroll position with the children. On a sheet with two
+     hundred layers that meant the list jumped to the top after every stroke
+     — and it is what undid the reveal one frame after a click on the sheet
+     had asked for it. */
+  const keepTop = host.scrollTop;
   host.innerHTML = rows.join("");
-  host.querySelectorAll(".mk-layer:not(.mk-layer--group)").forEach((row) => {
-    const it = items[+row.dataset.i];
-    if (it) mkPaintThumb(row.querySelector(".mk-layer__thumb"), it);
-  });
+  if (keepTop) host.scrollTop = keepTop;
+  /* and a reveal that is mid-settle just had its row destroyed and rebuilt:
+     tell it the scroll it is about to read is ours, not a hand's, so the
+     re-centre on the next frame happens instead of being taken for the
+     customer scrolling away */
+  if (_mkRevealWant) _mkRevealWant.seen = host.scrollTop;
+  /* ── ONLY WHAT CAN BE SEEN ───────────────────────────────────────────
+     Every thumbnail here is the real painter run on its own canvas, and
+     this list is rebuilt at the end of every mark. Painting all of them
+     meant a drawing with sixty objects paid for sixty canvas renders on
+     every stroke, most of them for rows scrolled out of sight. An observer
+     turns that into "however many fit on the screen", whatever the drawing
+     grows to — and the ones below the fold paint themselves as they arrive. */
+  mkThumbWatch(host);
   mkLayerChrome();
+  /* every row is somewhere new; a reveal from a moment ago is owed its
+     position back — see mkRevealAfterRebuild */
+  mkRevealAfterRebuild();
+}
+
+let __mkThumbIO = null;
+function mkThumbWatch(host) {
+  if (!("IntersectionObserver" in window)) {
+    host.querySelectorAll(".mk-layer:not(.mk-layer--group)").forEach((row) => {
+      const it = __mk && __mk.items[+row.dataset.i];
+      if (it) mkPaintThumb(row.querySelector(".mk-layer__thumb"), it);
+    });
+    return;
+  }
+  /* the previous list's canvases are gone; stop watching ghosts */
+  if (__mkThumbIO) __mkThumbIO.disconnect();
+  if (!__mkThumbIO) {
+    __mkThumbIO = new IntersectionObserver((ents) => {
+      ents.forEach((en) => {
+        if (!en.isIntersecting) return;
+        const cv = en.target;
+        __mkThumbIO.unobserve(cv);
+        const row = cv.closest(".mk-layer");
+        const it = row && __mk && __mk.items[+row.dataset.i];
+        if (it) { try { mkPaintThumb(cv, it); } catch (e) {} }
+      });
+    }, { root: host, rootMargin: "220px 0px" });
+  }
+  host.querySelectorAll(".mk-layer:not(.mk-layer--group) .mk-layer__thumb")
+      .forEach((cv) => __mkThumbIO.observe(cv));
 }
 
 /* Selection changes far more often than the stack does, and rebuilding a
    list of live thumbnails on every click would make a shift-click feel
    expensive. This repaints ONLY what is highlighted — which is what keeps
    the sheet and the list in step with each other in real time. */
+/* ═══════════ THE LIST FOLLOWS THE SELECTION ══════════════════════════════
+   Picking something up on the sheet is supposed to bring its row into view,
+   and on a drawing with two hundred layers it usually did not. Two reasons,
+   and they compound:
+
+     · the reveal was a single, synchronous `scrollIntoView` — one shot, at
+       the moment of the click. The list is rebuilt on the NEXT animation
+       frame by mkRenderLayersSoon, and a rebuild is `host.innerHTML = …`,
+       which throws every child away. The scroll position goes with them, so
+       the reveal was undone one frame after it happened and the list sat
+       wherever the rebuild left it. That is the screenshot exactly: the row
+       is selected, and the list is somewhere else entirely.
+     · and if the anchor's group happened to be collapsed there was no row
+       to scroll to at all, so nothing happened even before the rebuild.
+
+   So a reveal is no longer an action taken once; it is an INTENT that
+   survives until it is satisfied. It remembers the item's id rather than a
+   row element — elements die on every rebuild, ids do not — and re-finds
+   its row, and re-aims, on every frame. A rebuild mid-flight is therefore
+   not something to defend against; the next frame simply finds the new row
+   and carries on to it.
+
+   THE MOTION. Eased both ends — slow enough at the start that the direction
+   registers before the speed does, quickest through the middle, settling
+   rather than stopping. The duration grows with the distance so a nudge to
+   the next row is not given the same half second as a jump across two
+   hundred, and it is capped at both ends so neither is ever a surprise.
+   Because the whole thing is a tween on scrollTop, the scrollbar tracks it
+   for free.
+
+   AND THE CUSTOMER ALWAYS WINS. A wheel, a finger, a key or a hand on the
+   scrollbar cancels it on the spot, and cancelling simply stops — there is
+   no momentum to fight and no snapping back, so the list is left exactly
+   where it is and the gesture carries on from there. The scrollbar case
+   cannot be caught by any event, so each frame also checks whether the
+   scroll moved somewhere this animation did not put it; if it did, that was
+   a hand, and the animation stands down. */
+/* ═══════════ THE LIST JUMPS TO THE SELECTION ═════════════════════════════
+   IT USED TO ANIMATE, AND ANIMATING WAS THE WRONG IDEA. Two rewrites of the
+   tween each fixed what the last one broke and each found a new way to be
+   irregular, because a scroll animation on this list is fighting three
+   things at once that a straight assignment does not fight at all: the list
+   is rebuilt from innerHTML at the end of every mark, so the row the tween
+   is flying toward is destroyed and recreated underneath it; its thumbnails
+   paint in lazily, so rows change height mid-flight; and scrollTop is
+   quantised, so what the tween writes is not what it reads back. Every one
+   of those is a reason to re-aim, and re-aiming is what made it stutter.
+
+   None of them can touch an assignment. The list is where it should be one
+   frame after the click, every time, by the same arithmetic in the same
+   order — which is what "repeatable" actually asks for.
+
+   WHAT SURVIVES from the animated version is the part that was never about
+   motion: the reveal is an INTENT, not an action. It remembers the item's
+   id — rows die on every rebuild, ids do not — and if the row is not in the
+   DOM yet (the list rebuilds on the next animation frame, and a click on
+   the sheet asks for the reveal before that frame runs) it waits for it
+   rather than dropping the request. That was the fix for "it doesn't scroll
+   to the selection at all", and it is orthogonal to how the scroll happens. */
+/* ── AND THE JUMP HAS TO OUTLIVE THE REBUILD ─────────────────────────────
+   Measuring is exact — 45 placements against a real scroll container, every
+   one dead centre to the pixel. The miss was never arithmetic; it was
+   TIMING. The jump happens against the list as it stands, and the list is
+   rebuilt on the next animation frame: mkRenderLayers replaces every child
+   and restores the scroll from `keepTop`. If the rebuild has fewer rows
+   above the target than the DOM the jump measured — a group closed, a layer
+   deleted, the visibility sort turned on — the row moves UP while the
+   scrollTop stays put, and it ends up above the visible area.
+
+   Measured, removing three rows above it: the row lands 57px off the top.
+   Twelve rows: 876px. That is "sometimes the object is just above the
+   viewable part of the list", reproduced.
+
+   So a jump that moved the list watches it for a few frames afterwards and
+   re-centres if the row has shifted. It is a jump, not an animation — a
+   correction costs one assignment — and it stops the moment two consecutive
+   frames agree, so the ordinary case pays for exactly one extra measurement.
+   A jump that decided NOT to move (the row was already in view) arms
+   nothing: there is no promise to keep. */
+/* ── AND THE REBUILD THAT ARRIVES LATER STILL ────────────────────────────
+   Watching for a few frames covers a rebuild that happens straight away. It
+   does not cover the one that matters most: mkTouch defers its tail by 90ms,
+   and that tail is what rebuilds the list after a group, an ungroup, a
+   delete or a reorder. By then the settle has been finished for fifty
+   milliseconds.
+
+   Measured, with rows moving under a reveal:
+     rebuild at   0ms   centred
+     rebuild at  40ms   210px off
+     rebuild at 100ms   the row at the very top edge      ← mkTouch's tail
+     rebuild at 200ms   489px above the visible area, gone
+   Grouping and ungrouping are exactly the actions that move rows AND go
+   through that tail, which is why they were the ones that misbehaved.
+
+   Frame counting cannot fix this — the number of frames to watch is a guess
+   about someone else's timer. What moves rows is a REBUILD, so the rebuild
+   is what re-arms the reveal: mkRenderLayers says so directly, and the
+   reveal re-centres on the row it was asked for. The hold is a short window
+   after the click, long enough to cover a deferred tail and too short to be
+   mistaken for a later, unrelated action; and any hand on the list clears it
+   outright. */
+const MK_REVEAL_PAD   = 10;   /* px of air before a row counts as "in view"  */
+const MK_REVEAL_WAIT  = 1200; /* ms to wait for a row that has not built yet */
+const MK_REVEAL_HOLD  = 600;  /* ms a rebuild may still re-centre the row    */
+const MK_REVEAL_GRACE = 250;  /* ms a rebuild inside that window buys back   */
+const MK_REVEAL_LIFE  = 1500; /* ms no reveal may outlive, whatever happens  */
+const MK_REVEAL_HAND  = 24;   /* px of unexplained scroll that means a hand  */
+let _mkRevealWant = null;
+let _mkRevealHeld = null;     /* { id, g, until } — the row a rebuild owes   */
+
+function mkRevealNow() {
+  return (window.performance && performance.now) ? performance.now() : Date.now();
+}
+function mkRevealCancel() {
+  if (_mkRevealWant && _mkRevealWant.raf) cancelAnimationFrame(_mkRevealWant.raf);
+  _mkRevealWant = null;
+  /* a hand on the list ends the claim too: whatever the reveal was owed, the
+     customer has since said where they want to be looking */
+  _mkRevealHeld = null;
+}
+/* the list was just rebuilt, so every row is somewhere new. If a reveal
+   asked for a row moments ago, it is owed that row's position again. */
+function mkRevealAfterRebuild() {
+  const held = _mkRevealHeld;
+  if (!held) return;
+  const now = mkRevealNow();
+  if (now > held.until) { _mkRevealHeld = null; return; }
+  const host = $("#mkLayers");
+  if (!host || !host.isConnected) return;
+  /* A REBUILD DURING THE SETTLE IS NOT A REASON TO STAND BACK; it is the
+     event the settle was waiting for. Returning early when one was already
+     running left the tail end of a watch — a frame or two — to absorb a
+     whole relayout, and it landed a dozen pixels out. Whether or not a watch
+     is in flight, the rebuild re-centres the row and gives the watch its
+     full window again. */
+  const w = _mkRevealWant || (_mkRevealWant = {
+    id: held.id, g: held.g, born: now, raf: 0, landed: false, seen: null, grace: 1,
+  });
+  /* the rebuild is this action's deferred work ARRIVING, so the watch needs
+     a moment past it to see the relayout finish — but only a moment, and
+     never past the hard life below, so late rebuilds cannot chain the watch
+     along indefinitely */
+  held.until = Math.max(held.until, now + MK_REVEAL_GRACE);
+  /* and the next frame is exempt from the hand test — see mkRevealTick */
+  if (_mkRevealWant) _mkRevealWant.grace = 1;
+  const row = mkRevealRow(host, w.id, w.g);
+  if (row) {
+    /* forced: this row was centred a moment ago and the rebuild moved it.
+       "It is still just about in view" is the miss, not the answer. */
+    mkRevealPut(host, row, true);
+    w.landed = true;
+    w.seen = host.scrollTop;
+  }
+  if (!w.raf) w.raf = requestAnimationFrame(mkRevealTick);
+}
+/* the row standing for this item: its own, or — while its group is shut —
+   the group's. Matched by walking the rows rather than by building a
+   selector, because a group key is not something to interpolate into one. */
+function mkRevealRow(host, id, g) {
+  if (!id && !g) return null;
+  const rows = host.querySelectorAll(".mk-layer");
+  let fallback = null;
+  for (let n = 0; n < rows.length; n++) {
+    const d = rows[n].dataset;
+    if (id && d.id === id) return rows[n];
+    if (g && !fallback && d.g === g) fallback = rows[n];
+  }
+  return fallback;
+}
+/* THE CENTRE OF THE VISIBLE LIST, clamped to the ends — at the top of a
+   long list there is nothing above to scroll away, so "centred" becomes "as
+   centred as this list can be", which is what the clamp says.
+
+   A row already comfortably in view is left exactly where it is. Moving the
+   list under a row the customer can already see buys nothing and costs the
+   place they had; the reveal exists for the rows they cannot see. */
+function mkRevealTarget(host, row, force) {
+  const hb = host.getBoundingClientRect(), rb = row.getBoundingClientRect();
+  if (!force &&
+      rb.top >= hb.top + MK_REVEAL_PAD && rb.bottom <= hb.bottom - MK_REVEAL_PAD) {
+    return host.scrollTop;
+  }
+  const top = host.scrollTop + (rb.top - hb.top);
+  const max = Math.max(0, host.scrollHeight - host.clientHeight);
+  return Math.round(Math.max(0, Math.min(max, top - (host.clientHeight - rb.height) / 2)));
+}
+/* put the row in the middle and say whether that took any moving. `force`
+   is passed on once the reveal has committed to a move, so the settle pass
+   below re-centres rather than being told the row is now "in view" — which
+   it is, at the very edge, which is the complaint. */
+function mkRevealPut(host, row, force) {
+  const to = mkRevealTarget(host, row, force);
+  const moved = Math.abs(to - host.scrollTop) > 0.5;
+  if (moved) host.scrollTop = to;
+  return moved;
+}
+/* one attempt: jump if the row is there, otherwise ask again next frame.
+   Once the jump has landed the same tick keeps watch — see the note above. */
+function mkRevealTick(ts) {
+  const w = _mkRevealWant;
+  if (!w) return;
+  w.raf = 0;
+  const host = $("#mkLayers");
+  if (!host || !host.isConnected) { _mkRevealWant = null; return; }
+  const row = mkRevealRow(host, w.id, w.g);
+  if (!row) {
+    /* the list is between renders. Wait for it — but only while the jump has
+       not yet happened; a row that vanishes AFTER we landed on it has been
+       deleted, and there is nothing to chase. */
+    if (w.landed || ts - w.born > MK_REVEAL_WAIT) { _mkRevealWant = null; return; }
+    w.raf = requestAnimationFrame(mkRevealTick);
+    return;
+  }
+  /* ── WHO MOVED THE LIST ───────────────────────────────────────────────
+     A hand is caught by the wheel, touch, pointer and key listeners on the
+     list itself, and those cancel exactly and immediately. THIS check is a
+     backstop for the one gesture that leaves no event of its own on some
+     platforms — a drag of the scrollbar — and it has to be, because
+     everything else that moves scrollTop in this window is the browser:
+
+       · `innerHTML = …` empties the container for an instant, so the scroll
+         restored right after it can be clipped to a scrollHeight the new
+         rows have not established yet, and the browser parks it at an end;
+       · a relayout as thumbnails and group rows resolve nudges it by a
+         pixel or two.
+
+     Both used to read as "someone else scrolled" and stood the settle down
+     mid-recovery, which is the very miss it exists to prevent. So the
+     backstop only fires on movement no relayout produces and no clamp
+     explains: a real drag of a scrollbar throws the list a long way, and a
+     value sitting on either end of the range is never a person's doing. */
+  if (w.seen != null && Math.abs(host.scrollTop - w.seen) > MK_REVEAL_HAND) {
+    const end = Math.max(0, host.scrollHeight - host.clientHeight);
+    const clamped = host.scrollTop <= 0.5 || host.scrollTop >= end - 0.5;
+    /* THE ONE FRAME AFTER A REBUILD IS EXEMPT. Releasing a clamp does not
+       always land on an end: a container emptied and refilled can report a
+       stale scrollHeight for a frame, take a clipped scroll, and correct
+       itself once layout catches up — a jump from one middle value to
+       another, indistinguishable from a hand by size alone. It abandoned the
+       recovery about one time in twenty.
+
+       Rather than soften the test for every frame — which would let a click
+       on the scrollbar track through — it is waived only on the frame
+       following a rebuild, which is the one frame where the browser is known
+       to still be settling. Every other frame judges as strictly as before. */
+    if (!clamped && !w.grace) { _mkRevealWant = null; _mkRevealHeld = null; return; }
+    w.seen = host.scrollTop;
+  }
+  w.grace = 0;
+  const moved = mkRevealPut(host, row, w.landed);
+  w.seen = host.scrollTop;
+  if (!w.landed) {
+    w.landed = true;
+    /* nothing to hold if the row was already where it should be */
+    if (!moved) { _mkRevealWant = null; _mkRevealHeld = null; return; }
+    _mkRevealHeld = { id: w.id, g: w.g, until: ts + MK_REVEAL_HOLD };
+  }
+  /* ── THE WATCH IS BOUNDED BY THE CLAIM, NOT BY A FRAME COUNT ──────────
+     It used to stop after two frames with nothing to correct, and that is a
+     guess about how long a browser takes to finish a relayout — a guess that
+     was wrong about one run in twenty. Measuring the list mid-layout returns
+     a scrollHeight the new rows have not established, the target gets
+     clipped against it, two frames pass with nothing apparently to do, and
+     the watch retires leaving the row short.
+
+     There is already a number that says how long this action's deferred work
+     can take: the claim's own deadline, the same one the rebuild hook reads.
+     So the watch simply holds the row until the claim expires. It is one row
+     lookup and two rect reads per frame for at most six hundred milliseconds
+     — and any hand on the list ends it at once, which is the only thing that
+     should. */
+  if (!_mkRevealHeld || ts > _mkRevealHeld.until || ts - w.born > MK_REVEAL_LIFE) {
+    _mkRevealWant = null;
+    _mkRevealHeld = null;
+    return;
+  }
+  w.raf = requestAnimationFrame(mkRevealTick);
+}
+/* ask the list to show this item. Tries immediately — so in the ordinary
+   case, where the row is already built, the list has moved before the next
+   paint and there is no frame in which it is visibly wrong. */
+function mkRevealItem(it) {
+  if (!it) return;
+  const host = $("#mkLayers");
+  if (!host || !__mkDock.open || __mkDock.tab !== "layers") return;
+  const id = String(it.id || ""), g = mkGroupOf(it);
+  const now = mkRevealNow();
+  mkRevealCancel();
+  _mkRevealWant = { id, g, born: now, raf: 0, landed: false, seen: null };
+  const row = mkRevealRow(host, id, g);
+  if (row) {
+    const moved = mkRevealPut(host, row, false);
+    _mkRevealWant.landed = true;
+    _mkRevealWant.seen = host.scrollTop;
+    if (!moved) { _mkRevealWant = null; return; }   /* already in view: done */
+    /* a rebuild in the next few hundred milliseconds owes this row its
+       place back — see mkRevealAfterRebuild */
+    _mkRevealHeld = { id, g, until: now + MK_REVEAL_HOLD };
+  } else {
+    /* the row is not built yet: the claim is staked now so that the very
+       rebuild we are waiting for is the one that honours it */
+    _mkRevealHeld = { id, g, until: now + MK_REVEAL_HOLD };
+  }
+  _mkRevealWant.raf = requestAnimationFrame(mkRevealTick);
+}
+
 function mkPaintLayerSel(reveal) {
   const host = $("#mkLayers");
   if (!host || !__mk || !__mkDock.open || __mkDock.tab !== "layers") return;
+  /* the intent is recorded BEFORE the early return, so a reveal asked for
+     while the list is still being built is honoured once it exists rather
+     than dropped on the floor */
+  if (reveal) mkRevealItem(__mk.items[__mk.sel]);
   if (!host.querySelector(".mk-layer")) { mkRenderLayersSoon(); return; }
   host.querySelectorAll(".mk-layer").forEach((row) => {
     const g = row.dataset.g;
@@ -9916,13 +19804,69 @@ function mkPaintLayerSel(reveal) {
   /* Scrolling the list is only ever right when the selection came from
      somewhere ELSE — picking a thing up on the sheet should reveal its row.
      Doing it on every repaint would move the list out from under a finger
-     that is in the middle of dragging a row down it. */
-  const first = reveal && host.querySelector(".mk-layer.is-sel");
-  if (first && first.scrollIntoView) {
-    const hb = host.getBoundingClientRect(), rb = first.getBoundingClientRect();
-    if (rb.top < hb.top || rb.bottom > hb.bottom) first.scrollIntoView({ block: "nearest" });
-  }
+     that is in the middle of dragging a row down it. The reveal itself is
+     mkRevealItem, asked for above. */
   mkLayerChrome();
+}
+
+/* ═══════════ SORTING THE LIST BY WHAT IS SHOWN ═══════════════════════════
+   A layer list's ORDER IS THE STACK — the row above sits in front on the
+   sheet — so a sort cannot be allowed to rearrange the items themselves.
+   This one rearranges the VIEW: the rows are grouped by whether the layer
+   is showing, and inside each group the stack order is preserved exactly.
+   Nothing about the artwork changes, and putting it back to "stack order"
+   restores the list without touching a thing.
+
+   THE ONE THING IT DOES COST is dragging. A drag reads a row's visual
+   position and converts it back to a stack position, and that conversion is
+   only truthful while the two agree. Rather than let a drop land somewhere
+   nobody could have predicted, the grip is disabled while a sort is on and
+   the pane says why. The keyboard and toolbar reorders still work, because
+   they act on the selection rather than on where a row happens to be drawn.
+
+   Top-level blocks only. A group's members keep their own order inside it,
+   so a group never fragments across the divide — half a group under "shown"
+   and half under "hidden" would be a lie about what the group is. A group's
+   own place is decided by whether it is showing as a whole. */
+let __mkLayerSort = "stack";      /* stack | shown | hidden */
+
+function mkLayerSortSet(mode) {
+  const m = (mode === "shown" || mode === "hidden") ? mode : "stack";
+  if (m === __mkLayerSort) return;
+  __mkLayerSort = m;
+  mkLayerSortChrome();
+  mkRenderLayers();
+  /* the row you were working on is very likely somewhere else now */
+  if (__mk && __mk.items[__mk.sel]) mkRevealItem(__mk.items[__mk.sel]);
+}
+function mkLayerSortChrome() {
+  const on = __mkLayerSort !== "stack";
+  $$("#mkDock [data-lsort]").forEach((b) => {
+    const sel = b.dataset.lsort === __mkLayerSort;
+    b.classList.toggle("is-on", sel);
+    b.setAttribute("aria-checked", sel ? "true" : "false");
+  });
+  const dot = $("#mkLayerMoreDot");
+  if (dot) dot.hidden = !on;
+  const bar = $("#mkLayersSorted");
+  if (bar) bar.hidden = !on;
+  const txt = $("#mkLayersSortedTxt");
+  if (txt) txt.textContent = __mkLayerSort === "hidden" ? "Showing hidden first"
+                                                       : "Showing visible first";
+  const host = $("#mkLayers");
+  if (host) host.classList.toggle("is-sorted", on);
+}
+/* blocks in the order the list should DRAW them, bottom-of-stack first —
+   mkRenderLayers walks this backwards, exactly as it walks mkBlocks() */
+function mkLayerBlocks() {
+  const blocks = mkBlocks();
+  if (__mkLayerSort === "stack") return blocks;
+  const shown = (bl) => bl.idx.some((i) => !__mk.items[i].hid);
+  const a = [], b = [];
+  blocks.forEach((bl) => (shown(bl) ? a : b).push(bl));
+  /* the list draws the END of this array at the TOP, so the group that
+     should appear first goes last */
+  return __mkLayerSort === "hidden" ? a.concat(b) : b.concat(a);
 }
 
 function mkLayerChrome() {
@@ -9937,6 +19881,16 @@ function mkLayerChrome() {
   if (ub) ub.disabled = !(__mk && mkCanUngroup());
   const pasteBtn = $("#mkLayerPaste");
   if (pasteBtn) pasteBtn.disabled = !(__mkClip && __mkClip.length);
+  /* the same five states, for the copies that moved behind the ⋯. A menu
+     item cannot be `disabled` and still be reachable by the keyboard the way
+     a button is, so it says so with aria and refuses the click. */
+  const able = { dup: has, copy: has, paste: !!(__mkClip && __mkClip.length),
+                 group: !!(__mk && mkCanGroup()), ungroup: !!(__mk && mkCanUngroup()) };
+  $$("#mkDock [data-lact]").forEach((b) => {
+    const ok = able[b.dataset.lact] !== false;
+    b.setAttribute("aria-disabled", ok ? "false" : "true");
+    b.classList.toggle("is-off", !ok);
+  });
   const foot = $("#mkLayerFoot");
   if (foot) {
     foot.hidden = !has;
@@ -9958,10 +19912,20 @@ function mkLayerChrome() {
 }
 
 /* selection is one idea, wherever it is expressed */
+/* how:
+     ""            take this object, or its whole group if it is in one
+     "alone"       take THIS object only, group or not
+     "toggle"      add/remove it — or its group — from the selection
+     "toggleAlone" add/remove just this object, never its group
+     "range"       everything between the anchor and here
+   The two "alone" forms are what makes a grouped layer individually
+   workable: reach stops at the object instead of widening to its siblings,
+   and every tool downstream then acts on a selection of exactly one. */
 function mkSelect(i, how) {
   if (!__mk) return;
-  const reach = (i >= 0 && i < __mk.items.length) ? mkReachOf(i, how === "alone") : [];
-  if (how === "toggle") mkSelToggle(reach);
+  const alone = how === "alone" || how === "toggleAlone";
+  const reach = (i >= 0 && i < __mk.items.length) ? mkReachOf(i, alone) : [];
+  if (how === "toggle" || how === "toggleAlone") mkSelToggle(reach);
   else if (how === "range") mkSelRangeTo(i);
   else mkSelSet(reach);
   if (mkSelCount() && __mk.tool !== "select") mkSetTool("select");
@@ -9981,8 +19945,31 @@ function mkSelRangeTo(i) {
 }
 function mkSelectGroup(g, how) {
   if (!__mk || !g) return;
-  const idx = mkGroupIdx(g);
-  if (!idx.length) return;
+  /* ── THE HEADER ROW AND A MEMBER CLICK MUST AGREE ────────────────────
+     mkReachOf has always filtered locked members out of a group click:
+     locking is a promise the thing will not move, and a group cannot
+     overrule it. This function did not, so the SAME group taken from its
+     header row came back with the locked members in the selection — and
+     every consumer downstream then had to decide what to do about it
+     separately. The engraving chip guessed right (it skips them and says
+     so); Delete, Arrange and the property bar did not have to guess at
+     all when the click came from a member, and did when it came from the
+     header. One reading, so the two gestures cannot disagree.
+
+     A group with nothing unlocked in it therefore selects nothing at all,
+     which is the same answer clicking any of its members gives. */
+  const idx = mkGroupIdx(g).filter((k) => !__mk.items[k].lok);
+  if (!idx.length) {
+    /* say why, rather than looking broken: the row highlights on hover and
+       then refuses, and "locked" is not visible unless the meta line is read */
+    const all = mkGroupIdx(g);
+    if (all.length) {
+      toast(all.length === 1
+        ? "That layer is locked — unlock it in Layers to select it"
+        : "Every layer in that group is locked — unlock them in Layers to select it", "err");
+    }
+    return;
+  }
   if (how === "toggle") mkSelToggle(idx);
   else mkSelSet(idx);
   if (mkSelCount() && __mk.tool !== "select") mkSetTool("select");
@@ -9990,32 +19977,55 @@ function mkSelectGroup(g, how) {
   mkPaintLayerSel();
 }
 
+/* ONE PASTE, TWO PLACES IT CAN LAND. Pasted from the menu or ⌘V it steps
+   down and right from the original, which is how you can see that a copy
+   happened at all. Pasted INTO a marquee it lands centred on the box, which
+   is the whole reason for putting the verb on the box: cut a piece here,
+   draw a box there, and the piece arrives there. Nothing is scaled to fit —
+   a paste that resized the artwork would be a different operation wearing
+   this one's name. Returns the new layers' indices. */
+function mkPasteClip(at) {
+  if (!__mk || !(__mkClip && __mkClip.length)) return [];
+  mkPushUndo();
+  let dx = 0.035, dy = 0.035;
+  if (at) {
+    const b = mkUnionDrawn(__mkClip);
+    dx = at.x - (b.x + b.w / 2);
+    dy = at.y - (b.y + b.h / 2);
+  }
+  /* a copied GROUP pastes as a group again — of its own, so renaming the
+     copy never renames what it was copied from */
+  const remap = {};
+  const fresh = [];
+  __mkClip.forEach((c) => {
+    const cp = mkPack(c);
+    cp.id = mkId();
+    if (cp.g) {
+      if (!remap[cp.g]) remap[cp.g] = "g" + Math.random().toString(36).slice(2, 8);
+      if (!__mk.groups) __mk.groups = {};
+      __mk.groups[remap[cp.g]] = { n: mkGroupName(cp.g), col: 0 };
+      cp.g = remap[cp.g];
+    }
+    for (let k = 0; k + 1 < cp.p.length; k += 2) { cp.p[k] += dx; cp.p[k + 1] += dy; }
+    /* a note's cached box travels with the note, or mkBBox answers for
+       where the original was */
+    if (cp._bx != null) cp._bx += dx;
+    if (cp._by != null) cp._by += dy;
+    __mk.items.push(cp);
+    fresh.push(__mk.items.length - 1);
+  });
+  mkSelSet(fresh);
+  mkTouch();
+  try { mkRenderLayers(); } catch (e) {}
+  return fresh;
+}
+
 function mkLayerAct(what) {
   if (!__mk) return;
   if (what === "paste") {
     if (!(__mkClip && __mkClip.length)) return;
-    mkPushUndo();
-    /* a copied GROUP pastes as a group again — of its own, so renaming the
-       copy never renames what it was copied from */
-    const remap = {};
-    const fresh = [];
-    __mkClip.forEach((c) => {
-      const cp = mkPack(c);
-      cp.id = mkId();
-      if (cp.g) {
-        if (!remap[cp.g]) remap[cp.g] = "g" + Math.random().toString(36).slice(2, 8);
-        if (!__mk.groups) __mk.groups = {};
-        __mk.groups[remap[cp.g]] = { n: mkGroupName(cp.g), col: 0 };
-        cp.g = remap[cp.g];
-      }
-      for (let k = 0; k + 1 < cp.p.length; k += 2) { cp.p[k] += 0.035; cp.p[k + 1] += 0.035; }
-      __mk.items.push(cp);
-      fresh.push(__mk.items.length - 1);
-    });
-    mkSelSet(fresh);
-    mkTouch();
-    mkRenderLayers();
-    toast(__mkClip.length === 1 ? "Pasted" : `Pasted ${__mkClip.length} layers`, "gold");
+    const n = mkPasteClip(null).length;
+    toast(n === 1 ? "Pasted" : `Pasted ${n} layers`, "gold");
     return;
   }
   if (what === "group")   { mkGroupSelection(); return; }
@@ -10026,8 +20036,7 @@ function mkLayerAct(what) {
   const objs = idxs.map((i) => __mk.items[i]);
 
   if (what === "copy") {
-    __mkClip = objs.map(mkPack);
-    mkLayerChrome();
+    mkClipSet(objs.map(mkPack));
     toast(objs.length === 1 ? "Copied — paste it here or in another design"
                             : `Copied ${objs.length} layers`, "gold");
     return;
@@ -10104,13 +20113,33 @@ function mkLayerAct(what) {
     const g = row.dataset.g || "";
     const i = +row.dataset.i;
     const add = e.metaKey || e.ctrlKey || __mkMulti;
-    const how = e.shiftKey ? "range" : (add ? "toggle" : (e.altKey ? "alone" : ""));
+    /* ── A CHILD ROW IS THE CHILD, NOT THE GROUP ────────────────────────
+       Clicking a member's row used to widen to the whole group, which left
+       no way at all to work on one layer of a group: the row named Mark 57
+       selected Mark 57 and its siblings, every tool then acted on all of
+       them, and the only escape was an Alt-click nobody could be expected
+       to guess. But the list is the one place where the members are
+       individually addressable — the row IS the layer — so a click on it
+       means that layer, and the group's own header row is what means the
+       group. Alt still isolates on the SHEET, where a click has no way of
+       saying which member was meant and taking the group is right.
+
+       Held modifiers keep working, isolated: ⌘/Ctrl-click adds one member
+       to a selection without dragging its siblings in, and shift-click
+       still runs a range. */
+    const child = row.classList.contains("mk-layer--child");
+    const how = e.shiftKey ? "range"
+              : (add ? (child ? "toggleAlone" : "toggle")
+                     : ((e.altKey || child) ? "alone" : ""));
     if (g) mkSelectGroup(g, (e.shiftKey || add) ? "toggle" : "");
     else mkSelect(i, how);
     /* a shift- or ⌘-click is a selection, never the start of a reorder */
     if (e.shiftKey || add) return;
     /* a press anywhere on the row can start a drag, but only after it has
        actually moved — otherwise selecting a layer on a phone would jitter */
+    /* while the list is a VIEW of the stack rather than the stack, a drop
+       has no honest stack position to convert to — see mkLayerBlocks */
+    if (__mkLayerSort !== "stack") return;
     drag = { row, g, i, y0: e.clientY, moved: false, sibs: siblings(row) };
     try { host.setPointerCapture(e.pointerId); } catch (err) {}
   });
@@ -10242,32 +20271,250 @@ function mkLayerAct(what) {
    designs and a tile in the library, costing no storage, no upload and no
    request. Cached on the content, so a list of forty designs paints once. */
 const MK_SKETCH_CACHE = new Map();
-function mkSketchThumb(sess, key, size) {
+/* A cache that threw ITSELF away was the reason a big repository painted
+   every tile on every pass: at eighty entries it cleared, and a library plus
+   a drawer plus two sizes passes eighty long before a customer's work does.
+   Least-recently-used, with room for a real account, and a read counts as
+   use — so the tiles on screen are the ones that survive. */
+const MK_SKETCH_CAP = 400;
+function mkSketchCacheGet(ck) {
+  if (!MK_SKETCH_CACHE.has(ck)) return null;
+  const v = MK_SKETCH_CACHE.get(ck);
+  MK_SKETCH_CACHE.delete(ck); MK_SKETCH_CACHE.set(ck, v);   /* touch */
+  return v;
+}
+function mkSketchCacheSet(ck, url) {
+  MK_SKETCH_CACHE.set(ck, url);
+  if (MK_SKETCH_CACHE.size > MK_SKETCH_CAP) {
+    const drop = MK_SKETCH_CACHE.size - Math.floor(MK_SKETCH_CAP * 0.75);
+    const it = MK_SKETCH_CACHE.keys();
+    for (let i = 0; i < drop; i++) {
+      const n = it.next(); if (n.done) break;
+      MK_SKETCH_CACHE.delete(n.value);
+    }
+  }
+}
+
+/* the tile a thumbnail occupies while it is being drawn — paper, not a hole,
+   so nothing on the grid moves when the real picture arrives */
+const MK_THUMB_WAIT =
+  "data:image/svg+xml;charset=utf-8," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">' +
+    '<rect width="40" height="40" fill="#faf7f0"/>' +
+    '<circle cx="20" cy="20" r="6.5" fill="none" stroke="#ded6c4" stroke-width="1.6" ' +
+    'stroke-linecap="round" stroke-dasharray="10 30"><animateTransform ' +
+    'attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" ' +
+    'dur="1.1s" repeatCount="indefinite"/></circle></svg>');
+
+function mkSketchKey(sess, key, size) {
   if (!sess) return "";
   const k = key || "draw";
   const raw = mkItemsOf((sess.markups || {})[k]);
   if (!raw.length) return "";
-  const S = size || 260;
-  const ck = (sess.id || "?") + ":" + k + ":" + S + ":" + raw.length + ":" + (sess.updatedAt || 0);
-  if (MK_SKETCH_CACHE.has(ck)) return MK_SKETCH_CACHE.get(ck);
-  let url = "";
-  try {
-    const cv = document.createElement("canvas");
-    cv.width = S; cv.height = S;
-    const ctx = cv.getContext("2d");
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, S, S);
-    /* pictures inside the sketch are skipped rather than risked: one
-       cross-origin bitmap taints the canvas and toDataURL throws for ever */
-    mkPaint(ctx, S, S, raw.map(mkPack).filter((it) => it.t !== "img"), { export: true });
-    url = cv.toDataURL("image/png");
-  } catch (e) { url = ""; }
-  if (MK_SKETCH_CACHE.size > 80) MK_SKETCH_CACHE.clear();
-  MK_SKETCH_CACHE.set(ck, url);
-  return url;
+  return (sess.id || "?") + ":" + k + ":" + (size || 260) + ":" + raw.length +
+         ":" + asMs(sess.updatedAt);
 }
 
+/* ── the queue ───────────────────────────────────────────────────────────
+   One tile at a time, in idle time, never while something is animating, and
+   the answer is posted back into whatever is already on screen rather than
+   causing a re-render. Jobs for tiles that have scrolled away are still
+   drawn — they are cheap once queued and the customer is likely to scroll
+   back — but they are drawn LAST: newest request first, because the newest
+   request is the one somebody is looking at. */
+const __mkThumbQ = [];
+const __mkThumbJobs = new Map();      /* ck → what it takes to draw it */
+let __mkThumbRunning = 0;
+
+/* Knowing HOW to draw a tile is not the same as asking for it to be drawn.
+   Registering is free; the asking is done by the observer below, when the
+   tile is actually somewhere a customer can see it. */
+function mkThumbRegister(ck, sess, key, size) {
+  if (!ck || __mkThumbJobs.has(ck)) return;
+  __mkThumbJobs.set(ck, { ck, sess, key: key || "draw", size: size || 260 });
+  if (__mkThumbJobs.size > 600) {
+    const it = __mkThumbJobs.keys();
+    for (let i = 0; i < 200; i++) { const n = it.next(); if (n.done) break; __mkThumbJobs.delete(n.value); }
+  }
+}
+function mkThumbEnqueue(ck) {
+  if (!ck || mkSketchCacheGet(ck) != null) return;
+  const job = __mkThumbJobs.get(ck);
+  if (!job) return;
+  for (let i = 0; i < __mkThumbQ.length; i++) if (__mkThumbQ[i].ck === ck) return;
+  __mkThumbQ.push(job);
+  mkThumbPump();
+}
+
+/* ── ASKED FOR ONLY WHEN IT CAN BE SEEN ──────────────────────────────────
+   A repository of a hundred and fifty designs is a hundred and fifty
+   pictures to draw, and six of them are on the screen. Queueing all of them
+   the moment the grid is built meant the queue had to be capped, and a cap
+   on a queue that is popped newest-first means the tiles at the bottom are
+   thrown away and never drawn again — a spinner that spins for ever.
+   So nothing is queued until it is nearly in view, and scrolling to it is
+   what asks. The queue can no longer outgrow the screen, so nothing has to
+   be discarded, so no tile is ever abandoned. Root is the viewport, which
+   accounts for the modal's own scrollers on the way up. */
+let __mkThumbSeeIO = null;
+function mkThumbObserve(root) {
+  if (!("IntersectionObserver" in window)) {
+    /* no observer: fall back to asking for everything, in idle time */
+    (root || document).querySelectorAll("img[data-thumb]")
+      .forEach((img) => mkThumbEnqueue(img.getAttribute("data-thumb")));
+    return;
+  }
+  if (!__mkThumbSeeIO) {
+    __mkThumbSeeIO = new IntersectionObserver((ents) => {
+      ents.forEach((en) => {
+        if (!en.isIntersecting) return;
+        __mkThumbSeeIO.unobserve(en.target);
+        mkThumbEnqueue(en.target.getAttribute("data-thumb"));
+      });
+    }, { rootMargin: "320px 0px" });
+  }
+  (root || document).querySelectorAll("img[data-thumb]")
+    .forEach((img) => __mkThumbSeeIO.observe(img));
+}
+/* A few at a time, not one at a time. The expensive half of each job — the
+   PNG encode — is off this thread, so while one tile is being encoded the
+   thread is free to paint the next one's vectors. Three is enough to keep a
+   scrolling grid fed and few enough that a burst never becomes a long task. */
+const MK_THUMB_LANES = 3;
+function mkThumbPump() {
+  while (__mkThumbRunning < MK_THUMB_LANES && __mkThumbQ.length) {
+    __mkThumbRunning++;
+    bjIdle(async () => {
+      const job = __mkThumbQ.pop();
+      if (!job) { __mkThumbRunning--; return; }
+      /* One last look before the expensive part. bjIdle decided this was a
+         quiet moment when it queued the callback; between then and now a
+         menu may have started opening, and the paint below is synchronous
+         once it begins. Put the job back and try again in a moment. */
+      job.waits = (job.waits || 0) + 1;
+      if (bjBusyNow() && job.waits < 5) {      /* but not for ever — see bjIdle */
+        __mkThumbQ.push(job); __mkThumbRunning--;
+        setTimeout(mkThumbPump, 120);
+        return;
+      }
+      try {
+        if (mkSketchCacheGet(job.ck) == null) {
+          const url = await mkSketchRaster(job.sess, job.key, job.size);
+          mkSketchCacheSet(job.ck, url || "");
+          mkThumbPost(job.ck, url || "");
+        }
+      } catch (e) { mkSketchCacheSet(job.ck, ""); }
+      __mkThumbRunning--;
+      mkThumbPump();
+    }, 700);
+  }
+}
+/* Late arrival, delivered by hand. Every tile that was painted with the
+   placeholder carries its cache key, so the picture goes straight into the
+   one <img> that wanted it — no list rebuild, no scroll position lost, no
+   layout beyond that single element. */
+function mkThumbPost(ck, url) {
+  if (!url) return;
+  /* THE ENTRY, NOT ONLY THE PICTURE. The derived list is memoised, so an
+     entry built while its thumbnail was still being drawn is holding the
+     waiting tile — and that entry is what gets uploaded if somebody picks it
+     as their reference. Patch the data as well as the pixels, or a customer
+     eventually submits a spinner as their design. */
+  try {
+    const l = __mkLibMemo && __mkLibMemo.list;
+    if (l) for (let i = 0; i < l.length; i++) {
+      if (l[i].thumbKey === ck) { l[i].url = url; l[i].thumbKey = ""; }
+    }
+  } catch (e) {}
+  const sel = '[data-thumb="' + (window.CSS && CSS.escape ? CSS.escape(ck) : ck.replace(/"/g, "")) + '"]';
+  let n;
+  try { n = document.querySelectorAll(sel); } catch (e) { return; }
+  n.forEach((img) => { img.src = url; img.removeAttribute("data-thumb"); });
+}
+
+async function mkSketchRaster(sess, key, size) {
+  if (!sess) return "";
+  const raw = mkItemsOf((sess.markups || {})[key || "draw"]);
+  if (!raw.length) return "";
+  const S = size || 260;
+  /* pictures inside the sketch are skipped rather than risked: one
+     cross-origin bitmap taints the canvas and the encode throws for ever */
+  const packed = raw.map(mkPack).filter((it) => it.t !== "img");
+  try {
+    return await bjRasterPNG(S, (ctx) => {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, S, S);
+      mkPaint(ctx, S, S, packed, { export: true });
+    });
+  } catch (e) { return ""; }
+}
+
+/* The synchronous face of all of the above, and the ONLY one the rest of the
+   studio calls: it answers instantly — with the finished picture if it has
+   one, with the waiting tile if it does not — and puts the work in the
+   queue. `.thumbKey` on the answer is what lets the tile be patched later. */
+function mkSketchThumb(sess, key, size) {
+  return mkSketchThumbRef(sess, key, size).url;
+}
+/* same, but says which key to watch for */
+function mkSketchThumbRef(sess, key, size) {
+  const ck = mkSketchKey(sess, key, size);
+  if (!ck) return { url: "", ck: "" };
+  const hit = mkSketchCacheGet(ck);
+  if (hit != null) return { url: hit, ck: "" };
+  mkThumbRegister(ck, sess, key, size);
+  return { url: MK_THUMB_WAIT, ck };
+}
+
+/* ── AND WHEN SOMEBODY ACTUALLY USES ONE ─────────────────────────────────
+   Everything above is about what a tile LOOKS like. The moment a tile is
+   chosen — placed on a sheet, made the reference, opened large — its `url`
+   stops being decoration and becomes the picture itself, and the waiting
+   tile must never be the thing that gets used. So choosing jumps the queue:
+   draw it now, wait for it, hand back the real one. A tile whose thumbnail
+   was already drawn settles in the same tick and costs nothing. */
+async function mkAssetSettle(a) {
+  if (!a || !a.thumbKey) return a;
+  const ck = a.thumbKey;
+  let url = mkSketchCacheGet(ck);
+  if (url == null) {
+    const job = __mkThumbJobs.get(ck);
+    url = job ? await mkSketchRaster(job.sess, job.key, job.size) : "";
+    mkSketchCacheSet(ck, url || "");
+  }
+  if (url) { a.url = url; mkThumbPost(ck, url); }
+  a.thumbKey = "";
+  return a;
+}
+
+/* ── DERIVED ONCE, NOT FOUR TIMES ────────────────────────────────────────
+   Every renderer here used to call mkLibraryItems() twice — once for the
+   list and once for the total — and there are three renderers plus a count
+   on the upload step, so a single Firestore snapshot rebuilt the whole
+   repository up to eight times over. The build itself is honest work; doing
+   it eight times is not. The signature below is everything the answer can
+   depend on, so a rebuild happens when the data changed and never otherwise. */
+let __mkLibMemo = { sig: " ", list: null };
+let __mkPersistTick = 0;
+function mkLibSig() {
+  const ss = state.sessions || [];
+  let sig = ss.length + "|" + __mkPersistTick + "|";
+  for (let i = 0; i < ss.length; i++) {
+    const s = ss[i];
+    sig += (s.id || "?") + ":" + asMs(s.updatedAt) + ":" +
+           ((s.versions || []).length) + ":" + ((s.assets || []).length) + ";";
+  }
+  return sig;
+}
 function mkLibraryItems() {
+  const sig = mkLibSig();
+  if (__mkLibMemo.list && __mkLibMemo.sig === sig) return __mkLibMemo.list;
+  const list = mkLibraryBuild();
+  __mkLibMemo = { sig, list };
+  return list;
+}
+function mkLibForget() { __mkLibMemo = { sig: " ", list: null }; }
+function mkLibraryBuild() {
   const out = [];
   const seen = new Set();
   const add = (o) => {
@@ -10331,10 +20578,12 @@ function mkLibraryItems() {
       const m = s.markups[k] || {};
       const n = mkItemsOf(m).length;
       if (!n) return;
-      const u = m.impUrl || mkSketchThumb(s, k, 320);
+      const ref = m.impUrl ? { url: m.impUrl, ck: "" } : mkSketchThumbRef(s, k, 320);
+      const u = ref.url;
       if (!u) return;
       add({
-        kind: "design", url: u, path: m.impPath || "", pairUrl: "", pairPath: "",
+        kind: "design", url: u, thumbKey: ref.ck,
+        path: m.impPath || "", pairUrl: "", pairPath: "",
         key: s.id + "|" + k,
         at: Number(m.impAt) || Number(m.updatedAt) || Number(s.updatedAt) || 0,
         title: m.impName || "Imported artwork",
@@ -10350,10 +20599,20 @@ function mkLibraryItems() {
     const drawn = !!(s.reference && s.reference.type === "upload" && s.reference.drawn);
     const sketchLayers = layersOf(s, "draw");
     if (sketchLayers && !drawn) {
-      const u = mkSketchThumb(s, "draw", 320);
+      const sref = mkSketchThumbRef(s, "draw", 320);
+      const u = sref.url;
       if (u) {
         add({
-          kind: "sketch", url: u, path: "", pairUrl: "", pairPath: "",
+          kind: "sketch", url: u, thumbKey: sref.ck,
+          /* AN IDENTITY OF ITS OWN, NOT ONE BORROWED FROM ITS PICTURE.
+             Entries with no file behind them were identified by their url,
+             which worked only because each one was a different picture. Now
+             that a picture is drawn when it is needed rather than up front,
+             every undrawn sketch briefly shares the same waiting tile — and
+             a repository of a hundred and fifty designs deduplicated itself
+             down to one. A sketch is identified by WHICH sketch it is. */
+          key: s.id + "|draw",
+          path: "", pairUrl: "", pairPath: "",
           at: Number(s.updatedAt) || Number(s.createdAt) || 0,
           title: s.name || "My sketch", sub: "drawn by hand · not submitted",
           sid: s.id, srcSid: s.id, srcKey: "draw", layers: sketchLayers,
@@ -10364,9 +20623,14 @@ function mkLibraryItems() {
   });
   return out;
 }
-function mkLibFiltered() {
+/* .slice() FIRST, ALWAYS. The derived repository is memoised now, so what
+   comes back is the one shared array — and three panels sort it three
+   different ways. Sorting it in place would silently reorder a list another
+   panel has already painted indices against, and a tile whose index moved is
+   a tile that places somebody else's picture. Each view sorts its own copy. */
+function mkLibFiltered(src) {
   const q = String(__mkDock.q || "").trim().toLowerCase();
-  let list = mkLibraryItems();
+  let list = (src || mkLibraryItems()).slice();
   if (__mkDock.filter !== "all") list = list.filter((a) => a.kind === __mkDock.filter);
   if (q) list = list.filter((a) => (a.title + " " + a.sub).toLowerCase().indexOf(q) >= 0);
   list.sort((a, b) => __mkDock.sort === "old" ? a.at - b.at : b.at - a.at);
@@ -10382,37 +20646,105 @@ function mkLibDate(ms) {
       sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
   } catch (e) { return ""; }
 }
+/* ── PAINTING A HUNDRED AND FORTY TILES WITHOUT LOSING A FRAME ───────────
+   One innerHTML write for the whole grid is one string built, one parse, one
+   style pass and one layout for every tile at once — fine at twelve, a
+   visible stall at a hundred and forty, and it lands on whatever animation
+   happened to be running. So: enough tiles to fill the screen go down at
+   once, because a grid that arrives in pieces looks broken, and the rest are
+   appended in slices that hand the thread back between them. Returns a token
+   a newer render can cancel, so typing in the search box cannot end up with
+   two paints racing into the same grid. */
+const MK_GRID_FIRST = 24;
+const MK_GRID_CHUNK = 18;
+function mkAssetKey(a) { return (a && (a.key || a.path || a.url)) || ""; }
+/* Older designs arriving is an APPEND, and an append must not move the
+   ground under somebody who is already scrolling — which is exactly what
+   loads more of them. So a re-render that only adds to the end keeps its
+   scroll position, and paints at least as many tiles as were already there
+   before it hands the thread back. A re-render that changed the list (a
+   filter, a search) goes back to the top, which is what it is for. */
+function mkGridPaint(host, list, tile, prev) {
+  const top = host.scrollTop;
+  let keep = 0;
+  if (prev && prev.length && list.length >= prev.length && top > 0) {
+    keep = prev.length;
+    for (let i = 0; i < prev.length; i++) {
+      if (mkAssetKey(prev[i]) !== mkAssetKey(list[i])) { keep = 0; break; }
+    }
+  }
+  const head = [];
+  const n0 = Math.min(list.length, Math.max(MK_GRID_FIRST, keep));
+  for (let i = 0; i < n0; i++) head.push(tile(list[i], i));
+  host.innerHTML = head.join("");
+  host.scrollTop = keep ? top : 0;
+  mkThumbObserve(host);
+  if (list.length <= n0) return null;
+  let i = n0;
+  const tok = { cancelled: false, cancel() { this.cancelled = true; } };
+  const step = () => {
+    if (tok.cancelled || !host.isConnected) return;
+    const end = Math.min(list.length, i + MK_GRID_CHUNK);
+    const buf = [];
+    for (; i < end; i++) buf.push(tile(list[i], i));
+    host.insertAdjacentHTML("beforeend", buf.join(""));
+    mkThumbObserve(host);
+    if (i < list.length) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  return tok;
+}
+
 let __mkLib = [];
+let __mkLibJob = null;
 function mkRenderLibrary() {
   const host = $("#mkLibGrid"); if (!host) return;
-  __mkLib = mkLibFiltered();
-  const total = mkLibraryItems().length;
+  const all = mkLibraryItems();
+  const prev = __mkLib;
+  __mkLib = mkLibFiltered(all);
+  const total = all.length;
+  /* HOW MANY OF EACH, ON THE MENU ITEM ITSELF. It is the question the chips
+     were being clicked to answer, and answering it up front saves the click.
+     A kind with nothing in it is disabled rather than hidden: "no sketches
+     yet" is an answer, and a control that vanishes is not. */
+  const byKind = { all: total };
+  all.forEach((a) => { byKind[a.kind] = (byKind[a.kind] || 0) + 1; });
+  $$('[data-drop="libkind"] .mk-item').forEach((b) => {
+    const n = byKind[b.dataset.filter] || 0;
+    const em = b.querySelector("em");
+    if (em) em.textContent = n ? String(n) : "none";
+    b.disabled = !n && b.dataset.filter !== "all";
+  });
   $("#mkLibCount").textContent = __mkLib.length === total
     ? `${total} image${total === 1 ? "" : "s"}`
     : `${__mkLib.length} of ${total}`;
+  if (__mkLibJob) { __mkLibJob.cancel(); __mkLibJob = null; }
   if (!__mkLib.length) {
     host.innerHTML = total
       ? '<p class="mk-lib__empty">Nothing matches that.</p>'
       : '<p class="mk-lib__empty">Your library fills itself: every image you upload and every charm we draw for you lands here, ready to drop into any design.</p>';
     return;
   }
-  host.innerHTML = __mkLib.map((a, i) => {
-    const shown = a.pairUrl || a.url;
-    return `<figure class="mk-asset" data-a="${i}" tabindex="0" role="button"
-                    aria-label="${attrText(a.title + " — tap to place, drag onto the sheet to position it")}">
-      <span class="mk-asset__img"><img src="${attrText(shown)}" alt="" loading="lazy" draggable="false"></span>
-      ${a.src ? `<span class="mk-asset__fmt" title="${attrText(a.src.toUpperCase() + " — every layer came across, still editable")}">${escapeHtml(a.src.toUpperCase())}</span>` : ""}
-      ${a.pairUrl ? '<span class="mk-asset__pair" title="Charm and drawing, kept together">PAIR</span>' : ""}
-      ${a.layers ? `<span class="mk-asset__layers" title="${a.layers} editable object${a.layers === 1 ? "" : "s"} — placing this brings them all in, still editable">✦&nbsp;${a.layers}</span>` : ""}
-      <button class="mk-asset__zoom" data-zoom="${i}" type="button" aria-label="Preview larger">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M10.5 8v5M8 10.5h5"/></svg>
-      </button>
-      <button class="mk-asset__kill" data-kill="${i}" type="button" title="Delete this image for good" aria-label="${attrText("Delete " + a.title + " permanently")}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M9 6.5V4h6v2.5"/><path d="M6.5 6.5 7.5 20h9l1-13.5"/></svg>
-      </button>
-      <figcaption><b>${escapeHtml(a.title)}</b><span>${escapeHtml(a.sub)}${a.at ? " · " + mkLibDate(a.at) : ""}</span></figcaption>
-    </figure>`;
-  }).join("");
+  __mkLibJob = mkGridPaint(host, __mkLib, mkLibTile, prev);
+}
+function mkLibTile(a, i) {
+  const shown = a.pairUrl || a.url;
+  const watch = (!a.pairUrl && a.thumbKey) ? ` data-thumb="${attrText(a.thumbKey)}"` : "";
+  return `<figure class="mk-asset" data-a="${i}" tabindex="0" role="button"
+                  title="${attrText(a.title + " — tap to place, or drag it onto the sheet")}"
+                  aria-label="${attrText(a.title + " — tap to place, drag onto the sheet to position it")}">
+    <span class="mk-asset__img"><img src="${attrText(shown)}"${watch} alt="" loading="lazy" decoding="async" draggable="false"></span>
+    ${a.src ? `<span class="mk-asset__fmt" title="${attrText(a.src.toUpperCase() + " — every layer came across, still editable")}">${escapeHtml(a.src.toUpperCase())}</span>` : ""}
+    ${a.pairUrl ? '<span class="mk-asset__pair" title="Charm and drawing, kept together">PAIR</span>' : ""}
+    ${a.layers ? `<span class="mk-asset__layers" title="${a.layers} editable object${a.layers === 1 ? "" : "s"} — placing this brings them all in, still editable">✦&nbsp;${a.layers}</span>` : ""}
+    <button class="mk-asset__zoom" data-zoom="${i}" type="button" aria-label="Preview larger">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M10.5 8v5M8 10.5h5"/></svg>
+    </button>
+    <button class="mk-asset__kill" data-kill="${i}" type="button" title="Delete this image for good" aria-label="${attrText("Delete " + a.title + " permanently")}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M9 6.5V4h6v2.5"/><path d="M6.5 6.5 7.5 20h9l1-13.5"/></svg>
+    </button>
+    <figcaption><b>${escapeHtml(a.title)}</b><span>${escapeHtml(a.sub)}${a.at ? " · " + mkLibDate(a.at) : ""}</span></figcaption>
+  </figure>`;
 }
 /* Deleting an image says what it will cost first, because where the picture
    lives decides what goes with it. */
@@ -10446,6 +20778,9 @@ function mkLibRefresh() {
    between the metal charm and the drawing it was cut from. */
 let __mkZoomAsset = null, __mkZoomHalf = "charm";
 function mkOpenLibZoom(a) {
+  /* a preview at full size is the one place a waiting square would be
+     unmistakable — draw it now and repaint when it lands */
+  if (a && a.thumbKey) mkAssetSettle(a).then(() => { if (__mkZoomAsset === a) mkPaintLibZoom(); });
   __mkZoomAsset = a;
   __mkZoomHalf = a.pairUrl ? "charm" : "bw";
   $("#mkZoomTitle").textContent = a.title + (a.sub ? " · " + a.sub : "");
@@ -10607,8 +20942,12 @@ function mkPlaceItemsGroup(items, title, cx, cy, sourceFrame) {
 }
 
 /* the one door every "put this on my sheet" goes through */
-function mkPlaceAsset(a, cx, cy, forcePicture) {
+async function mkPlaceAsset(a, cx, cy, forcePicture) {
   if (!__mk || !a) return;
+  /* if this tile's picture is still being drawn, finish it before it becomes
+     something on the sheet — see mkAssetSettle */
+  if (a.thumbKey) await mkAssetSettle(a);
+  if (!__mk) return;
   if (!forcePicture && a.layers) {
     const n = mkInsertLayers(a, cx, cy);
     if (n) {
@@ -10820,7 +21159,9 @@ function mkCtxOpen(clientX, clientY, index) {
   if (index != null && index >= 0 && !mkIsSelIdx(index)) {
     mkSelSet(mkReachOf(index, false));
     mkChrome();
-    mkPaintLayerSel();
+    /* a right-click on the sheet selects, and a selection made on the sheet
+       shows its row — the same rule a left-click follows */
+    mkPaintLayerSel(true);
   }
   const it = __mk.items[__mk.sel];
   const n = mkSelCount();
@@ -10908,9 +21249,33 @@ function mkCtxDo(act) {
     return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
   };
 
+  /* ── THE MENU IS FOR THE RIGHT BUTTON, AND ONLY THE RIGHT BUTTON ───────
+     Ctrl held on a resize handle means "scale about the centre" — see the
+     note at `fromCentre`. On a Mac, Ctrl+click is ALSO the operating
+     system's secondary click, so the browser fires `contextmenu` from the
+     same press, and the menu opened over the top of the resize the customer
+     was in the middle of doing.
+
+     The two are told apart by the button. A genuine secondary click — right
+     mouse button, two-finger tap on a trackpad — arrives with button 2. A
+     Ctrl+click arrives with button 0 and ctrlKey set, because it is the
+     PRIMARY button plus a modifier, and in this studio that modifier is
+     already spoken for. The default is still suppressed either way, so the
+     browser's own menu cannot appear over a drag either.
+
+     And no menu opens while a gesture is in flight, whatever the button:
+     by the time contextmenu fires the pointerdown has already begun a
+     resize, a rotate, a move or a marquee, and a menu on top of a live drag
+     is never what was asked for. */
+  const gestureLive = () => !!(__mk && (__mk.drag || __mk.msDrag || __mk.marq ||
+                                        __mk.eraseDraw || __mk.live ||
+                                        __mk.cropFrom || __mk.gesture || __mk.panFrom));
+  const modifierClick = (e) => e.button !== 2 && (e.ctrlKey || e.metaKey);
+
   stage.addEventListener("contextmenu", (e) => {
     if (!__mk) return;
     e.preventDefault();
+    if (modifierClick(e) || gestureLive()) return;
     const [x, y] = norm(e);
     const hit = mkHitItem(x, y);
     mkCtxOpen(e.clientX, e.clientY, hit);
@@ -10951,6 +21316,9 @@ function mkCtxDo(act) {
       const row = e.target.closest(".mk-layer");
       if (!row || !__mk) return;
       e.preventDefault();
+      /* the same rule as the sheet: Ctrl-click here adds to the selection,
+         so it must not also open a menu on top of what it just picked */
+      if (modifierClick(e)) return;
       mkCtxOpen(e.clientX, e.clientY, +row.dataset.i);
     });
     layers.addEventListener("dblclick", (e) => {
@@ -10962,6 +21330,16 @@ function mkCtxDo(act) {
     layers.addEventListener("pointerdown", (e) => armPress(e, "layers"));
     ["pointermove", "pointerup", "pointercancel"].forEach((t) =>
       layers.addEventListener(t, cancelPress));
+    /* ── THE HAND ALWAYS WINS ────────────────────────────────────────────
+       There is no animation left to interrupt — the jump is over before the
+       next paint. What CAN still be outstanding is a reveal waiting for a
+       row the list has not built yet, and yanking the scroll out from under
+       someone who has started scrolling in the meantime is exactly the rude
+       thing the animation used to do. So a hand on the list abandons the
+       pending jump. */
+    ["wheel", "touchstart", "pointerdown", "keydown"].forEach((t) =>
+      layers.addEventListener(t, () => { if (_mkRevealWant) mkRevealCancel(); },
+                              { passive: true }));
   }
 
   menu.querySelectorAll("[data-ctx]").forEach((b) =>
@@ -10991,16 +21369,28 @@ function mkCtxDo(act) {
   $$("#mkDock .mk-dock__tab").forEach((b) =>
     b.addEventListener("click", () => { mkDockMin(false); mkDockSet(true, b.dataset.dock); }));
 
-  $("#mkLayerUp").addEventListener("click", () => mkLayerAct("up"));
-  $("#mkLayerDown").addEventListener("click", () => mkLayerAct("down"));
-  $("#mkLayerDup").addEventListener("click", () => mkLayerAct("dup"));
-  $("#mkLayerCopy").addEventListener("click", () => mkLayerAct("copy"));
-  $("#mkLayerPaste").addEventListener("click", () => mkLayerAct("paste"));
-  $("#mkLayerDel").addEventListener("click", () => mkLayerAct("del"));
-
-  const gb = $("#mkLayerGroup"), ub = $("#mkLayerUngroup");
-  if (gb) gb.addEventListener("click", () => mkLayerAct("group"));
-  if (ub) ub.addEventListener("click", () => mkLayerAct("ungroup"));
+  /* the three that stayed on the bar, and every one that moved behind the ⋯
+     — one dispatcher either way, so a control changing places is a change of
+     markup and nothing else. Guarded by presence: a theme section older than
+     this asset still has the flat nine-button bar and must keep working. */
+  const bar = { mkLayerUp: "up", mkLayerDown: "down", mkLayerDel: "del",
+                mkLayerDup: "dup", mkLayerCopy: "copy", mkLayerPaste: "paste",
+                mkLayerGroup: "group", mkLayerUngroup: "ungroup" };
+  Object.keys(bar).forEach((id) => {
+    const b = $("#" + id);
+    if (b) b.addEventListener("click", () => mkLayerAct(bar[id]));
+  });
+  $$("#mkDock [data-lact]").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (b.getAttribute("aria-disabled") === "true") return;
+      mkCloseAllDrops();
+      mkLayerAct(b.dataset.lact);
+    }));
+  $$("#mkDock [data-lsort]").forEach((b) =>
+    b.addEventListener("click", () => { mkCloseAllDrops(); mkLayerSortSet(b.dataset.lsort); }));
+  { const x = $("#mkLayersSortedX");
+    if (x) x.addEventListener("click", () => mkLayerSortSet("stack")); }
+  mkLayerSortChrome();          /* the menu starts agreeing with the default */
   const mb = $("#mkMultiBtn");
   if (mb) mb.addEventListener("click", () => {
     __mkMulti = !__mkMulti;
@@ -11040,29 +21430,48 @@ function mkCtxDo(act) {
     mkRedraw(); mkPersist();
   });
 
-  /* ── library controls ── */
-  $$("#mkLibFilters .mk-chip").forEach((b) => b.addEventListener("click", () => {
-    __mkDock.filter = b.dataset.filter;
-    $$("#mkLibFilters .mk-chip").forEach((x) => x.classList.toggle("is-on", x === b));
-    mkRenderLibrary();
-  }));
-  $$(".mk-chip--sort").forEach((b) => b.addEventListener("click", () => {
-    __mkDock.sort = b.dataset.sort;
-    $$(".mk-chip--sort").forEach((x) => x.classList.toggle("is-on", x === b));
-    mkRenderLibrary();
-  }));
+  /* ── library controls: two menus, one line ── */
+  const libPick = (sel, key, lbl) => {
+    $$(sel).forEach((b) => b.addEventListener("click", () => {
+      __mkDock[key] = b.dataset[key];
+      $$(sel).forEach((x) => x.classList.toggle("is-on", x === b));
+      const el = $(lbl); if (el) el.textContent = b.dataset.lbl || "";
+      mkCloseAllDrops();
+      mkRenderLibrary();
+    }));
+  };
+  libPick('[data-drop="libkind"] .mk-item', "filter", "#mkLibKindLbl");
+  libPick('[data-drop="libsort"] .mk-item', "sort",   "#mkLibSortLbl");
   $("#mkLibSearch").addEventListener("input", () => {
     __mkDock.q = $("#mkLibSearch").value;
     mkRenderLibrary();
   });
   $("#mkLibMore").addEventListener("click", async () => {
     const b = $("#mkLibMore");
+    if (b.disabled) return;
     b.disabled = true; b.textContent = "Loading…";
     await widenSessionWindow();
     b.textContent = "Load older designs";
     b.disabled = false;
     mkRenderLibrary();
   });
+  /* ── OLDER DESIGNS ARRIVE BY THEMSELVES ────────────────────────────────
+     A button under a list you were already scrolling, saying "there is
+     more", is a button asking you to confirm what you just did — and it and
+     its caption were costing the grid two rows of tiles. The grid IS the
+     scroller, so the end of it is the whole signal needed. The button stays
+     in the markup, hidden: it is still the thing that does the loading, and
+     it is still the way in for anything that cannot scroll. */
+  (function libAutoLoad() {
+    const grid = $("#mkLibGrid"), more = $("#mkLibMore");
+    if (!grid || !more) return;
+    grid.addEventListener("scroll", () => {
+      if (more.disabled) return;
+      /* a screen and a bit of runway, so the next tiles are already there by
+         the time the customer reaches where they would have been */
+      if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 260) more.click();
+    }, { passive: true });
+  })();
 
   /* ── the library grid: tap to place, drag to position ─────────────────
      One gesture handler for mouse and touch alike. A press that never moves
@@ -11077,15 +21486,35 @@ function mkCtxDo(act) {
     if (e.target.closest(".mk-asset__kill")) return;
     const a = __mkLib[+fig.dataset.a];
     if (!a) return;
-    gdrag = { a, x0: e.clientX, y0: e.clientY, moved: false, ghost: null, id: e.pointerId };
-    try { grid.setPointerCapture(e.pointerId); } catch (err) {}
+    /* A phone library is a scrollable list before it is a drag source. Do not
+       capture a finger on contact: capture prevents several mobile browsers
+       from handing a vertical gesture to the overflow scroller. Mouse and pen
+       retain the original immediate-capture behaviour. */
+    const scrollFirst = mkMobileWorkspaceActive() && e.pointerType === "touch";
+    gdrag = { a, x0: e.clientX, y0: e.clientY, moved: false, ghost: null,
+              id: e.pointerId, scrollFirst, scrollIntent: false };
+    if (!scrollFirst) {
+      try { grid.setPointerCapture(e.pointerId); } catch (err) {}
+    }
   });
   grid.addEventListener("pointermove", (e) => {
     if (!gdrag) return;
     const dx = e.clientX - gdrag.x0, dy = e.clientY - gdrag.y0;
+    /* Vertical finger travel is native list scrolling. A horizontal start is
+       unambiguous placement intent; once it crosses the same 8px slop as the
+       old handler, capture it and the asset may then be dragged in any
+       direction, including upward onto the canvas. */
+    if (!gdrag.moved && gdrag.scrollFirst) {
+      if (gdrag.scrollIntent) return;
+      if (dx * dx + dy * dy >= 64 && Math.abs(dy) >= Math.abs(dx)) {
+        gdrag.scrollIntent = true;
+        return;
+      }
+    }
     if (!gdrag.moved && dx * dx + dy * dy < 64) return;
     if (!gdrag.moved) {
       gdrag.moved = true;
+      try { grid.setPointerCapture(e.pointerId); } catch (err) {}
       const g = document.createElement("img");
       g.className = "mk-ghost";
       g.src = gdrag.a.pairUrl || gdrag.a.url;
@@ -11101,21 +21530,36 @@ function mkCtxDo(act) {
     gdrag.ghost.classList.toggle("is-over", over);
     $("#markupDropHint").hidden = !over;
   });
-  const endGrid = (e) => {
+  const endGrid = (e, cancelled) => {
     if (!gdrag) return;
     const g = gdrag; gdrag = null;
     $("#markupStage").classList.remove("is-dropzone");
     $("#markupDropHint").hidden = true;
     if (g.ghost) g.ghost.remove();
+    /* Native scrolling commonly ends the pointer with pointercancel. It must
+       never be interpreted as the tap that places an image; the intent flag
+       covers browsers that keep the pointer alive through the scroll. */
+    if (cancelled || g.scrollIntent) return;
     if (!__mk) return;
     if (!g.moved) { mkPlaceAsset(g.a, null, null); return; }
+    /* THE TEST IS THE ROOM; THE POSITION IS THE SHEET. The room is wider
+       than the drawing now, so a drop can land beside the sheet rather than
+       on it — and "beside it" plainly means the customer wants the picture,
+       just not with the precision of a pixel. It lands at the nearest edge.
+       Only a drop outside the room entirely is a cancelled drop. */
+    const st = $("#markupStage").getBoundingClientRect();
+    if (e.clientX < st.left || e.clientX > st.right ||
+        e.clientY < st.top  || e.clientY > st.bottom) return;
     const v = $("#markupView").getBoundingClientRect();
     const cx = (e.clientX - v.left) / v.width, cy = (e.clientY - v.top) / v.height;
-    if (cx < -0.05 || cx > 1.05 || cy < -0.05 || cy > 1.05) return;   // dropped outside
-    mkPlaceAsset(g.a, Math.min(1, Math.max(0, cx)), Math.min(1, Math.max(0, cy)));
+    /* the halo counts as somewhere: a picture let go beside the sheet stays
+       beside the sheet rather than being shoved onto it */
+    const h = mkHaloRange();
+    mkPlaceAsset(g.a, Math.min(1 + h.x, Math.max(-h.x, cx)),
+                      Math.min(1 + h.y, Math.max(-h.y, cy)));
   };
   grid.addEventListener("pointerup", endGrid);
-  grid.addEventListener("pointercancel", endGrid);
+  grid.addEventListener("pointercancel", (e) => endGrid(e, true));
   grid.addEventListener("click", (e) => {
     const z = e.target.closest("[data-zoom]");
     if (z) { e.stopPropagation(); mkOpenLibZoom(__mkLib[+z.dataset.zoom]); return; }
@@ -11136,11 +21580,13 @@ function mkCtxDo(act) {
     mkPlaceAsset(a, 0.5, 0.5);
   });
   /* the escape hatch: sometimes you want the flat picture, not the objects */
-  $("#mkZoomFlat").addEventListener("click", () => {
+  $("#mkZoomFlat").addEventListener("click", async () => {
     if (!__mkZoomAsset) return;
     const a = __mkZoomAsset;
     mkCloseLibZoom();
     if (!__mk) { toast("Open a drawing first", "err"); return; }
+    if (a.thumbKey) await mkAssetSettle(a);
+    if (!__mk) return;
     mkInsertImage(a, 0.5, 0.5, __mkZoomHalf === "bw" ? "bw" : "charm");
     toast("Placed as a flat picture", "gold");
   });
@@ -11152,7 +21598,10 @@ function mkCtxDo(act) {
   }));
   $$('.mk-item[data-pic="library"]').forEach((b) => b.addEventListener("click", () => {
     mkCloseAllDrops();
-    mkDockSet(true, "library");
+    /* the big picker, not the 300px column: this menu item is the one that
+       says "everything you've made", and it has to be able to show it. The
+       dock's Library tab is still there for browsing mid-drawing. */
+    mkPlaceOpen();
   }));
   $$('.mk-item[data-pic="killbg"]').forEach((b) => b.addEventListener("click", () => {
     mkCloseAllDrops();
@@ -11235,7 +21684,12 @@ function mkCtxDo(act) {
     stage.classList.remove("is-dropzone");
     $("#markupDropHint").hidden = true;
     const v = $("#markupView").getBoundingClientRect();
-    const cx = (e.clientX - v.left) / v.width, cy = (e.clientY - v.top) / v.height;
+    /* clamped for the same reason as a drop from the library: the room is
+       bigger than the sheet, and a file let go beside the sheet belongs at
+       its edge rather than off the end of the coordinate space */
+    const h = mkHaloRange();
+    const cx = Math.min(1 + h.x, Math.max(-h.x, (e.clientX - v.left) / v.width));
+    const cy = Math.min(1 + h.y, Math.max(-h.y, (e.clientY - v.top) / v.height));
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
       await mkImportFiles(e.dataTransfer.files, cx, cy);
     }
@@ -11244,6 +21698,7 @@ function mkCtxDo(act) {
   /* and paste one */
   document.addEventListener("paste", async (e) => {
     if (!__mk || !$("#markupModal").classList.contains("is-open")) return;
+    __mkPasteSeen = true;                           // the ⌘V fallback stands down
     if (__mk.editing) return;                       // pasting text into a note
     const items = (e.clipboardData && e.clipboardData.items) || [];
     const files = [];
@@ -11251,8 +21706,13 @@ function mkCtxDo(act) {
       if (items[i].kind === "file") { const f = items[i].getAsFile(); if (f) files.push(f); }
     }
     if (files.length) { e.preventDefault(); await mkImportFiles(files); return; }
-    /* nothing on the system clipboard — our own copied layer, then */
-    if (__mkClip && __mkClip.length) { e.preventDefault(); mkLayerAct("paste"); }
+    /* nothing on the system clipboard — our own copied layer, then. With a
+       marquee down it lands in the box, so the key and the button on the box
+       agree about where a paste goes. */
+    if (__mkClip && __mkClip.length) {
+      e.preventDefault();
+      if (mkMarqLive()) mkMarqApply("paste"); else mkLayerAct("paste");
+    }
   });
 
 
@@ -11264,12 +21724,266 @@ function mkCtxDo(act) {
     const meta = e.metaKey || e.ctrlKey;
     if (!meta) return;
     const k = e.key.toLowerCase();
-    if (k === "c") { e.preventDefault(); mkLayerAct("copy"); }
-    else if (k === "v") { e.preventDefault(); mkLayerAct("paste"); }
+    /* with a marquee down these act on the PIECE inside it; with none they
+       act on the selected layers, exactly as they always did */
+    if (k === "c") { e.preventDefault(); if (mkMarqLive()) mkMarqApply("copy"); else mkLayerAct("copy"); }
+    else if (k === "x") { e.preventDefault(); if (mkMarqLive()) mkMarqApply("cut"); else { mkLayerAct("copy"); mkDeleteSelected(); } }
+    else if (k === "d" && mkMarqLive()) { e.preventDefault(); mkMarqClear(); }
+    else if (k === "v") {
+      /* ── ⌘V WAS EATING ITSELF ──────────────────────────────────────────
+         preventDefault() on the keydown cancels the browser's own paste,
+         and the browser's own paste is what carries the CLIPBOARD — so the
+         paste listener further up, the one that turns a copied image into
+         artwork, could never fire. ⌘V pasted a copied LAYER and nothing
+         else, on a menu that had just started promising otherwise.
+
+         So the key is left alone and the paste event does the work: it
+         takes files if the clipboard has any and falls back to the copied
+         layer if it does not. The timer is the belt to that brace — a
+         document-level paste event is not guaranteed in every browser, and
+         if none arrives, the layer paste happens anyway. */
+      __mkPasteSeen = false;
+      setTimeout(() => {
+        if (__mkPasteSeen || !__mk) return;
+        if (mkMarqLive()) mkMarqApply("paste"); else mkLayerAct("paste");
+      }, 130);
+    }
     else if (k === "d") { e.preventDefault(); mkLayerAct("dup"); }
     else if (k === "]") { e.preventDefault(); mkLayerAct("up"); }
     else if (k === "[") { e.preventDefault(); mkLayerAct("down"); }
   });
+})();
+
+/* ═══════════ MOBILE / FOLDABLE / TABLET EDITOR SHELL ═══════════════════
+   The editing engine remains exactly one engine. This shell only changes
+   where its existing controls live and when they are revealed:
+
+     phone       full canvas · bottom quick tools · bottom sheets
+     fold/tablet full canvas · left quick tools   · right inspectors
+     desktop     untouched — every node is restored to its original comment
+
+   Moving the real controls is important. Proxy copies of Metal, Hoop,
+   Interpretation, Sheet and Import would need a second state machine and a
+   second set of ARIA values; moved controls keep their original listeners,
+   state and semantics.                                                     */
+const __mkMobileUI = {
+  active: false,
+  settings: false,
+  homes: new Map(),
+  resizeTimer: 0,
+};
+
+function mkMobileMove(key, selector, slotId) {
+  if (__mkMobileUI.homes.has(key)) return;
+  const node = document.querySelector(selector);
+  const slot = document.getElementById(slotId);
+  if (!node || !slot || !node.parentNode) return;
+  const mark = document.createComment("mk-mobile-home:" + key);
+  node.parentNode.insertBefore(mark, node);
+  __mkMobileUI.homes.set(key, { node, mark });
+  slot.appendChild(node);
+}
+
+function mkMobileRestore() {
+  __mkMobileUI.homes.forEach(({ node, mark }) => {
+    if (mark && mark.parentNode) mark.parentNode.insertBefore(node, mark);
+    if (mark && mark.parentNode) mark.parentNode.removeChild(mark);
+  });
+  __mkMobileUI.homes.clear();
+}
+
+function mkMobileWorkspaceSync() {
+  const modal = document.getElementById("markupModal");
+  const head = document.getElementById("mkMobileHead");
+  if (!modal || !head) return false;
+  const wanted = mkMobileDevice();
+
+  modal.classList.toggle("is-mobile-workspace", wanted);
+  head.hidden = !wanted;
+
+  if (wanted && !__mkMobileUI.active) {
+    /* File stays in the compact header; the rest are grouped by purpose in
+       the inspector. Each comment marks an exact desktop return address. */
+    mkMobileMove("file", "#markupModal .mk-file", "mkMobileFileSlot");
+    mkMobileMove("metal", "#mkMetal", "mkMobileMetalSlot");
+    mkMobileMove("hoop", "#mkHoopBox", "mkMobileHoopSlot");
+    mkMobileMove("read", "#markupMode", "mkMobileReadSlot");
+    mkMobileMove("sheet", "#mkSheetDrop", "mkMobileDocumentSlot");
+    mkMobileMove("import", "#mkImportDrop", "mkMobileDocumentSlot");
+    mkMobileMove("edit-sketch", "#mkEditSketch", "mkMobileDocumentSlot");
+  } else if (!wanted && __mkMobileUI.active) {
+    mkMobileSettingsSet(false);
+    mkCloseAllDrops();
+    mkMobileRestore();
+  }
+  __mkMobileUI.active = wanted;
+  try { mkMobileChrome(); mkMobileBackdropSync(); } catch (e) {}
+  return wanted;
+}
+
+function mkMobileBackdropSync() {
+  const modal = document.getElementById("markupModal");
+  const scrim = document.getElementById("mkMobilePanelScrim");
+  if (!modal || !scrim || !mkMobileWorkspaceActive()) {
+    if (scrim) scrim.hidden = true;
+    if (modal) modal.classList.remove("has-mobile-panel");
+    return;
+  }
+  const dock = mkDockEl();
+  const dockOpen = !!(dock && __mkDock.open && !__mkDock.min && !dock.hidden);
+  const open = !!__mkMobileUI.settings || dockOpen;
+  scrim.hidden = !open;
+  modal.classList.toggle("has-mobile-panel", open);
+}
+
+function mkMobileSettingsSet(on) {
+  const panel = document.getElementById("mkMobileSettings");
+  const btn = document.getElementById("mkMobileSettingsBtn");
+  if (!panel) return;
+  const next = !!on && mkMobileWorkspaceActive();
+  __mkMobileUI.settings = next;
+  panel.hidden = !next;
+  panel.style.removeProperty("transform");
+  if (btn) {
+    btn.classList.toggle("is-on", next);
+    btn.setAttribute("aria-expanded", next ? "true" : "false");
+  }
+  if (next) {
+    mkCloseAllDrops();
+    if (mkDockEl() && !__mkDock.min) mkDockMin(true);
+  }
+  mkMobileBackdropSync();
+  setTimeout(() => { if (__mk && __mk.resize) __mk.resize(); }, 60);
+}
+
+function mkMobilePanelToggle(tab) {
+  if (!mkMobileWorkspaceActive()) return;
+  mkCloseAllDrops();
+  mkMobileSettingsSet(false);
+  const dock = mkDockEl();
+  const sameOpen = !!(dock && !dock.hidden && __mkDock.open && !__mkDock.min && __mkDock.tab === tab);
+  if (sameOpen) {
+    mkDockMin(true);
+    return;
+  }
+  mkDockSet(true, tab);
+  mkDockMin(false);
+  mkMobileBackdropSync();
+}
+
+function mkMobileChrome() {
+  if (!mkMobileWorkspaceActive()) return;
+  const undo = document.getElementById("mkMobileUndo");
+  const redo = document.getElementById("mkMobileRedo");
+  const undoReal = document.getElementById("mkUndo");
+  const redoReal = document.getElementById("mkRedo");
+  if (undo) undo.disabled = !__mk || !undoReal || undoReal.disabled;
+  if (redo) redo.disabled = !__mk || !redoReal || redoReal.disabled;
+
+  const n = __mk ? mkSelCount() : 0;
+  const tool = (__mk && __mk.tool) || "draw";
+  const names = {
+    select: "Select", marquee: "Marquee", draw: "Pen", highlight: "Highlight",
+    line: "Line", arrow: "Arrow", rect: "Rectangle", round: "Rounded shape",
+    ellipse: "Circle", ring: "Ring", tri: "Triangle", star: "Star",
+    heart: "Heart", bail: "Charm + hoop", label: "Text", callout: "Note",
+    sign: "Signature", wand: "Magic eraser", erase: "Eraser", bucket: "Fill",
+  };
+  const label = document.getElementById("mkMobileToolLabel");
+  if (label) label.textContent = n > 1 ? n + " selected" : n === 1 ? "Layer selected" : (names[tool] || "Edit");
+  const count = document.getElementById("mkMobileLayerCount");
+  if (count) count.textContent = String((__mk && __mk.items && __mk.items.length) || 0);
+
+  const dock = mkDockEl();
+  const dockOpen = !!(dock && !dock.hidden && __mkDock.open && !__mkDock.min);
+  [["mkMobileLayers", "layers"], ["mkMobileLibrary", "library"]].forEach(([id, tab]) => {
+    const b = document.getElementById(id); if (!b) return;
+    const on = dockOpen && __mkDock.tab === tab;
+    b.classList.toggle("is-on", on);
+    b.setAttribute("aria-expanded", on ? "true" : "false");
+  });
+
+  /* One compact contextual shelf, and only when it has something useful to
+     say. The enormous permanent X/Y/angle/import row in the reported phone
+     layout is replaced by exactly one of: size, brush weight, text size,
+     eraser diameter, or colour tolerance. */
+  const props = document.getElementById("markupProps");
+  if (props) {
+    let context = "none";
+    if (n) context = "selection";
+    else if (tool === "erase") context = "eraser";
+    else if (tool === "wand" || tool === "bucket") context = "tolerance";
+    else if (["label", "callout", "sign"].indexOf(tool) >= 0) context = "text";
+    else if (["draw", "highlight", "line", "arrow", "rect", "round", "ellipse",
+              "ring", "tri", "star", "heart", "bail"].indexOf(tool) >= 0) context = "weight";
+    props.dataset.mobileContext = context;
+    props.classList.toggle("is-mobile-empty", context === "none");
+  }
+}
+
+(function wireMobileWorkspace() {
+  const modal = document.getElementById("markupModal");
+  if (!modal || !document.getElementById("mkMobileHead")) return;
+
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); };
+  on("mkMobileUndo", () => { if (__mk) mkUndoAny(); });
+  on("mkMobileRedo", () => { if (__mk) mkRedoAny(); });
+  on("mkMobileSettingsBtn", () => mkMobileSettingsSet(!__mkMobileUI.settings));
+  on("mkMobileSettingsClose", () => mkMobileSettingsSet(false));
+  on("mkMobileLayers", () => mkMobilePanelToggle("layers"));
+  on("mkMobileLibrary", () => mkMobilePanelToggle("library"));
+  on("mkMobilePanelScrim", () => {
+    mkCloseAllDrops();
+    mkMobileSettingsSet(false);
+    if (mkDockEl() && !__mkDock.min) mkDockMin(true);
+  });
+
+  /* A phone sheet follows the platform gesture: drag its handle down to put
+     it away. Side inspectors on foldables/tablets use the explicit close or
+     the scrim, so a horizontal canvas gesture can never dismiss them. */
+  const wirePullDown = (handle, panel, close) => {
+    if (!handle || !panel) return;
+    let drag = null;
+    handle.addEventListener("pointerdown", (e) => {
+      if (!mkMobileWorkspaceActive() || window.innerWidth >= 700) return;
+      drag = { id: e.pointerId, y: e.clientY, d: 0 };
+      try { handle.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!drag || drag.id !== e.pointerId) return;
+      drag.d = Math.max(0, e.clientY - drag.y);
+      panel.style.transform = "translateY(" + drag.d + "px)";
+      e.preventDefault();
+    });
+    const end = (e) => {
+      if (!drag || drag.id !== e.pointerId) return;
+      const dismiss = drag.d > 72;
+      drag = null;
+      panel.style.removeProperty("transform");
+      if (dismiss) close();
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  };
+  wirePullDown(document.querySelector("#mkMobileSettings .mk-mobile-sheet__grab"),
+               document.getElementById("mkMobileSettings"),
+               () => mkMobileSettingsSet(false));
+  wirePullDown(document.querySelector("#mkDock .mk-dock__grab"),
+               document.getElementById("mkDock"),
+               () => mkDockMin(true));
+
+  const resize = () => {
+    clearTimeout(__mkMobileUI.resizeTimer);
+    __mkMobileUI.resizeTimer = setTimeout(() => {
+      mkMobileWorkspaceSync();
+      mkDockFoot();
+      if (__mk && __mk.resize) __mk.resize();
+    }, 80);
+  };
+  window.addEventListener("resize", resize, { passive: true });
+  window.addEventListener("orientationchange", resize, { passive: true });
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", resize, { passive: true });
+  mkMobileWorkspaceSync();
 })();
 
 /* ── regenerate driven by the marks alone ─────────────────────────────────
@@ -11299,7 +22013,7 @@ async function regenerateFromMarkup() {
           "To see this drawing in metal as it stands, use Re-render.", "err");
     return;
   }
-  const mkMode = ((state.markups || {})[v.n] || {}).mode === "exact" ? "exact" : "interpret";
+  const mkMode = mkModeNorm(((state.markups || {})[v.n] || {}).mode);
   pushMsg({ role: "me", text: mkMode === "exact"
     ? "✎ Follow my marks exactly as drawn"
     : "✎ Read my marks and draw what I mean, properly" });
@@ -11344,6 +22058,21 @@ async function regenerateFromReference() {
   }
   const drawn = !!state.reference.drawn;
   const dirty = !!(__mk && __mk.dirty);
+  /* a reference that arrived as a line drawing stays one through an edit —
+     see the note where this is put back on the new reference below */
+  const wasLineArt = !!state.reference.lineArt;
+  /* ── ASKED WHILE THERE IS STILL A SHEET TO ASK ABOUT ───────────────────
+     mkRefSheetIsVector() reads state.markups.draw, and the reference swap
+     below DELETES that sheet before the guard that consults it ever runs.
+     So the answer was taken from an empty sheet and the traced clause —
+     `m.traced && !m.showBitmap && items.length`, the whole reason the
+     exemption exists — could never once be true inside this function. A
+     traced catalogue sheet was wiped, the layers went with it, and
+     mkComposeEligible went false with them, so the re-draw that was meant
+     to compose for nothing spent a credit on the model instead.
+
+     Read once, here, before anything has been changed. */
+  const wasVector = mkRefSheetIsVector();
   refEditBusy = true;
   const btn = $("#markupRegen");
   const was = btn.innerHTML;
@@ -11367,7 +22096,7 @@ async function regenerateFromReference() {
       if (!shot || !shot.count) { toast("Nothing on the sheet to send", "err"); return; }
       if (shot.tainted) toast("One picture couldn't be included — everything else is here", "err");
       if (uploadsLeft() <= 0) {
-        if (!state.user) openAuth("outOfCredits"); else openPricing("out");
+        if (!state.user) openAuth("outOfUploads"); else openPricing("out");
         return;
       }
       const sess = ensureSession();
@@ -11385,14 +22114,52 @@ async function regenerateFromReference() {
                                 name: drawn ? "Your drawing" : "Your reference",
                                 w: 1400, h: 1400, resized: false,
                                 drawn: drawn, marks: drawn ? shot.count : 0, zones },
-                              null, { clearDrawSheet: !drawn });
+                              /* `!drawn` alone threw away a traced sheet, which is
+                                 the one kind this function must keep — see wasVector */
+                              null, { clearDrawSheet: !drawn && !wasVector });
       state.refPlanKey = ""; state.refPlan = [];
       refreshWallet();
     }
     closeMarkup();
-    if (dirty && !drawn) {
+    /* ── THE SHEET IS ONLY THROWN AWAY WHEN IT WAS FLATTENED INTO THE NEW
+       REFERENCE ─────────────────────────────────────────────────────────
+       Which is what happens to marks drawn ON a photograph: they are baked
+       into the picture that was just uploaded, so keeping them would draw
+       everything twice. A vector-backed sheet is the opposite case — those
+       items ARE the design, they are what the drawing is about to be
+       composed from, and deleting them here left runComposedGeneration with
+       an empty sheet. Same test as mkComposeEligible, deliberately, so the
+       two cannot disagree about what the sheet is. */
+    if (dirty && !wasVector) {
       if (state.markups && state.markups.draw) { delete state.markups.draw; forgetKey("markups", "draw"); }
       if (state.mkHistory && state.mkHistory.draw) { delete state.mkHistory.draw; forgetKey("mkHistory", "draw"); }
+    }
+    /* ── AND IT IS STILL A LINE DRAWING ──────────────────────────────────
+       The picture that came back is still line work, and the customer has
+       just demonstrated that they want to edit it. Without this the new
+       reference is an ordinary upload: the sheet reopens as a flat bitmap
+       and the layering they were given once never comes back. Marked as
+       line art, it goes through the same separation again and the edit →
+       re-draw → edit loop stays open.
+
+       THIS IS ABOUT THE REFERENCE, NOT THE SHEET, and it used to be nested
+       inside the delete above — which meant it only ran when the sheet was
+       being thrown away. That was invisible while the sheet was ALWAYS
+       being thrown away (see wasVector); the moment a traced sheet is
+       correctly kept, the marker would have stopped being carried and the
+       next reopen would have lost the layering for good. Two separate
+       decisions, written as two. */
+    if (wasLineArt && state.reference) {
+      state.reference.lineArt = true;
+      state.reference.fromCatalog = true;
+      state.reference.lineArtUrl = state.reference.url;
+      state.reference.lineArtPath = state.reference.path || "";
+      state.reference.lineArtParts = 0;
+      state.refLineArt = { status: "layering", key: refLineArtKey() };
+      saveSession();
+      /* re-separating is only needed when the sheet did not survive; a kept
+         vector sheet already IS the layering */
+      if (!wasVector) traceRefLineArtSoon();
     }
     renderStage();
     pushMsg({ role: "me", text: dirty
@@ -11418,7 +22185,33 @@ async function regenerateFromReference() {
 /* the reference bitmap with its marks flattened onto it, for a design whose
    reference is a photograph or a catalogue charm rather than a drawing */
 async function mkRefCompositeDataUrl(SIZE) {
-  const items = mkItemsOf((state.markups || {}).draw).map(mkPack);
+  const sheet = (state.markups || {}).draw;
+  const items = mkItemsOf(sheet).map(mkPack);
+  /* ── THE SAME GHOST RULE THE SCREEN AND THE PAYLOAD BOTH OBEY ───────────
+     A reference that has been TAKEN APART is its vectors: the bitmap under
+     them is the picture they were cut from, and painting both would send a
+     drawing drawn twice — and, worse, would put back any component the
+     customer had just deleted, since deleting a layer cannot delete it out
+     of the photograph underneath. mkApplyBase hides the bitmap on screen for
+     exactly this reason and buildMarkupPayload skips it for exactly this
+     reason; a flattened reference has to agree with both, or what the
+     customer approved is not what they were looking at.
+
+     ── AND `showBitmap` IS NOT PART OF THAT RULE HERE ──────────────────
+     mkApplyBase reads `traced && !showBitmap` because it is deciding what
+     to put ON SCREEN, and "show me the original picture" is a request about
+     the screen. This function is not the screen; it is the EXPORT, and the
+     question it answers is "what is this reference made of". Once a sheet
+     has been taken apart the answer is "its vectors", whether or not the
+     customer happens to be peeking at the photograph behind them.
+
+     Including showBitmap here meant a toggle in the Sheet menu re-opened
+     the exact hole this rule exists to close: switch it on, and a layer
+     that had been deleted came straight back out of the photograph and
+     into the flattened reference — two clicks, no warning, and the drawing
+     drawn twice besides. The toggle now changes what is displayed and
+     nothing about what is sent. */
+  const tracedSheet = !!(sheet && sheet.traced);
   await mkAwaitImages(items.concat([{ t: "img", u: state.reference.url || "",
                                       sp: state.reference.path || "" }]), 12000);
   const cv = document.createElement("canvas");
@@ -11426,10 +22219,12 @@ async function mkRefCompositeDataUrl(SIZE) {
   const ctx = cv.getContext("2d");
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, SIZE, SIZE);
-  const bg = mkImageFor({ u: state.reference.url || "", sp: state.reference.path || "" });
   let tainted = false;
-  if (bg && bg.width) {
-    try { ctx.drawImage(bg, 0, 0, SIZE, SIZE); } catch (e) { tainted = true; }
+  if (!tracedSheet) {
+    const bg = mkImageFor({ u: state.reference.url || "", sp: state.reference.path || "" });
+    if (bg && bg.width) {
+      try { ctx.drawImage(bg, 0, 0, SIZE, SIZE); } catch (e) { tainted = true; }
+    }
   }
   mkPaint(ctx, SIZE, SIZE, items, { export: true });
   try {
@@ -11461,7 +22256,14 @@ async function buildMarkupPayload(v) {
      to Firebase. Generated versions always carry their Storage path, so this
      resolves through britesAuth as a same-origin data URL and the base image
      cannot disappear from the refinement merely because bucket CORS is off. */
-  const baseItem = { t: "img", u: v.url || "", sp: v.path || "" };
+  /* WHICHEVER PICTURE IS ACTUALLY UNDERNEATH. The modal paints
+     `v.url || v.renderUrl` for exactly the reason this must: a charm adopted
+     from our own catalogue has no production drawing and never will, so the
+     metal is the thing the customer made their marks ON. Reading `v.url`
+     alone shipped the designer a white sheet with arrows floating on it. */
+  const baseItem = v.url
+    ? { t: "img", u: v.url, sp: v.path || "" }
+    : { t: "img", u: v.renderUrl || "", sp: v.renderPath || "" };
   await mkAwaitImages([baseItem], 12000);
   const base = mkImageFor(baseItem);
   /* a composite that shipped before a placed picture had loaded would send
@@ -11514,7 +22316,7 @@ async function buildMarkupPayload(v) {
         try {
           const data = paint(SIZE, withBase).toDataURL("image/jpeg", q);
           if (data.length <= LIMIT) {
-            return { image: data, mode: m.mode === "exact" ? "exact" : "interpret",
+            return { image: data, mode: mkModeNorm(m.mode),
                      notes: mkNotesPayload(items), zones: mkZonesPayload(items) };
           }
         } catch (e) {
@@ -11523,7 +22325,7 @@ async function buildMarkupPayload(v) {
       }
     }
   }
-  return { image: null, mode: m.mode === "exact" ? "exact" : "interpret",
+  return { image: null, mode: mkModeNorm(m.mode),
            notes: mkNotesPayload(items), zones: mkZonesPayload(items) };
 }
 
@@ -11535,7 +22337,15 @@ function mkZonesPayload(items) {
   const out = [];
   (items || []).forEach((it) => {
     if (it.hid) return;
-    if (it.t === "img" || mkIsText(it) || it.t === "ink" || it.t === "hl" || it.t === "sign") return;
+    if (it.t === "img" || mkIsText(it) || it.t === "hl" || it.t === "sign") return;
+    if (it.t === "ink" && !mkInkInstruction(it)) return;
+    /* ── THE PERIMETER IS NOT A ZONE ────────────────────────────────────
+       A claimed perimeter line is the charm's outer cut EDGE, consumed at
+       compose (verified, recoloured to the instruction blue, and the
+       generated edge stood down). Left in this list it would be declared as
+       an outline-only AREA spanning nearly the whole drawing — an
+       instruction that contradicts the very edge the pixels now carry. */
+    if (mkIsPerimLine(it)) return;
     /* THE STUDIO'S OWN GRAMMAR SAYS A RING IS A CUT-OUT — the tool hint says
        it, the prompt's vocabulary section says it, and mkItemIntent is now
        the one place that says it, so the sheet says it too. */
@@ -11568,7 +22378,19 @@ function mkZonesPayload(items) {
     out.push({ intent, x: r(b.x), y: r(b.y), w: r(b.w), h: r(b.h), ring,
                where: mkWhereOf(b.x + b.w / 2, b.y + b.h / 2) });
   });
-  return out.slice(0, 40);
+  /* ── A CAP MUST NEVER SILENTLY DROP A CUT ───────────────────────────────
+     Everything downstream trims this list to 40 — the request body, the
+     version document, the prompt. On a 55-layer sheet the trim fell on
+     whatever happened to be drawn last, and what was drawn last was a blue
+     cut-out disc: the one zone whose loss changes the physical object. The
+     greyscale build treats the declared list as the AUTHORITY on which blue
+     is a hole, so a cut-out that misses the boat is a hole that never gets
+     punched — the customer watched exactly that. Cut-outs therefore go to
+     the front, in draw order among themselves; a dropped engrave zone costs
+     words in a prompt, a dropped cut-out costs metal. */
+  const first = out.filter((z) => z.intent === "cutout");
+  const rest = out.filter((z) => z.intent !== "cutout");
+  return first.concat(rest).slice(0, 40);
 }
 function mkWhereOf(x, y) {
   const col = x < 0.34 ? "left" : x > 0.66 ? "right" : "centre";
@@ -11903,21 +22725,21 @@ function mkFillPlan(v) {
            changes something — or the moment the plan above has been projected
            onto it and a cut-out is standing there in blue. */
         const meaningful = !m.traced || m.dirty || z.some((q) => q.intent === "cutout");
-        if (meaningful && z.length) return z.slice(0, 40);
+        if (meaningful && z.length) return zoneList(z, "fillPlan:markup");
       }
-      if (Array.isArray(m.plan) && m.plan.length) return m.plan.slice(0, 40);
+      if (Array.isArray(m.plan) && m.plan.length) return zoneList(m.plan, "fillPlan:plan");
     }
-    if (v && Array.isArray(v.zones) && v.zones.length) return v.zones.slice(0, 40);
+    if (v && Array.isArray(v.zones) && v.zones.length) return zoneList(v.zones, "fillPlan:version");
     if (state.reference && state.reference.drawn) {
       const rz = state.reference.zones;
-      if (Array.isArray(rz) && rz.length) return rz.slice(0, 40);
+      if (Array.isArray(rz) && rz.length) return zoneList(rz, "fillPlan:reference");
       const sk = mkZonesPayload(mkItemsOf((state.markups || {}).draw).map(mkPack));
-      if (sk.length) return sk.slice(0, 40);
+      if (sk.length) return zoneList(sk, "fillPlan:sketch");
     }
     /* the previous version's plan, for a design whose current sheet has none */
     for (let i = (state.versions || []).length - 1; i >= 0; i--) {
       const pv = state.versions[i];
-      if (pv && Array.isArray(pv.zones) && pv.zones.length) return pv.zones.slice(0, 40);
+      if (pv && Array.isArray(pv.zones) && pv.zones.length) return zoneList(pv.zones, "fillPlan:prevVersion");
     }
     /* the cached read of the reference's own pixels — but only while it is
        still THIS design's reference: loading another design out of My
@@ -11977,6 +22799,656 @@ async function mkComposeReady() {
   await mkAwaitImages(mkItemsOf((state.markups || {}).draw));
 }
 
+/* =============================================================================
+   FILE — TAKING A DESIGN OUT OF THE STUDIO
+   -----------------------------------------------------------------------------
+   Until now nothing a customer made could leave. There was no download, no
+   share and no print anywhere in the client: every `download` in the file was
+   a Firebase Storage URL, every Blob was something coming IN, and the only
+   clipboard write was the "open this in a real browser" escape link. A design
+   they had spent credits on lived at a URL they could not see.
+
+   Three pictures exist for a finished design and the customer thinks of them
+   as one thing, so the headline item is all three in a ZIP:
+
+     the production drawing   v.url            black/blue/red instructions
+     the greyscale map        v.renderSpecUrl  what the renderer was handed
+     the 14k gold charm       v.renderUrl      what they are buying
+
+   TWO RULES RUN THROUGH ALL OF IT.
+
+   1. Nothing is offered that cannot be produced. Every row is switched off by
+      mkFileSync() when the thing behind it does not exist, so the menu can
+      never be a list of promises — the greyscale and the gold are greyed out
+      until the drawing has been cut in metal, and the SVG is greyed out when
+      no layer on the sheet reduces to a path.
+
+   2. Every failure is said out loud. The pictures live on Storage URLs and
+      reaching them from script needs CORS the bucket may not have been given,
+      so mkFetchPicture tries three ways and, when all three fail, the ZIP is
+      still written with whatever WAS reachable and the toast names what is
+      missing. A silent short file would be worse than a slow one.
+   ========================================================================== */
+
+/* ── a ZIP, written here, because there is no library on this page ─────────
+   Stored (method 0), not deflated: these are PNGs, which are already
+   deflated, so compressing them again buys under 1% for a second of main
+   thread. Everything below is the format as published — local header, then
+   the bytes, then a central directory, then the end record.                */
+const MK_CRC_T = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function mkCrc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = MK_CRC_T[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+/* files: [{ name, bytes: Uint8Array }] → Blob */
+function mkZipBlob(files) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+  const u16 = (n) => [n & 0xFF, (n >>> 8) & 0xFF];
+  const u32 = (n) => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+
+  files.forEach((f) => {
+    const name = enc.encode(f.name);
+    const crc = mkCrc32(f.bytes);
+    const size = f.bytes.length;
+    /* no timestamps: a ZIP of the same design must be the same ZIP, and the
+       DOS date field is the only thing in here that would not be */
+    const head = new Uint8Array([
+      ...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0x21),                      /* 1980-01-01, fixed */
+      ...u32(crc), ...u32(size), ...u32(size),
+      ...u16(name.length), ...u16(0),
+    ]);
+    parts.push(head, name, f.bytes);
+    central.push(new Uint8Array([
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0x21),
+      ...u32(crc), ...u32(size), ...u32(size),
+      ...u16(name.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(0), ...u32(offset),
+    ]), name);
+    offset += head.length + name.length + size;
+  });
+
+  const cdSize = central.reduce((a, b) => a + b.length, 0);
+  const end = new Uint8Array([
+    ...u32(0x06054b50), ...u16(0), ...u16(0),
+    ...u16(files.length), ...u16(files.length),
+    ...u32(cdSize), ...u32(offset), ...u16(0),
+  ]);
+  return new Blob([...parts, ...central, end], { type: "application/zip" });
+}
+
+/* ── handing a file to the browser ────────────────────────────────────────
+   The object URL is revoked on a timer rather than immediately: Safari
+   reads the blob asynchronously after the click and a same-tick revoke
+   gives it an empty file. */
+function mkSaveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} a.remove(); }, 4000);
+  return filename;
+}
+function mkSafeName(s) {
+  return String(s || "charm").replace(/[^\w\- ]+/g, "").replace(/\s+/g, "-")
+    .replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 48).toLowerCase() || "charm";
+}
+function mkFileStem() {
+  const v = state.versions[state.currentVersion];
+  return mkSafeName(designName().replace(/ — custom$/, "")) + (v ? "-v" + v.n : "");
+}
+
+/* ── getting the bytes of a picture that lives on Storage ─────────────────
+   Three ways, in falling order of reliability, because which of them works
+   depends on a CORS rule on the bucket that this code cannot set:
+
+     1. fetch → blob.        Works when the bucket answers cross-origin.
+     2. <img crossOrigin> → canvas → blob. Works when the bucket answers the
+        image request with the header but not the fetch (they are configured
+        separately more often than you would think).
+     3. give up, and say which picture could not be reached.
+
+   Never throws. A caller gets bytes or null, and decides what to say. */
+async function mkFetchPicture(url, sp) {
+  if (!url && !sp) return null;
+  /* ── THE BUCKET HAS NO CORS, SO THE BUCKET IS NOT ASKED FIRST ──────────
+     Both rungs below go straight at firebasestorage.googleapis.com, and on
+     a storefront origin the bucket answers neither: the ZIP download filled
+     the console with CORS refusals and handed back nothing. The studio has
+     had the answer all along — mkImageFor fetches studio-owned objects
+     same-origin through britesAuth's asset_fetch and never negotiates CORS
+     at all — so the picture set now carries each object's Storage PATH and
+     this takes the proxied road first. The direct rungs remain for
+     URL-only pictures from origins that do allow it. */
+  if (sp) {
+    try {
+      const r0 = await postAuthed("britesAuth", { kind: "asset_fetch", path: sp });
+      if (r0 && r0.ok && r0.dataUrl) {
+        const b0 = await (await fetch(r0.dataUrl)).blob();
+        if (b0 && b0.size) return b0;
+      }
+    } catch (e) { /* the direct rungs still get their chance */ }
+  }
+  if (!url) return null;
+  try {
+    const r = await fetch(url, { mode: "cors", credentials: "omit" });
+    if (r && r.ok) {
+      const b = await r.blob();
+      if (b && b.size) return b;
+    }
+  } catch (e) { /* fall through */ }
+  try {
+    return await new Promise((res, rej) => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => {
+        try {
+          const cv = document.createElement("canvas");
+          cv.width = im.naturalWidth || 1; cv.height = im.naturalHeight || 1;
+          cv.getContext("2d").drawImage(im, 0, 0);
+          cv.toBlob((b) => (b && b.size ? res(b) : rej(new Error("empty"))), "image/png");
+        } catch (e2) { rej(e2); }
+      };
+      im.onerror = () => rej(new Error("blocked"));
+      im.src = url;
+    });
+  } catch (e) { return null; }
+}
+
+/* ── what this design actually has ────────────────────────────────────────
+   One reading of the three pictures, used by the ZIP, by the single
+   downloads, by Share and by the enable/disable pass, so the menu cannot
+   offer something the download then fails to find. The property names are
+   the client's own (renderSpecUrl, renderUrl) with the server's spellings
+   accepted as a fallback — the same pair mkViewHave reads. */
+function mkPictureSet() {
+  const v = state.versions[state.currentVersion] || null;
+  const stem = mkFileStem();
+  return {
+    v,
+    bw:   { url: (v && v.url) || "", sp: (v && v.path) || "",
+            name: stem + "-production-drawing.png", label: "production drawing" },
+    spec: { url: (v && (v.renderSpecUrl || v.renderSpecURL)) || "",
+            sp: (v && (v.renderSpecPath || v.specPath)) || "",
+            name: stem + "-greyscale-map.png", label: "greyscale material map" },
+    gold: { url: (v && v.renderUrl) || "", sp: (v && v.renderPath) || "",
+            name: stem + "-14k-gold-charm.png", label: "14k gold charm" },
+  };
+}
+/* the one picture a share is ABOUT: the finished charm if it exists, else
+   the drawing. Sharing a greyscale map by default would be absurd. */
+function mkShareSubject() {
+  const p = mkPictureSet();
+  if (p.gold.url) return p.gold;
+  if (p.bw.url) return p.bw;
+  return null;
+}
+
+/* ── the sheet as it stands, rendered here, at print size ─────────────────
+   Never touches the network, so it is the one download that always works —
+   including for a sketch that has never been submitted. */
+function mkSheetPngBlob(SIZE) {
+  const S = Math.max(256, Math.min(4096, SIZE || 2048));
+  const items = __mk ? __mk.items.map(mkPack) : [];
+  const cv = document.createElement("canvas");
+  cv.width = S; cv.height = S;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, S, S);
+  mkPaint(ctx, S, S, items, { export: true });
+  return new Promise((res) => {
+    /* a placed picture from another origin taints the canvas and toBlob
+       returns null rather than throwing — the same hazard mkComposeToDataUrl
+       handles, answered the same way: re-paint without the pictures and say
+       so, rather than losing the customer's own work */
+    cv.toBlob((b) => {
+      if (b && b.size) { res({ blob: b, tainted: false, n: items.length }); return; }
+      const safe = items.filter((it) => it.t !== "img");
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, S, S);
+      mkPaint(ctx, S, S, safe, { export: true });
+      cv.toBlob((b2) => res({ blob: b2, tainted: true, n: items.length }), "image/png");
+    }, "image/png");
+  });
+}
+
+/* ── cut paths, for the workshop ──────────────────────────────────────────
+   The layers that came out of taking a drawing apart ARE closed contours —
+   `p` is a flat list of normalised points and `q` says how many belong to
+   each contour — so they convert to SVG exactly, with no interpretation.
+   Strokes convert as open polylines.
+
+   NOTHING ELSE IS INVENTED. A placed picture is not a path; a note is not a
+   path; a star drawn with the star tool is a path this function does not
+   know how to rebuild, and guessing at it would put a shape in a laser
+   cutter's file that the customer never drew. Those layers are COUNTED and
+   reported, so the file is always exactly what it says it is. */
+const MK_SVG_LINEAR = { ink: 1, hl: 1, line: 1, arrow: 1, sign: 1 };
+function mkCutPathsSvg(SIZE) {
+  const S = Math.max(64, Math.min(4096, SIZE || 1024));
+  const items = (__mk ? __mk.items : []).filter((it) => !it.hid);
+  const paths = [];
+  let skipped = 0;
+  const px = (n) => Math.round(n * S * 100) / 100;
+
+  /* ── AND IT HAS TO BE WHERE IT IS DRAWN ─────────────────────────────────
+     Every point below used to be written out raw, which is the shape BEFORE
+     the layer was turned. A charm the customer had rotated therefore left
+     here at the angle it arrived at rather than the angle they left it at —
+     the same fault as the marquee, in the file that goes to the workshop. */
+  /* AND MIRRORED WHERE IT IS MIRRORED, for exactly the same reason: a charm
+     the customer flipped must leave here flipped, not as the shape it was
+     before they flipped it. */
+  const turned = (it) => {
+    const r = it.r || 0;
+    const fx = it.fx ? -1 : 1, fy = it.fy ? -1 : 1;
+    if (!r && fx > 0 && fy > 0) return (x, y) => [x, y];
+    const b = mkBBox(it), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    const c = Math.cos(r), sn = Math.sin(r);
+    return (x, y) => {
+      const rx = cx + (x - cx) * c - (y - cy) * sn;
+      const ry = cy + (x - cx) * sn + (y - cy) * c;
+      return [cx + (rx - cx) * fx, cy + (ry - cy) * fy];
+    };
+  };
+
+  items.forEach((it) => {
+    const p = it.p || [];
+    const intent = mkItemIntent(it);
+    const stroke = intent === "cutout" ? MK_CUTOUT : intent === "none" ? MK_OUTLINE : MK_ENGRAVE;
+    const T = turned(it);
+    /* ── ONE LINE, NOT TWO — HERE TOO ──────────────────────────────────
+       See mkSpineOf. The sheet stopped drawing a stroke as its own pair of
+       tramlines; a file that still writes both walls would put the same
+       mistake in front of the workshop instead of the customer, which is
+       the worse of the two places to leave it. */
+    if (intent === "none") {
+      const sp = mkSpineOf(it);
+      if (sp && sp.paths.length) {
+        const b = mkBBox(it);
+        let d = "";
+        sp.paths.forEach((pl) => {
+          const u = pl.u;
+          for (let k = 0; k + 1 < u.length; k += 2) {
+            const q = T(b.x + u[k] * b.w, b.y + u[k + 1] * b.h);
+            d += (k ? "L" : "M") + px(q[0]) + " " + px(q[1]);
+          }
+          if (pl.cl) d += "Z";
+        });
+        if (d) { paths.push({ d, stroke, fill: "none", it, w: MK_OUTLINE_W }); return; }
+      }
+    }
+    if (Array.isArray(it.q) && it.q.length && p.length >= 6) {
+      /* closed contours: q holds the point count of each in order */
+      let at = 0, d = "";
+      for (let k = 0; k < it.q.length; k++) {
+        const n = it.q[k];
+        if (n < 3 || (at + n) * 2 > p.length) { at += n; continue; }
+        for (let i = 0; i < n; i++) {
+          const q = T(p[(at + i) * 2], p[(at + i) * 2 + 1]);
+          d += (i ? "L" : "M") + px(q[0]) + " " + px(q[1]);
+        }
+        d += "Z";
+        at += n;
+      }
+      if (d) { paths.push({ d, stroke, fill: intent === "engrave" ? stroke : "none", it }); return; }
+      skipped++; return;
+    }
+    if (MK_SVG_LINEAR[it.t] && p.length >= 4) {
+      /* a pen line that carries no instruction is a note, and a note has no
+         business in the file a laser reads — it is counted with the other
+         skipped annotation so the file still says exactly what it is */
+      if (it.t === "ink" && !mkInkInstruction(it)) { skipped++; return; }
+      let d = "";
+      for (let i = 0; i * 2 + 1 < p.length; i++) {
+        const q = T(p[i * 2], p[i * 2 + 1]);
+        d += (i ? "L" : "M") + px(q[0]) + " " + px(q[1]);
+      }
+      paths.push({ d, stroke, fill: "none", it, w: it.w });
+      return;
+    }
+    skipped++;
+  });
+
+  const body = paths.map((q) =>
+    `<path d="${q.d}" fill="${q.fill}" stroke="${q.stroke}" stroke-width="${
+      Math.max(0.4, Math.round((q.w || 0.0015) * S * 100) / 100)
+    }" stroke-linejoin="round" stroke-linecap="round"/>`).join("\n  ");
+
+  const svg =
+`<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">
+  <title>${escapeHtml(designName())} — cut paths</title>
+  <desc>Black = engraved. Blue = cut clean through. Red = outline only.${
+    skipped ? " " + skipped + " layer(s) had no path form and are not in this file." : ""
+  }</desc>
+  <rect width="${S}" height="${S}" fill="#ffffff"/>
+  ${body}
+</svg>
+`;
+  return { svg, count: paths.length, skipped };
+}
+
+/* ── the downloads ───────────────────────────────────────────────────── */
+async function mkDownloadPicture(which) {
+  const set = mkPictureSet();
+  const pic = set[which];
+  if (!pic || !pic.url) { toast("That picture hasn't been made for this design yet", "err"); return false; }
+  const blob = await mkFetchPicture(pic.url, pic.sp);
+  if (!blob) {
+    /* honest, and still useful: the picture is reachable in a tab even when
+       script cannot read its bytes */
+    toast(`Couldn't read the ${escapeHtml(pic.label)} from storage — opening it in a new tab so you can save it yourself`, "err");
+    try { window.open(pic.url, "_blank", "noopener"); } catch (e) {}
+    return false;
+  }
+  mkSaveBlob(blob, pic.name);
+  toast(`Saved the ${escapeHtml(pic.label)} ✦`, "gold");
+  return true;
+}
+
+async function mkDownloadSet() {
+  const set = mkPictureSet();
+  const want = [set.bw, set.spec, set.gold].filter((p) => p.url);
+  if (!want.length) { toast("There's nothing to download yet — make a drawing first", "err"); return false; }
+
+  const got = [], missed = [];
+  for (const p of want) {
+    const b = await mkFetchPicture(p.url, p.sp);
+    if (b) got.push({ name: p.name, bytes: new Uint8Array(await b.arrayBuffer()) });
+    else missed.push(p.label);
+  }
+  if (!got.length) {
+    toast("Couldn't read any of the pictures from storage — check your connection and try again in a moment", "err");
+    return false;
+  }
+  /* a short note travels with them, because three PNGs in a folder do not
+     say which is which six weeks later */
+  got.push({ name: "README.txt", bytes: new TextEncoder().encode(
+    designName() + "\r\n" +
+    "Brites Custom Charm Studio\r\n\r\n" +
+    "production-drawing.png  the instructions: black engraves, blue cuts clean through, red is outline only\r\n" +
+    "greyscale-map.png       the material map the renderer was given\r\n" +
+    "14k-gold-charm.png      the finished charm\r\n"
+  ) });
+
+  mkSaveBlob(mkZipBlob(got), mkFileStem() + "-charm-images.zip");
+  toast(missed.length
+    ? `Saved ${got.length - 1} of ${want.length} pictures — the ${escapeHtml(missed.join(" and "))} couldn't be read from storage`
+    : `Saved all ${want.length} pictures as a ZIP ✦`, missed.length ? "err" : "gold");
+  return true;
+}
+
+async function mkDownloadSheet() {
+  const r = await mkSheetPngBlob(2048);
+  if (!r || !r.blob) { toast("Couldn't render this sheet — try again", "err"); return false; }
+  mkSaveBlob(r.blob, mkFileStem() + "-sheet-2048.png");
+  toast(r.tainted
+    ? "Saved the sheet — the placed pictures had to be left out (their host wouldn't allow it)"
+    : "Saved this sheet at 2048 px ✦", r.tainted ? "err" : "gold");
+  return true;
+}
+
+function mkDownloadSvg() {
+  const r = mkCutPathsSvg(1024);
+  if (!r.count) { toast("Nothing on this sheet reduces to a cut path yet", "err"); return false; }
+  mkSaveBlob(new Blob([r.svg], { type: "image/svg+xml" }), mkFileStem() + "-cut-paths.svg");
+  toast(r.skipped
+    ? `Saved ${r.count} cut path${r.count === 1 ? "" : "s"} — ${r.skipped} layer${r.skipped === 1 ? " has" : "s have"} no path form and ${r.skipped === 1 ? "is" : "are"} not in the file`
+    : `Saved ${r.count} cut path${r.count === 1 ? "" : "s"} ✦`, "gold");
+  return true;
+}
+
+/* ── sharing ──────────────────────────────────────────────────────────────
+   The native sheet FIRST, with the picture attached, because that is the
+   only route that puts an actual image into a message rather than a link to
+   one — and on a phone it is also the only one that reaches the apps people
+   share to. The network buttons are the fallback for a desktop browser that
+   has no sheet, and they can only ever carry a URL, which is what every one
+   of those endpoints accepts. */
+function mkShareText() {
+  return designName().replace(/ — custom$/, "") + " — made in the Brites Custom Charm Studio";
+}
+function mkShareUrl() {
+  const s = mkShareSubject();
+  /* the picture's own URL previews as a picture; the studio page does not
+     know which design is being talked about, so it is the last resort */
+  return (s && s.url) || cleanStudioUrl();
+}
+function mkCanNativeShare() {
+  return typeof navigator !== "undefined" && typeof navigator.share === "function";
+}
+async function mkShareNative() {
+  if (!mkCanNativeShare()) { toast("This browser has no share sheet — use one of the buttons beside it", "err"); return false; }
+  const subj = mkShareSubject();
+  const text = mkShareText();
+  const url = mkShareUrl();
+  /* try with the file attached, then without: canShare({files}) is the only
+     reliable test, and a browser that has share() but refuses files throws
+     on the call rather than returning false */
+  if (subj) {
+    const blob = await mkFetchPicture(subj.url, subj.sp);
+    if (blob && typeof File === "function" && navigator.canShare) {
+      const file = new File([blob], subj.name, { type: blob.type || "image/png" });
+      if (navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: text, text }); return true; }
+        catch (e) { if (e && e.name === "AbortError") return false; }
+      }
+    }
+  }
+  try { await navigator.share({ title: text, text, url }); return true; }
+  catch (e) {
+    if (e && e.name === "AbortError") return false;
+    toast("Couldn't open the share sheet — the link is copied instead", "err");
+    return mkCopyLink(true);
+  }
+}
+const MK_SHARE_NETS = {
+  x:        (u, t) => `https://twitter.com/intent/tweet?url=${u}&text=${t}`,
+  facebook: (u)    => `https://www.facebook.com/sharer/sharer.php?u=${u}`,
+  pinterest:(u, t, m) => `https://pinterest.com/pin/create/button/?url=${u}&media=${m}&description=${t}`,
+  whatsapp: (u, t) => `https://api.whatsapp.com/send?text=${t}%20${u}`,
+  reddit:   (u, t) => `https://www.reddit.com/submit?url=${u}&title=${t}`,
+  email:    (u, t) => `mailto:?subject=${t}&body=${t}%0A%0A${u}`,
+};
+function mkShareTo(net) {
+  const make = MK_SHARE_NETS[net];
+  if (!make) return false;
+  const u = encodeURIComponent(mkShareUrl());
+  const t = encodeURIComponent(mkShareText());
+  const s = mkShareSubject();
+  const m = encodeURIComponent((s && s.url) || "");
+  const href = make(u, t, m);
+  if (net === "email") { location.href = href; return true; }
+  const w = window.open(href, "_blank", "noopener,noreferrer,width=620,height=640");
+  if (!w) { toast("Your browser blocked the share window — allow pop-ups for this site, or use Copy link", "err"); return false; }
+  return true;
+}
+async function mkCopyLink(quiet) {
+  const url = mkShareUrl();
+  try {
+    await navigator.clipboard.writeText(url);
+    if (!quiet) toast("Link copied ✦", "gold");
+    return true;
+  } catch (e) {
+    /* the same fallback ladder copyEscapeLink uses, for a browser that will
+       not give script the clipboard without a gesture it recognises */
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = url; ta.setAttribute("readonly", "");
+      ta.style.cssText = "position:fixed;top:-1000px;opacity:0";
+      document.body.appendChild(ta); ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      if (ok) { if (!quiet) toast("Link copied ✦", "gold"); return true; }
+    } catch (e2) {}
+    toast("Couldn't reach the clipboard — the link is: " + escapeHtml(url), "err");
+    return false;
+  }
+}
+async function mkCopyImage() {
+  const subj = mkShareSubject();
+  if (!subj) { toast("There's no picture to copy yet", "err"); return false; }
+  if (!navigator.clipboard || typeof navigator.clipboard.write !== "function" ||
+      typeof ClipboardItem !== "function") {
+    toast("This browser can't take an image on the clipboard — use Download instead", "err");
+    return false;
+  }
+  const blob = await mkFetchPicture(subj.url, subj.sp);
+  if (!blob) { toast("Couldn't read that picture from storage", "err"); return false; }
+  try {
+    /* PNG is the only type every browser accepts on the clipboard */
+    const png = blob.type === "image/png" ? blob : new Blob([blob], { type: "image/png" });
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    toast(`Copied the ${escapeHtml(subj.label)} ✦`, "gold");
+    return true;
+  } catch (e) {
+    toast("The browser refused the clipboard write — use Download instead", "err");
+    return false;
+  }
+}
+
+/* ── print ────────────────────────────────────────────────────────────────
+   Printing the studio would print a modal, a tool rail and a layer list.
+   The sheet is rendered to one image, put in a container of its own, and
+   the print stylesheet hides everything else — so what comes out of the
+   printer is the drawing and a caption, on any theme, at any window size. */
+async function mkPrintSheet() {
+  const r = await mkSheetPngBlob(1600);
+  if (!r || !r.blob) { toast("Couldn't render this sheet for printing", "err"); return false; }
+  const url = URL.createObjectURL(r.blob);
+  let host = document.getElementById("bjPrintSheet");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "bjPrintSheet";
+    document.body.appendChild(host);
+  }
+  const t = mkMetalTally(__mk ? __mk.items : []);
+  host.innerHTML =
+    `<img alt="">` +
+    `<div class="bjp__cap">${escapeHtml(designName())} · ` +
+    `${t.engrave} engraved · ${t.cutout} cut through · ${t.none} outlined</div>`;
+  const img = host.querySelector("img");
+  await new Promise((res) => { img.onload = img.onerror = res; img.src = url; });
+  document.body.classList.add("bj-printing");
+  const clean = () => {
+    document.body.classList.remove("bj-printing");
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 2000);
+    window.removeEventListener("afterprint", clean);
+  };
+  window.addEventListener("afterprint", clean);
+  try { window.print(); } catch (e) { clean(); return false; }
+  /* Safari fires afterprint unreliably, so the class is taken off anyway */
+  setTimeout(clean, 8000);
+  return true;
+}
+
+/* ── the menu tells the truth about what exists ───────────────────────── */
+function mkFileSync() {
+  const menu = $(".mk-file .mk-drop__menu");
+  if (!menu) return;
+  const set = mkPictureSet();
+  const anyPic = !!(set.bw.url || set.spec.url || set.gold.url);
+  const sheetHas = !!(__mk && __mk.items.length);
+
+  /* the single-picture downloads, the cut-path export, Copy the picture and
+     the Save row were removed from this menu by request — the ZIP still
+     carries the full image set, and saving stays on the sheet's own button */
+  const able = {
+    zip: anyPic,
+    copylink: true,
+    import: !!__mk && !!$("#mkFileInput"),
+    importdesign: !!__mk && !!$("#mkDesignInput"),
+    print: sheetHas,
+  };
+  menu.querySelectorAll(".mk-item[data-file]").forEach((b) => {
+    b.disabled = !able[b.dataset.file];
+  });
+  menu.querySelectorAll(".mk-share__b").forEach((b) => {
+    b.disabled = b.dataset.share === "native"
+      ? !mkCanNativeShare()
+      : !mkShareSubject() && !cleanStudioUrl();
+  });
+  const note = $("#mkFileNote");
+  if (note) {
+    note.textContent = !anyPic
+      ? "The ZIP appears once this design has been drawn and cut in metal. Sharing, printing and importing work right now."
+      : (!set.gold.url
+        ? "The ZIP fills out once you press “See it in metal”."
+        : "The ZIP holds the full picture set plus a note saying which is which.");
+  }
+}
+
+/* ── wiring ───────────────────────────────────────────────────────────── */
+(function wireFileMenu() {
+  const drop = document.querySelector("#bjStudio .mk-file");
+  if (!drop) return;
+  const btn = drop.querySelector(".mk-drop__b");
+  const menu = drop.querySelector(".mk-drop__menu");
+  if (!btn || !menu) return;
+
+  /* wireDrops opens and places the menu; this only makes sure the rows are
+     honest at the moment it opens. Both listeners fire — the disabling here
+     lands before the menu is measured, which is also why the note's height
+     is correct on the first open. */
+  btn.addEventListener("pointerdown", mkFileSync, true);
+  btn.addEventListener("click", mkFileSync, true);
+
+  const busy = async (el, fn) => {
+    if (el.classList.contains("is-working")) return;
+    el.classList.add("is-working");
+    try { await fn(); }
+    catch (e) {
+      console.error("[studio] File:", e);
+      toast("That didn't work — please try again", "err");
+    }
+    finally { el.classList.remove("is-working"); }
+  };
+
+  const ACTIONS = {
+    zip:        () => mkDownloadSet(),
+    copylink:   () => mkCopyLink(),
+    print:      () => mkPrintSheet(),
+    /* the studio keeps two pickers so each can say what it takes — a photo
+       and a design file are not the same import and do not share an accept
+       list. The menu offers both rather than one picker that lies. */
+    import:     () => { const f = $("#mkFileInput"); if (f) f.click(); },
+    importdesign: () => { const f = $("#mkDesignInput"); if (f) f.click(); },
+  };
+
+  menu.querySelectorAll(".mk-item[data-file]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const act = ACTIONS[b.dataset.file];
+      if (!act) return;
+      mkCloseAllDrops();
+      await busy(b, act);
+    });
+  });
+
+  menu.querySelectorAll(".mk-share__b").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const net = b.dataset.share;
+      mkCloseAllDrops();
+      await busy(b, () => (net === "native" ? mkShareNative() : mkShareTo(net)));
+    });
+  });
+})();
+
 
 /* =============================================================================
    STEP 3 — ORDER MATH + CART HAND-OFF
@@ -12002,6 +23474,10 @@ const TYPES = {
             handle:"custom-charm-beady" },
   studs:  { base:45, label:"Stud Earrings (pair)",             sized:false, engravable:false,
             note:"One size · roughly 5–7 mm each, set by the design", handle:"custom-charm-studs" },
+};
+const FORMAT_SHORT = {
+  charm:"Charm", huggie:"Huggie hoops", chain:"Necklace",
+  beady:"Beady necklace", studs:"Stud earrings",
 };
 const SIZES = [
   { mm:10, delta:-4 },
@@ -12046,15 +23522,16 @@ function renderSizes(typeKey) {
   $("#sizeBlock").hidden = !t.sized;
   $("#oneSizeNote").hidden = !!t.sized;
   if (!t.sized) {
-    $("#oneSizeNote").innerHTML =
-      `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" style="color:var(--bj-gold);flex:none;"><path d="M4 12h16M4 9v6m16-6v6"/></svg>${t.note}`;
+    $("#oneSizeCopy").textContent = t.note;
     return;
   }
   const maxMm = SIZES[SIZES.length - 1].mm;
   $("#sizeRow").innerHTML = SIZES.map((s) => {
     const d = sizeDeltaFor(typeKey, orderState.metal, s.mm);
     const px = 9 + (s.mm / maxMm) * 13;                    // dot scaled to true proportion
-    return `<button class="size-opt${s.mm === orderState.mm ? " is-active" : ""}" data-mm="${s.mm}" type="button">
+    const on = s.mm === orderState.mm;
+    return `<button class="size-opt${on ? " is-active" : ""}" data-mm="${s.mm}" type="button"
+                    aria-pressed="${on ? "true" : "false"}" aria-label="${s.mm} millimetres${d ? `, ${d > 0 ? "plus" : "minus"} ${fmt(Math.abs(d))}` : ""}">
       ${s.popular ? '<span class="size-tag">Most loved</span>' : ""}
       <span class="size-dot" style="width:${px.toFixed(1)}px;height:${px.toFixed(1)}px;"></span>
       <span class="size-mm">${s.mm}mm</span>
@@ -12086,6 +23563,7 @@ function updateOrder() {
   const unit = itemPrice(typeKey, orderState.metal, orderState.mm);
   const isChainNecklace = ["chain", "beady"].includes(typeKey);
   $("#extenderBlock").hidden = !isChainNecklace;
+  if (!isChainNecklace) $("#extToggle").checked = false;
   const ext = isChainNecklace && $("#extToggle").checked;
   $("#heartToggle").disabled = !ext;
   if (!ext) $("#heartToggle").checked = false;
@@ -12097,14 +23575,37 @@ function updateOrder() {
   if (!canEngrave) { $("#engraveToggle").checked = false; $("#engraveInput").value = ""; }
   const engraved = canEngrave && $("#engraveToggle").checked;
   $("#engraveInput").hidden = !engraved;
-  $("#pdpPrice").textContent = CONFIG.currency + unit;
+  const personalize = $("#personalizeBlock");
+  personalize.hidden = !canEngrave && !isChainNecklace;
+  const addedExtras = (engraved ? 1 : 0) + (ext ? 1 : 0) + (heart ? 1 : 0);
+  $("#personalizeMeta").textContent = addedExtras ? `${addedExtras} added` : "Optional";
+  personalize.classList.toggle("has-selection", addedExtras > 0);
+
+  $("#pdpPrice").textContent = fmt(unit);
   const ov = state.versions[state.currentVersion];
-  $("#orderVersionLbl").textContent = ov ? `Ordering version ${ov.n} of ${state.versions.length}` : "";
+  $("#orderVersionLbl").textContent = ov ? `Version ${ov.n} of ${state.versions.length} selected` : "Charm + workshop drawing";
   $("#metalSelLbl").textContent = METAL_LABELS[orderState.metal];
+  $$("#orderMetalRow .mp").forEach((b) => {
+    const on = b.dataset.metal === orderState.metal;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
   $("#qtyVal").textContent = orderState.qty;
   const total = CONFIG.designFee + unit * orderState.qty +
                 (engraved ? CONFIG.engravingFee : 0) + (heart ? CONFIG.extenderHeartFee : 0);
+  $("#orderItemLabel").textContent = `${FORMAT_SHORT[typeKey]} · ${METAL_LABELS[orderState.metal]}`;
+  $("#orderItemSubtotal").textContent = fmt(unit * orderState.qty);
+  $("#orderEngravingRow").hidden = !engraved;
+  $("#orderHeartRow").hidden = !heart;
+  $("#orderGrandTotal").textContent = fmt(total);
   $("#orderTotal").textContent = fmt(total);
+  const cartBtn = $("#addToCartBtn");
+  if (!cartBtn.disabled) {
+    $("#addToCartLabel").textContent = "Add to cart";
+    const price = cartBtn.querySelector(".pdp-cart__price");
+    if (price) price.hidden = false;
+    cartBtn.classList.remove("is-loading", "is-added");
+  }
 }
 $("#orderFormat").addEventListener("change", updateOrder);
 
@@ -12133,6 +23634,15 @@ function syncFormatUI() {
     const on = +li.dataset.i === sel.selectedIndex;
     li.setAttribute("aria-selected", on ? "true" : "false");
     li.querySelector(".bj-select__tick").textContent = on ? "✓" : "";
+  });
+  $("#orderFormatSummary").textContent = FORMAT_SHORT[sel.value] || sel.selectedOptions[0].textContent;
+  $$("#orderFormatCards .format-card").forEach((b) => {
+    const key = b.dataset.formatCard;
+    const on = key === sel.value;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    const price = b.querySelector("[data-format-price]");
+    if (price) price.textContent = fmt(itemPrice(key, orderState.metal, orderState.mm));
   });
 }
 function setFormatFocus(i) {
@@ -12182,9 +23692,18 @@ $("#formatBtn").addEventListener("keyup", (e) => { if (e.key === "Escape") close
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && fmtSel.open) closeFormat(true); });
 document.addEventListener("click", (e) => { if (fmtSel.open && !e.target.closest("#formatSelect")) closeFormat(false); });
 buildFormatMenu();
+/* The five product formats are few enough to expose. The hidden native
+   select remains the source of truth so pricing, cart matching, automation
+   and saved state continue down the exact same change-event path. */
+$$("#orderFormatCards .format-card").forEach((b) => b.addEventListener("click", () => {
+  const sel = $("#orderFormat");
+  const next = b.dataset.formatCard;
+  if (sel.value !== next) {
+    sel.value = next;
+    sel.dispatchEvent(new Event("change", { bubbles:true }));
+  } else updateOrder();
+}));
 $$("#orderMetalRow .mp").forEach((b) => b.addEventListener("click", () => {
-  $$("#orderMetalRow .mp").forEach((x) => x.classList.remove("is-active"));
-  b.classList.add("is-active");
   orderState.metal = b.dataset.metal;
   updateOrder();
 }));
@@ -12223,13 +23742,20 @@ function variantFor(handle, opts) {
 function cartError(msg) {
   const btn = $("#addToCartBtn");
   btn.disabled = false;
+  btn.classList.remove("is-loading", "is-added");
+  const label = $("#addToCartLabel");
+  if (label) label.textContent = "Add to cart";
+  const price = btn.querySelector(".pdp-cart__price");
+  if (price) price.hidden = false;
   updateOrder();
   toast(msg, "err");
 }
 $("#addToCartBtn").addEventListener("click", async () => {
   const v = state.versions[state.currentVersion];
   if (!v) { toast("Approve a design first", "err"); return; }
-  if (!state.user) { openAuth("approve"); return; }
+  /* No account gate here either — see the note on #approveBtn. This is a
+     Shopify cart permalink like every other one on the store, and Shopify's
+     own guest checkout takes it from here. */
   const ctx = orderContext();
   const s = ensureSession();
 
@@ -12273,7 +23799,11 @@ $("#addToCartBtn").addEventListener("click", async () => {
   }
 
   const btn = $("#addToCartBtn");
-  btn.disabled = true; btn.textContent = "Adding…";
+  btn.disabled = true;
+  btn.classList.add("is-loading");
+  $("#addToCartLabel").textContent = "Adding…";
+  const cartPrice = btn.querySelector(".pdp-cart__price");
+  if (cartPrice) cartPrice.hidden = true;
   try {
     const r = await fetch(CART_ADD_URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -12284,7 +23814,9 @@ $("#addToCartBtn").addEventListener("click", async () => {
     s.status = "ordered";
     saveSession(true);
     toast("Added to cart ✦", "gold");
-    btn.textContent = "Added ✓ — taking you to the cart";
+    btn.classList.remove("is-loading");
+    btn.classList.add("is-added");
+    $("#addToCartLabel").textContent = "Added ✓ · Opening cart";
     setTimeout(() => { window.location.href = "/cart"; }, 900);
   } catch (e) {
     cartError(e.message || "Could not add to cart — please try another option.");
@@ -12300,6 +23832,15 @@ $("#addToCartBtn").addEventListener("click", async () => {
 const AUTH_COPY = {
   default:      ["Keep designing","Create your free account","Ten seconds, no card. Your designs, credits and order history live safely in one place."],
   outOfCredits: ["You're out of free designs","Keep going — it's free","Create a free account and we'll add "+CONFIG.signupBonusCredits+" bonus design credits instantly. No card required."],
+  /* ── RUNNING OUT OF IMAGES IS NOT RUNNING OUT OF DESIGNS ───────────────
+     All four upload walls used to raise the outOfCredits panel, which opens
+     with "You're out of free designs" — untrue, and confusing at exactly the
+     wrong moment, because the customer still had credits and had just been
+     stopped from adding a picture. This one names the right limit and, per
+     Paul, asks for an account rather than for money: a guest who hits the
+     image wall is one signup away from 10 more, not one purchase. */
+  outOfUploads: ["That's your "+CONFIG.guestFreeUploads+" free images","More images, still free",
+                 "Create a free account and we'll add "+CONFIG.signupBonusUploads+" more image uploads and "+CONFIG.signupBonusCredits+" bonus design credits, instantly. No card required."],
   saveDesign:   ["Don't lose this","Save your design","A free account keeps every version safe in your studio — on any device."],
   approve:      ["One last step","Approve with an account","Your approved artwork is stored full-resolution and reserved for you. Takes ten seconds."],
 };
@@ -12310,15 +23851,110 @@ function openAuth(intent = "default") {
   $("#authEyebrow").textContent = eye;
   $("#authTitle").textContent = title;
   $("#authSub").textContent = sub;
-  $("#authBonusTxt").textContent = CONFIG.signupBonusCredits + " bonus design credits";
+  /* Both halves of the offer, on every intent — the uploads are half of what
+     a free account is worth and they were never mentioned here. */
+  $("#authBonusTxt").textContent = CONFIG.signupBonusCredits + " bonus design credits and "
+                                 + CONFIG.signupBonusUploads + " more image uploads";
   $("#authModal").classList.add("is-open");
   mountGoogleButton();
 }
+/* ═══════════ THE FACE ON THE ACCOUNT ═════════════════════════════════════
+   One picture, chosen once, appearing wherever the studio says who you are.
+   It is an emoji, an uploaded image, or — the default, and never a gap —
+   the first letter of your name.
+
+   WHERE IT LIVES, AND WHY THAT IS A COMPROMISE WORTH NAMING. Everything
+   about an account in this studio is written by the server: the browser
+   holds a read-only snapshot of users/{uid} and writes only to its own
+   session documents. There is no client-writable field for a profile
+   picture, so this one is kept per-device, keyed by uid so two accounts on
+   one browser never wear each other's face. It survives reloads and it does
+   not follow you to your phone. The moment britesAuth grows a
+   profile_set kind, acctPicLoad and acctPicSave are the only two functions
+   that need to know — everything else already goes through them. */
+const ACCT_PIC_KEY = "bj:acctpic:";
+const ACCT_EMOJI = ["😀","😎","🥳","🤩","🦊","🐱","🐶","🐼","🦄","🐝",
+                    "🌸","🌿","🔥","⭐","🌙","💎","👑","🎨","✨","🧿",
+                    "🍀","🌊","⚡","🎸","☕","🚀","🐙","🦋","🍄","🫀"];
+const ACCT_PIC_MAX = 192;            /* px on the long edge — it is a 29px dot */
+
+function acctPicLoad() {
+  try {
+    const raw = localStorage.getItem(ACCT_PIC_KEY + (state.uid || ""));
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    return (v && (v.kind === "emoji" || v.kind === "img") && v.v) ? v : null;
+  } catch (e) { return null; }        /* private mode, quota, junk — no picture */
+}
+function acctPicSave(v) {
+  try {
+    const k = ACCT_PIC_KEY + (state.uid || "");
+    if (v) localStorage.setItem(k, JSON.stringify(v)); else localStorage.removeItem(k);
+  } catch (e) { toast("This browser will not keep the picture, sorry", "err"); }
+  acctPicPaint();
+}
+/* the INSIDE of an avatar dot, for every place that draws one */
+function acctPicInner(name) {
+  const v = acctPicLoad();
+  if (v && v.kind === "img") {
+    return `<img src="${attrText(v.v)}" alt="">`;
+  }
+  if (v && v.kind === "emoji") {
+    return `<i class="acct-emoji">${escapeHtml(v.v)}</i>`;
+  }
+  const n = String(name || (state.user && state.user.name) || "?");
+  return escapeHtml((n[0] || "?").toUpperCase());
+}
+/* every dot on the page, repainted from the one source */
+function acctPicPaint() {
+  const nm = (state.user && state.user.name) || "";
+  document.querySelectorAll(".acct-chip__avatar, .acct-id__pic").forEach((el) => {
+    el.innerHTML = acctPicInner(nm);
+    el.classList.toggle("has-img", !!(acctPicLoad() || {}).v &&
+                                   (acctPicLoad() || {}).kind === "img");
+  });
+  try { renderAccountPanel(); } catch (e) {}
+}
+
 function setAccountChip(name, email, provider) {
   state.user = { name, email, provider };
   const slot = $("#authSlot");
-  if (slot) slot.innerHTML = `<div class="acct-chip"><span class="acct-chip__avatar">${escapeHtml(String(name || "?")[0].toUpperCase())}</span><span>${escapeHtml(name)}</span></div>`;
+  if (slot) slot.innerHTML = `<div class="acct-chip"><span class="acct-chip__avatar">${acctPicInner(name)}</span><span>${escapeHtml(name)}</span></div>`;
   renderUploadAllowance();
+  try { renderAccountPanel(); } catch (e) {}
+}
+
+/* ── HOW YOU GET BACK IN ─────────────────────────────────────────────────
+   Said plainly, because it is the question a "manage account" panel exists
+   to answer and this studio's answer is unusual: there is no password to
+   change. Sign-in is Google, or a code emailed at the moment you ask for
+   one. Naming the provider tells a returning customer which button to press
+   next time, which is the whole of what a password row would have done. */
+function acctSigninLine() {
+  const u = state.user || {};
+  const p = String(u.provider || "").toLowerCase();
+  if (p.indexOf("google") >= 0) {
+    return "You sign in with Google — there is no password to change.";
+  }
+  return u.email
+    ? `You sign in with a one-time code emailed to ${escapeHtml(u.email)} — there is no password to change.`
+    : "You sign in with a one-time code sent to your email — there is no password to change.";
+}
+function renderAccountPanel() {
+  const row = $("#menuAcctToggle"), panel = $("#menuAcctPanel");
+  if (!row || !panel) return;
+  const on = !!(state.user && state.user.email);
+  row.hidden = !on;
+  if (!on) { panel.hidden = true; return; }
+  const nm = $("#acctName"), em = $("#acctEmail"), si = $("#acctSignin");
+  if (nm) nm.textContent = state.user.name || "Your account";
+  if (em) em.textContent = state.user.email || "";
+  if (si) si.innerHTML = acctSigninLine();
+  const pic = $("#acctPicBtn");
+  if (pic) {
+    pic.innerHTML = acctPicInner(state.user.name);
+    pic.classList.toggle("has-img", (acctPicLoad() || {}).kind === "img");
+  }
 }
 /* The signup bonus is granted SERVER-SIDE and exactly once per uid, keyed by a
    ledger entry with reason:"signup" — running it twice grants nothing further
@@ -12326,16 +23962,43 @@ function setAccountChip(name, email, provider) {
 async function completeAuth(name, email, provider) {
   setAccountChip(name, email, provider);
   $("#authModal").classList.remove("is-open");
+  /* ── SAY WHAT HAPPENED, NOT WHAT USUALLY HAPPENS ──────────────────────
+     The grant is server-side and exactly once per uid — the note above this
+     function says so — so every sign-in AFTER the first grants nothing at
+     all. The line announcing seven bonus credits did not know that: it was
+     written next to the request rather than after the answer, and it
+     congratulated returning customers on credits they had been given months
+     ago and were not given again. Told to somebody holding nine thousand of
+     them, every single time they log in, it reads as a system that has lost
+     count.
+
+     The wallet is the answer. Whatever the endpoint chooses to report, the
+     balance before and the balance after settle it between them: a rise is a
+     grant and is worth announcing, and no rise is a welcome back. */
+  const before = Number(state.credits);
+  let granted = 0;
   try {
     const r = await postAuthed("britesAuth", { kind: "wallet_grant_signup" });
     if (r && r.wallet) applyWallet(r.wallet);
+    const after = Number(state.credits);
+    if (isFinite(before) && isFinite(after) && after > before) granted = after - before;
+    /* and if the endpoint says so itself, believe it over the arithmetic —
+       a wallet snapshot arriving mid-flight could move the balance for a
+       reason that has nothing to do with this grant */
+    if (r && r.granted != null) granted = Number(r.granted) || 0;
   } catch (e) { /* the wallet snapshot will catch up */ }
   renderCredits(true);
   renderUploadAllowance();
-  toast(`Welcome, ${escapeHtml(name)} — ${CONFIG.signupBonusCredits} bonus credits added ✦`, "gold");
+  toast(granted > 0
+    ? `Welcome, ${escapeHtml(name)} — ${granted} bonus credit${granted === 1 ? "" : "s"} added ✦`
+    : `Welcome back, ${escapeHtml(name)} ✦`, "gold");
   saveSession(true);
   if (authIntent === "approve") setTimeout(approveNow, 600);
   if (authIntent === "saveDesign") { ensureSession(); saveSession(true); toast("Design saved to your studio"); }
+  /* a catalogue drawing that was waiting on this very sign-in */
+  if (refLineArtState().status === "await-auth" && refLineArtNeeded()) {
+    setTimeout(() => { kickRefLineArt().catch(() => {}); }, 400);
+  }
 }
 
 /* ═════════ IN-APP BROWSERS — the phone case Google will not serve ════════
@@ -13192,56 +24855,12 @@ $$(".pricing-tab").forEach((t) => t.addEventListener("click", () => {
   $("#pricingPacks").style.display = t.dataset.ptab === "packs" ? "grid" : "none";
   $("#pricingPlans").style.display = t.dataset.ptab === "plans" ? "grid" : "none";
 }));
-/* Resolving a tier to a Shopify variant. BJ_STUDIO_VARIANTS is built by the
-   Liquid section from the handles IT knows about; the packs and plans come
-   from config/customStudio, which can be retuned with no theme deploy. The two
-   drift — a pack renamed in Firestore, a handle typed differently in the
-   theme, a plan the section never listed — and every drift used to surface
-   as "That pack isn't available right now" on a product that is very much for
-   sale. So the lookup degrades in three steps: the injected map by exact
-   handle, then the map by the credit count in the handle (studio-pack-40 is
-   studio-pack-40 whatever the config calls it), then Shopify's own
-   /products/<handle>.js at click time, which is the storefront's source of
-   truth and needs no theme change at all. Credits are still granted by the
-   webhook on the STUDIO-PACK-<n> SKU, so nothing here can over-grant. */
-const _tierVariantCache = new Map();
-function tierHandle(t, kind) {
-  if (t.handle) return String(t.handle).trim();
-  return kind === "pack" ? `studio-pack-${t.credits}` : `studio-plan-${String(t.id || "").replace(/^m/, "")}`;
-}
-async function resolveTierVariant(t, kind) {
-  const handle = tierHandle(t, kind);
-  const direct = variantFor(handle, []);
-  if (direct) return direct;
-  if (kind === "pack") {
-    const key = Object.keys(VARIANTS).find((h) => new RegExp(`(^|-)pack-${t.credits}$`, "i").test(h));
-    const byCredits = key ? variantFor(key, []) : null;
-    if (byCredits) return byCredits;
-  }
-  if (_tierVariantCache.has(handle)) return _tierVariantCache.get(handle);
-  let found = null;
-  try {
-    const r = await fetch(`/products/${encodeURIComponent(handle)}.js`, { headers: { Accept: "application/json" } });
-    if (r.ok) {
-      const p = await r.json();
-      const v = (p && Array.isArray(p.variants) ? p.variants : []).find((x) => x.available) ||
-                (p && p.variants && p.variants[0]) || null;
-      if (v && v.id) found = { id: v.id, o: v.options || [] };
-    }
-  } catch (e) { /* offline or not a Shopify host — fall through to the toast */ }
-  _tierVariantCache.set(handle, found);
-  return found;
-}
-async function buyTier(id, kind) {
-  const t = (kind === "pack" ? CONFIG.packs : CONFIG.plans).find((x) => String(x.id) === String(id));
+function buyTier(id, kind) {
+  const t = (kind === "pack" ? CONFIG.packs : CONFIG.plans).find((x) => x.id === id);
   if (!t) return;
   if (!state.uid) { toast("One moment — still setting up your studio", "err"); return; }
-  const btn = $(`[data-buy="${CSS.escape(String(id))}"][data-kind="${kind}"]`);
-  if (btn) btn.disabled = true;
-  const variant = await resolveTierVariant(t, kind);
-  if (btn) btn.disabled = false;
+  const variant = variantFor(t.handle, []);
   if (!variant) {
-    console.warn("[studio] no variant for tier", kind, tierHandle(t, kind), "known handles:", Object.keys(VARIANTS));
     toast(kind === "plan"
       ? "Memberships open shortly — design packs are available now"
       : "That pack isn't available right now — please try another", "err");
@@ -13252,7 +24871,14 @@ async function buyTier(id, kind) {
   location.href = `/cart/${variant.id}:1?attributes[studio_uid]=${encodeURIComponent(state.uid)}&return_to=${ret}`;
 }
 function openPricing(context = "default") {
-  if (context === "out") {
+  if (context === "refs") {
+    /* the reference allowance is not the credit balance, and saying "out of
+       credits" to somebody who has credits left is how a paywall reads as a
+       bug. It names the limit it actually hit. */
+    $("#pricingEyebrow").textContent =
+      `Free designs start from ${refLimit()} reference images`;
+    $("#pricingTitle").textContent = "Start from another charm";
+  } else if (context === "out") {
     $("#pricingEyebrow").textContent = "You're out of design credits";
     $("#pricingTitle").textContent = "Keep the ideas coming";
   } else {
@@ -14953,7 +26579,7 @@ async function impRegister(file, kindLabel, items, preview) {
      objects, for nothing. A Photoshop file, whose layers ARE pictures, gets
      one small composite uploaded to storage like every other image. */
   state.markups[key] = {
-    items: impShrink(items), mode: "interpret", crop: [], baseRot: 0,
+    items: impShrink(items), mode: mkModeNorm(null), crop: [], baseRot: 0,
     guides: 0, groups: [], traced: 0, dirty: 0, updatedAt: now(),
     impName: String(file && file.name || "Artwork").slice(0, 60),
     impSrc: String(kindLabel || "").toLowerCase().slice(0, 8),
@@ -15112,8 +26738,14 @@ async function designFileImport(file, cx, cy) {
   return false;                           /* an ordinary picture; not ours */
 }
 
-/* every accept attribute in the app, written once */
-const DESIGN_ACCEPT = ".psd,.ai,.pdf,.svg,.svgz,.eps,.ps,image/vnd.adobe.photoshop,application/pdf,application/postscript,image/svg+xml";
+/* Every accept attribute in the app, written once.
+   .ai IS NOT HERE. The reader below still understands one — a modern .ai is
+   a PDF wearing a different extension, and it shares every line of that path
+   with the .pdf and .eps import that IS supported — but the studio does not
+   offer it, so it is not in the picker, not in the drop, and not on the menu.
+   Removing the reader would take PDF and EPS down with it, which is why the
+   line to delete is this one and not that code. */
+const DESIGN_ACCEPT = ".psd,.pdf,.svg,.svgz,.eps,.ps,image/vnd.adobe.photoshop,application/pdf,application/postscript,image/svg+xml";
 const IMAGE_ACCEPT = "image/jpeg,image/png,.jpg,.jpeg,.png";
 
 (function wireDesignFiles() {
@@ -15197,8 +26829,8 @@ function sessionThumb(s) {
      ever uploaded — so the drawing is painted from its own objects rather
      than shown as the black square with a question mark, which read as
      "your work is gone" when it never was. */
-  const drawn = typeof mkSketchThumb === "function" ? mkSketchThumb(s, "draw", 200) : "";
-  if (drawn) return `<img src="${attrText(drawn)}" alt="">`;
+  const dr = typeof mkSketchThumbRef === "function" ? mkSketchThumbRef(s, "draw", 200) : { url: "", ck: "" };
+  if (dr.url) return `<img src="${attrText(dr.url)}"${dr.ck ? ` data-thumb="${attrText(dr.ck)}"` : ""} alt="" decoding="async">`;
   return `<svg viewBox="0 0 100 100"><rect width="100" height="100" fill="#000"/><text x="50" y="58" text-anchor="middle" fill="#cdb98a" font-size="30" font-family="Georgia">?</text></svg>`;
 }
 function statusChip(st) {
@@ -15232,14 +26864,28 @@ function renderDrawer() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M9 6.5V4h6v2.5"/><path d="M6.5 6.5 7.5 20h9l1-13.5"/></svg>
       </button>
     </div>`; }).join("");
-  $$("#drawerBody .saved-item").forEach((el) => el.addEventListener("click", (e) => {
-    if (e.target.closest(".saved-kill")) return;
-    openSessionView(el.dataset.sid);
-  }));
-  $$("#drawerBody .saved-kill").forEach((b) => b.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    await confirmDeleteDesign(b.dataset.kill);
-  }));
+  /* the sketches in this list have their pictures drawn on demand too */
+  if (typeof mkThumbObserve === "function") mkThumbObserve(body);
+  wireDrawerRows();
+}
+/* ── ONE LISTENER, NOT THREE HUNDRED ─────────────────────────────────────
+   Two handlers were attached per row, every time the list was rebuilt — and
+   the list is rebuilt whenever anything on the account changes. At a hundred
+   and fifty designs that is three hundred registrations for a list nobody
+   has clicked yet, and the old ones went with the rows they were attached
+   to, so the cost was paid again on every repaint. A click knows which row
+   it happened in; the list does not need to be told in advance. */
+let _drawerWired = false;
+function wireDrawerRows() {
+  if (_drawerWired) return;
+  const body = $("#drawerBody"); if (!body) return;
+  _drawerWired = true;
+  body.addEventListener("click", async (e) => {
+    const kill = e.target.closest(".saved-kill");
+    if (kill) { e.stopPropagation(); await confirmDeleteDesign(kill.dataset.kill); return; }
+    const row = e.target.closest(".saved-item");
+    if (row) openSessionView(row.dataset.sid);
+  });
 }
 $("#myDesignsBtn").addEventListener("click", () => {
   renderDrawer(); $("#designsDrawer").classList.add("is-open");
@@ -15272,7 +26918,10 @@ async function confirmDeleteDesign(sid) {
   return gone;
 }
 
-const TL_ICONS = { created:"✦", reference:"⌕", upload:"⬆", instructions:"✎", metal:"◐", generate:"✦", refine:"↻", approve:"♥", order:"✓" };
+/* `render` was never in here and fell to the "·" fallback, which is how a
+   press that costs a credit ended up as the least legible line in a design's
+   own history. Both metal steps are named now. */
+const TL_ICONS = { created:"✦", reference:"⌕", upload:"⬆", instructions:"✎", metal:"◐", generate:"✦", refine:"↻", render:"◆", gold_edit:"✧", approve:"♥", order:"✓" };
 function openSessionView(sid) {
   const s = state.sessions.find((x) => x.id === sid); if (!s) return;
   $("#designsDrawer").classList.remove("is-open");
@@ -15391,28 +27040,132 @@ function renderHeroShow() {
 }
 
 /* =============================================================================
-   FAQ                                                  [prototype, verbatim]
+   STUDIO GUIDE / FAQ
+
+   This is sales copy, but it is also a contract with the product. Questions
+   are objects instead of anonymous pairs so the interface can expose a useful
+   topic label, and answers that mention allowances are FUNCTIONS so the live
+   Firestore CONFIG — not a number frozen into the asset — writes the copy.
+
+   Accessibility follows the WAI accordion relationship exactly: a native
+   button inside a heading, aria-expanded on that button, aria-controls to its
+   answer panel, and the entire visible row is one control. The answer is
+   aria-hidden while its animated grid row is closed; there is no invisible
+   copy left in a screen reader's reading order. Multiple answers may stay open
+   for comparison, and the one deliberate shortcut opens or closes all eight.
    ========================================================================== */
 const FAQ = [
-  ["Do I pay anything to try it?", "No — " + CONFIG.guestFreeCredits + " free designs for everyone, " + CONFIG.signupBonusCredits + " more with a free account."],
-  ["What happens when I approve?", "The design is locked and saved to your account. It costs nothing and orders nothing."],
-  ["What can I upload?", "Pets, drawings, tattoos, logos, sketches — anything that's yours to use."],
-  ["Will the real charm match the preview?", "Yes — same flat cut, hoop and engraving rules our workshop uses. If it doesn't, we remake or refund."],
-  ["Can I add a name?", "Yes — engraving is added when you order, just like our regular charms."],
+  {
+    tag: "Getting started",
+    q: "Is the Design Studio free to try?",
+    a: () => "Yes. You can begin as a guest with " + CONFIG.guestFreeCredits +
+      " design credits and " + CONFIG.guestFreeUploads +
+      " image uploads—no account or card required. A free account adds " +
+      CONFIG.signupBonusCredits + " more credits and " + CONFIG.signupBonusUploads +
+      " more uploads. Whenever an action uses a credit, the Studio shows the cost before you press it."
+  },
+  {
+    tag: "Files & inspiration",
+    q: "How can I begin—and what files can I use?",
+    a: "Start from any Brites design, upload your own artwork, or open a blank sketchpad. The Studio accepts JPG and PNG images plus PSD, AI, PDF, SVG and EPS design files; bring design files into the drawing studio when you want supported layers and paths to remain editable."
+  },
+  {
+    tag: "Editor tools",
+    q: "How much can I edit myself?",
+    a: "A lot. Draw with pen, shapes, text, symmetry and grids; move, resize and rotate parts; organize layers; mark engraving and cut-through areas; and use the eraser, Magic Eraser and undo/redo. Choose Exactly as drawn for strict fidelity, or For what I mean when a rough sketch needs a clean interpretation."
+  },
+  {
+    tag: "Revisions",
+    q: "Can I ask for changes without starting over?",
+    a: "Yes. Describe a change in the design conversation or mark directly on the drawing or metal proof. Each result becomes a version, so you can compare directions and return to the one you prefer without rebuilding the project from scratch."
+  },
+  {
+    tag: "Proof & production",
+    q: "Will the finished charm match what I approve?",
+    a: "The Drawing is the production artwork, Greyscale is the exact metal, engraving and cut-through map sent to the renderer, and Charm is the photoreal metal proof. Review all three before approval. Hand finishing and screen colour can vary slightly, but the approved drawing governs the shape, openings and engraving; if the finished piece does not follow the approved set, our remake promise applies."
+  },
+  {
+    tag: "Approval",
+    q: "What happens when I approve a design?",
+    a: "Approval selects that exact version and opens the order builder. It does not charge you, add anything to your cart or begin production; those happen only after you choose your product options, add the piece to cart and complete checkout."
+  },
+  {
+    tag: "Ordering",
+    q: "What can I order and personalize?",
+    a: "Choose a charm, huggie-hoop pair, regular or beady-chain necklace, or stud-earring pair in sterling silver, 14k gold filled, 14k rose gold filled, 10k solid gold or 14k solid gold. Size and engraving controls adapt to the format; eligible pieces can take up to 16 characters, and your total updates before anything reaches the cart."
+  },
+  {
+    tag: "Saving your work",
+    q: "Will my designs and versions be saved?",
+    a: "You can experiment as a guest. Create a free account to keep named projects, uploads, conversations, versions and credits together in My Designs and pick up where you left off; you can rename or delete saved work whenever you like."
+  }
 ];
+function faqAnswer(entry) {
+  return typeof entry.a === "function" ? entry.a() : entry.a;
+}
+function setFaqOpen(item, open) {
+  const btn = item && item.querySelector(".faq-q");
+  const answer = item && item.querySelector(".faq-a");
+  if (!item || !btn || !answer) return;
+  item.classList.toggle("is-open", !!open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  answer.setAttribute("aria-hidden", open ? "false" : "true");
+}
+function syncFaqToggle() {
+  const host = $("#faqList"), toggle = $("#faqToggleAll");
+  if (!host || !toggle) return;
+  const items = Array.from(host.querySelectorAll(".faq-item"));
+  const allOpen = items.length > 0 && items.every((item) => item.classList.contains("is-open"));
+  toggle.setAttribute("aria-pressed", allOpen ? "true" : "false");
+  const label = toggle.querySelector(".faq-toggle-all__text");
+  if (label) label.textContent = allOpen ? "Close all answers" : "Open all answers";
+}
 function renderFaq() {
-  $("#faqList").innerHTML = FAQ.map(([q, a], i) => `
-    <div class="faq-item" data-i="${i}">
-      <button class="faq-q" type="button">${escapeHtml(q)}<span class="chev">▾</span></button>
-      <div class="faq-a"><p>${escapeHtml(a)}</p></div>
-    </div>`).join("");
-  $$(".faq-item").forEach((item) => {
+  const host = $("#faqList");
+  if (!host) return;
+  const openBefore = new Set(Array.from(host.querySelectorAll(".faq-item.is-open"))
+    .map((item) => Number(item.dataset.i)));
+  if (!host.children.length && !openBefore.size) openBefore.add(0);
+  host.innerHTML = FAQ.map((entry, i) => {
+    const qid = "studioFaqQ" + i;
+    const aid = "studioFaqA" + i;
+    const open = openBefore.has(i);
+    return `
+      <article class="faq-item${open ? " is-open" : ""}" data-i="${i}">
+        <h3 class="faq-title">
+          <button class="faq-q" id="${qid}" type="button"
+                  aria-expanded="${open ? "true" : "false"}" aria-controls="${aid}">
+            <span class="faq-q__num" aria-hidden="true">${String(i + 1).padStart(2, "0")}</span>
+            <span class="faq-q__copy">
+              <span class="faq-q__tag">${escapeHtml(entry.tag)}</span>
+              <span class="faq-q__text">${escapeHtml(entry.q)}</span>
+            </span>
+            <span class="faq-q__toggle" aria-hidden="true"></span>
+          </button>
+        </h3>
+        <div class="faq-a" id="${aid}" aria-labelledby="${qid}"
+             aria-hidden="${open ? "false" : "true"}">
+          <div class="faq-a__inner"><p>${escapeHtml(faqAnswer(entry))}</p></div>
+        </div>
+      </article>`;
+  }).join("");
+  host.querySelectorAll(".faq-item").forEach((item) => {
     item.querySelector(".faq-q").addEventListener("click", () => {
-      const open = item.classList.toggle("is-open");
-      const a = item.querySelector(".faq-a");
-      a.style.maxHeight = open ? a.scrollHeight + "px" : "0";
+      setFaqOpen(item, !item.classList.contains("is-open"));
+      syncFaqToggle();
     });
   });
+  const toggle = $("#faqToggleAll");
+  if (toggle && !toggle.dataset.faqBound) {
+    toggle.dataset.faqBound = "1";
+    toggle.addEventListener("click", () => {
+      const items = Array.from(host.querySelectorAll(".faq-item"));
+      const open = !items.every((item) => item.classList.contains("is-open"));
+      items.forEach((item) => setFaqOpen(item, open));
+      syncFaqToggle();
+    });
+  }
+  syncFaqToggle();
 }
 
 /* =============================================================================
@@ -15568,7 +27321,9 @@ function setGroup(toggle, panel, open) {
     setTimeout(() => { if (!panel.classList.contains("is-open")) panel.hidden = true; }, 400);
   }
 }
-const MENU_GROUPS = [["#menuStartToggle", "#menuStartPanel"], ["#menuHelpToggle", "#menuHelpPanel"]];
+const MENU_GROUPS = [["#menuStartToggle", "#menuStartPanel"],
+                     ["#menuHelpToggle", "#menuHelpPanel"],
+                     ["#menuAcctToggle", "#menuAcctPanel"]];
 function collapseMenuGroups() {
   MENU_GROUPS.forEach(([t, p]) => setGroup($(t), $(p), false));
 }
@@ -15598,6 +27353,92 @@ document.addEventListener("keydown", (e) => {
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }, true);
+
+/* ═══════════ MANAGE ACCOUNT — the rows inside the panel ══════════════════
+   Three things, and nothing else, because an account panel that has to be
+   read is an account panel nobody reads: who you are, the picture that says
+   so, and the way out. Everything a customer might come here for that lives
+   somewhere better — credits at the top of this menu, designs one row up —
+   is left where it already is rather than copied in beside it. */
+(function wireAccount() {
+  const pickRow = $("#acctPicRow"), pick = $("#acctPick");
+  const grid = $("#acctEmoji"), file = $("#acctFile");
+
+  /* the emoji tray, built once */
+  if (grid && !grid.childElementCount) {
+    grid.innerHTML = ACCT_EMOJI.map((e) =>
+      `<button class="acct-emoji__b" type="button" data-emoji="${attrText(e)}" aria-label="${attrText(e)}">${escapeHtml(e)}</button>`
+    ).join("");
+    grid.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-emoji]");
+      if (!b) return;
+      acctPicSave({ kind: "emoji", v: b.dataset.emoji });
+      toast("That is your picture now ✦", "gold");
+    });
+  }
+
+  /* the tray opens from the row OR from the picture itself — the picture is
+     where a hand goes first, and a picture that looks pressable and is not
+     is a small lie told every time the panel opens */
+  const openPick = (want) => {
+    if (!pick || !pickRow) return;
+    const on = want == null ? pick.hidden : want;
+    pick.hidden = !on;
+    pickRow.setAttribute("aria-expanded", on ? "true" : "false");
+  };
+  if (pickRow) pickRow.addEventListener("click", () => openPick());
+  { const p = $("#acctPicBtn"); if (p) p.addEventListener("click", () => openPick(true)); }
+
+  { const b = $("#acctClear");
+    if (b) b.addEventListener("click", () => {
+      acctPicSave(null);
+      toast("Back to your initial", "gold");
+    }); }
+
+  { const b = $("#acctUpload");
+    if (b && file) b.addEventListener("click", () => file.click()); }
+
+  if (file) file.addEventListener("change", async () => {
+    const f = file.files && file.files[0];
+    file.value = "";
+    if (!f) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(f.type)) {
+      toast("Please choose a PNG, JPG or WEBP image", "err"); return;
+    }
+    if (f.size > 8 * 1024 * 1024) { toast("That image is over 8 MB — try a smaller one", "err"); return; }
+    try {
+      const raw = await new Promise((res, rej) => {
+        const rd = new FileReader();
+        rd.onload = () => res(rd.result);
+        rd.onerror = () => rej(new Error("read"));
+        rd.readAsDataURL(f);
+      });
+      /* a 29px dot does not need a 4000px photograph, and localStorage is
+         measured in a very few megabytes — so it is cut down to size before
+         it is kept, not after */
+      const small = await resizeToMax(raw, ACCT_PIC_MAX, { maxBytes: 120000 });
+      acctPicSave({ kind: "img", v: small.dataUrl || raw });
+      toast("That is your picture now ✦", "gold");
+    } catch (e) {
+      toast("We could not read that image — try another one", "err");
+    }
+  });
+
+  { const b = $("#acctSignOut");
+    if (b) b.addEventListener("click", async () => {
+      /* THE PAGE IS RELOADED RATHER THAN PATCHED. Signing out leaves a
+         studio full of one person's designs, credits, sessions and watchers
+         while onAuthStateChanged quietly signs the browser back in as a new
+         anonymous visitor — two identities in one page, and every listener
+         still pointed at the first. Nothing short of starting again is
+         honest about what just happened. */
+      try { saveSession(true); } catch (e) {}
+      closeMenu(false);
+      toast("Signing out…");
+      try { if (auth) await auth.signOut(); } catch (e) {}
+      setTimeout(() => { try { location.reload(); } catch (e) {} }, 260);
+    }); }
+})();
 
 /* Every row that leads somewhere else closes the panel first, so the surface
    it opens is never fighting the panel for the same corner of the screen. */
@@ -15641,9 +27482,24 @@ $("#menuStartUpload") && $("#menuStartUpload").addEventListener("click", () => m
 $("#menuStartSearch") && $("#menuStartSearch").addEventListener("click", () => menuStartDesign("search"));
 $("#menuStartDraw")   && $("#menuStartDraw").addEventListener("click",   () => menuStartDesign("draw"));
 $("#menuFaq") && $("#menuFaq").addEventListener("click", () => {
+  const wasDesigning = ROOT.classList.contains("is-designing");
   closeMenu(false);
-  const faq = ROOT.querySelector(".faq-item");
-  if (faq) setTimeout(() => faq.scrollIntoView({ behavior: "smooth", block: "center" }), 200);
+  /* The guide lives on the landing page, while every .aux-section is hidden
+     during the three-step workshop. Save the open project through the same
+     exit path as the Charm Studio breadcrumb, then take the customer to the
+     guide; the old handler scrolled toward a hidden node and appeared dead. */
+  if (wasDesigning) exitToLanding();
+  const guide = $("#studioFaq");
+  if (guide) setTimeout(() => {
+    const reduceMotion = !!(window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    guide.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    const first = guide.querySelector(".faq-q");
+    if (first) setTimeout(() => {
+      try { first.focus({ preventScroll: true }); }
+      catch (e) { first.focus(); }
+    }, reduceMotion ? 0 : 420);
+  }, wasDesigning ? 520 : 200);
 });
 
 /* The button's state follows surfaces it does not own — every modal and the
@@ -15658,8 +27514,306 @@ if (window.MutationObserver) {
 syncMenuButton();
 /* the Playwright menu suite drives these two directly, the same way the
    pricing suite reads window.__itemPrice */
-window.__studioBuild   = "2026-09-08.82";
-  window.__studioState   = state;
+window.__studioBuild   = "2026-08-27.mk44";
+/* ── DO THE ASSETS MATCH? SAY SO ONCE, IN WORDS ──────────────────────────
+   The section (this file plus the Liquid) and the stylesheet are separate
+   Shopify assets that deploy separately, and a page has now shipped twice
+   with a stylesheet that was stale or partially served — the stepper
+   collapsed into raw text while the rest of the page looked fine, which
+   reads as a code bug and is a deployment one. The stylesheet signs its
+   revision in a custom property; this checks it once the DOM is up and
+   names the problem in the console, where the person deploying will look.
+   MK_CSS_REV_WANT is bumped together with --mk-css-rev in the CSS. */
+const MK_CSS_REV_WANT = 60;
+/* ── THE PATCH IS A SPLINT, AND A SPLINT MUST BE THE RIGHT SIZE ─────────
+   mk23's patch carried the stepper's BASE rules and nothing else, and the
+   result was worse than useful: the bar appeared, at full size, in a nav
+   row that grew from 54px to 140px, with the Back/Next buttons dropped to
+   browser defaults. The compact `is-designing` overrides are not decoration
+   — they ARE the bar as it ships, and any patch that omits them is a
+   different bar. So the splint now carries both halves, plus the nav
+   buttons beside them and the page's own centring, which is the rest of
+   what the header loses when the stylesheet is absent.
+
+   Same rules as the Liquid's inline block and the stylesheet itself. If you
+   edit the stepper's bones, edit all three. */
+const MK_CRITICAL_CSS =
+  /* the bar, at rest */
+  '.bj-studio .stepper{display:flex;align-items:flex-start;justify-content:center;gap:0;margin:14px auto 22px;max-width:640px;padding:4px 0 2px}' +
+  '.bj-studio .step{display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;padding:0;width:82px;flex:none;color:#6f6b64;cursor:default}' +
+  '.bj-studio .step__num{width:27px;height:27px;border-radius:50%;border:1.5px solid #d9d5ce;display:flex;align-items:center;justify-content:center;position:relative;font-size:12px;font-weight:700;background:#fff;color:#b5b1aa;flex:none;line-height:1;padding:0}' +
+  '.bj-studio .step__num .n{display:block;line-height:1}' +
+  '.bj-studio .step__lbl{font-size:9.5px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#b5b1aa;line-height:1}' +
+  '.bj-studio .step__sub{font-size:7.5px;letter-spacing:.12em;text-transform:uppercase;color:transparent;line-height:1;margin-top:-2px}' +
+  '.bj-studio .step.is-active .step__num{background:#1c1d1d;border-color:#1c1d1d;color:#fff;box-shadow:0 0 0 2px #fff,0 0 0 3.5px #a58a52}' +
+  '.bj-studio .step.is-active .step__lbl{color:#1c1d1d}' +
+  '.bj-studio .step.is-active .step__sub{color:#a58a52}' +
+  '.bj-studio .step.is-done .step__num{background:#a58a52;border-color:#a58a52;color:#fff}' +
+  '.bj-studio .step.is-done .step__num .n{display:none}' +
+  '.bj-studio .step.is-done .step__num:after{content:"\\2713";font-size:12px;font-weight:700;line-height:1;display:block}' +
+  '.bj-studio .step.is-done .step__lbl{color:#a58a52}' +
+  '.bj-studio .step-sep{flex:1;height:1.5px;background:#e6e2da;min-width:22px;max-width:76px;margin-top:13px;position:relative;overflow:hidden}' +
+  '.bj-studio .step-sep i{position:absolute;inset:0;background:#a58a52;transform:scaleX(0);transform-origin:left center}' +
+  '.bj-studio .step-sep.is-done i{transform:scaleX(1)}' +
+  /* the row it sits in, and the two buttons that flank it */
+  '.bj-studio .stepper-wrap{background:#fff;display:none}' +
+  '.bj-studio.is-designing .stepper-wrap{display:block;position:sticky;top:66px;z-index:55;border-bottom:1px solid #e6e2da}' +
+  '.bj-studio .stepper-nav-row{display:flex;align-items:center;justify-content:center;gap:clamp(26px,4vw,72px)}' +
+  '.bj-studio .stepper-mid{flex:none;min-width:0}' +
+  '.bj-studio .nav-arrow{display:inline-flex;align-items:center;gap:10px;flex:none;border:1px solid #e6e2da;background:#fff;color:#1c1d1d;padding:10px 18px;font-size:10px;font-weight:700;letter-spacing:.22em;text-transform:uppercase}' +
+  '.bj-studio .nav-arrow em{font-style:normal}' +
+  '.bj-studio .nav-arrow span{font-size:15px;line-height:1}' +
+  '.bj-studio .nav-arrow--next:not(:disabled){background:#a58a52;border-color:#a58a52;color:#fff}' +
+  '.bj-studio .nav-arrow:disabled{opacity:.28;cursor:not-allowed}' +
+  /* AND THE COMPACT FORM, which is the one a designing customer sees */
+  '.bj-studio.is-designing .stepper{margin:0 auto;padding:6px 0 5px}' +
+  '.bj-studio.is-designing .step{gap:4px;width:76px}' +
+  '.bj-studio.is-designing .step__num{width:20px;height:20px;font-size:10px;border-width:1.2px}' +
+  '.bj-studio.is-designing .step.is-active .step__num{box-shadow:0 0 0 1.5px #fff,0 0 0 2.5px #a58a52}' +
+  '.bj-studio.is-designing .step.is-done .step__num:after{font-size:10px}' +
+  '.bj-studio.is-designing .step__lbl{font-size:8.5px}' +
+  '.bj-studio.is-designing .step__sub{font-size:6.5px;margin-top:-1px}' +
+  '.bj-studio.is-designing .step-sep{margin-top:9px;min-width:18px;max-width:64px}' +
+  '.bj-studio.is-designing .nav-arrow{padding:7px 14px;font-size:9px;gap:8px}' +
+  '.bj-studio.is-designing .nav-arrow span{font-size:13px}' +
+  /* and the masthead, which loses its centring with everything else */
+  '.bj-studio .page{max-width:1280px;margin:0 auto;padding:0 28px 90px}' +
+  /* the breadcrumb, :where()-wrapped for the usual reason — it has
+     small-screen overrides in the stylesheet and this block is appended
+     last, so an unscoped rule here would beat them. It is a passenger in
+     .stepper-nav-row now, not a bar of its own: flex:1 1 0 at the head of
+     the row, .nav-pad as its counterweight after Next. */
+  ':where(.bj-studio) .modal--name{z-index:120}' +
+  ':where(.bj-studio) .studio-crumbs{flex:1 1 0;min-width:0;display:flex;align-items:center;overflow:hidden}' +
+  ':where(.bj-studio) .nav-pad{flex:1 1 0;min-width:0}' +
+  ':where(.bj-studio) .studio-crumbs ol{display:flex;align-items:center;gap:0;list-style:none;margin:0;padding:0;min-width:0}' +
+  ':where(.bj-studio) .studio-crumbs li{display:flex;align-items:center;min-width:0}' +
+  ':where(.bj-studio) .studio-crumbs li + li:before{content:"\\203A";margin:0 7px;color:#c6c0b5;font-size:11px;line-height:1}' +
+  ':where(.bj-studio) .studio-crumb{background:none;border:0;border-radius:0;padding:2px 0;font-size:9.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:#6f6b64;text-decoration:none;white-space:nowrap}' +
+  ':where(.bj-studio) .studio-crumb--here{color:#1c1d1d;font-weight:700}' +
+  /* ── AND THE LANDING AND THE PROOF ROOM ───────────────────────────────
+     Same job as the stepper's rules above, and the same warning: these are
+     bones only, and every selector is wrapped in :where() so it contributes
+     no specificity and therefore ALWAYS loses to the real stylesheet. This
+     block is appended to <head> after everything, so without :where() a
+     desktop rule here would beat the stylesheet's own @media overrides and
+     strand a phone in the desktop layout — which is exactly what happened to
+     the three landing steps and to the Proof Room's two labels before this
+     was understood. If you edit these bones, edit all three copies. */
+  ':where(.bj-studio) .studio-landing,' +
+  ':where(.bj-studio) .studio-proof{margin-inline:calc(50% - 50vw)}' +
+  ':where(.bj-studio.is-designing) .studio-landing{display:none}' +
+  ':where(.bj-studio) .landing-hero{position:relative;background:#fdfaf6;overflow:hidden}' +
+  ':where(.bj-studio) .landing-hero__copy{position:relative;z-index:2;text-align:center}' +
+  ':where(.bj-studio) .landing-hero__inner{max-width:420px;margin:0 auto}' +
+  ':where(.bj-studio) .landing-hero__art .hero-show{max-width:none;margin:0;position:absolute;inset:0}' +
+  ':where(.bj-studio) .landing-hero__art .hero-story{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;border:0;box-shadow:none;background:#fdfaf6}' +
+  ':where(.bj-studio) .landing-hero__art .hero-story img{width:100%;height:100%;object-fit:cover;object-position:66% 50%}' +
+  ':where(.bj-studio) .landing-trust{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:0;list-style:none;margin:0;padding:16px 20px;background:#fdf9f3;border-top:1px solid #eee7db;border-bottom:1px solid #eee7db}' +
+  ':where(.bj-studio) .landing-trust__item{display:flex;align-items:center;gap:13px;padding:2px clamp(20px,4vw,88px);white-space:nowrap}' +
+  ':where(.bj-studio) .landing-trust__ico{width:25px;height:25px;color:#b8873e;flex:none}' +
+  ':where(.bj-studio) .landing-how{background:#fefdfb;padding:36px 20px 42px;text-align:center}' +
+  ':where(.bj-studio) .landing-how__eyebrow{display:block;margin:0 0 8px;text-transform:uppercase;color:#b8873e}' +
+  ':where(.bj-studio) .landing-how__head{max-width:720px;margin:0 auto}' +
+  ':where(.bj-studio) .landing-steps{display:flex;align-items:flex-start;justify-content:center;flex-wrap:wrap;gap:0;list-style:none;margin:28px auto 0;max-width:1460px}' +
+  ':where(.bj-studio) .landing-step{display:flex;flex:0 0 33.333%;align-items:flex-start;gap:18px;position:relative;text-align:left;min-width:0}' +
+  ':where(.bj-studio) .landing-step__visual{display:flex;align-items:center;gap:6px;flex:0 0 124px;width:124px;height:82px}' +
+  ':where(.bj-studio) .landing-step__num{flex:0 0 36px;width:36px;height:36px;border-radius:50%;background:#f4ecdd;display:flex;align-items:center;justify-content:center;font-size:18px;line-height:1}' +
+  ':where(.bj-studio) .landing-step__ico{flex:0 0 82px;width:82px;height:82px;padding:7px;display:grid;place-items:center;color:#b8873e}' +
+  ':where(.bj-studio) .landing-step__ico svg{width:100%;height:100%;display:block}' +
+  ':where(.bj-studio) .landing-step__txt{flex:1 1 auto;min-width:0;padding-top:2px}' +
+  ':where(.bj-studio) .landing-step__features{display:block;margin:0 0 6px;text-transform:uppercase;color:#b8873e}' +
+  ':where(.bj-studio) .landing-step__txt b{display:block;margin-bottom:5px}' +
+  ':where(.bj-studio) .landing-step__copy{display:block}' +
+  ':where(.bj-studio) .landing-btn{display:inline-flex;align-items:center;justify-content:center;gap:12px;font-size:18px;line-height:1;border-radius:0;border:1.5px solid transparent;padding:19px 24px;min-width:184px}' +
+  ':where(.bj-studio) .landing-btn--gold{background:#b8873e;border-color:#b8873e;color:#fff}' +
+  ':where(.bj-studio) .landing-btn--ghost{background:transparent;border-color:#b8873e;color:#b8873e}' +
+  ':where(.bj-studio) .landing-cta{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:14px;margin-top:30px}' +
+  ':where(.bj-studio) .studio-proof{display:grid;align-items:center;background:#fdfaf6;border-top:1px solid #eee7db;padding:clamp(40px,4.6vw,66px) clamp(20px,5vw,88px);gap:clamp(28px,4vw,68px)}' +
+  ':where(.bj-studio) .studio-proof[hidden]{display:none}' +
+  ':where(.bj-studio) .proof-copy{min-width:0}' +
+  ':where(.bj-studio) .proof-copy__head{margin:14px 0 16px;line-height:.96}' +
+  ':where(.bj-studio) .proof-copy__head em{font-style:italic;color:#b8873e}' +
+  ':where(.bj-studio) .proof-cue{width:max-content;max-width:100%;margin-top:28px;padding-top:20px;border-top:1px solid #e2cfa9;display:flex;align-items:center;gap:13px}' +
+  ':where(.bj-studio) .proof-cue > svg{width:26px;height:26px;color:#b8873e;flex:none}' +
+  ':where(.bj-studio) .proof-cue span{display:grid}' +
+  ':where(.bj-studio) .proof-cta{margin-top:28px}' +
+  ':where(.bj-studio) .proof-module{min-width:0;background:#fff;border:1px solid #eee7db}' +
+  ':where(.bj-studio) .proof-module__top,:where(.bj-studio) .proof-module__foot{min-height:62px;padding:10px 18px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}' +
+  ':where(.bj-studio) .proof-module__top{border-bottom:1px solid #eee7db}' +
+  ':where(.bj-studio) .proof-live{display:flex;align-items:center;gap:11px;font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase}' +
+  ':where(.bj-studio) .proof-live i{width:9px;height:9px;border-radius:50%;background:#b8873e;flex:none}' +
+  ':where(.bj-studio) .proof-badge{min-height:40px;padding:0 14px;display:flex;align-items:center;gap:9px;border:1px solid #eee7db;background:#fdf9f3;color:#b8873e;font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase}' +
+  ':where(.bj-studio) .proof-badge svg{width:17px;height:17px;flex:none}' +
+  ':where(.bj-studio) .proof-stage{--p:56%;position:relative;overflow:hidden;background:#fff;height:clamp(300px,31vw,470px)}' +
+  ':where(.bj-studio) .proof-layer{position:absolute;inset:0;overflow:hidden}' +
+  ':where(.bj-studio) .proof-art{position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);aspect-ratio:1}' +
+  ':where(.bj-studio) .proof-art img{width:100%;height:100%;object-fit:contain;display:block;transform:scale(1.22);transform-origin:center}' +
+  ':where(.bj-studio) .proof-art--gold img{transform:translate(-.394%,-1.078%) scale(1.1918,1.1772)}' +
+  ':where(.bj-studio) .proof-after{position:absolute;inset:0;z-index:2;clip-path:inset(0 0 0 var(--p))}' +
+  ':where(.bj-studio) .proof-tag{position:absolute;z-index:5;top:16px;min-height:40px;padding:0 12px;display:flex;align-items:center;gap:9px;pointer-events:none;background:rgba(255,255,255,.94);border:1px solid #eee7db;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}' +
+  ':where(.bj-studio) .proof-tag svg{width:17px;height:17px;color:#b8873e;flex:none}' +
+  ':where(.bj-studio) .proof-tag--before{left:16px}' +
+  ':where(.bj-studio) .proof-tag--after{right:16px}' +
+  ':where(.bj-studio) .proof-line{position:absolute;z-index:4;top:0;left:var(--p);width:2px;height:100%;background:#b8873e;pointer-events:none}' +
+  ':where(.bj-studio) .proof-handle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:56px;height:56px;border-radius:50%;border:2px solid #fff;background:#b8873e;color:#fff;display:flex;align-items:center;justify-content:center}' +
+  ':where(.bj-studio) .proof-handle svg{width:24px;height:24px}' +
+  ':where(.bj-studio) .proof-stage input.proof-range{position:absolute;inset:0;z-index:6;width:100%;height:100%;margin:0;padding:0;border:0;background:transparent;opacity:0;cursor:ew-resize;-webkit-appearance:none;appearance:none}' +
+  ':where(.bj-studio) .proof-stage input.proof-range::-webkit-slider-runnable-track{height:100%;background:transparent;border:0}' +
+  ':where(.bj-studio) .proof-stage input.proof-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:64px;height:100%;margin-top:0;border:0;background:transparent;box-shadow:none}' +
+  ':where(.bj-studio) .proof-stage input.proof-range::-moz-range-track{height:100%;background:transparent;border:0}' +
+  ':where(.bj-studio) .proof-stage input.proof-range::-moz-range-thumb{width:64px;height:100%;border:0;background:transparent;box-shadow:none}' +
+  ':where(.bj-studio) .proof-metal{min-height:40px;padding:0 14px;display:flex;align-items:center;gap:9px;border:1px solid #1f2020;background:#fdf9f3;font-size:12px;font-weight:700;letter-spacing:.08em}' +
+  ':where(.bj-studio) .proof-metal i{width:18px;height:18px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,.16);background:linear-gradient(135deg,#fff1b3,#a96d10)}' +
+  ':where(.bj-studio) .proof-legend{list-style:none;margin:0;padding:12px 18px 14px;border-top:1px solid #eee7db;background:#fefdfb;display:flex;flex-wrap:wrap;align-items:center;gap:8px 26px}' +
+  ':where(.bj-studio) .proof-legend li{display:flex;align-items:center;gap:9px;font-size:11.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#6b6862}' +
+  ':where(.bj-studio) .proof-legend__dot{width:11px;height:11px;border-radius:50%;flex:none}' +
+  ':where(.bj-studio) .proof-legend__dot--engrave{background:#000}' +
+  ':where(.bj-studio) .proof-legend__dot--cut{background:#00b4ff}' +
+  ':where(.bj-studio) .proof-legend__dot--note{background:#00d24a}' +
+  '@media (min-width:901px){' +
+    ':where(.bj-studio) .landing-hero{display:flex;align-items:center;min-height:clamp(360px,30.4vw,620px)}' +
+    ':where(.bj-studio) .landing-hero__copy{flex:none;width:38%;min-width:0;padding:34px 0 36px clamp(18px,6.5vw,88px)}' +
+    ':where(.bj-studio) .landing-hero__art{position:absolute;inset:0 0 0 38.5%}' +
+    ':where(.bj-studio) .landing-step{padding:4px clamp(18px,2.4vw,48px)}' +
+    ':where(.bj-studio) .studio-proof{grid-template-columns:minmax(280px,.46fr) minmax(0,1.54fr)}' +
+  '}' +
+  '@media (max-width:1100px){' +
+    ':where(.bj-studio) .landing-steps{flex-direction:column;align-items:center;gap:20px;margin-top:26px}' +
+    ':where(.bj-studio) .landing-step{flex:0 1 auto;max-width:620px;width:100%;padding:0;gap:18px}' +
+    ':where(.bj-studio) .landing-step__txt{max-width:none}' +
+  '}' +
+  '@media (max-width:900px){' +
+    ':where(.bj-studio) .landing-hero__art{position:relative;width:100%;aspect-ratio:16/8}' +
+    ':where(.bj-studio) .landing-hero__copy{padding:26px 22px 34px}' +
+    ':where(.bj-studio) .landing-how{padding:34px 20px 40px}' +
+    ':where(.bj-studio) .studio-proof{grid-template-columns:1fr;gap:26px;padding:38px 22px 42px}' +
+    ':where(.bj-studio) .proof-stage{height:min(64vw,380px)}' +
+  '}' +
+  '@media (max-width:620px){' +
+    ':where(.bj-studio) .landing-step{gap:14px}' +
+    ':where(.bj-studio) .landing-step__visual{flex-basis:108px;width:108px;height:72px;gap:4px}' +
+    ':where(.bj-studio) .landing-step__num{width:32px;height:32px;font-size:17px}' +
+    ':where(.bj-studio) .landing-step__ico{width:72px;height:72px;padding:7px}' +
+  '}' +
+  /* ── AND THE QUIET BUTTONS, WHICH THE THEME PAINTS BLACK ─────────────
+     Impulse's .btn:not([disabled])...:hover is 0,5,0 and outranks the
+     studio's own .btn--ghost:hover, so a ghost button hovers to black
+     background under black text and the label disappears. Same selector
+     shape here, so the two cannot fight, and it is in the splint because a
+     missing stylesheet does not make the THEME's rules go away — it only
+     removes the one thing that was holding them off. */
+  '#bjStudio .btn--ghost,.bj-studio .btn--ghost{background:transparent !important;border:1px solid transparent !important;color:#6f6b64}' +
+  '#bjStudio .btn--ghost:not([disabled]):hover,#bjStudio .btn--ghost:not([disabled]):focus-visible,' +
+  '.bj-studio .btn--ghost:not([disabled]):hover,.bj-studio .btn--ghost:not([disabled]):focus-visible' +
+  '{background:#f2eee4 !important;border-color:#c6bfaf !important;color:#1c1d1d}' +
+  '#bjStudio .btn--ghost:not([disabled]):active,.bj-studio .btn--ghost:not([disabled]):active' +
+  '{background:#e6dfcd !important;color:#1c1d1d}' +
+  '#bjStudio .btn--ghost:focus:not(:focus-visible):not(:hover)' +
+  '{background:transparent !important;border-color:transparent !important;color:#6f6b64}' +
+
+  /* ── AND EDIT CHARM, WHICH A STALE SHEET DOES NOT MERELY UNSTYLE ──────
+     It USED to be a bare 34px pencil, before it grew a name and a progress
+     fill. So an old copy of this stylesheet does not leave the button
+     plain — it puts today's three-part label inside yesterday's 34px box,
+     where overflow:hidden cuts "EDIT CHARM" in half and the pencil is
+     pushed out of the frame altogether. A gold tile with two broken words
+     in it, where the gate to the editor should be.
+
+     The geometry is the whole of the repair, and it belongs in the splint
+     because it cannot be won on specificity: a stale `.bj-studio .ref-edit`
+     ties with the live one and beats it on source order. This block is
+     appended to <head> after everything, so it is the last word. */
+  '.bj-studio .ref-edit{position:relative;overflow:hidden;flex:0 0 auto;' +
+    'display:inline-flex;align-items:center;gap:7px;width:auto;height:auto;' +
+    'min-width:0;min-height:0;max-width:none;max-height:none;border-radius:0;' +
+    'white-space:nowrap;line-height:1;padding:8px 13px;background:#fff;' +
+    'border:1px solid #a58a52;color:#a58a52;font-size:10.5px;font-weight:700;' +
+    'letter-spacing:.14em;text-transform:uppercase;cursor:pointer}' +
+  '.bj-studio .ref-edit svg{width:13px;height:13px;flex:none}' +
+  '.bj-studio .ref-edit__txt{white-space:nowrap;flex:none}' +
+  '.bj-studio .ref-edit>*{position:relative;z-index:1}' +
+  '.bj-studio .ref-edit[hidden]{display:none!important}';
+
+/* ── AND THE SPLINT IS NOT THE TREATMENT ────────────────────────────────
+   A patch can only ever carry the handful of rules someone thought to put
+   in it; the page has five and a half thousand. So before splinting,
+   the real stylesheet is fetched again.
+
+   The trick is that its URL does not have to be known. Shopify serves every
+   theme asset from one directory, so the address of the stylesheet is the
+   address of THIS SCRIPT with three letters changed — which means the
+   recovery works even when the <link> tag was never emitted, and a fresh
+   query string defeats a CDN or browser cache still holding a stale copy.
+   That is the likeliest cause by far: the JS on the page is current (its
+   build stamp says so) while the CSS beside it is not.
+
+   If the reload lands and the revision now agrees, the splint comes off. */
+function mkRecoverStylesheet(onDone) {
+  let href = "";
+  try {
+    const link = Array.prototype.slice.call(document.querySelectorAll('link[rel="stylesheet"]'))
+      .map((l) => l.href || "").filter((h) => /brites-custom-studio\.css/.test(h))[0];
+    if (link) href = link;
+    if (!href) {
+      const sc = Array.prototype.slice.call(document.querySelectorAll("script[src]"))
+        .map((x) => x.src || "").filter((h) => /brites-custom-studio\.js/.test(h))[0];
+      if (sc) href = sc.split("?")[0].replace(/\.js$/, ".css");
+    }
+  } catch (e) { href = ""; }
+  if (!href || document.getElementById("mkCssRecover")) { onDone(false, href); return; }
+  const l = document.createElement("link");
+  l.rel = "stylesheet";
+  l.id = "mkCssRecover";
+  l.href = href.split("?")[0] + "?mk=" + encodeURIComponent(String(window.__studioBuild || "1"));
+  l.onload = () => setTimeout(() => onDone(true, l.href), 40);
+  l.onerror = () => onDone(false, l.href);
+  document.head.appendChild(l);
+}
+
+(function mkAssetDriftCheck() {
+  const probe = () => {
+    const host = document.querySelector(".bj-studio");
+    if (!host) return;
+    const got = parseInt(String(getComputedStyle(host).getPropertyValue("--mk-css-rev") || "").trim(), 10);
+    if (got === MK_CSS_REV_WANT) return;
+    /* SPLINT FIRST, so nothing is ever seen unstyled, then go after the
+       real thing — see mkRecoverStylesheet. The console line is for the
+       person deploying and is never a substitute for the page working. */
+    try {
+      if (!document.getElementById("mkCriticalCss")) {
+        const st = document.createElement("style");
+        st.id = "mkCriticalCss";
+        st.textContent = MK_CRITICAL_CSS;
+        document.head.appendChild(st);
+      }
+    } catch (e) { /* the console line below still fires */ }
+    mkRecoverStylesheet((tried, href) => {
+      const now = parseInt(String(getComputedStyle(host).getPropertyValue("--mk-css-rev") || "").trim(), 10);
+      if (now === MK_CSS_REV_WANT) {
+        /* the real sheet is on the page: take the splint off so the two can
+           never disagree about a rule the patch happens to duplicate */
+        const st = document.getElementById("mkCriticalCss");
+        if (st) st.remove();
+        console.warn("[studio] the stylesheet on this page was stale; a fresh copy was " +
+                     "fetched from " + href + " and the page is now styled correctly. " +
+                     "Re-upload brites-custom-studio.css so the cached copy stops being served.");
+        return;
+      }
+      console.error(
+        "[studio] ASSET DRIFT: brites-custom-studio.js is build " + window.__studioBuild +
+        " (expects stylesheet rev " + MK_CSS_REV_WANT + ") but brites-custom-studio.css " +
+        (Number.isFinite(got) ? "on this page is rev " + got : "on this page carries no revision at all") +
+        (tried ? ", and re-fetching it from " + href + " did not help — the copy on the server is itself old" : ", and no copy could be found to re-fetch") +
+        ". Upload the current brites-custom-studio.css to the theme's assets. " +
+        "The header is being held together by a built-in patch until you do."
+      );
+    });
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", probe);
+  else probe();
+})();
+window.__studioState   = state;
 window.__renderCredits = renderCredits;
 window.__measureBar    = measureBar;
 window.__useGooglePopupFallback = useGooglePopupFallback;
@@ -15672,6 +27826,7 @@ window.__escapeUrl     = escapeUrl;
 window.__readInAppForce = readInAppForce;
 window.__openAuth      = openAuth;
 window.__runRender     = runRender;
+window.__runRenderSource = String(runRender);
 window.__openMarkup    = openMarkup;
 window.__openCompose   = openCompose;
 window.__markupState   = () => __mk;
@@ -15697,6 +27852,10 @@ window.__mkBucketFill  = mkBucketFill;
 window.__mkPlaceAsset  = mkPlaceAsset;
 window.__mkInsertLayers = mkInsertLayers;
 window.__setReference  = setReference;
+window.__replaceReferenceInPlace = replaceReferenceInPlace;
+window.__regenerateFromReferenceSource = String(regenerateFromReference);
+window.__mkRegionForget = mkRegionForget;
+window.__mkImageFor = (it, cb) => mkImageFor(it, cb);
 window.__mkCtxOpen     = mkCtxOpen;
 window.__mkImportError = mkImportError;
 window.__mkPack        = mkPack;
@@ -15735,8 +27894,24 @@ window.__askConfirm    = askConfirm;
 window.__mkTouch       = mkTouch;
 window.__closeMarkup   = closeMarkup;
 window.__mkSelIdx      = () => mkSelIdx();
-window.__mkSelSet      = (l) => { mkSelSet(l); mkChrome(); mkPaintLayerSel(); };
-window.__mkSelAdd      = (l) => { mkSelAdd(l); mkChrome(); mkPaintLayerSel(); };
+window.__mkMarqueeSelect = () => mkMarqueeSelect();
+window.__mkSpineOf     = (it) => mkSpineOf(it);
+window.__mkMaskSpine   = (m, w, h) => mkMaskSpine(m, w, h);
+window.__mkEdt         = (m, w, h) => mkEdt(m, w, h);
+window.__mkThinMask    = (m, w, h) => mkThinMask(m, w, h);
+window.__mkSpineCacheClear = () => MK_SPINE_CACHE.clear();
+window.__MK_OUTLINE_W  = () => MK_OUTLINE_W;
+/* the session document's wire format — see "A NUMBER COSTS EIGHT BYTES" */
+window.__mkPackItem    = mkPackItem;
+window.__mkUnpackItem  = mkUnpackItem;
+window.__mkPackMarkups = mkPackMarkups;
+window.__mkUnpackMarkups = mkUnpackMarkups;
+window.__buildSessionDoc = (s, plain) => buildSessionDoc(s, plain);
+window.__mkRleCanvas   = (it, mode) => mkRleCanvas(it, mode);
+/* a selection arriving from outside the studio came from somewhere the list
+   is not, so it reveals — the same reason a click on the sheet does */
+window.__mkSelSet      = (l) => { mkSelSet(l); mkChrome(); mkPaintLayerSel(true); };
+window.__mkSelAdd      = (l) => { mkSelAdd(l); mkChrome(); mkPaintLayerSel(true); };
 window.__mkGroup       = () => mkGroupSelection();
 window.__mkUngroup     = () => mkUngroupSelection();
 window.__mkGroupsOf    = () => mkGroupList();
@@ -15744,6 +27919,14 @@ window.__mkSelBBox     = () => mkSelBBox();
 window.__mkRenderLayers = mkRenderLayers;
 window.__mkLayerAct    = mkLayerAct;
 window.__mkArrange     = mkArrange;
+window.__mkRotateSelection = (dr) => {
+  const list = mkSelItems();
+  if (!list.length) return false;
+  const bb = list.length > 1 ? mkUnionBBox(list) : mkBBox(list[0]);
+  mkRotateItems(list, dr, bb.x + bb.w / 2, bb.y + bb.h / 2);
+  mkTouch(); mkRedraw(); mkRenderSelection();
+  return true;
+};
 window.__mkBlocks      = () => mkBlocks().map((b) => ({ g: b.g, idx: b.idx }));
 window.__mkMultiSet    = (on) => { __mkMulti = !!on; };
 window.__mkAssetKindReset = () => { __mkAssetKindDead = false; };
@@ -15769,7 +27952,11 @@ window.__studioDiag = async function () {
   try {
     await bootFirebase();
     const u = auth.currentUser;
-    out.auth = { ready: true, uid: u && u.uid, anonymous: !!(u && u.isAnonymous), email: (u && u.email) || null };
+    out.auth = {
+      ready:true, uid:u && u.uid, anonymous:!!(u && u.isAnonymous),
+      email:(u && u.email) || null, persistence:authPersistenceMode,
+      initialStateSettled:authInitialStateSettled,
+    };
   } catch (e) { out.auth = { ready: false, error: (e && e.message) || String(e) }; }
   out.popupProbe = "run window.__studioDiag.popup() to open the Google popup and report the raw result";
   console.table ? console.table(out) : console.log(out);
@@ -15875,6 +28062,8 @@ renderPricing();
 renderCredits();
 renderPictos();
 renderHeroShow();
+renderProofRoom();
+renderProjectName();
 renderFaq();
 syncBrief();
 renderThread();
@@ -15923,11 +28112,12 @@ attachZoomPan($("#refPreviewStage"));
        the old one. */
     await claimHandoff();
 
-    /* Anonymous auth FIRST. Every visitor gets a uid immediately anyway, and
-       config/customStudio is readable by a signed-in visitor only — there is
-       no reason for the studio's limits and prices to be world-readable when
-       the studio always has a session by the time it needs them. */
-    if (!auth.currentUser) {
+    /* Firebase restores LOCAL auth asynchronously. Wait for its first
+       authoritative state before deciding this is a new visitor: currentUser
+       can be temporarily null even while a month-old member session is being
+       recovered. Only a settled, genuinely empty state may become anonymous. */
+    const rememberedUser = await waitForInitialAuthState();
+    if (!rememberedUser && !auth.currentUser) {
       try { await auth.signInAnonymously(); }
       catch (e) { console.warn("[studio] anonymous auth:", e.message); }
     }
@@ -15935,6 +28125,7 @@ attachZoomPan($("#refPreviewStage"));
     await loadRemoteConfig();
     renderPricing();
     renderCredits();
+    renderFaq();
     renderUploadAllowance();
     updateOrder();
 
@@ -15957,6 +28148,7 @@ attachZoomPan($("#refPreviewStage"));
       }
       watchWallet(u.uid);
       watchSessions(u.uid);
+      widenSessionsWhenQuiet();
       refreshWallet();
       /* anything a previous visit could not write — a dropped connection, a
          tab closed mid-save — goes up now, before the customer touches
@@ -15977,5 +28169,3 @@ attachZoomPan($("#refPreviewStage"));
 })();
 
 })();
-
-
