@@ -1127,9 +1127,22 @@ const MUTATIONS = {
     if (X && acct.exists) { try { const c = await X.assertConservation(ctx.accountId, { admin: D }); if (!c.pass) preflight.push("ledger_conservation_failed"); } catch (e) { preflight.push(`conservation_check_failed:${e.code || e.message}`); } }
     if (preflight.length) throw typed("PREFLIGHT_FAILED", `activation preflight failed: ${preflight.join(", ")}`, { preflight });
     const epoch = (Number(ctrl.writerEpoch) || 0) + 1;
-    const out = await transitionControl(D, { expectedVersion: env.expectedResourceVersion, patch: { accountMode: "PAPER_AI", engineMode: "manager", writerEpoch: epoch, activationBinding: { policyHash: params.policyHash, universeHash: params.universeHash, universeVersion: snapshot.universeVersion, commit: commitId(), activatedBy: ctx.actorId, activatedAtMs: ctx.nowMs }, buyState: buyStateOf(ctrl), executorEnabled: true },
+    // Activation opens buys (unless an emergency stop is on) and, on a trading day after the evidence cutoff,
+    // queues the review immediately instead of waiting for the next pre-market window.
+    const clear = emergencyStateOf(ctrl) === "CLEAR";
+    const out = await transitionControl(D, { expectedVersion: env.expectedResourceVersion, patch: { accountMode: "PAPER_AI", engineMode: "manager", writerEpoch: epoch, activationBinding: { policyHash: params.policyHash, universeHash: params.universeHash, universeVersion: snapshot.universeVersion, commit: commitId(), activatedBy: ctx.actorId, activatedAtMs: ctx.nowMs }, buyState: clear ? "OPEN" : buyStateOf(ctrl), freezeNewBuys: clear ? false : ctrl.freezeNewBuys === true,executorEnabled: true },
       requested: { accountModeRequested: { requested: "PAPER_AI", applied: "PAPER_AI" } }, action: "activateAccountMode", actorId: ctx.actorId, reason: env.auditReason, nowMs: ctx.nowMs, correlationId: ctx.correlationId, mutationId: ctx.mutationId });
-    return { data: { accountMode: "PAPER_AI", writerEpoch: epoch, engineMode: "manager", binding: { policyHash: params.policyHash, universeHash: params.universeHash }, note: "v1 investment mutations now answer 410 ACTION_RETIRED; exactly one engine holds mutation authority" }, resourceVersion: String(out.version), requestedState: { accountMode: "PAPER_AI" }, appliedState: { accountMode: "PAPER_AI" } };
+    let review = null;
+    try {
+      const MK = require("./_investorMarket"), st = MK.sessionState(new Date(ctx.nowMs)), mm = Number(st.minutesEt);
+      if (st.tradingDay && Number.isFinite(mm) && mm >= POLICY.CUTOFFS_ET.evidenceFreezeMin && mm <= 15 * 60 + 15 && managerStateOf(ctrl) !== "PAUSED") {
+        const J = jobsFor(D), tradingDate = tradingDateOf(ctx.nowMs), slot = Math.floor(ctx.nowMs / (30 * 60000)), runId = `run_premarket_manager_${ctx.accountId}_${tradingDate}_act${slot}`;
+        const r = await J.enqueueOnce({ task: "premarket_manager", dedupeId: `${ctx.accountId}_${tradingDate}_activation_${slot}`, accountId: ctx.accountId, priority: 150, runId, sessionDate: tradingDate, createdBy: `apiV2:${ctx.actorId}`,
+          payload: { accountId: ctx.accountId, tradingDate, reason: "OPERATOR", acceptedAtMs: ctx.nowMs, effectiveAsOfMs: ctx.nowMs, evidenceCutoffMs: ctx.nowMs, requestedBy: ctx.actorId, correlationId: ctx.correlationId } });
+        review = { jobId: r.jobId, runId, tradingDate, duplicate: r.duplicate === true };
+      }
+    } catch (e) { review = { error: String(e.code || e.message).slice(0, 120) }; }
+    return { data: { accountMode: "PAPER_AI", writerEpoch: epoch, engineMode: "manager", buyState: clear ? "OPEN" : buyStateOf(ctrl), reviewQueued: review, binding: { policyHash: params.policyHash, universeHash: params.universeHash }, note: "v1 investment mutations now answer 410 ACTION_RETIRED; exactly one engine holds mutation authority" }, resourceVersion: String(out.version), requestedState: { accountMode: "PAPER_AI" }, appliedState: { accountMode: "PAPER_AI" } };
   },
   async deactivateAccountMode(params, ctx, env) {
     const D = ctx.admin, ctrl = ctx.control;

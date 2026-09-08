@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-2Wo9VO8Fwpm7oW9juow06CpE+WCzRla1Xfbq0Pyc4kw='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ETA9Qhncdr9mo65ydmA2Xf0v8bmeBpY01JyJP7AmK/Y='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -659,6 +659,7 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 <div class="view__h"><div><div class="eyebrow">YOUR MONEY, AT A GLANCE</div><h2 id="h-manager" tabindex="-1">Your overview</h2></div><a class="link" href="#/learning">View results →</a></div>
 <div class="hero" id="managerStatus"></div>
 <div class="card manager-brief" id="managerBrief" aria-live="polite"></div>
+<div class="card" id="liveActivity" aria-live="polite"></div>
 <div class="card manager-brief" id="paperDecisionCard">
   <div class="card__h"><h3>Paper trading · AI selection</h3><a class="link" href="#/simulation">Analyze saved simulations →</a></div>
   <form id="paperDecisionForm" class="stack">
@@ -707,7 +708,7 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
           <div class="list" id="expiredPlans" role="tabpanel" aria-labelledby="tab-expired" hidden></div>
         </div>
       </section>
-<section class="view" id="v-portfolio" hidden aria-labelledby="h-portfolio"><div class="view__h"><div><div class="eyebrow">YOUR PORTFOLIO</div><h2 id="h-portfolio" tabindex="-1">My investments</h2><p>See what you own, the plans protecting it, and any orders waiting to complete.</p></div></div><div class="card" id="portfolioSummary"></div><div class="tabs workspace-tabs" role="tablist" aria-label="portfolio" data-workspace="portfolio"><button type="button" role="tab" id="t-p-holdings" aria-controls="p-holdings" aria-selected="true" tabindex="0" data-panel="p-holdings">What I own</button><button type="button" role="tab" id="t-p-plans" aria-controls="p-plans" aria-selected="false" tabindex="-1" data-panel="p-plans">Plans & orders</button><button type="button" role="tab" id="t-p-activity" aria-controls="p-activity" aria-selected="false" tabindex="-1" data-panel="p-activity">Activity & history</button></div><div class="workspace-panel stack" id="p-holdings"><div class="card"><div class="card__h"><h3>Current investments</h3><span class="sub" id="holdingListSub"></span></div><div class="list" id="holdingList"></div></div></div><div class="workspace-panel stack" id="p-plans" hidden><div class="explainer"><b>A plan is not a purchase.</b> The AI proposes a trade, the system checks the price and quantity, then places an order. Your holdings change only when an order fills.</div><div class="card"><div class="card__h"><h3>Active investment plans</h3><span class="sub" id="standingAuthorizationsSub"></span></div><div class="list" id="standingAuthorizations"></div></div><div class="card"><div class="card__h"><h3>Pending & working orders</h3><span class="sub" id="workingOrdersSub"></span></div><div class="list" id="workingOrders"></div></div></div><div class="workspace-panel stack" id="p-activity" hidden><div class="card"><div class="card__h"><h3>Trade activity</h3><span class="sub" id="executionTimelineSub"></span></div><div class="tl" id="executionTimeline"></div></div><div class="grid2"><div class="card"><div class="card__h"><h3>Order processing</h3><span class="sub" id="executionQueueSub"></span></div><div class="scroll" id="executionQueue"></div></div><div class="card"><div class="card__h"><h3>Plan changes</h3><span class="sub" id="planRevisionHistorySub"></span></div><div class="scroll" id="planRevisionHistory"></div></div></div></div></section>
+<section class="view" id="v-portfolio" hidden aria-labelledby="h-portfolio"><div class="view__h"><div><div class="eyebrow">YOUR PORTFOLIO</div><h2 id="h-portfolio" tabindex="-1">My investments</h2><p>See what you own, the plans protecting it, and any orders waiting to complete.</p></div></div><div class="card" id="portfolioSummary"></div><div class="card" id="portfolioLive" aria-live="polite"></div><div class="tabs workspace-tabs" role="tablist" aria-label="portfolio" data-workspace="portfolio"><button type="button" role="tab" id="t-p-holdings" aria-controls="p-holdings" aria-selected="true" tabindex="0" data-panel="p-holdings">What I own</button><button type="button" role="tab" id="t-p-plans" aria-controls="p-plans" aria-selected="false" tabindex="-1" data-panel="p-plans">Plans & orders</button><button type="button" role="tab" id="t-p-activity" aria-controls="p-activity" aria-selected="false" tabindex="-1" data-panel="p-activity">Activity & history</button></div><div class="workspace-panel stack" id="p-holdings"><div class="card"><div class="card__h"><h3>Current investments</h3><span class="sub" id="holdingListSub"></span></div><div class="list" id="holdingList"></div></div></div><div class="workspace-panel stack" id="p-plans" hidden><div class="explainer"><b>A plan is not a purchase.</b> The AI proposes a trade, the system checks the price and quantity, then places an order. Your holdings change only when an order fills.</div><div class="card"><div class="card__h"><h3>Active investment plans</h3><span class="sub" id="standingAuthorizationsSub"></span></div><div class="list" id="standingAuthorizations"></div></div><div class="card"><div class="card__h"><h3>Pending & working orders</h3><span class="sub" id="workingOrdersSub"></span></div><div class="list" id="workingOrders"></div></div></div><div class="workspace-panel stack" id="p-activity" hidden><div class="card"><div class="card__h"><h3>Trade activity</h3><span class="sub" id="executionTimelineSub"></span></div><div class="tl" id="executionTimeline"></div></div><div class="grid2"><div class="card"><div class="card__h"><h3>Order processing</h3><span class="sub" id="executionQueueSub"></span></div><div class="scroll" id="executionQueue"></div></div><div class="card"><div class="card__h"><h3>Plan changes</h3><span class="sub" id="planRevisionHistorySub"></span></div><div class="scroll" id="planRevisionHistory"></div></div></div></div></section>
 <section class="view" id="v-learning" hidden aria-labelledby="h-learning"><div class="view__h"><div><div class="eyebrow">PERFORMANCE</div><h2 id="h-learning" tabindex="-1">Results & learning</h2><p>Follow your account over time, and check the decisions behind the results.</p></div></div><div class="tabs workspace-tabs" role="tablist" aria-label="learning" data-workspace="learning"><button type="button" role="tab" id="t-l-results" aria-controls="l-results" aria-selected="true" tabindex="0" data-panel="l-results">Account performance</button><button type="button" role="tab" id="t-l-journal" aria-controls="l-journal" aria-selected="false" tabindex="-1" data-panel="l-journal">Decision history</button><button type="button" role="tab" id="t-l-analysis" aria-controls="l-analysis" aria-selected="false" tabindex="-1" data-panel="l-analysis">Advanced analysis</button></div><div class="workspace-panel stack" id="l-results"><div class="card" id="performanceSummary"></div><div class="explainer"><b>Learning takes time.</b> Investment results, forecasts and hypothetical missed opportunities are measured separately. Missing or incomplete outcomes are not treated as wins.</div></div><div class="workspace-panel stack" id="l-journal" hidden>        <div class="card">
           <div class="card__h"><h3><svg aria-hidden="true" class="ic"><use href="#i-doc"/></svg>Decision journal</h3><span class="sub">Immutable · every decision including Abstain</span></div>
           <div class="filters">
@@ -856,7 +857,7 @@ function bindWorkspaces() {
 }
 function minuteEt(n) { if(n==null)return 'Time not reported';var h=Math.floor(n/60);return (h%12||12)+':'+String(n%60).padStart(2,'0')+(h>=12?' pm':' am')+' ET'; }
 function shortCopy(text,limit) { text=String(text||'');return text.length>(limit||190)?text.slice(0,(limit||190)-1).replace(/\s+\S*$/,'')+'…':text; }
-function dailyControl(ctrl,action,label,cls) { var cap=ctrl&&capOf(ctrl,action);return cap&&cap.enabled?capButton(ctrl,action,label,{icon:action==='activateAccountMode'?'play':'pause',cls:cls||'sm'}):null; }
+function dailyControl(ctrl,action,label,cls) { var cap=ctrl&&capOf(ctrl,action);return cap&&cap.enabled?capButton(ctrl,action,label,{icon:action==='activateAccountMode'||action==='resumeBuys'?'play':action==='runManagerReview'?'refresh':'pause',cls:cls||'sm'}):null; }
 function progressRow(label,done,total,active) {
   var known=done!=null&&total!=null&&Number.isFinite(Number(done))&&Number.isFinite(Number(total))&&Number(total)>0;
   var attrs={max:known?Number(total):1,'aria-label':label};if(known)attrs.value=Math.max(0,Math.min(Number(done),Number(total)));else if(!active)attrs.value=0;
@@ -869,6 +870,7 @@ function renderManagerBrief(dash,ctrl) {
   var copy=observe?'Start with simulated money. The AI will research companies and manage the paper account.':active?'The AI is checking the evidence before deciding what to buy, keep or sell.':!r?'The AI starts its daily review on trading mornings. No manual review is needed.':r.state==='FAILED'?'New decisions are not ready. Check the review details before trying again.':r.state==='PARTIAL'?'Some work is unfinished. Check the review details for what was completed and what is still blocked.':'The AI follows its investment plan and checks for important news. You do not need to approve each trade.';
   if(paused&&active)copy+=' Future reviews are paused.';
   var action=observe?dailyControl(ctrl,'activateAccountMode','Start AI investing','sm gold'):dailyControl(ctrl,paused?'resumeManager':'pauseManager',paused?'Resume reviews':active?'Pause future reviews':'Pause reviews');
+  var reviewNow=!observe&&!active&&!emergency?dailyControl(ctrl,'runManagerReview','Review now','sm gold'):null,resumeBuys=frozen&&!observe&&!emergency?dailyControl(ctrl,'resumeBuys','Resume buys','sm'):null;
   if(emergency){title='Emergency stop is on';copy='New purchases are stopped. Existing protection is handled separately.';action=el('a',{class:'btn sm',href:'#/system',text:'Review safety settings'});}
   else if(paused&&!observe&&!active){title='AI reviews are paused';copy='Resume when you are ready. Existing orders and protection are managed separately.';}
   else if(frozen&&!observe){copy+=' New purchases are currently paused.';}
@@ -878,7 +880,7 @@ function renderManagerBrief(dash,ctrl) {
   var cadence=observe?'Starts after you turn on AI investing':paused||emergency?'Scheduled reviews are paused':cad.reviewMinuteEt==null?'Review schedule not available':'Daily review from '+minuteEt(cad.reviewMinuteEt)+' on trading days';
   var next=active?'Last progress update '+fmtAgo(r.updatedAt||r.startedAt):o.nextReview?(o.nextReview.due?'Next review · due in this morning’s window':'Next review · '+fmtTimeFull(o.nextReview.startsAt)):r&&r.completedAt?'Last review '+fmtAgo(r.completedAt):'First review pending';
   setChildren($('managerBrief'),[
-    el('div',{class:'ai-head'},el('div',null,el('div',{class:'eyebrow',text:'YOUR AI MANAGER'}),el('h3',{class:'brief-title',text:title}),el('p',{class:'brief-copy',text:copy})),el('div',{class:'actions'},action)),
+    el('div',{class:'ai-head'},el('div',null,el('div',{class:'eyebrow',text:'YOUR AI MANAGER'}),el('h3',{class:'brief-title',text:title}),el('p',{class:'brief-copy',text:copy})),el('div',{class:'actions'},reviewNow,resumeBuys,action)),
     active?el('div',{class:'ai-progress'},progressRow(r.decisionProcess?'Company coverage · Luna + Astra':'Companies reviewed',cov&&cov.completedCount,cov&&cov.eligibleCount,r.stage==='review'),progressRow('In-depth research finished',research&&research.completed,research&&research.requested,r.stage==='research')):null,
     active?el('p',{class:'daily-foot',text:'Progress shows recorded work, not a time estimate. '+next+'.'}):null,
     r&&r.decisionProcess?el('p',{class:'daily-foot',text:'This review: '+({flex3:'0–3 finalists, cash allowed',top1:'exactly 1 finalist',range1:'1–2 finalists',range2:'3–5 finalists',range3:'6–8 finalists'}[r.decisionProcess.companyRange]||r.decisionProcess.companyRange)+' · Astra medium · Strategy '+r.decisionProcess.strategyVersionId}):null,
@@ -1468,21 +1470,23 @@ async function sessionRefreshTick() { if (document.hidden || !session.csrfToken)
 async function pollDashboard() {
   if (document.hidden || $("app").hidden) return;
   var acct = accountParams();
-  var results = await Promise.allSettled([loadRes("dash", "managerDashboard", acct), loadRes("ctrl", "controlState", acct)]);
+  var results = await Promise.allSettled([loadRes("dash", "managerDashboard", acct), loadRes("ctrl", "controlState", acct), loadRes("execEvents", "executionEvents", Object.assign({ pageSize: 12 }, acct))]);
   var ok = results.some(function (r) { return r.status === "fulfilled" && r.value; });
-  if (ok) { renderShell(); if (route.view === "manager") renderManager(); if (route.view === "system") renderSystemControl(); }
+  if (ok) { renderShell(); if (route.view === "manager") renderManager(); if (route.view === "system") renderSystemControl(); if (route.view === "portfolio") renderLiveActivity(); }
   var dash = getRes("dash"), running = !!(dash && dash.latestRun && (dash.latestRun.state === "RUNNING" || dash.latestRun.state === "QUEUED"));
-  ensureJobPolling(running || jobsActive());
+  ensureJobPolling(running || jobsActive() || liveView());
 }
+function liveView() { return route.view === "manager" || route.view === "portfolio"; }
 function jobsActive() { var j = getRes("jobs"); return !!(j && j.items && j.items.some(isActiveJob)); }
 function isActiveJob(j) { var s = String(j.state || "").toUpperCase(); return !(s === "COMPLETE" || s === "COMPLETED" || s === "FAILED" || s === "CANCELLED" || s === "SUCCEEDED" || s === "DONE" || s === "EXPIRED"); }
 async function pollJobs() {
   if (document.hidden) return;
   try { await loadRes("jobs", "jobs", { pageSize: 100 }); } catch (e) { return; }
+  if (liveView()) renderLiveActivity();
   if (route.view === "manager") renderManagerRunDetail();
   if (route.view === "system") renderManagerJobHealth();
   if (route.view === "companies" && companiesUI.tab === "research") renderResearchQueue();
-  ensureJobPolling(jobsActive() || (function () { var d = getRes("dash"); return !!(d && d.latestRun && (d.latestRun.state === "RUNNING" || d.latestRun.state === "QUEUED")); })());
+  ensureJobPolling(jobsActive() || liveView() || (function () { var d = getRes("dash"); return !!(d && d.latestRun && (d.latestRun.state === "RUNNING" || d.latestRun.state === "QUEUED")); })());
 }
 function collectVisibleSymbols() {
   var set = new Set();
@@ -1792,10 +1796,41 @@ async function loadManager(fresh) {
   renderManager();
 }
 async function loadSystemIdentity() { try { await loadRes("system", "systemHealth", {}); renderShell(); } catch (e) { /* the system view shows the failure */ } }
+// Live activity: what the AI is doing now, what it is waiting for, the latest decisions, active work and recent order events.
+var LIVE_STAGES={freeze:'Gathering the evidence',shortlist:'Luna selecting research candidates',review:'Reviewing companies',coverage:'Checking company coverage',maintenance:'Reviewing what you own',research:'Researching the strongest ideas',synthesis:'Choosing the investment plan',activation:'Checking prices and share quantities',persist:'Saving the investment plan',complete:'Review complete'};
+function workflowStepper(dash){
+  var order=["evidence","coverage","revisions","research","synthesis","mandates","execution"],names={evidence:"Gather the evidence",coverage:"Review every company",revisions:"Review existing investments",research:"Research promising ideas",synthesis:"Compare the portfolio choices",mandates:"Check prices, size and cash",execution:"Place and track orders"};
+  var byStep={};(dash.workflow||[]).forEach(function(w){byStep[w.step]=w;});
+  return el("div",{class:"stepper"},order.map(function(s){var w=byStep[s]||{state:"pending",detail:null,at:null};var t=w.state==="complete"?"check":w.state==="running"?"spin":w.state==="failed"?"block":w.state==="skipped"?"ignore":"clock";return el("div",{class:"step "+w.state},el("div",{class:"step__h"},icon(t),el("span",{text:names[s]||plainLabel(s)})),el("div",{class:"step__d",text:plainLabel(w.state)+(w.detail?" — "+w.detail:"")}),w.at?el("div",{class:"step__t",text:fmtTimeFull(w.at)}):null);}));
+}
+function liveActivityChildren(){
+  var dash=getRes("dash"),ctrl=getRes("ctrl"),jobs=getRes("jobs"),ev=getRes("execEvents");
+  if(!dash)return [cardHead("Live activity","clock"),stateBox("loading","Loading live activity…")];
+  var r=dash.latestRun,o=dash.overview||{},observe=dash.account.accountMode==='OBSERVE',active=!!(r&&['RUNNING','QUEUED'].includes(r.state));
+  var frozen=!!(ctrl&&ctrl.buyState&&ctrl.buyState.applied==='FROZEN'),paused=!!(ctrl&&ctrl.managerState&&ctrl.managerState.applied==='PAUSED'),emergency=!!(ctrl&&ctrl.emergencyState&&ctrl.emergencyState.applied!=='CLEAR');
+  var activeJobs=(jobs&&jobs.items||[]).filter(isActiveJob),sp=dash.spend,acct=dash.account;
+  var now=observe?'AI investing is off. Turn it on to start the first review.':emergency?'Emergency stop is on. Nothing new will be bought.':active?(r.state==='QUEUED'?'Review queued · waiting for a worker to start':LIVE_STAGES[r.stage]||'Review in progress'):activeJobs.length?'Working: '+activeJobs.map(function(j){return plainLabel(j.task);}).join(', '):paused?'Reviews are paused.':frozen?'Watching. New purchases are paused until buys are resumed.':'Watching your investments. Planned orders are checked every minute during trading hours.';
+  var waiting=observe?null:active?'Progress updates as work is recorded. Last update '+fmtAgo(r.updatedAt||r.startedAt)+'.':o.nextReview?(o.nextReview.due?'Next review is due in this morning’s window.':'Next scheduled review · '+fmtTimeFull(o.nextReview.startsAt)+'. Use Review now to start one immediately.'):r&&r.completedAt?'Last review finished '+fmtAgo(r.completedAt)+'. Use Review now to run another.':'No review has run yet. Use Review now to start one.';
+  var tone=emergency?'bad':active||activeJobs.length?'gold':frozen||paused?'warn':'ok';
+  var head=el("div",{class:"tl__i"},el("span",{class:"tl__dot "+tone}),el("div",{class:"tl__b"},el("b",{text:'Now: '+now}),waiting?el("div",{class:"tiny muted",text:waiting}):null),el("span",{class:"tl__t",text:'Updated '+fmtTime(new Date().toISOString())}));
+  var reviewNow=!observe&&!active&&!emergency&&ctrl?dailyControl(ctrl,'runManagerReview','Review now','sm gold'):null,resumeBuys=frozen&&!observe&&!emergency&&ctrl?dailyControl(ctrl,'resumeBuys','Resume buys','sm'):null;
+  var out=[el("div",{class:"card__h"},el("h3",null,icon("clock"),document.createTextNode(" Live activity")),el("div",{class:"actions"},reviewNow,resumeBuys)),head];
+  if(!observe)out.push(el("div",null,el("div",{class:"tiny muted",text:"Review stages"}),workflowStepper(dash)));
+  if(activeJobs.length)out.push(el("div",null,el("div",{class:"tiny muted",text:"Active work"}),el("div",{class:"list"},activeJobs.slice(0,6).map(function(j){var p=j.progress||{};return el("div",{class:"tl__i"},el("span",{class:"tl__dot gold"}),el("div",{class:"tl__b"},el("b",{text:plainLabel(j.task)}),el("div",{class:"tiny muted",text:plainLabel(j.state)+(p.numerator!=null&&p.denominator?' · '+fmtInt(p.numerator)+' / '+fmtInt(p.denominator):'')+(j.heartbeatAt?' · heartbeat '+fmtAgo(j.heartbeatAt):'')})),el("span",{class:"tl__t",text:j.createdAt?fmtTime(j.createdAt):''}));}))));
+  var decisions=dash.newDecisions||[];
+  if(decisions.length)out.push(el("div",null,el("div",{class:"tiny muted",text:"Latest decisions"}),countChips(dash.counts&&dash.counts.decisions,true),el("div",{class:"list"},decisions.slice(0,5).map(function(d){return decisionRow(d);}))));
+  else if(r&&r.completedAt)out.push(el("p",{class:"tiny muted",text:'Last review '+fmtAgo(r.completedAt)+(r.investmentNote?' · '+shortCopy(r.investmentNote,160):'')+((r.noBuyReasons||[]).length?' · '+plainPlanBlock((r.noBuyReasons[0].code||r.noBuyReasons[0])):'')}));
+  var events=(ev&&ev.items||[]).slice(0,8);
+  out.push(el("div",null,el("div",{class:"tiny muted",text:"Recent order activity"}),events.length?el("div",null,events.map(function(x){var t=x.authority==="EMERGENCY_RISK"?"bad":x.authority==="OPERATOR"?"warn":"gold";return el("div",{class:"tl__i"},el("span",{class:"tl__dot "+t}),el("div",{class:"tl__b"},el("div",{class:"inline"},el("b",{text:plainLabel(x.type)}),x.state?stateBadge(x.state):null,x.symbol?symButton(x.symbol,"link"):null)),el("span",{class:"tl__t",text:fmtTime(x.eventAt||x.receivedAt)}));})):el("p",{class:"tiny muted",text:observe?'Orders appear here once AI investing is on.':'No orders yet. Orders appear here the moment the AI places one.'})));
+  out.push(el("p",{class:"daily-foot",text:(acct?'Reserved for planned orders '+fmtMoney(acct.reserved)+' · Available '+fmtMoney(acct.available)+'. ':'')+(sp?'AI cost today '+fmtMoney(sp.actual)+' of '+fmtMoney(sp.dailyLimit)+'.':'')}));
+  return out;
+}
+function renderLiveActivity(){ ["liveActivity","portfolioLive"].forEach(function(id){ var h=$(id); if(h) setChildren(h, liveActivityChildren()); }); }
 function renderManager() {
   var dash = getRes("dash"), ctrl = getRes("ctrl"), sd = resSlot("dash");
   if (!dash && !ctrl) { setChildren($("managerStatus"), [el("div", { class: "tile main" }, sd.error ? stateBox("failed", "Could not load the manager dashboard", " — " + sd.error.message, sd.error.code) : stateBox("loading", "Loading the manager dashboard…"))]); renderControls(ctrl); return; }
   renderManagerStatus(dash, ctrl); renderControls(ctrl); if(!dash){setChildren($("managerBrief"),[sd.error?stateBox("failed","Could not load the investment review."," "+sd.error.message):stateBox("loading","Loading the investment review…")]);}
+  renderLiveActivity();
   if (dash) { renderManagerBrief(dash, ctrl); renderDailyCompanies(dash); if(sd.error)$("managerBrief").prepend(stateBox("stale","The review could not be refreshed."," Previously loaded information is shown. "+sd.error.message)); renderMarketContext(dash); renderReviewSummary(dash); renderCoverage(dash); renderWorkflow(dash); renderNewDecisions(dash); renderHoldingRevisions(dash); renderEvidenceDelta(dash); renderAuthorizationSummary(dash); renderManagerRunDetail(); renderSpend(dash); renderModelSummary(dash); }
   renderMaterialEvents();
 }
@@ -2343,6 +2378,7 @@ async function loadPortfolio(fresh) {
   renderPortfolio(); pollQuotes();
 }
 function renderPortfolio(loading) {
+  renderLiveActivity();
   var p = getRes("portfolio"), slot = resSlot("portfolio");
   if (!p) { setChildren($("portfolioSummary"), [cardHead("Portfolio", "portfolio"), slot.error && !loading ? stateBox("failed", "Could not load the portfolio", " — " + slot.error.message, slot.error.code) : stateBox("loading", "Loading the portfolio…")]); return; }
   renderPortfolioSummary(p.summary || {}); if(slot.error)$("portfolioSummary").prepend(stateBox("stale","Holdings could not be refreshed."," Previously loaded information is shown. "+slot.error.message));
