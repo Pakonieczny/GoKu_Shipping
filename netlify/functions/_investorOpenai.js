@@ -976,7 +976,8 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     requestKey = null, contextManifestHash = null, sourceManifestHash = null, allowedClaimIds = null, promptCacheKey = null, extraRules = "", outputSchema = null } = {}) {
     if (A.currentScope() && await A.currentScope().paused()) return {ok:false,pending:true,simulationPaused:true};
     const paper=PAPER.current();
-    const roleName = ROLE_OF[fn], configuredRole = POLICY.ROLE_MODELS[roleName], role = paper && ['shortlistCandidates','prepareResearchDocument','decidePreparedPortfolio'].includes(fn) ? {...configuredRole,reasoning:{effort:"medium"}} : configuredRole, schemaVersion = SCHEMA_OF[fn];
+    const core=(paper?.investmentPolicy||A.currentScope()?.aiWorkload?.investmentPolicy)?.coreVersion;
+    const roleName = ROLE_OF[fn], configuredRole = POLICY.ROLE_MODELS[roleName], role = (paper || core) && ['shortlistCandidates','prepareResearchDocument','decidePreparedPortfolio','reviewUniverse'].includes(fn) ? {...configuredRole,reasoning:{effort:"medium"}} : configuredRole, schemaVersion = SCHEMA_OF[fn];
     if (!role || !schemaVersion) return failure(`unknown gateway function ${fn}`);
     if (POLICY.FORBIDDEN_INVESTMENT_MODELS.includes(role.model)) return failure("forbidden_model_in_role");
     if (!env.OPENAI_API_KEY) return failure("OPENAI_API_KEY not configured");
@@ -986,17 +987,17 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     if(outputSchema)strict.name=outputSchema.properties.schemaVersion.enum[0].replace(/[^a-z0-9_]/gi,'_');
     const workload=A.currentScope()?.aiWorkload;
     const simulationRules=workload ? `\nThis historical simulation uses a saved 50-company shortlist and a strict total AI budget. Keep prose concise and do not repeat input evidence. ${fn==='reviewUniverse'?'Review every supplied company, but request deep research for at most '+workload.maxResearchCompanies+' highest-priority finalists. All other rows must use reviewDirective NONE unless an existing researched holding can be reused. Keep each coverage reason under 15 words. Research requests must name only supplied shortlist symbols.':fn==='researchCompany'?'Write a compact, complete memo with short checklist entries. Use source identifiers and verified calculations; do not invent evidence to save tokens.':''}` : '';
-    const requiredInvestment=HANDOFF.supportedInvestmentPolicy(workload?.investmentPolicy);
+    const requiredInvestment=HANDOFF.supportedInvestmentPolicy(workload?.investmentPolicy||paper?.investmentPolicy);
     if(requiredInvestment && fn==='reviewUniverse') {
       strict.schema.properties.researchRequests.minItems=requiredInvestment.minCompanies||1;
       strict.schema.properties.researchRequests.maxItems=requiredInvestment.maxCompanies;
       strict.strictHash=sha(strict.schema);strict.localSchema=strict.schema;
     }
     const investmentRules=requiredInvestment?.maxHoldingSessions && fn==='reviewUniverse'?`\nSIMULATION MANDATE: choose ${requiredInvestment.minCompanies}–${requiredInvestment.maxCompanies} distinct entry-eligible top picks. Request RESEARCH_NOW for every pick. Rank dated evidence, valuation, catalyst timing over one to three trading sessions, downside, liquidity and sector correlation; assess every supplied company. Prefer actionable near-term evidence; missing earnings dates are unknown, not safe. Never use future prices or model memory of subsequent outcomes.`:requiredInvestment?.version===HANDOFF.DIVERSIFIED_POLICY.version && fn==='reviewUniverse'?'\nSIMULATION MANDATE: choose 4–7 distinct, entry-eligible top picks for investment, ranked by the supplied dated evidence and available prices. Request RESEARCH_NOW for every pick. Consider relative conviction, catalysts, valuation, downside and sector concentration. Uncertainty affects size; do not invent evidence or select ineligible companies.':requiredInvestment && fn==='reviewUniverse'?'\nSIMULATION MANDATE: choose the best one or two candidates to INVEST in, not whether to hold cash. You must request RESEARCH_NOW for at least one entry-eligible candidate. Prefer complete dated evidence and available prices. Uncertainty affects subsequent position size. Do not exclude every company merely because cash looks better.':'';
-    const system = PROMPTS[fn].system + (extraRules ? `\n${extraRules}` : "") + simulationRules + investmentRules + (paper ? "\n"+PAPER.instructions(paper,fn) : "");
+    const system = core ? require("./_investorSimulationHorizon").sharedInstructions(requiredInvestment,fn)+(extraRules?"\n"+extraRules:"") : PROMPTS[fn].system + (extraRules ? `\n${extraRules}` : "") + simulationRules + investmentRules + (paper ? "\n"+PAPER.instructions(paper,fn) : "");
     const inputItems = [{ role: "system", content: system }, { role: "user", content: user }];
     const inputTokensEst = estimateTokens(system) + estimateTokens(user);
-    const maxOutputTokens = workload?.outputTokens?.[fn] || (paper && fn==='decidePreparedPortfolio' ? 64000 : MAX_OUTPUT_TOKENS[fn]);
+    const maxOutputTokens = core ? (fn==='decidePreparedPortfolio'?36000:fn==='shortlistCandidates'?12000:fn==='reviewUniverse'?10000:MAX_OUTPUT_TOKENS[fn]) : workload?.outputTokens?.[fn] || (paper && fn==='decidePreparedPortfolio' ? 64000 : MAX_OUTPUT_TOKENS[fn]);
     const requestId = `mr_${sha({fn,key:requestKey || `${now()}|${Math.random()}`,model:role.model,reasoning:role.reasoning || null,prompt:sha(system),schema:strict.strictHash,policy:identity.policyHash,contextManifestHash,sourceManifestHash,userHash:sha(user),maxOutputTokens}).slice(0,40)}`;
     const base = { ...(outputSchema?{outputSchemaJson:JSON.stringify(outputSchema)}:{}), fn, role: roleName, model: role.model, reasoningEffort: role.reasoning ? role.reasoning.effort : null, schemaVersion,
       promptVersion: PROMPTS[fn].version, promptHash: promptHash(fn), schemaHash: strict.schemaHash, strictSchemaHash: strict.strictHash,
@@ -1314,6 +1315,13 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
   async function shortlistCandidates({cards=[],count=50,contextManifestHash,waitMs=DEFAULT_WAIT_MS}={}) {
     const symbols=cards.map(c=>c.symbol);count=Math.min(count,symbols.length);
     if(!count)return {ok:true,selected:[],costMinor:'0'};
+    const shared=(PAPER.current()?.investmentPolicy||A.currentScope()?.aiWorkload?.investmentPolicy)?.coreVersion;
+    if(shared){
+      const H=require('./_investorSimulationHorizon'),outputSchema=H.shortlistSchema(symbols);
+      const r=await invoke('shortlistCandidates',{user:JSON.stringify(cards.map(H.screeningProfile)),outputSchema,background:true,waitMs,contextManifestHash,requestKey:'shared-shortlist|'+contextManifestHash});
+      if(!r.ok)return r;
+      try{return {...r,selected:H.selectShortlist(r.output,symbols,count).map(x=>x.symbol)};}catch(e){return {...r,ok:false,error:e.code};}
+    }
     const outputSchema={type:'object',additionalProperties:false,required:['schemaVersion','selected'],properties:{schemaVersion:{type:'string',enum:['paper-shortlist.v1']},selected:{type:'array',minItems:count,maxItems:count,items:{type:'string',enum:symbols}}}};
     const r=await invoke('shortlistCandidates',{user:'Choose exactly '+count+' distinct companies.\n'+untrusted('eligible_source_cards',cards),outputSchema,background:true,waitMs,contextManifestHash,requestKey:'paper-shortlist|'+contextManifestHash});
     if(!r.ok)return r;
@@ -1403,7 +1411,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
 
   async function prepareResearchDocument({source,waitMs=DEFAULT_WAIT_MS}={}) {
     if(!source?.baseline?.symbol)return failure("handoff_source_required");
-    const wire=PAPER.current()?HANDOFF.preparationWire(source):null;
+    const wire=(PAPER.current()||A.currentScope()?.aiWorkload?.investmentPolicy?.coreVersion)?HANDOFF.preparationWire(source):null;
     const r=await invoke("prepareResearchDocument",{user:untrusted("source_packet",wire?.source||source),...(wire?{outputSchema:wire.schema,extraRules:wire.instructions}:{}),background:true,waitMs,
       scope:{symbol:source.baseline.symbol,asOfMs:source.baseline.cutoffMs},contextManifestHash:sha(source),requestKey:`prepare|${HANDOFF.VERSION}|${sha(source)}`});
     if(!r.ok)return r;
@@ -1412,7 +1420,14 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
   }
   async function decidePreparedPortfolio({documents=[],packets=[],completedResearch=[],holdings=[],portfolio,marks,policy,marketState,expansionBlocked=false,contextManifestHash,waitMs=DEFAULT_WAIT_MS}={}) {
     try{documents.forEach(HANDOFF.assertDocument);}catch(e){return failure(e.code);}
-    const investmentPolicy=HANDOFF.supportedInvestmentPolicy(A.currentScope()?.aiWorkload?.investmentPolicy);
+    const investmentPolicy=HANDOFF.supportedInvestmentPolicy(A.currentScope()?.aiWorkload?.investmentPolicy||PAPER.current()?.investmentPolicy);
+    if(investmentPolicy?.coreVersion) {
+      const outputSchema=HANDOFF.investmentSchema(documents,investmentPolicy);
+      const user=[untrusted('prepared_documents',documents),untrusted('market_state',marketState),untrusted('portfolio',portfolio),untrusted('risk_policy',investmentPolicy.riskMandate)].join('\n\n');
+      const r=await invoke('decidePreparedPortfolio',{user,outputSchema,background:true,waitMs,contextManifestHash,requestKey:'shared-investment|'+sha(user)});
+      if(!r.ok)return r;
+      try{return {...r,simulationPlan:HANDOFF.validateInvestmentPlan(r.output,documents,investmentPolicy)};}catch(e){return {...r,ok:false,error:e.code||'SHARED_PLAN_INVALID'};}
+    }
     if(investmentPolicy) {
       const outputSchema=HANDOFF.investmentSchema(documents,investmentPolicy);
       const user=[untrusted('prepared_documents',documents),untrusted('historical_market',marketState),

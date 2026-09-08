@@ -135,12 +135,13 @@ function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false, 
 const INVESTMENT_POLICY = Object.freeze({version:'required-investment.v1',minUsd:5000,maxUsd:30000,maxCompanies:2,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
 const DIVERSIFIED_POLICY = Object.freeze({version:'required-investment.v2',minUsd:5000,maxUsd:30000,minCompanies:4,maxCompanies:7,maxTotalUsd:95000,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
 function supportedInvestmentPolicy(policy) {
+  if(policy?.version==='shared-investment.v1'){try{const canonical=require('./_investorSimulationHorizon').policyFor(policy.companyRange,policy.strategy||null,{shared:true,riskMandate:policy.riskMandate});return C.hash(canonical)===C.hash(policy)?canonical:null;}catch{return null;}}
   if(policy?.version==='required-investment.v4'){try{const canonical=require('./_investorSimulationHorizon').policyFor(policy.companyRange,policy.strategy);return C.hash(canonical)===C.hash(policy)?canonical:null;}catch{return null;}}
   return [INVESTMENT_POLICY,DIVERSIFIED_POLICY,...Object.keys(require('./_investorSimulationHorizon').RANGES).map(r=>require('./_investorSimulationHorizon').policyFor(r))].find(p=>policy?.version===p.version&&C.hash(policy)===C.hash(p))||null;
 }
 function assertInvestmentAllocations(investments,policy) {
   if(!supportedInvestmentPolicy(policy))fail('SIMULATION_INVESTMENT_POLICY_INVALID');
-  const all=Object.values(investments||{}),cashAllowed=policy.minCompanies===0;
+  const all=Object.values(investments||{}),cashAllowed=policy.minCompanies===0||!!policy.coreVersion;
   if(policy.maxHoldingSessions)all.forEach(r=>require('./_investorSimulationHorizon').validate(r,policy));
   // With a cash-allowed policy every finalist carries an explicit BUY or PASS; PASS rows reserve nothing.
   if(cashAllowed&&all.some(r=>!['BUY','PASS'].includes(r?.decision)||(r.decision==='PASS'&&r.allocationUsd!==0)))fail('SIMULATION_ALLOCATION_INVALID');
@@ -158,7 +159,7 @@ function investmentSchema(documents,policy=INVESTMENT_POLICY) {
   if(policy.maxHoldingSessions) {
     const estimate=obj({expectedReturnBps:{type:'integer',minimum:-10000,maximum:100000},downsideBps:{type:'integer',minimum:0,maximum:10000},opportunityCostBps:{type:'integer',minimum:0,maximum:10000},uncertaintyPenaltyBps:{type:'integer',minimum:0,maximum:10000},evidenceConfidence:{type:'string',enum:['LOW','MEDIUM','HIGH']},reason:{type:'string',minLength:1,maxLength:300}});
     Object.assign(investment.properties,{holdingSessions:{type:'integer',minimum:1,maximum:3},holdingReason:{type:'string',minLength:1,maxLength:600},horizonAnalysis:obj({session1:estimate,session2:estimate,session3:estimate})});
-    if(policy.minCompanies===0){investment.properties.allocationUsd={type:'integer',minimum:0,maximum:30000};Object.assign(investment.properties,{decision:{type:'string',enum:['BUY','PASS']},decisionReason:{type:'string',minLength:1,maxLength:400}});}
+    if(policy.minCompanies===0||policy.coreVersion){investment.properties.allocationUsd={type:'integer',minimum:0,maximum:30000};Object.assign(investment.properties,{decision:{type:'string',enum:['BUY','PASS']},decisionReason:{type:'string',minLength:1,maxLength:400}});}
     investment.required=Object.keys(investment.properties);
   }
   return obj({schemaVersion:{type:'string',enum:['simulation-investment-plan.v1']},comparisonNote:text(1200),
@@ -171,8 +172,10 @@ function validateInvestmentPlan(output,documents,policy=INVESTMENT_POLICY) {
   documents.forEach(assertDocument);
   if(P.validateAgainst(investmentSchema(documents,policy),output).length)fail('SIMULATION_INVESTMENT_PLAN_INVALID');
   assertInvestmentAllocations(output.investments,policy);
+  if(policy.coreVersion&&documents.some(d=>output.investments[d.symbol]?.decision==='BUY'&&(!d.baseline.dossierVersionId||!output.investments[d.symbol].evidenceIds.some(id=>d.evidence.some(e=>e.id===id&&['claim','financial_fact'].includes(e.kind))))))fail('HANDOFF_BUY_WITHOUT_EVIDENCE');
   if(documents.some(d=>d.cutoffMs!==documents[0].cutoffMs))fail('HANDOFF_AS_OF_MISMATCH');
   const plan={...output,policy,cutoffMs:documents[0].cutoffMs,...(policy.maxHoldingSessions?{sessions:require('./_investorSimulationHorizon').sessions(require('./_investorMarket').nyParts(new Date(documents[0].cutoffMs)).date)}:{}),
+    ...(policy.coreVersion?{liquidityBySymbol:Object.fromEntries(documents.map(d=>[d.symbol,{advMinor:String(Math.round(Number((d.baseline.marketObservation?.technicals?.bars>=10?d.baseline.marketObservation.technicals.liquidity?.avgDollarVolume20Usd:0)||0)*100))}]))}:{}),
     documentHashes:Object.fromEntries(documents.map(d=>[d.symbol,d.documentHash]))};
   return {...plan,planHash:C.hash(plan)};
 }

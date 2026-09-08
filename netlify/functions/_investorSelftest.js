@@ -4236,7 +4236,7 @@ function runFixtures() {
   cases.push(fixture("paper_process_range_strategy_pinning_and_permissions", async()=>{
     const assert=require('assert/strict'),Paper=require('./_investorPaperProcess'),S=require('./_investorSimulationStrategy'),H=require('./_investorSimulationHorizon');
     const fake=fakeAdmin(),store=Paper.create({admin:fake,now:()=>12345});
-    assert.equal((await store.settings()).companyRange,'range2');
+    assert.equal((await store.settings()).companyRange,'flex3');
     await store.save('owner',{companyRange:'top1',strategyVersionId:'baseline',revision:0});
     const pinned=await store.resolve(await store.settings());
     assert.equal(pinned.max,1);assert.equal(pinned.strategy,null);
@@ -4306,6 +4306,47 @@ function runFixtures() {
     const last=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
     assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,4);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
     assert.equal(W.calls.research,0);assert.equal(W.calls.synthesis,0);assert.equal(last.checkpoint.data.synthesis.holdingAnalysis[0].symbol,'BBB');
+    const charged=await gateway.spendToday();assert(charged.spentMinor>0);assert.equal(Number(last.summary.costMinor),charged.spentMinor);
+    assert.equal([...W.fake.docs.keys()].filter(k=>k.startsWith('InvestorAI_SimulationRuns/')).length,0);return true;
+  }));
+
+  cases.push(fixture("shared_paper_meeting_uses_joint_buy_pass_plan_and_preserves_holdings",async()=>{
+    const assert=require('assert/strict'),Paper=require('./_investorPaperProcess'),O=require('./_investorOpenai'),H=require('./_investorResearchHandoff'),G=require('./_investorManager');
+    const W=meetingWorld({reviewMissing:[],synthesisBuy:false});await W.seed();
+    W.deps.decisionProcess={version:Paper.VERSION,companyRange:'top1',min:1,max:1,strategy:null,settingsRevision:0,preparedResearch:true,investmentPolicy:require('./_investorSimulationHorizon').policyFor('top1',null,{shared:true})};
+    W.deps.preparePaperEvidence=async symbol=>({symbol,completedAtMs:W.t0,errors:[]});
+    await W.fake.col(W.fake.COL.control).doc('control').set({engineMode:'manager',accountMode:'PAPER_AI',accountId:'paper-1'});
+    const calls=[],baseReview=W.deps.gateway.reviewUniverse;
+    const gateway=O.withDeps({admin:W.fake,env:{OPENAI_API_KEY:'fixture'},now:()=>W.t0,fetchImpl:async(url,opts)=>{
+      assert.equal(require('./_investorAdmin').currentScope(),null);assert.equal(opts.method,'POST');const b=JSON.parse(opts.body),name=b.text.format.name,user=b.input.find(x=>x.role==='user').content;calls.push(b);
+      const data=label=>JSON.parse(user.match(new RegExp('<untrusted_context name="'+label+'">\\n([\\s\\S]*?)\\n</untrusted_context>'))[1]);let output;
+      if(name==='shared_shortlist_v1'){output={schemaVersion:'shared-shortlist.v1',assessments:Object.fromEntries(JSON.parse(user).map((p,i)=>[p.symbol,{rank:i+1,reason:'Dated priority'}]))};}
+      else if(name==='paper_shortlist_v1'){assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');assert.deepEqual(data('eligible_source_cards').map(x=>x.symbol),['AAA','CCC']);output={schemaVersion:'paper-shortlist.v1',selected:['AAA','CCC']};}
+      else if(name==='universe_review_v1'){const m=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]),r=await baseReview({cards:data('universe_cards'),universeManifest:m,holdings:data('holding_packets')});output={schemaVersion:'universe-review.v1',universeVersion:m.universeVersion,universeHash:m.universeHash,eligibleCount:3,coverage:r.coverage,holdingAnalysis:r.holdingAnalysis,researchRequests:r.researchRequests,managerNote:'One top finalist; existing holding retained.'};}
+      else if(name==='prepared_research_document_v1'){const source=data('source_packet');assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence incomplete',evidenceIds:[],missing:['Insufficient evidence']}]))};}
+      else if(name==='simulation_investment_plan_v1'){
+        const doc=data('prepared_documents')[0];assert.equal(b.reasoning.effort,'medium');assert.equal(b.max_output_tokens,36000);assert(!b.tools);
+        output={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Evidence is insufficient; retain cash and existing protection.',investments:{AAA:{decision:'PASS',decisionReason:'Evidence incomplete',allocationUsd:0,conviction:'LOW',sizingReason:'No new allocation',holdingSessions:1,holdingReason:'No entry',horizonAnalysis:Object.fromEntries([1,2,3].map(n=>['session'+n,{expectedReturnBps:0,downsideBps:100,opportunityCostBps:0,uncertaintyPenaltyBps:100,evidenceConfidence:'LOW',reason:'No supported positive return'}])),takeProfitBps:100,stopLossBps:100,assessment:Object.fromEntries(H.SECTIONS.map(k=>[k,'Missing evidence'])),outlook:'Uncertain',evidenceIds:[]}}};
+      }
+      else if(name==='prepared_investment_decision_v1'){
+        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'medium');assert(!b.tools);assert.equal(data('prepared_documents').length,1);assert.equal(data('holdings')[0].symbol,'BBB');
+        const memo={schemaVersion:'research-memo.v1',symbol:'AAA',asOf:new Date(data('prepared_documents')[0].cutoffMs).toISOString(),checklist:Object.fromEntries(['business','whatChanged','agreementDisagreement','risks','valuationFramework','disconfirmingEvidence','returnAndHorizon','versusAlternatives','mandateOrAbstain'].map(k=>[k,'Insufficient dated evidence.'])),factualPremises:[],inferences:[],valuation:null,bearCase:'Uncertain return',thesisHealth:'UNKNOWN',proposedDecision:'WATCH',reasonCode:'UNCERTAINTY',mandate:null};
+        const held=data('holdings').map(h=>({symbol:h.symbol,decision:'HOLD',reasonCode:null,revisionResult:'UNCHANGED',researchDirective:'NONE',thesisHealth:'INTACT',emergency:{emergencyReductionRank:1,emergencyRankAsOf:new Date(W.t0).toISOString(),emergencyRankExpiresAfterSession:'2026-09-08',rationale:'Protected'},rationale:'Retain existing protection',mandate:null}));
+        output={schemaVersion:'prepared-investment-decision.v1',research:[memo],allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:[{symbol:'AAA',decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Evidence insufficient'},{symbol:'BBB',decision:'HOLD',capitalRank:null,reasonCode:null,fundingState:'NOT_APPLICABLE',reason:'Retain protection'}],expansionMandates:[],holdingAnalysis:held,comparisonNote:'Cash preferable to unsupported purchase; retain existing holding.'}};
+      } else throw Error('Unexpected model stage '+name);
+      const errors=require('./_investorPolicy').validateAgainst(b.text.format.schema,output);assert.equal(errors.length,0,JSON.stringify(errors));
+      return {ok:true,status:200,json:async()=>({id:'resp_paper_'+calls.length,model:b.model,status:'completed',output_text:JSON.stringify(output),usage:{input_tokens:1000,output_tokens:500}})};
+    }});
+    let pauseOnce=true;W.deps.gateway={...gateway,decidePreparedPortfolio:async args=>{if(pauseOnce){pauseOnce=false;return {pending:true};}return gateway.decidePreparedPortfolio(args);}};
+    W.deps.tools=require('./_investorResearchTools');W.deps.toolBindings={getFilingFactsAsOf:async()=>({facts:[],lineage:[]}),searchDecisionData:async()=>({items:[]})};
+    const claim={runId:'paper_parity',payload:{accountId:'paper-1',tradingDate:'2026-09-04'}};
+    const first=await G.runManagerMeeting({claim,deps:W.deps,control:{engineMode:'manager'}});assert(first.yielded);assert.equal(first.checkpoint.data.handoff.phase,'decision');
+    const resume=structuredClone(first.checkpoint);await Paper.create({admin:W.fake}).save('owner',{companyRange:'range3',strategyVersionId:'baseline',revision:0});delete W.deps.decisionProcess;
+    const last=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
+    assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,4);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
+    assert.equal(W.calls.research,0);assert.equal(W.calls.synthesis,0);assert.equal(last.checkpoint.data.simulationPlan.investments.AAA.decision,'PASS');
+    const decisions=[...W.fake.docs.entries()].filter(([k])=>k.startsWith(W.fake.COL.managerDecisions+'/')).map(([,d])=>d._codec?require('./_investorStorageCodec').decode(d):d);assert.equal(decisions.find(d=>d.symbol==='BBB').decision,'HOLD');
+    assert.equal([...W.fake.docs.entries()].filter(([k,d])=>k.startsWith(W.fake.COL.portfolioPlans+'/')&&d.policy?.coreVersion).length,1);
     const charged=await gateway.spendToday();assert(charged.spentMinor>0);assert.equal(Number(last.summary.costMinor),charged.spentMinor);
     assert.equal([...W.fake.docs.keys()].filter(k=>k.startsWith('InvestorAI_SimulationRuns/')).length,0);return true;
   }));
@@ -5996,7 +6037,7 @@ async function simulatorAdversarial({only=null}={}) {
       config.investmentPolicy=require('./_investorResearchHandoff').DIVERSIFIED_POLICY;config.aiPlan=RealSim.AI_PLAN;
       const configRef=await svc.saveJSON(br,'fixture_legacy_configuration',config),legacyConfig={...b.config};delete legacyConfig.companyRange;delete legacyConfig.maxHoldingSessions;
       await br.set({configRef,config:legacyConfig,repositoryId:null},{merge:true});
-      for(const rid of b.runIds){const rr=options.admin.col('InvestorAI_Simulations').doc(rid),row=(await rr.get()).data();delete row.sessions;delete row.companyRange;await rr.set({...row,aiPlan:RealSim.AI_PLAN,configRef});}
+      for(const rid of b.runIds){const rr=options.admin.col('InvestorAI_Simulations').doc(rid),row=(await rr.get()).data();delete row.sessions;delete row.companyRange;await rr.set({...row,executionVersion:'observed-exits.v3',aiPlan:RealSim.AI_PLAN,configRef});}
       b=await svc.getBatch(b.batchId);const repo=await svc.ensureRepository(b,config);await svc.reuseRepositoryArtifacts(b,config,repo.ref);return svc.getBatch(b.batchId);
     };
     svc.startBatch=async(input,owner,key,dispatch)=>{const b=await svc.createBatch(input,owner,key);await svc.schedule({dispatch,batchId:b.batchId});return svc.getBatch(b.batchId);};
@@ -7157,7 +7198,9 @@ async function simulatorAdversarial({only=null}={}) {
       const b=JSON.parse(opts.body);
       if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:measure?400000:12000})};
       calls.push(b);const user=b.input.find(x=>x.role==='user').content,name=b.text.format.name;let output,items=null;
-      if(name==='historical_shortlist') {
+      if(name==='shared_shortlist_v1'){
+        const profiles=JSON.parse(user);output={schemaVersion:'shared-shortlist.v1',assessments:Object.fromEntries(profiles.map((p,i)=>[p.symbol,{rank:i+1,reason:'Dated profile priority'}]))};
+      } else if(name==='historical_shortlist') {
         const profiles=JSON.parse(user).profiles;assert.equal(profiles.length,304);
         output={assessments:Object.fromEntries(profiles.map((row,i)=>[row[0],{rank:i+1,reason:'Historical profile evaluated for research priority'}]))};
       } else if(name==='universe_review_v1') {
@@ -7169,11 +7212,11 @@ async function simulatorAdversarial({only=null}={}) {
         assert.equal(b.model,'gpt-5.6-luna');assert(!b.tools);
         const source=JSON.parse(user.match(/<untrusted_context name="source_packet">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);
         assert(source.catalog.some(c=>c.kind==='claim'),'pipeline must exercise real nonempty citation catalogs');
-        output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,{summary:'Available historical evidence is limited.',evidenceIds:[source.catalog.find(c=>c.kind==='claim').citationId],missing:['Insufficient evidence for a firm investment thesis']}]))};
+        output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,{summary:'Available historical evidence is limited.',evidenceIds:[source.catalog.find(c=>c.kind==='claim').citationId||source.catalog.find(c=>c.kind==='claim').id],missing:['Insufficient evidence for a firm investment thesis']}]))};
         if(bad==='document_citations')output.sections.business={summary:'Invented growth claim that must never reach Astra.',evidenceIds:['claim:not_in_the_source_packet'],missing:[]};
         else {const validate=new(require('ajv/dist/2020'))({strict:false}).compile(b.text.format.schema);assert(validate(output),JSON.stringify(validate.errors));}
       } else if(name==='prepared_investment_decision_v1'||name==='simulation_investment_plan_v1') {
-        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'medium');assert(!b.tools);assert.equal(b.max_output_tokens,horizon?(picks>5?47880:39900):picks>2?35910:23940);
+        assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'medium');assert(!b.tools);assert.equal(b.max_output_tokens,horizon?36000:picks>2?35910:23940);
         const docs=JSON.parse(user.match(/<untrusted_context name="prepared_documents">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);const prior=required?[]:JSON.parse(user.match(/<untrusted_context name="completed_research">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);assert.equal(docs.length+prior.length,picks);assert(docs.every(d=>d.documentHash));
         assert(!JSON.stringify(docs).includes('Invented growth claim that must never reach Astra.'));
         for(const doc of docs){const ids=new Set(doc.evidence.map(e=>e.id));assert(Object.values(doc.sections).every(s=>s.evidenceIds.every(id=>ids.has(id))));assert(doc.evidence.some(e=>e.claimType==='RISK_FACTOR'),'adverse evidence must survive preparation');}
@@ -7181,9 +7224,9 @@ async function simulatorAdversarial({only=null}={}) {
         output={schemaVersion:'prepared-investment-decision.v1',research,allocation:{schemaVersion:'portfolio-synthesis.v1',planClass:'EXPANSION',decisions:finalists.map(symbol=>({symbol,decision:'WATCH',capitalRank:null,reasonCode:'UNCERTAINTY',fundingState:'NOT_APPLICABLE',reason:'Retain cash after joint underwriting'})),expansionMandates:[],holdingAnalysis:[],comparisonNote:'Compared both finalists and cash in one decision'}};
         if(bad==='joint_schema')output.research[0].bearCase='x'.repeat(1201);
         if(required)output={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Best available candidates; allocate less to uncertainty.',
-          investments:Object.fromEntries(finalists.map((symbol,i)=>[symbol,{...(horizon?{holdingSessions:i%3+1,holdingReason:'Evidence supports this horizon after downside and opportunity cost.',horizonAnalysis:horizonFixture(i%3+1)}:{}),allocationUsd:horizon?Math.min(30000,Math.floor(95000/picks)):picks>2?Math.floor(95000/picks):(i?30000:5000),conviction:i?'HIGH':'LOW',sizingReason:i?'Stronger relative conviction':'Missing forward evidence reduces allocation',
+          investments:Object.fromEntries(finalists.map((symbol,i)=>[symbol,{...(horizon?{decision:'BUY',decisionReason:'Dated source supports the hypothesis',holdingSessions:i%3+1,holdingReason:'Evidence supports this horizon after downside and opportunity cost.',horizonAnalysis:horizonFixture(i%3+1)}:{}),allocationUsd:horizon?Math.min(30000,Math.floor(95000/picks)):picks>2?Math.floor(95000/picks):(i?30000:5000),conviction:i?'HIGH':'LOW',sizingReason:i?'Stronger relative conviction':'Missing forward evidence reduces allocation',
             assessment:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,'Dated evidence assessed; uncertainty remains.'])),
-            outlook:'Bear: loss; base: flat; bull: upside. These are assumptions, not issuer guidance.',takeProfitBps:2000,stopLossBps:2000,evidenceIds:['baseline:symbol']}]))};
+            outlook:'Bear: loss; base: flat; bull: upside. These are assumptions, not issuer guidance.',takeProfitBps:2000,stopLossBps:2000,evidenceIds:horizon?[docs.find(d=>d.symbol===symbol).evidence.find(e=>e.kind==='claim').id]:['baseline:symbol']}]))};
 
       } else if(name==='research_memo_v1') {
         const symbol=user.match(/SYMBOL=(\S+)/)[1],round=toolRounds.get(symbol)||0;toolRounds.set(symbol,round+1);
@@ -7225,6 +7268,37 @@ async function simulatorAdversarial({only=null}={}) {
     const runId=batch.runIds[0],ref=fake.col('InvestorAI_Simulations').doc(runId);
     return {svc,runId,ref,fake,calls,responses,toolRounds,finalists:()=>finalists,setValid:()=>{bad=null;},drive:async()=>{for(let i=0;i<8;i++){await svc.execute(runId);wall+=10000;const r=await svc.getRun(runId);if(transportErrors.length)throw Error(transportErrors.join('\n'));if(['complete','incomplete'].includes(r.status))return r;}throw Error('Pipeline failed to terminate: '+JSON.stringify({run:await svc.getRun(runId),calls:calls.map(b=>b.text.format.name)}));}};
   }
+  await check('shared_core_paper_and_simulation_fills_cash_protection_and_replay_match',async()=>{
+    const E=require('./_investorExecution'),H=require('./_investorSimulationHorizon'),C=require('./_investorDecisionContext'),M=require('./_investorMarket');
+    const policy=H.policyFor('range1',null,{shared:true}),sessions=H.sessions('2026-04-01'),cutoffMs=sessions[0].openMs-3600000;
+    const content={policy,sessions,cutoffMs,liquidityBySymbol:{TEST:{advMinor:'10000000000'}},investments:{TEST:{decision:'BUY',decisionReason:'Dated hypothesis',allocationUsd:20000,holdingSessions:1,holdingReason:'Initial session',horizonAnalysis:horizonFixture(1),conviction:'MEDIUM',sizingReason:'Bounded risk',stopLossBps:500,takeProfitBps:2000}}},plan={...content,planHash:C.hash(content)};
+    for(const exit of ['target','stop','deadline','expiry','frozen','missing_deadline']){
+      const sim=database(),paper=database(),ctrl={engineMode:'manager',accountMode:'PAPER_AI',accountId:'paper-1',buyState:exit==='frozen'?'FROZEN':'OPEN',managerState:'PAUSED'};
+      const scope={runId:RID,investmentPolicy:policy,clock:()=>cutoffMs,collection:sim.col,transaction:sim.runTransaction,batch:sim.batch,executionSpreadBps:policy.spreadBps,feePerShareMicros:policy.feePerShareMicros};
+      for(const [d,id] of [[sim,RID],[paper,'paper-1']]){await d.col(A.COL.accounts).doc(id).set({accountId:id,balanceCents:{cash:10000000,contributed_capital:-10000000}});await d.col(A.COL.ledger).doc('funding').set({accountId:id,legs:[{account:'cash',amountCents:10000000},{account:'contributed_capital',amountCents:-10000000}]});}
+      await paper.col(A.COL.control).doc('control').set(ctrl);
+      await A.withSimulationScope(scope,()=>E.saveRequiredSimulationPlan({plan,admin:sim,accountId:RID,managerRunId:'fixture'}));
+      await E.saveSharedPaperPlan({plan,admin:paper,accountId:'paper-1',managerRunId:'fixture',nowMs:cutoffMs});await E.saveSharedPaperPlan({plan,admin:paper,accountId:'paper-1',managerRunId:'fixture',nowMs:cutoffMs});
+      assert((await E.assertConservation('paper-1',{admin:paper})).pass,'reservation journal must balance');
+      const bar=(min,o=100,h=101,l=99,c=100)=>({t:new Date(sessions[0].openMs+min*60000).toISOString(),o,h,l,c,v:100000});
+      const initial=exit==='expiry'?[]:[bar(0)];const tail=exit==='target'?[bar(5,100,125,99,120)]:exit==='stop'?[bar(35,90,91,89,90)]:exit==='deadline'?[bar(385)]:[];
+      const barsBySymbol={TEST:[...initial,...tail]},nowMs=exit==='missing_deadline'||exit==='expiry'?sessions[0].closeMs+1200000:Date.parse(barsBySymbol.TEST.at(-1)?.t||new Date(sessions[0].openMs).toISOString())+1200000;
+      const paperTick=()=>E.tickSharedPaper({admin:paper,accountId:'paper-1',control:ctrl,barsBySymbol,provenanceBySymbol:{TEST:{provider:'alpaca',feed:'delayed_sip',timeframe:'5Min'}},nowMs});
+      const simTick=()=>A.withSimulationScope(scope,()=>E.tickRequiredSimulation({admin:sim,accountId:RID,control:{...ctrl,managerState:'PAUSED'},barsBySymbol,nowMs}));
+      if(exit==='missing_deadline'){await assert.rejects(paperTick,/no sufficiently liquid observed close/);await assert.rejects(simTick,/no sufficiently liquid observed close/);continue;}
+      await paperTick();await paperTick();if(exit==='frozen'){assert.equal((await paper.col(A.COL.fills).get()).size,0);continue;}
+      await simTick();await simTick();
+      const projection=async(d)=>{const fs=(await d.col(A.COL.fills).get()).docs.map(x=>x.data());return fs.map(f=>Object.fromEntries(['side','role','quantityUnits','priceMicros','feeMinor','realizedMinor','eventAtMs'].map(k=>[k,f[k]])));};
+      assert.deepEqual(await projection(paper),await projection(sim),exit);
+      const balances=async(d,id)=>Object.fromEntries(Object.entries((await d.col(A.COL.accounts).doc(id).get()).data().balanceCents).filter(([,n])=>n!==0));assert.deepEqual(await balances(paper,'paper-1'),await balances(sim,RID),exit);
+      assert((await E.assertConservation('paper-1',{admin:paper})).pass);assert((await E.assertConservation(RID,{admin:sim})).pass);
+      if(exit!=='expiry'){const pos=(await paper.col(A.COL.positions).get()).docs[0].data();assert(pos.qty===0);assert(pos.stopGraceUntilMs===sessions[0].openMs+1800000);assert(pos.coreVersion===H.CORE_VERSION);assert.equal((await paper.col(A.COL.orderSets).get()).docs[0].data().legs.filter(l=>l.status==='FILLED').length,1);}
+    }
+    // Late real-world completion cannot backfill an earlier opening purchase.
+    const late=database();await late.col(A.COL.accounts).doc('paper-1').set({balanceCents:{cash:10000000}});await late.col(A.COL.control).doc('control').set({engineMode:'manager',accountMode:'PAPER_AI'});
+    await E.saveSharedPaperPlan({plan,admin:late,accountId:'paper-1',nowMs:sessions[0].openMs+600000});
+    await E.tickSharedPaper({admin:late,accountId:'paper-1',control:{accountMode:'PAPER_AI'},barsBySymbol:{TEST:[{t:new Date(sessions[0].openMs).toISOString(),o:100,h:101,l:99,c:100,v:100000}]},provenanceBySymbol:{TEST:{provider:'alpaca',feed:'sip',timeframe:'5Min'}},nowMs:sessions[0].openMs+1800000});assert.equal((await late.col(A.COL.fills).get()).size,0);
+  });
   await check('horizon_ranges_required_dates_calendar_and_choice_validation',async()=>{
     const H=require('./_investorSimulationHorizon'),Hand=require('./_investorResearchHandoff'),fake=database(),svc=RealSim.create({admin:fake});
     const api=require('./_investorApiSchemas').compileAll().validators.params.simulationStart;
@@ -7292,7 +7366,7 @@ async function simulatorAdversarial({only=null}={}) {
   for(const picks of [1,3,8])await check('horizon_'+picks+'_picks_full_pipeline_fixed_deadlines_no_future_AI_or_rebuys',async()=>{
     const x=await researchPipeline({prepared:true,required:true,picks,horizon:true}),run=await x.drive();
     assert.equal(run.status,'complete',JSON.stringify(run.error));assert.equal(x.calls.length,picks+3);assert(!JSON.stringify(x.calls).includes('FUTURE_HORIZON_SECRET'));assert.equal(run.openPositions,0);assert.equal(run.sessionNumber,3);
-    const plan=(await x.ref.collection(A.COL.portfolioPlans).doc('required_investment').get()).data();assert.equal(plan.policy.version,'required-investment.v3');assert.equal(Object.keys(plan.investments).length,picks);
+    const plan=(await x.ref.collection(A.COL.portfolioPlans).doc('required_investment').get()).data();assert.equal(plan.policy.version,'shared-investment.v1');assert.equal(Object.keys(plan.investments).length,picks);
     const fills=(await x.ref.collection(A.COL.fills).get()).docs.map(x=>x.data()),sells=fills.filter(f=>f.side==='sell');assert.equal(sells.length,picks);
     for(const sell of sells){assert.equal(sell.role,'TIME_LIMIT');assert.equal(sell.eventAtMs,plan.sessions[plan.investments[sell.symbol].holdingSessions-1].closeMs);}
     assert(run.investments.every(i=>i.holdingSessions&&i.holdingDeadlineMs));assert(run.spentNano<Sim.CEILING);assert.equal(run.pendingAiCount,0);assert.equal(run.reservedNano,0);

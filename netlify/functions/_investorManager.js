@@ -373,12 +373,13 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
       await record({ startedAtMs: st.startedAtMs, universeVersion: snapshotRoster.universeVersion, universeHash: snapshotRoster.universeHash, eligibleCount: snapshotRoster.eligibleCount });
       try { const D = db(deps.admin); await D.col(D.COL.control).doc("control").set({ activeManagerRunId: managerRunId }, { merge: true }); } catch (e) { console.error("manager activity pointer", e.message); }
       const portfolio = await deps.portfolio.snapshot({ accountId, asOfMs: now(), admin: deps.admin });
+      st.sharedHoldingSymbols=portfolio.positions.filter(p=>p.coreVersion).map(p=>p.symbol);
       const workset = deps.workset.buildManaged({ roster: snapshotRoster, positions: portfolio.positions.map((p) => ({ symbol: p.symbol, qty: Number(p.quantityUnits), open: true })), pending: portfolio.workingOrders.map((o) => ({ symbol: o.symbol, orderId: o.orderId, status: o.status, side: o.side })), nowMs: now() });
       const cutoff = freezeDecisionCutoff({ runStartedAtMs: st.startedAtMs, tradingDate, nowMs: now() });
       const portfolioBySymbol = Object.fromEntries(workset.rows.map((r) => [r.symbol, { held: r.held, pending: r.pending, activeMandate: portfolio.activeMandates.some((m) => m.symbol === r.symbol), position: portfolio.positions.find(p => p.symbol === r.symbol) || null, mandate: portfolio.activeMandates.find(m => m.symbol === r.symbol) || null }]));
       const pointerCache = new Map();
       const progress = async (stage,label) => { if(deps.progress) await deps.progress({stage,label,done:null,total:null,unit:'',current:null}); };
-      const cards = await deps.dossier.compactCards({ symbols: snapshotRoster.symbols, cutoff, admin: deps.admin, portfolioBySymbol, deps, pointerCache });
+      const cards = await deps.dossier.compactCards({ symbols: snapshotRoster.symbols, cutoff, admin: deps.admin, portfolioBySymbol, deps:{...deps,sharedScreening:!!st.paperProcess?.investmentPolicy?.coreVersion}, pointerCache });
       await progress('manager_health','Checking saved research freshness');
       const freshness = await deps.dossier.dossierHealth({ symbols: snapshotRoster.symbols, admin: deps.admin, nowMs: cutoff.cutoffMs, pointerCache });
       let coverageInput;
@@ -465,7 +466,7 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
       continue;
     }
     if (stage === "maintenance") {
-      const held = st.workset.managedPositionSymbols.map((symbol) => ({ symbol }));
+      const held = st.workset.managedPositionSymbols.filter(symbol=>!st.sharedHoldingSymbols?.includes(symbol)).map((symbol) => ({ symbol }));
       const hardDeadlineMs = deps.market ? deps.market.nyWallClockToUtcMs(tradingDate, POLICY.CUTOFFS_ET.holdingHardDeadlineMin) : null;
       const plan = buildRiskMaintenancePlan({ holdingAnalysis: st.effective.holdingAnalysis || [], holdings: held, priorMandateBySymbol: st.priorMandates || {}, hardDeadlineMs, nowMs: now(), tradingDate });
       let staged = { status: "EMPTY", reason: "no_actionable_mandates" };
@@ -509,17 +510,30 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
           if(deps.checkpoint)await deps.checkpoint({stage,data:st});
           await record({research:{requested:requests.length,completed:st.handoff.phase==='complete'?st.research.completed.length:st.handoff.completedResearch.length,
             failed:0,deferred:0,documentsPrepared:Object.keys(st.handoff.documents).length,phase:st.handoff.phase,
-            detail:st.handoff.phase==='complete'?'Research and investment decision saved':st.handoff.phase==='decision'?'Astra is comparing the prepared research':`Luna prepared ${Object.keys(st.handoff.documents).length} of ${requests.length} research documents`}});
+            detail:st.handoff.phase==='sources'?`Refreshing current sources for ${Object.keys(st.handoff.liveSources||{}).length} of ${requests.length} finalists`:st.handoff.phase==='complete'?'Research and investment decision saved':st.handoff.phase==='decision'?'Astra is comparing the prepared research':`Luna prepared ${Object.keys(st.handoff.documents).length} of ${requests.length} research documents`}});
         };
+        if(st.paperProcess?.investmentPolicy?.coreVersion&&!st.handoff.liveCutoff){
+          st.handoff.liveSources=st.handoff.liveSources||{};
+          for(const request of requests){
+            if(st.handoff.liveSources[request.symbol])continue;
+            if(budget()<minStageMs)return yieldNow('current_sources_pending');
+            st.handoff.phase='sources';await saveHandoff();
+            st.handoff.liveSources[request.symbol]=await (deps.preparePaperEvidence||require('./_investorPaperEvidence').prepare)(request.symbol,{admin:deps.admin||A,now});
+            await saveHandoff();
+          }
+          st.handoff.liveCutoff={...st.cutoff,cutoffMs:now(),cutoff:new Date(now()).toISOString(),source:'current_finalist_sources'};
+          st.handoff.phase='documents';await saveHandoff();
+        }
+        const researchCutoff=st.handoff.liveCutoff||st.cutoff;
         const context=await rebuildContext(st,deps,accountId),packets=[],documents=[];
-        const marks=await liquidityMarks(requests.map(r=>r.symbol),deps,{policy,cutoffMs:st.cutoff.cutoffMs});
+        const marks=await liquidityMarks(requests.map(r=>r.symbol),deps,{policy,cutoffMs:researchCutoff.cutoffMs});
         for(const request of requests) {
           if(deps.shouldYield&&await deps.shouldYield())return yieldNow('simulation_paused');
           const packetId=`${managerRunId}_research_${request.symbol}`;
           let packet;
           try{packet=(await C.read({runId:packetId,admin:deps.admin})).packet;}
-          catch(e){if(e.code!=='FROZEN_INPUTS_MISSING')throw e;packet=await R.buildPacket({symbol:request.symbol,cutoff:st.cutoff,directive:request.reviewDirective,admin:deps.admin,deps:{...deps,frozenMarketState:context.marketState,independentReview:(st.independentSymbols||[]).includes(request.symbol)}});await C.freeze({runId:packetId,context:{packet,marks},admin:deps.admin});}
-          if(!packet?.ok)throw Object.assign(Error('Prepared research has no historical dossier for '+request.symbol),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
+          catch(e){if(e.code!=='FROZEN_INPUTS_MISSING')throw e;packet=await R.buildPacket({symbol:request.symbol,cutoff:researchCutoff,directive:request.reviewDirective,admin:deps.admin,deps:{...deps,frozenMarketState:context.marketState,independentReview:(st.independentSymbols||[]).includes(request.symbol)}});if(packet?.ok)await C.freeze({runId:packetId,context:{packet,marks},admin:deps.admin});}
+          if(!packet?.ok)throw Object.assign(Error('Prepared research is missing a dated dossier for '+request.symbol),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
           st.handoff.packets[request.symbol]=packetId;
           const prior=st.handoff.completedResearch.find(r=>r.symbol===request.symbol&&r.memo);
           if(prior){packets.push(packet);continue;}
@@ -530,8 +544,8 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
             try{source=(await C.read({runId:sourceId,admin:deps.admin})).source;}
             catch(e){
               if(e.code!=='FROZEN_INPUTS_MISSING')throw e;
-              const bound=deps.tools.allowlisted(deps.toolBindings||deps.tools.productionBindings({accountId,admin:deps.admin,policy,portfolio:context.portfolio,marks,decisionPacket:packet,sectorOf:sectorLookup(deps)}),policy.toolPolicy,{symbol:request.symbol,cutoffMs:st.cutoff.cutoffMs});
-              const args={symbol:request.symbol,asOfMs:st.cutoff.cutoffMs};
+              const bound=deps.tools.allowlisted(deps.toolBindings||deps.tools.productionBindings({accountId,admin:deps.admin,policy,portfolio:context.portfolio,marks,decisionPacket:packet,sectorOf:sectorLookup(deps)}),policy.toolPolicy,{symbol:request.symbol,cutoffMs:researchCutoff.cutoffMs});
+              const args={symbol:request.symbol,asOfMs:researchCutoff.cutoffMs};
               const [filings,decisionData]=await Promise.all([
                 bound.tools.getFilingFactsAsOf?.execute({...args,concepts:[]})||{missing:true,reason:'filings unavailable'},
                 bound.tools.searchDecisionData?.execute({...args,kinds:[],limit:50})||{missing:true,reason:'decision data unavailable'}]);
@@ -565,18 +579,20 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
         }
         if(joint.simulationPlan) {
           const plan=joint.simulationPlan;
-          await require('./_investorExecution').saveRequiredSimulationPlan({plan,admin:deps.admin,accountId,managerRunId});
-          const buys=Object.entries(plan.investments).map(([symbol,row],i)=>({symbol,capitalRank:i+1,row}));
+          const execution=require('./_investorExecution');
+          await (A.currentScope()?execution.saveRequiredSimulationPlan:execution.saveSharedPaperPlan)({plan,admin:deps.admin,accountId,managerRunId});
+          const buys=Object.entries(plan.investments).filter(([,row])=>row.decision!=='PASS').map(([symbol,row],i)=>({symbol,capitalRank:i+1,row}));
           const decisions=st.workset.symbols.map(symbol=>{const buy=buys.find(b=>b.symbol===symbol),cov=st.effective.coverage.find(r=>r.symbol===symbol);
-            return {symbol,decision:buy?'BUY':'IGNORE',reasonCode:null,reason:buy?buy.row.sizingReason:cov?.reason||'Not selected',capitalRank:buy?.capitalRank||null,
+            const held=st.workset.rows.some(r=>r.symbol===symbol&&r.held),passed=plan.investments[symbol]?.decision==='PASS';
+            return {symbol,decision:held?'HOLD':buy?'BUY':passed?'WATCH':'IGNORE',reasonCode:passed?'UNCERTAINTY':null,reason:held?'Existing plan retained':buy?buy.row.sizingReason:plan.investments[symbol]?.decisionReason||cov?.reason||'Not selected',capitalRank:buy?.capitalRank||null,
               fundingState:buy?'FUNDED':'NOT_APPLICABLE',reviewDirective:cov?.reviewDirective||'NONE',provisionalDisposition:cov?.provisionalDisposition||'IGNORE',
-              changedSincePrior:false,held:false,eligible:true,offRoster:false,source:'required_investment_simulation',mandate:null};});
+              changedSincePrior:false,held,eligible:st.workset.rows.find(r=>r.symbol===symbol)?.eligible!==false,offRoster:!!st.workset.rows.find(r=>r.symbol===symbol)?.offRoster,source:plan.policy.coreVersion?'shared_investment':'required_investment_simulation',mandate:null};});
           await persistDecisionRows({managerRunId,tradingDate,accountId,decisions,contextManifestHash:st.contextManifestHash,admin:deps.admin,cutoffMs:st.cutoff.cutoffMs});
-          st.handoff.phase='complete';st.simulationPlan=plan;
-          const summary={managerRunId,status:'complete',tradingDate,accountId,policyHash:st.policyHash,investmentPolicy:plan.policy,
+          st.handoff.phase='complete';st.simulationPlan=plan;st.research={...(st.research||{}),completed:documents,failed:[],deferred:[]};
+          const summary={managerRunId,status:'complete',tradingDate,accountId,policyHash:st.policyHash,investmentPolicy:plan.policy,coverage:st.coverage,eligibleCount:st.roster.eligibleCount,universeHash:st.roster.universeHash,decisionCount:decisions.length,
             research:{requested:requests.length,completed:requests.length,failed:0,deferred:0},
             buys:buys.map(({symbol,capitalRank})=>({symbol,capitalRank})),byDecision:countBy(decisions,'decision'),
-            investmentNote:plan.comparisonNote,costMinor:st.costMinor,noBuyReasons:[],activation:{status:'COMMITTED',planId:plan.planHash,mandates:buys.map(b=>b.symbol)}};
+            investmentNote:plan.comparisonNote,costMinor:st.costMinor,noBuyReasons:buys.length?[]:[{code:'AI_CHOSE_CASH',message:plan.comparisonNote}],activation:{status:'COMMITTED',planId:plan.planHash,mandates:buys.map(b=>b.symbol)}};
           await record({...summary,completedAtMs:now()});
           return {done:true,summary,checkpoint:{stage:'complete',data:st}};
         }
@@ -793,6 +809,8 @@ async function runEventRevision({ claim, deps: partial = {}, control = null } = 
   const payload = claim.payload || {};
   const accountId = String(payload.accountId || "paper-1");
   const symbol = String(payload.symbol || "").toUpperCase();
+  const sharedSets=(await db(deps.admin).col(db(deps.admin).COL.orderSets).where('accountId','==',accountId).get()).docs.map(d=>d.data()).filter(x=>x.symbol===symbol&&x.coreVersion&&!x.closed&&!x.entryExpired);
+  if(sharedSets.length)return {ok:true,symbol,decision:'KEEP_PLAN',reason:'Shared fixed plan retains its original protection and deadline; no paid intraday re-underwriting.'};
   const R = deps.research, inputId=`${claim.jobId || claim.runId || payload.eventId}_event_inputs`;
   let frozen;
   try{frozen=await C.read({runId:inputId,admin:deps.admin});}

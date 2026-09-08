@@ -36,14 +36,24 @@ if (Object.keys(require.cache).some((k) => !preloadedModules.has(k) && /_investo
 async function controlDoc() { const s = await A.col(A.COL.control).doc("control").get(); return s.exists ? s.data() : {}; }
 
 async function barsForOpenSymbols(accountId) {
-  const pointers = [];
-  (await A.col(A.COL.activeMandates).where("accountId", "==", accountId).get()).forEach((d) => pointers.push(d.data()));
-  const symbols = [...new Set(pointers.filter((p) => !["CLOSED", "CANCELLED", "SUPERSEDED"].includes(p.status)).map((p) => p.symbol))];
-  const barsBySymbol = {}, provenanceBySymbol = {};
-  for (const s of symbols.slice(0, 60)) {
-    try { const r = await M.readRecentBarsWithMeta(s, 1); barsBySymbol[s] = r.bars || []; provenanceBySymbol[s] = r.provenance || null; } catch { barsBySymbol[s] = []; }
+  const [pointers,positions,sets]=await Promise.all([A.col(A.COL.activeMandates).where('accountId','==',accountId).get(),A.col(A.COL.positions).where('accountId','==',accountId).where('open','==',true).get(),A.col(A.COL.orderSets).where('accountId','==',accountId).get()]);
+  const rows=s=>s.docs.map(d=>d.data());
+  const active=rows(sets).filter(x=>x.coreVersion&&!x.closed&&!x.entryExpired);
+  const symbols=[...new Set([...rows(pointers).filter(p=>!['CLOSED','CANCELLED','SUPERSEDED'].includes(p.status)),...rows(positions),...active].map(p=>p.symbol))];
+  const overrides=rows(sets).filter(x=>!x.coreVersion&&!['CLOSED','CANCELLED','FILLED','COMPLETE','REJECTED'].includes(x.status));
+  const legacySymbols=[...new Set([...symbols.filter(s=>!active.some(x=>x.symbol===s)),...overrides.map(x=>x.symbol)])];
+  const barsBySymbol={},provenanceBySymbol={},sharedBarsBySymbol={},sharedProvenanceBySymbol={};
+  // Execution data refresh is independent of paid research and review pauses.
+  // Keep legacy minute bars and shared five-minute bars in separate lanes.
+  if(legacySymbols.length){
+    const data=await M.fetchBarsChunked(legacySymbols,{timeframe:'1Min',limit:390,recentMinutes:360});
+    for(const [s,bars] of Object.entries(data.bars||{})){barsBySymbol[s]=bars;provenanceBySymbol[s]={provider:data.provider,feed:data.feed||null,adjustment:data.adjustment||null};}
   }
-  return { barsBySymbol, provenanceBySymbol, symbols };
+  if(active.length){
+    const data=await M.fetchBarsChunked([...new Set(active.map(x=>x.symbol))],{timeframe:'5Min',limit:390});
+    for(const [s,bars] of Object.entries(data.bars||{})){sharedBarsBySymbol[s]=bars;sharedProvenanceBySymbol[s]={provider:data.provider,feed:data.feed||null,adjustment:data.adjustment||null,timeframe:'5Min',sourceSha256:data.symbolSha256?.[s]||data.sha256||null};}
+  }
+  return {barsBySymbol,provenanceBySymbol,sharedBarsBySymbol,sharedProvenanceBySymbol,symbols};
 }
 
 exports.handler = async (event) => {
@@ -62,17 +72,18 @@ exports.handler = async (event) => {
     if (ctrl.engineMode !== "manager") { await JOBS.complete(claim, { skipped: true, reason: "engine_mode_legacy" }); return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: true }) }; }
     if (ctrl.executorState === "PAUSED_SAFETY" || ctrl.executorEnabled === false) { await JOBS.complete(claim, { skipped: true, reason: "executor_paused_safety" }); return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: true, reason: "executor_paused_safety" }) }; }
     const adapter = B.adapterFor({ control: ctrl });
-    const { barsBySymbol, provenanceBySymbol, symbols } = await barsForOpenSymbols(accountId);
+    const { barsBySymbol, provenanceBySymbol, sharedBarsBySymbol, sharedProvenanceBySymbol, symbols } = await barsForOpenSymbols(accountId);
     const brokerSnap = await adapter.getAccountSnapshot(accountId).catch((e) => ({ error: String(e.code || e.message).slice(0, 80), truthAgeSeconds: null }));
-    const summary = await X.tick({ adapter, accountId, control: ctrl, barsBySymbol, provenanceBySymbol, nowMs: Date.now(),
+    const summary = await X.tick({ adapter, accountId, control: ctrl, barsBySymbol, provenanceBySymbol, sharedBarsBySymbol, sharedProvenanceBySymbol, nowMs: Date.now(),
       metrics: { brokerTruthAgeSeconds: brokerSnap.truthAgeSeconds, reconciliationUnresolved: !!brokerSnap.error, ...(ctrl.executorMetrics || {}) } });
     const compact = { ...summary, outbox: summary.outbox ? { applied: summary.outbox.applied, results: (summary.outbox.results || []).slice(0, 20) } : null,
-      fills: summary.fills ? { fills: summary.fills.fills.length, protectionAttached: summary.fills.protectionAttached, closed: summary.fills.closed, ambiguous: summary.fills.ambiguous } : null, symbols: symbols.length, adapter: adapter.adapter };
+      fills: summary.fills ? { fills: summary.fills.fills.length+(summary.shared?.fills||0), protectionAttached: summary.fills.protectionAttached, closed: summary.fills.closed, ambiguous: summary.fills.ambiguous } : null, symbols: symbols.length, adapter: adapter.adapter };
     await A.col(A.COL.control).doc("control").set({ lastExecutionTick: { atMs: Date.now(), accountId, adapter: adapter.adapter, expired: summary.expired, paused: summary.paused.length, allowExpansion: summary.operational ? summary.operational.allowExpansion : null,
-      reasons: summary.operational ? summary.operational.reasons : [], fills: compact.fills, conservation: summary.conservation, outboxApplied: summary.outbox ? summary.outbox.applied : 0 } }, { merge: true });
+      reasons: summary.operational ? summary.operational.reasons : [], fills: compact.fills, shared:summary.shared?{plans:summary.shared.plans}:null, conservation: summary.conservation, outboxApplied: summary.outbox ? summary.outbox.applied : 0 } }, { merge: true });
     await JOBS.complete(claim, compact);
     return { statusCode: 200, body: JSON.stringify({ ok: true, summary: compact }) };
   } catch (e) {
+    await A.col(A.COL.control).doc('control').set({lastExecutionError:{atMs:Date.now(),code:e.code||'EXECUTION_TICK_FAILED',message:String(e.message).slice(0,240)}},{merge:true}).catch(()=>{});
     console.error("investorExecution tick failed", redact({ jobId, error: e.message, stack: (e.stack || "").slice(0, 400) }));
     await JOBS.failClosed(claim, { code: e.code || "EXECUTION_TICK_FAILED", message: e.message, retryable: true }).catch(() => ({}));
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(e.message).slice(0, 200) }) };

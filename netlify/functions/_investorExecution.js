@@ -142,7 +142,7 @@ function resolveBarCollisions({ entry = null, target = null, stop = null } = {})
 }
 
 /* ── journal (admin-injectable; mirrors _investorLedger.post) ─────────── */
-const ACCT = Object.freeze({ CASH: "cash", POSITIONS: "positions", FRICTION: "friction", REALIZED_PL: "realized_pl" });
+const ACCT = Object.freeze({ CASH: "cash", RESERVED: "reserved", POSITIONS: "positions", FRICTION: "friction", REALIZED_PL: "realized_pl" });
 function assertBalanced(legs) { const sum = legs.reduce((n, l) => n + Number(l.amountCents), 0); if (!Number.isInteger(sum) || sum !== 0) throw typed("LEDGER_UNBALANCED", `legs sum to ${sum}`); }
 async function postJournal({ admin = null, accountId, kind, idParts, legs, meta = {} }) {
   const D = db(admin);
@@ -247,7 +247,7 @@ async function readOrderSet(D, orderSetId) {
   const d = s.data();
   const os = d._codec && SC ? SC.decode(d) : d;
   const legs = rows(await D.col(D.COL.orderLegs).where("orderSetId", "==", orderSetId).get()).map((l) => (l._codec && SC ? SC.decode(l) : l));
-  return { ...os, legs };
+  return { ...os, legs:os.coreVersion?os.legs||[]:legs };
 }
 async function setPointer(D, accountId, symbol, fields) { await D.col(D.COL.activeMandates).doc(`${accountId}_${symbol}`).set({ ...fields, updatedAtMs: A.now() }, { merge: true }); }
 async function event(D, { accountId, symbol, mandateVersionId, kind, fields = {} }) {
@@ -526,7 +526,7 @@ async function simulatePaperFills({ admin = null, adapter, accountId, barsBySymb
 }
 
 /* ── the per-tick loop (§8.6) ──────────────────────────────────────────── */
-async function tick({ admin = null, adapter, accountId, control = {}, barsBySymbol = {}, nowMs = A.now(), metrics = {}, ranks = null } = {}) {
+async function tick({ admin = null, adapter, accountId, control = {}, barsBySymbol = {}, nowMs = A.now(), metrics = {}, ranks = null, provenanceBySymbol = {}, sharedBarsBySymbol = {}, sharedProvenanceBySymbol = {} } = {}) {
   const D = db(admin);
   const R = lazy("./_investorRisk"), ER = lazy("./_investorEmergencyRisk"), MD = lazy("./_investorMandate"), DOSSIER = lazy("./_investorDossier"), P = lazy("./_investorPortfolio");
   const summary = { accountId, nowMs, expired: [], paused: [], operational: null, emergency: null, outbox: null, fills: null, conservation: null };
@@ -550,6 +550,14 @@ async function tick({ admin = null, adapter, accountId, control = {}, barsBySymb
       if (hi) { const r = await MD.pauseUnfilledEntry(p.symbol, hi.deltaId || hi.eventId, { accountId, admin: D }); if (r.paused) summary.paused.push({ symbol: p.symbol, deltaId: hi.deltaId }); }
     }
   }
+  if(!A.currentScope()&&control.freezeReason==='UNPROTECTED_POSITIONS'&&control.buyRequested?.requested==='OPEN'){
+    const ref=D.col(D.COL.control).doc('control');
+    const recovered=await D.runTransaction(async tx=>{
+      const [cs,ps]=await Promise.all([tx.get(ref),tx.get(D.col(D.COL.positions).where('accountId','==',accountId).where('open','==',true))]);const c=cs.data()||{};
+      if(c.freezeReason!=='UNPROTECTED_POSITIONS'||c.buyRequested?.requested!=='OPEN'||rows(ps).some(p=>big(p.quantityUnits||p.qty)>0n)||c.emergencyState==='ENGAGED'||c.killSwitch)return null;
+      const patch={buyState:'OPEN',freezeNewBuys:false,freezeReason:null,controlVersion:(Number(c.controlVersion)||0)+1,freezeRecovery:{reason:'UNPROTECTED_POSITIONS_CLEARED',atMs:nowMs}};tx.set(ref,patch,{merge:true});return {...c,...patch};
+    });if(recovered)control=recovered;
+  }
   /* operational revalidation: safety and exposure, never company attractiveness */
   const portfolio = P ? await P.snapshot({ accountId, asOfMs: nowMs, admin: D }) : null;
   if (R && portfolio) {
@@ -560,7 +568,8 @@ async function tick({ admin = null, adapter, accountId, control = {}, barsBySymb
   const frozen = control.buyState === "FROZEN" || control.freezeNewBuys === true || control.emergencyState === "ENGAGED" || control.killSwitch === true || (summary.operational && summary.operational.allowExpansion === false);
   summary.allowExpansion = !frozen;
   summary.outbox = await applyOutbox({ admin: D, adapter, accountId, control, nowMs, allowExpansion: !frozen });
-  if (adapter.adapter === "paper") summary.fills = await simulatePaperFills({ admin: D, adapter, accountId, barsBySymbol, nowMs });
+  if (adapter.adapter === "paper") summary.fills = await simulatePaperFills({ admin: D, adapter, accountId, barsBySymbol, provenanceBySymbol, nowMs });
+  if (adapter.adapter === "paper" && !A.currentScope()) summary.shared = await tickSharedPaper({admin:D,accountId,control:{...control,freezeNewBuys:frozen},barsBySymbol:sharedBarsBySymbol,provenanceBySymbol:sharedProvenanceBySymbol,nowMs});
   summary.conservation = await assertConservation(accountId, { admin: D });
   if (!summary.conservation.pass) { await D.col(D.COL.control).doc("control").set({ executorState: "PAUSED_SAFETY", executorPauseReason: "LEDGER_CONSERVATION_FAILED", executorPausedAtMs: nowMs }, { merge: true }); }
   return summary;
@@ -587,10 +596,11 @@ async function saveRequiredSimulationPlan({plan,admin=null,accountId,managerRunI
     if(!old.exists)tx.set(ref,{...plan,accountId,managerRunId,createdAtMs:A.now()});
   });
 }
-async function tickRequiredSimulation({admin=null,accountId,control={},barsBySymbol={},nowMs=A.now()}={}) {
-  const scope=requireInvestmentScope(accountId),D=db(admin),market=require('./_investorMarket');
-  if(control.killSwitch||control.executorState==='PAUSED_SAFETY'||control.managerState==='PAUSED')return {conservation:await assertConservation(accountId,{admin:D})};
-  const ps=await D.col(D.COL.portfolioPlans).doc('required_investment').get();
+async function tickRequiredSimulation(args={}) {return tickInvestmentPlan({...args,runtime:requireInvestmentScope(args.accountId)});}
+async function tickInvestmentPlan({admin=null,accountId,control={},barsBySymbol={},nowMs=A.now(),runtime,provenanceBySymbol={}}={}) {
+  const scope=runtime,D=db(admin),market=require('./_investorMarket');
+  if(control.killSwitch||control.executorState==='PAUSED_SAFETY'||(!scope.investmentPolicy?.coreVersion&&control.managerState==='PAUSED'))return {conservation:await assertConservation(accountId,{admin:D})};
+  const ps=await D.col(D.COL.portfolioPlans).doc(scope.planId||'required_investment').get();
   if(!ps.exists)throw typed('SIMULATION_PLAN_MISSING','The AI investment plan has not been saved');
   const plan=ps.data(),{planHash,accountId:unusedAccount,managerRunId,createdAtMs,...content}=plan;
   if(sha(content)!==planHash)throw typed('SIMULATION_PLAN_CORRUPT','Saved investment plan changed');
@@ -598,50 +608,66 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
   require('./_investorResearchHandoff').assertInvestmentAllocations(plan.investments,plan.policy);
   const sessionDate=market.nyParts(new Date(plan.cutoffMs)).date,schedule=plan.policy.maxHoldingSessions?require('./_investorSimulationHorizon').sessions(sessionDate):null,spread=BigInt(scope.executionSpreadBps||0),feeMicros=BigInt(scope.feePerShareMicros||0);
   if(schedule&&sha(schedule)!==sha(plan.sessions))throw typed('SIMULATION_PLAN_CORRUPT','Session schedule mismatch');
+  let fillCount=0;const unavailable=[];
   for(const [symbol,investment] of Object.entries(plan.investments)) {
     if(investment.decision==='PASS')continue; // Astra chose cash for this finalist.
     const deadline=schedule?.[investment.holdingSessions-1]?.closeMs;
     for(const bar of [...(barsBySymbol[symbol]||[])].sort((a,b)=>Date.parse(a.t)-Date.parse(b.t))) {
       const at=Date.parse(bar.t),session=Number.isFinite(at)?market.sessionState(new Date(at)):null;
-      if(!Number.isFinite(at)||at<plan.cutoffMs||at+20*60000>nowMs||(schedule?!schedule.some(s=>at>=s.openMs&&at<s.closeMs)||at>=deadline:market.nyParts(new Date(at)).date!==sessionDate)||!session?.open)continue;
+      if(!Number.isFinite(at)||at<Math.max(plan.cutoffMs,scope.paper?createdAtMs||0:0)||at+20*60000>nowMs||(schedule?!schedule.some(s=>at>=s.openMs&&at<s.closeMs)||at>=deadline:market.nyParts(new Date(at)).date!==sessionDate)||!session?.open)continue;
       const o=micros(bar.o),h=micros(bar.h),l=micros(bar.l),c=micros(bar.c);
       if(!o||!h||!l||!c||h<o||h<c||l>o||l>c||h<l||bar.halted||participationCap(bar,DEFAULT_PARTICIPATION_BPS)<=0n)continue;
-      const stateRef=D.col(D.COL.orderSets).doc('required_'+symbol),posRef=D.col(D.COL.positions).doc(positionDocId(accountId,symbol)),accountRef=D.col(D.COL.accounts).doc(accountId);
-      await D.runTransaction(async tx=>{
-        const [stateSnap,posSnap,accountSnap]=await Promise.all([tx.get(stateRef),tx.get(posRef),tx.get(accountRef)]);
+      const setId=scope.planId?'shared_'+plan.planHash.slice(0,20)+'_'+symbol:'required_'+symbol;
+      const stateRef=D.col(D.COL.orderSets).doc(setId),posRef=D.col(D.COL.positions).doc(positionDocId(accountId,symbol)),accountRef=D.col(D.COL.accounts).doc(accountId);
+      const applied=await D.runTransaction(async tx=>{
+        const [stateSnap,posSnap,accountSnap,ctrlSnap]=await Promise.all([tx.get(stateRef),tx.get(posRef),tx.get(accountRef),...(scope.paper?[tx.get(D.col(D.COL.control).doc('control'))]:[])]);
+        const liveControl=ctrlSnap?.data()||control;
+        if(scope.paper&&(liveControl.engineMode!=='manager'||(liveControl.accountMode||liveControl.mode)!=='PAPER_AI'||liveControl.executorState==='PAUSED_SAFETY'||liveControl.executorEnabled===false||liveControl.killSwitch))return;
         const state=stateSnap.exists?stateSnap.data():{},account=accountSnap.data();
         if(!account)throw typed('ACCOUNT_MISSING',accountId);
         if(state.lastBarMs>=at||state.closed||state.entryExpired)return;
         let position=posSnap.exists?posSnap.data():null,entered=false,balance={...account.balanceCents},fills=[];
-        const rules=plan.policy.strategy?.rules;
-        const allocationUsd=rules?Math.max(5000,Math.floor(investment.allocationUsd*rules.allocationScalePct/100)):investment.allocationUsd;
+        if(scope.paper&&state.entered&&!position?.open){tx.set(stateRef,{closed:true,status:'CLOSED',legs:sharedLegs(setId,position||{}),updatedAtMs:nowMs},{merge:true});return;}
+        if(scope.paper&&position?.open&&(position.mandateVersionId!==planHash||at<Date.parse(position.lastMarkAt||'')))return;
+        if((scope.paper||plan.policy.coreVersion)&&!state.entered&&(control.buyState==='FROZEN'||control.freezeNewBuys||liveControl.buyState==='FROZEN'||liveControl.freezeNewBuys||liveControl.emergencyState==='ENGAGED'||liveControl.executorEnabled===false))return;
+        if(scope.paper&&!state.entered&&sha(POLICY.loadActiveSync(liveControl).riskMandate)!==sha(plan.policy.riskMandate)){tx.set(stateRef,{pausedReason:'RISK_POLICY_CHANGED',status:'PAUSED_OPERATIONAL'},{merge:true});return;}
+        const rules=plan.policy.strategy?.rules||(plan.policy.coreVersion?require('./_investorSimulationStrategy').DEFAULT:null);
+        const allocationUsd=rules?Math.max(plan.policy.coreVersion?0:5000,Math.floor(investment.allocationUsd*rules.allocationScalePct/100)):investment.allocationUsd;
         const stopLossBps=rules?Math.min(9500,Math.max(1,Math.round(investment.stopLossBps*rules.stopScalePct/100))):investment.stopLossBps;
         const takeProfitBps=rules?Math.min(100000,Math.max(1,Math.round(investment.takeProfitBps*rules.targetScalePct/100))):investment.takeProfitBps;
-        const budget=BigInt(allocationUsd)*100n;
-        if(budget<500000n||budget>3000000n)throw typed('SIMULATION_ALLOCATION_INVALID',symbol);
+        let budget=BigInt(allocationUsd)*100n;
+        if(scope.paper&&state.reservedMinor!=null)budget=budget<big(state.reservedMinor)?budget:big(state.reservedMinor);
+        if((!plan.policy.coreVersion&&budget<500000n)||budget>3000000n)throw typed('SIMULATION_ALLOCATION_INVALID',symbol);
         const entryPx=o+o*spread/20000n;
         if(!state.entered) {
+          if(plan.policy.coreVersion&&position?.open)return;
           if(schedule&&market.nyParts(new Date(at)).date!==sessionDate)return;
           if(rules){
             const firstOpen=state.firstOpenMicros||o.toString(),open=schedule[0].openMs,expiry=Math.min(schedule[0].closeMs,open+rules.entryWindowMinutes*60000);
             const wait=at<open+rules.entryDelayMinutes*60000||o>BigInt(firstOpen)*(10000n-BigInt(rules.pullbackBps))/10000n;
             if(at>=expiry||wait){tx.set(stateRef,{...state,accountId,symbol,planHash,entered:false,firstOpenMicros:firstOpen,lastBarMs:at,entryExpired:at>=expiry||at+300000>=expiry,status:at>=expiry||at+300000>=expiry?'ENTRY_EXPIRED':'AWAITING_STRATEGY_ENTRY'});return;}
           }
+          if(plan.policy.coreVersion){
+            const book=rows(await tx.get(D.col(D.COL.positions).where('accountId','==',accountId).where('open','==',true)));
+            budget=sharedEntryBudget({budget,entryPx,stopLossBps,balance,positions:book,symbol,policy:plan.policy,liquidity:plan.liquidityBySymbol?.[symbol]});
+          }
           const quantity=budget*10000n/(entryPx+feeMicros);
           // Whole shares; wait for sufficient observed liquidity, never invent volume.
-          if(quantity<=0n||quantity>participationCap(bar,DEFAULT_PARTICIPATION_BPS))return;
+          if(quantity<=0n){if(plan.policy.coreVersion&&at+300000>=schedule[0].closeMs)tx.set(stateRef,{...state,accountId,symbol,planHash,entered:false,entryExpired:true,status:'ENTRY_EXPIRED',reason:'NO_QUANTITY_WITHIN_RISK_LIMITS',lastBarMs:at});return;}
+          if(quantity>participationCap(bar,DEFAULT_PARTICIPATION_BPS))return;
           const notional=minorOf(quantity,entryPx),fee=(quantity*feeMicros+9999n)/10000n,total=notional+fee;
-          if(total>budget||total>BigInt(balance.cash||0))return;
+          if(total>budget||total>BigInt(balance.cash||0)+big(scope.paper?state.reservedMinor:0))return;
           position={accountId,symbol,open:true,quantityUnits:quantity.toString(),qty:Number(quantity),costBasisMinor:total.toString(),costBasisCents:Number(total),
             entryPriceUsd:Number(entryPx)/1e6,avgCostMicros:(total*10000n/quantity).toString(),openedAt:bar.t,
             positionLifecycleId:sha([accountId,planHash,symbol]).slice(0,32),schemaVersion:'position.v2',engineVersion:ENGINE_VERSION,
-            decisionAuthority:'ASTRA_REQUIRED_SIMULATION',mandateVersionId:planHash,orderSetId:'required_'+symbol,
+            decisionAuthority:plan.policy.coreVersion?'SHARED_AI_PLAN':'ASTRA_REQUIRED_SIMULATION',...(plan.policy.coreVersion?{coreVersion:plan.policy.coreVersion,protectionAcknowledged:true}:{}),mandateVersionId:planHash,orderSetId:setId,
             takeProfitPriceMicros:(entryPx+entryPx*BigInt(takeProfitBps)/10000n).toString(),
             lossBoundaryPriceMicros:(entryPx-entryPx*BigInt(stopLossBps)/10000n).toString(),
-            emergencyStopPriceMicros:(entryPx-entryPx*BigInt(Math.min(9500,stopLossBps*Number(STOP_GRACE_MULTIPLE)))/10000n).toString(),stopGraceUntilMs:at+STOP_GRACE_MS,protectionState:'SIMULATION_ACTIVE',
+            emergencyStopPriceMicros:(entryPx-entryPx*BigInt(Math.min(9500,stopLossBps*Number(STOP_GRACE_MULTIPLE)))/10000n).toString(),stopGraceUntilMs:at+STOP_GRACE_MS,protectionState:plan.policy.coreVersion?'SHARED_ACTIVE':'SIMULATION_ACTIVE',
             ...(schedule?{holdingSessions:investment.holdingSessions,holdingDeadlineMs:deadline}:{}),allocationUsd,baseAllocationUsd:investment.allocationUsd,stopLossBps,takeProfitBps,strategyVersionId:plan.policy.strategy?.versionId||'baseline',conviction:investment.conviction,sizingReason:investment.sizingReason};
           fills.push({side:'buy',role:'ENTRY',qty:quantity,px:entryPx,notional,fee,realized:0n,basis:rules?'required_simulation_strategy_open':'required_simulation_first_available_open',
             legs:[{account:ACCT.CASH,amountCents:-Number(total)},{account:ACCT.POSITIONS,amountCents:Number(total)}]});
+          if(scope.paper&&big(state.reservedMinor)>0n){const reserved=Number(state.reservedMinor);balance.cash=(balance.cash||0)+reserved;balance.reserved=(balance.reserved||0)-reserved;fills[0].legs.push({account:ACCT.CASH,amountCents:reserved},{account:ACCT.RESERVED,amountCents:-reserved});}
           balance.cash=(balance.cash||0)-Number(total);balance.positions=(balance.positions||0)+Number(total);entered=true;
         }
         if(!position?.open)return;
@@ -663,7 +689,7 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
           fills.push({side:'sell',role:stopHit?'STOP':targetExit?'TARGET':'TIME_LIMIT',qty,px,notional,fee,realized,basis:stopHit?(inGrace?'emergency_stop_in_grace_window':'stop_adverse_or_gap'):targetExit?'target_observed':'holding_deadline_observed_close',ambiguous:stopHit&&(entered||targetHit),
             legs:[{account:ACCT.CASH,amountCents:Number(proceeds)},{account:ACCT.POSITIONS,amountCents:-Number(cost)},{account:ACCT.REALIZED_PL,amountCents:-Number(realized)}]});
           balance.cash+=Number(proceeds);balance.positions-=Number(cost);balance.realized_pl=(balance.realized_pl||0)-Number(realized);
-          position={...position,open:false,quantityUnits:'0',qty:0,costBasisMinor:'0',costBasisCents:0,closedAt:new Date(openStop||openTarget?at:at+300000).toISOString(),realizedMinor:realized.toString(),protectionState:'CLOSED'};
+          position={...position,exitRole:stopHit?'STOP':targetExit?'TARGET':'TIME_LIMIT',open:false,quantityUnits:'0',qty:0,costBasisMinor:'0',costBasisCents:0,closedAt:new Date(openStop||openTarget?at:at+300000).toISOString(),realizedMinor:(big(position.realizedMinor||0)+realized).toString(),protectionState:'CLOSED'};
         }
         position={...position,lastMarkUsd:bar.c,lastPriceUsd:bar.c,markMicros:c.toString(),lastMarkAt:bar.t,updatedAtMs:nowMs};
         // One transaction covers fills, cash, journal, position and replay cursor.
@@ -674,24 +700,98 @@ async function tickRequiredSimulation({admin=null,accountId,control={},barsBySym
           tx.set(D.col(D.COL.fills).doc(fillId),{schemaVersion:'fill.v2',fillId,accountId,symbol,side:f.side,role:f.role,quantityUnits:f.qty.toString(),priceMicros:f.px.toString(),
             notionalMinor:f.notional.toString(),feeMinor:f.fee.toString(),realizedMinor:f.realized.toString(),eventAtMs:f.side==='buy'||openStop||openTarget?at:at+300000,receivedAtMs:nowMs,
             ...(f.side==='sell'?{exitTiming:openStop||openTarget?'BAR_OPEN':f.role==='TIME_LIMIT'?'BAR_CLOSE':'WITHIN_BAR',exitEarliestAtMs:openStop||openTarget?at:f.role==='TIME_LIMIT'?at+300000:at,exitLatestAtMs:openStop||openTarget?at:at+300000}:{}),
-            ...(schedule?{holdingSessions:investment.holdingSessions,holdingDeadlineMs:deadline}:{}),source:'historical_simulation',basis:f.basis,bar,ambiguous:!!f.ambiguous,mandateVersionId:planHash,positionLifecycleId:position.positionLifecycleId,
-            orderSetId:'required_'+symbol,legId:'required_'+symbol+'_'+f.role,decisionAuthority:'ASTRA_REQUIRED_SIMULATION'});
+            ...(schedule?{holdingSessions:investment.holdingSessions,holdingDeadlineMs:deadline}:{}),source:scope.paper?'paper':'historical_simulation',provenance:provenanceBySymbol[symbol]||null,engineVersion:ENGINE_VERSION,basis:f.basis,bar,ambiguous:!!f.ambiguous,mandateVersionId:planHash,positionLifecycleId:position.positionLifecycleId,
+            orderSetId:setId,legId:setId+'_'+f.role,decisionAuthority:plan.policy.coreVersion?'SHARED_AI_PLAN':'ASTRA_REQUIRED_SIMULATION'});
           tx.set(D.col(D.COL.ledger).doc(fillId),{txnId:fillId,accountId,kind:'manager_fill',legs:f.legs,meta:{fillId,symbol,planHash},postedAtMs:nowMs});
-          if(f.side==='sell')tx.set(D.col(D.COL.trades).doc(position.positionLifecycleId),{schemaVersion:'trade.v2',accountId,symbol,openedAt:position.openedAt,closedAt:position.closedAt,realizedMinor:f.realized.toString(),exitRole:f.role,mandateVersionId:planHash});
+          if(f.side==='sell')tx.set(D.col(D.COL.trades).doc(position.positionLifecycleId),{schemaVersion:'trade.v2',accountId,symbol,openedAt:position.openedAt,closedAt:position.closedAt,realizedMinor:position.realizedMinor,exitRole:f.role,mandateVersionId:planHash});
         }
         tx.set(accountRef,{balanceCents:balance,balanceRevision:(account.balanceRevision||0)+1,balanceUpdatedAtMs:nowMs},{merge:true});
         tx.set(posRef,position);
-        tx.set(stateRef,{accountId,symbol,planHash,entered:true,closed:!position.open,lastBarMs:at,status:position.open?'PROTECTED':'CLOSED'});
+        tx.set(stateRef,{...state,orderSetId:setId,accountId,symbol,planHash,entered:true,closed:!position.open,lastBarMs:at,reservedMinor:'0',status:position.open?'PROTECTED':'CLOSED',...(plan.policy.coreVersion?{coreVersion:plan.policy.coreVersion,legs:sharedLegs(setId,position),updatedAtMs:nowMs}: {})});
+        return fills.length;
       });
+      fillCount+=applied||0;
     }
-    if(deadline&&nowMs>=deadline+15*60000) {
+    if(deadline&&nowMs>=deadline+(plan.policy.coreVersion?20:15)*60000) {
       const position=(await D.col(D.COL.positions).doc(positionDocId(accountId,symbol)).get()).data();
-      if(position?.open)throw typed('HISTORICAL_HOLD_EXIT_UNAVAILABLE',symbol+': no sufficiently liquid observed close at the '+investment.holdingSessions+'-session deadline. The position and ledger are preserved; no extra holding day or sale was invented.');
+      if(position?.open&&position.mandateVersionId===planHash)unavailable.push(symbol+': no sufficiently liquid observed close at the '+investment.holdingSessions+'-session deadline. The position and ledger are preserved; no extra holding day or sale was invented.');
     }
   }
-  return {conservation:await assertConservation(accountId,{admin:D})};
+  if(unavailable.length)throw typed(scope.paper?'PAPER_HOLD_EXIT_UNAVAILABLE':'HISTORICAL_HOLD_EXIT_UNAVAILABLE',unavailable.join(' '));
+  return {fills:fillCount,conservation:await assertConservation(accountId,{admin:D})};
 }
 
-module.exports = { ENGINE_VERSION, DECISION_AUTHORITY, DEFAULT_PARTICIPATION_BPS, STOP_SLIPPAGE_BPS, STOP_GRACE_MS, STOP_GRACE_MULTIPLE, PROTECTION_SLA_SECONDS, ACCT,
+// Shared core: a single deterministic execution function above consumes either
+// a historical clock/namespace or current observed bars in the paper account.
+function sharedEntryBudget({budget,entryPx,stopLossBps,balance,positions,symbol,policy,liquidity}) {
+  const rm=policy.riskMandate||POLICY.RISK_MANDATE;
+  const adv=big(liquidity?.advMinor);if(adv<big(rm.liquidity.minAdvMinor)||big(policy.spreadBps)>big(rm.liquidity.maxSpreadBps))return 0n;
+  const universe=require('./_investorUniverse'),sector=s=>[...(universe.tradeTier||[]),...(universe.researchTier||[])].find(r=>r.symbol===s)?.sector||'unknown';
+  const value=p=>big(p.quantityUnits||p.qty)*big(p.markMicros||micros(p.lastPriceUsd||p.entryPriceUsd));
+  const invested=positions.reduce((n,p)=>n+value(p)/10000n,0n),nav=big(balance.cash)+big(balance.reserved)+invested;
+  const weight=k=>nav*big(rm.weights[k])/10000n;
+  const cluster=require('./_investorRisk').clusterOf;
+  const sectorExposure=positions.filter(p=>sector(p.symbol)===sector(symbol)).reduce((n,p)=>n+value(p)/10000n,0n);
+  const clusterExposure=positions.filter(p=>cluster(p.symbol,sector(p.symbol))===cluster(symbol,sector(symbol))).reduce((n,p)=>n+value(p)/10000n,0n);
+  const planned=positions.reduce((n,p)=>n+big(p.quantityUnits||p.qty)*(big(p.markMicros||micros(p.lastPriceUsd||p.entryPriceUsd))-big(p.lossBoundaryPriceMicros)>0n?big(p.markMicros||micros(p.lastPriceUsd||p.entryPriceUsd))-big(p.lossBoundaryPriceMicros):0n)/10000n,0n);
+  const room=nav*big(rm.losses.maxAggregatePlannedLossBps)/10000n-planned;
+  const perLoss=nav*big(rm.losses.maxPlannedLossPerPositionBps)/10000n;
+  const stressBps=BigInt(Math.max(stopLossBps*2,Number(rm.stress.gapHaltAdverseBps),Number(rm.stress.overnightGapBps)));
+  const stressed=positions.reduce((n,p)=>n+value(p)*BigInt(Math.max(Number(p.stopLossBps||10000)*2,Number(rm.stress.gapHaltAdverseBps),Number(rm.stress.overnightGapBps)))/100000000n,0n);
+  const stressRate=stressBps+big(rm.stress.stressCostPerShareMicros)*10000n/entryPx;
+  const limits=[budget,adv*big(rm.liquidity.maxOrderPctOfAdvBps)/10000n,adv*big(rm.liquidity.maxPositionPctOfAdvBps)/10000n,(nav*big(rm.losses.maxAggregateStressedLossBps)/10000n-stressed)*10000n/stressRate,nav*big(rm.losses.maxStressedLossPerPositionBps)/stressRate,weight('maxNetExposureBps')-invested,weight('maxOvernightExposureBps')-invested,weight('maxSingleNameWeightBps'),weight('maxGrossExposureBps')-invested,weight('maxSectorWeightBps')-sectorExposure,weight('maxCorrelatedClusterWeightBps')-clusterExposure,room*10000n/BigInt(stopLossBps),perLoss*10000n/BigInt(stopLossBps),nav-invested-weight('minSettledCashReserveBps')];
+  const result=limits.reduce((a,b)=>a<b?a:b);return result>0n?result:0n;
+}
+function sharedLegs(id,p){const q=String(p.quantityUnits||'0');return ['STOP','TARGET','TIME_LIMIT'].map(role=>({legId:id+'_'+role,role,side:'sell',type:role==='STOP'?'STOP':role==='TARGET'?'LIMIT':'MARKET',status:p.open?(role==='TIME_LIMIT'?'ARMED':'WORKING'):p.exitRole===role?'FILLED':'CANCELLED',quantityUnits:q,remainingUnits:q,...(role==='STOP'?{stopMicros:p.lossBoundaryPriceMicros}:role==='TARGET'?{priceMicros:p.takeProfitPriceMicros}:{submitAt:'CHOSEN_SESSION_CLOSE'})}));}
+async function saveSharedPaperPlan({plan,admin=null,accountId,managerRunId,nowMs=A.now()}){
+  const D=db(admin),H=require('./_investorResearchHandoff');
+  if(A.currentScope()||!plan.policy?.coreVersion||!H.supportedInvestmentPolicy(plan.policy))throw typed('SHARED_PAPER_SCOPE_REQUIRED');
+  const {planHash,...content}=plan;if(sha(content)!==planHash)throw typed('SIMULATION_PLAN_CORRUPT');H.assertInvestmentAllocations(plan.investments,plan.policy);
+  const planId='shared_'+planHash,ref=D.col(D.COL.portfolioPlans).doc(planId),accountRef=D.col(D.COL.accounts).doc(accountId);
+  await D.runTransaction(async tx=>{
+    const [old,acct,ctrl,positions,orders,sets]=await Promise.all([tx.get(ref),tx.get(accountRef),tx.get(D.col(D.COL.control).doc('control')),tx.get(D.col(D.COL.positions).where('accountId','==',accountId).where('open','==',true)),tx.get(D.col(D.COL.orders).where('accountId','==',accountId)),tx.get(D.col(D.COL.orderSets).where('accountId','==',accountId))]);
+    if(old.exists)return;
+    const c=ctrl.data()||{};if(c.engineMode!=='manager'||!['PAPER_AI'].includes(c.accountMode||c.mode)||accountId!==(c.accountId||'paper-1'))throw typed('SHARED_PAPER_SCOPE_REQUIRED');
+    if(!acct.exists)throw typed('ACCOUNT_MISSING');
+    const blocked=new Set([...rows(positions).map(x=>x.symbol),...rows(orders).filter(x=>['proposed','approved','working','partially_filled','pending_cancel'].includes(x.status)).map(x=>x.symbol),...rows(sets).filter(x=>x.coreVersion&&!x.closed&&!x.entryExpired).map(x=>x.symbol)]);
+    const balance={...acct.data().balanceCents};let reserved=0;
+    for(const [symbol,x] of Object.entries(plan.investments)){
+      if(x.decision==='PASS')continue;if(blocked.has(symbol))throw typed('SHARED_DUPLICATE_SYMBOL',symbol);
+      const amount=Math.max(0,Math.min(Math.floor(x.allocationUsd*(plan.policy.strategy?.rules?.allocationScalePct||100)),balance.cash||0));
+      const setId='shared_'+planHash.slice(0,20)+'_'+symbol;
+      tx.set(D.col(D.COL.orderSets).doc(setId),{orderSetId:setId,planId,planHash,accountId,symbol,coreVersion:plan.policy.coreVersion,purpose:'SHARED_AI_PLAN',authority:'SHARED_AI_PLAN',status:'AWAITING_STRATEGY_ENTRY',entered:false,reservedMinor:String(amount),createdAtMs:nowMs,expiresAtMs:plan.sessions[0].closeMs,legs:[],version:1});
+      balance.cash=(balance.cash||0)-amount;balance.reserved=(balance.reserved||0)+amount;reserved+=amount;
+    }
+    if(reserved){tx.set(accountRef,{balanceCents:balance,balanceRevision:(acct.data().balanceRevision||0)+1},{merge:true});tx.set(D.col(D.COL.ledger).doc(planId+'_reserve'),{accountId,txnId:planId+'_reserve',kind:'SHARED_PLAN_RESERVE',legs:[{account:ACCT.CASH,amountCents:-reserved},{account:ACCT.RESERVED,amountCents:reserved}],postedAtMs:nowMs});}
+    tx.set(ref,{...plan,accountId,managerRunId,createdAtMs:nowMs});
+  });return {planId};
+}
+async function tickSharedPaper({admin=null,accountId,control={},barsBySymbol={},provenanceBySymbol={},nowMs=A.now()}={}){
+ const D=db(admin),active=rows(await D.col(D.COL.orderSets).where('accountId','==',accountId).get()).filter(x=>x.coreVersion&&!x.closed&&(!x.entryExpired||big(x.reservedMinor)>0n)),ids=new Set(active.map(x=>x.planId)),plans=rows(await D.col(D.COL.portfolioPlans).where('accountId','==',accountId).get()).filter(p=>p.policy?.coreVersion&&ids.has('shared_'+p.planHash));
+ if((control.accountMode||control.mode)!=='PAPER_AI')return {plans:0};
+ let fills=0;const unavailable=[],missingPrices=[];
+ for(const p of plans){
+   const planId='shared_'+p.planHash;
+   // Only consolidated, timestamped, completed bars can drive current execution.
+   const filtered={};
+   for(const [symbol,bars] of Object.entries(barsBySymbol)){const pr=provenanceBySymbol[symbol];if(pr?.provider==='alpaca'&&pr.timeframe==='5Min'&&['sip','delayed_sip'].includes(pr.feed))filtered[symbol]=bars.filter(b=>Date.parse(b.t)+20*60000<=nowMs);}
+   for(const x of active.filter(x=>x.planId===planId))if(!filtered[x.symbol]?.length&&(x.entered||nowMs<p.sessions[0].closeMs+1200000))missingPrices.push(x.symbol);
+   let tick;try{tick=await tickInvestmentPlan({admin:D,accountId,control,barsBySymbol:filtered,provenanceBySymbol,nowMs,runtime:{paper:true,planId,investmentPolicy:p.policy,executionSpreadBps:p.policy.spreadBps,feePerShareMicros:p.policy.feePerShareMicros}});}catch(e){if(e.code!=='PAPER_HOLD_EXIT_UNAVAILABLE')throw e;unavailable.push(e.message);tick={};}
+   fills+=tick.fills||0;
+   for(const [symbol,x] of Object.entries(p.investments)){
+     const ref=D.col(D.COL.orderSets).doc('shared_'+p.planHash.slice(0,20)+'_'+symbol);
+     await D.runTransaction(async tx=>{const [ss,as]=await Promise.all([tx.get(ref),tx.get(D.col(D.COL.accounts).doc(accountId))]);if(!ss.exists)return;const state=ss.data();const expires=Math.min(p.sessions[0].closeMs,p.sessions[0].openMs+(p.policy.strategy?.rules?.entryWindowMinutes||390)*60000);
+       if(state.entered||(!state.entryExpired&&nowMs<expires+20*60000)||(state.entryExpired&&big(state.reservedMinor)<=0n))return;
+       const amount=Number(state.reservedMinor),balance={...as.data().balanceCents};if((balance.reserved||0)<amount)throw typed('RESERVATION_MISMATCH');balance.reserved-=amount;balance.cash=(balance.cash||0)+amount;
+       tx.set(D.col(D.COL.accounts).doc(accountId),{balanceCents:balance,balanceRevision:(as.data().balanceRevision||0)+1},{merge:true});tx.set(ref,{entryExpired:true,status:'ENTRY_EXPIRED',reservedMinor:'0',updatedAtMs:nowMs},{merge:true});tx.set(D.col(D.COL.ledger).doc(state.orderSetId+'_release'),{accountId,kind:'SHARED_ENTRY_EXPIRED',legs:[{account:ACCT.CASH,amountCents:amount},{account:ACCT.RESERVED,amountCents:-amount}],postedAtMs:nowMs});
+     });
+   }
+ }
+ if(unavailable.length)throw typed('PAPER_HOLD_EXIT_UNAVAILABLE',unavailable.join(' '));
+ if(missingPrices.length)throw typed('PAPER_MARKET_DATA_UNAVAILABLE','Consolidated five-minute market bars are unavailable for '+[...new Set(missingPrices)].join(', ')+'. Plans and cash are preserved; no prices were invented.');
+ return {plans:plans.length,fills,conservation:await assertConservation(accountId,{admin:D})};
+}
+
+module.exports = { sharedEntryBudget,saveSharedPaperPlan,tickSharedPaper,ENGINE_VERSION, DECISION_AUTHORITY, DEFAULT_PARTICIPATION_BPS, STOP_SLIPPAGE_BPS, STOP_GRACE_MS, STOP_GRACE_MULTIPLE, PROTECTION_SLA_SECONDS, ACCT,
   saveRequiredSimulationPlan, tickRequiredSimulation, simulateLegOnBar, resolveBarCollisions, postJournal, assertConservation, recordFill, readOrderSet, releaseReservation,
   applyTransition, applyOutbox, simulatePaperFills, tick, positionDocId };

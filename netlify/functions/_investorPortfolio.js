@@ -54,6 +54,8 @@ async function readOpenOrders(accountId, { admin = null } = {}) {
   for (const status of OPEN_ORDER_STATUSES) {
     try { out.push(...rows(await D.col(D.COL.orders).where("accountId", "==", accountId).where("status", "==", status).get())); } catch {}
   }
+  const sets=rows(await D.col(D.COL.orderSets).where('accountId','==',accountId).get());
+  for(const x of sets.filter(x=>x.coreVersion&&!x.entered&&!x.entryExpired&&!x.closed))out.push({orderId:x.orderSetId,accountId,symbol:x.symbol,status:'working',side:'buy',qty:0,filledQty:0,reservedMinor:x.reservedMinor,coreVersion:x.coreVersion});
   return out;
 }
 async function readBalances(accountId, { admin = null } = {}) {
@@ -99,7 +101,7 @@ function positionView(p, mandateBySymbol) {
   const mark = Number(p.lastMarkUsd) > 0 ? Number(p.lastMarkUsd) : Number(p.entryPriceUsd) || 0;
   const m = mandateBySymbol[p.symbol] || null;
   return {
-    symbol: p.symbol, quantityUnits: qty, markMicros: microsFromUsd(mark), markAt: p.lastMarkAt || null,
+    coreVersion:p.coreVersion||null, symbol: p.symbol, quantityUnits: qty, markMicros: microsFromUsd(mark), markAt: p.lastMarkAt || null,
     entryPriceMicros: microsFromUsd(p.entryPriceUsd), costBasisMinor: minorFromCents(p.costBasisCents),
     marketValueMinor: String(Math.round(Number(qty) * mark * 100)),
     unrealisedMinor: String(Math.round(Number(qty) * (mark - (Number(p.entryPriceUsd) || 0)) * 100)),
@@ -117,7 +119,7 @@ function orderView(o) {
   return {
     orderId: o.orderId, symbol: o.symbol, side: o.side || "buy", status: o.status,
     quantityUnits: requested, filledUnits: filled, remainingUnits: String(Math.max(0, Number(requested) - Number(filled))),
-    limitPriceMicros: o.limitPriceMicros || microsFromUsd(o.refPriceUsd), reservedMinor: minorFromCents((Number(o.grossCents) || 0) + (Number(o.frictionCents) || 0) + (Number(o.reservationHeadroomCents) || 0)),
+    limitPriceMicros: o.limitPriceMicros || microsFromUsd(o.refPriceUsd), reservedMinor: o.coreVersion?String(o.reservedMinor||0):minorFromCents((Number(o.grossCents) || 0) + (Number(o.frictionCents) || 0) + (Number(o.reservationHeadroomCents) || 0)),
     expiresAtMs: Number(o.expiresAtMs) || null, decisionAtMs: Number(o.decisionAtMs) || null,
     mandateVersionId: o.mandateVersionId || null, orderSetId: o.orderSetId || null, pausedReason: o.pausedReason || null,
   };

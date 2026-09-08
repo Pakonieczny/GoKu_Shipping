@@ -563,7 +563,12 @@ async function compactCards({ symbols = [], cutoff, admin = null, deps = {}, por
       const pointer = await current(sym, { admin });
       pointerCache.set(sym, pointer);
       const version = await versionAsOf(sym, { cutoffMs, admin, pointer });
-      if (!version) return { missing: {symbol:sym,reason:pointer ? 'dossier_version_unreadable' : 'no_dossier'} };
+      if (!version) {
+        if(!deps.sharedScreening)return {missing:{symbol:sym,reason:pointer?'dossier_version_unreadable':'no_dossier'}};
+        const row=[...(require('./_investorUniverse').tradeTier||[]),...(require('./_investorUniverse').researchTier||[])].find(r=>r.symbol===sym)||{};
+        const mk=await marketInputs(sym,row.sector,{cutoffMs,deps});
+        return {card:{...require('./_investorDecisionContext').unavailableCard(sym,cutoffMs,'no_dossier'),identity:{name:row.company||sym,sector:row.sector||null},price:mk.price?.ok?{closeMicros:mk.price.closeMicros,asOfDate:mk.price.asOfDate,returnBps:mk.price.bps}:null,marketObservation:mk.observation,portfolio:portfolioBySymbol[sym]||null}};
+      }
       const [mk, changes] = await Promise.all([
         marketInputs(sym, version.identity.sector, {cutoffMs, deps}),
         pendingChanges(sym, {cutoffMs, admin}).catch(() => [])

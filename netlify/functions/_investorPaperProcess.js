@@ -5,19 +5,19 @@ const A=require('./_investorAdmin'),H=require('./_investorSimulationHorizon'),S=
 const context=new AsyncLocalStorage(),VERSION='paper-decision-process.v1';
 const current=()=>context.getStore()||null;
 const fail=(message)=>Object.assign(Error(message),{code:'SEMANTIC_REJECTED'});
-const defaults=()=>({companyRange:'range2',strategyVersionId:'active',revision:0,owner:null});
+const defaults=()=>({companyRange:'flex3',strategyVersionId:'active',revision:0,owner:null});
 function validate(settings){if(!Object.hasOwn(H.RANGES,settings.companyRange)||typeof settings.strategyVersionId!=='string'||!settings.strategyVersionId||settings.strategyVersionId.length>100)throw fail('Choose a valid company range and strategy.');return settings;}
 function create({admin=A,now=Date.now}={}){
  const ref=admin.col('InvestorAI_PaperDecisionSettings').doc('paper-1');
  const learning=()=>require('./_investorSimulationLearning').create({admin});
  async function settings(){return {...defaults(),...((await ref.get()).data()||{})};}
- async function resolve(s){validate(s);const strategy=s.owner?await learning().resolve(s.owner,s.strategyVersionId==='active'?undefined:s.strategyVersionId):null;return {version:VERSION,companyRange:s.companyRange,...H.RANGES[s.companyRange],strategy,settingsRevision:s.revision,preparedResearch:true};}
+ async function resolve(s){validate(s);const strategy=s.owner?await learning().resolve(s.owner,s.strategyVersionId==='active'?undefined:s.strategyVersionId):null;return {version:VERSION,companyRange:s.companyRange,...H.RANGES[s.companyRange],strategy,settingsRevision:s.revision,preparedResearch:true,investmentPolicy:H.policyFor(s.companyRange,strategy,{shared:true,riskMandate:require('./_investorPolicy').loadActiveSync((await admin.col(admin.COL.control).doc('control').get()).data()||{}).riskMandate})};}
  async function save(owner,p){validate(p);if(p.strategyVersionId!=='active')await learning().resolve(owner,p.strategyVersionId);const tx=admin.runTransaction?f=>admin.runTransaction(f):f=>admin.db().runTransaction(f);await tx(async t=>{const old=(await t.get(ref)).data()||defaults();if(old.revision!==p.revision)throw Object.assign(Error('Paper settings changed in another window. Reload and try again.'),{code:'VERSION_CONFLICT'});t.set(ref,{companyRange:p.companyRange,strategyVersionId:p.strategyVersionId,revision:old.revision+1,owner,updatedAtMs:now()});});return settings();}
  return {settings,resolve,save};
 }
-function assertSnapshot(p){if(p.version!==VERSION||!H.RANGES[p.companyRange]||p.min!==H.RANGES[p.companyRange].min||p.max!==H.RANGES[p.companyRange].max)throw fail('Invalid saved paper decision process');if(p.strategy){S.validate(p.strategy.rules);if(S.hash(p.strategy.rules)!==p.strategy.rulesHash)throw fail('Saved strategy integrity check failed');}return p;}
+function assertSnapshot(p){if(p.version!==VERSION||!H.RANGES[p.companyRange]||p.min!==H.RANGES[p.companyRange].min||p.max!==H.RANGES[p.companyRange].max)throw fail('Invalid saved paper decision process');if(p.strategy){S.validate(p.strategy.rules);if(S.hash(p.strategy.rules)!==p.strategy.rulesHash)throw fail('Saved strategy integrity check failed');}if(p.investmentPolicy&&!require('./_investorResearchHandoff').supportedInvestmentPolicy(p.investmentPolicy))throw fail('Invalid saved shared investment policy');return p;}
 function instructions(p,fn){
- assertSnapshot(p);const s=p.strategy?.rules||S.DEFAULT;
+ assertSnapshot(p);if(p.investmentPolicy?.coreVersion===H.CORE_VERSION)return H.sharedInstructions(p.investmentPolicy,fn);const s=p.strategy?.rules||S.DEFAULT;
  if(fn==='shortlistCandidates')return `Screen exactly the requested shortlist count (normally 50). The operator's finalist range applies to Astra's later underwriting, not this screening step. Apply this generalized selection guidance to the dated cards: ${s.selectionInstructions}. Never use training outcomes as current evidence.`;
  if(fn==='prepareResearchDocument')return 'Prepare every supplied finalist faithfully; do not rank investments or alter source facts to fit a strategy.';
  if(!['reviewUniverse','decidePreparedPortfolio','finalizePortfolio','researchCompany'].includes(fn))return '';
