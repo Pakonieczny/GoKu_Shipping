@@ -5450,8 +5450,18 @@ function paintComposerMode() {
 }
 
 // Temporary comparison controls: choice stays in this tab, not in the design.
-let goldTestModel = "gemini";
+const STUDIO_GOLD_TEST_UI = false; // Temporary comparison remains available in code.
+let goldTestModel = "gpt-image-2.5-sunburst";
 function paintGoldTestControls() {
+  if (!STUDIO_GOLD_TEST_UI) {
+    const old = $("#goldTestControls");
+    if (old) {
+      const popup = old.querySelector("#goldTestPopup");
+      if (popup && popup.matches(":popover-open")) popup.hidePopover();
+      old.remove();
+    }
+    return;
+  }
   const frame = $("#pairRail")?.closest(".ref-frame");
   if (!frame) return;
   let panel = $("#goldTestControls");
@@ -27705,7 +27715,7 @@ if (window.MutationObserver) {
 syncMenuButton();
 /* the Playwright menu suite drives these two directly, the same way the
    pricing suite reads window.__itemPrice */
-window.__studioBuild   = "2026-09-09.gold-click-fix";
+window.__studioBuild   = "2026-09-09.sunburst-default";
 /* ── DO THE ASSETS MATCH? SAY SO ONCE, IN WORDS ──────────────────────────
    The section (this file plus the Liquid) and the stylesheet are separate
    Shopify assets that deploy separately, and a page has now shipped twice

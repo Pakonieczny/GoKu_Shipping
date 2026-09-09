@@ -2727,7 +2727,7 @@ const STUDIO_DEFAULT_CONFIG = {
      STUDIO_STEP_MODEL_KEYS), so it moves with the render, which is right:
      both produce the finished metal charm. The drawing steps, lineart and
      specgold, stay on flash — they feed the measurements, not the eye. */
-  studioRenderModel: "gemini-3-pro-image",
+  studioRenderModel: "gpt-image-2.5-sunburst",
   studioDrawingTier: "2K",
   studioRenderTier: "1K",
   /* THE MASK NEVER GOES TO THE MODEL SMALLER THAN THIS. It is built at the
@@ -3071,20 +3071,26 @@ const STUDIO_STEP_MODEL_KEYS = Object.freeze({
 const STUDIO_STEP_MODEL_FALLBACK = Object.freeze({
   lineart: "gemini-3.1-flash-image",
   specgold: "gemini-3.1-flash-image",
-  /* the finished metal charm — "Nano Banana Pro", a stable listed ID,
+  /* the finished metal charm — Sunburst, matching the default above;
      verified against the published model list rather than inferred from
      another name. Reached only when config/customStudio cannot be read at
      all; it matches STUDIO_CFG_DEFAULTS.studioRenderModel deliberately, so
      an unreachable Firestore does not quietly change which model draws the
      charm the customer is paying for. */
-  render: "gemini-3-pro-image",
-  goldedit: "gemini-3-pro-image",
+  render: "gpt-image-2.5-sunburst",
+  goldedit: "gpt-image-2.5-sunburst",
 });
 
 function studioImageModelId(cfg, step) {
   const key = step && STUDIO_STEP_MODEL_KEYS[step];
   if (key) {
     const own = cfg && cfg[key];
+    // Migrate the former stored Studio gold default as well as fresh configs.
+    // Explicit non-Gemini overrides and all drawing models remain unchanged.
+    if ((step === "render" || step === "goldedit") &&
+        (!own || ["gemini-3-pro-image", "gemini-3-pro-image-preview"].includes(String(own).trim()))) {
+      return "gpt-image-2.5-sunburst";
+    }
     return String(own || STUDIO_STEP_MODEL_FALLBACK[step]).trim();
   }
   return String(
@@ -4301,9 +4307,9 @@ function buildMaterialSpecToCharmPrompt(opts) {
 
 Transform IMAGE 1 into a photorealistic 14K gold charm. It is a pixel-level manufacturing map and the exclusive authority for the silhouette, every through-cut and every worked surface: WHITE = EMPTY; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow recessed engraving.
 
-TRACE, DO NOT INTERPRET: every grey region stays opaque gold, and every white region enclosed by grey is CUT clean through the sheet — a real opening, with the white ground behind the charm showing through it and a bright bevel where the sheet's own thickness catches the light. Cut every one of them, whatever their size or number, and never stand one in with engraving, shading, tinted metal or filled gold. Every notch, concavity, asymmetry and tilt of the outer boundary is the design. If you recognise what IMAGE 1 depicts, draw the map you were given rather than the tidier, more symmetrical version you remember, and add, remove, move or resize nothing — a better-looking charm with a different outline is a failed render.
+TRACE, DO NOT INTERPRET: every grey region stays opaque gold, and every white region enclosed by grey is CUT clean through the sheet — a real opening, with the white ground behind the charm showing through it and a bright bevel where the sheet's own thickness catches the light. Every opening, including tiny eye cutouts, has visible inner-wall depth and a soft shadow cast onto the white ground inside it, consistent with the hoop and the same upper-left light. Scale the shadow's width and softness to each opening so small holes keep a bright open centre rather than looking flat white or filled. Cut every one of them, whatever their size or number, and never stand one in with engraving, shading, tinted metal or filled gold. Every notch, concavity, asymmetry and tilt of the outer boundary is the design. If you recognise what IMAGE 1 depicts, draw the map you were given rather than the tidier, more symmetrical version you remember, and add, remove, move or resize nothing — a better-looking charm with a different outline is a failed render.
 
-MATERIAL: ONE alloy across the whole piece — 14K gold, thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker and warmer — its brightness is 0.85 of the polished metal beside it, and never below 0.75; IMAGE 1's greys are a classification code and must never reach the output as colour. Engrave the dark grey pixels themselves and no more: a dark grey line is a line, and the light grey it encloses stays polished rather than becoming a sunken field.
+MATERIAL: ONE alloy across the whole piece — warm yellow 14K gold with a subtle red-copper undertone, natural lustre and lively reflections, still yellow gold rather than pink or orange. Use thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker, with a little more red warmth than the base alloy — aim for brightness around 0.90 of the adjacent polished metal, never below 0.82, with gentle tonal depth rather than black, grey or oxidised grooves; IMAGE 1's greys are a classification code and must never reach the output as colour. Engrave the dark grey pixels themselves and no more: a dark grey line is a line, and the light grey it encloses stays polished rather than becoming a sunken field.
 
 FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them, and no lettering, appears anywhere in the picture.`;
 }
@@ -9649,7 +9655,7 @@ async function handleStudioRender({ body, event, origin }) {
     studioModelConfig = resolveImageModel(renderTestModel === "gpt-image-2.5-sunburst"
       ? renderTestModel : studioImageModelId(cfg, "render"));
     if (renderTestModel === "gemini" && studioModelConfig.provider !== "gemini") {
-      studioModelConfig = resolveImageModel(STUDIO_STEP_MODEL_FALLBACK.render);
+      studioModelConfig = resolveImageModel(DEFAULT_RENDER_IMAGE_MODEL);
     }
     apiKeyForImageModel(studioModelConfig);
   } catch (err) {
