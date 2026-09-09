@@ -8932,6 +8932,7 @@ function renderCharmPage(isApprovedView) {
             tempDiv.innerHTML = createCharmCardHTML(folderId, isApprovedView);
             const cardNode = tempDiv.firstElementChild;
             targetGrid.appendChild(cardNode);
+            if (!isApprovedView) window.updateQuadActionButtons(folderId);
             loadSetImagesForCharm(folderId, isApprovedView ? "Charm_Maker/Completed_Approved_Charm_Sets" : "Charm_Maker/Generated_Charm_Sets");
         });
         
@@ -9040,6 +9041,7 @@ async function loadSetImagesForCharm(folderId, folderName) {
                 }
             });
         }
+        if (!isApprovedView) window.updateQuadActionButtons(folderId);
     }
 
     document.getElementById("charmPrevPage").addEventListener("click", () => {
