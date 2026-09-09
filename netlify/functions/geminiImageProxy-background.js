@@ -904,7 +904,7 @@ async function callOpenAIImagesEdits({
   form.append("prompt", promptText);
   form.append("size", String(size || "2048x2048"));
   form.append("quality", "high");
-  form.append("input_fidelity", "high");
+  // Sunburst does not accept input_fidelity; output quality remains high.
   form.append("output_format", normalizeOpenAIOutputFormat(output_format));
   form.append("n", "1");
 
@@ -2158,7 +2158,7 @@ function buildOpenAIBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, c
   if (text.length > 32000) throw new Error("Batch edit prompt exceeds 32000 characters");
   return { custom_id: key, method: "POST", url: "/v1/images/edits",
     body: { model: "gpt-image-2.5-sunburst", prompt: text, images,
-      quality: "high", input_fidelity: "high", size: "2048x2048", output_format: "png", n: 1 } };
+      quality: "high", size: "2048x2048", output_format: "png", n: 1 } };
 }
 
 async function uploadOpenAIBatchFile(apiKey, buffer, displayName) {

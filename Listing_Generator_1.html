@@ -3647,7 +3647,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
             <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
               <div style="flex: 1;">
                 <div class="archive-source-label">Source folder · read-only · downloads do not delete</div>
-                <div class="archive-source-path">listing-generator-1 / Generated_Listing_Sets / Approved_Listing_Sets</div>
+                <div class="archive-source-path">listing-generator-1 / Generated_Listing_Sets / Completed_Listing_Sets</div>
               </div>
               <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0;">
                 <button class="btn btnSmall refresh-btn" id="approvedListRefreshBtn" title="Reload from Firebase">↻ Refresh</button>
@@ -3658,13 +3658,13 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
           <label class="field-label">Filter by category</label>
           <div class="chip-row" id="approvedListCategories">
-            <button class="chip cat-chip active" data-cat="*">All <span class="cat-count" id="catCount-all">—</span></button>
-            <button class="chip cat-chip active" data-cat="Beady_Necklace">Beady necklaces <span class="cat-count" id="catCount-Beady_Necklace">—</span></button>
-            <button class="chip cat-chip active" data-cat="Regular_Necklace">Necklaces <span class="cat-count" id="catCount-Regular_Necklace">—</span></button>
-            <button class="chip cat-chip active" data-cat="Stud_Earrings">Stud earrings <span class="cat-count" id="catCount-Stud_Earrings">—</span></button>
-            <button class="chip cat-chip active" data-cat="Hoop_Earrings">Hoop earrings <span class="cat-count" id="catCount-Hoop_Earrings">—</span></button>
-            <button class="chip cat-chip active" data-cat="Charms">Charm sets <span class="cat-count" id="catCount-Charms">—</span></button>
-            <button class="chip cat-chip active" data-cat="Bracelets">Bracelets <span class="cat-count" id="catCount-Bracelets">—</span></button>
+            <button class="chip cat-chip active" aria-pressed="true" data-cat="*">All <span class="cat-count" id="catCount-all">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Beady_Necklace">Beady necklaces <span class="cat-count" id="catCount-Beady_Necklace">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Regular_Necklace">Necklaces <span class="cat-count" id="catCount-Regular_Necklace">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Stud_Earrings">Stud earrings <span class="cat-count" id="catCount-Stud_Earrings">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Hoop_Earrings">Hoop earrings <span class="cat-count" id="catCount-Hoop_Earrings">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Charms">Charm sets <span class="cat-count" id="catCount-Charms">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Bracelets">Bracelets <span class="cat-count" id="catCount-Bracelets">—</span></button>
           </div>
 
           <label class="field-label" style="margin-top: 14px;">Sort &amp; pagination</label>
@@ -3728,9 +3728,9 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
           <label class="field-label" style="margin-top: 14px;">Custom date range</label>
           <div class="row date-row" style="gap: 8px; align-items: center;">
-            <input type="date" id="approvedCharmDateFrom" style="flex: 1;">
+            <input type="date" aria-label="Created on or after" id="approvedCharmDateFrom" style="flex: 1;">
             <span class="muted" style="font-size: 11px;">→</span>
-            <input type="date" id="approvedCharmDateTo" style="flex: 1;">
+            <input type="date" aria-label="Created on or before" id="approvedCharmDateTo" style="flex: 1;">
             <button class="btn btnSmall" id="approvedCharmDateClear" style="width: auto;">Clear</button>
           </div>
 
@@ -5109,6 +5109,10 @@ html.gs-locked body > *:not(#gate){display:none!important}
           setStatus(`Redo Slot ${slotIndex + 1}…`);
       }
 
+      let srcRandom = null;
+      let charmLatest = null;
+      let waitedResult = null;
+      try {
       const srcFolder = slotRefFolder(ctxCategory, spec.folder);
       // In adjustment mode we re-process the existing slot image, so there
       // is no need to pick a fresh random reference. Skipping listAll here
@@ -5116,7 +5120,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
       // Charm_Types is deliberately stricter: a full redo must reuse the
       // template originally allocated to this slot so the typography,
       // layout, hardware, and relative sizing do not change.
-      const srcRandom = isAdjustmentMode
+      srcRandom = isAdjustmentMode
         ? null
         : isStrictCharmReferenceSlot
           ? await resolveOriginalSlotSource(ctxSetPath, slotIndex, srcFolder)
@@ -5132,7 +5136,6 @@ html.gs-locked body > *:not(#gate){display:none!important}
       // moved out of New_Charms/ once they have been used, so resolveOriginalCharm
       // reads the manifest written at alloc time and falls back through
       // several layers before it ever resorts to "latest in folder".
-      let charmLatest = null;
       // A targeted Charm_Types correction still needs the master charm as
       // image 2; otherwise Gemini has no pixel-truth source from which to
       // restore missing or distorted engraving detail.
@@ -5143,9 +5146,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
         if (!charmLatest) throw new Error(`No charm available for redo (manifest sourceCharm missing and no files in ${charmFolderPath}/)`);
       }
       
-      let waitedResult = null; 
 
-      try {
           if (spec.type === "copy") {
             const r = await postJson(GEMINI_FN, {
               kind: "copy_to_slot",
@@ -5305,8 +5306,11 @@ The output must look like the input image with ONLY the user's requested change 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
              const prevBox = document.getElementById(`${prefix}_slotPrev_${slotIndex}`);
              if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+             const redoBtn = document.getElementById(`${prefix}_redo_${slotIndex}`);
+             if (redoBtn) redoBtn.disabled = false;
              setStatus("Redo failed: " + err.message);
           }
+          return; // Preserve the existing manifest after any failed redo.
       }
 
       try {
@@ -8119,6 +8123,7 @@ function updateApproveButtonState() {
              prevBox.classList.add("working-box");
           }
 
+          try {
           // Dispatch the individual API request
           if (spec.type === "copy") {
             await postJson(GEMINI_FN, {
@@ -8159,12 +8164,18 @@ function updateApproveButtonState() {
             newCharm: spec.type === "copy" ? null : charmLatest.fullPath,
             output: waited.storagePath,
           };
+          } catch (error) {
+            if (prevBox) { prevBox.classList.remove("working-box"); prevBox.textContent = `Failed: ${error.message || error}`; }
+            throw error;
+          }
         });
 
         setStatus("Generating… (Monitoring Storage)");
 
         // Wait for all staggered slots to finish
-        const results = await Promise.all(generationPromises);
+        const settled = await Promise.allSettled(generationPromises);
+        const results = settled.filter(r => r.status === "fulfilled").map(r => r.value);
+        const failures = settled.filter(r => r.status === "rejected");
         results.sort((a, b) => a.slot - b.slot);
         manifest.slots = results;
 
@@ -8176,12 +8187,15 @@ function updateApproveButtonState() {
                 manifest: manifest,
             });
 
+        if (failures.length) throw new Error(`${failures.length} image slot(s) failed: ${failures[0].reason?.message || failures[0].reason}. Use Redo to retry failed slots.`);
+
         setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
         setAllRedoEnabled(true);
       } catch (e) {
         console.error(e);
         setStatus(`Error: ${e?.message || e}`);
       } finally {
+        setAllRedoEnabled(true);
         setBusy(false);
       }
     }
@@ -16883,9 +16897,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           return { from: _startOfDayMs(d), to: _endOfDayMs(now) };
         }
         case '7d':
-          return { from: _startOfDayMs(new Date(ref0 - 6 * 86400000)), to: _endOfDayMs(now) };
-        case '30d':
-          return { from: _startOfDayMs(new Date(ref0 - 29 * 86400000)), to: _endOfDayMs(now) };
+        case '30d': {
+          const d = new Date(now);
+          d.setDate(d.getDate() - (preset === '7d' ? 6 : 29));
+          return { from: _startOfDayMs(d), to: _endOfDayMs(now) };
+        }
         default:
           return null; // 'all' | 'latest10' | 'latest25' | 'custom' | unknown
       }
@@ -16927,7 +16943,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         // folder is owned/populated by an external app and is read-only
         // from this software's perspective (and excluded from this view).
         const r = ref(storage, `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`);
-        const res = await listAll(r).catch(() => ({ prefixes: [] }));
+        const res = await listAll(r);
         const items = (res.prefixes || []).map(p => {
           const meta = _parseListingId(p.name);
           return { ...meta, fullPath: p.fullPath };
@@ -17182,8 +17198,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       let text;
       if (win.source === 'latest') text = `newest ${win.latestN} by date`;
       else if (win.source === 'all') text = 'no date limit · showing everything';
+      else if (win.from != null && win.to != null && win.from > win.to) text = 'Invalid range: start date must be on or before end date';
       else text = _describeWindow(win.from, win.to, win.source === 'custom' ? 'custom range' : null);
-      const parts = [text, `${filteredCount} of ${all.length} sets`];
+      const parts = [text, `${filteredCount} of ${all.length} sets`, 'dates use set creation time'];
       if (undated > 0 && (win.from != null || win.to != null)) {
         parts.push(`${undated} undated set${undated === 1 ? '' : 's'} excluded`);
       }
@@ -17193,8 +17210,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     function _renderCharmsPage() {
       const cs = _approvedSubState.charms;
       // Re-entrancy guard: prevent recursive render
-      if (cs._rendering) return;
+      if (cs._rendering) { cs._renderPending = true; return; }
       cs._rendering = true;
+      cs._renderPending = false;
       try {
         const filtered = _filterAndSortCharms();
 
@@ -17250,7 +17268,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       } finally {
         // Clear flag asynchronously so the MutationObserver triggered by
         // our own innerHTML writes sees it as still-rendering and skips.
-        setTimeout(() => { cs._rendering = false; }, 50);
+        setTimeout(() => {
+          cs._rendering = false;
+          if (cs._renderPending) _renderCharmsPage();
+        }, 0);
       }
     }
 
@@ -17393,24 +17414,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       chip.addEventListener('click', () => {
         const cat = chip.dataset.cat;
         const ls = _approvedSubState.listings;
-        if (cat === '*') {
-          // "All" toggles the entire selection
-          const allActive = chip.classList.contains('active');
-          if (allActive) {
-            ls.categories.clear();
-            document.querySelectorAll('#approvedListCategories .cat-chip').forEach(c => c.classList.remove('active'));
-          } else {
-            _LISTING_CATEGORIES.forEach(c => ls.categories.add(c));
-            document.querySelectorAll('#approvedListCategories .cat-chip').forEach(c => c.classList.add('active'));
-          }
-        } else {
-          chip.classList.toggle('active');
-          if (chip.classList.contains('active')) ls.categories.add(cat);
-          else ls.categories.delete(cat);
-          // Update "All" chip state
-          const allChip = document.querySelector('#approvedListCategories .cat-chip[data-cat="*"]');
-          if (allChip) allChip.classList.toggle('active', ls.categories.size === _LISTING_CATEGORIES.length);
-        }
+        ls.categories = new Set(cat === '*' ? _LISTING_CATEGORIES : [cat]);
+        document.querySelectorAll('#approvedListCategories .cat-chip').forEach(c => {
+          const active = c.dataset.cat === cat;
+          c.classList.toggle('active', active);
+          c.setAttribute('aria-pressed', String(active));
+        });
         ls.page = 1;
         _renderListingsPage();
       });
@@ -17480,7 +17489,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         _renderCharmsPage();
       });
     });
-    document.getElementById('approvedCharmDateFrom').addEventListener('change', e => {
+    document.getElementById('approvedCharmDateFrom').addEventListener('input', e => {
       const v = e.target.value; // YYYY-MM-DD, interpreted in local time
       const cs = _approvedSubState.charms;
       cs.dateFrom = v ? _startOfDayMs(new Date(v + 'T12:00:00')) : null;
@@ -17489,7 +17498,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       cs.page = 1;
       _renderCharmsPage();
     });
-    document.getElementById('approvedCharmDateTo').addEventListener('change', e => {
+    document.getElementById('approvedCharmDateTo').addEventListener('input', e => {
       const v = e.target.value;
       const cs = _approvedSubState.charms;
       // End of day must include the final 999ms or sets approved in the last
