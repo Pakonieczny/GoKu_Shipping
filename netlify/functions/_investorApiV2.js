@@ -246,8 +246,9 @@ async function spendView(D, { nowMs, policy }) {
   const s = await D.col(D.COL.costs).doc(`openai_${day}`).get();
   const d = s.exists ? s.data() : {};
   const ctrl=await controlDoc(D);
-  const ceiling = BigInt(require('./_investorOpenai').effectiveDailyCeiling(ctrl.budget,day,policy.budget?.dailyReservationMinor||0));
-  const spent = big(d.spentMinor || 0), reserved = big(d.reservedMinor || 0);
+  const ceiling = big(ctrl.budget?.dailyReservationMinor ?? policy.budget?.dailyReservationMinor ?? 0);
+  const resetBase=ctrl.budget?.todayReset?.day===day?big(ctrl.budget.todayReset.spentMinor||0):0n;
+  const billed=big(d.spentMinor||0),spent=billed>resetBase?billed-resetBase:0n,reserved=big(d.reservedMinor||0);
   const byRole = d.byRole || {};
   const byTask = Object.entries(byRole).map(([role, v]) => ({ task: role, model: (v && v.model) || null, calls: Number((v && v.calls) || 0), tokens: { input: String((v && v.inputTokens) || 0), cachedInput: String((v && v.cachedInputTokens) || 0), output: String((v && v.outputTokens) || 0), reasoning: String((v && v.reasoningTokens) || 0) }, actual: money((v && v.spentMinor) || 0) }));
   const t = d.tokens || {};
@@ -319,6 +320,8 @@ function workflowOf(ctrl, run) {
     row('mandates',run?.activation?(run.activation.status==='COMMITTED'?'complete':run.activation.status==='EMPTY'?'skipped':'failed'):state('activation',false,stage==='activation'||stage==='persist'),run?.activation?(noBuys?'Decision saved: no new buys approved':'Investment plan committed; execution checks apply'):'Waiting for an investment decision',run?.activation?1:0,1),
     row('execution',executionError?'failed':noBuys?'skipped':approved&&tick?'running':'pending',executionError?executionError.message:noBuys?'No new orders: the AI chose cash for this review':approved?`Monitoring approved buys against observed market bars. Latest check: ${tick?.fills?.fills||0} fills`:'Waiting for this review to approve buys; existing orders are monitored separately',null,null,{at:iso(executionError?.atMs||tick?.atMs)})
   ];
+  const retryError=!failed&&!terminal&&run?.worker?.state==='yielded_resumable'&&run.worker.error?.message;
+  if(retryError){const active=result.find(x=>x.state==='running');if(active){active.state='failed';active.detail='The last attempt stopped: '+retryError+'. Saved work is retained; waiting for retry.';}}
   if(failed){const active=result.find(x=>x.state==='running'||x.state==='failed');if(active){active.state='failed';active.detail=run.failureReason||run.noBuyReasons?.[0]?.error||run.failure?.message||'Review stopped; inspect the saved error';}}
   return result;
 }
@@ -698,7 +701,7 @@ async function readJobs({ params, ctx }) {
   let list=rows(await query.limit(300).get()).filter(j=>j&&j.jobId&&j.kind!=='run_lease');
   const activeId=ctx.control.activeManagerRunId;
   if(activeId){
-    const active=rows(await D.col(D.COL.jobs).where('runId','==',activeId).limit(20).get()).filter(j=>j.jobId&&(!params.task||j.task===params.task)&&(!params.status||j.status===params.status));
+    const active=rows(await D.col(D.COL.jobs).where('runId','==',activeId).limit(20).get()).filter(j=>j.jobId&&j.kind!=='run_lease'&&j.task&&(!params.task||j.task===params.task)&&(!params.status||j.status===params.status));
     list=[...new Map([...list,...active].map(j=>[j.jobId,j])).values()];
   }
   list=list.sort((a,b)=>Number(b.runId===activeId)-Number(a.runId===activeId)||Number(b.enqueuedAtMs||0)-Number(a.enqueuedAtMs||0)).map(jobView);
@@ -1073,6 +1076,27 @@ const MUTATIONS = {
     if (managerStateOf(ctrl) === "PAUSED") throw typed("STATE_CONFLICT", "manager is paused; resume it first");
     const tradingDate = tradingDateOf(ctx.nowMs);
     const J = jobsFor(ctx.admin);
+    const activeId=ctrl.activeManagerRunId||ctrl.lastManagerRunId||ctrl.lastManagerRun?.managerRunId;
+    if(activeId){
+      const existing=rows(await ctx.admin.col(ctx.admin.COL.jobs).where('runId','==',activeId).limit(50).get()).find(j=>j.task==='premarket_manager'&&j.payload?.tradingDate===tradingDate);
+      if(existing&&['queued','running','yielded_resumable'].includes(existing.status))return {data:{jobId:existing.jobId,runId:activeId,tradingDate,duplicate:true,status:existing.status},jobId:existing.jobId};
+      if(existing&&['failed','dead'].includes(existing.status)&&/output_truncated|HANDOFF_BUY_WITHOUT_EVIDENCE|daily_reservation_exhausted/.test(JSON.stringify(existing.lastError||{}))){
+        const C=require('./_investorDecisionContext'),cp=existing.checkpoint?.data?.paperCheckpointRef?await C.read({runId:existing.checkpoint.data.paperCheckpointRef,admin:ctx.admin}):existing.checkpoint;
+        if(cp?.stage==='research'&&Object.keys(cp.data?.handoff?.documents||{}).length&&!cp.data.handoff.resultRef){
+          if(existing.operatorRecoveryCount)throw typed('STATE_CONFLICT','The saved review has already used its recovery attempt. Its research and failure remain available.');
+          const ref=ctx.admin.col(ctx.admin.COL.jobs).doc(existing.jobId);
+          await ctx.admin.runTransaction(async tx=>{
+            const j=(await tx.get(ref)).data();
+            if(!j||!['failed','dead'].includes(j.status)||j.operatorRecoveryCount)throw typed('STATE_CONFLICT','The review state changed; refresh its progress.');
+            tx.set(ref,{status:'queued',attempts:0,dueAtMs:ctx.nowMs,resumeAtMs:null,workerLeaseExpiresAt:0,lastError:null,operatorRecoveryCount:1,
+              recoveryHistory:[...(j.recoveryHistory||[]),{atMs:ctx.nowMs,by:ctx.actorId,attempts:j.attempts||0,lastError:j.lastError||null}],operatorRecoveryAtMs:ctx.nowMs},{merge:true});
+          });
+          await require('./_investorManager').writeRun({admin:ctx.admin,managerRunId:activeId,status:'queued',failureReason:null});
+          await writeAudit(ctx.admin,{action:'runManagerReview',actorId:ctx.actorId,accountId:ctx.accountId,mutationId:ctx.mutationId,reason:'RESUME_SAVED_DECISION',after:{jobId:existing.jobId,runId:activeId,tradingDate},correlationId:ctx.correlationId,nowMs:ctx.nowMs});
+          return {data:{jobId:existing.jobId,runId:activeId,tradingDate,status:'queued',resumed:true},jobId:existing.jobId};
+        }
+      }
+    }
     const slot = Math.floor(ctx.nowMs / (30 * 60000));
     const runId = `run_premarket_manager_${ctx.accountId}_${tradingDate}_op${slot}`;
     const r = await J.enqueueOnce({ task: "premarket_manager", dedupeId: `${ctx.accountId}_${tradingDate}_operator_${slot}`, accountId: ctx.accountId, priority: 150, runId, sessionDate: tradingDate, createdBy: `apiV2:${ctx.actorId}`,

@@ -606,10 +606,24 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
           const {holdingPackets}=await rebuildContext(st,deps,accountId,{cardsNeeded:false});
           joint=await deps.gateway.decidePreparedPortfolio({documents,packets,completedResearch:st.handoff.completedResearch,holdings:holdingPackets.packets,
             portfolio:context.portfolio,marks,policy:{policyHash:policy.policyHash,riskPolicyHash:policy.riskPolicyHash,riskMandate:policy.riskMandate},marketState:context.marketState,expansionBlocked:!!st.expansionBlocked,contextManifestHash:st.contextManifestHash});
-          if(joint.pending)return yieldNow('astra_prepared_decision_pending');
-          if(!joint.ok)throw Object.assign(Error('Combined research and investment decision failed: '+joint.error),{code:'SIMULATION_RESEARCH_INCOMPLETE',details:{failed:[{error:joint.error,responseId:joint.responseId,requestId:joint.requestId}]}});
+          if(joint.costMinor&&joint.requestId){
+            const key=joint.originalRequestId||joint.requestId;st.handoff.accountedCosts=st.handoff.accountedCosts||{};
+            const previous=BigInt(st.handoff.accountedCosts[key]||0),current=BigInt(joint.costMinor);
+            if(current>previous){addCost((current-previous).toString());st.handoff.accountedCosts[key]=current.toString();}
+          }
+          if(joint.pending){await saveHandoff();return yieldNow(joint.recovery?'astra_completion_pending':'astra_prepared_decision_pending');}
+          if(!joint.ok){
+            await saveHandoff();
+            if(joint.error==='output_truncated'&&joint.retryable!==false)return yieldNow('astra_truncated_response_saved');
+            if(joint.retryable===false||joint.budgetBlocked){
+              const reason=joint.budgetBlocked?'The saved AI answer needs completion, but the remaining daily allowance cannot cover it.':`AI answer could not be completed: ${joint.error}`;
+              const summary={managerRunId,status:'failed_closed',costMinor:st.costMinor,noBuyReasons:[{code:joint.budgetBlocked?'BUDGET_EXHAUSTED':'MODEL_FAILURE',error:joint.error}],failureReason:reason};
+              await record({...summary});return {done:true,failed:true,reason:joint.error,checkpoint:{stage,data:st},summary};
+            }
+            throw Object.assign(Error('Combined research and investment decision failed: '+joint.error),{code:'SIMULATION_RESEARCH_INCOMPLETE',details:{failed:[{error:joint.error,responseId:joint.responseId,requestId:joint.requestId}]}});
+          }
           const resultId=`${managerRunId}_joint_${joint.requestId}`;await C.freeze({runId:resultId,context:{joint},admin:deps.admin});
-          st.handoff.resultRef=resultId;addCost(joint.costMinor);await saveHandoff();
+          st.handoff.resultRef=resultId;await saveHandoff();
         }
         if(joint.simulationPlan) {
           const plan=joint.simulationPlan;

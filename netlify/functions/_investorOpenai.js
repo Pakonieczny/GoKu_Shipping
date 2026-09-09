@@ -1015,7 +1015,11 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     if (requestKey) {
       const prior = await readRequest(requestId);
       if (prior && prior.status === "in_flight" && prior.responseId) return pollBackground({ requestId, prior, waitMs, timeoutMs, strict, allowedClaimIds, scope, base });
-      if (prior && prior.status === "complete" && prior.output) return { ok: true, cached: true, requestId, responseId: prior.responseId, model: prior.returnedModel, output: prior.output, usage: prior.tokens, costMinor: prior.costMinor, latencyMs: prior.latencyMs };
+      if (prior && prior.status === "complete" && prior.output) return { ok: true, cached: true, requestId, responseId: prior.responseId, model: prior.returnedModel, recovery:!!prior.recoveryRequestId, output: prior.output, usage: prior.tokens, costMinor: prior.costMinor, latencyMs: prior.latencyMs };
+      if(core && prior?.status==='rejected') {
+        if(fn==='decidePreparedPortfolio'&&['output_truncated','HANDOFF_BUY_WITHOUT_EVIDENCE'].includes(prior.error))return recoverTruncated({requestId,prior,base,role,roleName,strict,inputItems,waitMs,timeoutMs,allowedClaimIds,scope});
+        return failure(prior.error||'saved_response_rejected',{requestId,responseId:prior.responseId,costMinor:prior.costMinor,cached:true,retryable:false});
+      }
     }
     const est = POLICY.costMinor({ model: role.model, ordinaryInputTokens: inputTokensEst, outputTokens: maxOutputTokens });
     const estMinor = Number(est.amountMinor);
@@ -1025,6 +1029,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       await record(requestId, { ...base, status: "budget_blocked", reason: reservation.reason, estMinor, startedAtMs: now() });
       return failure("daily_reservation_exhausted", { budgetBlocked: true, requestId, estMinor, spentMinor: reservation.spentMinor, ceilingMinor: reservation.ceilingMinor });
     }
+    if(reservation.duplicate&&!reservation.ok)return failure('settled_request_cannot_be_resubmitted',{requestId,retryable:false});
     const startedAtMs = now();
     await record(requestId, { ...base, status: "started", startedAtMs, estMinor });
     const body = {
@@ -1223,7 +1228,17 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
 
   /** Validate, settle, record. Every rejection is a failure, never a partial result. */
   async function finish({ requestId, reservationId, role, roleName, data, parsed, usageTotals, startedAtMs, strict, allowedClaimIds, scope, toolLog, retries, schemaVersion, billing = null }) {
-    const b = billing || await settleFromUsage(reservationId, role.model, usageTotals, roleName);
+    // Older workers could resubmit after settling the original reservation.
+    // Record an already incurred later response once, without authorizing new spend.
+    let billingId=reservationId;
+    if(!billing&&data.id){const old=(await DB.col(DB.COL.costs).doc('openai_res_'+reservationId).get()).data();
+      if(old?.status==='settled'&&Number(old.settledAtMs)<Number(startedAtMs)){
+        billingId=reservationId+'_response_'+sha(data.id).slice(0,20);
+        const ref=DB.col(DB.COL.costs).doc('openai_res_'+billingId);
+        await DB.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)tx.set(ref,{reservationId:billingId,day:day(),status:'reserved',estMinor:0,role:roleName,createdAtMs:now(),reason:'reconcile_pre_fix_resubmission',responseId:data.id});});
+      }
+    }
+    const b = billing || await settleFromUsage(billingId, role.model, usageTotals, roleName);
     const latencyMs = now() - startedAtMs;
     const common = { responseId: parsed.id, returnedModel: parsed.model, tokens: b.tokens, costMinor: b.costMinor, longContext: b.longContext, latencyMs, toolCalls: toolLog, retries, responseStatus: parsed.status };
     const reject = async (error, extra = {}) => {
@@ -1234,7 +1249,11 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     if (parsed.forbidden.length) return reject("unexpected_tool_call");
     if (parsed.toolCalls.length) return reject("tool_call_without_tools");
     if (parsed.refusal) return reject("model_refusal", { refusal: parsed.refusal });
-    if (parsed.truncated) return reject("output_truncated");
+    if (parsed.truncated) {
+      const C=require('./_investorDecisionContext'),stateId=requestId+'_truncated_'+sha(data.output||[]).slice(0,24);
+      await C.freeze({runId:stateId,context:{output:data.output||[],outputText:data.output_text||null},admin:DB});
+      return reject("output_truncated",{truncatedStateId:stateId});
+    }
     if (parsed.incomplete) return reject(`incomplete_${(data.incomplete_details || {}).reason || "unknown"}`);
     if (parsed.parsed == null) return reject(parsed.parseError ? "unparseable_model_output" : "empty_model_output");
     const localErrors=strict.localSchema?POLICY.validateAgainst(strict.localSchema,parsed.parsed):HANDOFF.SCHEMAS[schemaVersion]?POLICY.validateAgainst(HANDOFF.SCHEMAS[schemaVersion],parsed.parsed):null;
@@ -1250,11 +1269,62 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       usage: b.tokens, costMinor: b.costMinor, latencyMs, toolCalls: toolLog, outputHash: sha(parsed.parsed), retries };
   }
 
+  // One continuation, with a distinct reservation and durable response identity.
+  // Preserve the original failure and opaque reasoning; never submit it again.
+  async function recoverTruncated({requestId,prior,base,role,roleName,strict,inputItems,waitMs,timeoutMs,allowedClaimIds,scope}) {
+    const C=require('./_investorDecisionContext'),tailId=requestId+'_completion_v1';
+    const finishTail=async result=>{
+      if(!result.ok)return {...result,costMinor:(BigInt(prior.costMinor||0)+BigInt(result.costMinor||0)).toString(),originalRequestId:requestId,recovery:true,retryable:result.pending===true||result.budgetBlocked===true};
+      const costMinor=(BigInt(prior.costMinor||0)+BigInt(result.costMinor||0)).toString();
+      await record(requestId,{status:'complete',responseId:result.responseId,output:result.output,outputHash:sha(result.output),costMinor,
+        originalResponseId:prior.responseId,originalError:prior.error,originalCostMinor:prior.costMinor||'0',
+        recoveryRequestId:tailId,recoveryResponseId:result.responseId,completedAtMs:now()});
+      return {...result,requestId,costMinor,recovery:true,originalResponseId:prior.responseId};
+    };
+    const tail=await readRequest(tailId);
+    if(tail?.status==='complete'&&tail.output)return finishTail({ok:true,cached:true,requestId:tailId,responseId:tail.responseId,output:tail.output,costMinor:tail.costMinor,usage:tail.tokens});
+    if(tail?.status==='in_flight'&&tail.responseId)return finishTail(await pollBackground({requestId:tailId,prior:tail,waitMs,timeoutMs,strict,allowedClaimIds,scope,base}));
+    if(tail&&!['budget_blocked'].includes(tail.status))return failure('truncated_response_recovery_'+tail.status,{requestId:tailId,originalRequestId:requestId,retryable:false});
+    let state;
+    if(prior.truncatedStateId)state=await C.read({runId:prior.truncatedStateId,admin:DB});
+    else {
+      const fetched=await http('GET',RESPONSES_ENDPOINT+'/'+encodeURIComponent(prior.responseId),null,timeoutMs);
+      if(!fetched.ok)return failure('truncated_response_unavailable',{requestId,retryable:false});
+      state={output:fetched.data?.output||[],outputText:fetched.data?.output_text||null};
+      const stateId=requestId+'_truncated_'+sha(state.output).slice(0,24);
+      await C.freeze({runId:stateId,context:state,admin:DB});await record(requestId,{truncatedStateId:stateId});
+    }
+    if(!state.output.length)return failure('truncated_response_has_no_continuation_state',{requestId,retryable:false});
+    const evidenceFeedback=prior.evidenceFeedback?' The previous BUY failed validation. Every BUY requires a saved dossier and at least one cited claim or financial_fact ID from that company. Baseline references alone do not qualify. Use a qualifying source only if it actually supports your thesis; otherwise return PASS with the exact missing prerequisite. Validation details: '+JSON.stringify(prior.evidenceFeedback):'';
+    const input=[...inputItems,...state.output,{role:'user',content:evidenceFeedback+' Continue from the retained reasoning and prepared evidence. Return ONE complete JSON object matching the supplied schema. Reuse the saved research; no tools are available. Preserve source honesty, BUY/PASS judgments, risk limits and the supplied holding-horizon formula. Include every required field for every finalist. This is the single bounded completion attempt.'}];
+    const maxOutputTokens=prior.maxOutputTokens||36000,estMinor=Number(POLICY.costMinor({model:role.model,ordinaryInputTokens:estimateTokens(JSON.stringify(input)),outputTokens:maxOutputTokens}).amountMinor);
+    const reservation=await reserveMinor(tailId,estMinor,roleName);
+    if(!reservation.ok){
+      if(reservation.duplicate)return failure('truncated_recovery_already_settled',{requestId:tailId,retryable:false});
+      await record(tailId,{status:'budget_blocked',originalRequestId:requestId,estMinor});
+      return failure('daily_reservation_exhausted',{requestId:tailId,budgetBlocked:true,estMinor,originalRequestId:requestId});
+    }
+    const startedAtMs=now(),tailRef=DB.col(DB.COL.modelRequests).doc(tailId);
+    const claimed=await DB.runTransaction(async tx=>{const snap=await tx.get(tailRef);if(snap.exists&&snap.data().status!=='budget_blocked')return false;tx.set(tailRef,{...base,requestId:tailId,status:'submitting',startedAtMs,reservationId:tailId,originalRequestId:requestId,maxOutputTokens,updatedAtMs:now()},{merge:true});return true;});
+    if(!claimed)return failure('truncated_recovery_submission_pending',{requestId:tailId,retryable:false});
+    let res;
+    try{res=await http('POST',RESPONSES_ENDPOINT,{model:role.model,store:false,background:true,max_output_tokens:maxOutputTokens,
+      reasoning:{effort:role.reasoning?.effort||'medium',context:'all_turns'},input,text:{format:{type:'json_schema',name:strict.name,strict:true,schema:strict.schema}}},timeoutMs);}
+    catch(e){await record(tailId,{status:'submission_uncertain',error:String(e.message).slice(0,160)});return failure('truncated_recovery_submission_uncertain',{requestId:tailId,retryable:false});}
+    if(!res.ok){await releaseMinor(tailId);await record(tailId,{status:'http_error',httpStatus:res.status});return failure('truncated_recovery_http_'+res.status,{requestId:tailId,retryable:false});}
+    const data=res.data||{};
+    if(['queued','in_progress'].includes(data.status)){
+      await record(tailId,{status:'in_flight',responseId:data.id,reservationId:tailId});
+      return {ok:false,pending:true,requestId:tailId,responseId:data.id,costMinor:prior.costMinor||'0',recovery:true,originalRequestId:requestId};
+    }
+    return finishTail(await finish({requestId:tailId,reservationId:tailId,role,roleName,data,parsed:parseResponse(data),usageTotals:[data.usage||{}],startedAtMs,strict,allowedClaimIds,scope,toolLog:[],retries:0,schemaVersion:base.schemaVersion}));
+  }
+
   /** Resume a previously yielded background request by its request id. */
   async function resume(requestId, { waitMs = DEFAULT_WAIT_MS, timeoutMs = DEFAULT_TIMEOUT_MS, allowedClaimIds = null, scope = {} } = {}) {
     const prior = await readRequest(requestId);
     if (!prior) return failure("unknown_request", { requestId });
-    if (prior.status === "complete" && prior.output) return { ok: true, cached: true, requestId, responseId: prior.responseId, model: prior.returnedModel, output: prior.output, usage: prior.tokens, costMinor: prior.costMinor, latencyMs: prior.latencyMs };
+    if (prior.status === "complete" && prior.output) return { ok: true, cached: true, requestId, responseId: prior.responseId, model: prior.returnedModel, recovery:!!prior.recoveryRequestId, output: prior.output, usage: prior.tokens, costMinor: prior.costMinor, latencyMs: prior.latencyMs };
     if (prior.status !== "in_flight" || !prior.responseId) return failure(`request_${prior.status}`, { requestId });
     const strict = POLICY.strictOutputSchema((prior.outputSchemaJson?JSON.parse(prior.outputSchemaJson):null)||gatewaySchema(prior.schemaVersion), { preserveConstraints:!!prior.outputSchemaJson||!!HANDOFF.SCHEMAS[prior.schemaVersion], name: prior.schemaVersion });
     strict.localSchema=prior.outputSchemaJson?JSON.parse(prior.outputSchemaJson):null;
@@ -1432,7 +1502,17 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       const user=[untrusted('prepared_documents',documents),untrusted('market_state',marketState),untrusted('portfolio',portfolio),untrusted('risk_policy',investmentPolicy.riskMandate)].join('\n\n');
       const r=await invoke('decidePreparedPortfolio',{user,outputSchema,background:true,waitMs,contextManifestHash,requestKey:'shared-investment|'+sha(user)});
       if(!r.ok)return r;
-      try{return {...r,simulationPlan:HANDOFF.validateInvestmentPlan(r.output,documents,investmentPolicy)};}catch(e){return {...r,ok:false,error:e.code||'SHARED_PLAN_INVALID'};}
+      try{return {...r,simulationPlan:HANDOFF.validateInvestmentPlan(r.output,documents,investmentPolicy)};}catch(e){
+        if(e.code==='HANDOFF_BUY_WITHOUT_EVIDENCE'&&!r.recovery){
+          const evidenceFeedback=documents.filter(d=>r.output.investments[d.symbol]?.decision==='BUY').map(d=>({symbol:d.symbol,dossierPresent:!!d.baseline.dossierVersionId,
+            citedEvidenceIds:r.output.investments[d.symbol].evidenceIds,qualifyingEvidenceIds:d.evidence.filter(e=>['claim','financial_fact'].includes(e.kind)).map(e=>e.id)}));
+          const C=require('./_investorDecisionContext'),stateId=r.requestId+'_validation_output';
+          await C.freeze({runId:stateId,context:{output:[{role:'assistant',content:JSON.stringify(r.output)}]},admin:DB});
+          await record(r.requestId,{status:'rejected',error:e.code,truncatedStateId:stateId,evidenceFeedback});
+          return {...r,ok:false,pending:true,recovery:true,error:e.code};
+        }
+        return {...r,ok:false,error:e.code||'SHARED_PLAN_INVALID',retryable:false};
+      }
     }
     if(investmentPolicy) {
       const outputSchema=HANDOFF.investmentSchema(documents,investmentPolicy);

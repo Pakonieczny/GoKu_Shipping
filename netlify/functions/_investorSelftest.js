@@ -3984,6 +3984,52 @@ function runFixtures() {
     return true;
   }));
 
+  cases.push(fixture("shared_decision_truncation_resumes_once_with_unchanged_reasoning_and_exact_costs", async () => {
+    const assert=require('assert/strict'),O=require('./_investorOpenai'),H=require('./_investorSimulationHorizon'),Paper=require('./_investorPaperProcess');
+    const output={schemaVersion:'completion-test.v1',answer:'saved'},schema={type:'object',additionalProperties:false,required:['schemaVersion','answer'],properties:{schemaVersion:{type:'string',enum:['completion-test.v1']},answer:{type:'string'}}};
+    for(const mode of ['complete','truncated','budget','legacy']){
+      const fake=fakeAdmin(),state={type:'reasoning',id:'reasoning_saved',encrypted_content:'opaque_fixture',summary:[]};
+      let clock=Date.now(),posts=0;
+      const first=completed('gpt-6-astra',output,{input_tokens:1000,output_tokens:1000},{id:'original_paid',status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[state]});
+      const {transport,calls}=scriptedTransport([
+        ()=>{posts++;return first;},
+        ({body})=>{
+          if(!body)return {...first,data:{...first.data,id:'legacy_paid_again'}};
+          posts++;assert.equal(body.reasoning.effort,'medium');assert.equal(body.reasoning.context,'all_turns');assert.equal(body.max_output_tokens,36000);
+          assert.deepEqual(body.input[2],state);assert.equal(body.store,false);assert(!body.tools);
+          return {data:{id:'completion_paid',status:'queued',model:'gpt-6-astra'}};
+        },
+        ()=>mode==='legacy'?{...first,data:{...first.data,id:'legacy_paid_again'}}:completed('gpt-6-astra',output,{input_tokens:1000,output_tokens:1000},mode==='truncated'?{id:'completion_paid',status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[state]}:{id:'completion_paid'})
+      ]);
+      const G=O.withDeps({admin:fake,fetchImpl:transport,env:{OPENAI_API_KEY:'test-key'},now:()=>clock});
+      const invoke=()=>Paper.withProcess({investmentPolicy:H.policyFor('range1',null,{shared:true})},()=>G.invoke('decidePreparedPortfolio',{user:'Saved prepared research',requestKey:'same',background:true,outputSchema:schema}));
+      const r=await invoke();assert.equal(r.error,'output_truncated');assert.equal(posts,1);assert.equal(calls[0].body.reasoning.effort,'medium');
+      const original=await G.readRequest(r.requestId);assert(original.truncatedStateId);
+      assert.equal((await G.spendToday()).calls,1);
+      if(mode==='budget'){
+        const ref=fake.col(fake.COL.costs).doc('openai_'+new Date(clock).toISOString().slice(0,10));await ref.set({spentMinor:1000},{merge:true});
+        const blocked=await invoke();assert.equal(blocked.budgetBlocked,true);assert.equal(posts,1);
+        assert.equal((await invoke()).budgetBlocked,true);assert.equal(posts,1);continue;
+      }
+      if(mode==='legacy'){
+        // An old worker already submitted another response after settling its first reservation.
+        clock+=1000;await fake.col(fake.COL.modelRequests).doc(r.requestId).set({status:'in_flight',startedAtMs:clock,responseId:'legacy_paid_again'},{merge:true});
+        const again=await invoke();assert.equal(again.error,'output_truncated');assert.equal((await G.spendToday()).calls,2);
+        // Re-reading that same response cannot settle it again.
+        await fake.col(fake.COL.modelRequests).doc(r.requestId).set({status:'in_flight'},{merge:true});
+        await invoke();assert.equal((await G.spendToday()).calls,2);continue;
+      }
+      const pending=await invoke();assert.equal(pending.pending,true);assert.equal(posts,2);assert.equal(pending.originalRequestId,r.requestId);
+      const done=await invoke();assert.equal(posts,2);assert.equal((await G.spendToday()).calls,2);
+      if(mode==='complete'){
+        assert.equal(done.ok,true);assert.equal(BigInt(done.costMinor),BigInt(r.costMinor)*2n);assert.equal(done.responseId,'completion_paid');
+        const cached=await invoke();assert.equal(cached.cached,true);assert.equal(cached.responseId,'completion_paid');assert.equal(cached.costMinor,done.costMinor);
+      }else{assert.equal(done.ok,false);assert.equal(done.retryable,false);assert.equal((await invoke()).retryable,false);}
+      assert.equal(posts,2);
+    }
+    return true;
+  }));
+
   cases.push(fixture("gateway_failures_are_never_decisions_refusal_truncation_schema_budget_and_substitution", async () => {
     const O = require("./_investorOpenai");
     const P = require("./_investorPolicy");
@@ -4267,6 +4313,21 @@ function runFixtures() {
     assert.equal(require('./_investorAdmin').currentScope(),null);return true;
   }));
 
+  cases.push(fixture('operator_review_resumes_saved_failed_decision_without_duplicate_screening',async()=>{
+    const assert=require('assert/strict'),W=apiWorld(),id='saved_recovery',C=require('./_investorDecisionContext');
+    W.ctrl().activeManagerRunId=id;
+    await require('./_investorManager').writeRun({admin:W.fake,managerRunId:id,status:'failed_closed',stage:'research',universeVersion:'fixture',universeHash:'fixture',eligibleCount:2});
+    const day=new Date(W.nowMs).toISOString().slice(0,10),cp={stage:'research',data:{handoff:{phase:'decision',documents:{AAA:'paid_document'}},costMinor:'250'}};
+    await C.freeze({runId:'saved_checkpoint',context:cp,admin:W.fake});
+    const ref=W.fake.col(W.C.jobs).doc('saved_job');
+    await ref.set({jobId:'saved_job',runId:id,task:'premarket_manager',status:'dead',attempts:5,payload:{tradingDate:day},checkpoint:{stage:'research',data:{paperCheckpointRef:'saved_checkpoint'}},lastError:{code:'SIMULATION_RESEARCH_INCOMPLETE',message:'HANDOFF_BUY_WITHOUT_EVIDENCE'}});
+    const r=await W.mutate('runManagerReview',{reason:'OPERATOR'});assert.equal(r.statusCode,200,JSON.stringify(r.body));assert.equal(r.body.data.runId,id);assert.equal(r.body.data.resumed,true);
+    const saved=(await ref.get()).data();assert.equal(saved.attempts,0);assert.equal(saved.status,'queued');assert.equal(saved.recoveryHistory[0].attempts,5);assert.equal(saved.checkpoint.data.paperCheckpointRef,'saved_checkpoint');
+    assert.equal((await C.read({runId:'saved_checkpoint',admin:W.fake})).data.costMinor,'250');
+    const again=await W.mutate('runManagerReview',{reason:'OPERATOR'});assert.equal(again.statusCode,200);assert.equal(again.body.data.duplicate,true);assert.equal(again.body.data.jobId,'saved_job');
+    return true;
+  }));
+
   cases.push(fixture("paper_daily_allowance_reset_preserves_charges_and_expires",async()=>{
     const assert=require('assert/strict'),W=apiWorld(),O=require('./_investorOpenai');
     const health=(await W.read('systemHealth')).body.data;
@@ -4280,8 +4341,15 @@ function runFixtures() {
     assert.equal(O.effectiveDailyCeiling(b,day,1000),1971);
     assert.equal(O.effectiveDailyCeiling(b,'2099-01-01',1000),1000);
     const after=(await W.read('systemHealth')).body.data;
-    assert.equal(after.spend.actual.amountMinor,'971');
+    assert.equal(after.spend.actual.amountMinor,'0');assert.equal(after.spend.dailyLimit.amountMinor,'1000');
     assert.equal(after.spend.remaining.amountMinor,'988');
+    const gateway=O.withDeps({admin:W.fake,now:()=>W.nowMs});
+    assert.equal((await gateway.reserveMinor('after_reset',988,'manager')).ok,true);
+    assert.equal((await gateway.reserveMinor('over_reset',1,'manager')).ok,false);
+    await gateway.settleMinor('after_reset',988,{},'manager');
+    const used=(await W.read('systemHealth')).body.data.spend;
+    assert.equal(used.actual.amountMinor,'988');assert.equal(used.dailyLimit.amountMinor,'1000');assert.equal(used.remaining.amountMinor,'0');
+    assert.equal((await ref.get()).data().spentMinor,1959);
     return true;
   }));
 
@@ -4300,7 +4368,7 @@ function runFixtures() {
     const assert=require('assert/strict'),Paper=require('./_investorPaperProcess'),O=require('./_investorOpenai'),H=require('./_investorResearchHandoff'),G=require('./_investorManager');
     const W=meetingWorld({reviewMissing:[],synthesisBuy:false});await W.seed();
     W.deps.decisionProcess={version:Paper.VERSION,companyRange:'top1',min:1,max:1,strategy:null,settingsRevision:0,preparedResearch:true};
-    const calls=[],baseReview=W.deps.gateway.reviewUniverse;
+    let decisionOutputs=0;const calls=[],baseReview=W.deps.gateway.reviewUniverse;
     const gateway=O.withDeps({admin:W.fake,env:{OPENAI_API_KEY:'fixture'},now:()=>W.t0,fetchImpl:async(url,opts)=>{
       assert.equal(require('./_investorAdmin').currentScope(),null);assert.equal(opts.method,'POST');const b=JSON.parse(opts.body),name=b.text.format.name,user=b.input.find(x=>x.role==='user').content;calls.push(b);
       const data=label=>JSON.parse(user.match(new RegExp('<untrusted_context name="'+label+'">\\n([\\s\\S]*?)\\n</untrusted_context>'))[1]);let output;
@@ -4324,10 +4392,17 @@ function runFixtures() {
     let sourceRepairs=0;W.deps.preparePaperEvidence=async symbol=>{sourceRepairs++;return {symbol,completedAtMs:W.t0,errors:[]};};
     const first=await G.runManagerMeeting({claim,deps:W.deps,control:{engineMode:'manager'}});assert(first.yielded);assert.equal(first.checkpoint.data.handoff.phase,'decision');
     const resume=structuredClone(first.checkpoint);await Paper.create({admin:W.fake}).save('owner',{companyRange:'range3',strategyVersionId:'baseline',revision:0});delete W.deps.decisionProcess;
-    const last=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
+    for(const failure of [{ok:false,error:'output_truncated',retryable:false},{ok:false,error:'daily_reservation_exhausted',budgetBlocked:true}]){
+      const stopped=await G.runManagerMeeting({claim:{...claim,checkpoint:structuredClone(resume)},deps:{...W.deps,gateway:{...gateway,decidePreparedPortfolio:async()=>({...failure,requestId:'saved_failure',costMinor:'7'})}},control:{engineMode:'manager'}});
+      assert(stopped.done&&stopped.failed);assert.equal(stopped.checkpoint.data.handoff.phase,'decision');
+      assert.deepEqual(stopped.checkpoint.data.handoff.documents,resume.data.handoff.documents);assert.equal(BigInt(stopped.summary.costMinor),BigInt(resume.data.costMinor)+7n);
+      assert.equal(stopped.summary.noBuyReasons[0].code,failure.budgetBlocked?'BUDGET_EXHAUSTED':'MODEL_FAILURE');
+    }
+    const invalid=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(invalid.yielded);assert.equal(invalid.reason,'astra_completion_pending');
+    const last=await G.runManagerMeeting({claim:{...claim,checkpoint:invalid.checkpoint},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
     assert.equal(sourceRepairs,1);assert.deepEqual((await C.read({runId:'paper_parity_research_AAA',admin:W.fake})).packet,missing);
     assert.equal(last.checkpoint.data.handoff.recoveredPackets.AAA.packetId,'paper_parity_research_AAA_current_sources_v1');
-    assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,4);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
+    assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,5);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
     assert.equal(W.calls.research,0);assert.equal(W.calls.synthesis,0);assert.equal(last.checkpoint.data.synthesis.holdingAnalysis[0].symbol,'BBB');
     const charged=await gateway.spendToday();assert(charged.spentMinor>0);assert.equal(Number(last.summary.costMinor),charged.spentMinor);
     assert.equal([...W.fake.docs.keys()].filter(k=>k.startsWith('InvestorAI_SimulationRuns/')).length,0);return true;
@@ -4356,7 +4431,7 @@ function runFixtures() {
     W.deps.decisionProcess={version:Paper.VERSION,companyRange:'top1',min:1,max:1,strategy:null,settingsRevision:0,preparedResearch:true,investmentPolicy:require('./_investorSimulationHorizon').policyFor('top1',null,{shared:true})};
     W.deps.preparePaperEvidence=async symbol=>({symbol,completedAtMs:W.t0,errors:[]});
     await W.fake.col(W.fake.COL.control).doc('control').set({engineMode:'manager',accountMode:'PAPER_AI',accountId:'paper-1'});
-    const calls=[],baseReview=W.deps.gateway.reviewUniverse;
+    let decisionOutputs=0;const calls=[],baseReview=W.deps.gateway.reviewUniverse;
     const gateway=O.withDeps({admin:W.fake,env:{OPENAI_API_KEY:'fixture'},now:()=>W.t0,fetchImpl:async(url,opts)=>{
       assert.equal(require('./_investorAdmin').currentScope(),null);assert.equal(opts.method,'POST');const b=JSON.parse(opts.body),name=b.text.format.name,user=b.input.find(x=>x.role==='user').content;calls.push(b);
       const data=label=>JSON.parse(user.match(new RegExp('<untrusted_context name="'+label+'">\\n([\\s\\S]*?)\\n</untrusted_context>'))[1]);let output;
@@ -4366,8 +4441,11 @@ function runFixtures() {
       else if(name==='prepared_research_document_v1'){const source=data('source_packet');assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence incomplete',evidenceIds:[],missing:['Insufficient evidence']}]))};}
       else if(name==='simulation_investment_plan_v1'){
         const doc=data('prepared_documents')[0];assert.equal(b.reasoning.effort,'medium');assert.equal(b.max_output_tokens,36000);assert(!b.tools);
-        assert(b.input.find(x=>x.role==='system').content.includes('INVESTMENT MANDATE last-resort.v1'));
+        assert(b.input.find(x=>x.role==='system').content.includes('INVESTMENT MANDATE '+require('./_investorSimulationHorizon').CASH_POLICY));
         output={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Evidence is insufficient; retain cash and existing protection.',investments:{AAA:{decision:'PASS',decisionReason:'Evidence incomplete',allocationUsd:0,conviction:'LOW',sizingReason:'No new allocation',holdingSessions:1,holdingReason:'No entry',horizonAnalysis:Object.fromEntries([1,2,3].map(n=>['session'+n,{expectedReturnBps:0,downsideBps:100,opportunityCostBps:0,uncertaintyPenaltyBps:100,evidenceConfidence:'LOW',reason:'No supported positive return'}])),takeProfitBps:100,stopLossBps:100,assessment:Object.fromEntries(H.SECTIONS.map(k=>[k,'Missing evidence'])),outlook:'Uncertain',evidenceIds:[]}}};
+        decisionOutputs++;
+        if(decisionOutputs===1){output.investments.AAA.decision='BUY';output.investments.AAA.allocationUsd=5000;for(const h of Object.values(output.investments.AAA.horizonAnalysis))h.expectedReturnBps=1000;}
+        else{assert.equal(b.reasoning.context,'all_turns');assert(b.input.at(-1).content.includes('Baseline references alone do not qualify'));assert(b.input.some(i=>i.role==='assistant'));}
       }
       else if(name==='prepared_investment_decision_v1'){
         assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'medium');assert(!b.tools);assert.equal(data('prepared_documents').length,1);assert.equal(data('holdings')[0].symbol,'BBB');
@@ -4383,8 +4461,15 @@ function runFixtures() {
     const claim={runId:'paper_parity',payload:{accountId:'paper-1',tradingDate:'2026-09-04'}};
     const first=await G.runManagerMeeting({claim,deps:W.deps,control:{engineMode:'manager'}});assert(first.yielded);assert.equal(first.checkpoint.data.handoff.phase,'decision');
     const resume=structuredClone(first.checkpoint);await Paper.create({admin:W.fake}).save('owner',{companyRange:'range3',strategyVersionId:'baseline',revision:0});delete W.deps.decisionProcess;
-    const last=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
-    assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,4);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
+    for(const failure of [{ok:false,error:'output_truncated',retryable:false},{ok:false,error:'daily_reservation_exhausted',budgetBlocked:true}]){
+      const stopped=await G.runManagerMeeting({claim:{...claim,checkpoint:structuredClone(resume)},deps:{...W.deps,gateway:{...gateway,decidePreparedPortfolio:async()=>({...failure,requestId:'saved_failure',costMinor:'7'})}},control:{engineMode:'manager'}});
+      assert(stopped.done&&stopped.failed);assert.equal(stopped.checkpoint.data.handoff.phase,'decision');
+      assert.deepEqual(stopped.checkpoint.data.handoff.documents,resume.data.handoff.documents);assert.equal(BigInt(stopped.summary.costMinor),BigInt(resume.data.costMinor)+7n);
+      assert.equal(stopped.summary.noBuyReasons[0].code,failure.budgetBlocked?'BUDGET_EXHAUSTED':'MODEL_FAILURE');
+    }
+    const invalid=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(invalid.yielded);assert.equal(invalid.reason,'astra_completion_pending');
+    const last=await G.runManagerMeeting({claim:{...claim,checkpoint:invalid.checkpoint},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
+    assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,5);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
     assert.equal(W.calls.research,0);assert.equal(W.calls.synthesis,0);assert.equal(last.checkpoint.data.simulationPlan.investments.AAA.decision,'PASS');
     const decisions=[...W.fake.docs.entries()].filter(([k])=>k.startsWith(W.fake.COL.managerDecisions+'/')).map(([,d])=>d._codec?require('./_investorStorageCodec').decode(d):d);assert.equal(decisions.find(d=>d.symbol==='BBB').decision,'HOLD');
     assert.equal([...W.fake.docs.entries()].filter(([k,d])=>k.startsWith(W.fake.COL.portfolioPlans+'/')&&d.policy?.coreVersion).length,1);
@@ -5276,7 +5361,10 @@ function runFixtures() {
     d=(await W.read('managerDashboard')).body.data;assert.equal(step('research').state,'complete');assert.equal(step('synthesis').state,'running');assert.equal(step('synthesis').progress.completed,0);
     for(let i=0;i<310;i++)await W.fake.col(W.C.jobs).doc('old_'+String(i).padStart(3,'0')).set({jobId:'old_'+i,task:'premarket_manager',status:'complete',enqueuedAtMs:W.nowMs-10000});
     await W.fake.col(W.C.jobs).doc('zz_active').set({jobId:'zz_active',runId:id,task:'premarket_manager',status:'yielded_resumable',lastHeartbeatAtMs:W.nowMs-2000,enqueuedAtMs:W.nowMs});
-    const jobs=(await W.read('jobs',{pageSize:50})).body.data.items;assert.equal(jobs[0].jobId,'zz_active');assert.equal(Date.parse(jobs[0].heartbeatAt),W.nowMs-2000);
+    await W.fake.col(W.C.jobs).doc('zz_lease').set({kind:'run_lease',jobId:'zz_active',runId:id});
+    const jobs=(await W.read('jobs',{pageSize:50})).body.data.items;assert.equal(jobs[0].jobId,'zz_active');assert.equal(jobs[0].task,'premarket_manager');assert.equal(Date.parse(jobs[0].heartbeatAt),W.nowMs-2000);
+    await W.fake.col(W.C.jobs).doc('zz_active').set({lastError:{message:'Combined research and investment decision failed: output_truncated'}},{merge:true});
+    d=(await W.read('managerDashboard')).body.data;assert.equal(step('synthesis').state,'failed');assert.match(step('synthesis').detail,/output_truncated/);assert.equal(step('research').state,'complete');
     await M.writeRun({admin:W.fake,managerRunId:id,status:'complete',stage:'complete',buys:[],activation:{status:'COMMITTED'}});
     d=(await W.read('managerDashboard')).body.data;assert.equal(step('execution').state,'skipped');assert.match(step('execution').detail,/AI chose cash/);
     return true;
