@@ -4333,6 +4333,23 @@ function runFixtures() {
     assert.equal([...W.fake.docs.keys()].filter(k=>k.startsWith('InvestorAI_SimulationRuns/')).length,0);return true;
   }));
 
+  cases.push(fixture("shared_cash_last_resort_policy_preserves_saved_reviews",()=>{
+    const assert=require('assert/strict'),H=require('./_investorSimulationHorizon'),Hand=require('./_investorResearchHandoff');
+    for(const range of Object.keys(H.RANGES)){
+      const next=H.policyFor(range,null,{shared:true}),saved={...next};delete saved.cashPolicy;
+      assert.equal(next.cashPolicy,H.CASH_POLICY);assert.deepEqual(Hand.supportedInvestmentPolicy(next),next);
+      assert.deepEqual(Hand.supportedInvestmentPolicy(saved),saved);
+      assert.equal(Hand.supportedInvestmentPolicy({...next,cashPolicy:'unknown'}),null);
+      assert.equal(Hand.supportedInvestmentPolicy({...next,maxTotalUsd:1000000}),null);
+      assert(!H.sharedInstructions(saved,'decidePreparedPortfolio').includes('last-resort.v1'));
+      assert(H.sharedInstructions(next,'decidePreparedPortfolio').includes('small position in the strongest finalist'));
+      assert(H.sharedInstructions(next,'decidePreparedPortfolio').includes('Risk limits, source honesty and execution eligibility still take precedence'));
+      assert.deepEqual(next.riskMandate,saved.riskMandate);assert.equal(next.minUsd,5000);
+      const legacy=H.policyFor(range);assert(!legacy.cashPolicy);assert.deepEqual(Hand.supportedInvestmentPolicy(legacy),legacy);
+    }
+    return true;
+  }));
+
   cases.push(fixture("shared_paper_meeting_uses_joint_buy_pass_plan_and_preserves_holdings",async()=>{
     const assert=require('assert/strict'),Paper=require('./_investorPaperProcess'),O=require('./_investorOpenai'),H=require('./_investorResearchHandoff'),G=require('./_investorManager');
     const W=meetingWorld({reviewMissing:[],synthesisBuy:false});await W.seed();
@@ -4349,6 +4366,7 @@ function runFixtures() {
       else if(name==='prepared_research_document_v1'){const source=data('source_packet');assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence incomplete',evidenceIds:[],missing:['Insufficient evidence']}]))};}
       else if(name==='simulation_investment_plan_v1'){
         const doc=data('prepared_documents')[0];assert.equal(b.reasoning.effort,'medium');assert.equal(b.max_output_tokens,36000);assert(!b.tools);
+        assert(b.input.find(x=>x.role==='system').content.includes('INVESTMENT MANDATE last-resort.v1'));
         output={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Evidence is insufficient; retain cash and existing protection.',investments:{AAA:{decision:'PASS',decisionReason:'Evidence incomplete',allocationUsd:0,conviction:'LOW',sizingReason:'No new allocation',holdingSessions:1,holdingReason:'No entry',horizonAnalysis:Object.fromEntries([1,2,3].map(n=>['session'+n,{expectedReturnBps:0,downsideBps:100,opportunityCostBps:0,uncertaintyPenaltyBps:100,evidenceConfidence:'LOW',reason:'No supported positive return'}])),takeProfitBps:100,stopLossBps:100,assessment:Object.fromEntries(H.SECTIONS.map(k=>[k,'Missing evidence'])),outlook:'Uncertain',evidenceIds:[]}}};
       }
       else if(name==='prepared_investment_decision_v1'){

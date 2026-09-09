@@ -135,7 +135,7 @@ function validateJoint(output, packets, heldSymbols=[], expansionBlocked=false, 
 const INVESTMENT_POLICY = Object.freeze({version:'required-investment.v1',minUsd:5000,maxUsd:30000,maxCompanies:2,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
 const DIVERSIFIED_POLICY = Object.freeze({version:'required-investment.v2',minUsd:5000,maxUsd:30000,minCompanies:4,maxCompanies:7,maxTotalUsd:95000,entry:'FIRST_AVAILABLE_SESSION_PRICE'});
 function supportedInvestmentPolicy(policy) {
-  if(policy?.version==='shared-investment.v1'){try{const canonical=require('./_investorSimulationHorizon').policyFor(policy.companyRange,policy.strategy||null,{shared:true,riskMandate:policy.riskMandate});return C.hash(canonical)===C.hash(policy)?canonical:null;}catch{return null;}}
+  if(policy?.version==='shared-investment.v1'){try{const canonical=require('./_investorSimulationHorizon').policyFor(policy.companyRange,policy.strategy||null,{shared:true,riskMandate:policy.riskMandate,cashPolicy:Object.hasOwn(policy,'cashPolicy')?policy.cashPolicy:null});return C.hash(canonical)===C.hash(policy)?canonical:null;}catch{return null;}}
   if(policy?.version==='required-investment.v4'){try{const canonical=require('./_investorSimulationHorizon').policyFor(policy.companyRange,policy.strategy);return C.hash(canonical)===C.hash(policy)?canonical:null;}catch{return null;}}
   return [INVESTMENT_POLICY,DIVERSIFIED_POLICY,...Object.keys(require('./_investorSimulationHorizon').RANGES).map(r=>require('./_investorSimulationHorizon').policyFor(r))].find(p=>policy?.version===p.version&&C.hash(policy)===C.hash(p))||null;
 }
