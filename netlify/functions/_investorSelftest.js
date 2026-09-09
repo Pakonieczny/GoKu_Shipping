@@ -3112,14 +3112,14 @@ function runFixtures() {
     const P = require("./_investorPolicy");
     /* Routing: Luna extracts, Sol decides at high effort, Terra is gone, and
        no model may filter the roster before Sol sees it. */
-    if (P.ROLE_MODELS.facts.model !== "gpt-5.6-luna" || P.ROLE_MODELS.manager.model !== "gpt-6-astra") return false;
+    if (P.ROLE_MODELS.facts.model !== "gpt-5.6-terra" || P.ROLE_MODELS.manager.model !== "gpt-6-astra") return false;
     if (P.ROLE_MODELS.manager.reasoning.effort !== "high") return false;
-    if (!P.FORBIDDEN_INVESTMENT_MODELS.includes("gpt-5.6-terra") || P.ROSTER_FILTER_MODELS_ALLOWED.length !== 0) return false;
+    if (P.FORBIDDEN_INVESTMENT_MODELS.includes("gpt-5.6-terra") || P.ROSTER_FILTER_MODELS_ALLOWED.length !== 0) return false;
     /* Identity is stable and every schema has a hash. */
     const a = P.policyIdentity(), b = P.policyIdentity();
     for (const h of [a.policyHash, a.riskPolicyHash, a.modelPolicyHash, a.costPolicyHash]) if (!/^[a-f0-9]{64}$/.test(h)) return false;
     if (a.policyHash !== b.policyHash || Object.keys(a.schemaHashes).length !== 11) return false;
-    if (a.calendarId !== "XNYS" || P.POLICY_VERSION !== "fund-manager-v2") return false;
+    if (a.calendarId !== "XNYS" || P.POLICY_VERSION !== "fund-manager-v3-terra-high") return false;
     /* The §7.1 worked example validates; a JSON number at a money boundary,
        an unknown field, a fractional share and INCREASE do not. */
     const ex = P.EXAMPLE_MANDATE_PROPOSAL;
@@ -3968,7 +3968,7 @@ function runFixtures() {
     /* exact cost from the published rates: 50k ordinary input × $4/M + 8k output × $20/M = $0.36 */
     if (r.costMinor !== "90") throw new Error(`cost ${r.costMinor}`);
     const spend = await G.spendToday();
-    if (spend.spentMinor !== 90 || spend.reservedMinor !== 0 || spend.calls !== 1 || spend.tokens.reasoning !== 6000 || spend.byRole.manager !== 1) throw new Error(`ledger ${JSON.stringify(spend)}`);
+    if (spend.spentMinor !== 90 || spend.reservedMinor !== 0 || spend.calls !== 1 || spend.tokens.reasoning !== 6000 || spend.byRole.manager.calls !== 1) throw new Error(`ledger ${JSON.stringify(spend)}`);
     const rec = await G.readRequest(r.requestIds[0]);
     if (!rec || rec.status !== "complete" || rec.responseId !== "resp_bg1" && !rec.responseId) throw new Error("request record");
     for (const k of ["promptHash", "schemaHash", "policyHash", "contextManifestHash", "tokens", "costMinor", "latencyMs", "returnedModel", "reasoningEffort", "outputHash"]) if (rec[k] == null) throw new Error(`record missing ${k}`);
@@ -3980,7 +3980,7 @@ function runFixtures() {
     if (O.ROLE_OF.reviewUniverse !== "manager" || O.ROLE_OF.extractFacts !== "facts" || O.ROLE_OF.verifyClaimsIndependently !== "verification") throw new Error("role map");
     for (const fn of Object.keys(O.ROLE_OF)) { const m = P.ROLE_MODELS[O.ROLE_OF[fn]].model; if (P.FORBIDDEN_INVESTMENT_MODELS.includes(m)) throw new Error(`${fn} routes to a forbidden model`); }
     for (const fn of ["reviewUniverse", "researchCompany", "finalizePortfolio", "reviseEntry", "reviseHolding", "finalizeEventRevision", "repairCoverageStructure"]) if (P.ROLE_MODELS[O.ROLE_OF[fn]].model !== "gpt-6-astra") throw new Error(`${fn} is not Sol`);
-    if (O.MODELS.classify.model !== "gpt-5.6-luna" || /terra/.test(JSON.stringify(O.MODELS))) throw new Error("legacy table still names Terra");
+    if (O.MODELS.classify.model !== "gpt-5.6-terra" || O.MODELS.classify.reasoning.effort !== "high") throw new Error("legacy table still names Terra");
     return true;
   }));
 
@@ -4152,7 +4152,7 @@ function runFixtures() {
     if ((await G.researchCompany({ dossier, cutoffMs })).error !== "buy_without_mandate") throw new Error("BUY without mandate accepted");
     /* extraction: only verbatim quotes survive; a paraphrase is dropped and reported */
     const text = "Net revenue for the quarter was $1.21 billion, up 14% year over year. We now expect full year revenue of $4.0 billion to $4.2 billion.";
-    t = scriptedTransport([completed("gpt-5.6-luna", { schemaVersion: "fact-extraction.v1", abstained: false, abstainReason: "", contradictions: [], claims: [
+    t = scriptedTransport([completed("gpt-5.6-terra", { schemaVersion: "fact-extraction.v1", abstained: false, abstainReason: "", contradictions: [], claims: [
       { claimType: "GUIDANCE", text: "FY revenue guide", quote: "expect full year revenue of $4.0 billion to $4.2 billion", documentRef: "v1", effectivePeriod: "FY2026", metric: "revenue", lowValue: "4000000000", highValue: "4200000000", unit: "USD", date: null, confirmed: null, supersedesHint: null },
       { claimType: "FACT", text: "Revenue rose 14%", quote: "revenue increased fourteen percent", documentRef: "v1", effectivePeriod: null, metric: null, lowValue: null, highValue: null, unit: null, date: null, confirmed: null, supersedesHint: null },
       { claimType: "FACT", text: "x", quote: "up 14% year over year", documentRef: "v_unknown", effectivePeriod: null, metric: null, lowValue: null, highValue: null, unit: null, date: null, confirmed: null, supersedesHint: null },
@@ -4161,11 +4161,11 @@ function runFixtures() {
     const ex = await G.extractFacts({ documentVersions: [{ versionId: "v1", canonicalText: text, sourceId: "sec.latest", form: "8-K" }], symbol: "ABC" });
     if (ex.ok !== true || ex.claims.length !== 1 || ex.claims[0].claimType !== "GUIDANCE" || ex.claims[0].documentVersionId !== "v1" || ex.dropped.length !== 2) throw new Error(`extraction ${JSON.stringify(ex).slice(0, 300)}`);
     if (!ex.dropped.some((d) => d.dropReason === "quote_not_found_verbatim") || !ex.dropped.some((d) => d.dropReason === "unknown_document_reference")) throw new Error("drop reasons");
-    if (t.calls[0].body.model !== "gpt-5.6-luna" || t.calls[0].body.reasoning) throw new Error("extraction did not route to Luna without reasoning");
+    if (t.calls[0].body.model !== "gpt-5.6-terra" || t.calls[0].body.reasoning?.effort !== "high") throw new Error("extraction did not route to Luna without reasoning");
     /* Luna cost at $0.20/M in + $1.20/M out: 3000 in, 500 out → $0.0012 → 0 cents, recorded exactly in nano-dollars */
-    if (ex.costMinor !== "0") throw new Error(`luna cost ${ex.costMinor}`);
+    if (ex.costMinor !== "1") throw new Error(`luna cost ${ex.costMinor}`);
     /* nothing survived verification → extraction incomplete, not an empty finding */
-    t = scriptedTransport([completed("gpt-5.6-luna", { schemaVersion: "fact-extraction.v1", abstained: false, abstainReason: "", contradictions: [], claims: [
+    t = scriptedTransport([completed("gpt-5.6-terra", { schemaVersion: "fact-extraction.v1", abstained: false, abstainReason: "", contradictions: [], claims: [
       { claimType: "FACT", text: "x", quote: "this sentence is not in the document", documentRef: "v1", effectivePeriod: null, metric: null, lowValue: null, highValue: null, unit: null, date: null, confirmed: null, supersedesHint: null }] })]);
     G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
     const none = await G.extractFacts({ documentVersions: [{ versionId: "v1", canonicalText: text }], symbol: "ABC" });
@@ -4321,10 +4321,12 @@ function runFixtures() {
     await C.freeze({runId:'saved_checkpoint',context:cp,admin:W.fake});
     const ref=W.fake.col(W.C.jobs).doc('saved_job');
     await ref.set({jobId:'saved_job',runId:id,task:'premarket_manager',status:'dead',attempts:5,payload:{tradingDate:day},checkpoint:{stage:'research',data:{paperCheckpointRef:'saved_checkpoint'}},lastError:{code:'SIMULATION_RESEARCH_INCOMPLETE',message:'HANDOFF_BUY_WITHOUT_EVIDENCE'}});
-    const r=await W.mutate('runManagerReview',{reason:'OPERATOR'});assert.equal(r.statusCode,200,JSON.stringify(r.body));assert.equal(r.body.data.runId,id);assert.equal(r.body.data.resumed,true);
+    const wrong=await W.mutate('runManagerReview',{reason:'OPERATOR',resumeRunId:'different_review'});assert.equal(wrong.statusCode,409);assert.equal((await ref.get()).data().status,'dead');
+    const r=await W.mutate('runManagerReview',{reason:'OPERATOR',resumeRunId:id});assert.equal(r.statusCode,200,JSON.stringify(r.body));assert.equal(r.body.data.runId,id);assert.equal(r.body.data.resumed,true);
     const saved=(await ref.get()).data();assert.equal(saved.attempts,0);assert.equal(saved.status,'queued');assert.equal(saved.recoveryHistory[0].attempts,5);assert.equal(saved.checkpoint.data.paperCheckpointRef,'saved_checkpoint');
     assert.equal((await C.read({runId:'saved_checkpoint',admin:W.fake})).data.costMinor,'250');
-    const again=await W.mutate('runManagerReview',{reason:'OPERATOR'});assert.equal(again.statusCode,200);assert.equal(again.body.data.duplicate,true);assert.equal(again.body.data.jobId,'saved_job');
+    const again=await W.mutate('runManagerReview',{reason:'OPERATOR',resumeRunId:id});assert.equal(again.statusCode,200);assert.equal(again.body.data.duplicate,true);assert.equal(again.body.data.jobId,'saved_job');
+    await ref.set({status:'complete'},{merge:true});const ended=await W.mutate('runManagerReview',{reason:'OPERATOR',resumeRunId:id});assert.equal(ended.statusCode,409);
     return true;
   }));
 
@@ -4372,9 +4374,9 @@ function runFixtures() {
     const gateway=O.withDeps({admin:W.fake,env:{OPENAI_API_KEY:'fixture'},now:()=>W.t0,fetchImpl:async(url,opts)=>{
       assert.equal(require('./_investorAdmin').currentScope(),null);assert.equal(opts.method,'POST');const b=JSON.parse(opts.body),name=b.text.format.name,user=b.input.find(x=>x.role==='user').content;calls.push(b);
       const data=label=>JSON.parse(user.match(new RegExp('<untrusted_context name="'+label+'">\\n([\\s\\S]*?)\\n</untrusted_context>'))[1]);let output;
-      if(name==='paper_shortlist_v1'){assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');assert.deepEqual(data('eligible_source_cards').map(x=>x.symbol),['AAA','CCC']);output={schemaVersion:'paper-shortlist.v1',selected:['AAA','CCC']};}
+      if(name==='paper_shortlist_v1'){assert.equal(b.model,'gpt-5.6-terra');assert.equal(b.reasoning.effort,'high');assert.deepEqual(data('eligible_source_cards').map(x=>x.symbol),['AAA','CCC']);output={schemaVersion:'paper-shortlist.v1',selected:['AAA','CCC']};}
       else if(name==='universe_review_v1'){const m=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]),r=await baseReview({cards:data('universe_cards'),universeManifest:m,holdings:data('holding_packets')});output={schemaVersion:'universe-review.v1',universeVersion:m.universeVersion,universeHash:m.universeHash,eligibleCount:3,coverage:r.coverage,holdingAnalysis:r.holdingAnalysis,researchRequests:r.researchRequests,managerNote:'One top finalist; existing holding retained.'};}
-      else if(name==='prepared_research_document_v1'){const source=data('source_packet');assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence incomplete',evidenceIds:[],missing:['Insufficient evidence']}]))};}
+      else if(name==='prepared_research_document_v1'){const source=data('source_packet');assert.equal(b.model,'gpt-5.6-terra');assert.equal(b.reasoning.effort,'high');output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence incomplete',evidenceIds:[],missing:['Insufficient evidence']}]))};}
       else if(name==='prepared_investment_decision_v1'){
         assert.equal(b.model,'gpt-6-astra');assert.equal(b.reasoning.effort,'medium');assert(!b.tools);assert.equal(data('prepared_documents').length,1);assert.equal(data('holdings')[0].symbol,'BBB');
         const memo={schemaVersion:'research-memo.v1',symbol:'AAA',asOf:new Date(data('prepared_documents')[0].cutoffMs).toISOString(),checklist:Object.fromEntries(['business','whatChanged','agreementDisagreement','risks','valuationFramework','disconfirmingEvidence','returnAndHorizon','versusAlternatives','mandateOrAbstain'].map(k=>[k,'Insufficient dated evidence.'])),factualPremises:[],inferences:[],valuation:null,bearCase:'Uncertain return',thesisHealth:'UNKNOWN',proposedDecision:'WATCH',reasonCode:'UNCERTAINTY',mandate:null};
@@ -4398,14 +4400,42 @@ function runFixtures() {
       assert.deepEqual(stopped.checkpoint.data.handoff.documents,resume.data.handoff.documents);assert.equal(BigInt(stopped.summary.costMinor),BigInt(resume.data.costMinor)+7n);
       assert.equal(stopped.summary.noBuyReasons[0].code,failure.budgetBlocked?'BUDGET_EXHAUSTED':'MODEL_FAILURE');
     }
-    const invalid=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(invalid.yielded);assert.equal(invalid.reason,'astra_completion_pending');
-    const last=await G.runManagerMeeting({claim:{...claim,checkpoint:invalid.checkpoint},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
+    const last=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
     assert.equal(sourceRepairs,1);assert.deepEqual((await C.read({runId:'paper_parity_research_AAA',admin:W.fake})).packet,missing);
     assert.equal(last.checkpoint.data.handoff.recoveredPackets.AAA.packetId,'paper_parity_research_AAA_current_sources_v1');
-    assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,5);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
+    assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,4);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
     assert.equal(W.calls.research,0);assert.equal(W.calls.synthesis,0);assert.equal(last.checkpoint.data.synthesis.holdingAnalysis[0].symbol,'BBB');
     const charged=await gateway.spendToday();assert(charged.spentMinor>0);assert.equal(Number(last.summary.costMinor),charged.spentMinor);
     assert.equal([...W.fake.docs.keys()].filter(k=>k.startsWith('InvestorAI_SimulationRuns/')).length,0);return true;
+  }));
+
+  cases.push(fixture("unowned_paper_news_does_not_purchase_standalone_research",async()=>{
+    const assert=require('assert/strict'),fake=fakeAdmin(),C=require('./_investorDecisionContext');
+    await C.freeze({runId:'event_test_event_inputs',admin:fake,context:{state:{kind:'NONHOLDING_NO_ENTRY'},packet:{ok:true},policy:{},portfolio:{},marks:{},cutoffMs:1}});
+    const out=await require('./_investorManager').runEventRevision({claim:{jobId:'event_test',payload:{accountId:'paper-1',symbol:'AME'}},control:{accountMode:'PAPER_AI'},deps:{admin:fake,gateway:{researchCompany:async()=>{throw Error('Must not purchase automatic research for an unowned company');}}}});
+    assert.equal(out.decision,'DEFERRED_TO_NEXT_REVIEW');return true;
+  }));
+
+  cases.push(fixture("operator_pause_blocks_new_ai_posts_without_changing_budget_or_execution",async()=>{
+    const assert=require('assert/strict'),fake=fakeAdmin(),O=require('./_investorOpenai');let calls=0;
+    await fake.col(fake.COL.control).doc('control').set({managerState:'PAUSED',accountMode:'PAPER_AI',executorState:'MONITORING',budget:{dailyReservationMinor:'1000'}});
+    const gateway=O.withDeps({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async()=>{calls++;throw Error('must not call provider');}});
+    const r=await gateway.extractFacts({symbol:'AME',documentVersions:[{versionId:'f1',canonicalText:'Reported revenue increased by ten percent this quarter.'}]});
+    assert.equal(calls,0);assert.equal(r.ok,false);assert.equal((await gateway.spendToday()).reservedMinor,0);assert.equal((await gateway.spendToday()).spentMinor,0);
+    assert.equal((await fake.col(fake.COL.control).doc('control').get()).data().executorState,'MONITORING');return true;
+  }));
+
+  cases.push(fixture("terra_high_and_whole_filing_evidence_survive_preparation",async()=>{
+    const assert=require('assert/strict'),P=require('./_investorPolicy'),T=require('./_investorResearchTools'),H=require('./_investorResearchHandoff');
+    assert.equal(P.ROLE_MODELS.facts.model,'gpt-5.6-terra');assert.equal(P.ROLE_MODELS.facts.reasoning.effort,'high');assert.equal(P.ROLE_MODELS.verification.reasoning.effort,'high');
+    assert.equal(P.ROLE_MODELS.manager.model,'gpt-6-astra');assert.equal(P.costMinor({model:'gpt-5.6-terra',ordinaryInputTokens:100000,outputTokens:10000}).amountMinor,'32');
+    const facts=Array.from({length:100},(_,i)=>({factId:'f'+i,filedDate:'2026-09-01',concept:'Revenue',valueScaled:'12345',unit:'USD',detail:'x'.repeat(100)}));
+    const bound=T.allowlisted({filings:async()=>({facts,lineage:facts.map(f=>({factId:f.factId,accession:'dated-sec-record'}))})},{...P.TOOL_POLICY,maxResultBytes:2000},{symbol:'AAA',cutoffMs:Date.UTC(2026,8,9)});
+    const filings=await bound.tools.getFilingFactsAsOf.execute({symbol:'AAA',asOfMs:Date.UTC(2026,8,9),concepts:[]});
+    assert(filings.truncated&&filings.facts.length>0&&filings.facts.length<100);assert(Buffer.byteLength(JSON.stringify(filings))<=2000);
+    const source=H.sourcePacket({symbol:'AAA',cutoffMs:Date.UTC(2026,8,9),dossierVersionId:'dossier',claims:[]},{filings});
+    const doc=H.bindDocument({schemaVersion:'prepared-research-document.v1',symbol:'AAA',sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Uncited summary',evidenceIds:[],missing:[]}]))},source);
+    assert.equal(doc.evidence.filter(e=>e.kind==='financial_fact').length,filings.facts.length);assert(doc.missing.some(x=>x.truncated));H.assertDocument(doc);return true;
   }));
 
   cases.push(fixture("shared_cash_last_resort_policy_preserves_saved_reviews",()=>{
@@ -4436,9 +4466,9 @@ function runFixtures() {
       assert.equal(require('./_investorAdmin').currentScope(),null);assert.equal(opts.method,'POST');const b=JSON.parse(opts.body),name=b.text.format.name,user=b.input.find(x=>x.role==='user').content;calls.push(b);
       const data=label=>JSON.parse(user.match(new RegExp('<untrusted_context name="'+label+'">\\n([\\s\\S]*?)\\n</untrusted_context>'))[1]);let output;
       if(name==='shared_shortlist_v1'){output={schemaVersion:'shared-shortlist.v1',assessments:Object.fromEntries(JSON.parse(user).map((p,i)=>[p.symbol,{rank:i+1,reason:'Dated priority'}]))};}
-      else if(name==='paper_shortlist_v1'){assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');assert.deepEqual(data('eligible_source_cards').map(x=>x.symbol),['AAA','CCC']);output={schemaVersion:'paper-shortlist.v1',selected:['AAA','CCC']};}
+      else if(name==='paper_shortlist_v1'){assert.equal(b.model,'gpt-5.6-terra');assert.equal(b.reasoning.effort,'high');assert.deepEqual(data('eligible_source_cards').map(x=>x.symbol),['AAA','CCC']);output={schemaVersion:'paper-shortlist.v1',selected:['AAA','CCC']};}
       else if(name==='universe_review_v1'){const m=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]),r=await baseReview({cards:data('universe_cards'),universeManifest:m,holdings:data('holding_packets')});output={schemaVersion:'universe-review.v1',universeVersion:m.universeVersion,universeHash:m.universeHash,eligibleCount:3,coverage:r.coverage,holdingAnalysis:r.holdingAnalysis,researchRequests:r.researchRequests,managerNote:'One top finalist; existing holding retained.'};}
-      else if(name==='prepared_research_document_v1'){const source=data('source_packet');assert.equal(b.model,'gpt-5.6-luna');assert.equal(b.reasoning.effort,'medium');output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence incomplete',evidenceIds:[],missing:['Insufficient evidence']}]))};}
+      else if(name==='prepared_research_document_v1'){const source=data('source_packet');assert.equal(b.model,'gpt-5.6-terra');assert.equal(b.reasoning.effort,'high');output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(H.SECTIONS.map(k=>[k,{summary:'Evidence incomplete',evidenceIds:[],missing:['Insufficient evidence']}]))};}
       else if(name==='simulation_investment_plan_v1'){
         const doc=data('prepared_documents')[0];assert.equal(b.reasoning.effort,'medium');assert.equal(b.max_output_tokens,36000);assert(!b.tools);
         assert(b.input.find(x=>x.role==='system').content.includes('INVESTMENT MANDATE '+require('./_investorSimulationHorizon').CASH_POLICY));
@@ -5312,6 +5342,24 @@ function runFixtures() {
     return { fake, C, nowMs, run, policy, symbols, S, V2, read, mutate, ctrl, commit };
   }
 
+  cases.push(fixture("operator_paper_test_runs_shared_fills_once_and_preserves_ai_pass",async()=>{
+    const assert=require('assert/strict'),W=apiWorld(),P=require('./_investorPolicy'),H=require('./_investorSimulationHorizon'),E=require('./_investorExecution');
+    const held=W.fake.docs.get(W.C.positions+'/paper-1_BBB');Object.assign(held,{lossBoundaryPriceMicros:'47000000',markMicros:'50000000',stopLossBps:600});
+    const at=W.nowMs,policy=H.policyFor('top1',null,{shared:true}),investment={decision:'PASS',decisionReason:'Missing source support',allocationUsd:0,stopLossBps:300,takeProfitBps:600,conviction:'LOW'};
+    const content={schemaVersion:'simulation-investment-plan.v1',policy,cutoffMs:at-3600000,sessions:H.sessions('2026-09-04'),investments:{CCC:investment},liquidityBySymbol:{CCC:{advMinor:'100000000000'}}},plan={...content,planHash:P.sha256(content)};
+    await W.fake.col(W.C.portfolioPlans).doc('saved_pass').set({...plan,accountId:'paper-1',managerRunId:'original',createdAtMs:at-3600000});
+    const args={symbol:'CCC',sourcePlanId:'saved_pass'},first=await W.mutate('runPaperPurchaseTest',args);assert.equal(first.statusCode,200,JSON.stringify(first.body));
+    const again=await W.mutate('runPaperPurchaseTest',args);assert.equal(again.statusCode,200);assert.equal(first.body.data.planId,again.body.data.planId);
+    assert.equal((await W.fake.col(W.C.portfolioPlans).doc('saved_pass').get()).data().investments.CCC.decision,'PASS');
+    const bar={t:new Date(at).toISOString(),o:100,h:101,l:99,c:100,v:1000000},provenance={CCC:{provider:'alpaca',timeframe:'5Min',feed:'delayed_sip'}};
+    await E.tickSharedPaper({admin:W.fake,accountId:'paper-1',control:W.ctrl(),barsBySymbol:{CCC:[bar]},provenanceBySymbol:provenance,nowMs:at+20*60000});
+    await E.tickSharedPaper({admin:W.fake,accountId:'paper-1',control:W.ctrl(),barsBySymbol:{CCC:[bar]},provenanceBySymbol:provenance,nowMs:at+21*60000});
+    const pos=(await W.fake.col(W.C.positions).doc('paper-1_CCC').get()).data();assert(pos.open&&pos.protectionAcknowledged);assert.equal(pos.decisionAuthority,'OPERATOR_PAPER_TEST');assert(pos.excludeFromLearning);
+    assert.equal([...W.fake.docs.values()].filter(f=>f.schemaVersion==='fill.v2'&&f.symbol==='CCC').length,1);assert((await E.assertConservation('paper-1',{admin:W.fake})).pass);
+    W.ctrl().buyState='FROZEN';assert.equal((await W.mutate('runPaperPurchaseTest',args)).statusCode,409);
+    return true;
+  }));
+
   cases.push(fixture("novice_overview_uses_net_capital_and_free_cash_without_double_reservations", async () => {
     const W = apiWorld(), first = (await W.read("managerDashboard")).body;
     if (!first.ok) throw Error(JSON.stringify(first.error));
@@ -5391,7 +5439,7 @@ function runFixtures() {
     const S = require("./_investorApiSchemas");
     const c = S.compileAll();
     if (!c || c.count < 60) throw new Error(`compiled ${c && c.count}`);
-    if (S.READ_ACTIONS.length !== 31 || S.MUTATION_ACTIONS.length !== 37) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
+    if (S.READ_ACTIONS.length !== 31 || S.MUTATION_ACTIONS.length !== 38) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
     const req = (body) => S.validateRequest(body);
     const base = { apiVersion: "investor.v2", requestId: "req_0000000001" };
     if (!req({ ...base, action: "companies", params: { pageSize: 200, bucket: "eligible" } }).ok) throw new Error("valid read rejected");
@@ -7255,17 +7303,17 @@ async function simulatorAdversarial({only=null}={}) {
     const cutoffMs=Date.UTC(2026,6,1,12,30),symbols=Array.from({length:55},(_,i)=>'S'+i),roster={symbols,eligibleCount:55,universeHash:'source55',members:symbols.map(symbol=>({symbol,company:symbol,sector:'Technology'})),excluded:[]};
     const D=require('./_investorDossier'),packets=symbols.map(symbol=>({symbol,daily:{date:['2026-06-29','2026-06-30','2026-07-02'],c:[100,110,99999],v:[100,200,1]},data:[{collection:A.COL.dossierVersions,id:symbol,knownAtMs:cutoffMs-1000,data:D.composeVersion({symbol,identity:{symbol,name:symbol,sector:'Technology'},asOfMs:cutoffMs-1000})},{collection:A.COL.documents,id:symbol+'_future',knownAtMs:cutoffMs+1,data:{title:'FUTURE_SECRET'}},{collection:A.COL.documents,id:symbol+'_past',knownAtMs:cutoffMs-1000,data:{title:'Historical filing'}}]}));
     const config={roster,aiPlan:Sim.AI_PLAN},selected=symbols.slice(0,50).map(symbol=>({symbol,reason:'Recent observed volume increased'}));let sent;
-    const x=await metered(async(url,opts)=>{if(opts.method==='POST'){sent=JSON.parse(opts.body);return {ok:true,status:200,json:async()=>({id:'shortlist_fixture',model:'gpt-5.6-luna',status:'in_progress'})};}return {ok:true,status:200,json:async()=>({...completed,id:'shortlist_fixture',model:'gpt-5.6-luna',service_tier:'default',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({selected})}]}]})};});
+    const x=await metered(async(url,opts)=>{if(opts.method==='POST'){sent=JSON.parse(opts.body);return {ok:true,status:200,json:async()=>({id:'shortlist_fixture',model:'gpt-5.6-terra',status:'in_progress'})};}return {ok:true,status:200,json:async()=>({...completed,id:'shortlist_fixture',model:'gpt-5.6-terra',service_tier:'default',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({selected})}]}]})};});
     Object.assign(x.run,{clockMs:cutoffMs,aiPlan:Sim.AI_PLAN});await x.ref.set(x.run);
     const save=async fields=>{await x.ref.set(fields,{merge:true});Object.assign(x.run,fields);},progress=[];
     const opts={request:args=>x.meter.request({...args,stage:'shortlist'}),save,onProgress:async p=>progress.push(p)};
-    assert.equal(await x.svc.prepareShortlist(x.run,config,packets,opts),null);assert.equal(x.posts(),1);assert.equal(sent.model,'gpt-5.6-luna');assert.equal(sent.reasoning.effort,'low');assert.equal(sent.max_output_tokens,24000);assert.equal(sent.service_tier,'default');assert(!JSON.stringify(sent).includes('FUTURE_SECRET'));assert(!JSON.stringify(sent).includes('99999'));
+    assert.equal(await x.svc.prepareShortlist(x.run,config,packets,opts),null);assert.equal(x.posts(),1);assert.equal(sent.model,'gpt-5.6-terra');assert.equal(sent.reasoning.effort,'high');assert.equal(sent.max_output_tokens,24000);assert.equal(sent.service_tier,'default');assert(!JSON.stringify(sent).includes('FUTURE_SECRET'));assert(!JSON.stringify(sent).includes('99999'));
     const pending=(await x.ref.get()).data();assert.equal(pending.spentNano,0);assert(pending.reservedNano>0);assert.equal(pending.pendingAiCount,1);
     await x.ref.set({paused:true},{merge:true});await x.meter.drain();await x.ref.set({paused:false},{merge:true});
-    const result=await x.svc.prepareShortlist(x.run,config,packets,opts);assert.equal(result.selected.length,50);assert.equal(result.reasoning,'low');assert.equal(x.posts(),1);assert.equal(result.cutoffMs,cutoffMs);
+    const result=await x.svc.prepareShortlist(x.run,config,packets,opts);assert.equal(result.selected.length,50);assert.equal(result.reasoning,'high');assert.equal(x.posts(),1);assert.equal(result.cutoffMs,cutoffMs);
     const roster50=Sim.shortlistedRoster(roster,result);assert.equal(roster50.eligibleCount,50);assert.equal(roster50.members.length,50);assert.equal(roster50.excluded.length,5);assert.equal(roster.symbols.length,55);assert.notEqual(roster50.universeHash,roster.universeHash);
     const again=await x.svc.prepareShortlist(x.run,config,[],opts);assert.deepEqual(again,result);assert.equal(x.posts(),1);
-    const settled=(await x.ref.get()).data();assert.equal(settled.reservedNano,0);assert.equal(settled.pendingAiCount,0);assert.equal(settled.spentNano,1400000);assert.equal(settled.costByStage.shortlist.spentNano,1400000);assert.equal(settled.costByStage.shortlist.requests,1);
+    const settled=(await x.ref.get()).data();assert.equal(settled.reservedNano,0);assert.equal(settled.pendingAiCount,0);assert.equal(settled.spentNano,14000000);assert.equal(settled.costByStage.shortlist.spentNano,14000000);assert.equal(settled.costByStage.shortlist.requests,1);
     for(const bad of [{selected:selected.slice(1)},{selected:[...selected.slice(1),selected[1]]},{selected:[...selected.slice(1),{symbol:'NOT_ELIGIBLE',reason:'bad'}]}])assert.throws(()=>Sim.validateShortlist(bad,roster,50),e=>e.code==='SIMULATION_SHORTLIST_INVALID');
     const earlier=Sim.shortlistProfiles(packets,roster,cutoffMs-2000),later=Sim.shortlistProfiles(packets,roster,cutoffMs);assert.equal(earlier[0].researchAsOfMs,null);assert(later[0].recentFilings.length>0);assert.equal(later[0].price,110);assert.equal(later[0].volumeRatio,2);assert.equal(later[0].returnsBps['1d'],'1000');assert.notEqual(require('./_investorDecisionContext').hash(earlier),require('./_investorDecisionContext').hash(later));
   });
@@ -7276,7 +7324,7 @@ async function simulatorAdversarial({only=null}={}) {
       if(url.endsWith('/input_tokens'))return {ok:true,status:200,json:async()=>({input_tokens:12000})};
       assert.equal(opts.method,'POST');const b=JSON.parse(opts.body),user=b.input.find(x=>x.role==='user').content;calls.push(b);
       let output;
-      if(b.model==='gpt-5.6-luna') {const input=JSON.parse(user);assert.equal(input.profiles.length,304);assert(input.profiles.every(row=>row[5]===100));selected=input.profiles.slice(0,50).map(row=>({symbol:row[0],reason:'Historical profile selected for deeper comparison'}));output={selected};}
+      if(b.model==='gpt-5.6-terra') {const input=JSON.parse(user);assert.equal(input.profiles.length,304);assert(input.profiles.every(row=>row[5]===100));selected=input.profiles.slice(0,50).map(row=>({symbol:row[0],reason:'Historical profile selected for deeper comparison'}));output={selected};}
       else {assert.equal(b.model,'gpt-6-astra');assert.equal(b.max_output_tokens,10640);assert.equal(b.reasoning.effort,'high');const m=JSON.parse(user.match(/UNIVERSE_MANIFEST=(.*)/)[1]);assert.equal(m.symbols.length,50);assert.deepEqual([...m.symbols].sort(),selected.map(x=>x.symbol).sort());output={schemaVersion:'universe-review.v1',universeVersion:m.universeVersion,universeHash:m.universeHash,eligibleCount:50,coverage:m.symbols.map(symbol=>({symbol,reviewDirective:'NONE',provisionalDisposition:'IGNORE',reason:'No edge in fixture',changedSincePrior:false,reasonCode:null})),holdingAnalysis:[],researchRequests:[],managerNote:calls.length===2?'x'.repeat(1201):'No investment justified by fixture'};assert.equal(b.text.format.schema.properties.managerNote.maxLength,1200);assert.equal(b.text.format.schema.properties.universeHash.pattern,'^[a-f0-9]{64}$');}
       savedResponse={id:'resp_pipeline_'+calls.length,model:b.model,status:'completed',service_tier:b.service_tier,usage:{input_tokens:12000,output_tokens:3000,output_tokens_details:{reasoning_tokens:1000}},output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(output)}]}]};
       return {ok:true,status:200,json:async()=>({...savedResponse,usage:null})};
@@ -7356,7 +7404,7 @@ async function simulatorAdversarial({only=null}={}) {
           coverage:m.symbols.map(symbol=>({symbol,reviewDirective:finalists.includes(symbol)?'RESEARCH_NOW':'NONE',provisionalDisposition:finalists.includes(symbol)?'WATCH':'IGNORE',reason:'Historical research priority',changedSincePrior:false,reasonCode:null})),holdingAnalysis:[],
           researchRequests:finalists.map((symbol,i)=>({symbol,researchPriority:i+1,completionClass:'BUY_REQUIRED',reason:'Investigate the historical evidence',reviewDirective:'RESEARCH_NOW'})),managerNote:'Research both finalists before portfolio planning'};
       } else if(name==='prepared_research_document_v1') {
-        assert.equal(b.model,'gpt-5.6-luna');assert(!b.tools);
+        assert.equal(b.model,'gpt-5.6-terra');assert(!b.tools);
         const source=JSON.parse(user.match(/<untrusted_context name="source_packet">\n([\s\S]*?)\n<\/untrusted_context>/)[1]);
         assert(source.catalog.some(c=>c.kind==='claim'),'pipeline must exercise real nonempty citation catalogs');
         output={schemaVersion:'prepared-research-document.v1',symbol:source.baseline.symbol,sections:Object.fromEntries(require('./_investorResearchHandoff').SECTIONS.map(k=>[k,{summary:'Available historical evidence is limited.',evidenceIds:[source.catalog.find(c=>c.kind==='claim').citationId||source.catalog.find(c=>c.kind==='claim').id],missing:['Insufficient evidence for a firm investment thesis']}]))};

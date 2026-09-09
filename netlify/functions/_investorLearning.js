@@ -259,7 +259,7 @@ async function actualTradeOutcome({record,series,nowMs,admin}) {
   if(record.decision !== "BUY" || !record.conditionalForecast) return null;
   if(!record.mandateVersionId) return {status:"UNKNOWN_ENTRY_LINEAGE",scoring:null};
   const D=db(admin), all=rows(await D.col(D.COL.fills).where("symbol","==",record.symbol).get())
-    .filter(f=>f.accountId===record.accountId && Number(f.receivedAtMs || f.eventAtMs)<=nowMs);
+    .filter(f=>!f.excludeFromLearning && f.accountId===record.accountId && Number(f.receivedAtMs || f.eventAtMs)<=nowMs);
   const entries=all.filter(f=>f.mandateVersionId===record.mandateVersionId && f.role === "ENTRY").sort((a,b)=>a.eventAtMs-b.eventAtMs);
   const fillScoring=record.entryExpiryMs && nowMs>=record.entryExpiryMs ? {probabilityPpm:record.fillProbabilityByExpiryPpm,occurred:entries.some(f=>Number(f.eventAtMs)<=record.entryExpiryMs),basis:"ENTRY_FILLED_BY_AUTHORIZED_EXPIRY"} : null;
   if(!entries.length) return {status:"NOT_FILLED",scoring:null,fillScoring,fillProbabilityByExpiryPpm:record.fillProbabilityByExpiryPpm,

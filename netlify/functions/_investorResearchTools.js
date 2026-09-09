@@ -49,6 +49,16 @@ const TOOL_SCHEMAS = Object.freeze({
 
 function sha(v) { return crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(POLICY.canonical(v))).digest("hex"); }
 function bounded(value, maxBytes) {
+  // Keep whole, usable SEC facts within the bound; a JSON string fragment is not evidence.
+  if(Array.isArray(value?.facts) && Buffer.byteLength(JSON.stringify(value),'utf8')>maxBytes) {
+    const kept={...value,facts:[],lineage:[],truncated:true,omittedFactCount:value.facts.length};
+    for(const fact of value.facts) {
+      const next={...kept,facts:[...kept.facts,fact],lineage:[...kept.lineage,...(value.lineage||[]).filter(l=>l.factId===fact.factId)],omittedFactCount:value.facts.length-kept.facts.length-1};
+      if(Buffer.byteLength(JSON.stringify(next),'utf8')>maxBytes)continue;
+      Object.assign(kept,next);
+    }
+    return {value:kept,truncated:true,bytes:Buffer.byteLength(JSON.stringify(kept),'utf8')};
+  }
   const text = JSON.stringify(value === undefined ? null : value);
   if (Buffer.byteLength(text, "utf8") <= maxBytes) return { value, truncated: false, bytes: Buffer.byteLength(text, "utf8") };
   return { value: { truncated: true, note: `result exceeded ${maxBytes} bytes; narrow the request`, head: text.slice(0, Math.floor(maxBytes / 2)) }, truncated: true, bytes: Buffer.byteLength(text, "utf8") };
@@ -98,7 +108,8 @@ function productionBindings({ accountId, admin = null, policy = POLICY.loadActiv
       // Replay uses the issuer identity in the released historical dossier. A
       // successor can keep the ticker while its SEC CIK changes (for example XOM).
       const historical = require('./_investorAdmin').currentScope() && D ? await D.versionAsOf(symbol,{cutoffMs:asOfMs,admin}) : null;
-      const row = historical?.identity?.cik ? historical.identity : rosterRow(symbol);
+      const packetIdentity = decisionPacket?.symbol===symbol && decisionPacket?.cutoffMs<=asOfMs ? decisionPacket.identity : null;
+      const row = historical?.identity?.cik ? historical.identity : packetIdentity?.cik ? packetIdentity : rosterRow(symbol);
       if (!row || !row.cik) return { missing: true, reason: "no CIK resolved for symbol" };
       const r = await F.getFilingFactsAsOf({ cik: row.cik, concepts, asOfMs, limit: 400 });
       const visible=r.facts.filter(f=>Number(f.retrievedAtMs)>0 && Number(f.retrievedAtMs)<=asOfMs);

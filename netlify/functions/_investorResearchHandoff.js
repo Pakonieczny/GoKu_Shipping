@@ -51,7 +51,7 @@ function preparationWire(source) {
     if(!ids.length)section.properties.evidenceIds.maxItems=0;
   }
   schema.properties.symbol={type:'string',enum:[source.baseline.symbol]};
-  return {source:{...source,catalog},schema,instructions:'In every evidenceIds array, select only the exact citationId values (source:0, source:1, etc.) from this packet. Never write raw claimId, factId, document IDs or invented names there. Baseline and supplemental entries point to the attached fields. Leave evidenceIds empty when no supplied record supports the summary, and describe the missing information. This citation format supersedes the earlier catalog-id instruction.'};
+  return {source:{...source,catalog},schema,instructions:'In every evidenceIds array, select only the exact citationId values (source:0, source:1, etc.) from this packet. Never write raw claimId, factId, document IDs or invented names there. Baseline and supplemental entries point to the attached fields. Leave evidenceIds empty when no supplied record supports the summary, and describe the missing information. Every material financial conclusion should cite a supplied financial_fact or claim when available. Astra receives all supplied claims and financial facts, including records not mentioned in these summaries. This citation format supersedes the earlier catalog-id instruction.'};
 }
 function bindDocument(output, source, {recoverReferences=false}={}) {
   const errors=P.validateAgainst(SCHEMAS['prepared-research-document.v1'],output);
@@ -80,9 +80,9 @@ function bindDocument(output, source, {recoverReferences=false}={}) {
     } else sections[key]={...section,evidenceIds:[...new Set(ids)]};
   }
   const recovered=recovery.discardedSections.length>0;
-  const ids=[...new Set([...Object.values(sections).flatMap(x=>x.evidenceIds),...catalog.filter(x=>recovered||x.kind==='claim'&&['GUIDANCE','EARNINGS_DATE','RISK_FACTOR','CONTRADICTION'].includes(x.claimType)).map(x=>x.id)])];
+  const ids=[...new Set([...Object.values(sections).flatMap(x=>x.evidenceIds),...catalog.filter(x=>recovered||['claim','financial_fact'].includes(x.kind)).map(x=>x.id)])];
   const document={version:VERSION,symbol:output.symbol,cutoffMs:source.baseline.cutoffMs,
-    preparationLabel:'Luna summaries are navigation and interpretation, not independently verified evidence. Use the attached exact source records.',
+    preparationLabel:'Preparation summaries are navigation and interpretation, not independently verified evidence. Use the attached exact source records. A BUY requires a saved dossier and at least one genuinely thesis-supporting claim or financial_fact citation from evidence; baseline references alone do not qualify.',
     sections,baseline:source.baseline,evidence:ids.map(id=>byId.get(id)),missing:source.missing,
     decisionData:source.decisionData,sourceHash:C.hash(source)};
   if(recovered||recovery.normalizedReferences.length)document.referenceRecovery=recovery;

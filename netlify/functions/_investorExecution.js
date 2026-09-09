@@ -660,7 +660,7 @@ async function tickInvestmentPlan({admin=null,accountId,control={},barsBySymbol=
           position={accountId,symbol,open:true,quantityUnits:quantity.toString(),qty:Number(quantity),costBasisMinor:total.toString(),costBasisCents:Number(total),
             entryPriceUsd:Number(entryPx)/1e6,avgCostMicros:(total*10000n/quantity).toString(),openedAt:bar.t,
             positionLifecycleId:sha([accountId,planHash,symbol]).slice(0,32),schemaVersion:'position.v2',engineVersion:ENGINE_VERSION,
-            decisionAuthority:plan.policy.coreVersion?'SHARED_AI_PLAN':'ASTRA_REQUIRED_SIMULATION',...(plan.policy.coreVersion?{coreVersion:plan.policy.coreVersion,protectionAcknowledged:true}:{}),mandateVersionId:planHash,orderSetId:setId,
+            decisionAuthority:plan.operatorTest?'OPERATOR_PAPER_TEST':plan.policy.coreVersion?'SHARED_AI_PLAN':'ASTRA_REQUIRED_SIMULATION',...(plan.operatorTest?{operatorTest:true,excludeFromLearning:true}:{}),...(plan.policy.coreVersion?{coreVersion:plan.policy.coreVersion,protectionAcknowledged:true}:{}),mandateVersionId:planHash,orderSetId:setId,
             takeProfitPriceMicros:(entryPx+entryPx*BigInt(takeProfitBps)/10000n).toString(),
             lossBoundaryPriceMicros:(entryPx-entryPx*BigInt(stopLossBps)/10000n).toString(),
             emergencyStopPriceMicros:(entryPx-entryPx*BigInt(Math.min(9500,stopLossBps*Number(STOP_GRACE_MULTIPLE)))/10000n).toString(),stopGraceUntilMs:at+STOP_GRACE_MS,protectionState:plan.policy.coreVersion?'SHARED_ACTIVE':'SIMULATION_ACTIVE',
@@ -701,9 +701,9 @@ async function tickInvestmentPlan({admin=null,accountId,control={},barsBySymbol=
             notionalMinor:f.notional.toString(),feeMinor:f.fee.toString(),realizedMinor:f.realized.toString(),eventAtMs:f.side==='buy'||openStop||openTarget?at:at+300000,receivedAtMs:nowMs,
             ...(f.side==='sell'?{exitTiming:openStop||openTarget?'BAR_OPEN':f.role==='TIME_LIMIT'?'BAR_CLOSE':'WITHIN_BAR',exitEarliestAtMs:openStop||openTarget?at:f.role==='TIME_LIMIT'?at+300000:at,exitLatestAtMs:openStop||openTarget?at:at+300000}:{}),
             ...(schedule?{holdingSessions:investment.holdingSessions,holdingDeadlineMs:deadline}:{}),source:scope.paper?'paper':'historical_simulation',provenance:provenanceBySymbol[symbol]||null,engineVersion:ENGINE_VERSION,basis:f.basis,bar,ambiguous:!!f.ambiguous,mandateVersionId:planHash,positionLifecycleId:position.positionLifecycleId,
-            orderSetId:setId,legId:setId+'_'+f.role,decisionAuthority:plan.policy.coreVersion?'SHARED_AI_PLAN':'ASTRA_REQUIRED_SIMULATION'});
+            orderSetId:setId,legId:setId+'_'+f.role,decisionAuthority:plan.operatorTest?'OPERATOR_PAPER_TEST':plan.policy.coreVersion?'SHARED_AI_PLAN':'ASTRA_REQUIRED_SIMULATION',...(plan.operatorTest?{operatorTest:true,excludeFromLearning:true}:{})});
           tx.set(D.col(D.COL.ledger).doc(fillId),{txnId:fillId,accountId,kind:'manager_fill',legs:f.legs,meta:{fillId,symbol,planHash},postedAtMs:nowMs});
-          if(f.side==='sell')tx.set(D.col(D.COL.trades).doc(position.positionLifecycleId),{schemaVersion:'trade.v2',accountId,symbol,openedAt:position.openedAt,closedAt:position.closedAt,realizedMinor:position.realizedMinor,exitRole:f.role,mandateVersionId:planHash});
+          if(f.side==='sell')tx.set(D.col(D.COL.trades).doc(position.positionLifecycleId),{schemaVersion:'trade.v2',accountId,symbol,...(plan.operatorTest?{decisionAuthority:'OPERATOR_PAPER_TEST',operatorTest:true,excludeFromLearning:true}:{}),openedAt:position.openedAt,closedAt:position.closedAt,realizedMinor:position.realizedMinor,exitRole:f.role,mandateVersionId:planHash});
         }
         tx.set(accountRef,{balanceCents:balance,balanceRevision:(account.balanceRevision||0)+1,balanceUpdatedAtMs:nowMs},{merge:true});
         tx.set(posRef,position);
@@ -759,7 +759,7 @@ async function saveSharedPaperPlan({plan,admin=null,accountId,managerRunId,nowMs
       if(x.decision==='PASS')continue;if(blocked.has(symbol))throw typed('SHARED_DUPLICATE_SYMBOL',symbol);
       const amount=Math.max(0,Math.min(Math.floor(x.allocationUsd*(plan.policy.strategy?.rules?.allocationScalePct||100)),balance.cash||0));
       const setId='shared_'+planHash.slice(0,20)+'_'+symbol;
-      tx.set(D.col(D.COL.orderSets).doc(setId),{orderSetId:setId,planId,planHash,accountId,symbol,coreVersion:plan.policy.coreVersion,purpose:'SHARED_AI_PLAN',authority:'SHARED_AI_PLAN',status:'AWAITING_STRATEGY_ENTRY',entered:false,reservedMinor:String(amount),createdAtMs:nowMs,expiresAtMs:plan.sessions[0].closeMs,legs:[],version:1});
+      tx.set(D.col(D.COL.orderSets).doc(setId),{orderSetId:setId,planId,planHash,accountId,symbol,coreVersion:plan.policy.coreVersion,purpose:plan.operatorTest?'OPERATOR_PAPER_TEST':'SHARED_AI_PLAN',authority:plan.operatorTest?'OPERATOR_PAPER_TEST':'SHARED_AI_PLAN',status:'AWAITING_STRATEGY_ENTRY',entered:false,reservedMinor:String(amount),createdAtMs:nowMs,expiresAtMs:plan.sessions[0].closeMs,legs:[],version:1});
       balance.cash=(balance.cash||0)-amount;balance.reserved=(balance.reserved||0)+amount;reserved+=amount;
     }
     if(reserved){tx.set(accountRef,{balanceCents:balance,balanceRevision:(acct.data().balanceRevision||0)+1},{merge:true});tx.set(D.col(D.COL.ledger).doc(planId+'_reserve'),{accountId,txnId:planId+'_reserve',kind:'SHARED_PLAN_RESERVE',legs:[{account:ACCT.CASH,amountCents:-reserved},{account:ACCT.RESERVED,amountCents:reserved}],postedAtMs:nowMs});}

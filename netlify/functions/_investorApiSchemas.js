@@ -189,7 +189,8 @@ const ACTIONS_V2 = Object.freeze({
   /* mutations */
   pauseManager: mutation({ ...acct }, { requiresReason: true }),
   resumeManager: mutation({ ...acct }),
-  runManagerReview: mutation({ ...acct, reason: T.str({ enum: ["OPERATOR"] }) }, { required: ["reason"], concurrency: "none" }),
+  runPaperPurchaseTest: mutation({ ...acct, symbol:T.ref("Symbol"), sourcePlanId:T.ref("Id") }, { required:["symbol","sourcePlanId"], concurrency:"none" }),
+  runManagerReview: mutation({ ...acct, resumeRunId: T.ref("Id"), reason: T.str({ enum: ["OPERATOR"] }) }, { required: ["reason"], concurrency: "none" }),
   requestResearch: mutation({ symbol: T.ref("Symbol"), directive: T.str({ enum: ["RESEARCH_NOW", "UPDATE_EXISTING", "FULL_REUNDERWRITE"] }) }, { required: ["symbol"], concurrency: "none" }),
   runFocusedRevision: mutation({ symbol: T.ref("Symbol"), deltaId: T.ref("Id") }, { required: ["symbol", "deltaId"], concurrency: "none" }),
   pauseMandate: mutation({ mandateSeriesId: T.ref("Id"), symbol: T.ref("Symbol"), pauseKind: T.enumOf("PauseKind") }, { required: ["mandateSeriesId", "symbol", "pauseKind"], requiresReason: true }),

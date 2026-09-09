@@ -445,7 +445,7 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
       if(st.paperProcess) {
         PAPER.researchBounds(r.researchRequests,st.paperProcess,st.shortlist,st.workset.rows.filter(r=>r.held||r.pending).map(r=>r.symbol));
         const reviewedSet=new Set(reviewed.map(c=>c.symbol));
-        r.coverage=[...r.coverage,...cards.cards.filter(c=>!reviewedSet.has(c.symbol)).map(c=>({symbol:c.symbol,reviewDirective:'NONE',provisionalDisposition:'IGNORE',changedSincePrior:false,reasonCode:null,reason:'Not shortlisted by Luna for this meeting; no Astra underwriting.'}))];
+        r.coverage=[...r.coverage,...cards.cards.filter(c=>!reviewedSet.has(c.symbol)).map(c=>({symbol:c.symbol,reviewDirective:'NONE',provisionalDisposition:'IGNORE',changedSincePrior:false,reasonCode:null,reason:'Not shortlisted by Terra for this meeting; no Astra underwriting.'}))];
       }
       addCost(r.costMinor);
       st.requestIds = [...(st.requestIds || []), ...(r.requestIds || [])];
@@ -518,7 +518,7 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
           if(deps.checkpoint)await deps.checkpoint({stage,data:st});
           await record({research:{requested:requests.length,completed:st.handoff.phase==='complete'?st.research.completed.length:st.handoff.completedResearch.length,
             failed:0,deferred:0,documentsPrepared:Object.keys(st.handoff.documents).length,phase:st.handoff.phase,
-            detail:st.handoff.phase==='sources'?`Refreshing current sources for ${Object.keys(st.handoff.liveSources||{}).length} of ${requests.length} finalists`:st.handoff.phase==='complete'?'Research and investment decision saved':st.handoff.phase==='decision'?'Astra is comparing the prepared research':`Luna prepared ${Object.keys(st.handoff.documents).length} of ${requests.length} research documents`}});
+            detail:st.handoff.phase==='sources'?`Refreshing current sources for ${Object.keys(st.handoff.liveSources||{}).length} of ${requests.length} finalists`:st.handoff.phase==='complete'?'Research and investment decision saved':st.handoff.phase==='decision'?'Astra is comparing the prepared research':`Terra prepared ${Object.keys(st.handoff.documents).length} of ${requests.length} research documents`}});
         };
         if(st.paperProcess?.investmentPolicy?.coreVersion&&!st.handoff.liveCutoff){
           st.handoff.liveSources=st.handoff.liveSources||{};
@@ -588,7 +588,7 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
             await saveHandoff();
             const prepared=await deps.gateway.prepareResearchDocument({source});
             if(prepared.pending)return yieldNow('luna_document_pending');
-            if(!prepared.ok)throw Object.assign(Error('Luna research document failed: '+prepared.error),{code:'SIMULATION_RESEARCH_INCOMPLETE',details:{failed:[{symbol:request.symbol,error:prepared.error,responseId:prepared.responseId}]}});
+            if(!prepared.ok)throw Object.assign(Error('Terra research document failed: '+prepared.error),{code:'SIMULATION_RESEARCH_INCOMPLETE',details:{failed:[{symbol:request.symbol,error:prepared.error,responseId:prepared.responseId}]}});
             document=prepared.document;
             const documentId=packetId+'_prepared_'+document.documentHash.slice(0,24);
             await C.freeze({runId:documentId,context:{document,requestId:prepared.requestId,responseId:prepared.responseId},admin:deps.admin});
@@ -873,6 +873,8 @@ async function runEventRevision({ claim, deps: partial = {}, control = null } = 
     frozen=await C.freeze({runId:inputId,admin:deps.admin,context:{cutoffMs,policy,state,prior,packet,portfolio,marks,thesisHistory:await R.history(symbol,{admin:deps.admin,cutoffMs,openedAtMs:Date.parse(state.position && state.position.openedAt || "") || null})}});
   }
   const {cutoffMs,policy,state,prior,packet,portfolio,marks}=frozen;
+  if((control?.accountMode||control?.mode)==='PAPER_AI' && state.kind==='NONHOLDING_NO_ENTRY')
+    return {ok:true,symbol,decision:'DEFERRED_TO_NEXT_REVIEW',reason:'New public evidence is saved. Unowned companies are compared in the next explicit or scheduled paper review, not paid standalone intraday research.'};
   if(!packet.ok) return {ok:false,symbol,reason:packet.reason,decision:"ABSTAIN",reasonCode:"DATA_INCOMPLETE"};
   const bound = deps.tools ? deps.tools.allowlisted(deps.toolBindings || deps.tools.productionBindings({ accountId, admin:deps.admin, policy, portfolio, marks, decisionPacket:packet, sectorOf:sectorLookup(deps) }), policy.toolPolicy, { symbol, cutoffMs }) : { tools: null, log: [] };
   const persistResearch = async (r) => R.persistImmutable({ ...r, dossierVersionId: packet.dossierVersionId, dossierHash: packet.dossierHash }, { admin: deps.admin, managerRunId: claim.runId || null, directive: "EVENT", cutoffMs });

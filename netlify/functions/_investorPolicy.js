@@ -14,7 +14,7 @@
  *  can therefore prove which policy produced it.
  *
  *  WHAT IS HERE
- *   · ROLE_MODELS      fixed model routing (§3): Luna extracts, Sol decides.
+ *   · ROLE_MODELS      fixed model routing (§3): Terra extracts, Astra decides.
  *   · MODEL_RATES      published token prices (§9.2) as nano-dollars per token
  *                      — integer strings, never floats — and the cost formula
  *                      of §9.3.
@@ -45,7 +45,7 @@
 
 const crypto = require("crypto");
 
-const POLICY_VERSION = "fund-manager-v2";
+const POLICY_VERSION = "fund-manager-v3-terra-high";
 const CALENDAR_ID = "XNYS";
 const ACCOUNT_CURRENCY = "USD";
 
@@ -70,16 +70,14 @@ function deepFreeze(o) {
 
 /* ── §3 FIXED MODEL ROUTING ────────────────────────────────────────────── */
 const ROLE_MODELS = deepFreeze({
-  facts: { model: "gpt-5.6-luna", authority: "extract_source_bound_facts_only" },
-  verification: { model: "gpt-5.6-luna", authority: "independent_claim_verification_only" },
+  facts: { model: "gpt-5.6-terra", reasoning: { effort: "high" }, authority: "extract_source_bound_facts_only" },
+  verification: { model: "gpt-5.6-terra", reasoning: { effort: "high" }, authority: "independent_claim_verification_only" },
   manager: { model: "gpt-6-astra", reasoning: { effort: "high" },
     authority: "investment_decision_and_standing_mandate" },
   postmortem: { model: "gpt-5.6-sol", reasoning: { effort: "medium" }, authority: "offline_evaluation_only" },
 });
-/* Terra is removed from the investment path (§3). Versioned paper meetings and
-   historical simulations opt into Luna screening/preparation followed by Astra
-   medium joint underwriting; legacy checkpoints retain the routing above. */
-const FORBIDDEN_INVESTMENT_MODELS = Object.freeze(["gpt-5.6-terra"]);
+/* Terra high screens, extracts and verifies. Astra retains investment authority. */
+const FORBIDDEN_INVESTMENT_MODELS = Object.freeze([]);
 const ROSTER_FILTER_MODELS_ALLOWED = Object.freeze([]);
 
 /* ── §9.2 PUBLISHED TOKEN PRICES, nano-dollars per token ───────────────── */
@@ -95,6 +93,11 @@ const MODEL_RATES = deepFreeze({
     longContextInputMultiplierBps: "20000", longContextOutputMultiplierBps: "15000",
     pricingAsOf: "2026-09-03", promotionalThrough: "2026-11-21",
     source: "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+  },
+  "gpt-5.6-terra": {
+    inputNanoPerToken: "2000", cacheWriteNanoPerToken: "2500", cachedReadNanoPerToken: "200", outputNanoPerToken: "12000",
+    longContextThresholdTokens: 272000, longContextInputMultiplierBps: "20000", longContextOutputMultiplierBps: "15000",
+    pricingAsOf: "2026-09-09", promotionalThrough: null, source: "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
   },
   "gpt-5.6-luna": {
     inputNanoPerToken: "200", cacheWriteNanoPerToken: "250",
@@ -185,7 +188,7 @@ function budgetPolicy() {
       "never cancel existing protective orders to save AI cost",
       "finish the current holding revision before considering new opportunities",
       "defer low-priority research and mark it visibly",
-      "never substitute Luna/Terra for Sol investment judgment",
+      "never substitute Terra for Astra investment judgment",
       "never fall back to v18 residual buys",
       "incomplete frozen-roster coverage activates no new BUY",
       "exhaustion never becomes a trade: abstain under evidence_unavailable",
@@ -557,7 +560,7 @@ const EXTRACTED_CLAIM = OBJ({
   confirmed: { type: ["boolean", "null"] },
   supersedesHint: { type: ["string", "null"], maxLength: 160 },
 });
-/** §5.3 / §5.6 — Luna extraction: source-bound candidate facts only. */
+/** §5.3 / §5.6 — Terra extraction: source-bound candidate facts only. */
 const FACT_EXTRACTION_V1 = OBJ({
   schemaVersion: STR_ENUM(["fact-extraction.v1"]),
   claims: ARR(EXTRACTED_CLAIM, 40),
