@@ -152,7 +152,7 @@ const ACTIONS_V2 = Object.freeze({
   paperDecisionSettings: read({}),
   /* dip-reversal lane (paper only): settings and a live status read */
   dipStatus: read({ ...acct }),
-  dipSettingsSave: mutation({ enabled: T.bool(), symbols: T.arr(T.ref("Symbol"), 50), watchShortlist: T.bool(), budgetUsd: T.int({ minimum: 1000, maximum: 95000 }), allocationUsd: T.int({ minimum: 500, maximum: 95000 }), maxOpen: T.int({ minimum: 1, maximum: 10 }), maxTradesPerDay: T.int({ minimum: 1, maximum: 80 }),
+  dipSettingsSave: mutation({ enabled: T.bool(), symbols: T.arr(T.ref("Symbol"), 50), watchShortlist: T.bool(), budgetUsd: T.int({ minimum: 1000, maximum: 95000 }), minTradeUsd: T.int({ minimum: 500, maximum: 95000 }), maxTradeUsd: T.int({ minimum: 500, maximum: 95000 }),
     dropBps: T.int({ minimum: 30, maximum: 1500 }), dropWindowMin: T.int({ minimum: 3, maximum: 120 }), zMinTenths: T.int({ minimum: 5, maximum: 80 }), speedFactorPct: T.int({ minimum: 0, maximum: 300 }), settleBars: T.int({ minimum: 1, maximum: 15 }), stabilitySigmaTenths: T.int({ minimum: 5, maximum: 100 }),
     retracePct: T.int({ minimum: 10, maximum: 150 }), stopPct: T.int({ minimum: 10, maximum: 200 }), maxHoldMin: T.int({ minimum: 5, maximum: 390 }), cooldownMin: T.int({ minimum: 0, maximum: 390 }), closeBeforeCloseMin: T.int({ minimum: 0, maximum: 60 }) }, { concurrency: "none", confirmationKind: "none", required: ["enabled"] }),
   paperDecisionSettingsSave: mutation({companyRange:T.str({enum:["flex3","top1","range1","range2","range3"]}),strategyVersionId:T.str({minLength:1,maxLength:100}),revision:T.int({minimum:0})},{concurrency:"none",required:["companyRange","strategyVersionId","revision"]}),

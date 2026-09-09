@@ -29,9 +29,11 @@ const DEFAULTS = Object.freeze({
   symbols: [],              // your chosen symbols (uppercase), up to 50
   watchShortlist: true,     // fill the list up to 50 from the AI's latest daily shortlist
   budgetUsd: 50000,         // the lane's own capital; the AI lane never sizes into it
-  allocationUsd: 5000,      // paper dollars per entry
-  maxOpen: 5,               // dip positions open at once
-  maxTradesPerDay: 20,
+  /* Size follows confidence: a fall that is more unusual for the stock and
+     settles more steadily gets more money, between these two amounts. There
+     is no cap on open positions or trades per day; only the lane budget. */
+  minTradeUsd: 5000,
+  maxTradeUsd: 25000,
   /* The fall. `dropBps` is the floor for a calm stock; the real requirement
      rises with how hard the stock is falling relative to its own normal
      minute-to-minute noise (see measureDrop). */
@@ -49,7 +51,7 @@ const DEFAULTS = Object.freeze({
   closeBeforeCloseMin: 5,   // flatten this many minutes before the close
 });
 const BOUNDS = Object.freeze({
-  budgetUsd: [1000, 95000], allocationUsd: [500, 95000], maxOpen: [1, 10], maxTradesPerDay: [1, 80], dropBps: [30, 1500], dropWindowMin: [3, 120], zMinTenths: [5, 80], speedFactorPct: [0, 300],
+  budgetUsd: [1000, 95000], minTradeUsd: [500, 95000], maxTradeUsd: [500, 95000], dropBps: [30, 1500], dropWindowMin: [3, 120], zMinTenths: [5, 80], speedFactorPct: [0, 300],
   settleBars: [1, 15], stabilitySigmaTenths: [5, 100], retracePct: [10, 150], stopPct: [10, 200], maxHoldMin: [5, 390], cooldownMin: [0, 390], closeBeforeCloseMin: [0, 60],
 });
 
@@ -68,6 +70,7 @@ function normalizeSettings(raw) {
   s.symbols = [...new Set((Array.isArray(r.symbols) ? r.symbols : String(r.symbols || "").split(/[\s,]+/)).map((x) => String(x || "").trim().toUpperCase()).filter((x) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(x)))].slice(0, 50);
   for (const k of Object.keys(BOUNDS)) { const [lo, hi] = BOUNDS[k]; s[k] = Math.min(hi, Math.max(lo, num(r[k], DEFAULTS[k]))); }
   for (const k of Object.keys(BOUNDS)) s[k] = Math.round(s[k]);
+  if (s.maxTradeUsd < s.minTradeUsd) s.maxTradeUsd = s.minTradeUsd;
   s.version = Number(r.version) || 0;
   s.updatedAtMs = Number(r.updatedAtMs) || null;
   return s;
@@ -190,9 +193,21 @@ function legsFor(setId, symbol, qty, stopMicros, targetMicros, deadlineMs) {
     { legId: `${setId}_TIME_LIMIT`, orderSetId: setId, symbol, role: "TIME_LIMIT", side: "sell", type: "MARKET", status: "ARMED", quantityUnits: q, remainingUnits: q, submitAtMs: deadlineMs },
   ];
 }
-async function enter({ D, accountId, symbol, price, drop, settings, nowMs, reason, laneAvailableUsd: lane = Infinity }) {
+/** Confidence 0..1 from how unusual the fall was (z above the minimum),
+ *  how steady the settle was, and a penalty for a fall still moving much
+ *  faster than the stock's normal pace. */
+function confidenceOf(drop, settle, settings) {
+  const zMin = settings.zMinTenths / 10;
+  const zPart = Math.max(0, Math.min(1, (drop.z - zMin) / (2 * zMin)));
+  const stab = Math.max(0, Math.min(1, settle && settle.stability != null ? settle.stability : 0.5));
+  const speedPen = Math.max(0.5, Math.min(1, 1 - 0.15 * Math.max(0, drop.speed - 1)));
+  const c = (0.5 * zPart + 0.5 * stab) * speedPen;
+  return { confidence: Math.round(c * 100) / 100, parts: { z: Math.round(zPart * 100) / 100, stability: Math.round(stab * 100) / 100, speedPenalty: Math.round(speedPen * 100) / 100 } };
+}
+function sizeFor(confidence, settings) { return Math.round(settings.minTradeUsd + (settings.maxTradeUsd - settings.minTradeUsd) * Math.max(0, Math.min(1, confidence))); }
+async function enter({ D, accountId, symbol, price, drop, settings, nowMs, reason, laneAvailableUsd: lane = Infinity, tradeUsd = null }) {
   const cash = await cashCents(D, accountId);
-  const budgetCents = Math.min(Math.round(settings.allocationUsd * 100), Math.round(lane * 100), cash - 100);
+  const budgetCents = Math.min(Math.round((tradeUsd || settings.minTradeUsd) * 100), Math.round(lane * 100), cash - 100);
   const fillMicros = micros(price) + micros(price) * SLIPPAGE_BPS / 10000n;
   const perShareCents = Number(fillMicros / 10000n) + 1;
   const qty = Math.floor(budgetCents / perShareCents);
@@ -295,19 +310,18 @@ async function evaluate({ D, accountId, settings, state, bars, prints, session, 
     const blockers = [];
     if (!session.open) blockers.push("market closed");
     if (nowMs >= flattenFromMs - settings.maxHoldMin * 60000 / 3) blockers.push("too close to the end of the session");
-    if (Object.keys(state.open).length >= settings.maxOpen) blockers.push(`${settings.maxOpen} dip position(s) already open`);
-    if (state.tradesToday >= settings.maxTradesPerDay) blockers.push("daily trade limit reached");
     const laneUsd = laneAvailableUsd(settings, state);
-    if (laneUsd < 500) blockers.push(`lane budget used up (${Math.round(laneUsd)} left of ${settings.budgetUsd})`);
+    if (laneUsd < Math.min(500, settings.minTradeUsd)) blockers.push(`lane budget used up (${Math.round(laneUsd)} left of ${settings.budgetUsd})`);
+    const conf = confidenceOf(drop, st, settings), tradeUsd = Math.min(sizeFor(conf.confidence, settings), Math.max(0, Math.floor(laneUsd)));
     if (sym.enteredDropKey === key) blockers.push("already traded this fall");
     if (blockers.length) { sym.status = "armed"; sym.note = "ready but " + blockers.join("; "); continue; }
-    const r = await enter({ D, accountId, symbol, price: print.p, drop, settings, nowMs, laneAvailableUsd: laneUsd, reason: `Fell ${drop.dropPct.toFixed(2)}% in ${Math.round(drop.minutes)} min (${drop.speed.toFixed(1)}× its normal pace, z ${drop.z.toFixed(1)}), then held above ${drop.low.toFixed(2)} for ${drop.settleBarsNeeded} bars (${st.why}); buying the settle with a target ${settings.retracePct}% back up the fall and a stop ${settings.stopPct}% of the fall below the low.` });
+    const r = await enter({ D, accountId, symbol, price: print.p, drop, settings, nowMs, laneAvailableUsd: laneUsd, tradeUsd, reason: `Fell ${drop.dropPct.toFixed(2)}% in ${Math.round(drop.minutes)} min (${drop.speed.toFixed(1)}× its normal pace, z ${drop.z.toFixed(1)}), then held above ${drop.low.toFixed(2)} for ${drop.settleBarsNeeded} bars (${st.why}). Confidence ${Math.round(conf.confidence * 100)}% → $${tradeUsd.toLocaleString()} of $${settings.minTradeUsd.toLocaleString()}–$${settings.maxTradeUsd.toLocaleString()}; target ${settings.retracePct}% back up the fall, stop ${settings.stopPct}% of the fall below the low.` });
     sym.enteredDropKey = key;
     if (!r.entered) { sym.status = "armed"; sym.note = r.why; const ev = { kind: "SKIP", symbol, atMs: nowMs, price: print.p, detail: r.why }; events.push(ev); await logSignal(D, accountId, ev); continue; }
     state.tradesToday += 1;
-    state.open[symbol] = { orderSetId: r.orderSetId, qty: r.qty, entry: r.entry, stop: r.stop, target: r.target, deadlineMs: r.deadlineMs, enteredAtMs: nowMs, drop: sym.drop, stability: st.stability == null ? null : Math.round(st.stability * 100) / 100, feeUsd: Math.round(r.qty * 0.005 * 100) / 100 };
+    state.open[symbol] = { orderSetId: r.orderSetId, qty: r.qty, entry: r.entry, stop: r.stop, target: r.target, deadlineMs: r.deadlineMs, enteredAtMs: nowMs, drop: sym.drop, stability: st.stability == null ? null : Math.round(st.stability * 100) / 100, confidence: conf.confidence, tradeUsd, feeUsd: Math.round(r.qty * 0.005 * 100) / 100 };
     sym.status = "holding"; sym.note = `bought ${r.qty} @ ${r.entry.toFixed(2)}`;
-    const ev = { kind: "ENTER", symbol, atMs: nowMs, price: r.entry, quantity: r.qty, stop: r.stop, target: r.target, dropPct: sym.drop.dropPct, minutes: sym.drop.minutes, detail: r.reason, orderSetId: r.orderSetId, fillId: r.fillId };
+    const ev = { kind: "ENTER", symbol, atMs: nowMs, price: r.entry, quantity: r.qty, stop: r.stop, target: r.target, dropPct: sym.drop.dropPct, minutes: sym.drop.minutes, confidence: conf.confidence, confidenceParts: conf.parts, tradeUsd, detail: r.reason, orderSetId: r.orderSetId, fillId: r.fillId };
     events.push(ev); await logSignal(D, accountId, ev);
   }
   return events;
@@ -327,4 +341,4 @@ async function status(D, accountId, settingsRaw) {
     signals, results: { todayPnlUsd: sum(todayExits), todayTrades: todayExits.length, allPnlUsd: sum(exits), allTrades: exits.length, wins: exits.filter((s) => Number(s.pnlUsd) > 0).length } };
 }
 
-module.exports = { VERSION, DEFAULTS, BOUNDS, normalizeSettings, latestTrades, seedBars, applyPrint, minuteSigmaPct, measureDrop, settled, loadState, saveState, watchlist, laneAvailableUsd, evaluate, status, enter, exit };
+module.exports = { VERSION, DEFAULTS, BOUNDS, normalizeSettings, latestTrades, seedBars, applyPrint, minuteSigmaPct, measureDrop, settled, confidenceOf, sizeFor, loadState, saveState, watchlist, laneAvailableUsd, evaluate, status, enter, exit };
