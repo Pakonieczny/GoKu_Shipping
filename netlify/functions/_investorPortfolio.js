@@ -107,6 +107,7 @@ function positionView(p, mandateBySymbol) {
     unrealisedMinor: String(Math.round(Number(qty) * (mark - (Number(p.entryPriceUsd) || 0)) * 100)),
     openedAt: p.openedAt || null, lifecycleId: p.lifecycleId || null, positionLifecycleId: p.positionLifecycleId || null,
     sector: p.sector || null, engine: p.mandateVersionId || (m && m.appliedVersionId) ? "manager" : "legacy",
+    lane: p.engine === "dip" ? "dip" : "ai", dipOrderSetId: p.dipOrderSetId || null,
     mandateVersionId: p.mandateVersionId || (m && m.appliedVersionId) || null,
     lossBoundaryPriceMicros: p.lossBoundaryPriceMicros || (m && m.lossBoundaryPriceMicros) || null,
     takeProfitPriceMicros: p.takeProfitPriceMicros || (m && m.takeProfitPriceMicros) || null,

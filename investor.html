@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-6b00Wk0QiYQ6IwGdL6mtpefKRVSFLk20DjbMxvBdg1Y='; style-src 'self' 'sha256-IK9yc8xXTN0i5lEZev3wNWeeMr+ivb1stDeSr4ZCUzc='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ROSAFTucMzRTSS3qo4ZQS3l0H7xyxRSh7M2ojA7R1rM='; style-src 'self' 'sha256-hQ4e79g5QfOxpqBZD6m7JPQa8CHGDHOwd+GEoUy1Cok='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -598,6 +598,30 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 .dipgrid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
 .dipgrid .field input{width:100%}
 #dipWatch .tiles{margin-bottom:12px}
+
+.lanetag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;letter-spacing:.02em;padding:3px 9px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+.lanetag.xs{font-size:10px;padding:2px 7px}
+.lanetag.lane-ai{background:rgba(169,130,63,.12);border-color:rgba(169,130,63,.35);color:var(--gold)}
+.lanetag.lane-dip{background:var(--slate-soft);border-color:var(--slate-line);color:var(--slate)}
+.lanestrip__h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.lanestrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.lanecard{border:1px solid var(--line);border-left:4px solid var(--gold);border-radius:12px;padding:14px 16px;background:var(--bg-2);display:flex;flex-direction:column;gap:8px;min-width:0}
+.lanecard.lane-dip{border-left-color:var(--slate)}
+.lanecard__h{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.lanecard__big{display:flex;align-items:baseline;gap:8px}
+.lanecard__big .pnl{font-size:26px;font-weight:650;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.lanecard__row{display:flex;gap:8px 18px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-70)}
+.lanecard__row b{color:var(--ink);font-variant-numeric:tabular-nums}
+.lanecard__status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-70)}
+.lanehead{display:flex;align-items:center;gap:10px;padding:14px 0 4px;flex-wrap:wrap}
+.row--dip{border-left:3px solid var(--slate);padding-left:10px}
+.row--ai{border-left:3px solid transparent;padding-left:10px}
+details.fold>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::after{content:"";width:8px;height:8px;border-right:1.5px solid var(--ink-45);border-bottom:1.5px solid var(--ink-45);transform:rotate(-45deg);transition:transform .15s}
+details.fold[open]>summary::after{transform:rotate(45deg)}
+details.fold>#dipWatchBody{margin-top:12px}
+.legend i.slate.vert{border-left-color:var(--slate)}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
@@ -744,7 +768,8 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 <div class="view__h"><div><div class="eyebrow">YOUR MONEY, AT A GLANCE</div><h2 id="h-manager" tabindex="-1">Your overview</h2></div><a class="link" href="#/learning">View results →</a></div>
 <div class="hero" id="managerStatus"></div>
 <div id="todayPnl"></div>
-<div class="card" id="dipWatch" hidden></div>
+<div class="card" id="laneStrip"></div>
+<details class="card fold" id="dipWatch" hidden><summary><span class="livechart__sum"><b>Dip trader · watch list and log</b><span class="tiny muted">what it is watching and what it did</span></span></summary><div id="dipWatchBody"></div></details>
 <div class="card manager-brief" id="managerBrief" aria-live="polite"></div>
 <div class="card" id="liveActivity" aria-live="polite"></div>
 <div class="card manager-brief" id="paperDecisionCard">
@@ -998,7 +1023,7 @@ function renderDailyCompanies(dash) {
   var winning=(hold||[]).filter(function(h){return h.pnl&&BigInt(h.pnl.amountMinor)>0n;}).length,losing=(hold||[]).filter(function(h){return h.pnl&&BigInt(h.pnl.amountMinor)<0n;}).length;
   var sorted=(hold||[]).slice().sort(function(a,b){return Math.abs(Number(b.pnl&&b.pnl.amountMinor||0))-Math.abs(Number(a.pnl&&a.pnl.amountMinor||0));});
   setChildren($('overviewHoldings'),[head('What you own','#/portfolio','All holdings'),hold&&hold.length?el('p',{class:'daily-summary',text:hold.length+' companies · '+winning+' gaining · '+losing+' losing since purchase'+(hold.some(function(h){return !h.pnl;})?' · some prices pending':'')}):null,
-    !hold?el('p',{class:'daily-empty',text:'Holdings are not available yet.'}):!hold.length?el('p',{class:'daily-empty',text:'You do not own any shares yet. Your money stays in cash until a buy order fills.'}):el('div',null,sorted.slice(0,5).map(function(h){return el('div',{class:'daily-row'},el('div',null,symButton(h.symbol),el('div',{class:'company-name',text:h.name===h.symbol?fmtQty(h.quantity)+' shares':h.name+' · '+fmtQty(h.quantity)+' shares'})),el('div',{class:'company-result'},pnlNode(h.pnl),el('div',{class:'tiny muted',text:fmtMoney(h.marketValue)+' owned'})),el('p',{class:'company-reason',text:shortCopy(h.reason)||'Open the company to see its investment plan.'}),el('span',{class:'daily-foot',text:h.markAt?'Price updated '+fmtAgo(h.markAt):'Price update pending'}));})),
+    !hold?el('p',{class:'daily-empty',text:'Holdings are not available yet.'}):!hold.length?el('p',{class:'daily-empty',text:'You do not own any shares yet. Your money stays in cash until a buy order fills.'}):el('div',null,sorted.slice(0,5).map(function(h){return el('div',{class:'daily-row'},el('div',null,el('div',{class:'inline'},symButton(h.symbol),laneTag(laneOf(h),'xs')),el('div',{class:'company-name',text:h.name===h.symbol?fmtQty(h.quantity)+' shares':h.name+' · '+fmtQty(h.quantity)+' shares'})),el('div',{class:'company-result'},pnlNode(h.pnl),el('div',{class:'tiny muted',text:fmtMoney(h.marketValue)+' owned'})),el('p',{class:'company-reason',text:shortCopy(h.reason)||'Open the company to see its investment plan.'}),el('span',{class:'daily-foot',text:h.markAt?'Price updated '+fmtAgo(h.markAt):'Price update pending'}));})),
     hold&&hold.length?el('p',{class:'daily-foot',text:'Gains and losses use the last recorded price, before selling costs. Largest moves shown first.'}):null]);
   setChildren($('overviewChoices'),[head('The AI’s chosen companies','#/companies','All companies'),active?el('p',{class:'daily-empty',text:'The AI is still reviewing. Its choices will appear when this review finishes.'}):!choices.length?el('p',{class:'daily-empty',text:!r?'The first review will show the companies worth considering.':'No new company choices were recorded. Waiting keeps cash available.'}):el('div',null,choices.slice(0,5).map(function(c){var label=c.decision==='WATCH'?'Watching':c.state==='WORKING'?'Order in progress':c.state==='WAITING_FOR_PRICE'?'Waiting for price':'Buy idea';return el('div',{class:'daily-row'},el('div',null,symButton(c.symbol),el('div',{class:'company-name',text:c.name===c.symbol?'':c.name})),badge(label,c.decision==='BUY'?'gold':'info'),el('p',{class:'company-reason',text:shortCopy(c.reason)||'Open this company for the evidence and investment plan.'}));})),!active&&choices.length?el('p',{class:'daily-foot',text:'Chosen does not mean purchased. Shares appear under “What you own” after an order fills.'}):null]);
 }
@@ -1977,8 +2002,8 @@ function liveActivityChildren(){
   var decisions=dash.newDecisions||[];
   if(decisions.length)out.push(el("div",null,el("div",{class:"tiny muted",text:"Latest decisions"}),countChips(dash.counts&&dash.counts.decisions,true),el("div",{class:"list"},decisions.slice(0,5).map(function(d){return decisionRow(d);}))));
   else if(r&&r.completedAt)out.push(el("p",{class:"tiny muted",text:'Last review '+fmtAgo(r.completedAt)+(r.investmentNote?' · '+shortCopy(r.investmentNote,160):'')+((r.noBuyReasons||[]).length?' · '+plainPlanBlock((r.noBuyReasons[0].code||r.noBuyReasons[0])):'')}));
-  var events=(ev&&ev.items||[]).slice(0,8);
-  out.push(el("div",null,el("div",{class:"tiny muted",text:"Recent order activity"}),events.length?el("div",null,events.map(function(x){var t=x.authority==="EMERGENCY_RISK"?"bad":x.authority==="OPERATOR"?"warn":"gold";return el("div",{class:"tl__i"},el("span",{class:"tl__dot "+t}),el("div",{class:"tl__b"},el("div",{class:"inline"},el("b",{text:plainLabel(x.type)}),x.state?stateBadge(x.state):null,x.symbol?symButton(x.symbol,"link"):null)),el("span",{class:"tl__t",text:fmtTime(x.eventAt||x.receivedAt)}));})):el("p",{class:"tiny muted",text:observe?'Orders appear here once AI investing is on.':'No orders yet. Orders appear here the moment the AI places one.'})));
+  var dipEv=((getRes("dip")||{}).signals||[]).filter(function(x){return x.kind==="ENTER"||x.kind==="EXIT";}).slice(0,4).map(function(x){return {type:x.kind==="ENTER"?"DIP_BUY":"DIP_SELL",state:null,symbol:x.symbol,at:x.at,lane:"dip",detail:x.kind==="ENTER"?x.quantity+" sh @ "+usd(x.price):signedUsd(Number(x.pnlUsd))+" · "+plainLabel(x.role||"")};}),events=(ev&&ev.items||[]).slice(0,8).concat(dipEv).sort(function(a,b){return Date.parse(b.at||b.createdAt||0)-Date.parse(a.at||a.createdAt||0);}).slice(0,8);
+  out.push(el("div",null,el("div",{class:"tiny muted",text:"Recent order activity"}),events.length?el("div",null,events.map(function(x){var t=x.authority==="EMERGENCY_RISK"?"bad":x.authority==="OPERATOR"?"warn":"gold";return el("div",{class:"tl__i"},el("span",{class:"tl__dot "+t}),el("div",{class:"tl__b"},el("div",{class:"inline"},x.lane==="dip"?laneTag("dip","xs"):null,el("b",{text:x.type==="DIP_BUY"?"Dip trader bought":x.type==="DIP_SELL"?"Dip trader sold":plainLabel(x.type)}),x.detail?el("span",{class:"small",text:x.detail}):null,x.state?stateBadge(x.state):null,x.symbol?symButton(x.symbol,"link"):null)),el("span",{class:"tl__t",text:fmtTime(x.eventAt||x.receivedAt)}));})):el("p",{class:"tiny muted",text:observe?'Orders appear here once AI investing is on.':'No orders yet. Orders appear here the moment the AI places one.'})));
   out.push(el("p",{class:"daily-foot",text:(sp?'AI cost today '+fmtMoney(sp.actual)+' of '+fmtMoney(sp.dailyLimit)+'.':'')}));
   return out;
 }
@@ -2601,6 +2626,7 @@ function renderLiveTiles() {
   num("totalTile", a.total); put("totalTile", liveNum(a.total) ? signedUsd(a.total) : "—", toneOf(a.total)); put("totalTileSub", liveNum(a.total) ? (liveNum(a.totalPct) ? signedPct(a.totalPct) + " · " : "") + "overall, after AI costs" : "", null);
   document.querySelectorAll("[data-live=verdictTile]").forEach(function (n) { n.textContent = !liveNum(a.total) ? "Result not available yet" : a.total > 0 ? "You’re ahead" : a.total < 0 ? "You’re down" : "You’re even"; });
   LIVE.account = a;
+  renderLaneStrip();
 }
 /* ── today's profit / loss chart (overview) ── */
 var TODAYC = { canvas: null, tip: null, node: null };
@@ -2783,14 +2809,14 @@ function holdChartRender(sym) {
   var stop = h.lossBoundary ? microsNum(h.lossBoundary.priceMicros) : NaN; if (liveNum(stop)) levels.push({ y: stop, label: "Stop", color: C.clay });
   var closes = pts.map(function (p) { return p.c; });
   var vlines = [];
-  (h.trades || []).forEach(function (t) { var ms = Date.parse(t.at); if (!liveNum(ms) || !pts.length || ms < pts[0].t - (intraday ? 5 * 60000 : 86400000)) return; var i = -1; for (var k = 0; k < pts.length; k++) if (pts[k].t >= ms) { i = k; break; } if (i < 0) { if (ms <= pts[pts.length - 1].t + (intraday ? 30 * 60000 : 86400000)) i = pts.length - 1; else return; } vlines.push({ i: i, color: t.side === "BUY" ? C.sage : C.clay, label: (t.side === "BUY" ? "Bought " : "Sold ") + fmtQty(t.quantity), trade: t, y: microsNum(t.price.priceMicros) }); });
+  (h.trades || []).forEach(function (t) { var ms = Date.parse(t.at); if (!liveNum(ms) || !pts.length || ms < pts[0].t - (intraday ? 5 * 60000 : 86400000)) return; var i = -1; for (var k = 0; k < pts.length; k++) if (pts[k].t >= ms) { i = k; break; } if (i < 0) { if (ms <= pts[pts.length - 1].t + (intraday ? 30 * 60000 : 86400000)) i = pts.length - 1; else return; } vlines.push({ i: i, color: laneOf(t) === "dip" ? C.slate : t.side === "BUY" ? C.sage : C.clay, label: (laneOf(t) === "dip" ? (t.side === "BUY" ? "Dip buy " : "Dip sell ") : (t.side === "BUY" ? "Bought " : "Sold ")) + fmtQty(t.quantity), trade: t, y: microsNum(t.price.priceMicros) }); });
   var note = st.error ? "Could not refresh this chart. " + (pts.length ? "Earlier prices stay visible. " : "") + (st.error.message || "") : st.loading && !pts.length ? "Loading prices…" : !pts.length ? "No prices for this range yet." : (intraday ? "5-minute bars" : "Daily closes") + " · " + pts.length + " points" + (pts[pts.length - 1].live ? " · newest point is the live quote" : "") + (st.loading ? " · refreshing…" : "");
   drawSeriesChart(st.canvas, { points: pts, intraday: intraday, series: [{ label: "Price", color: lineColor, width: 1.8, values: closes }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: levels, vlines: vlines, crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 2); }, emptyText: st.loading ? "Loading prices…" : "No prices yet",
     xFmt: function (d) { return intraday ? new Intl.DateTimeFormat(undefined, multiDay ? { weekday: "short", hour: "numeric" } : { hour: "numeric", minute: "2-digit" }).format(d) : new Intl.DateTimeFormat(undefined, holdRangeDays(st.range) > 200 || st.from || st.to ? { month: "short", year: "2-digit" } : { month: "short", day: "numeric" }).format(d); },
     tip: function (i, px, geom) {
       var p = pts[i]; if (!p) return "";
       var near = null; if (geom && liveNum(px)) vlines.forEach(function (v) { var d = Math.abs(geom.xOf(v.i) - px); if (d <= 9 && (!near || d < near.d)) near = { d: d, v: v }; });
-      if (near) { var t = near.v.trade; return [(t.side === "BUY" ? "BOUGHT " : "SOLD ") + fmtQty(t.quantity) + " shares @ " + fmtPrice(t.price), fmtTimeFull(t.at) + " · " + fmtMoney(t.notional) + (t.simulated ? " · simulated" : ""), t.reason ? "Why: " + t.reason : ""].filter(Boolean).join("\n"); }
+      if (near) { var t = near.v.trade; return [(laneOf(t) === "dip" ? "DIP TRADER " : "AI ") + (t.side === "BUY" ? "BOUGHT " : "SOLD ") + fmtQty(t.quantity) + " shares @ " + fmtPrice(t.price), fmtTimeFull(t.at) + " · " + fmtMoney(t.notional) + (t.simulated ? " · simulated" : ""), t.reason ? "Why: " + t.reason : ""].filter(Boolean).join("\n"); }
       var when = new Intl.DateTimeFormat(undefined, intraday ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { year: "numeric", month: "short", day: "numeric" }).format(new Date(p.t));
       var lines = [usd(p.c) + (p.live ? "  · live" : "")];
       var chg = base && liveNum(base.y) && base.y > 0 ? signedUsd(p.c - base.y) + " (" + signedPct((p.c / base.y - 1) * 100) + ") " + holdRangeWord(st) : "";
@@ -2799,7 +2825,7 @@ function holdChartRender(sym) {
       return lines.join("\n");
     } });
   bindChartPointer(st.canvas, st.tip);
-  setChildren(st.node.querySelector("[data-live=legend]"), [legendItem(up ? "sage" : "clay", "Price"), base ? legendItem("ink dot", base.label) : null, liveNum(cost) ? legendItem("slate dash", "Your cost") : null, liveNum(tgt) ? legendItem("gold dash", "Profit target") : null, liveNum(stop) ? legendItem("clay dash", "Stop") : null, vlines.length ? legendItem("sage vert", "Bought") : null, vlines.some(function (v) { return v.trade.side === "SELL"; }) ? legendItem("clay vert", "Sold") : null]);
+  setChildren(st.node.querySelector("[data-live=legend]"), [legendItem(up ? "sage" : "clay", "Price"), base ? legendItem("ink dot", base.label) : null, liveNum(cost) ? legendItem("slate dash", "Your cost") : null, liveNum(tgt) ? legendItem("gold dash", "Profit target") : null, liveNum(stop) ? legendItem("clay dash", "Stop") : null, vlines.some(function (v) { return laneOf(v.trade) !== "dip" && v.trade.side === "BUY"; }) ? legendItem("sage vert", "AI bought") : null, vlines.some(function (v) { return laneOf(v.trade) !== "dip" && v.trade.side === "SELL"; }) ? legendItem("clay vert", "AI sold") : null, vlines.some(function (v) { return laneOf(v.trade) === "dip"; }) ? legendItem("slate vert", "Dip trade") : null]);
   setText2(st.node.querySelector("[data-live=note]"), note);
   holdChartHero(sym);
 }
@@ -2858,7 +2884,36 @@ var resizeTimer = null;
 window.addEventListener("resize", function () { clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { HCH.forEach(function (st, sym) { holdChartRender(sym); }); navChartRender(); }, 120); });
 
 
-/* ── 17c. Dip-reversal lane (paper experiment) ──────────────────────────── */
+/* ── 17c. Two lanes: AI investor (gold) and Dip trader (teal) ───────────── */
+function laneOf(x) { return x && x.lane === "dip" ? "dip" : "ai"; }
+function laneTag(lane, cls) { var dip = lane === "dip"; return el("span", { class: "lanetag " + (dip ? "lane-dip" : "lane-ai") + (cls ? " " + cls : ""), title: dip ? "Bought by the rule-based dip trader from its own budget" : "Chosen by the AI investor after research" }, icon(dip ? "learning" : "manager", "sm"), el("span", { text: dip ? "Dip trade" : "AI investment" })); }
+/* Per-lane money: the dip lane's numbers come from its own log and open
+   positions; the AI lane is everything else. Display only. */
+function laneAccounts() {
+  var a = LIVE.account || liveAccount(), d = getRes("dip"), ds = d && d.settings || {}, dst = d && d.state || {}, dres = d && d.results || {};
+  var p = getRes("portfolio"), dash = getRes("dash");
+  var list = p && p.holdings && p.holdings.items ? p.holdings.items : (dash && dash.holdings) || [];
+  var dipInv = 0, dipUnreal = 0, dipN = 0, aiInv = 0, aiN = 0;
+  list.forEach(function (h) { var lp = livePriceOf(h.symbol), q = qtyNum(h.quantity), book = h.marketValue ? minorNum(h.marketValue.amountMinor) : NaN, val = lp && liveNum(q) ? lp.price * q : book; if (!liveNum(val)) return; if (laneOf(h) === "dip") { dipN++; dipInv += val; var o = dst.open && dst.open[h.symbol]; if (o && lp) dipUnreal += (lp.price - o.entry) * o.qty; else if (h.unrealizedPnl) dipUnreal += minorNum(h.unrealizedPnl.amountMinor); } else { aiN++; aiInv += val; } });
+  var dipToday = (Number(dres.todayPnlUsd) || 0) + dipUnreal, dipAll = (Number(dres.allPnlUsd) || 0) + dipUnreal;
+  var dipBudget = ds.enabled ? Number(ds.budgetUsd) || 0 : 0;
+  return { ai: { invested: aiInv, positions: aiN, today: liveNum(a.day) ? a.day - dipToday : NaN, total: liveNum(a.total) ? a.total - dipAll : NaN, budget: liveNum(a.nav) ? a.nav - dipBudget : NaN },
+    dip: { enabled: !!ds.enabled, invested: dipInv, positions: dipN, today: ds.enabled || dipN ? dipToday : NaN, total: ds.enabled || dres.allTrades ? dipAll : NaN, budget: dipBudget, free: liveNum(dst.laneAvailableUsd) ? dst.laneAvailableUsd : NaN, alive: dst.loopAliveAtMs && Date.now() - Number(dst.loopAliveAtMs) < 30000, watching: Object.keys(dst.symbols || {}).length, trades: Number(dres.allTrades) || 0 } };
+}
+function laneCard(lane, L) {
+  var dip = lane === "dip";
+  var status = dip ? (!L.enabled ? "Off · turn on under Advanced workspace" : L.alive ? "Live · watching " + L.watching + " companies every 5 s" : marketOpen() ? "Starting…" : "Waiting for the market to open") : (L.positions ? L.positions + (L.positions === 1 ? " company held" : " companies held") + " · plans protected by stops" : "Nothing held · waiting for the next review");
+  return el("div", { class: "lanecard " + (dip ? "lane-dip" : "lane-ai") },
+    el("div", { class: "lanecard__h" }, laneTag(lane), el("span", { class: "tiny muted", text: dip ? "rule-based · quick trades" : "research-driven · holds for days" })),
+    el("div", { class: "lanecard__big" }, el("span", { class: "pnl " + toneOf(L.today), text: liveNum(L.today) ? signedUsd(L.today) : "—" }), el("span", { class: "tiny muted", text: "today" })),
+    el("div", { class: "lanecard__row" }, el("span", null, el("b", { class: "pnl " + toneOf(L.total), text: liveNum(L.total) ? signedUsd(L.total) : "—" }), " overall"), el("span", null, el("b", { text: usd(L.invested, 0) }), " invested in ", el("b", { text: String(L.positions) })), el("span", null, el("b", { text: liveNum(L.budget) ? usd(L.budget, 0) : "—" }), dip ? " budget" + (liveNum(L.free) ? " · " + usd(L.free, 0) + " free" : "") : " to work with")),
+    el("div", { class: "lanecard__status" }, dip ? liveDot(L.enabled ? (L.alive ? "on" : "off") : "off") : icon("check", "sm"), el("span", { text: status })));
+}
+function renderLaneStrip() {
+  var host = $("laneStrip"); if (!host) return;
+  var L = laneAccounts();
+  setChildren(host, [el("div", { class: "lanestrip__h" }, el("b", { text: "Your account invests two ways" }), el("span", { class: "tiny muted", text: "same paper money, two separate budgets" })), el("div", { class: "lanestrip" }, laneCard("ai", L.ai), laneCard("dip", L.dip))]);
+}
 var DIPUI = { at: 0, loading: false };
 var DIP_FIELDS = [
   ["budgetUsd", "Lane budget", "$ · the AI lane can't use this", 1], ["minTradeUsd", "Smallest trade", "$ · low confidence", 1], ["maxTradeUsd", "Largest trade", "$ · high confidence", 1],
@@ -2874,18 +2929,13 @@ async function loadDip(force) {
 }
 function dipKindBadge(k) { return badge(k === "ENTER" ? "Bought" : k === "EXIT" ? "Sold" : k === "DROP" ? "Fall seen" : "Skipped", k === "ENTER" ? "ok" : k === "EXIT" ? "gold" : k === "DROP" ? "info" : "warn", k === "ENTER" ? "buy" : k === "EXIT" ? "sell" : k === "DROP" ? "warn" : "info"); }
 function renderDipWatch() {
-  var host = $("dipWatch"); if (!host) return;
-  var d = getRes("dip"); if (!d) { host.hidden = true; return; }
+  var box = $("dipWatch"), host = $("dipWatchBody"); if (!box || !host) return;
+  var d = getRes("dip"); if (!d || !(d.settings && (d.settings.enabled || (d.results && d.results.allTrades)))) { box.hidden = true; renderLaneStrip(); return; }
   var st = d.settings || {}, state = d.state || {}, res = d.results || {}, syms = Object.keys(state.symbols || {}).sort(), open = state.open || {};
-  host.hidden = false;
+  box.hidden = false;
   var alive = state.loopAliveAtMs && Date.now() - Number(state.loopAliveAtMs) < 30000;
-  var head = el("div", { class: "card__h" }, el("h3", null, icon("learning"), " Dip watch ", el("span", { class: "chip", text: "paper experiment" })), el("span", { class: "sub" }, st.enabled ? el("span", { class: "livestat" }, liveDot(alive ? "on" : "off"), el("span", { class: "livestat__t", text: alive ? "Loop alive · checking every 5 s" : (marketOpen() ? "Loop starting…" : "Waiting for the market to open") })) : el("span", { text: "Off · turn it on under Advanced workspace" })));
-  var tiles = el("div", { class: "tiles tiles--five" },
-    el("div", { class: "tile" }, el("div", { class: "k", text: "Today" }), el("div", { class: "v pnl " + toneOf(res.todayPnlUsd), text: liveNum(res.todayPnlUsd) ? signedUsd(res.todayPnlUsd) : "—" }), el("div", { class: "u tiny muted", text: (res.todayTrades || 0) + " trade" + (res.todayTrades === 1 ? "" : "s") + " closed" })),
-    el("div", { class: "tile" }, el("div", { class: "k", text: "All time" }), el("div", { class: "v pnl " + toneOf(res.allPnlUsd), text: liveNum(res.allPnlUsd) ? signedUsd(res.allPnlUsd) : "—" }), el("div", { class: "u tiny muted", text: (res.allTrades || 0) + " closed · " + (res.wins || 0) + " winners" })),
-    el("div", { class: "tile" }, el("div", { class: "k", text: "Holding now" }), el("div", { class: "v", text: String(Object.keys(open).length) }), el("div", { class: "u tiny muted", text: usd(Object.values(open).reduce(function (n, o) { return n + (Number(o.entry) || 0) * (Number(o.qty) || 0); }, 0), 0) + " at cost" })),
-    el("div", { class: "tile" }, el("div", { class: "k", text: "Watching" }), el("div", { class: "v", text: String(syms.length) }), el("div", { class: "u tiny muted", text: "fall ≥ " + ((st.dropBps || 0) / 100).toFixed(1) + "% in " + (st.dropWindowMin || 0) + " min" })),
-    el("div", { class: "tile" }, el("div", { class: "k", text: "Lane budget" }), el("div", { class: "v", text: liveNum(state.laneAvailableUsd) ? usd(state.laneAvailableUsd, 0) : (st.budgetUsd ? usd(st.budgetUsd, 0) : "—") }), el("div", { class: "u tiny muted", text: "free of " + usd(st.budgetUsd || 0, 0) + " · " + usd(st.minTradeUsd || 0, 0) + "–" + usd(st.maxTradeUsd || 0, 0) + " per trade by confidence" })));
+  var head = null;
+  var tiles = null;
   var rows = syms.map(function (sym) {
     var x = state.symbols[sym] || {}, o = open[sym], lp = livePriceOf(sym), price = lp ? lp.price : x.last && x.last.p, drop = x.drop;
     var stateTxt = { watching: "Watching", settling: "Fell — waiting for it to settle", armed: "Ready", holding: "Holding", cooldown: "Cooling down" }[x.status] || plainLabel(x.status || "watching");
@@ -2895,10 +2945,12 @@ function renderDipWatch() {
     return el("div", { class: "diprow" }, el("div", { class: "diprow__sym" }, symButton(sym), el("span", { class: "n", text: liveNum(price) ? usd(price) : "—" })), el("div", { class: "diprow__mid" }, badge(stateTxt, tone, x.status === "holding" ? "check" : x.status === "watching" ? "dot" : "warn"), el("div", { class: "tiny muted", text: fallTxt }), el("div", { class: "small", text: posTxt })));
   });
   var sigs = (d.signals || []).slice(0, 12).map(function (sg) { return el("div", { class: "tl__i" }, el("span", { class: "tl__dot " + (sg.kind === "ENTER" ? "ok" : sg.kind === "EXIT" ? (Number(sg.pnlUsd) >= 0 ? "ok" : "bad") : sg.kind === "SKIP" ? "warn" : "") }), el("div", { class: "tl__b" }, el("div", { class: "inline" }, dipKindBadge(sg.kind), symButton(sg.symbol, "link"), sg.kind === "EXIT" ? el("b", { class: "pnl " + toneOf(Number(sg.pnlUsd)), text: signedUsd(Number(sg.pnlUsd)) + " · " + plainLabel(sg.role || "") + (sg.holdMin != null ? " · held " + sg.holdMin + " min" : "") }) : sg.kind === "ENTER" ? el("b", { text: sg.quantity + " sh @ " + usd(sg.price) + (sg.confidence != null ? " · confidence " + Math.round(sg.confidence * 100) + "%" : "") + " · target " + usd(sg.target) + " · stop " + usd(sg.stop) }) : null), el("div", { class: "tiny muted", text: sg.detail || "" })), el("span", { class: "tl__t", text: fmtTime(sg.at) })); });
-  setChildren(host, [head, tiles, el("div", { class: "explainer" }, el("b", { text: "How it works. " }), "Every 5 seconds it checks the live IEX print for up to 50 companies. A fall of at least " + ((st.dropBps || 0) / 100).toFixed(1) + "% inside " + (st.dropWindowMin || 0) + " minutes counts only if it is unusual for that stock (at least " + ((st.zMinTenths || 0) / 10).toFixed(1) + " noise units); a faster fall must go further and settle longer. After " + (st.settleBars || 0) + "+ steady one-minute bars with no new low it buys, sizing each trade by confidence from " + usd(st.minTradeUsd || 0, 0) + " to " + usd(st.maxTradeUsd || 0, 0) + " (how unusual the fall was, how steady the settle was, less a penalty for a fall still racing). No cap on open positions or trades per day, only the lane budget. It sells when " + (st.retracePct || 0) + "% of the fall is recovered, if the price breaks " + (st.stopPct || 0) + "% of the fall below the low, or after " + (st.maxHoldMin || 0) + " minutes. The lane trades only from its own budget and never a company the AI lane holds. Fills are the IEX print plus a small slippage allowance; IEX is a thin slice of the market, so treat results as an estimate."),
+  setChildren(host, [head, tiles, detailsNode("How the dip trader works", el("div", { class: "explainer" }, el("b", { text: "How it works. " }), "Every 5 seconds it checks the live IEX print for up to 50 companies. A fall of at least " + ((st.dropBps || 0) / 100).toFixed(1) + "% inside " + (st.dropWindowMin || 0) + " minutes counts only if it is unusual for that stock (at least " + ((st.zMinTenths || 0) / 10).toFixed(1) + " noise units); a faster fall must go further and settle longer. After " + (st.settleBars || 0) + "+ steady one-minute bars with no new low it buys, sizing each trade by confidence from " + usd(st.minTradeUsd || 0, 0) + " to " + usd(st.maxTradeUsd || 0, 0) + " (how unusual the fall was, how steady the settle was, less a penalty for a fall still racing). No cap on open positions or trades per day, only the lane budget. It sells when " + (st.retracePct || 0) + "% of the fall is recovered, if the price breaks " + (st.stopPct || 0) + "% of the fall below the low, or after " + (st.maxHoldMin || 0) + " minutes. The lane trades only from its own budget and never a company the AI lane holds. Fills are the IEX print plus a small slippage allowance; IEX is a thin slice of the market, so treat results as an estimate."), false),
+    el("div", { class: "card__h" }, el("h3", { text: "Watching now" }), el("span", { class: "sub", text: syms.length + " companies" + (state.excludedAiHeld && state.excludedAiHeld.length ? " · skipping " + state.excludedAiHeld.join(", ") + " (held by the AI)" : "") })),
     rows.length ? el("div", { class: "diplist" }, rows) : el("div", { class: "muted small", text: st.enabled ? "Nothing on the watch list yet. Add symbols under Advanced workspace, or hold a position — held companies are watched automatically." : "" }),
     el("div", { class: "card__h" }, el("h3", { text: "What it did" }), el("span", { class: "sub", text: (d.signals || []).length ? "latest first" : "" })), sigs.length ? el("div", { class: "tl" }, sigs) : el("div", { class: "muted small", text: "No falls, buys or sells recorded yet." }),
     state.loopNote ? el("div", { class: "tiny muted", text: "Loop: " + state.loopNote + (state.updatedAtMs ? " · updated " + ageText(new Date(Number(state.updatedAtMs)).toISOString()) : "") }) : null]);
+  renderLaneStrip();
 }
 function renderDipSettings() {
   var host = $("dipSettingsCard"); if (!host) return;
@@ -2938,7 +2990,7 @@ function renderPortfolio(loading) {
   renderPortfolioSummary(p.summary || {}); if(slot.error)$("portfolioSummary").prepend(stateBox("stale","Holdings could not be refreshed."," Previously loaded information is shown. "+slot.error.message));
   var h = p.holdings; setText("holdingListSub", h ? fmtInt(h.completedCount) + " / " + (h.totalCount == null ? "?" : fmtInt(h.totalCount)) + " · as of " + fmtTime(h.asOf) : "");
   var holdSig = JSON.stringify((h && h.items || []).map(function (x) { return [x.resourceId, x.resourceVersion, x.quantity, x.averageCost, x.target, x.lossBoundary, x.protection, x.labels, x.thesisHealth, x.availableActions, x.trades, x.reason]; })) + "|" + (h ? h.collectionState : "");
-  if (holdSig !== LIVE.holdSig || !$("holdingList").children.length) { LIVE.holdSig = holdSig; setChildren($("holdingList"), [colStateNode(h, "holdings"), (h && h.items || []).map(holdingRow)]); holdChartsMount(); }
+  if (holdSig !== LIVE.holdSig || !$("holdingList").children.length) { LIVE.holdSig = holdSig; var items = (h && h.items || []), ai = items.filter(function (x) { return laneOf(x) !== "dip"; }), dp = items.filter(function (x) { return laneOf(x) === "dip"; }); setChildren($("holdingList"), [colStateNode(h, "holdings"), ai.length && dp.length ? el("div", { class: "lanehead lane-ai" }, laneTag("ai"), el("span", { class: "tiny muted", text: ai.length + " held · research-driven, protected by stops" })) : null, ai.map(holdingRow), dp.length ? el("div", { class: "lanehead lane-dip" }, laneTag("dip"), el("span", { class: "tiny muted", text: dp.length + " open · quick trades from the dip trader's own budget" })) : null, dp.map(holdingRow)]); holdChartsMount(); }
   else (h && h.items || []).forEach(function (x) { LIVE.holdings.set(x.symbol, x); });
   applyLiveQuotes();
   var a = p.standingAuthorizations; setText("standingAuthorizationsSub", a ? fmtInt(a.completedCount) + " / " + (a.totalCount == null ? "?" : fmtInt(a.totalCount)) : "");
@@ -2973,28 +3025,36 @@ function holdingRow(h) {
   var entryBig = e ? fmtTime(e.at) : h.openedAt ? fmtTime(h.openedAt) : "—";
   var entrySub = e ? fmtQty(e.quantity) + " sh @ " + fmtPrice(e.price) + " = " + fmtMoney(e.notional) + (ts.buys.length > 1 ? " · " + ts.buys.length + " buys, " + fmtInt(ts.boughtUnits) + " sh total" : "") : (liveNum(cost) ? fmtQty(h.quantity) + " sh @ " + usd(cost) + " · fill time not recorded" : "fill not recorded yet");
   var upIf = liveNum(tgt) && liveNum(cost) && liveNum(qtyN) ? (tgt - cost) * qtyN : NaN, downIf = liveNum(stop) && liveNum(cost) && liveNum(qtyN) ? (stop - cost) * qtyN : NaN;
-  var keyfacts = el("div", { class: "keyfacts" },
+  var isDip = laneOf(h) === "dip", dip = h.dip || null;
+  var keyfacts = isDip ? el("div", { class: "keyfacts" },
+    keyFact("Bought", null, entryBig, entrySub),
+    keyFact("Live price", "price", lc ? usd(lc.price) : (h.mark ? fmtPrice(h.mark) : "—"), lc && liveNum(lc.pnlPct) ? signedPct(lc.pnlPct) + " vs your cost" : "your cost " + (liveNum(cost) ? usd(cost) : "—")),
+    keyFact("Fall it caught", null, dip && dip.fall && dip.fall.dropPct ? "−" + Number(dip.fall.dropPct).toFixed(2) + "%" : "—", dip && dip.fall ? "in " + (dip.fall.minutes || "?") + " min · low " + fmtPrice(dip.fall.low) + (dip.fall.z != null ? " · z " + dip.fall.z : "") : "", "down"),
+    keyFact("Sell target", null, liveNum(tgt) ? usd(tgt) : "—", liveNum(tgt) && liveNum(cost) ? signedPct((tgt / cost - 1) * 100) + " · " + signedUsd(upIf) + " if reached" : "recovery target", "up"),
+    keyFact("Stop", null, liveNum(stop) ? usd(stop) : "—", liveNum(stop) && liveNum(cost) ? signedPct((stop / cost - 1) * 100) + " · " + signedUsd(downIf) + " if hit" : "below the fall's low", "down"),
+    keyFact("Gain / loss", "pnl", lc && liveNum(lc.pnl) ? signedUsd(lc.pnl) + " (" + signedPct(lc.pnlPct) + ")" : fmtMoney(h.unrealizedPnl), (dip && dip.confidence != null ? "confidence " + Math.round(dip.confidence * 100) + "% · " : "") + (dip && dip.deadlineAt ? "sells by " + fmtTime(dip.deadlineAt) : "live"), lc ? toneOf(lc.pnl) : null))
+  : el("div", { class: "keyfacts" },
     keyFact("Bought", null, entryBig, entrySub),
     keyFact("Live price", "price", lc ? usd(lc.price) : (h.mark ? fmtPrice(h.mark) : "—"), lc && liveNum(lc.pnlPct) ? signedPct(lc.pnlPct) + " vs your cost" : "your cost " + (liveNum(cost) ? usd(cost) : "—")),
     keyFact("Sell target", null, liveNum(tgt) ? usd(tgt) : "—", liveNum(tgt) && liveNum(cost) ? signedPct((tgt / cost - 1) * 100) + " · " + signedUsd(upIf) + " if reached" : "no target set", "up"),
     keyFact("Stop (worst case)", null, liveNum(stop) ? usd(stop) : "—", liveNum(stop) && liveNum(cost) ? signedPct((stop / cost - 1) * 100) + " · " + signedUsd(downIf) + " if hit" : "no stop set", "down"),
     keyFact("Gain / loss", "pnl", lc && liveNum(lc.pnl) ? signedUsd(lc.pnl) + " (" + signedPct(lc.pnlPct) + ")" : fmtMoney(h.unrealizedPnl), "live · " + (lc && liveNum(lc.value) ? usd(lc.value) : fmtMoney(h.marketValue)) + " market value", lc ? toneOf(lc.pnl) : null));
   if (ts.sells.length) { var ls = ts.sells[ts.sells.length - 1]; keyfacts.appendChild(keyFact("Sold", null, fmtTime(ls.at), fmtQty(ls.quantity) + " sh @ " + fmtPrice(ls.price) + " · " + plainLabel(ls.kind === "target" ? "profit target" : ls.kind === "stop" ? "stop" : "sell"))); }
-  var why = h.reason || (e && e.reason);
+  var why = isDip ? (e && e.reason) || "Bought after a sharp fall settled; the dip trader sells on a recovery, a break of the low, or a time limit." : h.reason || (e && e.reason);
   var more = detailsNode("More details", [
     el("div", { class: "t" }, stateBadge(h.thesisHealth === "INTACT" || h.thesisHealth === "IMPROVING" ? "HEALTHY" : h.thesisHealth === "BROKEN" ? "DOWN" : h.thesisHealth === "WEAKENED" ? "DEGRADED" : "UNKNOWN", "thesis " + plainLabel(h.thesisHealth).toLowerCase()), badge(plainLabel(prot.state || "unknown") + (prot.coverage ? " · " + plainLabel(prot.coverage) : ""), protectionTone(prot.state), protectionTone(prot.state) === "ok" ? "check" : "warn", "protection"), h.emergencyRank != null ? badge("#" + h.emergencyRank + (h.emergencyExpiry ? " until " + fmtTime(h.emergencyExpiry) : ""), "info", null, "emergency rank") : null, (h.labels || []).map(function (l) { return el("span", { class: "chip", text: plainLabel(l) }); })),
-    ts.trades.length ? el("div", { class: "tradelist" }, ts.trades.map(function (t) { return el("div", { class: "trade " + (t.side === "BUY" ? "up" : "down") }, el("b", { text: (t.side === "BUY" ? "Bought " : "Sold ") + fmtQty(t.quantity) + " sh @ " + fmtPrice(t.price) }), el("span", { class: "muted", text: " · " + fmtTimeFull(t.at) + " · " + fmtMoney(t.notional) + (t.simulated ? " · simulated" : "") + (t.ambiguous ? " · same-bar ambiguity" : "") }), t.reason ? el("div", { class: "tiny muted", text: t.reason }) : null); })) : el("div", { class: "tiny muted", text: "No fills recorded for this position yet." }),
+    ts.trades.length ? el("div", { class: "tradelist" }, ts.trades.map(function (t) { return el("div", { class: "trade " + (t.side === "BUY" ? "up" : "down") }, laneTag(laneOf(t), "xs"), " ", el("b", { text: (t.side === "BUY" ? "Bought " : "Sold ") + fmtQty(t.quantity) + " sh @ " + fmtPrice(t.price) }), el("span", { class: "muted", text: " · " + fmtTimeFull(t.at) + " · " + fmtMoney(t.notional) + (t.simulated ? " · simulated" : "") + (t.ambiguous ? " · same-bar ambiguity" : "") }), t.reason ? el("div", { class: "tiny muted", text: t.reason }) : null); })) : el("div", { class: "tiny muted", text: "No fills recorded for this position yet." }),
     el("div", { class: "evid" }, factNode("Average cost", h.averageCost ? fmtPrice(h.averageCost) : "—", "your basis"), factNode("Book price", h.mark ? fmtPrice(h.mark) : "—", "used to value this holding" + (h.markAt ? " · " + fmtTime(h.markAt) : "")), el("div", { class: "e" }, el("div", { class: "k", text: "Market value" }), el("div", { class: "v", "data-live": "value", text: lc && liveNum(lc.value) ? usd(lc.value) : fmtMoney(h.marketValue) }), el("div", { class: "u", text: "book " + fmtMoney(h.marketValue) })), factNode("Book gain / loss", fmtMoney(h.unrealizedPnl)), factNode("Share of portfolio", fmtBps(h.weightBps)), factNode("Plan active until", h.timeExit ? h.timeExit.sessionDate : "—", h.timeExit ? h.timeExit.calendarId + " " + h.timeExit.calendarVersion : null), factNode("Planned downside", h.forwardDownside ? fmtMoney(h.forwardDownside) : "—", h.stressedDownside ? "stressed " + fmtMoney(h.stressedDownside) : null), factNode("Distance to target", h.distanceToTargetBps != null ? fmtSignedBps(h.distanceToTargetBps) : "—"), factNode("Distance to stop", h.distanceToBoundaryBps != null ? fmtSignedBps(h.distanceToBoundaryBps) : "—")),
     el("div", { class: "m" }, el("span", { text: "plan version " + (ids.mandateVersionId || ids.mandateVersion || "—") }), ids.positionId ? el("span", { text: "position " + ids.positionId }) : null, h.nextCatalystAt || h.nextReviewAt ? el("span", { text: "next " + (h.nextCatalystAt ? "catalyst " + fmtDate(h.nextCatalystAt) : "review " + fmtDate(h.nextReviewAt)) }) : null, el("span", { class: "muted", "data-quote-sym": h.symbol, text: quoteOf(h.symbol) ? "Indicative " + quoteText(quoteOf(h.symbol)) : "" })),
     sellCap && !sellCap.enabled ? el("div", { class: "tiny muted" }, icon("info", "sm"), " ", el("span", { text: plainSellBlock(sellCap.disabledReason) })) : null], false);
   more.className = "morebox";
-  return el("div", { class: "row row--holding", "data-hold-sym": h.symbol }, el("div", { class: "row__sym" }, symButton(h.symbol), el("span", { class: "n", text: fmtQty(h.quantity) + " sh" }), h.name && h.name !== h.symbol ? el("span", { class: "tiny muted", text: h.name }) : null),
+  return el("div", { class: "row row--holding " + (isDip ? "row--dip" : "row--ai"), "data-hold-sym": h.symbol }, el("div", { class: "row__sym" }, symButton(h.symbol), el("span", { class: "n", text: fmtQty(h.quantity) + " sh" }), laneTag(isDip ? "dip" : "ai", "xs"), h.name && h.name !== h.symbol ? el("span", { class: "tiny muted", text: h.name }) : null),
     el("div", { class: "row__mid" },
       keyfacts,
-      why ? el("div", { class: "why" }, el("b", { text: "Why the AI bought: " }), el("span", { text: why })) : null,
+      why ? el("div", { class: "why" }, el("b", { text: isDip ? "Why the dip trader bought: " : "Why the AI bought: " }), el("span", { text: why })) : null,
       holdChartNode(h),
       more),
-    el("div", { class: "row__side" }, el("div", { class: "actions" }, capButton(h, "pauseMandate", "Pause plan", { icon: "pause" }), capButton(h, "resumeMandate", "Resume plan", { icon: "play" }), capButton(h, "cancelMandate", "Cancel plan", { icon: "close" })), el("div", { class: "actions" }, capButton(h, "requestSell", "Sell…", { icon: "sell", cls: "xs danger", blockText: plainSellBlock }), shortcuts), el("div", { class: "d", text: "version " + h.resourceVersion })));
+    el("div", { class: "row__side" }, isDip ? null : el("div", { class: "actions" }, capButton(h, "pauseMandate", "Pause plan", { icon: "pause" }), capButton(h, "resumeMandate", "Resume plan", { icon: "play" }), capButton(h, "cancelMandate", "Cancel plan", { icon: "close" })), el("div", { class: "actions" }, capButton(h, "requestSell", "Sell…", { icon: "sell", cls: "xs danger", blockText: plainSellBlock }), shortcuts), el("div", { class: "d", text: "version " + h.resourceVersion })));
 }
 function renderExecutionTimeline() {
   var col = getRes("execEvents"); setText("executionTimelineSub", col ? fmtInt(col.completedCount) + " / " + (col.totalCount == null ? "?" : fmtInt(col.totalCount)) : "");

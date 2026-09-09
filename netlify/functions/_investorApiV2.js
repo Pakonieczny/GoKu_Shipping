@@ -385,7 +385,7 @@ async function readManagerDashboard({ params, ctx }) {
       totalReturnBps: totalPnl != null && capital > 0n ? String(totalPnl * 10000n / capital) : null,
       resultBasis: "Account value minus net money added, including costs charged to this account",
       marksComplete: marked,
-      holdings: snap.positions.map(p => ({ symbol: p.symbol, name: names.get(p.symbol) || p.symbol, quantity: qty(p.quantityUnits), marketValue: money(p.marketValueMinor), pnl: p.markAt ? money(p.unrealisedMinor) : null, markAt: p.markAt,
+      holdings: snap.positions.map(p => ({ symbol: p.symbol, lane: p.lane === "dip" ? "dip" : "ai", name: names.get(p.symbol) || p.symbol, quantity: qty(p.quantityUnits), marketValue: money(p.marketValueMinor), pnl: p.markAt ? money(p.unrealisedMinor) : null, markAt: p.markAt,
         returnBps: p.markAt && big(p.costBasisMinor) > 0n ? String(big(p.unrealisedMinor) * 10000n / big(p.costBasisMinor)) : null,
         reason: clip((decisions.find(d => d.symbol === p.symbol) || {}).reason, 180) })),
       chosenCompanies: decisions.filter(d => !d.held && ["BUY", "WATCH"].includes(d.decision) && (!run?.decisionProcess || ["final_synthesis","shared_investment"].includes(d.source) && run.shortlist?.symbols?.includes(d.symbol))).sort((a,b) => (a.decision === "BUY" ? 0 : 1) - (b.decision === "BUY" ? 0 : 1) || (a.capitalRank || 999) - (b.capitalRank || 999)).slice(0,8).map(d => ({ symbol:d.symbol, name:names.get(d.symbol) || d.symbol, decision:d.decision, reason:clip(d.reason,180), state:(pointers.find(p => p.symbol === d.symbol) || {}).status || null })),
@@ -608,7 +608,7 @@ async function authorizationViews(D, ctrl, { accountId, pointers, orderSets, fil
   }
   return out;
 }
-function holdingView(p, { snap, pointer, env, ctrl, nowMs, trades, reason }) {
+function holdingView(p, { snap, pointer, env, ctrl, nowMs, trades, reason, dipOpen }) {
   const mark = big(p.markMicros), boundary = p.lossBoundaryPriceMicros ? big(p.lossBoundaryPriceMicros) : null, target = p.takeProfitPriceMicros ? big(p.takeProfitPriceMicros) : null;
   const units = big(p.quantityUnits);
   const forward = boundary && mark > boundary ? (mark - boundary) * units / 10000n : 0n;
@@ -625,16 +625,20 @@ function holdingView(p, { snap, pointer, env, ctrl, nowMs, trades, reason }) {
     emergencyRank: pointer && pointer.emergencyRank != null ? pointer.emergencyRank : null, emergencyExpiry: iso(pointer && pointer.emergencyExpiresAtMs), labels: [p.engine === "legacy" ? "legacy position" : null, snap.aggregates && snap.aggregates.unprotected && snap.aggregates.unprotected.includes(p.symbol) ? "unprotected" : null, pointer && pointer.status === "ACTION_REQUIRED" ? "action required" : null].filter(Boolean),
     nextReview: pointer ? { at: iso(pointer.nextReviewAtMs), reason: pointer.nextReviewReason || null } : null, planVersion: pointer ? pointer.desiredVersion || null : null, openedAt: isoOf(p.openedAt),
     trades: Array.isArray(trades) ? trades : [], reason: reason || null,
+    lane: p.lane === "dip" ? "dip" : "ai",
+    dip: p.lane === "dip" && dipOpen ? { orderSetId: dipOpen.orderSetId || null, entry: priceUsd(dipOpen.entry), target: priceUsd(dipOpen.target), stop: priceUsd(dipOpen.stop), deadlineAt: dipOpen.deadlineMs ? iso(dipOpen.deadlineMs) : null, enteredAt: dipOpen.enteredAtMs ? iso(dipOpen.enteredAtMs) : null, confidence: dipOpen.confidence == null ? null : Number(dipOpen.confidence), stability: dipOpen.stability == null ? null : Number(dipOpen.stability), tradeUsd: dipOpen.tradeUsd == null ? null : Number(dipOpen.tradeUsd), fall: dipOpen.drop ? { high: priceUsd(dipOpen.drop.high), low: priceUsd(dipOpen.drop.low), dropPct: Number(dipOpen.drop.dropPct) || null, minutes: Number(dipOpen.drop.minutes) || null, z: dipOpen.drop.z == null ? null : Number(dipOpen.drop.z), speed: dipOpen.drop.speed == null ? null : Number(dipOpen.drop.speed) } : null } : null,
   };
 }
 /* Every fill for a symbol as one plain trade row for the holding card and
    its chart: when, which way, how many, at what price, and the one-sentence
    reason. Both fill schemas are read: fill.v2 (units/micros) and the legacy
    ledger fill (qty/fillPriceUsd). Display only. */
-function tradeViews(fills, symbol, reason) {
+function tradeViews(fills, symbol, reason, orderSetsById = {}) {
   const out = [];
   for (const f of fills || []) {
     if (!f || String(f.symbol || "").toUpperCase() !== symbol) continue;
+    const lane = f.source === "paper_dip" || (f.provenance && f.provenance.lane === "dip") ? "dip" : "ai";
+    const dipSet = lane === "dip" && f.orderSetId ? orderSetsById[f.orderSetId] : null;
     const side = String(f.side || "").toLowerCase() === "sell" ? "SELL" : "BUY";
     const units = f.quantityUnits != null ? big(f.quantityUnits) : f.qty != null ? BigInt(Math.round(Number(f.qty))) : 0n;
     const px = f.priceMicros != null ? price(f.priceMicros) : priceUsd(f.fillPriceUsd);
@@ -642,9 +646,11 @@ function tradeViews(fills, symbol, reason) {
     if (!(units > 0n) || !px || !atMs) continue;
     const role = String(f.role || "").toUpperCase();
     const kind = side === "BUY" ? "entry" : role === "TARGET" ? "target" : role === "STOP" ? "stop" : "sell";
-    const why = side === "BUY" ? (reason || null) : kind === "target" ? "The price reached the profit target the AI set when it bought." : kind === "stop" ? "The price fell to the planned stop, so the position was sold to cap the loss." : f.reason || "Sold on instruction.";
+    const why = lane === "dip"
+      ? (side === "BUY" ? (dipSet && dipSet.dip ? `Dip trade: fell ${Number(dipSet.dip.dropPct).toFixed(2)}% in ${Math.round(Number(dipSet.dip.minutes) || 0)} min, then settled above ${Number(dipSet.dip.low).toFixed(2)}; bought the settle.` : "Dip trade: bought after a sharp fall settled.") : kind === "target" ? "Dip trade: the price recovered the set share of the fall." : kind === "stop" ? "Dip trade: the price broke below the fall's low, so it was sold to cap the loss." : "Dip trade: time limit reached, sold.")
+      : side === "BUY" ? (reason || null) : kind === "target" ? "The price reached the profit target the AI set when it bought." : kind === "stop" ? "The price fell to the planned stop, so the position was sold to cap the loss." : f.reason || "Sold on instruction.";
     const notional = f.notionalMinor != null ? money(f.notionalMinor) : f.fillNotionalCents != null ? money(f.fillNotionalCents) : money((units * big(px.priceMicros)) / 1000000n / 10000n);
-    out.push({ fillId: f.fillId || null, at: iso(atMs), side, kind, quantity: qty(units), price: px, notional, reason: why ? clip(why, 240) : null, simulated: f.source === "historical_simulation" || f.simulated === true, ambiguous: f.ambiguous === true });
+    out.push({ fillId: f.fillId || null, at: iso(atMs), side, kind, lane, quantity: qty(units), price: px, notional, reason: why ? clip(why, 240) : null, simulated: f.source === "historical_simulation" || f.simulated === true, ambiguous: f.ambiguous === true });
   }
   return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(-40);
 }
@@ -667,8 +673,11 @@ async function readPortfolio({ params, ctx }) {
   for (const p of pointers) if (p.desiredVersionId && !envelopesById[p.desiredVersionId]) { const es = await D.col(D.COL.activationEnvelopes).doc(p.desiredVersionId).get(); envelopesById[p.desiredVersionId] = es.exists ? decode(es.data()) : null; }
   const asOf = new Date(nowMs).toISOString();
   const reasonBySymbol = {};
-  for (const p of snap.positions) reasonBySymbol[p.symbol] = await decisionReasonFor(D, ctrl, p.symbol);
-  const holdings = snap.positions.map((p) => holdingView(p, { snap, pointer: pointerBy.get(p.symbol) || null, env: pointerBy.get(p.symbol) ? envelopesById[pointerBy.get(p.symbol).desiredVersionId] : null, ctrl, nowMs, trades: tradeViews(fills, p.symbol, reasonBySymbol[p.symbol]), reason: reasonBySymbol[p.symbol] })).sort((a, b) => a.symbol.localeCompare(b.symbol));
+  for (const p of snap.positions) reasonBySymbol[p.symbol] = p.lane === "dip" ? null : await decisionReasonFor(D, ctrl, p.symbol);
+  const orderSetsById = Object.fromEntries(orderSets.map((o) => [o.orderSetId, o]));
+  let dipOpenBySymbol = {};
+  try { const ds = await D.col(D.COL.dipState).doc(accountId).get(); dipOpenBySymbol = ds.exists && ds.data().open ? ds.data().open : {}; } catch (e) { dipOpenBySymbol = {}; }
+  const holdings = snap.positions.map((p) => holdingView(p, { snap, pointer: pointerBy.get(p.symbol) || null, env: pointerBy.get(p.symbol) ? envelopesById[pointerBy.get(p.symbol).desiredVersionId] : null, ctrl, nowMs, trades: tradeViews(fills, p.symbol, reasonBySymbol[p.symbol], orderSetsById), reason: reasonBySymbol[p.symbol], dipOpen: dipOpenBySymbol[p.symbol] || null })).sort((a, b) => (a.lane === b.lane ? 0 : a.lane === "ai" ? -1 : 1) || a.symbol.localeCompare(b.symbol));
   const active = pointers.filter((p) => !TERMINAL_POINTER.has(p.status)).sort((a, b) => a.symbol.localeCompare(b.symbol));
   const auths = await authorizationViews(D, ctrl, { accountId, pointers: active, orderSets, fills, envelopesById });
   const working = orderSets.filter((o) => !["CLOSED", "CANCELLED", "FILLED", "COMPLETE", "ENTRY_EXPIRED"].includes(o.status)).sort((a, b) => Number(b.createdAtMs) - Number(a.createdAtMs)).map((o) => orderSetView(o, fills, ctrl));
