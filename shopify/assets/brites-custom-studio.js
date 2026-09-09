@@ -10215,9 +10215,7788 @@ function mkSpineOf(it) {
   let val = null;
   try {
     const b = mkBBox(it);
-    const ext = Math.max(b
-... 368811 bytes omitted ...
-utout" ? MK_CUTOUT
+    const ext = Math.max(b.w, b.h);
+    if (ext > 1e-6) {
+      const PAD = 3;
+      const G = Math.max(20, Math.min(MK_SPINE_GRID, Math.round(ext * MK_SPINE_DPI)));
+      const gw = Math.max(1, Math.round(G * (b.w / ext))) + PAD * 2;
+      const gh = Math.max(1, Math.round(G * (b.h / ext))) + PAD * 2;
+      const cv = document.createElement("canvas");
+      cv.width = gw; cv.height = gh;
+      const ctx = cv.getContext("2d", { willReadFrequently: true });
+      ctx.fillStyle = "#000";
+      const path = new Path2D();
+      const q = (it.q && it.q.length) ? it.q : [Math.floor(p.length / 2)];
+      let k = 0;
+      q.forEach((len) => {
+        for (let j = 0; j < len && k * 2 + 1 < p.length; j++, k++) {
+          const X = PAD + ((p[k * 2] - b.x) / Math.max(1e-9, b.w)) * (gw - PAD * 2);
+          const Y = PAD + ((p[k * 2 + 1] - b.y) / Math.max(1e-9, b.h)) * (gh - PAD * 2);
+          if (j === 0) path.moveTo(X, Y); else path.lineTo(X, Y);
+        }
+        path.closePath();
+      });
+      ctx.fill(path, "evenodd");
+      const px = ctx.getImageData(0, 0, gw, gh).data;
+      const mask = new Uint8Array(gw * gh);
+      for (let i = 0; i < gw * gh; i++) mask[i] = px[i * 4 + 3] >= 128 ? 1 : 0;
+
+      const s = mkMaskSpine(mask, gw, gh);
+      /* AN AREA IS A VERDICT, NOT A FAILURE. Returning null for a disc made
+         "this shape is not a line" indistinguishable from "the raster went
+         wrong", which cost the cache — every repaint skeletonised every blob
+         on the sheet again — and cost the tests their teeth: a check that a
+         disc keeps its boundary passes just as well when nothing ran at all. */
+      if (s) val = { paths: [], wid: s.wid / G, ratio: s.ratio, ribbon: !!s.ribbon };
+      if (s && s.ribbon && s.paths.length) {
+        const ux = (gw - PAD * 2), uy = (gh - PAD * 2);
+        const out = [];
+        s.paths.forEach((pts) => {
+          if (pts.length < 2) return;
+          const closed = pts[0] === pts[pts.length - 1];
+          const grid = closed ? pts.map((i) => [i % gw, (i / gw) | 0])
+                              : mkSpineExtend(pts, s.deg, s.dist, mask, gw, gh);
+          const flat = [];
+          grid.forEach((g) => flat.push((g[0] - PAD) / ux, (g[1] - PAD) / uy));
+          /* RDP strips collinear stair points; Chaikin rounds what is left.
+             The eps is a whisker over one grid cell, so genuine features
+             survive and only the staircase is treated as noise. */
+          const simp = mkRdp(flat, 1.2 / Math.max(ux, uy));
+          if (simp.length >= 4) {
+            out.push({ u: mkChaikin(simp, closed, 2), cl: closed ? 1 : 0 });
+          }
+        });
+        if (out.length) val = { paths: out, wid: s.wid / G, ratio: s.ratio, ribbon: true };
+      }
+    }
+  } catch (e) { val = null; }
+
+  if (MK_SPINE_CACHE.size > 500) MK_SPINE_CACHE.clear();
+  MK_SPINE_CACHE.set(it.id, { sig, val });
+  return val;
+}
+
+/* ═══════════ the painter — one function, screen and export alike ══════════
+   Every pixel the designer receives is painted by this, at a different size.
+   Nothing can drift between what the customer sees and what is sent.        */
+function mkPaint(ctx, W, H, items, opt) {
+  opt = opt || {};
+  const px = (n) => Math.max(1, n * W);
+
+  if (opt.grid) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(28,29,29,.10)"; ctx.lineWidth = 1;
+    const gn = Math.max(4, Math.min(48, opt.gridN || 12));
+    for (let i = 1; i < gn; i++) {
+      const g = (i / gn);
+      ctx.beginPath(); ctx.moveTo(g * W, 0); ctx.lineTo(g * W, H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, g * H); ctx.lineTo(W, g * H); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  if (opt.centre || opt.mirror) {
+    ctx.save();
+    ctx.strokeStyle = opt.mirror ? "rgba(165,138,82,.75)" : "rgba(28,29,29,.28)";
+    ctx.lineWidth = 1; ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+    if (opt.centre) { ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  const notes = [];
+  items.forEach((it) => {
+    if (it.hid) return;
+    if (it.t === "text" || it.t === "callout") notes.push(it);
+  });
+
+  items.forEach((it) => {
+    if (it.hid) return;                        // a hidden layer paints nothing
+    if (!opt._erasePass && Array.isArray(it.er) && it.er.length &&
+        it.t !== "text" && it.t !== "callout" && it.t !== "label") {
+      mkPaintErasedLayer(ctx, W, H, it, opt);
+      return;
+    }
+    ctx.save();
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.strokeStyle = it.c || "#d23a3a";
+    ctx.fillStyle = it.f && it.f !== "none" ? it.f : "transparent";
+    ctx.lineWidth = px(it.w || 0.008);
+    ctx.globalAlpha = (MK_ALPHA[it.t] || 1) * (it.o == null ? 1 : it.o);
+
+    const p = it.p || [];
+    const bb = mkBBox(it);
+    /* rotation and mirroring are both about the item's own centre, so a
+       turned or flipped item still lives where it was put. The mirror is
+       applied OUTSIDE the turn — scale then rotate — because that is the
+       order the flip arithmetic in mkFlipItems assumes when it decides what
+       a flip does to `r`, and the two have to agree or a flipped, turned
+       layer lands at twice its angle. */
+    if (it.r || it.fx || it.fy) {
+      ctx.translate((bb.x + bb.w / 2) * W, (bb.y + bb.h / 2) * H);
+      if (it.fx || it.fy) ctx.scale(it.fx ? -1 : 1, it.fy ? -1 : 1);
+      if (it.r) ctx.rotate(it.r);
+      ctx.translate(-(bb.x + bb.w / 2) * W, -(bb.y + bb.h / 2) * H);
+    }
+
+    if (it.t === "fill") {
+      /* ── WHAT A FILL LOOKS LIKE IS DECIDED BY ITS INSTRUCTION ──────────
+         This branch used to paint `it.c` unconditionally and never look at
+         `it.f` at all — which meant the one control the whole engraving
+         system rests on did NOTHING to any object that is itself a fill.
+         An .svg shape, an .ai path, a part traced out of a generated
+         drawing: select it, press Cut out or Outline, and the model changed
+         while the sheet did not move a pixel. The customer's report was
+         exactly that, in exactly those words, and it went further than they
+         knew — the payload sent to the workshop reported the intention while
+         the picture beside it showed the opposite.
+
+         Three instructions, three appearances, the same three everywhere
+         else in the studio:
+           ENGRAVE  → the area, solid, in the engraving ink.
+           CUT OUT  → the area, solid, in the reserved blue.
+           OUTLINE  → the boundary line only; the inside is plain metal. */
+      /* ── A FILL CLAIMED AS THE PERIMETER PAINTS AS ITS EDGE ────────────
+         A traced outline is a FILL — a thin closed band — and fills take
+         their look from their instruction, never from `c`. So the perimeter
+         claim rides in on `c` (the editor's light green) or on `pm` (set at
+         compose, where a verified claim goes out in the instruction blue),
+         and either one turns the fill into what the claim means: no area
+         instruction at all, just its boundary drawn in the claim's colour.
+         The spine/boundary machinery below is exactly the "none" path, so a
+         band that measures as a line paints as one line, not tramlines. */
+      const pmc = it.pm ? MK_CUTOUT
+                : String(it.c || "").toLowerCase() === MK_PERIM ? MK_PERIM : null;
+      const intent = pmc ? "none" : mkFillIntent(it.f);
+      const ink = pmc || mkIntentInk(intent);
+
+      if (it.m && it.m.length) {
+        /* a masked fill: drawn into its own box, so moving or scaling the
+           layer moves and scales the area exactly as any picture would */
+        /* "edge" is mkRleCanvas's outline-only mode: it walks the mask and
+           keeps a pixel only where a neighbour is unset, then widens that to
+           a visible band. Handing it the OUTLINE INK instead asked for the
+           same area painted solid red — the instruction was read correctly
+           and then drawn as its own opposite. */
+        const cv = mkRleCanvas(it, intent === "none" ? "edge" : ink);
+        if (cv && cv.width && cv.height) {
+          ctx.imageSmoothingEnabled = intent !== "none";
+          ctx.drawImage(cv, bb.x * W, bb.y * H, Math.max(1, bb.w * W), Math.max(1, bb.h * H));
+        }
+      } else {
+        /* one or more closed contours (outer edge plus any holes), painted
+           evenodd so a shape sitting INSIDE the filled area keeps its white
+           interior */
+        const path = new Path2D();
+        const q = (it.q && it.q.length) ? it.q : [Math.floor(p.length / 2)];
+        let k = 0;
+        q.forEach((len) => {
+          for (let j = 0; j < len && k * 2 + 1 < p.length; j++, k++) {
+            const X = p[k * 2] * W, Y = p[k * 2 + 1] * H;
+            if (j === 0) path.moveTo(X, Y); else path.lineTo(X, Y);
+          }
+          path.closePath();
+        });
+        /* OUTLINE ONLY MEANS THE INSIDE IS PLAIN METAL. The block above says
+           exactly that, and the stroke below already handles it — but the
+           fill ran unconditionally, so an outline-only contour was flooded in
+           the outline red before its boundary was ever drawn. */
+        if (intent !== "none") {
+          ctx.fillStyle = ink;
+          ctx.fill(path, "evenodd");
+        }
+        /* THE OUTLINE IS ALWAYS DRAWN WHEN THERE IS NO FILL, whatever the
+           object is. Skipping it — which the traced branch used to do
+           unconditionally — would make "outline only" erase the layer from
+           the sheet, which is the vanishing act this round set out to end,
+           wearing a different hat.
+
+           When the area IS filled, the stroke is only there to close the
+           half-pixel seam a traced contour leaves, so a traced object (whose
+           contours sit exactly on the pixels they came from) does without. */
+        const seam = !it.tr;
+        /* ── AND WHEN THE AREA IS A LINE, DRAW THE LINE ────────────────────
+           See mkSpineOf. Stroking the contour of a stroke draws both of its
+           walls, which is where the tramlines came from. A shape that
+           measures as a line gets its spine instead — one line, medium
+           weight, running where the stroke ran and reaching the same
+           junctions. A shape that measures as an area gets its boundary,
+           unchanged, because for an area the boundary is the right answer. */
+        const spine = intent === "none" ? mkSpineOf(it) : null;
+        if (spine && spine.paths.length) {
+          ctx.strokeStyle = ink;
+          ctx.lineCap = "round"; ctx.lineJoin = "round";
+          const hair = Math.max(0.75, W / 900);
+          /* never fatter than the stroke it replaces: a hairline detail must
+             not come back as a rope that swallows its neighbours */
+          const own = spine.wid * Math.max(bb.w * W, bb.h * H);
+          ctx.lineWidth = Math.max(hair, Math.min(W * MK_OUTLINE_W, own));
+          spine.paths.forEach((pl) => {
+            const u = pl.u;
+            ctx.beginPath();
+            for (let k = 0; k + 1 < u.length; k += 2) {
+              const X = (bb.x + u[k] * bb.w) * W, Y = (bb.y + u[k + 1] * bb.h) * H;
+              if (k === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+            }
+            if (pl.cl) ctx.closePath();
+            ctx.stroke();
+          });
+        } else if (intent === "none" || seam) {
+          ctx.strokeStyle = ink;
+          /* A HAIRLINE FOR ANYTHING THIS BUILD MADE — but an old fill was
+             traced from a flood that had NOT been grown back to the true
+             edge, and it stored a fat stroke precisely because it needed one
+             to reach its own walls. Repainting those at a hairline would
+             pull every fill in every saved design back by half the old
+             tolerance and leave a white seam round it.
+
+             `it.w` is otherwise never read here: Weight edits the stroke of
+             whatever is selected, and a fill is selected the moment it
+             lands, so reading it made nudging Weight look like the fill
+             getting more or less accurate. It never was. */
+          const legacy = (!it.gr && Number(it.w) > 0.02) ? Number(it.w) : 0;
+          const hair = Math.max(0.75, W / 900);
+          ctx.lineWidth = intent === "none" ? Math.max(hair, W / 420)
+                                            : (legacy ? px(legacy) : hair);
+          ctx.stroke(path);
+        }
+      }
+    } else if (it.t === "img") {
+      /* letterboxed inside its own box, so a placed picture keeps its shape
+         however the box is dragged — the alternative is a squashed photo the
+         customer did not ask for */
+      const img = mkPictureFor(it, opt.onImage);
+      const bx = bb.x * W, by = bb.y * H, bw = bb.w * W, bh = bb.h * H;
+      if (img && img.width) {
+        const s = Math.min(bw / img.width, bh / img.height);
+        const dw = img.width * s, dh = img.height * s;
+        ctx.drawImage(img, bx + (bw - dw) / 2, by + (bh - dh) / 2, dw, dh);
+      } else if (!opt.export) {
+        ctx.setLineDash([6, 6]);
+        ctx.strokeStyle = "rgba(28,29,29,.35)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx, by, bw, bh);
+        ctx.setLineDash([]);
+      }
+    } else if (it.t === "ink" || it.t === "hl" || it.t === "sign") {
+      if (p.length >= 2) {
+        ctx.beginPath();
+        ctx.moveTo(p[0] * W, p[1] * H);
+        for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(p[i] * W, p[i + 1] * H);
+        if (p.length === 2) ctx.lineTo(p[0] * W + 0.1, p[1] * H + 0.1);  /* a dot is a mark */
+        ctx.stroke();
+      }
+    } else if (MK_SHAPE_TOOLS.indexOf(it.t) >= 0) {
+      mkPaintShape(ctx, it, bb, W, H);
+    } else if (it.t === "label") {
+      const size = Math.max(9, (it.fs || 0.05) * W);
+      ctx.font = `600 ${size}px ${MK_FONTS[it.ff] || MK_FONTS.sans}`;
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = it.c || "#1c1d1d";
+      const lines = String(it.s || "").split("\n");
+      lines.forEach((ln, i) => {
+        const y = (p[1] || 0.5) * H + (i - (lines.length - 1) / 2) * size * 1.2;
+        ctx.fillText(ln, (p[0] || 0.5) * W, y);
+      });
+      it._w = Math.max.apply(null, lines.map((l) => ctx.measureText(l).width)) / W;
+      it._h = (lines.length * size * 1.2) / H;
+    }
+    ctx.restore();
+  });
+
+  /* Notes last and unrotated, so they are always legible and always on top —
+     they are annotation, not artwork. Numbered to match the notes list that
+     travels with the request. */
+  notes.forEach((it, i) => {
+    const p = it.p || [];
+    const ax = (p[0] || 0.5) * W, ay = (p[1] || 0.5) * H;
+    const bx = it.t === "callout" && p.length > 3 ? p[2] * W : ax;
+    const by = it.t === "callout" && p.length > 3 ? p[3] * H : ay;
+    const size = Math.max(9, (it.fs || 0.03) * W);
+    ctx.save();
+    ctx.font = `600 ${size}px ${MK_FONTS[it.ff] || MK_FONTS.sans}`;
+    const label = (i + 1) + ". " + String(it.s || "").replace(/\n+/g, " ");
+    const tw = ctx.measureText(label).width;
+    const padX = size * 0.55, h = size * 1.9;
+    /* keep the pill on the sheet whatever the pin does */
+    let x = Math.min(W - tw - padX * 2 - 4, Math.max(4, bx - tw / 2 - padX));
+    let y = Math.min(H - h - 4, Math.max(4, by - h - size * 0.8));
+    if (it.t === "callout") {
+      ctx.strokeStyle = it.c || "#1c1d1d";
+      ctx.lineWidth = Math.max(1, size * 0.06);
+      ctx.setLineDash([size * 0.28, size * 0.28]);
+      ctx.beginPath(); ctx.moveTo(x + tw / 2 + padX, y + h); ctx.lineTo(ax, ay); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.fillStyle = "rgba(28,29,29,.93)";
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, tw + padX * 2, h, h / 2);
+    else ctx.rect(x, y, tw + padX * 2, h);
+    ctx.fill();
+    /* the pin itself */
+    ctx.fillStyle = it.c || "#d23a3a";
+    ctx.beginPath(); ctx.arc(ax, ay, Math.max(2.5, size * 0.16), 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, x + padX, y + h / 2);
+    ctx.restore();
+    it._w = (tw + padX * 2) / W; it._h = h / H; it._bx = x / W; it._by = y / H;
+  });
+}
+
+function mkPaintShape(ctx, it, bb, W, H) {
+  const x = bb.x * W, y = bb.y * H, w = bb.w * W, h = bb.h * H;
+  const p = it.p || [];
+  /* A CLOSED SHAPE IS AN AREA, and an area carries one of the three
+     instructions whether or not it is filled. It used to be stroked in the
+     pen's own colour, so an outline-only circle looked identical to a circle
+     nobody had said anything about — the single commonest way this control
+     went unnoticed. A line and an arrow enclose nothing, so they stay ink. */
+  const closed = it.t !== "line" && it.t !== "arrow";
+  /* an unfilled ring or bail is a HOLE by the studio's own grammar, so it is
+     stroked in the cut-out blue rather than the outline red — the list sent
+     to the workshop has said so all along */
+  const intent = mkItemIntent(it);
+  /* WHETHER IT IS FILLED IS THE INSTRUCTION, NOT THE SHAPE. `filled = closed`
+     flooded every closed primitive in whatever ink its instruction had
+     chosen, so an outline-only body came out solid red — and `intent` sat one
+     line above, computed and unread. A ring or bail promoted to cut-out is
+     still an OUTLINE on the page: mkItemIntent changes its colour, never its
+     hollowness, so the promotion is read off `it.f` here, not off intent. */
+  const filled = closed && mkFillIntent(it.f) !== "none";
+  /* ── AND A PRIMITIVE CLAIMED AS THE PERIMETER PAINTS IN ITS OWN GREEN ──
+     The fill branch above learned this and mkPaintShape never did. Perimeter
+     is a claim carried on `c`, and the three-instruction vocabulary has no
+     entry for it — so mkInkInstruction returns null for the green,
+     mkItemIntent falls through to the shape's own fill, which on the
+     unfilled boundary the claim is always made on is "none", and
+     mkIntentInk paints that OUTLINE RED.
+
+     Select a circle, press Perimeter, watch it turn red. The click handler
+     wrote MK_PERIM onto the item correctly and did exactly what it was
+     asked; the painter threw the answer away one function later. A drawn
+     primitive is every bit as able to be the charm's outer cut edge as a
+     traced band is, and mkIsPerimLine has always agreed — this is the only
+     place that did not. */
+  const perim = !filled && String(it.c || "").toLowerCase() === MK_PERIM;
+  const ink = perim ? MK_PERIM : mkIntentInk(intent);
+  const path = new Path2D();
+  switch (it.t) {
+    case "line":
+      path.moveTo((p[0] || 0) * W, (p[1] || 0) * H);
+      path.lineTo((p[2] || 0) * W, (p[3] || 0) * H);
+      break;
+    case "arrow": {
+      const x1 = (p[0] || 0) * W, y1 = (p[1] || 0) * H, x2 = (p[2] || 0) * W, y2 = (p[3] || 0) * H;
+      const a = Math.atan2(y2 - y1, x2 - x1);
+      const hd = Math.max(8, Math.hypot(x2 - x1, y2 - y1) * 0.22);
+      path.moveTo(x1, y1); path.lineTo(x2, y2);
+      path.moveTo(x2, y2); path.lineTo(x2 - hd * Math.cos(a - 0.42), y2 - hd * Math.sin(a - 0.42));
+      path.moveTo(x2, y2); path.lineTo(x2 - hd * Math.cos(a + 0.42), y2 - hd * Math.sin(a + 0.42));
+      break;
+    }
+    case "rect": path.rect(x, y, w, h); break;
+    case "round": {
+      const r = Math.min(w, h) * 0.22;
+      if (path.roundRect) path.roundRect(x, y, w, h, r); else path.rect(x, y, w, h);
+      break;
+    }
+    case "ellipse": path.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); break;
+    case "ring":
+      path.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      /* WITHOUT THE MOVE, THE PEN STAYS DOWN. ellipse() draws a connecting
+         line from wherever the current point is to the arc's start — so the
+         two circles arrived joined by a horizontal bar from the outer rim
+         to the inner, which no one drew and the customer photographed. */
+      path.moveTo(x + w * 0.75, y + h / 2);
+      path.ellipse(x + w / 2, y + h / 2, w / 4, h / 4, 0, 0, Math.PI * 2);
+      break;
+    case "tri": path.moveTo(x + w / 2, y); path.lineTo(x + w, y + h); path.lineTo(x, y + h); path.closePath(); break;
+    case "star": {
+      const cx = x + w / 2, cy = y + h / 2;
+      for (let i = 0; i < 10; i++) {
+        const rr = i % 2 ? 0.42 : 1;
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const sx = cx + Math.cos(a) * (w / 2) * rr, sy = cy + Math.sin(a) * (h / 2) * rr;
+        if (i) path.lineTo(sx, sy); else path.moveTo(sx, sy);
+      }
+      path.closePath();
+      break;
+    }
+    case "heart": {
+      const cx = x + w / 2;
+      path.moveTo(cx, y + h);
+      path.bezierCurveTo(x - w * 0.12, y + h * 0.55, x + w * 0.08, y - h * 0.10, cx, y + h * 0.28);
+      path.bezierCurveTo(x + w * 0.92, y - h * 0.10, x + w * 1.12, y + h * 0.55, cx, y + h);
+      path.closePath();
+      break;
+    }
+    case "bail": {
+      /* the loop a charm actually hangs from — the one piece of geometry every
+         charm has and nobody remembers to draw */
+      const br = Math.min(w, h) * 0.13;
+      path.rect(x, y + br * 2, w, h - br * 2);
+      path.ellipse(x + w / 2, y + br, br, br, 0, 0, Math.PI * 2);
+      break;
+    }
+  }
+  if (filled) { ctx.fillStyle = ink; ctx.fill(path, "evenodd"); }
+  if (closed) ctx.strokeStyle = ink;
+  ctx.stroke(path);
+}
+
+/* ── geometry ────────────────────────────────────────────────────────────── */
+function mkBBox(it) {
+  const p = it.p || [];
+  if (it.t === "text" || it.t === "callout") {
+    const w = it._w || 0.2, h = it._h || 0.06;
+    const bx = it._bx != null ? it._bx : (p[0] || 0) - w / 2;
+    const by = it._by != null ? it._by : (p[1] || 0) - h;
+    return { x: bx, y: by, w, h };
+  }
+  if (it.t === "label") {
+    const w = it._w || 0.2, h = it._h || 0.06;
+    return { x: (p[0] || 0) - w / 2, y: (p[1] || 0) - h / 2, w, h };
+  }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i + 1 < p.length; i += 2) {
+    x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]);
+    y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]);
+  }
+  if (!isFinite(x0)) return { x: 0, y: 0, w: 0, h: 0 };
+  return { x: x0, y: y0, w: Math.max(1e-4, x1 - x0), h: Math.max(1e-4, y1 - y0) };
+}
+/* A POINT, BROUGHT BACK INTO AN ITEM'S OWN UNTURNED, UNMIRRORED FRAME.
+   Every point hit test in the studio comes through here — mkHitItem,
+   mkFillHit, mkPictureLocal, mkEraseLocalPoint, mkPxLocal — which is why the
+   mirror is undone here and nowhere else. The painter does scale then
+   rotate, so the inverse undoes the scale first and the turn second. */
+function mkUnrotate(it, x, y) {
+  const fx = it.fx ? -1 : 1, fy = it.fy ? -1 : 1;
+  if (!it.r && fx > 0 && fy > 0) return [x, y];
+  const bb = mkBBox(it), cx = bb.x + bb.w / 2, cy = bb.y + bb.h / 2;
+  const dx = (x - cx) * fx, dy = (y - cy) * fy;
+  if (!it.r) return [cx + dx, cy + dy];
+  const c = Math.cos(-it.r), s = Math.sin(-it.r);
+  return [cx + dx * c - dy * s, cy + dx * s + dy * c];
+}
+/* Where a picture is actually drawn inside its box. mkPaint letterboxes it,
+   so the box and the picture are not the same rectangle, and a click has to
+   be converted through the same arithmetic or the wand would fire at the
+   wrong pixel. */
+function mkPictureRect(it) {
+  const img = mkImageFor(it);
+  const bb = mkBBox(it);
+  if (!img || !img.width) return bb;
+  const s = Math.min(bb.w / img.width, bb.h / img.height);
+  const dw = img.width * s, dh = img.height * s;
+  return { x: bb.x + (bb.w - dw) / 2, y: bb.y + (bb.h - dh) / 2, w: dw, h: dh };
+}
+/* a sheet point in the picture's own 0..1 space, or null if it missed */
+function mkPictureLocal(it, x, y) {
+  const [ux, uy] = mkUnrotate(it, x, y);
+  const r = mkPictureRect(it);
+  if (!r.w || !r.h) return null;
+  const u = (ux - r.x) / r.w, v = (uy - r.y) / r.h;
+  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+  return [u, v];
+}
+/* the topmost picture under a point — the one a click would land on */
+function mkHitPicture(x, y) {
+  for (let i = __mk.items.length - 1; i >= 0; i--) {
+    const it = __mk.items[i];
+    if (it.t !== "img" || it.hid || it.lok) continue;
+    if (mkPictureLocal(it, x, y)) return i;
+  }
+  return -1;
+}
+/* ═══════════ WHICH PICTURE A PIXEL TOOL IS AIMING AT ═════════════════════
+   Shared by the eraser and the magic eraser: the arithmetic that turns a
+   point on the sheet into a pixel inside whichever picture is under it — a
+   placed one if the pointer is over it, otherwise the sheet's own base.
+
+   Clone and Heal used these too and have been removed in full. What is left
+   is only what the tools that remain actually need. */
+function mkPxTarget(x, y) {
+  const i = mkHitPicture(x, y);
+  if (i >= 0) { const it = __mk.items[i]; const rec = mkPxEnsure(it); if (rec) return { it, rec }; }
+  const rec = mkPxBaseEnsure();
+  if (!rec) return null;
+  return { it: { id: MK_PX_BASE, t: "img", p: [0, 0, 1, 1], r: 0 }, rec, base: true };
+}
+function mkPxLocal(t, x, y) {
+  if (!t.base) return mkPictureLocal(t.it, x, y);
+  const d = t.rec.doc;
+  /* undo the crop and rotation first, in sheet-normalised space, using the
+     inverse of the very matrix mkRedraw drew with */
+  let sx = x, sy = y;
+  const m = mkBaseMatrix(1, 1);
+  if (m) {
+    try {
+      const inv = m.inverse();
+      const q = inv.transformPoint(new DOMPoint(x, y));
+      sx = q.x; sy = q.y;
+    } catch (e) { return null; }
+  }
+  const sc = Math.min(1 / d.w, 1 / d.h);
+  const dw = d.w * sc, dh = d.h * sc;
+  const ox = (1 - dw) / 2, oy = (1 - dh) / 2;
+  const u = (sx - ox) / dw, v = (sy - oy) / dh;
+  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+  return [u, v];
+}
+
+/* REMOVE AND FILL — take out whatever has been cut away from a picture and
+   close the background behind it. Not a fill OPTION: the studio has exactly
+   three of those and they are the engraving instructions. This is a repair,
+   and it reads the eraser's and the magic eraser's work rather than needing a
+   selection of its own. */
+async function mkRemoveAndFill() {
+  if (!__mk || !window.BJRaster) return false;
+  let i = __mk.sel;
+  let it = null, rec = null;
+  if (i >= 0 && __mk.items[i] && __mk.items[i].t === "img") it = __mk.items[i];
+  if (!it) {
+    i = __mk.items.findIndex((o) => o.t === "img" && !o.hid);
+    if (i >= 0) it = __mk.items[i];
+  }
+  rec = it ? mkPxEnsure(it) : mkPxBaseEnsure();
+  if (!rec) { toast("Select a picture first — then this closes the gap behind whatever you removed", "err"); return false; }
+  if (!it) it = { id: MK_PX_BASE };
+  const R = window.BJRaster;
+  const d = rec.doc;
+  const rgba = R.compositeRGBA(d);
+  const hole = new Uint8Array(d.w * d.h);
+  let n = 0;
+  for (let k = 0; k < d.w * d.h; k++) if (rgba[k * 4 + 3] < 128) { hole[k] = 1; n++; }
+  if (!n) { toast("Nothing has been taken out of this picture yet — erase something first", "err"); return false; }
+  if (n > d.w * d.h * 0.6) { toast("Too much of this picture is missing to fill it back in", "err"); return false; }
+  toast("Closing the gap…", "gold");
+  await new Promise((r) => setTimeout(r, 30));
+  try {
+    const filled = R.inpaintPatchMatch(rgba, d.w, d.h, hole, { patch: 7, iters: 5 });
+    const L = R.layerFromRGBA(it.n || "Picture", filled, d.w, d.h);
+    const entry = R.histBegin(d, "remove and fill");
+    d.layers[0] = L;
+    R.histCommit(d, entry);
+    __mk.dirty = true;
+    mkLogPush("px:" + it.id);
+    mkPxTouch(it);
+    mkTouch();
+    toast("Filled in.", "gold");
+    return true;
+  } catch (e) {
+    SD("removeAndFill:", e && e.message);
+    toast("That didn't work — undo and try erasing a smaller area", "err");
+    return false;
+  }
+}
+
+window.__mkRemoveAndFill = mkRemoveAndFill;
+
+/* CLOSE THE GAP, WHATEVER THE THEME IS SERVING. It belongs in the Liquid and
+   that is where it is — but the section template and this asset do not have
+   to land at the same moment, and a customer whose theme still has
+   yesterday's menu should still get it. Built here only if absent.
+
+   (This function also used to build Clone and Heal. Both were removed at the
+   customer's request; only the menu item is left.) */
+function mkEnsureRailTools() {
+  if (document.getElementById("mkFillGap")) return;
+  const more = document.querySelector("#mkMore + .mk-drop__menu") ||
+               (document.getElementById("mkMore") &&
+                document.getElementById("mkMore").parentNode.querySelector(".mk-drop__menu"));
+  if (!more) return;
+  const b = document.createElement("button");
+  b.type = "button"; b.id = "mkFillGap"; b.className = "mk-item";
+  b.setAttribute("role", "menuitem");
+  b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+    'stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 6.4 9.6a7.4 7.4 0 1 0 11.2 0Z"/>' +
+    '<path d="M8.6 14.4h6.8"/></svg>Close the gap';
+  more.insertBefore(b, more.firstChild ? more.firstChild.nextSibling : null);
+}
+
+/* the magic eraser, applied to a pixel buffer: flood from the clicked colour
+   and clear those pixels, which is exactly what the seed-and-tolerance version
+   computes — only written down instead of recomputed on every paint. */
+function mkPxWandCut(it, rec, uv) {
+  if (!window.BJRaster) return false;
+  const R = window.BJRaster;
+  const d = rec.doc;
+  const sx = Math.max(0, Math.min(d.w - 1, Math.round(uv[0] * d.w)));
+  const sy = Math.max(0, Math.min(d.h - 1, Math.round(uv[1] * d.h)));
+  const rgba = R.compositeRGBA(d);
+  const tol = (Number(it.kt) || MK_WAND_DEFAULT_TOL);
+  const mask = R.magicWand(rgba, d.w, d.h, sx, sy, tol, true);
+  let n = 0;
+  for (let k = 0; k < mask.length; k++) if (mask[k]) n++;
+  if (!n) { toast("Nothing matching that colour is connected to where you clicked", "err"); return false; }
+  const L = R.docActive(d);
+  const entry = R.histBegin(d, "magic eraser");
+  const soft = R.selFeather(mask, d.w, d.h, 1);
+  for (let ty = 0; ty <= ((d.h - 1) >> 8); ty++) {
+    for (let tx = 0; tx <= ((d.w - 1) >> 8); tx++) {
+      R.histTouch(entry, L, tx, ty);
+      const t = R.tileForWrite(L, tx, ty);
+      for (let y = 0; y < R.TILE; y++) {
+        const dy = ty * R.TILE + y; if (dy >= d.h) break;
+        for (let x = 0; x < R.TILE; x++) {
+          const dx = tx * R.TILE + x; if (dx >= d.w) break;
+          const m = soft[dy * d.w + dx];
+          if (!m) continue;
+          const di = ((y << 8) + x) << 2;
+          t.data[di + 3] = Math.round(t.data[di + 3] * (1 - m / 255));
+        }
+      }
+    }
+  }
+  R.histCommit(d, entry);
+  __mk.dirty = true;
+  mkLogPush("px:" + it.id);
+  mkPxTouch(it);
+  mkTouch();
+  return true;
+}
+const MK_WAND_DEFAULT_TOL = 18;
+function mkWandAt(x, y) {
+  const i = mkHitPicture(x, y);
+  if (i < 0) { toast("Click on a picture — this tool cuts a picture's background away", "err"); return false; }
+  const it = __mk.items[i];
+  const uv = mkPictureLocal(it, x, y);
+  /* ── ONCE A PICTURE IS PIXELS, THE SEEDS STOP BEING READ ─────────────
+     mkPictureFor serves the pixel buffer and never looks at it.k again, so
+     this quietly stopped doing anything the moment the picture became
+     pixel-backed: the seeds updated, no error appeared, and the tool was
+     simply dead. It cuts the pixels directly instead — same gesture, same
+     result, and it is undoable through the same shared log. */
+  const rec = mkPxGet(it);
+  if (rec) return mkPxWandCut(it, rec, uv);
+  mkPushUndo();
+  it.k = (it.k || []).concat([uv[0], uv[1]]).slice(-64);
+  if (!it.kt) it.kt = MK_WAND_DEFAULT_TOL;
+  __mk.sel = i;
+  mkTouch();
+  if (MK_WAND_DEAD.has(mkImageKey(it))) {
+    toast("This picture's pixels can't be read from here, so its background can't be cut. " +
+          "Re-import it from your device and it will work.", "err");
+    return false;
+  }
+  return true;
+}
+/* the common case, with no aim required: the four corners of a picture are
+   its background far more often than not */
+function mkKillBackground() {
+  if (!__mk) return false;
+  let i = __mk.sel;
+  if (!(__mk.items[i] && __mk.items[i].t === "img")) {
+    i = -1;
+    for (let k = __mk.items.length - 1; k >= 0; k--) {
+      if (__mk.items[k].t === "img" && !__mk.items[k].hid) { i = k; break; }
+    }
+  }
+  if (i < 0) { toast("Add a picture first, then its background can go", "err"); return false; }
+  const it = __mk.items[i];
+  mkPushUndo();
+  it.k = [0.012, 0.012, 0.988, 0.012, 0.012, 0.988, 0.988, 0.988];
+  it.kt = it.kt || MK_WAND_DEFAULT_TOL;
+  __mk.sel = i;
+  mkTouch();
+  const img = mkImageFor(it);
+  if (img && img.width) {
+    toast("Background removed — drag “how close a shade counts” if it took too much or too little", "gold");
+  }
+  return true;
+}
+function mkRestoreBackground() {
+  if (!__mk) return false;
+  const list = mkSelItems().filter((o) => o.t === "img" && (o.k || []).length);
+  const targets = list.length ? list : __mk.items.filter((o) => o.t === "img" && (o.k || []).length);
+  if (!targets.length) { toast("No background has been removed here", "err"); return false; }
+  mkPushUndo();
+  targets.forEach((o) => { o.k = []; });
+  mkTouch();
+  toast("Background back — nothing was ever altered, so nothing was lost", "gold");
+  return true;
+}
+
+function mkIsText(it) {
+  return !!it && (it.t === "text" || it.t === "callout" || it.t === "label");
+}
+/* the text item under a point, if any — the thing a double-click reopens */
+function mkHitText(x, y) {
+  const i = mkHitItem(x, y);
+  return (i >= 0 && mkIsText(__mk.items[i])) ? i : -1;
+}
+function mkEditItem(i) {
+  const it = __mk && __mk.items[i];
+  if (!mkIsText(it)) return false;
+  if (it.lok) { toast("That layer is locked — unlock it to edit the words", "err"); return false; }
+  __mk.sel = i;
+  mkSetTool("select");
+  __mk.sel = i;
+  mkChrome();
+  mkOpenEditor(it);
+  return true;
+}
+/* ═══════════ PIXEL-EXACT PICKING — ASK THE PAINTER, NOT THE BOX ══════════
+   Two complaints, one cause. "Sometimes I click on a line and the line
+   beside it gets selected." "Some things I have to click many times to
+   erase, some get erased just outside the eraser, and changing the eraser
+   size makes it work." Both are the same bug wearing different clothes:
+   nothing in the studio was asking where the INK is.
+
+   What the two hit tests actually did:
+     · mkHitItem, for a drawn stroke, measured the distance to the stroke's
+       VERTICES — never to the segments between them — with a tolerance of
+       0.02, which is two per cent of the sheet. A straight line stored as
+       two points therefore had no hit region along its length at all, and a
+       click anywhere near it landed on whichever NEIGHBOUR happened to have
+       a vertex within 2%. That is the wrong line getting selected, exactly.
+     · everything else — every shape, every primitive, every traced part —
+       was a BOUNDING BOX with a pad. A diagonal line's box is mostly empty.
+       A ring's box is a disc. Clicking the hole in the middle of an O
+       grabbed the O.
+     · mkEraseHit was the same box test, and its pad was
+       `max(0.008, eraseSize/2)` — THE PAD GREW WITH THE ERASER. So changing
+       the eraser size changed which object the box test picked, which is
+       precisely the customer's "I have to change the size to make it work".
+       And because it returned only the TOPMOST box, an object whose empty
+       box lay over the mark you were rubbing swallowed the whole stroke and
+       the mark underneath was never touched: "I have to click many times."
+
+   The fix is not a better approximation of the geometry. There is already
+   something in this file that knows exactly where every object's ink is,
+   down to the pixel, for every type, through every rotation, mirror, mask,
+   letterbox and erase stroke — THE PAINTER. So the hit test asks it.
+
+   A query renders the candidate ALONE into a scratch canvas the size of the
+   query itself — one pixel for a click, the eraser's disc for a sweep — with
+   the same mkPaint call, the same transform and the same erase mask the
+   visible sheet uses, and then reads the alpha. If the painter put ink
+   there, it is a hit; if it did not, it is not. There is no tolerance to
+   tune and no geometry to keep in step, because there is no second
+   description of the shape to drift from the first.
+
+   WHY NOT A RAY CASTER. A ray cast is the right tool when the scene is a
+   set of analytic primitives and you must intersect them — 3D, or a 2D
+   scene with no rasteriser. Here the exact rasteriser already exists and is
+   the definition of what the customer sees, so casting rays at a
+   reconstruction of the shapes would be strictly less accurate than reading
+   the shapes themselves, and would need a new closed-form intersection for
+   every item type — fills with holes, RLE masks, letterboxed photographs,
+   outline-only bands, spines — each one a fresh chance to disagree with the
+   picture. Reading the painter cannot disagree with the picture.
+
+   WHY IT IS NOT EXPENSIVE. Nothing builds a full-screen id buffer and
+   nothing is cached, so there is nothing to invalidate. Every query first
+   throws out candidates by bounding box — the cheap test is still the right
+   FIRST test, it is only the wrong LAST one — and then rasterises the two or
+   three survivors into a window that is one pixel across for a click and at
+   most 96 for the largest eraser. A big eraser is rendered at a reduced
+   scale rather than a bigger window, so the cost of a query is bounded by
+   the window and not by the size of the brush or the size of the sheet.  */
+const MK_PICK_INK  = 16;    /* alpha at or above this is ink, not a fringe    */
+const MK_PICK_GRAB = 3.5;   /* SCREEN px of forgiveness — SELECTION only      */
+const MK_PICK_MAXW = 96;    /* widest window a single query may rasterise     */
+let _mkPickCv = null;
+
+function mkPickCtx(w, h) {
+  if (!_mkPickCv) _mkPickCv = document.createElement("canvas");
+  if (_mkPickCv.width < w) _mkPickCv.width = w;
+  if (_mkPickCv.height < h) _mkPickCv.height = h;
+  let ctx = null;
+  try { ctx = _mkPickCv.getContext("2d", { willReadFrequently: true }); } catch (e) {}
+  return ctx || _mkPickCv.getContext("2d");
+}
+
+/* the sheet's own bitmap size — the pixels the customer is actually looking
+   at, so "pixel perfect" means perfect in the pixels they can see */
+function mkPickSheet() {
+  const cv = markupCanvas();
+  if (cv && cv.width) {
+    const p = mkPad(cv);
+    const W = cv.width - p.x * 2, H = cv.height - p.y * 2;
+    if (W > 8 && H > 8) return { W, H };
+  }
+  return { W: 1000, H: 1000 };
+}
+/* sheet pixels per SCREEN pixel, so a grab tolerance quoted in screen pixels
+   feels the same at every zoom instead of shrinking as you zoom in */
+function mkPickScale() {
+  const s = mkPickSheet(), box = mkSheetBox();
+  const z = (__mk && __mk.z) || 1;
+  const cssW = (box && box.width) || 0;
+  return cssW > 8 ? s.W / (cssW * z) : 1;
+}
+/* the box the item is DRAWN in — mkBBox turned by `r`, plus the half-width
+   the stroke hangs outside its own points. Only ever used to throw
+   candidates away, so it errs outwards. */
+function mkPickAabb(it) {
+  const b = mkBBox(it);
+  let x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h;
+  if (it.r) {
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    const c = Math.cos(it.r), s = Math.sin(it.r);
+    let nx0 = Infinity, ny0 = Infinity, nx1 = -Infinity, ny1 = -Infinity;
+    const corner = (px, py) => {
+      const dx = px - cx, dy = py - cy;
+      const rx = cx + dx * c - dy * s, ry = cy + dx * s + dy * c;
+      if (rx < nx0) nx0 = rx; if (rx > nx1) nx1 = rx;
+      if (ry < ny0) ny0 = ry; if (ry > ny1) ny1 = ry;
+    };
+    corner(x0, y0); corner(x1, y0); corner(x1, y1); corner(x0, y1);
+    x0 = nx0; y0 = ny0; x1 = nx1; y1 = ny1;
+  }
+  const g = Math.max(0.004, (Number(it.w) || 0) * 0.75);
+  return { x0: x0 - g, y0: y0 - g, x1: x1 + g, y1: y1 + g };
+}
+/* topmost first, and only the ones whose box could possibly reach the query */
+function mkPickCands(x, y, rad, keep) {
+  const out = [];
+  if (!__mk || !__mk.items) return out;
+  for (let i = __mk.items.length - 1; i >= 0; i--) {
+    const it = __mk.items[i];
+    if (!it || it.hid) continue;
+    if (keep && !keep(it, i)) continue;
+    const a = mkPickAabb(it);
+    if (x + rad < a.x0 || x - rad > a.x1 || y + rad < a.y0 || y - rad > a.y1) continue;
+    out.push(i);
+  }
+  return out;
+}
+/* ONE item, painted alone into a w×h window whose top-left corner is
+   (rx, ry) in a sheet of W×H — the same call mkRedraw makes, so whatever
+   appears on the sheet appears here and nothing else does.
+
+   `o` is forced to 1 because opacity is a question about how an object
+   LOOKS, not about whether it is there: a layer faded to 10% is still the
+   layer under your cursor, and it must still be grabbable and erasable.
+   `_erasePass` stops mkPaint taking the mkPaintErasedLayer branch, which
+   allocates a full-sheet canvas — the mask is applied here instead, to the
+   window, which is the same picture for a fraction of the work. */
+function mkPickInk(it, rx, ry, w, h, W, H) {
+  const ctx = mkPickCtx(w, h);
+  if (!ctx) return null;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, -rx, -ry);
+  const solo = (it.o == null || it.o >= 1) ? it : Object.assign({}, it, { o: 1 });
+  /* A PICTURE THAT HAS NOT DECODED YET IS STILL SOMETHING YOU CAN GRAB.
+     mkPaint draws nothing for an image it does not have, and no onImage
+     callback is handed over on purpose — a hit test must never kick off a
+     download. So until the bitmap arrives the picture stands in for itself
+     as the rectangle it will occupy, which is exactly what the old box test
+     gave and is replaced by the real pixels the moment it loads. */
+  let stood = false;
+  if (it.t === "img") {
+    let img = null;
+    try { img = mkPictureFor(it); } catch (e) {}
+    if (!img || !img.width) {
+      const r = mkBBox(it);
+      ctx.save();                       /* its own turn, not the mask's */
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#000";
+      if (it.r || it.fx || it.fy) {
+        ctx.translate((r.x + r.w / 2) * W, (r.y + r.h / 2) * H);
+        if (it.fx || it.fy) ctx.scale(it.fx ? -1 : 1, it.fy ? -1 : 1);
+        if (it.r) ctx.rotate(it.r);
+        ctx.translate(-(r.x + r.w / 2) * W, -(r.y + r.h / 2) * H);
+      }
+      ctx.fillRect(r.x * W, r.y * H, r.w * W, r.h * H);
+      ctx.restore();
+      stood = true;
+    }
+  }
+  if (!stood) mkPaint(ctx, W, H, [solo], { export: true, _erasePass: true });
+  if (Array.isArray(it.er) && it.er.length) {
+    mkErasePaintMask(ctx, W, H, it, { x0: rx, y0: ry, x1: rx + w, y1: ry + h });
+  }
+  ctx.restore();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  try { return ctx.getImageData(0, 0, w, h).data; } catch (e) { return null; }
+}
+/* is there ink of THIS item under this exact point. `s` is the sheet size,
+   passed in by any caller in a loop so that walking two hundred layers does
+   not mean two hundred DOM lookups for a number that cannot change during
+   the walk. */
+function mkPickOne(it, x, y, s) {
+  const a = mkPickAabb(it);
+  if (x < a.x0 || x > a.x1 || y < a.y0 || y > a.y1) return false;
+  s = s || mkPickSheet();
+  const d = mkPickInk(it, Math.round(x * s.W), Math.round(y * s.H), 1, 1, s.W, s.H);
+  return !!d && d[3] >= MK_PICK_INK;
+}
+/* the item whose ink comes CLOSEST to the point, within radPx sheet pixels.
+   Distance rather than stacking order is what fixes "the line beside it got
+   selected": when two things are both inside the grab radius, the one the
+   cursor is actually nearer to is the one that was being pointed at. Ties go
+   to the topmost, because candidates arrive topmost first and the compare
+   is strict. */
+function mkPickNear(x, y, radPx, keep) {
+  const s = mkPickSheet(), W = s.W, H = s.H;
+  /* capped for the same reason the disc is: a query's cost belongs to the
+     query, not to how far out the sheet happens to be zoomed */
+  const r = Math.max(0, Math.min(MK_PICK_MAXW, Math.round(radPx)));
+  const radN = r / Math.max(1, Math.min(W, H));
+  const cands = mkPickCands(x, y, radN, keep);
+  if (!cands.length) return -1;
+  const w = r * 2 + 1, h = w;
+  const rx = Math.round(x * W) - r, ry = Math.round(y * H) - r;
+  let best = -1, bestD = Infinity;
+  for (let n = 0; n < cands.length; n++) {
+    const d = mkPickInk(__mk.items[cands[n]], rx, ry, w, h, W, H);
+    if (!d) continue;
+    let m = Infinity;
+    for (let py = 0; py < h; py++) {
+      for (let px = 0; px < w; px++) {
+        if (d[(py * w + px) * 4 + 3] < MK_PICK_INK) continue;
+        const dx = px - r, dy = py - r, q = dx * dx + dy * dy;
+        if (q < m) m = q;
+      }
+    }
+    if (m < bestD) { bestD = m; best = cands[n]; }
+    if (bestD === 0) break;                   /* nothing can beat dead centre */
+  }
+  return bestD <= r * r ? best : -1;
+}
+/* every item with ink inside a disc — what an eraser needs, because a rubber
+   takes away everything it passes over and not merely the topmost thing
+   whose bounding box it happened to be inside.
+
+   A large brush is rendered SMALLER rather than into a larger window: the
+   question is "is any of this item's ink inside the circle", and shrinking
+   the whole drawing keeps a hairline visible in a way that sampling every
+   fourth pixel of a full-size window would not. */
+function mkPickDisc(x, y, radN, keep) {
+  const s = mkPickSheet();
+  const rFull = Math.max(0.75, radN * Math.max(s.W, s.H));
+  const k = Math.min(1, MK_PICK_MAXW / (2 * rFull));
+  const W = Math.max(8, Math.round(s.W * k)), H = Math.max(8, Math.round(s.H * k));
+  const r = Math.max(0.75, rFull * k), ri = Math.ceil(r);
+  const cands = mkPickCands(x, y, radN, keep);
+  const out = [];
+  if (!cands.length) return out;
+  const cx = x * W, cy = y * H;
+  const rx = Math.floor(cx) - ri, ry = Math.floor(cy) - ri, w = ri * 2 + 1, h = w;
+  const ox = cx - rx, oy = cy - ry, r2 = r * r;
+  for (let n = 0; n < cands.length; n++) {
+    const d = mkPickInk(__mk.items[cands[n]], rx, ry, w, h, W, H);
+    if (!d) continue;
+    let got = false;
+    for (let py = 0; py < h && !got; py++) {
+      const dy = py + 0.5 - oy;
+      if (dy * dy > r2) continue;
+      for (let px = 0; px < w; px++) {
+        const dx = px + 0.5 - ox;
+        if (dx * dx + dy * dy > r2) continue;
+        if (d[(py * w + px) * 4 + 3] >= MK_PICK_INK) { got = true; break; }
+      }
+    }
+    if (got) out.push(cands[n]);
+  }
+  return out;
+}
+/* Text, callouts and labels are grabbed by their BOX and always were, on
+   purpose: the object a customer is pointing at is the note, not the three
+   strokes of the letter g their cursor happens to be over, and a box you can
+   grab anywhere inside is the whole affordance of a text frame. Everything
+   that is artwork rather than furniture is picked by its ink. */
+function mkGrabsByBox(it) {
+  return !!it && (it.t === "text" || it.t === "callout" || it.t === "label");
+}
+function mkBoxHit(it, x, y, pad) {
+  const [ux, uy] = mkUnrotate(it, x, y), b = mkBBox(it);
+  return ux >= b.x - pad && ux <= b.x + b.w + pad &&
+         uy >= b.y - pad && uy <= b.y + b.h + pad;
+}
+
+function mkHitItem(x, y) {
+  if (!__mk || !__mk.items) return -1;
+  /* topmost first — the thing you can see is the thing you grab. A hidden
+     layer is not there to be grabbed; a locked one is deliberately out of
+     reach, which is the whole point of locking it. */
+  const live = (it) => !!it && !it.hid && !it.lok;
+  /* ── PASS ONE: DEAD ON ────────────────────────────────────────────────
+     If the cursor is on an object's ink, that object is the answer and the
+     stack decides between overlaps — no distances, no tolerances, no chance
+     for a neighbour to win. This is the pass that answers almost every
+     click, and it is the one the old vertex-and-box test never had. */
+  try {
+    const s = mkPickSheet();
+    for (let i = __mk.items.length - 1; i >= 0; i--) {
+      const it = __mk.items[i];
+      if (!live(it)) continue;
+      if (mkGrabsByBox(it)) { if (mkBoxHit(it, x, y, 0.012)) return i; continue; }
+      if (mkPickOne(it, x, y, s)) return i;
+    }
+    /* ── PASS TWO: A FEW PIXELS OF FORGIVENESS, GIVEN TO THE NEAREST ─────
+       A hairline at low zoom is genuinely hard to land on, so a miss looks
+       again within a few SCREEN pixels — but it awards the click to whatever
+       the cursor is CLOSEST to, not to whatever is highest in the stack.
+       That is the difference between a forgiving hit test and a wrong one,
+       and it is why the line beside the one you pointed at can no longer
+       take the selection. */
+    const grab = MK_PICK_GRAB * mkPickScale();
+    const near = mkPickNear(x, y, grab, (it) => live(it) && !mkGrabsByBox(it));
+    if (near >= 0) return near;
+    return -1;
+  } catch (e) {
+    /* no canvas, no 2D context, a browser that refuses getImageData on this
+       surface: fall back to the box test rather than to no hit test at all */
+    for (let i = __mk.items.length - 1; i >= 0; i--) {
+      const it = __mk.items[i];
+      if (!live(it)) continue;
+      if (mkBoxHit(it, x, y, 0.012)) return i;
+    }
+    return -1;
+  }
+}
+
+/* ═══════════ SELECTION — a SET, not an index ═════════════════════════════
+   The sheet used to hold one selected index. Everything downstream — the
+   dashed box, the handles, delete, the layer list, the object menu — read
+   `__mk.sel` and got a number.
+
+   Rather than rewrite forty call sites, `sel` is now a property with a
+   getter and a setter over the real thing, which is `selIds`: an ORDERED
+   LIST OF IDS. Reading `.sel` gives the anchor — the last thing picked, the
+   one whose colour and weight the format bar shows. Writing `.sel = i`
+   means what it always meant: select exactly that, and nothing else. Every
+   line of the old code therefore keeps working unchanged and collapses a
+   multi-selection to one, which is precisely what a plain click should do.
+
+   Ids rather than indices, because indices move. Reorder the stack, group
+   four things, delete something underneath, and an index quietly points at
+   a different object; an id never does.                                    */
+function mkDefineSel(mk) {
+  Object.defineProperty(mk, "sel", {
+    enumerable: false, configurable: true,
+    get() {
+      const ids = mk.selIds;
+      if (!ids || !ids.length) return -1;
+      for (let n = ids.length - 1; n >= 0; n--) {
+        const id = ids[n];
+        for (let i = 0; i < mk.items.length; i++) if (mk.items[i].id === id) return i;
+      }
+      return -1;
+    },
+    set(i) {
+      const it = (Number(i) >= 0 && mk.items) ? mk.items[Number(i)] : null;
+      mk.selIds = it ? [it.id] : [];
+    },
+  });
+  return mk;
+}
+/* every selected index, bottom of the stack first */
+function mkSelIdx(mk) {
+  mk = mk || __mk;
+  if (!mk || !mk.selIds || !mk.selIds.length) return [];
+  const want = mk.selIds, out = [];
+  for (let i = 0; i < mk.items.length; i++) {
+    if (want.indexOf(mk.items[i].id) >= 0) out.push(i);
+  }
+  return out;
+}
+function mkSelItems() { return mkSelIdx().map((i) => __mk.items[i]); }
+function mkSelCount() { return mkSelIdx().length; }
+function mkIsSelIdx(i) {
+  const it = __mk && __mk.items[i];
+  return !!it && __mk.selIds.indexOf(it.id) >= 0;
+}
+/* set the selection from a list of indices; the LAST one becomes the anchor */
+function mkSelSet(list) {
+  if (!__mk) return;
+  const ids = [];
+  (list || []).forEach((i) => {
+    const it = __mk.items[i];
+    if (it && ids.indexOf(it.id) < 0) ids.push(it.id);
+  });
+  __mk.selIds = ids;
+}
+function mkSelAdd(list) {
+  if (!__mk) return;
+  const ids = __mk.selIds.slice();
+  (list || []).forEach((i) => {
+    const it = __mk.items[i];
+    if (it && ids.indexOf(it.id) < 0) ids.push(it.id);
+  });
+  __mk.selIds = ids;
+}
+function mkSelDrop(list) {
+  if (!__mk) return;
+  const kill = [];
+  (list || []).forEach((i) => { const it = __mk.items[i]; if (it) kill.push(it.id); });
+  __mk.selIds = __mk.selIds.filter((id) => kill.indexOf(id) < 0);
+}
+/* shift-click: in or out, and the whole group goes with it */
+function mkSelToggle(list) {
+  if (!__mk) return;
+  const every = (list || []).length && list.every((i) => mkIsSelIdx(i));
+  if (every) mkSelDrop(list); else mkSelAdd(list);
+}
+
+/* ═══════════ GROUPS ══════════════════════════════════════════════════════
+   A group is one field on the item — `g`, which mkPack has always carried —
+   plus a name kept beside it. Two rules make the rest fall out:
+
+     1. members of a group are CONTIGUOUS in the stack. Grouping closes the
+        gaps, so a group can be dragged up or down the layer list as one
+        block without anything having to be threaded between its members.
+     2. clicking any member selects the whole group. Alt-click reaches the
+        one object inside, the way it does in every editor.               */
+function mkGroupOf(it) { return it && it.g ? String(it.g) : ""; }
+function mkGroupIdx(g) {
+  if (!__mk || !g) return [];
+  const out = [];
+  __mk.items.forEach((it, i) => { if (it.g === g) out.push(i); });
+  return out;
+}
+function mkGroupName(g) {
+  const m = (__mk && __mk.groups && __mk.groups[g]) || null;
+  return (m && m.n) || "Group";
+}
+function mkGroupOpen(g) {
+  const m = (__mk && __mk.groups && __mk.groups[g]) || null;
+  return !(m && m.col);                       /* open unless collapsed */
+}
+/* the indices a click on `i` should select: the whole group, or just it */
+function mkReachOf(i, alone) {
+  const it = __mk && __mk.items[i];
+  if (!it) return [];
+  const g = mkGroupOf(it);
+  if (!g || alone) return it.lok ? [] : [i];
+  /* a locked member stays out of reach even inside a group — locking is a
+     promise that the thing will not move, and a group cannot overrule it */
+  return mkGroupIdx(g).filter((k) => !__mk.items[k].lok);
+}
+
+function mkGroupSelection() {
+  if (!__mk) return false;
+  /* pulling in every member of any group that is partly selected: you cannot
+     group half of a group, and pretending otherwise would leave orphans */
+  const seed = mkSelIdx();
+  const set = {};
+  seed.forEach((i) => {
+    const g = mkGroupOf(__mk.items[i]);
+    if (g) mkGroupIdx(g).forEach((k) => { set[k] = 1; });
+    else set[i] = 1;
+  });
+  const idxs = Object.keys(set).map(Number).sort((a, b) => a - b);
+  if (idxs.length < 2) { toast("Pick two or more layers first — shift-click to add", "err"); return false; }
+  mkPushUndo();
+  const gid = "g" + Math.random().toString(36).slice(2, 8);
+  const objs = idxs.map((i) => __mk.items[i]);
+  /* where the block lands: where the topmost member is now, once everything
+     below it has been lifted out */
+  const top = idxs[idxs.length - 1];
+  const below = idxs.filter((i) => i < top).length;
+  for (let k = idxs.length - 1; k >= 0; k--) __mk.items.splice(idxs[k], 1);
+  const at = Math.max(0, Math.min(__mk.items.length, top - below));
+  objs.forEach((o, k) => {
+    /* a group of groups is ONE group — a hierarchy nobody asked for is a
+       hierarchy nobody can find their way out of */
+    o.g = gid;
+    __mk.items.splice(at + k, 0, o);
+  });
+  if (!__mk.groups) __mk.groups = {};
+  __mk.groups[gid] = { n: "Group", col: 0 };
+  mkSelSet(objs.map((o) => __mk.items.indexOf(o)));
+  mkTouch();
+  mkRenderLayers();
+  toast(`Grouped ${objs.length} layers — they move, resize and rotate together`, "gold");
+  return true;
+}
+
+function mkUngroupSelection() {
+  if (!__mk) return false;
+  const gs = {};
+  mkSelIdx().forEach((i) => { const g = mkGroupOf(__mk.items[i]); if (g) gs[g] = 1; });
+  const list = Object.keys(gs);
+  if (!list.length) { toast("Nothing grouped in that selection", "err"); return false; }
+  mkPushUndo();
+  const freed = [];
+  list.forEach((g) => {
+    mkGroupIdx(g).forEach((i) => { __mk.items[i].g = ""; freed.push(i); });
+    if (__mk.groups) delete __mk.groups[g];
+  });
+  mkSelSet(freed);
+  mkTouch();
+  mkRenderLayers();
+  toast(list.length === 1 ? "Ungrouped" : `Ungrouped ${list.length} groups`, "gold");
+  return true;
+}
+function mkCanGroup()   { return mkSelIdx().length > 1; }
+function mkCanUngroup() { return mkSelIdx().some((i) => !!mkGroupOf(__mk.items[i])); }
+
+/* ── the box that has to hold everything ─────────────────────────────────
+   With one object selected this is its own bounds, exactly as before. With
+   several it is their union, which is what makes the marquee grow to
+   encompass the whole selection.                                          */
+/* ═══════════ TURNING A SELECTION ═════════════════════════════════════════
+   Rotation lives in two places on an item and they do different jobs:
+
+     `it.r`  the painter's own turn, applied about the item's CURRENT
+             bounding-box centre — this is what makes a shape look rotated
+     `it.p`  where the item is
+
+   Turning a group means both: every part keeps its own spin AND its centre
+   swings round the selection's centre. This used to be written as "add dr to
+   r, and rotate all the POINTS about the selection centre" — which turns the
+   geometry a second time, because rotating a polygon's points IS a rotation
+   and the painter then applies `r` on top of it. One quarter turn asked for,
+   two delivered, each part about a different origin: the drawing comes apart
+   and the pieces sit at angles nobody chose. On a traced charm — where every
+   part is a polygon and there are a hundred of them — it is spectacular.
+
+   So: the POINTS are only ever TRANSLATED, which moves the part's centre
+   round the selection, and `r` does all the turning. That composes to a true
+   rotation about the selection centre for every kind of item alike — a
+   polygon, a two-point ellipse, a picture, a note — because none of them has
+   to express the turn in its own coordinates any more.
+
+   `p0`/`r0` are the geometry the gesture STARTED from, so a live drag is
+   always computed from one origin rather than accumulating rounding. Called
+   without them it turns from wherever the items are now. */
+/* ── AND THE PIVOT HAS TO SURVIVE THE TURN ────────────────────────────────
+   The obvious pivot is the centre of the selection box, and it is wrong for
+   anything but a single press: mkUnionBBox is the axis-aligned union of the
+   members' UNROTATED boxes, so the moment the parts carry a turn of their
+   own it stops describing what is on screen and its centre wanders. Three
+   presses of Rotate left, or a turn and its exact reverse, and the drawing
+   has crept several per cent across the sheet — visibly out of register on a
+   charm made of a hundred parts. Using the DRAWN union instead is worse, not
+   better: the bounding box of a rotated set is not the rotated bounding box,
+   so it wobbles on every step.
+
+   The one point that cannot move is the members' own balance point. Each
+   part's box keeps its size through a rotation — only its centre travels —
+   so the area-weighted mean of those centres rotates exactly onto itself.
+   Turn about it and repeated rotations compose perfectly; turn back and the
+   drawing lands where it started, to the last decimal.
+
+   It is also the honest pivot to look at: a shape turns about its balance
+   point, which is where a hand expects it to turn. */
+/* WHICH WAY ROUND A MIRRORED LAYER TURNS. The painter draws scale then
+   rotate, and a single-axis mirror reverses the sense of the turn that
+   follows it: S·R(r) is the mirrored shape turned by MINUS r. So a layer
+   that has been flipped once must have dr SUBTRACTED from its `r` to turn
+   the way the hand is moving — and a layer flipped on both axes is not
+   mirrored at all (mkFlipItems folds that case into a half turn), so it
+   turns the ordinary way. Without this the rotate handle runs backwards on
+   anything that has been flipped, which is a thing you can only discover by
+   flipping something and then trying to turn it. */
+function mkMirrorSgn(it) {
+  return ((it.fx ? 1 : 0) ^ (it.fy ? 1 : 0)) ? -1 : 1;
+}
+
+function mkRotatePivot(list) {
+  let ax = 0, ay = 0, wsum = 0;
+  (list || []).forEach((it) => {
+    const b = mkBBox(it);
+    /* every part counts for something, so a hairline stroke still anchors */
+    const w = Math.max(1e-6, b.w * b.h) + 1e-5;
+    ax += (b.x + b.w / 2) * w; ay += (b.y + b.h / 2) * w; wsum += w;
+  });
+  if (!wsum) return null;
+  return [ax / wsum, ay / wsum];
+}
+
+function mkRotateItems(list, dr, cx, cy, p0, r0) {
+  if (!list || !list.length || !dr) return;
+  const c = Math.cos(dr), s = Math.sin(dr);
+  const many = list.length > 1;
+  if (many) {
+    /* p0 means a live drag: restore the starting geometry first, so the pivot
+       is measured from where the gesture began rather than from halfway
+       through it */
+    if (p0) list.forEach((it, n) => { if (p0[n]) it.p = p0[n].slice(); });
+    const piv = mkRotatePivot(list);
+    if (piv) { cx = piv[0]; cy = piv[1]; }
+  }
+  list.forEach((it, n) => {
+    /* start from the gesture's own beginning, so a drag never compounds */
+    if (p0 && p0[n]) it.p = p0[n].slice();
+    it.r = (r0 && r0[n] != null ? r0[n] : (it.r || 0)) + dr * mkMirrorSgn(it);
+    if (!many) return;                 /* one object turns about its own centre */
+    const b = mkBBox(it);
+    const ox = b.x + b.w / 2, oy = b.y + b.h / 2;
+    const tx = (cx + (ox - cx) * c - (oy - cy) * s) - ox;
+    const ty = (cy + (ox - cx) * s + (oy - cy) * c) - oy;
+    const p = it.p || [];
+    for (let k = 0; k + 1 < p.length; k += 2) { p[k] += tx; p[k + 1] += ty; }
+    /* a note's box is measured in sheet coordinates and cached, so it has to
+       travel with the note or mkBBox answers for where the note used to be */
+    if (it._bx != null) it._bx += tx;
+    if (it._by != null) it._by += ty;
+  });
+}
+
+function mkUnionBBox(items) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  (items || []).forEach((it) => {
+    const b = mkBBox(it);
+    x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+    x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+  });
+  if (!isFinite(x0)) return { x: 0, y: 0, w: 0, h: 0 };
+  return { x: x0, y: y0, w: Math.max(1e-4, x1 - x0), h: Math.max(1e-4, y1 - y0) };
+}
+function mkSelBBox() { return mkUnionBBox(mkSelItems()); }
+
+/* ═══════════ the one write path ══════════════════════════════════════════
+   Called after EVERY mutation. Repaints, refreshes the chrome, and writes the
+   session. There is deliberately no other way for work to reach storage, and
+   deliberately no commit step — a note typed and abandoned is already saved.  */
+/* ── WHY UNDO TOOK SECONDS ────────────────────────────────────────────────
+   mkTouch ran four things in one synchronous block: redraw the sheet, repaint
+   the chrome, persist the sheet, rebuild the layer list. The browser cannot
+   paint until a block like that finishes — so on a traced drawing, where the
+   sheet can hold a couple of thousand objects, pressing undo re-packed every
+   one of them, re-serialised the session around them and re-rendered a 96px
+   thumbnail for each layer BEFORE the canvas the customer was watching had
+   changed by a single pixel.
+
+   The two halves are now separated by what they are for. The ANSWER — the
+   sheet and the buttons — stays synchronous, because that is what the press
+   was asking for. The BOOKKEEPING — the save, the composer's mode line, the
+   layer list — trails it on a short timer, and a burst of edits (a drag, an
+   erase sweep, typing into a note) collapses into one pass instead of one
+   per event.
+
+   Nothing may read the persisted sheet before that timer fires, so
+   mkTouchFlush() runs it early, and every save goes through it. */
+let _mkTailTimer = 0;
+function mkTouchTail() {
+  _mkTailTimer = 0;
+  if (!__mk) return;
+  mkPersist();
+  /* ── THE FIRST MARK CHANGES WHAT THE ARROW DOES ───────────────────────
+     Marks the customer put on this drawing route the send button back to the
+     design step (goldEditMode), and the button, the placeholder and the mode
+     line under the composer are the only things saying which job is loaded. */
+  try { paintComposerMode(); } catch (e) {}
+  /* Every path that adds, removes, reorders or edits an item ends here, so
+     the layer list is repainted from here too and can never lag the sheet. */
+  mkRenderLayersSoon();
+}
+/* Safe to call from anywhere, including from inside the tail itself: the
+   timer id is cleared before the work starts, so the re-entry a save makes
+   through saveSession() finds nothing pending and returns. */
+function mkTouchFlush() {
+  if (!_mkTailTimer) return;
+  clearTimeout(_mkTailTimer);
+  mkTouchTail();
+}
+function mkTouch(skipUndoButtons) {
+  if (!__mk) return;
+  /* the composed sheet the region engine works from is now out of date */
+  mkRegionForget();
+  mkRedraw();
+  if (!skipUndoButtons) mkChrome();
+  if (!_mkTailTimer) _mkTailTimer = setTimeout(mkTouchTail, 90);
+}
+let _mkLayerFrame = 0;
+function mkRenderLayersSoon() {
+  if (!__mkDock.open || __mkDock.tab !== "layers") return;
+  if (_mkLayerFrame) return;
+  _mkLayerFrame = requestAnimationFrame(() => {
+    _mkLayerFrame = 0;
+    if (__mk && __mkDock.open && __mkDock.tab === "layers") mkRenderLayers();
+  });
+}
+function mkPersist() {
+  if (!__mk) return;
+  /* the derived library is memoised on the sessions it is built from, and
+     the sheet being drawn on right now is one of them */
+  __mkPersistTick++;
+  const key = __mk.key;
+  if (!state.markups) state.markups = {};
+  const items = __mk.items.map(mkPack);
+  /* A blank sheet with a CHOICE made on it is not nothing: pick the
+     non-default reading before drawing a line and that choice must still be
+     there when you do. Storing only when items exist quietly threw it away.
+     The choice worth storing is the one that departs from the default, which
+     is now "for what I mean" — see mkModeNorm. */
+  const changed = !!(items.length || __mk.crop || __mk.baseRot ||
+                     __mk.mode === "interpret" || __mk.hoop || mkGuidesChosen());
+  if (changed) {
+    state.markups[key] = {
+      items,
+      mode: mkModeNorm(__mk.mode),
+      crop: __mk.crop ? [__mk.crop.x, __mk.crop.y, __mk.crop.w] : [],
+      baseRot: __mk.baseRot || 0,
+      /* a flat list of {id,n}: Firestore refuses an array inside an array,
+         and a map keyed by a generated id is harder to read in the console */
+      groups: mkGroupList(),
+      /* the sheet IS the drawing, taken apart — so the bitmap underneath is
+         not painted, and an untouched trace is not a mark-up */
+      traced: __mk.traced ? 1 : 0,
+      /* the hoop answer belongs to the DESIGN, so it is stored with it and
+         read back by the compose — not asked again of mutable state later */
+      hoop: __mk.hoop ? 1 : 0,
+      /* CARRIED, NOT REBUILT. The account of which areas are holes belongs to
+         the design, not to this save: dropping it here would mean the first
+         time anybody nudged a layer, the plan the drawing was made from
+         disappeared and the render went back to guessing. */
+      plan: zoneList((state.markups[key] || {}).plan, "markupSave"),
+      /* CARRIED FOR THE SAME REASON THE PLAN IS. These two say the sheet was
+         traced from a PHOTOGRAPH rather than a drawing, which is what stops
+         the ghost rule turning the customer's charm off the next time the
+         sheet opens. Rebuilding the record without them meant the very first
+         save — which happens during the trace itself — undid the trace's own
+         decision, and the charm vanished on reopen. */
+      fromGold: __mk.fromGold ? 1 : ((state.markups[key] || {}).fromGold ? 1 : 0),
+      showBitmap: __mk.showBitmap ? 1 : 0,
+      dirty: __mk.dirty ? 1 : 0,
+      guides: mkGuideFlags(),
+      gridN: Math.max(4, Math.min(48, __mk.gridN || 12)),
+      updatedAt: now(),
+    };
+  } else {
+    delete state.markups[key];
+    /* a tombstone travels with the next save, or merge puts it straight back */
+    if (typeof forgetKey === "function") forgetKey("markups", key);
+  }
+  /* the stacks persist beside the items — snapshots are already JSON strings,
+     so this is a slice, not a serialization. flushSession budgets the total. */
+  if (!state.mkHistory) state.mkHistory = {};
+  if (__mk.undo.length || __mk.redo.length) {
+    state.mkHistory[key] = { u: __mk.undo.slice(-10), r: __mk.redo.slice(-6) };
+  } else if (!changed) {
+    delete state.mkHistory[key];
+  }
+  saveSession();
+}
+/* only groups that still have members — deleting the last layer out of a
+   group should not leave its name behind for ever */
+function mkGroupList() {
+  if (!__mk) return [];
+  const live = {};
+  __mk.items.forEach((it) => { if (it.g) live[it.g] = 1; });
+  return Object.keys(live).map((id) => {
+    const m = (__mk.groups || {})[id] || {};
+    return { id, n: String(m.n || "Group").slice(0, 48), col: m.col ? 1 : 0 };
+  });
+}
+/* bits 16 and 32 are stored INVERTED, so that every design saved before
+   these existed — which has them as 0 — opens with them on */
+function mkGuideFlags() {
+  const g = __mk.guides || {};
+  return (g.grid ? 1 : 0) | (g.mirror ? 4 : 0) | (g.snap ? 8 : 0) |
+         (g.align ? 0 : 16) | (g.dims ? 0 : 32);
+}
+/* anything other than the defaults is a choice the customer made, and a
+   choice made before the first stroke has to survive the first stroke */
+function mkGuidesChosen() {
+  return mkGuideFlags() !== 0 || (Number(__mk.gridN) || 12) !== 12;
+}
+
+function mkSnapshot() {
+  return JSON.stringify({
+    items: __mk.items.map(mkPack),
+    crop: __mk.crop, baseRot: __mk.baseRot,
+    groups: mkGroupList(),
+  });
+}
+/* ═══════ ONE UNDO, WHATEVER KIND OF EDIT IT WAS ══════════════════════════
+   The sheet's history is a stack of JSON snapshots of the items. Pixels are
+   not items and never will be — a 2K photograph does not belong in a JSON
+   snapshot pushed on every stroke — so the pixel buffers keep their own tile
+   history, which is what makes them cheap.
+
+   Two histories would mean two undos, and a customer pressing ⌘Z does not
+   know or care which kind of edit they just made. So a LOG records the order
+   the two kinds happened in, and Undo consults it: "sheet" pops the JSON
+   stack, "px:<id>" steps that buffer's tile history back. One key, one
+   expectation, whatever it was they just did. */
+const __mkLog = { back: [], fwd: [] };
+function mkLogPush(kind) {
+  __mkLog.back.push(kind);
+  /* A NEW EDIT INVALIDATES BOTH FUTURES. Clearing only the log's left
+     __mk.redo holding a snapshot the log no longer knows about: Undo a move,
+     then erase the picture once, then press Redo, and mkRedoAny fell through
+     to that stale entry and resurrected an edit the customer had abandoned. */
+  __mkLog.fwd.length = 0;
+  if (__mk) __mk.redo = [];
+  if (__mkLog.back.length > 120) __mkLog.back.shift();
+}
+function mkLogClear() { __mkLog.back.length = 0; __mkLog.fwd.length = 0; }
+/* ── A SHEET STARTS EMPTY, INCLUDING ITS PIXELS ──────────────────────────
+   __mkLog and MK_PX are module-level and outlive every openMarkup, and the
+   base's key is the literal string "__base__" — SHARED by every design in the
+   account. Left alone that means: a fresh sheet shows Undo enabled because a
+   previous sheet left entries; pressing it pops a dead step and does nothing;
+   and a base buffer orphaned by closing with Escape paints itself onto a
+   completely different customer's design the next time the sheet opens.
+
+   One call, at the one moment a sheet becomes a different sheet. */
+function mkPxResetForSheet() {
+  MK_PX.clear();
+  mkLogClear();
+  const b = $("#markupBase");
+  if (b) b.hidden = false;
+}
+function mkPushUndo() {
+  /* every user mutation comes through here, which makes it the honest place
+     to record that a traced drawing has actually been touched */
+  __mk.dirty = true;
+  __mk.undo.push(mkSnapshot());
+  if (__mk.undo.length > 60) __mk.undo.shift();
+  __mk.redo = [];
+  mkLogPush("sheet");
+}
+/* the pixel half: step one buffer's tile history, and repaint */
+function mkPxUndoOne(id, redo) {
+  const rec = MK_PX.get(id);
+  if (!rec || !window.BJRaster) return false;
+  const R = window.BJRaster;
+  const moved = redo ? R.redo(rec.doc) : R.undo(rec.doc);
+  if (!moved) return false;
+  rec.seq++;
+  mkRedraw();
+  mkTouch();
+  return true;
+}
+function mkUndoAny() {
+  if (!__mk) return false;
+  const kind = __mkLog.back.pop();
+  if (kind && kind.indexOf("px:") === 0) {
+    if (mkPxUndoOne(kind.slice(3), false)) { __mkLog.fwd.push(kind); return true; }
+    return mkUndoAny();                        /* nothing there: fall through */
+  }
+  if (!__mk.undo.length) { if (kind) __mkLog.back.push(kind); return false; }
+  __mk.redo.push(mkSnapshot());
+  mkRestore(__mk.undo.pop());
+  __mkLog.fwd.push("sheet");
+  return true;
+}
+function mkRedoAny() {
+  if (!__mk) return false;
+  const kind = __mkLog.fwd.pop();
+  if (kind && kind.indexOf("px:") === 0) {
+    if (mkPxUndoOne(kind.slice(3), true)) { __mkLog.back.push(kind); return true; }
+    return mkRedoAny();
+  }
+  if (!__mk.redo.length) { if (kind) __mkLog.fwd.push(kind); return false; }
+  __mk.undo.push(mkSnapshot());
+  mkRestore(__mk.redo.pop());
+  __mkLog.back.push("sheet");
+  return true;
+}
+window.__loadRaster = loadRaster;
+window.__rasterAssetUrl = rasterAssetUrl;
+window.__mkPxHas = (id) => MK_PX.has(id);
+window.__mkPxDiagKeys = () => Array.from(MK_PX.keys());
+window.__mkPxProbe = (id) => {
+  const rec = MK_PX.get(id || "__base__");
+  return rec ? { seq: rec.seq, history: rec.doc.history.length, future: rec.doc.future.length,
+                 w: rec.doc.w, h: rec.doc.h, log: __mkLog.back.slice(-6) } : null;
+};
+window.__mkUndoAny = mkUndoAny;
+window.__mkRedoAny = mkRedoAny;
+function mkRestore(snap) {
+  const s = JSON.parse(snap);
+  __mk.items = s.items.map(mkPack);
+  __mk.crop = s.crop || null;
+  __mk.baseRot = s.baseRot || 0;
+  __mk.groups = {};
+  (Array.isArray(s.groups) ? s.groups : []).forEach((g) => {
+    if (g && g.id) __mk.groups[String(g.id)] = { n: String(g.n || "Group"), col: g.col ? 1 : 0 };
+  });
+  __mk.items.forEach((it) => {
+    if (it.g && !__mk.groups[it.g]) __mk.groups[it.g] = { n: "Group", col: 0 };
+  });
+  __mk.sel = -1;
+  mkCloseEditor(true);
+  mkApplyBase();
+  mkTouch();
+}
+
+/* ── the chrome that reflects the model ──────────────────────────────────── */
+function mkChrome() {
+  if (!__mk) return;
+  /* the marquee's box and its little bar are chrome like anything else: the
+     one function every change passes through is the one place that can keep
+     the size read-out honest when the ruler switches between mm and inches */
+  try { mkPaintMarqSel(); } catch (e) {}
+  /* the buttons follow the SHARED log, not the JSON stack alone: a pixel
+     stroke is recorded in the buffer's own tile history, so gating Undo
+     on __mk.undo left the button greyed out after a perfectly real edit — the
+     tool worked and the way to take it back did not. */
+  $("#mkUndo").disabled = !(__mkLog.back.length || __mk.undo.length);
+  $("#mkRedo").disabled = !(__mkLog.fwd.length || __mk.redo.length);
+  const sel = __mk.items[__mk.sel] || null;
+  const nsel = mkSelCount();
+  /* Delete does not consume a properties-row slot. On a phone it follows the
+     selection as a contextual pill; desktop keeps ⌫, the object menu and the
+     Layers-panel trash control. Every route reads this same selection. */
+  { const del = $("#mkDelete"); if (del) del.disabled = !nsel; }
+
+  let marks = 0, notes = 0;
+  __mk.items.forEach((it) => {
+    if (it.t === "text" || it.t === "callout") notes++; else marks++;
+  });
+  /* while several things are selected the count line says so — it is the
+     one place on screen that is always visible on every layout */
+  mkPaintTally();
+  $("#markupCount").textContent = nsel > 1
+    ? `${nsel} selected${mkCanUngroup() ? " · grouped" : ""}`
+    : ((marks || notes)
+      ? `${marks} mark${marks === 1 ? "" : "s"}${notes ? ` · ${notes} note${notes === 1 ? "" : "s"}` : ""}`
+      : (__mk.compose ? "Blank sheet — draw anything" : "No marks yet"));
+
+  /* the property bar shows the SELECTION when there is one, otherwise what
+     the tool is about to do — the same contract as a Mac format bar */
+  const c  = sel ? sel.c  : __mk.color;
+  const f  = sel ? sel.f  : __mk.fill;
+  const w  = sel ? sel.w  : __mk.w;
+  const ff = sel ? sel.ff : __mk.ff;
+  const fs = sel ? sel.fs : __mk.fs;
+  /* THE ENGRAVING CONTROL, WHICH IS ALSO THE BUCKET.
+     Two of these three say "fill this area", so choosing one of them puts
+     the bucket in your hand — and the chip says so by turning its colour
+     swatch into a bucket. There is no separate Fill button any more: a tool
+     whose only job was to apply one of two settings, sitting next to the
+     control that chose the setting, was one control too many. */
+  const filling = __mk.tool === "bucket";
+  /* WHAT IS IN THE BUCKET, not what is selected. A fill is selected the
+     instant it lands, so reading the selection here meant that re-aiming to
+     Cut out left the Engrave chip lit and armed — and the next tap put a
+     hole through the charm while the bar said "engrave". */
+  const intent = mkFillIntent(filling ? __mk.fill : f);
+  $$("#mkMetal .mk-metal__b").forEach((b) => {
+    /* the perimeter chip lights while the pen holds the perimeter green —
+       it is a line control and never mirrors the fill intent */
+    const on = b.dataset.fill === "perim"
+      ? (__mk.color === MK_PERIM && !filling)
+      : b.dataset.fill === intent;
+    b.classList.toggle("is-on", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+    /* all three arm — see the control's own note. Outline was excluded here
+       too, so even when it WAS holding the bucket the bar refused to say so. */
+    const armed = filling && on;
+    b.classList.toggle("is-armed", armed);
+    const sw = b.querySelector(".mk-metal__sw");
+    if (sw) sw.classList.toggle("mk-metal__sw--bucket", armed);
+  });
+  $("#mkWeightSw").style.height = Math.max(1, Math.round(w * 260)) + "px";
+  $$('.mk-drop[data-drop="weight"] .mk-item--w').forEach((b) =>
+    b.classList.toggle("is-on", Math.abs(parseFloat(b.dataset.w) - w) < 1e-6));
+  $$(".mk-item--font").forEach((b) => b.classList.toggle("is-on", b.dataset.ff === ff));
+  $$("#mkSizes .mk-size").forEach((b) => b.classList.toggle("is-on", Math.abs(parseFloat(b.dataset.fs) - fs) < 1e-6));
+  $$(".mk-item--tog[data-guide]").forEach((b) => b.classList.toggle("is-on", !!(__mk.guides || {})[b.dataset.guide]));
+  const gnEl = $("#mkGridN");
+  if (gnEl && document.activeElement !== gnEl) {
+    gnEl.value = String(__mk.gridN || 12);
+    const gl = $("#mkGridNVal");
+    if (gl) gl.textContent = String(__mk.gridN || 12);
+  }
+  const bmp = $("#mkShowBitmap");
+  if (bmp) {
+    bmp.classList.toggle("is-on", !!__mk.showBitmap);
+    bmp.hidden = !__mk.traced;
+  }
+  const rt = $("#mkRetrace");
+  if (rt) rt.hidden = !!__mk.compose;
+  /* the tolerance slider shows the selected picture's own judgement */
+  const trow = $("#mkTolRow");
+  if (trow) trow.hidden = !(__mk.tool === "wand" || filling);
+  const erow = $("#mkEraseRow");
+  if (erow) erow.hidden = __mk.tool !== "erase";
+  const es = $("#mkEraseSize");
+  if (es && document.activeElement !== es) es.value = String(Math.round((__mk.eraseSize || 0.035) * 1000) / 10);
+  const ev = $("#mkEraseSizeVal");
+  if (ev) ev.textContent = (Math.round((__mk.eraseSize || 0.035) * 1000) / 10).toFixed(1) + "%";
+  const wt = $("#mkWandTol");
+  if (wt && document.activeElement !== wt) {
+    const pic = mkSelItems().filter((o) => o.t === "img")[0] ||
+                __mk.items.filter((o) => o.t === "img" && (o.k || []).length).slice(-1)[0];
+    const v = filling ? (__mk.tol || MK_WAND_DEFAULT_TOL)
+                      : ((pic && pic.kt) || MK_WAND_DEFAULT_TOL);
+    wt.value = String(v);
+    const lbl = $("#mkWandTolVal");
+    if (lbl) lbl.textContent = String(v);
+  }
+  mkPaintMode();
+  mkHoopChrome();
+  mkRenderSelection();
+  /* the layer list is the model rendered, so it is refreshed wherever the
+     model's chrome is — never on its own timer */
+  if (typeof mkLayerChrome === "function") mkLayerChrome();
+  if (typeof mkPaintLayerSel === "function") mkPaintLayerSel();
+  const lc = $("#mkLayersCount");
+  if (lc) lc.textContent = String(__mk.items.length);
+  /* The phone/tablet shell is only a view of this same model. Keeping its
+     labels, contextual shelf and proxy controls inside mkChrome means every
+     mutation updates both surfaces in the same frame. */
+  try { mkMobileChrome(); } catch (e) {}
+}
+
+/* What the workshop has been told, on screen at all times. Three numbers is
+   all it takes, and it means nobody discovers on the finished charm that
+   they never said which areas were engraved. */
+/* Said once, in the one place it matters, the first time somebody opens a
+   sheet. Not a modal, not a tour: a small note pinned to the control it is
+   about, which goes away the moment they use it or dismiss it. */
+function mkMetalCoachSeen() {
+  const el = document.getElementById("mkMetalCoach");
+  if (el) el.remove();
+  if (state.metalCoach) return;
+  state.metalCoach = 1;
+  saveSession();
+}
+function mkMetalCoach() {
+  /* The touch workspace already introduces this choice inside a labelled
+     Settings sheet. A floating desktop coach on top of that sheet would be
+     duplicate instruction and, while the sheet is closed, has no anchor. */
+  if (mkMobileWorkspaceActive()) return;
+  if (state.metalCoach) return;
+  const host = $("#mkMetal");
+  if (!host || document.getElementById("mkMetalCoach")) return;
+  const el = document.createElement("div");
+  el.className = "mk-coach";
+  el.id = "mkMetalCoach";
+  el.innerHTML =
+    '<b>Start here.</b> This is the one control that changes what the ' +
+    'workshop <i>does</i> — engrave an area, cut it clean through, or leave ' +
+    'it as an outline. Say it here and the design comes back the way you ' +
+    'pictured it.<button type="button" class="mk-coach__x">Got it</button>';
+  /* on the body and placed by script: the property row scrolls sideways,
+     and a scroll container clips its children on BOTH axes however you write
+     overflow — the same reason every menu in here is fixed */
+  document.body.appendChild(el);
+  const place = () => {
+    const r = host.getBoundingClientRect();
+    if (!r.width) { el.remove(); return; }
+    const w = el.offsetWidth || 320;
+    let left = r.left;
+    if (left + w > window.innerWidth - 10) left = Math.max(10, window.innerWidth - 10 - w);
+    el.style.left = left + "px";
+    el.style.top = (r.bottom + 9) + "px";
+    el.style.setProperty("--arrow", Math.max(10, Math.min(w - 22, r.left + 26 - left)) + "px");
+  };
+  place();
+  el.querySelector(".mk-coach__x").addEventListener("click", mkMetalCoachSeen);
+  window.addEventListener("resize", place);
+}
+
+/* Asked ONCE per design, and only when it would actually help: there are
+   closed shapes on the sheet and not one of them has been given an
+   instruction. Not a gate — the answer "outlines only" is a real answer and
+   is taken at face value. */
+async function mkMetalCheck(key) {
+  if (!__mk) return true;
+  const t = mkMetalTally(__mk.items);
+  if (t.engrave || t.cutout) return true;         // they have said something
+  if (!t.none) return true;                       // nothing shaped to say it about
+  if (!state.metalAsked) state.metalAsked = {};
+  const k = String(key || __mk.key || "?");
+  if (state.metalAsked[k]) return true;
+  state.metalAsked[k] = 1;
+  saveSession();
+  const yes = await askConfirm({
+    title: "Nothing is marked to be engraved",
+    body: `${t.none} shape${t.none === 1 ? " has" : "s have"} no instruction, so ` +
+          "every one of them will come back as an engraved OUTLINE with flat polished " +
+          "metal inside. If you want an area filled in — or cut clean through — say so " +
+          "with “In metal” first. It is the single biggest difference to what you get back.",
+    yes: "Outlines only, go ahead",
+    no: "Let me mark it first",
+    danger: false,
+  });
+  return yes;
+}
+
+/* the pen button wears the ink it is holding — a dot in the line's own
+   colour, and a tick on the menu row it came from */
+function mkPenChrome() {
+  if (!__mk) return;
+  const sw = $("#mkPenSw");
+  if (sw) {
+    sw.style.background = __mk.color || "";
+    /* the perimeter ink is an instruction too — the dot wears the ring */
+    sw.classList.toggle("mk-pen__sw--live",
+      !!mkInkInstruction({ t: "ink", c: __mk.color }) || __mk.color === MK_PERIM);
+  }
+  $$('.mk-drop[data-drop="pen"] .mk-item[data-ink]').forEach((b) => {
+    const kind = b.dataset.ink;
+    const c = kind === "engrave" ? MK_ENGRAVE : kind === "cutout" ? MK_CUTOUT
+            : kind === "none" ? MK_OUTLINE
+            : kind === "perimeter" ? MK_PERIM : null;
+    b.classList.toggle("is-on", c ? __mk.color === c
+                                  : !mkInkInstruction({ t: "ink", c: __mk.color }) &&
+                                    __mk.color !== MK_PERIM);
+  });
+}
+
+/* the switch wears its own state — aria-checked is the single source, so the
+   CSS, the screen reader and the flag can never say three different things */
+function mkHoopChrome() {
+  const b = $("#mkHoopToggle");
+  if (!b || !__mk) return;
+  const on = !!__mk.hoop;
+  b.setAttribute("aria-checked", on ? "true" : "false");
+  b.title = on
+    ? "A hanging hoop will be added above your design — click to leave it off"
+    : "Add a hanging hoop to this design — off unless your charm needs one";
+}
+
+function mkPaintTally() {
+  const el = $("#markupMetal");
+  if (!el || !__mk) return;
+  const t = mkMetalTally(__mk.items);
+  const total = t.engrave + t.cutout + t.none;
+  if (!total) { el.hidden = true; el.textContent = ""; return; }
+  el.hidden = false;
+  /* THE SWATCH IS THE WORD. "1 engraved · 1 cut out · 5 outlines" spelled
+     out was three phrases on a line that had to hold a selection count too,
+     so it wrapped — and a footer that changes height as you select things
+     moves the two buttons under it while you are reaching for them. The
+     swatches already carry the meaning everywhere else in the studio; here
+     they carry it alone, with the words on the hover. */
+  const bit = (n, cls, word) => n
+    ? `<span class="markup-metal__b" title="${attrText(n + " " + word)}">` +
+      `<i class="mk-metal__sw mk-metal__sw--${cls}"></i>${n}</span>` : "";
+  el.innerHTML = bit(t.engrave, "engrave", "engraved") +
+                 bit(t.cutout, "cutout", "cut out") +
+                 bit(t.none, "none", t.none === 1 ? "outline" : "outlines");
+}
+
+function mkPaintMode() {
+  const mode = mkModeNorm(__mk && __mk.mode);
+  $$("#markupMode .mk-mode").forEach((b) => {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle("is-on", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+
+/* ── redraw ──────────────────────────────────────────────────────────────── */
+function markupCanvas() { return $("#markupCanvas"); }
+/* the most bitmap one live canvas is allowed, in pixels. Reached only on a
+   very wide screen, where the parking area either side can be larger than
+   the sheet itself; past it the oversampling steps down rather than the
+   parking area shrinking, because a slightly softer halo is a better trade
+   than one that stops before the edge of the room. */
+const MK_CANVAS_BUDGET = 14e6;
+
+/* the halo, in device pixels, as this canvas was actually built */
+function mkPad(cv) {
+  return { x: +(cv && cv.dataset.padx) || 0, y: +(cv && cv.dataset.pady) || 0 };
+}
+
+/* how far outside the sheet a coordinate is allowed to go — exactly as far
+   as there is canvas to draw it on, so nothing can be dragged somewhere it
+   would not be visible */
+function mkHaloRange() {
+  const cv = markupCanvas();
+  if (!cv || !cv.width) return { x: 0, y: 0 };
+  const p = mkPad(cv);
+  const w = cv.width - p.x * 2, h = cv.height - p.y * 2;
+  return { x: w > 1 ? p.x / w : 0, y: h > 1 ? p.y / h : 0 };
+}
+
+/* The grid, on its own canvas behind the base picture. Built on demand so a
+   theme section older than this asset needs no change, and sized and placed
+   to match #markupCanvas exactly — one pixel of drift would read as a wobble. */
+function mkGridEl(cv) {
+  let g = document.getElementById("markupGrid");
+  if (!g) {
+    const view = document.getElementById("markupView");
+    const base = document.getElementById("markupBase");
+    if (!view) return null;
+    g = document.createElement("canvas");
+    g.id = "markupGrid";
+    g.className = "markup-grid";
+    g.setAttribute("aria-hidden", "true");
+    view.insertBefore(g, base || view.firstChild);
+  }
+  if (cv) {
+    if (g.width !== cv.width || g.height !== cv.height) { g.width = cv.width; g.height = cv.height; }
+    /* match the painted canvas's box, whatever the stage has done to it */
+    const cs = cv.style;
+    g.style.width = cs.width; g.style.height = cs.height;
+    g.style.left = cs.left; g.style.top = cs.top;
+    g.style.transform = cs.transform;
+  }
+  return g;
+}
+function mkPaintGridLayer(cv, p) {
+  const g = mkGridEl(cv);
+  if (!g) return;
+  const gx = g.getContext("2d");
+  gx.setTransform(1, 0, 0, 1, 0, 0);
+  gx.clearRect(0, 0, g.width, g.height);
+  if (!(__mk.guides && __mk.guides.grid)) return;
+  const W = cv.width - p.x * 2, H = cv.height - p.y * 2;
+  gx.setTransform(1, 0, 0, 1, p.x, p.y);
+  gx.strokeStyle = "rgba(28,29,29,.10)";
+  gx.lineWidth = 1;
+  const gn = Math.max(4, Math.min(48, __mk.gridN || 12));
+  for (let i = 1; i < gn; i++) {
+    const t = i / gn;
+    gx.beginPath(); gx.moveTo(t * W, 0); gx.lineTo(t * W, H); gx.stroke();
+    gx.beginPath(); gx.moveTo(0, t * H); gx.lineTo(W, t * H); gx.stroke();
+  }
+  gx.setTransform(1, 0, 0, 1, 0, 0);
+}
+function mkRedraw() {
+  const cv = markupCanvas(); if (!cv || !__mk) return;
+  /* the size fields are a read-out of the selection, and this is the one
+     function every change passes through — including every frame of a drag,
+     which is what makes the numbers move while the hand does */
+  try { mkSizeSync(); } catch (e) {}
+  const ctx = cv.getContext("2d");
+  const p = mkPad(cv);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  /* THE ORIGIN MOVES, THE SCALE DOES NOT. mkPaint multiplies every
+     normalised coordinate by the width it is handed, so it must be handed
+     the SHEET's width and then be told where the sheet starts — hand it the
+     canvas's width instead and the whole drawing grows by the halo. */
+  /* ── THE GRID BELONGS UNDER THE ARTWORK ────────────────────────────────
+     It used to be painted by mkPaint onto this canvas, and the base picture
+     is an <img> BEHIND this canvas — so every imported photograph appeared
+     to be lying underneath the graph paper, which is not what a drafting aid
+     is for. It now has its own surface, inserted behind the base, and mkPaint
+     is told not to draw it. Centre and mirror lines stay on top: those are
+     live guides you align to while you draw, not stationery. */
+  mkPaintGridLayer(cv, p);
+  ctx.setTransform(1, 0, 0, 1, p.x, p.y);
+  /* the edited base, beneath every mark — letterboxed exactly the way the
+     <img> it replaced was, so nothing shifts at the moment it takes over */
+  /* the SAME question mkApplyBase asks of the <img>. Without it a sheet that
+     already had a rasterised base — from a retouch before it was traced, or
+     from Show the original being switched on and off again — carries on
+     painting the bitmap here long after the ghost rule has hidden it. */
+  const baseRec = mkBaseIsGhosted() ? null : mkPxBaseRec();
+  if (baseRec) {
+    try {
+      const bcv = mkPxCanvas(baseRec);
+      const W = cv.width - p.x * 2, H = cv.height - p.y * 2;
+      /* THROUGH THE SAME CROP AND ROTATION THE <img> HAD. Drawing a naive
+         centred letterbox meant a customer who had cropped or rotated their
+         imported picture watched the full uncropped original snap back the
+         instant a pixel tool touched it — and then every stroke landed at
+         the wrong place, because the hit-test had the same blind spot. */
+      const m = mkBaseMatrix(W, H);
+      ctx.save();
+      if (m) ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+      const sc = Math.min(W / bcv.width, H / bcv.height);
+      const dw = bcv.width * sc, dh = bcv.height * sc;
+      ctx.drawImage(bcv, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      ctx.restore();
+    } catch (e) {}
+  }
+  const items = __mk.items.slice();
+  if (__mk.live) items.push(__mk.live);
+  mkPaint(ctx, cv.width - p.x * 2, cv.height - p.y * 2, items,
+          Object.assign({}, __mk.guides || {}, { gridN: __mk.gridN || 12, grid: false }));
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  mkRenderSelection();
+}
+
+/* ── selection furniture: a dashed box, four corners and a rotate grip ───── */
+function mkRenderSelection() {
+  const host = $("#markupOverlay"); if (!host) return;
+  const mobileDel = $("#mkDelete");
+  if (mobileDel) mobileDel.hidden = true;
+  host.querySelectorAll(".mk-sel, .mk-handle, .mk-selone").forEach((e) => e.remove());
+  if (!__mk || __mk.tool !== "select" || __mk.cropping) return;
+  const list = mkSelItems();
+  if (!list.length) return;
+  const it = list[list.length - 1];
+  const many = list.length > 1;
+  /* ONE box around everything selected — the whole point of selecting more
+     than one thing is that it then behaves as one thing. Each member also
+     gets a thin outline of its own, so it stays obvious WHAT is in the
+     selection and not merely how far it reaches. */
+  /* ── THE BOX HAS TO COVER WHAT IS SELECTED ──────────────────────────
+     mkUnionBBox is the union of the members' UNROTATED boxes, so on a
+     drawing that has been turned the dashed box sat where the parts used to
+     be — it neither contained them nor pointed at them, and the corner
+     handles hung off it in mid-air. mkUnionDrawn asks the same question of
+     the parts as they are actually drawn, which is what an axis-aligned box
+     round a set of turned things should be. The per-member outlines below
+     have always carried each part's own turn; now the box agrees with them. */
+  const bb = many ? mkUnionDrawn(list) : mkBBox(it);
+  const pad = 0.008;
+  if (many) {
+    list.forEach((o) => {
+      const b = mkBBox(o);
+      const one = document.createElement("div");
+      one.className = "mk-selone";
+      one.style.left = (b.x * 100) + "%";
+      one.style.top = (b.y * 100) + "%";
+      one.style.width = (b.w * 100) + "%";
+      one.style.height = (b.h * 100) + "%";
+      if (o.r) one.style.transform = `rotate(${o.r}rad)`;
+      host.appendChild(one);
+    });
+  }
+  const box = document.createElement("div");
+  box.className = "mk-sel" + (many ? " mk-sel--many" : "");
+  box.style.left = ((bb.x - pad) * 100) + "%";
+  box.style.top = ((bb.y - pad) * 100) + "%";
+  box.style.width = ((bb.w + pad * 2) * 100) + "%";
+  box.style.height = ((bb.h + pad * 2) * 100) + "%";
+  if (!many && it.r) box.style.transform = `rotate(${it.r}rad)`;
+  host.appendChild(box);
+
+  const corners = [["nw", 0, 0], ["ne", 1, 0], ["se", 1, 1], ["sw", 0, 1]];
+  corners.forEach(([h, fx, fy]) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "mk-handle";
+    el.dataset.h = h;
+    el.style.left = ((bb.x - pad + (bb.w + pad * 2) * fx) * 100) + "%";
+    el.style.top = ((bb.y - pad + (bb.h + pad * 2) * fy) * 100) + "%";
+    host.appendChild(el);
+  });
+  const rot = document.createElement("button");
+  rot.type = "button";
+  rot.className = "mk-handle mk-handle--rot";
+  rot.dataset.h = "rot";
+  rot.style.left = ((bb.x + bb.w / 2) * 100) + "%";
+  rot.style.top = ((bb.y - pad - 0.055) * 100) + "%";
+  host.appendChild(rot);
+
+  /* A contextual mobile action, positioned in pixels so its 44px touch target
+     never shrinks with a tiny layer. Prefer below the selection, move above
+     when the lower edge is crowded, and clamp both axes to the visible sheet.
+     It acts on mkSelIdx(), so one object, a multi-selection, and a whole group
+     all follow the exact same deletion path. */
+  const mobileDeleteMode = mkMobileWorkspaceActive();
+  if (mobileDel && mobileDeleteMode) {
+    const vw = Math.max(1, host.clientWidth || 320);
+    const vh = Math.max(1, host.clientHeight || vw);
+    const bw = 88, bh = 44, edge = 8, clear = 18;
+    const cx = (bb.x + bb.w / 2) * vw;
+    const x = Math.max(bw / 2 + edge, Math.min(vw - bw / 2 - edge, cx));
+    const below = (bb.y + bb.h) * vh + clear;
+    const above = bb.y * vh - clear;
+    let y, isAbove;
+    if (below >= edge && below + bh <= vh - edge) {
+      y = below; isAbove = false;
+    } else if (above - bh >= edge && above <= vh - edge) {
+      y = above; isAbove = true;
+    } else {
+      /* A selection filling nearly the whole sheet has no outside edge. Keep
+         the pill inside its lower-right area rather than letting it clip. */
+      y = Math.max(bh + edge, Math.min(vh - edge, (bb.y + bb.h) * vh - edge));
+      isAbove = true;
+    }
+    const groupIds = {};
+    list.forEach((o) => { const g = mkGroupOf(o); if (g) groupIds[g] = 1; });
+    const gs = Object.keys(groupIds);
+    const wholeGroup = gs.length === 1 && mkGroupIdx(gs[0]).length === list.length;
+    mobileDel.style.left = x + "px";
+    mobileDel.style.top = y + "px";
+    mobileDel.classList.toggle("is-above", isAbove);
+    mobileDel.setAttribute("aria-label", wholeGroup
+      ? "Delete selected group"
+      : (list.length > 1 ? `Delete ${list.length} selected layers` : `Delete ${mkLayerName(it)}`));
+    mobileDel.hidden = false;
+  }
+}
+
+/* ── the rubber band ─────────────────────────────────────────────────────
+   Dragging across empty sheet with the Select tool sweeps up everything the
+   box touches. The other half of "select several at once", and the one most
+   people reach for before they think of shift.                            */
+function mkMarqRect() {
+  const m = __mk && __mk.marq;
+  if (!m) return null;
+  return { x: Math.min(m.x0, m.x), y: Math.min(m.y0, m.y),
+           w: Math.abs(m.x - m.x0), h: Math.abs(m.y - m.y0) };
+}
+function mkPaintMarquee() {
+  const host = $("#markupOverlay"); if (!host) return;
+  host.querySelectorAll(".mk-marq").forEach((e) => e.remove());
+  const m = __mk && __mk.marq;
+  if (!m || !m.live) return;
+  const r = mkMarqRect();
+  const el = document.createElement("div");
+  el.className = "mk-marq";
+  el.style.left = (r.x * 100) + "%"; el.style.top = (r.y * 100) + "%";
+  el.style.width = (r.w * 100) + "%"; el.style.height = (r.h * 100) + "%";
+  host.appendChild(el);
+}
+/* ═══════════ WHERE A LAYER ACTUALLY IS, FOR THE BOX THAT SWEEPS IT ═══════
+   Every point hit-test in the studio unrotates before it asks — mkHitItem,
+   mkFillHit, mkPictureLocal, mkEraseHit all do it, and mkFillHit carries a
+   note saying so. The marquee did not. It tested mkBBox, which is the box a
+   layer occupied BEFORE it was turned, so the moment a drawing has been
+   rotated the box sweeps one place and selects another: parts plainly inside
+   it are missed, parts nowhere near it are taken. On a traced charm, where a
+   hundred small parts sit tightly packed, that is the difference between
+   selecting what you meant and selecting its neighbour.
+
+   Two things are wrong with the old test and both are fixed here.
+
+   IT IGNORED THE TURN. The outline below is the layer as DRAWN — its points
+   turned by its own `r` about its own centre, which is exactly what mkPaint
+   does — so the answer is about the shape on screen rather than a memory of
+   where it used to be.
+
+   AND A BOUNDING BOX IS TOO FAT. Turning a bounding box and taking the box
+   of THAT is worse than useless for a thin diagonal part: the axis-aligned
+   box of a rotated bar is enormous, and every neighbour inside it would be
+   swept up. So a layer with real geometry — a traced contour, a pen stroke,
+   a line — is tested against its own outline, contour by contour, and only a
+   box-shaped primitive falls back to four corners. */
+const MK_PATH_GEOM = { fill: 1, ink: 1, hl: 1, sign: 1, line: 1, arrow: 1 };
+
+function mkDrawnOutline(it) {
+  const b = mkBBox(it);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const r = it.r || 0, c = Math.cos(r), s = Math.sin(r);
+  const fx = it.fx ? -1 : 1, fy = it.fy ? -1 : 1;
+  /* turn, then mirror — the painter's own order */
+  const turn = (x, y) => {
+    const rx = cx + (x - cx) * c - (y - cy) * s;
+    const ry = cy + (x - cx) * s + (y - cy) * c;
+    return [cx + (rx - cx) * fx, cy + (ry - cy) * fy];
+  };
+  const p = it.p || [];
+  if (MK_PATH_GEOM[it.t] && p.length >= 4) {
+    /* a fill's points are its contours laid end to end, and `q` says how many
+       belong to each — walked separately so the ring of an O is not joined to
+       its outside by an edge that was never drawn */
+    const runs = [];
+    const q = Array.isArray(it.q) && it.q.length ? it.q : [p.length / 2];
+    let at = 0;
+    q.forEach((n) => {
+      const pts = [];
+      for (let k = 0; k < n && (at + k) * 2 + 1 < p.length; k++) {
+        pts.push(turn(p[(at + k) * 2], p[(at + k) * 2 + 1]));
+      }
+      at += n;
+      if (pts.length >= 2) runs.push(pts);
+    });
+    if (at * 2 < p.length) {                 /* anything q did not account for */
+      const pts = [];
+      for (let k = at * 2; k + 1 < p.length; k += 2) pts.push(turn(p[k], p[k + 1]));
+      if (pts.length >= 2) runs.push(pts);
+    }
+    if (runs.length) return { runs, closed: it.t === "fill" };
+  }
+  return { runs: [[turn(b.x, b.y), turn(b.x + b.w, b.y),
+                   turn(b.x + b.w, b.y + b.h), turn(b.x, b.y + b.h)]], closed: true };
+}
+
+/* does an outline meet an axis-aligned rectangle — touched, not enclosed */
+function mkOutlineMeetsRect(o, r) {
+  const x1 = r.x + r.w, y1 = r.y + r.h;
+  const seg = (a, b) => {
+    /* Liang–Barsky: the segment against the box, without building anything */
+    let t0 = 0, t1 = 1;
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const P = [-dx, dx, -dy, dy];
+    const Q = [a[0] - r.x, x1 - a[0], a[1] - r.y, y1 - a[1]];
+    for (let i = 0; i < 4; i++) {
+      if (P[i] === 0) { if (Q[i] < 0) return false; continue; }
+      const t = Q[i] / P[i];
+      if (P[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+      else { if (t < t0) return false; if (t < t1) t1 = t; }
+    }
+    return true;
+  };
+  for (const pts of o.runs) {
+    for (let i = 0; i < pts.length; i++) {
+      const j = i + 1;
+      if (j >= pts.length) { if (!o.closed) break; if (seg(pts[i], pts[0])) return true; break; }
+      if (seg(pts[i], pts[j])) return true;
+    }
+  }
+  /* a box entirely inside a filled shape still selects it */
+  if (o.closed) {
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    let inside = false;
+    for (const pts of o.runs) {
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+        if ((yi > cy) !== (yj > cy) &&
+            cx < (xj - xi) * (cy - yi) / ((yj - yi) || 1e-9) + xi) inside = !inside;
+      }
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
+function mkMarqueeSelect() {
+  const m = __mk && __mk.marq; if (!m) return;
+  const r = mkMarqRect();
+  const hit = [];
+  __mk.items.forEach((it, i) => {
+    if (it.hid || it.lok) return;
+    /* the cheap question first: the drawn bounding box rejects almost
+       everything on a busy sheet, so the outline walk below is only paid for
+       by the handful of parts the box could plausibly be touching */
+    const b = mkDrawnBox(it);
+    if (!(b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y)) return;
+    /* touched, not enclosed — sweeping a box across a drawing to catch the
+       strokes it crosses is what the hand expects */
+    if (!mkOutlineMeetsRect(mkDrawnOutline(it), r)) return;
+    mkReachOf(i, false).forEach((k) => { if (hit.indexOf(k) < 0) hit.push(k); });
+  });
+  if (m.add) { mkSelSet(m.base || []); mkSelAdd(hit); }
+  else mkSelSet(hit);
+  mkRenderSelection();
+  mkPaintLayerSel(true);
+  const cnt = $("#markupCount");
+  if (cnt) cnt.textContent = hit.length ? `${mkSelCount()} layers selected` : "Drag to select";
+}
+
+/* ═══════════ THE MARQUEE ═════════════════════════════════════════════════
+   A rectangle drawn over the artwork, and then Copy, Cut or Delete of
+   EXACTLY the piece inside it — Photoshop's rectangular marquee, with the
+   one difference that matters here: this studio's artwork is not pixels, it
+   is instructions. A blue line means "saw through along this path". A blue
+   area means "this is a hole". Rasterising a cut piece would turn every line
+   in it into an area and quietly rewrite what the workshop is told to do.
+
+   So the marquee CLIPS GEOMETRY rather than pixels, and every piece it
+   produces is an ordinary layer of the same kind as the layer it came from:
+   a clipped pen stroke is a pen stroke, in the same ink, at the same weight;
+   a clipped area is an area carrying the same instruction. Which is also
+   what "no restrictions in terms of editability" has to mean — the piece
+   that lands is not a picture of a mark, it IS a mark, and everything the
+   studio can do to a mark it can do to that one.
+
+   WHAT IT ACTS ON. Everything visible and unlocked that the box touches —
+   one layer, forty layers, whole groups, all in the same gesture, and a
+   clipped piece keeps its group so a cut group pastes back as a group. If
+   layers ARE selected when the box is drawn, only those are cut: that is the
+   escape hatch for a crowded sheet, and it costs nothing when unused.
+
+   WHAT IT DOES NOT TOUCH. The reference photograph under the sheet is the
+   base bitmap, not a layer, and the eraser is the tool that reaches it. Say
+   so plainly when a box catches nothing rather than appearing to fail.
+
+   Per kind, and none of this is a special case for its own sake:
+     · pen / highlight / signature / line / arrow — the polyline is clipped
+       segment by segment, so a stroke crossing the box becomes the run
+       inside and the runs outside, all still strokes.
+     · outline-only shapes — the outline is sampled to a path and clipped the
+       same way, landing as pen strokes in the shape's own ink and weight.
+     · filled shapes and areas — clipped as a MASK and re-emitted as an area,
+       because an area's boundary can be concave, can have holes, and the
+       mask is the only representation that is exact for all three.
+     · notes and lettering — whole or not at all. Half a word is not a thing
+       anybody wants, and the anchor decides which side it falls.
+     · pictures — the rectangle becomes a non-destructive mask entry on the
+       layer, so a cut picture is still the same picture file, still movable,
+       still resizable, and Undo is exact.                                  */
+
+const MK_MS_MASK = 1100;      /* the working resolution for an area's mask */
+const MK_MS_MIN  = 0.006;     /* below this a drag was a click, not a box */
+
+/* the live box while one is being drawn, the committed one otherwise */
+function mkMsRect() {
+  if (!__mk) return null;
+  const d = __mk.msDrag;
+  if (d && d.mode === "new") {
+    return { x: Math.min(d.x0, d.x), y: Math.min(d.y0, d.y),
+             w: Math.abs(d.x - d.x0), h: Math.abs(d.y - d.y0) };
+  }
+  return __mk.msel || null;
+}
+function mkMarqClear() {
+  if (!__mk) return;
+  __mk.msel = null; __mk.msDrag = null;
+  mkPaintMarqSel();
+}
+function mkMarqLive() {
+  const r = __mk && __mk.msel;
+  return !!(r && r.w >= MK_MS_MIN && r.h >= MK_MS_MIN);
+}
+
+/* ── the clipper's arithmetic ──────────────────────────────────────────── */
+
+/* Liang–Barsky: the parameter range of a segment that lies inside the box,
+   or null. The same routine mkOutlineMeetsRect uses to answer yes/no — this
+   one keeps the numbers, because the numbers are where the cut goes. */
+function mkSegClip(ax, ay, bx, by, r) {
+  let t0 = 0, t1 = 1;
+  const dx = bx - ax, dy = by - ay;
+  const P = [-dx, dx, -dy, dy];
+  const Q = [ax - r.x, r.x + r.w - ax, ay - r.y, r.y + r.h - ay];
+  for (let i = 0; i < 4; i++) {
+    if (P[i] === 0) { if (Q[i] < 0) return null; continue; }
+    const t = Q[i] / P[i];
+    if (P[i] < 0) { if (t > t1) return null; if (t > t0) t0 = t; }
+    else { if (t < t0) return null; if (t < t1) t1 = t; }
+  }
+  return [t0, t1];
+}
+function mkPtIn(x, y, r) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+/* a polyline against the box: the runs kept, as flat point arrays. A run
+   ends wherever the line leaves the side it was on, which is what makes one
+   stroke crossing the box come back as three. */
+function mkClipPolyline(p, r, inside) {
+  const out = [];
+  const EPS = 1e-9;
+  let cur = null;
+  const push = (x, y) => {
+    if (!cur) { cur = []; out.push(cur); }
+    const n = cur.length;
+    if (n >= 2 && Math.abs(cur[n - 2] - x) < 1e-7 && Math.abs(cur[n - 1] - y) < 1e-7) return;
+    cur.push(x, y);
+  };
+  const end = () => { cur = null; };
+  for (let k = 0; k + 3 < p.length; k += 2) {
+    const ax = p[k], ay = p[k + 1], bx = p[k + 2], by = p[k + 3];
+    const hit = mkSegClip(ax, ay, bx, by, r);
+    const spans = [];
+    if (inside) { if (hit) spans.push(hit); }
+    else if (!hit) spans.push([0, 1]);
+    else {
+      if (hit[0] > EPS) spans.push([0, hit[0]]);
+      if (hit[1] < 1 - EPS) spans.push([hit[1], 1]);
+    }
+    if (!spans.length) { end(); continue; }
+    for (let s = 0; s < spans.length; s++) {
+      const t0 = spans[s][0], t1 = spans[s][1];
+      if (t1 - t0 < 1e-7) continue;
+      if (t0 > EPS) end();                    /* starts mid-segment: a new run */
+      push(ax + (bx - ax) * t0, ay + (by - ay) * t0);
+      push(ax + (bx - ax) * t1, ay + (by - ay) * t1);
+      if (t1 < 1 - EPS) end();                /* stops short of the vertex */
+    }
+  }
+  return out.filter((a) => a.length >= 4);
+}
+
+/* the item's points AS DRAWN — its own turn baked in, so the clip is against
+   the shape on screen and the pieces need no rotation of their own. Every
+   other hit test in the studio unrotates the QUESTION instead; that cannot
+   work here, because the answer has to come back as geometry. */
+function mkTurnedPts(p, it) {
+  const q = (p || []).slice();
+  const fx = it.fx ? -1 : 1, fy = it.fy ? -1 : 1;
+  if (!it.r && fx > 0 && fy > 0) return q;
+  const b = mkBBox(it);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const c = Math.cos(it.r || 0), s = Math.sin(it.r || 0);
+  for (let k = 0; k + 1 < q.length; k += 2) {
+    const dx = q[k] - cx, dy = q[k + 1] - cy;
+    q[k] = cx + (dx * c - dy * s) * fx;
+    q[k + 1] = cy + (dx * s + dy * c) * fy;
+  }
+  return q;
+}
+
+/* A CLOSED SHAPE, AS POINTS. Sampled from the same numbers mkPaintShape
+   draws from — one source for the geometry, so an outline that is clipped
+   and an outline that is painted cannot come back different shapes. */
+function mkShapeContours(it) {
+  const b = mkBBox(it);
+  const x = b.x, y = b.y, w = b.w, h = b.h;
+  const cs = [];
+  const rectPts = (X, Y, W, H) => [X, Y, X + W, Y, X + W, Y + H, X, Y + H, X, Y];
+  const ell = (cx, cy, rx, ry, n) => {
+    const a = [];
+    for (let i = 0; i <= n; i++) { const t = (i / n) * Math.PI * 2; a.push(cx + Math.cos(t) * rx, cy + Math.sin(t) * ry); }
+    return a;
+  };
+  const cube = (a, out, n) => {
+    for (let i = 1; i <= n; i++) {
+      const t = i / n, u = 1 - t;
+      out.push(u * u * u * a[0] + 3 * u * u * t * a[2] + 3 * u * t * t * a[4] + t * t * t * a[6],
+               u * u * u * a[1] + 3 * u * u * t * a[3] + 3 * u * t * t * a[5] + t * t * t * a[7]);
+    }
+  };
+  switch (it.t) {
+    case "rect": cs.push(rectPts(x, y, w, h)); break;
+    case "round": {
+      const r = Math.min(w, h) * 0.22, a = [], N = 10;
+      const arc = (cx, cy, a0) => { for (let i = 0; i <= N; i++) { const t = a0 + (i / N) * (Math.PI / 2); a.push(cx + Math.cos(t) * r, cy + Math.sin(t) * r); } };
+      arc(x + w - r, y + h - r, 0);
+      arc(x + r, y + h - r, Math.PI / 2);
+      arc(x + r, y + r, Math.PI);
+      arc(x + w - r, y + r, Math.PI * 1.5);
+      a.push(a[0], a[1]);
+      cs.push(a);
+      break;
+    }
+    case "ellipse": cs.push(ell(x + w / 2, y + h / 2, w / 2, h / 2, 96)); break;
+    case "ring":
+      cs.push(ell(x + w / 2, y + h / 2, w / 2, h / 2, 96));
+      cs.push(ell(x + w / 2, y + h / 2, w / 4, h / 4, 72));
+      break;
+    case "tri": cs.push([x + w / 2, y, x + w, y + h, x, y + h, x + w / 2, y]); break;
+    case "star": {
+      const a = [], cx = x + w / 2, cy = y + h / 2;
+      for (let i = 0; i < 10; i++) {
+        const rr = i % 2 ? 0.42 : 1, t = -Math.PI / 2 + (i * Math.PI) / 5;
+        a.push(cx + Math.cos(t) * (w / 2) * rr, cy + Math.sin(t) * (h / 2) * rr);
+      }
+      a.push(a[0], a[1]);
+      cs.push(a);
+      break;
+    }
+    case "heart": {
+      const cx = x + w / 2, a = [cx, y + h];
+      cube([cx, y + h, x - w * 0.12, y + h * 0.55, x + w * 0.08, y - h * 0.10, cx, y + h * 0.28], a, 40);
+      cube([cx, y + h * 0.28, x + w * 0.92, y - h * 0.10, x + w * 1.12, y + h * 0.55, cx, y + h], a, 40);
+      cs.push(a);
+      break;
+    }
+    case "bail": {
+      const br = Math.min(w, h) * 0.13;
+      cs.push(rectPts(x, y + br * 2, w, h - br * 2));
+      cs.push(ell(x + w / 2, y + br, br, br, 64));
+      break;
+    }
+    default: cs.push(rectPts(x, y, w, h));
+  }
+  return cs.map((c) => mkTurnedPts(c, it));
+}
+
+/* AN AREA, AS A MASK. Painted from the item's own geometry rather than
+   through mkPaint, because mkPaint answers "what does this look like" — an
+   area set to Outline paints as a boundary, and the boundary is not the
+   thing being cut. The area is what is being cut, whichever way it is drawn. */
+let __mkMaskCv = null;
+function mkAreaMask(it, S) {
+  /* ONE canvas for the whole operation. A box dragged across a traced charm
+     can touch fifty filled areas, and a fresh 1100x1100 canvas for each of
+     them is fifty allocations of five megabytes that the collector then has
+     to find — the difference between a cut that lands instantly and one that
+     stutters. The same surface is cleared and reused instead. */
+  if (!__mkMaskCv || __mkMaskCv.width !== S) {
+    __mkMaskCv = document.createElement("canvas");
+    __mkMaskCv.width = S; __mkMaskCv.height = S;
+  }
+  const cv = __mkMaskCv;
+  const x = cv.getContext("2d", { willReadFrequently: true });
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.clearRect(0, 0, S, S);
+  const bb = mkBBox(it);
+  x.save();
+  if (it.r || it.fx || it.fy) {
+    const cx = (bb.x + bb.w / 2) * S, cy = (bb.y + bb.h / 2) * S;
+    x.translate(cx, cy);
+    if (it.fx || it.fy) x.scale(it.fx ? -1 : 1, it.fy ? -1 : 1);
+    if (it.r) x.rotate(it.r);
+    x.translate(-cx, -cy);
+  }
+  x.fillStyle = "#000"; x.strokeStyle = "#000";
+  x.lineWidth = Math.max(1, (it.w || 0.008) * S);
+  if (it.t === "fill") {
+    if (it.m && it.m.length && it.ms) {
+      const w = Math.max(1, (it.ms[0] | 0)), h = Math.max(1, (it.ms[1] | 0));
+      const m = mkRleDecode(it.m, w, h);
+      const tmp = document.createElement("canvas");
+      tmp.width = w; tmp.height = h;
+      const tc = tmp.getContext("2d");
+      const img = tc.createImageData(w, h);
+      const d = img.data;
+      for (let i = 0; i < w * h; i++) if (m[i]) { d[i * 4 + 3] = 255; }
+      tc.putImageData(img, 0, 0);
+      x.imageSmoothingEnabled = false;
+      x.drawImage(tmp, bb.x * S, bb.y * S, Math.max(1, bb.w * S), Math.max(1, bb.h * S));
+    } else {
+      const p = it.p || [];
+      const q = (Array.isArray(it.q) && it.q.length) ? it.q : [p.length / 2];
+      x.beginPath();
+      let at = 0;
+      q.forEach((n) => {
+        for (let k = 0; k < n && (at + k) * 2 + 1 < p.length; k++) {
+          const px = p[(at + k) * 2] * S, py = p[(at + k) * 2 + 1] * S;
+          if (k) x.lineTo(px, py); else x.moveTo(px, py);
+        }
+        x.closePath();
+        at += n;
+      });
+      x.fill("evenodd");
+    }
+  } else {
+    /* the shape's own painter, told to fill — so a ring's hole and a bail's
+       loop come out of the same evenodd path they are drawn with */
+    mkPaintShape(x, Object.assign({}, it, { f: MK_ENGRAVE, c: MK_ENGRAVE }), bb, S, S);
+  }
+  x.restore();
+  const d = x.getImageData(0, 0, S, S).data;
+  const m = new Uint8Array(S * S);
+  for (let i = 0, N = S * S; i < N; i++) if (d[i * 4 + 3] > 40) m[i] = 1;
+  return m;
+}
+function mkMaskByRect(m, S, r, inside) {
+  const x0 = Math.max(0, Math.floor(r.x * S)), x1 = Math.min(S - 1, Math.ceil((r.x + r.w) * S) - 1);
+  const y0 = Math.max(0, Math.floor(r.y * S)), y1 = Math.min(S - 1, Math.ceil((r.y + r.h) * S) - 1);
+  const o = new Uint8Array(S * S);
+  if (inside) {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) o[y * S + x] = m[y * S + x];
+  } else {
+    o.set(m);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) o[y * S + x] = 0;
+  }
+  return o;
+}
+/* the mask back into the document's own vocabulary: a run-length area, which
+   is a first-class fill here and has been since the bucket learned to take
+   a photograph's region */
+function mkFillFromMask(m, S, src) {
+  let x0 = S, y0 = S, x1 = -1, y1 = -1;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      if (!m[y * S + x]) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return null;
+  let cropped = mkMaskCrop(m, S, { x0, y0, x1, y1 });
+  let runs = mkRleEncode(cropped.m, cropped.w, cropped.h);
+  let guard = 0;
+  while (runs.length > MK_RLE_MAX && guard++ < 4) {
+    cropped = mkMaskHalve(cropped.m, cropped.w, cropped.h);
+    runs = mkRleEncode(cropped.m, cropped.w, cropped.h);
+  }
+  return mkPack({
+    id: mkId(), t: "fill", c: src.c, f: src.f, w: src.w || 0.0015, gr: 1,
+    bk: src.bk ? 1 : 0, o: src.o, n: src.n, g: src.g, r: 0,
+    p: [x0 / S, y0 / S, (x1 + 1) / S, (y1 + 1) / S],
+    m: runs, ms: [cropped.w, cropped.h],
+  });
+}
+
+/* A PICTURE, WITHOUT REWRITING ONE PIXEL OF IT. The box is carried into the
+   layer's own frame — where a turned picture turns it into a quad, which is
+   exactly right — and stored as a mask entry beside the eraser's strokes.
+   Same field, same painter, same Undo, and the file behind the layer is
+   untouched, so a cut piece of a photograph is still that photograph. */
+function mkImgClip(it, r, inside) {
+  const bb = mkBBox(it);
+  const q = [];
+  [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].forEach((c) => {
+    const u = mkUnrotate(it, c[0], c[1]);
+    q.push((u[0] - bb.x) / Math.max(1e-6, bb.w), (u[1] - bb.y) / Math.max(1e-6, bb.h));
+  });
+  const er = (Array.isArray(it.er) ? it.er : []).concat([{ q, v: inside ? 1 : 0 }]);
+  return mkPack(Object.assign({}, it, { id: mkId(), er }));
+}
+
+/* ── one layer against the box ─────────────────────────────────────────── */
+function mkClipItem(it, r) {
+  const box = mkDrawnBox(it);
+  const touches = box.x < r.x + r.w && box.x + box.w > r.x &&
+                  box.y < r.y + r.h && box.y + box.h > r.y;
+  if (!touches) return { in: [], out: [it] };
+
+  if (it.t === "text" || it.t === "callout" || it.t === "label") {
+    const p = it.p || [];
+    return mkPtIn(p[0] || 0, p[1] || 0, r) ? { in: [it], out: [] } : { in: [], out: [it] };
+  }
+
+  if (it.t === "img") {
+    const whole = box.x >= r.x && box.y >= r.y &&
+                  box.x + box.w <= r.x + r.w && box.y + box.h <= r.y + r.h;
+    if (whole) return { in: [it], out: [] };
+    return { in: [mkImgClip(it, r, true)], out: [mkImgClip(it, r, false)] };
+  }
+
+  const stroke = it.t === "ink" || it.t === "hl" || it.t === "sign" ||
+                 it.t === "line" || it.t === "arrow";
+  if (stroke) {
+    const p = mkTurnedPts(it.p, it);
+    if (p.length < 4) {                                       /* a single dot */
+      return mkPtIn(p[0] || 0, p[1] || 0, r) ? { in: [it], out: [] } : { in: [], out: [it] };
+    }
+    const A = mkClipPolyline(p, r, true);
+    if (!A.length) return { in: [], out: [it] };
+    const B = mkClipPolyline(p, r, false);
+    if (!B.length) return { in: [it], out: [] };
+    /* an arrow that has been cut is no longer pointing at anything with a
+       head the geometry can still derive, so the pieces are plain lines */
+    const t = it.t === "arrow" ? "line" : it.t;
+    /* the turn AND the mirror are already baked into these points by
+       mkTurnedPts, so the pieces must carry neither — a piece that kept its
+       parent's flags would be transformed a second time */
+    const mk = (runs) => runs.map((pts) => mkPack(Object.assign({}, it,
+      { id: mkId(), t, r: 0, fx: 0, fy: 0, p: pts })));
+    return { in: mk(A), out: mk(B) };
+  }
+
+  const area = it.t === "fill" ? true : (mkFillIntent(it.f) !== "none");
+  if (!area) {
+    const cs = mkShapeContours(it);
+    const A = [], B = [];
+    cs.forEach((c) => {
+      mkClipPolyline(c, r, true).forEach((x) => A.push(x));
+      mkClipPolyline(c, r, false).forEach((x) => B.push(x));
+    });
+    if (!A.length) return { in: [], out: [it] };
+    if (!B.length) return { in: [it], out: [] };
+    const mk = (runs) => runs.map((pts) => mkPack(Object.assign({}, it,
+      { id: mkId(), t: "ink", r: 0, fx: 0, fy: 0, q: [], m: [], ms: [], p: pts })));
+    return { in: mk(A), out: mk(B) };
+  }
+
+  const S = MK_MS_MASK;
+  const m = mkAreaMask(it, S);
+  const A = mkFillFromMask(mkMaskByRect(m, S, r, true), S, it);
+  if (!A) return { in: [], out: [it] };
+  const B = mkFillFromMask(mkMaskByRect(m, S, r, false), S, it);
+  if (!B) return { in: [it], out: [] };
+  return { in: [A], out: [B] };
+}
+
+/* ── the three verbs ───────────────────────────────────────────────────── */
+function mkMarqTargets() {
+  const sel = mkSelIdx();
+  const pool = sel.length ? sel : __mk.items.map((_, i) => i);
+  return pool.filter((i) => { const it = __mk.items[i]; return it && !it.hid && !it.lok; });
+}
+function mkMarqApply(mode) {
+  if (!__mk) return;
+  const r = __mk.msel;
+  if (!r || r.w < MK_MS_MIN || r.h < MK_MS_MIN) { toast("Drag a box over the artwork first", "err"); return; }
+
+  /* ── PASTE INTO THE BOX ─────────────────────────────────────────────────
+     The box has already said where: the piece arrives centred on it. Then
+     the box has done its job and gets out of the way — it is put away, the
+     Select tool comes up and the pasted layers are handed over already
+     selected, with their handles on, so the very next thing the hand does
+     is move or resize what just arrived rather than hunt for it.
+     The tool changes BEFORE the paste, because the selection furniture is
+     only drawn for the Select tool and mkTouch is what draws it. */
+  if (mode === "paste") {
+    if (!(__mkClip && __mkClip.length)) {
+      toast("Nothing copied yet — Copy or Cut a piece first", "err");
+      return;
+    }
+    const at = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    mkSetTool("select");
+    mkMarqClear();
+    const n = mkPasteClip(at).length;
+    mkChrome();
+    toast(n === 1 ? "Pasted into the box" : `Pasted ${n} layers into the box`, "gold");
+    return;
+  }
+  const idxs = mkMarqTargets();
+  const taken = [];
+  const repl = new Map();
+  idxs.forEach((i) => {
+    const it = __mk.items[i];
+    let res = null;
+    try { res = mkClipItem(it, r); } catch (err) { SD("marquee:", err && err.message); return; }
+    if (!res || !res.in.length) return;
+    res.in.forEach((o) => taken.push(o === it ? mkPack(it) : o));
+    if (mode !== "copy") repl.set(i, res.out);
+  });
+  if (!taken.length) {
+    toast("Nothing of yours inside the box — the marquee cuts your marks, not the picture underneath", "err");
+    return;
+  }
+  if (mode !== "del") {
+    /* the studio's own clipboard, so ⌘V, the Paste button and the
+       right-click menu all reach this piece without knowing it came from
+       a marquee. Group ids ride along and mkLayerAct remaps them, so a cut
+       group pastes back as a group. */
+    mkClipSet(taken.map(mkPack));
+  }
+  if (mode === "copy") {
+    toast(taken.length === 1 ? "Piece copied — ⌘V to place it" : taken.length + " pieces copied — ⌘V to place them", "gold");
+    return;
+  }
+  mkPushUndo();
+  const out = [];
+  __mk.items.forEach((it, i) => {
+    if (!repl.has(i)) { out.push(it); return; }
+    repl.get(i).forEach((o) => out.push(o));
+  });
+  __mk.items = out;
+  mkSelSet([]);
+  mkTouch();
+  try { mkRenderLayers(); } catch (e) {}
+  mkChrome();
+  mkPaintMarqSel();
+  toast(mode === "cut"
+    ? (taken.length === 1 ? "Piece cut — ⌘V to place it" : taken.length + " pieces cut — ⌘V to place them")
+    : "Deleted", mode === "cut" ? "gold" : "");
+}
+
+/* ── the box on screen, and what you can do to it ──────────────────────── */
+function mkPaintMarqSel() {
+  const host = $("#markupOverlay");
+  if (!host) return;
+  host.querySelectorAll(".mk-msel").forEach((e) => e.remove());
+  if (!__mk) { const b = host.querySelector(".mk-msbar"); if (b) b.remove(); return; }
+  const r = __mk ? mkMsRect() : null;
+  if (!r || r.w <= 0 || r.h <= 0) { mkMarqBar(null); return; }
+  const el = document.createElement("div");
+  el.className = "mk-msel" + (__mk.msDrag ? " is-live" : "");
+  el.style.left = (r.x * 100) + "%";
+  el.style.top = (r.y * 100) + "%";
+  el.style.width = (r.w * 100) + "%";
+  el.style.height = (r.h * 100) + "%";
+  host.appendChild(el);
+  mkMarqBar(__mk.msDrag ? null : r);
+}
+function mkMarqBar(r) {
+  const host = $("#markupOverlay");
+  if (!host) return;
+  let bar = host.querySelector(".mk-msbar");
+  if (!r || r.w < MK_MS_MIN || r.h < MK_MS_MIN) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.className = "mk-msbar";
+    bar.innerHTML =
+      '<button type="button" data-ms="copy">Copy</button>' +
+      '<button type="button" data-ms="cut">Cut</button>' +
+      /* Paste, not Delete. Deleting the piece inside the box is still ⌫ and
+         still the right-click menu; what the box could not do until now was
+         receive, and cut-here-paste-there is the whole reason anybody draws
+         two boxes in a row. */
+      '<button type="button" data-ms="paste" class="mk-msbar__p">Paste</button>' +
+      '<b class="mk-msbar__n"></b>' +
+      '<button type="button" data-ms="off" class="mk-msbar__x" aria-label="Deselect">&#215;</button>';
+    /* the bar sits inside the sheet, so a press on it must not also reach
+       the sheet underneath and start a second box on top of the first */
+    bar.addEventListener("pointerdown", (e) => e.stopPropagation());
+    bar.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-ms]");
+      if (!b) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (b.dataset.ms === "off") mkMarqClear();
+      else mkMarqApply(b.dataset.ms);
+    });
+    host.appendChild(bar);
+  }
+  /* nothing to paste is a dimmed word, not a button that answers with a
+     complaint — the state is visible before the click, which is the only
+     time it is any use */
+  const pb = bar.querySelector(".mk-msbar__p");
+  if (pb) pb.disabled = !(__mkClip && __mkClip.length);
+  const n = bar.querySelector(".mk-msbar__n");
+  if (n) {
+    n.textContent = mkSizeFmt(mkSizeToUnit(r.w)) + " × " + mkSizeFmt(mkSizeToUnit(r.h)) +
+                    " " + (__mkUnit === "in" ? "in" : "mm");
+  }
+  /* above the box, unless the box is at the top of the sheet */
+  const below = r.y < 0.11;
+  bar.classList.toggle("is-below", below);
+  bar.style.left = (Math.max(0.02, Math.min(0.98, r.x + r.w / 2)) * 100) + "%";
+  bar.style.top = (Math.max(0, Math.min(1, below ? r.y + r.h : r.y)) * 100) + "%";
+}
+
+/* ═══════════ the single text editor ══════════════════════════════════════
+   One <textarea>, always the live one, whose value lands in the model on
+   every keystroke. A real form control rather than a contenteditable: native
+   caret, native mobile keyboard, native IME, and a .value that is never a
+   guess about what the DOM currently holds.                                */
+function mkOpenEditor(it) {
+  mkCloseEditor(true);
+  const host = $("#markupOverlay");
+  const ta = document.createElement("textarea");
+  ta.className = "mk-editor";
+  ta.rows = 1;
+  ta.value = it.s || "";
+  ta.placeholder = it.t === "label" ? "Words on the charm…" : "What should we change here?";
+  ta.spellcheck = false;
+  ta.maxLength = 240;
+  const bb = mkBBox(it);
+  const size = (it.t === "label" ? it.fs : Math.max(0.026, it.fs || 0.03));
+  ta.style.left = (Math.min(0.72, Math.max(0.01, bb.x)) * 100) + "%";
+  ta.style.top  = (Math.min(0.86, Math.max(0.01, bb.y)) * 100) + "%";
+  ta.style.width = "28%";
+  ta.style.fontFamily = MK_FONTS[it.ff] || MK_FONTS.sans;
+  ta.style.fontSize = Math.max(11, size * (mkSheetBox().width || 400)) + "px";
+  host.appendChild(ta);
+  __mk.editing = { it, ta };
+
+  const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(160, ta.scrollHeight) + "px"; };
+  /* THE line that fixes note persistence: the model is written on every
+     keystroke, and mkTouch writes the session. No blur, no close, no commit
+     is ever load-bearing again. */
+  ta.addEventListener("input", () => { it.s = ta.value.slice(0, 240); grow(); mkTouch(); });
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); mkCloseEditor(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); mkCloseEditor(); }
+    e.stopPropagation();                       /* ⌫ must delete text, not the item */
+  });
+  /* NO close-on-blur. Focus is a slippery thing to hang an editor's life on:
+     a re-render, a mobile keyboard dismissing itself, or a stray blur with no
+     new focus target all used to take the editor away mid-word — reopening
+     text looked like it simply refused to work. The editor now closes on
+     purpose only: Enter, Escape, a click somewhere else, or a tool change.
+     Nothing is at risk in the meantime because the model is written on every
+     keystroke. */
+  grow();
+  /* the frame delay matters: pointerdown handlers preventDefault to keep the
+     mark where it was clicked, and focus set inside that same tick is undone */
+  requestAnimationFrame(() => { try { ta.focus(); ta.select(); } catch (e) {} });
+}
+/* the click-away that used to be a blur */
+(function wireEditorDismiss() {
+  document.addEventListener("pointerdown", (e) => {
+    if (!__mk || !__mk.editing) return;
+    if (e.target.closest(".mk-editor")) return;      /* typing in it */
+    if (e.target.closest("#mkCtx")) return;          /* its own menu */
+    mkCloseEditor();
+  }, true);
+})();
+
+function mkCloseEditor(silent) {
+  if (!__mk || !__mk.editing) return;
+  const { it, ta } = __mk.editing;
+  __mk.editing = null;
+  it.s = String(ta.value || "").slice(0, 240);
+  if (ta.parentNode) ta.parentNode.removeChild(ta);
+  /* an empty note is not a note — but it is also not a loss, because nothing
+     was ever typed into it */
+  if (!it.s.trim()) {
+    const i = __mk.items.indexOf(it);
+    if (i >= 0) __mk.items.splice(i, 1);
+    if (__mk.sel === i) __mk.sel = -1;
+  }
+  if (!silent) mkTouch();
+}
+
+/* ═══════════ zoom & pan ══════════════════════════════════════════════════
+   One transform on #markupView — the drawing, the ink canvas and the overlay
+   all live inside it, so they can never drift apart. All pointer math reads
+   the VIEW's rect, which already reflects the transform, so every tool is
+   exact at any zoom.                                                        */
+function mkApplyView() {
+  const view = $("#markupView");
+  if (!view || !__mk) return;
+  view.style.transform = `translate(${__mk.px}px, ${__mk.py}px) scale(${__mk.z})`;
+  /* the rulers read off the sheet as DRAWN, so every zoom and every pan is a
+     redraw — coalesced onto one frame, so a pinch does not queue thirty */
+  mkRulerQueue();
+  /* the scrollbars are a read-out of this transform, so they are repainted
+     by the act of applying it — no caller has to remember them. Guarded:
+     mkApplyView sits under zoom, pan, pinch and open, and a read-out must
+     never be able to take any of those down with it. */
+  try { mkScrollSync(); } catch (e) {}
+  const reset = $("#mkZoomReset");
+  if (reset) {
+    reset.hidden = __mk.z <= 1.01;
+    reset.textContent = "⤾ " + Math.round(__mk.z * 100) + "%";
+  }
+}
+/* ── THE SHEET'S OWN BOX ──────────────────────────────────────────────────
+   The stage is the room now and the sheet is centred inside it, so "where
+   the drawing starts" and "where the stage starts" are two different points
+   and every piece of pan/zoom arithmetic wants the first one.
+
+   offsetLeft/offsetWidth, NOT getBoundingClientRect(): px, py and z are the
+   sheet's own transform, and a client rect has that transform already baked
+   into it. Feeding a zoomed rect back into the equation that computes the
+   next zoom compounds it — the sheet would drift a little further off the
+   cursor with every notch of the wheel. These four numbers are the sheet's
+   LAYOUT box, which is the fixed frame all three values are measured from. */
+function mkSheetBox() {
+  const v = $("#markupView"), st = $("#markupStage");
+  if (!v || !st) return { left: 0, top: 0, width: 0, height: 0 };
+  const r = st.getBoundingClientRect();
+  return { left: r.left + v.offsetLeft, top: r.top + v.offsetTop,
+           width: v.offsetWidth, height: v.offsetHeight };
+}
+function mkClampView() {
+  const r = mkSheetBox();
+  const minX = r.width - r.width * __mk.z, minY = r.height - r.height * __mk.z;
+  __mk.px = Math.min(0, Math.max(minX, __mk.px));
+  __mk.py = Math.min(0, Math.max(minY, __mk.py));
+}
+/* ── PANNING BY THE PIXEL ─────────────────────────────────────────────────
+   The one place that moves the sheet without changing its zoom. Everything
+   that scrolls the work area — Shift+wheel, Ctrl+wheel, the scrollbars —
+   comes through here, so the clamp is applied once and the rulers and the
+   zoom read-out cannot be left describing a view nobody is looking at.
+
+   At z=1 the clamp collapses the range to a single point, so a stray notch
+   on an un-zoomed sheet is a no-op rather than a drift. */
+function mkPanBy(dx, dy) {
+  if (!__mk) return;
+  __mk.px += dx;
+  __mk.py += dy;
+  mkClampView();
+  mkApplyView();
+}
+/* ── HOW FAR THE SHEET CAN TRAVEL ON EACH AXIS ────────────────────────────
+   The one definition of the scrollable span, so the bars, their drag
+   arithmetic and mkClampView can never disagree about the range. Zero at
+   100%, which is what makes every scroll path a no-op there. */
+function mkPanSpan() {
+  const r = mkSheetBox();
+  return { x: Math.max(0, r.width * __mk.z - r.width),
+           y: Math.max(0, r.height * __mk.z - r.height) };
+}
+/* ── THE BARS ARE A READ-OUT OF THE TRANSFORM ─────────────────────────────
+   Called from mkApplyView, so every route that moves the sheet — wheel,
+   drag-pan, pinch, the zoom reset, a fresh open — repaints them by virtue of
+   having moved it. Nothing else has to remember to.
+
+   thumb LENGTH is the visible fraction (1/z); thumb POSITION is how far
+   through the span the sheet has travelled, laid along the track's leftover
+   room (1 - 1/z). Both in per cent, so the bars need no pixel measurement of
+   their own and stay correct through a window resize. */
+function mkScrollSync() {
+  const bx = $("#mkSbarX"), by = $("#mkSbarY");
+  if (!bx || !by || !__mk) return;
+  const on = __mk.z > 1.01;
+  bx.hidden = !on; by.hidden = !on;
+  if (!on) return;
+  const span = mkPanSpan(), ratio = 1 / __mk.z;
+  const tx = $("#mkSbarThumbX"), ty = $("#mkSbarThumbY");
+  if (tx) {
+    tx.style.width = (ratio * 100) + "%";
+    tx.style.left = (span.x ? (-__mk.px / span.x) * (1 - ratio) * 100 : 0) + "%";
+  }
+  if (ty) {
+    ty.style.height = (ratio * 100) + "%";
+    ty.style.top = (span.y ? (-__mk.py / span.y) * (1 - ratio) * 100 : 0) + "%";
+  }
+}
+/* Dragging a thumb: the pointer's travel along the track is converted to
+   sheet travel by the same two factors the sync uses, read backwards. The
+   pointer is captured so a fast drag that leaves the rail keeps scrolling,
+   which is the behaviour every native bar has and the thing that makes a
+   thin one usable. */
+function mkWireScrollbars() {
+  [["#mkSbarX", "#mkSbarThumbX", "x"], ["#mkSbarY", "#mkSbarThumbY", "y"]]
+    .forEach(([railSel, thumbSel, axis]) => {
+      const rail = $(railSel), thumb = $(thumbSel);
+      if (!rail || !thumb) return;
+      let from = null;
+      thumb.addEventListener("pointerdown", (e) => {
+        if (!__mk) return;
+        e.preventDefault(); e.stopPropagation();
+        thumb.setPointerCapture(e.pointerId);
+        rail.classList.add("is-drag");
+        from = { p: axis === "x" ? e.clientX : e.clientY,
+                 v: axis === "x" ? __mk.px : __mk.py };
+      });
+      thumb.addEventListener("pointermove", (e) => {
+        if (!from || !__mk) return;
+        e.preventDefault();
+        const railPx = axis === "x" ? rail.clientWidth : rail.clientHeight;
+        const room = railPx * (1 - 1 / __mk.z);
+        if (room <= 0) return;
+        const span = mkPanSpan()[axis];
+        const moved = (axis === "x" ? e.clientX : e.clientY) - from.p;
+        const want = from.v - (moved / room) * span;
+        if (axis === "x") { __mk.px = want; } else { __mk.py = want; }
+        mkClampView();
+        mkApplyView();
+      });
+      const done = (e) => {
+        if (!from) return;
+        from = null;
+        rail.classList.remove("is-drag");
+        try { thumb.releasePointerCapture(e.pointerId); } catch (err) {}
+      };
+      thumb.addEventListener("pointerup", done);
+      thumb.addEventListener("pointercancel", done);
+      /* a press on the bare rail jumps one screenful toward the press —
+         the same courtesy a native bar pays, and the reason a thin thumb is
+         not a precision-only control */
+      rail.addEventListener("pointerdown", (e) => {
+        if (!__mk || e.target === thumb) return;
+        e.preventDefault(); e.stopPropagation();
+        const r = rail.getBoundingClientRect();
+        const at = axis === "x" ? (e.clientX - r.left) / r.width
+                                : (e.clientY - r.top) / r.height;
+        const here = axis === "x" ? -__mk.px : -__mk.py;
+        const span = mkPanSpan()[axis];
+        const page = span * (1 / __mk.z);
+        mkPanBy(axis === "x" ? -(at * span > here ? page : -page) : 0,
+                axis === "y" ? -(at * span > here ? page : -page) : 0);
+      });
+    });
+}
+function mkZoomAt(clientX, clientY, factor) {
+  const r = mkSheetBox();
+  const cx = clientX - r.left, cy = clientY - r.top;
+  const z2 = Math.min(8, Math.max(1, __mk.z * factor));
+  if (z2 === __mk.z) return;
+  __mk.px = cx - (cx - __mk.px) * (z2 / __mk.z);
+  __mk.py = cy - (cy - __mk.py) * (z2 / __mk.z);
+  __mk.z = z2;
+  if (__mk.z === 1) { __mk.px = 0; __mk.py = 0; }
+  mkClampView();
+  mkApplyView();
+}
+
+/* ── the base layer: rotation, crop and fade, all as one CSS transform ───── */
+function mkApplyBase() {
+  const img = $("#markupBase"); if (!img || !__mk) return;
+  const c = __mk.crop;
+  const s = c ? 1 / c.w : 1;
+  const tx = c ? -c.x * 100 : 0, ty = c ? -c.y * 100 : 0;
+  /* right-to-left: rotate about the centre first, then crop-scale it */
+  img.style.transformOrigin = "0 0";
+  img.style.transform =
+    `scale(${s}) translate(${tx}%, ${ty}%) ` +
+    `translate(50%,50%) rotate(${__mk.baseRot || 0}deg) translate(-50%,-50%)`;
+  img.style.opacity = String(__mk.baseFade != null ? __mk.baseFade : 1);
+  /* THE GHOST RULE. Once the drawing has been taken apart, the vectors ARE
+     the drawing — painting the bitmap as well would leave the original eye
+     sitting there the moment you moved the traced one. */
+  /* ── AND IT MUST NOT FIGHT THE PIXEL TAKEOVER ──────────────────────
+     mkApplyBase runs on every sheet Undo/Redo, every crop confirm and every
+     rotate. Recomputing `hidden` from the ghost rule alone meant the very
+     next Undo after a retouch un-hid the ORIGINAL, unedited <img> in front of
+     the customer's work. Once the pixels are the picture, they stay it. */
+  img.hidden = mkBaseIsGhosted() || !!mkPxBaseRec();
+}
+
+/* ── the tool ────────────────────────────────────────────────────────────── */
+function mkSetTool(tool) {
+  if (!__mk) return;
+  mkCloseEditor();
+  /* ── A GESTURE THAT NEVER FINISHED MUST NOT OUTLIVE ITS TOOL ───────────
+     A shape being dragged lives in `__mk.live` until pointerup files it into
+     __mk.items, and mkRedraw paints it alongside them. If that pointerup
+     never arrives — a pointercancel, a lost capture, a finger that leaves the
+     stage — the half-drawn shape stays live, and the next gesture's commit()
+     returns on ITS branch long before reaching the code that clears it. The
+     eraser's branch is the one that returns earliest.
+
+     What the customer sees then is a shape that is on the sheet but in no
+     layer row, that no click will select and no Delete will remove, sitting
+     over the real work while they rub the real work out. Picking up a
+     different tool is unambiguously the end of whatever the last one was
+     doing, so it is abandoned here — the one place every tool change passes
+     through. */
+  if (tool !== __mk.tool && (__mk.live || __mk.liveFrom)) {
+    __mk.live = null; __mk.liveFrom = null;
+    try { mkRedraw(); } catch (e) {}
+  }
+  /* so that choosing Outline puts the bucket down and hands back whatever
+     was in the customer's hand before they reached for it */
+  if (tool === "bucket" && __mk.tool && __mk.tool !== "bucket") __mk.lastDrawTool = __mk.tool;
+  __mk.tool = tool;
+  /* THE ENGINE ARRIVES WHEN A PIXEL TOOL IS PICKED UP, not on page load: it
+     is a second asset that most visits never need. Fetching it here means it
+     is almost always ready by the time the first stroke is drawn, and the
+     customer is never made to wait for a progress bar to use a brush. */
+  if (tool === "erase" && !window.BJRaster) {
+    /* quietly, and without an alarm if it is not installed: the eraser still
+       rubs out marks perfectly well without it */
+    loadRaster().then(() => mkPxWarm()).catch(() => {});
+  }
+  if (tool !== "select") __mk.sel = -1;
+  $$(".mk-tool").forEach((b) => b.classList.toggle("is-on", b.dataset.tool === tool));
+  /* a nested menu's button wears the sub-tool it is currently holding */
+  const shapesBtn = $("#mkShapes");
+  if (MK_SHAPE_TOOLS.indexOf(tool) >= 0) {
+    shapesBtn.dataset.tool = tool;
+    const src = $('.mk-drop[data-drop="shapes"] .mk-item[data-tool="' + tool + '"]');
+    if (src) {
+      shapesBtn.querySelector("[data-shapelbl]").textContent = MK_SHAPE_LABEL[tool] || "Shape";
+      const ico = src.querySelector("svg");
+      const slot = shapesBtn.querySelector("[data-shapeico]");
+      if (ico && slot) slot.innerHTML = ico.innerHTML;
+    }
+  }
+  /* the Note button wears whatever it is holding, in the words the menu
+     uses — and it holds the signature tool too, which otherwise lit nothing
+     on the whole bar while a stroke was being captured as a signature */
+  const textBtn = $("#mkText");
+  if (textBtn && (MK_TEXT_TOOLS.indexOf(tool) >= 0 || tool === "sign")) {
+    textBtn.dataset.tool = tool;
+    const lbl = textBtn.querySelector("[data-textlbl]");
+    if (lbl) lbl.textContent = tool === "label" ? "Text" : tool === "sign" ? "Sign" : "Note";
+    textBtn.classList.add("is-on");
+  }
+  /* Magic eraser is now a first-class button beside Picture. */
+  const magicBtn = $("#mkMagicEraser");
+  if (magicBtn) magicBtn.classList.toggle("is-on", tool === "wand");
+  const eraseBtn = $("#mkEraser");
+  if (eraseBtn) eraseBtn.classList.toggle("is-on", tool === "erase");
+  mkPenChrome();
+  if (tool !== "erase") mkEraserCursorClear();
+  if (tool !== "bucket") mkFillPreviewClear();
+  /* the bucket's hint names the instruction it is about to give, because
+     "the area that will be engraved" is a lie while Cut out is in hand */
+  $("#markupHint").textContent = tool === "bucket"
+    ? (mkFillIntent(__mk.fill) === "cutout"
+        ? "Move over the sheet — the area that will be CUT CLEAN THROUGH lights up. Click to take it, click again to undo"
+        : "Move over the sheet — the area that will be ENGRAVED lights up. Click to take it, click again to undo")
+    : (MK_HINTS[tool] || "");
+  $("#markupStage").dataset.tool = tool;
+  /* THE BOX OUTLIVES THE TOOL, as it does in every editor that has one:
+     draw it with the marquee, then reach for anything else and it is still
+     there to Copy or Cut from. Only Deselect, Escape or a click on bare
+     sheet with the marquee in hand puts it away. mkChrome repaints it. */
+  mkChrome();
+}
+
+/* ── mutations the property bar makes ────────────────────────────────────── */
+function mkApplyProp(patch) {
+  if (!__mk) return;
+  /* a colour or a weight chosen while several layers are selected changes
+     all of them — anything else would make multi-selection decorative */
+  const list = mkSelItems();
+  if (list.length) { mkPushUndo(); list.forEach((o) => Object.assign(o, patch)); }
+  if (patch.c  != null) __mk.color = patch.c;
+  if (patch.f  != null) __mk.fill  = patch.f;
+  if (patch.w  != null) __mk.w     = patch.w;
+  if (patch.ff != null) __mk.ff    = patch.ff;
+  if (patch.fs != null) __mk.fs    = patch.fs;
+  mkTouch();
+}
+
+/* ═══════════ MIRRORING A SELECTION ═══════════════════════════════════════
+   The same lesson mkRotateItems had to learn, in the other transform.
+
+   Flip was written as "reflect every point about the selection's box", and
+   that is wrong three times over:
+
+     IT DID NOT MOVE HALF THE LAYERS. A picture, a run-length area and every
+     two-corner shape keep only a BOX in `p`. Reflecting a box about a line
+     gives back a box, so those layers came through a flip completely
+     unchanged while their neighbours moved — which is most of what "it
+     messed up the grouped object" looks like.
+
+     IT LEFT THE TURN ALONE. The painter applies `r` about the layer's own
+     centre AFTER the points. Reflect the points and leave `r` at +r and the
+     layer is drawn at the mirror of its position but the original of its
+     angle: every turned part in a group swings out to twice its own angle,
+     which is the drawing coming apart at the seams.
+
+     AND IT MEASURED THE AXIS WITH THE WRONG RULER. mkUnionBBox is the union
+     of the members' UNROTATED boxes, so on a group whose parts carry turns
+     it does not describe what is on screen and its centre sits off to one
+     side. The whole drawing therefore slides sideways as it flips.
+
+   So a flip does what a flip is: it moves each layer's centre to the mirror
+   of where it was, and tells the painter to draw that layer mirrored. The
+   points are only ever TRANSLATED — no layer has to express the mirror in
+   its own coordinates, so a polygon, a two-corner ellipse, a masked area, a
+   photograph and a note all flip by the same arithmetic and land together.
+
+   `fx`/`fy` and `r` compose the way the matrices do. Mirroring on one axis
+   toggles that flag. Mirroring on BOTH is not two mirrors, it is a half
+   turn — so when both flags come on they are cleared and π is added to `r`
+   instead, which is the same picture written the way the rest of the studio
+   can read it.
+
+   THE AXIS IS THE DRAWN UNION'S MIDDLE. Unlike a rotation, a reflection maps
+   an axis-aligned box onto itself, so this axis survives its own transform
+   exactly: flip twice and the drawing is back where it started, to the last
+   decimal, however many turned parts it is made of.
+
+   LETTERING IS THE ONE EXCEPTION and it is not really one: words written
+   backwards are not a flip of anything anybody wants. A note moves to its
+   mirrored position and stays readable — reflected points, negated turn,
+   which for a shape with no interior is the same transform said differently. */
+function mkFlipItems(list, horiz, axis) {
+  (list || []).forEach((it) => {
+    const p = it.p || [];
+    const words = it.t === "text" || it.t === "callout" || it.t === "label";
+    if (words) {
+      for (let k = 0; k + 1 < p.length; k += 2) {
+        if (horiz) p[k] = axis * 2 - p[k];
+        else p[k + 1] = axis * 2 - p[k + 1];
+      }
+      /* a note's box is measured on the sheet and cached, so it has to be
+         reflected too or mkBBox answers for where the note used to be */
+      if (horiz && it._bx != null) it._bx = axis * 2 - it._bx - (it._w || 0);
+      if (!horiz && it._by != null) it._by = axis * 2 - it._by - (it._h || 0);
+      if (it.r) it.r = -it.r;
+      return;
+    }
+    const b = mkBBox(it);
+    const c0 = horiz ? b.x + b.w / 2 : b.y + b.h / 2;
+    const d = (axis * 2 - c0) - c0;              /* how far its centre travels */
+    for (let k = 0; k + 1 < p.length; k += 2) {
+      if (horiz) p[k] += d; else p[k + 1] += d;
+    }
+    if (horiz) it.fx = it.fx ? 0 : 1;
+    else       it.fy = it.fy ? 0 : 1;
+    if (it.fx && it.fy) { it.fx = 0; it.fy = 0; it.r = (it.r || 0) + Math.PI; }
+  });
+}
+
+function mkArrange(what) {
+  if (!__mk) return;
+  const canvasOp = what === "canvasL" || what === "canvasR" || what === "canvasFlip";
+  const idxs = mkSelIdx();
+  const list = idxs.map((i) => __mk.items[i]);
+  if (!list.length && !canvasOp) { toast("Right-click an object to act on it", "err"); return; }
+  mkPushUndo();
+  const bb = list.length ? mkUnionBBox(list) : null;
+
+  if (what === "rotL" || what === "rotR") {
+    /* several objects turn about the SELECTION's centre, one about its own —
+       which is the same thing when the selection is one object */
+    /* 90°, not 15°. The menu's two entries are the quarter-turn everybody
+     reaches a context menu for; fifteen degrees is a nudge, and a nudge is
+     what the rotate handle and the arrow keys are already for. */
+  const dr = (what === "rotL" ? -1 : 1) * Math.PI / 2;
+    mkRotateItems(list, dr, bb.x + bb.w / 2, bb.y + bb.h / 2);
+  } else if (what === "flipH" || what === "flipV") {
+    /* the DRAWN union, not mkUnionBBox: see mkFlipItems for why the box a
+       layer occupied before it was turned is the wrong ruler here */
+    const D = mkUnionDrawn(list);
+    const horiz = what === "flipH";
+    mkFlipItems(list, horiz, horiz ? D.x + D.w / 2 : D.y + D.h / 2);
+  } else if (what === "front" || what === "back") {
+    /* by block, so a group arrives at the front intact */
+    const blocks = mkBlocks();
+    const mine = [], rest = [];
+    blocks.forEach((b) => (b.idx.some((i) => idxs.indexOf(i) >= 0) ? mine : rest).push(b));
+    mkApplyBlocks(what === "front" ? rest.concat(mine) : mine.concat(rest));
+    __mk.selIds = list.map((o) => o.id);
+  } else if (what === "dup") {
+    mkLayerAct("dup");
+    return;                                  /* it touches and repaints itself */
+  } else if (canvasOp) {
+    /* the whole sheet turns: every point AND the drawing underneath */
+    if (what === "canvasFlip") {
+      /* the whole sheet mirrors about its own middle, by the same arithmetic
+         a selection does — the sheet is just the largest selection there is */
+      mkFlipItems(__mk.items, true, 0.5);
+    } else {
+      __mk.items.forEach((o) => {
+        const p = o.p || [];
+        for (let k = 0; k + 1 < p.length; k += 2) {
+          const x = p[k], y = p[k + 1];
+          if (what === "canvasL") { p[k] = y; p[k + 1] = 1 - x; }
+          else                    { p[k] = 1 - y; p[k + 1] = x; }
+        }
+        o.r = (o.r || 0) + (what === "canvasL" ? -Math.PI / 2 : Math.PI / 2);
+      });
+    }
+    if (what === "canvasL") __mk.baseRot = ((__mk.baseRot || 0) - 90 + 360) % 360;
+    else if (what === "canvasR") __mk.baseRot = ((__mk.baseRot || 0) + 90) % 360;
+    else __mk.baseFlip = !__mk.baseFlip;
+    mkApplyBase();
+  }
+  mkTouch();
+}
+
+function mkDeleteSelected() {
+  if (!__mk) return;
+  const idxs = mkSelIdx();
+  if (!idxs.length) return;
+  mkPushUndo();
+  for (let k = idxs.length - 1; k >= 0; k--) __mk.items.splice(idxs[k], 1);
+  mkSelSet([]);
+  mkTouch();
+}
+
+/* ═══════════ crop ════════════════════════════════════════════════════════
+   Square by construction, because the stage is square and every mark is
+   stored normalized against it — a rectangular crop would put every existing
+   mark somewhere other than where it was drawn.                             */
+/* ═══════════ THE REGION ENGINE ═══════════════════════════════════════════
+   One question, asked once, however the boundary happens to be made.
+
+   "What area am I pointing at?" has three plausible answers in a studio like
+   this one, and every editor that makes the customer CHOOSE between them is
+   making them do the software's job:
+
+     · an enclosed piece of paper, walled in by ink — and the ink may come
+       from one object, from two grouped objects, from twelve ungrouped
+       ones, or from the black in an imported picture. It makes no
+       difference: the wall is the wall.
+     · a region of one colour INSIDE a picture — the magic wand's question,
+       which is the right one when the finger is on a photograph or a logo
+       rather than on paper.
+     · nothing at all, because the finger is on a line.
+
+   So the engine works on the COMPOSED SHEET — everything visible, in the
+   order it is painted — decides for itself which of the first two questions
+   is being asked, and refuses to accept the third: land on a line and it
+   quietly steps off it to the nearest fillable pixel rather than telling
+   somebody to aim better.
+
+   That composed sheet is computed once and cached, so the region under the
+   cursor can be recomputed on every mouse move without costing anything —
+   which is what makes the live preview possible, and the live preview is
+   what makes this feature impossible to get wrong.
+   ====================================================================== */
+const MK_FILL_TOL = 0.016;            /* the gap a hand is forgiven, of sheet */
+/* ── WHAT COUNTS AS EMPTY PAPER, AND WHO DECIDES ─────────────────────────
+   690 of a possible 765 — a mean channel of 230 — was the single hardcoded
+   answer to "is this pixel empty?", and it is the answer the bucket has
+   given on a drawn sheet since the day it was written.
+
+   Meanwhile the slider above the bar says "How close a shade counts", and it
+   reached the PICTURE branch of mkRegionAt and nothing else. Click inside a
+   room on the sheet — which is what the bucket is for — and the number the
+   customer had just moved was not consulted by any line of code. That is the
+   report, and it is exact: a control that moves and changes nothing.
+
+   It is the same question in both places, so it gets the same answer. The
+   default, 18, reproduces 690 to the level, so every sheet that fills today
+   fills identically tomorrow. Raising it lets a DARKER pixel still count as
+   empty, which is what a small enclosed space needs: at the sheet's working
+   resolution a gap two strokes wide can be entirely antialiased grey, with
+   nothing in it bright enough to clear 690, so the room reads as solid metal
+   and the click does nothing at all. Lowering it makes the faintest grey a
+   wall, for a design that wants its hairlines respected.
+
+   It moves the FILLABLE mask only. The void flood — what is outside the
+   charm — keeps the fixed threshold on purpose, so no setting of this slider
+   can redirect a fill into painting the background. */
+const MK_PAPER_SUM = 690;
+function mkPaperSum(tol) {
+  const t = Math.max(2, Math.min(70, Number(tol) || MK_WAND_DEFAULT_TOL));
+  return 765 - (765 - MK_PAPER_SUM) * (t / MK_WAND_DEFAULT_TOL);
+}
+/* TWO RESOLUTIONS, AND THE REASON FOR BOTH.
+
+   The preview redraws on every mouse move, so it runs at a size a flood fill
+   can finish inside one animation frame. The COMMITTED fill runs once, when
+   the customer clicks, and there is no reason on earth for it to be as
+   coarse as the preview — that is what made a filled logo come out as a
+   rough polygon in the shape of the thing rather than the thing. So the
+   commit re-floods at the magic eraser's own working size, and the contour
+   that gets stored is traced from THAT. Same engine, same answer, one of
+   them simply drawn at the resolution the result deserves. */
+const MK_REG_S  = 520;                /* the preview: still fast, more reliable for tiny enclosed areas */
+const MK_FINE_S = 1400;               /* the commit: the eraser's own fidelity */
+const MK_REG_CACHE = new Map();       /* size → the composed sheet at that size */
+
+/* everything visible, painted flat, with a note of WHICH object owns each
+   inked pixel — that ownership is what lets a fill know which group it
+   belongs to and what it must sit on top of */
+function mkRegionSheet(size, tol) {
+  if (!__mk) return null;
+  const S = Math.max(64, Math.round(Number(size) || MK_REG_S));
+  /* the paper mask below is built from this, so it belongs in the signature:
+     without it the first sheet built at one setting is handed back at every
+     other setting and the slider is dead through the cache instead of dead
+     through the threshold */
+  const paperSum = mkPaperSum(tol);
+  const vis = __mk.items.filter((it) => !it.hid);
+  const sig = vis.map((it) => it.id + ":" + (it.p || []).length + ":" + it.f + ":" + it.o +
+                              ":" + (it.k || []).length + ":" + (it.m || []).length).join("|") +
+              "#" + (__mk.baseRef && !__mk.traced ? __mk.baseRef.u : "") + "#" + S +
+              "#" + Math.round(paperSum);
+  const MK_REG = MK_REG_CACHE.get(S) || { sig: "", data: null, S };
+  MK_REG_CACHE.set(S, MK_REG);
+  if (MK_REG.sig === sig && MK_REG.data) return MK_REG;
+
+  const paint = (list, withBase) => {
+    const cv = document.createElement("canvas");
+    cv.width = S; cv.height = S;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, S, S);
+    if (withBase && __mk.baseRef && !__mk.traced) {
+      /* ── A PICTURE THAT HAD NOT DECODED YET IS NOT WHITE PAPER ─────────
+         mkImageFor returns null while a picture is still loading, and this
+         call used to ignore that: the sheet was composed with nothing where
+         the photograph belongs and then CACHED, with a signature that
+         cannot tell the difference — the URL, the item ids and their point
+         counts are all identical before and after the bytes arrive. Nothing
+         then invalidated it, because only mkTouch does and no edit had
+         happened.
+
+         The cost is not a stale preview. The sheet is what the flood runs
+         on, so a region bounded by the photograph read as open paper: the
+         highlight ran across the picture, and the COMMIT ran across it too
+         and stored the result as a layer. Wrong fills, not slow ones.
+
+         mkImageFor has always taken a waiter. Passing one turns the arrival
+         into exactly what it is — a change to the sheet — and mkRegionForget
+         is the one thing that has to happen. */
+      const img = mkImageFor(__mk.baseRef, () => {
+        mkRegionForget();
+        if (__mk && __mk.tool === "bucket") { __mkPrev.key = ""; mkRedraw(); }
+      });
+      if (img && img.width) { try { ctx.drawImage(img, 0, 0, S, S); } catch (e) {} }
+    }
+    /* the same hazard for a PLACED picture: mkPaint resolves each one through
+       mkPictureFor, which returns null while it loads unless it is handed a
+       waiter. Without this a sheet composed mid-load is cached with the
+       pictures missing and every fill over them is unbounded. */
+    try { mkPaint(ctx, S, S, list, { export: true, onImage: () => mkRegionForget() }); }
+    catch (e) {}
+    try { return ctx.getImageData(0, 0, S, S); } catch (e) { return null; }
+  };
+  /* the widened copy is what forgives a hand: a sketched loop almost never
+     quite closes, so every stroke is fattened by the gap tolerance before
+     the flood runs — the gap seals itself and the fill stays inside */
+  const widened = vis.map((it) => {
+    const c = mkPack(it);
+    c.o = 1;
+    c.w = (c.w || 0.008) + MK_FILL_TOL;
+    c.__wide = 1;
+    c.u = it.u; c.sp = it.sp;      /* transient copies keep their source */
+    c.k = it.k; c.kt = it.kt;      /* …and their cut-away background */
+    return c;
+  });
+  const data = paint(widened, true) || paint(widened.filter((i) => i.t !== "img"), true) ||
+               paint(widened.filter((i) => i.t !== "img"), false);
+  if (!data) return null;
+
+  /* the true colours too, unwidened — the wand's question is about what the
+     picture actually looks like, not about a fattened stencil of it */
+  const trueData = paint(vis.map((it) => { const c = mkPack(it); c.u = it.u; c.sp = it.sp; c.k = it.k; c.kt = it.kt; return c; }), true) || data;
+
+  /* THE VOID, once. Paper connected to the edge of the sheet is the space
+     around the charm — computed here rather than guessed at per click, and
+     used for two things: refusing to flood it, and knowing which way to
+     step when a finger lands on a line. */
+  const d = data.data;
+  const td = trueData.data;
+  const N = S * S;
+  /* TWO VOIDS, NOT ONE.
+
+     `outside` is the space around the charm as the SEALED sheet sees it, and
+     that is the right answer for "may I flood here". But the mask is later
+     grown back out against the sheet's TRUE colours, and paper that is
+     hidden underneath a fattened stroke is not marked void — so growing
+     against `outside` alone let a fill seep through the wall it was supposed
+     to stop at, by half the fattening, which made the leak depend on line
+     weight all over again. `outsideTrue` is the same flood run on the
+     unwidened sheet: it knows the outside as the artwork really draws it,
+     and it is what the grow is allowed to see. */
+  const flood = (px) => {
+    const out = new Uint8Array(N);
+    const st = [];
+    const seed = (i) => {
+      const j = i * 4;
+      if (out[i] || px[j] + px[j + 1] + px[j + 2] <= 690) return;
+      out[i] = 1; st.push(i);
+    };
+    for (let x = 0; x < S; x++) { seed(x); seed((S - 1) * S + x); }
+    for (let y = 0; y < S; y++) { seed(y * S); seed(y * S + S - 1); }
+    while (st.length) {
+      const i = st.pop();
+      const cx = i % S, cy = (i / S) | 0;
+      if (cx > 0) seed(i - 1);
+      if (cx < S - 1) seed(i + 1);
+      if (cy > 0) seed(i - S);
+      if (cy < S - 1) seed(i + S);
+    }
+    return out;
+  };
+  const outside = flood(d);
+  const outsideTrue = flood(td);
+
+  /* ── THE PAPER, AND ITS ROOMS, WORKED OUT ONCE ─────────────────────────
+     mkRegionAt used to build this mask itself — a fresh Uint8Array(N) and a
+     full pass over every pixel — on EVERY call. That was affordable while a
+     call meant a click. It stopped being affordable when the hover preview
+     started calling it: mkRegionNear probes sixty-four points around the
+     cursor, so one mouse move rebuilt the same mask sixty-five times, at
+     270,000 pixels a go. Seventeen million pixel reads and seventeen
+     megabytes of allocation, to answer a question about a cursor that had
+     not moved a millimetre in sheet coordinates.
+
+     It depends on the SHEET and nothing else, so it belongs here, beside the
+     void it is computed from. Nobody may write to it — see the copy in
+     mkRegionAt's true-paper fallback, which is the one path that needs to. */
+  const open = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    const j = i * 4;
+    open[i] = (d[j] + d[j + 1] + d[j + 2] > paperSum) ? 1 : 0;
+  }
+  /* ── AND WHICH ROOM EACH PIXEL IS IN ───────────────────────────────────
+     The expensive floods were exactly the ones being thrown away. Most of a
+     sheet is the space around the charm — on a long thin charm like a bat,
+     four fifths of it — so most of those sixty-five probes flooded the whole
+     void, all 216,000 pixels of it, and were then discarded for touching the
+     edge. Labelling the rooms once turns "is this the void?" into one array
+     read, and only a genuinely enclosed room is ever flooded. */
+  const lab = new Int32Array(N);
+  const labEdge = [0], labArea = [0];
+  let nextLab = 0;
+  const lst = [];
+  for (let s0 = 0; s0 < N; s0++) {
+    if (!open[s0] || lab[s0]) continue;
+    nextLab++;
+    let area = 0, edge = false;
+    lst.length = 0; lst.push(s0); lab[s0] = nextLab;
+    while (lst.length) {
+      const i = lst.pop();
+      area++;
+      const cx = i % S, cy = (i / S) | 0;
+      if (cx === 0 || cy === 0 || cx === S - 1 || cy === S - 1) edge = true;
+      if (cx > 0 && open[i - 1] && !lab[i - 1]) { lab[i - 1] = nextLab; lst.push(i - 1); }
+      if (cx < S - 1 && open[i + 1] && !lab[i + 1]) { lab[i + 1] = nextLab; lst.push(i + 1); }
+      if (cy > 0 && open[i - S] && !lab[i - S]) { lab[i - S] = nextLab; lst.push(i - S); }
+      if (cy < S - 1 && open[i + S] && !lab[i + S]) { lab[i + S] = nextLab; lst.push(i + S); }
+    }
+    labArea[nextLab] = area;
+    labEdge[nextLab] = edge ? 1 : 0;
+  }
+
+  MK_REG.sig = sig;
+  MK_REG.S = S;
+  MK_REG.data = d;
+  MK_REG.truth = trueData.data;
+  MK_REG.outside = outside;
+  MK_REG.outsideTrue = outsideTrue;
+  MK_REG.open = open;
+  MK_REG.paperSum = paperSum;
+  MK_REG.lab = lab;
+  MK_REG.labEdge = labEdge;
+  MK_REG.labArea = labArea;
+  MK_REG.items = vis;
+  return MK_REG;
+}
+/* every mutation invalidates it; recomputing is cheap and being wrong is not */
+function mkRegionForget() { MK_REG_CACHE.clear(); }
+
+/* the topmost visible picture whose drawn area contains this point */
+function mkRegionPictureAt(x, y) {
+  if (!__mk) return -1;
+  for (let i = __mk.items.length - 1; i >= 0; i--) {
+    const it = __mk.items[i];
+    if (it.t !== "img" || it.hid) continue;
+    if (mkPictureLocal(it, x, y)) return i;
+  }
+  return -1;
+}
+
+/* THE ANSWER. Returns the mask of the area under (x, y), what kind of area
+   it is, how big it is, and which objects wall it in — or null if there is
+   genuinely nothing there. */
+function mkRegionAt(x, y, opts) {
+  const o = opts || {};
+  /* ONE tolerance for the whole call, resolved before the sheet is asked
+     for, because the sheet's own paper mask is built from it. Same ladder
+     the picture branch below uses, so the two branches can never be reading
+     different numbers off the same slider. */
+  const askTol = Math.max(2, Math.min(70,
+    Number(o.tol) || Number(__mk.tol) || MK_WAND_DEFAULT_TOL));
+  const sheet = mkRegionSheet(o.S || MK_REG_S, askTol);
+  if (!sheet) return null;
+  const S = sheet.S, d = sheet.data, truth = sheet.truth;
+  const N = S * S;
+  const paperSum = sheet.paperSum;
+
+  /* WHICH BRANCH TO TAKE stays on the fixed threshold. It is not asking "may
+     I flood here", it is asking "did the finger land on blank paper or on a
+     picture", and that answer must not move when the fill's forgiveness
+     does — or a slider meant to change how far a fill spreads would change
+     which kind of fill it is. */
+  const isPaper = (i) => { const j = i * 4; return d[j] + d[j + 1] + d[j + 2] > MK_PAPER_SUM; };
+  let sx = Math.min(S - 1, Math.max(0, Math.round(x * S)));
+  let sy = Math.min(S - 1, Math.max(0, Math.round(y * S)));
+  let si = sy * S + sx;
+
+  /* IS THE FINGER ON A PICTURE? Then the question is about colour, not
+     about paper — filling part of a logo means "this shape here", and the
+     shape is bounded by where the colour changes. */
+  const picIdx = mkRegionPictureAt(x, y);
+  const onPicture = picIdx >= 0 && !isPaper(si);
+
+  let open, ownOpen = false;
+  if (onPicture) {
+    const pic = __mk.items[picIdx];
+    const tol = (Number(o.tol) || Number(__mk.tol)) ? askTol
+              : Math.max(2, Math.min(70, Number(pic && pic.kt) || MK_WAND_DEFAULT_TOL));
+    const lim = (tol / 100) * 441.673;
+    const j0 = si * 4;
+    const r0 = truth[j0], g0 = truth[j0 + 1], b0 = truth[j0 + 2];
+    open = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      const j = i * 4;
+      const dr = truth[j] - r0, dg = truth[j + 1] - g0, db = truth[j + 2] - b0;
+      open[i] = (dr * dr + dg * dg + db * db) <= lim * lim ? 1 : 0;
+    }
+  } else {
+    /* the sheet's own paper mask — SHARED, never written to */
+    open = sheet.open;
+    /* ON A LINE? Step off it — and step INWARDS. Nobody should be told to
+       aim better at a stroke they can barely see, and nobody who clicks the
+       edge of a charm means the empty space beyond it. So the search prefers
+       enclosed paper and only falls back to the void if there is genuinely
+       nothing else within reach. */
+    if (!open[si]) {
+      const outs = sheet.outside;
+      let best = -1, bestD = 1e9, any = -1, anyD = 1e9;
+      const R = Math.max(4, Math.round(S * 0.04));
+      for (let dy = -R; dy <= R; dy++) {
+        const ny = sy + dy;
+        if (ny < 0 || ny >= S) continue;
+        for (let dx = -R; dx <= R; dx++) {
+          const nx = sx + dx;
+          if (nx < 0 || nx >= S) continue;
+          const q = ny * S + nx;
+          if (!open[q]) continue;
+          const dd = dx * dx + dy * dy;
+          if (dd < anyD) { anyD = dd; any = q; }
+          if (outs && outs[q]) continue;
+          if (dd < bestD) { bestD = dd; best = q; }
+        }
+      }
+      let pick = best >= 0 ? best : any;
+      /* ── A CORRIDOR THE SEALING SWALLOWED WHOLE ─────────────────────────
+         The sealed sheet fattens every stroke so a nearly-closed loop counts
+         as closed — but a genuinely narrow slot between two objects can be
+         narrower than the fattening itself, and then there is NO open pixel
+         to step to: the hover finds nothing in a place the eye can plainly
+         see paper. When that happens, and the spot truly is paper (by the
+         sheet's own unfattened colours) and not the void, the flood runs on
+         the TRUE paper instead. It stops at real ink — the same evidence the
+         magic eraser uses — so it is exact; and the background guard below
+         still refuses it if the slot turns out to leak off the sheet. */
+      if (pick < 0) {
+        const jt = si * 4;
+        const truePaper = truth[jt] + truth[jt + 1] + truth[jt + 2] > paperSum;
+        const inVoid = sheet.outsideTrue && sheet.outsideTrue[si];
+        if (truePaper && !inVoid) {
+          /* THE ONE PATH THAT NEEDS ITS OWN MASK. It floods the sheet's TRUE
+             colours instead of the sealed ones, so it writes — and the mask
+             it would write to is now shared with every other call. Copy
+             first. This is rare by construction: it only runs for a slot
+             narrower than the gap tolerance. */
+          open = new Uint8Array(N);
+          ownOpen = true;
+          for (let i = 0; i < N; i++) {
+            const j = i * 4;
+            open[i] = (truth[j] + truth[j + 1] + truth[j + 2] > paperSum &&
+                       !(sheet.outsideTrue && sheet.outsideTrue[i])) ? 1 : 0;
+          }
+          pick = si;
+        }
+      }
+      if (pick < 0) return null;
+      si = pick; sx = si % S; sy = (si / S) | 0;
+    }
+  }
+  if (!open[si]) return null;
+
+  /* ── THE VOID, REFUSED WITHOUT BEING FLOODED ─────────────────────────────
+     Every caller throws an open region away — mkBucketFill returns the bare
+     flag, the preview clears and says "that's the space around the charm" —
+     so flooding a fifth of a megapixel to produce a mask nobody reads was
+     the single most expensive thing a hover did. The labelling done with the
+     sheet answers it in one read. Skipped when this call built its own mask,
+     because then the labels describe a different sheet. */
+  if (!onPicture && !ownOpen && sheet.lab) {
+    const L = sheet.lab[si];
+    if (L && sheet.labEdge[L]) {
+      return { S, mask: null, area: sheet.labArea[L] || 0, openRegion: true,
+               onPicture: false, picIdx: -1, frac: (sheet.labArea[L] || 0) / N,
+               box: { x0: 0, y0: 0, x1: S - 1, y1: S - 1 },
+               seed: [sx / S, sy / S], walls: [] };
+    }
+  }
+
+  /* the flood */
+  const mask = new Uint8Array(N);
+  /* every cell the flood takes, kept as it is taken. The grow-back pass
+     below needs exactly this list and used to rediscover it by scanning all
+     270,000 cells of the sheet — a second full pass to learn something the
+     first pass already knew, on the one hover probe per frame that reaches
+     here. */
+  const cells = [];
+  const stack = [si];
+  mask[si] = 1;
+  let area = 0, x0 = S, y0 = S, x1 = -1, y1 = -1;
+  let touchesEdge = false;
+  while (stack.length) {
+    const i = stack.pop();
+    area++;
+    cells.push(i);
+    const cx = i % S, cy = (i / S) | 0;
+    if (cx === 0 || cy === 0 || cx === S - 1 || cy === S - 1) touchesEdge = true;
+    if (cx < x0) x0 = cx;
+    if (cx > x1) x1 = cx;
+    if (cy < y0) y0 = cy;
+    if (cy > y1) y1 = cy;
+    if (cx > 0 && open[i - 1] && !mask[i - 1]) { mask[i - 1] = 1; stack.push(i - 1); }
+    if (cx < S - 1 && open[i + 1] && !mask[i + 1]) { mask[i + 1] = 1; stack.push(i + 1); }
+    if (cy > 0 && open[i - S] && !mask[i - S]) { mask[i - S] = 1; stack.push(i - S); }
+    if (cy < S - 1 && open[i + S] && !mask[i + S]) { mask[i + S] = 1; stack.push(i + S); }
+  }
+  /* ── AND NOW GIVE BACK WHAT THE SEALING TOOK ─────────────────────────
+     The flood above ran on a sheet where every stroke was FATTENED, because
+     that is the only way a hand-drawn loop that does not quite close still
+     counts as closed. But fattening the walls shrinks the room: the mask
+     stops short of the real edge by however wide the tolerance made that
+     line, and — worse — by MORE when the line is thicker. That is exactly
+     the bug where changing the line Weight changed how accurate the fill
+     looked, and it is why a filled logo came back a size too small and
+     needed a fat outline painted round it to hide the gap.
+
+     So the mask is now grown back out, one pixel at a time, into anything
+     the sheet's TRUE colours say is still open. It stops dead at real ink.
+     The result is the exact contour — the same boundary the magic eraser
+     finds, because it is the same evidence — and it no longer depends in
+     any way on how thick the lines around it happen to be. */
+  const seedInVoid = !!(sheet.outside && sheet.outside[si]);
+  if (!onPicture && !seedInVoid) {
+    const grow = Math.ceil(MK_FILL_TOL * S) + 2;
+    let frontier = cells.slice();
+    const isTruePaper = (i) => {
+      const j = i * 4;
+      return truth[j] + truth[j + 1] + truth[j + 2] > paperSum;
+    };
+    for (let step = 0; step < grow && frontier.length; step++) {
+      const next = [];
+      for (let n = 0; n < frontier.length; n++) {
+        const i = frontier[n];
+        const cx = i % S, cy = (i / S) | 0;
+        const tryOne = (q) => {
+          if (mask[q] || !isTruePaper(q)) return;
+          /* never leak into the void around the charm. Tested against the
+             TRUE outside, not the sealed one: paper hidden under a fattened
+             stroke is not void, and treating it as fillable let the fill
+             seep a fraction of the line weight past its own wall. */
+          if (sheet.outsideTrue && sheet.outsideTrue[q]) return;
+          if (sheet.outside && sheet.outside[q] && !seedInVoid) return;
+          mask[q] = 1; area++; next.push(q);
+          /* the grow can reach the sheet's border too, and if it does this
+             region really is open — the guard below reads this flag */
+          const qx = q % S;
+          if (qx === 0 || qx === S - 1) touchesEdge = true;
+          if ((q / S | 0) === 0 || (q / S | 0) === S - 1) touchesEdge = true;
+          if (qx < x0) x0 = qx;
+          if (q % S > x1) x1 = q % S;
+          const qy = (q / S) | 0;
+          if (qy < y0) y0 = qy;
+          if (qy > y1) y1 = qy;
+        };
+        if (cx > 0) tryOne(i - 1);
+        if (cx < S - 1) tryOne(i + 1);
+        if (cy > 0) tryOne(i - S);
+        if (cy < S - 1) tryOne(i + S);
+      }
+      frontier = next;
+    }
+  }
+
+  /* THE BACKGROUND, DEFINED PROPERLY. Paper that reaches the edge of the
+     sheet is the space AROUND the charm, not an area of it — and that is a
+     fact about the region's shape rather than a guess about its size, so a
+     charm that fills 95% of the sheet still fills correctly and a thin
+     sliver of background is still refused. A region of a PICTURE is allowed
+     to reach the edge: a photograph's sky legitimately does. */
+  const openRegion = onPicture ? (area > N * 0.94) : (touchesEdge || seedInVoid);
+
+  /* WHO WALLS IT IN. Every object whose own ink touches the edge of this
+     region is a boundary of it — which tells the fill where in the stack it
+     has to sit, and which group it belongs to. */
+  /* WHO WALLS IT IN is asked by painting every candidate object alone at
+     the working size, so at the commit resolution that is a 1200×1200
+     canvas per candidate — and the answer is a list of object indices, which
+     does not get any truer for being computed nine times larger. The fine
+     pass therefore skips it and inherits the coarse pass's answer. */
+  const walls = o.noWalls ? [] : mkRegionWalls(mask, S, x0, y0, x1, y1, onPicture ? picIdx : -1);
+
+  return {
+    S, mask, area, openRegion, onPicture,
+    picIdx: onPicture ? picIdx : -1,
+    frac: area / N,
+    box: { x0, y0, x1, y1 },
+    seed: [sx / S, sy / S],
+    walls,
+  };
+}
+
+/* which objects form the edge of a region. Asked by painting each candidate
+   ALONE and seeing whether its ink lands on the region's rim — exact, and
+   cheap because only the objects whose boxes overlap are even considered. */
+function mkRegionWalls(mask, S, x0, y0, x1, y1, picIdx) {
+  const out = [];
+  if (!__mk) return out;
+  /* the rim: every pixel just outside the region */
+  const rim = [];
+  for (let y = Math.max(0, y0 - 2); y <= Math.min(S - 1, y1 + 2); y++) {
+    for (let x = Math.max(0, x0 - 2); x <= Math.min(S - 1, x1 + 2); x++) {
+      const i = y * S + x;
+      if (mask[i]) continue;
+      if ((x > 0 && mask[i - 1]) || (x < S - 1 && mask[i + 1]) ||
+          (y > 0 && mask[i - S]) || (y < S - 1 && mask[i + S])) rim.push(i);
+    }
+  }
+  if (!rim.length) return out;
+  const rx0 = (x0 - 3) / S, ry0 = (y0 - 3) / S, rx1 = (x1 + 3) / S, ry1 = (y1 + 3) / S;
+  __mk.items.forEach((it, idx) => {
+    if (it.hid || idx === picIdx) return;
+    const bb = mkBBox(it);
+    if (bb.x > rx1 || bb.x + bb.w < rx0 || bb.y > ry1 || bb.y + bb.h < ry0) return;
+    const cv = document.createElement("canvas");
+    cv.width = S; cv.height = S;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, S, S);
+    const one = mkPack(it);
+    one.o = 1; one.w = (one.w || 0.008) + MK_FILL_TOL;
+    one.u = it.u; one.sp = it.sp; one.k = it.k; one.kt = it.kt;
+    try { mkPaint(ctx, S, S, [one], { export: true }); } catch (e) { return; }
+    let px;
+    try { px = ctx.getImageData(0, 0, S, S).data; } catch (e) { return; }
+    let hits = 0;
+    for (let n = 0; n < rim.length; n++) {
+      const j = rim[n] * 4;
+      if (px[j] + px[j + 1] + px[j + 2] <= 690) { hits++; if (hits > 3) break; }
+    }
+    if (hits > 3) out.push(idx);
+  });
+  if (picIdx >= 0) out.push(picIdx);
+  return out;
+}
+
+/* ═══════════ THE PREVIEW ═════════════════════════════════════════════════
+   The whole feature, really.
+
+   Every flood-fill tool ever shipped asks the customer to click and find
+   out. That is why a fill that lands somewhere unexpected reads as "nothing
+   happened" — there was never any way to know what was about to happen.
+
+   So the region under the cursor is computed as the cursor moves and shown,
+   tinted, before anything is committed. What you see is exactly the area
+   that will be engraved: not an approximation of it, not a highlight of the
+   object it belongs to — the actual mask, the actual pixels. Aiming becomes
+   obvious, the tolerance becomes something you can SEE rather than guess,
+   and the click at the end can hold no surprises.
+
+   It costs one flood fill per animation frame at 400×400 over a cached
+   sheet, which is a fraction of a millisecond. */
+const MK_PREVIEW_OPTS = { noWalls: true };
+let __mkPrev = { key: "", frame: 0, at: null, cv: null };
+
+function mkFillPreviewClear() {
+  const host = $("#markupOverlay");
+  if (host) host.querySelectorAll(".mk-prevfill, .mk-prevtag").forEach((e) => e.remove());
+  __mkPrev.key = "";
+  __mkPrev.at = null;
+}
+function mkFillPreviewAt(x, y) {
+  if (!__mk || __mk.tool !== "bucket" || __mk.cropping) { mkFillPreviewClear(); return; }
+  __mkPrev.at = [x, y];
+  if (__mkPrev.frame) return;
+  __mkPrev.frame = requestAnimationFrame(() => {
+    __mkPrev.frame = 0;
+    const p = __mkPrev.at;
+    if (!p || !__mk || __mk.tool !== "bucket") return;
+    mkFillPreviewPaint(p[0], p[1]);
+  });
+}
+function mkRegionNear(x, y, opts) {
+  let best = null;
+  const rings = [0.0025, 0.0045, 0.0075, 0.011];
+  const dirs = 16;
+  for (let r = 0; r < rings.length; r++) {
+    const rad = rings[r];
+    for (let i = 0; i < dirs; i++) {
+      const a = (Math.PI * 2 * i) / dirs;
+      const nx = Math.max(0, Math.min(0.999999, x + Math.cos(a) * rad));
+      const ny = Math.max(0, Math.min(0.999999, y + Math.sin(a) * rad));
+      const reg = mkRegionAt(nx, ny, opts);
+      if (!reg || reg.openRegion) continue;
+      const dx = nx - x, dy = ny - y;
+      const cand = { reg, d2: dx * dx + dy * dy, area: reg.area || 0 };
+      if (!best || cand.d2 < best.d2 - 1e-9 ||
+          (Math.abs(cand.d2 - best.d2) < 1e-9 && cand.area < best.area)) best = cand;
+    }
+    if (best) break;
+  }
+  return best ? best.reg : null;
+}
+
+function mkFillPreviewPaint(x, y) {
+  const host = $("#markupOverlay");
+  if (!host) return;
+  /* all three instructions preview the same way now — Outline included */
+  const want = mkFillIntent(__mk.fill);
+
+  /* over an existing fill the preview says what the click will UNDO, which
+     is the other half of the one-gesture rule */
+  const hit = mkFillUnderPoint(x, y);
+  if (hit >= 0) {
+    const it = __mk.items[hit];
+    const same = mkFillIntent(it.f) === want;
+    mkPreviewShow(null, mkBBox(it),
+      same ? (it.bk ? "Click to take this back"
+                    : "Click to leave “" + (mkLayerName(it) || "this") + "” as an outline")
+           : "Click to make this " + (want === "cutout" ? "a cut-out"
+                                    : want === "none" ? "outline only" : "engraved"),
+      same ? "undo" : want);
+    return;
+  }
+
+  /* ── A HOVER DOES NOT NEED TO KNOW WHAT WALLS THE REGION IN ────────────
+     mkRegionWalls answers "which objects form this region's edge", and it
+     answers it by painting every candidate object ALONE onto its own
+     canvas and reading the pixels back. At this working size that is a
+     270,000-pixel canvas per object — and the preview was asking for it
+     sixty-five times per mouse move, once per probe, for fifty-eight
+     objects. A billion pixel reads to light up a highlight.
+
+     The answer is only ever used by the COMMIT, to decide where in the
+     layer stack the new fill sits. Nothing about a highlight depends on it. */
+  let reg = mkRegionAt(x, y, MK_PREVIEW_OPTS);
+  if (!reg || reg.openRegion) reg = mkRegionNear(x, y, MK_PREVIEW_OPTS);
+  if (!reg || reg.openRegion) {
+    mkFillPreviewClear();
+    if (reg && reg.openRegion) mkPreviewTag("That's the space around the charm");
+    return;
+  }
+  const key = reg.seed.join(",") + ":" + reg.area + ":" + want;
+  if (key === __mkPrev.key) return;
+  __mkPrev.key = key;
+
+  /* ── THE MASK, DRAWN AS A SHAPE RATHER THAN AS ITS PIXELS ────────────────
+     This used to putImageData the raw 400×400 flood mask and let the browser
+     scale it up, which is exactly what "pixelated around the edges" looks
+     like: every curve a staircase of 3-pixel steps. The commit has always
+     vectorised the same mask through marching squares and drawn a true
+     contour; the preview now does what the commit does — trace the mask,
+     shave the pixel-grid staircase off with a sub-pixel simplify, and let
+     the canvas draw one antialiased path at double resolution. What lights
+     up is the same smooth boundary the click will produce. */
+  const S = reg.S;
+  const P = S * 2;
+  const cv = document.createElement("canvas");
+  cv.width = P; cv.height = P;
+  const ctx = cv.getContext("2d");
+  const tint = want === "cutout" ? "rgba(31,111,224," : want === "none" ? "rgba(216,31,42," : "rgba(28,29,29,";
+  let vector = false;
+  try {
+    /* ── SCAN THE REGION, NOT THE SHEET ────────────────────────────────
+       mkTraceMask has taken a bounding box since the tracer was fixed, and
+       reg.box has always been on the region — this call and the commit's
+       simply never passed it, so a fill covering 2% of the sheet still
+       marched all 270,400 cells of it, on every repaint of a hover. The
+       box is the region's own, so the contour is identical either way. */
+    const cs = mkTraceMask(reg.mask, S, reg.box).filter((c) => c.length >= 8)
+      .map((c) => mkRdp(c, 0.9));                 /* < half a mask pixel */
+    if (cs.length) {
+      const path = new Path2D();
+      const k = P / S;
+      cs.forEach((c) => {
+        path.moveTo(c[0] * k, c[1] * k);
+        for (let i = 2; i < c.length; i += 2) path.lineTo(c[i] * k, c[i + 1] * k);
+        path.closePath();
+      });
+      if (want === "none") {
+        /* the third instruction previews as what it does: the boundary lit
+           red, the inside left alone */
+        ctx.strokeStyle = tint + "0.95)";
+        ctx.lineWidth = Math.max(2.5, P * 0.006);
+        ctx.lineJoin = "round";
+        ctx.stroke(path);
+        ctx.fillStyle = tint + "0.10)";
+        ctx.fill(path, "evenodd");
+      } else {
+        ctx.fillStyle = tint + "0.46)";
+        ctx.fill(path, "evenodd");
+        ctx.strokeStyle = tint + "0.9)";
+        ctx.lineWidth = Math.max(1.5, P * 0.003);
+        ctx.lineJoin = "round";
+        ctx.stroke(path);
+      }
+      vector = true;
+    }
+  } catch (e) { /* the bitmap below is a real answer */ }
+  if (!vector) {
+    const img = ctx.createImageData(S, S);
+    const d = img.data;
+    const rgb = want === "cutout" ? [31, 111, 224] : want === "none" ? [216, 31, 42] : [28, 29, 29];
+    for (let i = 0; i < reg.mask.length; i++) {
+      if (!reg.mask[i]) continue;
+      const j = i * 4;
+      d[j] = rgb[0]; d[j + 1] = rgb[1]; d[j + 2] = rgb[2]; d[j + 3] = 118;
+    }
+    const half = document.createElement("canvas");
+    half.width = S; half.height = S;
+    half.getContext("2d").putImageData(img, 0, 0);
+    ctx.drawImage(half, 0, 0, P, P);
+  }
+  const pct = reg.frac * 100;
+  mkPreviewShow(cv, null,
+    (reg.onPicture ? "Colour area" : "Enclosed area") + " · " +
+    (pct < 1 ? "<1" : Math.round(pct)) + "% of the sheet — click to " +
+    (want === "cutout" ? "cut it through" : want === "none" ? "outline it" : "engrave it"), want);
+}
+function mkPreviewShow(canvas, box, label, kind) {
+  const host = $("#markupOverlay");
+  host.querySelectorAll(".mk-prevfill, .mk-prevtag").forEach((e) => e.remove());
+  if (canvas) {
+    const el = document.createElement("img");
+    el.className = "mk-prevfill";
+    el.src = canvas.toDataURL("image/png");
+    host.appendChild(el);
+  } else if (box) {
+    const el = document.createElement("div");
+    el.className = "mk-prevfill mk-prevfill--box mk-prevfill--" + (kind || "engrave");
+    el.style.left = (box.x * 100) + "%";
+    el.style.top = (box.y * 100) + "%";
+    el.style.width = (box.w * 100) + "%";
+    el.style.height = (box.h * 100) + "%";
+    host.appendChild(el);
+  }
+  mkPreviewTag(label, kind);
+}
+function mkPreviewTag(label, kind) {
+  const host = $("#markupOverlay");
+  host.querySelectorAll(".mk-prevtag").forEach((e) => e.remove());
+  if (!label) return;
+  const tag = document.createElement("div");
+  tag.className = "mk-prevtag mk-prevtag--" + (kind || "engrave");
+  tag.textContent = label;
+  host.appendChild(tag);
+}
+
+/* ═══════════ TURNING A REGION INTO A LAYER ═══════════════════════════════
+   A region has to become an object: something in the layer list, something
+   you can select, move, hide, rename and delete. Two ways to write one down,
+   and the engine picks whichever tells the truth:
+
+     · CONTOURS, while they stay compact. A ring between two circles is
+       eighty numbers and stays a true vector — infinitely scalable, and
+       exactly the same object the rest of the studio already understands.
+     · A RUN-LENGTH MASK, when they do not. The inside of a photograph does
+       not have a tidy outline, and the old code answered that by raising the
+       simplification tolerance until the shape survived the byte budget —
+       which is how a carefully aimed fill came back as an unrecognisable
+       blob, or as nothing at all. A mask cannot lose detail: it IS the
+       preview, written down.
+
+   Either way the item carries a bounding box in `p`, so a masked fill moves,
+   scales and rotates exactly like every other layer. */
+const MK_RLE_MAX = 9000;          /* numbers; beyond this the mask is coarsened */
+
+function mkMaskCrop(mask, S, box) {
+  const x0 = Math.max(0, box.x0), y0 = Math.max(0, box.y0);
+  const w = Math.min(S - 1, box.x1) - x0 + 1, h = Math.min(S - 1, box.y1) - y0 + 1;
+  const out = new Uint8Array(Math.max(1, w * h));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) out[y * w + x] = mask[(y + y0) * S + (x + x0)];
+  }
+  return { m: out, w: Math.max(1, w), h: Math.max(1, h) };
+}
+/* alternating run lengths, starting with OFF, row-major. Flat integers, so
+   Firestore is happy and a diff of two fills is readable by eye. */
+function mkRleEncode(m, w, h) {
+  const runs = [];
+  let cur = 0, n = 0;
+  for (let i = 0, N = w * h; i < N; i++) {
+    const v = m[i] ? 1 : 0;
+    if (v === cur) { n++; continue; }
+    runs.push(n); cur = v; n = 1;
+  }
+  runs.push(n);
+  return runs;
+}
+function mkRleDecode(runs, w, h) {
+  const m = new Uint8Array(w * h);
+  let i = 0, v = 0;
+  for (let k = 0; k < runs.length; k++) {
+    const n = Math.max(0, Number(runs[k]) || 0);
+    if (v) for (let j = 0; j < n && i + j < m.length; j++) m[i + j] = 1;
+    i += n; v = v ? 0 : 1;
+    if (i >= m.length) break;
+  }
+  return m;
+}
+/* halve a mask, keeping any pixel that was mostly on — used only when a
+   region is so intricate that its runs would outgrow the document */
+function mkMaskHalve(m, w, h) {
+  const W = Math.max(1, w >> 1), H = Math.max(1, h >> 1);
+  const o = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const a = m[(y * 2) * w + x * 2] || 0;
+      const b = m[(y * 2) * w + Math.min(w - 1, x * 2 + 1)] || 0;
+      const c = m[Math.min(h - 1, y * 2 + 1) * w + x * 2] || 0;
+      const d = m[Math.min(h - 1, y * 2 + 1) * w + Math.min(w - 1, x * 2 + 1)] || 0;
+      o[y * W + x] = (a + b + c + d) >= 2 ? 1 : 0;
+    }
+  }
+  return { m: o, w: W, h: H };
+}
+
+/* how many coordinate numbers a single fill may spend. A session is one
+   Firestore document with a 1 MB ceiling, and a fill is one object among
+   many — but 1,400 numbers was far too mean for a traced logo, and meanness
+   is precisely what made the shape come back as a polygon roughly the right
+   size. At five decimal places this is about 35 KB for the very worst case
+   and a few hundred bytes for an ordinary one. */
+const MK_FILL_MAX_PTS = 5200;
+
+function mkRegionToItem(reg, colour, name) {
+  if (!reg) return null;
+  const S = reg.S;
+
+  /* try the vector first: it is the better object in every way when it fits.
+
+     THE TOLERANCE IS IN SHEET UNITS, NOT PIXELS. Written in pixels it meant
+     one thing at the preview size and something four times looser at the
+     commit size, so the same fill traced at higher resolution came out no
+     more faithful — the simplifier gave back everything the extra pixels
+     had bought. Expressed as a fraction of the sheet, "how far the outline
+     may stray from the truth" means the same thing at any resolution: a
+     quarter of a thousandth of the drawing, which on a 12 mm charm is a
+     third of the width of a human hair. */
+  let contours = mkTraceMask(reg.mask, S, reg.box).filter((c) => c.length >= 8);
+  const EPS_STEPS = [0.00025, 0.0005, 0.001, 0.002, 0.004];
+  let r = null;
+  for (let k = 0; k < EPS_STEPS.length; k++) {
+    const eps = EPS_STEPS[k] * S;
+    const cs = contours.map((c) => mkRdp(c, eps)).filter((c) => c.length >= 6);
+    r = { cs, n: cs.reduce((t, c) => t + c.length, 0) };
+    if (r.n <= MK_FILL_MAX_PTS) break;
+  }
+  if (r && r.cs.length && r.n <= MK_FILL_MAX_PTS) {
+    const flat = [], q = [];
+    r.cs.forEach((c) => {
+      q.push(c.length / 2);
+      for (let k = 0; k < c.length; k += 2) {
+        flat.push(Math.round((c[k] / S) * 1e5) / 1e5, Math.round((c[k + 1] / S) * 1e5) / 1e5);
+      }
+    });
+    /* A HAIRLINE, NOT A HALO. This used to carry a stroke of 0.0256 of the
+       sheet — a fat rope drawn round the outline to hide the gap the
+       fattened walls had left. The gap is gone (the mask is grown back to
+       the true edge above), so the rope is not only unnecessary, it was the
+       thing rounding off every corner and swallowing every fine detail. And
+       because Weight edits the stroke of whatever is selected, that rope is
+       exactly why nudging Weight appeared to change the accuracy of a fill:
+       it was thinning the halo, not sharpening the shape. */
+    return mkPack({ id: mkId(), t: "fill", c: colour, f: colour, w: 0.0012, gr: 1,
+                    p: flat, q, n: name || "" });
+  }
+
+  /* otherwise the mask, exactly as previewed */
+  let cropped = mkMaskCrop(reg.mask, S, reg.box);
+  let runs = mkRleEncode(cropped.m, cropped.w, cropped.h);
+  let guard = 0;
+  while (runs.length > MK_RLE_MAX && guard++ < 4) {
+    cropped = mkMaskHalve(cropped.m, cropped.w, cropped.h);
+    runs = mkRleEncode(cropped.m, cropped.w, cropped.h);
+  }
+  const b = reg.box;
+  return mkPack({
+    id: mkId(), t: "fill", c: colour, f: colour, w: 0.0015, gr: 1, n: name || "",
+    /* the bounding box IS the geometry as far as the rest of the studio is
+       concerned, so a masked fill drags and scales like anything else */
+    p: [b.x0 / S, b.y0 / S, (b.x1 + 1) / S, (b.y1 + 1) / S],
+    m: runs, ms: [cropped.w, cropped.h],
+  });
+}
+
+/* the painted form of a masked fill, cached on its own content */
+const MK_RLE_CACHE = new Map();
+function mkRleCanvas(it, mode) {
+  const w = Math.max(1, (it.ms || [])[0] | 0), h = Math.max(1, (it.ms || [])[1] | 0);
+  const edge = mode === "edge";
+  const col = edge ? MK_OUTLINE : String(mode || it.c || MK_ENGRAVE);
+  /* ── AND IT HAS TO BE VISIBLE ────────────────────────────────────────
+     A one-pixel boundary on a mask that is a couple of hundred pixels wide
+     becomes a sub-pixel hairline once it is drawn across the sheet — which
+     is not "outline only", it is "nothing happened". The band is scaled to
+     the mask so a red outline on a photograph region reads as clearly as a
+     red outline on a traced shape. */
+  const R = edge ? Math.max(1, Math.round(Math.max(w, h) / 150)) : 0;
+  const key = it.id + ":" + w + "x" + h + ":" + (it.m || []).length + ":" + col + (edge ? ":e" + R : "");
+  const hit = MK_RLE_CACHE.get(key);
+  if (hit) return hit;
+  const m = mkRleDecode(it.m || [], w, h);
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d");
+  const img = ctx.createImageData(w, h);
+  const d = img.data;
+  const r = parseInt(col.slice(1, 3), 16) || 0;
+  const g = parseInt(col.slice(3, 5), 16) || 0;
+  const b = parseInt(col.slice(5, 7), 16) || 0;
+  /* OUTLINE ONLY, for an area that has no contours to stroke. A run-length
+     mask is just pixels, so its boundary is computed the only way pixels
+     have one: a pixel is on the edge when it is set and one of its four
+     neighbours is not. Cached on the same key as the solid form, so
+     switching an area between engraved and outline costs nothing.
+
+     AND THE SAME QUESTION IS ASKED FIRST. A masked area is no less likely to
+     be a stroke than a traced one — a flood down a drawn line is a stroke —
+     and the boundary of a stroke is the pair of tramlines mkSpineOf exists
+     to end. So a mask that measures as a line is painted as its spine, and
+     only a mask that measures as an AREA gets its outline walked. */
+  let band = null;
+  if (edge) {
+    const sp = mkMaskSpine(m, w, h);
+    if (sp && sp.ribbon && sp.paths.length) {
+      band = new Uint8Array(w * h);
+      const stamp = (cx, cy) => {
+        for (let dy = -R; dy <= R; dy++) {
+          for (let dx = -R; dx <= R; dx++) {
+            if (dx * dx + dy * dy > R * R) continue;
+            const x = Math.round(cx) + dx, y = Math.round(cy) + dy;
+            if (x < 0 || y < 0 || x >= w || y >= h) continue;
+            band[y * w + x] = 1;
+          }
+        }
+      };
+      sp.paths.forEach((pts) => {
+        const closed = pts[0] === pts[pts.length - 1];
+        const g = closed ? pts.map((i) => [i % w, (i / w) | 0])
+                         : mkSpineExtend(pts, sp.deg, sp.dist, m, w, h);
+        for (let k = 1; k < g.length; k++) {
+          const ax = g[k - 1][0], ay = g[k - 1][1], bx = g[k][0], by = g[k][1];
+          const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * 2));
+          for (let s = 0; s <= steps; s++) {
+            stamp(ax + ((bx - ax) * s) / steps, ay + ((by - ay) * s) / steps);
+          }
+        }
+      });
+    }
+  }
+  for (let i = 0; i < m.length; i++) {
+    if (band) {
+      if (!band[i]) continue;
+    } else if (!m[i]) continue;
+    else if (edge) {
+      const x = i % w, y = (i / w) | 0;
+      const on = (xx, yy) => (xx < 0 || yy < 0 || xx >= w || yy >= h) ? 0 : m[yy * w + xx];
+      if (on(x - R, y) && on(x + R, y) && on(x, y - R) && on(x, y + R) &&
+          on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1)) continue;
+    }
+    const j = i * 4;
+    d[j] = r; d[j + 1] = g; d[j + 2] = b; d[j + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  if (MK_RLE_CACHE.size > 40) MK_RLE_CACHE.clear();
+  MK_RLE_CACHE.set(key, cv);
+  return cv;
+}
+
+/* ═══════════ THE BUCKET ══════════════════════════════════════════════════
+   Flood fill that forgives the hand. A sketched loop almost never quite
+   closes, so the region is computed against a version of the sheet whose
+   every stroke is WIDENED by a small tolerance — the gap seals itself and
+   the fill stays inside. The flooded mask is then traced back to closed
+   vector contours (outer edge AND holes, so a shape sitting inside the
+   filled area keeps its white interior) and stored as an ordinary layer:
+   flat points plus a list of contour lengths, because Firestore refuses an
+   array inside an array.                                                    */
+
+/* The bucket, expressed in terms of the region engine. Kept as a function of
+   its own because the tests, the picture path and the tool all ask the same
+   question and must get the same answer. */
+function mkBucketFill(x, y, opts) {  /* every fill it returns is marked bk:1 */
+  if (!__mk) return null;
+  const o = opts || {};
+  /* THE PREVIEW IS CHEAP; THE ANSWER SHOULD NOT BE. The tinted shape under
+     the cursor is recomputed on every mouse move and so runs small. This
+     runs ONCE, on the click, and there is no reason for the thing that gets
+     kept to be as coarse as the thing that was only ever a hint. So the
+     region is asked again at the eraser's own resolution, and the contour
+     that lands on the sheet is traced from that — nine times the evidence,
+     for one flood fill the customer never waits on.
+
+     If the fine pass disagrees about whether there is a region here at all
+     (a hairline gap that seals at one size and not the other), the coarse
+     answer stands: it is the one the customer was shown. */
+  const coarse = mkRegionAt(x, y, o) || mkRegionNear(x, y, o);
+  if (!coarse) return { onLine: true };
+  if (coarse.openRegion) return { openRegion: true };
+  let reg = coarse;
+  if (!o.S && MK_FINE_S > MK_REG_S) {
+    try {
+      const fine = mkRegionAt(x, y, Object.assign({}, o, { S: MK_FINE_S, noWalls: 1 }));
+      /* AND IT HAS TO BE THE SAME REGION. Agreeing about "is this an area at
+         all" is not enough: a click landing within a pixel of a wall can seal
+         one way at 400 and the other way at 1200, and the customer would be
+         handed the room on the far side of a line from the one they were
+         shown. So the two masks are compared where it counts — the fine one
+         must cover the coarse one's own seed point, and the two must be
+         substantially the same area. If they are not, the answer the
+         customer SAW is the answer they get. */
+      if (fine && !fine.openRegion && fine.onPicture === coarse.onPicture &&
+          mkRegionAgree(coarse, fine)) {
+        fine.walls = coarse.walls;          /* the same objects, already known */
+        reg = fine;
+      }
+    } catch (e) { /* the coarse answer is a real answer */ }
+  }
+  const intent = mkFillIntent((opts && opts.fill) || __mk.fill);
+  const colour = mkIntentInk(intent);
+  const item = mkRegionToItem(reg, colour, mkRegionName(reg, intent));
+  if (!item) return null;
+  /* an OUTLINE area is the region's boundary, worked, with its inside left
+     alone — the same contours, carrying the third instruction */
+  if (intent === "none") item.f = "none";
+  item.bk = 1;
+  return { item, region: reg };
+}
+
+/* Do two masks, computed at different resolutions, describe the same area?
+   Asked by sampling: the coarse mask's own seed must be inside the fine one,
+   and the fine one's coverage of the coarse one must be overwhelming. */
+function mkRegionAgree(a, b) {
+  try {
+    const sx = Math.min(b.S - 1, Math.max(0, Math.round(a.seed[0] * b.S)));
+    const sy = Math.min(b.S - 1, Math.max(0, Math.round(a.seed[1] * b.S)));
+    if (!b.mask[sy * b.S + sx]) return false;
+    let hit = 0, n = 0;
+    const step = Math.max(1, Math.floor(a.S / 120));
+    for (let y = 0; y < a.S; y += step) {
+      for (let x = 0; x < a.S; x += step) {
+        if (!a.mask[y * a.S + x]) continue;
+        n++;
+        const bx = Math.min(b.S - 1, Math.round((x / a.S) * b.S));
+        const by = Math.min(b.S - 1, Math.round((y / a.S) * b.S));
+        if (b.mask[by * b.S + bx]) hit++;
+      }
+    }
+    return n === 0 || hit / n > 0.9;
+  } catch (e) { return false; }
+}
+
+/* what to call it in the layer list, so a sheet of fills stays legible */
+function mkRegionName(reg, intent) {
+  const what = intent === "cutout" ? "Cut-out" : intent === "none" ? "Outline" : "Engraved";
+  if (reg.onPicture) {
+    const pic = __mk.items[reg.picIdx];
+    return what + " · " + String((pic && pic.n) || "picture").slice(0, 22);
+  }
+  const pct = Math.round(reg.frac * 100);
+  return what + " area" + (pct >= 1 ? " · " + pct + "%" : "");
+}
+
+/* ── WHERE IT LANDS ──────────────────────────────────────────────────────
+   Above everything that walls it in, so it can never be hidden behind the
+   very objects that defined it — and INSIDE their group when they share
+   one, so it travels with them from then on. Nobody is asked about either. */
+function mkPlaceFill(item, reg) {
+  const walls = (reg && reg.walls) || [];
+  let at = 0;
+  if (walls.length) at = Math.max.apply(null, walls) + 1;
+  /* if every wall belongs to one group, the fill is part of that group */
+  const gs = {};
+  walls.forEach((i) => { const g = mkGroupOf(__mk.items[i]); if (g) gs[g] = (gs[g] || 0) + 1; });
+  const names = Object.keys(gs);
+  const g = (names.length === 1 && gs[names[0]] === walls.length) ? names[0] : "";
+  if (g) {
+    item.g = g;
+    /* directly above the group's topmost member keeps the block contiguous,
+       which is the rule the whole layer model rests on */
+    const idx = mkGroupIdx(g);
+    if (idx.length) at = idx[idx.length - 1] + 1;
+  }
+  at = Math.max(0, Math.min(__mk.items.length, at));
+  /* NEVER LAND INSIDE SOMEBODY ELSE'S BLOCK. When the walls belong to two
+     different groups the index above is simply "above the topmost wall",
+     and that can fall in the middle of a group whose members must stay
+     contiguous — the rule the whole layer model rests on. Slide up past the
+     end of whatever block the index landed in. */
+  if (!g) {
+    const host = __mk.items[at] ? mkGroupOf(__mk.items[at]) : "";
+    const below = at > 0 ? mkGroupOf(__mk.items[at - 1]) : "";
+    if (host && host === below) {
+      const idx = mkGroupIdx(host);
+      if (idx.length) at = Math.max(at, idx[idx.length - 1] + 1);
+    }
+  }
+  at = Math.max(0, Math.min(__mk.items.length, at));
+  __mk.items.splice(at, 0, item);
+  return at;
+}
+
+/* ── CLICKING A FILL THAT IS ALREADY THERE ──────────────────────────────
+   The same click that engraves an area un-engraves it, and switches it
+   between engraved and cut-out if that is what changed in the meantime.
+   One gesture, no modifier, nothing to learn: the tool always does the
+   obvious thing to whatever is under the finger. */
+function mkFillUnderPoint(x, y) {
+  for (let i = __mk.items.length - 1; i >= 0; i--) {
+    const it = __mk.items[i];
+    if (it.t !== "fill" || it.hid || it.lok) continue;
+    if (mkFillHit(it, x, y)) return i;
+  }
+  return -1;
+}
+/* …and the one that is in the way but may not be touched, so the studio can
+   say which rather than "nothing to fill just there" */
+function mkFillBlockedAt(x, y) {
+  for (let i = __mk.items.length - 1; i >= 0; i--) {
+    const it = __mk.items[i];
+    if (it.t !== "fill" || (!it.hid && !it.lok)) continue;
+    if (mkFillHit(it, x, y)) return it;
+  }
+  return null;
+}
+function mkFillHit(it, x, y) {
+  /* ── ASK WHERE THE OBJECT ACTUALLY IS ────────────────────────────────
+     A rotated fill is DRAWN rotated but was tested against its unrotated
+     points, so the customer could hover solid black and be told there was
+     nothing there, while a click on bare metal on the opposite side of the
+     shape deleted it. Every other hit test in the studio unrotates first;
+     this one did not. */
+  const [ux, uy] = mkUnrotate(it, x, y);
+  const bb = mkBBox(it);
+  /* ── AND WITH A LITTLE ROOM AT THE EDGE ──────────────────────────────
+     The contour a flood is traced into sits a fraction inside the pixels it
+     came from, and the hairline that closes that seam is painted OUTSIDE
+     it. So there is a band, a pixel or two wide, that looks filled and
+     tested empty — and a click there did not take the fill back, it made a
+     second identical one on top of the first. Every click in that band
+     added another. The test is given the same tolerance the painter uses. */
+  const tol = 0.004;
+  if (ux < bb.x - tol || ux > bb.x + bb.w + tol ||
+      uy < bb.y - tol || uy > bb.y + bb.h + tol) return false;
+  if (it.m && it.m.length) {
+    const w = (it.ms || [])[0] | 0, h = (it.ms || [])[1] | 0;
+    if (!w || !h) return false;
+    const m = mkRleDecode(it.m, w, h);
+    const at = (gx, gy) => {
+      const px = Math.floor(((gx - bb.x) / (bb.w || 1e-6)) * w);
+      const py = Math.floor(((gy - bb.y) / (bb.h || 1e-6)) * h);
+      if (px < 0 || py < 0 || px >= w || py >= h) return false;
+      return !!m[py * w + px];
+    };
+    if (at(ux, uy)) return true;
+    return at(ux - tol, uy) || at(ux + tol, uy) || at(ux, uy - tol) || at(ux, uy + tol);
+  }
+  /* contours, even-odd, exactly as they are painted */
+  const p = it.p || [];
+  const q = (it.q && it.q.length) ? it.q : [Math.floor(p.length / 2)];
+  const inPoly = (px, py) => {
+    let inside = false, k = 0;
+    q.forEach((len) => {
+      const s0 = k;
+      for (let a = 0; a < len; a++, k++) {
+        const b = s0 + ((a + 1) % len);
+        const xi = p[k * 2], yi = p[k * 2 + 1], xj = p[b * 2], yj = p[b * 2 + 1];
+        if ((yi > py) !== (yj > py) &&
+            px < ((xj - xi) * (py - yi)) / ((yj - yi) || 1e-9) + xi) inside = !inside;
+      }
+    });
+    return inside;
+  };
+  if (inPoly(ux, uy)) return true;
+  /* the band: four probes at the painter's own tolerance */
+  return inPoly(ux - tol, uy) || inPoly(ux + tol, uy) ||
+         inPoly(ux, uy - tol) || inPoly(ux, uy + tol);
+}
+
+/* ── `box` IS NOT AN OPTIMISATION, IT IS THE DIFFERENCE BETWEEN USABLE AND NOT ──
+   This walked the WHOLE canvas for every part it was given, which was fine
+   for as long as a drawing came apart into a handful of blobs: ten parts at
+   1100² is twelve million cell visits and nobody notices. Line art comes
+   apart into HUNDREDS of strokes, and at 2K that same loop is two hundred
+   parts × four million cells — thirteen SECONDS of frozen main thread, on a
+   charm the customer is trying to type a description next to.
+
+   A part's boundary can only lie inside its own bounding box, which the
+   segmenter has already computed, so the caller passes it and the scan costs
+   the part's own area instead of the canvas's. The coordinates are absolute
+   either way, so nothing downstream changes. */
+function mkTraceMask(mask, S, box) {
+  const val = (x, y) => (x >= 0 && y >= 0 && x < S && y < S && mask[y * S + x]) ? 1 : 0;
+  /* directed segments per 2×2 case, in half-pixel units so keys stay ints */
+  const segs = new Map();                 /* "x,y" start → [ex, ey] */
+  const put = (x1, y1, x2, y2) => {
+    const k = x1 + "," + y1;
+    if (!segs.has(k)) segs.set(k, []);
+    segs.get(k).push([x2, y2]);
+  };
+  const y0 = box ? Math.max(-1, (box.y0 | 0) - 1) : -1;
+  const x0 = box ? Math.max(-1, (box.x0 | 0) - 1) : -1;
+  const y1 = box ? Math.min(S - 1, box.y1 | 0) : S - 1;
+  const x1 = box ? Math.min(S - 1, box.x1 | 0) : S - 1;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const tl = val(x, y), tr = val(x + 1, y), br = val(x + 1, y + 1), bl = val(x, y + 1);
+      const c = tl * 8 + tr * 4 + br * 2 + bl;
+      if (c === 0 || c === 15) continue;
+      /* edge midpoints of this 2×2 block, ×2 for integer keys */
+      const T = [2 * x + 2, 2 * y + 1], R = [2 * x + 3, 2 * y + 2],
+            B = [2 * x + 2, 2 * y + 3], L = [2 * x + 1, 2 * y + 2];
+      /* filled kept on the LEFT of travel, so every loop closes */
+      switch (c) {
+        case 1:  put(B[0], B[1], L[0], L[1]); break;
+        case 2:  put(R[0], R[1], B[0], B[1]); break;
+        case 3:  put(R[0], R[1], L[0], L[1]); break;
+        case 4:  put(T[0], T[1], R[0], R[1]); break;
+        case 5:  put(T[0], T[1], L[0], L[1]); put(B[0], B[1], R[0], R[1]); break;
+        case 6:  put(T[0], T[1], B[0], B[1]); break;
+        case 7:  put(T[0], T[1], L[0], L[1]); break;
+        case 8:  put(L[0], L[1], T[0], T[1]); break;
+        case 9:  put(B[0], B[1], T[0], T[1]); break;
+        case 10: put(L[0], L[1], B[0], B[1]); put(R[0], R[1], T[0], T[1]); break;
+        case 11: put(R[0], R[1], T[0], T[1]); break;
+        case 12: put(L[0], L[1], R[0], R[1]); break;
+        case 13: put(B[0], B[1], R[0], R[1]); break;
+        case 14: put(L[0], L[1], B[0], B[1]); break;
+      }
+    }
+  }
+  const contours = [];
+  segs.forEach((ends, startKey) => {
+    while (ends.length) {
+      const first = startKey.split(",").map(Number);
+      let cur = ends.pop();
+      const pts = [first[0], first[1], cur[0], cur[1]];
+      let guard = 0;
+      while (guard++ < 200000) {
+        const k = cur[0] + "," + cur[1];
+        const nx = segs.get(k);
+        if (!nx || !nx.length) break;
+        cur = nx.pop();
+        if (cur[0] === first[0] && cur[1] === first[1]) break;   /* closed */
+        pts.push(cur[0], cur[1]);
+      }
+      if (pts.length >= 6) contours.push(pts.map((v) => v / 2));
+    }
+  });
+  return contours;
+}
+
+/* Ramer–Douglas–Peucker on a flat closed contour, iterative. */
+function mkRdp(pts, eps) {
+  const n = pts.length / 2;
+  if (n <= 4) return pts;
+  const keep = new Uint8Array(n);
+  keep[0] = 1; keep[n - 1] = 1;
+  const stack = [[0, n - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    if (b - a < 2) continue;
+    const ax = pts[a * 2], ay = pts[a * 2 + 1], bx = pts[b * 2], by = pts[b * 2 + 1];
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy) || 1;
+    let worst = -1, wd = eps;
+    for (let i = a + 1; i < b; i++) {
+      const dd = Math.abs(dy * (pts[i * 2] - ax) - dx * (pts[i * 2 + 1] - ay)) / len;
+      if (dd > wd) { wd = dd; worst = i; }
+    }
+    if (worst >= 0) { keep[worst] = 1; stack.push([a, worst], [worst, b]); }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(pts[i * 2], pts[i * 2 + 1]);
+  return out;
+}
+
+/* ═══════════ TAKING A GENERATED DRAWING APART ════════════════════════════
+   A generated design arrives as a picture: black lines on white, one flat
+   bitmap. Everything in the studio downstream of it — select, move, resize,
+   group, delete, re-generate from what you changed — works on OBJECTS. So
+   the picture is taken apart the moment it lands.
+
+   The method is the one the bucket already uses, run the other way round.
+   The bucket floods a WHITE region and traces the mask it filled; this
+   labels every connected region of INK and traces each one. The outline of
+   the charm is one region, each eye is another, the mouth another. Each
+   comes back as closed contours — outer edge plus any holes, painted
+   evenodd — which is why a ring traces as a ring and keeps its middle.
+
+   Two things make this honest rather than clever:
+
+     · it is exact. The contours follow the pixels that were generated, so
+       the vector drawing and the bitmap are the same drawing. Nothing is
+       redrawn, guessed or prettified.
+     · it knows when to decline. A photograph, a wash of grey, or anything
+       that comes apart into hundreds of specks is not a line drawing, and
+       the picture is left alone rather than turned into confetti.        */
+const MK_TRACE_S = 1100;            /* the magic eraser's own working size —
+                                       a traced part is held to the same
+                                       standard as everything else here */
+const MK_TRACE_INK = 150;           /* luminance below this is ink */
+const MK_TRACE_MAXPARTS = 48;       /* more than this is not a line drawing */
+
+/* ── WHY THIS BUDGET IS WHAT IT IS ────────────────────────────────────────
+   The tolerance used to be quoted in PIXELS, and when the total ran over
+   budget it was multiplied by 1.6, up to six times. Six times 1.6 is
+   nineteen — nineteen pixels of permitted error on a 640-pixel sheet, which
+   is three per cent of the drawing per vertex. At that setting a circle of
+   any size comes back as an eleven-sided polygon, and that is precisely what
+   a generated charm looked like after being taken apart: the outline and the
+   inner ring visibly faceted, the very thing the fill engine had just been
+   fixed for.
+
+   Expressed as a fraction of the SHEET, "how far may the outline stray from
+   the truth" means the same thing at any resolution. At 0.0005 — half a
+   thousandth of the drawing — a circle needs a vertex roughly every
+   sqrt(8·r·ε), which for a charm-sized circle is about sixty of them: far
+   past the point where an eye can find a straight edge, and only a hundred
+   and twenty numbers. Fidelity here is cheap; it was the runaway that was
+   expensive. The ceiling is raised to match, and no single part may eat it. */
+const MK_TRACE_BUDGET = 11000;      /* numbers, across every part */
+/* …and within any ONE of them, so a single gnarly region cannot spend the
+   whole allowance. Generous on purpose: a charm whose ink is one connected
+   region — a hoop touching the ring, engraving touching the outline, which
+   is most of them — is legitimately one enormous part, and capping it
+   tightly was throwing away the very outline the customer was complaining
+   about while two thirds of the shared budget sat unused. */
+const MK_TRACE_PART_MAX = 8000;
+/* Finer rungs near the bottom. The first step used to be a cliff: 0.0005 to
+   0.0008 collapsed a clean annulus from 1996 numbers to 344 — a six-fold
+   loss for one step, landing far under budget and taking the detail with
+   it. Small steps mean the simplification stops as soon as it has to. */
+const MK_TRACE_EPS_STEPS = [0.0005, 0.00062, 0.0008, 0.001, 0.0013, 0.0017,
+                            0.0022, 0.0028, 0.0036, 0.005];
+
+/* every connected region of ink, 8-connected so a diagonal hairline is one
+   stroke rather than a dotted line of separate ones */
+function mkInkComponents(img, S, opts) {
+  const cfg = opts || {};
+  const maxInkFraction = cfg.maxInkFraction == null ? 0.55 : Math.max(0.05, Math.min(0.995, Number(cfg.maxInkFraction)));
+  const cv = document.createElement("canvas");
+  cv.width = S; cv.height = S;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, S, S);
+
+  /* NEVER STRETCH THE SOURCE INTO THE TRACING SQUARE. The tracer uses a
+     square working raster because its contour code is square-indexed, but
+     the source image is letterboxed into that square at its native aspect
+     ratio. `frame` is carried out with the trace so placement can preserve
+     the complete original image format, including intentional blank margins. */
+  const iw = img.naturalWidth || img.width || 0;
+  const ih = img.naturalHeight || img.height || 0;
+  if (!iw || !ih) return null;
+  const sc = Math.min(S / iw, S / ih);
+  const dw = Math.max(1, Math.round(iw * sc));
+  const dh = Math.max(1, Math.round(ih * sc));
+  const dx = Math.round((S - dw) / 2);
+  const dy = Math.round((S - dh) / 2);
+  try { ctx.drawImage(img, dx, dy, dw, dh); } catch (e) { return null; }
+  let d;
+  try { d = ctx.getImageData(0, 0, S, S).data; } catch (e) { return null; }
+
+  const N = S * S;
+  const ink = new Uint8Array(N);
+  let inked = 0, mid = 0;
+  for (let i = 0; i < N; i++) {
+    const j = i * 4;
+    const a = d[j + 3];
+    const lum = a < 40 ? 255 : (d[j] * 0.299 + d[j + 1] * 0.587 + d[j + 2] * 0.114);
+    const sat = a < 40 ? 0 : Math.max(d[j], d[j + 1], d[j + 2]) - Math.min(d[j], d[j + 1], d[j + 2]);
+    if (lum < MK_TRACE_INK || (sat > 70 && lum < 214)) { ink[i] = 1; inked++; }
+    else if (lum < 214) mid++;
+  }
+  if (!inked || inked > N * maxInkFraction) return null;
+
+  /* THE INK MASK, WITHOUT THE FLOOD. mkStrokeComponents wants the pixels and
+     the letterbox and nothing else — it does its own segmenting — and the
+     flood below is both wasted work and, on line art, wasted in a way that
+     matters: it is the very answer being replaced. */
+  if (cfg.inkOnly) {
+    return { ink, d, lab: null, comps: [], S, inked, mid: mid / N,
+             frame: { x: dx / S, y: dy / S, w: dw / S, h: dh / S },
+             sourceW: iw, sourceH: ih };
+  }
+
+  const lab = new Int32Array(N);
+  const comps = [];
+  const stack = [];
+  let next = 0;
+  for (let seed = 0; seed < N; seed++) {
+    if (!ink[seed] || lab[seed]) continue;
+    next++;
+    let area = 0, x0 = S, y0 = S, x1 = -1, y1 = -1;
+    stack.length = 0; stack.push(seed); lab[seed] = next;
+    let sr = 0, sg = 0, sb = 0;
+    while (stack.length) {
+      const q = stack.pop();
+      area++;
+      const j4 = q * 4;
+      sr += d[j4]; sg += d[j4 + 1]; sb += d[j4 + 2];
+      const px = q % S, py = (q / S) | 0;
+      if (px < x0) x0 = px; if (px > x1) x1 = px;
+      if (py < y0) y0 = py; if (py > y1) y1 = py;
+      for (let yy = -1; yy <= 1; yy++) {
+        const ny = py + yy; if (ny < 0 || ny >= S) continue;
+        for (let xx = -1; xx <= 1; xx++) {
+          if (!xx && !yy) continue;
+          const nx = px + xx; if (nx < 0 || nx >= S) continue;
+          const r = ny * S + nx;
+          if (ink[r] && !lab[r]) { lab[r] = next; stack.push(r); }
+        }
+      }
+    }
+    comps.push({ id: next, area, x0, y0, x1, y1,
+                 r: sr / area, g: sg / area, b: sb / area });
+    if (comps.length > 4000) return null;
+  }
+  return {
+    lab, comps, S, inked, mid: mid / N,
+    frame: { x: dx / S, y: dy / S, w: dw / S, h: dh / S },
+    sourceW: iw, sourceH: ih,
+  };
+}
+
+/* ═══════════ LINE ART IS NOT A SET OF BLOBS ══════════════════════════════
+   mkInkComponents labels 8-connected regions of ink. That is exactly right
+   for a drawing made of separate filled shapes, and exactly wrong for line
+   work, because on a line drawing everything touches: the ball seam runs
+   into the bat's outline, every stitch crosses the seam, the bail meets the
+   neck. A baseball bat charm with forty engraved marks on it came back as
+   ONE component holding 91% of the ink plus two strays — three layers, with
+   the whole engraving welded into the silhouette.
+
+   What a person means by "a part" in line work is a STROKE. So:
+
+     1. thin the ink to a one-pixel skeleton              (Zhang–Suen)
+     2. cut that skeleton where lines meet                (crossing number ≥ 3)
+     3. re-join the cuts that are really one line         (tangent continuity)
+     4. give every ink pixel back to its nearest stroke   (multi-source BFS)
+     5. fold strokes too small to be a layer into their neighbour
+
+   STEP 4 IS WHAT KEEPS THE DRAWING HONEST. Every ink pixel is assigned to
+   exactly one stroke, so the layers add back up to precisely the drawing
+   they were cut from: nothing is dropped, nothing is drawn twice, and the
+   engraving detail survives being taken apart. Step 3 is what stops the
+   bat's outline arriving as eleven fragments, one per stitch that lands on
+   it — a place where one line crosses another is not a place a line ends. */
+
+/* ── AND IT MUST NOT HOLD THE THREAD WHILE IT DOES ANY OF THIS ─────────────
+   Taking a 2K drawing apart is real work — half a second of it — and half a
+   second of frozen main thread is half a second in which a click does
+   nothing, a hover shows nothing and the studio reads as broken. Nobody is
+   waiting on this: it runs in the background while the customer writes their
+   description. So every long loop in the segmenter stops at a deadline,
+   hands the thread back so the browser can paint, and carries on where it
+   left off. The arithmetic is unchanged; only the interruptions are new. */
+const MK_SLICE_MS = 12;
+function mkTraceCheck(opts) {
+  if (opts && opts.deadlineAt && Date.now() >= opts.deadlineAt) {
+    throw new Error("trace_budget_exceeded");
+  }
+}
+function mkYield(opts) {
+  mkTraceCheck(opts);
+  return new Promise((resolve, reject) => setTimeout(() => {
+    try { mkTraceCheck(opts); resolve(); }
+    catch (e) { reject(e); }
+  }, 0));
+}
+/* true when this slice has run long enough that the frame is owed back */
+function mkSliceDue(t0) { return performance.now() - t0 > MK_SLICE_MS; }
+
+/* Zhang–Suen thinning: two sub-iterations a pass, walked over the pixels
+   still standing rather than the whole canvas, so the cost tracks the ink. */
+async function mkSkeletonize(ink, S, opts) {
+  mkTraceCheck(opts);
+  const sk = Uint8Array.from(ink);
+  let live = [];
+  for (let i = 0; i < sk.length; i++) if (sk[i]) live.push(i);
+  const doomed = [];
+  let t0 = performance.now();
+  for (let pass = 0; pass < 64; pass++) {
+    let changed = 0;
+    for (let sub = 0; sub < 2; sub++) {
+      /* a pass boundary is the natural place to breathe: the algorithm is
+         defined pass by pass, so stopping between them changes nothing */
+      if (mkSliceDue(t0)) { await mkYield(opts); t0 = performance.now(); }
+      doomed.length = 0;
+      for (let k = 0; k < live.length; k++) {
+        const i = live[k];
+        if (!sk[i]) continue;
+        const x = i % S, y = (i / S) | 0;
+        if (x < 1 || y < 1 || x > S - 2 || y > S - 2) continue;
+        const p2 = sk[i - S], p3 = sk[i - S + 1], p4 = sk[i + 1], p5 = sk[i + S + 1];
+        const p6 = sk[i + S], p7 = sk[i + S - 1], p8 = sk[i - 1], p9 = sk[i - S - 1];
+        const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+        if (B < 2 || B > 6) continue;
+        const A = (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
+                  (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+        if (A !== 1) continue;
+        if (sub === 0) { if (p2 * p4 * p6) continue; if (p4 * p6 * p8) continue; }
+        else           { if (p2 * p4 * p8) continue; if (p2 * p6 * p8) continue; }
+        doomed.push(i);
+      }
+      for (let k = 0; k < doomed.length; k++) sk[doomed[k]] = 0;
+      changed += doomed.length;
+    }
+    if (!changed) break;
+    if (live.length > 4096) {
+      const next = [];
+      for (let k = 0; k < live.length; k++) if (sk[live[k]]) next.push(live[k]);
+      live = next;
+    }
+  }
+  return sk;
+}
+/* 0→1 transitions round the eight neighbours: 1 at an end or along a line,
+   2 inside a loop, 3 or more where lines meet */
+function mkCrossing(sk, i, S) {
+  const p2 = sk[i - S], p3 = sk[i - S + 1], p4 = sk[i + 1], p5 = sk[i + S + 1];
+  const p6 = sk[i + S], p7 = sk[i + S - 1], p8 = sk[i - 1], p9 = sk[i - S - 1];
+  return (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
+         (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+}
+
+async function mkStrokeSegment(ink, S, opts) {
+  const cfg = opts || {};
+  mkTraceCheck(cfg);
+  let t0 = performance.now();
+  /* only join across a meeting when the two arms are very nearly a straight
+     line through it — about 148°. Looser than this and the bat's outline
+     starts swallowing the seams it merely touches. */
+  const joinCos = cfg.joinCos == null ? -0.85 : Number(cfg.joinCos);
+  const tangentRun = cfg.tangentRun == null ? 7 : Math.round(cfg.tangentRun);
+  const N8 = [-S - 1, -S, -S + 1, -1, 1, S - 1, S, S + 1];
+  const sk = await mkSkeletonize(ink, S, cfg);
+  t0 = performance.now();
+
+  /* ── 2. cut where the lines meet — AND CUT WIDE ENOUGH TO ACTUALLY CUT ──
+     Deleting the single pixel where three lines meet does not separate them:
+     the arms stay diagonally 8-adjacent round the hole, the label flood walks
+     straight across it, and the drawing comes back as one stroke — the very
+     symptom this exists to fix, reached by a subtler route. Removing the
+     junction's neighbourhood leaves the arms two pixels apart, which no
+     8-connected walk can bridge. The few skeleton pixels it costs are handed
+     back in step 4, which gives every ink pixel to the nearest stroke. */
+  const junction = new Uint8Array(S * S);
+  const skPix = [];
+  for (let i = 0; i < sk.length; i++) {
+    if (!sk[i]) continue;
+    const x = i % S, y = (i / S) | 0;
+    if (x < 1 || y < 1 || x > S - 2 || y > S - 2) { skPix.push(i); continue; }
+    if (mkCrossing(sk, i, S) >= 3) junction[i] = 1;
+    skPix.push(i);
+  }
+  const removed = new Uint8Array(S * S);
+  for (let k = 0; k < skPix.length; k++) {
+    if (!(k & 8191) && mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    const i = skPix[k];
+    if (junction[i]) { removed[i] = 1; continue; }
+    const x = i % S;
+    for (let d = 0; d < 8; d++) {
+      const r = i + N8[d];
+      if (r < 0 || r >= removed.length) continue;
+      if (Math.abs((r % S) - x) > 1) continue;
+      if (junction[r]) { removed[i] = 1; break; }
+    }
+  }
+
+  /* one label per surviving run of skeleton */
+  const lab = new Int32Array(S * S);
+  let n = 0;
+  const stack = [];
+  for (let s0 = 0; s0 < skPix.length; s0++) {
+    if (!(s0 & 8191) && mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    const seed = skPix[s0];
+    if (removed[seed] || lab[seed]) continue;
+    n++;
+    stack.length = 0; stack.push(seed); lab[seed] = n;
+    while (stack.length) {
+      const q = stack.pop();
+      const x = q % S;
+      for (let d = 0; d < 8; d++) {
+        const r = q + N8[d];
+        if (r < 0 || r >= lab.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        if (sk[r] && !removed[r] && !lab[r]) { lab[r] = n; stack.push(r); }
+      }
+    }
+  }
+
+  /* ── 3. re-join the cuts that are really one line ─────────────────────── */
+  const par = new Int32Array(n + 1);
+  for (let i = 0; i <= n; i++) par[i] = i;
+  const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  const union = (a, b) => { a = find(a); b = find(b); if (a !== b) par[b] = a; };
+  /* walk a few pixels back into the stroke to read the heading it arrives on */
+  const heading = (endPix, myLab) => {
+    let cur = endPix, prev = -1;
+    for (let s2 = 0; s2 < tangentRun; s2++) {
+      let nxt = -1;
+      const x = cur % S;
+      for (let d = 0; d < 8; d++) {
+        const r = cur + N8[d];
+        if (r < 0 || r >= lab.length || r === prev) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        if (lab[r] === myLab) { nxt = r; break; }
+      }
+      if (nxt < 0) break;
+      prev = cur; cur = nxt;
+    }
+    const dx2 = (endPix % S) - (cur % S);
+    const dy2 = ((endPix / S) | 0) - ((cur / S) | 0);
+    const m = Math.hypot(dx2, dy2) || 1;
+    return [dx2 / m, dy2 / m];
+  };
+  /* the removed pixels form CLUSTERS, so a meeting is considered whole
+     rather than one pixel of it at a time */
+  const seenJ = new Uint8Array(S * S);
+  const jstack = [];
+  for (let j0 = 0; j0 < removed.length; j0++) {
+    if (!(j0 & 65535) && mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    if (!removed[j0] || seenJ[j0]) continue;
+    const cluster = [];
+    jstack.length = 0; jstack.push(j0); seenJ[j0] = 1;
+    while (jstack.length) {
+      const q = jstack.pop();
+      cluster.push(q);
+      const x = q % S;
+      for (let d = 0; d < 8; d++) {
+        const r = q + N8[d];
+        if (r < 0 || r >= removed.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        if (removed[r] && !seenJ[r]) { seenJ[r] = 1; jstack.push(r); }
+      }
+    }
+    const ends = [];
+    for (let c = 0; c < cluster.length; c++) {
+      const i = cluster[c];
+      const x = i % S;
+      for (let d = 0; d < 8; d++) {
+        const r = i + N8[d];
+        if (r < 0 || r >= lab.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        const L = lab[r];
+        if (!L) continue;
+        let seen = false;
+        for (let e = 0; e < ends.length; e++) if (ends[e].lab === L) { seen = true; break; }
+        if (!seen) ends.push({ lab: L, dir: heading(r, L) });
+      }
+    }
+    if (ends.length < 2) continue;
+    const pairs = [];
+    for (let a = 0; a < ends.length; a++) {
+      for (let b2 = a + 1; b2 < ends.length; b2++) {
+        pairs.push({ a, b: b2,
+          c: ends[a].dir[0] * ends[b2].dir[0] + ends[a].dir[1] * ends[b2].dir[1] });
+      }
+    }
+    pairs.sort((u, v) => u.c - v.c);
+    const used = {};
+    for (let k = 0; k < pairs.length; k++) {
+      const pr = pairs[k];
+      if (pr.c > joinCos) break;
+      if (used[pr.a] || used[pr.b]) continue;
+      used[pr.a] = used[pr.b] = 1;
+      union(ends[pr.a].lab, ends[pr.b].lab);
+    }
+  }
+  const remap = new Int32Array(n + 1);
+  let m = 0;
+  for (let i = 1; i <= n; i++) {
+    const r = find(i);
+    if (!remap[r]) remap[r] = ++m;
+    remap[i] = remap[r];
+  }
+  for (let i = 0; i < lab.length; i++) if (lab[i]) lab[i] = remap[lab[i]];
+
+  /* ── 4. give every ink pixel back to its nearest stroke ───────────────── */
+  const out = new Int32Array(S * S);
+  const queue = new Int32Array(S * S);
+  let head = 0, tail = 0;
+  for (let i = 0; i < lab.length; i++) {
+    if (lab[i] && ink[i]) { out[i] = lab[i]; queue[tail++] = i; }
+  }
+  while (head < tail) {
+    if (!(head & 32767) && mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    const q = queue[head++];
+    const x = q % S;
+    for (let d = 0; d < 8; d++) {
+      const r = q + N8[d];
+      if (r < 0 || r >= out.length) continue;
+      if (Math.abs((r % S) - x) > 1) continue;
+      if (ink[r] && !out[r]) { out[r] = out[q]; queue[tail++] = r; }
+    }
+  }
+  /* a speck the thinner ate whole is its own mark, not a hole in the drawing */
+  for (let i = 0; i < ink.length; i++) {
+    if (!ink[i] || out[i]) continue;
+    m++;
+    head = tail = 0; queue[tail++] = i; out[i] = m;
+    while (head < tail) {
+      const q = queue[head++];
+      const x = q % S;
+      for (let d = 0; d < 8; d++) {
+        const r = q + N8[d];
+        if (r < 0 || r >= out.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        if (ink[r] && !out[r]) { out[r] = m; queue[tail++] = r; }
+      }
+    }
+  }
+  return { lab: out, n: m };
+}
+
+/* ── 5. fold away the strokes too small to be worth a layer ────────────────
+   DROPPING them is not an option: their ink would leave the drawing, and a
+   drawing that loses marks by being taken apart is worse than one that was
+   never taken apart. Each is given to whichever neighbour it shares the most
+   border with. */
+async function mkStrokeMergeSmall(lab, ink, S, minArea, opts) {
+  const cfg = opts || {};
+  mkTraceCheck(cfg);
+  let t0 = performance.now();
+  let n = 0;
+  for (let i = 0; i < lab.length; i++) if (lab[i] > n) n = lab[i];
+  if (!n) return 0;
+  const N8 = [-S - 1, -S, -S + 1, -1, 1, S - 1, S, S + 1];
+  const A = new Int32Array(n + 1);
+  for (let i = 0; i < lab.length; i++) if (lab[i]) A[lab[i]]++;
+  for (let guard = 0; guard < 12; guard++) {
+    if (mkSliceDue(t0)) { await mkYield(cfg); t0 = performance.now(); }
+    let small = 0;
+    for (let L = 1; L <= n; L++) if (A[L] && A[L] < minArea) small++;
+    if (!small) break;
+    const touch = new Array(n + 1);
+    for (let i = 0; i < lab.length; i++) {
+      const L = lab[i];
+      if (!L || A[L] >= minArea) continue;
+      const x = i % S;
+      for (let d = 0; d < 8; d++) {
+        const r = i + N8[d];
+        if (r < 0 || r >= lab.length) continue;
+        if (Math.abs((r % S) - x) > 1) continue;
+        const K = lab[r];
+        if (!K || K === L) continue;
+        if (!touch[L]) touch[L] = {};
+        touch[L][K] = (touch[L][K] || 0) + 1;
+      }
+    }
+    const into = new Int32Array(n + 1);
+    let any = 0;
+    for (let L = 1; L <= n; L++) {
+      if (!A[L] || A[L] >= minArea || !touch[L]) continue;
+      let best = 0, bn = -1;
+      const keys = Object.keys(touch[L]);
+      for (let k = 0; k < keys.length; k++) {
+        const K = +keys[k];
+        /* never merge into something even smaller — that just moves the
+           problem and can ping-pong two specks between each other */
+        if (A[K] < minArea && A[K] <= A[L]) continue;
+        if (touch[L][keys[k]] > bn) { bn = touch[L][keys[k]]; best = K; }
+      }
+      if (best) { into[L] = best; any++; }
+    }
+    if (!any) break;
+    for (let i = 0; i < lab.length; i++) {
+      const L = lab[i];
+      if (L && into[L]) lab[i] = into[L];
+    }
+    A.fill(0);
+    for (let i = 0; i < lab.length; i++) if (lab[i]) A[lab[i]]++;
+  }
+  const remap = new Int32Array(n + 1);
+  let k = 0;
+  for (let i = 0; i < lab.length; i++) {
+    const L = lab[i];
+    if (!L) continue;
+    if (!remap[L]) remap[L] = ++k;
+    lab[i] = remap[L];
+  }
+  return k;
+}
+
+/* the same shape mkInkComponents hands back, so mkTraceImage cannot tell the
+   difference and every line below it is untouched */
+async function mkStrokeComponents(img, S, opts) {
+  const cfg = opts || {};
+  const base = mkInkComponents(img, S, Object.assign({}, cfg, { inkOnly: true }));
+  if (!base) return null;
+  const minAreaFraction = Math.max(0.000002, Number(cfg.minAreaFraction) || 0.00006);
+  const minArea = Math.max(8, Math.round(S * S * minAreaFraction));
+  const seg = await mkStrokeSegment(base.ink, S, cfg);
+  if (!seg || !seg.n) return null;
+  const n = await mkStrokeMergeSmall(seg.lab, base.ink, S, minArea, cfg);
+  if (!n || n > 4000) return null;
+  const lab = seg.lab, d = base.d;
+  const area = new Int32Array(n + 1);
+  const x0 = new Int32Array(n + 1).fill(S), y0 = new Int32Array(n + 1).fill(S);
+  const x1 = new Int32Array(n + 1).fill(-1), y1 = new Int32Array(n + 1).fill(-1);
+  const sr = new Float64Array(n + 1), sg = new Float64Array(n + 1), sb = new Float64Array(n + 1);
+  for (let i = 0; i < lab.length; i++) {
+    const L = lab[i];
+    if (!L) continue;
+    area[L]++;
+    const px = i % S, py = (i / S) | 0;
+    if (px < x0[L]) x0[L] = px; if (px > x1[L]) x1[L] = px;
+    if (py < y0[L]) y0[L] = py; if (py > y1[L]) y1[L] = py;
+    const j = i * 4;
+    sr[L] += d[j]; sg[L] += d[j + 1]; sb[L] += d[j + 2];
+  }
+  const comps = [];
+  for (let L = 1; L <= n; L++) {
+    if (!area[L]) continue;
+    comps.push({ id: L, area: area[L], x0: x0[L], y0: y0[L], x1: x1[L], y1: y1[L],
+                 r: sr[L] / area[L], g: sg[L] / area[L], b: sb[L] / area[L] });
+  }
+  return { lab, comps, S, inked: base.inked, mid: base.mid,
+           frame: base.frame, sourceW: base.sourceW, sourceH: base.sourceH };
+}
+
+/* what a part looks like, in the terms a person would use about it */
+function mkNamePart(p, all, S) {
+  const w = p.w, h = p.h, cx = p.cx, cy = p.cy;
+  if (p.isOutline) return "Charm outline";
+  if (p.isHoop) return "Hoop ring";
+  /* ── A STITCH IS NOT AN EYE ────────────────────────────────────────────
+     Everything below this line reads a drawing as a FACE — two matching
+     blobs level with each other are eyes, a wide low one is a mouth — which
+     is a good guess about a character charm and a bad one about line work,
+     where the two "matching blobs level with each other" are the third pair
+     of stitches down a baseball seam. A stroke gets named for what it is:
+     a ring, a line, or a mark. */
+  if (p.stroke) {
+    if (p.holes) return "Ring";
+    return Math.max(w, h) >= 0.28 ? "Line" : "Mark";
+  }
+  if (p.eye) return p.eye;
+  /* wide, low, and thin for its width: a mouth */
+  if (cy > 0.52 && w > 0.16 && w > h * 1.6) return "Mouth";
+  /* small, central, between the eyes and the mouth: a nose */
+  if (Math.abs(cx - 0.5) < 0.12 && cy > 0.34 && cy < 0.68 && w < 0.22 && h < 0.26) return "Nose";
+  if (p.holes) return "Ring";
+  if (Math.max(w, h) < 0.06) return "Dot";
+  if (w > h * 3 || h > w * 3) return "Line";
+  return "Shape";
+}
+
+/* the two that are the same size, the same height up, and mirrored about the
+   middle — a pair of eyes says so by its geometry, not by hope */
+function mkFindEyes(parts) {
+  const cands = parts.filter((p) => !p.isOutline && !p.isHoop &&
+                                    p.cy < 0.62 && p.w < 0.34 && p.h < 0.34);
+  let best = null;
+  for (let i = 0; i < cands.length; i++) {
+    for (let j = i + 1; j < cands.length; j++) {
+      const a = cands[i], b = cands[j];
+      const bigger = Math.max(a.area, b.area), smaller = Math.min(a.area, b.area);
+      if (smaller < bigger * 0.55) continue;             /* not the same size */
+      if (Math.abs(a.cy - b.cy) > 0.07) continue;        /* not level */
+      if (Math.abs(a.cx - b.cx) < 0.08) continue;        /* not apart */
+      const mirror = Math.abs((a.cx + b.cx) / 2 - 0.5);
+      if (mirror > 0.09) continue;                       /* not centred */
+      const score = mirror + Math.abs(a.cy - b.cy);
+      if (!best || score < best.score) best = { a, b, score };
+    }
+  }
+  if (!best) return;
+  /* left and right as the WEARER sees them, which is how a person naming
+     the parts of a face would say it */
+  const left = best.a.cx < best.b.cx ? best.a : best.b;
+  const right = left === best.a ? best.b : best.a;
+  left.eye = "Left eye";
+  right.eye = "Right eye";
+}
+
+/* Trace one loaded image into ready-made layer objects. Returns null when
+   the picture is not linework — the caller then leaves the bitmap alone. */
+function mkTraceImage(img, colour, tune) {
+  const cfg = tune || {};
+  mkTraceCheck(cfg);
+  const S = Math.max(420, Math.round(cfg.size || MK_TRACE_S));
+  const eps0 = Math.max(0.00008, Number(cfg.eps) || MK_TRACE_EPS_STEPS[0]);
+  const maxParts = Math.max(8, Math.round(cfg.maxParts || MK_TRACE_MAXPARTS));
+  const budgetCap = Math.max(1200, Math.round(cfg.budget || MK_TRACE_BUDGET));
+  const partCap = Math.max(900, Math.round(cfg.partMax || MK_TRACE_PART_MAX));
+  const minAreaFraction = Math.max(0.000002, Number(cfg.minAreaFraction) || 0.00006);
+  const highFidelity = !!cfg.highFidelity;
+  const coordScale = highFidelity ? 1e5 : 1e4;
+  const forceEngrave = !!cfg.forceEngrave;
+  /* ── THE SEGMENTING MAY ALREADY BE DONE ───────────────────────────────
+     Line work is segmented into strokes rather than blobs, and that pass now
+     hands the thread back while it runs, so a 2K drawing cannot freeze the
+     studio for half a second at a time. Handing the thread back makes it
+     async — and this function is called synchronously by the import path and
+     by every version trace, so it stays synchronous and accepts the finished
+     segmentation as an argument instead. mkTraceLineArtRaster is the one
+     caller that supplies it. `cfg.strokes` still travels, because it decides
+     how the parts are NAMED and stops a row of stitches being read as a face. */
+  const cc = cfg.pre || mkInkComponents(img, S, cfg);
+  if (!cc) return null;
+  if (cc.mid != null && cc.mid > (cfg.maxMidFraction == null ? 0.30 : Number(cfg.maxMidFraction))) return null;
+  const minArea = Math.max(8, Math.round(S * S * minAreaFraction));
+  let parts = cc.comps.filter((c) => c.area >= minArea);
+  if (!parts.length || parts.length > maxParts) return null;
+
+  parts.sort((a, b) => {
+    const ea = (a.x1 - a.x0 + 1) * (a.y1 - a.y0 + 1);
+    const eb = (b.x1 - b.x0 + 1) * (b.y1 - b.y0 + 1);
+    return (eb - ea) || (b.area - a.area);
+  });
+  parts = parts.map((c) => ({
+    src: c, area: c.area,
+    x: c.x0 / S, y: c.y0 / S,
+    w: (c.x1 - c.x0 + 1) / S, h: (c.y1 - c.y0 + 1) / S,
+    cx: (c.x0 + c.x1 + 1) / 2 / S, cy: (c.y0 + c.y1 + 1) / 2 / S,
+    stroke: !!cfg.strokes,
+    intent: mkPixelIntent(c.r || 0, c.g || 0, c.b || 0) || "engrave",
+  }));
+  const big = parts[0];
+  if (big.w > 0.55 && big.h > 0.55) big.isOutline = true;
+  parts.forEach((p) => {
+    if (p.isOutline) return;
+    if (p.cy < 0.16 && p.w < 0.4 && Math.abs(p.cx - 0.5) < 0.22) p.isHoop = true;
+  });
+  /* the face reading belongs to the blob tracer — see mkNamePart */
+  if (!cfg.strokes) mkFindEyes(parts);
+
+  /* ONE scratch mask for every part, not one PER part. A fresh Uint8Array(S*S)
+     inside this loop is four megabytes at 2K, and two hundred strokes made it
+     eight hundred megabytes of allocation and collection on the main thread
+     before a single contour was walked. The buffer is now reused and only the
+     part's own rectangle is written and wiped, so the cost of the loop is the
+     sum of the parts' areas rather than the canvas area times the part count. */
+  const raw = [];
+  const mask = new Uint8Array(S * S);
+  for (const p of parts) {
+    if (!(raw.length & 15)) mkTraceCheck(cfg);
+    const id = p.src.id;
+    for (let y = p.src.y0; y <= p.src.y1; y++) {
+      const row = y * S;
+      for (let x = p.src.x0; x <= p.src.x1; x++) if (cc.lab[row + x] === id) mask[row + x] = 1;
+    }
+    raw.push({ p, cs: mkTraceMask(mask, S, p.src).filter((c) => c.length >= 8) });
+    /* wipe exactly what was written — a stale 1 from the previous stroke
+       would be traced as part of the next one */
+    for (let y = p.src.y0; y <= p.src.y1; y++) {
+      const row = y * S;
+      mask.fill(0, row + p.src.x0, row + p.src.x1 + 1);
+    }
+  }
+
+  const traced = [];
+  let eps = eps0;
+  const traceAll = () => {
+    mkTraceCheck(cfg);
+    traced.length = 0;
+    let total = 0;
+    for (const r0 of raw) {
+      if (!(traced.length & 31)) mkTraceCheck(cfg);
+      let contours = r0.cs.map((c) => mkRdp(c, eps * S)).filter((c) => c.length >= 6);
+      if (!contours.length) continue;
+      let own = contours.reduce((t, c) => t + c.length, 0);
+      let e2 = eps, guard = 0;
+      while (own > partCap && guard++ < 10) {
+        e2 *= highFidelity ? 1.45 : 1.7;
+        contours = r0.cs.map((c) => mkRdp(c, e2 * S)).filter((c) => c.length >= 6);
+        own = contours.reduce((t, c) => t + c.length, 0);
+      }
+      if (!contours.length) continue;
+      const flat = [], q = [];
+      contours.forEach((c) => {
+        q.push(c.length / 2);
+        for (let k = 0; k < c.length; k += 2) {
+          flat.push(Math.round((c[k] / S) * coordScale) / coordScale,
+                    Math.round((c[k + 1] / S) * coordScale) / coordScale);
+        }
+      });
+      total += flat.length;
+      traced.push({ p: r0.p, flat, q, holes: contours.length - 1 });
+    }
+    return total;
+  };
+
+  /* Honour a caller's genuinely finer tolerance. The old ladder silently
+     snapped any value below 0.0005 back UP to 0.0005, defeating high-fidelity
+     imports. Escalation now starts exactly where the caller asked. */
+  const ladder = [eps0].concat(MK_TRACE_EPS_STEPS.filter((v) => v > eps0 + 1e-10));
+  let step = 0, total = traceAll();
+  while (total > budgetCap && step < ladder.length - 1) {
+    eps = ladder[++step];
+    total = traceAll();
+  }
+  let hard = 0;
+  while (total > budgetCap && hard++ < 10) { eps *= highFidelity ? 1.35 : 1.5; total = traceAll(); }
+  if (!traced.length) return null;
+
+  const items = traced.map((t) => {
+    t.p.holes = t.holes;
+    const intent = forceEngrave ? "engrave" : (t.p.isOutline ? "engrave" : (t.p.intent || "engrave"));
+    const ink = intent === "engrave" ? (colour || MK_ENGRAVE) : mkIntentInk(intent);
+    const nm = mkNamePart(t.p, traced, S);
+    return mkPack({
+      id: mkId(), t: "fill", c: ink,
+      f: intent === "none" ? "none" : ink,
+      w: 0.0012,
+      p: t.flat, q: t.q,
+      n: intent === "cutout" ? "Cut out · " + nm
+       : intent === "none" ? "Outline · " + nm : nm,
+      tr: 1,
+    });
+  });
+  const seen = {};
+  items.forEach((it) => {
+    const base = it.n;
+    seen[base] = (seen[base] || 0) + 1;
+    if (seen[base] > 1) it.n = base + " " + seen[base];
+  });
+  return { items, points: total, eps, frame: cc.frame, sourceW: cc.sourceW, sourceH: cc.sourceH };
+}
+
+/* ── doing it, at the moment a drawing appears ───────────────────────────
+   Automatic, because "take this apart for me" is not a thing anyone should
+   have to know to ask for, and idle-timed, because it must never make a
+   finished generation feel slower than it is. */
+const MK_TRACED = new Set();          /* version keys done this session */
+function mkVersionKey(v) { return String((v && v.n) != null ? v.n : ""); }
+
+async function traceVersion(v, opts) {
+  const force = !!(opts && opts.force);
+  /* ── A CHARM WITH NO DRAWING IS STILL A THING WITH PARTS ───────────────
+     This used to refuse outright on `!v.url`, and refusing was the whole of
+     why a charm adopted from our catalogue sat in the mark-up sheet like a
+     photograph pinned to a wall: nothing to select, nothing in Layers,
+     nothing to drag, and every tool that works on an OBJECT quietly doing
+     nothing because there was no object — only a backdrop.
+
+     The tracer never needed the drawing. mkInkComponents already counts a
+     saturated pixel as ink (`sat > 70 && lum < 214`), which is exactly what
+     gold is and exactly what the white ground and its grey shadow are not,
+     so a charm photograph segments on the same rule that separates it from
+     its background everywhere else in this studio. What it CANNOT do is
+     tell an engraved line from a polished one — that separates at 0.037 and
+     is not recoverable from a photograph — so it does not try, and what it
+     returns is the silhouette and the genuine openings, as outlines. */
+  const fromGold = !!(v && !v.url && v.renderUrl);
+  if (!v || (!v.url && !v.renderUrl)) return null;
+  /* a trace writes state.markups[versionNumber] — the one key shape that is
+     GUARANTEED to collide between two designs */
+  const ep = epochNow();
+  const key = mkVersionKey(v);
+  if (!key) return null;
+  const saved = (state.markups || {})[key];
+  /* never over-write work: a drawing somebody has already marked up, or
+     already traced, is left exactly as it is */
+  if (!force && saved && (mkItemsOf(saved).length || saved.traced)) return null;
+  if (!force && MK_TRACED.has(key)) return null;
+  MK_TRACED.add(key);
+
+  const ref = fromGold ? { u: v.renderUrl, sp: v.renderPath || "" }
+                       : { u: v.url, sp: v.path || "" };
+  let img = mkImageFor(ref);
+  if (!img) {
+    await mkAwaitImages([{ t: "img", u: ref.u, sp: ref.sp }], 12000);
+    img = mkImageFor(ref);
+  }
+  if (!img || !img.width) { MK_TRACED.delete(key); return null; }
+  /* fetching the picture awaits, and "version 4" of the design they left is
+     not "version 4" of the one they are in now */
+  if (!sameProject(ep)) { MK_TRACED.delete(key); return null; }
+
+  const res = mkTraceImage(img, "#1c1d1d");
+  if (!res) return null;
+
+  if (fromGold) {
+    /* ── OUTLINES, NOT INK ───────────────────────────────────────────────
+       Every part comes back from the tracer saying ENGRAVE, which on a
+       DRAWING is right — the black on the page is the engraving. On a
+       PHOTOGRAPH it is a lie twice over: the tracer read the whole gold
+       body as one saturated region, and filling that region with ink would
+       drop a black charm-shaped slab over the customer's charm. So the
+       parts become boundaries: the shape is there to be selected, dragged,
+       scaled and filled deliberately, and the photograph underneath stays
+       the thing you are looking at.
+
+       And nothing here claims to know what is engraved. If the customer
+       wants an area engraved or cut they say so with the bucket, on top of
+       a real contour — which is the whole point of having contours. */
+    res.items.forEach((it) => {
+      it.f = "none";
+      it.c = MK_OUTLINE;
+      if (!/^Outline · /.test(String(it.n || ""))) it.n = "Outline · " + (it.n || "Charm");
+    });
+  }
+
+  /* ── AND NOW GIVE THE PARTS BACK THEIR INSTRUCTIONS ────────────────────
+     The trace can only see ink, so every part of it arrives saying ENGRAVE.
+     The customer's own account of which areas are holes is carried on the
+     version this drawing came from — so it is projected back on here, at the
+     one moment the layers come into existence, and the sheet opens showing
+     blue where they said blue.
+
+     Skipped for a charm traced from its own photograph: there is no drawing
+     the plan could describe, and re-colouring bare outlines from a plan that
+     was never about them would be inventing instructions. */
+  const plan = fromGold ? [] : mkFillPlan(v);
+  if (!fromGold) {
+    try { mkApplyPlanToTrace(res.items, plan); } catch (e) { /* never blocks a trace */ }
+  }
+
+  /* ── THE RECEIPT ─────────────────────────────────────────────────────────
+     The rulebook travels with every generation and is stored on every
+     version — but a rulebook the model can quietly disobey is a request, not
+     a rule. So the drawing is now CHECKED the moment it arrives: its own
+     pixels, read back with the same classifier that reads a reference,
+     against the plan it was generated from. Every declared cut-out the
+     drawing failed to honour is written on the version, told to the
+     customer, and — the part that closes the loop — DICTATED into the next
+     generation as an explicit correction, in words, digit-free. The model
+     no longer gets to lose an instruction twice. */
+  try { mkAuditVersion(v, img, plan); } catch (e) { /* audit never blocks */ }
+
+  if (!state.markups) state.markups = {};
+  const prev = state.markups[key] || {};
+  state.markups[key] = {
+    items: res.items,
+    /* kept beside the layers so a re-trace, a re-render and another device
+       all start from the same account of the design */
+    plan: zoneList(plan, "planSave"),
+    mode: mkModeNorm(prev.mode),
+    crop: prev.crop || [],
+    baseRot: prev.baseRot || 0,
+    guides: prev.guides || 0,
+    gridN: prev.gridN || 12,
+    groups: [],
+    traced: 1,
+    /* ── THE GHOST RULE DOES NOT APPLY TO A PHOTOGRAPH ──────────────────
+       Once a DRAWING is taken apart the vectors ARE the drawing, so the
+       bitmap is hidden and moving a traced eye does not leave the original
+       eye sitting behind it. A charm is the other way round: the vectors
+       are a boundary around a photograph, and hiding the photograph would
+       replace the customer's charm with a red outline of it. So the
+       bitmap stays shown, and it is recorded so re-opening the sheet on
+       another day does not turn the charm off. */
+    fromGold: fromGold ? 1 : 0,
+    showBitmap: fromGold ? 1 : (prev.showBitmap ? 1 : 0),
+    /* untouched by hand, so a re-generate is still a plain re-generate and
+       not "here is a marked-up sheet" — see buildMarkupPayload */
+    dirty: 0,
+    updatedAt: now(),
+  };
+  saveSession();
+  /* the sheet, if it happens to be open on this very version */
+  if (__mk && __mk.key === key && !__mk.items.length) {
+    __mk.items = res.items.map(mkPack);
+    __mk.traced = true;
+    if (fromGold) { __mk.showBitmap = true; __mk.fromGold = true; }
+    __mk.dirty = false;
+    mkApplyBase();
+    mkTouch();
+    mkRenderLayers();
+  }
+  if (typeof mkLibRefresh === "function") mkLibRefresh();
+  return res;
+}
+/* fire and forget, off the critical path of a generation */
+function traceVersionSoon(v) {
+  const go = () => { traceVersion(v).catch(() => {}); };
+  if (window.requestIdleCallback) window.requestIdleCallback(go, { timeout: 2500 });
+  else setTimeout(go, 400);
+}
+
+function mkStartCrop() {
+  if (!__mk) return;
+  mkCloseEditor();
+  __mk.cropping = { rect: null };
+  __mk.sel = -1;
+  /* the crop bar takes the property row's place, so the square stage keeps
+     exactly the height it had — see the note on .markup-crop */
+  $("#markupProps").hidden = true;
+  const cb0 = $("#markupCropBar"); if (cb0) cb0.hidden = false;
+  $("#markupStage").classList.add("is-cropping");
+  const ca0 = $("#mkCropApply"); if (ca0) ca0.disabled = true;
+  mkRedraw();
+}
+function mkEndCrop(apply) {
+  if (!__mk || !__mk.cropping) return;
+  const r = __mk.cropping.rect;
+  __mk.cropping = null;
+  const cb1 = $("#markupCropBar"); if (cb1) cb1.hidden = true;
+  $("#markupProps").hidden = false;
+  $("#markupStage").classList.remove("is-cropping");
+  $("#markupOverlay").querySelectorAll(".mk-croprect").forEach((e) => e.remove());
+  if (apply && r && r.w > 0.05) {
+    mkPushUndo();
+    __mk.items.forEach((it) => {
+      const p = it.p || [];
+      for (let k = 0; k + 1 < p.length; k += 2) {
+        p[k] = (p[k] - r.x) / r.w;
+        p[k + 1] = (p[k + 1] - r.y) / r.w;
+      }
+    });
+    /* crops compose: a crop of a crop is a smaller window on the original */
+    const prev = __mk.crop || { x: 0, y: 0, w: 1 };
+    __mk.crop = { x: prev.x + r.x * prev.w, y: prev.y + r.y * prev.w, w: prev.w * r.w };
+    mkApplyBase();
+  }
+  mkTouch();
+}
+function mkPaintCropRect() {
+  const host = $("#markupOverlay");
+  host.querySelectorAll(".mk-croprect").forEach((e) => e.remove());
+  const r = __mk.cropping && __mk.cropping.rect;
+  if (!r) return;
+  const el = document.createElement("div");
+  el.className = "mk-sel mk-croprect";
+  el.style.left = (r.x * 100) + "%"; el.style.top = (r.y * 100) + "%";
+  el.style.width = (r.w * 100) + "%"; el.style.height = (r.w * 100) + "%";
+  el.style.boxShadow = "0 0 0 9999px rgba(28,29,29,.42)";
+  host.appendChild(el);
+}
+
+/* ═══════════ opening and closing ═════════════════════════════════════════ */
+function mkBlank(key, compose) {
+  return mkDefineSel({
+    key, compose: !!compose,
+    selIds: [], groups: {},
+    /* the marquee's box, and the drag that is drawing or moving it. Named
+       here rather than left to appear on first use, so a fresh sheet cannot
+       inherit the last one's box — the overlay is reused between opens and
+       the furniture in it would otherwise outlive the design it belonged to. */
+    msel: null, msDrag: null,
+    tool: "draw", live: null, editing: null, cropping: null,
+    /* NOT RED ANY MORE. Red is now one of the three engraving instructions,
+       and a pen that draws in it would put the reserved colour on the sheet
+       for a reason that has nothing to do with the metal. Green reads as ink
+       — which is what a drawn line is — and stands off a black drawing just
+       as well as red did. */
+    color: compose ? "#1c1d1d" : "#0f7a4a",
+    fill: "none", w: compose ? 0.006 : 0.008, ff: "sans", fs: 0.036,
+    mode: mkModeNorm(null),
+    items: [], undo: [], redo: [],
+    crop: null, baseRot: 0, baseFade: 1,
+    /* The grid is BACK, and off until asked for — it was removed along with
+       a Guides button that has not come back, so it needed a home rather
+       than an execution. Alignment and the read-outs are on, because they
+       only appear while something is actually being dragged. */
+    guides: { grid: true, mirror: false, snap: false, align: true, dims: true },
+    gridN: 48,
+    /* OFF, and off is the answer for most designs: a drawing that already
+       shows a ring, a bail or a hole to thread through gets a second one
+       the moment this is true, and the workshop cuts both. Nothing is added
+       to anybody's charm until they ask for it. */
+    hoop: 0,
+    eraseSize: 0.035,
+    eraseDraw: null,
+    z: 1, px: 0, py: 0,
+  });
+}
+function mkLoadInto(mk, saved) {
+  /* the undo/redo stacks ride the session too, so "undo" still works after a
+     reload or on another device — continuing where you left off includes
+     being able to take the last thing back */
+  const hh = (state.mkHistory || {})[mk.key];
+  if (hh) {
+    mk.undo = Array.isArray(hh.u) ? hh.u.filter((v) => typeof v === "string") : [];
+    mk.redo = Array.isArray(hh.r) ? hh.r.filter((v) => typeof v === "string") : [];
+  }
+  if (!saved) return mk;
+  mk.items = mkItemsOf(saved).map(mkPack);
+  mk.mode = mkModeNorm(saved.mode);
+  if (Array.isArray(saved.crop) && saved.crop.length === 3) {
+    mk.crop = { x: saved.crop[0], y: saved.crop[1], w: saved.crop[2] };
+  }
+  mk.baseRot = Number(saved.baseRot) || 0;
+  mk.traced = !!saved.traced;
+  /* absent on every design saved before the switch existed, and absent must
+     read as OFF — the old behaviour added a hoop by guessing at the
+     reference, and inheriting that guess as a stored "yes" would put one on
+     drawings whose owner never chose it */
+  mk.hoop = saved.hoop ? 1 : 0;
+  /* A sheet traced from a photograph must come back with the photograph
+     still on. Without this the ghost rule reads `traced && !showBitmap` on
+     the next open and turns the charm off, which is the same blank sheet by
+     a longer route. */
+  mk.showBitmap = !!saved.showBitmap || !!saved.fromGold;
+  mk.fromGold = !!saved.fromGold;
+  mk.dirty = !!saved.dirty;
+  /* group names come back with the groups — an "Eyes" group that reloaded as
+     "Group" would be a group you have to identify all over again */
+  mk.groups = {};
+  (Array.isArray(saved.groups) ? saved.groups : []).forEach((g2) => {
+    if (g2 && g2.id) mk.groups[String(g2.id)] = { n: String(g2.n || "Group").slice(0, 48), col: g2.col ? 1 : 0 };
+  });
+  /* any group tag on an item that arrived without a name still IS a group —
+     imported layers have carried a shared tag since the library landed */
+  mk.items.forEach((it) => {
+    if (it.g && !mk.groups[it.g]) mk.groups[it.g] = { n: "Group", col: 0 };
+  });
+  /* GRID, CENTRE LINES AND SNAP WERE SCAFFOLDING, and the scaffolding has
+     come down with the Guides button. Only symmetry survived — it halves the
+     work of drawing anything symmetrical, which is not a guide, it is a
+     tool — and it now lives with the other whole-sheet settings. Anything
+     saved with the old flags still opens; it just opens on clean paper. */
+  /* WHITE INK WAS IN THE OLD PALETTE, and the palette is gone — so a mark
+     saved in white is now invisible on white paper with no way to change
+     it. Anything that pale becomes the engraving ink on the way in: it is
+     the only reading that leaves the customer their work. */
+  mk.items.forEach((it) => {
+    if (it.t === "img" || it.t === "fill") return;
+    const c = String(it.c || "").toLowerCase();
+    if (/^#(f{3,6}|f[0-9a-f]f[0-9a-f]f[0-9a-f])$/.test(c) || c === "#ffffff" || c === "#fff") {
+      it.c = MK_ENGRAVE;
+    }
+  });
+  const g = Number(saved.guides) || 0;
+  /* five flags in one integer, the way they have always been stored, with
+     the two new ones defaulting ON for a design saved before they existed */
+  mk.guides = {
+    grid: !!(g & 1), mirror: !!(g & 4), snap: !!(g & 8),
+    align: !(g & 16), dims: !(g & 32),
+  };
+  /* the same range the slider can express, so a saved value can never
+     show one number on the control and mean another */
+  mk.gridN = Math.max(4, Math.min(48, Number(saved.gridN) || 12));
+  return mk;
+}
+
+/* Mark up the DRAWING of the current version. The button that opens this is
+   always available — including while the metal render is on screen — because
+   direction is always about the drawing, and hiding the way to give it was
+   only ever a way to make people hunt for it. */
+/* ═══════════ THE TWO SOURCES ═════════════════════════════════════════════
+   A design is TWO pictures, and it always was: the reference the customer
+   made, and the drawing the studio made from it. Every iteration used to be
+   forced through the second one — so when the drawing lost something, the
+   only available move was to ask the drawing to correct itself, while the
+   reference, the picture that is actually right, sat behind a different
+   screen and could not be reached without leaving.
+
+   The switch in the modal's head changes BOTH the sheet you are working on
+   and what the gold button will re-draw from, because those are the same
+   decision. It is stored on the version, so a design reopens where it was
+   left, on this device and on any other. */
+let __mkSrc = "ai";
+function mkRefSheetAvailable() {
+  return !!(state.reference && (state.reference.url || state.reference.drawn));
+}
+function mkSrcSay() {
+  const btn = $("#markupRegenLbl");
+  /* two words, not seven — the button sits beside a cost chip in a footer
+     that also has to hold the mark count and the metal tally */
+  if (btn) btn.textContent = __mkSrc === "ref" ? "Re-draw" : "Re-draw from marks";
+  const box = $("#markupSrc");
+  if (!box) return;
+  box.hidden = !mkRefSheetAvailable();
+  box.querySelectorAll(".mk-src").forEach((b) => {
+    const on = b.dataset.src === __mkSrc;
+    b.classList.toggle("is-on", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+/* switching persists what is on the sheet first: nobody's work is ever the
+   price of looking at the other picture */
+function mkSrcSet(which, quiet) {
+  const want = which === "ref" ? "ref" : "ai";
+  if (want === "ref" && !mkRefSheetAvailable()) {
+    toast("There's no reference on this design yet", "err");
+    return;
+  }
+  if (__mk) { mkCloseEditor(true); mkPersist(); }
+  __mkSrc = want;
+  const v = state.versions[state.currentVersion];
+  if (v) { v.src = want; saveSession(); }
+  mkRegionForget();                       /* the cached sheet is the old one */
+  openMarkup(true);
+  if (!quiet) {
+    toast(want === "ref"
+      ? "This is your own reference — change anything, then Re-generate and the drawing is made again from it"
+      : "This is the studio's drawing — mark it up, then Re-generate to re-draw from your marks", "gold");
+  }
+}
+
+/* ── EDITING THE REFERENCE, BEFORE ANYTHING HAS BEEN MADE ──────────────────
+   The line drawing arrives while the customer is still on step 2 with no
+   version to their name, and it is precisely then that they want to change
+   it — that is the whole point of turning the photograph into line work.
+   openMarkup has always refused without a version, for the good reason that
+   there was nothing to mark up. There is now. */
+function openReferenceMarkup() {
+  const r = state.reference;
+  if (!r || !r.url) { toast("The drawing isn't ready yet — one moment", "err"); return; }
+  openMarkup(false, { refOnly: true });
+}
+function openMarkup(keepSrc, opts) {
+  const refOnly = !!(opts && opts.refOnly);
+  const v = state.versions[state.currentVersion];
+  if (!v && !refOnly) { toast("Generate a design first — then you can mark it up", "err"); return; }
+  /* a different sheet starts with a clean pixel world — see mkPxResetForSheet
+     for why the shared "__base__" key makes this load-bearing rather than
+     merely tidy. keepSrc means the SAME sheet, switching which picture it
+     shows, so the buffers stay. */
+  if (!keepSrc) mkPxResetForSheet();
+  if (v && state.stageView !== "bw") { state.stageView = "bw"; renderStage(); }
+  ensureSession();
+  /* THE REFERENCE, WHENEVER THERE IS ONE. The choice used to be stored per
+     version and restored here; it is not a choice any more. The reference is
+     the picture that is right — it is what the customer made — and every
+     correction they were reaching for was a correction to that. The drawing
+     is the fallback for a design that has no reference sheet to open. */
+  if (!keepSrc) __mkSrc = mkRefSheetAvailable() ? "ref" : "ai";
+  if (__mkSrc === "ref" && !mkRefSheetAvailable()) __mkSrc = "ai";
+  /* with no version there is only one sheet it can possibly be */
+  if (!v) __mkSrc = "ref";
+
+  const base = $("#markupBase");
+  /* NO crossOrigin here. Firebase Storage download URLs serve fine to a plain
+     <img>, but a CORS-mode request against a bucket with no CORS rule fails
+     the load outright — which is exactly why this modal once opened with a
+     broken image icon. The composite makes its own CORS attempt on a separate
+     Image and degrades to marks-on-white if refused. */
+  base.removeAttribute("crossorigin");
+
+  if (__mkSrc === "ref") {
+    /* ── THE REFERENCE SHEET ────────────────────────────────────────────
+       For a design that began as a drawing this IS the sketch — the same
+       "draw" sheet, every component still live — so it opens the way the
+       sketchpad opens it: white paper, no bitmap underneath, because the
+       items ARE the picture and painting the flattened PNG behind them
+       would draw everything twice. For a design that began as an upload or
+       a catalogue charm there are no items, so the reference itself is the
+       bitmap and marks go on top of it. */
+    const drawn = !!(state.reference && state.reference.drawn);
+    __mk = mkLoadInto(mkBlank("draw", drawn), (state.markups || {}).draw);
+    try { mkPaintMarqSel(); } catch (e) {}
+    __mk.url = state.reference.url || "";
+    if (!drawn) {
+      __mk.baseRef = { u: state.reference.url || "", sp: state.reference.path || "" };
+      base.hidden = false;
+      base.src = state.reference.url || "";
+    } else {
+      base.removeAttribute("src");
+      base.hidden = true;
+    }
+    $("#markupEyebrow").textContent = "Your own reference";
+    $("#markupTitle").textContent = "Change your reference";
+    $("#markupActions").hidden = false;
+    $("#markupComposeActions").hidden = true;
+    $("#markupMode").hidden = false;
+    /* One control, one name, in all three of the places that set it — it was
+     "Image Processing" here, "Read my marks" on a version and "Read my
+     sketch" on a drawing, which read as three different settings. */
+  const lblR = document.querySelector("#markupMode .markup-mode__lbl");
+    if (lblR) lblR.textContent = "Design Interpretation";
+    $("#mkEditSketch").hidden = true;
+    mkSrcSay();
+    mkShow(drawn);
+    /* ── THE SAME BELT THE VERSION SHEET HAS ─────────────────────────────
+       A line drawing that landed before this build, or one whose trace was
+       interrupted by a reload, comes apart the moment it is opened. Without
+       this the customer meets exactly the thing they reported: a picture
+       pinned to the sheet with nothing in it to take hold of. */
+    if (!drawn && !__mk.items.length && !__mk.traced &&
+        state.reference && state.reference.lineArtUrl) {
+      traceRefLineArt().then((res) => {
+        if (!res || !__mk || __mk.key !== MK_REF_SHEET) return;
+        toast(`Taken apart into ${res.items.length} objects — every one of them ` +
+              `is in Layers, and yours to move`, "gold");
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  /* ── THE PICTURE UNDERNEATH IS WHICHEVER ONE EXISTS ───────────────────
+     `v.url` is the production drawing, and reading it unconditionally is why
+     this modal opened blank on a charm adopted from our own catalogue:
+     those have no drawing and never will. The metal is the picture in that
+     case — it is what the customer is looking at and what their marks are
+     about. */
+  const mkBaseUrl = v.url || v.renderUrl || "";
+  const mkBasePath = v.url ? (v.path || "") : (v.renderPath || "");
+  __mk = mkLoadInto(mkBlank(String(v.n), false), (state.markups || {})[v.n]);
+  try { mkPaintMarqSel(); } catch (e) {}
+  __mk.url = mkBaseUrl;
+  /* the picture underneath, addressable the CORS-safe way — see mkBucketFill */
+  __mk.baseRef = { u: mkBaseUrl, sp: mkBasePath };
+  base.hidden = false;
+  const onGold = !v.url && !!v.renderUrl;
+  $("#markupEyebrow").textContent = onGold ? "Show us, right on the charm"
+                                           : "Show us, right on the drawing";
+  $("#markupTitle").textContent = onGold ? `Mark up charm v${v.n}`
+                                         : `Mark up drawing v${v.n}`;
+  $("#markupActions").hidden = false;
+  $("#markupComposeActions").hidden = true;
+  $("#markupMode").hidden = false;
+  const lbl0 = document.querySelector("#markupMode .markup-mode__lbl");
+  if (lbl0) lbl0.textContent = "Design Interpretation";
+  /* a design that began as a hand drawing keeps every component live —
+     this is the way back to them */
+  $("#mkEditSketch").hidden = !(state.reference && state.reference.drawn &&
+                                markupHasContent((state.markups || {}).draw));
+  base.src = mkBaseUrl;
+  mkSrcSay();
+  mkShow();
+  /* the belt to the generation's braces: a drawing made before this build,
+     or one whose trace was interrupted, comes apart the moment it is opened */
+  if (!__mk.items.length && !__mk.traced) {
+    traceVersion(v).then((res) => {
+      if (!res || !__mk || __mk.key !== String(v.n)) return;
+      toast(`Taken apart into ${res.items.length} objects — every one of them ` +
+            `is in Layers, and yours to move`, "gold");
+    }).catch(() => {});
+  }
+}
+
+/* The sketchpad: a blank sheet, no base image, and a different pair of
+   actions at the foot. Everything else — every tool, guide and gesture — is
+   identical, because it is the same surface. */
+function openCompose() {
+  /* A DESIGN EXISTS THE MOMENT SOMEBODY DRAWS.
+     Without this the sketchpad had no session to save into: saveSession()
+     returns silently when there is no active one, so every stroke made
+     before pressing "Use this as my reference" was written nowhere and the
+     design never appeared in My Designs. */
+  ensureSession();
+  state.designing = true;
+  if (!state.startMode) state.startMode = "draw";
+  __mkSrc = "ai";
+  if ($("#markupSrc")) $("#markupSrc").hidden = true;
+  __mk = mkLoadInto(mkBlank("draw", true), (state.markups || {}).draw);
+  try { mkPaintMarqSel(); } catch (e) {}
+  $("#markupEyebrow").textContent = "Your own hand";
+  $("#markupTitle").textContent = "Draw your charm";
+  $("#markupActions").hidden = true;
+  $("#markupComposeActions").hidden = false;
+  /* the exact/interpret choice belongs HERE too: it decides whether the
+     sketch is vectorized faithfully or read as a brief for the real thing */
+  $("#markupMode").hidden = false;
+  const lbl = document.querySelector("#markupMode .markup-mode__lbl");
+  if (lbl) lbl.textContent = "Design Interpretation";
+  $("#mkEditSketch").hidden = true;
+  const base = $("#markupBase");
+  base.removeAttribute("src");
+  base.hidden = true;
+  /* A BLANK SHEET USED TO ARRIVE RULED, on the theory that a grid helps you
+     start. It did — while there was a Guides button to turn it off with.
+     There is not any more, so ruling the paper permanently would be handing
+     everybody a grid they cannot put away. Clean paper it is. */
+  mkShow(true);
+
+  /* ── AND HERE IS WHERE THE DESIGN GETS ITS NAME ────────────────────────
+     One place, because openCompose is the one function that opens the
+     editor — whichever of the eight entry points got here. Hooking the
+     doors instead meant a list to keep up to date, and it put the dialog up
+     a frame BEFORE this modal, which paints over it: same z-index, later in
+     the document. Nobody saw the prompt on the way in; it was sitting
+     underneath the sketchpad and surfaced when they saved and closed. The
+     modal--name z-index is raised for the same reason.
+
+     Only for a design that is actually new: unnamed, nothing drawn from,
+     nothing generated. Reopening the sketchpad on work in progress asks
+     nothing, and neither does a second visit within the same page life. */
+  maybePromptNameOnOpen();
+}
+
+/* Deliberately narrow, and deliberately not clever. Anything that already
+   has a name, a reference or a version is not a new project; the id set
+   stops a design that was dismissed from asking again on every reopen. */
+const _namePrompted = new Set();
+function maybePromptNameOnOpen() {
+  const s = activeSession();
+  if (!s || s.named) return;
+  if (_namePrompted.has(s.id)) return;
+  if (state.reference || (state.versions || []).length) return;
+  _namePrompted.add(s.id);
+  /* a frame, so the editor has painted behind it */
+  requestAnimationFrame(() => promptNewProjectName(renderProjectName));
+}
+
+function mkShow(full) {
+  /* Establish the device shell before the modal is painted. Doing this one
+     frame later is visible as the old desktop rows flashing and then jumping
+     out of the way on a phone. */
+  try { mkMobileWorkspaceSync(); } catch (e) {}
+  /* every path into the editor comes through here, so this is where the name
+     chip is refreshed — the same reasoning that put the naming prompt in
+     openCompose rather than on each of the doors */
+  try { renderProjectName(); } catch (e) {}
+  setTimeout(mkMetalCoach, 500);
+  $("#markupModal").classList.add("is-open");
+  const inner = document.querySelector("#markupModal .markup__inner");
+  if (inner) inner.classList.toggle("is-full", !!full);
+  if ($("#mkFull")) $("#mkFull").classList.toggle("is-on", !!full);
+  __mk.z = 1; __mk.px = 0; __mk.py = 0;
+  mkApplyView();
+  mkApplyBase();
+  mkSignList();
+
+  const size = () => {
+    const cv = markupCanvas(), st = $("#markupStage");
+    /* the SHEET's box, not the room's — the room is wider than the drawing
+       and a bitmap cut to the room would paint every normalised coordinate
+       across a rectangle, which is exactly how a square charm comes back
+       stretched */
+    const r = mkSheetBox();
+    if (r.width < 2 || !st) return;            /* still laying out */
+
+    /* ── THE HALO ────────────────────────────────────────────────────────
+       The canvas reaches PAST the sheet, into as much of the room as there
+       is, so a thing dragged off the edge is still somewhere rather than
+       nowhere. That is the whole of the parking area: coordinates outside
+       0..1 land in the halo, are painted, are hit-testable and are dragged
+       back the same way they went out.
+
+       They are also, by construction, not on the charm. Every export paints
+       the same normalised coordinates onto a square 0..1 canvas, so anything
+       in the halo falls off the edge of it and is cropped — no rule to
+       write, no flag to keep in step. The halo is toned rather than white,
+       because the sheet's white comes from #markupView underneath and the
+       halo hangs over the room; you can see where the charm stops.
+
+       It reaches exactly as far as the ROOM does — no further, because
+       nobody can see past that, and no less, because a fraction of the sheet
+       stopped short of the edge and clipped whatever was parked there. */
+    const room = st.getBoundingClientRect();
+    const padX = Math.round(Math.max(0, (room.width  - r.width)  / 2));
+    const padY = Math.round(Math.max(0, (room.height - r.height) / 2));
+    /* bitmap at 2× the CSS box: the canvas is transformed with the view when
+       zooming, and a 1× bitmap goes soft the moment it is scaled. On a very
+       wide screen the halo can double the canvas's area, so the multiplier
+       steps down rather than letting the bitmap grow without a ceiling —
+       a slightly softer parking area beats a browser reclaiming the canvas
+       mid-drag, which is what happens when one gets too big. */
+    const wCss = r.width + padX * 2, hCss = r.height + padY * 2;
+    let D = 2;
+    while (D > 1 && wCss * hCss * D * D > MK_CANVAS_BUDGET) D -= 0.25;
+    cv.style.left = (-padX) + "px";  cv.style.top = (-padY) + "px";
+    cv.style.right = "auto";         cv.style.bottom = "auto";
+    cv.style.width  = (r.width  + padX * 2) + "px";
+    cv.style.height = (r.height + padY * 2) + "px";
+    cv.dataset.padx = String(Math.round(padX * D));
+    cv.dataset.pady = String(Math.round(padY * D));
+    cv.width  = Math.max(2, Math.round(wCss * D));
+    cv.height = Math.max(2, Math.round(hCss * D));
+    mkRedraw();
+    mkRulerQueue();
+  };
+  __mk.resize = size;
+  const base = $("#markupBase");
+  if (base.complete || __mk.compose) size(); else base.onload = size;
+  setTimeout(size, 60);                        /* after the modal's transition */
+  setTimeout(size, 260);
+  if (window.ResizeObserver && !$("#markupStage").dataset.ro) {
+    $("#markupStage").dataset.ro = "1";
+    new ResizeObserver(() => { if (__mk && __mk.resize) __mk.resize(); }).observe($("#markupStage"));
+  }
+  mkSetTool("draw");
+  mkChrome();
+  /* the sketchpad opens with the library showing: on a blank sheet, "what
+     have I already got" is the first question, and hunting for the answer is
+     the difference between using the library and forgetting it exists */
+  /* Pick the destination that will open first. Desktop renders it now;
+     touch keeps the choice ready behind its one-tap destination. */
+  mkDockSet(true, (__mk.compose && !__mk.items.length) ? "library" : __mkDock.tab);
+  /* ON TOUCH IT STARTS ABSENT. Layers and Library remain labelled one-tap
+     destinations in the quick dock, while the canvas keeps every pixel until
+     one is requested. Phones reveal a bottom sheet; folds/tablets reveal the
+     same inspector on the right. */
+  mkDockAutoFold();
+  /* the footer's height is not settled on the first frame */
+  setTimeout(mkDockFoot, 80);
+  setTimeout(mkDockFoot, 400);
+}
+
+/* ═══════════ PIXELS HAVE TO SURVIVE THE RELOAD ══════════════════════════
+   Everything else on the sheet is parameters, and parameters fit in the
+   session document. Pixels do not, and Firestore must not be asked to hold
+   them — so when a picture has been edited destructively it is flattened,
+   uploaded through the SAME door every other customer picture goes through,
+   and the item is repointed at the new file.
+
+   That is what a raster edit IS: the picture becomes a different picture.
+   Within the session the tile history still undoes every stroke; once it is
+   saved, the edit is the picture, exactly as it would be in Photoshop after
+   Save. The flush runs on close rather than on every touch, because
+   uploading on every dab would be absurd. */
+let __mkPxFlushing = false;
+async function mkPxFlushAll() {
+  if (__mkPxFlushing || !MK_PX.size || !window.BJRaster) return 0;
+  __mkPxFlushing = true;
+  let saved = 0;
+  try {
+    const sess = ensureSession();
+    for (const [id, rec] of Array.from(MK_PX.entries())) {
+      /* an untouched buffer is one nobody edited — rasterising is not an edit */
+      if (!rec.doc.history.length) { MK_PX.delete(id); continue; }
+
+      /* ── THE BASE IS NOT AN ITEM AND STILL HAS TO BE SAVED ───────────
+         It is the customer's own reference picture, not a placed object, so
+         there is nothing in __mk.items to repoint. Looking for one meant
+         every edit made directly on an imported photograph was thrown away
+         at close, silently, with no upload even attempted. */
+      if (id === MK_PX_BASE) {
+        let durl;
+        try { durl = mkPxCanvas(rec).toDataURL("image/png"); }
+        catch (e) { SD("px flush: base canvas unreadable —", e && e.message); continue; }
+        try {
+          const rb = await mkUploadPicture(sess.id, "edited-reference.png", durl);
+          const upb = rb && rb.up;
+          if (!upb || !upb.path) throw new Error("no_path");
+          if (__mk) __mk.baseRef = { u: upb.url || "", sp: upb.path };
+          /* the reference IS what was edited, so the design's reference moves
+             with it — the next generation draws from the retouched picture */
+          if (state.reference) {
+            state.reference.url = upb.url || state.reference.url;
+            state.reference.path = upb.path;
+          }
+          const bEl = $("#markupBase");
+          if (bEl) { bEl.src = upb.url || bEl.src; bEl.hidden = false; }
+          MK_PX.delete(id);
+          saved++;
+        } catch (e) { SD("px flush: base upload failed —", (e && e.message) || ""); }
+        continue;
+      }
+
+      const it = ((__mk && __mk.items) || []).find((o) => o.id === id) ||
+                 mkFindItemAnywhere(id);
+      if (!it) { MK_PX.delete(id); continue; }
+      let dataUrl;
+      try { dataUrl = mkPxCanvas(rec).toDataURL("image/png"); }
+      catch (e) { SD("px flush: could not read the canvas —", e && e.message); continue; }
+      try {
+        const r = await mkUploadPicture(sess.id, "edited-" + String(id).slice(0, 12) + ".png", dataUrl);
+        const up = r && r.up;
+        if (!up || !up.path) throw new Error("no_path");
+        it.u = up.url || it.u;
+        it.sp = up.path;
+        /* the wand seeds and eraser strokes are BAKED IN now — leaving them
+           would apply the same cut twice, once in the pixels and once again
+           on top of them */
+        it.k = []; it.kt = 0; it.er = [];
+        MK_PX.delete(id);
+        saved++;
+      } catch (e) {
+        SD("px flush: upload failed —", (e && e.message) || "");
+        /* keep the buffer: the customer's work is still on screen and still
+           in memory, and the next close will try again */
+      }
+    }
+    if (saved) { mkPersist(); saveSession(); }
+  } finally { __mkPxFlushing = false; }
+  return saved;
+}
+/* an item may have been persisted out of __mk already */
+function mkFindItemAnywhere(id) {
+  const all = state.markups || {};
+  for (const k of Object.keys(all)) {
+    const list = mkItemsOf(all[k]);
+    const hit = list.find((o) => o.id === id);
+    if (hit) return hit;
+  }
+  return null;
+}
+window.__mkPxFlushAll = mkPxFlushAll;
+
+function closeMarkup() {
+  try { mkMobileSettingsSet(false); } catch (e) {}
+  mkCloseEditor(true);
+  /* flush before the persist, so the item that gets saved is the repointed
+     one; it is fire-and-forget because nobody should watch a modal close */
+  mkPxFlushAll().catch(() => {});
+  mkPersist();
+  $("#markupModal").classList.remove("is-open");
+  mkCloseAllDrops();
+  mkCloseLibZoom();
+  /* the panel goes with the modal it lives in; it does not get "closed",
+     because there is no longer a button anywhere to open it again */
+  const dock = mkDockEl();
+  if (dock) dock.hidden = true;
+  /* the panel is always open WHILE THE SHEET IS, and not one moment longer:
+     mkLibRefresh fires on every sessions snapshot, and rebuilding a library
+     of sketch thumbnails into a hidden node is work nobody will ever see */
+  __mkDock.open = false;
+  const inner = document.querySelector("#markupModal .markup__inner");
+  if (inner) inner.classList.remove("has-dock");
+  try { mkMobileBackdropSync(); } catch (e) {}
+  /* …and the composed sheets it cached, which are megabytes */
+  mkRegionForget();
+  __mk = null;
+}
+
+/* ═══════════ signatures ══════════════════════════════════════════════════
+   Drawn once with the Sign tool, kept on the design session, dropped in
+   anywhere afterwards. Stored flat: one point list plus the length of each
+   stroke, because Firestore will not take an array of arrays.               */
+/* a row you can focus but cannot activate is a row that lies about being
+   focusable — Enter and Space do what a click does */
+function mkSignKeys(host) {
+  if (!host) return;
+  host.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const row = e.target && e.target.closest ? e.target.closest("[role='button']") : null;
+    if (!row) return;
+    e.preventDefault();
+    row.click();
+  });
+}
+function mkSignList() {
+  const host = $("#mkSignList"); if (!host) return;
+  if (!host.dataset.keys) { host.dataset.keys = "1"; mkSignKeys(host); }
+  const sigs = state.signatures || [];
+  if (!sigs.length) {
+    host.innerHTML = '<p class="mk-sign-empty">Nothing saved yet — choose <b>Add Signature</b> above and write across the sheet. We keep it for next time.</p>';
+    return;
+  }
+  host.innerHTML = sigs.map((s, i) => {
+    const p = s.p || [];
+    let d = "", k = 0;
+    (s.seg || [p.length / 2]).forEach((n) => {
+      for (let j = 0; j < n; j++, k++) d += (j ? "L" : "M") + (p[k * 2] * 100).toFixed(1) + " " + (p[k * 2 + 1] * 100).toFixed(1) + " ";
+    });
+    return `<div class="mk-sign" data-sig="${i}" role="button" tabindex="0">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="${attrText(d)}" fill="none" stroke="#1c1d1d" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <button class="mk-sign__x" type="button" data-sigx="${i}" aria-label="Delete this signature">×</button>
+    </div>`;
+  }).join("");
+}
+function mkSaveSignature(it) {
+  if (!state.signatures) state.signatures = [];
+  const p = (it.p || []).slice();
+  if (p.length < 8) return;
+  /* normalize into its own box so it can be dropped anywhere at any size */
+  const bb = mkBBox(it), sc = Math.max(bb.w, bb.h) || 1;
+  const q = [];
+  for (let k = 0; k + 1 < p.length; k += 2) {
+    q.push(Math.round(((p[k] - bb.x) / sc) * 1e4) / 1e4, Math.round(((p[k + 1] - bb.y) / sc) * 1e4) / 1e4);
+  }
+  state.signatures.unshift({ p: q, seg: [q.length / 2] });
+  state.signatures = state.signatures.slice(0, 4);
+  mkSignList();
+  saveSession();
+}
+function mkPlaceSignature(i) {
+  const s = (state.signatures || [])[i]; if (!s || !__mk) return;
+  mkPushUndo();
+  const size = 0.42, ox = 0.3, oy = 0.62;
+  const p = [];
+  for (let k = 0; k + 1 < (s.p || []).length; k += 2) {
+    p.push(ox + s.p[k] * size, oy + s.p[k + 1] * size);
+  }
+  __mk.items.push(mkPack({ id: mkId(), t: "sign", c: __mk.color, w: __mk.w, p }));
+  __mk.sel = __mk.items.length - 1;
+  mkSetTool("select");
+  mkTouch();
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   ALIGNMENT — WHAT THE HAND CANNOT SEE
+
+   Placing anything by eye is guesswork, and guesswork on a 12 mm object is
+   guesswork nobody can correct later. Every serious drawing tool solves this
+   the same way, and it is worth saying exactly what "the same way" means,
+   because the details are the feature:
+
+     · A DRAGGED OBJECT LOOKS FOR AGREEMENT. Its left, centre and right — and
+       its top, middle and bottom — are compared against the same six lines
+       on every other visible object, and against the sheet's own edges and
+       centre. Agreement within a few SCREEN pixels is treated as intent.
+
+     · THE THRESHOLD IS IN SCREEN PIXELS, NOT DRAWING UNITS. Zoomed in, the
+       hand is more precise and the snap must be finer; zoomed out, coarser.
+       A fixed tolerance in sheet units feels sticky at one zoom and useless
+       at another, which is the single most common way this feature is got
+       wrong.
+
+     · IT SNAPS, AND IT SHOWS WHY. A line is drawn through the two things
+       that agree — spanning both of them, not the whole sheet — so the
+       reason the object jumped is visible rather than mysterious.
+
+     · EQUAL SPACING IS ITS OWN KIND OF AGREEMENT. Three things in a row want
+       equal gaps; when the gaps match, both are marked, and the object snaps
+       to keep them matching.
+
+     · IT MEASURES. The distance to the nearest neighbour on each side, in
+       plain per cent of the drawing, while the object is moving.
+
+     · AND IT GETS OUT OF THE WAY. Hold ALT and nothing snaps at all — for
+       the times when the right answer is "no, exactly there".
+   ====================================================================== */
+const MK_SNAP_PX = 7;             /* agreement, in screen pixels */
+const MK_ALIGN_MAXOBJ = 60;       /* neighbours considered — the NEAREST 60 */
+
+/* THE BOX AS IT IS DRAWN, rotation and all. mkBBox returns the box of an
+   object's raw points, which is what everything that EDITS geometry needs —
+   but it is not where a rotated object appears, and aligning to a box the
+   customer cannot see is aligning to nothing. Measured on a 45° bar, the two
+   disagree by 13% of the sheet: on a 12 mm charm, a millimetre and a half of
+   confident, unexplainable misplacement. */
+function mkDrawnBox(it) {
+  const bb = mkBBox(it);
+  if (!it.r) return bb;
+  const cx = bb.x + bb.w / 2, cy = bb.y + bb.h / 2;
+  const c = Math.cos(it.r), s = Math.sin(it.r);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  [[bb.x, bb.y], [bb.x + bb.w, bb.y], [bb.x + bb.w, bb.y + bb.h], [bb.x, bb.y + bb.h]]
+    .forEach((q) => {
+      const dx = q[0] - cx, dy = q[1] - cy;
+      const X = cx + dx * c - dy * s, Y = cy + dx * s + dy * c;
+      if (X < x0) x0 = X;
+      if (X > x1) x1 = X;
+      if (Y < y0) y0 = Y;
+      if (Y > y1) y1 = Y;
+    });
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+/* ═══════════ THE SELECTION'S SIZE, READ AND WRITTEN ══════════════════════
+   Every mark is stored normalised against the sheet, so a size in the
+   customer's own unit is one multiplication away — mkSheetSpan() is how much
+   of that unit the sheet spans end to end, and it already follows the
+   ruler's mm/inch corner. One conversion, used in both directions, so the
+   number the field shows and the number it accepts cannot drift apart. */
+function mkSizeToUnit(n) { return n * mkSheetSpan(); }
+function mkSizeFromUnit(n) { const s = mkSheetSpan(); return s ? n / s : 0; }
+function mkSizeFmt(n) {
+  return __mkUnit === "in" ? (+n.toFixed(3)).toString() : (+n.toFixed(2)).toString();
+}
+/* Painted from mkRedraw, which is the one function every change goes
+   through — a drag on the sheet redraws on every frame, so the fields tick
+   along with the hand for free and no drag path has to remember them.
+
+   A field being EDITED is never overwritten: typing "1" on the way to "12"
+   would otherwise be snatched away and rounded the instant the sheet
+   repainted underneath. */
+function mkSizeSync() {
+  const box = $("#mkSizeBox"), fx = $("#mkSizeX"), fy = $("#mkSizeY"),
+        un = $("#mkSizeUnit");
+  if (!box || !fx || !fy || !__mk) return;
+  const list = mkSelItems();
+  box.hidden = false;
+  if (un) un.textContent = __mkUnit;
+  if (!list.length) {
+    fx.disabled = fy.disabled = true;
+    if (document.activeElement !== fx) fx.value = "";
+    if (document.activeElement !== fy) fy.value = "";
+    return;
+  }
+  fx.disabled = fy.disabled = false;
+  const bb = mkUnionDrawn(list);
+  if (document.activeElement !== fx) fx.value = mkSizeFmt(mkSizeToUnit(bb.w));
+  if (document.activeElement !== fy) fy.value = mkSizeFmt(mkSizeToUnit(bb.h));
+  mkAngleSync(list);
+}
+/* ── THE ANGLE, READ AND WRITTEN ──────────────────────────────────────────
+   Rotation is stored in RADIANS on each item; the field speaks degrees,
+   because nobody turns anything by 0.7854 of anything.
+
+   Normalised to 0–359 so a mark turned all the way round reads 0 rather
+   than 360, and a turn the other way reads 315 rather than -45 — the same
+   number the customer would say out loud.
+
+   A MIXED SELECTION HAS NO ONE ANGLE. Several marks at different rotations
+   are shown as an empty field rather than the first one's value, which
+   would be a number that describes one item and would rotate all of them
+   the moment it was committed. Typing into it still turns the whole
+   selection — the field is empty because there is nothing true to show,
+   not because it is unusable. */
+function mkAngleOf(list) {
+  if (!list.length) return null;
+  /* the angle the customer can SEE, which on a mirrored layer is the
+     opposite of the number stored — see mkMirrorSgn */
+  const deg = (it) => {
+    let d = ((it.r || 0) * mkMirrorSgn(it) * 180 / Math.PI) % 360;
+    if (d < 0) d += 360;
+    return d;
+  };
+  const first = deg(list[0]);
+  for (let i = 1; i < list.length; i++) {
+    if (Math.abs(deg(list[i]) - first) > 0.05) return null;   /* mixed */
+  }
+  return first;
+}
+function mkAngleSync(list) {
+  const fr = $("#mkSizeR");
+  if (!fr) return;
+  list = list || mkSelItems();
+  if (!list.length) {
+    fr.disabled = true;
+    if (document.activeElement !== fr) fr.value = "";
+    return;
+  }
+  fr.disabled = false;
+  if (document.activeElement === fr) return;
+  const a = mkAngleOf(list);
+  fr.value = a == null ? "" : String(+a.toFixed(1));
+}
+/* Typing an angle turns the selection TO it — an absolute bearing, not a
+   nudge — about the same pivot the rotate grip uses, so the two agree about
+   what "turn this" means. A mixed selection is turned by the difference
+   from its first member, which is the only reading that leaves the typed
+   number true of something. */
+function mkAngleCommit() {
+  const fr = $("#mkSizeR");
+  const list = mkSelItems();
+  if (!fr || !list.length) return;
+  const raw = String(fr.value).replace(",", ".").replace(/[^\d.\-]/g, "");
+  const typed = parseFloat(raw);
+  if (!isFinite(typed)) { mkAngleSync(list); return; }
+  let want = typed % 360;
+  if (want < 0) want += 360;
+  const now = mkAngleOf(list);
+  const from = now == null
+    ? (((list[0].r || 0) * mkMirrorSgn(list[0]) * 180 / Math.PI) % 360 + 360) % 360
+    : now;
+  let dr = (want - from) * Math.PI / 180;
+  if (Math.abs(dr) < 1e-6) { mkAngleSync(list); return; }
+  const bb = mkUnionDrawn(list);
+  mkPushUndo();
+  mkRotateItems(list, dr, bb.x + bb.w / 2, bb.y + bb.h / 2, null, null);
+  mkTouch();
+  mkAngleSync(list);
+}
+/* Typing a size resizes the selection ABOUT ITS OWN CENTRE, so fine-tuning a
+   number never also moves the object — the same anchor Ctrl+drag uses, so
+   the two ways of resizing agree. The other axis is left alone unless the
+   selection holds a picture, which is locked in proportion for the same
+   reason a stretched photograph is never what was meant. */
+function mkSizeCommit(axis) {
+  if (!__mk) return;
+  const el = $(axis === "x" ? "#mkSizeX" : "#mkSizeY");
+  const list = mkSelItems();
+  if (!el || !list.length) return;
+  const typed = parseFloat(String(el.value).replace(",", "."));
+  const bb = mkUnionDrawn(list);
+  const now = axis === "x" ? bb.w : bb.h;
+  if (!isFinite(typed) || typed <= 0 || !now) { mkSizeSync(); return; }
+  const want = mkSizeFromUnit(typed);
+  let sx = axis === "x" ? want / now : 1;
+  let sy = axis === "y" ? want / now : 1;
+  if (list.some((o) => o.t === "img")) { const k = axis === "x" ? sx : sy; sx = k; sy = k; }
+  if (!isFinite(sx) || !isFinite(sy) || sx <= 0 || sy <= 0 || sx > 60 || sy > 60) {
+    mkSizeSync(); return;
+  }
+  if (Math.abs(sx - 1) < 1e-6 && Math.abs(sy - 1) < 1e-6) return;
+  const ax = bb.x + bb.w / 2, ay = bb.y + bb.h / 2;
+  mkPushUndo();
+  list.forEach((it) => {
+    const p = it.p;
+    for (let k = 0; k + 1 < p.length; k += 2) {
+      p[k] = ax + (p[k] - ax) * sx;
+      p[k + 1] = ay + (p[k + 1] - ay) * sy;
+    }
+    if (it.t === "label" || it.t === "text" || it.t === "callout") {
+      it.fs = Math.min(0.4, Math.max(0.012, (it.fs || 0.036) * ((sx + sy) / 2)));
+    }
+  });
+  mkTouch();
+  mkSizeSync();
+}
+function mkWireSizeFields() {
+  /* the angle field: same keyboard contract as X and Y — arrows nudge,
+     Enter and blur commit, Escape puts the real value back — with the step
+     in degrees rather than millimetres */
+  const fr = $("#mkSizeR");
+  if (fr) {
+    fr.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const step = e.shiftKey ? 15 : 1;
+        const list = mkSelItems();
+        const cur = parseFloat(String(fr.value).replace(",", "."));
+        const base = isFinite(cur) ? cur : (mkAngleOf(list) || 0);
+        let next = base + (e.key === "ArrowUp" ? step : -step);
+        next = ((next % 360) + 360) % 360;
+        fr.value = String(+next.toFixed(1));
+        mkAngleCommit();
+        return;
+      }
+      if (e.key === "Enter") { e.preventDefault(); fr.blur(); }
+      if (e.key === "Escape") { e.preventDefault(); mkAngleSync(); fr.blur(); }
+      e.stopPropagation();
+    });
+    fr.addEventListener("change", mkAngleCommit);
+    fr.addEventListener("blur", mkAngleCommit);
+    fr.addEventListener("focus", () => fr.select());
+  }
+  [["#mkSizeX", "x"], ["#mkSizeY", "y"]].forEach(([sel, axis]) => {
+    const el = $(sel);
+    if (!el) return;
+    el.addEventListener("keydown", (e) => {
+      /* the arrows nudge by a step of the unit rather than walking the
+         caret — a size field people fine-tune deserves the same treatment
+         the sheet's own arrow-key nudge gets */
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const step = (e.shiftKey ? 10 : 1) * (__mkUnit === "in" ? 0.01 : 0.1);
+        const v = parseFloat(String(el.value).replace(",", "."));
+        if (!isFinite(v)) return;
+        el.value = mkSizeFmt(Math.max(0, v + (e.key === "ArrowUp" ? step : -step)));
+        mkSizeCommit(axis);
+        return;
+      }
+      if (e.key === "Enter") { e.preventDefault(); el.blur(); }
+      if (e.key === "Escape") { e.preventDefault(); mkSizeSync(); el.blur(); }
+      /* the sheet's own shortcuts must not fire while a number is being
+         typed — ⌫ would delete the selection out from under the field */
+      e.stopPropagation();
+    });
+    el.addEventListener("change", () => mkSizeCommit(axis));
+    el.addEventListener("blur", () => mkSizeCommit(axis));
+    el.addEventListener("focus", () => el.select());
+  });
+}
+
+function mkUnionDrawn(list) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  list.forEach((it) => {
+    const b = mkDrawnBox(it);
+    if (b.x < x0) x0 = b.x;
+    if (b.y < y0) y0 = b.y;
+    if (b.x + b.w > x1) x1 = b.x + b.w;
+    if (b.y + b.h > y1) y1 = b.y + b.h;
+  });
+  if (!isFinite(x0)) return { x: 0, y: 0, w: 0, h: 0 };
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/* the tolerance the hand actually has, converted into sheet units — and
+   never wider than half a grid cell, because a snap radius bigger than the
+   gap between two attractors means there is nowhere left to rest between
+   them, which is exactly what dragging the spacing slider toward "fine"
+   used to produce */
+function mkSnapTol() {
+  const v = $("#markupView");
+  const w = v ? v.getBoundingClientRect().width : 0;
+  let t = (w > 8) ? Math.min(0.05, Math.max(0.0008, MK_SNAP_PX / w)) : 0.006;
+  if (__mk && __mk.guides && __mk.guides.snap) {
+    const n = Math.max(4, Math.min(48, __mk.gridN || 12));
+    t = Math.min(t, 0.42 / n);
+  }
+  return t;
+}
+
+/* every line worth agreeing with: the sheet, and the NEAREST visible objects
+   that are not part of what is moving. Nearest, not first — taking the first
+   sixty in stacking order meant the object right under the customer's hand
+   could be ignored while sixty in a far corner supplied the guides. */
+function mkAlignTargets(excludeIdx, near) {
+  const out = { x: [], y: [], boxes: [] };
+  if (!__mk) return out;
+  const skip = new Set(excludeIdx || []);
+  out.x.push({ v: 0, kind: "sheet" }, { v: 0.5, kind: "sheet-mid" }, { v: 1, kind: "sheet" });
+  out.y.push({ v: 0, kind: "sheet" }, { v: 0.5, kind: "sheet-mid" }, { v: 1, kind: "sheet" });
+  const cx = near ? near.x + near.w / 2 : 0.5;
+  const cy = near ? near.y + near.h / 2 : 0.5;
+  const cand = [];
+  __mk.items.forEach((it, i) => {
+    if (skip.has(i) || it.hid) return;
+    const b = mkDrawnBox(it);
+    if (!(b.w >= 0) || !(b.h >= 0)) return;
+    /* AN OBJECT OFF THE SHEET IS NOT A THING TO LINE UP WITH. Its edges are
+       outside the paper, and a guide drawn there lands on the surrounding
+       chrome — the object jumps for a reason nothing on screen shows. */
+    if (b.x + b.w < -0.02 || b.x > 1.02 || b.y + b.h < -0.02 || b.y > 1.02) return;
+    const d = Math.abs(b.x + b.w / 2 - cx) + Math.abs(b.y + b.h / 2 - cy);
+    cand.push({ b, d });
+  });
+  cand.sort((a, b) => a.d - b.d);
+  cand.slice(0, MK_ALIGN_MAXOBJ).forEach(({ b }) => {
+    out.boxes.push(b);
+    out.x.push({ v: b.x, kind: "edge", b }, { v: b.x + b.w / 2, kind: "mid", b },
+               { v: b.x + b.w, kind: "edge", b });
+    out.y.push({ v: b.y, kind: "edge", b }, { v: b.y + b.h / 2, kind: "mid", b },
+               { v: b.y + b.h, kind: "edge", b });
+  });
+  return out;
+}
+
+/* THE SOLVER. Given where the moving box is now, return the nudge that makes
+   it agree with something — and EVERY target it then agrees with, so all of
+   them can be drawn rather than only the one that won. */
+function mkAlignSolve(bb, targets, tol, opts) {
+  const o = opts || {};
+  const res = { dx: 0, dy: 0, gx: [], gy: [] };
+  const axis = (lo, mid, hi, list, allowed) => {
+    let best = null;
+    const mine = [{ v: lo, at: "lo" }, { v: mid, at: "mid" }, { v: hi, at: "hi" }];
+    mine.forEach((m) => {
+      if (allowed && allowed.indexOf(m.at) < 0) return;
+      list.forEach((t) => {
+        const ad = Math.abs(t.v - m.v);
+        if (ad > tol) return;
+        /* A CENTRE IS PREFERRED, BUT NEVER OVER A PERFECT EDGE. This used to
+           SUBTRACT a quarter of the tolerance from a centre candidate's
+           distance, which makes the rank negative — so a centre a whole
+           pixel away beat an edge sitting at exactly zero, and picking an
+           already-aligned object up and putting it straight back down
+           knocked it off by a pixel and a half. A preference has to be a
+           tie-break, not a discount. */
+        const centre = t.kind === "mid" || t.kind === "sheet-mid" || m.at === "mid";
+        if (!best) { best = { ad, centre, d: t.v - m.v }; return; }
+        const close = Math.abs(ad - best.ad) < tol * 0.06;
+        if (ad < best.ad - 1e-9 || (close && centre && !best.centre)) {
+          best = { ad, centre, d: t.v - m.v };
+        }
+      });
+    });
+    if (!best) return null;
+    /* everything that agrees at the winning value, not merely the winner:
+       four things sharing an edge should show four connections, and showing
+       one of them is the difference between a guide and a hint */
+    const at = [];
+    mine.forEach((m) => {
+      if (allowed && allowed.indexOf(m.at) < 0) return;
+      list.forEach((t) => {
+        if (Math.abs((t.v - m.v) - best.d) < 1e-6) at.push(t);
+      });
+    });
+    return { d: best.d, hits: at };
+  };
+  const bx = axis(bb.x, bb.x + bb.w / 2, bb.x + bb.w, targets.x, o.edgesX);
+  const by = axis(bb.y, bb.y + bb.h / 2, bb.y + bb.h, targets.y, o.edgesY);
+  if (bx) {
+    res.dx = bx.d;
+    bx.hits.forEach((t) => res.gx.push({ v: t.v, kind: t.kind, with: t.b || null }));
+  }
+  if (by) {
+    res.dy = by.d;
+    by.hits.forEach((t) => res.gy.push({ v: t.v, kind: t.kind, with: t.b || null }));
+  }
+  return res;
+}
+
+/* EQUAL SPACING. Looks along one axis for a neighbour on each side and, when
+   the two gaps are within tolerance of each other, nudges so they match. */
+function mkAlignSpacing(bb, boxes, tol, horiz) {
+  const lo = horiz ? bb.x : bb.y;
+  const size = horiz ? bb.w : bb.h;
+  const hi = lo + size;
+  const c0 = horiz ? bb.y : bb.x, c1 = horiz ? bb.y + bb.h : bb.x + bb.w;
+  let before = null, after = null;
+  boxes.forEach((b) => {
+    const bl = horiz ? b.x : b.y, bs = horiz ? b.w : b.h;
+    const d0 = horiz ? b.y : b.x, d1 = horiz ? b.y + b.h : b.x + b.w;
+    /* IN THE SAME ROW MEANS IN THE SAME ROW. Any overlap at all used to
+       count, so two objects sharing one ten-thousandth of the sheet were
+       treated as a row and the object was dragged to space itself evenly
+       between things it is nowhere near. */
+    const over = Math.min(c1, d1) - Math.max(c0, d0);
+    if (over < Math.min(c1 - c0, d1 - d0) * 0.4) return;
+    if (bl + bs <= lo && (!before || bl + bs > (horiz ? before.x + before.w : before.y + before.h))) before = b;
+    if (bl >= hi && (!after || bl < (horiz ? after.x : after.y))) after = b;
+  });
+  if (!before || !after) return null;
+  const gapA = lo - (horiz ? before.x + before.w : before.y + before.h);
+  const gapB = (horiz ? after.x : after.y) - hi;
+  if (gapA < 0 || gapB < 0) return null;
+  if (Math.abs(gapA - gapB) > tol * 2) return null;
+  const want = (gapA + gapB) / 2;
+  return { delta: want - gapA, gapA, gapB, before, after, horiz, want };
+}
+
+/* ── DRAWING THE REASON ────────────────────────────────────────────────── */
+function mkAlignClear() {
+  const host = $("#markupOverlay"); if (!host) return;
+  host.querySelectorAll(".mk-gd, .mk-dim").forEach((e) => e.remove());
+}
+function mkAlignPaint(bb, hits, spacing) {
+  const host = $("#markupOverlay"); if (!host || !__mk) return;
+  mkAlignClear();
+  if (!(__mk.guides && __mk.guides.align)) return;
+  const CL = (n) => Math.min(1, Math.max(0, n));
+  const pc = (n) => (n * 100 < 10 ? (n * 100).toFixed(1) : Math.round(n * 100)) + "%";
+  const line = (vert, at, from, to, kind) => {
+    if (at < -0.001 || at > 1.001) return;      /* never off the paper */
+    const a = CL(at), f = CL(from), t = CL(to);
+    if (t - f < 0.005) return;
+    const el = document.createElement("i");
+    el.className = "mk-gd" + (kind === "sheet-mid" ? " mk-gd--mid" : kind === "sheet" ? " mk-gd--sheet" : "");
+    if (vert) {
+      el.style.left = a * 100 + "%"; el.style.top = f * 100 + "%";
+      el.style.height = (t - f) * 100 + "%"; el.style.width = "0";
+    } else {
+      el.style.top = a * 100 + "%"; el.style.left = f * 100 + "%";
+      el.style.width = (t - f) * 100 + "%"; el.style.height = "0";
+    }
+    host.appendChild(el);
+  };
+  const badge = (x, y, text, cls) => {
+    const el = document.createElement("i");
+    el.className = "mk-dim" + (cls ? " " + cls : "");
+    el.style.left = CL(Math.min(0.9, Math.max(0.1, x))) * 100 + "%";
+    el.style.top = CL(Math.min(0.95, Math.max(0.05, y))) * 100 + "%";
+    el.textContent = text;
+    host.appendChild(el);
+  };
+  const seenX = {}, seenY = {};
+  (hits.gx || []).forEach((g) => {
+    const k = g.v.toFixed(5);
+    if (seenX[k] && !g.with) return;
+    seenX[k] = 1;
+    const o = g.with;
+    line(true, g.v, o ? Math.min(bb.y, o.y) - 0.02 : 0, o ? Math.max(bb.y + bb.h, o.y + o.h) + 0.02 : 1, g.kind);
+  });
+  (hits.gy || []).forEach((g) => {
+    const k = g.v.toFixed(5);
+    if (seenY[k] && !g.with) return;
+    seenY[k] = 1;
+    const o = g.with;
+    line(false, g.v, o ? Math.min(bb.x, o.x) - 0.02 : 0, o ? Math.max(bb.x + bb.w, o.x + o.w) + 0.02 : 1, g.kind);
+  });
+  /* SPACING IS SHOWN AS A BAR, not only as a number — otherwise switching
+     measurements off leaves an object moving for a reason nothing explains */
+  (spacing || []).forEach((sp) => {
+    if (!sp) return;
+    const bar = (from, to, at) => {
+      const el = document.createElement("i");
+      el.className = "mk-gd mk-gd--gap";
+      if (sp.horiz) {
+        el.style.left = CL(from) * 100 + "%"; el.style.width = Math.max(0, CL(to) - CL(from)) * 100 + "%";
+        el.style.top = CL(at) * 100 + "%"; el.style.height = "0";
+      } else {
+        el.style.top = CL(from) * 100 + "%"; el.style.height = Math.max(0, CL(to) - CL(from)) * 100 + "%";
+        el.style.left = CL(at) * 100 + "%"; el.style.width = "0";
+      }
+      host.appendChild(el);
+    };
+    if (sp.horiz) {
+      const y = bb.y + bb.h / 2;
+      bar(sp.before.x + sp.before.w, bb.x, y);
+      bar(bb.x + bb.w, sp.after.x, y);
+      if (__mk.guides.dims) {
+        /* THE REAL GAP, not the average of the two. When an edge snap wins
+           the same frame the nudge is not applied, and printing the mean
+           made both badges claim a match that was not there. */
+        badge(sp.before.x + sp.before.w + (bb.x - (sp.before.x + sp.before.w)) / 2, y - 0.035,
+              pc(Math.max(0, bb.x - (sp.before.x + sp.before.w))), "mk-dim--gap");
+        badge(bb.x + bb.w + (sp.after.x - (bb.x + bb.w)) / 2, y - 0.035,
+              pc(Math.max(0, sp.after.x - (bb.x + bb.w))), "mk-dim--gap");
+      }
+    } else {
+      const x = bb.x + bb.w / 2;
+      bar(sp.before.y + sp.before.h, bb.y, x);
+      bar(bb.y + bb.h, sp.after.y, x);
+      if (__mk.guides.dims) {
+        badge(x + 0.05, sp.before.y + sp.before.h + (bb.y - (sp.before.y + sp.before.h)) / 2,
+              pc(Math.max(0, bb.y - (sp.before.y + sp.before.h))), "mk-dim--gap");
+        badge(x + 0.05, bb.y + bb.h + (sp.after.y - (bb.y + bb.h)) / 2,
+              pc(Math.max(0, sp.after.y - (bb.y + bb.h))), "mk-dim--gap");
+      }
+    }
+  });
+}
+
+/* the read-out that follows the selection — placed OUTSIDE it, so it never
+   covers the very thing being positioned, and always on the paper */
+function mkAlignReadout(bb, mode) {
+  const host = $("#markupOverlay"); if (!host || !__mk) return;
+  if (!(__mk.guides && __mk.guides.dims)) return;
+  const el = document.createElement("i");
+  el.className = "mk-dim mk-dim--size";
+  const pc = (n) => Math.round(n * 1000) / 10;
+  el.textContent = mode === "resize"
+    ? pc(bb.w) + "% × " + pc(bb.h) + "%"
+    : "x " + pc(bb.x) + "%  y " + pc(bb.y) + "%";
+  /* clear the resize handles, which are twice the size on a touch screen —
+     a fixed gap in sheet units put the read-out UNDER the corner handle on a
+     phone, where the sheet is small and the handles are big */
+  const vw = (() => { const v = $("#markupView");
+                      return v ? v.getBoundingClientRect().width : 0; })();
+  const coarse = !!(window.matchMedia && window.matchMedia("(pointer:coarse)").matches);
+  const clearPx = (coarse ? 11 : 6) + 17;
+  const gap = vw > 8 ? Math.max(0.03, Math.min(0.1, clearPx / vw)) : 0.035;
+  const below = bb.y + bb.h + gap;
+  const above = bb.y - gap;
+  el.style.left = Math.min(0.84, Math.max(0.16, bb.x + bb.w / 2)) * 100 + "%";
+  el.style.top = (below < 0.95 ? below : Math.max(0.05, above)) * 100 + "%";
+  host.appendChild(el);
+}
+
+/* THE WHOLE THING, applied to a drag in progress. */
+function mkAlignApply(list, mode, suspended, edgesX, edgesY) {
+  const res = { dx: 0, dy: 0 };
+  if (!__mk || !list.length) { mkAlignClear(); return res; }
+  const bb = mkUnionDrawn(list);
+  if (suspended || !(__mk.guides && (__mk.guides.align || __mk.guides.snap))) {
+    mkAlignClear();
+    mkAlignReadout(bb, mode);
+    return res;
+  }
+  const tol = mkSnapTol();
+  const idxs = list.map((o) => __mk.items.indexOf(o));
+  const targets = __mk.guides.align ? mkAlignTargets(idxs, bb) : { x: [], y: [], boxes: [] };
+
+  /* the grid is just another set of lines to agree with, which is why snap
+     and alignment can be on together without arguing */
+  if (__mk.guides.snap) {
+    const n = Math.max(4, Math.min(48, __mk.gridN || 12));
+    for (let i = 0; i <= n; i++) {
+      targets.x.push({ v: i / n, kind: "grid" });
+      targets.y.push({ v: i / n, kind: "grid" });
+    }
+  }
+  const hits = mkAlignSolve(bb, targets, tol, { edgesX, edgesY });
+  res.dx = hits.dx; res.dy = hits.dy;
+
+  const moved = { x: bb.x + res.dx, y: bb.y + res.dy, w: bb.w, h: bb.h };
+  const spacing = [];
+  if (mode === "move" && __mk.guides.align) {
+    const sh = mkAlignSpacing(moved, targets.boxes, tol, true);
+    const sv = mkAlignSpacing(moved, targets.boxes, tol, false);
+    if (sh && !hits.gx.length) { res.dx += sh.delta; moved.x += sh.delta; }
+    if (sh) spacing.push(sh);
+    if (sv && !hits.gy.length) { res.dy += sv.delta; moved.y += sv.delta; }
+    if (sv) spacing.push(sv);
+  }
+  mkAlignPaint(moved, hits, spacing);
+  mkAlignReadout(moved, mode);
+  return res;
+}
+
+/* ── WHAT A RUBBER TOUCHES ────────────────────────────────────────────────
+   Everything whose ink is inside the circle — not the topmost object whose
+   BOUNDING BOX the circle is inside, which is what this used to answer and
+   which produced all three of the reported symptoms at once:
+
+     · the pad was `max(0.008, eraseSize/2)`, so the eraser's SIZE decided
+       which object the box test picked. Making the circle bigger or smaller
+       until something finally rubbed out was not superstition; it really was
+       the control that changed the answer.
+     · only one index came back, so an object with an empty box lying over
+       your mark absorbed the whole sweep and the mark underneath was never
+       reached — "I have to click many times".
+     · and the box reaches wherever the box reaches, which is why things well
+       clear of the circle came away with it.
+
+   Now the circle is the circle. The disc is rasterised, every candidate is
+   painted into it by the real painter, and an object is touched exactly when
+   the painter put ink inside the radius. Already-erased areas paint nothing,
+   so a second pass over a hole falls through to whatever is under it, which
+   is what a rubber does on paper. */
+function mkEraseErasable(it) {
+  return !!it && !it.hid && !it.lok &&
+         it.t !== "text" && it.t !== "callout" && it.t !== "label";
+}
+function mkEraseHits(x, y) {
+  if (!__mk) return [];
+  const rad = Math.max(0.0015, (Number(__mk.eraseSize) || 0.035) / 2);
+  try { return mkPickDisc(x, y, rad, mkEraseErasable); }
+  catch (e) {
+    /* the old test, kept only for a browser that cannot give us a pixel */
+    for (let i = __mk.items.length - 1; i >= 0; i--) {
+      const it = __mk.items[i];
+      if (!mkEraseErasable(it)) continue;
+      if (mkBoxHit(it, x, y, rad)) return [i];
+    }
+    return [];
+  }
+}
+function mkEraseHit(x, y) {
+  const h = mkEraseHits(x, y);
+  return h.length ? h[0] : -1;
+}
+function mkEraseLocalPoint(it, x, y) {
+  const [ux, uy] = mkUnrotate(it, x, y);
+  const b = mkBBox(it);
+  return [
+    Math.max(-0.5, Math.min(1.5, (ux - b.x) / Math.max(1e-6, b.w))),
+    Math.max(-0.5, Math.min(1.5, (uy - b.y) / Math.max(1e-6, b.h))),
+  ];
+}
+/* One point of an erase sweep, with the undo step taken at the moment the
+   sweep first reaches something rather than at the press. Two things fall
+   out of that: a stroke can start on blank sheet and still work, and a press
+   that never touches ink does not push an undo step that would restore a
+   sheet nobody changed. */
+/* ── THE ERASER ON A PICTURE THE CUSTOMER IMPORTED ────────────────────────
+   mkEraseHit searches __mk.items, and an imported photograph is the sheet's
+   BASE, not an item — so dragging the eraser across it did nothing at all,
+   which is exactly what a customer means by "the eraser doesn't work".
+
+   Marks still win where there are marks: the eraser rubs out ink first, and
+   only falls through to the picture when there is no ink under it. That is
+   the order a person expects, and it keeps every existing sheet behaving as
+   it did. */
+function mkErasePxTouch(x, y) {
+  if (!window.BJRaster) {
+    /* fetch the engine on first need and let the next stroke bite; a 64KB
+       download must not be paid by everyone who picks up the eraser */
+    if (!__mk.__erasePxAsked) {
+      __mk.__erasePxAsked = true;
+      loadRaster().then(() => mkPxWarm()).catch(() => {});
+    }
+    return false;
+  }
+  const t = mkPxTarget(x, y);
+  if (!t) return false;
+  const uv = mkPxLocal(t, x, y);
+  if (!uv) return false;
+  const rec = t.rec, R = window.BJRaster;
+  const p = [uv[0] * rec.doc.w, uv[1] * rec.doc.h];
+  const rad = Math.max(1, (__mk.eraseSize || 0.035) * Math.max(rec.doc.w, rec.doc.h) * 0.5);
+  if (!rec.live || rec.live.kind !== "erase") {
+    rec.live = { S: R.strokeNew(rec.doc), kind: "erase", it: t.it,
+                 opt: { radius: rad, hardness: 0.8, flow: 1, opacity: 1 } };
+    __mk.pxErase = { id: t.it.id };
+  }
+  rec.live.opt.radius = rad;
+  R.strokeTo(rec.doc, rec.live.S, p[0], p[1], rec.live.opt);
+  rec.seq++;
+  mkRedraw();
+  return true;
+}
+function mkErasePxEnd() {
+  const st = __mk && __mk.pxErase;
+  __mk.pxErase = null;
+  if (!st) return false;
+  const rec = MK_PX.get(st.id);
+  if (!rec || !rec.live) return false;
+  const R = window.BJRaster;
+  const live = rec.live;
+  rec.live = null;
+  const entry = R.histBegin(rec.doc, "erase");
+  const wrote = R.strokeCommit(rec.doc, R.docActive(rec.doc), live.S, entry,
+                               live.opt.opacity, "erase");
+  if (wrote) {
+    R.histCommit(rec.doc, entry);
+    __mk.dirty = true;
+    mkLogPush("px:" + st.id);
+    mkPxTouch(live.it);
+    mkTouch();
+  } else { rec.seq++; mkRedraw(); }
+  return wrote;
+}
+function mkEraseTouch(x, y) {
+  if (!__mk || !__mk.eraseDraw) return false;
+  if (!__mk.eraseDraw.marked) {
+    if (!mkEraseHits(x, y).length) return mkErasePxTouch(x, y);  /* no ink: the picture */
+    mkPushUndo();                                 /* BEFORE the first removal */
+    __mk.eraseDraw.marked = true;
+  }
+  /* a stroke that began on the picture stays on the picture for its whole
+     length — switching target mid-drag would erase two different things from
+     one gesture and leave two different undo steps behind it */
+  if (__mk.pxErase) return mkErasePxTouch(x, y);
+  return mkEraseAddPoint(x, y);
+}
+
+/* ── ONE SWEEP TAKES AWAY EVERYTHING IT PASSES OVER ───────────────────────
+   This used to append the sample to a single item — whichever the box test
+   named — so rubbing across two crossing lines rubbed out one of them and
+   left the other whole, and there was no size or angle of stroke that could
+   take both. A rubber does not choose.
+
+   Each touched item keeps its OWN open stroke, held by id in
+   `eraseDraw.open`, so the sweep writes one continuous path per object and
+   an object the circle has left is closed rather than joined across the gap
+   by a straight line back to wherever it is re-entered. Ids rather than
+   indices, for the same reason the selection uses them: an index is not the
+   same object after a reorder. */
+function mkEraseAddPoint(x, y) {
+  if (!__mk || !__mk.eraseDraw) return false;
+  const hits = mkEraseHits(x, y);
+  const open = __mk.eraseDraw.open || (__mk.eraseDraw.open = {});
+  const seen = Object.create(null);
+  hits.forEach((hit) => {
+    const it = __mk.items[hit];
+    if (!it) return;
+    seen[it.id] = 1;
+    const b = mkBBox(it), maxDim = Math.max(1e-6, b.w, b.h);
+    const radiusLocal = ((__mk.eraseSize || 0.035) / 2) / maxDim;
+    const pt = mkEraseLocalPoint(it, x, y);
+    if (!Array.isArray(it.er)) it.er = [];
+    let st = open[it.id] || null;
+    /* an undo, or the 80-stroke cap, can take the open stroke out from under
+       us — if it is no longer on the item it is not ours to append to */
+    if (st && it.er.indexOf(st) < 0) st = null;
+    if (!st || Math.abs((Number(st.r) || 0) - radiusLocal) > 0.002) {
+      st = { r: radiusLocal, p: [] };
+      it.er.push(st);
+      if (it.er.length > 80) it.er.shift();
+    }
+    open[it.id] = st;
+    const q = st.p;
+    if (q.length >= 2) {
+      const du = pt[0] - q[q.length - 2], dv = pt[1] - q[q.length - 1];
+      /* enough samples for a smooth stroke, without writing hundreds of almost
+         identical points into Firestore during a slow finger drag */
+      const minStep = Math.max(0.0012, radiusLocal * 0.12);
+      if (du * du + dv * dv < minStep * minStep) return;
+    }
+    q.push(pt[0], pt[1]);
+    if (q.length > 2400) q.splice(0, q.length - 2400);
+    /* the extent cache in mkErasePaintMask is keyed on point count, and this
+       just changed it — clearing it here keeps that honest without the mask
+       painter having to know who edits its strokes */
+    st.__n = 0;
+  });
+  Object.keys(open).forEach((id) => { if (!seen[id]) delete open[id]; });
+  __mk.eraseDraw.last = hits.length ? hits[0] : -1;
+  return hits.length > 0;
+}
+function mkEraserCursorAt(x, y) {
+  const host = $("#markupOverlay");
+  if (!host || !__mk || __mk.tool !== "erase") return;
+  let c = host.querySelector(".mk-eraser-cursor");
+  if (!c) { c = document.createElement("i"); c.className = "mk-eraser-cursor"; host.appendChild(c); }
+  const d = Math.max(0.008, __mk.eraseSize || 0.035);
+  c.style.left = (x * 100) + "%"; c.style.top = (y * 100) + "%";
+  c.style.width = (d * 100) + "%"; c.style.height = (d * 100) + "%";
+}
+function mkEraserCursorClear() {
+  const c = document.querySelector("#markupOverlay .mk-eraser-cursor");
+  if (c) c.remove();
+}
+
+/* ═══════════ pointer plumbing — one handler set, every tool ══════════════ */
+(function wireMarkup() {
+  const stage = $("#markupStage");
+  if (!stage) return;
+
+  /* normalized against the VIEW, not the stage: the view's rect reflects the
+     zoom/pan transform, so these coordinates are image-true at any zoom */
+  const norm = (e) => {
+    const r = $("#markupView").getBoundingClientRect();
+    let x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    /* THE POINTER IS NOT QUANTISED. Snapping the cursor snaps wherever the
+       object happened to be GRABBED, so an object picked up 3% from its own
+       corner lands 3% off every grid line for ever. What gets snapped is the
+       OBJECT — its edges and its centre — and that happens in mkAlignApply
+       once the drag knows what it is moving. */
+    /* CLAMPED TO THE HALO, NOT TO THE SHEET. Clamping at 0 and 1 is what
+       made a drag stop dead at the edge and the thing being dragged vanish:
+       every coordinate past the border collapsed onto the border. The limit
+       is now the edge of the canvas — as far out as there is somewhere to
+       draw, and not one pixel further. */
+    const h = mkHaloRange();
+    return [Math.min(1 + h.x, Math.max(-h.x, x)),
+            Math.min(1 + h.y, Math.max(-h.y, y))];
+  };
+
+  /* ── THE WHEEL HAS THREE JOBS ──────────────────────────────────────────
+     bare  → zoom about the cursor, as it always has
+     SHIFT → pan the sheet left and right
+     CTRL  → pan the sheet up and down
+
+     WHICH AXIS THE NOTCH ARRIVES ON IS NOT OURS TO ASSUME. Most browsers
+     already turn shift+wheel into deltaX before it reaches us, while a
+     mouse with only a vertical wheel still reports deltaY; a horizontal
+     trackpad swipe sends deltaX with no modifier at all. So the larger of
+     the two axes is taken as "the notch" and the modifier alone decides
+     which way the sheet moves. Reading deltaY only would have made
+     Shift+wheel dead on half the trackpads in use.
+
+     The sheet moves OPPOSITE the notch, which is what every scrollable
+     surface does: wheel down looks further down the page, so the artwork
+     travels up. mkPanBy clamps, so at 100% none of this can nudge anything.
+
+     Ctrl+wheel used to mean "zoom, but three times faster" — a trackpad
+     pinch arrives that way. Pinch-to-zoom on the trackpad is unchanged
+     because a pinch is a gesture event to the stage's own two-finger
+     handler below; what changes is the ctrl-key WHEEL, which is now a pan
+     by request. */
+  stage.addEventListener("wheel", (e) => {
+    if (!__mk) return;
+    e.preventDefault();
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      const notch = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (e.shiftKey) mkPanBy(-notch, 0);
+      else mkPanBy(0, -notch);
+      return;
+    }
+    mkZoomAt(e.clientX, e.clientY, Math.pow(1.0018, -e.deltaY));
+  }, { passive: false });
+  $("#mkZoomReset").addEventListener("click", () => {
+    if (!__mk) return;
+    __mk.z = 1; __mk.px = 0; __mk.py = 0;
+    mkApplyView();
+  });
+  mkWireScrollbars();
+  mkWireSizeFields();
+  /* ── THE HOOP SWITCH ────────────────────────────────────────────────────
+     A property of the DESIGN, not of the selection, so it is not on the
+     bucket's path and touches nothing that is selected — it flips a flag,
+     saves it with the sheet and says what it means. It does not push undo:
+     it changes no geometry, and burying a settings toggle in the drawing's
+     undo stack would make ⌘Z do something nobody expects. */
+  const hoopBtn = $("#mkHoopToggle");
+  if (hoopBtn) hoopBtn.addEventListener("click", () => {
+    if (!__mk) return;
+    __mk.hoop = __mk.hoop ? 0 : 1;
+    mkHoopChrome();
+    mkTouch();
+    toast(__mk.hoop
+      ? "We'll add a hanging hoop above your design"
+      : "No hoop added — your charm is cut exactly as drawn", "gold");
+  });
+
+  /* ══════════ two fingers ═══════════════════════════════════════════════
+     Pinch to zoom, two-finger drag to pan — on EVERY tool, so a phone never
+     has to swap to a Move tool just to look somewhere else. The moment a
+     second finger lands, whatever the first one was drawing is abandoned:
+     the customer is navigating, not drawing, and half a stroke left behind
+     by a pinch is a mark nobody asked for. */
+  const PTRS = new Map();
+  const twoFinger = () => PTRS.size >= 2;
+  const gestureFrom = () => {
+    const [a, b] = Array.from(PTRS.values());
+    return { d: Math.hypot(a.x - b.x, a.y - b.y),
+             cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+  };
+  const abandonLive = () => {
+    if (!__mk) return;
+    __mk.live = null; __mk.liveFrom = null;
+    if (__mk.marq) { __mk.marq = null; mkPaintMarquee(); }
+    if (__mk.msDrag) { __mk.msDrag = null; mkPaintMarqSel(); }
+    if (__mk.drag) { __mk.drag = null; mkAlignClear(); }
+    __mk.panFrom = null;
+    if (__mk.cropFrom) { __mk.cropFrom = null; __mk.cropping && (__mk.cropping.rect = null); mkPaintCropRect(); }
+    mkRedraw();
+  };
+
+  stage.addEventListener("pointerdown", (e) => {
+    if (!__mk) return;
+    /* A SECONDARY BUTTON NEVER STARTS A GESTURE. Right-clicking a resize
+       handle used to begin a resize AND open the menu, so the object moved
+       while the customer was reading it. Touch and pen both report button 0,
+       so nothing about a finger changes here. */
+    if (e.button != null && e.button > 0) return;
+    if (e.target.closest(".markup-zoom-reset")) return;
+    if (e.target.closest(".mk-editor")) return;
+    if (e.target.closest(".mk-mobile-delete")) return;
+    PTRS.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (twoFinger()) {
+      e.preventDefault();
+      abandonLive();
+      const g = gestureFrom();
+      __mk.gesture = { d0: g.d, z0: __mk.z, px0: __mk.px, py0: __mk.py, cx: g.cx, cy: g.cy };
+      return;
+    }
+    const handle = e.target.closest(".mk-handle");
+    const [x, y] = norm(e);
+    mkCloseAllDrops();
+
+    /* ── crop ── */
+    if (__mk.cropping) {
+      e.preventDefault();
+      __mk.cropFrom = { x, y };
+      __mk.cropping.rect = { x, y, w: 0 };
+      return;
+    }
+
+    /* ── a selection handle ── */
+    if (handle && mkSelCount()) {
+      e.preventDefault();
+      const list = mkSelItems();
+      /* the SAME box the handles were drawn on — see mkRenderSelection. A
+         drag that anchored on a different rectangle from the one under the
+         hand is a resize that runs away from the corner being held. */
+      const bb = list.length > 1 ? mkUnionDrawn(list) : mkBBox(list[0]);
+      mkPushUndo();
+      __mk.drag = {
+        kind: handle.dataset.h === "rot" ? "rotate" : "resize",
+        h: handle.dataset.h, list, from: [x, y], bb,
+        /* every member's starting geometry, so the whole selection is
+           transformed from ONE origin instead of each drifting on its own */
+        p0: list.map((o) => (o.p || []).slice()),
+        r0: list.map((o) => o.r || 0),
+        fs0: list.map((o) => o.fs || 0.036),
+        a0: Math.atan2(y - (bb.y + bb.h / 2), x - (bb.x + bb.w / 2)),
+        lock: !!__mk.lockRatio,
+      };
+      return;
+    }
+
+    if (__mk.tool === "pan") {
+      e.preventDefault();
+      try { stage.setPointerCapture && stage.setPointerCapture(e.pointerId); } catch (err) {}
+      __mk.panFrom = { x: e.clientX, y: e.clientY, px: __mk.px, py: __mk.py };
+      return;
+    }
+
+    /* ── the marquee ────────────────────────────────────────────────────
+       Press inside the box that is already there and it moves; press
+       anywhere else and a new one is drawn. A press that never becomes a
+       drag puts the box away, which is what clicking off a selection means
+       everywhere else and what ⌘D does in Photoshop. */
+    if (__mk.tool === "marquee") {
+      e.preventDefault();
+      mkCloseEditor();
+      try { stage.setPointerCapture && stage.setPointerCapture(e.pointerId); } catch (err) {}
+      const r = __mk.msel;
+      if (r && mkPtIn(x, y, r)) {
+        __mk.msDrag = { mode: "move", ox: x - r.x, oy: y - r.y, moved: false };
+      } else {
+        __mk.msel = null;
+        __mk.msDrag = { mode: "new", x0: x, y0: y, x, y, moved: false };
+      }
+      mkPaintMarqSel();
+      return;
+    }
+
+    if (__mk.tool === "select") {
+      e.preventDefault();
+      mkCloseEditor();
+      const hit = mkHitItem(x, y);
+      const additive = e.shiftKey || e.metaKey || e.ctrlKey || __mkMulti;
+      /* alt reaches PAST the group to the one object inside it — the same
+         gesture Illustrator, Figma and Keynote all use */
+      const reach = mkReachOf(hit, e.altKey);
+
+      if (hit < 0) {
+        /* empty sheet: a click clears, a DRAG rubber-bands. Shift keeps what
+           is already selected and adds to it. */
+        const base = additive ? mkSelIdx() : [];
+        if (!additive) mkSelSet([]);
+        __mk.marq = { x0: x, y0: y, x, y, add: additive, live: false, base };
+        /* ── AND A HOLD BECOMES A HAND ──────────────────────────────────
+           Press on bare paper and keep still, and after a beat the gesture
+           turns into panning — the same press-and-hold that grabs the
+           canvas in every touch app, asked for here by name. The marquee
+           keeps the gesture if the hand moves before the beat; the timer
+           is cancelled the moment the rubber-band goes live or the press
+           ends. Space-drag and middle-drag still pan exactly as before. */
+        if (__mk.holdPan) clearTimeout(__mk.holdPan);
+        __mk.holdPan = setTimeout(() => {
+          __mk.holdPan = null;
+          if (!__mk.marq || __mk.marq.live) return;
+          __mk.marq = null;
+          __mk.panFrom = { x: e.clientX, y: e.clientY, px: __mk.px, py: __mk.py };
+          const st = $("#markupStage");
+          if (st) st.classList.add("is-panning");
+          mkRedraw();
+        }, 380);
+        mkChrome();
+        mkPaintLayerSel(true);
+        return;
+      }
+      if (additive) {
+        mkSelToggle(reach);
+        mkChrome();
+        mkPaintLayerSel(true);
+        return;                       /* a shift-click selects; it never drags */
+      }
+      /* already inside the selection? Then this is a drag of the WHOLE
+         selection, not a demand to start a new one from this object.
+
+         THE TEST IS THE OBJECT UNDER THE HAND, NOT ITS WHOLE REACH. This
+         read `reach.every(isSelected)` — every member of the group had to
+         be selected for the press to count as "already selected". So with
+         ONE member isolated, pressing it failed that test and the group was
+         re-selected underneath the drag: the isolation the layer list had
+         just granted was thrown away by the first attempt to use it, and
+         the whole group moved. Asking only whether the pressed object is
+         selected preserves an isolated member, and is still true of every
+         member when the group is selected whole — so the group case drags
+         exactly as it always did. */
+      if (!mkIsSelIdx(hit)) mkSelSet(reach);
+      const list = mkSelItems();
+      if (list.length) {
+        mkPushUndo();
+        __mk.drag = { kind: "move", list, from: [x, y],
+                      p0: list.map((o) => (o.p || []).slice()) };
+      }
+      mkChrome();
+      /* picking something up on the sheet highlights its row in the layer
+         list, and vice versa — one selection, two places you can see it */
+      mkPaintLayerSel(true);
+      return;
+    }
+
+    if (__mk.tool === "erase") {
+      e.preventDefault();
+      mkEraserCursorAt(x, y);
+      /* ── THE ERASER USED TO REFUSE TO START OFF THE INK ─────────────────
+         `if (mkEraseHit(x, y) < 0) return;` meant the stroke only began if
+         the press landed ON something. But nobody erases that way: you put
+         the rubber down beside the mark and sweep across it, exactly as you
+         would on paper. Every one of those presses did nothing, which is
+         why it took two or three goes to get the tool to bite.
+
+         It engages wherever it is put down now, and the sweep does the work.
+         The undo snapshot moves with it — see mkEraseTouch — so a stroke
+         that never crosses any ink still leaves no step to undo. */
+      try { stage.setPointerCapture && stage.setPointerCapture(e.pointerId); } catch (err) {}
+      __mk.eraseDraw = { pointerId: e.pointerId, last: -1, marked: false, open: {} };
+      mkEraseTouch(x, y);
+      mkRedraw();
+      return;
+    }
+
+    if (__mk.tool === "wand") {
+      e.preventDefault();
+      mkWandAt(x, y);
+      return;
+    }
+
+    if (__mk.tool === "bucket") {
+      e.preventDefault();
+      /* ── OUTLINE IS THE THIRD BUCKET, NOT AN EXIT ────────────────────────
+         It used to be coerced to Engrave here, which is why Outline was the
+         one instruction you could not simply hover-and-tap: the only way to
+         say it was to fill an area with something else first and then
+         convert it. All three instructions are now placed the same way. */
+      const want = mkFillIntent(__mk.fill);
+
+      /* ALREADY FILLED? Then this click is about that fill, not about a new
+         one. Same instruction → take it back; different instruction → change
+         it. One gesture, no modifier, nothing to learn. */
+      const hitFill = mkFillUnderPoint(x, y);
+      if (hitFill >= 0) {
+        const it = __mk.items[hitFill];
+        mkPushUndo();
+        if (mkFillIntent(it.f) === want) {
+          /* SAME INSTRUCTION AGAIN MEANS "UNDO THIS", and what undoing means
+             depends entirely on what the thing IS.
+
+             A fill the bucket made is an instruction and nothing else, so
+             taking it back removes it. A filled shape that arrived in an
+             .svg or .ai, or came out of taking a generated drawing apart, is
+             the customer's ARTWORK — and deleting somebody's logo because
+             they clicked it with the engraving tool is the worst thing this
+             studio could do with a click. For those, "un-engrave" means what
+             it says: the shape stays, its interior goes back to plain metal,
+             and its outline is still engraved. */
+          if (it.bk) {
+            __mk.items.splice(hitFill, 1);
+            mkSelSet([]);
+            mkTouch();
+            toast("Taken back — that area is plain metal again", "gold");
+          } else {
+            it.f = "none";
+            mkSelSet([hitFill]);
+            mkTouch();
+            toast("Outline only — its inside is plain polished metal now", "gold");
+          }
+        } else {
+          /* only `f` — the instruction. `c` is the object's own ink, and a
+             traced part can be traced in any colour; overwriting it here
+             threw that away permanently for no benefit, now that the
+             painter takes a fill's colour from its INSTRUCTION. */
+          it.f = want === "cutout" ? MK_CUTOUT : want === "none" ? "none" : MK_ENGRAVE;
+          /* ONLY THE BUCKET'S OWN FILLS ARE NAMED BY THE BUCKET. Renaming an
+             imported shape because its engraving instruction changed takes
+             away the name the customer finds it by in the layer list —
+             "logo 2" becomes "Cut-out area" and their own artwork is gone
+             from under them. */
+          if (it.bk) it.n = mkRegionName({ frac: 0, onPicture: false }, want);
+          mkSelSet([hitFill]);
+          mkTouch();
+          toast(mkFillMode(want).say, "gold");
+        }
+        mkFillPreviewClear();
+        return;
+      }
+
+      const blocked = mkFillBlockedAt(x, y);
+      const res = mkBucketFill(x, y);
+      if (blocked && (!res || res.onLine || res.openRegion)) {
+        toast(blocked.lok
+          ? `“${mkLayerName(blocked)}” is locked — unlock it in Layers and try again`
+          : `“${mkLayerName(blocked)}” is hidden — turn it back on in Layers and try again`, "err");
+        return;
+      }
+      if (!res) { toast("Nothing enclosed under there — try inside a shape", "err"); return; }
+      if (res.onLine) { toast("Nothing to fill just there", "err"); return; }
+      if (res.openRegion) {
+        toast("That's the space around the charm, not an area of it — the outline has to close first", "err");
+        return;
+      }
+      mkPushUndo();
+      const at = mkPlaceFill(res.item, res.region);
+      mkSelSet([at]);
+      mkTouch();
+      mkFillPreviewClear();
+      toast(mkFillMode(want).say, "gold");
+      return;
+    }
+
+    if (MK_TEXT_TOOLS.indexOf(__mk.tool) >= 0) {
+      e.preventDefault();
+      /* words already there? Then this is an edit, not a second note stacked
+         on the first. Wanting to change what you wrote is the commonest
+         thing anyone does with text. */
+      const hitTxt = mkHitText(x, y);
+      if (hitTxt >= 0) {
+        const keep = __mk.tool;
+        mkEditItem(hitTxt);
+        __mk.tool = keep;
+        return;
+      }
+      /* preventDefault is the note-tool fix: without it the browser moves
+         focus on pointerup and the fresh editor is torn down before a
+         keystroke can reach it. */
+      mkPushUndo();
+      const it = mkPack({
+        id: mkId(), t: __mk.tool, c: __mk.color, w: __mk.w, ff: __mk.ff,
+        fs: __mk.tool === "label" ? Math.max(0.05, __mk.fs) : __mk.fs,
+        p: __mk.tool === "callout" ? [x, y, x + 0.16, y - 0.14] : [x, y], s: "",
+      });
+      __mk.items.push(it);
+      __mk.sel = __mk.items.length - 1;
+      mkTouch();
+      mkOpenEditor(it);
+      return;
+    }
+
+    /* ── everything that is drawn by dragging ── */
+    e.preventDefault();
+    try { stage.setPointerCapture && stage.setPointerCapture(e.pointerId); } catch (err) {}
+    const kind = MK_PATH_TOOLS[__mk.tool];
+    /* ── AN AREA TAKES ITS INSTRUCTION FROM THE BAR, NOT FROM THE PEN ────
+       `__mk.color` is the PEN'S ink, and a closed primitive was inheriting
+       it. That matters because on a closed primitive a reserved colour is
+       not decoration — mkInkInstruction reads it back as the instruction —
+       so one visit to the pen menu's "Cut-through line" silently made every
+       rectangle, circle, star and heart drawn afterwards a CUT-OUT, in blue,
+       until the pen was changed again. The customer's report was exactly
+       that: primitives arriving blue, from a control they had used to set a
+       line's colour.
+
+       The studio already draws the distinction everywhere else: the metal
+       bar says what an AREA becomes, the pen menu says what a LINE does. A
+       closed primitive is an area, so it reads the bar. A line and an arrow
+       enclose nothing and stay ink, exactly as mkPaintShape's own `closed`
+       test has always had it.
+
+       This is the same separation `f` got when a visit to Engrave started
+       making every circle arrive solid black — and for the same reason. It
+       is NOT a reversal of that fix: a primitive is still born an outline
+       (`f: "none"` below). Only its ink follows the armed instruction, so
+       what lands on the sheet is the chip the customer can see is lit.
+
+       RING AND BAIL ARE EXCLUDED, and that is not an oversight. Both are
+       named in the toolbar as holes — "Ring: a cut-out", "Charm + bail: the
+       hanging loop" — and mkItemIntent has promoted an unfilled one to
+       cut-out for as long as the promotion has existed. Giving them the bar's
+       ink would put a RESERVED colour on them, mkInkInstruction would read
+       that colour back as the instruction before the promotion is ever
+       reached, and a bail drawn with Engrave lit would arrive as engraved
+       metal instead of the hanging hole it is. */
+    const closedNew = !kind && MK_SHAPE_TOOLS.indexOf(__mk.tool) >= 0 &&
+                      __mk.tool !== "line" && __mk.tool !== "arrow" &&
+                      __mk.tool !== "ring" && __mk.tool !== "bail";
+    __mk.live = mkPack({
+      id: mkId(),
+      t: kind || __mk.tool,
+      c: closedNew ? mkIntentInk(mkFillIntent(__mk.fill)) : __mk.color,
+      /* ── A PRIMITIVE IS BORN AN OUTLINE. ALWAYS. ─────────────────────────
+         `__mk.fill` is the bucket's load, and it used to be this too — what
+         a new shape came pre-filled with. Two jobs, one variable, and the
+         moment the engraving chips became sticky (which the bucket needed),
+         one visit to Engrave meant every circle drawn afterwards arrived
+         solid black. The jobs are separate now: the chips ARE the bucket
+         and nothing else, and a drawn shape starts as its outline — the
+         instruction is given the same way it is given to everything else,
+         by lighting the area up and tapping it. */
+      f: "none",
+      w: __mk.tool === "highlight" ? Math.max(0.03, __mk.w * 3) : __mk.w,
+      p: [x, y, x, y],
+    });
+    if (kind) __mk.live.p = [x, y];
+    __mk.liveFrom = [x, y];
+  });
+
+  stage.addEventListener("pointermove", (e) => {
+    if (!__mk) return;
+    if (PTRS.has(e.pointerId)) PTRS.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    /* pinch + two-finger pan, together, in one gesture */
+    if (__mk.gesture && twoFinger()) {
+      e.preventDefault();
+      const g = gestureFrom(), G = __mk.gesture;
+      /* the SHEET's origin, not the room's — px/py translate the sheet, so
+         an anchor measured from the room would be off by however far the
+         sheet is inset in it, and a pinch would slide sideways as it zoomed */
+      const r = mkSheetBox();
+      const z = Math.min(8, Math.max(1, G.z0 * (g.d / Math.max(8, G.d0))));
+      /* keep the point between the fingers under the fingers, then add
+         whatever the midpoint itself travelled */
+      const ax = G.cx - r.left, ay = G.cy - r.top;
+      __mk.px = ax - (ax - G.px0) * (z / G.z0) + (g.cx - G.cx);
+      __mk.py = ay - (ay - G.py0) * (z / G.z0) + (g.cy - G.cy);
+      __mk.z = z;
+      if (z === 1) { __mk.px = 0; __mk.py = 0; }
+      mkClampView();
+      mkApplyView();
+      return;
+    }
+
+    const [x, y] = norm(e);
+
+    if (__mk.tool === "erase") {
+      mkEraserCursorAt(x, y);
+      if (__mk.eraseDraw && __mk.eraseDraw.pointerId === e.pointerId) {
+        e.preventDefault();
+        let evs = (typeof e.getCoalescedEvents === "function") ? e.getCoalescedEvents() : [e];
+        if (!evs || !evs.length) evs = [e];
+        evs.forEach((ce) => { const q = norm(ce); mkEraseTouch(q[0], q[1]); });
+        mkRedraw();
+        return;
+      }
+    }
+
+    /* the fill preview follows the cursor whenever the bucket is in hand */
+    if (__mk.tool === "bucket" && !__mk.drag && !__mk.live && !__mk.marq) mkFillPreviewAt(x, y);
+
+    if (__mk.cropping && __mk.cropFrom) {
+      const f = __mk.cropFrom;
+      /* square by construction — see mkStartCrop */
+      const w = Math.min(Math.abs(x - f.x), Math.abs(y - f.y));
+      __mk.cropping.rect = { x: x >= f.x ? f.x : f.x - w, y: y >= f.y ? f.y : f.y - w, w };
+      const ca1 = $("#mkCropApply"); if (ca1) ca1.disabled = w < 0.05;
+      mkPaintCropRect();
+      return;
+    }
+
+    if (__mk.panFrom) {
+      __mk.px = __mk.panFrom.px + (e.clientX - __mk.panFrom.x);
+      __mk.py = __mk.panFrom.py + (e.clientY - __mk.panFrom.y);
+      mkClampView();
+      mkApplyView();
+      return;
+    }
+
+    /* ── the marquee, being drawn or being moved ── */
+    if (__mk.msDrag) {
+      const d = __mk.msDrag;
+      if (d.mode === "move") {
+        const r = __mk.msel;
+        if (r) { r.x = x - d.ox; r.y = y - d.oy; d.moved = true; }
+      } else {
+        d.x = x; d.y = y;
+        /* shift makes it square, the same promise every shape tool here
+           already makes with the same key */
+        if (e.shiftKey) {
+          const sq = Math.min(Math.abs(x - d.x0), Math.abs(y - d.y0));
+          d.x = d.x0 + Math.sign(x - d.x0 || 1) * sq;
+          d.y = d.y0 + Math.sign(y - d.y0 || 1) * sq;
+        }
+        if (Math.abs(d.x - d.x0) > 0.004 || Math.abs(d.y - d.y0) > 0.004) d.moved = true;
+      }
+      mkPaintMarqSel();
+      return;
+    }
+
+    /* ── the rubber band ── */
+    if (__mk.marq) {
+      const m = __mk.marq;
+      m.x = x; m.y = y;
+      if (!m.live && (Math.abs(x - m.x0) > 0.012 || Math.abs(y - m.y0) > 0.012)) {
+        m.live = true;
+        if (__mk.holdPan) { clearTimeout(__mk.holdPan); __mk.holdPan = null; }
+      }
+      if (m.live) { mkPaintMarquee(); mkMarqueeSelect(); }
+      return;
+    }
+
+    if (__mk.drag) {
+      const d = __mk.drag;
+      /* ONE transform, applied to every member from its own starting
+         geometry. With a single object selected the maths is identical to
+         what it always was — a union of one is just that one. */
+      const list = d.list || [];
+      if (d.kind === "move") {
+        let dx = x - d.from[0], dy = y - d.from[1];
+        const put = (ddx, ddy) => list.forEach((it, n) => {
+          const p = it.p, s = d.p0[n];
+          for (let k = 0; k + 1 < p.length; k += 2) { p[k] = s[k] + ddx; p[k + 1] = s[k + 1] + ddy; }
+        });
+        put(dx, dy);
+        /* now that the objects are where the hand put them, ask what they
+           agree with and take the nudge. ALT suspends the whole thing. */
+        const nudge = mkAlignApply(list, "move", e.altKey);
+        if (nudge.dx || nudge.dy) put(dx + nudge.dx, dy + nudge.dy);
+      } else if (d.kind === "resize") {
+        const bb = d.bb;
+        /* ── CTRL RESIZES ABOUT THE CENTRE ─────────────────────────────────
+           Normally the opposite corner is the anchor: the corner you are NOT
+           holding stays exactly where it is, which is what makes a resize
+           feel like a resize rather than a move.
+
+           Hold CTRL and the anchor moves to the object's own centre instead,
+           so every side travels the same distance and the object grows and
+           shrinks evenly in all four directions about the point it is
+           already sitting on. The whole change is WHERE THE ANCHOR IS and
+           what the scale is measured against — the scaling loop below
+           already works about (ax, ay), so nothing downstream needs to know.
+
+           The reference length halves with it: from the centre the hand is
+           only ever crossing half the box, so dividing by the full width
+           would report half the scale the hand is actually asking for.
+
+           SHIFT still composes — ctrl+shift is "evenly from the centre AND
+           in proportion", which is the pair every editor offers together. */
+        const fromCentre = e.ctrlKey || e.metaKey;
+        const ax = fromCentre ? bb.x + bb.w / 2
+                 : (d.h === "nw" || d.h === "sw" ? bb.x + bb.w : bb.x);
+        const ay = fromCentre ? bb.y + bb.h / 2
+                 : (d.h === "nw" || d.h === "ne" ? bb.y + bb.h : bb.y);
+        const refW = fromCentre ? bb.w / 2 : bb.w;
+        const refH = fromCentre ? bb.h / 2 : bb.h;
+        let sx = Math.max(0.02, Math.abs(x - ax) / Math.max(1e-4, refW));
+        let sy = Math.max(0.02, Math.abs(y - ay) / Math.max(1e-4, refH));
+        /* SHIFT — or a picture, or a two-finger pinch on a handle — holds the
+           aspect ratio. One scale for both axes, taken from whichever the hand
+           moved further, so the object follows the corner without distorting.
+           Pictures default to locked because a stretched photograph is never
+           what was meant; shift then RELEASES them, the same way it does in
+           every editor people already know. */
+        const anyImg = list.some((o) => o.t === "img");
+        /* ── CTRL ALONE IS THE WHOLE GESTURE ──────────────────────────────
+           "Equally in all directions from the centre" is TWO properties —
+           the anchor is the centre, AND the object keeps its shape — and
+           this line used to supply only the first, so plain Ctrl+drag moved
+           all four sides but by different amounts per axis and the object
+           came out a different shape. Getting what was asked for meant
+           adding Shift, which is exactly the second key the request said it
+           did not want to press.
+
+           Ctrl therefore locks the ratio by itself. Shift keeps its usual
+           job of RELEASING a lock — Ctrl+Shift is the escape hatch to a
+           centred but free-form resize — so nothing is lost and Shift is
+           never needed for the gesture as asked. */
+        const wantLock = fromCentre ? !e.shiftKey
+                       : (anyImg ? !e.shiftKey : (e.shiftKey || !!d.lock));
+        if (wantLock) {
+          const s = Math.abs(sx - 1) > Math.abs(sy - 1) ? sx : sy;
+          sx = s; sy = s;
+        }
+        list.forEach((it, n) => {
+          const p = it.p, s0 = d.p0[n];
+          for (let k = 0; k + 1 < p.length; k += 2) {
+            p[k] = ax + (s0[k] - ax) * sx;
+            p[k + 1] = ay + (s0[k + 1] - ay) * sy;
+          }
+          /* type scales with its box rather than being stretched by it */
+          if (it.t === "label" || it.t === "text" || it.t === "callout") {
+            it.fs = Math.min(0.4, Math.max(0.012, (d.fs0[n] || 0.036) * (wantLock ? sx : (sx + sy) / 2)));
+          }
+        });
+        /* ONLY THE CORNER IN THE HAND MAY SNAP — and ONE AXIS AT A TIME.
+           The allowed ends used to be passed as a single flat list for both
+           axes, so on the ne and sw handles (where the pair is mixed) each
+           axis accepted BOTH ends, including the anchored one: the fixed
+           corner moved, the object resized for an alignment that did not
+           exist, and the guide was painted through nothing. */
+        const eX = (d.h === "nw" || d.h === "sw") ? "lo" : "hi";
+        const eY = (d.h === "nw" || d.h === "ne") ? "lo" : "hi";
+        /* ── AND A CENTRED RESIZE HAS NO FIXED EDGE TO SNAP ────────────────
+           The snap below nudges ONE end and then rescales about the anchor to
+           put that end on a guide — which is only meaningful while the other
+           end is nailed down. Resizing from the centre moves both ends at
+           once, so honouring a guide on one of them would drag the opposite
+           edge off by the same amount and the object would chase the guide
+           without ever arriving. Suspended exactly as ALT suspends it. */
+        const nudge = mkAlignApply(list, "resize", e.altKey || fromCentre, [eX], [eY]);
+        if (nudge.dx || nudge.dy) {
+          const bb2 = mkUnionDrawn(list);
+          let nx = bb2.w ? (bb2.w + (eX === "hi" ? nudge.dx : -nudge.dx)) / bb2.w : 1;
+          let ny = bb2.h ? (bb2.h + (eY === "hi" ? nudge.dy : -nudge.dy)) / bb2.h : 1;
+          /* A LOCKED RESIZE STILL DESERVES HELP. Pictures are locked by
+             default, so "no snapping while locked" meant every imported
+             logo got none at all. One scale, taken from whichever axis
+             actually found an agreement. */
+          if (wantLock) {
+            const useX = Math.abs(nudge.dx) > 0 && (!nudge.dy || Math.abs(nudge.dx) <= Math.abs(nudge.dy));
+            const k = useX ? nx : ny;
+            nx = k; ny = k;
+          }
+          if (isFinite(nx) && isFinite(ny) && nx > 0.02 && ny > 0.02 &&
+              nx < 50 && ny < 50) {
+            list.forEach((it, n2) => {
+              const p = it.p;
+              for (let k = 0; k + 1 < p.length; k += 2) {
+                p[k] = ax + (p[k] - ax) * nx;
+                p[k + 1] = ay + (p[k + 1] - ay) * ny;
+              }
+              if (it.t === "label" || it.t === "text" || it.t === "callout") {
+                it.fs = Math.min(0.4, Math.max(0.012, it.fs * (wantLock ? nx : (nx + ny) / 2)));
+              }
+              void n2;
+            });
+            /* and the read-out must describe the box that ENDED UP here,
+               not the one the hand asked for: a resize scales the box and
+               the preview was merely translating it */
+            mkAlignReadout(mkUnionDrawn(list), "resize");
+          }
+        }
+      } else if (d.kind === "rotate") {
+        const bb = d.bb, cx = bb.x + bb.w / 2, cy = bb.y + bb.h / 2;
+        let dr = Math.atan2(y - cy, x - cx) - d.a0;
+        if (e.shiftKey && list.length === 1) {
+          dr = Math.round((d.r0[0] + dr) / (Math.PI / 12)) * (Math.PI / 12) - d.r0[0];
+        } else if (e.shiftKey) {
+          dr = Math.round(dr / (Math.PI / 12)) * (Math.PI / 12);
+        }
+        /* several objects turn ABOUT THE SELECTION's centre, not each about
+           its own — otherwise a grouped face would spin its eyes in place and
+           leave them where they were. One definition, shared with the menu's
+           own rotate, so the grip and the menu can never disagree. */
+        mkRotateItems(list, dr, cx, cy, d.p0, d.r0);
+      }
+      mkRedraw();
+      mkRenderSelection();
+      return;
+    }
+
+    if (!__mk.live) return;
+    const kind = MK_PATH_TOOLS[__mk.tool];
+    if (kind) {
+      const p = __mk.live.p;
+      const lx = p[p.length - 2], ly = p[p.length - 1];
+      const dx = x - lx, dy = y - ly;
+      if (dx * dx + dy * dy < 0.000009) return;    /* decimate — the doc stays small */
+      p.push(x, y);
+    } else {
+      const f = __mk.liveFrom;
+      let ex = x, ey = y;
+      if (e.shiftKey) {
+        if (__mk.live.t === "line" || __mk.live.t === "arrow") {
+          if (Math.abs(x - f[0]) > Math.abs(y - f[1])) ey = f[1]; else ex = f[0];
+        } else {
+          const s = Math.max(Math.abs(x - f[0]), Math.abs(y - f[1]));
+          ex = f[0] + Math.sign(x - f[0] || 1) * s;
+          ey = f[1] + Math.sign(y - f[1] || 1) * s;
+        }
+      }
+      __mk.live.p = [f[0], f[1], ex, ey];
+    }
+    mkRedraw();
+  });
+
+  const commit = (e) => {
+    if (!__mk) return;
+    if (e && e.pointerId != null) PTRS.delete(e.pointerId);
+    if (__mk.eraseDraw && (!e || e.pointerId == null || __mk.eraseDraw.pointerId === e.pointerId)) {
+      __mk.eraseDraw = null;
+      /* belt and braces for the orphan described in mkSetTool: this branch
+         returns before the code at the foot of commit() that clears a live
+         shape, so anything still hanging from an unfinished draw would be
+         painted for ever. Nothing here can legitimately want it. */
+      __mk.live = null; __mk.liveFrom = null;
+      if (__mk.pxErase) { mkErasePxEnd(); return; }
+      mkTouch();
+      mkRedraw();
+      return;
+    }
+    if (__mk.gesture) {
+      /* the gesture ends when the SECOND finger leaves; the one still down
+         must not suddenly start drawing from where it happens to be */
+      if (PTRS.size < 2) __mk.gesture = null;
+      return;
+    }
+    if (__mk.cropFrom) { __mk.cropFrom = null; return; }
+    if (__mk.holdPan) { clearTimeout(__mk.holdPan); __mk.holdPan = null; }
+    if (__mk.panFrom) {
+      __mk.panFrom = null;
+      const stEl = $("#markupStage");
+      if (stEl) stEl.classList.remove("is-panning");
+      return;
+    }
+    if (__mk.msDrag) {
+      const d = __mk.msDrag;
+      if (d.mode === "new") {
+        const r = mkMsRect();
+        __mk.msel = (r && r.w >= MK_MS_MIN && r.h >= MK_MS_MIN)
+          ? { x: r.x, y: r.y, w: r.w, h: r.h } : null;
+      }
+      __mk.msDrag = null;
+      mkPaintMarqSel();
+      mkChrome();
+      return;
+    }
+    if (__mk.marq) {
+      const live = __mk.marq.live;
+      const add = __mk.marq.add;
+      __mk.marq = null;
+      mkPaintMarquee();
+      if (live) { mkChrome(); mkRenderLayersSoon(); }
+      else if (!add && mkSelCount()) {
+        /* ── A CLICK ON BARE PAPER CLEARS THE SELECTION, FULL STOP ────────
+           The press already cleared it, so reaching here with something
+           still selected means the press was swallowed or overruled between
+           down and up — a handle taking the press, a repaint that put the
+           box back, a pointer captured elsewhere. Rather than leave the
+           customer holding a selection they have plainly just clicked away
+           from, the release states the outcome itself.
+
+           Deliberately at the END of the gesture and not in place of the
+           press: this fires only when the rubber-band never went live (a
+           click, not a drag) and no modifier was held, so it can neither
+           undo an additive shift-click nor cancel a marquee that selected
+           something. Cheap, and it makes the behaviour unconditional. */
+        mkSelSet([]);
+        mkChrome();
+        mkRedraw();
+        mkPaintLayerSel(true);
+      }
+      return;
+    }
+    if (__mk.drag) { __mk.drag = null; mkAlignClear(); mkTouch(); return; }
+    if (!__mk.live) return;
+    const live = __mk.live;
+    __mk.live = null;
+    const kind = MK_PATH_TOOLS[__mk.tool];
+    /* a shape dragged to nothing is a misfire, not a mark */
+    if (!kind && Math.hypot(live.p[2] - live.p[0], live.p[3] - live.p[1]) < 0.02) { mkRedraw(); return; }
+    if (kind && live.p.length > 1200) live.p = live.p.filter((_, i) => Math.floor(i / 2) % 2 === 0);
+    mkPushUndo();
+    /* ── A RING IS TWO CIRCLES, AND THE CUSTOMER OWNS BOTH ────────────────
+       Committed as one "ring" item, the two circles were welded: no way to
+       move the hole, no way to fatten the band. So the tool now lands TWO
+       ellipse layers — the rim and the hole, concentric, the hole at half
+       size — pre-grouped so they still move as one until the customer says
+       otherwise. Both are drawn in the reserved blue, which under the line
+       rules IS the cut-through instruction — the same thing the ring has
+       promised in its menu row all along. Old ring items in saved designs
+       still paint (see mkPaintShape), they just are not made any more. */
+    if (live.t === "ring") {
+      const b = mkBBox(live);
+      const gid = "g" + Math.random().toString(36).slice(2, 8);
+      const mkCircle = (fr, name) => mkPack({
+        id: mkId(), t: "ellipse", n: name, c: MK_CUTOUT, f: "none", w: live.w,
+        g: gid,
+        p: [b.x + b.w * (0.5 - fr / 2), b.y + b.h * (0.5 - fr / 2),
+            b.x + b.w * (0.5 + fr / 2), b.y + b.h * (0.5 + fr / 2)],
+      });
+      const rim = mkCircle(1, "Ring · rim");
+      const hole = mkCircle(0.5, "Ring · hole");
+      __mk.items.push(rim, hole);
+      if (!__mk.groups) __mk.groups = {};
+      __mk.groups[gid] = { n: "Ring", col: 0 };
+      mkSelSet([__mk.items.length - 2, __mk.items.length - 1]);
+      mkTouch();
+      mkRenderLayers();
+      mkChrome();
+      return;
+    }
+    __mk.items.push(live);
+    /* symmetry: one hand, two halves — the single most useful thing you can
+       give someone drawing a charm freehand */
+    if (__mk.guides && __mk.guides.mirror) {
+      const cp = mkPack(live); cp.id = mkId();
+      for (let k = 0; k + 1 < cp.p.length; k += 2) cp.p[k] = 1 - cp.p[k];
+      __mk.items.push(cp);
+    }
+    if (__mk.items.length > 400) __mk.items.shift();
+    if (live.t === "sign") mkSaveSignature(live);
+    mkTouch();
+  };
+  stage.addEventListener("pointerleave", () => {
+    mkFillPreviewClear();
+    if (!__mk || !__mk.eraseDraw) mkEraserCursorClear();
+  });
+  stage.addEventListener("pointerup", commit);
+  stage.addEventListener("pointercancel", commit);
+  /* A press that ENDS off the stage never reaches the listeners above — the
+     finger slides out, the pointerup lands elsewhere, and the stale entry
+     left in the gesture map makes the NEXT touch read as a second finger.
+     The window sees every pointerup, so the map is purged there too. */
+  window.addEventListener("pointerup", (e) => {
+    PTRS.delete(e.pointerId);
+    if (__mk && __mk.gesture && PTRS.size < 2) __mk.gesture = null;
+  });
+  window.addEventListener("pointercancel", (e) => {
+    PTRS.delete(e.pointerId);
+    if (__mk && __mk.gesture && PTRS.size < 2) __mk.gesture = null;
+  });
+
+  /* ── the toolbar ── */
+  mkEnsureRailTools();
+  $$(".mk-tool").forEach((b) => b.addEventListener("click", (e) => {
+    if (!__mk) return;
+    if (e.target.closest("[data-caret]")) return;    /* the caret opens the menu */
+    /* Picture and More are pure menus — they hold no tool of their own. Left
+       to fall through, this set the active tool to `undefined`, which broke
+       whatever was in hand AND stopped the menu opening: pressing "Picture"
+       looked like it did nothing, which is exactly what it did. */
+    if (!b.dataset.tool) return;
+    mkSetTool(b.dataset.tool);
+  }));
+  $$(".mk-drop__menu .mk-item[data-tool]").forEach((b) => b.addEventListener("click", () => {
+    mkCloseAllDrops();
+    if (__mk) mkSetTool(b.dataset.tool);
+  }));
+  /* ── THE PEN'S INKS ──────────────────────────────────────────────────────
+     The one place in the studio that writes the three reserved colours onto
+     a line. Deliberately NOT mkApplyProp: that would also recolour whatever
+     happens to be selected, and turning a selected part's instruction over
+     because the customer chose their next pen colour is an edit nobody made. */
+  $$('.mk-drop[data-drop="pen"] .mk-item[data-ink]').forEach((b) => b.addEventListener("click", () => {
+    mkCloseAllDrops();
+    if (!__mk) return;
+    const kind = b.dataset.ink;
+    __mk.penInk = kind;
+    __mk.color = kind === "engrave" ? MK_ENGRAVE
+               : kind === "cutout" ? MK_CUTOUT
                : kind === "none" ? MK_OUTLINE
                : kind === "perimeter" ? MK_PERIM
                : (__mk.compose ? "#1c1d1d" : "#0f7a4a");
