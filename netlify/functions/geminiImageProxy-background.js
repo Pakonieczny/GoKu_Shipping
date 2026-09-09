@@ -4211,7 +4211,7 @@ function buildMaterialSpecToCharmPrompt(opts) {
 MATERIAL MAP — classify by the input tone, never by shape:
 LIGHT GREY: solid, smooth polished gold.
 DARK GREY: shallow engraving in solid gold, never holes. Match each stroke's varying width and endpoints; use finer grooves and bevels for fine detail. Keep paired lines separate; light grey between or inside them stays polished.
-WHITE: empty space, the only regions exposing background. Open the entire marked shape, including narrow tips; gold walls stay at its boundary.
+WHITE: through-cut to white ground. Preserve each connected region, including narrow branches; gold rims must not bridge or fill the opening.
 
 FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. A warm red-copper undertone, lively lustre and luminous reflections: gold that feels alive, not pink or orange. Engraving: the same alloy, a touch redder, brightness around 0.93 of adjacent gold, never below 0.86; no black or grey.
 
