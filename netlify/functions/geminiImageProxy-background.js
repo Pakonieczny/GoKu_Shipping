@@ -2651,11 +2651,9 @@ function studioClientIp(event) {
    a 503 not cost the customer a credit.                                    */
 const STUDIO_VERIFICATION_PAUSED = true;
 
-/* THE MOST IMAGES ONE RENDER MAY EVER COST. Every gate and every judge in
-   the attempt loop is capped by this together, not each separately — see the
-   ceiling in studioRenderAttempts. The storefront shows it as the "of 3" in
-   its counter, so changing it here changes both. */
-const STUDIO_MAX_RENDER_ATTEMPTS = 3;
+/* Temporarily evaluate the first image only. This shared ceiling overrides
+   every gate's retry allowance and supplies the storefront counter. */
+const STUDIO_MAX_RENDER_ATTEMPTS = 1;
 
 const STUDIO_DEFAULT_CONFIG = {
   guestFreeCredits: 3,
@@ -4208,18 +4206,18 @@ const STUDIO_HOOP_AS_FOUND =
    catching when the model did not make one.                                */
 function buildMaterialSpecToCharmPrompt(opts) {
   const hoop = (opts && opts.builtInHoop === true) ? STUDIO_HOOP_AS_FOUND : STUDIO_HOOP_INTEGRATED;
-  return `Render IMAGE 1 as a photorealistic 14K gold charm. Trace its silhouette and every marked region exactly; do not redesign or infer features from familiar shapes.
+  return `Render IMAGE 1 as a photorealistic 14K gold charm. Trace its silhouette and markings exactly; never infer features from familiar shapes.
 
 MATERIAL MAP — classify by the input tone, never by shape:
 LIGHT GREY: solid, smooth polished gold.
-DARK GREY: solid gold with shallow surface engraving. Filled shapes and thin lines both remain metal, never holes. Engrave only the dark grey pixels; enclosed light grey stays polished.
+DARK GREY: shallow engraving in solid gold, never holes. Preserve each line's width, spacing and endpoints; keep paired lines separate. Engrave only dark grey pixels; light grey between or inside them stays polished.
 WHITE: empty space. Only white regions may expose the background. Inside the silhouette, cut these regions through the sheet.
 
-FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. Subtle red-copper warmth and natural lustre, not pink or orange. Engraving is the same alloy, a little redder and slightly darker: brightness around 0.90 of adjacent polished gold, never below 0.82; no black or grey coloration.
+FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. A warm red-copper undertone, lively lustre and luminous reflections: gold that feels alive, not pink or orange. Engraving: the same alloy, a touch redder, brightness around 0.93 of adjacent gold, never below 0.86; no black or grey.
 
 LIGHTING: upper-left light on a plain white ground, one soft contact shadow beneath the centred charm. ONLY the white-map cutouts receive inner-wall depth and shadows on the ground visible through them. Scale these shadows to each opening, including tiny ones, keeping a bright open centre. Dark-grey engravings have a solid gold floor, not a view of the background.
 
-IMAGE 2 supplies material and lighting reference only; copy none of its geometry or artwork. Show only the charm, without captions or reference images.`;
+IMAGE 2 guides material and lighting only, never geometry or artwork. Show only the charm, without captions or references.`;
 }
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
@@ -5623,12 +5621,8 @@ async function studioRenderAttempts(opts) {
     const shapeWants = shaping && !!lastShape && lastShape.iou != null &&
                        !lastShape.ok && attempts <= shapeRetries;
     if (!cutWants && !shapeWants && !scoreWants) break;
-    /* ── THREE IMAGES, EVER ───────────────────────────────────────────────
-       Three judges can each ask for another attempt and each carries its own
-       allowance, so the worst case was the sum of three budgets rather than
-       any one of them. One ceiling over all of them: the original render and
-       at most two re-rolls. It is the number the storefront's counter shows
-       as the denominator, so the two must not be able to disagree. */
+    /* One shared ceiling wins over all checkers and configured retry budgets.
+       Keep diagnostics, but do not generate another image once it is reached. */
     if (attempts >= STUDIO_MAX_RENDER_ATTEMPTS) {
       log(`[studio] attempt ceiling reached (${attempts}/${STUDIO_MAX_RENDER_ATTEMPTS})` +
           ` — shipping the best attempt so far`);
