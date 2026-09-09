@@ -1331,13 +1331,28 @@ const ACTIONS = {
     const todayLagging = lastDate === todaySt.date && todaySt.open
       && delayedEdgeMs - lastBarMs > 12 * 60000;
     const missing = dates.filter((d, i) => !docs[i] || !(docs[i].bars || []).length);
+    /* A stored session that starts late or has a hole inside regular hours
+       (the guard only began writing bars mid-day) is backfilled from the
+       provider so the chart shows the whole 9:30–16:00 session. */
+    const incomplete = dates.filter((d, i) => {
+      const bars = (docs[i] && docs[i].bars) || [];
+      if (!bars.length) return false;
+      const mins = bars.map((b) => M.nyParts(new Date(Date.parse(b.t))).minutes).filter(Number.isFinite);
+      const regular = mins.filter((m) => m >= 9 * 60 + 30 && m < 16 * 60);
+      if (!regular.length) return true;
+      if (regular[0] > 9 * 60 + 40) return true;
+      for (let k = 1; k < regular.length; k++) if (regular[k] - regular[k - 1] > 30) return true;
+      const lastRegular = regular[regular.length - 1];
+      const dayOver = d < todaySt.date || (d === todaySt.date && !todaySt.open && todaySt.minutesEt >= 16 * 60);
+      return dayOver && lastRegular < 15 * 60 + 45;
+    });
     let fetched = null;
-    if ((missing.length || todayLagging) && provider.id !== "manual") {
+    if ((missing.length || incomplete.length || todayLagging) && provider.id !== "manual") {
       try {
-        const limit = Math.min(9000, want * 80);
+        const limit = Math.min(9000, want * 200);
         const got = await M.fetchBars([symbol], { timeframe: "5Min", limit });
         const bars = (got.bars && got.bars[symbol]) || [];
-        fetched = { provider: got.provider, feed: got.feed || null, bars: bars.length };
+        fetched = { provider: got.provider, feed: got.feed || null, bars: bars.length, backfilled: incomplete };
         if (bars.length) {
           try {
             await M.writeBars(symbol, todaySt.date, bars, {
