@@ -455,7 +455,7 @@ async function firestoreRetry(fn, label = "firestore") {
 // -------------------------
 // IMAGE PROVIDER RETRY HELPER (aggressive 6s+ backoff & 10 retries)
 // -------------------------
-async function callImageWithRetry(fn, label = "image-provider", maxRetries = 10) {
+async function callImageWithRetry(fn, label = "image-provider", maxRetries = 2) {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -479,12 +479,12 @@ async function callImageWithRetry(fn, label = "image-provider", maxRetries = 10)
         msg.includes("internal error") || 
         msg.includes("resource exhausted");
 
-      if (!isOverloaded || attempt === maxRetries) {
+      if (!isOverloaded || err?.imageRetryExhausted || ["insufficient_quota", "billing_hard_limit_reached"].includes(err?.code) || attempt === maxRetries) {
         throw err; // Fatal error or out of retries
       }
 
       // Aggressive Backoff: 6s, 12s, 24s, 48s... + random jitter
-      const backoff = (6000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 2000);
+      const backoff = Math.min(30000, 6000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 2000);
       console.log(`[${label}] Model overloaded/failed (attempt ${attempt + 1}/${maxRetries}), retrying in ${backoff}ms...`, safeErr(err));
       await sleep(backoff);
     }
@@ -845,6 +845,7 @@ async function readUpstreamJson(resp, providerLabel) {
       `${providerLabel} failed with HTTP ${resp.status} (empty body)`;
     const err = new Error(requestId ? `${message} [request ${requestId}]` : message);
     err.status = resp.status;
+    err.code = data?.error?.code || null;
     throw err;
   }
   if (!data) throw new Error(`${providerLabel} returned an empty or non-JSON response`);
@@ -867,7 +868,107 @@ function normalizeOpenAIOutputFormat(value) {
   return ["png", "jpeg", "webp"].includes(v) ? v : "png";
 }
 
+// Shared across tabs, background workers and the Studio's Sunburst calls.
+// Keep 10% headroom beneath the account's 250 IPM / 8M TPM limits.
+const SUNBURST_RATE = Object.freeze({ images: 225, tokens: 7200000, concurrent: 32, windowMs: 61000 });
+function sunburstTokenReservation(prompt, images = []) {
+  // Conservative admission estimate; reconcile with reported usage, and also
+  // honor provider remaining-token/reset headers. Do not treat this as billing.
+  return Math.max(200000, Buffer.byteLength(String(prompt || ""), "utf8") + 65536 * (images.length + 1));
+}
+function rateDurationMs(value) {
+  if (!value) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(String(value))) return Number(value) * 1000;
+  let ms = 0;
+  for (const m of String(value).matchAll(/([\d.]+)(ms|s|m|h)/g)) ms += Number(m[1]) * ({ms:1,s:1000,m:60000,h:3600000}[m[2]]);
+  return ms || Math.max(0, Date.parse(value) - Date.now()) || 0;
+}
+async function reserveSunburstCapacity(tokens, deadline, imageCount = 1, jobId = null) {
+  let reportedWait = false;
+  if (tokens > SUNBURST_RATE.tokens) throw new Error("Image request exceeds the token admission budget; reduce input images or prompt length.");
+  const db = getDb();
+  const doc = db.collection("ImageProviderRateLimits").doc("gpt-image-2_5-sunburst");
+  const id = require("crypto").randomUUID();
+  while (Date.now() < deadline) {
+    const wait = await firestoreRetry(() => db.runTransaction(async tx => {
+      const snap = await tx.get(doc), data = snap.exists ? snap.data() : {};
+      const now = Date.now();
+      const entries = (data.entries || []).filter(e => e.at > now - SUNBURST_RATE.windowMs || e.until > now);
+      const active = entries.filter(e => e.until > now);
+      const used = entries.reduce((n,e) => n + e.tokens, 0);
+      const images = entries.filter(e => e.at > now - SUNBURST_RATE.windowMs).reduce((n,e) => n + (e.images || 1), 0);
+      const tokenCap = Math.min(SUNBURST_RATE.tokens, Number(data.tokenCap) || SUNBURST_RATE.tokens);
+      const imageCap = Math.min(SUNBURST_RATE.images, Number(data.imageCap) || SUNBURST_RATE.images);
+      if (tokens > tokenCap) throw new Error("This image request is larger than the provider's current token limit.");
+      let delay = Math.max(0, (data.blockedUntil || 0) - now, (data.nextAt || 0) - now);
+      if (active.length >= SUNBURST_RATE.concurrent) delay = Math.max(delay, 1000);
+      if (images + imageCount > imageCap || used + tokens > tokenCap) delay = Math.max(delay, 1000);
+      if (delay) return Math.min(delay, 5000);
+      // A dead worker releases its concurrency lease automatically. Its token
+      // reservation remains held throughout the longest allowed model call.
+      entries.push({id, at:now, until:now + 180000, tokens, images:imageCount});
+      tx.set(doc, {entries, nextAt:now + Math.ceil(60000 * imageCount / imageCap), updatedAt:now}, {merge:true});
+      return 0;
+    }), "sunburst.admit");
+    if (!wait) {
+      if (reportedWait && jobId) await db.collection(JOBS_COLL).doc(jobId).set({stage:"generating"},{merge:true});
+      return {id, doc};
+    }
+    if (!reportedWait && jobId) {
+      await db.collection(JOBS_COLL).doc(jobId).set({stage:"rate_limit"},{merge:true});
+      reportedWait = true;
+    }
+    await sleep(wait + Math.floor(Math.random() * 200));
+  }
+  throw new Error("Image queue is at API capacity. Please retry this image when current jobs finish.");
+}
+async function finishSunburstCapacity(ticket, response, usage, error) {
+  const headers = response?.headers;
+  const get = name => headers?.get?.(name);
+  const tokens = Number(usage?.total_tokens) || (Number(usage?.input_tokens || 0) + Number(usage?.output_tokens || 0));
+  await firestoreRetry(() => getDb().runTransaction(async tx => {
+    const snap = await tx.get(ticket.doc), data = snap.exists ? snap.data() : {};
+    const now = Date.now();
+    const entries = (data.entries || []).filter(e => e.at > now - SUNBURST_RATE.windowMs || e.until > now);
+    const entry = entries.find(e => e.id === ticket.id);
+    if (entry) { entry.until = 0; if (tokens > 0) entry.tokens = Math.max(entry.tokens * 0.1, tokens); entry.at = now; }
+    let blockedUntil = Number(data.blockedUntil) || 0;
+    if (response?.status === 429 && error?.code !== "insufficient_quota") {
+      blockedUntil = Math.max(blockedUntil, now + Math.max(6000, rateDurationMs(get("retry-after")), rateDurationMs(get("x-ratelimit-reset-tokens")), rateDurationMs(get("x-ratelimit-reset-requests"))));
+    }
+    for (const scope of ["tokens", "project-tokens", "requests"]) {
+      const remaining = get(`x-ratelimit-remaining-${scope}`);
+      if (remaining != null && Number(remaining) < (scope === "requests" ? 1 : 200000)) {
+        blockedUntil = Math.max(blockedUntil, now + (rateDurationMs(get(`x-ratelimit-reset-${scope}`)) || 60000));
+      }
+    }
+    const limits = {};
+    const tokenLimits = [get("x-ratelimit-limit-tokens"), get("x-ratelimit-limit-project-tokens")].map(Number).filter(n=>n>0);
+    if (tokenLimits.length) limits.tokenCap = Math.floor(Math.min(SUNBURST_RATE.tokens, ...tokenLimits.map(n=>n*0.9)));
+    const requests = Number(get("x-ratelimit-limit-requests"));
+    if (requests > 0) limits.imageCap = Math.max(1, Math.floor(Math.min(SUNBURST_RATE.images, requests*0.9)));
+    tx.set(ticket.doc, {entries, blockedUntil, ...limits, updatedAt:now}, {merge:true});
+  }), "sunburst.finish");
+}
+async function limitedOpenAIImageJson(url, options, reservation, imageCount = 1, jobId = null) {
+  const deadline = Date.now() + 480000;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ticket = await reserveSunburstCapacity(reservation, deadline, imageCount, jobId);
+    let response, data, error;
+    try {
+      response = await studioFetchWithTimeout(url, options, STUDIO_UPSTREAM_TIMEOUT_MS, "OpenAI image generation");
+      data = await readUpstreamJson(response, "OpenAI image generation");
+    } catch (err) { error = err; }
+    // Fail closed on admission errors; completion accounting must never turn
+    // an already-generated image into a retry (and a duplicate paid request).
+    await finishSunburstCapacity(ticket, response, data?.usage, error).catch(err => console.error("Image quota accounting:", err.message));
+    if (!error) return data;
+    if (error.status !== 429 || ["insufficient_quota", "billing_hard_limit_reached"].includes(error.code) || attempt === 2 || Date.now() >= deadline) { error.imageRetryExhausted = true; throw error; }
+  }
+}
+
 async function callOpenAIImagesEdits({
+  jobId,
   apiKey,
   model,
   prompt,
@@ -918,17 +1019,16 @@ async function callOpenAIImagesEdits({
     );
   }
 
-  const resp = await studioFetchWithTimeout("https://api.openai.com/v1/images/edits", {
+  const data = await limitedOpenAIImageJson("https://api.openai.com/v1/images/edits", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
-  }, STUDIO_UPSTREAM_TIMEOUT_MS, "OpenAI images/edits");
-  return openAIImageBufferFromResponse(
-    await readUpstreamJson(resp, "OpenAI images/edits")
-  );
+  }, sunburstTokenReservation(promptText, images), 1, jobId);
+  return openAIImageBufferFromResponse(data);
 }
 
 async function callOpenAIImagesGenerations({
+  jobId,
   apiKey,
   model,
   prompt,
@@ -936,7 +1036,7 @@ async function callOpenAIImagesGenerations({
   quality,
   output_format,
 }) {
-  const resp = await studioFetchWithTimeout("https://api.openai.com/v1/images/generations", {
+  const data = await limitedOpenAIImageJson("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -950,10 +1050,8 @@ async function callOpenAIImagesGenerations({
       output_format: normalizeOpenAIOutputFormat(output_format),
       n: 1,
     }),
- }, STUDIO_UPSTREAM_TIMEOUT_MS, "OpenAI images/generations");
-  return openAIImageBufferFromResponse(
-    await readUpstreamJson(resp, "OpenAI images/generations")
-  );
+ }, sunburstTokenReservation(prompt), 1, jobId);
+  return openAIImageBufferFromResponse(data);
 }
 
 /* ── NO CALL WAITS FOR EVER ──────────────────────────────────────────────
@@ -2145,6 +2243,13 @@ function normalizeOpenAIBatch(raw) {
     providerStatus: raw.status, errors: raw.errors || null };
 }
 
+// Slots 3 and 4 of a Charm Maker quad are the two B&W outline images.
+// Keep this rule server-side so old tabs, redos and batch recovery agree.
+function listingImageSize(outputBasePath, slotIndex, fallback = "2048x2048") {
+  const charmQuad = /\/Charm_Maker\/(?:Generated_Charm_Sets|Completed_Approved_Charm_Sets)\//.test(String(outputBasePath || ""));
+  return charmQuad && [2, 3].includes(Number(slotIndex)) ? "1024x1024" : fallback;
+}
+
 function buildOpenAIBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize, opts) {
   // Preserve the existing prompt's image roles and final geometry/background
   // rules while translating the transport to OpenAI's JSON image-edit schema.
@@ -2158,7 +2263,7 @@ function buildOpenAIBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, c
   if (text.length > 32000) throw new Error("Batch edit prompt exceeds 32000 characters");
   return { custom_id: key, method: "POST", url: "/v1/images/edits",
     body: { model: "gpt-image-2.5-sunburst", prompt: text, images,
-      quality: "high", size: "2048x2048", output_format: "png", n: 1 } };
+      quality: "high", size: imageSize === "1K" ? "1024x1024" : "2048x2048", output_format: "png", n: 1 } };
 }
 
 async function uploadOpenAIBatchFile(apiKey, buffer, displayName) {
@@ -13135,6 +13240,7 @@ async function _handlerImpl(event) {
   // Gemini selections and resumed orchestration tasks. Studio dispatch is above.
   body.model = "gpt-image-2.5-sunburst";
   body.quality = "high";
+  body.size = listingImageSize(body.output_base_path, body.slotIndex, body.size || "2048x2048");
 
   const {
     jobId,
@@ -14434,7 +14540,7 @@ async function _handlerImpl(event) {
           key, j.promptT,
           ref.mime, ref.buffer.toString("base64"),
           charm ? charm.mime : null, charm ? charm.buffer.toString("base64") : null,
-          imageSize,
+          listingImageSize(j.outputBasePath, j.slot) === "1024x1024" ? "1K" : imageSize,
           { imageRoles: j.imageRoles, backgroundPolicy: j.backgroundPolicy, geometryPolicy: j.geometryPolicy }
         );
         let jsonStr = JSON.stringify(line) + "\n";
@@ -14536,8 +14642,8 @@ async function _handlerImpl(event) {
       jsonlChunks.length = 0;
       memLog(`after Buffer.concat (${(jsonlBytes/1e6).toFixed(1)}MB JSONL)`);
 
-      // Hard cap: Files API limit is 2GB. We reject early to avoid uploading.
-      if (jsonlBytes > 190 * 1024 * 1024) {
+      // OpenAI Batch input files must remain below 200 MB.
+      if (jsonlBytes > 190000000 || routes.length > 50000) {
         return json(400, {
           error: { message: `JSONL too large (${(jsonlBytes / 1e9).toFixed(2)} GB). Reduce sets per batch.` }
         });
@@ -15272,7 +15378,7 @@ async function _handlerImpl(event) {
               apiKey,
               model,
               prompt: promptT,
-              size: String(t?.size || body?.size || "2048x2048"),
+              size: listingImageSize(base, slot, String(t?.size || body?.size || "2048x2048")),
               quality: "high",
               output_format: "png",
               images: [
@@ -15423,6 +15529,7 @@ async function _handlerImpl(event) {
         apiKey,
         model,
         prompt: effectivePrompt,
+        jobId,
         size,
         quality,
         output_format,
@@ -15911,3 +16018,7 @@ async function _handlerImpl(event) {
   }
 };
 
+
+// Compatibility endpoint shares the same provider quota ledger.
+exports.limitedOpenAIImageJson = limitedOpenAIImageJson;
+exports.sunburstTokenReservation = sunburstTokenReservation;

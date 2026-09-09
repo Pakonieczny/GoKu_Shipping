@@ -3886,9 +3886,33 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
     const pendingImageJobs = new Map();
 
+    const imageDispatchQueue = [];
+    let imageDispatchActive = 0;
+    async function acquireImageDispatch() {
+      if (imageDispatchActive >= 12) await new Promise(resolve => imageDispatchQueue.push(resolve));
+      else imageDispatchActive++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const next = imageDispatchQueue.shift();
+        if (next) next(); else imageDispatchActive--;
+      };
+    }
+    function finishPendingImage(key) {
+      const pending = pendingImageJobs.get(key);
+      pendingImageJobs.delete(key);
+      pending?.release?.();
+    }
+
     async function postImageGeneration(body, signal, modelId = getSelectedImageModel()) {
       const config = getImageModelConfig(modelId);
       const jobId = body?.jobId || `lg1_${Date.now()}_${crypto.randomUUID()}`;
+      const release = await acquireImageDispatch();
+      const pendingKey = body?.output_base_path && Number.isInteger(body?.slotIndex) ? `${body.output_base_path}/${body.slotIndex}` : null;
+      try {
+      if (pendingKey && pendingImageJobs.has(pendingKey)) throw new Error("This image already has a generation in progress.");
+      if (pendingKey) pendingImageJobs.set(pendingKey, {jobId, startedAt:Date.now(), release});
       const result = await postJson(
         config.endpoint,
         {
@@ -3896,16 +3920,19 @@ html.gs-locked body > *:not(#gate){display:none!important}
           jobId,
           model: config.id,
           quality: "high",
-          size: body?.size || "2048x2048",
+          size: /\/Charm_Maker\/(?:Generated_Charm_Sets|Completed_Approved_Charm_Sets)\//.test(String(body?.output_base_path || "")) && [2, 3].includes(Number(body?.slotIndex))
+            ? "1024x1024" : (body?.size || "2048x2048"),
           output_format: body?.output_format || "png",
         },
         signal
       );
       if (result?.ok === false) throw new Error(result?.error?.message || "Image request rejected");
-      if (body?.output_base_path && Number.isInteger(body?.slotIndex)) {
-        pendingImageJobs.set(`${body.output_base_path}/${body.slotIndex}`, { jobId, startedAt: Date.now() });
-      }
+      if (!body?.output_base_path || !Number.isInteger(body?.slotIndex)) release();
       return result;
+      } catch (error) {
+        if (pendingKey && pendingImageJobs.get(pendingKey)?.jobId === jobId) finishPendingImage(pendingKey);
+        release(); throw error;
+      }
     }
 
     function renderImageModelSelection() {
@@ -4720,6 +4747,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
       const afterGeneration = opts.afterGeneration == null ? null : Number(opts.afterGeneration);
       const signal = opts.signal; // Capture the abort signal
 
+      try {
       // Check if already aborted before starting
       if (signal && signal.aborted) throw new Error("AbortError");
 
@@ -4742,13 +4770,13 @@ html.gs-locked body > *:not(#gate){display:none!important}
           const folderId = outputBasePath.split("/").pop();
           const preview = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
           if (state.status === "error") {
-            pendingImageJobs.delete(pendingKey);
+            finishPendingImage(pendingKey);
             const message = state.error?.message || "Image generation failed";
             if (preview) { preview.textContent = `Failed: ${message}`; preview.classList.remove("working-box"); }
             throw new Error(message);
           }
           if (state.status !== "done") {
-            const label = state.status === "running" ? `Generating with Sunburst · ${elapsed}s` : `Waiting for worker · ${elapsed}s`;
+            const label = state.stage === "rate_limit" ? `Queued within API limits · ${elapsed}s` : state.status === "running" ? `Generating with Sunburst · ${elapsed}s` : `Waiting for worker · ${elapsed}s`;
             const caption = preview?.querySelector(".spinner-container > div:last-child");
             if (caption) caption.textContent = label;
             setStatus(label);
@@ -4756,7 +4784,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
             await sleep(intervalMs, signal);
             continue;
           }
-          pendingImageJobs.delete(pendingKey);
+          finishPendingImage(pendingKey);
         }
 
         try {
@@ -4821,6 +4849,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
         }
         await sleep(intervalMs, signal);
       }
+      } finally { finishPendingImage(`${outputBasePath}/${slotIndex}`); }
     }
 
 // --- UI State ---
@@ -8040,14 +8069,15 @@ function updateApproveButtonState() {
       return `${ROOT}/${category}/${folder}`;
     }
 
-    async function generateSet() {
-      setBusy(true);
+    async function generateSet(options = {}) {
+      const headless = !!options.headless;
+      if (!headless) setBusy(true);
       try {
-        const category = String(categoryEl.value || "").trim();
+        const category = String(options.category || categoryEl.value || "").trim();
         if (!category) throw new Error("Pick a category first.");
         const slotPlan = SLOT_MAP[category];
         if (!slotPlan) throw new Error(`Unknown category: ${category}`);
-        const generationModel = getSelectedImageModel();
+        const generationModel = options.model || getSelectedImageModel();
 
         setStatus("Allocating Set…");
         const alloc = await allocSet(category);
@@ -8060,7 +8090,7 @@ function updateApproveButtonState() {
           if (m) setN = Number(m[1]);
         }
 
-        CURRENT_SET = { category, outputBasePath, setN };
+        if (!headless) CURRENT_SET = { category, outputBasePath, setN };
 
         const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
         const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
@@ -8090,6 +8120,7 @@ function updateApproveButtonState() {
           return { spec, i, slotNum: i + 1, srcLatest: srcRandom };
         }));
 
+        if (!headless) {
         generateGrid.innerHTML = "";
         for (const r of slotResolved) {
           const { spec, i, slotNum, srcLatest } = r;
@@ -8108,16 +8139,17 @@ function updateApproveButtonState() {
           generateGrid.appendChild(slotCard);
         }
 
-        setStatus("Starting parallel staggered generation…");
+        }
+        setStatus("Starting parallel generation…");
 
         // Process slots in parallel, but stagger the API requests to prevent rate limiting
         const generationPromises = slotResolved.map(async (r, index) => {
           const { spec, i, slotNum, srcLatest } = r;
           
           // Delay each request by 2.5 seconds multiplied by its index (0s, 2.5s, 5s, 7.5s...)
-          await sleep(index * 2500); 
+          // Shared dispatch and server quota gates control admission. 
 
-          const prevBox = document.getElementById(`gen_slotPrev_${i}`);
+          const prevBox = headless ? null : document.getElementById(`gen_slotPrev_${i}`);
           if (prevBox) {
              prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
              prevBox.classList.add("working-box");
@@ -8190,13 +8222,14 @@ function updateApproveButtonState() {
         if (failures.length) throw new Error(`${failures.length} image slot(s) failed: ${failures[0].reason?.message || failures[0].reason}. Use Redo to retry failed slots.`);
 
         setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
-        setAllRedoEnabled(true);
+        if (!headless) setAllRedoEnabled(true);
       } catch (e) {
         console.error(e);
         setStatus(`Error: ${e?.message || e}`);
+        if (headless) throw e;
       } finally {
-        setAllRedoEnabled(true);
-        setBusy(false);
+        if (!headless) setAllRedoEnabled(true);
+        if (!headless) setBusy(false);
       }
     }
 
@@ -8875,13 +8908,13 @@ function createCharmCardHTML(folderId, isApprovedView) {
                 </div>
 
                 <div class="charm-col">
-                    <div class="muted">B&W Line Art (Standard)</div>
+                    <div class="muted">B&W Line Art (Standard) · 1024 × 1024</div>
                     <div class="slotPrev" id="prevBox_${folderId}_2"><div class="slotRefEmpty">Loading...</div></div>
                     ${redoHTML2}
                 </div>
                 
                 <div class="charm-col">
-                    <div class="muted">B&W Line Art (Earrings)</div>
+                    <div class="muted">B&W Line Art (Earrings) · 1024 × 1024</div>
                     <div class="slotPrev" id="prevBox_${folderId}_3"><div class="slotRefEmpty">Loading...</div></div>
                     ${redoHTML3}
                 </div>
@@ -9436,12 +9469,13 @@ window.regenCharmQuad = async function(folderId) {
             const btn0 = document.getElementById(`redo_${folderId}_0`);
             if(btn0) btn0.disabled = false;
 
+            const derivativeResults = await Promise.allSettled([
+              (async () => {
             // STEP 2
             const sig1 = myControllers[1].signal;
             setStatus("Generating Earring Twin (Removing Hoop)...");
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
             if(prev1) prev1.innerHTML = window.getSpinnerHTML("Removing Hoop...");
-            await sleep(2000, sig1); 
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath,
@@ -9469,12 +9503,13 @@ window.regenCharmQuad = async function(folderId) {
             const btn1 = document.getElementById(`redo_${folderId}_1`);
             if(btn1) btn1.disabled = false;
 
+              })(),
+              (async () => {
             // STEP 3
             const sig2 = myControllers[2].signal;
             setStatus("Generating B&W Line Art (Standard)...");
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
             if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
-            await sleep(2000, sig2);
             // Style sample only when one exists; labeled so image 1 stays the
             // subject truth and the sample contributes drawing style only.
             await postImageGeneration({
@@ -9508,7 +9543,6 @@ window.regenCharmQuad = async function(folderId) {
             setStatus("Generating B&W Line Art (Earrings)...");
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
             if(prev3) prev3.innerHTML = window.getSpinnerHTML("Removing Hoop...");
-            await sleep(2000, sig3);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmBWRes.storagePath,
@@ -9532,6 +9566,11 @@ window.regenCharmQuad = async function(folderId) {
             }
             const btn3 = document.getElementById(`redo_${folderId}_3`);
             if(btn3) btn3.disabled = false;
+
+              })()
+            ]);
+            const derivativeFailure = derivativeResults.find(r => r.status === "rejected");
+            if (derivativeFailure) throw derivativeFailure.reason;
 
             setStatus("Quad Regeneration Complete.");
         } catch(err) {
@@ -9612,11 +9651,12 @@ window.regenCharmQuad = async function(folderId) {
                 } catch(e) {}
             }
 
+            const derivativeResults = await Promise.allSettled([
+              (async () => {
             // STEP 2
             setStatus("Generating Earring Twin (Removing Hoop)...");
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
             if(prev1) prev1.innerHTML = window.getSpinnerHTML("Removing Hoop...");
-            await sleep(2000);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: baseCharmStoragePath,
@@ -9639,11 +9679,12 @@ window.regenCharmQuad = async function(folderId) {
             const btn1 = document.getElementById(`redo_${folderId}_1`);
             if(btn1) btn1.disabled = false;
 
+              })(),
+              (async () => {
             // STEP 3
             setStatus("Generating B&W Line Art (Standard)...");
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
             if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
-            await sleep(2000);
             // Style sample goes in ONLY when one exists (never a duplicate of
             // the charm), and it is labeled "line_art_style": image 1 is the
             // subject truth, image 2 contributes drawing style only.
@@ -9672,7 +9713,6 @@ window.regenCharmQuad = async function(folderId) {
             setStatus("Generating B&W Line Art (Earrings)...");
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
             if(prev3) prev3.innerHTML = window.getSpinnerHTML("Removing Hoop...");
-            await sleep(2000);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: charmBWRes.storagePath,
@@ -9691,6 +9731,11 @@ window.regenCharmQuad = async function(folderId) {
             }
             const btn3 = document.getElementById(`redo_${folderId}_3`);
             if(btn3) btn3.disabled = false;
+
+              })()
+            ]);
+            const derivativeFailure = derivativeResults.find(r => r.status === "rejected");
+            if (derivativeFailure) throw derivativeFailure.reason;
 
             setStatus("Derivatives & Line Art Loop Complete.");
         } catch (err) {
@@ -13742,17 +13787,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     });
 
     // ============================================================
-    // Batch generate — loops generateSet() N times sequentially.
-    // Each iteration picks fresh randomized refs from the shared
-    // charm pool (same logic as a single click), so over N runs
-    // the system naturally cycles through the available charms.
-    // Sequential (not parallel) on purpose:
-    //   - alloc_set is server-side and assigns Set_N atomically;
-    //     parallel calls would risk gaps or contention
-    //   - Gemini image generation is rate-limited; a tight serial
-    //     loop is the safest pattern that still fully utilizes the
-    //     pipeline
-    // ============================================================
+    // Independent sets run concurrently; each owns its manifest and output
+    // path. Browser and shared server gates bound the actual image traffic.
     const generateBatchBtn = document.getElementById('generateBatchBtn');
     const cancelBatchBtn = document.getElementById('cancelBatchBtn');
     const batchGenerateCountInput = document.getElementById('batchGenerateCount');
@@ -13793,7 +13829,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           alert('Batch capped at 1000 sets per run. Adjust the count.');
           return;
         }
-        const ok = confirm(`Generate ${count} sets sequentially? This will run in the background — you can switch tabs but keep this page open.`);
+        const ok = confirm(`Generate ${count} sets with up to 3 sets in parallel? This will run in the background — you can switch tabs but keep this page open.`);
         if (!ok) return;
 
         _batchInFlight = true;
@@ -13810,25 +13846,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         let failed = 0;
         _setBatchProgress(0, count, `Starting batch of ${count}…`);
 
-        for (let i = 0; i < count; i++) {
-          if (_batchCancelRequested) {
-            _setBatchProgress(succeeded, count, `Cancelled at ${i}/${count}`);
-            break;
+        const batchCategory = String(categoryEl.value || "").trim();
+        const batchModel = getSelectedImageModel();
+        let nextSet = 0;
+        await Promise.all(Array.from({ length: Math.min(3, count) }, async () => {
+          while (!_batchCancelRequested && nextSet < count) {
+            const i = nextSet++;
+            try {
+              await generateSet({ headless: true, category: batchCategory, model: batchModel });
+              succeeded++;
+            } catch (e) {
+              console.error(`[Batch] Set ${i + 1} failed:`, e);
+              failed++;
+            }
+            _setBatchProgress(succeeded + failed, count, `${succeeded} done · ${failed} failed · up to 3 sets in parallel; results in Review`);
           }
-          _setBatchProgress(i, count, `Generating ${i + 1}/${count}…`);
-          try {
-            // generateSet() handles its own setBusy / status / errors.
-            // Awaiting it serializes the loop on the natural critical
-            // path (alloc → fetch refs → call gemini → upload → manifest).
-            await generateSet();
-            succeeded++;
-          } catch (e) {
-            console.error(`[Batch] Set ${i + 1} failed:`, e);
-            failed++;
-            // Continue the batch even if one set fails — we surface
-            // the failures in the final summary.
-          }
-        }
+        }));
 
         const finalPhase = _batchCancelRequested
           ? `Cancelled · ${succeeded} done, ${failed} failed`

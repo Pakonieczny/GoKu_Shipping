@@ -89,6 +89,21 @@ async function readBodySafe(resp) {
 }
 
 async function fetchWithTimeout(url, options, timeoutMs) {
+  if (String(url).startsWith("https://api.openai.com/v1/images/")) {
+    const shared = require("./geminiImageProxy-background");
+    const multipart = typeof options.body?.get === "function";
+    const payload = multipart ? null : JSON.parse(options.body || "{}");
+    const n = Math.max(1, Math.min(8, Number(multipart ? options.body.get("n") : payload.n) || 1));
+    const prompt = multipart ? options.body.get("prompt") : payload.prompt;
+    const images = multipart ? options.body.getAll("image[]") : [];
+    try {
+      const data = await shared.limitedOpenAIImageJson(url, options, shared.sunburstTokenReservation(prompt, images) * n, n);
+      return new Response(JSON.stringify(data), {status:200, headers:{"Content-Type":"application/json"}});
+    } catch (error) {
+      return new Response(JSON.stringify({error:{message:error.message, code:error.code}}), {status:error.status || 503, headers:{"Content-Type":"application/json"}});
+    }
+  }
+
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
