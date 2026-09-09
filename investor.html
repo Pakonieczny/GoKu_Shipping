@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ROSAFTucMzRTSS3qo4ZQS3l0H7xyxRSh7M2ojA7R1rM='; style-src 'self' 'sha256-hQ4e79g5QfOxpqBZD6m7JPQa8CHGDHOwd+GEoUy1Cok='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-4+NN3904ytqf6TkXDDub9+78ORNsF/ut3tBNYHXPspc='; style-src 'self' 'sha256-lNFYmDUCx7nXeqfUjH+KmuH+HjrWhNzGqdh9RbGmw1c='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -622,6 +622,17 @@ details.fold>summary::after{content:"";width:8px;height:8px;border-right:1.5px s
 details.fold[open]>summary::after{transform:rotate(45deg)}
 details.fold>#dipWatchBody{margin-top:12px}
 .legend i.slate.vert{border-left-color:var(--slate)}
+
+#managerStatus.hero{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+#managerStatus.hero .tile{min-height:0;padding:10px 12px;border-radius:10px}
+#managerStatus.hero .tile .k{font-size:10.5px;margin:0}
+#managerStatus.hero .tile .v{font-size:clamp(15px,1.25vw,20px);margin-top:4px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#managerStatus.hero .tile .d,#managerStatus.hero .tile .u{font-size:10.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#managerStatus.hero .tile.main{grid-column:auto}
+@media(max-width:760px){#managerStatus.hero{grid-template-columns:repeat(2,minmax(0,1fr))}#managerStatus.hero .tile.main{grid-column:1/-1}}
+details.fold>.foldbody{margin-top:12px}
+details.fold>summary .livechart__sum b{font-size:14px}
+#liveActivity>.card__h h3,#managerBrief .card__h>h3{margin-right:auto}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
@@ -769,11 +780,11 @@ details.fold>#dipWatchBody{margin-top:12px}
 <div class="hero" id="managerStatus"></div>
 <div id="todayPnl"></div>
 <div class="card" id="laneStrip"></div>
-<details class="card fold" id="dipWatch" hidden><summary><span class="livechart__sum"><b>Dip trader · watch list and log</b><span class="tiny muted">what it is watching and what it did</span></span></summary><div id="dipWatchBody"></div></details>
-<div class="card manager-brief" id="managerBrief" aria-live="polite"></div>
-<div class="card" id="liveActivity" aria-live="polite"></div>
-<div class="card manager-brief" id="paperDecisionCard">
-  <div class="card__h"><h3>Paper trading · AI selection</h3><a class="link" href="#/simulation">Analyze saved simulations →</a></div>
+<details class="card fold" id="dipWatch" data-fold="dipWatch" hidden><summary><span class="livechart__sum"><b>Dip trader · watch list and log</b><span class="tiny muted">what it is watching and what it did</span></span></summary><div id="dipWatchBody"></div></details>
+<details class="card fold" id="fold-managerBrief" data-fold="managerBrief" open><summary><span class="livechart__sum"><b>Your AI manager</b><span class="tiny muted">what it is doing and why</span></span></summary><div class="manager-brief foldbody" id="managerBrief" aria-live="polite"></div></details>
+<details class="card fold" id="fold-liveActivity" data-fold="liveActivity" open><summary><span class="livechart__sum"><b>Live activity</b><span class="tiny muted">reviews, orders and progress</span></span></summary><div class="foldbody" id="liveActivity" aria-live="polite"></div></details>
+<details class="card fold" id="fold-paperDecision" data-fold="paperDecision" open><summary><span class="livechart__sum"><b>Paper trading · AI selection</b><span class="tiny muted">how many finalists, which strategy</span></span></summary><div class="manager-brief foldbody" id="paperDecisionCard">
+  <div class="card__h"><span></span><a class="link" href="#/simulation">Analyze saved simulations →</a></div>
   <form id="paperDecisionForm" class="stack">
     <div class="sim-selection">
       <label class="field">Companies for each investment review<select id="paperCompanyRange" required disabled>
@@ -788,7 +799,7 @@ details.fold>#dipWatchBody{margin-top:12px}
     <p class="note" id="paperStrategyDescription"></p>
     <p class="note neg" id="paperSettingsError" role="alert"></p>
   </form>
-</div>
+</div></details>
 
 <div class="overview-grid daily-companies"><div class="card" id="overviewHoldings"></div><div class="card" id="overviewChoices"></div></div>
 </section>
@@ -1625,6 +1636,7 @@ function collectVisibleSymbols() {
   if (drawer.symbol) set.add(drawer.symbol);
   document.querySelectorAll("[data-hold-sym]").forEach(function (n) { if (!n.closest("[hidden]")) set.add(n.dataset.holdSym); });
   var dash = getRes("dash"); if (dash && dash.holdings) dash.holdings.forEach(function (h) { if (h && h.symbol) set.add(h.symbol); });
+  var dipRes = getRes("dip"); if (route.view === "manager" && dipRes && dipRes.state && dipRes.state.symbols) Object.keys(dipRes.state.symbols).forEach(function (sym) { set.add(sym); });
   document.querySelectorAll("[data-quote-sym]").forEach(function (n) { var v = n.closest("[hidden]"); if (!v) set.add(n.dataset.quoteSym); });
   return Array.from(set).filter(function (s) { return /^[A-Z][A-Z0-9.-]{0,9}$/.test(s); }).slice(0, 100);
 }
@@ -2444,14 +2456,19 @@ function drawSeriesChart(canvas, cfg) {
   (cfg.levels || []).forEach(function (l) { if (Number.isFinite(l.y) && l.y > lo - span0 * 0.6 && l.y < hi + span0 * 0.6) { if (l.y < lo) lo = l.y; if (l.y > hi) hi = l.y; } });
   (cfg.zones || []).forEach(function (z) { [z.y1, z.y2].forEach(function (y) { if (Number.isFinite(y) && y > lo - span0 * 0.6 && y < hi + span0 * 0.6) { if (y < lo) lo = y; if (y > hi) hi = y; } }); });
   var pad = (hi - lo || 1) * 0.06; lo -= pad; hi += pad;
-  var bw = (x1 - x0) / n;
-  function xOf(i) { return x0 + (i + 0.5) * bw; }
+  var bw = (x1 - x0) / n, TS = cfg.timeScale && Number.isFinite(cfg.timeScale.start) && Number.isFinite(cfg.timeScale.end) && cfg.timeScale.end > cfg.timeScale.start ? cfg.timeScale : null;
+  if (TS) bw = Math.max(2, (x1 - x0) / Math.max(n, (TS.end - TS.start) / 60000));
+  function xOf(i) { if (TS) { var t = pts[i] ? pts[i].t : TS.start; return x0 + Math.max(0, Math.min(1, (t - TS.start) / (TS.end - TS.start))) * (x1 - x0); } return x0 + (i + 0.5) * bw; }
   function yOf(v) { return y1 - (v - lo) / (hi - lo) * (y1 - y0); }
   var yFmt = cfg.yFmt || function (v) { return v.toFixed(2); };
   ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.fillStyle = C.ink45; ctx.textAlign = "left";
   for (var g = 0; g <= 4; g++) { var gv = lo + (hi - lo) * g / 4, gy = yOf(gv); ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke(); ctx.fillText(yFmt(gv), x1 + 6, gy); }
   ctx.textAlign = "center"; var step = Math.max(1, Math.round(n / 6));
   var lastLabelEnd = -Infinity;
+  if (TS) {
+    var spanMin = (TS.end - TS.start) / 60000, tickMin = spanMin > 300 ? 60 : spanMin > 120 ? 30 : 15, first = Math.ceil(TS.start / (tickMin * 60000)) * tickMin * 60000;
+    for (var tt = first; tt <= TS.end; tt += tickMin * 60000) { var td = new Date(tt), tl = cfg.xFmt ? cfg.xFmt(td) : new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(td), tw = ctx.measureText(tl).width, tx = x0 + (tt - TS.start) / (TS.end - TS.start) * (x1 - x0), tlx = Math.min(x1 - tw / 2, Math.max(x0 + tw / 2, tx)); if (tlx - tw / 2 < lastLabelEnd + 6) continue; lastLabelEnd = tlx + tw / 2; ctx.fillText(tl, tlx, H - padB / 2); ctx.save(); ctx.strokeStyle = C.line; ctx.globalAlpha = 0.6; ctx.beginPath(); ctx.moveTo(tx, y1); ctx.lineTo(tx, y1 + 4); ctx.stroke(); ctx.restore(); }
+  } else
   for (var i = 0; i < n; i += step) { var d = new Date(pts[i].t), lbl = cfg.xFmt ? cfg.xFmt(d, i) : new Intl.DateTimeFormat(undefined, { month:cfg.intraday?undefined:"short", day:cfg.intraday?undefined:"numeric",hour:cfg.intraday?"2-digit":undefined,minute:cfg.intraday?"2-digit":undefined }).format(d), lw = ctx.measureText(lbl).width, lx = Math.min(x1 - lw / 2, Math.max(x0 + lw / 2, xOf(i))); if (lx - lw / 2 < lastLabelEnd + 6) continue; lastLabelEnd = lx + lw / 2; ctx.fillText(lbl, lx, H - padB / 2); }
   if (cfg.area && cfg.series && cfg.series[0]) { var s0 = cfg.series[0], grad = ctx.createLinearGradient(0, y0, 0, y1); grad.addColorStop(0, withAlpha(s0.color, 0.22)); grad.addColorStop(1, withAlpha(s0.color, 0.02)); ctx.save(); ctx.fillStyle = grad; ctx.beginPath(); var open = false, firstX = 0, lastX = 0; s0.values.forEach(function (v, i) { if (v == null || !Number.isFinite(v)) return; var x = xOf(i), y = yOf(v); if (!open) { ctx.moveTo(x, y1); ctx.lineTo(x, y); open = true; firstX = x; } else ctx.lineTo(x, y); lastX = x; }); if (open) { ctx.lineTo(lastX, y1); ctx.lineTo(firstX, y1); ctx.closePath(); ctx.fill(); } ctx.restore(); }
   if (volH) { var vmax = 0; pts.forEach(function (p) { if (Number.isFinite(p.v) && p.v > vmax) vmax = p.v; }); ctx.fillStyle = C.vol; pts.forEach(function (p, i) { if (!Number.isFinite(p.v) || !vmax) return; var h = (p.v / vmax) * volH; ctx.fillRect(xOf(i) - Math.max(1, bw * 0.35), H - padB - h, Math.max(2, bw * 0.7), h); }); }
@@ -2463,7 +2480,7 @@ function drawSeriesChart(canvas, cfg) {
   (cfg.markers || []).forEach(function (m) { if (m.i == null || m.i < 0 || m.i >= n) return; var y = Number.isFinite(m.y) ? yOf(Math.min(hi, Math.max(lo, m.y))) : yOf(pts[m.i].c); drawMarkerGlyph(ctx, xOf(m.i), y, m.kind, m.color || markerColor(m.kind)); });
   (cfg.vlines || []).forEach(function (v) { if (v.i == null || v.i < 0 || v.i >= n) return; var vx = xOf(v.i); ctx.save(); ctx.strokeStyle = v.color; ctx.lineWidth = 1.4; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(vx, y0); ctx.lineTo(vx, y1); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle = v.color; ctx.beginPath(); ctx.moveTo(vx, y0 + 9); ctx.lineTo(vx - 5, y0); ctx.lineTo(vx + 5, y0); ctx.closePath(); ctx.fill(); if (Number.isFinite(v.y) && v.y >= lo && v.y <= hi) { ctx.beginPath(); ctx.arc(vx, yOf(v.y), 4, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke(); } if (v.label) { ctx.font = "bold 11px " + (getComputedStyle(document.body).fontFamily || "sans-serif"); ctx.textAlign = vx > (x0 + x1) / 2 ? "right" : "left"; ctx.textBaseline = "top"; ctx.fillText(v.label, vx + (vx > (x0 + x1) / 2 ? -8 : 8), y0 + 2); ctx.textBaseline = "middle"; ctx.font = "11px " + (getComputedStyle(document.body).fontFamily || "sans-serif"); } ctx.restore(); });
   if (cfg.liveDot && cfg.series && cfg.series[0]) { var lv = cfg.series[0].values, li = lv.length - 1; while (li >= 0 && (lv[li] == null || !Number.isFinite(lv[li]))) li--; if (li >= 0) { var lx = xOf(li), ly = yOf(lv[li]), lc = cfg.series[0].color; ctx.save(); ctx.fillStyle = withAlpha(lc, 0.25); ctx.beginPath(); ctx.arc(lx, ly, 7, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = lc; ctx.beginPath(); ctx.arc(lx, ly, 3.2, 0, Math.PI * 2); ctx.fill(); ctx.restore(); } }
-  var geom = { xOf: xOf, yOf: yOf, x0: x0, x1: x1, y0: y0, y1: y1, n: n, idxAt: function (px) { return Math.max(0, Math.min(n - 1, Math.floor((px - x0) / bw))); } };
+  var geom = { xOf: xOf, yOf: yOf, x0: x0, x1: x1, y0: y0, y1: y1, n: n, idxAt: function (px) { if (!TS) return Math.max(0, Math.min(n - 1, Math.floor((px - x0) / bw))); var best = 0, bd = Infinity; for (var k = 0; k < n; k++) { var dd = Math.abs(xOf(k) - px); if (dd < bd) { bd = dd; best = k; } } return best; } };
   canvas._geom = geom; canvas._cfg = cfg;
   return geom;
 }
@@ -2582,6 +2599,14 @@ function marketOpen() { return !!(LIVE.session && LIVE.session.open); }
    today's session, else the first point of today. Read from the week's NAV
    marks every five minutes. */
 function sessionDateToday() { return (LIVE.session && LIVE.session.date) || new Date().toISOString().slice(0, 10); }
+/* New York wall-clock time on a given date, as a UTC timestamp (handles DST). */
+function etMs(dateStr, hh, mm) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || ""); if (!m) return NaN;
+  var ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), hh, mm);
+  for (var pass = 0; pass < 2; pass++) { var parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(ms)); var h = Number((parts.find(function (x) { return x.type === "hour"; }) || {}).value) % 24, mi = Number((parts.find(function (x) { return x.type === "minute"; }) || {}).value); var diff = (hh * 60 + mm) - (h * 60 + mi); if (!diff) break; ms += diff * 60000; }
+  return ms;
+}
+function sessionBounds(dateStr) { var d = dateStr || sessionDateToday(), a = etMs(d, 9, 30), b = etMs(d, 16, 0); return liveNum(a) && liveNum(b) ? { start: a, end: b } : null; }
 async function loadNavDay(force) {
   if (LIVE.navDayLoading || (!force && Date.now() - (LIVE.navDayAt || 0) < 5 * 60000)) return;
   LIVE.navDayLoading = true;
@@ -2647,7 +2672,8 @@ function todayChartRender() {
   if (liveNum(a.day)) { var now = Date.now(), last = pts[pts.length - 1]; if (!last || now > last.t + 30000) pts.push({ t: now, c: a.day, nav: a.nav, live: true, raw: {} }); else pts[pts.length - 1] = Object.assign({}, last, { c: a.day, nav: a.nav, live: true }); }
   var last = pts.length ? pts[pts.length - 1].c : NaN, up = !liveNum(last) || last >= 0;
   var big = $("todayPnlBig"), chg = $("todayPnlChg"); if (big) setLiveVal(big, liveNum(last) ? signedUsd(last) : "—", toneOf(last)); if (chg) setLiveVal(chg, liveNum(a.dayPct) ? signedPct(a.dayPct) + " today" : "", toneOf(last));
-  drawSeriesChart(TODAYC.canvas, { points: pts, intraday: true, series: [{ label: "Profit / loss", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: [{ y: 0, label: "Break-even", color: C.ink45, dash: [2, 4] }], crosshair: true, yFmt: function (v) { return (v < 0 ? "−" : "+") + "$" + fmtFloat(Math.abs(v), 0); }, emptyText: liveNum(start) ? "Today's line starts with the first valuation" : "Waiting for today's first valuation",
+  var tsb = sessionBounds(today); if (tsb && pts.length) { tsb = { start: Math.min(tsb.start, pts[0].t), end: Math.max(tsb.end, pts[pts.length - 1].t) }; }
+  drawSeriesChart(TODAYC.canvas, { points: pts, intraday: true, timeScale: tsb, series: [{ label: "Profit / loss", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: [{ y: 0, label: "Break-even", color: C.ink45, dash: [2, 4] }], crosshair: true, yFmt: function (v) { return (v < 0 ? "−" : "+") + "$" + fmtFloat(Math.abs(v), 0); }, emptyText: liveNum(start) ? "Today's line starts with the first valuation" : "Waiting for today's first valuation",
     xFmt: function (d) { return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(d); },
     tip: function (i) { var p = pts[i]; if (!p) return ""; return [signedUsd(p.c) + (p.live ? "  · live" : ""), new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(p.t)) + " · account " + usd(p.nav, 0)].join("\n"); } });
   bindChartPointer(TODAYC.canvas, TODAYC.tip);
@@ -2811,7 +2837,8 @@ function holdChartRender(sym) {
   var vlines = [];
   (h.trades || []).forEach(function (t) { var ms = Date.parse(t.at); if (!liveNum(ms) || !pts.length || ms < pts[0].t - (intraday ? 5 * 60000 : 86400000)) return; var i = -1; for (var k = 0; k < pts.length; k++) if (pts[k].t >= ms) { i = k; break; } if (i < 0) { if (ms <= pts[pts.length - 1].t + (intraday ? 30 * 60000 : 86400000)) i = pts.length - 1; else return; } vlines.push({ i: i, color: laneOf(t) === "dip" ? C.slate : t.side === "BUY" ? C.sage : C.clay, label: (laneOf(t) === "dip" ? (t.side === "BUY" ? "Dip buy " : "Dip sell ") : (t.side === "BUY" ? "Bought " : "Sold ")) + fmtQty(t.quantity), trade: t, y: microsNum(t.price.priceMicros) }); });
   var note = st.error ? "Could not refresh this chart. " + (pts.length ? "Earlier prices stay visible. " : "") + (st.error.message || "") : st.loading && !pts.length ? "Loading prices…" : !pts.length ? "No prices for this range yet." : (intraday ? "5-minute bars" : "Daily closes") + " · " + pts.length + " points" + (pts[pts.length - 1].live ? " · newest point is the live quote" : "") + (st.loading ? " · refreshing…" : "");
-  drawSeriesChart(st.canvas, { points: pts, intraday: intraday, series: [{ label: "Price", color: lineColor, width: 1.8, values: closes }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: levels, vlines: vlines, crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 2); }, emptyText: st.loading ? "Loading prices…" : "No prices yet",
+  var hts = null; if (st.range === "1D" && pts.length) { var sd = new Date(pts[pts.length - 1].t), sdStr = (pts[pts.length - 1].raw && pts[pts.length - 1].raw.d) || sessionDateToday(); hts = sessionBounds(sdStr); if (hts) hts = { start: Math.min(hts.start, pts[0].t), end: Math.max(hts.end, pts[pts.length - 1].t) }; }
+  drawSeriesChart(st.canvas, { points: pts, intraday: intraday, timeScale: hts, series: [{ label: "Price", color: lineColor, width: 1.8, values: closes }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: levels, vlines: vlines, crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 2); }, emptyText: st.loading ? "Loading prices…" : "No prices yet",
     xFmt: function (d) { return intraday ? new Intl.DateTimeFormat(undefined, multiDay ? { weekday: "short", hour: "numeric" } : { hour: "numeric", minute: "2-digit" }).format(d) : new Intl.DateTimeFormat(undefined, holdRangeDays(st.range) > 200 || st.from || st.to ? { month: "short", year: "2-digit" } : { month: "short", day: "numeric" }).format(d); },
     tip: function (i, px, geom) {
       var p = pts[i]; if (!p) return "";
@@ -2872,8 +2899,8 @@ function navChartRender() {
   var pts = navPoints(), C = chartColors(), base = pts.length ? pts[0].c : NaN, last = pts.length ? pts[pts.length - 1].c : NaN, up = liveNum(base) && liveNum(last) ? last >= base : true;
   var intraday = NAVC.range === "1D", multi = NAVC.range === "1W";
   var big = $("navLiveBig"), chg = $("navLiveChg"); if (big) setLiveVal(big, usd(last), null); if (chg) { if (liveNum(base) && base > 0 && liveNum(last)) setLiveVal(chg, signedUsd(last - base) + " (" + signedPct((last / base - 1) * 100) + ") " + ({ "1D": "today", "1W": "past week", "1M": "past month", "3M": "past 3 months", "6M": "past 6 months", "1Y": "past year", ALL: "since start" }[NAVC.range] || ""), toneOf(last - base)); else setLiveVal(chg, "", "flat"); }
-  var only = pts.length === 1;
-  drawSeriesChart(NAVC.canvas, { points: pts, intraday: intraday || multi, series: [{ label: "Account value", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: liveNum(base) && !only ? [{ y: base, label: "Start", color: C.ink45, dash: [2, 4] }] : [], crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 0); }, emptyText: NAVC.loading ? "Loading account history…" : "No account history for this range yet",
+  var only = pts.length === 1, nts = intraday ? sessionBounds(sessionDateToday()) : null; if (nts && pts.length) nts = { start: Math.min(nts.start, pts[0].t), end: Math.max(nts.end, pts[pts.length - 1].t) };
+  drawSeriesChart(NAVC.canvas, { points: pts, intraday: intraday || multi, timeScale: nts, series: [{ label: "Account value", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: liveNum(base) && !only ? [{ y: base, label: "Start", color: C.ink45, dash: [2, 4] }] : [], crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 0); }, emptyText: NAVC.loading ? "Loading account history…" : "No account history for this range yet",
     xFmt: function (d) { return new Intl.DateTimeFormat(undefined, intraday ? { hour: "numeric", minute: "2-digit" } : multi ? { weekday: "short", hour: "numeric" } : { month: "short", day: "numeric" }).format(d); },
     tip: function (i) { var p = pts[i]; if (!p) return ""; var lines = [usd(p.c) + (p.live ? "  · live" : ""), new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(p.t)) + (liveNum(base) && base > 0 ? " · " + signedUsd(p.c - base) + " (" + signedPct((p.c / base - 1) * 100) + ")" : "")]; if (liveNum(p.cash)) lines.push("Cash " + usd(p.cash, 0) + " · invested " + usd(p.inv, 0)); return lines.join("\n"); } });
   bindChartPointer(NAVC.canvas, NAVC.tip);
@@ -3594,7 +3621,16 @@ function simFold(node,key,header,body){var existing=node.querySelector('details[
 function bindSimulation(){bindPaperDecisionSettings();bindLearning();bindSimSections();simDefaults();$('simReset').addEventListener('click',resetSimulations);$('simMeasureCost').addEventListener('change',function(){if(this.checked)$('simCount').value=1;simEstimate();});$('simCount').addEventListener('input',function(){if(Number(this.value)!==1)$('simMeasureCost').checked=false;simEstimate();});$('simChoices').addEventListener('click',function(e){var b=e.target.closest('[data-count]');if(b){$('simCount').value=b.dataset.count;$('simMeasureCost').checked=false;simEstimate();}});$('simForm').addEventListener('submit',function(e){e.preventDefault();if(!$('simForm').reportValidity())return;simMutation('simulationStart',{strategyVersionId:$('simStrategyVersion').value,companyRange:$('simCompanyRange').value,count:Number($('simCount').value),from:$('simFrom').value,to:$('simTo').value,budgetMode:$('simMeasureCost').checked?'measure_actual_cost':'capped'});});$('workspacePaper').addEventListener('click',function(){setHash('manager',{});});$('workspaceSimulation').addEventListener('click',function(){setHash('simulation',simUI.batchId?{batch:simUI.batchId}:{});});$('simPauseAll').addEventListener('click',function(){simMutation('simulationControl',{batchId:simUI.batchId,command:'pause'});});$('simResumeAll').addEventListener('click',function(){simMutation('simulationControl',{batchId:simUI.batchId,command:'resume'});});$('simHistory').addEventListener('change',function(){if(this.value){simUI.batchId=this.value;simUI.page=0;simUI.selected=null;$('simDetail').hidden=true;setHash('simulation',{batch:this.value});}});$('simOlder').addEventListener('click',function(){simUI.historyCursor=simUI.data.nextCursor;loadSimulation();});$('simPrev').addEventListener('click',function(){simUI.page--;renderSimulation();});$('simNext').addEventListener('click',function(){simUI.page++;renderSimulation();});$('simDetailClose').addEventListener('click',function(){simUI.selected=null;simUI.chartPoints=[];$('simDetail').hidden=true;});$('simDetailTab').addEventListener('change',function(){simUI.detailCollection=this.value;simUI.detailCursor=null;loadSimDetail();});$('simDetailMore').addEventListener('click',function(){simUI.detailCursor=simUI.detail.nextCursor;loadSimDetail();});window.addEventListener('resize',function(){if(route.view==='simulation'){drawSimChart();drawSimDistribution(simUI.data?.statistics?.values||[]);}});}
 
 /* ── 21. boot ───────────────────────────────────────────────────────────── */
+function bindFolds() {
+  document.querySelectorAll("details[data-fold]").forEach(function (d) {
+    var key = "investor.fold." + d.dataset.fold, saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) { saved = null; }
+    if (saved === "open") d.open = true; else if (saved === "closed") d.open = false;
+    d.addEventListener("toggle", function () { try { localStorage.setItem(key, d.open ? "open" : "closed"); } catch (e) { /* private mode */ } });
+  });
+}
 function bindShell() {
+  bindFolds();
   bindSimulation();
   bindWorkspaces();
   fillSelect("fDecision", ENUM.Decision, function (d) { return DECISION_PLAIN[d]; }); fillSelect("fResearch", ENUM.ResearchState); fillSelect("jDecision", ENUM.Decision, function (d) { return DECISION_PLAIN[d]; });
