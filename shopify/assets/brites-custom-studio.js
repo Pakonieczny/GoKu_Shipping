@@ -5456,27 +5456,47 @@ function paintGoldTestControls() {
   if (!frame) return;
   let panel = $("#goldTestControls");
   if (!panel) {
-    panel = document.createElement("details");
+    panel = document.createElement("div");
     panel.id = "goldTestControls";
-    panel.style.cssText = "position:relative;width:24px;margin:2px 0 0 auto;font-size:11px;line-height:1.3";
-    panel.innerHTML = '<summary title="Temporary gold test" aria-label="Temporary gold test" style="list-style:none;cursor:pointer;width:24px;height:24px;text-align:center;line-height:24px;color:#888;font-size:16px">⋯</summary>' +
-      '<div style="position:absolute;right:0;bottom:28px;z-index:60;width:230px;max-width:calc(100vw - 48px);box-sizing:border-box;padding:6px;background:#fff;border:1px solid #ddd;box-shadow:0 2px 8px #0001">' +
+    panel.style.cssText = "position:relative;z-index:61;width:24px;margin:2px 0 0 auto;font-size:11px;line-height:1.3;pointer-events:auto";
+    panel.innerHTML = '<button type="button" id="goldTestToggle" title="Temporary gold test" aria-label="Temporary gold test" aria-expanded="false" aria-controls="goldTestPopup" style="cursor:pointer;width:24px;height:24px;padding:0;border:0;background:transparent;color:#888;font-size:16px;line-height:24px">⋯</button>' +
+      '<div id="goldTestPopup" popover="auto" style="position:fixed;inset:auto;margin:0;z-index:1000;width:230px;max-width:calc(100vw - 24px);box-sizing:border-box;padding:6px;background:#fff;border:1px solid #ddd;box-shadow:0 2px 8px #0001;pointer-events:auto">' +
       '<div style="display:flex;gap:4px;align-items:center">' +
       '<select id="goldTestModel" aria-label="Gold image generator" style="flex:1;min-width:0;height:26px;padding:2px;border:1px solid #ddd;background:#fff;color:#333;font:inherit;font-size:11px">' +
       '<option value="gemini">Gemini (current)</option><option value="gpt-image-2.5-sunburst">GPT Image 2.5 Sunburst</option></select>' +
       '<button type="button" id="goldTestRegenerate" style="height:26px;min-width:50px;padding:2px 5px;border:1px solid #ddd;background:#f7f6f2;color:#444;font:inherit;font-size:11px;cursor:pointer">↻ Gold</button></div>' +
       '<div id="goldTestNote" role="status" style="margin-top:4px;font-size:10px;color:#777"></div></div>';
     frame.after(panel);
+    const popup = panel.querySelector("#goldTestPopup");
+    const toggle = panel.querySelector("#goldTestToggle");
+    toggle.addEventListener("click", event => {
+      event.preventDefault(); event.stopPropagation();
+      if (popup.matches(":popover-open")) { popup.hidePopover(); return; }
+      paintGoldTestControls();
+      const r = toggle.getBoundingClientRect();
+      popup.style.left = Math.max(12, Math.min(r.right - 230, window.innerWidth - 242)) + "px";
+      popup.style.top = Math.max(12, r.top - 78) + "px";
+      popup.showPopover();
+    });
+    popup.addEventListener("toggle", () => toggle.setAttribute("aria-expanded", String(popup.matches(":popover-open"))));
+    // Keep theme click-away handlers from swallowing the controls; the native
+    // popover supplies outside-click and Escape dismissal in the top layer.
+    popup.addEventListener("pointerdown", event => event.stopPropagation());
+    popup.addEventListener("click", event => event.stopPropagation());
     panel.querySelector("#goldTestModel").addEventListener("change", event => {
       if (!(genBusy || renderBusy || __relay.on)) goldTestModel = event.target.value;
       paintGoldTestControls();
     });
-    panel.querySelector("#goldTestRegenerate").addEventListener("click", () => {
-      panel.open = false;
-      runRender({ renderTestModel: goldTestModel });
-    });
-    panel.addEventListener("keydown", event => {
-      if (event.key === "Escape") { panel.open = false; panel.querySelector("summary").focus(); }
+    panel.querySelector("#goldTestRegenerate").addEventListener("click", async event => {
+      event.preventDefault(); event.stopPropagation();
+      try {
+        const pending = runRender({ renderTestModel: goldTestModel });
+        if (popup.matches(":popover-open")) popup.hidePopover();
+        await pending;
+      } catch (err) {
+        console.error("[studio] gold test:", err);
+        toast("The gold preview could not start. Please refresh and try again.", "err");
+      }
     });
   }
   const v = state.versions[state.currentVersion];
@@ -5492,9 +5512,13 @@ function paintGoldTestControls() {
   button.textContent = busy ? "…" : "↻ Gold";
   button.title = "Regenerate gold only · " + creditWord(renderCost());
   button.setAttribute("aria-label", button.title);
-  panel.querySelector("#goldTestNote").textContent = !hasSpec
-    ? "Saved greyscale required."
+  panel.querySelector("#goldTestNote").textContent = busy ? "Preview in progress…"
+    : !hasSpec ? "Saved greyscale required."
     : creditWord(renderCost()) + " · saved greyscale";
+  if (!v) {
+    const popup = panel.querySelector("#goldTestPopup");
+    if (popup.matches(":popover-open")) popup.hidePopover();
+  }
 }
 
 function renderStage() {
@@ -27681,7 +27705,7 @@ if (window.MutationObserver) {
 syncMenuButton();
 /* the Playwright menu suite drives these two directly, the same way the
    pricing suite reads window.__itemPrice */
-window.__studioBuild   = "2026-09-09.gold-compare-fix";
+window.__studioBuild   = "2026-09-09.gold-click-fix";
 /* ── DO THE ASSETS MATCH? SAY SO ONCE, IN WORDS ──────────────────────────
    The section (this file plus the Liquid) and the stylesheet are separate
    Shopify assets that deploy separately, and a page has now shipped twice
