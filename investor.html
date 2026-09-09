@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-4+NN3904ytqf6TkXDDub9+78ORNsF/ut3tBNYHXPspc='; style-src 'self' 'sha256-lNFYmDUCx7nXeqfUjH+KmuH+HjrWhNzGqdh9RbGmw1c='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-fWvcWq5jg6iiwBImyq9jHyPe+iz9ZGDZl72KCmrZvbQ='; style-src 'self' 'sha256-V6aYgGCKipQM52GWCmj4YMw4ZMTYYpS2jXcFmWItTY8='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -631,6 +631,8 @@ details.fold>#dipWatchBody{margin-top:12px}
 #managerStatus.hero .tile.main{grid-column:auto}
 @media(max-width:760px){#managerStatus.hero{grid-template-columns:repeat(2,minmax(0,1fr))}#managerStatus.hero .tile.main{grid-column:1/-1}}
 details.fold>.foldbody{margin-top:12px}
+details.fold>summary{list-style:none}details.fold>summary::marker{content:"";display:none}
+#liveActivity>.card__h>h3,#liveActivity .card__h>h3:first-child{display:none}
 details.fold>summary .livechart__sum b{font-size:14px}
 #liveActivity>.card__h h3,#managerBrief .card__h>h3{margin-right:auto}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
@@ -2672,7 +2674,7 @@ function todayChartRender() {
   if (liveNum(a.day)) { var now = Date.now(), last = pts[pts.length - 1]; if (!last || now > last.t + 30000) pts.push({ t: now, c: a.day, nav: a.nav, live: true, raw: {} }); else pts[pts.length - 1] = Object.assign({}, last, { c: a.day, nav: a.nav, live: true }); }
   var last = pts.length ? pts[pts.length - 1].c : NaN, up = !liveNum(last) || last >= 0;
   var big = $("todayPnlBig"), chg = $("todayPnlChg"); if (big) setLiveVal(big, liveNum(last) ? signedUsd(last) : "—", toneOf(last)); if (chg) setLiveVal(chg, liveNum(a.dayPct) ? signedPct(a.dayPct) + " today" : "", toneOf(last));
-  var tsb = sessionBounds(today); if (tsb && pts.length) { tsb = { start: Math.min(tsb.start, pts[0].t), end: Math.max(tsb.end, pts[pts.length - 1].t) }; }
+  var tsb = sessionBounds(today); if (tsb && pts.length) { tsb = { start: Math.min(tsb.start, pts[0].t), end: tsb.end }; }
   drawSeriesChart(TODAYC.canvas, { points: pts, intraday: true, timeScale: tsb, series: [{ label: "Profit / loss", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: [{ y: 0, label: "Break-even", color: C.ink45, dash: [2, 4] }], crosshair: true, yFmt: function (v) { return (v < 0 ? "−" : "+") + "$" + fmtFloat(Math.abs(v), 0); }, emptyText: liveNum(start) ? "Today's line starts with the first valuation" : "Waiting for today's first valuation",
     xFmt: function (d) { return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(d); },
     tip: function (i) { var p = pts[i]; if (!p) return ""; return [signedUsd(p.c) + (p.live ? "  · live" : ""), new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(p.t)) + " · account " + usd(p.nav, 0)].join("\n"); } });
@@ -2837,7 +2839,7 @@ function holdChartRender(sym) {
   var vlines = [];
   (h.trades || []).forEach(function (t) { var ms = Date.parse(t.at); if (!liveNum(ms) || !pts.length || ms < pts[0].t - (intraday ? 5 * 60000 : 86400000)) return; var i = -1; for (var k = 0; k < pts.length; k++) if (pts[k].t >= ms) { i = k; break; } if (i < 0) { if (ms <= pts[pts.length - 1].t + (intraday ? 30 * 60000 : 86400000)) i = pts.length - 1; else return; } vlines.push({ i: i, color: laneOf(t) === "dip" ? C.slate : t.side === "BUY" ? C.sage : C.clay, label: (laneOf(t) === "dip" ? (t.side === "BUY" ? "Dip buy " : "Dip sell ") : (t.side === "BUY" ? "Bought " : "Sold ")) + fmtQty(t.quantity), trade: t, y: microsNum(t.price.priceMicros) }); });
   var note = st.error ? "Could not refresh this chart. " + (pts.length ? "Earlier prices stay visible. " : "") + (st.error.message || "") : st.loading && !pts.length ? "Loading prices…" : !pts.length ? "No prices for this range yet." : (intraday ? "5-minute bars" : "Daily closes") + " · " + pts.length + " points" + (pts[pts.length - 1].live ? " · newest point is the live quote" : "") + (st.loading ? " · refreshing…" : "");
-  var hts = null; if (st.range === "1D" && pts.length) { var sd = new Date(pts[pts.length - 1].t), sdStr = (pts[pts.length - 1].raw && pts[pts.length - 1].raw.d) || sessionDateToday(); hts = sessionBounds(sdStr); if (hts) hts = { start: Math.min(hts.start, pts[0].t), end: Math.max(hts.end, pts[pts.length - 1].t) }; }
+  var hts = null; if (st.range === "1D" && pts.length) { var sd = new Date(pts[pts.length - 1].t), sdStr = (pts[pts.length - 1].raw && pts[pts.length - 1].raw.d) || sessionDateToday(); hts = sessionBounds(sdStr); if (hts) hts = { start: Math.min(hts.start, pts[0].t), end: Math.max(hts.end, Math.min(pts[pts.length - 1].t, hts.end + 4 * 3600000)) }; }
   drawSeriesChart(st.canvas, { points: pts, intraday: intraday, timeScale: hts, series: [{ label: "Price", color: lineColor, width: 1.8, values: closes }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: levels, vlines: vlines, crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 2); }, emptyText: st.loading ? "Loading prices…" : "No prices yet",
     xFmt: function (d) { return intraday ? new Intl.DateTimeFormat(undefined, multiDay ? { weekday: "short", hour: "numeric" } : { hour: "numeric", minute: "2-digit" }).format(d) : new Intl.DateTimeFormat(undefined, holdRangeDays(st.range) > 200 || st.from || st.to ? { month: "short", year: "2-digit" } : { month: "short", day: "numeric" }).format(d); },
     tip: function (i, px, geom) {
@@ -2899,7 +2901,7 @@ function navChartRender() {
   var pts = navPoints(), C = chartColors(), base = pts.length ? pts[0].c : NaN, last = pts.length ? pts[pts.length - 1].c : NaN, up = liveNum(base) && liveNum(last) ? last >= base : true;
   var intraday = NAVC.range === "1D", multi = NAVC.range === "1W";
   var big = $("navLiveBig"), chg = $("navLiveChg"); if (big) setLiveVal(big, usd(last), null); if (chg) { if (liveNum(base) && base > 0 && liveNum(last)) setLiveVal(chg, signedUsd(last - base) + " (" + signedPct((last / base - 1) * 100) + ") " + ({ "1D": "today", "1W": "past week", "1M": "past month", "3M": "past 3 months", "6M": "past 6 months", "1Y": "past year", ALL: "since start" }[NAVC.range] || ""), toneOf(last - base)); else setLiveVal(chg, "", "flat"); }
-  var only = pts.length === 1, nts = intraday ? sessionBounds(sessionDateToday()) : null; if (nts && pts.length) nts = { start: Math.min(nts.start, pts[0].t), end: Math.max(nts.end, pts[pts.length - 1].t) };
+  var only = pts.length === 1, nts = intraday ? sessionBounds(sessionDateToday()) : null; if (nts && pts.length) nts = { start: Math.min(nts.start, pts[0].t), end: nts.end };
   drawSeriesChart(NAVC.canvas, { points: pts, intraday: intraday || multi, timeScale: nts, series: [{ label: "Account value", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: liveNum(base) && !only ? [{ y: base, label: "Start", color: C.ink45, dash: [2, 4] }] : [], crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 0); }, emptyText: NAVC.loading ? "Loading account history…" : "No account history for this range yet",
     xFmt: function (d) { return new Intl.DateTimeFormat(undefined, intraday ? { hour: "numeric", minute: "2-digit" } : multi ? { weekday: "short", hour: "numeric" } : { month: "short", day: "numeric" }).format(d); },
     tip: function (i) { var p = pts[i]; if (!p) return ""; var lines = [usd(p.c) + (p.live ? "  · live" : ""), new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(p.t)) + (liveNum(base) && base > 0 ? " · " + signedUsd(p.c - base) + " (" + signedPct((p.c / base - 1) * 100) + ")" : "")]; if (liveNum(p.cash)) lines.push("Cash " + usd(p.cash, 0) + " · invested " + usd(p.inv, 0)); return lines.join("\n"); } });
