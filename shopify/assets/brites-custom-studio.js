@@ -4165,9 +4165,10 @@ function mkIsPerimLine(it) {
    The verdict says what it did — `healed` when a wider seal was needed,
    `partial` when ink was left outside — so the compose can tell the
    customer in words instead of doing either silently. */
-function mkPerimVerdict(perimInk, otherInk, M) {
+function mkPerimVerdict(perimInk, otherInk, M, options) {
+  const opt = options || {};
   const n = M * M;
-  const R0 = Math.max(2, Math.round(0.026 * M));
+  const R0 = Math.max(2, Math.round((opt.strict ? 0.007 : 0.026) * M));
   const inv = new Uint8Array(n);
   for (let i = 0; i < n; i++) inv[i] = perimInk[i] ? 0 : 1;
   const d = mkEdt(inv, M, M);
@@ -4195,18 +4196,45 @@ function mkPerimVerdict(perimInk, otherInk, M) {
     }
     return { enclosed, inkPx, inkIn };
   };
-  const radii = [R0, Math.round(R0 * 1.8), Math.round(R0 * 3)];
+  const radii = opt.strict ? [R0] : [R0, Math.round(R0 * 1.8), Math.round(R0 * 3)];
   for (let k = 0; k < radii.length; k++) {
     const r = flood(radii[k]);
     /* a loop that traps less than 1% of the sheet has not closed yet —
        try the next, braver seal */
-    if (r.enclosed < n * 0.01) continue;
+    if (r.enclosed < Math.max(n * 0.01, opt.minEnclosed || 0)) continue;
     const cover = r.inkPx ? r.inkIn / r.inkPx : 1;
-    if (cover < 0.5) return { ok: false, why: "spill" };
+    if (cover < (opt.strict ? 0.95 : 0.5)) return { ok: false, why: "spill" };
     return { ok: true, why: "", healed: k > 0, partial: cover < 0.95 };
   }
   return { ok: false, why: "open" };
 }
+/* Read the finished pixels so both drawn vectors and imported blue outlines
+   count. A small internal cut-out must not be mistaken for the perimeter:
+   the outline must enclose the artwork and a substantial part of its box.
+   Only small raster gaps are tolerated; the user's lines are never redrawn. */
+function mkBluePerimeterVerdict(source) {
+  const M = 560, cv = document.createElement("canvas");
+  cv.width = M; cv.height = M;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, M, M);
+  ctx.drawImage(source, 0, 0, M, M);
+  const data = ctx.getImageData(0, 0, M, M).data;
+  const blue = new Uint8Array(M * M), other = new Uint8Array(M * M);
+  let x0 = M, y0 = M, x1 = -1, y1 = -1;
+  for (let i = 0; i < blue.length; i++) {
+    const p = i * 4, r = data[p], g = data[p + 1], b = data[p + 2];
+    blue[i] = b > 120 && b - Math.max(r, g) > 28 ? 1 : 0;
+    other[i] = !blue[i] && (Math.max(r, g, b) < 150 || r - Math.max(g, b) > 45) ? 1 : 0;
+    if (!blue[i] && !other[i]) continue;
+    const x = i % M, y = (i / M) | 0;
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+    y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  if (x1 < x0) return { ok: false, why: "empty" };
+  return mkPerimVerdict(blue, other, M,
+    { strict: true, minEnclosed: (x1 - x0 + 1) * (y1 - y0 + 1) * 0.25 });
+}
+
 function mkPerimeterEncloses(items, perimItems) {
   const M = 280;
   const paintBlack = (list) => {
@@ -4297,6 +4325,9 @@ async function mkComposeDrawing(S) {
       } catch (e) {}
     }
   }
+  if (!perimOwn) {
+    try { perimOwn = mkBluePerimeterVerdict(prepared.cv).ok; } catch (e) {}
+  }
   const sil = mkComposeSilhouette(items, S);
   if (!sil) return null;
   const cv = document.createElement("canvas");
@@ -4304,7 +4335,7 @@ async function mkComposeDrawing(S) {
   const ctx = cv.getContext("2d");
   ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, S, S);
   const LW = Math.max(3, S * 0.0044);
-  const body = mkComposeBodyPath(sil, S);
+  const body = perimOwn ? null : mkComposeBodyPath(sil, S);
   /* ── THE HOOP IS ADDED ONLY TO A CHARM THAT HAS NOT GOT ONE ────────────
      A sketch is a shape the customer drew. It needs somewhere to hang from,
      and the studio puts it there: an annulus on the body's top edge, above
