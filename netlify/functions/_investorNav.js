@@ -31,6 +31,7 @@ const MAX_POINTS_PER_DAY = 600;          // ~1/min across a session plus closed-
 const RANGES = Object.freeze({
   today: { days: 1 }, yesterday: { days: 2, prevOnly: true },
   "7": { days: 7 }, "14": { days: 14 }, "30": { days: 30 }, "60": { days: 60 }, "90": { days: 90 },
+  "180": { days: 180 }, "365": { days: 365 },
 });
 
 function docId(accountId, date) { return `${accountId}_${date}`; }

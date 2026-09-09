@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-mr16fcrPYISlSuvKDl+/FdIZg7/KlHqL5uM9xUsL3Jc='; style-src 'self' 'sha256-EQyxBb7J7e822QiFlKY7yhlIqg8FDvJDHzxc2ph8Fx0='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+akYLg9p4GgwudOehPljPxcCYWgsQVZuZir5QXLJ6hM='; style-src 'self' 'sha256-p4r5GWKBbBr3rRi2TKmj1b45DqnrlQ2yc5TqJj+Rtv8='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -517,6 +517,50 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 
 .sim-section{min-width:0}.sim-section>summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:12px;row-gap:2px;padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;list-style:none}.sim-section>summary::-webkit-details-marker{display:none}.sim-section>summary h3{margin:0;font-size:15px;line-height:1.3}.sim-section>summary .chev{grid-column:2;grid-row:1/3;transition:transform .18s;color:var(--ink-45)}.sim-section[open]>summary .chev{transform:rotate(90deg)}.sim-section-body{display:flex;flex-direction:column;gap:14px;padding:14px 0 0;min-width:0}.sim-fold{min-width:0}.sim-fold>summary{display:flex;align-items:center;gap:12px;cursor:pointer;list-style:none;min-width:0}.sim-fold>summary::-webkit-details-marker{display:none}.sim-fold-head{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}.sim-fold-head h3{margin:0}.sim-fold>summary .chev{flex:none;transition:transform .18s;color:var(--ink-45)}.sim-fold[open]>summary .chev{transform:rotate(90deg)}.sim-fold-body{display:flex;flex-direction:column;gap:12px;padding-top:12px;min-width:0}
 .master-workflow{padding:18px 20px;border:1px solid var(--line,#e5dfd5);border-radius:14px;display:grid;gap:10px}.master-workflow progress,.step progress{width:100%;height:12px;accent-color:#ac863b}
+
+/* ── live valuation + live charts ── */
+.livechart{border:1px solid var(--line);border-radius:14px;background:var(--bg-2);padding:0;min-width:0;overflow:hidden}
+.livechart>summary{list-style:none;cursor:pointer;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.livechart>summary::-webkit-details-marker{display:none}
+.livechart>summary::after{content:"";width:8px;height:8px;border-right:1.5px solid var(--ink-45);border-bottom:1.5px solid var(--ink-45);transform:rotate(-45deg);transition:transform .15s;flex:none}
+.livechart[open]>summary::after{transform:rotate(45deg)}
+.livechart__sum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.livechart__hero{display:flex;justify-content:space-between;align-items:flex-end;gap:10px 16px;flex-wrap:wrap;padding:2px 14px 6px}
+.livechart__price{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.livechart__big{font-size:30px;font-weight:650;letter-spacing:-.04em;font-variant-numeric:tabular-nums;line-height:1.1;transition:color .6s}
+.livechart__chg{font-size:13.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.livechart__ctl{display:flex;justify-content:space-between;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:4px 14px 8px}
+.livechart__custom summary{cursor:pointer;list-style:none;padding:4px 0}
+.livechart__custom summary::-webkit-details-marker{display:none}
+.livechart__custom .filters{padding-top:6px}
+.livechart__wrap{min-height:220px;height:280px;padding:0 6px}
+.livechart--nav .livechart__wrap{height:260px}
+.livechart .chartwrap canvas{width:100%;height:100%;display:block;outline:none;touch-action:pan-y}
+.livechart__canvas:focus-visible,#navLiveChart:focus-visible{box-shadow:inset 0 0 0 2px var(--gold-2);border-radius:8px}
+.livechart__foot{display:flex;justify-content:space-between;gap:8px 14px;flex-wrap:wrap;padding:6px 14px 12px}
+.livechart__foot .legend{gap:6px 12px}
+.legend i.sage{border-color:var(--sage)}.legend i.clay{border-color:var(--clay)}.legend i.slate{border-color:var(--slate)}.legend i.amber{border-color:var(--amber)}
+.legend i.dash{border-top-style:dashed}.legend i.ink.dot{border-top-style:dotted;border-color:var(--ink-45)}
+.segs--range button{min-width:38px;text-align:center}
+.livestat{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-70);white-space:nowrap}
+.livestat__t{font-weight:600}
+.livestat__age{color:var(--ink-45);font-variant-numeric:tabular-nums}
+.livedot{width:8px;height:8px;border-radius:50%;background:var(--ink-45);flex:none;display:inline-block}
+.livedot.on{background:var(--sage);box-shadow:0 0 0 0 rgba(95,122,91,.5);animation:livepulse 2s ease-out infinite}
+.livedot.off{background:var(--ink-45)}
+@keyframes livepulse{0%{box-shadow:0 0 0 0 rgba(95,122,91,.55)}70%{box-shadow:0 0 0 8px rgba(95,122,91,0)}100%{box-shadow:0 0 0 0 rgba(95,122,91,0)}}
+.up{color:var(--sage)}.down{color:var(--clay)}.flat{color:inherit}
+.flash-up{animation:flashUp 1.1s ease-out}.flash-down{animation:flashDown 1.1s ease-out}
+@keyframes flashUp{0%{background:rgba(95,122,91,.28);border-radius:6px}100%{background:transparent}}
+@keyframes flashDown{0%{background:rgba(176,86,63,.28);border-radius:6px}100%{background:transparent}}
+.evid .e.live .v{font-variant-numeric:tabular-nums;transition:color .4s}
+.tile--live .v{font-variant-numeric:tabular-nums}
+.tile--live .v.pnl.up,.pnl.up{color:var(--sage)}.tile--live .v.pnl.down,.pnl.down{color:var(--clay)}
+.row--holding{gap:12px 14px}
+.tiles{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.tile .v{font-size:clamp(18px,1.7vw,25px);word-break:normal;overflow-wrap:anywhere}
+@media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
+@media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
 </head>
 <body>
@@ -977,7 +1021,7 @@ var ACTION_SPECS = {
 var ENUM = {
   Decision: ["BUY", "WATCH", "IGNORE", "HOLD", "REDUCE", "SELL", "ABSTAIN"],
   ResearchState: ["CURRENT", "UPDATE_AVAILABLE", "REVISION_RUNNING", "FULL_RESEARCH_REQUIRED", "STALE", "INCOMPLETE", "QUEUED", "DEFERRED_BUDGET", "FAILED"],
-  PerformanceRange: ["1M", "3M", "6M", "1Y", "ALL"], ExportScope: ["decisions", "mandates", "execution", "ledger", "all"],
+  PerformanceRange: ["1M", "3M", "6M", "1Y", "ALL"], NavRange: ["1D", "1W", "1M", "3M", "6M", "1Y", "ALL"], ExportScope: ["decisions", "mandates", "execution", "ledger", "all"],
   OrderType: ["MARKETABLE_LIMIT", "LIMIT"], TimeInForce: ["DAY", "GTC"], PauseKind: ["OPERATIONAL", "THESIS"],
   ResearchDirective: ["RESEARCH_NOW", "UPDATE_EXISTING", "FULL_REUNDERWRITE"]
 };
@@ -1472,12 +1516,17 @@ function toggleAlertPanel(force) { var p = $("alertPanel"), b = $("alertToggle")
 async function loadAlerts() { try { await loadRes("alerts", "alerts", { status: "active", pageSize: 100 }); renderAlertCenter(); } catch (e) { /* the dashboard copy stays */ } }
 
 /* ── 9. polling (display only; paused while hidden) ─────────────────────── */
-var POLL = { dash: null, jobs: null, quotes: null, session: null, simulation: null };
+var POLL = { dash: null, jobs: null, quotes: null, session: null, simulation: null, portfolio: null, charts: null };
 function startPolling() {
   stopPolling();
   POLL.simulation = setInterval(loadSimulation, 3000);
   POLL.dash = setInterval(pollDashboard, 30000);
-  POLL.quotes = setInterval(function(){pollQuotes();if(drawer.open && drawer.panel==="c-chart" && drawer.days===0 && $("chartAuto").checked)loadCompanyIntraday();}, 15000);
+  /* Display quotes every 5 s while the market is open (the server answers
+     from a 3 s cache), every 15 s otherwise; holdings and their charts refresh
+     on their own cadence while the portfolio view is showing. */
+  POLL.quotes = setInterval(function(){ var open = marketOpen(), due = Date.now() - LIVE.quotesAt >= (open ? 4500 : 14500); if (due) pollQuotes(); if(open && drawer.open && drawer.panel==="c-chart" && drawer.days===0 && $("chartAuto").checked && Date.now() - (drawer.intradayAt || 0) >= 14500){drawer.intradayAt = Date.now(); loadCompanyIntraday();} }, 5000);
+  POLL.portfolio = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "portfolio") return; loadPortfolio(); }, 10000);
+  POLL.charts = setInterval(holdChartsTick, 5000);
   POLL.session = setInterval(sessionRefreshTick, 20 * 60 * 1000);
 }
 function stopPolling() { Object.keys(POLL).forEach(function (k) { if (POLL[k]) { clearInterval(POLL[k]); POLL[k] = null; } }); }
@@ -1507,13 +1556,17 @@ async function pollJobs() {
 function collectVisibleSymbols() {
   var set = new Set();
   if (drawer.symbol) set.add(drawer.symbol);
+  document.querySelectorAll("[data-hold-sym]").forEach(function (n) { if (!n.closest("[hidden]")) set.add(n.dataset.holdSym); });
   document.querySelectorAll("[data-quote-sym]").forEach(function (n) { var v = n.closest("[hidden]"); if (!v) set.add(n.dataset.quoteSym); });
   return Array.from(set).filter(function (s) { return /^[A-Z][A-Z0-9.-]{0,9}$/.test(s); }).slice(0, 100);
 }
 async function pollQuotes() {
   if (document.hidden || $("app").hidden) return;
   var syms = collectVisibleSymbols(); if (!syms.length) return;
+  LIVE.quotesAt = Date.now();
   try { await loadRes("quotes", "quotes", { symbols: syms }); } catch (e) { return; }
+  var qres = getRes("quotes"); if (qres && qres.session) LIVE.session = qres.session;
+  try { applyLiveQuotes(); } catch (e) { console.error("live valuation failed", e); }
   renderQuoteSpots(); renderShell();
 }
 function quoteOf(sym) { var q = getRes("quotes"); if (!q || !q.items) return null; for (var i = 0; i < q.items.length; i++) if (q.items[i].symbol === sym) return q.items[i]; return null; }
@@ -2325,13 +2378,17 @@ function drawSeriesChart(canvas, cfg) {
   ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.fillStyle = C.ink45; ctx.textAlign = "left";
   for (var g = 0; g <= 4; g++) { var gv = lo + (hi - lo) * g / 4, gy = yOf(gv); ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke(); ctx.fillText(yFmt(gv), x1 + 6, gy); }
   ctx.textAlign = "center"; var step = Math.max(1, Math.round(n / 6));
-  for (var i = 0; i < n; i += step) { var d = new Date(pts[i].t); ctx.fillText(new Intl.DateTimeFormat(undefined, { month:cfg.intraday?undefined:"short", day:cfg.intraday?undefined:"numeric",hour:cfg.intraday?"2-digit":undefined,minute:cfg.intraday?"2-digit":undefined }).format(d), xOf(i), H - padB / 2); }
+  var lastLabelEnd = -Infinity;
+  for (var i = 0; i < n; i += step) { var d = new Date(pts[i].t), lbl = cfg.xFmt ? cfg.xFmt(d, i) : new Intl.DateTimeFormat(undefined, { month:cfg.intraday?undefined:"short", day:cfg.intraday?undefined:"numeric",hour:cfg.intraday?"2-digit":undefined,minute:cfg.intraday?"2-digit":undefined }).format(d), lw = ctx.measureText(lbl).width, lx = Math.min(x1 - lw / 2, Math.max(x0 + lw / 2, xOf(i))); if (lx - lw / 2 < lastLabelEnd + 6) continue; lastLabelEnd = lx + lw / 2; ctx.fillText(lbl, lx, H - padB / 2); }
+  if (cfg.area && cfg.series && cfg.series[0]) { var s0 = cfg.series[0], grad = ctx.createLinearGradient(0, y0, 0, y1); grad.addColorStop(0, withAlpha(s0.color, 0.22)); grad.addColorStop(1, withAlpha(s0.color, 0.02)); ctx.save(); ctx.fillStyle = grad; ctx.beginPath(); var open = false, firstX = 0, lastX = 0; s0.values.forEach(function (v, i) { if (v == null || !Number.isFinite(v)) return; var x = xOf(i), y = yOf(v); if (!open) { ctx.moveTo(x, y1); ctx.lineTo(x, y); open = true; firstX = x; } else ctx.lineTo(x, y); lastX = x; }); if (open) { ctx.lineTo(lastX, y1); ctx.lineTo(firstX, y1); ctx.closePath(); ctx.fill(); } ctx.restore(); }
   if (volH) { var vmax = 0; pts.forEach(function (p) { if (Number.isFinite(p.v) && p.v > vmax) vmax = p.v; }); ctx.fillStyle = C.vol; pts.forEach(function (p, i) { if (!Number.isFinite(p.v) || !vmax) return; var h = (p.v / vmax) * volH; ctx.fillRect(xOf(i) - Math.max(1, bw * 0.35), H - padB - h, Math.max(2, bw * 0.7), h); }); }
   (cfg.zones || []).forEach(function (z) { if (!Number.isFinite(z.y1) || !Number.isFinite(z.y2)) return; var a = yOf(Math.max(z.y1, z.y2)), b = yOf(Math.min(z.y1, z.y2)); ctx.fillStyle = z.color || C.zone; ctx.fillRect(x0, a, x1 - x0, b - a); ctx.fillStyle = C.slate; ctx.textAlign = "left"; if(W>=500)ctx.fillText(z.label, x0 + 4, a + 8); });
-  (cfg.levels || []).forEach(function (l) { if (!Number.isFinite(l.y) || l.y < lo || l.y > hi) return; var y = yOf(l.y); ctx.save(); ctx.strokeStyle = l.color; ctx.setLineDash(l.dash || [5, 4]); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); ctx.restore(); ctx.fillStyle = l.color; ctx.textAlign = "right"; ctx.fillText(l.label + " " + yFmt(l.y), x1 - 4, y - 7); });
+  var usedLabelYs = [];
+  (cfg.levels || []).forEach(function (l) { if (!Number.isFinite(l.y) || l.y < lo || l.y > hi) return; var y = yOf(l.y); ctx.save(); ctx.strokeStyle = l.color; ctx.setLineDash(l.dash || [5, 4]); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); ctx.restore(); ctx.fillStyle = l.color; ctx.textAlign = "right"; var ly = y - 7; if (usedLabelYs.some(function (u) { return Math.abs(u - ly) < 11; })) ly = y + 8; if (usedLabelYs.some(function (u) { return Math.abs(u - ly) < 11; })) ly = y + 19; usedLabelYs.push(ly); ctx.fillText(l.label + " " + yFmt(l.y), x1 - 4, ly); });
   if(cfg.candles) pts.forEach(function(p,i){if(![p.o,p.h,p.l,p.c].every(Number.isFinite))return;var x=xOf(i),w=Math.max(1,Math.min(12,bw*.65));ctx.strokeStyle=ctx.fillStyle=p.c>=p.o?C.sage:C.clay;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,yOf(p.h));ctx.lineTo(x,yOf(p.l));ctx.stroke();ctx.fillRect(x-w/2,Math.min(yOf(p.o),yOf(p.c)),w,Math.max(1,Math.abs(yOf(p.o)-yOf(p.c))));});
   (cfg.series || []).forEach(function (s) { if(cfg.candles && s.label==='Close')return; ctx.save(); ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.4; if (s.dash) ctx.setLineDash(s.dash); ctx.beginPath(); var started = false; s.values.forEach(function (v, i) { if (v == null || !Number.isFinite(v)) { started = false; return; } var x = xOf(i), y = yOf(v); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }); ctx.stroke(); ctx.restore(); });
   (cfg.markers || []).forEach(function (m) { if (m.i == null || m.i < 0 || m.i >= n) return; var y = Number.isFinite(m.y) ? yOf(Math.min(hi, Math.max(lo, m.y))) : yOf(pts[m.i].c); drawMarkerGlyph(ctx, xOf(m.i), y, m.kind, m.color || markerColor(m.kind)); });
+  if (cfg.liveDot && cfg.series && cfg.series[0]) { var lv = cfg.series[0].values, li = lv.length - 1; while (li >= 0 && (lv[li] == null || !Number.isFinite(lv[li]))) li--; if (li >= 0) { var lx = xOf(li), ly = yOf(lv[li]), lc = cfg.series[0].color; ctx.save(); ctx.fillStyle = withAlpha(lc, 0.25); ctx.beginPath(); ctx.arc(lx, ly, 7, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = lc; ctx.beginPath(); ctx.arc(lx, ly, 3.2, 0, Math.PI * 2); ctx.fill(); ctx.restore(); } }
   var geom = { xOf: xOf, yOf: yOf, x0: x0, x1: x1, y0: y0, y1: y1, n: n, idxAt: function (px) { return Math.max(0, Math.min(n - 1, Math.floor((px - x0) / bw))); } };
   canvas._geom = geom; canvas._cfg = cfg;
   return geom;
@@ -2436,11 +2493,251 @@ function orderRow(o) {
     el("div", { class: "row__side" }, manual ? capButton(o, "cancelSell", "Cancel sell", { icon: "close", blockText: plainSellBlock }) : null, el("div", { class: "d", text: "version " + o.resourceVersion })));
 }
 
+/* ── 17b. Live valuation + live charts (display only; never a fill price) ── */
+/* Everything in this section is a mirror of what the desk already knows: the
+   real-time IEX display quote and the stored bars. It re-values the screen
+   between portfolio reads so a novice sees the holding move; it never feeds a
+   decision, a mark or an order. */
+var LIVE = { session: null, quotesAt: 0, lastPrice: {}, holdings: new Map(), holdSig: "", timers: {} };
+var HOLD_RANGES = [["1D", "Today"], ["5D", "5 days"], ["1M", "1 month"], ["3M", "3 months"], ["6M", "6 months"], ["1Y", "1 year"], ["ALL", "All"]];
+var NAV_RANGES = [["1D", "Today"], ["1W", "1 week"], ["1M", "1 month"], ["3M", "3 months"], ["6M", "6 months"], ["1Y", "1 year"], ["ALL", "All"]];
+var HCH = new Map(); /* symbol → chart state */
+var NAVC = { range: (function () { try { var r = localStorage.getItem("investor.navRange"); return NAV_RANGES.some(function (x) { return x[0] === r; }) ? r : "1D"; } catch (e) { return "1D"; } })(), series: null, loading: false, error: null, loadedAt: 0, request: 0 };
+function marketOpen() { return !!(LIVE.session && LIVE.session.open); }
+function liveNum(x) { return typeof x === "number" && Number.isFinite(x); }
+function qtyNum(q) { var c = canonicalInt(q && q.quantityUnits != null ? q.quantityUnits : q); return c === null ? NaN : Number(c); }
+function usd(v, digits) { if (!liveNum(v)) return "—"; var neg = v < 0; v = Math.abs(v); var s = v.toLocaleString(undefined, { minimumFractionDigits: digits == null ? 2 : digits, maximumFractionDigits: digits == null ? 2 : digits }); return (neg ? "-" : "") + "$" + s; }
+function signedUsd(v, digits) { if (!liveNum(v)) return "—"; return (v > 0 ? "+" : v < 0 ? "−" : "") + usd(Math.abs(v), digits); }
+function signedPct(v) { if (!liveNum(v)) return ""; return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + "%"; }
+function toneOf(v) { return !liveNum(v) || Math.abs(v) < 1e-9 ? "flat" : v > 0 ? "up" : "down"; }
+function withAlpha(color, a) { var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color).trim()); if (m) { var h = m[1]; if (h.length === 3) h = h.split("").map(function (c) { return c + c; }).join(""); var n = parseInt(h, 16); return "rgba(" + (n >> 16 & 255) + "," + (n >> 8 & 255) + "," + (n & 255) + "," + a + ")"; } var r = /^rgba?\(([^)]+)\)/.exec(String(color)); if (r) { var p = r[1].split(",").slice(0, 3).map(function (x) { return x.trim(); }); return "rgba(" + p.join(",") + "," + a + ")"; } return "rgba(120,120,120," + a + ")"; }
+function livePriceOf(sym) { var q = quoteOf(sym); if (!q || !q.price) return null; var p = microsNum(q.price.priceMicros); return liveNum(p) && p > 0 ? { price: p, asOf: q.asOf, feed: q.feed, delay: q.delayMinutes } : null; }
+function fmtClock(iso) { if (!iso) return "—"; var d = new Date(iso); if (isNaN(d)) return "—"; return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(d); }
+function ageText(iso) { if (!iso) return ""; var s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); if (!Number.isFinite(s)) return ""; return s < 5 ? "just now" : s < 60 ? s + "s ago" : s < 3600 ? Math.round(s / 60) + " min ago" : fmtTime(iso); }
+function liveDot(state) { return el("span", { class: "livedot " + (state || ""), "aria-hidden": "true" }); }
+function liveStatusNode(asOf) { var open = marketOpen(), s = LIVE.session; return el("span", { class: "livestat" }, liveDot(open ? "on" : "off"), el("span", { class: "livestat__t", text: open ? "Live" : s ? (s.tradingDay ? "Market closed · last trade" : "Market closed") : "Waiting for prices" }), el("span", { class: "livestat__age", "data-live-age": asOf || "", text: asOf ? ageText(asOf) : "" })); }
+function setLiveVal(node, text, tone, flash) {
+  if (!node) return; var prev = node.textContent; node.textContent = text;
+  if (tone !== undefined) { node.classList.remove("up", "down", "flat"); if (tone) node.classList.add(tone); }
+  if (flash && prev && prev !== text) { node.classList.remove("flash-up", "flash-down"); void node.offsetWidth; node.classList.add(flash === "up" ? "flash-up" : flash === "down" ? "flash-down" : "flash-up"); }
+}
+/* Holding numbers from the live quote: value, gain against your cost, today's move. */
+function liveHoldingCalc(h) {
+  var lp = livePriceOf(h.symbol); if (!lp) return null;
+  var qty = qtyNum(h.quantity), cost = h.averageCost ? microsNum(h.averageCost.priceMicros) : NaN, mark = h.mark ? microsNum(h.mark.priceMicros) : NaN;
+  var out = { price: lp.price, asOf: lp.asOf, qty: qty, cost: cost, mark: mark };
+  if (liveNum(qty)) { out.value = lp.price * qty; if (liveNum(mark)) out.bookValue = mark * qty; if (liveNum(cost)) { out.pnl = (lp.price - cost) * qty; out.pnlPct = cost ? (lp.price / cost - 1) * 100 : NaN; } }
+  var st = HCH.get(h.symbol), pc = st && liveNum(st.prevClose) ? st.prevClose : NaN;
+  if (liveNum(pc) && pc > 0) { out.dayChg = lp.price - pc; out.dayPct = (lp.price / pc - 1) * 100; }
+  return out;
+}
+function applyLiveQuotes() {
+  var rows = document.querySelectorAll("[data-hold-sym]"), liveTotal = 0, bookTotal = 0, pnlTotal = 0, anyLive = false, newestAsOf = null;
+  rows.forEach(function (row) {
+    var sym = row.dataset.holdSym, h = LIVE.holdings.get(sym); if (!h) return;
+    var c = liveHoldingCalc(h); if (!c) return;
+    var prev = LIVE.lastPrice[sym], flash = prev == null || prev === c.price ? null : c.price > prev ? "up" : "down"; LIVE.lastPrice[sym] = c.price;
+    if (!newestAsOf || (c.asOf && Date.parse(c.asOf) > Date.parse(newestAsOf))) newestAsOf = c.asOf;
+    setLiveVal(row.querySelector("[data-live=price]"), usd(c.price), null, flash);
+    setLiveVal(row.querySelector("[data-live=value]"), usd(c.value), null, flash);
+    setLiveVal(row.querySelector("[data-live=pnl]"), liveNum(c.pnl) ? signedUsd(c.pnl) + (liveNum(c.pnlPct) ? " (" + signedPct(c.pnlPct) + ")" : "") : "—", toneOf(c.pnl), flash);
+    var hero = row.querySelector("[data-live=heroPrice]"); setLiveVal(hero, usd(c.price), null, flash);
+    holdChartHero(sym);
+    var age = row.querySelector("[data-live-age]"); if (age) { age.dataset.liveAge = c.asOf || ""; age.textContent = ageText(c.asOf); }
+    if (liveNum(c.value)) { anyLive = true; liveTotal += c.value; bookTotal += liveNum(c.bookValue) ? c.bookValue : c.value; if (liveNum(c.pnl)) pnlTotal += c.pnl; }
+    holdChartLiveTick(sym);
+  });
+  var p = getRes("portfolio"), s = p && p.summary;
+  if (anyLive && s) {
+    var nav = s.nav ? minorNum(s.nav.amountMinor) : NaN, liveNav = liveNum(nav) ? nav + (liveTotal - bookTotal) : NaN;
+    var t = document.querySelector("[data-live=navTile]"); if (t && liveNum(liveNav)) { var prevNav = Number(t.dataset.prev || "NaN"); setLiveVal(t, usd(liveNav), null, liveNum(prevNav) && prevNav !== liveNav ? (liveNav > prevNav ? "up" : "down") : null); t.dataset.prev = String(liveNav); }
+    var pt = document.querySelector("[data-live=pnlTile]"); if (pt) setLiveVal(pt, signedUsd(pnlTotal), toneOf(pnlTotal));
+    var it = document.querySelector("[data-live=investedTile]"); if (it) setLiveVal(it, usd(liveTotal));
+    NAVC.liveNav = liveNav; navChartRender();
+  }
+  document.querySelectorAll("[data-live=summaryStatus]").forEach(function (n) { setChildren(n, [liveStatusNode(newestAsOf)]); });
+}
+/* age labels tick once a second so “12s ago” stays honest without a fetch */
+setInterval(function () { document.querySelectorAll("[data-live-age]").forEach(function (n) { if (n.dataset.liveAge) n.textContent = ageText(n.dataset.liveAge); }); }, 1000);
+
+/* ── per-holding live chart ─────────────────────────────────────────────── */
+function holdState(sym) { var st = HCH.get(sym); if (!st) { var saved = null; try { saved = JSON.parse(localStorage.getItem("investor.holdChart." + sym) || "null"); } catch (e) { saved = null; } st = { symbol: sym, range: saved && saved.range || "1D", from: "", to: "", intraday: null, intradaySessions: 0, intradayAt: 0, history: null, historyAt: 0, loading: false, error: null, prevClose: NaN, request: 0, open: !(saved && saved.collapsed) }; HCH.set(sym, st); } return st; }
+function holdSave(st) { try { localStorage.setItem("investor.holdChart." + st.symbol, JSON.stringify({ range: st.range, collapsed: !st.open })); } catch (e) { /* private mode */ } }
+function holdRangeDays(r) { return { "1M": 31, "3M": 93, "6M": 186, "1Y": 366, ALL: 100000 }[r] || 31; }
+function holdChartNode(h) {
+  var st = holdState(h.symbol), sym = h.symbol;
+  var segs = el("div", { class: "segs segs--range", role: "group", "aria-label": "Chart range" }, HOLD_RANGES.map(function (r) { return el("button", { type: "button", "data-range": r[0], "aria-pressed": String(st.range === r[0] && !st.from && !st.to), title: r[1], text: r[0] }); }));
+  segs.addEventListener("click", function (e) { var b = e.target.closest("button[data-range]"); if (!b) return; st.range = b.dataset.range; st.from = ""; st.to = ""; var box = segs.closest(".livechart"); box.querySelectorAll("input[type=date]").forEach(function (i) { i.value = ""; }); holdSave(st); holdSyncSegs(sym); holdChartLoad(sym, true); holdChartRender(sym); });
+  var from = el("input", { type: "date", "aria-label": "From date" }), to = el("input", { type: "date", "aria-label": "To date" });
+  var apply = el("button", { type: "button", class: "btn xs", text: "Apply" });
+  apply.addEventListener("click", function () { if (from.value && to.value && from.value > to.value) { st.error = { message: "Choose a start date on or before the end date." }; holdChartRender(sym); return; } st.from = from.value; st.to = to.value; if (st.from || st.to) st.range = "CUSTOM"; else st.range = "1M"; st.error = null; holdSyncSegs(sym); holdChartLoad(sym, true); holdChartRender(sym); });
+  var custom = el("details", { class: "livechart__custom" }, el("summary", { class: "tiny muted", text: "Pick dates" }), el("div", { class: "filters" }, el("label", { text: "From " }, from), el("label", { text: "To " }, to), apply));
+  var canvas = el("canvas", { class: "livechart__canvas", tabindex: "0", "aria-label": sym + " live price chart; hover or use arrow keys to inspect" });
+  var tip = el("div", { class: "tip", hidden: true });
+  var det = el("details", { class: "livechart", open: st.open, "data-chart-sym": sym },
+    el("summary", null, el("span", { class: "livechart__sum" }, icon("learning", "sm"), el("b", { text: "Price chart" }), el("span", { class: "tiny muted", text: "live · hover for details" }))),
+    el("div", { class: "livechart__hero", "data-live": "hero" }, el("div", { class: "livechart__price" }, el("span", { class: "livechart__big", "data-live": "heroPrice", text: "—" }), el("span", { class: "livechart__chg", "data-live": "heroChg", text: "" })), el("div", { class: "livechart__status" }, liveStatusNode(null))),
+    el("div", { class: "livechart__ctl" }, segs, custom),
+    el("div", { class: "chartwrap livechart__wrap" }, canvas, tip),
+    el("div", { class: "livechart__foot" }, el("div", { class: "legend", "data-live": "legend" }), el("div", { class: "tiny muted", "data-live": "note", role: "status" })));
+  det.addEventListener("toggle", function () { st.open = det.open; holdSave(st); if (det.open) { holdChartLoad(sym); holdChartRender(sym); } });
+  st.canvas = canvas; st.tip = tip; st.node = det;
+  return det;
+}
+function holdSyncSegs(sym) { var st = HCH.get(sym); if (!st || !st.node) return; st.node.querySelectorAll("button[data-range]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.range === st.range && !st.from && !st.to)); }); }
+function holdNeedsIntraday(st) { return st.range === "1D" || st.range === "5D"; }
+async function holdChartLoad(sym, force) {
+  var st = holdState(sym); if (!st.node || !st.node.open || !document.contains(st.node)) return;
+  var now = Date.now(), request = ++st.request;
+  try {
+    if (holdNeedsIntraday(st)) {
+      var sessions = st.range === "5D" ? 5 : 1;
+      var stale = !st.intraday || st.intradaySessions < sessions || now - st.intradayAt > (marketOpen() ? 30000 : 5 * 60000);
+      if (force && st.intradaySessions >= sessions && now - st.intradayAt < 4000) stale = false;
+      if (!stale) return;
+      st.loading = true; holdChartRender(sym);
+      var series = await loadRes("liveIntraday:" + sym + ":" + sessions, "intraday", { symbol: sym, sessions: sessions });
+      if (request !== st.request) return;
+      if (series) { st.intraday = series; st.intradaySessions = sessions; st.intradayAt = Date.now(); st.error = null; if (series.session) LIVE.session = series.session; var pc = series.previousClose ? microsNum(series.previousClose) : NaN; if (liveNum(pc) && pc > 0) st.prevClose = pc; }
+    } else {
+      var hstale = !st.history || now - (st.historyAt || 0) > 5 * 60000;
+      if (!hstale) return;
+      st.loading = true; holdChartRender(sym);
+      var hs = await loadRes("liveHistory:" + sym, "history", { symbol: sym, days: 400 });
+      if (request !== st.request) return;
+      if (hs) { st.history = hs; st.historyAt = Date.now(); st.error = null; }
+      if (!liveNum(st.prevClose)) { var pts = seriesToPoints(hs); if (pts.length >= 2) st.prevClose = pts[pts.length - 2].c; }
+    }
+  } catch (e) { if (e && e.name === "AbortError") return; if (request === st.request) st.error = e; }
+  finally { if (request === st.request) { st.loading = false; holdChartRender(sym); } }
+}
+function holdVisiblePoints(st) {
+  var h = LIVE.holdings.get(st.symbol), pts;
+  if (holdNeedsIntraday(st)) pts = seriesToPoints(st.intraday);
+  else {
+    var all = seriesToPoints(st.history);
+    if (st.from || st.to) pts = all.filter(function (p) { if (st.from && p.t < Date.parse(st.from + "T00:00:00Z")) return false; if (st.to && p.t > Date.parse(st.to + "T23:59:59.999Z")) return false; return true; });
+    else { var cutoff = Date.now() - holdRangeDays(st.range) * 86400000; pts = all.filter(function (p) { return p.t >= cutoff; }); }
+  }
+  pts = pts.slice();
+  /* append the real-time quote as the newest point so the line moves between bar refreshes */
+  var lp = livePriceOf(st.symbol);
+  if (lp && pts.length) {
+    var last = pts[pts.length - 1], qt = lp.asOf ? Date.parse(lp.asOf) : Date.now(); if (!liveNum(qt)) qt = Date.now();
+    var intraday = holdNeedsIntraday(st);
+    var today = (LIVE.session && LIVE.session.date) || new Date(qt).toISOString().slice(0, 10), lastDay = (last.raw && last.raw.d) || new Date(last.t).toISOString().slice(0, 10);
+    var sameDay = lastDay === today;
+    if (intraday ? qt > last.t + 60000 : (!sameDay && lastDay < today)) pts.push({ t: Math.max(qt, last.t + 1000), o: lp.price, h: lp.price, l: lp.price, c: lp.price, v: NaN, raw: { t: new Date(qt).toISOString(), c: lp.price }, live: true });
+    else if (intraday ? qt >= last.t : sameDay) { var cp = Object.assign({}, last, { c: lp.price, h: Math.max(last.h, lp.price), l: Math.min(last.l, lp.price), live: true }); pts[pts.length - 1] = cp; }
+  } else if (lp && !pts.length) pts.push({ t: Date.now(), o: lp.price, h: lp.price, l: lp.price, c: lp.price, v: NaN, raw: { c: lp.price }, live: true });
+  return pts;
+}
+function holdBaseline(st, pts) {
+  if (st.range === "1D") { if (liveNum(st.prevClose) && st.prevClose > 0) return { y: st.prevClose, label: "Yesterday's close" }; return pts.length ? { y: pts[0].o != null && liveNum(pts[0].o) ? pts[0].o : pts[0].c, label: "Today's open" } : null; }
+  if (st.range === "5D" && pts.length) { var firstDay = new Date(pts[0].t).toISOString().slice(0, 10), i = 0; while (i < pts.length - 1 && new Date(pts[i + 1].t).toISOString().slice(0, 10) === firstDay) i++; var next = pts[i + 1]; return next ? { y: pts[i].c, label: "Close 5 days ago" } : { y: pts[0].c, label: "Start" }; }
+  return pts.length ? { y: pts[0].c, label: "Start of range" } : null;
+}
+function holdRangeWord(st) { return st.from || st.to ? "in the chosen dates" : { "1D": "today", "5D": "past 5 days", "1M": "past month", "3M": "past 3 months", "6M": "past 6 months", "1Y": "past year", ALL: "since records began" }[st.range] || ""; }
+function holdChartHero(sym) {
+  var st = HCH.get(sym); if (!st || !st.node) return;
+  var pts = st._pts || holdVisiblePoints(st), lp = livePriceOf(sym), last = pts.length ? pts[pts.length - 1].c : lp && lp.price;
+  var base = holdBaseline(st, pts), chg = st.node.querySelector("[data-live=heroChg]"), big = st.node.querySelector("[data-live=heroPrice]");
+  if (big && liveNum(last) && !lp) big.textContent = usd(last);
+  if (!chg) return;
+  if (liveNum(last) && base && liveNum(base.y) && base.y > 0) { var d = last - base.y, p = (last / base.y - 1) * 100; setLiveVal(chg, signedUsd(d) + " (" + signedPct(p) + ") " + holdRangeWord(st), toneOf(d)); }
+  else setLiveVal(chg, "", "flat");
+  setChildren(st.node.querySelector(".livechart__status"), [liveStatusNode(lp && lp.asOf)]);
+}
+function holdChartLiveTick(sym) { var st = HCH.get(sym); if (!st || !st.node || !st.node.open) return; holdChartRender(sym); }
+function holdChartRender(sym) {
+  var st = HCH.get(sym); if (!st || !st.canvas || !st.node || !st.node.open) return;
+  var h = LIVE.holdings.get(sym) || {}, C = chartColors(), pts = holdVisiblePoints(st); st._pts = pts;
+  var base = holdBaseline(st, pts), last = pts.length ? pts[pts.length - 1].c : NaN;
+  var up = base && liveNum(last) ? last >= base.y : true, lineColor = up ? C.sage : C.clay;
+  var intraday = holdNeedsIntraday(st), multiDay = st.range === "5D";
+  var levels = [];
+  if (base && liveNum(base.y)) levels.push({ y: base.y, label: base.label, color: C.ink45, dash: [2, 4] });
+  var cost = h.averageCost ? microsNum(h.averageCost.priceMicros) : NaN; if (liveNum(cost)) levels.push({ y: cost, label: "Your cost", color: C.slate });
+  var tgt = h.target ? microsNum(h.target.priceMicros) : NaN; if (liveNum(tgt)) levels.push({ y: tgt, label: "Profit target", color: C.gold });
+  var stop = h.lossBoundary ? microsNum(h.lossBoundary.priceMicros) : NaN; if (liveNum(stop)) levels.push({ y: stop, label: "Stop", color: C.clay });
+  var closes = pts.map(function (p) { return p.c; });
+  var note = st.error ? "Could not refresh this chart. " + (pts.length ? "Earlier prices stay visible. " : "") + (st.error.message || "") : st.loading && !pts.length ? "Loading prices…" : !pts.length ? "No prices for this range yet." : (intraday ? "5-minute bars" : "Daily closes") + " · " + pts.length + " points" + (pts[pts.length - 1].live ? " · newest point is the live quote" : "") + (st.loading ? " · refreshing…" : "");
+  drawSeriesChart(st.canvas, { points: pts, intraday: intraday, series: [{ label: "Price", color: lineColor, width: 1.8, values: closes }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: levels, crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 2); }, emptyText: st.loading ? "Loading prices…" : "No prices yet",
+    xFmt: function (d) { return intraday ? new Intl.DateTimeFormat(undefined, multiDay ? { weekday: "short", hour: "numeric" } : { hour: "numeric", minute: "2-digit" }).format(d) : new Intl.DateTimeFormat(undefined, holdRangeDays(st.range) > 200 || st.from || st.to ? { month: "short", year: "2-digit" } : { month: "short", day: "numeric" }).format(d); },
+    tip: function (i) {
+      var p = pts[i]; if (!p) return "";
+      var when = new Intl.DateTimeFormat(undefined, intraday ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" } : { year: "numeric", month: "short", day: "numeric" }).format(new Date(p.t));
+      var lines = [when + (p.live ? " · live quote" : "")];
+      lines.push("Price " + usd(p.c) + (liveNum(p.o) && !p.live && intraday ? "  ·  open " + usd(p.o) + "  high " + usd(p.h) + "  low " + usd(p.l) : ""));
+      if (base && liveNum(base.y) && base.y > 0) lines.push(signedUsd(p.c - base.y) + " (" + signedPct((p.c / base.y - 1) * 100) + ") vs " + base.label.toLowerCase());
+      if (liveNum(cost) && cost > 0) { var q = qtyNum(h.quantity); lines.push(signedPct((p.c / cost - 1) * 100) + " vs your cost" + (liveNum(q) ? " · " + signedUsd((p.c - cost) * q) + " on " + q + " sh" : "")); }
+      if (liveNum(p.v) && p.v > 0) lines.push("Volume " + fmtInt(p.v));
+      return lines.join("\n");
+    } });
+  bindChartPointer(st.canvas, st.tip);
+  setChildren(st.node.querySelector("[data-live=legend]"), [legendItem(up ? "sage" : "clay", "Price"), base ? legendItem("ink dot", base.label) : null, liveNum(cost) ? legendItem("slate dash", "Your cost") : null, liveNum(tgt) ? legendItem("gold dash", "Profit target") : null, liveNum(stop) ? legendItem("clay dash", "Stop") : null]);
+  setText2(st.node.querySelector("[data-live=note]"), note);
+  holdChartHero(sym);
+}
+function setText2(node, text) { if (node) node.textContent = text == null ? "" : String(text); }
+function holdChartsMount() {
+  var rows = document.querySelectorAll("[data-chart-sym]");
+  rows.forEach(function (n) { var sym = n.dataset.chartSym, st = HCH.get(sym); if (!st) return; holdSyncSegs(sym); if (n.open) { holdChartLoad(sym); holdChartRender(sym); } });
+}
+function holdChartsTick() {
+  if (document.hidden || route.view !== "portfolio") return;
+  HCH.forEach(function (st, sym) { if (st.node && st.node.open && document.contains(st.node)) holdChartLoad(sym); });
+  if (Date.now() - NAVC.loadedAt > 60000) navChartLoad();
+}
+
+/* ── account value chart ────────────────────────────────────────────────── */
+function navChartNode() {
+  var segs = el("div", { class: "segs segs--range", role: "group", "aria-label": "Account value range" }, NAV_RANGES.map(function (r) { return el("button", { type: "button", "data-range": r[0], "aria-pressed": String(NAVC.range === r[0]), title: r[1], text: r[0] }); }));
+  segs.addEventListener("click", function (e) { var b = e.target.closest("button[data-range]"); if (!b) return; NAVC.range = b.dataset.range; try { localStorage.setItem("investor.navRange", NAVC.range); } catch (x) { /* ignore */ } segs.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", String(x.dataset.range === NAVC.range)); }); NAVC.series = null; NAVC.loadedAt = 0; navChartLoad(); navChartRender(); });
+  var canvas = el("canvas", { id: "navLiveChart", tabindex: "0", "aria-label": "Account value over time; hover or use arrow keys to inspect" }), tip = el("div", { class: "tip", id: "navLiveTip", hidden: true });
+  var det = el("details", { class: "livechart livechart--nav", open: true, id: "navLiveBox" },
+    el("summary", null, el("span", { class: "livechart__sum" }, icon("portfolio", "sm"), el("b", { text: "Account value over time" }), el("span", { class: "tiny muted", text: "cash + investments · live" }))),
+    el("div", { class: "livechart__hero" }, el("div", { class: "livechart__price" }, el("span", { class: "livechart__big", id: "navLiveBig", text: "—" }), el("span", { class: "livechart__chg", id: "navLiveChg", text: "" })), el("div", { class: "livechart__status", "data-live": "summaryStatus" }, liveStatusNode(null))),
+    el("div", { class: "livechart__ctl" }, segs),
+    el("div", { class: "chartwrap livechart__wrap" }, canvas, tip),
+    el("div", { class: "livechart__foot" }, el("div", { class: "legend", id: "navLiveLegend" }), el("div", { class: "tiny muted", id: "navLiveNote", role: "status" })));
+  NAVC.canvas = canvas; NAVC.tip = tip; NAVC.node = det;
+  return det;
+}
+async function navChartLoad() {
+  if (!NAVC.node || !document.contains(NAVC.node) || NAVC.loading) return;
+  var request = ++NAVC.request; NAVC.loading = true;
+  try { var s = await loadRes("navLive:" + NAVC.range, "navSeries", Object.assign({ range: NAVC.range }, accountParams())); if (request !== NAVC.request) return; if (s) { NAVC.series = s; NAVC.error = null; NAVC.loadedAt = Date.now(); } }
+  catch (e) { if (e && e.name !== "AbortError" && request === NAVC.request) NAVC.error = e; }
+  finally { if (request === NAVC.request) { NAVC.loading = false; navChartRender(); } }
+}
+function navPoints() {
+  var s = NAVC.series, pts = ((s && s.points) || []).map(function (p) { return { t: Date.parse(p.t), c: minorNum(p.navMinor), cash: minorNum(p.cashMinor), inv: minorNum(p.investedMinor), raw: p }; }).filter(function (p) { return liveNum(p.t) && liveNum(p.c); });
+  var p = getRes("portfolio"), sum = p && p.summary, nav = liveNum(NAVC.liveNav) ? NAVC.liveNav : sum && sum.nav ? minorNum(sum.nav.amountMinor) : NaN;
+  if (liveNum(nav)) { var now = Date.now(), last = pts[pts.length - 1]; if (!last || now > last.t + 30000) pts.push({ t: now, c: nav, live: true, raw: {} }); else pts[pts.length - 1] = Object.assign({}, last, { c: nav, live: true }); }
+  return pts;
+}
+function navChartRender() {
+  if (!NAVC.canvas || !NAVC.node || !document.contains(NAVC.node)) return;
+  var pts = navPoints(), C = chartColors(), base = pts.length ? pts[0].c : NaN, last = pts.length ? pts[pts.length - 1].c : NaN, up = liveNum(base) && liveNum(last) ? last >= base : true;
+  var intraday = NAVC.range === "1D", multi = NAVC.range === "1W";
+  var big = $("navLiveBig"), chg = $("navLiveChg"); if (big) setLiveVal(big, usd(last), null); if (chg) { if (liveNum(base) && base > 0 && liveNum(last)) setLiveVal(chg, signedUsd(last - base) + " (" + signedPct((last / base - 1) * 100) + ") " + ({ "1D": "today", "1W": "past week", "1M": "past month", "3M": "past 3 months", "6M": "past 6 months", "1Y": "past year", ALL: "since start" }[NAVC.range] || ""), toneOf(last - base)); else setLiveVal(chg, "", "flat"); }
+  var only = pts.length === 1;
+  drawSeriesChart(NAVC.canvas, { points: pts, intraday: intraday || multi, series: [{ label: "Account value", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: liveNum(base) && !only ? [{ y: base, label: "Start", color: C.ink45, dash: [2, 4] }] : [], crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 0); }, emptyText: NAVC.loading ? "Loading account history…" : "No account history for this range yet",
+    xFmt: function (d) { return new Intl.DateTimeFormat(undefined, intraday ? { hour: "numeric", minute: "2-digit" } : multi ? { weekday: "short", hour: "numeric" } : { month: "short", day: "numeric" }).format(d); },
+    tip: function (i) { var p = pts[i]; if (!p) return ""; var lines = [new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(p.t)) + (p.live ? " · live" : ""), "Account value " + usd(p.c)]; if (liveNum(base) && base > 0) lines.push(signedUsd(p.c - base) + " (" + signedPct((p.c / base - 1) * 100) + ") vs start"); if (liveNum(p.cash)) lines.push("Cash " + usd(p.cash, 0) + " · invested " + usd(p.inv, 0)); return lines.join("\n"); } });
+  bindChartPointer(NAVC.canvas, NAVC.tip);
+  setChildren($("navLiveLegend"), [legendItem(up ? "sage" : "clay", "Account value"), legendItem("ink dot", "Start of range")]);
+  setText("navLiveNote", NAVC.error ? "Could not refresh account history. " + (NAVC.error.message || "") : only ? "History builds up as the account is valued through the day. The dot is the live value now." : pts.length ? pts.length + " points · account is valued about once a minute while the market is open" + (NAVC.loading ? " · refreshing…" : "") : "");
+}
+var resizeTimer = null;
+window.addEventListener("resize", function () { clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { HCH.forEach(function (st, sym) { holdChartRender(sym); }); navChartRender(); }, 120); });
+
 /* ── 18. Portfolio view ─────────────────────────────────────────────────── */
 async function loadPortfolio(fresh) {
   if (fresh || !getRes("portfolio")) renderPortfolio(true);
   await Promise.allSettled([loadRes("portfolio", "portfolio", accountParams()), loadRes("execEvents", "executionEvents", Object.assign({ pageSize: 100 }, accountParams()))]);
-  renderPortfolio(); pollQuotes();
+  renderPortfolio(); pollQuotes(); navChartLoad(); holdChartsMount();
 }
 function renderPortfolio(loading) {
   renderLiveActivity();
@@ -2448,7 +2745,10 @@ function renderPortfolio(loading) {
   if (!p) { setChildren($("portfolioSummary"), [cardHead("Portfolio", "portfolio"), slot.error && !loading ? stateBox("failed", "Could not load the portfolio", " — " + slot.error.message, slot.error.code) : stateBox("loading", "Loading the portfolio…")]); return; }
   renderPortfolioSummary(p.summary || {}); if(slot.error)$("portfolioSummary").prepend(stateBox("stale","Holdings could not be refreshed."," Previously loaded information is shown. "+slot.error.message));
   var h = p.holdings; setText("holdingListSub", h ? fmtInt(h.completedCount) + " / " + (h.totalCount == null ? "?" : fmtInt(h.totalCount)) + " · as of " + fmtTime(h.asOf) : "");
-  setChildren($("holdingList"), [colStateNode(h, "holdings"), (h && h.items || []).map(holdingRow)]);
+  var holdSig = JSON.stringify((h && h.items || []).map(function (x) { return [x.resourceId, x.resourceVersion, x.quantity, x.averageCost, x.target, x.lossBoundary, x.protection, x.labels, x.thesisHealth, x.availableActions]; })) + "|" + (h ? h.collectionState : "");
+  if (holdSig !== LIVE.holdSig || !$("holdingList").children.length) { LIVE.holdSig = holdSig; setChildren($("holdingList"), [colStateNode(h, "holdings"), (h && h.items || []).map(holdingRow)]); holdChartsMount(); }
+  else (h && h.items || []).forEach(function (x) { LIVE.holdings.set(x.symbol, x); });
+  applyLiveQuotes();
   var a = p.standingAuthorizations; setText("standingAuthorizationsSub", a ? fmtInt(a.completedCount) + " / " + (a.totalCount == null ? "?" : fmtInt(a.totalCount)) : "");
   setChildren($("standingAuthorizations"), [colStateNode(a, "authorizations"), (a && a.items || []).map(function (x) { return authRow(x); })]);
   var o = p.workingOrders; setText("workingOrdersSub", o ? fmtInt(o.completedCount) + " / " + (o.totalCount == null ? "?" : fmtInt(o.totalCount)) + " · pending and working are one list" : "");
@@ -2461,21 +2761,25 @@ function renderPortfolio(loading) {
 }
 function authorityBadge(a) { return badge(a === "AI_MANDATE" ? "AI mandate" : a === "OPERATOR" ? "Operator" : a === "EMERGENCY_RISK" ? "Emergency risk" : plainLabel(a || "unknown"), a === "AI_MANDATE" ? "gold" : a === "OPERATOR" ? "warn" : a === "EMERGENCY_RISK" ? "bad" : "info", a === "AI_MANDATE" ? "manager" : a === "OPERATOR" ? "flag" : "warn"); }
 function renderPortfolioSummary(s) {
-  var tiles = [["Account value", s.nav], ["Settled cash", s.settledCash], ["Reserved", s.reserved], ["Invested", s.invested]].map(function (t) { return el("div", { class: "tile" }, el("div", { class: "k", text: t[0] }), el("div", { class: "v", text: t[1] ? fmtMoney(t[1]) : "—" })); });
-  tiles.push(el("div", { class: "tile" }, el("div", { class: "k", text: "Gain / loss on holdings" }), el("div", { class: "v" }, pnlNode(s.unrealizedPnl))));
+  var liveKeys = { "Account value": "navTile", "Invested": "investedTile" };
+  var tiles = [["Account value", s.nav], ["Settled cash", s.settledCash], ["Reserved", s.reserved], ["Invested", s.invested]].map(function (t) { return el("div", { class: "tile" + (liveKeys[t[0]] ? " tile--live" : "") }, el("div", { class: "k", text: t[0] }), el("div", { class: "v", "data-live": liveKeys[t[0]] || null, text: t[1] ? fmtMoney(t[1]) : "—" }), liveKeys[t[0]] ? el("div", { class: "u tiny muted", text: "book " + (t[1] ? fmtMoney(t[1]) : "—") }) : null); });
+  tiles.push(el("div", { class: "tile tile--live" }, el("div", { class: "k", text: "Gain / loss on holdings" }), el("div", { class: "v pnl", "data-live": "pnlTile" }, pnlNode(s.unrealizedPnl)), el("div", { class: "u tiny muted", text: "live · book " + fmtMoney(s.unrealizedPnl) })));
   tiles.push(el("div", { class: "tile" }, el("div", { class: "k", text: "Gain / loss on closed trades" }), el("div", { class: "v" }, pnlNode(s.realizedPnl))));
   tiles.push(el("div", { class: "tile" }, el("div", { class: "k", text: "Open positions" }), el("div", { class: "v", text: fmtInt(s.openPositions) })));
-  setChildren($("portfolioSummary"), [cardHead("Portfolio", "portfolio", s.versions ? Object.keys(s.versions).map(function (k) { return k + " v" + s.versions[k]; }).join(" · ") : ""), el("div", { class: "tiles" }, tiles),
+  var navBox = NAVC.node && document.contains(NAVC.node) ? NAVC.node : navChartNode();
+  setChildren($("portfolioSummary"), [cardHead("Portfolio", "portfolio", s.versions ? Object.keys(s.versions).map(function (k) { return k + " v" + s.versions[k]; }).join(" · ") : ""), el("div", { class: "tiles" }, tiles), navBox,
     s.unprotected && s.unprotected.length ? el("div", { class: "badline" }, icon("block"), el("span", null, "Unprotected positions (no working protection at the broker): ", symbolChips(s.unprotected))) : el("div", { class: "okline" }, icon("check"), el("span", { text: "Every open position has protection working or none is open." }))]);
 }
 function protectionTone(state) { var s = String(state || "").toUpperCase(); return s.indexOf("PROTECTED") === 0 && s !== "PROTECTED_PARTIAL" ? "ok" : s.indexOf("UNPROTECTED") >= 0 || s === "NONE" ? "bad" : "warn"; }
 function holdingRow(h) {
   regRes("holding", h); var ids = idsOf(h), prot = h.protection || {}, sellCap = capOf(h, "requestSell");
   var shortcuts = sellCap && sellCap.enabled ? el("div", { class: "qshort" }, [25, 50, 100].map(function (p) { return el("button", { type: "button", class: "btn xs", "data-action": "requestSell", "data-resource-id": h.resourceId, "data-resource-version": String(h.resourceVersion), "data-pct": String(p), text: "Sell " + p + "%", title: "Prefills " + fmtQty(sellQtyFromPct(h.quantity.quantityUnits, p)) + " sh (floor) for confirmation" }); })) : null;
-  return el("div", { class: "row" }, el("div", { class: "row__sym" }, symButton(h.symbol), el("span", { class: "n", text: fmtQty(h.quantity) + " sh" }), (h.labels || []).length ? el("div", { class: "chips" }, h.labels.map(function (l) { return el("span", { class: "chip", text: plainLabel(l) }); })) : null),
+  LIVE.holdings.set(h.symbol, h); var lc = liveHoldingCalc(h);
+  return el("div", { class: "row row--holding", "data-hold-sym": h.symbol }, el("div", { class: "row__sym" }, symButton(h.symbol), el("span", { class: "n", text: fmtQty(h.quantity) + " sh" }), (h.labels || []).length ? el("div", { class: "chips" }, h.labels.map(function (l) { return el("span", { class: "chip", text: plainLabel(l) }); })) : null),
     el("div", { class: "row__mid" },
       el("div", { class: "t" }, stateBadge(h.thesisHealth === "INTACT" || h.thesisHealth === "IMPROVING" ? "HEALTHY" : h.thesisHealth === "BROKEN" ? "DOWN" : h.thesisHealth === "WEAKENED" ? "DEGRADED" : "UNKNOWN", "thesis " + plainLabel(h.thesisHealth).toLowerCase()), badge(plainLabel(prot.state || "unknown") + (prot.coverage ? " · " + plainLabel(prot.coverage) : ""), protectionTone(prot.state), protectionTone(prot.state) === "ok" ? "check" : "warn", "protection"), h.emergencyRank != null ? badge("#" + h.emergencyRank + (h.emergencyExpiry ? " until " + fmtTime(h.emergencyExpiry) : ""), "info", null, "emergency rank") : null),
-      el("div", { class: "evid" }, factNode("Average cost", h.averageCost ? fmtPrice(h.averageCost) : "—", "your basis"), factNode("Portfolio price", h.mark ? fmtPrice(h.mark) : "—", "used to value this holding"), factNode("Market value", fmtMoney(h.marketValue)), el("div", { class: "e" }, el("div", { class: "k", text: "Gain / loss on holdings" }), el("div", { class: "v" }, pnlNode(h.unrealizedPnl))), factNode("Share of portfolio", fmtBps(h.weightBps)), factNode("Profit target", h.target ? fmtPrice(h.target) : "—", h.distanceToTargetBps != null ? "distance " + fmtSignedBps(h.distanceToTargetBps) : null), factNode("Planned stop price", h.lossBoundary ? fmtPrice(h.lossBoundary) : "—", h.distanceToBoundaryBps != null ? "distance " + fmtSignedBps(h.distanceToBoundaryBps) : null), factNode("Plan active until", h.timeExit ? h.timeExit.sessionDate : "—", h.timeExit ? h.timeExit.calendarId + " " + h.timeExit.calendarVersion : null), factNode("Planned downside", h.forwardDownside ? fmtMoney(h.forwardDownside) : "—", h.stressedDownside ? "stressed " + fmtMoney(h.stressedDownside) : null)),
+      holdChartNode(h),
+      el("div", { class: "evid" }, factNode("Average cost", h.averageCost ? fmtPrice(h.averageCost) : "—", "your basis"), el("div", { class: "e live" }, el("div", { class: "k", text: "Live price" }), el("div", { class: "v", "data-live": "price", text: lc ? usd(lc.price) : (h.mark ? fmtPrice(h.mark) : "—") }), el("div", { class: "u", text: "book price " + (h.mark ? fmtPrice(h.mark) : "—") + " · used to value this holding" })), el("div", { class: "e live" }, el("div", { class: "k", text: "Market value" }), el("div", { class: "v", "data-live": "value", text: lc && liveNum(lc.value) ? usd(lc.value) : fmtMoney(h.marketValue) }), el("div", { class: "u", text: "live · book " + fmtMoney(h.marketValue) })), el("div", { class: "e live" }, el("div", { class: "k", text: "Gain / loss" }), el("div", { class: "v pnl " + (lc ? toneOf(lc.pnl) : ""), "data-live": "pnl", text: lc && liveNum(lc.pnl) ? signedUsd(lc.pnl) + (liveNum(lc.pnlPct) ? " (" + signedPct(lc.pnlPct) + ")" : "") : fmtMoney(h.unrealizedPnl) }), el("div", { class: "u", text: "live vs your cost · book " + fmtMoney(h.unrealizedPnl) })), factNode("Share of portfolio", fmtBps(h.weightBps)), factNode("Profit target", h.target ? fmtPrice(h.target) : "—", h.distanceToTargetBps != null ? "distance " + fmtSignedBps(h.distanceToTargetBps) : null), factNode("Planned stop price", h.lossBoundary ? fmtPrice(h.lossBoundary) : "—", h.distanceToBoundaryBps != null ? "distance " + fmtSignedBps(h.distanceToBoundaryBps) : null), factNode("Plan active until", h.timeExit ? h.timeExit.sessionDate : "—", h.timeExit ? h.timeExit.calendarId + " " + h.timeExit.calendarVersion : null), factNode("Planned downside", h.forwardDownside ? fmtMoney(h.forwardDownside) : "—", h.stressedDownside ? "stressed " + fmtMoney(h.stressedDownside) : null)),
       el("div", { class: "m" }, el("span", { text: "plan version " + (ids.mandateVersionId || ids.mandateVersion || "—") }), ids.positionId ? el("span", { text: "position " + ids.positionId }) : null, h.nextCatalystAt || h.nextReviewAt ? el("span", { text: "next " + (h.nextCatalystAt ? "catalyst " + fmtDate(h.nextCatalystAt) : "review " + fmtDate(h.nextReviewAt)) }) : null, el("span", { class: "muted", "data-quote-sym": h.symbol, text: quoteOf(h.symbol) ? "Indicative " + quoteText(quoteOf(h.symbol)) : "" })),
       sellCap && !sellCap.enabled ? el("div", { class: "tiny muted" }, icon("info", "sm"), " ", el("span", { text: plainSellBlock(sellCap.disabledReason) })) : null),
     el("div", { class: "row__side" }, el("div", { class: "actions" }, capButton(h, "pauseMandate", "Pause plan", { icon: "pause" }), capButton(h, "resumeMandate", "Resume plan", { icon: "play" }), capButton(h, "cancelMandate", "Cancel plan", { icon: "close" })), el("div", { class: "actions" }, capButton(h, "requestSell", "Sell…", { icon: "sell", cls: "xs danger", blockText: plainSellBlock }), shortcuts), el("div", { class: "d", text: "version " + h.resourceVersion })));

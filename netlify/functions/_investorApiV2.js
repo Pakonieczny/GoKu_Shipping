@@ -954,8 +954,24 @@ function v1() { const V = lazy("./investorApi"); if (!V || !V.ACTIONS) throw typ
 async function readQuotes({ params, ctx }) {
   const out = await v1().quotes({ symbols: params.symbols });
   const asOf = new Date(ctx.nowMs).toISOString();
-  const items = (params.symbols || []).map((s) => { const q = out.quotes && out.quotes[s] || null; return { symbol: s, price: q ? priceUsd(q.lastPrice != null ? q.lastPrice : q.price) : null, provider: q ? q.provider || out.provider || null : out.provider || null, feed: q ? q.feed || out.feed || null : out.feed || null, delayMinutes: q ? (q.priceDelayMinutes != null ? q.priceDelayMinutes : q.feedDelayMinutes != null ? q.feedDelayMinutes : null) : null, asOf: q ? isoOf(q.lastBarAt || q.asOf) : null, sessionDate: q ? q.quoteSessionDate || null : null, currentTradingDay: q ? q.currentTradingDay === true : false, displayOnly: true, note: "display quote; never the fill price" }; });
-  return { data: { collectionState: out.ok === false ? "FAILED" : items.length ? "READY" : "EMPTY", asOf, items, completedCount: items.length, totalCount: items.length, nextCursor: null, error: out.ok === false ? S.errorShape("DEPENDENCY_DEGRADED", out.error || "quotes unavailable") : null, buckets: null, partialReason: null, snapshotId: "quotes" }, partial: out.ok === false, partialReason: out.ok === false ? out.error || "quotes unavailable" : null };
+  /* v1 answers with Alpaca's latest-trade shape ({ p: price, t: trade time,
+     s: size }) on the real-time IEX lane. Older callers wrote lastPrice /
+     price, so both spellings are honoured. */
+  const feedOf = (q) => (q && q.feed) || out.feed || null;
+  const items = (params.symbols || []).map((s) => {
+    const q = out.quotes && out.quotes[s] || null;
+    const usd = q ? (q.p != null ? q.p : q.lastPrice != null ? q.lastPrice : q.price) : null;
+    const feed = feedOf(q);
+    const delay = q ? (q.priceDelayMinutes != null ? q.priceDelayMinutes : q.feedDelayMinutes != null ? q.feedDelayMinutes : feed === "iex" ? 0 : null) : null;
+    return { symbol: s, price: priceUsd(usd), provider: q ? q.provider || out.provider || "alpaca" : out.provider || null, feed,
+      delayMinutes: delay, asOf: q ? isoOf(q.t || q.lastBarAt || q.asOf) || out.asOf || asOf : null,
+      size: q && Number.isFinite(Number(q.s)) ? Number(q.s) : null,
+      sessionDate: q ? q.quoteSessionDate || null : null, currentTradingDay: q ? q.currentTradingDay === true : false,
+      displayOnly: true, note: "display quote; never the fill price" };
+  });
+  let session = null;
+  try { const MK = require("./_investorMarket"), st = MK.sessionState(new Date(ctx.nowMs)); session = { date: st.date, open: !!st.open, phase: st.phase || null, tradingDay: !!st.tradingDay }; } catch (e) { session = null; }
+  return { data: { collectionState: out.ok === false ? "FAILED" : items.length ? "READY" : "EMPTY", asOf, items, completedCount: items.length, totalCount: items.length, nextCursor: null, error: out.ok === false ? S.errorShape("DEPENDENCY_DEGRADED", out.error || "quotes unavailable") : null, buckets: null, partialReason: null, snapshotId: "quotes", session, cached: out.cached === true }, partial: out.ok === false, partialReason: out.ok === false ? out.error || "quotes unavailable" : null };
 }
 async function readHistory({ params, ctx }) {
   const H = require("./_investorHistory");
@@ -964,15 +980,31 @@ async function readHistory({ params, ctx }) {
   return { data: chartSeries({ seriesId: `daily:${params.symbol}`, asOf: new Date(ctx.nowMs).toISOString(), series, provenance: r.provenance, resolution: "1d" }) };
 }
 async function readIntraday({ params, ctx }) {
-  const out = await v1().intraday({ symbol: params.symbol, sessions: params.date ? 14 : 1 });
-  if (out.error) return { data: { seriesId: `intraday:${params.symbol}`, version: "1", asOf: new Date(ctx.nowMs).toISOString(), currency: "USD", calendarId: POLICY.CALENDAR_ID || "XNYS", adjustment: null, provenance: null, resolution: "5m", points: [], gaps: [], scorable: false, markers: [] }, partial: true, partialReason: out.error };
-  const session = params.date ? (out.sessions || []).find(s=>s.date === params.date) || {date:params.date,bars:[]} : (out.sessions || []).at(-1) || {bars:[]};
-  const points = (session.bars || []).map((b) => ({ t: isoOf(b.t) || null, o: priceUsd(b.o) ? priceUsd(b.o).priceMicros : null, h: priceUsd(b.h) ? priceUsd(b.h).priceMicros : null, l: priceUsd(b.l) ? priceUsd(b.l).priceMicros : null, c: priceUsd(b.c) ? priceUsd(b.c).priceMicros : null, v: String(Math.max(0, Math.round(Number(b.v) || 0))) })).filter((p) => p.t && p.c);
-  return { data: { seriesId: `intraday:${params.symbol}:${session.date || ""}`, version: "1", asOf: new Date(ctx.nowMs).toISOString(), currency: "USD", calendarId: POLICY.CALENDAR_ID || "XNYS", adjustment: null, provenance: { provider: session.provider || out.provider || null, feed: session.feed || out.feed || null, delayMinutes: out.delayMinutes == null ? null : out.delayMinutes }, resolution: "5m", points, gaps: [], scorable: points.length > 0, markers: [], sessionDate: session.date || null } };
+  const want = params.date ? 14 : Math.max(1, Math.min(14, Number(params.sessions) || 1));
+  /* One extra session is always read so “today” can carry yesterday's close
+     as its baseline; only the requested sessions are returned as points. */
+  const out = await v1().intraday({ symbol: params.symbol, sessions: Math.min(14, want + 1) });
+  const base = { seriesId: `intraday:${params.symbol}`, version: "1", asOf: new Date(ctx.nowMs).toISOString(), currency: "USD", calendarId: POLICY.CALENDAR_ID || "XNYS", adjustment: null };
+  if (out.error) return { data: { ...base, provenance: null, resolution: "5m", points: [], gaps: [], scorable: false, markers: [], sessions: [], session: null }, partial: true, partialReason: out.error };
+  const all = out.sessions || [];
+  const chosen = params.date ? [all.find(s => s.date === params.date) || { date: params.date, bars: [] }] : all.slice(-want);
+  const toPoint = (b, date) => ({ t: isoOf(b.t) || null, o: priceUsd(b.o) ? priceUsd(b.o).priceMicros : null, h: priceUsd(b.h) ? priceUsd(b.h).priceMicros : null, l: priceUsd(b.l) ? priceUsd(b.l).priceMicros : null, c: priceUsd(b.c) ? priceUsd(b.c).priceMicros : null, v: String(Math.max(0, Math.round(Number(b.v) || 0))), d: date || null });
+  const points = [];
+  for (const session of chosen) for (const b of (session.bars || [])) { const p = toPoint(b, session.date); if (p.t && p.c) points.push(p); }
+  const last = chosen[chosen.length - 1] || {};
+  const firstIdx = chosen.length ? all.indexOf(chosen[0]) : -1;
+  const prev = firstIdx > 0 ? all[firstIdx - 1] : null;
+  const prevClose = prev && (prev.bars || []).length ? priceUsd(prev.bars[prev.bars.length - 1].c) : null;
+  return { data: { ...base, seriesId: `intraday:${params.symbol}:${last.date || ""}`,
+    provenance: { provider: last.provider || out.provider || null, feed: last.feed || out.feed || null, delayMinutes: out.delayMinutes == null ? null : out.delayMinutes },
+    resolution: "5m", points, gaps: [], scorable: points.length > 0, markers: [], sessionDate: last.date || null,
+    sessions: chosen.map((s) => ({ date: s.date, bars: (s.bars || []).length })),
+    previousClose: prevClose ? prevClose.priceMicros : null,
+    session: out.session ? { date: out.session.date, open: !!out.session.open, phase: out.session.phase || null, tradingDay: !!out.session.tradingDay } : null } };
 }
 async function readNavSeries({ params, ctx }) {
   const NAV = require("./_investorNav");
-  const key = { "1M": "1m", "3M": "3m", "6M": "6m", "1Y": "1y", ALL: "all" }[params.range || "3M"];
+  const key = { "1D": "today", "1W": "7", "1M": "30", "3M": "90", "6M": "180", "1Y": "365", ALL: "365" }[params.range || "1M"];
   const rangeKey = Object.prototype.hasOwnProperty.call(NAV.RANGES, key) ? key : Object.keys(NAV.RANGES)[0];
   const out = await NAV.series(ctx.accountId, rangeKey, { nowMs: ctx.nowMs });
   const points = (out.points || []).map((p) => ({ t: iso(p.t), navMinor: String(Math.round(Number(p.nav || 0) * 100)), cashMinor: String(Math.round(Number(p.cash || 0) * 100)), investedMinor: String(Math.round(Number(p.inv || 0) * 100)), source: p.s || null })).filter((p) => p.t);
