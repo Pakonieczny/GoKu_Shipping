@@ -881,7 +881,6 @@ async function callOpenAIImagesEdits({
 }) {
   const form = new FormData();
   form.append("model", model);
-  if (model === "gpt-image-2.5-sunburst") form.append("input_fidelity", "high");
   // Gemini receives explicit role labels as separate multimodal parts. OpenAI
   // receives a multipart edit request, so mirror the Charm Maker's special
   // role vocabularies inside the prompt. Default listing-edit behaviour is

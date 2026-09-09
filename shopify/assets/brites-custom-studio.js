@@ -5456,43 +5456,45 @@ function paintGoldTestControls() {
   if (!frame) return;
   let panel = $("#goldTestControls");
   if (!panel) {
-    panel = document.createElement("div");
+    panel = document.createElement("details");
     panel.id = "goldTestControls";
-    panel.style.cssText = "margin-top:12px;padding:12px;border:1px solid #ddd5c4;background:#faf8f3;display:flex;flex-wrap:wrap;gap:8px;align-items:center";
-    panel.innerHTML = '<span style="width:100%;font-size:12px;letter-spacing:.08em">TEMPORARY GOLD COMPARISON</span>' +
-      '<div role="group" aria-label="Gold image generator" style="display:flex;flex-wrap:wrap;gap:6px;width:100%">' +
-      '<button type="button" data-gold-test-model="gemini" aria-pressed="true">Gemini (current)</button>' +
-      '<button type="button" data-gold-test-model="gpt-image-2.5-sunburst" aria-pressed="false">GPT Image 2.5 Sunburst</button></div>' +
-      '<button type="button" id="goldTestRegenerate" class="btn btn--gold" style="width:100%"></button>' +
-      '<span id="goldTestNote" role="status" style="font-size:12px;width:100%"></span>';
+    panel.style.cssText = "position:relative;width:24px;margin:2px 0 0 auto;font-size:11px;line-height:1.3";
+    panel.innerHTML = '<summary title="Temporary gold test" aria-label="Temporary gold test" style="list-style:none;cursor:pointer;width:24px;height:24px;text-align:center;line-height:24px;color:#888;font-size:16px">⋯</summary>' +
+      '<div style="position:absolute;right:0;bottom:28px;z-index:60;width:230px;max-width:calc(100vw - 48px);box-sizing:border-box;padding:6px;background:#fff;border:1px solid #ddd;box-shadow:0 2px 8px #0001">' +
+      '<div style="display:flex;gap:4px;align-items:center">' +
+      '<select id="goldTestModel" aria-label="Gold image generator" style="flex:1;min-width:0;height:26px;padding:2px;border:1px solid #ddd;background:#fff;color:#333;font:inherit;font-size:11px">' +
+      '<option value="gemini">Gemini (current)</option><option value="gpt-image-2.5-sunburst">GPT Image 2.5 Sunburst</option></select>' +
+      '<button type="button" id="goldTestRegenerate" style="height:26px;min-width:50px;padding:2px 5px;border:1px solid #ddd;background:#f7f6f2;color:#444;font:inherit;font-size:11px;cursor:pointer">↻ Gold</button></div>' +
+      '<div id="goldTestNote" role="status" style="margin-top:4px;font-size:10px;color:#777"></div></div>';
     frame.after(panel);
-    panel.querySelectorAll("[data-gold-test-model]").forEach(button => {
-      button.addEventListener("click", () => {
-        if (genBusy || renderBusy) return;
-        goldTestModel = button.dataset.goldTestModel;
-        paintGoldTestControls();
-      });
+    panel.querySelector("#goldTestModel").addEventListener("change", event => {
+      if (!(genBusy || renderBusy || __relay.on)) goldTestModel = event.target.value;
+      paintGoldTestControls();
     });
-    panel.querySelector("#goldTestRegenerate").addEventListener("click", () => runRender({ renderTestModel: goldTestModel }));
+    panel.querySelector("#goldTestRegenerate").addEventListener("click", () => {
+      panel.open = false;
+      runRender({ renderTestModel: goldTestModel });
+    });
+    panel.addEventListener("keydown", event => {
+      if (event.key === "Escape") { panel.open = false; panel.querySelector("summary").focus(); }
+    });
   }
   const v = state.versions[state.currentVersion];
   panel.hidden = !v;
-  panel.style.display = v ? "flex" : "none";
+  panel.style.display = v ? "block" : "none";
   const busy = genBusy || renderBusy || __relay.on;
   const hasSpec = !!(v && (v.renderSpecUrl || v.renderSpecURL || v.renderSpecPath));
-  panel.querySelectorAll("[data-gold-test-model]").forEach(button => {
-    const active = button.dataset.goldTestModel === goldTestModel;
-    button.setAttribute("aria-pressed", String(active));
-    button.disabled = busy;
-    button.style.cssText = "flex:1;min-width:130px;min-height:40px;padding:8px;border:1px solid #b39b65;font:inherit;font-size:12px;cursor:pointer;" +
-      (active ? "background:#202020;color:#fff" : "background:#fff;color:#202020");
-  });
+  const select = panel.querySelector("#goldTestModel");
+  select.value = goldTestModel;
+  select.disabled = busy;
   const button = panel.querySelector("#goldTestRegenerate");
   button.disabled = busy || !hasSpec;
-  button.textContent = busy ? "Gold preview is busy…" : "Regenerate gold only · " + creditWord(renderCost());
+  button.textContent = busy ? "…" : "↻ Gold";
+  button.title = "Regenerate gold only · " + creditWord(renderCost());
+  button.setAttribute("aria-label", button.title);
   panel.querySelector("#goldTestNote").textContent = !hasSpec
-    ? "A saved greyscale image is required."
-    : "Uses the saved greyscale." + (v.renderModel ? " Last gold image: " + v.renderModel + "." : "");
+    ? "Saved greyscale required."
+    : creditWord(renderCost()) + " · saved greyscale";
 }
 
 function renderStage() {
@@ -27679,7 +27681,7 @@ if (window.MutationObserver) {
 syncMenuButton();
 /* the Playwright menu suite drives these two directly, the same way the
    pricing suite reads window.__itemPrice */
-window.__studioBuild   = "2026-09-09.gold-compare";
+window.__studioBuild   = "2026-09-09.gold-compare-fix";
 /* ── DO THE ASSETS MATCH? SAY SO ONCE, IN WORDS ──────────────────────────
    The section (this file plus the Liquid) and the stylesheet are separate
    Shopify assets that deploy separately, and a page has now shipped twice
