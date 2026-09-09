@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-p+7BKvzCmZX5szG/3bMiSP6x4mgea4Z6Johx3NwCtfA='; style-src 'self' 'sha256-4E5z/dAe5IlAEwwLKqQKX8izJmDXs/ngwPypOTXEwXg='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-tEilT4hva+KQovBB07AHbS1r5q1ntUPOkhg3AsB0vKE='; style-src 'self' 'sha256-jLhqgYlu/h1rBtnWLZL69NHbXwjnhWaQTdwaVbgoB+E='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -165,7 +165,7 @@ details.card>summary .sub{font-size:11.5px;color:var(--ink-45);font-weight:400;f
 .tile .v{font-family:var(--mono);font-size:20px;margin-top:5px;font-weight:600;letter-spacing:-.01em;word-break:break-word;display:flex;align-items:center;gap:6px}
 .tile .d{font-size:11.5px;color:var(--ink-45);margin-top:5px;line-height:1.45}
 .tile.big .v{font-size:28px}
-.hero{display:grid;grid-template-columns:minmax(240px,1.2fr) repeat(4,minmax(130px,1fr));gap:10px}
+.hero{display:grid;grid-template-columns:minmax(220px,1.2fr) repeat(4,minmax(120px,1fr));gap:10px}
 .hero .tile.main{background:linear-gradient(160deg,#262019,#322a20);border-color:var(--gold-line)}
 @media(max-width:1100px){.hero{grid-template-columns:1fr 1fr}.hero .tile.main{grid-column:1/-1}}
 .badges{display:flex;gap:6px;flex-wrap:wrap}
@@ -578,6 +578,17 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 .livechart .tip{font-family:var(--sans);font-size:13px;line-height:1.5;padding:9px 12px;max-width:320px}
 .livechart .tip::first-line{font-weight:700;font-size:15px}
 @media (max-width:640px){.kf__v{font-size:19px}}
+
+.tiles--five{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.tile--live .u{margin-top:6px;line-height:1.35}
+.hero .tile .v.pnl.up{color:var(--sage)}.hero .tile .v.pnl.down{color:var(--clay)}
+#todayPnl{margin-top:10px}
+#todayPnl .livechart__wrap{height:220px}
+.simwrap{position:relative;min-height:0}
+.simwrap canvas{display:block;width:100%}
+#simReturnChart.sim-series{height:250px}
+.sparkwrap{position:relative;display:block}
+.sparkwrap .tip{font-size:12px;padding:6px 9px}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
@@ -723,6 +734,7 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 <section class="view" id="v-manager" hidden aria-labelledby="h-manager">
 <div class="view__h"><div><div class="eyebrow">YOUR MONEY, AT A GLANCE</div><h2 id="h-manager" tabindex="-1">Your overview</h2></div><a class="link" href="#/learning">View results →</a></div>
 <div class="hero" id="managerStatus"></div>
+<div id="todayPnl"></div>
 <div class="card manager-brief" id="managerBrief" aria-live="polite"></div>
 <div class="card" id="liveActivity" aria-live="polite"></div>
 <div class="card manager-brief" id="paperDecisionCard">
@@ -1576,6 +1588,7 @@ function collectVisibleSymbols() {
   var set = new Set();
   if (drawer.symbol) set.add(drawer.symbol);
   document.querySelectorAll("[data-hold-sym]").forEach(function (n) { if (!n.closest("[hidden]")) set.add(n.dataset.holdSym); });
+  var dash = getRes("dash"); if (dash && dash.holdings) dash.holdings.forEach(function (h) { if (h && h.symbol) set.add(h.symbol); });
   document.querySelectorAll("[data-quote-sym]").forEach(function (n) { var v = n.closest("[hidden]"); if (!v) set.add(n.dataset.quoteSym); });
   return Array.from(set).filter(function (s) { return /^[A-Z][A-Z0-9.-]{0,9}$/.test(s); }).slice(0, 100);
 }
@@ -1850,7 +1863,7 @@ async function paperResetFlow(res) {
   var d = preview.data || {}, token = d.previewToken;
   setChildren($("resetPreview"), [el("div", { class: "infoline" }, icon("info"), el("span", { text: "Reset preview " + fmtTimeFull(preview.asOf) })), evidenceNode(d)]);
   if (!token || !d.accountVersion || !d.balanceHash) { toast("The preview did not return previewToken, accountVersion and balanceHash; nothing applied.", { icon: "warn" }); return null; }
-  return runMutation({ action: "resetPaperAccount", res: res, previewToken: token, params: Object.assign({ accountVersion: String(d.accountVersion), balanceHash: d.balanceHash }, accountParams()), title: "Reset the paper account", danger: "Closes every paper position, cancels every authorization and restarts the ledger at the starting NAV. This cannot be undone.", lines: [["Account version", String(d.accountVersion), "mono"], ["Balance hash", d.balanceHash, "mono"], d.nav ? ["Current NAV", fmtMoney(d.nav)] : null, d.openPositions != null ? ["Open positions", String(d.openPositions)] : null].filter(Boolean), dangerButton: true, confirmLabel: "Reset paper account", refresh: function () { loadSystem(true); pollDashboard(); } });
+  return runMutation({ action: "resetPaperAccount", res: res, previewToken: token, params: Object.assign({ accountVersion: String(d.accountVersion), balanceHash: d.balanceHash }, accountParams()), title: "Reset the paper account", danger: "Closes every paper position at its current recorded price, cancels every working order and plan, and restarts the account with exactly $100,000 of paper cash. History stays in the ledger. This cannot be undone.", lines: [["Account version", String(d.accountVersion), "mono"], ["Balance hash", d.balanceHash, "mono"], d.nav ? ["Current NAV", fmtMoney(d.nav)] : null, d.openPositions != null ? ["Open positions", String(d.openPositions)] : null, d.willClose ? ["Will close", d.willClose.positions + " position(s), " + d.willClose.workingOrders + " order(s), " + d.willClose.activeMandates + " plan(s)"] : null, d.startingNav ? ["Restarts with", fmtMoney(d.startingNav)] : null].filter(Boolean), dangerButton: true, confirmLabel: "Reset paper account", refresh: function () { loadSystem(true); pollDashboard(); } });
 }
 
 /* ── 13. Manager view ───────────────────────────────────────────────────── */
@@ -1955,7 +1968,7 @@ function liveActivityChildren(){
   else if(r&&r.completedAt)out.push(el("p",{class:"tiny muted",text:'Last review '+fmtAgo(r.completedAt)+(r.investmentNote?' · '+shortCopy(r.investmentNote,160):'')+((r.noBuyReasons||[]).length?' · '+plainPlanBlock((r.noBuyReasons[0].code||r.noBuyReasons[0])):'')}));
   var events=(ev&&ev.items||[]).slice(0,8);
   out.push(el("div",null,el("div",{class:"tiny muted",text:"Recent order activity"}),events.length?el("div",null,events.map(function(x){var t=x.authority==="EMERGENCY_RISK"?"bad":x.authority==="OPERATOR"?"warn":"gold";return el("div",{class:"tl__i"},el("span",{class:"tl__dot "+t}),el("div",{class:"tl__b"},el("div",{class:"inline"},el("b",{text:plainLabel(x.type)}),x.state?stateBadge(x.state):null,x.symbol?symButton(x.symbol,"link"):null)),el("span",{class:"tl__t",text:fmtTime(x.eventAt||x.receivedAt)}));})):el("p",{class:"tiny muted",text:observe?'Orders appear here once AI investing is on.':'No orders yet. Orders appear here the moment the AI places one.'})));
-  out.push(el("p",{class:"daily-foot",text:(acct?'Reserved for planned orders '+fmtMoney(acct.reserved)+' · Available '+fmtMoney(acct.available)+'. ':'')+(sp?'AI cost today '+fmtMoney(sp.actual)+' of '+fmtMoney(sp.dailyLimit)+'.':'')}));
+  out.push(el("p",{class:"daily-foot",text:(sp?'AI cost today '+fmtMoney(sp.actual)+' of '+fmtMoney(sp.dailyLimit)+'.':'')}));
   return out;
 }
 function renderLiveActivity(){ ["liveActivity","portfolioLive"].forEach(function(id){ var h=$(id); if(h) setChildren(h, liveActivityChildren()); }); }
@@ -1976,10 +1989,15 @@ function pairBadge(label, pair, goodValue) {
 }
 function renderManagerStatus(dash,ctrl) {
   var a=dash&&dash.account,o=dash&&dash.overview||{},p=o.totalPnl,amount=p&&amountOf(p,'amountMinor'),verdict=amount==null?'Result not available yet':BigInt(amount)>0n?'You’re ahead':BigInt(amount)<0n?'You’re down':'You’re even';
+  var invested=a&&a.nav&&a.available?minorNum(a.nav.amountMinor)-minorNum(a.available.amountMinor)-(a.reserved?minorNum(a.reserved.amountMinor):0):NaN;
   setChildren($('managerStatus'),[
-    el('div',{class:'tile main'},el('div',{class:'k',text:'Account value'}),el('div',{class:'v',text:fmtMoney(a&&a.nav)}),el('div',{class:'d',text:o.marksComplete===false?'Some investment prices are pending':'Cash + investments at recorded prices'})),
-    el('div',{class:'tile'},el('div',{class:'k',text:verdict}),el('div',{class:'v'},pnlNode(p)),el('div',{class:'d',text:amount==null?'Waiting for the capital record or prices':(o.totalReturnBps!=null?fmtSignedBps(o.totalReturnBps)+' · ':'')+'overall, after account costs',title:o.resultBasis||''})),
-    el('div',{class:'tile'},el('div',{class:'k',text:'Available cash'}),el('div',{class:'v',text:fmtMoney(a&&a.available)}),el('div',{class:'d',text:a&&a.reserved&&BigInt(a.reserved.amountMinor)>0n?fmtMoney(a.reserved)+' also set aside for orders':'Ready for future investments'}))]);
+    el('div',{class:'tile main tile--live'},el('div',{class:'k',text:'Account value'}),el('div',{class:'v','data-live':'navTile',text:fmtMoney(a&&a.nav)}),el('div',{class:'d','data-live':'navTileSub',text:o.marksComplete===false?'Some investment prices are pending':'Cash + investments · live'})),
+    el('div',{class:'tile tile--live'},el('div',{class:'k',text:'Today'}),el('div',{class:'v pnl flat','data-live':'todayTile',text:'—'}),el('div',{class:'d','data-live':'todayTileSub',text:'Waiting for today\u2019s first valuation'})),
+    el('div',{class:'tile tile--live'},el('div',{class:'k','data-live':'verdictTile',text:verdict}),el('div',{class:'v pnl','data-live':'totalTile'},pnlNode(p)),el('div',{class:'d','data-live':'totalTileSub',text:amount==null?'Waiting for the capital record or prices':(o.totalReturnBps!=null?fmtSignedBps(o.totalReturnBps)+' · ':'')+'overall, after AI costs',title:o.resultBasis||''})),
+    el('div',{class:'tile tile--live'},el('div',{class:'k',text:'Invested'}),el('div',{class:'v','data-live':'investedTile',text:liveNum(invested)?usd(invested):'—'}),el('div',{class:'d','data-live':'investedTileSub',text:''})),
+    el('div',{class:'tile tile--live'},el('div',{class:'k',text:'Not invested'}),el('div',{class:'v','data-live':'notInvestedTile',text:a&&a.available?fmtMoney(a.available):'—'}),el('div',{class:'d','data-live':'notInvestedTileSub',text:'Ready to invest'}))]);
+  var box=$('todayPnl'); if(box){ if(!(TODAYC.node&&box.contains(TODAYC.node))) setChildren(box,[todayChartNode()]); }
+  renderLiveTiles(); todayChartRender(); loadNavDay();
 }
 
 function ctlPair(ctrl, ids, note) {
@@ -2524,6 +2542,81 @@ var NAV_RANGES = [["1D", "Today"], ["1W", "1 week"], ["1M", "1 month"], ["3M", "
 var HCH = new Map(); /* symbol → chart state */
 var NAVC = { range: (function () { try { var r = localStorage.getItem("investor.navRange"); return NAV_RANGES.some(function (x) { return x[0] === r; }) ? r : "1D"; } catch (e) { return "1D"; } })(), series: null, loading: false, error: null, loadedAt: 0, request: 0 };
 function marketOpen() { return !!(LIVE.session && LIVE.session.open); }
+/* Day-start account value for "today" numbers: the last valued point before
+   today's session, else the first point of today. Read from the week's NAV
+   marks every five minutes. */
+function sessionDateToday() { return (LIVE.session && LIVE.session.date) || new Date().toISOString().slice(0, 10); }
+async function loadNavDay(force) {
+  if (LIVE.navDayLoading || (!force && Date.now() - (LIVE.navDayAt || 0) < 5 * 60000)) return;
+  LIVE.navDayLoading = true;
+  try { var s = await loadRes("navDay", "navSeries", Object.assign({ range: "1W" }, accountParams())); if (s) { LIVE.navDay = s; LIVE.navDayAt = Date.now(); } }
+  catch (e) { /* the day figures simply stay at book until the next read */ }
+  finally { LIVE.navDayLoading = false; renderLiveTiles(); todayChartRender(); }
+}
+function navDayPoints() { var s = LIVE.navDay; return ((s && s.points) || []).map(function (p) { return { t: Date.parse(p.t), c: minorNum(p.navMinor), raw: p }; }).filter(function (p) { return liveNum(p.t) && liveNum(p.c); }); }
+function dayStartNav() {
+  var pts = navDayPoints(), today = sessionDateToday(), prev = null, first = null;
+  pts.forEach(function (p) { var d = new Date(p.t).toISOString().slice(0, 10); if (d < today) prev = p; else if (d === today && !first) first = p; });
+  LIVE.dayStartKind = prev ? "close" : first ? "first" : null;
+  if (prev) return prev.c; if (first) return first.c; return NaN;
+}
+/* Live account picture: book values from the last portfolio read, moved by
+   the display quotes for every holding on screen. Display only. */
+function liveAccount() {
+  var p = getRes("portfolio"), sum = p && p.summary, dash = getRes("dash"), acct = dash && dash.account, ov = dash && dash.overview || {};
+  var nav = sum && sum.nav ? minorNum(sum.nav.amountMinor) : acct && acct.nav ? minorNum(acct.nav.amountMinor) : NaN;
+  var invested = sum && sum.invested ? minorNum(sum.invested.amountMinor) : NaN;
+  var list = sum ? Array.from(LIVE.holdings.values()) : (dash && dash.holdings) || [];
+  var delta = 0, liveInv = 0, bookInv = 0, any = false;
+  list.forEach(function (h) { var lp = livePriceOf(h.symbol), q = qtyNum(h.quantity), book = h.marketValue ? minorNum(h.marketValue.amountMinor) : NaN; if (!lp || !liveNum(q) || !liveNum(book)) return; any = true; delta += lp.price * q - book; liveInv += lp.price * q; bookInv += book; });
+  if (!liveNum(invested) && any) invested = bookInv;
+  var liveNav = liveNum(nav) ? nav + delta : NaN, liveInvested = liveNum(invested) ? invested + delta : NaN;
+  var start = dayStartNav(), day = liveNum(liveNav) && liveNum(start) && start > 0 ? liveNav - start : NaN;
+  var total = NaN;
+  if (sum && sum.realizedPnl && sum.unrealizedPnl) total = minorNum(sum.realizedPnl.amountMinor) + minorNum(sum.unrealizedPnl.amountMinor) + delta;
+  else if (ov.totalPnl) total = minorNum(ov.totalPnl.amountMinor) + delta;
+  var basis = liveNum(total) && liveNum(liveNav) && liveNav - total > 0 ? liveNav - total : NaN;
+  return { nav: liveNav, bookNav: nav, invested: liveInvested, notInvested: liveNum(liveNav) && liveNum(liveInvested) ? liveNav - liveInvested : NaN, day: day, dayPct: liveNum(day) ? day / start * 100 : NaN, dayStart: start, total: total, totalPct: liveNum(total) && liveNum(basis) ? total / basis * 100 : NaN, live: any, positions: list.length };
+}
+function moneyTile(label, key, big, sub, tone, extraClass) { return el("div", { class: "tile tile--live" + (extraClass ? " " + extraClass : "") }, el("div", { class: "k", text: label }), el("div", { class: "v" + (tone ? " pnl " + tone : ""), "data-live": key, text: big }), el("div", { class: "u tiny muted", "data-live": key + "Sub", text: sub || "" })); }
+function renderLiveTiles() {
+  var a = liveAccount();
+  function put(key, text, tone) { document.querySelectorAll("[data-live=" + key + "]").forEach(function (n) { var prev = Number(n.dataset.prev || "NaN"), cur = Number(n.dataset.cur || "NaN"); setLiveVal(n, text, tone === undefined ? undefined : tone, liveNum(prev) && liveNum(cur) && prev !== cur ? (cur > prev ? "up" : "down") : null); }); }
+  function num(key, v) { document.querySelectorAll("[data-live=" + key + "]").forEach(function (n) { n.dataset.prev = n.dataset.cur || ""; n.dataset.cur = liveNum(v) ? String(Math.round(v * 100)) : ""; }); }
+  num("navTile", a.nav); put("navTile", usd(a.nav)); put("navTileSub", a.live ? "live · book " + usd(a.bookNav) : liveNum(a.bookNav) ? "book value · waiting for live prices" : "", null);
+  num("investedTile", a.invested); put("investedTile", usd(a.invested)); put("investedTileSub", a.positions ? a.positions + (a.positions === 1 ? " company" : " companies") + (liveNum(a.nav) && a.nav > 0 && liveNum(a.invested) ? " · " + (a.invested / a.nav * 100).toFixed(1) + "% of account" : "") : "nothing invested right now", null);
+  put("notInvestedTile", usd(a.notInvested)); put("notInvestedTileSub", liveNum(a.nav) && a.nav > 0 && liveNum(a.notInvested) ? (a.notInvested / a.nav * 100).toFixed(1) + "% of account · ready to invest" : "", null);
+  num("todayTile", a.day); put("todayTile", liveNum(a.day) ? signedUsd(a.day) : "—", toneOf(a.day)); put("todayTileSub", liveNum(a.day) ? signedPct(a.dayPct) + " since " + (LIVE.dayStartKind === "close" ? "yesterday's close" : "the first valuation today") : liveNum(a.nav) ? "no account history yet today" : "", null);
+  num("totalTile", a.total); put("totalTile", liveNum(a.total) ? signedUsd(a.total) : "—", toneOf(a.total)); put("totalTileSub", liveNum(a.total) ? (liveNum(a.totalPct) ? signedPct(a.totalPct) + " · " : "") + "overall, after AI costs" : "", null);
+  document.querySelectorAll("[data-live=verdictTile]").forEach(function (n) { n.textContent = !liveNum(a.total) ? "Result not available yet" : a.total > 0 ? "You’re ahead" : a.total < 0 ? "You’re down" : "You’re even"; });
+  LIVE.account = a;
+}
+/* ── today's profit / loss chart (overview) ── */
+var TODAYC = { canvas: null, tip: null, node: null };
+function todayChartNode() {
+  var canvas = el("canvas", { id: "todayPnlChart", tabindex: "0", "aria-label": "Today's profit or loss through the day; hover or use arrow keys to inspect" }), tip = el("div", { class: "tip", hidden: true });
+  var det = el("details", { class: "livechart livechart--nav", open: true, id: "todayPnlBox" },
+    el("summary", null, el("span", { class: "livechart__sum" }, icon("portfolio", "sm"), el("b", { text: "Today's profit / loss" }), el("span", { class: "tiny muted", text: "whole account · live" }))),
+    el("div", { class: "livechart__hero" }, el("div", { class: "livechart__price" }, el("span", { class: "livechart__big pnl", id: "todayPnlBig", text: "—" }), el("span", { class: "livechart__chg", id: "todayPnlChg", text: "" })), el("div", { class: "livechart__status", "data-live": "summaryStatus" }, liveStatusNode(null))),
+    el("div", { class: "chartwrap livechart__wrap" }, canvas, tip),
+    el("div", { class: "livechart__foot" }, el("div", { class: "legend", id: "todayPnlLegend" }), el("div", { class: "tiny muted", id: "todayPnlNote", role: "status" })));
+  TODAYC.canvas = canvas; TODAYC.tip = tip; TODAYC.node = det;
+  return det;
+}
+function todayChartRender() {
+  if (!TODAYC.node || !document.contains(TODAYC.node)) return;
+  var a = LIVE.account || liveAccount(), start = a.dayStart, today = sessionDateToday(), C = chartColors();
+  var pts = navDayPoints().filter(function (p) { return new Date(p.t).toISOString().slice(0, 10) === today; }).map(function (p) { return { t: p.t, c: liveNum(start) ? p.c - start : NaN, nav: p.c, raw: p.raw }; }).filter(function (p) { return liveNum(p.c); });
+  if (liveNum(a.day)) { var now = Date.now(), last = pts[pts.length - 1]; if (!last || now > last.t + 30000) pts.push({ t: now, c: a.day, nav: a.nav, live: true, raw: {} }); else pts[pts.length - 1] = Object.assign({}, last, { c: a.day, nav: a.nav, live: true }); }
+  var last = pts.length ? pts[pts.length - 1].c : NaN, up = !liveNum(last) || last >= 0;
+  var big = $("todayPnlBig"), chg = $("todayPnlChg"); if (big) setLiveVal(big, liveNum(last) ? signedUsd(last) : "—", toneOf(last)); if (chg) setLiveVal(chg, liveNum(a.dayPct) ? signedPct(a.dayPct) + " today" : "", toneOf(last));
+  drawSeriesChart(TODAYC.canvas, { points: pts, intraday: true, series: [{ label: "Profit / loss", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: [{ y: 0, label: "Break-even", color: C.ink45, dash: [2, 4] }], crosshair: true, yFmt: function (v) { return (v < 0 ? "−" : "+") + "$" + fmtFloat(Math.abs(v), 0); }, emptyText: liveNum(start) ? "Today's line starts with the first valuation" : "Waiting for today's first valuation",
+    xFmt: function (d) { return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(d); },
+    tip: function (i) { var p = pts[i]; if (!p) return ""; return [signedUsd(p.c) + (p.live ? "  · live" : ""), new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(p.t)) + " · account " + usd(p.nav, 0)].join("\n"); } });
+  bindChartPointer(TODAYC.canvas, TODAYC.tip);
+  setChildren($("todayPnlLegend"), [legendItem(up ? "sage" : "clay", "Profit / loss"), legendItem("ink dot", "Break-even")]);
+  setText("todayPnlNote", liveNum(start) ? "Measured from " + usd(start, 0) + " at " + (LIVE.dayStartKind === "close" ? "yesterday's close" : "the first valuation today") + " · the account is valued about once a minute while the market is open" : "");
+}
 function liveNum(x) { return typeof x === "number" && Number.isFinite(x); }
 function qtyNum(q) { var c = canonicalInt(q && q.quantityUnits != null ? q.quantityUnits : q); return c === null ? NaN : Number(c); }
 function usd(v, digits) { if (!liveNum(v)) return "—"; var neg = v < 0; v = Math.abs(v); var s = v.toLocaleString(undefined, { minimumFractionDigits: digits == null ? 2 : digits, maximumFractionDigits: digits == null ? 2 : digits }); return (neg ? "-" : "") + "$" + s; }
@@ -2569,14 +2662,9 @@ function applyLiveQuotes() {
     if (liveNum(c.value)) { anyLive = true; liveTotal += c.value; bookTotal += liveNum(c.bookValue) ? c.bookValue : c.value; if (liveNum(c.pnl)) pnlTotal += c.pnl; }
     holdChartLiveTick(sym);
   });
-  var p = getRes("portfolio"), s = p && p.summary;
-  if (anyLive && s) {
-    var nav = s.nav ? minorNum(s.nav.amountMinor) : NaN, liveNav = liveNum(nav) ? nav + (liveTotal - bookTotal) : NaN;
-    var t = document.querySelector("[data-live=navTile]"); if (t && liveNum(liveNav)) { var prevNav = Number(t.dataset.prev || "NaN"); setLiveVal(t, usd(liveNav), null, liveNum(prevNav) && prevNav !== liveNav ? (liveNav > prevNav ? "up" : "down") : null); t.dataset.prev = String(liveNav); }
-    var pt = document.querySelector("[data-live=pnlTile]"); if (pt) setLiveVal(pt, signedUsd(pnlTotal), toneOf(pnlTotal));
-    var it = document.querySelector("[data-live=investedTile]"); if (it) setLiveVal(it, usd(liveTotal));
-    NAVC.liveNav = liveNav; navChartRender();
-  }
+  renderLiveTiles();
+  NAVC.liveNav = LIVE.account ? LIVE.account.nav : NaN; navChartRender(); todayChartRender();
+  loadNavDay();
   document.querySelectorAll("[data-live=summaryStatus]").forEach(function (n) { setChildren(n, [liveStatusNode(newestAsOf)]); });
 }
 /* age labels tick once a second so “12s ago” stays honest without a fetch */
@@ -2762,7 +2850,7 @@ window.addEventListener("resize", function () { clearTimeout(resizeTimer); resiz
 async function loadPortfolio(fresh) {
   if (fresh || !getRes("portfolio")) renderPortfolio(true);
   await Promise.allSettled([loadRes("portfolio", "portfolio", accountParams()), loadRes("execEvents", "executionEvents", Object.assign({ pageSize: 100 }, accountParams()))]);
-  renderPortfolio(); pollQuotes(); navChartLoad(); holdChartsMount();
+  renderPortfolio(); pollQuotes(); navChartLoad(); holdChartsMount(); loadNavDay(); renderLiveTiles();
 }
 function renderPortfolio(loading) {
   renderLiveActivity();
@@ -2786,13 +2874,9 @@ function renderPortfolio(loading) {
 }
 function authorityBadge(a) { return badge(a === "AI_MANDATE" ? "AI mandate" : a === "OPERATOR" ? "Operator" : a === "EMERGENCY_RISK" ? "Emergency risk" : plainLabel(a || "unknown"), a === "AI_MANDATE" ? "gold" : a === "OPERATOR" ? "warn" : a === "EMERGENCY_RISK" ? "bad" : "info", a === "AI_MANDATE" ? "manager" : a === "OPERATOR" ? "flag" : "warn"); }
 function renderPortfolioSummary(s) {
-  var liveKeys = { "Account value": "navTile", "Invested": "investedTile" };
-  var tiles = [["Account value", s.nav], ["Settled cash", s.settledCash], ["Reserved", s.reserved], ["Invested", s.invested]].map(function (t) { return el("div", { class: "tile" + (liveKeys[t[0]] ? " tile--live" : "") }, el("div", { class: "k", text: t[0] }), el("div", { class: "v", "data-live": liveKeys[t[0]] || null, text: t[1] ? fmtMoney(t[1]) : "—" }), liveKeys[t[0]] ? el("div", { class: "u tiny muted", text: "book " + (t[1] ? fmtMoney(t[1]) : "—") }) : null); });
-  tiles.push(el("div", { class: "tile tile--live" }, el("div", { class: "k", text: "Gain / loss on holdings" }), el("div", { class: "v pnl", "data-live": "pnlTile" }, pnlNode(s.unrealizedPnl)), el("div", { class: "u tiny muted", text: "live · book " + fmtMoney(s.unrealizedPnl) })));
-  tiles.push(el("div", { class: "tile" }, el("div", { class: "k", text: "Gain / loss on closed trades" }), el("div", { class: "v" }, pnlNode(s.realizedPnl))));
-  tiles.push(el("div", { class: "tile" }, el("div", { class: "k", text: "Open positions" }), el("div", { class: "v", text: fmtInt(s.openPositions) })));
+  var tiles = [moneyTile("Account value", "navTile", s.nav ? fmtMoney(s.nav) : "—", ""), moneyTile("Invested", "investedTile", s.invested ? fmtMoney(s.invested) : "—", ""), moneyTile("Not invested", "notInvestedTile", s.nav && s.invested ? usd(minorNum(s.nav.amountMinor) - minorNum(s.invested.amountMinor)) : "—", "ready to invest"), moneyTile("Today", "todayTile", "—", "", "flat"), moneyTile("Overall gain / loss", "totalTile", "—", "", "flat")];
   var navBox = NAVC.node && document.contains(NAVC.node) ? NAVC.node : navChartNode();
-  setChildren($("portfolioSummary"), [cardHead("Portfolio", "portfolio", s.versions ? Object.keys(s.versions).map(function (k) { return k + " v" + s.versions[k]; }).join(" · ") : ""), el("div", { class: "tiles" }, tiles), navBox,
+  setChildren($("portfolioSummary"), [cardHead("Portfolio", "portfolio", ""), el("div", { class: "tiles tiles--five" }, tiles), navBox,
     s.unprotected && s.unprotected.length ? el("div", { class: "badline" }, icon("block"), el("span", null, "Unprotected positions (no working protection at the broker): ", symbolChips(s.unprotected))) : el("div", { class: "okline" }, icon("check"), el("span", { text: "Every open position has protection working or none is open." }))]);
 }
 function protectionTone(state) { var s = String(state || "").toUpperCase(); return s.indexOf("PROTECTED") === 0 && s !== "PROTECTED_PARTIAL" ? "ok" : s.indexOf("UNPROTECTED") >= 0 || s === "NONE" ? "bad" : "warn"; }
@@ -3122,7 +3206,10 @@ function simMoney(n){return '$'+(Number(n||0)/1e9).toFixed(4);}
 function simReturn(n){return (Number(n)>=0?'+':'')+(Number(n||0)/100).toFixed(2)+'%';}
 function simTime(ms){if(ms==null||!Number.isFinite(ms))return 'Estimating…';return ms<60000?Math.max(0,Math.ceil(ms/1000))+' sec':Math.ceil(ms/60000)+' min';}
 function simButton(label,fn,cls){var b=el('button',{type:'button',class:'btn sm '+(cls||''),text:label});b.addEventListener('click',fn);return b;}
-function simSpark(points,label){var svg=document.createElementNS(SVG_NS,'svg');svg.setAttribute('viewBox','0 0 240 54');svg.setAttribute('class','sim-spark');svg.setAttribute('role','img');svg.setAttribute('aria-label',label);if(!points.length)return svg;var ys=points.map(function(p){return Number(p.returnBps)||0;}),lo=Math.min(0,...ys),hi=Math.max(0,...ys),span=hi-lo||1;var line=document.createElementNS(SVG_NS,'polyline');line.setAttribute('points',ys.map(function(y,i){return (4+i*232/Math.max(1,ys.length-1))+','+(50-(y-lo)*46/span);}).join(' '));line.setAttribute('class',ys[ys.length-1]>=0?'sim-line-up':'sim-line-down');svg.appendChild(line);return svg;}
+function simSpark(points,label){var svg=simSparkSvg(points,label);if(!points.length)return svg;var wrap=el('div',{class:'sparkwrap'},svg,el('div',{class:'tip',hidden:true}));var tip=wrap.lastChild;
+  wrap.addEventListener('pointermove',function(e){var r=wrap.getBoundingClientRect(),i=Math.max(0,Math.min(points.length-1,Math.round((e.clientX-r.left)/Math.max(1,r.width)*(points.length-1)))),p=points[i];if(!p)return;tip.textContent=simReturn(p.returnBps)+(p.priceMicros?' · '+simPrice(p.priceMicros):'')+'\n'+simMarketTime(p.atMs);tip.hidden=false;var tw=tip.offsetWidth,left=e.clientX-r.left+10;if(left+tw>r.width-2)left=e.clientX-r.left-tw-10;tip.style.left=Math.max(0,left)+'px';tip.style.top='-6px';});
+  wrap.addEventListener('pointerleave',function(){tip.hidden=true;});return wrap;}
+function simSparkSvg(points,label){var svg=document.createElementNS(SVG_NS,'svg');svg.setAttribute('viewBox','0 0 240 54');svg.setAttribute('class','sim-spark');svg.setAttribute('role','img');svg.setAttribute('aria-label',label);if(!points.length)return svg;var ys=points.map(function(p){return Number(p.returnBps)||0;}),lo=Math.min(0,...ys),hi=Math.max(0,...ys),span=hi-lo||1;var line=document.createElementNS(SVG_NS,'polyline');line.setAttribute('points',ys.map(function(y,i){return (4+i*232/Math.max(1,ys.length-1))+','+(50-(y-lo)*46/span);}).join(' '));line.setAttribute('class',ys[ys.length-1]>=0?'sim-line-up':'sim-line-down');svg.appendChild(line);return svg;}
 function simBudgetMoney(n){return '$'+(Number(n||0)/1e9).toFixed(5);}
 function simEstimate(){var n=Number($('simCount').value)||0;setText('simEstimate',$('simMeasureCost').checked?'1 simulation · no AI spending limit · actual charges recorded for every step':n+' simulations · target '+simMoney(n*1763500000)+' · maximum '+simBudgetMoney(n*1889850000)+' USD');}
 function simDefaults(){var yesterday=new Date(Date.now()-86400000).toISOString().slice(0,10),yearAgo=new Date(Date.now()-365*86400000).toISOString().slice(0,10);$('simCount').value=10;$('simCompanyRange').value='flex3';$('simFrom').value=yearAgo;$('simTo').value=yesterday;$('simTo').max=yesterday;simEstimate();}
@@ -3335,7 +3422,8 @@ function renderSimulation(){var d=simUI.data;if(!d)return;var runs=d.runs||[],t=
  renderSimOutcomes(d);
  setText('simPricing','Rates dated '+d.pricing.asOf+'. New batches: Terra/high shortlist, then Astra/high using Flex. '+d.pricing.includes+'.');
 }
-function drawSimDistribution(values){var c=$('simDistribution');if(!c)return;var w=c.clientWidth||600;c.width=w*2;c.height=240;var ctx=c.getContext('2d');ctx.scale(2,2);if(!values.length){ctx.fillStyle=chartColors().ink45;ctx.font='12px sans-serif';ctx.fillText('The distribution will appear as simulations finish.',10,50);return;}var lo=Math.min(...values),hi=Math.max(...values),bins=Array(12).fill(0);values.forEach(function(v){bins[Math.min(11,Math.floor((v-lo)/(hi-lo||1)*12))]++;});var max=Math.max(...bins);bins.forEach(function(n,i){ctx.fillStyle=chartColors().gold;ctx.fillRect(8+i*(w-16)/12,94-n/max*75,(w-16)/12-3,n/max*75);});ctx.fillStyle=chartColors().ink45;ctx.font='11px sans-serif';ctx.fillText(simReturn(lo),8,112);ctx.textAlign='right';ctx.fillText(simReturn(hi),w-8,112);}
+function drawSimDistribution(values){var c=$('simDistribution');if(!c)return;var wrap=simChartWrap(c),tip=wrap.querySelector('.tip');var w=c.clientWidth||600;c.width=w*2;c.height=240;var ctx=c.getContext('2d');ctx.scale(2,2);c._bins=null;
+  if(!c._distBound){c._distBound=true;c.addEventListener('pointermove',function(e){var b=c._bins;if(!b){tip.hidden=true;return;}var r=c.getBoundingClientRect(),i=Math.max(0,Math.min(11,Math.floor((e.clientX-r.left-8)/((r.width-16)/12))));tip.textContent=b.counts[i]+(b.counts[i]===1?' simulation':' simulations')+'\n'+simReturn(b.lo+(b.hi-b.lo)*i/12)+' to '+simReturn(b.lo+(b.hi-b.lo)*(i+1)/12);tip.hidden=false;var tw=tip.offsetWidth,left=e.clientX-r.left+12;if(left+tw>r.width-4)left=e.clientX-r.left-tw-12;tip.style.left=Math.max(4,left)+'px';tip.style.top='8px';});c.addEventListener('pointerleave',function(){tip.hidden=true;});}if(!values.length){ctx.fillStyle=chartColors().ink45;ctx.font='12px sans-serif';ctx.fillText('The distribution will appear as simulations finish.',10,50);return;}var lo=Math.min(...values),hi=Math.max(...values),bins=Array(12).fill(0);values.forEach(function(v){bins[Math.min(11,Math.floor((v-lo)/(hi-lo||1)*12))]++;});c._bins={lo:lo,hi:hi,counts:bins};var max=Math.max(...bins);bins.forEach(function(n,i){ctx.fillStyle=chartColors().gold;ctx.fillRect(8+i*(w-16)/12,94-n/max*75,(w-16)/12-3,n/max*75);});ctx.fillStyle=chartColors().ink45;ctx.font='11px sans-serif';ctx.fillText(simReturn(lo),8,112);ctx.textAlign='right';ctx.fillText(simReturn(hi),w-8,112);}
 async function loadSimDetail(){if(!simUI.selected||simUI.detailLoading)return;simUI.detailLoading=true;var selectedRun=simUI.selected,ctl=new AbortController(),timer=setTimeout(function(){ctl.abort();},12000);try{var params={runId:simUI.selected,collection:simUI.detailCollection};if(simUI.detailCursor)params.after=simUI.detailCursor;var r=await api('simulationDetail',params,{signal:ctl.signal});if(simUI.selected!==selectedRun)return;simUI.detail=r.data;renderSimDetail();}catch(e){setText('simError',e.name==='AbortError'?'Details are taking longer to load. Retrying shortly.':e.message);}finally{clearTimeout(timer);simUI.detailLoading=false;}}
 function renderSimDetail(){var d=simUI.detail;if(!d)return;var r=d.run;$('simDetail').hidden=false;setText('simDetailTitle',r.date+' · simulation details');setText('simDetailClock',r.clockMs?'Historical clock '+new Date(r.clockMs).toLocaleString('en-US',{timeZone:'America/New_York'})+' ET':'Preparing historical data');
  setChildren($('simDetailCosts'),[el('span',{text:'Charged '+simMoney(r.spentNano)}),el('span',{text:'Reserved '+simMoney(r.reservedNano)+' (not charged)'}),el('span',{text:r.budgetMode==='measure_actual_cost'?'No AI spending limit':'Ceiling '+simBudgetMoney(r.ceilingNano||1889850000)+' USD'}),el('span',{text:(r.reportedInputTokens||0)+' input · '+(r.reportedOutputTokens||0)+' output tokens (includes reasoning)'})]);
@@ -3348,14 +3436,23 @@ function renderSimDetail(){var d=simUI.detail;if(!d)return;var r=d.run;$('simDet
  r.priceCoverage?.symbolsWithGaps?.length?el('p',{class:'tiny muted',text:r.priceCoverage.note+' Missing five-minute intervals: '+r.priceCoverage.symbolsWithGaps.map(function(x){return x.symbol+' '+x.missing+'/'+x.expected;}).join(', ')}):null,el('h3',{text:'Investments in this simulation'}),p?tableNode([{label:'Company',k:'symbol'},{label:'Shares',k:'quantityUnits'},{label:'Value',render:function(x){return '$'+(Number(x.marketValueMinor)/100).toFixed(2);}},{label:'Gain / loss',render:function(x){return '$'+(Number(x.unrealisedMinor)/100).toFixed(2);}}],p.positions):el('p',{class:'muted',text:'No investments yet.'})]);
  replaceChildren($('simDetailData'),d.collection==='curve'?[el('p',{class:'tiny muted',text:'Open positions are marked using the latest released historical price. Moving the pointer over the chart shows the saved return.'})]:[tableNode(d.collection==='requests'?[{label:'Step',k:'stage'},{label:'Model',k:'model'},{label:'State',k:'status'},{label:'Provider result',render:function(x){return [x.responseStatus,x.providerError?.code,x.providerError?.message,x.incompleteReason].filter(Boolean).join(' · ')||'—';}},{label:'Response ID',k:'responseId'},{label:'Charged',render:function(x){return x.status==='settled'?simMoney(x.actualNano):'Awaiting usage';}},{label:'Reserved',render:function(x){return simMoney(['settled','rejected'].includes(x.status)?0:x.reservation);}},{label:'Input tokens',k:'inputTokens'},{label:'Output tokens',render:function(x){return x.usage?.output_tokens??'—';}}]:d.collection==='decisions'?[{label:'Company',k:'symbol'},{label:'Decision',k:'decision'},{label:'Reason',k:'reason'}]:[{label:'Company',k:'symbol'},{label:'Side / event',render:function(x){return x.side||x.kind||x.status;}},{label:'Details',render:function(x){return x.reason||x.quantityUnits||x.qty||'';}}],d.items)]);$('simDetailMore').disabled=!d.nextCursor;
 }
-function drawSimChart(){var c=$('simReturnChart'),points=simUI.chartPoints||[];if(!c||!points.length)return;var w=c.clientWidth||600,h=230;c.width=w*2;c.height=h*2;var ctx=c.getContext('2d');ctx.scale(2,2);var lo=Math.min(0,...points.map(p=>p.returnBps)),hi=Math.max(0,...points.map(p=>p.returnBps)),span=hi-lo||1;ctx.strokeStyle=chartColors().line;ctx.beginPath();ctx.moveTo(40,190-(0-lo)/span*160);ctx.lineTo(w-12,190-(0-lo)/span*160);ctx.stroke();ctx.strokeStyle=points.at(-1).returnBps>=0?chartColors().sage:chartColors().clay;ctx.lineWidth=2;ctx.beginPath();points.forEach(function(p,i){var x=40+i*(w-55)/Math.max(1,points.length-1),y=190-(p.returnBps-lo)/span*160;if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y);});ctx.stroke();ctx.fillStyle=chartColors().ink45;ctx.font='11px sans-serif';ctx.fillText(simReturn(hi),2,20);ctx.fillText(simReturn(lo),2,204);ctx.fillText('Simulated market time (ET)',40,225);}
+function simChartWrap(c){if(c.parentElement&&c.parentElement.classList.contains('chartwrap'))return c.parentElement;var w=el('div',{class:'chartwrap simwrap'});c.parentNode.insertBefore(w,c);w.appendChild(c);w.appendChild(el('div',{class:'tip',hidden:true}));return w;}
+function drawSimChart(){var c=$('simReturnChart'),points=simUI.chartPoints||[];if(!c)return;var wrap=simChartWrap(c),tip=wrap.querySelector('.tip'),C=chartColors();c.classList.add('sim-series');
+  var pts=points.map(function(p){return {t:Number(p.atMs),c:Number(p.returnBps)/100,nav:p.navMinor!=null?Number(p.navMinor)/100:NaN,raw:p};}).filter(function(p){return liveNum(p.t)&&liveNum(p.c);});
+  var last=pts.length?pts[pts.length-1].c:0,up=last>=0;
+  drawSeriesChart(c,{points:pts,intraday:true,series:[{label:'Return',color:up?C.sage:C.clay,width:1.8,values:pts.map(function(p){return p.c;})}],area:true,levels:[{y:0,label:'Break-even',color:C.ink45,dash:[2,4]}],crosshair:true,yFmt:function(v){return (v<0?'−':'+')+Math.abs(v).toFixed(2)+'%';},emptyText:'No return points saved for this simulation yet',
+    xFmt:function(d){return new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric'}).format(d);},
+    tip:function(i){var p=pts[i];if(!p)return '';return [(p.c<0?'−':'+')+Math.abs(p.c).toFixed(2)+'%',new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(p.t))+' ET'+(liveNum(p.nav)?' · account '+usd(p.nav,0):'')].join('\n');}});
+  bindChartPointer(c,tip);
+  if(pts.length)setText('simChartPoint','Hover the chart for the return and account value at any moment · '+pts.length+' saved points');
+  return;var w=c.clientWidth||600,h=230;c.width=w*2;c.height=h*2;var ctx=c.getContext('2d');ctx.scale(2,2);var lo=Math.min(0,...points.map(p=>p.returnBps)),hi=Math.max(0,...points.map(p=>p.returnBps)),span=hi-lo||1;ctx.strokeStyle=chartColors().line;ctx.beginPath();ctx.moveTo(40,190-(0-lo)/span*160);ctx.lineTo(w-12,190-(0-lo)/span*160);ctx.stroke();ctx.strokeStyle=points.at(-1).returnBps>=0?chartColors().sage:chartColors().clay;ctx.lineWidth=2;ctx.beginPath();points.forEach(function(p,i){var x=40+i*(w-55)/Math.max(1,points.length-1),y=190-(p.returnBps-lo)/span*160;if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y);});ctx.stroke();ctx.fillStyle=chartColors().ink45;ctx.font='11px sans-serif';ctx.fillText(simReturn(hi),2,20);ctx.fillText(simReturn(lo),2,204);ctx.fillText('Simulated market time (ET)',40,225);}
 // Remembered open/closed state for simulation sections and panels (per browser).
 function simFoldState(){try{return JSON.parse(localStorage.getItem('investorSimSections')||'{}')||{};}catch(e){return {};}}
 function simFoldRemember(key,open){var saved=simFoldState();saved[key]=open;try{localStorage.setItem('investorSimSections',JSON.stringify(saved));}catch(e){/* storage unavailable */}}
 function bindSimSections(){var saved=simFoldState();document.querySelectorAll('#v-simulation details.sim-section').forEach(function(d){if(typeof saved[d.id]==='boolean')d.open=saved[d.id];d.addEventListener('toggle',function(){simFoldRemember(d.id,d.open);});});}
 // Render a panel as a collapsible card: header in the summary, everything else in the body. Re-renders keep the user's choice.
 function simFold(node,key,header,body){var existing=node.querySelector('details[data-detail-key="'+key+'"]'),open=existing?existing.open:simFoldState()[key]!==false;var fold=el('details',{class:'sim-fold','data-detail-key':key,open:open},el('summary',{},el('div',{class:'sim-fold-head'},header),icon('chevron','chev')),el('div',{class:'sim-fold-body'},body));fold.addEventListener('toggle',function(){simFoldRemember(key,fold.open);});replaceChildren(node,[fold]);return fold;}
-function bindSimulation(){bindPaperDecisionSettings();bindLearning();bindSimSections();simDefaults();$('simReset').addEventListener('click',resetSimulations);$('simMeasureCost').addEventListener('change',function(){if(this.checked)$('simCount').value=1;simEstimate();});$('simCount').addEventListener('input',function(){if(Number(this.value)!==1)$('simMeasureCost').checked=false;simEstimate();});$('simChoices').addEventListener('click',function(e){var b=e.target.closest('[data-count]');if(b){$('simCount').value=b.dataset.count;$('simMeasureCost').checked=false;simEstimate();}});$('simForm').addEventListener('submit',function(e){e.preventDefault();if(!$('simForm').reportValidity())return;simMutation('simulationStart',{strategyVersionId:$('simStrategyVersion').value,companyRange:$('simCompanyRange').value,count:Number($('simCount').value),from:$('simFrom').value,to:$('simTo').value,budgetMode:$('simMeasureCost').checked?'measure_actual_cost':'capped'});});$('workspacePaper').addEventListener('click',function(){setHash('manager',{});});$('workspaceSimulation').addEventListener('click',function(){setHash('simulation',simUI.batchId?{batch:simUI.batchId}:{});});$('simPauseAll').addEventListener('click',function(){simMutation('simulationControl',{batchId:simUI.batchId,command:'pause'});});$('simResumeAll').addEventListener('click',function(){simMutation('simulationControl',{batchId:simUI.batchId,command:'resume'});});$('simHistory').addEventListener('change',function(){if(this.value){simUI.batchId=this.value;simUI.page=0;simUI.selected=null;$('simDetail').hidden=true;setHash('simulation',{batch:this.value});}});$('simOlder').addEventListener('click',function(){simUI.historyCursor=simUI.data.nextCursor;loadSimulation();});$('simPrev').addEventListener('click',function(){simUI.page--;renderSimulation();});$('simNext').addEventListener('click',function(){simUI.page++;renderSimulation();});$('simDetailClose').addEventListener('click',function(){simUI.selected=null;simUI.chartPoints=[];$('simDetail').hidden=true;});$('simDetailTab').addEventListener('change',function(){simUI.detailCollection=this.value;simUI.detailCursor=null;loadSimDetail();});$('simDetailMore').addEventListener('click',function(){simUI.detailCursor=simUI.detail.nextCursor;loadSimDetail();});$('simReturnChart').addEventListener('pointermove',function(e){var points=simUI.chartPoints||[];if(!points.length)return;var box=this.getBoundingClientRect(),idx=Math.max(0,Math.min(points.length-1,Math.round((e.clientX-box.left)/box.width*(points.length-1)))),p=points[idx];setText('simChartPoint',new Date(p.atMs).toLocaleTimeString('en-US',{timeZone:'America/New_York'})+' ET · '+simReturn(p.returnBps)+' · account $'+(p.navMinor/100).toFixed(2));});window.addEventListener('resize',function(){if(route.view==='simulation'){drawSimChart();drawSimDistribution(simUI.data?.statistics?.values||[]);}});}
+function bindSimulation(){bindPaperDecisionSettings();bindLearning();bindSimSections();simDefaults();$('simReset').addEventListener('click',resetSimulations);$('simMeasureCost').addEventListener('change',function(){if(this.checked)$('simCount').value=1;simEstimate();});$('simCount').addEventListener('input',function(){if(Number(this.value)!==1)$('simMeasureCost').checked=false;simEstimate();});$('simChoices').addEventListener('click',function(e){var b=e.target.closest('[data-count]');if(b){$('simCount').value=b.dataset.count;$('simMeasureCost').checked=false;simEstimate();}});$('simForm').addEventListener('submit',function(e){e.preventDefault();if(!$('simForm').reportValidity())return;simMutation('simulationStart',{strategyVersionId:$('simStrategyVersion').value,companyRange:$('simCompanyRange').value,count:Number($('simCount').value),from:$('simFrom').value,to:$('simTo').value,budgetMode:$('simMeasureCost').checked?'measure_actual_cost':'capped'});});$('workspacePaper').addEventListener('click',function(){setHash('manager',{});});$('workspaceSimulation').addEventListener('click',function(){setHash('simulation',simUI.batchId?{batch:simUI.batchId}:{});});$('simPauseAll').addEventListener('click',function(){simMutation('simulationControl',{batchId:simUI.batchId,command:'pause'});});$('simResumeAll').addEventListener('click',function(){simMutation('simulationControl',{batchId:simUI.batchId,command:'resume'});});$('simHistory').addEventListener('change',function(){if(this.value){simUI.batchId=this.value;simUI.page=0;simUI.selected=null;$('simDetail').hidden=true;setHash('simulation',{batch:this.value});}});$('simOlder').addEventListener('click',function(){simUI.historyCursor=simUI.data.nextCursor;loadSimulation();});$('simPrev').addEventListener('click',function(){simUI.page--;renderSimulation();});$('simNext').addEventListener('click',function(){simUI.page++;renderSimulation();});$('simDetailClose').addEventListener('click',function(){simUI.selected=null;simUI.chartPoints=[];$('simDetail').hidden=true;});$('simDetailTab').addEventListener('change',function(){simUI.detailCollection=this.value;simUI.detailCursor=null;loadSimDetail();});$('simDetailMore').addEventListener('click',function(){simUI.detailCursor=simUI.detail.nextCursor;loadSimDetail();});window.addEventListener('resize',function(){if(route.view==='simulation'){drawSimChart();drawSimDistribution(simUI.data?.statistics?.values||[]);}});}
 
 /* ── 21. boot ───────────────────────────────────────────────────────────── */
 function bindShell() {

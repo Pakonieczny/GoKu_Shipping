@@ -1575,14 +1575,15 @@ const MUTATIONS = {
     const activeMandates = pointers.filter((p) => !TERMINAL_POINTER.has(p.status)).length;
     const conservation = X ? await X.assertConservation(ctx.accountId, { admin: D }).catch((e) => ({ pass: false, discrepancies: [String(e.code || e.message)] })) : { pass: null, discrepancies: [] };
     const [ledgerN, fillsN, tradesN] = await Promise.all([rows(await D.col(D.COL.ledger).where("accountId", "==", ctx.accountId).get()).length, rows(await D.col(D.COL.fills).where("accountId", "==", ctx.accountId).get()).length, rows(await D.col(D.COL.trades).where("accountId", "==", ctx.accountId).get()).length]);
+    /* Open positions, working orders and active mandates are closed by the
+       reset itself (paper liquidation at the recorded mark); only a broken
+       ledger blocks it. */
     const blockers = [];
-    if (snap.positions.length) blockers.push(`open_positions:${snap.positions.length}`);
-    if (snap.workingOrders.length) blockers.push(`working_orders:${snap.workingOrders.length}`);
-    if (activeMandates) blockers.push(`active_mandates:${activeMandates}`);
     if (conservation.pass === false) blockers.push("ledger_conservation_failed");
+    const willClose = { positions: snap.positions.length, workingOrders: snap.workingOrders.length, activeMandates };
     const balanceHash = sha({ cash: snap.settledCashMinor, reserved: snap.reservedMinor, invested: snap.investedMinor, version: snap.versions.portfolioVersion });
     const pv = await issuePreview(D, { kind: "paperAccountReset", accountId: ctx.accountId, payload: { accountVersion: String(snap.versions.portfolioVersion), balanceHash, blockers }, nowMs: ctx.nowMs });
-    return { data: { previewToken: pv.previewToken, accountVersion: String(snap.versions.portfolioVersion), balanceHash, recordsAffected: { ledger: ledgerN, fills: fillsN, trades: tradesN, navMarks: null }, expiresAt: pv.expiresAt, blockers, conservation, canReset: blockers.length === 0 }, resourceVersion: String(snap.versions.portfolioVersion) };
+    return { data: { previewToken: pv.previewToken, accountVersion: String(snap.versions.portfolioVersion), balanceHash, recordsAffected: { ledger: ledgerN, fills: fillsN, trades: tradesN, navMarks: null }, expiresAt: pv.expiresAt, blockers, willClose, startingNav: money(POLICY.PAPER_STARTING_NAV_MINOR), conservation, canReset: blockers.length === 0 }, resourceVersion: String(snap.versions.portfolioVersion) };
   },
   async resetPaperAccount(params, ctx, env) {
     requireEnabled(ctx, "resetPaperAccount");
@@ -1594,18 +1595,34 @@ const MUTATIONS = {
     const balanceHash = sha({ cash: snap.settledCashMinor, reserved: snap.reservedMinor, invested: snap.investedMinor, version: snap.versions.portfolioVersion });
     if (balanceHash !== params.balanceHash) throw typed("VERSION_CONFLICT", "balances changed since the preview", { resourceVersion: String(snap.versions.portfolioVersion) });
     const pointers = await pointersFor(D, ctx.accountId);
-    if (snap.positions.length || snap.workingOrders.length || pointers.some((p) => !TERMINAL_POINTER.has(p.status))) throw typed("STATE_CONFLICT", "reset needs no open position, working order or active mandate");
+    const activePointers = pointers.filter((p) => !TERMINAL_POINTER.has(p.status));
+    const orderSets = (await orderSetsFor(D, ctx.accountId)).filter((o) => !["CLOSED", "CANCELLED", "FILLED", "COMPLETE", "ENTRY_EXPIRED"].includes(o.status));
     const conservation = X ? await X.assertConservation(ctx.accountId, { admin: D }) : { pass: true };
     if (!conservation.pass) throw typed("STATE_CONFLICT", "ledger conservation must pass before a reset");
-    const starting = big(snap.startingNavMinor || snap.navMinor);
+    /* A reset always restarts at the paper starting cash, whatever the
+       account held before: positions are closed at their recorded mark,
+       every working order and active mandate is cancelled. */
+    const starting = big(POLICY.PAPER_STARTING_NAV_MINOR);
+    const closedPositions = snap.positions.map((p) => ({ symbol: p.symbol, quantityUnits: String(p.quantityUnits), markMicros: String(p.markMicros || 0), marketValueMinor: String(p.marketValueMinor || 0) }));
     await consumePreview(D, { token: env.previewToken, kind: "paperAccountReset", accountId: ctx.accountId, nowMs: ctx.nowMs, verify: (p) => { if (p.payload.balanceHash !== params.balanceHash || String(p.payload.accountVersion) !== String(params.accountVersion)) throw typed("PREVIEW_TOKEN_INVALID", "preview does not match the reset request"); },
       andThen: async (p, tx) => {
         const aref = D.col(D.COL.accounts).doc(ctx.accountId);
         const cur = await tx.get(aref);
         const a = cur.exists ? cur.data() : {};
-        if(!cur.exists||String(a.portfolioVersion||a.balanceRevision||0)!==String(params.accountVersion)||Number(a.balanceCents?.reserved||0)!==0||Number(a.balanceCents?.positions||0)!==0||String(a.balanceCents?.cash||0)!==String(snap.settledCashMinor))throw typed('VERSION_CONFLICT','Account changed before reset; refresh its preview.');
+        if(!cur.exists||String(a.portfolioVersion||a.balanceRevision||0)!==String(params.accountVersion)||String(a.balanceCents?.cash||0)!==String(snap.settledCashMinor))throw typed('VERSION_CONFLICT','Account changed before reset; refresh its preview.');
         const resetId = `reset_${ctx.mutationId.slice(-12)}`;
-        tx.set(D.col(D.COL.ledger).doc(`${resetId}_close`), { txnId: `${resetId}_close`, accountId: ctx.accountId, kind: "account_reset_close", legs: [{ account: "cash", amountCents: -Number(big(snap.settledCashMinor)) }, { account: "contributed_capital", amountCents: Number(big(snap.settledCashMinor)) }], postedAt: iso(ctx.nowMs), atMs: ctx.nowMs, meta: { mutationId: ctx.mutationId, by: ctx.actorId } });
+        /* Close every balance except contributed capital so the ledger still
+           reconciles: cash, reserved cash and the marked positions all go back
+           to the capital account in one entry. */
+        const bal = a.balanceCents || {};
+        const closeLegs = Object.keys(bal).filter((k) => k !== "contributed_capital" && Number(bal[k])).map((k) => ({ account: k, amountCents: -Number(bal[k]) }));
+        const closeTotal = closeLegs.reduce((n, l) => n - l.amountCents, 0);
+        closeLegs.push({ account: "contributed_capital", amountCents: closeTotal });
+        tx.set(D.col(D.COL.ledger).doc(`${resetId}_close`), { txnId: `${resetId}_close`, accountId: ctx.accountId, kind: "account_reset_close", legs: closeLegs, postedAt: iso(ctx.nowMs), atMs: ctx.nowMs, meta: { mutationId: ctx.mutationId, by: ctx.actorId, closedPositions, cancelledOrders: snap.workingOrders.length + orderSets.length, cancelledMandates: activePointers.length } });
+        for (const p of snap.positions) tx.set(D.col(D.COL.positions).doc(`${ctx.accountId}_${p.symbol}`), { open: false, quantityUnits: "0", qty: 0, closedAtMs: ctx.nowMs, closedReason: "paper_reset", closedByMutationId: ctx.mutationId, protectionState: "NONE", updatedAtMs: ctx.nowMs }, { merge: true });
+        for (const o of snap.workingOrders) if (o.orderId) tx.set(D.col(D.COL.orders).doc(o.orderId), { status: "cancelled", cancelledAtMs: ctx.nowMs, cancelReason: "paper_reset", updatedAtMs: ctx.nowMs }, { merge: true });
+        for (const os of orderSets) tx.set(D.col(D.COL.orderSets).doc(os.orderSetId), { status: "CANCELLED", cancelledAtMs: ctx.nowMs, cancelReason: "paper_reset", updatedAtMs: ctx.nowMs }, { merge: true });
+        for (const p of activePointers) tx.set(D.col(D.COL.activeMandates).doc(`${ctx.accountId}_${p.symbol}`), { status: "CANCELLED", cancelledAtMs: ctx.nowMs, cancelReason: "paper_reset", updatedAtMs: ctx.nowMs }, { merge: true });
         tx.set(D.col(D.COL.ledger).doc(`${resetId}_open`), { txnId: `${resetId}_open`, accountId: ctx.accountId, kind: "capital_contribution", legs: [{ account: "cash", amountCents: Number(starting) }, { account: "contributed_capital", amountCents: -Number(starting) }], postedAt: iso(ctx.nowMs), atMs: ctx.nowMs, meta: { mutationId: ctx.mutationId, by: ctx.actorId, reset: true } });
         tx.set(aref, { accountId: ctx.accountId, balanceCents: { cash: Number(starting), reserved: 0, positions: 0, contributed_capital: -Number(starting) }, balanceRevision: (Number(a.balanceRevision) || 0) + 2, portfolioVersion: (Number(a.portfolioVersion || a.balanceRevision) || 0) + 2, writerEpoch: (Number(a.writerEpoch) || 0) + 1, startingNavCents: Number(starting), resetAtMs: ctx.nowMs, resetBy: ctx.actorId, resetMutationId: ctx.mutationId, updatedAtMs: ctx.nowMs }, { merge: true });
         tx.set(D.col(D.COL.reservationAccounts).doc(ctx.accountId), { accountId: ctx.accountId, reservedNotionalMinor: "0", reservedPlannedLossMinor: "0", reservedStressLossMinor: "0", committedPortfolioPlanId: null, resetAtMs: ctx.nowMs, updatedAtMs: ctx.nowMs }, { merge: true });
@@ -1613,7 +1630,7 @@ const MUTATIONS = {
       } });
     await writeAudit(D, { action: "resetPaperAccount", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: env.auditReason, before: { navMinor: snap.navMinor, version: snap.versions.portfolioVersion }, after: { startingNavMinor: starting.toString() }, correlationId: ctx.correlationId, nowMs: ctx.nowMs, extra: { conservation } });
     forgetMemo("");
-    return { data: { accountId: ctx.accountId, startingNav: money(starting), conservation, note: "history is retained in the ledger; balances restart from the contributed capital" }, resourceVersion: String(Number(snap.versions.portfolioVersion) + 2) };
+    return { data: { accountId: ctx.accountId, startingNav: money(starting), closedPositions, cancelledOrders: snap.workingOrders.length + orderSets.length, cancelledMandates: activePointers.length, conservation, note: "history is retained in the ledger; balances restart from the paper starting cash" }, resourceVersion: String(Number(snap.versions.portfolioVersion) + 2) };
   },
   async reconcile(params, ctx) {
     const J = jobsFor(ctx.admin);

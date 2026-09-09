@@ -3150,7 +3150,7 @@ function runFixtures() {
     if (!rm.instruments.longOnly || rm.instruments.quantityScale !== 0 || rm.instruments.leverage || rm.instruments.increaseAction) return false;
     const ov = P.applyRiskMandateOverrides({ "weights.maxSingleNameWeightBps": "800", "weights.maxGrossExposureBps": "99999", "losses.dailyLossFreezeBps": 12 });
     if (ov.applied.length !== 1 || ov.refused.length !== 2 || ov.riskMandate.weights.maxSingleNameWeightBps !== "800") return false;
-    if (P.RISK_MANDATE.weights.maxSingleNameWeightBps !== "1000") return false;   // never mutated
+    if (P.RISK_MANDATE.weights.maxSingleNameWeightBps !== "9500") return false;   // never mutated
     /* §8.7: the emergency policy is inactive until an owner approves it, and
        cannot be widened to open a long. */
     if (P.activeEmergencyPolicy(null).active !== false) return false;
@@ -4766,14 +4766,14 @@ function runFixtures() {
     if (pr.pass !== true) throw new Error(`portfolio risk selfCheck: ${JSON.stringify(pr.failures).slice(0, 300)}`);
     const va = V.selfCheck();
     if (va.pass !== true) throw new Error(`valuation selfCheck: ${JSON.stringify(va.failures).slice(0, 300)}`);
-    /* §15.1 on the policy's own paper mandate: NAV $1,000,000; the name cap (10%) binds before cash */
-    const portfolio = { navMinor: "100000000", settledCashMinor: "60000000", reservedMinor: "0", positions: [], workingOrders: [] };
-    const candidate = { symbol: "AAA", sector: "sw", proposedQuantityUnits: "5000", limitPriceMicros: "50000000", lossBoundaryPriceMicros: "47000000", costPerShareMicros: "20000", advMinor: "10000000000", spreadBps: "10" };
+    /* §15.1 on the policy's own paper mandate: NAV $1,000,000 all in cash; the 95% name cap and the 5% cash reserve coincide and bind before the planned-loss cap */
+    const portfolio = { navMinor: "100000000", settledCashMinor: "100000000", reservedMinor: "0", positions: [], workingOrders: [] };
+    const candidate = { symbol: "AAA", sector: "sw", proposedQuantityUnits: "30000", limitPriceMicros: "50000000", lossBoundaryPriceMicros: "49500000", costPerShareMicros: "20000", advMinor: "10000000000", spreadBps: "10" };
     const q = PR.quantityAuthority({ candidate, portfolio, policy: P.RISK_MANDATE, marks: {}, advBySymbol: {}, sectorOf: () => "sw", clusterOf: null });
     if (BigInt(q.authorizedQuantityUnits) > BigInt(candidate.proposedQuantityUnits)) throw new Error("authority enlarged the proposal");
     if (!/^(0|[1-9][0-9]*)$/.test(q.authorizedQuantityUnits) || !q.bindingConstraint) throw new Error(`authority shape ${JSON.stringify(q).slice(0, 200)}`);
-    /* name cap: 10% × $1,000,000 = $100,000 / $50 = 2000 shares; planned loss: 1% × NAV = $10,000 / ($3 + $0.02) = 3311 → name binds at 2000 */
-    if (q.authorizedQuantityUnits !== "2000" || !/name/i.test(q.bindingConstraint)) throw new Error(`binding ${q.bindingConstraint} ${q.authorizedQuantityUnits}`);
+    /* name cap: 95% × $1,000,000 = $950,000 / $50 = 19000 shares; cash after the 5% reserve = 19000; planned loss: 5% × NAV = $50,000 / $0.52 = 96153; stressed loss: 10% × NAV = $100,000 over the gap-stress rate = 13297 → the stress cap binds first */
+    if (q.authorizedQuantityUnits !== "13297" || !/stress/i.test(q.bindingConstraint)) throw new Error(`binding ${q.bindingConstraint} ${q.authorizedQuantityUnits}`);
     /* a wide spread refuses outright with a rule reason, never a smaller position */
     const wide = PR.quantityAuthority({ candidate: { ...candidate, spreadBps: "500" }, portfolio, policy: P.RISK_MANDATE, marks: {}, advBySymbol: {}, sectorOf: () => "sw", clusterOf: null });
     if (wide.authorizedQuantityUnits !== "0" || wide.refused !== true || !wide.reasons.some((r) => /SPREAD/.test(r.code || r))) throw new Error(`spread refusal ${JSON.stringify(wide).slice(0, 200)}`);
@@ -4918,7 +4918,7 @@ function runFixtures() {
     if (first.fired.length !== 0 || first.pending.length !== 1) throw new Error("drawdown fired without persistence");
     const second = ER.evaluateTriggers({ policy: stored, metrics: { drawdownFromPeakBps: "700", shortQuantityUnits: "5", singleNameWeightBps: "2000" }, persistence: first.persistence, nowMs: nowMs + 61000 });
     if (!second.fired.some((f) => f.id === "drawdown") || !second.fired.some((f) => f.id === "accidental_short")) throw new Error(`fired ${JSON.stringify(second.fired.map((f) => f.id))}`);
-    const plan = ER.planActions({ fired: [...second.fired, { id: "concentration_breach", action: "REDUCE_TO_LIMIT", metric: "singleNameWeightBps", value: "2000", threshold: "1200", op: "gt" }], portfolio, policy: stored, riskMandate: P.RISK_MANDATE, nowMs });
+    const plan = ER.planActions({ fired: [...second.fired, { id: "concentration_breach", action: "REDUCE_TO_LIMIT", metric: "singleNameWeightBps", value: "2000", threshold: "1200", op: "gt" }], portfolio, policy: stored, riskMandate: P.applyRiskMandateOverrides({ "weights.maxSingleNameWeightBps": "1000" }).riskMandate, nowMs });
     const ops = plan.actions.map((a) => a.op);
     if (!ops.includes("FREEZE_EXPANSION") || !ops.includes("CANCEL_UNFILLED_ENTRY") || !ops.includes("BUY_TO_COVER_ACCIDENTAL_SHORT") || !ops.includes("REDUCE")) throw new Error(`ops ${ops}`);
     for (const a of plan.actions) { if (a.label !== "EMERGENCY_RISK") throw new Error("unlabelled action"); if (ER.FORBIDDEN.includes(a.op)) throw new Error(`forbidden op ${a.op}`); if (!stored.permittedOperations.includes(a.op)) throw new Error(`unpermitted op ${a.op}`); }
@@ -4935,7 +4935,8 @@ function runFixtures() {
     if (inactive.actions.length !== 1 || inactive.actions[0].op !== "FREEZE_EXPANSION") throw new Error(`inactive policy acted: ${inactive.actions.map((a) => a.op)}`);
     /* a thesis-less position gets a protection plan that can never buy */
     const ep = ER.emergencyProtectionPlan({ accountId: "paper-1", symbol: "NAK", position: { quantityUnits: "10", markMicros: "20000000", entryPriceMicros: "19000000" }, reason: "inherited without thesis", nowMs });
-    if (ep.permittedOperations.includes("BUY") || !ep.forbiddenOperations.includes("BUY") || ep.status !== "ACTION_REQUIRED" || ep.protectiveOrder.stopMicros !== "19500000" || ep.protectiveOrder.quantityUnits !== "10") throw new Error(`protection plan ${JSON.stringify(ep).slice(0, 200)}`);
+    /* the protective stop sits at the mandate's stressed-loss ceiling: 10% below the $20 mark = $18 */
+    if (ep.permittedOperations.includes("BUY") || !ep.forbiddenOperations.includes("BUY") || ep.status !== "ACTION_REQUIRED" || ep.protectiveOrder.stopMicros !== "18000000" || ep.protectiveOrder.quantityUnits !== "10") throw new Error(`protection plan ${JSON.stringify(ep).slice(0, 200)}`);
     /* enforcement persists outbox transitions labelled EMERGENCY_RISK and freezes buys; never a Sol decision */
     const fake = fakeAdmin();
     const out = await ER.enforceBoundedPolicy({ accountId: "paper-1", observed: { shortQuantityUnits: "5" }, portfolio, control: { emergencyRiskPolicy: stored }, admin: fake, nowMs });
@@ -5703,7 +5704,7 @@ function runFixtures() {
     const up = await mutate("setBudget", { dailyReservationMinor: "999999" }, { version: 5 });
     if (up.statusCode !== 200 || ctrl().budget.dailyReservationMinor !== "999999" || ctrl().budget.version !== 1) throw new Error(`budget increase ${up.statusCode} ${JSON.stringify(up.body.error)}`);
     /* the risk mandate: bounded, versioned, an over-limit book freezes expansion instead of liquidating */
-    const oob = await mutate("setRiskMandate", { overrides: { "weights.maxSingleNameWeightBps": "9999" } }, { version: 6, reauthed: true });
+    const oob = await mutate("setRiskMandate", { overrides: { "weights.maxSingleNameWeightBps": "20000" } }, { version: 6, reauthed: true });
     if (oob.statusCode !== 422 || oob.body.error.code !== "RISK_BOUND_EXCEEDED") throw new Error(`bounds ${oob.statusCode} ${JSON.stringify(oob.body.error)}`);
     const tight = await mutate("setRiskMandate", { overrides: { "weights.maxSingleNameWeightBps": "1000" } }, { version: 6, reauthed: true });
     if (tight.statusCode !== 200 || tight.body.data.version !== 1 || !/^[a-f0-9]{64}$/.test(tight.body.data.hash) || tight.body.data.overLimit[0] !== "BBB" || ctrl().buyState !== "FROZEN" || fake.docs.get(`${C.positions}/paper-1_BBB`).open !== true) throw new Error(`risk ${tight.statusCode} ${JSON.stringify(tight.body).slice(0, 300)}`);
@@ -5732,17 +5733,25 @@ function runFixtures() {
     const cancelHeld = await mutate("cancelMandate", { mandateSeriesId: "paper-1_BBB", symbol: "BBB" }, { version: 1 });
     if (cancelHeld.statusCode !== 200 || cancelHeld.body.data.protectionRetained !== true || fake.docs.get(`${C.activeMandates}/paper-1_BBB`).status !== "PROTECTED_RTH" || fake.docs.get(`${C.activeMandates}/paper-1_BBB`).replacementRequired !== true) throw new Error(`cancel held ${cancelHeld.statusCode} ${JSON.stringify(cancelHeld.body).slice(0, 300)}`);
     if (fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_STOP`).status !== "WORKING") throw new Error("cancelling a held mandate must never touch its protection");
-    /* the account reset needs a one-use preview, the right versions, no exposure, and conservation */
+    /* the account reset needs a one-use preview, the right versions and conservation; open exposure is closed by the reset itself */
     const pv = await mutate("previewPaperAccountReset", {});
-    if (pv.statusCode !== 200 || !pv.body.data.previewToken || pv.body.data.canReset !== false || !pv.body.data.blockers.some((b) => /open_positions/.test(b))) throw new Error(`preview ${pv.statusCode} ${JSON.stringify(pv.body).slice(0, 300)}`);
-    const reset = await mutate("resetPaperAccount", { accountVersion: pv.body.data.accountVersion, balanceHash: pv.body.data.balanceHash }, { preview: pv.body.data.previewToken, reauthed: true });
-    if (reset.statusCode !== 409 || reset.body.error.code !== "STATE_CONFLICT") throw new Error(`reset with exposure ${reset.statusCode} ${JSON.stringify(reset.body.error)}`);
+    if (pv.statusCode !== 200 || !pv.body.data.previewToken || pv.body.data.canReset !== true || pv.body.data.willClose.positions < 1 || pv.body.data.startingNav.amountMinor !== "10000000") throw new Error(`preview ${pv.statusCode} ${JSON.stringify(pv.body).slice(0, 1400)}`);
+    const staleReset = await mutate("resetPaperAccount", { accountVersion: pv.body.data.accountVersion, balanceHash: "0".repeat(64) }, { preview: pv.body.data.previewToken, reauthed: true });
+    if (staleReset.statusCode !== 409) throw new Error(`reset with a stale balance hash ${staleReset.statusCode} ${JSON.stringify(staleReset.body.error)}`);
     /* emergency stop: expansion frozen, unfilled entries cancelled through the outbox, protection untouched, not a liquidation */
     const es = await mutate("emergencyStop", {});
     if (es.statusCode !== 200 || ctrl().emergencyState !== "ENGAGED" || ctrl().buyState !== "FROZEN" || ctrl().managerState !== "PAUSED") throw new Error(`emergency ${es.statusCode} ${JSON.stringify(es.body.error)}`);
     if (fake.docs.get(`${C.orderLegs}/os_mv_BBB_1_STOP`).status !== "WORKING" || fake.docs.get(`${C.positions}/paper-1_BBB`).open !== true) throw new Error("an emergency stop never cancels protection or liquidates");
     const rs = await mutate("resumeSystem", {}, { version: ctrl().controlVersion, reauthed: true });
     if (rs.statusCode !== 200 || !["CLEAR", "RECOVERING"].includes(ctrl().emergencyState) || ctrl().buyState !== "FROZEN") throw new Error(`resumeSystem ${rs.statusCode} ${JSON.stringify(rs.body.error)} ${ctrl().emergencyState}`);
+    /* a real reset: closes the paper position at its mark, cancels the mandate, restarts at $100,000 and still reconciles */
+    const pv2 = await mutate("previewPaperAccountReset", {});
+    if (pv2.statusCode !== 200 || pv2.body.data.canReset !== true) throw new Error(`reset preview ${pv2.statusCode} ${JSON.stringify(pv2.body).slice(0, 300)}`);
+    const reset = await mutate("resetPaperAccount", { accountVersion: pv2.body.data.accountVersion, balanceHash: pv2.body.data.balanceHash }, { preview: pv2.body.data.previewToken, reauthed: true });
+    const acct = fake.docs.get(`${C.accounts}/paper-1`);
+    if (reset.statusCode !== 200 || reset.body.data.startingNav.amountMinor !== "10000000" || !reset.body.data.closedPositions.some((p) => p.symbol === "BBB") || acct.balanceCents.cash !== 10000000 || acct.balanceCents.positions !== 0 || acct.balanceCents.reserved !== 0 || fake.docs.get(`${C.positions}/paper-1_BBB`).open !== false || fake.docs.get(`${C.activeMandates}/paper-1_BBB`).status !== "CANCELLED") throw new Error(`reset ${reset.statusCode} ${JSON.stringify(reset.body).slice(0, 400)} ${JSON.stringify(acct.balanceCents)}`);
+    const cons = await require("./_investorExecution").assertConservation("paper-1", { admin: fake });
+    if (cons.pass !== true) throw new Error(`conservation after reset ${JSON.stringify(cons.discrepancies)}`);
     /* deactivation: back to OBSERVE with buys frozen and protection retained */
     const de = await mutate("deactivateAccountMode", { targetMode: "OBSERVE" }, { version: ctrl().controlVersion, reauthed: true });
     if (de.statusCode !== 200 || ctrl().accountMode !== "OBSERVE" || ctrl().buyState !== "FROZEN") throw new Error(`deactivate ${de.statusCode} ${JSON.stringify(de.body.error)}`);
@@ -7810,7 +7819,7 @@ async function simulatorAdversarial({only=null}={}) {
     const row={allocationUsd:5000,conviction:'LOW',sizingReason:'Thin evidence',assessment:Object.fromEntries(H.SECTIONS.map(k=>[k,'Uncertain'])),outlook:'Assumptions',takeProfitBps:100,stopLossBps:100,evidenceIds:['baseline:symbol']};
     const out={schemaVersion:'simulation-investment-plan.v1',comparisonNote:'Best available',investments:{AAA:row}};
     assert(H.validateInvestmentPlan(out,[doc]).planHash);
-    for(const amount of [0,4999,30001])assert.throws(()=>H.validateInvestmentPlan({...out,investments:{AAA:{...row,allocationUsd:amount}}},[doc]),/INVALID/);
+    for(const amount of [0,4999,95001])assert.throws(()=>H.validateInvestmentPlan({...out,investments:{AAA:{...row,allocationUsd:amount}}},[doc]),/INVALID/);
     assert.throws(()=>H.validateInvestmentPlan({...out,investments:{}},[doc]),/INVALID/);
     assert.throws(()=>H.validateInvestmentPlan({...out,investments:{AAA:{...row,evidenceIds:['invented']}}},[doc]),/INVALID/);
     assert.throws(()=>H.validateInvestmentPlan({...out,investments:{BBB:row}},[doc]),/INVALID/);
@@ -7821,9 +7830,9 @@ async function simulatorAdversarial({only=null}={}) {
     const fills=(await x.ref.collection(A.COL.fills).get()).docs.map(d=>d.data());
     const buys=fills.filter(f=>f.side==='buy');assert.equal(buys.length,2);
     assert.equal(buys[0].source,'historical_simulation');
-    for(const f of buys){const spent=Number(f.notionalMinor)+Number(f.feeMinor);assert(spent>=490000&&spent<=3000000);}
+    for(const f of buys){const spent=Number(f.notionalMinor)+Number(f.feeMinor);assert(spent>=490000&&spent<=9500000);}
     assert.equal(r.pendingAiCount,0);assert.equal(r.reservedNano,0);
-    const plan=(await x.ref.collection(A.COL.portfolioPlans).doc('required_investment').get()).data();assert.equal(plan.policy.maxUsd,30000);
+    const plan=(await x.ref.collection(A.COL.portfolioPlans).doc('required_investment').get()).data();assert.equal(plan.policy.maxUsd,95000);
     const view=await x.svc.detail(x.runId,'operator',{collection:'decisions'});assert.equal(view.items.filter(d=>d.decision==='BUY').length,2);
     await x.svc.execute(x.runId);assert.equal((await x.ref.collection(A.COL.fills).get()).size,fills.length);assert.equal(x.calls.length,5);
     const batch=await x.svc.getBatch(r.batchId),br=x.fake.col('InvestorAI_SimulationBatches').doc(r.batchId),config=await x.svc.readJSON(br,batch.configRef);

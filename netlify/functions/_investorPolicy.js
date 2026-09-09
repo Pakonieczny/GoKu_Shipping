@@ -212,13 +212,16 @@ const RISK_MANDATE = deepFreeze({
   currency: ACCOUNT_CURRENCY, navBasis: "MARKED_NAV_INCLUDING_SETTLED_CASH",
   assumption: "paper defaults; live operation requires the owner's capital, loss tolerance, liquidity needs, tax/account constraints, jurisdiction and broker rules (§15.1)",
   weights: {
-    maxSingleNameWeightBps: "1000", maxSectorWeightBps: "2500", maxCorrelatedClusterWeightBps: "2000",
+    /* Paper experiment: the AI may put up to 95% of the account into a single
+       name when conviction supports it (owner instruction, 2026-09-09). The 5%
+       settled-cash reserve is the only concentration brake left. */
+    maxSingleNameWeightBps: "9500", maxSectorWeightBps: "9500", maxCorrelatedClusterWeightBps: "9500",
     maxGrossExposureBps: "9500", maxNetExposureBps: "9500", minSettledCashReserveBps: "500",
-    maxOvernightExposureBps: "9500", maxOpenOrderNotionalBps: "3000",
+    maxOvernightExposureBps: "9500", maxOpenOrderNotionalBps: "9500",
   },
   losses: {
-    maxPlannedLossPerPositionBps: "100", maxAggregatePlannedLossBps: "500",
-    maxStressedLossPerPositionBps: "250", maxAggregateStressedLossBps: "1000",
+    maxPlannedLossPerPositionBps: "500", maxAggregatePlannedLossBps: "1000",
+    maxStressedLossPerPositionBps: "1000", maxAggregateStressedLossBps: "2000",
     dailyLossFreezeBps: "200",
     drawdownStates: [
       { fromPeakBps: "600", state: "FREEZE_EXPANSION" },
@@ -256,18 +259,20 @@ const RISK_MANDATE = deepFreeze({
 });
 /* Absolute bounds an owner override must respect. Tightening is always
    allowed; loosening past these is refused. */
+/* Paper accounts restart from exactly this much cash on a reset. */
+const PAPER_STARTING_NAV_MINOR = "10000000";
 const RISK_MANDATE_BOUNDS = deepFreeze({
-  "weights.maxSingleNameWeightBps": { min: "100", max: "2500" },
-  "weights.maxSectorWeightBps": { min: "500", max: "5000" },
-  "weights.maxCorrelatedClusterWeightBps": { min: "500", max: "5000" },
+  "weights.maxSingleNameWeightBps": { min: "100", max: "9500" },
+  "weights.maxSectorWeightBps": { min: "500", max: "9500" },
+  "weights.maxCorrelatedClusterWeightBps": { min: "500", max: "9500" },
   "weights.maxGrossExposureBps": { min: "1000", max: "10000" },
   "weights.maxNetExposureBps": { min: "1000", max: "10000" },
   "weights.minSettledCashReserveBps": { min: "0", max: "5000" },
   "weights.maxOvernightExposureBps": { min: "0", max: "10000" },
   "weights.maxOpenOrderNotionalBps": { min: "0", max: "10000" },
-  "losses.maxPlannedLossPerPositionBps": { min: "10", max: "300" },
+  "losses.maxPlannedLossPerPositionBps": { min: "10", max: "800" },
   "losses.maxAggregatePlannedLossBps": { min: "50", max: "1000" },
-  "losses.maxStressedLossPerPositionBps": { min: "25", max: "600" },
+  "losses.maxStressedLossPerPositionBps": { min: "25", max: "1500" },
   "losses.maxAggregateStressedLossBps": { min: "100", max: "2000" },
   "losses.dailyLossFreezeBps": { min: "50", max: "500" },
   "liquidity.maxOrderPctOfAdvBps": { min: "10", max: "500" },
@@ -293,7 +298,7 @@ const EMERGENCY_RISK_POLICY_TEMPLATE = deepFreeze({
       action: "FREEZE_EXPANSION_AND_CANCEL_UNFILLED_ENTRIES" },
     { id: "buying_power_breach", metric: "buyingPowerShortfallMinor", op: "gt", threshold: "0", persistenceSeconds: 0,
       action: "REDUCE_TO_LEGAL_LIMIT" },
-    { id: "concentration_breach", metric: "singleNameWeightBps", op: "gt", threshold: "1200", persistenceSeconds: 300,
+    { id: "concentration_breach", metric: "singleNameWeightBps", op: "gt", threshold: "9700", persistenceSeconds: 300,
       action: "REDUCE_TO_LIMIT" },
     { id: "gross_exposure_breach", metric: "grossExposureBps", op: "gt", threshold: "10000", persistenceSeconds: 300,
       action: "REDUCE_TO_LIMIT" },
@@ -846,7 +851,7 @@ function validateHashSet(expected = {}, active = null) {
   return { ok: mismatches.length === 0, mismatches };
 }
 
-module.exports = {
+module.exports = { PAPER_STARTING_NAV_MINOR,
   POLICY_VERSION, CALENDAR_ID, ACCOUNT_CURRENCY,
   canonical, sha256,
   ROLE_MODELS, FORBIDDEN_INVESTMENT_MODELS, ROSTER_FILTER_MODELS_ALLOWED,
