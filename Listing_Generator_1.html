@@ -1575,7 +1575,7 @@
     color: #0a1426 !important;
     font-weight: 600 !important;
   }
-  /* Charm Maker generate button while Gemini Batch mode is armed — green,
+  /* Charm Maker generate button while OpenAI Batch mode is armed — green,
      mirroring the Generate tab's "Submit batch" recolor. Must out-specify
      .btn-primary's !important rules, hence the class + !important here. */
   .btn-primary.charm-batch-armed {
@@ -2713,7 +2713,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
         <li>Every approved set archived to Firebase Storage</li>
       </ul>
       <div class="signin__brandfoot">
-        <span>Gemini 3 &middot; GPT Image 2</span>
+        <span>GPT Image 2.5 Sunburst</span>
         <span class="signin__dotsep">&middot;</span>
         <span>Storage: gokudatabase</span>
       </div>
@@ -3130,9 +3130,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
       <label class="image-model-switcher" for="imageModelSelect" title="Controls all new Standard generations, redos, and Charm Maker images.">
         <span>model:</span>
         <select id="imageModelSelect" aria-label="Image generation model">
-          <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image · fast / value</option>
-          <option value="gemini-3-pro-image">Gemini 3 Pro Image · maximum Gemini quality</option>
-          <option value="gpt-image-2">OpenAI GPT Image 2 · best realism / balanced cost</option>
+          <option value="gpt-image-2.5-sunburst">GPT Image 2.5 Sunburst · High quality</option>
         </select>
       </label>
     </div>
@@ -3187,7 +3185,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
           </div>
 
           <!-- Generation mode toggle. Standard = realtime, current behavior.
-               Batch = Gemini Batch API at 50% off, 2K output, up to 24h turnaround.
+               Batch = OpenAI Batch API at 50% off, 2K output, up to 24h turnaround.
                Persisted to localStorage so it survives page reloads. -->
           <div id="genModeToggle" style="margin-top: 14px; padding: 10px 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -3205,12 +3203,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
               </button>
             </div>
             <div id="genModeBatchInfo" class="muted" style="display: none; margin-top: 8px; font-size: 10px; line-height: 1.5;">
-              Batch jobs run on Google's asynchronous Gemini endpoint at 50% of standard cost. Output stays at 2K (2048×2048). The browser does not need to stay open; results land in Firebase Storage and the manifest writes automatically. Track progress in the panel below.
+              Batch jobs run on OpenAI's asynchronous Batch endpoint at 50% of standard cost. Output stays at 2K (2048×2048). The browser does not need to stay open; results land in Firebase Storage and the manifest writes automatically. Track progress in the panel below.
             </div>
           </div>
 
           <!-- Batch generation: loops generateSet() N times in Standard mode,
-               or submits one Gemini batch job in Batch mode. -->
+               or submits one OpenAI batch job in Batch mode. -->
           <div style="margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <label style="margin: 0; font-size: 12px;">Batch generate</label>
@@ -3254,7 +3252,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
           </div>
 
           <!-- Batch jobs panel — visible when Batch mode is on. Each card
-               shows a Gemini batch's lifecycle: queued → running → ready
+               shows a OpenAI batch's lifecycle: queued → running → ready
                to collect → results downloaded into Firebase. -->
           <div id="batchJobsPanel" style="display: none; margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -3262,7 +3260,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
               <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
             </div>
             <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
-              Submitted batches run at Google for hours, then images auto-save to Firebase. You can close this tab; jobs keep running. The status box below updates every 60 seconds.
+              Submitted batches run at OpenAI for hours, then images auto-save to Firebase. You can close this tab; jobs keep running. The status box below updates every 60 seconds.
             </div>
             <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
               <div class="muted" style="font-size: 11px; padding: 6px 0;">Loading…</div>
@@ -3530,7 +3528,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
             </div>
             <div class="row" style="gap: 8px; margin-top: 8px;">
               <button type="button" class="btn btnSmall" id="charmGenModeStandardBtn" style="flex: 1;">Standard</button>
-              <button type="button" class="btn btnSmall" id="charmGenModeBatchBtn" style="flex: 1;">Gemini Batch (50% off)</button>
+              <button type="button" class="btn btnSmall" id="charmGenModeBatchBtn" style="flex: 1;">OpenAI Batch (50% off)</button>
             </div>
             <div id="charmGenModeBatchInfo" class="muted" style="display: none; margin-top: 8px; font-size: 10px; line-height: 1.5;"></div>
           </div>
@@ -3840,47 +3838,18 @@ html.gs-locked body > *:not(#gate){display:none!important}
     // ------------------------------------------------------------
     // One persisted selector controls every new Standard generation,
     // Review redo, and Charm Maker image request. Only these allowlisted
-    // models can reach the backend. Gemini models also support this app's
-    // existing asynchronous Batch workflow; OpenAI currently runs through
-    // Standard mode so a selected model is never silently substituted.
+    // models can reach the backend. Sunburst supports both Standard and asynchronous OpenAI Batch workflows.
+    // Saved legacy selections migrate to the single supported image model.
     // ============================================================
     const IMAGE_MODEL_LS_KEY = "lg1_image_model_v1";
-    const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
-    const IMAGE_MODEL_ALIASES = Object.freeze({
-      "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
-      "gemini-3-pro-image-preview": "gemini-3-pro-image",
-      "gpt-5.5": "gpt-image-2",
-    });
+    const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-sunburst";
+    const IMAGE_MODEL_ALIASES = Object.freeze({});
     const IMAGE_MODEL_CATALOG = Object.freeze({
-      "gemini-3.1-flash-image": Object.freeze({
-        id: "gemini-3.1-flash-image",
-        provider: "gemini",
-        endpoint: "geminiImageProxy-background",
-        quality: "high",
-        supportsBatch: true,
-        label: "Gemini 3.1 Flash Image",
-        detail: "Fastest and best value for bulk generation",
-      }),
-      "gemini-3-pro-image": Object.freeze({
-        id: "gemini-3-pro-image",
-        provider: "gemini",
-        endpoint: "geminiImageProxy-background",
-        quality: "high",
-        supportsBatch: true,
-        label: "Gemini 3 Pro Image",
-        detail: "Maximum Gemini fidelity for complex product edits",
-      }),
-      "gpt-image-2": Object.freeze({
-        id: "gpt-image-2",
-        provider: "openai",
-        endpoint: "openaiImageProxy-background",
-        // Medium is the strongest practical quality/cost balance for
-        // repeated 2K listing generations. Select Gemini Pro when you want
-        // the premium path without OpenAI's higher 2K image-token spend.
-        quality: "medium",
-        supportsBatch: false,
-        label: "OpenAI GPT Image 2",
-        detail: "Best realism with cost-balanced Medium quality at 2K",
+      "gpt-image-2.5-sunburst": Object.freeze({
+        id: "gpt-image-2.5-sunburst", provider: "openai",
+        endpoint: "openaiImageProxy-background", quality: "high",
+        supportsBatch: true, label: "GPT Image 2.5 Sunburst",
+        detail: "High quality · 2K · Standard and OpenAI Batch",
       }),
     });
 
@@ -3922,7 +3891,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
         {
           ...body,
           model: config.id,
-          quality: body?.quality || config.quality,
+          quality: "high",
           size: body?.size || "2048x2048",
           output_format: body?.output_format || "png",
         },
@@ -7944,7 +7913,7 @@ function updateApproveButtonState() {
           );
         }
 
-        // Number of sets per Gemini batch job. Was originally a per-handler
+        // Number of sets per OpenAI batch job. Was originally a per-handler
         // local constant in the main batch button's click handler, but
         // resume_empty_sets needs the same value, so it's hoisted here at
         // module scope. CHUNK_SIZE history: tried 8 (server OOM), 4 (server
@@ -9964,7 +9933,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         const batchCount = parseInt(document.getElementById("batchProcessCountInput").value) || 1;
         const derivCount = Math.max(1, Math.min(8, parseInt(document.getElementById("derivativesPerCharmInput").value, 10) || 1));
 
-        // Gemini Batch mode (50% off): queue the base charms asynchronously
+        // OpenAI Batch mode (50% off): queue the base charms asynchronously
         // instead of running the interactive Standard loop.
         if (typeof _isCharmBatchModeActive === "function" && _isCharmBatchModeActive()) {
             await runCharmBatchSubmission(null, batchCount, derivCount);
@@ -13755,7 +13724,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         if (_batchInFlight) return;
 
         // Mode-aware dispatch: if Batch mode is on, route to the
-        // Gemini Batch API submission flow defined later in this script.
+        // OpenAI Batch API submission flow defined later in this script.
         // Otherwise fall through to the existing Standard-mode loop.
         if (typeof _isBatchModeActive === "function" && _isBatchModeActive()) {
           if (typeof runBatchModeSubmission === "function") {
@@ -13846,10 +13815,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     }
 
     // ============================================================
-    // GEMINI BATCH API — Listing Generator integration
+    // OPENAI BATCH API — Listing Generator integration
     // ------------------------------------------------------------
     // The toggle below routes Generate Set / Generate Batch through
-    // the Gemini Batch API at 50% of standard cost. Output is locked
+    // the OpenAI Batch API at 50% of standard cost. Output is locked
     // to 2K (2048×2048) via imageConfig.imageSize, identical to the
     // resolution Standard mode produces today. Up to 24h turnaround.
     //
@@ -13857,7 +13826,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     //   - Submission: client builds a list of sets (each with allocSet
     //     reservation + resolved random refs) and POSTs to the new
     //     `batch_submit` kind. Server handles JSONL build, Files API
-    //     upload, Gemini batch creation, and Firestore persistence.
+    //     upload, OpenAI batch creation, and Firestore persistence.
     //   - Polling: client polls `batch_status` every 60s while the
     //     panel is visible. Even if user closes the tab, Firestore
     //     keeps the record for later.
@@ -13922,13 +13891,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       batchBtn.style.opacity = canBatch ? "1" : "0.45";
       batchBtn.style.cursor = canBatch ? "pointer" : "not-allowed";
       batchBtn.title = canBatch
-        ? `Run ${modelConfig.label} through the Gemini Batch API at reduced cost.`
+        ? `Run ${modelConfig.label} through the OpenAI Batch API at reduced cost.`
         : `${modelConfig.label} currently uses Standard mode in this app.`;
 
       if (info) {
         info.style.display = isBatch ? "block" : "none";
         info.textContent =
-          `${modelConfig.label} batch jobs run on Google's asynchronous Gemini endpoint at reduced cost. ` +
+          `${modelConfig.label} batch jobs run on OpenAI's asynchronous Batch endpoint at reduced cost. ` +
           `Output stays at 2K (2048×2048); results land in Firebase Storage and the manifest writes automatically.`;
       }
       if (batchHint) {
@@ -13955,7 +13924,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       // directly through the generation API without the resumable JSONL
       // upload flow).
       const cleanupRow = document.getElementById("filesApiCleanupRow");
-      if (cleanupRow) cleanupRow.style.display = isBatch ? "block" : "none";
+      if (cleanupRow) cleanupRow.style.display = "none"; // Legacy Google cleanup is not used by Sunburst.
 
       // Color-shift the Generate Batch button so users see at a glance
       // whether they're firing a batch job.
@@ -13978,7 +13947,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       if (m === "batch" && !getImageModelConfig().supportsBatch) {
         _writeGenMode("standard");
         _renderGenModeButtons();
-        setStatus(`${getImageModelConfig().label} uses Standard mode. Select a Gemini model to enable Gemini Batch.`);
+        setStatus(`${getImageModelConfig().label} uses Standard mode. Select Sunburst to enable OpenAI Batch.`);
         return;
       }
       _writeGenMode(m);
@@ -14011,7 +13980,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         return;
       }
       // Per-submission sanity cap. Each submission gets sliced into
-      // CHUNK_SIZE-sized Gemini batches (see below) so this is just an
+      // CHUNK_SIZE-sized OpenAI batches (see below) so this is just an
       // upper bound on how many sets the user can prep with one click.
       if (count > 1000) {
         alert("Batch mode supports up to 1000 sets per submission. Split into multiple submissions for more.");
@@ -14026,11 +13995,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const batchModelConfig = getImageModelConfig(batchModel);
       if (!batchModelConfig.supportsBatch) {
         _setGenMode("standard");
-        alert(`${batchModelConfig.label} uses Standard mode. Select a Gemini model before submitting a Gemini batch.`);
+        alert(`${batchModelConfig.label} uses Standard mode. Select Sunburst before submitting a OpenAI batch.`);
         return;
       }
 
-      // Auto-chunk. Each chunk = one Gemini batch job.
+      // Auto-chunk. Each chunk = one OpenAI batch job.
       // CHUNK_SIZE is hoisted to module scope (see near postJson around
       // line ~5246) so resume_empty_sets can share it. CHUNK_SIZE history:
       // 8 OOM'd, 4 OOM'd. Currently set to 1 as a diagnostic — if a 1-set
@@ -14046,7 +14015,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           `· Turnaround: usually 2–6h, up to 24h\n\n` +
           `You can close this tab — results land in Firebase automatically.`
         : `Submit ${count} set(s) of ${category}?\n\n` +
-          `Will be split into ${chunkCount} Gemini batch job(s) of up to ${CHUNK_SIZE} sets each ` +
+          `Will be split into ${chunkCount} OpenAI batch job(s) of up to ${CHUNK_SIZE} sets each ` +
           `to stay under server memory limits.\n\n` +
           `· Cost: ~50% of Standard mode\n` +
           `· Output: 2K (2048×2048)\n` +
@@ -14159,7 +14128,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           allSets.push({ category, outputBasePath, setN, tasks });
         }
 
-        // Slice into chunks and submit each as its own Gemini batch.
+        // Slice into chunks and submit each as its own OpenAI batch.
         // Each call to batch_submit creates one Files-API upload and one
         // batchGenerateContent job, which appears as a separate row in
         // the in-flight panel. The display name carries the part index
@@ -14222,7 +14191,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
             }
             // Otherwise: don't abort the whole submission — keep going so
             // that remaining chunks still get submitted. Each chunk is an
-            // independent Gemini batch.
+            // independent OpenAI batch.
           }
 
           // Adaptive stagger between chunks. Starts at CHUNK_STAGGER_MS,
@@ -14607,7 +14576,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const batchModelConfig = getImageModelConfig(batchModel);
       if (!batchModelConfig.supportsBatch) {
         _setGenMode("standard");
-        alert(`${batchModelConfig.label} uses Standard mode. Select a Gemini model before resuming Gemini batches.`);
+        alert(`${batchModelConfig.label} uses Standard mode. Select Sunburst before resuming OpenAI batches.`);
         return;
       }
 
@@ -15308,7 +15277,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected;
       });
       if (targets.length === 0) return;
-      const ok = confirm(`Recover partial results from ${targets.length} failed batch(es)?\n\nThis pulls whatever images Google managed to finish before the failure. Successful images land in Firebase; failed slots stay empty.`);
+      const ok = confirm(`Recover partial results from ${targets.length} failed batch(es)?\n\nThis pulls whatever images the provider managed to finish before the failure. Successful images land in Firebase; failed slots stay empty.`);
       if (!ok) return;
       for (const b of targets) {
         try { await postJson("geminiImageProxy", { kind: "batch_collect", batchName: b.batchName, force: true }); }
@@ -15335,8 +15304,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     async function collectOneBatch(batchName, force) {
       const isForce = !!force;
       const confirmMsg = isForce
-        ? `Force-download partial results for ${batchName}?\n\nThis pulls whatever images Google has finished, even if the job failed, expired, or is still running. Successful images land in Firebase; failed slots stay empty and can be regenerated later.`
-        : `Download results for ${batchName}?\n\nPulls all finished images from Google into Firebase Storage. The collection runs in the background — keep using the page if you want.`;
+        ? `Force-download partial results for ${batchName}?\n\nThis pulls whatever images the provider has finished, even if the job failed, expired, or is still running. Successful images land in Firebase; failed slots stay empty and can be regenerated later.`
+        : `Download results for ${batchName}?\n\nPulls all finished images from the image provider into Firebase Storage. The collection runs in the background — keep using the page if you want.`;
       const ok = confirm(confirmMsg);
       if (!ok) return;
       try {
@@ -15423,7 +15392,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         const charmVisible = !!(charmPanel && charmPanel.style.display !== "none");
         if (!genVisible && !charmVisible) return;
 
-        // Step 1: refresh state from Google for any non-final batch.
+        // Step 1: refresh state from the image provider for any non-final batch.
         for (const b of _lastBatchList) {
           if (b.collected) continue;
           const st = _normState(b.state);
@@ -15471,7 +15440,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     }
 
     // ============================================================
-    // GEMINI BATCH API — Charm Maker integration
+    // OPENAI BATCH API — Charm Maker integration
     // ------------------------------------------------------------
     // The exact same half-price batch pipeline the Generate tab uses,
     // applied to Charm Maker base-charm generation:
@@ -15541,13 +15510,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       batchBtn.style.opacity = canBatch ? "1" : "0.45";
       batchBtn.style.cursor = canBatch ? "pointer" : "not-allowed";
       batchBtn.title = canBatch
-        ? `Run ${modelConfig.label} base-charm generation through the Gemini Batch API at reduced cost.`
+        ? `Run ${modelConfig.label} base-charm generation through the OpenAI Batch API at reduced cost.`
         : `${modelConfig.label} currently uses Standard mode in this app.`;
 
       if (info) {
         info.style.display = isBatch ? "block" : "none";
         info.textContent =
-          `${modelConfig.label} batch jobs generate the BASE charms on Google's asynchronous endpoint at ~50% cost ` +
+          `${modelConfig.label} batch jobs generate the BASE charms on OpenAI's asynchronous endpoint at ~50% cost ` +
           `(2K output, usually 2–6h, up to 24h). You can close this tab — results land in Firebase automatically. ` +
           `When a base arrives, its card shows "Waiting for Base Approval" and you continue slots 2–4 as usual.`;
       }
@@ -15572,7 +15541,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       if (m === "batch" && !getImageModelConfig().supportsBatch) {
         _writeCharmGenMode("standard");
         _renderCharmGenModeButtons();
-        setStatus(`${getImageModelConfig().label} uses Standard mode. Select a Gemini model to enable Gemini Batch.`);
+        setStatus(`${getImageModelConfig().label} uses Standard mode. Select Sunburst to enable OpenAI Batch.`);
         return;
       }
       _writeCharmGenMode(m);
@@ -15599,7 +15568,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       try {
         // Server-side orchestrations (prep/submission progress) — rendered
         // above the per-batch rows so an in-flight hand-off is visible even
-        // before its first Gemini batch exists. Purely informational: the
+        // before its first OpenAI batch exists. Purely informational: the
         // server runs with or without this panel open.
         let orchRows = "";
         try {
@@ -15700,15 +15669,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const btn = document.getElementById("charmBatchRecoverBtn");
       const modelId = getSelectedImageModel();
       if (!getImageModelConfig(modelId).supportsBatch) {
-        alert(`${getImageModelConfig(modelId).label} uses Standard mode. Select a Gemini model before recovering via batch.`);
+        alert(`${getImageModelConfig(modelId).label} uses Standard mode. Select Sunburst before recovering via batch.`);
         return;
       }
       const ok = confirm(
         `Recover unfinished charm sets?\n\n` +
         `The server will scan every set folder, find those with a saved concept/manifest but NO base image ` +
-        `(from a submission that died mid-run), and resubmit them as half-price Gemini batch jobs.\n\n` +
+        `(from a submission that died mid-run), and resubmit them as half-price OpenAI batch jobs.\n\n` +
         `· Uses the ALREADY-PLANNED concepts — no re-planning cost\n` +
-        `· Skips finished sets and sets already waiting at Gemini — no double spend\n` +
+        `· Skips finished sets and sets already waiting at OpenAI — no double spend\n` +
         `· Runs entirely on the server — you can close this tab right after it's accepted\n\n` +
         `Progress appears in this panel as a "recovery run" row.`
       );
@@ -15776,7 +15745,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const modelConfig = getImageModelConfig(modelId);
       if (!modelConfig.supportsBatch) {
         _setCharmGenMode("standard");
-        alert(`${modelConfig.label} uses Standard mode. Select a Gemini model before submitting a Gemini batch.`);
+        alert(`${modelConfig.label} uses Standard mode. Select Sunburst before submitting a OpenAI batch.`);
         return;
       }
 
@@ -19547,7 +19516,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const execBtn = e.currentTarget;
       const ordered = [..._charmRefSelection.values()].sort((a, b) => a.order - b.order);
 
-      // Gemini Batch mode (50% off) with a mosaic selection: queue the
+      // OpenAI Batch mode (50% off) with a mosaic selection: queue the
       // selected charms' bases asynchronously in click order.
       if (typeof _isCharmBatchModeActive === 'function' && _isCharmBatchModeActive()) {
         const derivCountB = Math.max(1, Math.min(8, parseInt(document.getElementById('derivativesPerCharmInput')?.value, 10) || 1));
@@ -20366,3 +20335,4 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
 </body>
 </html>
+

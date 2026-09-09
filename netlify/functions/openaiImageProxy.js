@@ -11,11 +11,11 @@
 // Browser payload example:
 // {
 //   kind: "edits",
-//   model: "gpt-image-2",
+//   model: "gpt-image-2.5-sunburst",
 //   prompt: "...",
 //   n: 1,
 //   size: "2048x2048",
-//   quality: "medium",
+//   quality: "high",
 //   input_image: "data:image/jpeg;base64,...",
 //   mask_image:  "data:image/png;base64,..." // optional
 // }
@@ -56,20 +56,11 @@ function pickMode(body) {
 }
 
 function pickModel(body) {
-  const requested = String(body?.model || process.env.OPENAI_IMAGE_MODEL || "gpt-image-2").trim();
-  // GPT-5.5 can orchestrate the hosted image-generation tool, but it is not
-  // an Images API model. Normalize that human-facing choice to OpenAI's
-  // current purpose-built image renderer.
-  const normalized = requested === "gpt-5.5" ? "gpt-image-2" : requested;
-  if (normalized !== "gpt-image-2") {
-    throw new Error('Unsupported OpenAI image model. Expected "gpt-image-2".');
-  }
-  return normalized;
+  return "gpt-image-2.5-sunburst";
 }
 
 function pickQuality(value) {
-  const v = String(value || "medium").toLowerCase();
-  return ["low", "medium", "high", "auto"].includes(v) ? v : "medium";
+  return "high";
 }
 
 function pickOutputFormat(value) {
@@ -271,3 +262,4 @@ exports.handler = async (event) => {
     });
   }
 };
+

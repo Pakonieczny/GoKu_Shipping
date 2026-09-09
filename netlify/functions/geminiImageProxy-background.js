@@ -30,8 +30,8 @@ function getBucket() {
 // of these models, but it cannot turn this function into an arbitrary upstream
 // proxy. Old preview IDs are normalized so in-flight manifests and saved local
 // preferences continue to work after the stable model migration.
-const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
-const DEFAULT_RENDER_IMAGE_MODEL = "gemini-3-pro-image";
+const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-sunburst";
+const DEFAULT_RENDER_IMAGE_MODEL = "gpt-image-2.5-sunburst";
 /* ── THE READING JOBS GET A READING MODEL ─────────────────────────────────
    Every fallback chain in this file used to end at DEFAULT_IMAGE_MODEL — an
    image GENERATOR — including the four jobs that never draw anything: the
@@ -96,7 +96,7 @@ const IMAGE_MODEL_CONFIG = Object.freeze({
   "gpt-image-2.5-sunburst": Object.freeze({
     id: "gpt-image-2.5-sunburst",
     provider: "openai",
-    supportsBatch: false,
+    supportsBatch: true,
   }),
 });
 
@@ -903,7 +903,8 @@ async function callOpenAIImagesEdits({
   if (policyText) promptText = `${promptText}\n\n${policyText}`;
   form.append("prompt", promptText);
   form.append("size", String(size || "2048x2048"));
-  form.append("quality", normalizeOpenAIQuality(quality));
+  form.append("quality", "high");
+  form.append("input_fidelity", "high");
   form.append("output_format", normalizeOpenAIOutputFormat(output_format));
   form.append("n", "1");
 
@@ -945,7 +946,7 @@ async function callOpenAIImagesGenerations({
       model,
       prompt: String(prompt || ""),
       size: String(size || "2048x2048"),
-      quality: normalizeOpenAIQuality(quality),
+      quality: "high",
       output_format: normalizeOpenAIOutputFormat(output_format),
       n: 1,
     }),
@@ -2112,6 +2113,99 @@ function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBa
   };
 }
 
+// OpenAI Batch adapter. Existing Google records remain readable; new jobs use
+// Sunburst only. Normalize lifecycle fields to the established dashboard schema.
+function batchApiKey(batchName) {
+  const provider = String(batchName || "").startsWith("batch_") ? "OPENAI" : "GEMINI";
+  const key = process.env[`${provider}_API_KEY`];
+  if (!key) throw new Error(`Missing ${provider}_API_KEY env var`);
+  return key;
+}
+
+async function openAIBatchRequest(apiKey, path, options = {}) {
+  const resp = await studioFetchWithTimeout(`https://api.openai.com/v1${path}`, {
+    ...options,
+    headers: { Authorization: `Bearer ${apiKey}`, ...options.headers },
+  }, 120000, "OpenAI Batch");
+  return readUpstreamJson(resp, "OpenAI Batch");
+}
+
+function normalizeOpenAIBatch(raw) {
+  const states = { validating: "JOB_STATE_PENDING", in_progress: "JOB_STATE_RUNNING",
+    finalizing: "JOB_STATE_RUNNING", cancelling: "JOB_STATE_RUNNING",
+    completed: "JOB_STATE_SUCCEEDED", failed: "JOB_STATE_FAILED",
+    expired: "JOB_STATE_EXPIRED", cancelled: "JOB_STATE_CANCELLED" };
+  const state = states[raw.status] || "UNKNOWN";
+  const counts = raw.request_counts || {};
+  const batchStats = { requestCount: counts.total || 0,
+    successfulRequestCount: counts.completed || 0, failedRequestCount: counts.failed || 0,
+    pendingRequestCount: Math.max(0, (counts.total || 0) - (counts.completed || 0) - (counts.failed || 0)) };
+  return { state, metadata: { state, batchStats },
+    response: { responsesFile: [raw.output_file_id, raw.error_file_id].filter(Boolean).join(",") || null },
+    providerStatus: raw.status, errors: raw.errors || null };
+}
+
+function buildOpenAIBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize, opts) {
+  // Preserve the existing prompt's image roles and final geometry/background
+  // rules while translating the transport to OpenAI's JSON image-edit schema.
+  const legacy = buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize, opts);
+  const parts = legacy.request.contents[0].parts;
+  const images = parts.filter(p => p.inline_data?.data).map(p => ({
+    image_url: `data:${p.inline_data.mime_type};base64,${p.inline_data.data}`,
+  }));
+  const text = parts.filter(p => p.text).map(p => p.text).join("\n\n");
+  if (!images.length || !text.trim()) throw new Error("Batch edit requires a prompt and source image");
+  if (text.length > 32000) throw new Error("Batch edit prompt exceeds 32000 characters");
+  return { custom_id: key, method: "POST", url: "/v1/images/edits",
+    body: { model: "gpt-image-2.5-sunburst", prompt: text, images,
+      quality: "high", input_fidelity: "high", size: "2048x2048", output_format: "png", n: 1 } };
+}
+
+async function uploadOpenAIBatchFile(apiKey, buffer, displayName) {
+  const form = new FormData();
+  form.append("purpose", "batch");
+  form.append("file", new Blob([buffer], { type: "application/jsonl" }), "listing-images.jsonl");
+  const raw = await openAIBatchRequest(apiKey, "/files", { method: "POST", body: form });
+  if (!raw.id) throw new Error("OpenAI file upload returned no file ID");
+  return raw.id;
+}
+
+async function createOpenAIImageBatch(apiKey, fileName, displayName) {
+  const raw = await openAIBatchRequest(apiKey, "/batches", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input_file_id: fileName, endpoint: "/v1/images/edits",
+      completion_window: "24h", metadata: { application: "listing-generator-1", displayName } }),
+  });
+  if (!/^batch_[A-Za-z0-9_-]+$/.test(raw.id || "")) throw new Error("OpenAI batch returned no valid ID");
+  return { batchName: raw.id, raw };
+}
+
+async function* streamOpenAIBatchFile(apiKey, fileId) {
+  if (!/^file-[A-Za-z0-9_-]+$/.test(fileId)) throw new Error("Invalid OpenAI result file ID");
+  const resp = await fetch(`https://api.openai.com/v1/files/${fileId}/content`, {
+    headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(600000),
+  });
+  if (!resp.ok) throw new Error(`OpenAI batch download failed: HTTP ${resp.status}`);
+  if (!resp.body) throw new Error("OpenAI batch download has no body");
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      let newline;
+      while ((newline = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, newline).trim();
+        pending = pending.slice(newline + 1);
+        if (line) yield JSON.parse(line);
+      }
+      if (done) break;
+    }
+    if (pending.trim()) yield JSON.parse(pending);
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
 // Upload a JSONL file via the Files API using the resumable protocol
 // (the only protocol Google documents for the Batch flow). Returns the
 // `files/abc123` resource name.
@@ -2189,6 +2283,7 @@ async function createGeminiBatchJob(apiKey, model, fileName, displayName) {
 }
 
 async function getGeminiBatchJob(apiKey, batchName) {
+  if (batchName.startsWith("batch_")) return normalizeOpenAIBatch(await openAIBatchRequest(apiKey, `/batches/${batchName}`));
   // batchName is "batches/abc123" — keep it as-is in the URL.
   const resp = await fetch(`${GEMINI_BASE}/${batchName}`, {
     method: "GET",
@@ -2215,6 +2310,7 @@ async function getGeminiBatchJob(apiKey, batchName) {
 }
 
 async function cancelGeminiBatchJob(apiKey, batchName) {
+  if (batchName.startsWith("batch_")) return normalizeOpenAIBatch(await openAIBatchRequest(apiKey, `/batches/${batchName}/cancel`, { method: "POST" }));
   const resp = await fetch(`${GEMINI_BASE}/${batchName}:cancel`, {
     method: "POST",
     headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
@@ -2232,6 +2328,10 @@ async function cancelGeminiBatchJob(apiKey, batchName) {
 // yields each JSON-parsed line. Throws on non-OK HTTP. Empty/blank
 // lines and parse errors are silently skipped (mirrors the older code).
 async function* streamGeminiResultLines(apiKey, fileName) {
+  if (fileName.startsWith("file-")) {
+    for (const id of fileName.split(",")) yield* streamOpenAIBatchFile(apiKey, id);
+    return;
+  }
   const url = `https://generativelanguage.googleapis.com/download/v1beta/${fileName}:download?alt=media`;
   const resp = await fetch(url, {
     method: "GET",
@@ -13007,6 +13107,11 @@ async function _handlerImpl(event) {
     return await handleStudioKind({ kind: body.kind, body, event });
   }
 
+  // All new Listing Generator image work uses Sunburst, including saved
+  // Gemini selections and resumed orchestration tasks. Studio dispatch is above.
+  body.model = "gpt-image-2.5-sunburst";
+  body.quality = "high";
+
   const {
     jobId,
     runId,
@@ -14140,11 +14245,11 @@ async function _handlerImpl(event) {
       };
       memLog("entry");
 
-      if (modelConfig.provider !== "gemini" || !modelConfig.supportsBatch) {
+      if (modelConfig.id !== "gpt-image-2.5-sunburst" || !modelConfig.supportsBatch) {
         return json(400, {
           error: {
             message:
-              "Batch mode is available for Gemini 3.1 Flash Image and Gemini 3 Pro Image. Use Standard mode for OpenAI GPT Image 2.",
+              "Batch image generation requires GPT Image 2.5 Sunburst.",
           },
         });
       }
@@ -14287,7 +14392,7 @@ async function _handlerImpl(event) {
         // Build the line, stringify, encode to Buffer, then explicitly
         // null out big locals so V8 has a strong hint to free them
         // before the next worker iteration starts.
-        let line = buildBatchJsonlLine(
+        let line = buildOpenAIBatchJsonlLine(
           key, j.promptT,
           ref.mime, ref.buffer.toString("base64"),
           charm ? charm.mime : null, charm ? charm.buffer.toString("base64") : null,
@@ -14394,16 +14499,16 @@ async function _handlerImpl(event) {
       memLog(`after Buffer.concat (${(jsonlBytes/1e6).toFixed(1)}MB JSONL)`);
 
       // Hard cap: Files API limit is 2GB. We reject early to avoid uploading.
-      if (jsonlBytes > 1.9 * 1024 * 1024 * 1024) {
+      if (jsonlBytes > 190 * 1024 * 1024) {
         return json(400, {
           error: { message: `JSONL too large (${(jsonlBytes / 1e9).toFixed(2)} GB). Reduce sets per batch.` }
         });
       }
 
       // Step C: Upload JSONL to Gemini Files API, then create the batch.
-      const fileName = await uploadJsonlToGeminiFiles(apiKey, jsonlBuffer, displayName);
+      const fileName = await uploadOpenAIBatchFile(apiKey, jsonlBuffer, displayName);
       memLog(`after Files API upload`);
-      const { batchName, raw } = await createGeminiBatchJob(apiKey, batchModel, fileName, displayName);
+      const { batchName, raw } = await createOpenAIImageBatch(apiKey, fileName, displayName);
       memLog(`after batch create`);
 
       // Step D: Persist routing data in Firestore. The doc id is a
@@ -14420,6 +14525,8 @@ async function _handlerImpl(event) {
         state: "JOB_STATE_PENDING",
         collected: false,
         model: batchModel,
+        provider: "openai",
+        quality: "high",
         imageSize,
         inputFileName: fileName,
         inputJsonlBytes: jsonlBytes,
@@ -14458,12 +14565,12 @@ async function _handlerImpl(event) {
 
     if (kind === "batch_status") {
       let apiKey;
-      try { apiKey = apiKeyForImageModel(modelConfig); }
+      try { apiKey = batchApiKey(body?.batchName); }
       catch (err) { return json(400, { error: safeErr(err) }); }
 
       const batchName = String(body?.batchName || "").trim();
-      if (!batchName.startsWith("batches/")) {
-        return json(400, { error: { message: "batchName must start with batches/" } });
+      if (!/^(batches\/[A-Za-z0-9_-]+|batch_[A-Za-z0-9_-]+)$/.test(batchName)) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
       }
 
       const data = await getGeminiBatchJob(apiKey, batchName);
@@ -14498,12 +14605,11 @@ async function _handlerImpl(event) {
     }
 
     if (kind === "batch_collect") {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      const apiKey = batchApiKey(body?.batchName);
 
       const batchName = String(body?.batchName || "").trim();
-      if (!batchName.startsWith("batches/")) {
-        return json(400, { error: { message: "batchName must start with batches/" } });
+      if (!/^(batches\/[A-Za-z0-9_-]+|batch_[A-Za-z0-9_-]+)$/.test(batchName)) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
       }
 
       const db = getDb();
@@ -14585,6 +14691,7 @@ async function _handlerImpl(event) {
       // queue concurrently. We use a simple semaphore (slots[]) to
       // throttle in-flight uploads without buffering the whole list.
       const inFlight = new Set();
+      const seenResultKeys = new Set();
       const recordResult = (route, ok, storagePath, error) => {
         const arr = perSetSlotResults.get(route.setIndex) || [];
         if (ok) {
@@ -14623,20 +14730,22 @@ async function _handlerImpl(event) {
       // memory bounded by UPLOAD_CONCURRENCY × per-image size.
       try {
         for await (const parsed of streamGeminiResultLines(apiKey, respFileName)) {
-          const key = parsed?.key;
+          const key = parsed?.custom_id || parsed?.key;
           const route = routeByKey.get(key);
           if (!route) {
             failures.push({ key: key || "(none)", error: "no route for key" });
             continue;
           }
-          if (parsed?.error) {
-            recordResult(route, false, null, parsed.error?.message || "batch error");
+          if (seenResultKeys.has(key)) continue;
+          seenResultKeys.add(key);
+          if (parsed?.error || parsed?.response?.body?.error) {
+            recordResult(route, false, null, parsed.error?.message || parsed.response.body.error.message || "batch error");
             continue;
           }
           const partsOut = parsed?.response?.candidates?.[0]?.content?.parts || [];
           const imgPart = partsOut.find((p) => p?.inline_data?.data) ||
                           partsOut.find((p) => p?.inlineData?.data) || null;
-          const b64 = imgPart?.inline_data?.data || imgPart?.inlineData?.data;
+          const b64 = parsed?.response?.body?.data?.[0]?.b64_json || imgPart?.inline_data?.data || imgPart?.inlineData?.data;
           if (!b64) {
             recordResult(route, false, null, "no inline_data in response");
             continue;
@@ -14656,7 +14765,12 @@ async function _handlerImpl(event) {
         // If the stream itself fails, surface the partial state so the
         // user can see what was already uploaded before the break.
         await Promise.all(inFlight);
-        failures.push({ key: "(stream)", error: String(streamErr?.message || streamErr) });
+        throw new Error(`Batch collection interrupted; retry collection: ${streamErr?.message || streamErr}`);
+      }
+
+      // Missing upstream results must remain visible as failed slots.
+      for (const [key, route] of routeByKey) {
+        if (!seenResultKeys.has(key)) recordResult(route, false, null, "No result returned for this image");
       }
 
       // Step: write a manifest per set, mirroring what Standard mode writes.
@@ -14910,18 +15024,17 @@ async function _handlerImpl(event) {
     }
 
     if (kind === "batch_cancel") {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      const apiKey = batchApiKey(body?.batchName);
       const batchName = String(body?.batchName || "").trim();
-      if (!batchName.startsWith("batches/")) {
-        return json(400, { error: { message: "batchName must start with batches/" } });
+      if (!/^(batches\/[A-Za-z0-9_-]+|batch_[A-Za-z0-9_-]+)$/.test(batchName)) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
       }
-      await cancelGeminiBatchJob(apiKey, batchName);
+      const cancellation = await cancelGeminiBatchJob(apiKey, batchName);
       try {
         const db = getDb();
         await firestoreRetry(
           () => db.collection(BATCHES_COLL).doc(batchDocIdFromName(batchName)).set({
-            state: "JOB_STATE_CANCELLED",
+            state: cancellation?.state || "JOB_STATE_CANCELLED",
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }),
           "batch.cancelMirror"
@@ -15122,11 +15235,7 @@ async function _handlerImpl(event) {
               model,
               prompt: promptT,
               size: String(t?.size || body?.size || "2048x2048"),
-              quality: String(
-                t?.quality ||
-                body?.quality ||
-                (modelConfig.provider === "openai" ? "medium" : "high")
-              ),
+              quality: "high",
               output_format: "png",
               images: [
                 { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
@@ -15763,3 +15872,4 @@ async function _handlerImpl(event) {
     return json(202, { ok: false, jobId, error: safeErr(err) });
   }
 };
+
