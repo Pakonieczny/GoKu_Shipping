@@ -8023,25 +8023,16 @@ function scoMaskParts(px, w, h, ch) {
   const cmp = studioLargestComponent(
     scoFillHoles(scoDropBorderTouching(scoClose(solid, w, h, SCO_CMP_CLOSE), w, h), w, h), w, h);
 
-  // Thin exterior tracing fragments must not join an intentional slit to
-  // the white perimeter. Otherwise the sever test rejects the entire region,
-  // including cuts such as the eagle's beak. Keep substantial metal, bridge
-  // narrow edge-connected slits for discovery, and still test each cut below.
-  let solidPx = 0;
-  for (let i = 0; i < n; i++) solidPx += solid[i];
-  const scale = Math.sqrt(Math.max(1, solidPx));
-  const traceRadius = Math.max(1, Math.round(scale * 0.005));
-  const clean = scoDilate8(scoErode8(solid, w, h, traceRadius), w, h, traceRadius);
-  const cutEnvelope = scoFillHoles(scoClose(clean, w, h, Math.max(2, Math.round(scale * 0.009))), w, h);
   const holes = new Uint8Array(n), engraved = new Uint8Array(n);
   const alpha = new Float32Array(n);
   for (let i = 0; i < n; i++) {
-    if (cutEnvelope[i] && grey[i] >= 240) holes[i] = 1;
-    if (outer[i] && grey[i] < polish - 20) engraved[i] = 1;
+    if (!outer[i]) continue;
+    if (!metal[i]) holes[i] = 1;
+    if (grey[i] < polish - 20) engraved[i] = 1;
     const a = (grey[i] - polish) / span;
-    if (outer[i] || cutEnvelope[i]) alpha[i] = a < 0 ? 0 : a > 1 ? 1 : a;
+    alpha[i] = a < 0 ? 0 : a > 1 ? 1 : a;
   }
-  return { outer, outerCmp: cmp, cutEnvelope, holes, alpha, engraved, polish };
+  return { outer, outerCmp: cmp, holes, alpha, engraved, polish };
 }
 
 /* ── THE GROUND, READ FROM THE GROUND ─────────────────────────────────────
@@ -8396,129 +8387,10 @@ function scoEngravePlacement(rp, w, h, expected, scale) {
     if (!allowed[i]) spillPx++;
   }
   const spillFrac = corePx ? spillPx / corePx : 0;
-  const misplaced = corePx >= 600 && spillFrac > SCO_ENG_SPILL_MAX && spillPx > 24;
+  const misplaced = corePx >= 600 && spillFrac > SCO_ENG_SPILL_MAX &&
+    spillPx > Math.max(24, darkPx * 0.20);
   return { misplaced, spillFrac: Math.round(spillFrac * 1e4) / 1e4,
            spillPx, localEngravedPx: darkPx, tolerancePx: tolerance };
-}
-
-/* The map owns engraving geometry; the generated photograph supplies gold
-   colour and illumination. Reconstruct polish beneath invented recesses,
-   then shade only the map's strokes/fills. This runs once after selection,
-   never edits the approved map and never purchases another model response. */
-function scoBoxMean(field, w, h, radius) {
-  const pass = (src, horizontal) => {
-    const dst = new Float32Array(src.length);
-    const length = horizontal ? w : h, lines = horizontal ? h : w;
-    for (let line = 0; line < lines; line++) {
-      const at = p => horizontal ? line * w + p : p * w + line;
-      let sum = 0, end = -1, start = 0;
-      for (let p = 0; p < length; p++) {
-        const next = Math.min(length - 1, p + radius);
-        while (end < next) sum += src[at(++end)];
-        const first = Math.max(0, p - radius);
-        while (start < first) sum -= src[at(start++)];
-        dst[at(p)] = sum / (end - start + 1);
-      }
-    }
-    return dst;
-  };
-  return pass(pass(field, true), false);
-}
-
-function scoFinishEngraving(R, M, mp, rp, fit, mb, rb, scale) {
-  const w = R.w, h = R.h, n = w * h;
-  const report = { applied: false, why: "", engravedPx: 0, restoredPx: 0 };
-  // An unreliable coordinate transform is not permission to redraw a face.
-  if (fit.iou < 0.94) { report.why = "alignment"; return report; }
-  const mapped = new Float32Array(n);
-  // Filled engraving and the rims of existing openings already have valid
-  // photographic relief. Limit reconstruction to fine strokes, where the
-  // generator can mistake paired lines for the boundary of a broad recess.
-  const labels = studioLabel(mp.engraved, M.w, M.h);
-  const distance = studioEdt2d(mp.engraved, M.w, M.h);
-  const radii = new Float32Array(labels.count + 1);
-  const x0 = new Int32Array(labels.count + 1).fill(M.w), y0 = new Int32Array(labels.count + 1).fill(M.h);
-  const x1 = new Int32Array(labels.count + 1), y1 = new Int32Array(labels.count + 1);
-  for (let i = 0; i < distance.length; i++) if (labels.labels[i]) {
-    const L = labels.labels[i]; radii[L] = Math.max(radii[L], distance[i]);
-    const x = i % M.w, y = Math.floor(i / M.w);
-    x0[L] = Math.min(x0[L], x); x1[L] = Math.max(x1[L], x);
-    y0[L] = Math.min(y0[L], y); y1[L] = Math.max(y1[L], y);
-  }
-  const source = new Float32Array(M.w * M.h), filled = new Float32Array(M.w * M.h);
-  const mScale = scale * mb.w / rb.w;
-  for (let i = 0; i < source.length; i++) if (mp.engraved[i]) {
-    const L = labels.labels[i], length = Math.max(x1[L] - x0[L] + 1, y1[L] - y0[L] + 1);
-    if (radii[L] <= Math.max(2, Math.min(mScale * 0.014, length * 0.04))) source[i] = 1;
-    else filled[i] = 1;
-  }
-  scoPlace(source, M.w, M.h, mb, mb, rb, fit.sx, fit.sy, fit.dx, fit.dy, mapped, w, h, "set");
-  const preserve = new Float32Array(n);
-  scoPlace(filled, M.w, M.h, mb, mb, rb, fit.sx, fit.sy, fit.dx, fit.dy, preserve, w, h, "set");
-  const holeLabels = studioLabel(mp.holes, M.w, M.h), holeDepth = studioEdt2d(mp.holes, M.w, M.h);
-  const holeRadii = new Float32Array(holeLabels.count + 1);
-  for (let i = 0; i < holeDepth.length; i++) if (holeLabels.labels[i]) {
-    const L = holeLabels.labels[i]; holeRadii[L] = Math.max(holeRadii[L], holeDepth[i]);
-  }
-  const holes = new Float32Array(M.w * M.h);
-  for (let i = 0; i < holes.length; i++) if (holeLabels.labels[i] && holeRadii[holeLabels.labels[i]] > Math.max(2, mScale * 0.01)) holes[i] = 1;
-  scoPlace(holes, M.w, M.h, mb, mb, rb, fit.sx, fit.sy, fit.dx, fit.dy, preserve, w, h, "max");
-  const protectedInk = scoDilate8(Uint8Array.from(preserve, v => v > 0.1 ? 1 : 0), w, h, Math.max(4, Math.round(scale * 0.022)));
-  const edge = studioEdt2d(rp.metal, w, h);
-  const radius = Math.max(4, Math.round(scale * 0.09));
-  const polish = scoGreyExtrema(scoGreyExtrema(rp.lum, w, h, radius, true), w, h, radius, false);
-  const suspect = new Uint8Array(n), strokes = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    strokes[i] = mapped[i] > 0.05 ? 1 : 0;
-    if (edge[i] > Math.max(5, scale * 0.02) && polish[i] - rp.lum[i] > Math.max(8, polish[i] * 0.055)) suspect[i] = 1;
-  }
-  const pad = Math.max(2, Math.round(scale * 0.008));
-  const affected = scoDilate8(suspect.map((v, i) => v || strokes[i] ? 1 : 0), w, h, pad);
-  const strokeBand = scoDilate8(strokes, w, h, Math.max(4, Math.round(scale * 0.06)));
-  const weights = new Float32Array(n), sum = [0, 0, 0];
-  let count = 0;
-  for (let i = 0; i < n; i++) if (edge[i] > Math.max(6, scale * 0.03) && !affected[i]) {
-    weights[i] = 1; count++;
-    for (let c = 0; c < 3; c++) sum[c] += R.px[i * R.ch + c];
-  }
-  if (count < Math.max(64, scale * scale * 0.02)) { report.why = "no_polish_samples"; return report; }
-  const smooth = field => {
-    const r = Math.max(2, Math.round(radius * 0.55));
-    for (let k = 0; k < 3; k++) field = scoBoxMean(field, w, h, r);
-    return field;
-  };
-  const weight = smooth(weights);
-  const base = [];
-  for (let c = 0; c < 3; c++) {
-    const channel = new Float32Array(n);
-    for (let i = 0; i < n; i++) channel[i] = weights[i] * R.px[i * R.ch + c];
-    const mean = smooth(channel);
-    for (let i = 0; i < n; i++) mean[i] = (mean[i] + 0.003 * sum[c] / count) / (weight[i] + 0.003);
-    base.push(mean);
-  }
-  const blend = studioGaussField(Float32Array.from(affected), w, h, Math.max(0.6, scale * 0.002));
-  const relief = studioGaussField(mapped, w, h, Math.max(0.5, scale * 0.0012));
-  const rim = Math.max(3, scale * 0.012);
-  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
-    const i = y * w + x;
-    if (!rp.metal[i] || blend[i] < 0.001 || !strokeBand[i] || protectedInk[i]) continue;
-    const a = blend[i] * Math.min(1, Math.max(0, (edge[i] - rim) / rim));
-    if (!a) continue;
-    const e = mapped[i];
-    // A shallow engraved recess has a directional edge, not a dark outline
-    // enclosing a newly filled pocket. Relief remains inside the declared ink.
-    const slope = (relief[i + 1] - relief[i - 1] + relief[i + w] - relief[i - w]) * 0.5;
-    const k = 1 - e * 0.19 + Math.max(-0.10, Math.min(0.10, slope * 0.28)) * e;
-    for (let c = 0; c < 3; c++) {
-      const p = i * R.ch + c;
-      R.px[p] = Math.max(0, Math.min(255, Math.round(R.px[p] * (1 - a) + base[c][i] * k * a)));
-    }
-    if (e > 0.5) report.engravedPx++;
-    else if (a > 0.5) report.restoredPx++;
-  }
-  report.applied = report.engravedPx + report.restoredPx > 0;
-  report.why = report.applied ? "map_applied" : "nothing_to_restore";
-  return report;
 }
 
 function scoAlloy(px, w, h, ch, outer, gnd) {
@@ -8876,7 +8748,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       rInL[L] = rIn;
       if (area[L] < 0.35 * bw * bh && rIn < 0.12 * Math.max(bw, bh)) {
         const cut = new Uint8Array(mn);
-        for (let i = 0; i < mn; i++) cut[i] = (mp.cutEnvelope[i] && lab.labels[i] !== L) ? 1 : 0;
+        for (let i = 0; i < mn; i++) cut[i] = (mp.outer[i] && lab.labels[i] !== L) ? 1 : 0;
         const sub = studioLabel(cut, M.w, M.h);
         if (sub.count > 1) {
           const sz = new Float64Array(sub.count + 1);
@@ -8889,7 +8761,15 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
       isKept[L] = 1;
     }
     report.declared = keep.length;
-    /* Solid charms still need registration and engraving correction. */
+    /* A CHARM WITH NO OPENINGS IS STILL A CHARM THAT CAN BE REDRAWN WRONG.
+       The composite has nothing to do here and stops; the shape gate has the
+       same question to answer as ever and must not be skipped just because
+       this design happens to be solid. */
+    if (!keep.length && !o.fitOnly) {
+      report.why = "nothing_declared";
+      report.ms = Date.now() - t0;
+      return { buf: renderBuf, report };
+    }
     let declaredPx = 0, moPx = 0;
     for (let i = 0; i < mn; i++) {
       if (isKept[lab.labels[i]]) declaredPx++;
@@ -9017,20 +8897,6 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
     const aspectMax = Math.max(1.0, Number(o.aspectMax) || SCO_ASPECT_MAX);
     if (report.aspect != null && report.aspect > aspectMax) {
       report.why = "aspect_drift";
-      report.ms = Date.now() - t0;
-      return { buf: renderBuf, report };
-    }
-
-    if (Date.now() > deadline) throw new Error("budget");
-    report.surface = report.engrave.misplaced
-      ? scoFinishEngraving(R, M, mp, rp, fit, mb, rb, scale)
-      : { applied: false, why: "no_engraving_spill", engravedPx: 0, restoredPx: 0 };
-    if (report.surface.applied) {
-      renderBuf = await sharp(R.px, { raw: { width: R.w, height: R.h, channels: R.ch } }).png().toBuffer();
-      report.ran = true;
-    }
-    if (!keep.length) {
-      report.why = "nothing_declared";
       report.ms = Date.now() - t0;
       return { buf: renderBuf, report };
     }
@@ -10808,10 +10674,6 @@ async function handleStudioRender({ body, event, origin }) {
             renderCompositeMaxShift: comp.report.maxShift,
             renderCompositeStray: comp.report.furniture ? comp.report.furniture.biggest : null,
             renderCompositeLocalFit: !!comp.report.localFit,
-            renderSurfaceApplied: !!comp.report.surface?.applied,
-            renderSurfaceWhy: comp.report.surface?.why || "",
-            renderSurfaceEngravedPx: comp.report.surface?.engravedPx || 0,
-            renderSurfaceRestoredPx: comp.report.surface?.restoredPx || 0,
             renderRunId,
           }, { merge: true });
         } catch (e) { /* the numbers are a record, not the product */ }
