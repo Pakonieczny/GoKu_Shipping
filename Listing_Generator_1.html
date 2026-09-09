@@ -3847,7 +3847,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
     const IMAGE_MODEL_CATALOG = Object.freeze({
       "gpt-image-2.5-sunburst": Object.freeze({
         id: "gpt-image-2.5-sunburst", provider: "openai",
-        endpoint: "openaiImageProxy-background", quality: "high",
+        endpoint: "geminiImageProxy", quality: "high",
         supportsBatch: true, label: "GPT Image 2.5 Sunburst",
         detail: "High quality · 2K · Standard and OpenAI Batch",
       }),
@@ -3884,12 +3884,16 @@ html.gs-locked body > *:not(#gate){display:none!important}
       return IMAGE_MODEL_CATALOG[normalizeImageModelId(modelId)];
     }
 
+    const pendingImageJobs = new Map();
+
     async function postImageGeneration(body, signal, modelId = getSelectedImageModel()) {
       const config = getImageModelConfig(modelId);
-      return postJson(
+      const jobId = body?.jobId || `lg1_${Date.now()}_${crypto.randomUUID()}`;
+      const result = await postJson(
         config.endpoint,
         {
           ...body,
+          jobId,
           model: config.id,
           quality: "high",
           size: body?.size || "2048x2048",
@@ -3897,6 +3901,11 @@ html.gs-locked body > *:not(#gate){display:none!important}
         },
         signal
       );
+      if (result?.ok === false) throw new Error(result?.error?.message || "Image request rejected");
+      if (body?.output_base_path && Number.isInteger(body?.slotIndex)) {
+        pendingImageJobs.set(`${body.output_base_path}/${body.slotIndex}`, { jobId, startedAt: Date.now() });
+      }
+      return result;
     }
 
     function renderImageModelSelection() {
@@ -4722,6 +4731,33 @@ html.gs-locked body > *:not(#gate){display:none!important}
         if (signal && signal.aborted) throw new Error("AbortError");
 
         await ensureStorageSignedIn();
+
+        // Track the actual worker, not just the eventual output file. A host
+        // 202 only confirms dispatch; it does not mean image generation started.
+        const pendingKey = `${outputBasePath}/${slotIndex}`;
+        const pending = pendingImageJobs.get(pendingKey);
+        if (pending) {
+          const state = await postJson("geminiImageProxy", { kind: "job_status", jobId: pending.jobId }, signal);
+          const elapsed = Math.floor((Date.now() - pending.startedAt) / 1000);
+          const folderId = outputBasePath.split("/").pop();
+          const preview = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
+          if (state.status === "error") {
+            pendingImageJobs.delete(pendingKey);
+            const message = state.error?.message || "Image generation failed";
+            if (preview) { preview.textContent = `Failed: ${message}`; preview.classList.remove("working-box"); }
+            throw new Error(message);
+          }
+          if (state.status !== "done") {
+            const label = state.status === "running" ? `Generating with Sunburst · ${elapsed}s` : `Waiting for worker · ${elapsed}s`;
+            const caption = preview?.querySelector(".spinner-container > div:last-child");
+            if (caption) caption.textContent = label;
+            setStatus(label);
+            if (Date.now() - t0 > timeoutMs) throw new Error(`Image job ${pending.jobId} has not finished. Check its status before retrying.`);
+            await sleep(intervalMs, signal);
+            continue;
+          }
+          pendingImageJobs.delete(pendingKey);
+        }
 
         try {
           const folderRef = ref(storage, outputBasePath);
@@ -9495,7 +9531,7 @@ window.regenCharmQuad = async function(folderId) {
                     const p = document.getElementById(`prevBox_${folderId}_${i}`);
                     if(p) {
                         p.classList.remove("working-box");
-                        if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                        if (p.querySelector(".spinner-container")) {
                             p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
                         }
                     }
@@ -9650,7 +9686,7 @@ window.regenCharmQuad = async function(folderId) {
                 const p = document.getElementById(`prevBox_${folderId}_${i}`);
                 if(p) {
                     p.classList.remove("working-box");
-                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                    if (p.querySelector(".spinner-container")) {
                         p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
                     }
                 }
@@ -9916,7 +9952,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
                 const p = document.getElementById(`prevBox_${folderId}_${i}`);
                 if(p) {
                     p.classList.remove("working-box");
-                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                    if (p.querySelector(".spinner-container")) {
                         p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
                     }
                 }

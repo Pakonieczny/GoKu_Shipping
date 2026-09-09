@@ -13059,7 +13059,7 @@ async function handleStudioKind({ kind, body, event }) {
   }
 }
 
-exports.handler = async (event) => {
+async function imageHandlerWithSafetyNet(event) {
   // Top-level safety net. Any error inside the handler that isn't
   // caught by the inner try/catch blocks would otherwise bubble up to
   // Netlify and surface as an opaque "Internal Error. ID: xxx" 500
@@ -13087,6 +13087,30 @@ exports.handler = async (event) => {
       }),
     };
   }
+};
+
+// Netlify background replies have no response body. Persist the result for
+// every image route, including legacy edits that return before job-based code.
+exports.handler = async (event) => {
+  const body = parseJsonBody(event);
+  const tracked = event?.httpMethod === "POST" &&
+    ["edits", "generations", "charm_postscale"].includes(body?.kind || "edits");
+  if (!tracked) return imageHandlerWithSafetyNet(event);
+  const id = String(body.jobId || `lg1_${Date.now()}_${require("crypto").randomUUID()}`);
+  if (!/^[A-Za-z0-9_-]{1,160}$/.test(id)) return json(400, { ok: false, error: { message: "Invalid jobId" } });
+  const job = getDb().collection(JOBS_COLL).doc(id);
+  await firestoreRetry(() => job.set({status: "running", stage: "generating", model: "gpt-image-2.5-sunburst",
+    outputBasePath: body.output_base_path || null, slotIndex: body.slotIndex ?? null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp()}, {merge:true}), "image.start");
+  const result = await imageHandlerWithSafetyNet({...event, body: JSON.stringify({...body,jobId:id}),isBase64Encoded:false});
+  let payload;
+  try { payload = JSON.parse(result.body || "{}"); } catch (_) { payload = {}; }
+  const failed = result.statusCode >= 400 || payload.ok === false;
+  await firestoreRetry(() => job.set({status: failed ? "error" : "done", stage: failed ? "error" : "done",
+    error: failed ? {message: String(payload.error?.message || payload.error || `HTTP ${result.statusCode}`)} : null,
+    storagePath: payload.storagePath || null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()}, {merge:true}), "image.finish");
+  return result;
 };
 
 async function _handlerImpl(event) {
@@ -13891,6 +13915,20 @@ async function _handlerImpl(event) {
       console.error("[batch_sweep] failed", safeErr(err));
       return json(502, { ok: false, error: safeErr(err) });
     }
+  }
+
+  if (kind === "job_status") {
+    if (!/^[A-Za-z0-9_-]{1,160}$/.test(String(jobId || ""))) {
+      return json(400, { ok: false, error: { message: "Invalid jobId" } });
+    }
+    const snapshot = await getDb().collection(JOBS_COLL).doc(jobId).get();
+    if (!snapshot.exists) return json(200, { ok: true, jobId, status: "pending" });
+    const data = snapshot.data();
+    return json(200, {
+      ok: true, jobId, status: data.status || "pending", stage: data.stage || null,
+      model: data.model || null,
+      error: data.error ? { message: String(data.error.message || data.error) } : null,
+    });
   }
 
   // ---------- NEW: non-job operations (no jobId required) ----------
