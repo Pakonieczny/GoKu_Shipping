@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-fWvcWq5jg6iiwBImyq9jHyPe+iz9ZGDZl72KCmrZvbQ='; style-src 'self' 'sha256-ytx67vWMARKz+81wOTxlzP7/P3Sd1FhzPNlOrfvlUHA='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-fWvcWq5jg6iiwBImyq9jHyPe+iz9ZGDZl72KCmrZvbQ='; style-src 'self' 'sha256-gQubBm50Ufs+FXw/idMcbnszSDt+wyJf7QuND45pjs4='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -633,15 +633,14 @@ details.fold>#dipWatchBody{margin-top:12px}
 details.fold>.foldbody{margin-top:12px}
 details.fold>summary{list-style:none}details.fold>summary::marker{content:"";display:none}
 #liveActivity>.card__h>h3,#liveActivity .card__h>h3:first-child{display:none}
-/* holding cards: symbol | content, with the actions on a top-right line so the facts and chart take the full width */
-.row.row--holding{grid-template-columns:minmax(78px,110px) minmax(0,1fr);grid-template-rows:auto 1fr;align-items:start}
-.row.row--holding .row__sym{grid-column:1;grid-row:1/3}
+/* holding cards: one header line (symbol, shares, lane tag | actions), then the facts and chart across the full card width */
+.row.row--holding{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;align-items:center;gap:10px 14px}
+.row.row--holding .row__sym{grid-column:1;grid-row:1;flex-direction:row;align-items:center;flex-wrap:wrap;gap:6px 10px}
+.row.row--holding .row__sym .n{font-size:13px;color:var(--ink-70)}
 .row.row--holding .row__side{grid-column:2;grid-row:1;display:flex;flex-direction:row;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:6px 10px;text-align:right;min-width:0}
-.row.row--holding .row__side .d{width:100%;text-align:right}
-.row.row--holding .row__mid{grid-column:2;grid-row:2;min-width:0;width:100%}
+.row.row--holding .row__side .d{width:auto;font-size:10.5px}
+.row.row--holding .row__mid{grid-column:1/-1;grid-row:2;min-width:0;width:100%}
 @media(max-width:700px){.row.row--holding{grid-template-columns:1fr}.row.row--holding .row__sym{grid-column:1;grid-row:1}.row.row--holding .row__side{grid-column:1;grid-row:2;justify-content:flex-start}.row.row--holding .row__mid{grid-column:1;grid-row:3}}
-details.fold>summary .livechart__sum b{font-size:14px}
-#liveActivity>.card__h h3,#managerBrief .card__h>h3{margin-right:auto}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
