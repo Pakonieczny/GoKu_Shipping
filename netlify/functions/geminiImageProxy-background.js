@@ -5291,7 +5291,8 @@ function shapeBadness(s, minIoU) {
   return iouShort +
     over(s.outline && s.outline.mean, STUDIO_OUTLINE_MEAN_LIMIT) +
     over(s.furniture && s.furniture.biggest, STUDIO_FURN_LIMIT) +
-    over(s.alloy && s.alloy.offAlloy, STUDIO_ALLOY_LIMIT);
+    over(s.alloy && s.alloy.offAlloy, STUDIO_ALLOY_LIMIT) +
+    (s.engrave && s.engrave.misplaced ? Math.max(0.01, over(s.engrave.spillFrac, SCO_ENG_SPILL_MAX)) : 0);
 }
 /* the same limits the compositor applies, named here so the ranking and the
    gate can never drift apart.
@@ -5570,7 +5571,8 @@ async function studioRenderAttempts(opts) {
            a passing render never reaches this. */
         lastShape.badness = shapeBadness(lastShape, shapeMinIoU);
         if (!shapeBest || lastShape.badness < shapeBest.badness) {
-          shapeBest = { buf: outBuf, iou: lastShape.iou, badness: lastShape.badness,
+          shapeBest = { buf: outBuf, punch, shape: lastShape,
+                        iou: lastShape.iou, badness: lastShape.badness,
                         why: lastShape.why, attempt: attempts };
         }
       }
@@ -5607,11 +5609,15 @@ async function studioRenderAttempts(opts) {
            a trusted 90 that was sitting right there never got its turn.
            Now that an untrusted verdict can spend a retry, that race is
            reachable rather than theoretical. */
-        const better = !scoreBest ||
+        const geometryBetter = scoreBest && lastShape && scoreBest.shape &&
+          lastShape.badness < scoreBest.shape.badness;
+        const geometryWorse = scoreBest && lastShape && scoreBest.shape &&
+          lastShape.badness > scoreBest.shape.badness;
+        const better = !scoreBest || geometryBetter || (!geometryWorse && (
           (!scored.suspect && scoreBest.scored.suspect) ||
           (!!scored.suspect === !!scoreBest.scored.suspect &&
-           scored.total > scoreBest.scored.total);
-        if (better) scoreBest = { buf: outBuf, punch, scored };
+           scored.total > scoreBest.scored.total)));
+        if (better) scoreBest = { buf: outBuf, punch, scored, shape: lastShape };
         log(`[studio] adjudicator attempt ${attempts}: ${scored.total}/${scored.threshold}` +
             ` ${STUDIO_SCORE_KEYS.map((k) => k[0] + scored.cats[k]).join(" ")}` +
             (scored.floorFails.length ? ` FLOOR:${scored.floorFails.join(",")}` : "") +
@@ -5638,6 +5644,7 @@ async function studioRenderAttempts(opts) {
     }
     /* the budget must account for the judge too, or three scored attempts
        overrun a limit that was measured for three bare renders */
+    if (shapeBest && shapeBest.buf === outBuf) shapeBest.scored = scored;
     lastMs = now() - t0;
 
     /* EVERY IMAGE MADE GETS A ROW, whatever happened to it after. `judged`
@@ -5724,7 +5731,7 @@ async function studioRenderAttempts(opts) {
     nextNote = cutWants ? studioRetryNote(punch.report, attempts, opts.builtInHoop)
              : shapeWants ? (lastShape.why === "frame_furniture" ? studioFrameRetryNote(attempts)
                             : lastShape.why === "two_tone_metal" ? studioAlloyRetryNote(attempts)
-                            : lastShape.why === "engraving_filled" ? studioEngraveRetryNote(attempts)
+                            : lastShape.why === "engraving_filled" ? ""
                             : lastShape.why === "engraving_too_dark" ? studioEngraveToneRetryNote(lastShape, attempts)
                             : lastShape.why === "aspect_drift" ? studioAspectRetryNote(lastShape, attempts)
                             : lastShape.why === "outline_mismatch"
@@ -5740,19 +5747,17 @@ async function studioRenderAttempts(opts) {
                   : `score ${scored.total}`));
   }
 
-  /* ── IF EVERY ATTEMPT DRIFTED, THE CLOSEST ONE SHIPS ──────────────────
-     Only when the adjudicator did not pick a winner of its own, so the two
-     selections can never contradict each other. When it did, its choice
-     stands: a scored verdict looks at the whole picture and this number does
-     not. */
-  if (shaping && !scoreBest && shapeBest && lastShape && !lastShape.ok &&
+  /* Keep the best measured geometry and its matching report. A high model
+     score must not restore an attempt with demonstrably worse engraving. */
+  if (shaping && shapeBest && lastShape && !lastShape.ok &&
       shapeBest.badness < (lastShape.badness == null ? Infinity : lastShape.badness)) {
     log(`[studio] every attempt failed — shipping attempt ${shapeBest.attempt} ` +
         `(${shapeBest.why}, badness ${shapeBest.badness.toFixed(2)}) rather than the ` +
         `last one (badness ${(lastShape.badness || 0).toFixed(2)})`);
     outBuf = shapeBest.buf;
-    lastShape = { iou: shapeBest.iou, ok: false, why: shapeBest.why,
-                  badness: shapeBest.badness, ms: 0, swapped: true };
+    punch = shapeBest.punch;
+    lastScored = shapeBest.scored;
+    lastShape = Object.assign({}, shapeBest.shape, { swapped: true });
   }
 
   /* ── THE BEST ONE SHIPS, NOT THE LAST ONE ───────────────────────────────
@@ -5779,12 +5784,14 @@ async function studioRenderAttempts(opts) {
      numbers were real and belonged to the wrong image, which is the worst
      kind of wrong a readout can be. */
   let shipped = { buf: outBuf, punch, scored: lastScored };
-  if (adjMode === "enforce" && scoreBest && !scoreBest.scored.suspect && scoreBest.buf !== outBuf) {
+  if (adjMode === "enforce" && scoreBest && !scoreBest.scored.suspect && scoreBest.buf !== outBuf &&
+      (!lastShape || !scoreBest.shape || scoreBest.shape.badness <= lastShape.badness)) {
     log(`[studio] adjudicator: shipping attempt ${scoreBest.scored.attempt} ` +
         `(${scoreBest.scored.total}) over the last one`);
     shipped = scoreBest;
     outBuf = scoreBest.buf;
     punch = scoreBest.punch;
+    lastShape = scoreBest.shape;
   }
   return { outBuf, punch, attempts, failedVerdicts, scoreLog, attemptLog,
            scoreBest, shipped, shape: lastShape, shapeBest };
@@ -6640,236 +6647,10 @@ async function studioDrawingPlan(sharp, drawingBuf) {
            roiSignalPx: roi.signalPx, roiGuard };
 }
 
-/* ── DETERMINISTIC MATERIAL SPECIFICATION ────────────────────────────────
-   The production drawing is useful to a person because three reserved colours
-   explain three manufacturing operations. It is a poor final input to an
-   image model because the model still has to DECIDE what each colour means.
-
-   This pass removes that decision. Before the renderer is called, the drawing
-   is converted into a flat proof of the finished topology:
-     · actual sheet metal is already shown in the requested metal family;
-     · black and red work is already shown as worked metal of that same family;
-     · blue filled areas are already absent;
-     · white holes enclosed by a blue boundary (most importantly the hoop hole)
-       are already absent;
-     · blue cut/perimeter lines themselves are NOT reproduced as decoration.
-
-   The customer never sees this image. It exists only between the deterministic
-   drawing and the probabilistic material renderer. The renderer no longer
-   interprets BLUE/RED/BLACK at all — it photorealises geometry that is already
-   resolved. No second model call, no extra customer instruction, no new cost.
-   ====================================================================== */
-/* ── A LETTER'S COUNTER IS NOT A HOLE ──────────────────────────────────────
-   An enclosed white island is an opening only if it is at least this many
-   times thicker than the blue stroke that encloses it. Below the line the
-   blue is a PEN and the white is the pen's own counter — the eye of a
-   cursive I, the inside of an o — which is metal.
-
-   Asked as a RATIO of two local measurements, and deliberately not as an
-   area: area is a property of the whole connected blue component, so a
-   letter joined to a long word scores differently from the same letter
-   standing alone, and a hoop ring touching the charm's perimeter reads as
-   one 7,654 px component rather than as a ring. Thickness is local and does
-   none of that. Measured, island inscribed radius ÷ the enclosing stroke's
-   half-width within six pixels:
-
-     the eye of a blue cursive I                  1.2
-     the counter of a blue o                      1.0
-     a hoop hole inside a blue ring               7.8
-     a blue outlined loop, drawn to be cut        7.8
-
-   Two and a half times of margin on each side. */
-const STUDIO_BLUE_COUNTER_MIN = 3.0;
-const STUDIO_BLUE_REACH = 6;      /* how far out the enclosing stroke is measured */
-const STUDIO_RAY_DX = [1, 1, 0, -1, -1, -1, 0, 1];
-const STUDIO_RAY_DY = [0, 1, 1, 1, 0, -1, -1, -1];
-
-function studioBlueBoundedWhiteHoles(plan) {
-  const { px, w, h, n, face, blue } = plan;
-  const white = new Uint8Array(n);
-  for (let i = 0; i < n; i++) if (face[i] && studioIsBg(px, i * 3)) white[i] = 1;
-  const { labels, count } = studioLabel(white, w, h);
-  if (!count) return new Uint8Array(n);
-
-  /* A structural hoop is two nested BLUE cut lines: the outer contour cuts
-     the hoop from the sheet and the inner contour cuts its opening. The white
-     band between them is METAL, not a hole. The previous blue-vote test saw
-     blue on both sides of that band and therefore classified the entire hoop
-     body as empty. Track the distinct blue contours touching each white
-     region so a band between two contours remains solid; the white centre,
-     which touches only the inner contour, is still cut out. */
-  const blueMask = blue || studioBlueMask(px, n, 3);
-  const blueComponents = studioLabel(blueMask, w, h).labels;
-  /* ── TWO THICKNESS FIELDS, ONE PASS EACH ───────────────────────────────
-     dBlue is how deep inside the blue a pixel sits — half the stroke's width
-     at its spine. dWhite is the same for the enclosed white, so the maximum
-     over an island IS its inscribed radius. Both feed the counter test in
-     the verdict below; see STUDIO_BLUE_COUNTER_MIN. */
-  const dBlue = studioEdt2d(blueMask, w, h);
-  const dWhite = studioEdt2d(white, w, h);
-  const islandRIn = new Float64Array(count + 1);
-  for (let i = 0; i < n; i++) {
-    const L = labels[i];
-    if (L && dWhite[i] > islandRIn[L]) islandRIn[L] = dWhite[i];
-  }
-  /* the thickest blue found within STUDIO_BLUE_REACH of each island — the
-     stroke's spine, which a two-pixel vote window never reaches */
-  const blueDepth = new Float64Array(count + 1);
-
-  const size = new Float64Array(count + 1);
-  for (let i = 0; i < n; i++) if (labels[i]) size[labels[i]]++;
-  let largest = 1;
-  for (let L = 2; L <= count; L++) if (size[L] > size[largest]) largest = L;
-
-  /* One pass over the sheet, not one pass PER component. A 2K drawing can
-     contain hundreds of tiny enclosed white islands; O(regions × pixels)
-     would turn a deterministic pre-pass into the slowest part of the render. */
-  const blueVotes = new Float64Array(count + 1);
-  const redVotes = new Float64Array(count + 1);
-  const blackVotes = new Float64Array(count + 1);
-  const firstBlueComponent = new Int32Array(count + 1);
-  const secondBlueComponent = new Int32Array(count + 1);
-  const noteBlueComponent = (L, B) => {
-    if (!B || firstBlueComponent[L] === B || secondBlueComponent[L] === B) return;
-    if (!firstBlueComponent[L]) firstBlueComponent[L] = B;
-    else if (!secondBlueComponent[L]) secondBlueComponent[L] = B;
-  };
-  const at = (x, y) => y * w + x;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = at(x, y), L = labels[i];
-      if (!L || L === largest) continue;
-      const boundary = (x === 0 || labels[i - 1] !== L) ||
-                       (x === w - 1 || labels[i + 1] !== L) ||
-                       (y === 0 || labels[i - w] !== L) ||
-                       (y === h - 1 || labels[i + w] !== L);
-      if (!boundary) continue;
-      /* Two pixels reaches through antialiasing without reaching across a
-         normal studio line into unrelated artwork. We count the actual ink
-         colours around the component; a true hole is overwhelmingly blue,
-         while a polished enclosed shape is overwhelmingly red or black. */
-      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-        if (Math.abs(dx) + Math.abs(dy) > 2) continue;
-        const xx = x + dx, yy = y + dy;
-        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-        const q = at(xx, yy);
-        if (labels[q] === L) continue;
-        const p = q * 3;
-        if (studioIsBluePixel(px, p)) {
-          blueVotes[L]++;
-          noteBlueComponent(L, blueComponents[q]);
-        }
-        else if (studioIsRedPixel(px, p)) redVotes[L]++;
-        else if (studioIsBlack(px, p)) blackVotes[L]++;
-      }
-      /* HOW THICK THE ENCLOSING STROKE IS, along eight rays rather than over
-         a disc: the vote window above stops two pixels out, which on a pen
-         four pixels wide never reaches the spine and reads every stroke as
-         the same thickness. Eight rays is 48 samples against 169 for a full
-         ±6 disc, and the spine is what is being looked for, not a census. */
-      for (let d = 1; d <= STUDIO_BLUE_REACH; d++) {
-        for (let k = 0; k < 8; k++) {
-          const xx = x + STUDIO_RAY_DX[k] * d, yy = y + STUDIO_RAY_DY[k] * d;
-          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-          const q = at(xx, yy);
-          if (blueMask[q] && dBlue[q] > blueDepth[L]) blueDepth[L] = dBlue[q];
-        }
-      }
-    }
-  }
-
-  const holeLabel = new Uint8Array(count + 1);
-  const minPx = Math.max(20, Math.round(n * 0.00001));
-  for (let L = 1; L <= count; L++) {
-    /* The largest white component is the polished face itself. It is bounded
-       by the charm's blue outer cut line and must NEVER be mistaken for one
-       enormous hole. */
-    if (L === largest || size[L] < minPx) continue;
-    const blue = blueVotes[L], red = redVotes[L], black = blackVotes[L];
-    const votes = blue + red + black;
-    const betweenTwoBlueContours = !!secondBlueComponent[L];
-    /* ── AND THE EYE OF A LETTER IS NOT A HOLE ───────────────────────────
-       The vote test asks WHAT surrounds a white island and a letter's own
-       counter answers "blue, unanimously" — so "I love" written in blue came
-       back with the eye of its I and the counter of its o filled solid, the
-       strokes merged into blobs, while the same words in black traced 1:1
-       (15,031 ink px in, 15,351 engraved px out). It is the one place the
-       blue path is coarser than the black path, and the reason is that black
-       marks only the ink itself while blue also claims what the ink encloses.
-
-       The doctrine that separates them is already written into the render
-       prompt: a blue LINE is a cut edge, only a blue FILLED AREA is an
-       opening. So the test is thickness — how big the island is against the
-       stroke that wraps it. See STUDIO_BLUE_COUNTER_MIN for the numbers.
-
-       It applies ONLY to this vote path. A blue FILLED area is still a hole
-       through `blue[i]` in studioMaterialSpec, at any width, exactly as
-       before, and the two-contour hoop band is still excluded above. */
-    const isStrokeCounter =
-      islandRIn[L] < STUDIO_BLUE_COUNTER_MIN * Math.max(0.5, blueDepth[L]);
-    if (!betweenTwoBlueContours && !isStrokeCounter &&
-        votes >= 8 && blue / votes >= 0.72 && blue > (red + black) * 2) {
-      holeLabel[L] = 1;
-    }
-  }
-
-  const holes = new Uint8Array(n);
-  for (let i = 0; i < n; i++) if (labels[i] && holeLabel[labels[i]]) holes[i] = 1;
-  return holes;
-}
-
-function studioEnlargeTopHoopHole(plan, holes) {
-  const { w, h, n, face, faceBox } = plan;
-  if (!faceBox) return;
-  const { labels, count } = studioLabel(holes, w, h);
-  if (!count) return;
-
-  const size = new Float64Array(count + 1);
-  const x0 = new Int32Array(count + 1); x0.fill(w);
-  const y0 = new Int32Array(count + 1); y0.fill(h);
-  const x1 = new Int32Array(count + 1); x1.fill(-1);
-  const y1 = new Int32Array(count + 1); y1.fill(-1);
-  for (let i = 0; i < n; i++) {
-    const L = labels[i];
-    if (!L) continue;
-    const x = i % w, y = (i / w) | 0;
-    size[L]++;
-    if (x < x0[L]) x0[L] = x; if (x > x1[L]) x1[L] = x;
-    if (y < y0[L]) y0[L] = y; if (y > y1[L]) y1[L] = y;
-  }
-
-  /* The integrated hoop opening is the uppermost compact, near-round hole in
-     the protruding top band. Grow only that final resolved opening, after the
-     blue cut line and white centre have been combined, so its inner diameter
-     increases slightly without moving the outer hoop or any design cut-out. */
-  const topEdgeLimit = faceBox.y0 + faceBox.h * 0.18;
-  const centreLimit = faceBox.y0 + faceBox.h * 0.25;
-  const minDiameter = Math.max(4, faceBox.w * 0.02);
-  const maxDiameter = faceBox.w * 0.18;
-  let hoopLabel = 0;
-  for (let L = 1; L <= count; L++) {
-    const bw = x1[L] - x0[L] + 1, bh = y1[L] - y0[L] + 1;
-    const diameter = Math.min(bw, bh);
-    const ratio = bw / Math.max(1, bh);
-    const density = size[L] / Math.max(1, bw * bh);
-    const cy = (y0[L] + y1[L]) * 0.5;
-    if (y0[L] > topEdgeLimit || cy > centreLimit ||
-        diameter < minDiameter || diameter > maxDiameter ||
-        ratio < 0.55 || ratio > 1.8 || density < 0.45) continue;
-    if (!hoopLabel || y0[L] < y0[hoopLabel] ||
-        (y0[L] === y0[hoopLabel] && size[L] > size[hoopLabel])) hoopLabel = L;
-  }
-  if (!hoopLabel) return;
-
-  const hoopHole = new Uint8Array(n);
-  for (let i = 0; i < n; i++) if (labels[i] === hoopLabel) hoopHole[i] = 1;
-  const diameter = Math.min(x1[hoopLabel] - x0[hoopLabel] + 1,
-                            y1[hoopLabel] - y0[hoopLabel] + 1);
-  const grow = Math.max(1, Math.min(3, Math.ceil(diameter * 0.025)));
-  const enlarged = studioDilate(hoopHole, w, h, grow);
-  for (let i = 0; i < n; i++) if (face[i] && enlarged[i]) holes[i] = 1;
-}
-
+/* Deterministic material map: blue pixels are cut, black/red pixels are
+   engraved, and the remaining interior is polished. White enclosed by a
+   contour is not evidence of a hole. This is the same map shown in the
+   Greyscale tab and supplied to the material renderer. */
 function studioSpecCutMask(plan, zones) {
   const { w, h, n, blue, cut } = plan;
   const out = new Uint8Array(n);
@@ -7457,15 +7238,16 @@ async function studioMaterialSpec(sharp, plan, metal, zones) {
   if (!sharp || !plan || !plan.faceBox) return null;
   const { px, w, h, n, face, blue } = plan;
   const cut = studioSpecCutMask(plan, zones);
-  const bounded = studioBlueBoundedWhiteHoles(plan);
   const holes = new Uint8Array(n);
   let holePx = 0, facePx = 0, workPx = 0;
   /* BLUE IS A HOLE AT ANY WIDTH. A blue line is a thin slit cut clean
      through — the same instruction as a blue area, narrower. Without this
      term studioCutRegions calls it a "line", it falls through to POLISHED,
      and the white beside it gets punched instead. */
-  for (let i = 0; i < n; i++) if (cut[i] || bounded[i] || blue[i]) holes[i] = 1;
-  studioEnlargeTopHoopHole(plan, holes);
+  /* Only blue pixels declare a cut. Enclosed white stays polished even when
+     most of its boundary is blue (for example, the eagle's beak). Neither
+     infer a filled opening from a contour nor enlarge a declared opening. */
+  for (let i = 0; i < n; i++) if (cut[i] || blue[i]) holes[i] = 1;
   for (let i = 0; i < n; i++) {
     if (holes[i]) holePx++;
     if (face[i]) facePx++;
@@ -8544,6 +8326,73 @@ function scoEngraveFill(rp, rw, rh, mp, mw, mh, scaleR, m2r) {
   return out;
 }
 
+/* Local closing estimates the polish beside a recess, while preserving
+   gradual lighting changes. Sliding extrema keep the work linear in pixels. */
+function scoGreyExtrema(field, w, h, radius, maximum) {
+  const pass = (src, horizontal) => {
+    const dst = new Float32Array(src.length);
+    const length = horizontal ? w : h, lines = horizontal ? h : w;
+    const queue = new Int32Array(length);
+    for (let line = 0; line < lines; line++) {
+      const index = (v) => horizontal ? line * w + v : v * w + line;
+      let head = 0, tail = 0, next = 0;
+      for (let p = 0; p < length; p++) {
+        const end = Math.min(length - 1, p + radius);
+        while (next <= end) {
+          const value = src[index(next)];
+          while (tail > head && (maximum
+            ? src[index(queue[tail - 1])] <= value
+            : src[index(queue[tail - 1])] >= value)) tail--;
+          queue[tail++] = next++;
+        }
+        while (head < tail && queue[head] < p - radius) head++;
+        dst[index(p)] = src[index(queue[head])];
+      }
+    }
+    return dst;
+  };
+  return pass(pass(field, true), false);
+}
+
+const SCO_ENG_SPILL_MAX = 0.015; // share of the interior with undeclared engraving
+function scoEngravePlacement(rp, w, h, expected, scale) {
+  const n = w * h, edge = Math.max(2, Math.round(scale * SCO_ENG_EDGE_FRAC));
+  const tolerance = Math.max(2, Math.round(scale * 0.006));
+  const radius = Math.max(4, Math.round(scale * 0.04));
+  const localPolish = scoGreyExtrema(scoGreyExtrema(rp.lum, w, h, radius, true), w, h, radius, false);
+  const allowed = scoDilate8(expected.engraved, w, h, tolerance);
+  const core = scoErode8(expected.metal, w, h, edge);
+  const actualCore = scoErode8(rp.metal, w, h, edge);
+  const histogram = new Uint32Array(256);
+  let samples = 0;
+  for (let i = 0; i < n; i++) if (core[i] && actualCore[i]) {
+    histogram[Math.max(0, Math.min(255, Math.round(rp.lum[i])))]++;
+    samples++;
+  }
+  let polish = 255, seen = 0;
+  for (let v = 0; v < 256; v++) {
+    seen += histogram[v];
+    if (seen >= samples * SCO_ENG_POL_PCT) { polish = v; break; }
+  }
+  let corePx = 0, darkPx = 0, spillPx = 0;
+  for (let i = 0; i < n; i++) {
+    if (!core[i] || !actualCore[i]) continue;
+    corePx++;
+    const nearby = Math.min(polish, localPolish[i]);
+    // Broad dark recesses can exceed the local window. Require a larger
+    // contrast for that case so ordinary illumination gradients are exempt.
+    if (nearby - rp.lum[i] <= Math.max(10, nearby * 0.07) &&
+        polish - rp.lum[i] <= Math.max(18, polish * 0.18)) continue;
+    darkPx++;
+    if (!allowed[i]) spillPx++;
+  }
+  const spillFrac = corePx ? spillPx / corePx : 0;
+  const misplaced = corePx >= 600 && spillFrac > SCO_ENG_SPILL_MAX &&
+    spillPx > Math.max(24, darkPx * 0.20);
+  return { misplaced, spillFrac: Math.round(spillFrac * 1e4) / 1e4,
+           spillPx, localEngravedPx: darkPx, tolerancePx: tolerance };
+}
+
 function scoAlloy(px, w, h, ch, outer, gnd) {
   const n = w * h;
   const gl = 0.299 * gnd.r + 0.587 * gnd.g + 0.114 * gnd.b;
@@ -8942,6 +8791,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
        two boundaries are compared there — so this is asking "having lined
        these up as well as they can be lined up, do their edges run the same
        way", which is the question a heart passing for a shield exposed. */
+    const expected = { engraved: new Uint8Array(rn), metal: new Uint8Array(rn) };
     {
       const kx = rb.w / mb.w * fit.sx, ky = rb.h / mb.h * fit.sy;
       const warp = new Uint8Array(rn);
@@ -8953,17 +8803,19 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
           const mx = Math.round((x - rb.x0 - fit.dx) / kx) + mb.x0;
           if (mx < 0 || mx >= M.w) continue;
           if (mCmp[srow + mx]) warp[drow + x] = 1;
+          expected.engraved[drow + x] = mp.engraved[srow + mx];
+          expected.metal[drow + x] = mp.outer[srow + mx] && !mp.holes[srow + mx] ? 1 : 0;
         }
       }
       report.outline = scoBoundaryError(rp.outer, warp, R.w, R.h, scale);
     }
-    /* AND WHETHER THE ENGRAVING WAS TRACED OR FILLED. Same pass, same two
-       segmentations, no model call and no credit — and, unlike everything
-       else in this gate, no dependence on the fit: both sides are measured
-       in their own frame. */
+    /* Compare engraving both by thickness and by location. The registered
+       map keeps filled stars from granting a wider allowance to wing lines.
+       Placement is enforced; the legacy tone/thickness gate keeps its mode. */
     try {
       report.engrave = scoEngraveFill(rp, R.w, R.h, mp, M.w, M.h, scale,
                                       (rb.x1 - rb.x0 + 1) / (mb.x1 - mb.x0 + 1));
+      Object.assign(report.engrave, scoEngravePlacement(rp, R.w, R.h, expected, scale));
     } catch (e) { /* a measurement is never a reason to fail a render */ }
     /* THE SHAPE GATE STOPS HERE. Everything above is what it takes to answer
        "is this the same charm?" — the two segmentations, the two silhouettes
@@ -8989,6 +8841,7 @@ async function studioCompositeOpenings(renderBuf, specBuf, opts) {
                     wrong shape has a more useful thing to be told than that
                     its engraving is too thick, and the note that goes back to
                     the renderer carries one correction, not four. */
+                 : report.engrave.misplaced ? "engraving_filled"
                  : (o.engraveGate && report.engrave.filled) ? "engraving_filled"
                  : (o.engraveGate && report.engrave.tooDark) ? "engraving_too_dark"
                  : "fit_ok";
@@ -9667,6 +9520,7 @@ function studioSpecKey(drawingBuffer, zones, floorPx) {
     .update("\u0000" + JSON.stringify(studioZoneList(zones, "specKey")))
     .update("\u0000" + String(floorPx))
     .update("\u0000frame-" + STUDIO_PREVIEW_FILL)
+    .update("\u0000explicit-cut-pixels-v2")
     .digest("hex").slice(0, 32);
 }
 
@@ -10504,6 +10358,9 @@ async function handleStudioRender({ body, event, origin }) {
         renderEngraveRenderFrac: s.engrave ? s.engrave.renderFrac : null,
         renderEngraveMapFrac: s.engrave ? s.engrave.mapFrac : null,
         renderEngraveFilled: s.engrave ? !!s.engrave.filled : null,
+        renderEngraveMisplaced: s.engrave ? !!s.engrave.misplaced : null,
+        renderEngraveSpillFrac: s.engrave && s.engrave.spillFrac != null ? s.engrave.spillFrac : null,
+        renderEngraveTolerancePx: s.engrave && s.engrave.tolerancePx != null ? s.engrave.tolerancePx : null,
         /* the recess-to-polish brightness ratio, against STUDIO_ENGRAVE_RATIO.
            The approved swallow is 0.837; the render the customer rejected for
            being too dark was 0.488. One number, no registration, no model. */

@@ -4247,10 +4247,13 @@ function mkPerimeterEncloses(items, perimItems) {
    and a blank compose: the pictures simply were not there yet. Every other
    exporter in the studio awaits this; so does this one now. */
 async function mkComposeDrawing(S) {
-  const items = mkItemsOf((state.markups || {}).draw)
+  let items = mkItemsOf((state.markups || {}).draw)
     .filter((it) => !it.hid && it.t !== "note").map(mkPack);
   if (!items.length) return null;
   try { await mkAwaitImages(items, 12000); } catch (e) { /* paint what we have */ }
+  const prepared = await mkItemsToDataUrl(items, S, 0.60);
+  if (!prepared) return null;
+  items = prepared.items;
   /* ── THE CUSTOMER'S OWN PERIMETER, IF THE CLAIM HOLDS ──────────────────
      Verified BEFORE the sheet is painted, because two things hang on the
      verdict: whether the studio's generated blue edge is drawn at all, and
@@ -4336,7 +4339,7 @@ async function mkComposeDrawing(S) {
     if (!addHoop) return;
     ctx.beginPath(); ctx.arc(hx, hy, R, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.arc(hx, hy, R * 0.46, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff"; ctx.fill(); ctx.stroke();
+    ctx.fillStyle = MK_CUTOUT; ctx.fill(); ctx.stroke();
   };
   ctx.lineWidth = LW; ctx.strokeStyle = MK_CUTOUT; ctx.lineJoin = "round";
   /* a verified customer perimeter IS the cut edge — the generated one stays off */
@@ -4351,7 +4354,7 @@ async function mkComposeDrawing(S) {
      and on failure the sheet is re-composed without the pictures: their
      geometry is gone, but every engraving instruction, every drawn shape and
      the silhouette all survive, and the customer is told which happened. */
-  let url = "", tainted = false;
+  let url = "", tainted = prepared.tainted;
   try {
     url = cv.toDataURL("image/png");
   } catch (e) {
@@ -4366,13 +4369,79 @@ async function mkComposeDrawing(S) {
   }
   /* addHoop travels with the picture so the version document can record the
      SAME answer the sheet was drawn with — see builtInHoop at the filing */
-  return { cv, items, url, tainted, addHoop };
+  return mkFrameDeterministic({ cv, items, url, tainted, addHoop });
 }
 
 /* A deterministic export of ANY studio sheet. Used when a marked-up drawing
    is in “Exactly as drawn” mode: the updated drawing itself becomes the next
    B/W version, with no model involved and no opportunity to reinterpret it. */
-async function mkItemsToDataUrl(items, SIZE) {
+/* Preview framing is independent of the editor's millimetres, zoom and sheet
+   margins. Fit ALL visible artwork, including its hoop, inside an 82% box.
+   Measure painted pixels so rotated layers, text and raster whitespace count
+   correctly. Apply the same uniform transform to the saved editable layers;
+   their local eraser/mask coordinates and relative proportions stay intact. */
+const MK_PREVIEW_FILL = 0.82;
+function mkFrameDeterministic(made, fill = MK_PREVIEW_FILL) {
+  const { cv } = made, W = cv.width, H = cv.height;
+  const d = cv.getContext("2d").getImageData(0, 0, W, H).data;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = (y * W + x) * 4;
+    if (d[p + 3] && Math.min(d[p], d[p + 1], d[p + 2]) < 245) {
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+  }
+  if (x1 < x0 || y1 < y0) return made;
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+  const scale = Math.min(W * fill / bw, H * fill / bh);
+  const tx = (W - bw * scale) / 2 - x0 * scale;
+  const ty = (H - bh * scale) / 2 - y0 * scale;
+  const out = document.createElement("canvas");
+  out.width = W; out.height = H;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(cv, x0, y0, bw, bh,
+    (W - bw * scale) / 2, (H - bh * scale) / 2, bw * scale, bh * scale);
+  const items = made.items.map((it) => {
+    const one = mkPack(it);
+    one.p = one.p.map((v, i) => v * scale + (i % 2 ? ty / H : tx / W));
+    one.w *= scale; one.fs *= scale;
+    return one;
+  });
+  return Object.assign({}, made, { cv: out, items, url: out.toDataURL("image/png") });
+}
+
+/* Saved versions can predate fixed framing. Change only their displayed copy;
+   the editor continues to use the original bitmap and layer coordinates. */
+const MK_DRAWING_PREVIEWS = new Map();
+async function mkFrameStoredDrawing(el, v) {
+  if (!el || !v || !v.url) return;
+  const key = v.url;
+  let pending = MK_DRAWING_PREVIEWS.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const it = { t: "img", u: v.url, sp: v.path || v.storagePath || "" };
+      await mkAwaitImages([it], 12000);
+      const img = mkImageFor(it);
+      if (!img) return "";
+      const cv = document.createElement("canvas");
+      const scale = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+      cv.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      cv.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      return mkFrameDeterministic({ cv, items: [], tainted: false }).url || "";
+    })().catch(() => "");
+    if (MK_DRAWING_PREVIEWS.size >= 24) MK_DRAWING_PREVIEWS.delete(MK_DRAWING_PREVIEWS.keys().next().value);
+    MK_DRAWING_PREVIEWS.set(key, pending);
+  }
+  const url = await pending;
+  if (url && el.isConnected) el.src = url;
+}
+
+async function mkItemsToDataUrl(items, SIZE, fill = MK_PREVIEW_FILL) {
   const list = (items || []).map(mkPack);
   if (!list.length) return null;
   try { await mkAwaitImages(list, 12000); } catch (e) { /* paint what we have */ }
@@ -4384,12 +4453,12 @@ async function mkItemsToDataUrl(items, SIZE) {
   try { mkPaint(ctx, SIZE, SIZE, list, { export: true }); }
   catch (e) { return null; }
   try {
-    return { cv, items: list, url: cv.toDataURL("image/png"), tainted: false };
+    return mkFrameDeterministic({ cv, items: list, url: cv.toDataURL("image/png"), tainted: false }, fill);
   } catch (e) {
     const safe = list.filter((it) => it.t !== "img");
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, SIZE, SIZE);
     try { mkPaint(ctx, SIZE, SIZE, safe, { export: true }); } catch (e2) { return null; }
-    try { return { cv, items: safe, url: cv.toDataURL("image/png"), tainted: true }; }
+    try { return mkFrameDeterministic({ cv, items: safe, url: cv.toDataURL("image/png"), tainted: true }, fill); }
     catch (e2) { return null; }
   }
 }
@@ -5463,6 +5532,7 @@ function renderStage() {
   const el = holder.firstElementChild;
   el.classList.add("result");
   stage.appendChild(el);
+  if (view === "bw") void mkFrameStoredDrawing(el, v);
   /* THE STAGE FOLLOWS THE PICTURE. The metal render used to arrive on pure
      black, so the stage was black. It now arrives on a white ground with a
      real cast shadow under it — and a white render inside a black frame
@@ -6791,7 +6861,7 @@ function refreshApproveStage() {
   const el = holder.firstElementChild; el.classList.add("result");
   fs.appendChild(el);
   fs.classList.add("stage--paper");
-  void _orderView;
+  if (_orderView === "bw" || !v.renderUrl) void mkFrameStoredDrawing(el, v);
   /* the approved SET, side by side: the charm and the drawing it is cut
      from. Click either to put it on the big stage — the pair is never
      hidden, so there is no doubt about what was chosen. */
@@ -6801,6 +6871,7 @@ function refreshApproveStage() {
       pair.hidden = false;
       $("#pairCharmT").innerHTML = versionMedia({ url: v.renderUrl });
       $("#pairBWT").innerHTML = versionMedia({ url: v.url });
+      void mkFrameStoredDrawing($("#pairBWT img"), v);
       $("#pairCharmT").classList.toggle("is-on", _orderView === "charm");
       $("#pairBWT").classList.toggle("is-on", _orderView === "bw");
       $("#pairCharmT").setAttribute("aria-pressed", _orderView === "charm" ? "true" : "false");
@@ -27514,7 +27585,7 @@ if (window.MutationObserver) {
 syncMenuButton();
 /* the Playwright menu suite drives these two directly, the same way the
    pricing suite reads window.__itemPrice */
-window.__studioBuild   = "2026-08-27.mk44";
+window.__studioBuild   = "2026-09-09.82";
 /* ── DO THE ASSETS MATCH? SAY SO ONCE, IN WORDS ──────────────────────────
    The section (this file plus the Liquid) and the stylesheet are separate
    Shopify assets that deploy separately, and a page has now shipped twice
