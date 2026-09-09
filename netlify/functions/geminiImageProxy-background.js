@@ -4215,7 +4215,9 @@ WHITE: through-cut to white ground. Preserve each connected region, including na
 
 FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. A warm red-copper undertone, lively lustre and luminous reflections: gold that feels alive, not pink or orange. Engraving: the same alloy, a touch redder, brightness around 0.93 of adjacent gold, never below 0.86; no black or grey.
 
-LIGHTING: upper-left light, white ground, one soft contact shadow beneath the charm. Every white-map cutout, large or tiny, shows a visible gold inner wall of the sheet's thickness and a neutral grey shadow on the ground below. Scale the visible wall and shadow to the opening, keeping a bright open centre.
+LIGHTING: upper-left light, white ground, one soft contact shadow beneath the charm.
+
+CUTOUT DEPTH: all white-map openings pass through the same sheet thickness. Show the polished top, a shaded gold inner wall, and white ground BELOW with a soft neutral-grey shadow. For example, if the map has a large hoop hole and a tiny eye hole, both show this depth: the eye is not a flat white inset. Keep the wall visibly dimensional even in small holes; fit its projection and shadow to narrow passages without closing them, retaining a bright open centre. Apply this only to white-map openings.
 
 IMAGE 2 guides material and lighting only, never geometry or artwork. Show only the charm, without captions or references.`;
 }
