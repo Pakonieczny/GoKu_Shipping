@@ -1223,14 +1223,14 @@ const IMAGE_ROLE_LABELS = {
   },
   material_spec_to_charm: {
     first:
-      "IMAGE 1 — GREYSCALE MANUFACTURING MAP. White is empty; light grey is smooth metal; dark grey is engraving. It alone determines the silhouette, every through-cut and every worked surface.",
+      "IMAGE 1 — GREYSCALE MANUFACTURING MAP. White is empty; light grey is polished solid gold; dark grey is engraved solid gold, never a hole. Trace this map exactly.",
     second:
       "IMAGE 2 — MATERIAL REFERENCE ONLY. Its subject, silhouette, artwork and hardware must not appear in the output.",
     extra: (n) => `IMAGE ${n} — MATERIAL REFERENCE ONLY. Its subject, silhouette, artwork and hardware must not appear in the output.`,
     single:
-      "IMAGE 1 — GREYSCALE MANUFACTURING MAP. White is empty; light grey is smooth metal; dark grey is engraving. It alone determines the silhouette, every through-cut and every worked surface.",
+      "IMAGE 1 — GREYSCALE MANUFACTURING MAP. White is empty; light grey is polished solid gold; dark grey is engraved solid gold, never a hole. Trace this map exactly.",
     lock:
-      "FINAL LOCK: all geometry and surface treatment from IMAGE 1; any later image supplies material and lighting only.",
+      "FINAL LOCK: only IMAGE 1 white is cut through; all grey remains metal. Later images supply finish only.",
   },
   line_art_style: {
     first:
@@ -4207,111 +4207,19 @@ const STUDIO_HOOP_AS_FOUND =
    is for the rules that decide what a good charm IS; the gates are for
    catching when the model did not make one.                                */
 function buildMaterialSpecToCharmPrompt(opts) {
-  /* strict true in the builder as well as at the call site: a truthy string
-     arriving from somewhere unexpected must not quietly drop the hoop rule
-     for a charm the studio drew itself */
   const hoop = (opts && opts.builtInHoop === true) ? STUDIO_HOOP_AS_FOUND : STUDIO_HOOP_INTEGRATED;
-  /* ── SEVEN BLOCKS INTO FOUR, WITH EVERY INSTRUCTION STILL IN IT ───────────
-     Nothing was decided to be unnecessary. What came out was RESTATEMENT, and
-     restatement is what dilutes: sixteen distinct rules were being carried by
-     twenty-three sentences, so the fill law — the one rule that must never be
-     missed — was competing for salience with two paraphrases of itself.
+  return `Render IMAGE 1 as a photorealistic 14K gold charm. Trace its silhouette and every marked region exactly; do not redesign or infer features from familiar shapes.
 
-     Three ideas were each said three times and are now said once:
-       · "not a recognizable object" / "overrides all familiar meaning" /
-         "if you recognise what it depicts" — one idea, kept in the form that
-         tells the model what to DO about it.
-       · the legend's WHITE = EMPTY / "every grey stays opaque, only white is
-         empty" / "OUTPUT CUT-OUT MASK = IMAGE 1 WHITE MASK, exactly" — the
-         equation was a third phrasing of the clause above it, not a stronger
-         one, and an equation invites arithmetic rather than looking.
-       · NO INVENTION's "do not add, remove, move, resize or reinterpret any
-         geometry, and add nothing IMAGE 1 does not already contain" against
-         "exclusive authority" and "traced, not interpreted" — the verbs are
-         kept, the block they sat in is not.
+MATERIAL MAP — classify by the input tone, never by shape:
+LIGHT GREY: solid, smooth polished gold.
+DARK GREY: solid gold with shallow surface engraving. Filled shapes and thin lines both remain metal, never holes. Engrave only the dark grey pixels; enclosed light grey stays polished.
+WHITE: empty space. Only white regions may expose the background. Inside the silhouette, cut these regions through the sheet.
 
-     Two headings also went, and headings are not free: each one announces a
-     new topic and spends attention on the announcement. Four blocks — what it
-     is, trace it, what it is made of, what the picture looks like — is the
-     whole instruction set with no section that exists only to be a section.
+FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. Subtle red-copper warmth and natural lustre, not pink or orange. Engraving is the same alloy, a little redder and slightly darker: brightness around 0.90 of adjacent polished gold, never below 0.82; no black or grey coloration.
 
-     The count, for the next person tempted to add a paragraph: 1,652 chars to
-     1,346, and all sixteen rules verifiable one by one against the old text.
-     See SHORTER, NOT LONGER above for why that direction is the right one.
+LIGHTING: upper-left light on a plain white ground, one soft contact shadow beneath the centred charm. ONLY the white-map cutouts receive inner-wall depth and shadows on the ground visible through them. Scale these shadows to each opening, including tiny ones, keeping a bright open centre. Dark-grey engravings have a solid gold floor, not a view of the background.
 
-     ONE RULE ADDED SINCE, AND THE FIRST ATTEMPT AT IT BROKE THE CUTTING.
-     A swallow came back with its head, flank and tail band sunk as broad
-     recesses because the model read each closed engraved OUTLINE as the edge
-     of a pocket to hollow out — 17.6% of the map engraved against 32.9% of
-     the render, at three times the map's own stroke thickness. Nothing here
-     forbade it: every other line about engraving is about its TONE.
-
-     THE FIRST FIX WAS WORSE THAN THE FAULT. To pay for the new paragraph out
-     of the block's own length, a clause was deleted from TRACE as "duplicate"
-     — "every grey region stays opaque gold and only the white regions are
-     empty". It is not duplicate. The ladder line above it is a LEGEND, a
-     glossary entry that names the tone; that clause was the only IMPERATIVE
-     in the whole prompt telling the renderer that white is cut through.
-     Deleting it, lowercasing "WHITE = EMPTY", and putting an ALL-CAPS
-     engraving headline in the slot where it had been left a prompt whose
-     single loudest instruction was about engraving and which no longer asked
-     for a hole anywhere. Three renders in a row came back with every opening
-     solid, and the compositor cut all of them — which is also why their
-     alignment became the next complaint.
-
-     SO THE BLOCK IS THE ORIGINAL, VERBATIM, plus one clause inside MATERIAL
-     where engraving was already being discussed. Not a headline, not a
-     paragraph, and not in front of anything: 1,277 chars to 1,441, every
-     original sentence present unchanged, one ALL-CAPS heading as before, and
-     both mentions of white-as-empty back where they were.
-
-     THE LESSON, FOR THE NEXT PERSON SHORTENING THIS: SHORTER, NOT LONGER is
-     about padding, not about rules, and a sentence is not duplicate because
-     another sentence contains the same word. Diff the imperatives, not the
-     vocabulary. The enforcement for the engraving rule is scoEngraveFill,
-     because a rule in a prompt is a request; see the note there.
-
-     AND THEN THE CUT CLAUSE WAS STRENGTHENED ON PURPOSE, against Google's
-     own published guidance for this model family. Three rules from it apply
-     here and the old clause broke all three:
-
-       · NAME THE OPERATION WITH A VERB. The guide's first rule is to open
-         with a strong verb naming the primary operation. "Cut" appeared
-         NOWHERE in this prompt as a verb — only as the noun "through-cut"
-         and the adjective "crisp cut edges". The one operation the renderer
-         kept failing at was the one operation never asked for.
-       · SAY WHAT IS THERE, NOT WHAT IS ABSENT. "empty street", not "no
-         cars". "Only the white regions are empty" is a restriction, and it
-         asks for an absence — the hardest thing to render. It is now an
-         instruction to cut, and what fills the hole is named: the white
-         ground behind the charm, and a bright bevel on the sheet's edge.
-         That is the guide's own cut-out pattern, which works by describing
-         what is VISIBLE through the opening rather than the opening itself.
-       · A LEGEND IS NOT AN INSTRUCTION. "WHITE = EMPTY" is a glossary
-         entry, and the guide is explicit that a list of keywords is not
-         enough on its own. It stays, because it is compact and the other
-         two tones are served by it, and the white case now has a narrative
-         sentence behind it as well.
-
-     The clause was strengthened IN PLACE — same paragraph, same position —
-     because the last edit's damage came as much from moving and re-ranking
-     instructions as from deleting one. 1,277 chars to 1,748; the length
-     discipline above is about padding, and none of this is padding.
-
-     HOW TO TELL WHETHER IT WORKED, without waiting for a customer:
-     renderModelCutShare on the version doc is the share of declared
-     openings the model cut itself. 1.0 is a clean render; 0.0 means every
-     hole in the picture was cut by code. The three renders that prompted
-     this were 0.0. There is a console warning on that case too. */
-  return `PRIMARY OPERATION — MATERIAL TRANSFER ONLY
-
-Transform IMAGE 1 into a photorealistic 14K gold charm. It is a pixel-level manufacturing map and the exclusive authority for the silhouette, every through-cut and every worked surface: WHITE = EMPTY; LIGHT GREY = smooth unengraved metal; DARK GREY = shallow recessed engraving.
-
-TRACE, DO NOT INTERPRET: every grey region stays opaque gold, and every white region enclosed by grey is CUT clean through the sheet — a real opening, with the white ground behind the charm showing through it and a bright bevel where the sheet's own thickness catches the light. Every opening, including tiny eye cutouts, has visible inner-wall depth and a soft shadow cast onto the white ground inside it, consistent with the hoop and the same upper-left light. Scale the shadow's width and softness to each opening so small holes keep a bright open centre rather than looking flat white or filled. Cut every one of them, whatever their size or number, and never stand one in with engraving, shading, tinted metal or filled gold. Every notch, concavity, asymmetry and tilt of the outer boundary is the design. If you recognise what IMAGE 1 depicts, draw the map you were given rather than the tidier, more symmetrical version you remember, and add, remove, move or resize nothing — a better-looking charm with a different outline is a failed render.
-
-MATERIAL: ONE alloy across the whole piece — warm yellow 14K gold with a subtle red-copper undertone, natural lustre and lively reflections, still yellow gold rather than pink or orange. Use thin flat sheet with crisp cut edges, not a thick moulded token, ${hoop}. An engraved area is the SAME gold as the polish beside it, only slightly darker, with a little more red warmth than the base alloy — aim for brightness around 0.90 of the adjacent polished metal, never below 0.82, with gentle tonal depth rather than black, grey or oxidised grooves; IMAGE 1's greys are a classification code and must never reach the output as colour. Engrave the dark grey pixels themselves and no more: a dark grey line is a line, and the light grey it encloses stays polished rather than becoming a sunken field.
-
-FRAME: one charm, alone and centred, on a plain pure WHITE ground with a single soft contact shadow beneath it. The attached images are read, never drawn: no copy of them, and no lettering, appears anywhere in the picture.`;
+IMAGE 2 supplies material and lighting reference only; copy none of its geometry or artwork. Show only the charm, without captions or reference images.`;
 }
 
 /* ═══════════ HOW THE CUSTOMER'S CHARM IS PRESENTED ═══════════════════════
