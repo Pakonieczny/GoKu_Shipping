@@ -4217,7 +4217,7 @@ FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. A warm red-copper
 
 LIGHTING: upper-left light, white ground, one soft contact shadow beneath the charm.
 
-CUTOUT DEPTH: all white-map openings pass through the same sheet thickness. Show the polished top, a shaded gold inner wall, and white ground BELOW with a soft neutral-grey shadow. For example, if the map has a large hoop hole and a tiny eye hole, both show this depth: the eye is not a flat white inset. Keep the wall visibly dimensional even in small holes; fit its projection and shadow to narrow passages without closing them, retaining a bright open centre. Apply this only to white-map openings.
+CUTOUT DEPTH: every grey region stays opaque gold, and every white region enclosed by grey is CUT clean through the sheet — a real opening, with the white ground behind the charm showing through it and a bright bevel where the sheet's own thickness catches the light. Every opening, including tiny eye cutouts, has visible inner-wall depth and a soft shadow cast onto the white ground inside it, consistent with the hoop and the same upper-left light. Scale the shadow's width and softness to each opening so small holes keep a bright open centre rather than looking flat white or filled. Cut every one of them, whatever their size or number, and never stand one in with engraving, shading, tinted metal or filled gold.
 
 IMAGE 2 guides material and lighting only, never geometry or artwork. Show only the charm, without captions or references.`;
 }
