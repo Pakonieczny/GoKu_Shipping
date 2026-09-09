@@ -4215,7 +4215,7 @@ WHITE: empty space, the only regions exposing background. Open the entire marked
 
 FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. A warm red-copper undertone, lively lustre and luminous reflections: gold that feels alive, not pink or orange. Engraving: the same alloy, a touch redder, brightness around 0.93 of adjacent gold, never below 0.86; no black or grey.
 
-LIGHTING: upper-left light, plain white ground, one soft contact shadow beneath the centred charm. White-map cutouts show white ground with neutral grey edge shadows, never gold fill. Scale wall depth, bevels and shadows to the LOCAL opening width so narrow slots stay open. Engravings retain a solid gold floor.
+LIGHTING: upper-left light, plain white ground, one soft contact shadow beneath the centred charm. ONLY white-map cutouts receive inner-wall depth and shadows on the ground visible through them. Scale these neutral grey shadows to each opening, including tiny ones, keeping a bright open centre. Engravings retain a solid gold floor.
 
 IMAGE 2 guides material and lighting only, never geometry or artwork. Show only the charm, without captions or references.`;
 }
