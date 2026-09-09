@@ -572,6 +572,15 @@ function decideManager(ctrl, session, nowMs) {
   if (session.tradingDay && taskDispatchable("execute", mm) && !executorPaused) {
     enqueue.push({ task: "execute", dedupeId: `${accountId}_${session.date}_${mm}`, accountId, priority: 10,
       payload: { accountId, tradingDate: session.date, minuteEt: mm }, sessionDate: session.date });
+    /* Dip-reversal lane: a worker loop that watches IEX prints every few
+       seconds for up to ~13 minutes. One is enqueued each minute; a worker
+       that finds a live loop simply exits, so at most one loop runs. */
+    const dip = (ctrl.raw && ctrl.raw.dip) || ctrl.dip || null;
+    if (dip && dip.enabled === true && session.open) {
+      enqueue.push({ task: "dip_watch", dedupeId: `${accountId}_${session.date}_${mm}`, accountId, priority: 12,
+        payload: { accountId, tradingDate: session.date, minuteEt: mm }, sessionDate: session.date });
+      reasons.push("dip-reversal watch loop due");
+    }
   } else if (session.tradingDay && executorPaused) reasons.push("executor paused for safety — reconciliation only");
 
   /* Post-close and archive: after the official close and the finalization buffer. */

@@ -247,7 +247,9 @@ const COL = {
   activeMandates:      COL_PREFIX + "ActiveMandates",      // account+symbol: desired/applied version pointers (CAS)
   mandateEvents:       COL_PREFIX + "MandateEvents",       // mandate+sequence: audit stream
   orderSets:           COL_PREFIX + "OrderSets",           // order-set id: desired/applied versions, broker group, state
-  orderLegs:           COL_PREFIX + "OrderLegs",           // order-set+leg id: entry/target/stop/reduce/sell terms
+  orderLegs:           COL_PREFIX + "OrderLegs",
+  dipState:            COL_PREFIX + "DipState",      // dip-reversal lane: one doc per account
+  dipSignals:          COL_PREFIX + "DipSignals",    // dip-reversal lane: every fall, entry, exit and skip           // order-set+leg id: entry/target/stop/reduce/sell terms
   brokerEvents:        COL_PREFIX + "BrokerEvents",        // provider+account+event id: immutable normalized observations
   capitalReservations: COL_PREFIX + "CapitalReservations", // account+mandate version: reserved notional and risk
   reservationAccounts: COL_PREFIX + "ReservationAccounts", // account: CAS-protected aggregate ledger

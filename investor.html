@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-tEilT4hva+KQovBB07AHbS1r5q1ntUPOkhg3AsB0vKE='; style-src 'self' 'sha256-jLhqgYlu/h1rBtnWLZL69NHbXwjnhWaQTdwaVbgoB+E='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-cZin3tcvbz0TnN1qSf2gvkzpRhhVj3ESVCfjlBSIOvI='; style-src 'self' 'sha256-IK9yc8xXTN0i5lEZev3wNWeeMr+ivb1stDeSr4ZCUzc='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -589,6 +589,15 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 #simReturnChart.sim-series{height:250px}
 .sparkwrap{position:relative;display:block}
 .sparkwrap .tip{font-size:12px;padding:6px 9px}
+
+.diplist{display:flex;flex-direction:column;gap:8px}
+.diprow{display:grid;grid-template-columns:minmax(90px,130px) 1fr;gap:8px 14px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--bg-2);align-items:start}
+.diprow__sym{display:flex;flex-direction:column;gap:2px}
+.diprow__sym .n{font-variant-numeric:tabular-nums;font-weight:600}
+.diprow__mid{display:flex;flex-direction:column;gap:4px;min-width:0}
+.dipgrid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.dipgrid .field input{width:100%}
+#dipWatch .tiles{margin-bottom:12px}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
@@ -735,6 +744,7 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 <div class="view__h"><div><div class="eyebrow">YOUR MONEY, AT A GLANCE</div><h2 id="h-manager" tabindex="-1">Your overview</h2></div><a class="link" href="#/learning">View results →</a></div>
 <div class="hero" id="managerStatus"></div>
 <div id="todayPnl"></div>
+<div class="card" id="dipWatch" hidden></div>
 <div class="card manager-brief" id="managerBrief" aria-live="polite"></div>
 <div class="card" id="liveActivity" aria-live="polite"></div>
 <div class="card manager-brief" id="paperDecisionCard">
@@ -812,7 +822,7 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
         </div>
         <div class="card" id="modelComparison"></div>
 </div></section>
-<section class="view" id="v-system" hidden aria-labelledby="h-system"><div class="view__h"><div><div class="eyebrow">ADVANCED</div><h2 id="h-system" tabindex="-1">Advanced workspace</h2><p>Adjust investment limits, inspect system health, and explore the full audit trail.</p></div></div><div class="tabs workspace-tabs" role="tablist" aria-label="system" data-workspace="system"><button type="button" role="tab" id="t-s-setup" aria-controls="s-setup" aria-selected="true" tabindex="0" data-panel="s-setup">Account & settings</button><button type="button" role="tab" id="t-s-health" aria-controls="s-health" aria-selected="false" tabindex="-1" data-panel="s-health">Health & models</button><button type="button" role="tab" id="t-s-data" aria-controls="s-data" aria-selected="false" tabindex="-1" data-panel="s-data">Data & audit</button></div><div class="workspace-panel stack" id="s-setup">        <div class="card">
+<section class="view" id="v-system" hidden aria-labelledby="h-system"><div class="view__h"><div><div class="eyebrow">ADVANCED</div><h2 id="h-system" tabindex="-1">Advanced workspace</h2><p>Adjust investment limits, inspect system health, and explore the full audit trail.</p></div></div><div class="tabs workspace-tabs" role="tablist" aria-label="system" data-workspace="system"><button type="button" role="tab" id="t-s-setup" aria-controls="s-setup" aria-selected="true" tabindex="0" data-panel="s-setup">Account & settings</button><button type="button" role="tab" id="t-s-health" aria-controls="s-health" aria-selected="false" tabindex="-1" data-panel="s-health">Health & models</button><button type="button" role="tab" id="t-s-data" aria-controls="s-data" aria-selected="false" tabindex="-1" data-panel="s-data">Data & audit</button></div><div class="workspace-panel stack" id="s-setup"><div class="card" id="dipSettingsCard"></div>        <div class="card">
           <div class="card__h"><h3><svg aria-hidden="true" class="ic"><use href="#i-manager"/></svg>Manager controls</h3><span class="sub" id="controlVersion"></span></div>
           <div class="ctlgrid">
             <div class="ctl">
@@ -1043,7 +1053,7 @@ var ACTION_SPECS = {
   freezeBuys: M(false, true, "version", "confirm_with_reason", true), resumeBuys: M(true, false, "version", "reauth"),
   emergencyStop: M(false, true, "none", "confirm_with_reason", true), resumeSystem: M(true, false, "version", "reauth"),
   activateAccountMode: M(true, false, "version", "reauth"), deactivateAccountMode: M(true, true, "version", "reauth"),
-  setBudget: M(false, false, "version", "confirm"), setRiskMandate: M(true, false, "version", "reauth"), setEmergencyRiskPolicy: M(true, false, "preview", "reauth_with_preview"),
+  setBudget: M(false, false, "version", "confirm"), dipSettingsSave: M(false, false, "none", "none"), setRiskMandate: M(true, false, "version", "reauth"), setEmergencyRiskPolicy: M(true, false, "preview", "reauth_with_preview"),
   setMarketConfig: M(true, false, "version", "reauth"), confirmSplit: M(true, false, "version", "reauth"), confirmCashDividend: M(true, false, "version", "reauth"),
   requestAuditExport: M(false, false, "none", "confirm"), createPaperAccount: M(true, false, "absent", "reauth"), previewPaperAccountReset: M(false, false, "none", "none"),
   resetPaperAccount: M(true, false, "preview", "reauth_with_preview"), reconcile: M(false, false, "none", "none"), freezeUniverse: M(true, false, "none", "reauth"),
@@ -1547,7 +1557,7 @@ function toggleAlertPanel(force) { var p = $("alertPanel"), b = $("alertToggle")
 async function loadAlerts() { try { await loadRes("alerts", "alerts", { status: "active", pageSize: 100 }); renderAlertCenter(); } catch (e) { /* the dashboard copy stays */ } }
 
 /* ── 9. polling (display only; paused while hidden) ─────────────────────── */
-var POLL = { dash: null, jobs: null, quotes: null, session: null, simulation: null, portfolio: null, charts: null };
+var POLL = { dash: null, jobs: null, quotes: null, session: null, simulation: null, portfolio: null, charts: null, dip: null };
 function startPolling() {
   stopPolling();
   POLL.simulation = setInterval(loadSimulation, 3000);
@@ -1558,6 +1568,7 @@ function startPolling() {
   POLL.quotes = setInterval(function(){ var open = marketOpen(), due = Date.now() - LIVE.quotesAt >= (open ? 4500 : 14500); if (due) pollQuotes(); if(open && drawer.open && drawer.panel==="c-chart" && drawer.days===0 && $("chartAuto").checked && Date.now() - (drawer.intradayAt || 0) >= 14500){drawer.intradayAt = Date.now(); loadCompanyIntraday();} }, 5000);
   POLL.portfolio = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "portfolio") return; loadPortfolio(); }, 10000);
   POLL.charts = setInterval(holdChartsTick, 5000);
+  POLL.dip = setInterval(function () { if (document.hidden || $("app").hidden) return; var d = getRes("dip"), on = !!(d && d.settings && d.settings.enabled); if ((route.view === "manager" && (on || Date.now() - (DIPUI.at || 0) > 30000)) || (route.view === "system" && Date.now() - (DIPUI.at || 0) > 30000)) loadDip(); }, 5000);
   POLL.session = setInterval(sessionRefreshTick, 20 * 60 * 1000);
 }
 function stopPolling() { Object.keys(POLL).forEach(function (k) { if (POLL[k]) { clearInterval(POLL[k]); POLL[k] = null; } }); }
@@ -1997,7 +2008,7 @@ function renderManagerStatus(dash,ctrl) {
     el('div',{class:'tile tile--live'},el('div',{class:'k',text:'Invested'}),el('div',{class:'v','data-live':'investedTile',text:liveNum(invested)?usd(invested):'—'}),el('div',{class:'d','data-live':'investedTileSub',text:''})),
     el('div',{class:'tile tile--live'},el('div',{class:'k',text:'Not invested'}),el('div',{class:'v','data-live':'notInvestedTile',text:a&&a.available?fmtMoney(a.available):'—'}),el('div',{class:'d','data-live':'notInvestedTileSub',text:'Ready to invest'}))]);
   var box=$('todayPnl'); if(box){ if(!(TODAYC.node&&box.contains(TODAYC.node))) setChildren(box,[todayChartNode()]); }
-  renderLiveTiles(); todayChartRender(); loadNavDay();
+  renderLiveTiles(); todayChartRender(); loadNavDay(); loadDip();
 }
 
 function ctlPair(ctrl, ids, note) {
@@ -2846,6 +2857,73 @@ function navChartRender() {
 var resizeTimer = null;
 window.addEventListener("resize", function () { clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { HCH.forEach(function (st, sym) { holdChartRender(sym); }); navChartRender(); }, 120); });
 
+
+/* ── 17c. Dip-reversal lane (paper experiment) ──────────────────────────── */
+var DIPUI = { at: 0, loading: false };
+var DIP_FIELDS = [
+  ["allocationUsd", "Dollars per trade", "$", 1], ["maxOpen", "Positions open at once", "", 1], ["maxTradesPerDay", "Trades per day, max", "", 1],
+  ["dropBps", "Fall needed", "bps (100 = 1%)", 1], ["dropWindowMin", "…within", "minutes", 1], ["settleBars", "Steady bars before buying", "1-min bars", 1], ["settleRangeBps", "Steady band above the low", "bps", 1],
+  ["retracePct", "Sell target", "% of the fall recovered", 1], ["stopPct", "Stop", "% of the fall below the low", 1], ["maxHoldMin", "Give up after", "minutes", 1], ["cooldownMin", "Pause after a trade", "minutes", 1], ["closeBeforeCloseMin", "Flatten before the close", "minutes", 1]];
+async function loadDip(force) {
+  if (DIPUI.loading) return; if (!force && Date.now() - DIPUI.at < 3000) return;
+  DIPUI.loading = true;
+  try { await loadRes("dip", "dipStatus", accountParams()); DIPUI.at = Date.now(); }
+  catch (e) { /* the panel keeps what it has */ }
+  finally { DIPUI.loading = false; renderDipWatch(); renderDipSettings(); }
+}
+function dipKindBadge(k) { return badge(k === "ENTER" ? "Bought" : k === "EXIT" ? "Sold" : k === "DROP" ? "Fall seen" : "Skipped", k === "ENTER" ? "ok" : k === "EXIT" ? "gold" : k === "DROP" ? "info" : "warn", k === "ENTER" ? "buy" : k === "EXIT" ? "sell" : k === "DROP" ? "warn" : "info"); }
+function renderDipWatch() {
+  var host = $("dipWatch"); if (!host) return;
+  var d = getRes("dip"); if (!d) { host.hidden = true; return; }
+  var st = d.settings || {}, state = d.state || {}, res = d.results || {}, syms = Object.keys(state.symbols || {}).sort(), open = state.open || {};
+  host.hidden = false;
+  var alive = state.loopAliveAtMs && Date.now() - Number(state.loopAliveAtMs) < 30000;
+  var head = el("div", { class: "card__h" }, el("h3", null, icon("learning"), " Dip watch ", el("span", { class: "chip", text: "paper experiment" })), el("span", { class: "sub" }, st.enabled ? el("span", { class: "livestat" }, liveDot(alive ? "on" : "off"), el("span", { class: "livestat__t", text: alive ? "Loop alive · checking every 5 s" : (marketOpen() ? "Loop starting…" : "Waiting for the market to open") })) : el("span", { text: "Off · turn it on under Advanced workspace" })));
+  var tiles = el("div", { class: "tiles tiles--five" },
+    el("div", { class: "tile" }, el("div", { class: "k", text: "Today" }), el("div", { class: "v pnl " + toneOf(res.todayPnlUsd), text: liveNum(res.todayPnlUsd) ? signedUsd(res.todayPnlUsd) : "—" }), el("div", { class: "u tiny muted", text: (res.todayTrades || 0) + " trade" + (res.todayTrades === 1 ? "" : "s") + " closed" })),
+    el("div", { class: "tile" }, el("div", { class: "k", text: "All time" }), el("div", { class: "v pnl " + toneOf(res.allPnlUsd), text: liveNum(res.allPnlUsd) ? signedUsd(res.allPnlUsd) : "—" }), el("div", { class: "u tiny muted", text: (res.allTrades || 0) + " closed · " + (res.wins || 0) + " winners" })),
+    el("div", { class: "tile" }, el("div", { class: "k", text: "Holding now" }), el("div", { class: "v", text: String(Object.keys(open).length) }), el("div", { class: "u tiny muted", text: "of " + (st.maxOpen || 0) + " allowed" })),
+    el("div", { class: "tile" }, el("div", { class: "k", text: "Watching" }), el("div", { class: "v", text: String(syms.length) }), el("div", { class: "u tiny muted", text: "fall ≥ " + ((st.dropBps || 0) / 100).toFixed(1) + "% in " + (st.dropWindowMin || 0) + " min" })),
+    el("div", { class: "tile" }, el("div", { class: "k", text: "Per trade" }), el("div", { class: "v", text: st.allocationUsd ? usd(st.allocationUsd, 0) : "—" }), el("div", { class: "u tiny muted", text: "target " + (st.retracePct || 0) + "% of the fall · stop " + (st.stopPct || 0) + "% below" })));
+  var rows = syms.map(function (sym) {
+    var x = state.symbols[sym] || {}, o = open[sym], lp = livePriceOf(sym), price = lp ? lp.price : x.last && x.last.p, drop = x.drop;
+    var stateTxt = { watching: "Watching", settling: "Fell — waiting for it to settle", armed: "Ready", holding: "Holding", cooldown: "Cooling down" }[x.status] || plainLabel(x.status || "watching");
+    var tone = x.status === "holding" ? "ok" : x.status === "settling" || x.status === "armed" ? "warn" : x.status === "cooldown" ? "info" : "";
+    var fallTxt = drop ? "−" + Number(drop.dropPct).toFixed(2) + "% in " + drop.minutes + " min · low " + usd(drop.low) : "no qualifying fall";
+    var posTxt = o ? "bought " + o.qty + " @ " + usd(o.entry) + " · target " + usd(o.target) + " · stop " + usd(o.stop) + (liveNum(price) ? " · now " + signedUsd((price - o.entry) * o.qty) : "") : (x.note || "");
+    return el("div", { class: "diprow" }, el("div", { class: "diprow__sym" }, symButton(sym), el("span", { class: "n", text: liveNum(price) ? usd(price) : "—" })), el("div", { class: "diprow__mid" }, badge(stateTxt, tone, x.status === "holding" ? "check" : x.status === "watching" ? "dot" : "warn"), el("div", { class: "tiny muted", text: fallTxt }), el("div", { class: "small", text: posTxt })));
+  });
+  var sigs = (d.signals || []).slice(0, 12).map(function (sg) { return el("div", { class: "tl__i" }, el("span", { class: "tl__dot " + (sg.kind === "ENTER" ? "ok" : sg.kind === "EXIT" ? (Number(sg.pnlUsd) >= 0 ? "ok" : "bad") : sg.kind === "SKIP" ? "warn" : "") }), el("div", { class: "tl__b" }, el("div", { class: "inline" }, dipKindBadge(sg.kind), symButton(sg.symbol, "link"), sg.kind === "EXIT" ? el("b", { class: "pnl " + toneOf(Number(sg.pnlUsd)), text: signedUsd(Number(sg.pnlUsd)) + " · " + plainLabel(sg.role || "") + (sg.holdMin != null ? " · held " + sg.holdMin + " min" : "") }) : sg.kind === "ENTER" ? el("b", { text: sg.quantity + " sh @ " + usd(sg.price) + " · target " + usd(sg.target) + " · stop " + usd(sg.stop) }) : null), el("div", { class: "tiny muted", text: sg.detail || "" })), el("span", { class: "tl__t", text: fmtTime(sg.at) })); });
+  setChildren(host, [head, tiles, el("div", { class: "explainer" }, el("b", { text: "How it works. " }), "Every 5 seconds it checks the live IEX print for each watched company. A fall of at least " + ((st.dropBps || 0) / 100).toFixed(1) + "% inside " + (st.dropWindowMin || 0) + " minutes, followed by " + (st.settleBars || 0) + " steady one-minute bars with no new low, triggers a paper buy. It sells when " + (st.retracePct || 0) + "% of the fall is recovered, if the price breaks " + (st.stopPct || 0) + "% of the fall below the low, or after " + (st.maxHoldMin || 0) + " minutes. Fills are the IEX print plus a small slippage allowance; IEX is a thin slice of the market, so treat results as an estimate."),
+    rows.length ? el("div", { class: "diplist" }, rows) : el("div", { class: "muted small", text: st.enabled ? "Nothing on the watch list yet. Add symbols under Advanced workspace, or hold a position — held companies are watched automatically." : "" }),
+    el("div", { class: "card__h" }, el("h3", { text: "What it did" }), el("span", { class: "sub", text: (d.signals || []).length ? "latest first" : "" })), sigs.length ? el("div", { class: "tl" }, sigs) : el("div", { class: "muted small", text: "No falls, buys or sells recorded yet." }),
+    state.loopNote ? el("div", { class: "tiny muted", text: "Loop: " + state.loopNote + (state.updatedAtMs ? " · updated " + ageText(new Date(Number(state.updatedAtMs)).toISOString()) : "") }) : null]);
+}
+function renderDipSettings() {
+  var host = $("dipSettingsCard"); if (!host) return;
+  var d = getRes("dip"), st = d && d.settings; if (!st) { setChildren(host, [cardHead("Dip reversal (paper experiment)", "learning"), stateBox("loading", "Loading dip settings…")]); return; }
+  if (host.dataset.version === String(st.version) && host.querySelector("form")) return;
+  host.dataset.version = String(st.version);
+  var form = el("form", { class: "stack", id: "dipForm" });
+  var onoff = el("label", { class: "inline" }, el("input", { type: "checkbox", id: "dipEnabled", checked: !!st.enabled }), el("b", { text: " Watch for dips and trade them (paper only)" }));
+  var held = el("label", { class: "inline" }, el("input", { type: "checkbox", id: "dipWatchHeld", checked: st.watchHeld !== false }), " Also watch every company the account holds");
+  var symbols = el("label", { class: "field" }, "Extra companies to watch (symbols, comma separated)", el("input", { type: "text", id: "dipSymbols", value: (st.symbols || []).join(", "), placeholder: "NVDA, AMD, TSLA" }));
+  var grid = el("div", { class: "ctlgrid dipgrid" }, DIP_FIELDS.map(function (f) { return el("label", { class: "field" }, f[1] + (f[2] ? " (" + f[2] + ")" : ""), el("input", { type: "number", step: "1", "data-dip": f[0], value: String(st[f[0]] != null ? st[f[0]] : "") })); }));
+  var save = el("button", { type: "submit", class: "btn", text: "Save dip settings" });
+  form.appendChild(onoff); form.appendChild(held); form.appendChild(symbols); form.appendChild(grid); form.appendChild(el("div", { class: "actions" }, save));
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var params = { enabled: $("dipEnabled").checked, watchHeld: $("dipWatchHeld").checked, symbols: $("dipSymbols").value.split(/[\s,]+/).map(function (x) { return x.trim().toUpperCase(); }).filter(function (x) { return /^[A-Z][A-Z0-9.-]{0,9}$/.test(x); }).slice(0, 20) };
+    var bad = null;
+    grid.querySelectorAll("input[data-dip]").forEach(function (i) { var v = Number(i.value); if (!Number.isFinite(v)) bad = i.dataset.dip; params[i.dataset.dip] = Math.round(v); });
+    if (bad) { toast("Enter a whole number for " + bad, { icon: "warn" }); return; }
+    save.disabled = true;
+    try { var r = await runMutation({ action: "dipSettingsSave", params: params, silent: true, title: "Save dip settings" }); if (r) { toast(params.enabled ? "Dip lane on. The loop starts within a minute during market hours." : "Dip lane off.", { icon: "check" }); host.dataset.version = ""; await loadDip(true); } }
+    finally { save.disabled = false; }
+  });
+  setChildren(host, [cardHead("Dip reversal (paper experiment)", "learning", st.updatedAtMs ? "settings v" + st.version + " · " + fmtTime(new Date(Number(st.updatedAtMs)).toISOString()) : "defaults"), el("div", { class: "explainer" }, el("b", { text: "What this is. " }), "A rule-based lane that buys a sharp intraday fall once it stops falling and sells on a partial recovery, a break of the low, or a time limit. It runs on the paper account only, never touches the AI's plans, and logs every fall it sees so you can judge whether the pattern pays."), form]);
+}
+
 /* ── 18. Portfolio view ─────────────────────────────────────────────────── */
 async function loadPortfolio(fresh) {
   if (fresh || !getRes("portfolio")) renderPortfolio(true);
@@ -2997,7 +3075,7 @@ function renderJournal() {
 async function loadSystem(fresh) {
   if (fresh || !getRes("system")) setChildren($("policyIdentity"), [cardHead("Policy identity", "system"), stateBox("loading", "Loading system health…")]);
   await Promise.allSettled([loadRes("system", "systemHealth", {}), loadRes("universe", "universe", { includeMembers: false }), loadRes("sources", "sources", { pageSize: 100 }), loadRes("jobs", "jobs", { pageSize: 100 }), loadRes("corp", "corporateActions", { pageSize: 50 }), loadAuditExports(), loadRes("ledger", "ledger", Object.assign({ pageSize: 50 }, accountParams())), loadRes("alerts", "alerts", { status: "active", pageSize: 100 }), loadRes("events", "materialEvents", { status: "unresolved", pageSize: 50 }), loadRes("soak", "soakStatus", {}), loadRes("account", "account", accountParams()), getRes("ctrl") ? Promise.resolve() : loadRes("ctrl", "controlState", accountParams())]);
-  renderSystem(); renderShell(); ensureJobPolling(jobsActive());
+  renderSystem(); renderShell(); ensureJobPolling(jobsActive()); loadDip(true);
 }
 async function loadAuditExports() { try { await loadRes("exports", "auditExports", { pageSize: 50 }); } catch (e) { /* rendered from slot */ } if (route.view === "system") renderAuditExport(); }
 function sysRes(sub, version) { var s = getRes("system"); if (!s) return null; var cfg = s.configuration || {}; return regRes("system", { resourceId: "system:" + sub, resourceVersion: String(version != null ? version : (cfg.version != null ? cfg.version : "0")), availableActions: s.availableActions || [] }); }

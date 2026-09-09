@@ -136,7 +136,7 @@ function controlCapabilities(ctrl, { attested = attestationOk(ctrl), reconciled 
   caps.push(em === "ENGAGED" || em === "RECOVERING" ? on("resumeSystem") : off("resumeSystem", "emergency state is clear"));
   caps.push(mode === "OBSERVE" ? (attested ? on("activateAccountMode") : off("activateAccountMode", "deployed build attestation failing")) : off("activateAccountMode", `account mode is ${mode}`));
   caps.push(mode === "PAPER_AI" ? on("deactivateAccountMode") : off("deactivateAccountMode", `account mode is ${mode}`));
-  for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset"]) caps.push(on(a));
+  for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset", "dipSettingsSave"]) caps.push(on(a));
   caps.push(enabled ? on("resetPaperAccount") : off("resetPaperAccount", "account is in OBSERVE mode"));
   return caps;
 }
@@ -1456,6 +1456,17 @@ const MUTATIONS = {
     return { data: { overrideId: os.overrideId, orderSetId: os.orderSetId, state: "CANCEL_PENDING", transitionId, note: "the executor cancels the working sell and restores protection to the whole owned quantity" }, resourceVersion: String((Number(os.version) || 1) + 1), requestedState: { sell: "CANCELLED" }, appliedState: { sell: "CANCEL_PENDING" } };
   },
   /* ── administration ─────────────────────────────────────────────────── */
+  /* dip-reversal lane settings: bounded, versioned, paper only */
+  async dipSettingsSave(params, ctx, env) {
+    const D = ctx.admin, ctrl = ctx.control, DIP = require("./_investorDipReversal");
+    const prior = DIP.normalizeSettings(ctrl.dip);
+    const next = DIP.normalizeSettings({ ...prior, ...params });
+    if (next.enabled && !mutationsEnabled(ctrl)) throw typed("MUTATIONS_DISABLED", "the dip lane needs the paper account active (PAPER_AI, manager engine)");
+    const dip = { ...next, version: (Number(prior.version) || 0) + 1, updatedAtMs: ctx.nowMs, updatedBy: ctx.actorId };
+    const out = await transitionControl(D, { expectedVersion: null, patch: { dip }, action: "dipSettingsSave", actorId: ctx.actorId, reason: env.auditReason || "dip lane settings", nowMs: ctx.nowMs, correlationId: ctx.correlationId, mutationId: ctx.mutationId });
+    forgetMemo("");
+    return { data: { settings: dip, note: next.enabled ? "the watch loop starts on the next minute of the regular session" : "the lane is off; any open dip position stays protected by its stop and time limit until the lane is turned back on or you sell it" }, resourceVersion: String(out.version) };
+  },
   async setBudget(params, ctx, env) {
     const D = ctx.admin, ctrl = ctx.control;
     const currentMinor = big((ctrl.budget && ctrl.budget.dailyReservationMinor) || ctx.policy.budget.dailyReservationMinor || 0);
@@ -1672,6 +1683,7 @@ const MUTATIONS = {
 
 /* ═══ DISPATCH ════════════════════════════════════════════════════════════ */
 const READS = {
+  dipStatus: async ({ ctx }) => ({ data: await require("./_investorDipReversal").status(ctx.admin, ctx.accountId, ctx.control && ctx.control.dip) }),
   paperDecisionSettings:async({ctx})=>{const store=require("./_investorPaperProcess").create({admin:ctx.admin}),settings=await store.settings(),resolved=await store.resolve(settings);return {data:{settings:{companyRange:settings.companyRange,strategyVersionId:settings.strategyVersionId,revision:settings.revision,updatedAtMs:settings.updatedAtMs||null},resolved}};},
   simulationAnalysisOverview:async({params,ctx})=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).view(ctx.actorId,params)}),
   simulationOverview:async({params,ctx})=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).overview({...params,owner:ctx.actorId})}),
