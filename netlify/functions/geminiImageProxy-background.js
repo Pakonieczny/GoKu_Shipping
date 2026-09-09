@@ -2694,7 +2694,7 @@ const STUDIO_DEFAULT_CONFIG = {
      OWN default, so a typo in one cannot silently change the other. No new
      environment variable — GEMINI_STUDIO_IMAGE_MODEL is still read if it is
      already set, below studioImageModel so Firestore stays the faster lever. */
-  studioImageModel: "gemini-3-pro-image",
+  studioImageModel: "gpt-image-2.5-sunburst",
   /* the steps that do NOT run on studioImageModel. The first two are
      rewritten by code before anyone sees them; the third is the gold charm
      itself, which Paul moved onto the flash image model. Set any key to
@@ -2992,7 +2992,7 @@ let _studioCfg = null, _studioCfgAt = 0;
    so "what is the studio running on" has one answer and one place to change
    it. Order is deliberate: Firestore first (no deploy), then the existing env
    var if someone has already set it, then the built-in default. */
-const STUDIO_IMAGE_MODEL_FALLBACK = "gemini-3-pro-image";
+const STUDIO_IMAGE_MODEL_FALLBACK = "gpt-image-2.5-sunburst";
 const STUDIO_DRAWING_TIER_FALLBACK = "2K";   // the input side
 const STUDIO_RENDER_TIER_FALLBACK = "1K";    // the output side
 const STUDIO_MASK_MIN_PX_FALLBACK = 2048;
@@ -3084,18 +3084,21 @@ function studioImageModelId(cfg, step) {
   if (key) {
     const own = cfg && cfg[key];
     // Migrate the former stored Studio gold default as well as fresh configs.
-    // Explicit non-Gemini overrides and all drawing models remain unchanged.
+    // Explicit non-Gemini overrides and the separate line-art/spec steps remain unchanged.
     if ((step === "render" || step === "goldedit") &&
         (!own || ["gemini-3-pro-image", "gemini-3-pro-image-preview"].includes(String(own).trim()))) {
       return "gpt-image-2.5-sunburst";
     }
     return String(own || STUDIO_STEP_MODEL_FALLBACK[step]).trim();
   }
-  return String(
+  const drawingModel = String(
     (cfg && cfg.studioImageModel) ||
     process.env.GEMINI_STUDIO_IMAGE_MODEL ||
     STUDIO_IMAGE_MODEL_FALLBACK
   ).trim();
+  // Initial drawings and refinements also migrate saved/env Gemini Pro defaults.
+  return ["gemini-3-pro-image", "gemini-3-pro-image-preview"].includes(drawingModel)
+    ? STUDIO_IMAGE_MODEL_FALLBACK : drawingModel;
 }
 
 /* An unrecognised value falls back to this step's OWN default rather than to
