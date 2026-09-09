@@ -608,7 +608,7 @@ async function authorizationViews(D, ctrl, { accountId, pointers, orderSets, fil
   }
   return out;
 }
-function holdingView(p, { snap, pointer, env, ctrl, nowMs }) {
+function holdingView(p, { snap, pointer, env, ctrl, nowMs, trades, reason }) {
   const mark = big(p.markMicros), boundary = p.lossBoundaryPriceMicros ? big(p.lossBoundaryPriceMicros) : null, target = p.takeProfitPriceMicros ? big(p.takeProfitPriceMicros) : null;
   const units = big(p.quantityUnits);
   const forward = boundary && mark > boundary ? (mark - boundary) * units / 10000n : 0n;
@@ -624,7 +624,37 @@ function holdingView(p, { snap, pointer, env, ctrl, nowMs }) {
     protection: { state: p.protectionState || (boundary ? "PROTECTED_RTH" : "UNPROTECTED"), coverage: boundary ? "RTH" : "NONE", acknowledged: p.protectionAcknowledged === true, overnight: boundary ? "gap_exposed" : "unprotected" },
     emergencyRank: pointer && pointer.emergencyRank != null ? pointer.emergencyRank : null, emergencyExpiry: iso(pointer && pointer.emergencyExpiresAtMs), labels: [p.engine === "legacy" ? "legacy position" : null, snap.aggregates && snap.aggregates.unprotected && snap.aggregates.unprotected.includes(p.symbol) ? "unprotected" : null, pointer && pointer.status === "ACTION_REQUIRED" ? "action required" : null].filter(Boolean),
     nextReview: pointer ? { at: iso(pointer.nextReviewAtMs), reason: pointer.nextReviewReason || null } : null, planVersion: pointer ? pointer.desiredVersion || null : null, openedAt: isoOf(p.openedAt),
+    trades: Array.isArray(trades) ? trades : [], reason: reason || null,
   };
+}
+/* Every fill for a symbol as one plain trade row for the holding card and
+   its chart: when, which way, how many, at what price, and the one-sentence
+   reason. Both fill schemas are read: fill.v2 (units/micros) and the legacy
+   ledger fill (qty/fillPriceUsd). Display only. */
+function tradeViews(fills, symbol, reason) {
+  const out = [];
+  for (const f of fills || []) {
+    if (!f || String(f.symbol || "").toUpperCase() !== symbol) continue;
+    const side = String(f.side || "").toLowerCase() === "sell" ? "SELL" : "BUY";
+    const units = f.quantityUnits != null ? big(f.quantityUnits) : f.qty != null ? BigInt(Math.round(Number(f.qty))) : 0n;
+    const px = f.priceMicros != null ? price(f.priceMicros) : priceUsd(f.fillPriceUsd);
+    const atMs = Number(f.eventAtMs) || Date.parse(f.barOpenAt || "") || Number(f.receivedAtMs) || Number(f.atMs) || 0;
+    if (!(units > 0n) || !px || !atMs) continue;
+    const role = String(f.role || "").toUpperCase();
+    const kind = side === "BUY" ? "entry" : role === "TARGET" ? "target" : role === "STOP" ? "stop" : "sell";
+    const why = side === "BUY" ? (reason || null) : kind === "target" ? "The price reached the profit target the AI set when it bought." : kind === "stop" ? "The price fell to the planned stop, so the position was sold to cap the loss." : f.reason || "Sold on instruction.";
+    const notional = f.notionalMinor != null ? money(f.notionalMinor) : f.fillNotionalCents != null ? money(f.fillNotionalCents) : money((units * big(px.priceMicros)) / 1000000n / 10000n);
+    out.push({ fillId: f.fillId || null, at: iso(atMs), side, kind, quantity: qty(units), price: px, notional, reason: why ? clip(why, 240) : null, simulated: f.source === "historical_simulation" || f.simulated === true, ambiguous: f.ambiguous === true });
+  }
+  return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(-40);
+}
+async function decisionReasonFor(D, ctrl, symbol) {
+  try {
+    const run = ctrl && ctrl.lastManagerRun;
+    if (!run || !run.managerRunId) return null;
+    const snap = await memo(D, `decision:${run.managerRunId}:${symbol}`, MEMO_TTL_MS, async () => { const s = await D.col(D.COL.managerDecisions).doc(`${run.managerRunId}_${symbol}`).get(); return s.exists ? decode(s.data()) : null; });
+    return snap && snap.reason ? String(snap.reason) : null;
+  } catch (e) { return null; }
 }
 async function readPortfolio({ params, ctx }) {
   const { admin: D, control: ctrl, accountId, nowMs } = ctx;
@@ -636,7 +666,9 @@ async function readPortfolio({ params, ctx }) {
   const envelopesById = {};
   for (const p of pointers) if (p.desiredVersionId && !envelopesById[p.desiredVersionId]) { const es = await D.col(D.COL.activationEnvelopes).doc(p.desiredVersionId).get(); envelopesById[p.desiredVersionId] = es.exists ? decode(es.data()) : null; }
   const asOf = new Date(nowMs).toISOString();
-  const holdings = snap.positions.map((p) => holdingView(p, { snap, pointer: pointerBy.get(p.symbol) || null, env: pointerBy.get(p.symbol) ? envelopesById[pointerBy.get(p.symbol).desiredVersionId] : null, ctrl, nowMs })).sort((a, b) => a.symbol.localeCompare(b.symbol));
+  const reasonBySymbol = {};
+  for (const p of snap.positions) reasonBySymbol[p.symbol] = await decisionReasonFor(D, ctrl, p.symbol);
+  const holdings = snap.positions.map((p) => holdingView(p, { snap, pointer: pointerBy.get(p.symbol) || null, env: pointerBy.get(p.symbol) ? envelopesById[pointerBy.get(p.symbol).desiredVersionId] : null, ctrl, nowMs, trades: tradeViews(fills, p.symbol, reasonBySymbol[p.symbol]), reason: reasonBySymbol[p.symbol] })).sort((a, b) => a.symbol.localeCompare(b.symbol));
   const active = pointers.filter((p) => !TERMINAL_POINTER.has(p.status)).sort((a, b) => a.symbol.localeCompare(b.symbol));
   const auths = await authorizationViews(D, ctrl, { accountId, pointers: active, orderSets, fills, envelopesById });
   const working = orderSets.filter((o) => !["CLOSED", "CANCELLED", "FILLED", "COMPLETE", "ENTRY_EXPIRED"].includes(o.status)).sort((a, b) => Number(b.createdAtMs) - Number(a.createdAtMs)).map((o) => orderSetView(o, fills, ctrl));

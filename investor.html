@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+akYLg9p4GgwudOehPljPxcCYWgsQVZuZir5QXLJ6hM='; style-src 'self' 'sha256-p4r5GWKBbBr3rRi2TKmj1b45DqnrlQ2yc5TqJj+Rtv8='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-p+7BKvzCmZX5szG/3bMiSP6x4mgea4Z6Johx3NwCtfA='; style-src 'self' 'sha256-4E5z/dAe5IlAEwwLKqQKX8izJmDXs/ngwPypOTXEwXg='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -559,6 +559,25 @@ input[type=checkbox],input[type=radio]{min-height:0}.search{background:var(--car
 .row--holding{gap:12px 14px}
 .tiles{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
 .tile .v{font-size:clamp(18px,1.7vw,25px);word-break:normal;overflow-wrap:anywhere}
+
+.keyfacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+.kf{background:var(--bg-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
+.kf__k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-45);font-weight:600}
+.kf__v{font-size:20px;font-weight:650;letter-spacing:-.03em;font-variant-numeric:tabular-nums;margin-top:6px;line-height:1.15;word-break:normal;overflow-wrap:anywhere}
+.kf__s{font-size:12.5px;color:var(--ink-70);margin-top:4px;line-height:1.4}
+.kf.up .kf__v{color:var(--sage)}.kf.down .kf__v{color:var(--clay)}
+.why{font-size:14px;line-height:1.5;color:var(--ink-70);padding:2px 2px}
+.why b{color:var(--ink)}
+.morebox{border:1px solid var(--line);border-radius:12px;background:var(--bg-2);padding:8px 14px}
+.morebox>summary{cursor:pointer;font-weight:600;padding:4px 0}
+.morebox>div,.morebox>.t,.morebox>.evid,.morebox>.m{margin-top:10px}
+.tradelist{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.trade.up b{color:var(--sage)}.trade.down b{color:var(--clay)}
+.legend i.vert{width:0;height:12px;border-top:0;border-left:2px dashed var(--ink-70);vertical-align:middle}
+.legend i.sage.vert{border-left-color:var(--sage)}.legend i.clay.vert{border-left-color:var(--clay)}
+.livechart .tip{font-family:var(--sans);font-size:13px;line-height:1.5;padding:9px 12px;max-width:320px}
+.livechart .tip::first-line{font-weight:700;font-size:15px}
+@media (max-width:640px){.kf__v{font-size:19px}}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
@@ -2388,6 +2407,7 @@ function drawSeriesChart(canvas, cfg) {
   if(cfg.candles) pts.forEach(function(p,i){if(![p.o,p.h,p.l,p.c].every(Number.isFinite))return;var x=xOf(i),w=Math.max(1,Math.min(12,bw*.65));ctx.strokeStyle=ctx.fillStyle=p.c>=p.o?C.sage:C.clay;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,yOf(p.h));ctx.lineTo(x,yOf(p.l));ctx.stroke();ctx.fillRect(x-w/2,Math.min(yOf(p.o),yOf(p.c)),w,Math.max(1,Math.abs(yOf(p.o)-yOf(p.c))));});
   (cfg.series || []).forEach(function (s) { if(cfg.candles && s.label==='Close')return; ctx.save(); ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.4; if (s.dash) ctx.setLineDash(s.dash); ctx.beginPath(); var started = false; s.values.forEach(function (v, i) { if (v == null || !Number.isFinite(v)) { started = false; return; } var x = xOf(i), y = yOf(v); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }); ctx.stroke(); ctx.restore(); });
   (cfg.markers || []).forEach(function (m) { if (m.i == null || m.i < 0 || m.i >= n) return; var y = Number.isFinite(m.y) ? yOf(Math.min(hi, Math.max(lo, m.y))) : yOf(pts[m.i].c); drawMarkerGlyph(ctx, xOf(m.i), y, m.kind, m.color || markerColor(m.kind)); });
+  (cfg.vlines || []).forEach(function (v) { if (v.i == null || v.i < 0 || v.i >= n) return; var vx = xOf(v.i); ctx.save(); ctx.strokeStyle = v.color; ctx.lineWidth = 1.4; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(vx, y0); ctx.lineTo(vx, y1); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle = v.color; ctx.beginPath(); ctx.moveTo(vx, y0 + 9); ctx.lineTo(vx - 5, y0); ctx.lineTo(vx + 5, y0); ctx.closePath(); ctx.fill(); if (Number.isFinite(v.y) && v.y >= lo && v.y <= hi) { ctx.beginPath(); ctx.arc(vx, yOf(v.y), 4, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke(); } if (v.label) { ctx.font = "bold 11px " + (getComputedStyle(document.body).fontFamily || "sans-serif"); ctx.textAlign = vx > (x0 + x1) / 2 ? "right" : "left"; ctx.textBaseline = "top"; ctx.fillText(v.label, vx + (vx > (x0 + x1) / 2 ? -8 : 8), y0 + 2); ctx.textBaseline = "middle"; ctx.font = "11px " + (getComputedStyle(document.body).fontFamily || "sans-serif"); } ctx.restore(); });
   if (cfg.liveDot && cfg.series && cfg.series[0]) { var lv = cfg.series[0].values, li = lv.length - 1; while (li >= 0 && (lv[li] == null || !Number.isFinite(lv[li]))) li--; if (li >= 0) { var lx = xOf(li), ly = yOf(lv[li]), lc = cfg.series[0].color; ctx.save(); ctx.fillStyle = withAlpha(lc, 0.25); ctx.beginPath(); ctx.arc(lx, ly, 7, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = lc; ctx.beginPath(); ctx.arc(lx, ly, 3.2, 0, Math.PI * 2); ctx.fill(); ctx.restore(); } }
   var geom = { xOf: xOf, yOf: yOf, x0: x0, x1: x1, y0: y0, y1: y1, n: n, idxAt: function (px) { return Math.max(0, Math.min(n - 1, Math.floor((px - x0) / bw))); } };
   canvas._geom = geom; canvas._cfg = cfg;
@@ -2398,7 +2418,7 @@ function bindChartPointer(canvas, tipEl) {
   function show(e) {
     var geom = canvas._geom, cfg = canvas._cfg; if (!geom || !cfg || !cfg.tip) { tipEl.hidden = true; return; }
     var rect = canvas.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top, i = geom.idxAt(px);
-    var text = cfg.tip(i); if (!text) { tipEl.hidden = true; return; }
+    var text = cfg.tip(i, px, geom); if (!text) { tipEl.hidden = true; return; }
     tipEl.textContent = text; tipEl.hidden = false;
     var wrap = canvas.parentElement, tw = tipEl.offsetWidth, th = tipEl.offsetHeight, left = px + 14, top = py - th / 2;
     if (left + tw > wrap.clientWidth - 4) left = px - tw - 14; if (left < 0) left = 4;
@@ -2541,6 +2561,8 @@ function applyLiveQuotes() {
     setLiveVal(row.querySelector("[data-live=price]"), usd(c.price), null, flash);
     setLiveVal(row.querySelector("[data-live=value]"), usd(c.value), null, flash);
     setLiveVal(row.querySelector("[data-live=pnl]"), liveNum(c.pnl) ? signedUsd(c.pnl) + (liveNum(c.pnlPct) ? " (" + signedPct(c.pnlPct) + ")" : "") : "—", toneOf(c.pnl), flash);
+    setLiveVal(row.querySelector("[data-live=priceSub]"), liveNum(c.pnlPct) ? signedPct(c.pnlPct) + " vs your cost" : "", null);
+    setLiveVal(row.querySelector("[data-live=pnlSub]"), "live · " + usd(c.value) + " market value", null);
     var hero = row.querySelector("[data-live=heroPrice]"); setLiveVal(hero, usd(c.price), null, flash);
     holdChartHero(sym);
     var age = row.querySelector("[data-live-age]"); if (age) { age.dataset.liveAge = c.asOf || ""; age.textContent = ageText(c.asOf); }
@@ -2661,21 +2683,24 @@ function holdChartRender(sym) {
   var tgt = h.target ? microsNum(h.target.priceMicros) : NaN; if (liveNum(tgt)) levels.push({ y: tgt, label: "Profit target", color: C.gold });
   var stop = h.lossBoundary ? microsNum(h.lossBoundary.priceMicros) : NaN; if (liveNum(stop)) levels.push({ y: stop, label: "Stop", color: C.clay });
   var closes = pts.map(function (p) { return p.c; });
+  var vlines = [];
+  (h.trades || []).forEach(function (t) { var ms = Date.parse(t.at); if (!liveNum(ms) || !pts.length || ms < pts[0].t - (intraday ? 5 * 60000 : 86400000)) return; var i = -1; for (var k = 0; k < pts.length; k++) if (pts[k].t >= ms) { i = k; break; } if (i < 0) { if (ms <= pts[pts.length - 1].t + (intraday ? 30 * 60000 : 86400000)) i = pts.length - 1; else return; } vlines.push({ i: i, color: t.side === "BUY" ? C.sage : C.clay, label: (t.side === "BUY" ? "Bought " : "Sold ") + fmtQty(t.quantity), trade: t, y: microsNum(t.price.priceMicros) }); });
   var note = st.error ? "Could not refresh this chart. " + (pts.length ? "Earlier prices stay visible. " : "") + (st.error.message || "") : st.loading && !pts.length ? "Loading prices…" : !pts.length ? "No prices for this range yet." : (intraday ? "5-minute bars" : "Daily closes") + " · " + pts.length + " points" + (pts[pts.length - 1].live ? " · newest point is the live quote" : "") + (st.loading ? " · refreshing…" : "");
-  drawSeriesChart(st.canvas, { points: pts, intraday: intraday, series: [{ label: "Price", color: lineColor, width: 1.8, values: closes }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: levels, crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 2); }, emptyText: st.loading ? "Loading prices…" : "No prices yet",
+  drawSeriesChart(st.canvas, { points: pts, intraday: intraday, series: [{ label: "Price", color: lineColor, width: 1.8, values: closes }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: levels, vlines: vlines, crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 2); }, emptyText: st.loading ? "Loading prices…" : "No prices yet",
     xFmt: function (d) { return intraday ? new Intl.DateTimeFormat(undefined, multiDay ? { weekday: "short", hour: "numeric" } : { hour: "numeric", minute: "2-digit" }).format(d) : new Intl.DateTimeFormat(undefined, holdRangeDays(st.range) > 200 || st.from || st.to ? { month: "short", year: "2-digit" } : { month: "short", day: "numeric" }).format(d); },
-    tip: function (i) {
+    tip: function (i, px, geom) {
       var p = pts[i]; if (!p) return "";
-      var when = new Intl.DateTimeFormat(undefined, intraday ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" } : { year: "numeric", month: "short", day: "numeric" }).format(new Date(p.t));
-      var lines = [when + (p.live ? " · live quote" : "")];
-      lines.push("Price " + usd(p.c) + (liveNum(p.o) && !p.live && intraday ? "  ·  open " + usd(p.o) + "  high " + usd(p.h) + "  low " + usd(p.l) : ""));
-      if (base && liveNum(base.y) && base.y > 0) lines.push(signedUsd(p.c - base.y) + " (" + signedPct((p.c / base.y - 1) * 100) + ") vs " + base.label.toLowerCase());
-      if (liveNum(cost) && cost > 0) { var q = qtyNum(h.quantity); lines.push(signedPct((p.c / cost - 1) * 100) + " vs your cost" + (liveNum(q) ? " · " + signedUsd((p.c - cost) * q) + " on " + q + " sh" : "")); }
-      if (liveNum(p.v) && p.v > 0) lines.push("Volume " + fmtInt(p.v));
+      var near = null; if (geom && liveNum(px)) vlines.forEach(function (v) { var d = Math.abs(geom.xOf(v.i) - px); if (d <= 9 && (!near || d < near.d)) near = { d: d, v: v }; });
+      if (near) { var t = near.v.trade; return [(t.side === "BUY" ? "BOUGHT " : "SOLD ") + fmtQty(t.quantity) + " shares @ " + fmtPrice(t.price), fmtTimeFull(t.at) + " · " + fmtMoney(t.notional) + (t.simulated ? " · simulated" : ""), t.reason ? "Why: " + t.reason : ""].filter(Boolean).join("\n"); }
+      var when = new Intl.DateTimeFormat(undefined, intraday ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { year: "numeric", month: "short", day: "numeric" }).format(new Date(p.t));
+      var lines = [usd(p.c) + (p.live ? "  · live" : "")];
+      var chg = base && liveNum(base.y) && base.y > 0 ? signedUsd(p.c - base.y) + " (" + signedPct((p.c / base.y - 1) * 100) + ") " + holdRangeWord(st) : "";
+      lines.push(when + (chg ? " · " + chg : ""));
+      if (liveNum(cost) && cost > 0) lines.push(signedPct((p.c / cost - 1) * 100) + " vs your cost");
       return lines.join("\n");
     } });
   bindChartPointer(st.canvas, st.tip);
-  setChildren(st.node.querySelector("[data-live=legend]"), [legendItem(up ? "sage" : "clay", "Price"), base ? legendItem("ink dot", base.label) : null, liveNum(cost) ? legendItem("slate dash", "Your cost") : null, liveNum(tgt) ? legendItem("gold dash", "Profit target") : null, liveNum(stop) ? legendItem("clay dash", "Stop") : null]);
+  setChildren(st.node.querySelector("[data-live=legend]"), [legendItem(up ? "sage" : "clay", "Price"), base ? legendItem("ink dot", base.label) : null, liveNum(cost) ? legendItem("slate dash", "Your cost") : null, liveNum(tgt) ? legendItem("gold dash", "Profit target") : null, liveNum(stop) ? legendItem("clay dash", "Stop") : null, vlines.length ? legendItem("sage vert", "Bought") : null, vlines.some(function (v) { return v.trade.side === "SELL"; }) ? legendItem("clay vert", "Sold") : null]);
   setText2(st.node.querySelector("[data-live=note]"), note);
   holdChartHero(sym);
 }
@@ -2725,7 +2750,7 @@ function navChartRender() {
   var only = pts.length === 1;
   drawSeriesChart(NAVC.canvas, { points: pts, intraday: intraday || multi, series: [{ label: "Account value", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, liveDot: !!(pts.length && pts[pts.length - 1].live), levels: liveNum(base) && !only ? [{ y: base, label: "Start", color: C.ink45, dash: [2, 4] }] : [], crosshair: true, yFmt: function (v) { return "$" + fmtFloat(v, 0); }, emptyText: NAVC.loading ? "Loading account history…" : "No account history for this range yet",
     xFmt: function (d) { return new Intl.DateTimeFormat(undefined, intraday ? { hour: "numeric", minute: "2-digit" } : multi ? { weekday: "short", hour: "numeric" } : { month: "short", day: "numeric" }).format(d); },
-    tip: function (i) { var p = pts[i]; if (!p) return ""; var lines = [new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(p.t)) + (p.live ? " · live" : ""), "Account value " + usd(p.c)]; if (liveNum(base) && base > 0) lines.push(signedUsd(p.c - base) + " (" + signedPct((p.c / base - 1) * 100) + ") vs start"); if (liveNum(p.cash)) lines.push("Cash " + usd(p.cash, 0) + " · invested " + usd(p.inv, 0)); return lines.join("\n"); } });
+    tip: function (i) { var p = pts[i]; if (!p) return ""; var lines = [usd(p.c) + (p.live ? "  · live" : ""), new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(p.t)) + (liveNum(base) && base > 0 ? " · " + signedUsd(p.c - base) + " (" + signedPct((p.c / base - 1) * 100) + ")" : "")]; if (liveNum(p.cash)) lines.push("Cash " + usd(p.cash, 0) + " · invested " + usd(p.inv, 0)); return lines.join("\n"); } });
   bindChartPointer(NAVC.canvas, NAVC.tip);
   setChildren($("navLiveLegend"), [legendItem(up ? "sage" : "clay", "Account value"), legendItem("ink dot", "Start of range")]);
   setText("navLiveNote", NAVC.error ? "Could not refresh account history. " + (NAVC.error.message || "") : only ? "History builds up as the account is valued through the day. The dot is the live value now." : pts.length ? pts.length + " points · account is valued about once a minute while the market is open" + (NAVC.loading ? " · refreshing…" : "") : "");
@@ -2745,7 +2770,7 @@ function renderPortfolio(loading) {
   if (!p) { setChildren($("portfolioSummary"), [cardHead("Portfolio", "portfolio"), slot.error && !loading ? stateBox("failed", "Could not load the portfolio", " — " + slot.error.message, slot.error.code) : stateBox("loading", "Loading the portfolio…")]); return; }
   renderPortfolioSummary(p.summary || {}); if(slot.error)$("portfolioSummary").prepend(stateBox("stale","Holdings could not be refreshed."," Previously loaded information is shown. "+slot.error.message));
   var h = p.holdings; setText("holdingListSub", h ? fmtInt(h.completedCount) + " / " + (h.totalCount == null ? "?" : fmtInt(h.totalCount)) + " · as of " + fmtTime(h.asOf) : "");
-  var holdSig = JSON.stringify((h && h.items || []).map(function (x) { return [x.resourceId, x.resourceVersion, x.quantity, x.averageCost, x.target, x.lossBoundary, x.protection, x.labels, x.thesisHealth, x.availableActions]; })) + "|" + (h ? h.collectionState : "");
+  var holdSig = JSON.stringify((h && h.items || []).map(function (x) { return [x.resourceId, x.resourceVersion, x.quantity, x.averageCost, x.target, x.lossBoundary, x.protection, x.labels, x.thesisHealth, x.availableActions, x.trades, x.reason]; })) + "|" + (h ? h.collectionState : "");
   if (holdSig !== LIVE.holdSig || !$("holdingList").children.length) { LIVE.holdSig = holdSig; setChildren($("holdingList"), [colStateNode(h, "holdings"), (h && h.items || []).map(holdingRow)]); holdChartsMount(); }
   else (h && h.items || []).forEach(function (x) { LIVE.holdings.set(x.symbol, x); });
   applyLiveQuotes();
@@ -2771,17 +2796,41 @@ function renderPortfolioSummary(s) {
     s.unprotected && s.unprotected.length ? el("div", { class: "badline" }, icon("block"), el("span", null, "Unprotected positions (no working protection at the broker): ", symbolChips(s.unprotected))) : el("div", { class: "okline" }, icon("check"), el("span", { text: "Every open position has protection working or none is open." }))]);
 }
 function protectionTone(state) { var s = String(state || "").toUpperCase(); return s.indexOf("PROTECTED") === 0 && s !== "PROTECTED_PARTIAL" ? "ok" : s.indexOf("UNPROTECTED") >= 0 || s === "NONE" ? "bad" : "warn"; }
+function tradeSummary(h) {
+  var trades = (h.trades || []).slice(), buys = trades.filter(function (t) { return t.side === "BUY"; }), sells = trades.filter(function (t) { return t.side === "SELL"; });
+  var last = buys.length ? buys[buys.length - 1] : null;
+  return { trades: trades, buys: buys, sells: sells, entry: last, boughtUnits: buys.reduce(function (n, t) { return n + (qtyNum(t.quantity) || 0); }, 0) };
+}
+function keyFact(label, id, big, sub, tone) { return el("div", { class: "kf" + (tone ? " " + tone : "") }, el("div", { class: "kf__k", text: label }), el("div", { class: "kf__v" + (tone ? " " + tone : ""), "data-live": id || null, text: big }), sub ? el("div", { class: "kf__s", "data-live": id ? id + "Sub" : null, text: sub }) : null); }
 function holdingRow(h) {
   regRes("holding", h); var ids = idsOf(h), prot = h.protection || {}, sellCap = capOf(h, "requestSell");
   var shortcuts = sellCap && sellCap.enabled ? el("div", { class: "qshort" }, [25, 50, 100].map(function (p) { return el("button", { type: "button", class: "btn xs", "data-action": "requestSell", "data-resource-id": h.resourceId, "data-resource-version": String(h.resourceVersion), "data-pct": String(p), text: "Sell " + p + "%", title: "Prefills " + fmtQty(sellQtyFromPct(h.quantity.quantityUnits, p)) + " sh (floor) for confirmation" }); })) : null;
-  LIVE.holdings.set(h.symbol, h); var lc = liveHoldingCalc(h);
-  return el("div", { class: "row row--holding", "data-hold-sym": h.symbol }, el("div", { class: "row__sym" }, symButton(h.symbol), el("span", { class: "n", text: fmtQty(h.quantity) + " sh" }), (h.labels || []).length ? el("div", { class: "chips" }, h.labels.map(function (l) { return el("span", { class: "chip", text: plainLabel(l) }); })) : null),
+  LIVE.holdings.set(h.symbol, h); var lc = liveHoldingCalc(h), ts = tradeSummary(h), e = ts.entry;
+  var qtyN = qtyNum(h.quantity), cost = h.averageCost ? microsNum(h.averageCost.priceMicros) : NaN, tgt = h.target ? microsNum(h.target.priceMicros) : NaN, stop = h.lossBoundary ? microsNum(h.lossBoundary.priceMicros) : NaN;
+  var entryBig = e ? fmtTime(e.at) : h.openedAt ? fmtTime(h.openedAt) : "—";
+  var entrySub = e ? fmtQty(e.quantity) + " sh @ " + fmtPrice(e.price) + " = " + fmtMoney(e.notional) + (ts.buys.length > 1 ? " · " + ts.buys.length + " buys, " + fmtInt(ts.boughtUnits) + " sh total" : "") : (liveNum(cost) ? fmtQty(h.quantity) + " sh @ " + usd(cost) + " · fill time not recorded" : "fill not recorded yet");
+  var upIf = liveNum(tgt) && liveNum(cost) && liveNum(qtyN) ? (tgt - cost) * qtyN : NaN, downIf = liveNum(stop) && liveNum(cost) && liveNum(qtyN) ? (stop - cost) * qtyN : NaN;
+  var keyfacts = el("div", { class: "keyfacts" },
+    keyFact("Bought", null, entryBig, entrySub),
+    keyFact("Live price", "price", lc ? usd(lc.price) : (h.mark ? fmtPrice(h.mark) : "—"), lc && liveNum(lc.pnlPct) ? signedPct(lc.pnlPct) + " vs your cost" : "your cost " + (liveNum(cost) ? usd(cost) : "—")),
+    keyFact("Sell target", null, liveNum(tgt) ? usd(tgt) : "—", liveNum(tgt) && liveNum(cost) ? signedPct((tgt / cost - 1) * 100) + " · " + signedUsd(upIf) + " if reached" : "no target set", "up"),
+    keyFact("Stop (worst case)", null, liveNum(stop) ? usd(stop) : "—", liveNum(stop) && liveNum(cost) ? signedPct((stop / cost - 1) * 100) + " · " + signedUsd(downIf) + " if hit" : "no stop set", "down"),
+    keyFact("Gain / loss", "pnl", lc && liveNum(lc.pnl) ? signedUsd(lc.pnl) + " (" + signedPct(lc.pnlPct) + ")" : fmtMoney(h.unrealizedPnl), "live · " + (lc && liveNum(lc.value) ? usd(lc.value) : fmtMoney(h.marketValue)) + " market value", lc ? toneOf(lc.pnl) : null));
+  if (ts.sells.length) { var ls = ts.sells[ts.sells.length - 1]; keyfacts.appendChild(keyFact("Sold", null, fmtTime(ls.at), fmtQty(ls.quantity) + " sh @ " + fmtPrice(ls.price) + " · " + plainLabel(ls.kind === "target" ? "profit target" : ls.kind === "stop" ? "stop" : "sell"))); }
+  var why = h.reason || (e && e.reason);
+  var more = detailsNode("More details", [
+    el("div", { class: "t" }, stateBadge(h.thesisHealth === "INTACT" || h.thesisHealth === "IMPROVING" ? "HEALTHY" : h.thesisHealth === "BROKEN" ? "DOWN" : h.thesisHealth === "WEAKENED" ? "DEGRADED" : "UNKNOWN", "thesis " + plainLabel(h.thesisHealth).toLowerCase()), badge(plainLabel(prot.state || "unknown") + (prot.coverage ? " · " + plainLabel(prot.coverage) : ""), protectionTone(prot.state), protectionTone(prot.state) === "ok" ? "check" : "warn", "protection"), h.emergencyRank != null ? badge("#" + h.emergencyRank + (h.emergencyExpiry ? " until " + fmtTime(h.emergencyExpiry) : ""), "info", null, "emergency rank") : null, (h.labels || []).map(function (l) { return el("span", { class: "chip", text: plainLabel(l) }); })),
+    ts.trades.length ? el("div", { class: "tradelist" }, ts.trades.map(function (t) { return el("div", { class: "trade " + (t.side === "BUY" ? "up" : "down") }, el("b", { text: (t.side === "BUY" ? "Bought " : "Sold ") + fmtQty(t.quantity) + " sh @ " + fmtPrice(t.price) }), el("span", { class: "muted", text: " · " + fmtTimeFull(t.at) + " · " + fmtMoney(t.notional) + (t.simulated ? " · simulated" : "") + (t.ambiguous ? " · same-bar ambiguity" : "") }), t.reason ? el("div", { class: "tiny muted", text: t.reason }) : null); })) : el("div", { class: "tiny muted", text: "No fills recorded for this position yet." }),
+    el("div", { class: "evid" }, factNode("Average cost", h.averageCost ? fmtPrice(h.averageCost) : "—", "your basis"), factNode("Book price", h.mark ? fmtPrice(h.mark) : "—", "used to value this holding" + (h.markAt ? " · " + fmtTime(h.markAt) : "")), el("div", { class: "e" }, el("div", { class: "k", text: "Market value" }), el("div", { class: "v", "data-live": "value", text: lc && liveNum(lc.value) ? usd(lc.value) : fmtMoney(h.marketValue) }), el("div", { class: "u", text: "book " + fmtMoney(h.marketValue) })), factNode("Book gain / loss", fmtMoney(h.unrealizedPnl)), factNode("Share of portfolio", fmtBps(h.weightBps)), factNode("Plan active until", h.timeExit ? h.timeExit.sessionDate : "—", h.timeExit ? h.timeExit.calendarId + " " + h.timeExit.calendarVersion : null), factNode("Planned downside", h.forwardDownside ? fmtMoney(h.forwardDownside) : "—", h.stressedDownside ? "stressed " + fmtMoney(h.stressedDownside) : null), factNode("Distance to target", h.distanceToTargetBps != null ? fmtSignedBps(h.distanceToTargetBps) : "—"), factNode("Distance to stop", h.distanceToBoundaryBps != null ? fmtSignedBps(h.distanceToBoundaryBps) : "—")),
+    el("div", { class: "m" }, el("span", { text: "plan version " + (ids.mandateVersionId || ids.mandateVersion || "—") }), ids.positionId ? el("span", { text: "position " + ids.positionId }) : null, h.nextCatalystAt || h.nextReviewAt ? el("span", { text: "next " + (h.nextCatalystAt ? "catalyst " + fmtDate(h.nextCatalystAt) : "review " + fmtDate(h.nextReviewAt)) }) : null, el("span", { class: "muted", "data-quote-sym": h.symbol, text: quoteOf(h.symbol) ? "Indicative " + quoteText(quoteOf(h.symbol)) : "" })),
+    sellCap && !sellCap.enabled ? el("div", { class: "tiny muted" }, icon("info", "sm"), " ", el("span", { text: plainSellBlock(sellCap.disabledReason) })) : null], false);
+  more.className = "morebox";
+  return el("div", { class: "row row--holding", "data-hold-sym": h.symbol }, el("div", { class: "row__sym" }, symButton(h.symbol), el("span", { class: "n", text: fmtQty(h.quantity) + " sh" }), h.name && h.name !== h.symbol ? el("span", { class: "tiny muted", text: h.name }) : null),
     el("div", { class: "row__mid" },
-      el("div", { class: "t" }, stateBadge(h.thesisHealth === "INTACT" || h.thesisHealth === "IMPROVING" ? "HEALTHY" : h.thesisHealth === "BROKEN" ? "DOWN" : h.thesisHealth === "WEAKENED" ? "DEGRADED" : "UNKNOWN", "thesis " + plainLabel(h.thesisHealth).toLowerCase()), badge(plainLabel(prot.state || "unknown") + (prot.coverage ? " · " + plainLabel(prot.coverage) : ""), protectionTone(prot.state), protectionTone(prot.state) === "ok" ? "check" : "warn", "protection"), h.emergencyRank != null ? badge("#" + h.emergencyRank + (h.emergencyExpiry ? " until " + fmtTime(h.emergencyExpiry) : ""), "info", null, "emergency rank") : null),
+      keyfacts,
+      why ? el("div", { class: "why" }, el("b", { text: "Why the AI bought: " }), el("span", { text: why })) : null,
       holdChartNode(h),
-      el("div", { class: "evid" }, factNode("Average cost", h.averageCost ? fmtPrice(h.averageCost) : "—", "your basis"), el("div", { class: "e live" }, el("div", { class: "k", text: "Live price" }), el("div", { class: "v", "data-live": "price", text: lc ? usd(lc.price) : (h.mark ? fmtPrice(h.mark) : "—") }), el("div", { class: "u", text: "book price " + (h.mark ? fmtPrice(h.mark) : "—") + " · used to value this holding" })), el("div", { class: "e live" }, el("div", { class: "k", text: "Market value" }), el("div", { class: "v", "data-live": "value", text: lc && liveNum(lc.value) ? usd(lc.value) : fmtMoney(h.marketValue) }), el("div", { class: "u", text: "live · book " + fmtMoney(h.marketValue) })), el("div", { class: "e live" }, el("div", { class: "k", text: "Gain / loss" }), el("div", { class: "v pnl " + (lc ? toneOf(lc.pnl) : ""), "data-live": "pnl", text: lc && liveNum(lc.pnl) ? signedUsd(lc.pnl) + (liveNum(lc.pnlPct) ? " (" + signedPct(lc.pnlPct) + ")" : "") : fmtMoney(h.unrealizedPnl) }), el("div", { class: "u", text: "live vs your cost · book " + fmtMoney(h.unrealizedPnl) })), factNode("Share of portfolio", fmtBps(h.weightBps)), factNode("Profit target", h.target ? fmtPrice(h.target) : "—", h.distanceToTargetBps != null ? "distance " + fmtSignedBps(h.distanceToTargetBps) : null), factNode("Planned stop price", h.lossBoundary ? fmtPrice(h.lossBoundary) : "—", h.distanceToBoundaryBps != null ? "distance " + fmtSignedBps(h.distanceToBoundaryBps) : null), factNode("Plan active until", h.timeExit ? h.timeExit.sessionDate : "—", h.timeExit ? h.timeExit.calendarId + " " + h.timeExit.calendarVersion : null), factNode("Planned downside", h.forwardDownside ? fmtMoney(h.forwardDownside) : "—", h.stressedDownside ? "stressed " + fmtMoney(h.stressedDownside) : null)),
-      el("div", { class: "m" }, el("span", { text: "plan version " + (ids.mandateVersionId || ids.mandateVersion || "—") }), ids.positionId ? el("span", { text: "position " + ids.positionId }) : null, h.nextCatalystAt || h.nextReviewAt ? el("span", { text: "next " + (h.nextCatalystAt ? "catalyst " + fmtDate(h.nextCatalystAt) : "review " + fmtDate(h.nextReviewAt)) }) : null, el("span", { class: "muted", "data-quote-sym": h.symbol, text: quoteOf(h.symbol) ? "Indicative " + quoteText(quoteOf(h.symbol)) : "" })),
-      sellCap && !sellCap.enabled ? el("div", { class: "tiny muted" }, icon("info", "sm"), " ", el("span", { text: plainSellBlock(sellCap.disabledReason) })) : null),
+      more),
     el("div", { class: "row__side" }, el("div", { class: "actions" }, capButton(h, "pauseMandate", "Pause plan", { icon: "pause" }), capButton(h, "resumeMandate", "Resume plan", { icon: "play" }), capButton(h, "cancelMandate", "Cancel plan", { icon: "close" })), el("div", { class: "actions" }, capButton(h, "requestSell", "Sell…", { icon: "sell", cls: "xs danger", blockText: plainSellBlock }), shortcuts), el("div", { class: "d", text: "version " + h.resourceVersion })));
 }
 function renderExecutionTimeline() {
