@@ -4210,12 +4210,12 @@ function buildMaterialSpecToCharmPrompt(opts) {
 
 MATERIAL MAP — classify by the input tone, never by shape:
 LIGHT GREY: solid, smooth polished gold.
-DARK GREY: shallow engraving in solid gold, never holes. Preserve each line's width, spacing and endpoints; keep paired lines separate. Engrave only dark grey pixels; light grey between or inside them stays polished.
-WHITE: empty space. Only white regions may expose the background. Inside the silhouette, cut these regions through the sheet.
+DARK GREY: shallow engraving in solid gold, never holes. Match each stroke's varying width and endpoints; use finer grooves and bevels for fine detail. Keep paired lines separate; light grey between or inside them stays polished.
+WHITE: empty space, the only regions exposing background. Open the entire marked shape, including narrow tips; gold walls stay at its boundary.
 
 FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. A warm red-copper undertone, lively lustre and luminous reflections: gold that feels alive, not pink or orange. Engraving: the same alloy, a touch redder, brightness around 0.93 of adjacent gold, never below 0.86; no black or grey.
 
-LIGHTING: upper-left light on a plain white ground, one soft contact shadow beneath the centred charm. ONLY the white-map cutouts receive inner-wall depth and shadows on the ground visible through them. Scale these shadows to each opening, including tiny ones, keeping a bright open centre. Dark-grey engravings have a solid gold floor, not a view of the background.
+LIGHTING: upper-left light, plain white ground, one soft contact shadow beneath the centred charm. White-map cutouts show white ground with neutral grey edge shadows, never gold fill. Scale wall depth, bevels and shadows to the LOCAL opening width so narrow slots stay open. Engravings retain a solid gold floor.
 
 IMAGE 2 guides material and lighting only, never geometry or artwork. Show only the charm, without captions or references.`;
 }
