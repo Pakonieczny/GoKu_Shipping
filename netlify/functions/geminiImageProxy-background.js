@@ -93,6 +93,11 @@ const IMAGE_MODEL_CONFIG = Object.freeze({
     provider: "openai",
     supportsBatch: false,
   }),
+  "gpt-image-2.5-sunburst": Object.freeze({
+    id: "gpt-image-2.5-sunburst",
+    provider: "openai",
+    supportsBatch: false,
+  }),
 });
 
 function resolveImageModel(value) {
@@ -876,6 +881,7 @@ async function callOpenAIImagesEdits({
 }) {
   const form = new FormData();
   form.append("model", model);
+  if (model === "gpt-image-2.5-sunburst") form.append("input_fidelity", "high");
   // Gemini receives explicit role labels as separate multimodal parts. OpenAI
   // receives a multipart edit request, so mirror the Charm Maker's special
   // role vocabularies inside the prompt. Default listing-edit behaviour is
@@ -9596,17 +9602,14 @@ async function handleStudioRender({ body, event, origin }) {
   const cost = Number(cfg.generateCost) || 1;
   const db = getDb();
 
-  /* ── ONE RENDERER, AND body.quality IS NOT READ ───────────────────────────
-     There was a tier here: "low" was Gemini at one credit, "high" routed the
-     same drawing and prompt to OpenAI's image model for two, chosen by a
-     Model toggle in the pair rail. The toggle is removed and the tier with
-     it. `body.quality` is deliberately not read at all now — not sanitised,
-     not downgraded, not refused — so an open tab or a replayed request from
-     before the change cannot cost a customer double for something no screen
-     offers. Every render is Gemini, and every render costs `cost`.
+  // Temporary gold-only comparison. No arbitrary model or prompt overrides.
+  const renderTestModel = String(body?.renderTestModel || "");
+  if (renderTestModel && !["gemini", "gpt-image-2.5-sunburst"].includes(renderTestModel)) {
+    return studioJson(400, { ok: false, error: "unsupported_render_test_model" }, origin);
+  }
 
-     cfg.renderHighCost and cfg.renderQualityTiers are likewise unread. A
-     config document that still carries them changes nothing. */
+  /* The legacy quality tier remains ignored. The temporary model selector
+     changes only the gold renderer; both choices use the existing render cost. */
   const quality = "low";
   const renderCost = cost;
 
@@ -9642,16 +9645,35 @@ async function handleStudioRender({ body, event, origin }) {
      doc in words the studio can show. */
   let studioModelConfig = null;
   try {
-    /* One id, not a branch on quality. cfg.renderHighModel is no longer
-       consulted: there is no request that can reach the second renderer.
-       The "render" step resolves studioRenderModel first — the gold charm
-       has its own key so the drawing step can be moved without moving it. */
-    studioModelConfig = resolveImageModel(studioImageModelId(cfg, "render"));
+    // Normal renders use studioRenderModel; temporary tests select an
+    // allowlisted provider without changing the stored configuration.
+    studioModelConfig = resolveImageModel(renderTestModel === "gpt-image-2.5-sunburst"
+      ? renderTestModel : studioImageModelId(cfg, "render"));
+    if (renderTestModel === "gemini" && studioModelConfig.provider !== "gemini") {
+      studioModelConfig = resolveImageModel(STUDIO_STEP_MODEL_FALLBACK.render);
+    }
     apiKeyForImageModel(studioModelConfig);
   } catch (err) {
     console.error("[studio] render model unavailable:", err?.message || err);
     await studioFailRender(vRef, "render_unavailable", renderRunId);
     return studioJson(503, { ok: false, error: "render_unavailable" }, origin);
+  }
+
+  // Read the exact saved proof before taking a credit. This test never
+  // rebuilds, reframes, refines, or uploads a replacement greyscale image.
+  let testSpec = null;
+  if (renderTestModel) {
+    const saved = vSnap.data();
+    try {
+      if (!saved.renderSpecPath) throw new Error("missing greyscale");
+      const got = await storagePathToBuffer(saved.renderSpecPath);
+      if (!got?.buffer?.length) throw new Error("unreadable greyscale");
+      testSpec = { buf: got.buffer, facePx: Number(saved.renderSpecFacePx) || 0,
+        holePx: Number(saved.renderSpecHolePx) || 0, workPx: Number(saved.renderSpecWorkPx) || 0 };
+    } catch (err) {
+      await studioFailRender(vRef, "greyscale_unavailable", renderRunId);
+      return studioJson(409, { ok: false, error: "greyscale_unavailable" }, origin);
+    }
   }
 
   /* Renders share the generation budgets — a render IS a generation as far
@@ -9710,7 +9732,7 @@ async function handleStudioRender({ body, event, origin }) {
     }, clearedScore), { merge: true });
 
     const bwPath = `custom-studio/${uid}/uploads/designs/${sessionId}/v${n}.png`;
-    const bw = await storagePathToBuffer(bwPath);
+    const bw = testSpec ? { buffer: Buffer.alloc(0) } : await storagePathToBuffer(bwPath);
 
     /* ── RE-RENDER RE-RENDERS. IT DOES NOT RE-DERIVE. ─────────────────────
        Everything between here and the model call resolves the approved
@@ -9732,9 +9754,10 @@ async function handleStudioRender({ body, event, origin }) {
     /* the same three inputs, hashed by the same function the BUILDER uses —
        see studioSpecKey. Inlining the hash in two places is exactly what let
        the two drift apart and made reuse unreachable on the first press. */
-    const specKey = studioSpecKey(bw.buffer, renderZones, studioMaskMinPx(cfg));
-    let reusedSpec = null;
-    if (vNow.renderSpecPath && String(vNow.renderSpecKey || "") === specKey) {
+    const specKey = testSpec ? String(vNow.renderSpecKey || "")
+      : studioSpecKey(bw.buffer, renderZones, studioMaskMinPx(cfg));
+    let reusedSpec = testSpec;
+    if (!reusedSpec && vNow.renderSpecPath && String(vNow.renderSpecKey || "") === specKey) {
       try {
         const got = await storagePathToBuffer(vNow.renderSpecPath);
         if (got?.buffer?.length) {
@@ -9968,6 +9991,7 @@ async function handleStudioRender({ body, event, origin }) {
          it still describes this version — see the note where it is read */
       renderSpecKey: renderSpecPath ? specKey : null,
       renderSpecReused: !!reusedSpec,
+      renderTestModel: renderTestModel || null,
       renderSpecMode: "deterministic-material",
       renderSpecFacePx: materialSpec.facePx,
       renderSpecHolePx: materialSpec.holePx,
