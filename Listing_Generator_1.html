@@ -3233,14 +3233,15 @@ html.gs-locked body > *:not(#gate){display:none!important}
                 🔄 Resume empty sets (scan & re-fill folders left empty by partial failures)
               </button>
             </div>
-            <!-- Files API cleanup — same visibility rules as resume button.
-                 Calls the server-side `kind: files_cleanup` endpoint which
-                 must be implemented in geminiImageProxy. See the click
-                 handler's comment for the exact server-side code template. -->
-            <div id="filesApiCleanupRow" style="display: none; margin-top: 8px;">
-              <button class="btn btnSmall" id="filesApiCleanupBtn" style="width: 100%; background: #4a1c1c; border: 1px solid #702d2d; color: #fca5a5;">
-                🗑 Clear Gemini Files API storage (deletes ALL old uploads — frees the 20 GB cap)
+            <div id="filesApiCleanupRow" style="margin-top: 8px;">
+              <button type="button" class="btn btnSmall" id="filesApiCleanupBtn" style="width: 100%; background: #4a1c1c; border: 1px solid #702d2d; color: #fca5a5;">
+                🗑 Purge temporary batch files…
               </button>
+              <div class="muted" style="font-size: 11px; margin-top: 6px; line-height: 1.5;">
+                Clears OpenAI and legacy Gemini uploads/results after collection. Saved Firebase images and active or uncollected jobs are preserved.
+              </div>
+              <div id="filesApiCleanupStatus" role="status" aria-live="polite" style="font-size: 12px; margin-top: 6px; white-space: pre-line;"></div>
+              <button type="button" class="btn btnSmall" id="filesApiCleanupCancel" hidden>Cancel cleanup</button>
             </div>
             <div id="batchProgress" style="display: none; margin-top: 10px;">
               <div class="upload-progress-bar"><div class="upload-progress-fill" id="batchProgressFill"></div></div>
@@ -14009,7 +14010,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       // directly through the generation API without the resumable JSONL
       // upload flow).
       const cleanupRow = document.getElementById("filesApiCleanupRow");
-      if (cleanupRow) cleanupRow.style.display = "none"; // Legacy Google cleanup is not used by Sunburst.
+      if (cleanupRow) cleanupRow.style.display = "block";
 
       // Color-shift the Generate Batch button so users see at a glance
       // whether they're firing a batch job.
@@ -14958,25 +14959,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         const storageQuotaHit = submitErrors.some((e) => _isStorageQuotaError({ message: e.error }));
         if (storageQuotaHit) {
           alert(
-            `⚠ GEMINI FILES API STORAGE QUOTA EXCEEDED\n\n` +
-            `Submission aborted after ${submitted.length}/${effectiveChunkCount} chunks.\n\n` +
-            `The Gemini Files API has a cumulative storage limit (default 20 GB) ` +
-            `across ALL uploaded reference files. Each batch_submit uploads the ` +
-            `set's reference images and a JSONL manifest to Files API; over many ` +
-            `batches these accumulate.\n\n` +
-            `IMPORTANT: This is NOT a per-minute rate limit. Retrying immediately ` +
-            `won't help. The cap is reset by:\n\n` +
-            `  1. WAIT for TTL: Files API auto-deletes uploads after 48 hours. ` +
-            `Wait ~24-48h and try Resume again — by then enough old files will ` +
-            `have expired.\n\n` +
-            `  2. ACTIVE DELETE: List & delete old files via the Gemini Files ` +
-            `API yourself. This requires a server-side endpoint (the current ` +
-            `geminiImageProxy doesn't expose files.delete). If you want this, ` +
-            `you'll need to add a "kind: files_cleanup" handler that calls ` +
-            `https://generativelanguage.googleapis.com/v1beta/files (list + delete).\n\n` +
-            `The ${effectiveChunkCount - submitted.length} unfilled empty set(s) ` +
-            `will still be detected on the next Resume run — no folder state was ` +
-            `corrupted by the partial run.`
+            `Batch file storage quota exceeded. Submission stopped after ${submitted.length}/${effectiveChunkCount} chunks.\n\n` +
+            `Use Purge temporary batch files below to clear uploads and results from collected batches, then retry Resume empty sets. ` +
+            `Active and uncollected batches stay protected. The original provider error is: ${submitErrors.find(e => _isStorageQuotaError({ message: e.error }))?.error || "Storage quota exceeded"}`
           );
           // Skip the generic submission-result alert below.
           await refreshBatchJobsPanel();
@@ -15024,134 +15009,75 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     document.getElementById("resumeEmptySetsBtn")?.addEventListener("click", runResumeEmptySetsSubmission);
 
     // ------------------------------------------------------------
-    // Files API cleanup — frees the Gemini Files API 20 GB cumulative
-    // storage cap by deleting all old uploaded files.
-    //
-    // SERVER-SIDE REQUIREMENT (this is the part you need to add to
-    // your geminiImageProxy Netlify function):
-    //
-    //   case 'files_cleanup': {
-    //     const API_KEY = process.env.GEMINI_API_KEY;
-    //     const baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
-    //
-    //     // Paginate through all files
-    //     const listed = [];
-    //     let pageToken = null;
-    //     do {
-    //       const url = `${baseUrl}/files?key=${API_KEY}&pageSize=100` +
-    //                   (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
-    //       const r = await fetch(url);
-    //       if (!r.ok) throw new Error(`Files API list failed: HTTP ${r.status} ${await r.text()}`);
-    //       const data = await r.json();
-    //       for (const f of (data.files || [])) listed.push(f);
-    //       pageToken = data.nextPageToken;
-    //     } while (pageToken);
-    //
-    //     // Delete each file (parallelism 10 to avoid hammering the API)
-    //     let deleted = 0;
-    //     let bytesFreed = 0;
-    //     const errors = [];
-    //     const CONC = 10;
-    //     let idx = 0;
-    //     async function worker() {
-    //       while (idx < listed.length) {
-    //         const f = listed[idx++];
-    //         try {
-    //           const delUrl = `${baseUrl}/${f.name}?key=${API_KEY}`;
-    //           const r = await fetch(delUrl, { method: 'DELETE' });
-    //           if (!r.ok) errors.push(`${f.name}: HTTP ${r.status} ${(await r.text()).slice(0, 80)}`);
-    //           else { deleted++; bytesFreed += Number(f.sizeBytes || 0); }
-    //         } catch (e) { errors.push(`${f.name}: ${e.message}`); }
-    //       }
-    //     }
-    //     const workers = []; for (let i = 0; i < CONC; i++) workers.push(worker());
-    //     await Promise.all(workers);
-    //
-    //     return res.status(200).json({
-    //       deleted, totalListed: listed.length, bytesFreed,
-    //       errors: errors.slice(0, 20),  // cap the error list size
-    //     });
-    //   }
-    //
-    // NOTE on Netlify function timeout: default is 10 seconds. If you have
-    // many hundreds of files to delete, you may need either:
-    //   (a) a background function (`yourname-background.js`) for 15-min limit, or
-    //   (b) chunked cleanup via a `maxDelete` param (delete N per call, repeat)
-    // Until then, this button works fine for typical accumulations.
-    //
-    // CAUTION: deleting Files API uploads breaks any IN-FLIGHT batch jobs
-    // that still reference those input files. Only clean up when your
-    // submitted batches have either completed or you're OK with losing
-    // unfinished ones (Google would just fail those output sets).
-    // ------------------------------------------------------------
+    // Scan first; confirmation authorizes only collected batch temporary files.
+    let filesCleanupPlan = null;
+    let filesCleanupCancelled = false;
+    const cleanupLabel = "🗑 Purge temporary batch files…";
+    document.getElementById("filesApiCleanupCancel")?.addEventListener("click", () => {
+      filesCleanupCancelled = true;
+      filesCleanupPlan = null;
+      const btn = document.getElementById("filesApiCleanupBtn");
+      if (!btn.disabled) {
+        btn.textContent = cleanupLabel;
+        document.getElementById("filesApiCleanupCancel").hidden = true;
+        document.getElementById("filesApiCleanupStatus").textContent = "Cleanup cancelled. No files deleted.";
+      }
+    });
     async function runFilesApiCleanup() {
       const btn = document.getElementById("filesApiCleanupBtn");
       if (!btn || btn.disabled) return;
-
-      const proceed = confirm(
-        `⚠ DELETE ALL FILES from Gemini Files API?\n\n` +
-        `This permanently removes EVERY file you've uploaded to the Gemini ` +
-        `Files API across all your batch submissions.\n\n` +
-        `WARNING: This will BREAK any in-flight batch jobs that are still ` +
-        `running on Google's side and reference those input files. Only do ` +
-        `this when:\n\n` +
-        `  • Your in-flight batches have all completed (check the panel below), OR\n` +
-        `  • You accept that running batches may produce incomplete output.\n\n` +
-        `Click OK to delete all files. Click Cancel to keep them.`
-      );
-      if (!proceed) return;
-
-      const originalText = btn.textContent;
+      const status = document.getElementById("filesApiCleanupStatus");
+      const cancel = document.getElementById("filesApiCleanupCancel");
+      const report = text => { status.textContent = text; };
       btn.disabled = true;
-      btn.textContent = "🗑 Deleting files… (this can take a minute)";
-      setStatus("Clearing Gemini Files API storage…");
-
+      cancel.hidden = false;
+      filesCleanupCancelled = false;
+      const call = body => postJson("geminiImageProxy", { kind: "files_cleanup", ...body }, AbortSignal.timeout(30000));
       try {
-        const result = await postJson("geminiImageProxy", { kind: "files_cleanup" });
-        const deleted = Number(result?.deleted || 0);
-        const totalListed = Number(result?.totalListed || 0);
-        const bytesFreed = Number(result?.bytesFreed || 0);
-        const errors = Array.isArray(result?.errors) ? result.errors : [];
-
-        const gbFreed = bytesFreed > 0
-          ? ` (~${(bytesFreed / 1024 / 1024 / 1024).toFixed(2)} GB freed)`
-          : "";
-        const errorBlock = errors.length > 0
-          ? `\n\n⚠ ${errors.length} file(s) failed to delete:\n` +
-            errors.slice(0, 5).map((e) => `  • ${e}`).join("\n") +
-            (errors.length > 5 ? `\n  …and ${errors.length - 5} more (check function logs)` : "")
-          : "";
-
-        setStatus(`Files API cleanup: deleted ${deleted}/${totalListed}`);
-        alert(
-          `Gemini Files API cleanup complete:\n\n` +
-          `Files listed: ${totalListed}\n` +
-          `Files deleted: ${deleted}${gbFreed}` +
-          errorBlock +
-          `\n\nThe 20 GB cap should now have room. You can re-run Resume ` +
-          `empty sets if you have unfilled folders.`
-        );
+        if (!filesCleanupPlan) {
+          btn.textContent = "Scanning temporary batch files…";
+          let cursor = null, scanned = 0, protectedCount = 0;
+          const candidates = [];
+          do {
+            const page = await call({ action: "scan", cursor });
+            candidates.push(...(page.candidates || []));
+            scanned += page.scanned || 0;
+            protectedCount += page.protected || 0;
+            cursor = page.cursor;
+            report(`Checked ${scanned} batches · ${candidates.length} collected batches eligible · ${protectedCount} uncollected batches protected`);
+          } while (cursor && !filesCleanupCancelled);
+          if (filesCleanupCancelled) { report("Scan cancelled. No files deleted."); return; }
+          if (!candidates.length) { report(`No collected batch files need cleanup. ${protectedCount} uncollected batches protected.`); return; }
+          filesCleanupPlan = [...new Set(candidates)];
+          report(`Ready to check and purge temporary files from ${filesCleanupPlan.length} collected batches. Active batches will be skipped. Firebase images remain saved.
+Click the button again to permanently delete eligible temporary files, or cancel.`);
+          btn.textContent = `Confirm purge · ${filesCleanupPlan.length} collected batches`;
+          return;
+        }
+        const plan = filesCleanupPlan;
+        filesCleanupPlan = null;
+        let deleted = 0, absent = 0, bytes = 0, skipped = 0, processed = 0;
+        const errors = [];
+        for (const docId of plan) {
+          if (filesCleanupCancelled) break;
+          btn.textContent = `Purging batch ${processed + 1} of ${plan.length}…`;
+          try {
+            const r = await call({ action: "delete", confirm: true, docId });
+            deleted += r.deleted || 0; absent += r.alreadyAbsent || 0;
+            bytes += r.bytesFreed || 0; skipped += r.skipped ? 1 : 0;
+            errors.push(...(r.errors || []));
+          } catch (e) { errors.push(`${docId}: ${e.message}`); }
+          processed++;
+          report(`${processed}/${plan.length} batches checked · ${deleted} files deleted · ${(bytes / 1024 ** 3).toFixed(3)} GB freed`);
+        }
+        report(`${filesCleanupCancelled ? "Stopped" : "Cleanup finished"}: ${processed}/${plan.length} batches checked. ${deleted} files deleted; ${absent} already absent; ${skipped} batches protected or unavailable. ${(bytes / 1024 ** 3).toFixed(3)} GB freed. Firebase images preserved.` +
+          (errors.length ? `\n${errors.length} errors. You can scan again to retry:\n${errors.slice(0, 5).join("\n")}` : ""));
       } catch (e) {
-        console.error("[files_cleanup] failed:", e);
-        const msg = e?.message || String(e);
-        const looksLikeMissingHandler = /unknown.*kind|invalid.*kind|400|files_cleanup/i.test(msg);
-        setStatus("Files API cleanup failed");
-        alert(
-          `Files API cleanup failed:\n\n${msg}\n\n` +
-          (looksLikeMissingHandler
-            ? `This usually means your server-side geminiImageProxy function ` +
-              `doesn't have a "kind: files_cleanup" handler yet. See the ` +
-              `comment block above the runFilesApiCleanup function in this ` +
-              `file's source code for the exact server-side code to add.\n\n` +
-              `Until that handler is deployed, your options are to wait ~48h ` +
-              `for the Files API TTL to clear old uploads, or to delete files ` +
-              `manually via the gcloud CLI or Google AI Studio.`
-            : `Check the browser console and your Netlify function logs for ` +
-              `details.`)
-        );
+        filesCleanupPlan = null;
+        report(`Cleanup failed: ${e.message}. Scan again to retry.`);
       } finally {
         btn.disabled = false;
-        btn.textContent = originalText;
+        if (!filesCleanupPlan) { btn.textContent = cleanupLabel; cancel.hidden = true; }
       }
     }
 

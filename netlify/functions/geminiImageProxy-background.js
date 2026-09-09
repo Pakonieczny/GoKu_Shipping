@@ -2243,6 +2243,68 @@ function normalizeOpenAIBatch(raw) {
     providerStatus: raw.status, errors: raw.errors || null };
 }
 
+// Cleanup is scoped to this application's recorded, collected batches.
+// Never list/delete an entire provider account or touch Firebase image objects.
+async function cleanupBatchFiles(body) {
+  const collection = getDb().collection(BATCHES_COLL);
+  const eligible = d => d.collected === true && !d.filesPurgedAt &&
+    /^(batch_[A-Za-z0-9_-]+|batches\/[A-Za-z0-9_-]+)$/.test(d.batchName || "");
+  if (body.action !== "delete") {
+    let query = collection.orderBy(admin.firestore.FieldPath.documentId()).limit(50);
+    if (body.cursor) {
+      if (!/^[A-Za-z0-9_-]{1,200}$/.test(body.cursor)) throw new Error("Invalid cleanup cursor");
+      query = query.startAfter(body.cursor);
+    }
+    const snap = await query.select("batchName", "collected", "filesPurgedAt").get();
+    return { ok: true, scanned: snap.size,
+      candidates: snap.docs.filter(d => eligible(d.data())).map(d => d.id),
+      protected: snap.docs.filter(d => d.data().collected !== true).length,
+      cursor: snap.size === 50 ? snap.docs[snap.docs.length - 1].id : null };
+  }
+  if (body.confirm !== true || !/^[A-Za-z0-9_-]{1,200}$/.test(body.docId || "")) {
+    throw new Error("Cleanup requires confirmation and a valid batch record");
+  }
+  const ref = collection.doc(body.docId), snap = await ref.get();
+  if (!snap.exists || !eligible(snap.data())) return { ok: true, skipped: true, deleted: 0 };
+  const d = snap.data(), openai = d.batchName.startsWith("batch_");
+  const apiKey = batchApiKey(d.batchName);
+  const root = openai ? "https://api.openai.com/v1" : "https://generativelanguage.googleapis.com/v1beta";
+  const headers = openai ? { Authorization: `Bearer ${apiKey}` } : { "x-goog-api-key": apiKey };
+  // One batch per request, short upstream deadlines, at most three files.
+  const request = async (path, method = "GET") => {
+    const r = await fetch(`${root}/${path}`, { method, headers, signal: AbortSignal.timeout(5000) });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`Temporary file ${method} failed: HTTP ${r.status}`);
+    return method === "DELETE" ? true : await r.json();
+  };
+  const live = await request(openai ? `batches/${d.batchName}` : d.batchName);
+  // Missing/unknown batch status cannot establish safe ownership/lifecycle.
+  if (!live) return { ok: true, skipped: true, reason: "Batch status is unavailable", deleted: 0 };
+  const state = openai ? live.status : String(live.metadata?.state || live.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_");
+  const terminal = openai ? ["completed", "failed", "expired", "cancelled"] :
+    ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_CANCELLED"];
+  if (!terminal.includes(state)) return { ok: true, skipped: true, reason: "Batch is still active", deleted: 0 };
+  const ids = [...new Set(openai ? [d.inputFileName, live.input_file_id, live.output_file_id, live.error_file_id] :
+    [d.inputFileName, live.response?.responsesFile, live.dest?.fileName])].filter(Boolean);
+  const valid = openai ? /^file-[A-Za-z0-9_-]+$/ : /^files\/[A-Za-z0-9_-]+$/;
+  if (ids.length > 4 || ids.some(id => !valid.test(id))) throw new Error("Invalid recorded temporary file identifier");
+  let deleted = 0, alreadyAbsent = 0, bytesFreed = 0;
+  const errors = [];
+  await Promise.all(ids.map(async id => {
+    try {
+      const path = openai ? `files/${id}` : id;
+      const file = await request(path);
+      if (!file) { alreadyAbsent++; return; }
+      if (await request(path, "DELETE")) {
+        deleted++; bytesFreed += Number(file.bytes || file.sizeBytes || 0);
+      } else alreadyAbsent++;
+    } catch (e) { errors.push(`${id}: ${e.message}`); }
+  }));
+  if (!errors.length) await ref.set({ filesPurgedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true, deleted, alreadyAbsent, bytesFreed, errors };
+}
+
+
 // Slots 3 and 4 of a Charm Maker quad are the two B&W outline images.
 // Keep this rule server-side so old tabs, redos and batch recovery agree.
 function listingImageSize(outputBasePath, slotIndex, fallback = "2048x2048") {
@@ -15188,116 +15250,9 @@ async function _handlerImpl(event) {
     }
 
     // ------------------------------------------------------------
-    // files_cleanup
-    //   Lists ALL files uploaded to the Gemini Files API for this API key
-    //   and deletes them. Used to free the 20 GB cumulative
-    //   file_storage_bytes quota that accumulates across batch_submit
-    //   JSONL/reference uploads.
-    //
-    //   Optional body params:
-    //     maxDelete  number  — cap deletion at N files this call (default:
-    //                          no cap; use for chunked cleanup if you
-    //                          have thousands of files and the function
-    //                          might time out)
-    //     prefix     string  — only delete files whose displayName starts
-    //                          with this prefix (e.g., "lg1-Beady_Necklace-").
-    //                          Useful if the same API key is shared with
-    //                          other projects.
-    //
-    //   Returns:
-    //     { ok, deleted, totalListed, candidateCount, bytesFreed,
-    //       truncated, errors }
-    //
-    //   CAUTION: deleting Files API uploads breaks any in-flight batch
-    //   jobs that still reference those input files. Caller is responsible
-    //   for confirmation before invoking.
-    // ------------------------------------------------------------
-    if (kind === "files_cleanup") {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
-
-      const maxDeleteRaw = Number(body?.maxDelete);
-      const maxDelete = Number.isFinite(maxDeleteRaw) && maxDeleteRaw > 0 ? maxDeleteRaw : Infinity;
-      const prefix = typeof body?.prefix === "string" && body.prefix.length > 0 ? body.prefix : null;
-
-      const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
-
-      // 1) Paginate through all files. Hard guard against runaway
-      //    pagination at 200 pages × 100/page = 20,000 files.
-      const listed = [];
-      let pageToken = null;
-      let pages = 0;
-      const MAX_PAGES = 200;
-      do {
-        const url = `${baseUrl}/files?key=${encodeURIComponent(apiKey)}&pageSize=100` +
-                    (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
-        const r = await fetch(url);
-        if (!r.ok) {
-          const errBody = await r.text().catch(() => "");
-          return json(r.status, {
-            error: { message: `Files API list failed: HTTP ${r.status}: ${errBody.slice(0, 300)}` },
-          });
-        }
-        const data = await r.json();
-        for (const f of (data.files || [])) listed.push(f);
-        pageToken = data.nextPageToken || null;
-        pages++;
-      } while (pageToken && pages < MAX_PAGES);
-
-      // 2) Optional displayName prefix filter
-      const candidates = prefix
-        ? listed.filter((f) => typeof f.displayName === "string" && f.displayName.startsWith(prefix))
-        : listed.slice();
-
-      // 3) Cap deletion count (for chunked cleanup if maxDelete supplied)
-      const toDelete = maxDelete === Infinity
-        ? candidates
-        : candidates.slice(0, maxDelete);
-
-      // 4) Delete with concurrency 10 — fast enough that even 1000s of
-      //    files complete inside the 15-minute background-function budget,
-      //    while not so parallel that we trigger our own rate-limit on
-      //    the Files API delete endpoint.
-      let deleted = 0;
-      let bytesFreed = 0;
-      const errors = [];
-      let idx = 0;
-      const CONC = 10;
-
-      async function deleteWorker() {
-        while (idx < toDelete.length) {
-          const myIdx = idx++;
-          const f = toDelete[myIdx];
-          try {
-            const delUrl = `${baseUrl}/${f.name}?key=${encodeURIComponent(apiKey)}`;
-            const r = await fetch(delUrl, { method: "DELETE" });
-            if (!r.ok) {
-              const errBody = await r.text().catch(() => "");
-              errors.push(`${f.name}: HTTP ${r.status} ${errBody.slice(0, 80)}`);
-            } else {
-              deleted++;
-              bytesFreed += Number(f.sizeBytes || 0);
-            }
-          } catch (e) {
-            errors.push(`${f.name}: ${e?.message || e}`);
-          }
-        }
-      }
-
-      const workers = [];
-      for (let i = 0; i < CONC; i++) workers.push(deleteWorker());
-      await Promise.all(workers);
-
-      return json(200, {
-        ok: true,
-        deleted,
-        totalListed: listed.length,
-        candidateCount: candidates.length,
-        bytesFreed,
-        truncated: candidates.length > toDelete.length,
-        errors: errors.slice(0, 20),
-      });
-    }
+    // Paginated scan and one collected batch per purge request keep cleanup
+    // below the synchronous deadline. Bare legacy requests only scan.
+    if (kind === "files_cleanup") return json(200, await cleanupBatchFiles(body));
 
 // ------------------------------------------------------------
     // NEW: run_set_async
