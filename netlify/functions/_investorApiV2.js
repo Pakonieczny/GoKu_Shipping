@@ -299,7 +299,7 @@ function laneAsOf(ctrl) {
   const ingest = ctrl.lastIngestPass || {}, run = ctrl.lastManagerRun || {}, tick = ctrl.lastExecutionTick || {};
   return { sources: iso(ingest.finishedAtMs || ingest.atMs), dossiers: iso(ingest.finishedAtMs || ingest.atMs), managerReview: iso(run.completedAtMs), mandates: iso((run.activation && run.activation.committedAtMs) || run.completedAtMs), marks: iso(tick.atMs || (ctrl.lastPostclose && ctrl.lastPostclose.elapsedMs ? ctrl.lastPostcloseAtMs : null)) };
 }
-function workflowOf(ctrl, run) {
+function workflowOf(ctrl, run, orderSets = []) {
   const tick=ctrl.lastExecutionTick||null,a=run?.activity||{},research=run?.research||{},stage=run?.stage||'',phase=a.phase||research.phase;
   const stages=['freeze','shortlist','review','coverage','maintenance','research','synthesis','activation','persist','complete'];
   const terminal=run?.status==='complete',failed=['failed_closed','failed','dead','cancelled'].includes(run?.status);
@@ -311,14 +311,15 @@ function workflowOf(ctrl, run) {
   const prepComplete=terminal||phase==='decision'||phase==='complete'||after('research');
   const row=(step,status,detail,done=null,count=null,extra={})=>({step,state:status,detail,at:['running','failed'].includes(status)?at:null,progress:{completed:done,total:count},...extra});
   const activeCompany=a.currentSymbol?' · '+a.currentSymbol:'';
-  const shortlistCount=run?.shortlist?.count||a.shortlisted||null;
+  const shortlistCount=run?.shortlist?.count??a.shortlisted??null;
+  const plannedShortlist=shortlistCount>0?shortlistCount:Math.min(50,a.rankable??total??50);
   const compared=run?.coverage?.ok?(shortlistCount||total):a.compared||0;
   const executionError=ctrl.lastExecutionError&&Number(ctrl.lastExecutionError.atMs)>Number(tick?.atMs||0)?ctrl.lastExecutionError:null;
   const noBuys=terminal&&!(run.buys||[]).length,approved=!!run?.activation&&(run.buys||[]).length>0;
   const result=[
-    row('evidence',state('freeze',!!run?.contextManifestHash,stage==='freeze'),run?.contextManifestHash?'Review input snapshot saved':'Preparing the dated company and portfolio inputs',run?.contextManifestHash?1:0,1),
+    row('evidence',state('freeze',!!run?.contextManifestHash,stage==='freeze'),run?.contextManifestHash?'Review input snapshot saved':a.preparation?.label||'Preparing the dated company and portfolio inputs',run?.contextManifestHash?(a.preparation?.total||1):(a.preparation?.completed||0),a.preparation?.total||1),
     row('shortlist',shared?state('shortlist',!!run?.shortlist,stage==='shortlist'):'skipped',!shared?'This saved review uses the earlier screening process':run?.shortlist?`${run.shortlist.screened} companies ranked; ${run.shortlist.count} shortlisted`:'Terra is ranking the universe; the model returns one complete batch',run?.shortlist?.screened||0,run?.shortlist?.screened||a.rankable||total),
-    row('coverage',state('coverage',after('coverage'),['review','coverage'].includes(stage)),after('coverage')?`${compared} shortlisted companies compared; ${requested??'the'} finalists selected`:stage==='review'?`Astra is comparing ${shortlistCount||total||'the'} company summaries; waiting for its result`:'Waiting for the ranked shortlist',compared,shortlistCount||total),
+    row('coverage',state('coverage',after('coverage'),['review','coverage'].includes(stage)),after('coverage')?`${compared} shortlisted companies compared; ${requested??'the'} finalists selected`:stage==='review'?`Astra is comparing ${shared?plannedShortlist:total||'the'} company summaries; waiting for its result`:'Waiting for the ranked shortlist',compared,shared?plannedShortlist:total),
     row('revisions',state('maintenance',after('maintenance'),stage==='maintenance'),after('maintenance')?(Number(run?.heldCount)===0?'No existing holdings to review':`${run?.maintenance?.actionable||0} actionable; ${run?.maintenance?.actionRequired?.length||0} need attention`):'Waiting for the company comparison',after('maintenance')?1:0,1),
     row('sources',state('research',prepComplete||phase==='documents',stage==='research'&&phase==='sources'),prepComplete||phase==='documents'?'Finalist source collection finished':stage==='research'&&phase==='sources'?'Collecting current public sources'+activeCompany:'Waiting for finalists',prepComplete||phase==='documents'?requested:sourcesDone,requested,{companies:companies.map(c=>({symbol:c.symbol,completed:c.sourcesReady||prepComplete?1:0,total:1,detail:c.sourceErrors?.length?c.sourceErrors.map(e=>e.source+': '+e.error).join('; '):c.sourcesReady?'Sources collected':a.currentSymbol===c.symbol&&phase==='sources'?'Collecting sources':'Waiting'}))}),
     row('research',state('research',prepComplete,stage==='research'&&phase!=='sources'&&phase!=='decision'),prepComplete?'Prepared research documents saved':stage==='research'?'Terra is preparing sourced research'+activeCompany:'Waiting for source collection',prepComplete?requested:docsDone,requested,{companies:companies.map(c=>({symbol:c.symbol,completed:c.documentReady?1:0,total:1,detail:c.documentReady?'Research document saved':a.currentSymbol===c.symbol&&phase==='documents'?'Terra is preparing this company':'Waiting'}))}),
@@ -326,6 +327,15 @@ function workflowOf(ctrl, run) {
     row('mandates',run?.activation?(run.activation.status==='COMMITTED'?'complete':run.activation.status==='EMPTY'?'skipped':'failed'):state('activation',false,stage==='activation'||stage==='persist'),run?.activation?(noBuys?'Decision saved: no new buys approved':'Investment plan committed; execution checks apply'):'Waiting for an investment decision',run?.activation?1:0,1),
     row('execution',executionError?'failed':noBuys?'skipped':approved&&tick?'running':'pending',executionError?executionError.message:noBuys?'No new orders: the AI chose cash for this review':approved?`Monitoring approved buys against observed market bars. Latest check: ${tick?.fills?.fills||0} fills`:'Waiting for this review to approve buys; existing orders are monitored separately',null,null,{at:iso(executionError?.atMs||tick?.atMs)})
   ];
+  if(shared&&approved){
+    const planId=run.activation.planId,sets=orderSets.filter(s=>s.planId===planId||s.planHash===planId||s.planId==='shared_'+planId);
+    const expected=(run.buys||[]).length,entered=sets.filter(s=>s.entered).length,expired=sets.filter(s=>s.entryExpired&&!s.entered).length;
+    const blocked=sets.find(s=>s.pausedReason),step=result.find(s=>s.step==='execution');
+    step.progress={completed:entered,total:expected};
+    step.state=executionError||blocked||expired?'failed':entered===expected?'complete':sets.length?'running':'pending';
+    step.detail=executionError?executionError.message:blocked?'Execution paused: '+blocked.pausedReason:expired?`${entered} filled; ${expired} expired without a purchase. Released cash stays in the account.`:entered===expected?`${entered} entries filled; saved exit protection continues to be monitored.`:`${entered} of ${expected} entries filled. Waiting for an eligible observed market bar; delayed quotes and entry limits apply.`;
+    step.companies=sets.map(s=>({symbol:s.symbol,completed:s.entered?1:0,total:1,detail:s.pausedReason||s.status||'Waiting for execution'}));
+  }
   const retryError=!failed&&!terminal&&run?.worker?.state==='yielded_resumable'&&run.worker.error?.message;
   if(retryError){const active=result.find(x=>x.state==='running');if(active){active.state='failed';active.detail='The last attempt stopped: '+retryError+'. Saved work is retained; waiting for retry.';}}
   if(failed){const active=result.find(x=>x.state==='running'||x.state==='failed');if(active){active.state='failed';active.detail=run.failureReason||run.noBuyReasons?.[0]?.error||run.failure?.message||'Review stopped; inspect the saved error';}}
@@ -351,8 +361,8 @@ async function readManagerDashboard({ params, ctx }) {
   const PF = require("./_investorPortfolio");
   const AL = require("./_investorAlerts");
   const O = lazy("./_investorOpenai");
-  const [snap, run, pointers, alerts, deltas, spend] = await Promise.all([
-    PF.snapshot({ accountId, asOfMs: nowMs, admin: D }), latestRunDoc(D, ctrl), pointersFor(D, accountId), AL.listActive({ admin: D, accountId }), pendingDeltas(D, { limit: 50 }), spendView(D, { nowMs, policy }),
+  const [snap, run, pointers, alerts, deltas, spend, orderSetSnapshot] = await Promise.all([
+    PF.snapshot({ accountId, asOfMs: nowMs, admin: D }), latestRunDoc(D, ctrl), pointersFor(D, accountId), AL.listActive({ admin: D, accountId }), pendingDeltas(D, { limit: 50 }), spendView(D, { nowMs, policy }), D.col(D.COL.orderSets).where('accountId','==',accountId).get(),
   ]);
   const decisions = await decisionsForRun(D, run && run.managerRunId);
   // The ledger transfers reservations out of cash; do not subtract them twice.
@@ -378,7 +388,7 @@ async function readManagerDashboard({ params, ctx }) {
       holdings: snap.positions.map(p => ({ symbol: p.symbol, name: names.get(p.symbol) || p.symbol, quantity: qty(p.quantityUnits), marketValue: money(p.marketValueMinor), pnl: p.markAt ? money(p.unrealisedMinor) : null, markAt: p.markAt,
         returnBps: p.markAt && big(p.costBasisMinor) > 0n ? String(big(p.unrealisedMinor) * 10000n / big(p.costBasisMinor)) : null,
         reason: clip((decisions.find(d => d.symbol === p.symbol) || {}).reason, 180) })),
-      chosenCompanies: decisions.filter(d => !d.held && ["BUY", "WATCH"].includes(d.decision) && (!run?.decisionProcess || d.source==="final_synthesis" && run.shortlist?.symbols?.includes(d.symbol))).sort((a,b) => (a.decision === "BUY" ? 0 : 1) - (b.decision === "BUY" ? 0 : 1) || (a.capitalRank || 999) - (b.capitalRank || 999)).slice(0,8).map(d => ({ symbol:d.symbol, name:names.get(d.symbol) || d.symbol, decision:d.decision, reason:clip(d.reason,180), state:(pointers.find(p => p.symbol === d.symbol) || {}).status || null })),
+      chosenCompanies: decisions.filter(d => !d.held && ["BUY", "WATCH"].includes(d.decision) && (!run?.decisionProcess || ["final_synthesis","shared_investment"].includes(d.source) && run.shortlist?.symbols?.includes(d.symbol))).sort((a,b) => (a.decision === "BUY" ? 0 : 1) - (b.decision === "BUY" ? 0 : 1) || (a.capitalRank || 999) - (b.capitalRank || 999)).slice(0,8).map(d => ({ symbol:d.symbol, name:names.get(d.symbol) || d.symbol, decision:d.decision, reason:clip(d.reason,180), state:(pointers.find(p => p.symbol === d.symbol) || {}).status || null })),
       nextReview: nextReviewWindow(ctrl, nowMs),
       cadence: { reviewMinuteEt: POLICY.CUTOFFS_ET.managerStartMin, holdingDeadlineMinuteEt: POLICY.CUTOFFS_ET.holdingHardDeadlineMin, newsCheckMinutes:10, orderCheckMinutes:1 }
     },
@@ -393,7 +403,7 @@ async function readManagerDashboard({ params, ctx }) {
     spend, health, alerts: alerts.slice(0, 50).map(alertView), evidenceDeltas: deltas.slice(0, 50).map(deltaSummary),
     newDecisions: decisions.filter((d) => d.decision === "BUY" || d.changedSincePrior).sort((a, b) => (a.capitalRank || 999) - (b.capitalRank || 999)).slice(0, 50).map((d) => ({ symbol: d.symbol, decision: d.decision, reasonCode: d.reasonCode || null, reason: clip(d.reason, 240), capitalRank: d.capitalRank == null ? null : d.capitalRank, changedSincePrior: d.changedSincePrior === true, fundingState: d.fundingState || null })),
     holdingRevisions: decisions.filter((d) => d.held).slice(0, 50).map((d) => ({ symbol: d.symbol, decision: d.decision, reasonCode: d.reasonCode || null, reason: clip(d.reason, 240), revised: d.source === "holding_analysis" })),
-    workflow: workflowOf(ctrl, run), control: controlView(ctrl, { reconciled: !(health.executor.state === "ACTION_REQUIRED") }), asOfByLane: laneAsOf(ctrl),
+    workflow: workflowOf(ctrl, run, rows(orderSetSnapshot)), control: controlView(ctrl, { reconciled: !(health.executor.state === "ACTION_REQUIRED") }), asOfByLane: laneAsOf(ctrl),
     capitalDeployment: { explanation: run && run.noBuyReasons && run.noBuyReasons.length ? run.noBuyReasons.map((r) => r.code).join(", ") : run && run.buys && run.buys.length ? `${run.buys.length} BUY mandate(s) activated` : "no Manager Meeting recorded", reserved: money(snap.reservedMinor), available: money(avail > 0n ? avail : 0n) },
   };
   return { data };
@@ -1039,8 +1049,8 @@ async function consumePreview(D, { token, kind, accountId, nowMs, verify = null,
     if (p.status !== "UNUSED") throw typed("PREVIEW_TOKEN_INVALID", "preview token already consumed");
     if (Number(p.expiresAtMs) < nowMs) throw typed("PREVIEW_TOKEN_INVALID", "preview token expired");
     if (verify) await verify(p, tx);
-    tx.set(ref, { status: "CONSUMED", consumedAtMs: nowMs }, { merge: true });
     const extra = andThen ? await andThen(p, tx) : null;
+    tx.set(ref, { status: "CONSUMED", consumedAtMs: nowMs }, { merge: true });
     return { preview: p, extra };
   });
 }
@@ -1096,7 +1106,7 @@ const MUTATIONS = {
       if(existing&&['queued','running','yielded_resumable'].includes(existing.status))return {data:{jobId:existing.jobId,runId:activeId,tradingDate,duplicate:true,status:existing.status},jobId:existing.jobId};
       if(existing&&['failed','dead'].includes(existing.status)&&/output_truncated|HANDOFF_BUY_WITHOUT_EVIDENCE|daily_reservation_exhausted/.test(JSON.stringify(existing.lastError||{}))){
         const C=require('./_investorDecisionContext'),cp=existing.checkpoint?.data?.paperCheckpointRef?await C.read({runId:existing.checkpoint.data.paperCheckpointRef,admin:ctx.admin}):existing.checkpoint;
-        if(cp?.stage==='research'&&Object.keys(cp.data?.handoff?.documents||{}).length&&!cp.data.handoff.resultRef){
+        if(cp?.stage==='shortlist'||cp?.stage==='research'&&Object.keys(cp.data?.handoff?.documents||{}).length&&!cp.data.handoff.resultRef){
           if(existing.operatorRecoveryCount)throw typed('STATE_CONFLICT','The saved review has already used its recovery attempt. Its research and failure remain available.');
           const ref=ctx.admin.col(ctx.admin.COL.jobs).doc(existing.jobId);
           await ctx.admin.runTransaction(async tx=>{
@@ -1119,7 +1129,7 @@ const MUTATIONS = {
     const r = await J.enqueueOnce({ task: "premarket_manager", dedupeId: `${ctx.accountId}_${tradingDate}_operator_${slot}`, accountId: ctx.accountId, priority: 150, runId, sessionDate: tradingDate, createdBy: `apiV2:${ctx.actorId}`,
       payload: { accountId: ctx.accountId, tradingDate, reason: "OPERATOR", acceptedAtMs: ctx.nowMs, effectiveAsOfMs: ctx.nowMs, evidenceCutoffMs: ctx.nowMs, requestedBy: ctx.actorId, correlationId: ctx.correlationId } });
     await writeAudit(ctx.admin, { action: "runManagerReview", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: "OPERATOR", after: { jobId: r.jobId, duplicate: r.duplicate === true, tradingDate }, correlationId: ctx.correlationId, nowMs: ctx.nowMs });
-    return { data: { jobId: r.jobId, runId, tradingDate, acceptedAt: iso(ctx.nowMs), effectiveAsOf: iso(ctx.nowMs), evidenceCutoff: iso(ctx.nowMs), duplicate: r.duplicate === true, status: r.status }, jobId: r.jobId, requestedState: { run: "QUEUED" }, appliedState: { run: r.duplicate ? String(r.status).toUpperCase() : "QUEUED" } };
+    return { data: { jobId: r.jobId, runId, tradingDate, acceptedAt: iso(ctx.nowMs), effectiveAsOf: iso(ctx.nowMs), evidenceCutoff: iso(ctx.nowMs), duplicate: r.duplicate === true, status: r.status }, jobId: r.jobId, ...(r.controlVersion != null ? { resourceVersion: String(r.controlVersion) } : {}), requestedState: { run: "QUEUED" }, appliedState: { run: r.duplicate ? String(r.status).toUpperCase() : "QUEUED" } };
   },
   async requestResearch(params, ctx) {
     requireEnabled(ctx, "requestResearch");
@@ -1210,7 +1220,7 @@ const MUTATIONS = {
     const clear = emergencyStateOf(ctrl) === "CLEAR";
     const out = await transitionControl(D, { expectedVersion: env.expectedResourceVersion, patch: { accountMode: "PAPER_AI", engineMode: "manager", writerEpoch: epoch, activationBinding: { policyHash: params.policyHash, universeHash: params.universeHash, universeVersion: snapshot.universeVersion, commit: commitId(), activatedBy: ctx.actorId, activatedAtMs: ctx.nowMs }, buyState: clear ? "OPEN" : buyStateOf(ctrl), freezeNewBuys: clear ? false : ctrl.freezeNewBuys === true,executorEnabled: true },
       requested: { accountModeRequested: { requested: "PAPER_AI", applied: "PAPER_AI" } }, action: "activateAccountMode", actorId: ctx.actorId, reason: env.auditReason, nowMs: ctx.nowMs, correlationId: ctx.correlationId, mutationId: ctx.mutationId });
-    let review = null;
+    let review = null, appliedControlVersion = out.version;
     try {
       const MK = require("./_investorMarket"), st = MK.sessionState(new Date(ctx.nowMs)), mm = Number(st.minutesEt);
       if (st.tradingDay && Number.isFinite(mm) && mm >= POLICY.CUTOFFS_ET.evidenceFreezeMin && mm <= 15 * 60 + 15 && managerStateOf(ctrl) !== "PAUSED") {
@@ -1218,9 +1228,10 @@ const MUTATIONS = {
         const r = await J.enqueueOnce({ task: "premarket_manager", dedupeId: `${ctx.accountId}_${tradingDate}_activation_${slot}`, accountId: ctx.accountId, priority: 150, runId, sessionDate: tradingDate, createdBy: `apiV2:${ctx.actorId}`,
           payload: { accountId: ctx.accountId, tradingDate, reason: "OPERATOR", acceptedAtMs: ctx.nowMs, effectiveAsOfMs: ctx.nowMs, evidenceCutoffMs: ctx.nowMs, requestedBy: ctx.actorId, correlationId: ctx.correlationId } });
         review = { jobId: r.jobId, runId, tradingDate, duplicate: r.duplicate === true };
+        if (r.controlVersion != null) appliedControlVersion = r.controlVersion;
       }
     } catch (e) { review = { error: String(e.code || e.message).slice(0, 120) }; }
-    return { data: { accountMode: "PAPER_AI", writerEpoch: epoch, engineMode: "manager", buyState: clear ? "OPEN" : buyStateOf(ctrl), reviewQueued: review, binding: { policyHash: params.policyHash, universeHash: params.universeHash }, note: "v1 investment mutations now answer 410 ACTION_RETIRED; exactly one engine holds mutation authority" }, resourceVersion: String(out.version), requestedState: { accountMode: "PAPER_AI" }, appliedState: { accountMode: "PAPER_AI" } };
+    return { data: { accountMode: "PAPER_AI", writerEpoch: epoch, engineMode: "manager", buyState: clear ? "OPEN" : buyStateOf(ctrl), reviewQueued: review, binding: { policyHash: params.policyHash, universeHash: params.universeHash }, note: "v1 investment mutations now answer 410 ACTION_RETIRED; exactly one engine holds mutation authority" }, resourceVersion: String(appliedControlVersion), requestedState: { accountMode: "PAPER_AI" }, appliedState: { accountMode: "PAPER_AI" } };
   },
   async deactivateAccountMode(params, ctx, env) {
     const D = ctx.admin, ctrl = ctx.control;
@@ -1528,6 +1539,7 @@ const MUTATIONS = {
         const aref = D.col(D.COL.accounts).doc(ctx.accountId);
         const cur = await tx.get(aref);
         const a = cur.exists ? cur.data() : {};
+        if(!cur.exists||String(a.portfolioVersion||a.balanceRevision||0)!==String(params.accountVersion)||Number(a.balanceCents?.reserved||0)!==0||Number(a.balanceCents?.positions||0)!==0||String(a.balanceCents?.cash||0)!==String(snap.settledCashMinor))throw typed('VERSION_CONFLICT','Account changed before reset; refresh its preview.');
         const resetId = `reset_${ctx.mutationId.slice(-12)}`;
         tx.set(D.col(D.COL.ledger).doc(`${resetId}_close`), { txnId: `${resetId}_close`, accountId: ctx.accountId, kind: "account_reset_close", legs: [{ account: "cash", amountCents: -Number(big(snap.settledCashMinor)) }, { account: "contributed_capital", amountCents: Number(big(snap.settledCashMinor)) }], postedAt: iso(ctx.nowMs), atMs: ctx.nowMs, meta: { mutationId: ctx.mutationId, by: ctx.actorId } });
         tx.set(D.col(D.COL.ledger).doc(`${resetId}_open`), { txnId: `${resetId}_open`, accountId: ctx.accountId, kind: "capital_contribution", legs: [{ account: "cash", amountCents: Number(starting) }, { account: "contributed_capital", amountCents: -Number(starting) }], postedAt: iso(ctx.nowMs), atMs: ctx.nowMs, meta: { mutationId: ctx.mutationId, by: ctx.actorId, reset: true } });

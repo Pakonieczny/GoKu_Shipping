@@ -174,11 +174,16 @@ function normalizeBook(portfolio, ctx = {}) {
     if (!symbol || (side !== "buy" && side !== "sell")) throw err(CODES.PORTFOLIO_INVALID, `workingOrders[${i}]: symbol and side buy|sell are required`);
     const quantity = big(w.quantityUnits, `workingOrders[${i}].quantityUnits`);
     if (quantity < 0n) throw err(CODES.PORTFOLIO_INVALID, `workingOrders[${i}]: negative quantity`);
+    // Shared paper plans reserve dollars before an observed bar determines
+    // their share count and price. Zero shares add no executable exposure;
+    // their cash remains accounted for by portfolio.reservedMinor. The shared
+    // executor rechecks sizing and every risk cap when shares are determined.
+    if (quantity === 0n) return null;
     const boundary = w.lossBoundaryPriceMicros === undefined || w.lossBoundaryPriceMicros === null
       ? null : big(w.lossBoundaryPriceMicros, `workingOrders[${i}].lossBoundaryPriceMicros`);
     return { symbol, side, quantity, limit: big(w.limitPriceMicros, `workingOrders[${i}].limitPriceMicros`), boundary,
       cost: bigOr(w.costPerShareMicros, 0n, `workingOrders[${i}].costPerShareMicros`), ...classify(symbol, w.sector) };
-  });
+  }).filter(Boolean);
   return {
     navMinor, navMicros: navMinor * MICROS_PER_MINOR,
     settledCashMinor: bigOr(portfolio.settledCashMinor, 0n, "portfolio.settledCashMinor"),

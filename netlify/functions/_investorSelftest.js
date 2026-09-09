@@ -4061,20 +4061,20 @@ function runFixtures() {
     assertFailure(bad.r, "schema_invalid");
     if (!bad.r.schemaErrors || !bad.r.schemaErrors.length) throw new Error("schema errors not surfaced");
     /* unparseable */
-    const junk = await run([{ data: { id: "j", status: "completed", model: "gpt-6-astra", output: [{ type: "message", content: [{ type: "output_text", text: "{not json" }] }], usage: {} } }]);
+    const junk = await run([{ data: { id: "j", status: "completed", model: "gpt-6-astra", output: [{ type: "message", content: [{ type: "output_text", text: "{not json" }] }], usage: {input_tokens:0,output_tokens:0} } }]);
     assertFailure(junk.r, "unparseable_model_output");
     /* an unexpected tool call when none were offered */
-    const tool = await run([{ data: { id: "t", status: "completed", model: "gpt-6-astra", output: [{ type: "function_call", call_id: "c", name: "submitOrder", arguments: "{}" }], usage: {} } }]);
+    const tool = await run([{ data: { id: "t", status: "completed", model: "gpt-6-astra", output: [{ type: "function_call", call_id: "c", name: "submitOrder", arguments: "{}" }], usage: {input_tokens:0,output_tokens:0} } }]);
     assertFailure(tool.r, "tool_call_without_tools");
     /* model substitution by the provider */
     const sub = await run([completed("gpt-5.6-terra", reviewOutput(symbols))]);
     assertFailure(sub.r, "model_substituted");
-    /* HTTP error and unreachable: reservation released, nothing spent */
+    /* Explicit rate rejection releases funds; an uncertain submission retains them. */
     const http = await run([{ status: 429, data: { error: { message: "rate" } } }]);
     assertFailure(http.r, "openai_http_429");
     if ((await http.G.spendToday()).reservedMinor !== 0) throw new Error("reservation leaked after HTTP error");
     const dead = await run([() => { throw new Error("ECONNRESET"); }]);
-    assertFailure(dead.r, "model_unreachable");
+    assertFailure(dead.r, "model_submission_uncertain");
     /* exhausted reservation: no HTTP call is made, and the shortfall is not a smaller proposal */
     const ceiling = Number(P.budgetPolicy().dailyReservationMinor);
     const broke = await run([completed("gpt-6-astra", reviewOutput(symbols))], { day: new Date().toISOString().slice(0, 10), spentMinor: ceiling, reservedMinor: 0 });
@@ -4121,12 +4121,12 @@ function runFixtures() {
     /* both turns settle into one cost: (1000+2000) input × $4/M + (100+3000) output × $20/M = $0.074 → 7 cents */
     if (r.costMinor !== "19") throw new Error(`tool-loop cost ${r.costMinor}`);
     /* a tool that is not allowlisted is a rejected output, not an executed call */
-    t = scriptedTransport([{ data: { id: "r2", status: "completed", model: "gpt-6-astra", output: [{ type: "function_call", call_id: "c2", name: "browse", arguments: "{}" }], usage: {} } }]);
+    t = scriptedTransport([{ data: { id: "r2", status: "completed", model: "gpt-6-astra", output: [{ type: "function_call", call_id: "c2", name: "browse", arguments: "{}" }], usage: {input_tokens:0,output_tokens:0} } }]);
     G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
     const bad = await G.researchCompany({ dossier, tools, cutoffMs });
     if (bad.ok !== false || bad.error !== "tool_not_allowlisted" || bad.decision !== "ABSTAIN" || t.calls.length !== 1) throw new Error(`browse ${JSON.stringify(bad).slice(0, 200)}`);
     /* a call for another symbol is out of scope */
-    t = scriptedTransport([{ data: { id: "r3", status: "completed", model: "gpt-6-astra", output: [{ type: "function_call", call_id: "c3", name: "getFilingFactsAsOf", arguments: JSON.stringify({ symbol: "ZZZ", asOfMs: cutoffMs, concepts: [] }) }], usage: {} } }]);
+    t = scriptedTransport([{ data: { id: "r3", status: "completed", model: "gpt-6-astra", output: [{ type: "function_call", call_id: "c3", name: "getFilingFactsAsOf", arguments: JSON.stringify({ symbol: "ZZZ", asOfMs: cutoffMs, concepts: [] }) }], usage: {input_tokens:0,output_tokens:0} } }]);
     G = O.withDeps({ admin: fakeAdmin(), fetchImpl: t.transport, env: { OPENAI_API_KEY: "k" } });
     const scope = await G.researchCompany({ dossier, tools, cutoffMs });
     if (scope.ok !== false || scope.error !== "tool_symbol_out_of_scope") throw new Error("symbol scope");
@@ -4330,6 +4330,41 @@ function runFixtures() {
     return true;
   }));
 
+  cases.push(fixture("shared_pending_dollar_reservation_does_not_require_an_unobserved_share_price",async()=>{
+    const assert=require('assert/strict'),fake=fakeAdmin(),C=fake.COL,P=require('./_investorPortfolio'),R=require('./_investorRisk'),PR=require('./_investorPortfolioRisk');
+    await fake.col(C.accounts).doc('paper-1').set({balanceCents:{cash:9500000,reserved:500000}});
+    await fake.col(C.orderSets).doc('shared_pending').set({accountId:'paper-1',orderSetId:'shared_pending',symbol:'NVDA',coreVersion:'fixture',entered:false,reservedMinor:'500000'});
+    const portfolio=await P.snapshot({accountId:'paper-1',admin:fake});
+    assert.equal(portfolio.reservedMinor,'500000');assert.equal(portfolio.workingOrders[0].quantityUnits,'0');assert.equal(portfolio.workingOrders[0].limitPriceMicros,null);
+    const risk=R.revalidateOperationalLimits({portfolio});assert.equal(risk.allowExpansion,true,JSON.stringify(risk));
+    assert.equal(risk.exposures.workingBuyCount,0);assert.equal(risk.exposures.cashAfterWorkingMinor,'9000000');
+    assert.throws(()=>PR.exposures({...portfolio,policy:require('./_investorPolicy').RISK_MANDATE,workingOrders:[{...portfolio.workingOrders[0],quantityUnits:'1'}]}),e=>e.code==='NOT_CANONICAL_INTEGER','an actual share order must still have a canonical price');
+    return true;
+  }));
+
+  cases.push(fixture("new_paper_review_resets_allowance_once_without_erasing_costs_or_reservations",async()=>{
+    const assert=require('assert/strict'),fake=fakeAdmin(),J=require('./_investorJobs').withAdmin(fake);
+    const day=new Date().toISOString().slice(0,10),cost=fake.col(fake.COL.costs).doc('openai_'+day),control=fake.col(fake.COL.control).doc('control');
+    await control.set({controlVersion:4,budget:{dailyReservationMinor:'1000',version:2}});
+    await cost.set({spentMinor:895,reservedMinor:25,calls:8});
+    const input={task:'premarket_manager',dedupeId:'fresh_allowance',accountId:'paper-1',runId:'fresh_allowance'};
+    const first=await J.enqueueOnce(input),budget=(await control.get()).data().budget;
+    assert.equal(first.enqueued,true);assert.equal(budget.todayReset.spentMinor,'895');assert.equal(budget.dailyReservationMinor,'1000');
+    assert.deepEqual((await cost.get()).data(),{spentMinor:895,reservedMinor:25,calls:8});
+    await cost.set({spentMinor:920},{merge:true});
+    assert.equal((await J.enqueueOnce(input)).duplicate,true);
+    await fake.col(fake.COL.jobs).doc(first.jobId).set({status:'dead'},{merge:true});
+    await J.enqueueOnce(input);
+    assert.deepEqual((await control.get()).data().budget,budget,'retry must not replenish the allowance');
+    await J.enqueueOnce({...input,dedupeId:'next_review',runId:'next_review'});
+    const next=(await control.get()).data().budget;
+    assert.equal(next.todayReset.spentMinor,'920');assert.equal(next.dailyReservationMinor,'1000');
+    const gateway=require('./_investorOpenai').withDeps({admin:fake});
+    assert.equal((await gateway.reserveMinor('within_fresh_run',975,'manager')).ok,true);
+    assert.equal((await gateway.reserveMinor('over_fresh_run',1,'manager')).ok,false);
+    return true;
+  }));
+
   cases.push(fixture("paper_daily_allowance_reset_preserves_charges_and_expires",async()=>{
     const assert=require('assert/strict'),W=apiWorld(),O=require('./_investorOpenai');
     const health=(await W.read('systemHealth')).body.data;
@@ -4414,6 +4449,81 @@ function runFixtures() {
     await C.freeze({runId:'event_test_event_inputs',admin:fake,context:{state:{kind:'NONHOLDING_NO_ENTRY'},packet:{ok:true},policy:{},portfolio:{},marks:{},cutoffMs:1}});
     const out=await require('./_investorManager').runEventRevision({claim:{jobId:'event_test',payload:{accountId:'paper-1',symbol:'AME'}},control:{accountMode:'PAPER_AI'},deps:{admin:fake,gateway:{researchCompany:async()=>{throw Error('Must not purchase automatic research for an unowned company');}}}});
     assert.equal(out.decision,'DEFERRED_TO_NEXT_REVIEW');return true;
+  }));
+
+  cases.push(fixture("ranking_truncation_continues_once_with_saved_inputs_and_charges",async()=>{
+    const assert=require('assert/strict'),O=require('./_investorOpenai'),Paper=require('./_investorPaperProcess'),H=require('./_investorSimulationHorizon'),fake=fakeAdmin();
+    const cards=Array.from({length:303},(_,i)=>({symbol:'C'+i})),calls=[];
+    const process={version:Paper.VERSION,companyRange:'top1',min:1,max:1,investmentPolicy:H.policyFor('top1',null,{shared:true})};
+    const gateway=O.withDeps({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>{
+      const body=JSON.parse(opts.body);calls.push(body);assert.equal(opts.method,'POST');assert.equal(body.reasoning.effort,'high');
+      const output={schemaVersion:'shared-shortlist.v1',assessments:Object.fromEntries(cards.map((c,i)=>[c.symbol,{rank:i+1,reason:'Dated evidence'}]))};
+      return {ok:true,status:200,json:async()=>calls.length===1?{id:'ranking_partial',model:body.model,status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[{type:'reasoning',id:'saved_reasoning',encrypted_content:'opaque-fixture',summary:[]}],usage:{input_tokens:1000,output_tokens:12000}}:{id:'ranking_complete',model:body.model,status:'completed',output_text:JSON.stringify(output),usage:{input_tokens:2000,output_tokens:15000}}};
+    }});
+    await Paper.withProcess(process,async()=>{
+      const args={cards,count:50,contextManifestHash:'saved-ranking-303'};
+      const first=await gateway.shortlistCandidates(args);assert.equal(first.error,'output_truncated');assert(first.costMinor>0);
+      const second=await gateway.shortlistCandidates(args);assert(second.ok,JSON.stringify(second));assert.equal(second.selected.length,50);assert.equal(calls.length,2);
+      assert.equal(calls[1].max_output_tokens,24000);assert.deepEqual(calls[1].input.slice(0,2),calls[0].input);assert(calls[1].input.some(x=>x.id==='saved_reasoning'));
+      assert.equal(Number(second.costMinor),(await gateway.spendToday()).spentMinor);
+      const cached=await gateway.shortlistCandidates(args);assert(cached.ok&&cached.cached);assert.equal(calls.length,2);
+    });return true;
+  }));
+
+  cases.push(fixture("concurrent_model_workers_submit_only_once_and_keep_unknown_billing_reserved",async()=>{
+    const assert=require('assert/strict'),O=require('./_investorOpenai'),fake=fakeAdmin();
+    const transaction=fake.runTransaction;let queue=Promise.resolve();fake.runTransaction=fn=>{const result=queue.then(()=>transaction(fn));queue=result.catch(()=>{});return result;};
+    let posts=0;const gateway=O.withDeps({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async()=>{posts++;throw Error('timeout after provider accepted request');}});
+    const args={cards:[{symbol:'AAA'}],count:1,contextManifestHash:'same-paid-operation'};
+    const results=await Promise.all([gateway.shortlistCandidates(args),gateway.shortlistCandidates(args)]);
+    assert.equal(posts,1);assert(results.every(x=>!x.ok));assert((await gateway.spendToday()).reservedMinor>0);
+    const again=await gateway.shortlistCandidates(args);assert.equal(again.retryable,false);assert.equal(posts,1);return true;
+  }));
+
+  cases.push(fixture("accepted_response_poll_failure_does_not_erase_reserved_cost",async()=>{
+    const assert=require('assert/strict'),O=require('./_investorOpenai'),fake=fakeAdmin();let posts=0;
+    const gateway=O.withDeps({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async(url,opts)=>opts.method==='POST'?(posts++,{ok:true,status:200,json:async()=>({id:'accepted_response',status:'queued'})}):{ok:false,status:503,json:async()=>({})}});
+    const args={cards:[{symbol:'AAA'}],count:1,contextManifestHash:'poll-error'};
+    assert((await gateway.shortlistCandidates(args)).pending);const reserved=(await gateway.spendToday()).reservedMinor;assert(reserved>0);
+    assert((await gateway.shortlistCandidates(args)).pending);assert.equal(posts,1);assert.equal((await gateway.spendToday()).reservedMinor,reserved);return true;
+  }));
+
+  cases.push(fixture("missing_usage_and_ambiguous_server_errors_retain_the_paid_reservation",async()=>{
+    const assert=require('assert/strict'),O=require('./_investorOpenai');
+    for(const status of [200,503]){
+      const fake=fakeAdmin();let posts=0;
+      const gateway=O.withDeps({admin:fake,env:{OPENAI_API_KEY:'fixture'},fetchImpl:async()=>{posts++;return {ok:status===200,status,json:async()=>({id:'unknown-charge',model:'gpt-5.6-terra',status:'completed',output_text:JSON.stringify({schemaVersion:'paper-shortlist.v1',selected:['AAA']})})};}});
+      const args={cards:[{symbol:'AAA'}],count:1,contextManifestHash:'unknown-billing'};
+      const result=await gateway.shortlistCandidates(args);assert.equal(result.ok,false);assert.equal(result.retryable,false);assert((await gateway.spendToday()).reservedMinor>0);
+      await gateway.shortlistCandidates(args);assert.equal(posts,1);
+    }return true;
+  }));
+
+  cases.push(fixture("model_reservations_settle_on_the_original_day_after_midnight",async()=>{
+    const assert=require('assert/strict'),O=require('./_investorOpenai'),fake=fakeAdmin();let time=Date.parse('2026-09-09T23:59:00Z');
+    const gateway=O.withDeps({admin:fake,now:()=>time});await gateway.reserveMinor('overnight',20,'facts');await gateway.reserveMinor('release-overnight',10,'facts');
+    time+=120000;await gateway.settleMinor('overnight',7,{},'facts');await gateway.releaseMinor('release-overnight');
+    const yesterday=(await fake.col(fake.COL.costs).doc('openai_2026-09-09').get()).data();assert.equal(yesterday.reservedMinor,0);assert.equal(yesterday.spentMinor,7);
+    assert.equal((await gateway.spendToday()).spentMinor,0);return true;
+  }));
+
+  cases.push(fixture("paper_ranking_terminal_failure_keeps_checkpoint_and_stops_retries",async()=>{
+    const assert=require('assert/strict'),Paper=require('./_investorPaperProcess'),G=require('./_investorManager'),W=meetingWorld({reviewMissing:[],synthesisBuy:false});await W.seed();
+    W.deps.decisionProcess={version:Paper.VERSION,companyRange:'top1',min:1,max:1,strategy:null,settingsRevision:0,preparedResearch:true};
+    W.deps.gateway.shortlistCandidates=async()=>({ok:false,error:'output_truncated',retryable:false,costMinor:'17',requestId:'saved-ranking'});
+    const result=await G.runManagerMeeting({claim:{runId:'terminal-ranking',payload:{accountId:'paper-1',tradingDate:'2026-09-04'}},deps:W.deps,control:{engineMode:'manager'}});
+    assert(result.done&&result.failed);assert.equal(result.checkpoint.stage,'shortlist');assert(result.checkpoint.data.contextManifestHash);assert.equal(result.summary.costMinor,'17');return true;
+  }));
+
+  cases.push(fixture("preview_transaction_reads_finish_before_consumption_write",async()=>{
+    const assert=require('assert/strict'),V=require('./_investorApiV2'),fake=fakeAdmin();
+    const token='reset-preview';
+    // Preview IDs hash the literal token, without JSON encoding.
+    const actualId='preview_'+require('crypto').createHash('sha256').update(token).digest('hex').slice(0,40);
+    await fake.col(fake.COL.mutations).doc(actualId).set({previewKind:'paperAccountReset',accountId:'paper-1',status:'UNUSED',expiresAtMs:100});
+    let writes=false;fake.runTransaction=fn=>fn({get:ref=>{assert.equal(writes,false,'Firestore forbids reads after writes');return ref.get();},set:(ref,data,opts)=>{writes=true;return ref.set(data,opts);}});
+    await V.consumePreview(fake,{token,kind:'paperAccountReset',accountId:'paper-1',nowMs:1,andThen:async(p,tx)=>{await tx.get(fake.col(fake.COL.accounts).doc('paper-1'));}});
+    assert(writes);return true;
   }));
 
   cases.push(fixture("operator_pause_blocks_new_ai_posts_without_changing_budget_or_execution",async()=>{
@@ -5418,6 +5528,18 @@ function runFixtures() {
     return true;
   }));
 
+  cases.push(fixture("dashboard_tracks_shared_plan_entries_and_shows_shared_finalists",async()=>{
+    const assert=require('assert/strict'),W=apiWorld(),M=require('./_investorManager'),id='shared-progress';W.ctrl().activeManagerRunId=id;
+    await M.writeRun({admin:W.fake,managerRunId:id,status:'running',stage:'shortlist',accountId:'paper-1',eligibleCount:304,universeVersion:'fixture',universeHash:'fixture',decisionProcess:{version:'paper-decision-process.v1'},activity:{rankable:303}});
+    let d=(await W.read('managerDashboard')).body.data;assert.equal(d.workflow.find(x=>x.step==='coverage').progress.total,50);
+    await M.writeRun({admin:W.fake,managerRunId:id,status:'complete',stage:'complete',buys:[{symbol:'AAA'}],shortlist:{count:50,screened:303,symbols:['AAA']},activation:{status:'COMMITTED',planId:'shared_fixture'}});
+    await W.fake.col(W.C.managerDecisions).doc('shared-finalist').set({managerRunId:id,symbol:'AAA',decision:'BUY',source:'shared_investment',held:false,reason:'Supported opportunity'});
+    const ref=W.fake.col(W.C.orderSets).doc('shared-entry');await ref.set({accountId:'paper-1',planId:'shared_fixture',symbol:'AAA',coreVersion:'shared',entered:false,status:'AWAITING_STRATEGY_ENTRY'});W.V2.forgetMemo();
+    d=(await W.read('managerDashboard')).body.data;assert(d.overview.chosenCompanies.some(x=>x.symbol==='AAA'));assert.equal(d.workflow.find(x=>x.step==='execution').state,'running');
+    await ref.set({entered:true,status:'PROTECTED'},{merge:true});d=(await W.read('managerDashboard')).body.data;assert.equal(d.workflow.find(x=>x.step==='execution').state,'complete');
+    await ref.set({entered:false,entryExpired:true,status:'ENTRY_EXPIRED'},{merge:true});d=(await W.read('managerDashboard')).body.data;assert.equal(d.workflow.find(x=>x.step==='execution').state,'failed');return true;
+  }));
+
   cases.push(fixture("dashboard_reports_worker_failure_and_saved_research_instead_of_an_endless_spinner", async () => {
     const assert=require('assert'),W=apiWorld(),id='interrupted_review';
     W.ctrl().activeManagerRunId=id;
@@ -5558,7 +5680,7 @@ function runFixtures() {
     if (badPreflight.statusCode !== 422 || badPreflight.body.error.code !== "PREFLIGHT_FAILED" || !/policy_hash_mismatch/.test(badPreflight.body.error.message)) throw new Error(`preflight ${badPreflight.statusCode} ${JSON.stringify(badPreflight.body.error).slice(0, 200)}`);
     const uni = await O.read("universe");
     const good = await O.mutate("activateAccountMode", { targetMode: "PAPER_AI", policyHash: O.policy.policyHash, universeHash: uni.body.data.snapshot.universeHash }, { version: 4, reauthed: true });
-    if (good.statusCode !== 200 || O.ctrl().accountMode !== "PAPER_AI" || O.ctrl().writerEpoch !== 1 || O.ctrl().engineMode !== "manager" || O.ctrl().controlVersion !== 5) throw new Error(`activation ${good.statusCode} ${JSON.stringify(good.body.error)} ${JSON.stringify(O.ctrl()).slice(0, 200)}`);
+    if (good.statusCode !== 200 || O.ctrl().accountMode !== "PAPER_AI" || O.ctrl().writerEpoch !== 1 || O.ctrl().engineMode !== "manager" || O.ctrl().controlVersion !== 6 || good.body.resourceVersion !== String(O.ctrl().controlVersion)) throw new Error(`activation ${good.statusCode} ${JSON.stringify(good.body.error)} ${JSON.stringify(O.ctrl()).slice(0, 200)}`);
     if (!O.ctrl().lastTransition || O.ctrl().lastTransition.action !== "activateAccountMode") throw new Error("transition record");
     /* idempotency: same key + same content replays; same key + other content is refused; stale version conflicts */
     const key = "key_freeze_0000000001";
@@ -7345,11 +7467,11 @@ async function simulatorAdversarial({only=null}={}) {
     assert.equal((await svc.getRun(batch.runIds[0])).aiRecovery,true);
     // Luna recovery resumes the same request. Astra's missing usage must also yield through the real gateway.
     const middle=await svc.execute(batch.runIds[0]);assert(middle.yielded);assert.equal(calls.length,2);assert.equal((await svc.getRun(batch.runIds[0])).aiRecovery,true);wall+=10000;
-    await svc.execute(batch.runIds[0]);const rejected=await svc.getRun(batch.runIds[0]);assert.equal(rejected.status,'incomplete');assert(rejected.error.message.includes('schema_invalid'));assert(rejected.error.message.includes('$.managerNote'));assert.equal(rejected.spentNano,141000000);
+    await svc.execute(batch.runIds[0]);const rejected=await svc.getRun(batch.runIds[0]);assert.equal(rejected.status,'incomplete');assert(rejected.error.message.includes('schema_invalid'));assert(rejected.error.message.includes('$.managerNote'));assert.equal(rejected.spentNano,195000000);
     const failedView=await svc.overview({owner:'operator',batchId:batch.batchId});assert(failedView.runs[0].canRetryAIStep);
     const audits=(await rr.collection(A.COL.modelRequests).get()).docs;assert(audits.some(d=>d.data().schemaErrors?.some(e=>e.path==='$.managerNote')));
     await svc.control({runId:rejected.runId,command:'retry'},'operator');await svc.execute(rejected.runId);wall+=10000;
-    const result=await svc.execute(rejected.runId),run=await svc.getRun(rejected.runId);assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(calls.length,3);assert.equal(run.shortlist.count,50);assert.equal(run.shortlist.sourceCount,304);assert.equal(run.reservedNano,0);assert.equal(run.spentNano,276000000);assert.equal(run.costByStage.shortlist.spentNano,6000000);assert.equal(run.costByStage.manager_review.spentNano,270000000);
+    const result=await svc.execute(rejected.runId),run=await svc.getRun(rejected.runId);assert.equal(run.status,'complete',JSON.stringify({result,error:run.error}));assert.equal(calls.length,3);assert.equal(run.shortlist.count,50);assert.equal(run.shortlist.sourceCount,304);assert.equal(run.reservedNano,0);assert.equal(run.spentNano,330000000);assert.equal(run.costByStage.shortlist.spentNano,60000000);assert.equal(run.costByStage.manager_review.spentNano,270000000);
     const detail=await svc.detail(run.runId,'operator');assert.equal(detail.shortlist.selected.length,50);assert.deepEqual(detail.shortlist.selected,selected);const view=await svc.overview({owner:'operator',batchId:batch.batchId});assert.equal(view.totals.spentNano,run.spentNano);assert.equal(view.history[0].spentNano,run.spentNano);
     await svc.execute(run.runId);assert.equal(calls.length,3);assert.equal(Object.keys((await svc.readJSON(prices,artifact)).symbols).length,321,'master prices still cover the full universe');
   });

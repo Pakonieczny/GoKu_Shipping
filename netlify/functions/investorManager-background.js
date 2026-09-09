@@ -209,6 +209,7 @@ exports.handler = async (event) => {
         return { statusCode: 202, body: JSON.stringify({ ok: true, yielded: true, stage: out.checkpoint.stage, reason: out.reason }) };
       }
       if (out.failed) {
+        await checkpoint(out.checkpoint);
         await JOBS.failClosed(claim, { code: out.reason || "MANAGER_FAILED_CLOSED", message: JSON.stringify(out.summary && out.summary.noBuyReasons || []).slice(0, 280), retryable: false, data: out.summary || null });
         try { await A.col(A.COL.control).doc("control").set({ lastManagerRunDate: payload.tradingDate || null, lastManagerRun: { ...(out.summary || {}), status: "failed_closed" } }, { merge: true }); } catch {}
         return { statusCode: 200, body: JSON.stringify({ ok: false, failedClosed: true, reason: out.reason, noBuyReasons: out.summary && out.summary.noBuyReasons }) };
@@ -226,7 +227,7 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ ok: true, result }) };
   } catch (e) {
     console.error("investorManager segment failed", redact({ jobId, task, error: e.message, stack: (e.stack || "").slice(0, 400) }));
-    await JOBS.failClosed(claim, { code: e.code || "MANAGER_SEGMENT_FAILED", message: e.message, retryable: !/CODEC|COVERAGE/.test(String(e.code)) }).catch(() => ({}));
+    await JOBS.failClosed(claim, { code: e.code || "MANAGER_SEGMENT_FAILED", message: e.message, retryable: e.retryable!==false&&!/CODEC|COVERAGE|SHORTLIST|RESEARCH_INCOMPLETE|LEASE_LOST/.test(String(e.code)) }).catch(() => ({}));
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(e.message).slice(0, 200) }) };
   }
 };

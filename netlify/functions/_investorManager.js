@@ -355,6 +355,7 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
   const record = (fields) => {
     const handoff=st.handoff||{},requests=st.effective?.researchRequests||[];
     const activity={stage:fields.status==='complete'?'complete':stage,phase:handoff.phase||null,currentSymbol:handoff.currentSymbol||null,
+      preparation:st.preparation||null,
       rankable:st.shortlistScreened||null,ranked:st.shortlist?Number(st.shortlistScreened||st.roster?.eligibleCount||0):0,shortlisted:st.shortlist?.length||0,
       compared:st.review?.ok?(st.shortlist?.length||st.roster?.eligibleCount||0):0,
       companies:requests.map(r=>({symbol:r.symbol,sourcesReady:!!handoff.liveSources?.[r.symbol],documentReady:!!handoff.documents?.[r.symbol],
@@ -385,7 +386,9 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
       const cutoff = freezeDecisionCutoff({ runStartedAtMs: st.startedAtMs, tradingDate, nowMs: now() });
       const portfolioBySymbol = Object.fromEntries(workset.rows.map((r) => [r.symbol, { held: r.held, pending: r.pending, activeMandate: portfolio.activeMandates.some((m) => m.symbol === r.symbol), position: portfolio.positions.find(p => p.symbol === r.symbol) || null, mandate: portfolio.activeMandates.find(m => m.symbol === r.symbol) || null }]));
       const pointerCache = new Map();
-      const progress = async (stage,label) => { if(deps.progress) await deps.progress({stage,label,done:null,total:null,unit:'',current:null}); };
+      const preparationSteps=['manager_cards','manager_health','manager_holdings','manager_market','manager_freeze_save'];
+      const progress = async (step,label) => { st.preparation={label,completed:Math.max(0,preparationSteps.indexOf(step)),total:preparationSteps.length};await record({});if(deps.progress) await deps.progress({stage:step,label,done:null,total:null,unit:'',current:null}); };
+      await progress('manager_cards','Loading saved company summaries for the eligible universe');
       const cards = await deps.dossier.compactCards({ symbols: snapshotRoster.symbols, cutoff, admin: deps.admin, portfolioBySymbol, deps:{...deps,sharedScreening:!!st.paperProcess?.investmentPolicy?.coreVersion}, pointerCache });
       await progress('manager_health','Checking saved research freshness');
       const freshness = await deps.dossier.dossierHealth({ symbols: snapshotRoster.symbols, admin: deps.admin, nowMs: cutoff.cutoffMs, pointerCache });
@@ -423,10 +426,19 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
       const eligible=new Set(st.workset.rows.filter(r=>r.entryEligible&&!r.held&&!r.pending).map(r=>r.symbol));
       st.shortlistScreened=eligible.size;await record({});
       const r=await deps.gateway.shortlistCandidates({cards:cards.cards.filter(c=>eligible.has(c.symbol)),count:50,contextManifestHash:st.contextManifestHash});
-      if(r.pending)return yieldNow('luna_shortlist_pending');
-      if(!r.ok)throw typed('PAPER_SHORTLIST_FAILED',r.error);
+      if(r.pending)return yieldNow(r.recovery?'terra_ranking_completion_pending':'terra_shortlist_pending');
+      const rankingCost=BigInt(r.costMinor||0),alreadyCounted=BigInt(st.shortlistCostMinor||0);
+      if(rankingCost>alreadyCounted){addCost(rankingCost-alreadyCounted);st.shortlistCostMinor=rankingCost.toString();}
+      if(!r.ok){
+        if(r.error==='output_truncated'&&r.retryable!==false)return yieldNow('terra_ranking_answer_saved');
+        if(r.requestId&&!st.requestIds.includes(r.requestId))st.requestIds.push(r.requestId);
+        const reason=r.budgetBlocked?'The remaining AI allowance cannot cover the saved ranking step.':`Company ranking stopped: ${r.error}. Saved inputs and charges are retained.`;
+        st.noBuyReasons=[{code:r.budgetBlocked?'BUDGET_EXHAUSTED':'MODEL_FAILURE',error:r.error}];
+        const summary={managerRunId,status:'failed_closed',costMinor:st.costMinor,noBuyReasons:st.noBuyReasons,failureReason:reason};
+        await record(summary);return {done:true,failed:true,reason:'PAPER_SHORTLIST_FAILED',checkpoint:{stage,data:st},summary};
+      }
       if(r.selected.length!==Math.min(50,eligible.size)||new Set(r.selected).size!==r.selected.length||r.selected.some(s=>!eligible.has(s)))throw typed('PAPER_SHORTLIST_INVALID');
-      st.shortlist=r.selected;st.shortlistScreened=eligible.size;addCost(r.costMinor);if(r.requestId)st.requestIds.push(r.requestId);
+      st.shortlist=r.selected;st.shortlistScreened=eligible.size;if(r.requestId&&!st.requestIds.includes(r.requestId))st.requestIds.push(r.requestId);
       await record({shortlist:{symbols:st.shortlist,count:st.shortlist.length,screened:eligible.size,model:r.model||null}});
       stage='review';continue;
     }
@@ -628,7 +640,7 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
         if(joint.simulationPlan) {
           const plan=joint.simulationPlan;
           const execution=require('./_investorExecution');
-          await (A.currentScope()?execution.saveRequiredSimulationPlan:execution.saveSharedPaperPlan)({plan,admin:deps.admin,accountId,managerRunId});
+          const savedPlan=await (A.currentScope()?execution.saveRequiredSimulationPlan:execution.saveSharedPaperPlan)({plan,admin:deps.admin,accountId,managerRunId});
           const buys=Object.entries(plan.investments).filter(([,row])=>row.decision!=='PASS').map(([symbol,row],i)=>({symbol,capitalRank:i+1,row}));
           const decisions=st.workset.symbols.map(symbol=>{const buy=buys.find(b=>b.symbol===symbol),cov=st.effective.coverage.find(r=>r.symbol===symbol);
             const held=st.workset.rows.some(r=>r.symbol===symbol&&r.held),passed=plan.investments[symbol]?.decision==='PASS';
@@ -640,7 +652,7 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
           const summary={managerRunId,status:'complete',tradingDate,accountId,policyHash:st.policyHash,investmentPolicy:plan.policy,coverage:st.coverage,eligibleCount:st.roster.eligibleCount,universeHash:st.roster.universeHash,decisionCount:decisions.length,
             research:{requested:requests.length,completed:requests.length,failed:0,deferred:0},
             buys:buys.map(({symbol,capitalRank})=>({symbol,capitalRank})),byDecision:countBy(decisions,'decision'),
-            investmentNote:plan.comparisonNote,costMinor:st.costMinor,noBuyReasons:buys.length?[]:[{code:'AI_CHOSE_CASH',message:plan.comparisonNote}],activation:{status:'COMMITTED',planId:plan.planHash,mandates:buys.map(b=>b.symbol)}};
+            investmentNote:plan.comparisonNote,costMinor:st.costMinor,noBuyReasons:buys.length?[]:[{code:'AI_CHOSE_CASH',message:plan.comparisonNote}],activation:{status:'COMMITTED',planId:savedPlan?.planId||plan.planHash,mandates:buys.map(b=>b.symbol)}};
           await record({...summary,completedAtMs:now()});
           return {done:true,summary,checkpoint:{stage:'complete',data:st}};
         }

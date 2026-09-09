@@ -121,6 +121,22 @@ function createJobs(A) {
           return { enqueued: false, duplicate: true, jobId, status: j.status };
         }
       }
+      // A new paper review gets a fresh allowance atomically with its job.
+      // Retries keep the same job identity and must never replenish it.
+      let allowanceReset = null, controlVersion = null;
+      if (!snap.exists && task === "premarket_manager" && runId && !REAL_ADMIN.currentScope()) {
+        const atMs = Date.now(), day = new Date(atMs).toISOString().slice(0, 10);
+        const controlRef = A.col(A.COL.control).doc("control");
+        const [controlSnap, usageSnap] = await Promise.all([tx.get(controlRef), tx.get(A.col(A.COL.costs).doc("openai_" + day))]);
+        const control = controlSnap.data() || {}, priorBudget = control.budget || {};
+        controlVersion = (Number(control.controlVersion) || 0) + 1;
+        allowanceReset = { day, spentMinor: String(usageSnap.data()?.spentMinor || 0), atMs, by: createdBy, runId };
+        tx.set(controlRef, {
+          budget: { ...priorBudget, dailyReservationMinor: String(priorBudget.dailyReservationMinor ?? POLICY.budgetPolicy().dailyReservationMinor),
+            todayReset: allowanceReset, version: (Number(priorBudget.version) || 0) + 1 },
+          controlVersion,
+        }, { merge: true });
+      }
       tx.set(ref, {
         schemaVersion: SCHEMA_VERSION, jobId, task, dedupeId: String(dedupeId), accountId: accountId || null,
         targetFunction: spec.targetFunction, category: spec.category, heavy: spec.heavy === true,
@@ -128,10 +144,10 @@ function createJobs(A) {
         payload, payloadHash: hash, priority: Number(priority) || 100,
         status: "queued", attempts: 0, segments: 0,
         dueAtMs: Number(dueAtMs) || Date.now(), enqueuedAtMs: Date.now(),
-        checkpoint: null, lastError: null,
+        checkpoint: null, lastError: null, ...(allowanceReset ? { allowanceReset } : {}),
         ...A.envelope({ created_by: createdBy }),
       }, { merge: true });
-      return { enqueued: true, jobId, status: "queued" };
+      return { enqueued: true, jobId, status: "queued", ...(controlVersion !== null ? { controlVersion } : {}) };
     });
   }
 
@@ -395,7 +411,7 @@ function createJobs(A) {
    *  next segment claims the run lease immediately. */
   async function yieldSegment(claim, { reason = "segment_budget", resumeAtMs = Date.now() + 5000, checkpoint: cp = null } = {}) {
     const out = await ownedUpdate(claim, { status: "yielded_resumable", resumeAtMs, yieldedAtMs: Date.now(),
-      yieldReason: String(reason), workerLeaseExpiresAt: 0,
+      yieldReason: String(reason), workerLeaseExpiresAt: 0, lastError:null,
       ...(cp ? { checkpoint: { ...cp, atMs: Date.now() } } : {}) });
     await releaseRunLease(claim, { reason: `yield:${reason}` }).catch(() => ({}));
     return { ...out, status: "yielded_resumable" };

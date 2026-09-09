@@ -868,10 +868,10 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
   async function reserveMinor(reservationId, estMinor, role) {
     const ref = DB.col(DB.COL.costs).doc(`openai_${day()}`), rref = DB.col(DB.COL.costs).doc(`openai_res_${reservationId}`);
     return DB.runTransaction(async (tx) => {
-      const [s, r] = await Promise.all([tx.get(ref), tx.get(rref)]);
+      const [s, r, control] = await Promise.all([tx.get(ref), tx.get(rref), tx.get(DB.col(DB.COL.control).doc('control'))]);
       if (r.exists) return { ok: r.data().status === "reserved", duplicate: true };
       const d = s.exists ? s.data() : {};
-      const spent = Number(d.spentMinor) || 0, reserved = Number(d.reservedMinor) || 0, ceiling = await ceilingMinor();
+      const spent = Number(d.spentMinor) || 0, reserved = Number(d.reservedMinor) || 0, ceiling = effectiveDailyCeiling(control.data()?.budget,day(),dailyReservationMinor());
       if (!A.currentScope()?.aiBudgetUncapped && spent + reserved + estMinor > ceiling) {
         return { ok: false, reason: "daily_reservation_exhausted", spentMinor: spent, reservedMinor: reserved, ceilingMinor: ceiling, estMinor };
       }
@@ -881,15 +881,16 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     });
   }
   async function settleMinor(reservationId, actualMinor, tokens, role) {
-    const ref = DB.col(DB.COL.costs).doc(`openai_${day()}`), rref = DB.col(DB.COL.costs).doc(`openai_res_${reservationId}`);
+    const rref = DB.col(DB.COL.costs).doc(`openai_res_${reservationId}`);
     return DB.runTransaction(async (tx) => {
-      const [s, r] = await Promise.all([tx.get(ref), tx.get(rref)]);
+      const r = await tx.get(rref);
       if (!r.exists || r.data().status !== "reserved") return { duplicate: true };
+      const billingDay = r.data().day || day(), ref = DB.col(DB.COL.costs).doc(`openai_${billingDay}`), s = await tx.get(ref);
       const d = s.exists ? s.data() : {}, est = Number(r.data().estMinor) || 0;
       const t = d.tokens || {};
       const sum = (k) => (Number(t[k]) || 0) + (Number(tokens[k]) || 0);
       const spentMinor = (Number(d.spentMinor) || 0) + actualMinor;
-      tx.set(ref, { day: day(), reservedMinor: Math.max(0, (Number(d.reservedMinor) || 0) - est), spentMinor,
+      tx.set(ref, { day: billingDay, reservedMinor: Math.max(0, (Number(d.reservedMinor) || 0) - est), spentMinor,
         usd: spentMinor / 100, calls: (Number(d.calls) || 0) + 1,
         byRole: { ...(d.byRole || {}), [role]: {model:POLICY.ROLE_MODELS[role]?.model||null,calls:(Number(d.byRole?.[role]?.calls??d.byRole?.[role])||0)+1,spentMinor:(Number(d.byRole?.[role]?.spentMinor)||0)+actualMinor,inputTokens:(Number(d.byRole?.[role]?.inputTokens)||0)+(tokens.input||0),outputTokens:(Number(d.byRole?.[role]?.outputTokens)||0)+(tokens.output||0)} },
         tokens: { input: sum("input"), ordinaryInput: sum("ordinaryInput"), cacheWrite: sum("cacheWrite"), cachedRead: sum("cachedRead"), output: sum("output"), reasoning: sum("reasoning") },
@@ -899,10 +900,11 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     });
   }
   async function releaseMinor(reservationId) {
-    const ref = DB.col(DB.COL.costs).doc(`openai_${day()}`), rref = DB.col(DB.COL.costs).doc(`openai_res_${reservationId}`);
+    const rref = DB.col(DB.COL.costs).doc(`openai_res_${reservationId}`);
     return DB.runTransaction(async (tx) => {
-      const [s, r] = await Promise.all([tx.get(ref), tx.get(rref)]);
+      const r = await tx.get(rref);
       if (!r.exists || r.data().status !== "reserved") return { noop: true };
+      const ref = DB.col(DB.COL.costs).doc(`openai_${r.data().day || day()}`), s = await tx.get(ref);
       const d = s.exists ? s.data() : {}, est = Number(r.data().estMinor) || 0;
       tx.set(ref, { reservedMinor: Math.max(0, (Number(d.reservedMinor) || 0) - est), updatedAtMs: now() }, { merge: true });
       tx.set(rref, { status: "released", releasedAtMs: now() }, { merge: true });
@@ -912,8 +914,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
 
   /* ── ModelRequest audit record ─────────────────────────────────────────── */
   async function record(requestId, fields) {
-    try { await DB.col(DB.COL.modelRequests).doc(requestId).set({ requestId, gatewayVersion: GATEWAY_VERSION, updatedAtMs: now(), ...fields }, { merge: true }); }
-    catch (e) { console.error("investorOpenai: model request record failed", redact({ requestId, error: e.message })); }
+    await DB.col(DB.COL.modelRequests).doc(requestId).set({ requestId, gatewayVersion: GATEWAY_VERSION, updatedAtMs: now(), ...fields }, { merge: true });
   }
   async function readRequest(requestId) {
     const s = await DB.col(DB.COL.modelRequests).doc(String(requestId)).get();
@@ -1018,10 +1019,11 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       const prior = await readRequest(requestId);
       if (prior && prior.status === "in_flight" && prior.responseId) return pollBackground({ requestId, prior, waitMs, timeoutMs, strict, allowedClaimIds, scope, base });
       if (prior && prior.status === "complete" && prior.output) return { ok: true, cached: true, requestId, responseId: prior.responseId, model: prior.returnedModel, recovery:!!prior.recoveryRequestId, output: prior.output, usage: prior.tokens, costMinor: prior.costMinor, latencyMs: prior.latencyMs };
-      if(core && prior?.status==='rejected') {
-        if(fn==='decidePreparedPortfolio'&&['output_truncated','HANDOFF_BUY_WITHOUT_EVIDENCE'].includes(prior.error))return recoverTruncated({requestId,prior,base,role,roleName,strict,inputItems,waitMs,timeoutMs,allowedClaimIds,scope});
+      if(prior?.status==='rejected'&&(!A.currentScope()||core)&&prior.error!=='operator_retry_requested') {
+        if(core && (fn==='shortlistCandidates'&&prior.error==='output_truncated'||fn==='decidePreparedPortfolio'&&['output_truncated','HANDOFF_BUY_WITHOUT_EVIDENCE'].includes(prior.error)))return recoverTruncated({requestId,prior,base,role,roleName,strict,inputItems,waitMs,timeoutMs,allowedClaimIds,scope});
         return failure(prior.error||'saved_response_rejected',{requestId,responseId:prior.responseId,costMinor:prior.costMinor,cached:true,retryable:false});
       }
+      if(!A.currentScope()&&prior&&!['budget_blocked'].includes(prior.status))return failure('saved_request_'+prior.status,{requestId,responseId:prior.responseId||null,retryable:false});
     }
     const est = POLICY.costMinor({ model: role.model, ordinaryInputTokens: inputTokensEst, outputTokens: maxOutputTokens });
     const estMinor = Number(est.amountMinor);
@@ -1031,9 +1033,19 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       await record(requestId, { ...base, status: "budget_blocked", reason: reservation.reason, estMinor, startedAtMs: now() });
       return failure("daily_reservation_exhausted", { budgetBlocked: true, requestId, estMinor, spentMinor: reservation.spentMinor, ceilingMinor: reservation.ceilingMinor });
     }
-    if(reservation.duplicate&&!reservation.ok)return failure('settled_request_cannot_be_resubmitted',{requestId,retryable:false});
+    if(!A.currentScope()&&reservation.duplicate&&!reservation.ok)return failure('settled_request_cannot_be_resubmitted',{requestId,retryable:false});
     const startedAtMs = now();
-    await record(requestId, { ...base, status: "started", startedAtMs, estMinor });
+    // A reservation alone does not own submission: two workers may both see it.
+    const requestRef=DB.col(DB.COL.modelRequests).doc(requestId);
+    const submissionOwned=A.currentScope()?true:await DB.runTransaction(async tx=>{
+      const prior=await tx.get(requestRef);
+      if(prior.exists&&prior.data().status!=='budget_blocked')return false;
+      tx.set(requestRef,{...base,requestId,gatewayVersion:GATEWAY_VERSION,status:'submitting',startedAtMs,estMinor,reservationId,updatedAtMs:now()},{merge:true});return true;
+    });
+    // Historical simulations own their submission fence and retry generation
+    // in the scoped exact-cost broker; their gateway record is a projection.
+    if(A.currentScope())await record(requestId,{...base,status:'started',startedAtMs,estMinor});
+    if(!submissionOwned)return failure('request_submission_owned',{requestId,retryable:false});
     const body = {
       model: role.model, store: false, max_output_tokens: maxOutputTokens,
       text: { format: { type: "json_schema", name: strict.name, strict: true, schema: strict.schema } },
@@ -1041,18 +1053,23 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       ...(role.reasoning ? { reasoning: { effort: role.reasoning.effort } } : {}),
       ...(promptCacheKey ? { prompt_cache_key: String(promptCacheKey).slice(0, 64) } : {}),
       ...(tools ? { tools: toolDefinitions(tools), tool_choice: "auto", parallel_tool_calls: false } : {}),
-      ...(background && !tools ? { background: true } : {}),
+      ...(background && !tools ? { background: true, include: ['reasoning.encrypted_content'] } : {}),
     };
     const toolBudget = { calls: 0, startedAtMs, log: [] };
     let attempt = 0, res;
     try { res = await http("POST", RESPONSES_ENDPOINT, body, timeoutMs); }
     catch (e) {
       if (A.currentScope() && /^SIMULATION_/.test(e.code || '')) throw e;
-      await releaseMinor(reservationId).catch(() => {});
-      await record(requestId, { status: "unreachable", error: String(e.message).slice(0, 120), latencyMs: now() - startedAtMs });
-      return failure("model_unreachable", { requestId });
+      // A timeout does not prove the provider rejected the POST. Retain its
+      // reservation and prohibit resubmission until billing can be reconciled.
+      await record(requestId, { status: "submission_uncertain", error: String(e.message).slice(0, 120), latencyMs: now() - startedAtMs });
+      return failure("model_submission_uncertain", { requestId, retryable:false });
     }
     if (!res.ok) {
+      if(!A.currentScope()&&res.status>=500){
+        await record(requestId,{status:'submission_uncertain',httpStatus:res.status});
+        return failure('model_submission_uncertain',{requestId,httpStatus:res.status,retryable:false});
+      }
       await releaseMinor(reservationId).catch(() => {});
       await record(requestId, { status: "http_error", httpStatus: res.status, error: String(res.data && res.data.error && res.data.error.message || "").slice(0, 200), latencyMs: now() - startedAtMs });
       return failure(`openai_http_${res.status}`, { requestId, httpStatus: res.status });
@@ -1195,7 +1212,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       merged.output_tokens_details.reasoning_tokens += Number((u.output_tokens_details || {}).reasoning_tokens) || 0;
     }
     const b = usageBreakdown(model, merged);
-    await settleMinor(reservationId, Number(b.costMinor), b.tokens, roleName).catch(() => {});
+    await settleMinor(reservationId, Number(b.costMinor), b.tokens, roleName);
     return b;
   }
 
@@ -1209,9 +1226,10 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
       try { res = await http("GET", `${RESPONSES_ENDPOINT}/${encodeURIComponent(responseId)}`, null, timeoutMs); }
       catch (e) { if (A.currentScope() && /^SIMULATION_/.test(e.code || '')) throw e; await record(requestId, { status: "in_flight", pollError: String(e.message).slice(0, 120), lastPollAtMs: now() }); return { ok: false, pending: true, requestId, responseId, error: "poll_unreachable" }; }
       if (!res.ok) {
-        await settleMinor(prior.reservationId || requestId, 0, {}, base.role).catch(() => {});
-        await record(requestId, { status: "http_error", httpStatus: res.status, latencyMs: now() - (prior.startedAtMs || now()) });
-        return failure(`openai_http_${res.status}`, { requestId, responseId });
+        // Poll failures say nothing about the cost of the accepted request.
+        await record(requestId, { lastPollHttpStatus: res.status, lastPollAtMs: now() });
+        if(res.status===429||res.status>=500)return {ok:false,pending:true,requestId,responseId,error:'poll_http_'+res.status};
+        return failure(`poll_http_${res.status}`, { requestId, responseId, retryable:false });
       }
       data = res.data || {};
       if (data.status === "completed" || data.status === "incomplete" || data.status === "failed" || data.status === "cancelled") break;
@@ -1231,6 +1249,10 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
 
   /** Validate, settle, record. Every rejection is a failure, never a partial result. */
   async function finish({ requestId, reservationId, role, roleName, data, parsed, usageTotals, startedAtMs, strict, allowedClaimIds, scope, toolLog, retries, schemaVersion, billing = null }) {
+    if(!billing&&!A.currentScope()&&usageTotals.some(u=>!Number.isSafeInteger(u.input_tokens)||!Number.isSafeInteger(u.output_tokens))){
+      await record(requestId,{status:'billing_uncertain',responseId:parsed.id||null,error:'model_usage_unknown'});
+      return failure('model_usage_unknown',{requestId,responseId:parsed.id||null,retryable:false});
+    }
     // Older workers could resubmit after settling the original reservation.
     // Record an already incurred later response once, without authorizing new spend.
     let billingId=reservationId;
@@ -1255,7 +1277,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     if (parsed.truncated) {
       const C=require('./_investorDecisionContext'),stateId=requestId+'_truncated_'+sha(data.output||[]).slice(0,24);
       await C.freeze({runId:stateId,context:{output:data.output||[],outputText:data.output_text||null},admin:DB});
-      return reject("output_truncated",{truncatedStateId:stateId});
+      return reject("output_truncated",{truncatedStateId:stateId,retryable:scope.allowTruncatedRecovery!==false});
     }
     if (parsed.incomplete) return reject(`incomplete_${(data.incomplete_details || {}).reason || "unknown"}`);
     if (parsed.parsed == null) return reject(parsed.parseError ? "unparseable_model_output" : "empty_model_output");
@@ -1299,13 +1321,14 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     }
     if(!state.output.length)return failure('truncated_response_has_no_continuation_state',{requestId,retryable:false});
     const evidenceFeedback=prior.evidenceFeedback?' The previous BUY failed validation. Every BUY requires a saved dossier and at least one cited claim or financial_fact ID from that company. Baseline references alone do not qualify. Use a qualifying source only if it actually supports your thesis; otherwise return PASS with the exact missing prerequisite. Validation details: '+JSON.stringify(prior.evidenceFeedback):'';
-    const input=[...inputItems,...state.output,{role:'user',content:evidenceFeedback+' Continue from the retained reasoning and prepared evidence. Return ONE complete JSON object matching the supplied schema. Reuse the saved research; no tools are available. Preserve source honesty, BUY/PASS judgments, risk limits and the supplied holding-horizon formula. Include every required field for every finalist. This is the single bounded completion attempt.'}];
-    const maxOutputTokens=prior.maxOutputTokens||36000,estMinor=Number(POLICY.costMinor({model:role.model,ordinaryInputTokens:estimateTokens(JSON.stringify(input)),outputTokens:maxOutputTokens}).amountMinor);
+    const completionInstruction=base.fn==='shortlistCandidates'?' Continue the saved company comparison. Return ONE complete JSON object covering EVERY supplied company. Use distinct ranks and a brief reason of at most eight words for each company. Preserve all dated evidence and the original ranking criteria. No tools are available. This is the single bounded completion attempt.':evidenceFeedback+' Continue from the retained reasoning and prepared evidence. Return ONE complete JSON object matching the supplied schema. Reuse the saved research; no tools are available. Preserve source honesty, BUY/PASS judgments, risk limits and the supplied holding-horizon formula. Include every required field for every finalist. This is the single bounded completion attempt.';
+    const input=[...inputItems,...state.output,{role:'user',content:completionInstruction}];
+    const maxOutputTokens=base.fn==='shortlistCandidates'?Math.max(24000,prior.maxOutputTokens||0):prior.maxOutputTokens||36000,estMinor=Number(POLICY.costMinor({model:role.model,ordinaryInputTokens:estimateTokens(JSON.stringify(input)),outputTokens:maxOutputTokens}).amountMinor);
     const reservation=await reserveMinor(tailId,estMinor,roleName);
     if(!reservation.ok){
       if(reservation.duplicate)return failure('truncated_recovery_already_settled',{requestId:tailId,retryable:false});
       await record(tailId,{status:'budget_blocked',originalRequestId:requestId,estMinor});
-      return failure('daily_reservation_exhausted',{requestId:tailId,budgetBlocked:true,estMinor,originalRequestId:requestId});
+      return failure('daily_reservation_exhausted',{requestId:tailId,budgetBlocked:true,estMinor,originalRequestId:requestId,costMinor:prior.costMinor||'0'});
     }
     const startedAtMs=now(),tailRef=DB.col(DB.COL.modelRequests).doc(tailId);
     const claimed=await DB.runTransaction(async tx=>{const snap=await tx.get(tailRef);if(snap.exists&&snap.data().status!=='budget_blocked')return false;tx.set(tailRef,{...base,requestId:tailId,status:'submitting',startedAtMs,reservationId:tailId,originalRequestId:requestId,maxOutputTokens,updatedAtMs:now()},{merge:true});return true;});
@@ -1314,7 +1337,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
     try{res=await http('POST',RESPONSES_ENDPOINT,{model:role.model,store:false,background:true,max_output_tokens:maxOutputTokens,
       reasoning:{effort:role.reasoning?.effort||'medium',context:'all_turns'},input,text:{format:{type:'json_schema',name:strict.name,strict:true,schema:strict.schema}}},timeoutMs);}
     catch(e){await record(tailId,{status:'submission_uncertain',error:String(e.message).slice(0,160)});return failure('truncated_recovery_submission_uncertain',{requestId:tailId,retryable:false});}
-    if(!res.ok){await releaseMinor(tailId);await record(tailId,{status:'http_error',httpStatus:res.status});return failure('truncated_recovery_http_'+res.status,{requestId:tailId,retryable:false});}
+    if(!res.ok){if(res.status<500)await releaseMinor(tailId);await record(tailId,{status:res.status>=500?'submission_uncertain':'http_error',httpStatus:res.status});return failure('truncated_recovery_http_'+res.status,{requestId:tailId,retryable:false,costMinor:prior.costMinor||'0'});}
     const data=res.data||{};
     if(['queued','in_progress'].includes(data.status)){
       await record(tailId,{status:'in_flight',responseId:data.id,reservationId:tailId});
