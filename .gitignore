@@ -1,2 +1,4 @@
 netlify/functions/secrets/
 *PrivateKey*
+node_modules/
+package-lock.json
