@@ -234,6 +234,12 @@ RULES:
 9. Prefer abstention over inference. Return only the schema-constrained object.`;
 
 /* ── spend accounting (Firestore, not memory) ──────────────────────────── */
+// A dated allowance reset preserves billed usage and expires at the UTC day boundary.
+function effectiveDailyCeiling(budget, day, fallback) {
+  const base=budget?.dailyReservationMinor ?? fallback;
+  const credit=budget?.todayReset?.day===day ? budget.todayReset.spentMinor : 0;
+  return Number(base||0)+Number(credit||0);
+}
 function dayKey() { return new Date().toISOString().slice(0, 10); }
 
 async function checkBudget(estUsd) {
@@ -852,7 +858,7 @@ function createGateway({ admin = null, fetchImpl = null, env = process.env, now 
   function dailyReservationMinor() { return Number(POLICY.budgetPolicy().dailyReservationMinor) || 0; }
   /* the operator's versioned budget (setBudget, §11.3) overrides the policy default; read per call so a change never waits on a cold start */
   async function ceilingMinor() {
-    try { const s = await DB.col(DB.COL.control).doc("control").get(); const b = s.exists && s.data().budget; if (b && b.dailyReservationMinor != null && /^[0-9]+$/.test(String(b.dailyReservationMinor))) return Number(b.dailyReservationMinor); } catch {}
+    try { const s = await DB.col(DB.COL.control).doc("control").get(); const b = s.exists && s.data().budget; if (b && b.dailyReservationMinor != null && /^[0-9]+$/.test(String(b.dailyReservationMinor))) return effectiveDailyCeiling(b,day(),dailyReservationMinor()); } catch {}
     return dailyReservationMinor();
   }
   async function spendToday() {
@@ -1582,7 +1588,7 @@ const GATEWAY = createGateway();
 
 module.exports = {
   /* ── fund-manager gateway (§12.2): the only OpenAI boundary ──────────── */
-  GATEWAY_VERSION, PROMPTS, ROLE_OF, SCHEMA_OF, MAX_OUTPUT_TOKENS, promptHash, createGateway,
+  effectiveDailyCeiling, GATEWAY_VERSION, PROMPTS, ROLE_OF, SCHEMA_OF, MAX_OUTPUT_TOKENS, promptHash, createGateway,
   withDeps: (deps) => createGateway(deps || {}),
   shortlistCandidates: GATEWAY.shortlistCandidates, prepareResearchDocument: GATEWAY.prepareResearchDocument, decidePreparedPortfolio: GATEWAY.decidePreparedPortfolio,
   extractFacts: GATEWAY.extractFacts, verifyClaimsIndependently: GATEWAY.verifyClaimsIndependently,

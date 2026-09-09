@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+iMKioNyVOJ0tdu6AcTC2wXaREzuPIe9mgKc3DodXLQ='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-kYz6sY1WnxS5C083WUjBkZSZcMTywfz41LQeHjIY2sE='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -2579,9 +2579,14 @@ function renderMarketConfig() {
   setChildren($("marketConfig"), [cardHead("Market data", "info", mk.provider ? mk.provider + (mk.feed ? " · " + mk.feed : "") : "not configured"), kvList([["Provider", mk.provider || "—"], ["Feed", mk.feed || "—"], ["Delay", mk.delayMinutes != null ? (Number(mk.delayMinutes) === 0 ? "real-time" : mk.delayMinutes + " min") : "—"], ["Credentials present", mk.credentialsPresent == null ? "—" : (mk.credentialsPresent ? "yes (never displayed)" : "no")]]), form]);
 }
 function renderBudgetAdmin() {
-  var s = getRes("system"), b = s && s.configuration && s.configuration.budget || {}, res = sysRes("budget", b.version);
+  var s = getRes("system"), b = s && s.configuration && s.configuration.budget || {}, res = getRes("ctrl") || sysRes("budget", b.version);
   var form = el("form", { id: "budgetForm", class: "form", autocomplete: "off" }, el("label", null, "Daily reservation (USD)", el("input", { name: "daily", value: b.dailyReservationMinor ? String(minorNum(b.dailyReservationMinor)) : "", inputmode: "decimal" })), el("label", null, "Investment role (USD, optional)", el("input", { name: "investment", value: b.byRoleMinor && b.byRoleMinor.investment ? String(minorNum(b.byRoleMinor.investment)) : "", inputmode: "decimal" })), el("label", null, "Extraction role (USD, optional)", el("input", { name: "extraction", value: b.byRoleMinor && b.byRoleMinor.extraction ? String(minorNum(b.byRoleMinor.extraction)) : "", inputmode: "decimal" })), el("label", null, "Alert threshold (ppm of budget)", el("input", { name: "alert", value: b.alertThresholdPpm || "", inputmode: "numeric", placeholder: "800000" })), el("div", { class: "actions" }, res ? capButton(res, "setBudget", "Set budget", { icon: "check", cls: "sm gold" }) : null));
   form.addEventListener("submit", function (e) { e.preventDefault(); });
+  if(res){
+    var reset=el("button",{type:"button",class:"btn sm",text:"Reset today's AI allowance"});
+    reset.addEventListener("click",function(){runMutation({action:"setBudget",res:res,params:{dailyReservationMinor:String(b.dailyReservationMinor||"1000"),resetToday:true},title:"Reset today's AI allowance",intro:"Retain all actual charges. Start a fresh allowance for today; tomorrow returns to the normal daily budget. Existing in-flight reservations still count.",lines:[["Fresh allowance",fmtMoney(b.dailyReservationMinor||"1000")]],refresh:function(){loadSystem(true);pollDashboard();}});});
+    form.appendChild(reset);
+  }
   setChildren($("budgetAdministration"), [cardHead("AI budget", "doc", b.dailyReservationMinor ? fmtMoney(b.dailyReservationMinor) + " / day" : "not configured"), kvList([["Daily reservation", b.dailyReservationMinor ? fmtMoney(b.dailyReservationMinor) : "—"], ["By role", b.byRoleMinor ? "investment " + fmtMoney(b.byRoleMinor.investment) + " · extraction " + fmtMoney(b.byRoleMinor.extraction) : "—"], ["Alert threshold", b.alertThresholdPpm ? fmtPpm(b.alertThresholdPpm) : "—"], ["Version", b.version || "—", "mono"]]), form]);
 }
 function renderRiskAdmin() {

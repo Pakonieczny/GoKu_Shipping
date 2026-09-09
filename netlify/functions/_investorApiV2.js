@@ -245,7 +245,8 @@ async function spendView(D, { nowMs, policy }) {
   const day = new Date(nowMs).toISOString().slice(0, 10);
   const s = await D.col(D.COL.costs).doc(`openai_${day}`).get();
   const d = s.exists ? s.data() : {};
-  const ceiling = big((policy.budget && policy.budget.dailyReservationMinor) || 0);
+  const ctrl=await controlDoc(D);
+  const ceiling = BigInt(require('./_investorOpenai').effectiveDailyCeiling(ctrl.budget,day,policy.budget?.dailyReservationMinor||0));
   const spent = big(d.spentMinor || 0), reserved = big(d.reservedMinor || 0);
   const byRole = d.byRole || {};
   const byTask = Object.entries(byRole).map(([role, v]) => ({ task: role, model: (v && v.model) || null, calls: Number((v && v.calls) || 0), tokens: { input: String((v && v.inputTokens) || 0), cachedInput: String((v && v.cachedInputTokens) || 0), output: String((v && v.outputTokens) || 0), reasoning: String((v && v.reasoningTokens) || 0) }, actual: money((v && v.spentMinor) || 0) }));
@@ -822,7 +823,7 @@ async function readSystemHealth({ ctx }) {
     configuration: { account: { accountId, accountMode: accountModeOf(ctrl), engineMode: ctrl.engineMode || "legacy", writerEpoch: Number(ctrl.writerEpoch) || 0 },
       riskMandate: { values: risk, hash: policy.riskMandateHash || null, version: risk.version || null, overrides: ctrl.riskMandateOverrides || null, overridesApplied: policy.riskOverridesApplied || [], overridesRefused: policy.riskOverridesRefused || [], bounds: POLICY.RISK_MANDATE_BOUNDS },
       emergencyRiskPolicy: { active: policy.emergencyRiskPolicyActive === true, reason: policy.emergencyRiskPolicyReason || null, policyHash: policy.emergencyRiskPolicy ? policy.emergencyRiskPolicy.policyHash || null : null, status: policy.emergencyRiskPolicy ? policy.emergencyRiskPolicy.status || null : null, template: POLICY.EMERGENCY_RISK_POLICY_TEMPLATE },
-      budget: { dailyReservationMinor: canon((policy.budget && policy.budget.dailyReservationMinor) || 0), byRoleMinor: (ctrl.budget && ctrl.budget.byRoleMinor) || null, alertThresholdPpm: (ctrl.budget && ctrl.budget.alertThresholdPpm) || "800000", version: (ctrl.budget && ctrl.budget.version) || 0, source: ctrl.budget ? "control" : "policy_default" },
+      budget: { dailyReservationMinor: canon(ctrl.budget?.dailyReservationMinor ?? policy.budget?.dailyReservationMinor ?? 0), byRoleMinor: (ctrl.budget && ctrl.budget.byRoleMinor) || null, alertThresholdPpm: (ctrl.budget && ctrl.budget.alertThresholdPpm) || "800000", version: (ctrl.budget && ctrl.budget.version) || 0, source: ctrl.budget ? "control" : "policy_default" },
       universe: { version: U.version || null, eligibleCount: (U.tradeTier || []).length, excludedCount: (U.excludedTier || []).length, researchCount: (U.researchTier || []).length, removals: (ctrl.universeRemovals || []).slice(0, 40), lastFreeze: ctrl.lastUniverseFreeze || null },
       sources: { registryVersion: ctrl.sourceRegistryVersion || "1", issuerDomains: ctrl.issuerDomainOverrides || {}, scope: ctrl.sourceScope || null }, corporateActions: { pending: 0 }, market,
       executor: { cadenceSeconds: 60, dataResolution: "5-minute bars; daily closes for marks", adapter: adapter ? adapter.adapter : null, capabilityMatrix: B ? B.CAPABILITY_MATRIX : null, liveAdapter: adapter && adapter.adapter === "alpaca" ? "enabled" : "disabled" } },
@@ -1325,6 +1326,12 @@ const MUTATIONS = {
     const next = big(params.dailyReservationMinor);
     if (next < 0n || next > 100000000n) throw typed("SEMANTIC_REJECTED", "daily reservation must be between 0 and $1,000,000");
     const budget = { dailyReservationMinor: next.toString(), byRoleMinor: params.byRoleMinor ? { investment: params.byRoleMinor.investment ? canon(params.byRoleMinor.investment) : null, extraction: params.byRoleMinor.extraction ? canon(params.byRoleMinor.extraction) : null } : null, alertThresholdPpm: params.alertThresholdPpm ? canon(params.alertThresholdPpm) : "800000", version: (Number(ctrl.budget && ctrl.budget.version) || 0) + 1, setBy: ctx.actorId, setAtMs: ctx.nowMs };
+    if(ctrl.budget?.todayReset)budget.todayReset=ctrl.budget.todayReset;
+    if(params.resetToday===true){
+      const day=new Date(ctx.nowMs).toISOString().slice(0,10);
+      const usage=(await D.col(D.COL.costs).doc('openai_'+day).get()).data()||{};
+      budget.todayReset={day,spentMinor:canon(usage.spentMinor||0),atMs:ctx.nowMs,by:ctx.actorId};
+    }
     const out = await transitionControl(D, { expectedVersion: env.expectedResourceVersion, patch: { budget }, action: "setBudget", actorId: ctx.actorId, reason: env.auditReason, nowMs: ctx.nowMs, correlationId: ctx.correlationId, mutationId: ctx.mutationId });
     return { data: { budget, note: "the gateway reads the versioned daily reservation from Control at each call; per-role ceilings apply within it" }, resourceVersion: String(out.version) };
   },
@@ -1538,6 +1545,8 @@ async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), au
   const AUTH = require("./_investorAuth");
   const auth = authOverride || await AUTH.requireOperatorV2(event, body, { mutation: kind === "mutation", reauth: spec.reauth === true, admin: D, nowMs });
   if (!auth.ok) return { statusCode: statusOf({ code: auth.code }), body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape(auth.code, auth.message, { correlationId }) }) };
+  // V2 bypasses the V1 dashboard loader; load the same saved feed as workers.
+  if (!admin) await require('./_investorMarket').loadMarketSettings();
   const ctrl = await controlDoc(D);
   const accountId = String(params.accountId || ctrl.accountId || "paper-1");
   const policy = POLICY.loadActiveSync(ctrl);

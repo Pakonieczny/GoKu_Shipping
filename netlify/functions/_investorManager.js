@@ -529,10 +529,35 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
         const marks=await liquidityMarks(requests.map(r=>r.symbol),deps,{policy,cutoffMs:researchCutoff.cutoffMs});
         for(const request of requests) {
           if(deps.shouldYield&&await deps.shouldYield())return yieldNow('simulation_paused');
-          const packetId=`${managerRunId}_research_${request.symbol}`;
+          const recovered=st.handoff.recoveredPackets?.[request.symbol];
+          let packetId=recovered?.packetId||`${managerRunId}_research_${request.symbol}`;
+          const packetCutoff=recovered?{...researchCutoff,cutoffMs:recovered.cutoffMs,cutoff:new Date(recovered.cutoffMs).toISOString()}:researchCutoff;
           let packet;
           try{packet=(await C.read({runId:packetId,admin:deps.admin})).packet;}
-          catch(e){if(e.code!=='FROZEN_INPUTS_MISSING')throw e;packet=await R.buildPacket({symbol:request.symbol,cutoff:researchCutoff,directive:request.reviewDirective,admin:deps.admin,deps:{...deps,frozenMarketState:context.marketState,independentReview:(st.independentSymbols||[]).includes(request.symbol)}});if(packet?.ok)await C.freeze({runId:packetId,context:{packet,marks},admin:deps.admin});}
+          catch(e){if(e.code!=='FROZEN_INPUTS_MISSING')throw e;packet=await R.buildPacket({symbol:request.symbol,cutoff:packetCutoff,directive:request.reviewDirective,admin:deps.admin,deps:{...deps,frozenMarketState:context.marketState,independentReview:(st.independentSymbols||[]).includes(request.symbol)}});if(packet?.ok)await C.freeze({runId:packetId,context:{packet,marks},admin:deps.admin});}
+          // Older paper checkpoints froze no_dossier as if it were evidence.
+          // Repair only an unused missing packet, under a new immutable ID.
+          // Historical simulations must never acquire present-day sources.
+          if(!packet?.ok && packet?.reason==='no_dossier' && st.paperProcess && !A.currentScope()
+            && !st.handoff.documents[request.symbol] && !st.handoff.resultRef
+            && !st.handoff.completedResearch.some(r=>r.symbol===request.symbol&&r.memo)) {
+            st.handoff.recoveredPackets=st.handoff.recoveredPackets||{};
+            let recovery=st.handoff.recoveredPackets[request.symbol];
+            if(!recovery){
+              if(budget()<minStageMs)return yieldNow('current_sources_pending');
+              st.handoff.phase='sources';await saveHandoff();
+              const sources=await (deps.preparePaperEvidence||require('./_investorPaperEvidence').prepare)(request.symbol,{admin:deps.admin||A,now});
+              const cutoffMs=now();
+              recovery={packetId:packetId+'_current_sources_v1',originalPacketId:packetId,cutoffMs,sources};
+              st.handoff.recoveredPackets[request.symbol]=recovery;
+              await saveHandoff();
+            }
+            packetId=recovery.packetId;
+            const cutoff={...researchCutoff,cutoffMs:recovery.cutoffMs,cutoff:new Date(recovery.cutoffMs).toISOString(),source:'paper_missing_dossier_recovery'};
+            packet=await R.buildPacket({symbol:request.symbol,cutoff,directive:request.reviewDirective,admin:deps.admin,deps:{...deps,frozenMarketState:context.marketState,independentReview:(st.independentSymbols||[]).includes(request.symbol)}});
+            if(packet?.ok)await C.freeze({runId:packetId,context:{packet,marks},admin:deps.admin});
+            st.handoff.phase='documents';await saveHandoff();
+          }
           if(!packet?.ok)throw Object.assign(Error('Prepared research is missing a dated dossier for '+request.symbol),{code:'SIMULATION_RESEARCH_INCOMPLETE'});
           st.handoff.packets[request.symbol]=packetId;
           const prior=st.handoff.completedResearch.find(r=>r.symbol===request.symbol&&r.memo);
@@ -544,8 +569,8 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
             try{source=(await C.read({runId:sourceId,admin:deps.admin})).source;}
             catch(e){
               if(e.code!=='FROZEN_INPUTS_MISSING')throw e;
-              const bound=deps.tools.allowlisted(deps.toolBindings||deps.tools.productionBindings({accountId,admin:deps.admin,policy,portfolio:context.portfolio,marks,decisionPacket:packet,sectorOf:sectorLookup(deps)}),policy.toolPolicy,{symbol:request.symbol,cutoffMs:researchCutoff.cutoffMs});
-              const args={symbol:request.symbol,asOfMs:researchCutoff.cutoffMs};
+              const bound=deps.tools.allowlisted(deps.toolBindings||deps.tools.productionBindings({accountId,admin:deps.admin,policy,portfolio:context.portfolio,marks,decisionPacket:packet,sectorOf:sectorLookup(deps)}),policy.toolPolicy,{symbol:request.symbol,cutoffMs:packet.cutoffMs});
+              const args={symbol:request.symbol,asOfMs:packet.cutoffMs};
               const [filings,decisionData]=await Promise.all([
                 bound.tools.getFilingFactsAsOf?.execute({...args,concepts:[]})||{missing:true,reason:'filings unavailable'},
                 bound.tools.searchDecisionData?.execute({...args,kinds:[],limit:50})||{missing:true,reason:'decision data unavailable'}]);

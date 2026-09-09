@@ -205,7 +205,7 @@ const ACTIONS_V2 = Object.freeze({
   resumeSystem: mutation({ ...acct }, { reauth: true }),
   activateAccountMode: mutation({ ...acct, targetMode: T.str({ enum: ["PAPER_AI"] }), policyHash: T.ref("Hash"), universeHash: T.ref("Hash") }, { required: ["targetMode"], confirmationKind: "none" }),
   deactivateAccountMode: mutation({ ...acct, targetMode: T.str({ enum: ["OBSERVE"] }) }, { required: ["targetMode"], reauth: true, requiresReason: true }),
-  setBudget: mutation({ dailyReservationMinor: canonicalInt(), byRoleMinor: T.obj({ investment: canonicalInt(), extraction: canonicalInt() }), alertThresholdPpm: T.ref("Ppm") }, { required: ["dailyReservationMinor"], reauth: false, confirmationKind: "confirm" }),
+  setBudget: mutation({ resetToday: T.bool(), dailyReservationMinor: canonicalInt(), byRoleMinor: T.obj({ investment: canonicalInt(), extraction: canonicalInt() }), alertThresholdPpm: T.ref("Ppm") }, { required: ["dailyReservationMinor"], reauth: false, confirmationKind: "confirm" }),
   setRiskMandate: mutation({ overrides: T.obj(Object.fromEntries(Object.keys(POLICY.RISK_MANDATE_BOUNDS).map((k) => [k, canonicalInt()]))), note: T.str({ maxLength: REASON_MAX }) }, { required: ["overrides"], reauth: true }),
   setEmergencyRiskPolicy: mutation({ ...acct, policy: T.open({ schemaVersion: T.str({ enum: ["emergency-risk-policy.v1"] }) }, ["schemaVersion"]), dryRun: T.bool() }, { required: ["policy"], reauth: true, concurrency: "preview", confirmationKind: "reauth_with_preview" }),
   setMarketConfig: mutation({ provider: T.str({ maxLength: 40 }), feed: T.nullable(T.str({ maxLength: 40 })), alpacaKeyId: T.str({ maxLength: 200 }), alpacaSecretKey: T.str({ maxLength: 400 }) }, { required: ["provider"], reauth: true }),

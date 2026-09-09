@@ -4267,6 +4267,24 @@ function runFixtures() {
     assert.equal(require('./_investorAdmin').currentScope(),null);return true;
   }));
 
+  cases.push(fixture("paper_daily_allowance_reset_preserves_charges_and_expires",async()=>{
+    const assert=require('assert/strict'),W=apiWorld(),O=require('./_investorOpenai');
+    const health=(await W.read('systemHealth')).body.data;
+    const day=health.spend.day,ref=W.fake.col(W.fake.COL.costs).doc('openai_'+day);
+    await ref.set({spentMinor:971,reservedMinor:12,calls:7});
+    const ctrl=(await W.read('controlState')).body.data;
+    const reset=await W.mutate('setBudget',{dailyReservationMinor:'1000',resetToday:true},{version:ctrl.resourceVersion});
+    assert.equal(reset.statusCode,200,JSON.stringify(reset.body));
+    assert.deepEqual((await ref.get()).data(),{spentMinor:971,reservedMinor:12,calls:7});
+    const b=reset.body.data.budget;
+    assert.equal(O.effectiveDailyCeiling(b,day,1000),1971);
+    assert.equal(O.effectiveDailyCeiling(b,'2099-01-01',1000),1000);
+    const after=(await W.read('systemHealth')).body.data;
+    assert.equal(after.spend.actual.amountMinor,'971');
+    assert.equal(after.spend.remaining.amountMinor,'988');
+    return true;
+  }));
+
   cases.push(fixture("paper_joint_schema_supports_eight_finalists_and_rejects_missing_or_duplicate_memos",()=>{
     const assert=require('assert/strict'),H=require('./_investorResearchHandoff'),cutoff=Date.parse('2026-09-04T12:30:00Z');
     const symbols=Array.from({length:8},(_,i)=>'C'+i),packets=symbols.map(symbol=>({symbol,cutoffMs:cutoff,claims:[]}));
@@ -4301,9 +4319,14 @@ function runFixtures() {
     let pauseOnce=true;W.deps.gateway={...gateway,decidePreparedPortfolio:async args=>{if(pauseOnce){pauseOnce=false;return {pending:true};}return gateway.decidePreparedPortfolio(args);}};
     W.deps.tools=require('./_investorResearchTools');W.deps.toolBindings={getFilingFactsAsOf:async()=>({facts:[],lineage:[]}),searchDecisionData:async()=>({items:[]})};
     const claim={runId:'paper_parity',payload:{accountId:'paper-1',tradingDate:'2026-09-04'}};
+    const C=require('./_investorDecisionContext'),missing={ok:false,symbol:'AAA',reason:'no_dossier',cutoffMs:W.t0-1000};
+    await C.freeze({runId:'paper_parity_research_AAA',context:{packet:missing,marks:{}},admin:W.fake});
+    let sourceRepairs=0;W.deps.preparePaperEvidence=async symbol=>{sourceRepairs++;return {symbol,completedAtMs:W.t0,errors:[]};};
     const first=await G.runManagerMeeting({claim,deps:W.deps,control:{engineMode:'manager'}});assert(first.yielded);assert.equal(first.checkpoint.data.handoff.phase,'decision');
     const resume=structuredClone(first.checkpoint);await Paper.create({admin:W.fake}).save('owner',{companyRange:'range3',strategyVersionId:'baseline',revision:0});delete W.deps.decisionProcess;
     const last=await G.runManagerMeeting({claim:{...claim,checkpoint:resume},deps:W.deps,control:{engineMode:'manager'}});assert(last.done&&!last.failed,JSON.stringify(last));
+    assert.equal(sourceRepairs,1);assert.deepEqual((await C.read({runId:'paper_parity_research_AAA',admin:W.fake})).packet,missing);
+    assert.equal(last.checkpoint.data.handoff.recoveredPackets.AAA.packetId,'paper_parity_research_AAA_current_sources_v1');
     assert.equal(last.checkpoint.data.paperProcess.companyRange,'top1');assert.equal(calls.length,4);assert.equal(last.summary.coverage.completedCount,3);assert.equal(last.summary.research.completed,1);
     assert.equal(W.calls.research,0);assert.equal(W.calls.synthesis,0);assert.equal(last.checkpoint.data.synthesis.holdingAnalysis[0].symbol,'BBB');
     const charged=await gateway.spendToday();assert(charged.spentMinor>0);assert.equal(Number(last.summary.costMinor),charged.spentMinor);
