@@ -1575,7 +1575,7 @@
     color: #0a1426 !important;
     font-weight: 600 !important;
   }
-  /* Charm Maker generate button while Gemini Batch mode is armed — green,
+  /* Charm Maker generate button while OpenAI Batch mode is armed — green,
      mirroring the Generate tab's "Submit batch" recolor. Must out-specify
      .btn-primary's !important rules, hence the class + !important here. */
   .btn-primary.charm-batch-armed {
@@ -2713,7 +2713,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
         <li>Every approved set archived to Firebase Storage</li>
       </ul>
       <div class="signin__brandfoot">
-        <span>Gemini 3 &middot; GPT Image 2</span>
+        <span>GPT Image 2.5 Sunburst</span>
         <span class="signin__dotsep">&middot;</span>
         <span>Storage: gokudatabase</span>
       </div>
@@ -3130,9 +3130,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
       <label class="image-model-switcher" for="imageModelSelect" title="Controls all new Standard generations, redos, and Charm Maker images.">
         <span>model:</span>
         <select id="imageModelSelect" aria-label="Image generation model">
-          <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image · fast / value</option>
-          <option value="gemini-3-pro-image">Gemini 3 Pro Image · maximum Gemini quality</option>
-          <option value="gpt-image-2">OpenAI GPT Image 2 · best realism / balanced cost</option>
+          <option value="gpt-image-2.5-sunburst">GPT Image 2.5 Sunburst · High quality</option>
         </select>
       </label>
     </div>
@@ -3187,7 +3185,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
           </div>
 
           <!-- Generation mode toggle. Standard = realtime, current behavior.
-               Batch = Gemini Batch API at 50% off, 2K output, up to 24h turnaround.
+               Batch = OpenAI Batch API at 50% off, 2K output, up to 24h turnaround.
                Persisted to localStorage so it survives page reloads. -->
           <div id="genModeToggle" style="margin-top: 14px; padding: 10px 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -3205,12 +3203,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
               </button>
             </div>
             <div id="genModeBatchInfo" class="muted" style="display: none; margin-top: 8px; font-size: 10px; line-height: 1.5;">
-              Batch jobs run on Google's asynchronous Gemini endpoint at 50% of standard cost. Output stays at 2K (2048×2048). The browser does not need to stay open; results land in Firebase Storage and the manifest writes automatically. Track progress in the panel below.
+              Batch jobs run on OpenAI's asynchronous Batch endpoint at 50% of standard cost. Output stays at 2K (2048×2048). The browser does not need to stay open; results land in Firebase Storage and the manifest writes automatically. Track progress in the panel below.
             </div>
           </div>
 
           <!-- Batch generation: loops generateSet() N times in Standard mode,
-               or submits one Gemini batch job in Batch mode. -->
+               or submits one OpenAI batch job in Batch mode. -->
           <div style="margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <label style="margin: 0; font-size: 12px;">Batch generate</label>
@@ -3235,14 +3233,15 @@ html.gs-locked body > *:not(#gate){display:none!important}
                 🔄 Resume empty sets (scan & re-fill folders left empty by partial failures)
               </button>
             </div>
-            <!-- Files API cleanup — same visibility rules as resume button.
-                 Calls the server-side `kind: files_cleanup` endpoint which
-                 must be implemented in geminiImageProxy. See the click
-                 handler's comment for the exact server-side code template. -->
-            <div id="filesApiCleanupRow" style="display: none; margin-top: 8px;">
-              <button class="btn btnSmall" id="filesApiCleanupBtn" style="width: 100%; background: #4a1c1c; border: 1px solid #702d2d; color: #fca5a5;">
-                🗑 Clear Gemini Files API storage (deletes ALL old uploads — frees the 20 GB cap)
+            <div id="filesApiCleanupRow" style="margin-top: 8px;">
+              <button type="button" class="btn btnSmall" id="filesApiCleanupBtn" style="width: 100%; background: #4a1c1c; border: 1px solid #702d2d; color: #fca5a5;">
+                🗑 Purge temporary batch files…
               </button>
+              <div class="muted" style="font-size: 11px; margin-top: 6px; line-height: 1.5;">
+                Clears OpenAI and legacy Gemini uploads/results after collection. Saved Firebase images and active or uncollected jobs are preserved.
+              </div>
+              <div id="filesApiCleanupStatus" role="status" aria-live="polite" style="font-size: 12px; margin-top: 6px; white-space: pre-line;"></div>
+              <button type="button" class="btn btnSmall" id="filesApiCleanupCancel" hidden>Cancel cleanup</button>
             </div>
             <div id="batchProgress" style="display: none; margin-top: 10px;">
               <div class="upload-progress-bar"><div class="upload-progress-fill" id="batchProgressFill"></div></div>
@@ -3254,7 +3253,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
           </div>
 
           <!-- Batch jobs panel — visible when Batch mode is on. Each card
-               shows a Gemini batch's lifecycle: queued → running → ready
+               shows a OpenAI batch's lifecycle: queued → running → ready
                to collect → results downloaded into Firebase. -->
           <div id="batchJobsPanel" style="display: none; margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -3262,7 +3261,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
               <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
             </div>
             <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
-              Submitted batches run at Google for hours, then images auto-save to Firebase. You can close this tab; jobs keep running. The status box below updates every 60 seconds.
+              Submitted batches run at OpenAI for hours, then images auto-save to Firebase. You can close this tab; jobs keep running. The status box below updates every 60 seconds.
             </div>
             <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
               <div class="muted" style="font-size: 11px; padding: 6px 0;">Loading…</div>
@@ -3530,7 +3529,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
             </div>
             <div class="row" style="gap: 8px; margin-top: 8px;">
               <button type="button" class="btn btnSmall" id="charmGenModeStandardBtn" style="flex: 1;">Standard</button>
-              <button type="button" class="btn btnSmall" id="charmGenModeBatchBtn" style="flex: 1;">Gemini Batch (50% off)</button>
+              <button type="button" class="btn btnSmall" id="charmGenModeBatchBtn" style="flex: 1;">OpenAI Batch (50% off)</button>
             </div>
             <div id="charmGenModeBatchInfo" class="muted" style="display: none; margin-top: 8px; font-size: 10px; line-height: 1.5;"></div>
           </div>
@@ -3649,7 +3648,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
             <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
               <div style="flex: 1;">
                 <div class="archive-source-label">Source folder · read-only · downloads do not delete</div>
-                <div class="archive-source-path">listing-generator-1 / Generated_Listing_Sets / Approved_Listing_Sets</div>
+                <div class="archive-source-path">listing-generator-1 / Generated_Listing_Sets / Completed_Listing_Sets</div>
               </div>
               <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0;">
                 <button class="btn btnSmall refresh-btn" id="approvedListRefreshBtn" title="Reload from Firebase">↻ Refresh</button>
@@ -3660,13 +3659,13 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
           <label class="field-label">Filter by category</label>
           <div class="chip-row" id="approvedListCategories">
-            <button class="chip cat-chip active" data-cat="*">All <span class="cat-count" id="catCount-all">—</span></button>
-            <button class="chip cat-chip active" data-cat="Beady_Necklace">Beady necklaces <span class="cat-count" id="catCount-Beady_Necklace">—</span></button>
-            <button class="chip cat-chip active" data-cat="Regular_Necklace">Necklaces <span class="cat-count" id="catCount-Regular_Necklace">—</span></button>
-            <button class="chip cat-chip active" data-cat="Stud_Earrings">Stud earrings <span class="cat-count" id="catCount-Stud_Earrings">—</span></button>
-            <button class="chip cat-chip active" data-cat="Hoop_Earrings">Hoop earrings <span class="cat-count" id="catCount-Hoop_Earrings">—</span></button>
-            <button class="chip cat-chip active" data-cat="Charms">Charm sets <span class="cat-count" id="catCount-Charms">—</span></button>
-            <button class="chip cat-chip active" data-cat="Bracelets">Bracelets <span class="cat-count" id="catCount-Bracelets">—</span></button>
+            <button class="chip cat-chip active" aria-pressed="true" data-cat="*">All <span class="cat-count" id="catCount-all">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Beady_Necklace">Beady necklaces <span class="cat-count" id="catCount-Beady_Necklace">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Regular_Necklace">Necklaces <span class="cat-count" id="catCount-Regular_Necklace">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Stud_Earrings">Stud earrings <span class="cat-count" id="catCount-Stud_Earrings">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Hoop_Earrings">Hoop earrings <span class="cat-count" id="catCount-Hoop_Earrings">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Charms">Charm sets <span class="cat-count" id="catCount-Charms">—</span></button>
+            <button class="chip cat-chip" aria-pressed="false" data-cat="Bracelets">Bracelets <span class="cat-count" id="catCount-Bracelets">—</span></button>
           </div>
 
           <label class="field-label" style="margin-top: 14px;">Sort &amp; pagination</label>
@@ -3730,9 +3729,9 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
           <label class="field-label" style="margin-top: 14px;">Custom date range</label>
           <div class="row date-row" style="gap: 8px; align-items: center;">
-            <input type="date" id="approvedCharmDateFrom" style="flex: 1;">
+            <input type="date" aria-label="Created on or after" id="approvedCharmDateFrom" style="flex: 1;">
             <span class="muted" style="font-size: 11px;">→</span>
-            <input type="date" id="approvedCharmDateTo" style="flex: 1;">
+            <input type="date" aria-label="Created on or before" id="approvedCharmDateTo" style="flex: 1;">
             <button class="btn btnSmall" id="approvedCharmDateClear" style="width: auto;">Clear</button>
           </div>
 
@@ -3840,47 +3839,18 @@ html.gs-locked body > *:not(#gate){display:none!important}
     // ------------------------------------------------------------
     // One persisted selector controls every new Standard generation,
     // Review redo, and Charm Maker image request. Only these allowlisted
-    // models can reach the backend. Gemini models also support this app's
-    // existing asynchronous Batch workflow; OpenAI currently runs through
-    // Standard mode so a selected model is never silently substituted.
+    // models can reach the backend. Sunburst supports both Standard and asynchronous OpenAI Batch workflows.
+    // Saved legacy selections migrate to the single supported image model.
     // ============================================================
     const IMAGE_MODEL_LS_KEY = "lg1_image_model_v1";
-    const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
-    const IMAGE_MODEL_ALIASES = Object.freeze({
-      "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
-      "gemini-3-pro-image-preview": "gemini-3-pro-image",
-      "gpt-5.5": "gpt-image-2",
-    });
+    const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-sunburst";
+    const IMAGE_MODEL_ALIASES = Object.freeze({});
     const IMAGE_MODEL_CATALOG = Object.freeze({
-      "gemini-3.1-flash-image": Object.freeze({
-        id: "gemini-3.1-flash-image",
-        provider: "gemini",
-        endpoint: "geminiImageProxy-background",
-        quality: "high",
-        supportsBatch: true,
-        label: "Gemini 3.1 Flash Image",
-        detail: "Fastest and best value for bulk generation",
-      }),
-      "gemini-3-pro-image": Object.freeze({
-        id: "gemini-3-pro-image",
-        provider: "gemini",
-        endpoint: "geminiImageProxy-background",
-        quality: "high",
-        supportsBatch: true,
-        label: "Gemini 3 Pro Image",
-        detail: "Maximum Gemini fidelity for complex product edits",
-      }),
-      "gpt-image-2": Object.freeze({
-        id: "gpt-image-2",
-        provider: "openai",
-        endpoint: "openaiImageProxy-background",
-        // Medium is the strongest practical quality/cost balance for
-        // repeated 2K listing generations. Select Gemini Pro when you want
-        // the premium path without OpenAI's higher 2K image-token spend.
-        quality: "medium",
-        supportsBatch: false,
-        label: "OpenAI GPT Image 2",
-        detail: "Best realism with cost-balanced Medium quality at 2K",
+      "gpt-image-2.5-sunburst": Object.freeze({
+        id: "gpt-image-2.5-sunburst", provider: "openai",
+        endpoint: "geminiImageProxy", quality: "high",
+        supportsBatch: true, label: "GPT Image 2.5 Sunburst",
+        detail: "High quality · 2K · Standard and OpenAI Batch",
       }),
     });
 
@@ -3915,19 +3885,55 @@ html.gs-locked body > *:not(#gate){display:none!important}
       return IMAGE_MODEL_CATALOG[normalizeImageModelId(modelId)];
     }
 
+    const pendingImageJobs = new Map();
+
+    const imageDispatchQueue = [];
+    let imageDispatchActive = 0;
+    async function acquireImageDispatch() {
+      if (imageDispatchActive >= 12) await new Promise(resolve => imageDispatchQueue.push(resolve));
+      else imageDispatchActive++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const next = imageDispatchQueue.shift();
+        if (next) next(); else imageDispatchActive--;
+      };
+    }
+    function finishPendingImage(key) {
+      const pending = pendingImageJobs.get(key);
+      pendingImageJobs.delete(key);
+      pending?.release?.();
+    }
+
     async function postImageGeneration(body, signal, modelId = getSelectedImageModel()) {
       const config = getImageModelConfig(modelId);
-      return postJson(
+      const jobId = body?.jobId || `lg1_${Date.now()}_${crypto.randomUUID()}`;
+      const release = await acquireImageDispatch();
+      const pendingKey = body?.output_base_path && Number.isInteger(body?.slotIndex) ? `${body.output_base_path}/${body.slotIndex}` : null;
+      try {
+      if (pendingKey && pendingImageJobs.has(pendingKey)) throw new Error("This image already has a generation in progress.");
+      if (pendingKey) pendingImageJobs.set(pendingKey, {jobId, startedAt:Date.now(), release});
+      const result = await postJson(
         config.endpoint,
         {
           ...body,
+          jobId,
           model: config.id,
-          quality: body?.quality || config.quality,
-          size: body?.size || "2048x2048",
+          quality: "high",
+          size: /\/Charm_Maker\/(?:Generated_Charm_Sets|Completed_Approved_Charm_Sets)\//.test(String(body?.output_base_path || "")) && [2, 3].includes(Number(body?.slotIndex))
+            ? "1024x1024" : (body?.size || "2048x2048"),
           output_format: body?.output_format || "png",
         },
         signal
       );
+      if (result?.ok === false) throw new Error(result?.error?.message || "Image request rejected");
+      if (!body?.output_base_path || !Number.isInteger(body?.slotIndex)) release();
+      return result;
+      } catch (error) {
+        if (pendingKey && pendingImageJobs.get(pendingKey)?.jobId === jobId) finishPendingImage(pendingKey);
+        release(); throw error;
+      }
     }
 
     function renderImageModelSelection() {
@@ -4742,6 +4748,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
       const afterGeneration = opts.afterGeneration == null ? null : Number(opts.afterGeneration);
       const signal = opts.signal; // Capture the abort signal
 
+      try {
       // Check if already aborted before starting
       if (signal && signal.aborted) throw new Error("AbortError");
 
@@ -4753,6 +4760,33 @@ html.gs-locked body > *:not(#gate){display:none!important}
         if (signal && signal.aborted) throw new Error("AbortError");
 
         await ensureStorageSignedIn();
+
+        // Track the actual worker, not just the eventual output file. A host
+        // 202 only confirms dispatch; it does not mean image generation started.
+        const pendingKey = `${outputBasePath}/${slotIndex}`;
+        const pending = pendingImageJobs.get(pendingKey);
+        if (pending) {
+          const state = await postJson("geminiImageProxy", { kind: "job_status", jobId: pending.jobId }, signal);
+          const elapsed = Math.floor((Date.now() - pending.startedAt) / 1000);
+          const folderId = outputBasePath.split("/").pop();
+          const preview = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
+          if (state.status === "error") {
+            finishPendingImage(pendingKey);
+            const message = state.error?.message || "Image generation failed";
+            if (preview) { preview.textContent = `Failed: ${message}`; preview.classList.remove("working-box"); }
+            throw new Error(message);
+          }
+          if (state.status !== "done") {
+            const label = state.stage === "rate_limit" ? `Queued within API limits · ${elapsed}s` : state.status === "running" ? `Generating with Sunburst · ${elapsed}s` : `Waiting for worker · ${elapsed}s`;
+            const caption = preview?.querySelector(".spinner-container > div:last-child");
+            if (caption) caption.textContent = label;
+            setStatus(label);
+            if (Date.now() - t0 > timeoutMs) throw new Error(`Image job ${pending.jobId} has not finished. Check its status before retrying.`);
+            await sleep(intervalMs, signal);
+            continue;
+          }
+          finishPendingImage(pendingKey);
+        }
 
         try {
           const folderRef = ref(storage, outputBasePath);
@@ -4816,6 +4850,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
         }
         await sleep(intervalMs, signal);
       }
+      } finally { finishPendingImage(`${outputBasePath}/${slotIndex}`); }
     }
 
 // --- UI State ---
@@ -5104,6 +5139,10 @@ html.gs-locked body > *:not(#gate){display:none!important}
           setStatus(`Redo Slot ${slotIndex + 1}…`);
       }
 
+      let srcRandom = null;
+      let charmLatest = null;
+      let waitedResult = null;
+      try {
       const srcFolder = slotRefFolder(ctxCategory, spec.folder);
       // In adjustment mode we re-process the existing slot image, so there
       // is no need to pick a fresh random reference. Skipping listAll here
@@ -5111,7 +5150,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
       // Charm_Types is deliberately stricter: a full redo must reuse the
       // template originally allocated to this slot so the typography,
       // layout, hardware, and relative sizing do not change.
-      const srcRandom = isAdjustmentMode
+      srcRandom = isAdjustmentMode
         ? null
         : isStrictCharmReferenceSlot
           ? await resolveOriginalSlotSource(ctxSetPath, slotIndex, srcFolder)
@@ -5127,7 +5166,6 @@ html.gs-locked body > *:not(#gate){display:none!important}
       // moved out of New_Charms/ once they have been used, so resolveOriginalCharm
       // reads the manifest written at alloc time and falls back through
       // several layers before it ever resorts to "latest in folder".
-      let charmLatest = null;
       // A targeted Charm_Types correction still needs the master charm as
       // image 2; otherwise Gemini has no pixel-truth source from which to
       // restore missing or distorted engraving detail.
@@ -5138,9 +5176,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
         if (!charmLatest) throw new Error(`No charm available for redo (manifest sourceCharm missing and no files in ${charmFolderPath}/)`);
       }
       
-      let waitedResult = null; 
 
-      try {
           if (spec.type === "copy") {
             const r = await postJson(GEMINI_FN, {
               kind: "copy_to_slot",
@@ -5300,8 +5336,11 @@ The output must look like the input image with ONLY the user's requested change 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
              const prevBox = document.getElementById(`${prefix}_slotPrev_${slotIndex}`);
              if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+             const redoBtn = document.getElementById(`${prefix}_redo_${slotIndex}`);
+             if (redoBtn) redoBtn.disabled = false;
              setStatus("Redo failed: " + err.message);
           }
+          return; // Preserve the existing manifest after any failed redo.
       }
 
       try {
@@ -7944,7 +7983,7 @@ function updateApproveButtonState() {
           );
         }
 
-        // Number of sets per Gemini batch job. Was originally a per-handler
+        // Number of sets per OpenAI batch job. Was originally a per-handler
         // local constant in the main batch button's click handler, but
         // resume_empty_sets needs the same value, so it's hoisted here at
         // module scope. CHUNK_SIZE history: tried 8 (server OOM), 4 (server
@@ -8031,14 +8070,15 @@ function updateApproveButtonState() {
       return `${ROOT}/${category}/${folder}`;
     }
 
-    async function generateSet() {
-      setBusy(true);
+    async function generateSet(options = {}) {
+      const headless = !!options.headless;
+      if (!headless) setBusy(true);
       try {
-        const category = String(categoryEl.value || "").trim();
+        const category = String(options.category || categoryEl.value || "").trim();
         if (!category) throw new Error("Pick a category first.");
         const slotPlan = SLOT_MAP[category];
         if (!slotPlan) throw new Error(`Unknown category: ${category}`);
-        const generationModel = getSelectedImageModel();
+        const generationModel = options.model || getSelectedImageModel();
 
         setStatus("Allocating Set…");
         const alloc = await allocSet(category);
@@ -8051,7 +8091,7 @@ function updateApproveButtonState() {
           if (m) setN = Number(m[1]);
         }
 
-        CURRENT_SET = { category, outputBasePath, setN };
+        if (!headless) CURRENT_SET = { category, outputBasePath, setN };
 
         const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
         const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
@@ -8081,6 +8121,7 @@ function updateApproveButtonState() {
           return { spec, i, slotNum: i + 1, srcLatest: srcRandom };
         }));
 
+        if (!headless) {
         generateGrid.innerHTML = "";
         for (const r of slotResolved) {
           const { spec, i, slotNum, srcLatest } = r;
@@ -8099,21 +8140,23 @@ function updateApproveButtonState() {
           generateGrid.appendChild(slotCard);
         }
 
-        setStatus("Starting parallel staggered generation…");
+        }
+        setStatus("Starting parallel generation…");
 
         // Process slots in parallel, but stagger the API requests to prevent rate limiting
         const generationPromises = slotResolved.map(async (r, index) => {
           const { spec, i, slotNum, srcLatest } = r;
           
           // Delay each request by 2.5 seconds multiplied by its index (0s, 2.5s, 5s, 7.5s...)
-          await sleep(index * 2500); 
+          // Shared dispatch and server quota gates control admission. 
 
-          const prevBox = document.getElementById(`gen_slotPrev_${i}`);
+          const prevBox = headless ? null : document.getElementById(`gen_slotPrev_${i}`);
           if (prevBox) {
              prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
              prevBox.classList.add("working-box");
           }
 
+          try {
           // Dispatch the individual API request
           if (spec.type === "copy") {
             await postJson(GEMINI_FN, {
@@ -8154,12 +8197,18 @@ function updateApproveButtonState() {
             newCharm: spec.type === "copy" ? null : charmLatest.fullPath,
             output: waited.storagePath,
           };
+          } catch (error) {
+            if (prevBox) { prevBox.classList.remove("working-box"); prevBox.textContent = `Failed: ${error.message || error}`; }
+            throw error;
+          }
         });
 
         setStatus("Generating… (Monitoring Storage)");
 
         // Wait for all staggered slots to finish
-        const results = await Promise.all(generationPromises);
+        const settled = await Promise.allSettled(generationPromises);
+        const results = settled.filter(r => r.status === "fulfilled").map(r => r.value);
+        const failures = settled.filter(r => r.status === "rejected");
         results.sort((a, b) => a.slot - b.slot);
         manifest.slots = results;
 
@@ -8171,13 +8220,17 @@ function updateApproveButtonState() {
                 manifest: manifest,
             });
 
+        if (failures.length) throw new Error(`${failures.length} image slot(s) failed: ${failures[0].reason?.message || failures[0].reason}. Use Redo to retry failed slots.`);
+
         setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
-        setAllRedoEnabled(true);
+        if (!headless) setAllRedoEnabled(true);
       } catch (e) {
         console.error(e);
         setStatus(`Error: ${e?.message || e}`);
+        if (headless) throw e;
       } finally {
-        setBusy(false);
+        if (!headless) setAllRedoEnabled(true);
+        if (!headless) setBusy(false);
       }
     }
 
@@ -8856,13 +8909,13 @@ function createCharmCardHTML(folderId, isApprovedView) {
                 </div>
 
                 <div class="charm-col">
-                    <div class="muted">B&W Line Art (Standard)</div>
+                    <div class="muted">B&W Line Art (Standard) · 1024 × 1024</div>
                     <div class="slotPrev" id="prevBox_${folderId}_2"><div class="slotRefEmpty">Loading...</div></div>
                     ${redoHTML2}
                 </div>
                 
                 <div class="charm-col">
-                    <div class="muted">B&W Line Art (Earrings)</div>
+                    <div class="muted">B&W Line Art (Earrings) · 1024 × 1024</div>
                     <div class="slotPrev" id="prevBox_${folderId}_3"><div class="slotRefEmpty">Loading...</div></div>
                     ${redoHTML3}
                 </div>
@@ -8913,6 +8966,7 @@ function renderCharmPage(isApprovedView) {
             tempDiv.innerHTML = createCharmCardHTML(folderId, isApprovedView);
             const cardNode = tempDiv.firstElementChild;
             targetGrid.appendChild(cardNode);
+            if (!isApprovedView) window.updateQuadActionButtons(folderId);
             loadSetImagesForCharm(folderId, isApprovedView ? "Charm_Maker/Completed_Approved_Charm_Sets" : "Charm_Maker/Generated_Charm_Sets");
         });
         
@@ -9021,6 +9075,7 @@ async function loadSetImagesForCharm(folderId, folderName) {
                 }
             });
         }
+        if (!isApprovedView) window.updateQuadActionButtons(folderId);
     }
 
     document.getElementById("charmPrevPage").addEventListener("click", () => {
@@ -9415,12 +9470,13 @@ window.regenCharmQuad = async function(folderId) {
             const btn0 = document.getElementById(`redo_${folderId}_0`);
             if(btn0) btn0.disabled = false;
 
+            const derivativeResults = await Promise.allSettled([
+              (async () => {
             // STEP 2
             const sig1 = myControllers[1].signal;
             setStatus("Generating Earring Twin (Removing Hoop)...");
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
             if(prev1) prev1.innerHTML = window.getSpinnerHTML("Removing Hoop...");
-            await sleep(2000, sig1); 
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath,
@@ -9448,12 +9504,13 @@ window.regenCharmQuad = async function(folderId) {
             const btn1 = document.getElementById(`redo_${folderId}_1`);
             if(btn1) btn1.disabled = false;
 
+              })(),
+              (async () => {
             // STEP 3
             const sig2 = myControllers[2].signal;
             setStatus("Generating B&W Line Art (Standard)...");
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
             if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
-            await sleep(2000, sig2);
             // Style sample only when one exists; labeled so image 1 stays the
             // subject truth and the sample contributes drawing style only.
             await postImageGeneration({
@@ -9487,7 +9544,6 @@ window.regenCharmQuad = async function(folderId) {
             setStatus("Generating B&W Line Art (Earrings)...");
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
             if(prev3) prev3.innerHTML = window.getSpinnerHTML("Removing Hoop...");
-            await sleep(2000, sig3);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmBWRes.storagePath,
@@ -9512,6 +9568,11 @@ window.regenCharmQuad = async function(folderId) {
             const btn3 = document.getElementById(`redo_${folderId}_3`);
             if(btn3) btn3.disabled = false;
 
+              })()
+            ]);
+            const derivativeFailure = derivativeResults.find(r => r.status === "rejected");
+            if (derivativeFailure) throw derivativeFailure.reason;
+
             setStatus("Quad Regeneration Complete.");
         } catch(err) {
             if (err.name === "AbortError" || err.message === "AbortError") {
@@ -9526,7 +9587,7 @@ window.regenCharmQuad = async function(folderId) {
                     const p = document.getElementById(`prevBox_${folderId}_${i}`);
                     if(p) {
                         p.classList.remove("working-box");
-                        if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                        if (p.querySelector(".spinner-container")) {
                             p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
                         }
                     }
@@ -9591,11 +9652,12 @@ window.regenCharmQuad = async function(folderId) {
                 } catch(e) {}
             }
 
+            const derivativeResults = await Promise.allSettled([
+              (async () => {
             // STEP 2
             setStatus("Generating Earring Twin (Removing Hoop)...");
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
             if(prev1) prev1.innerHTML = window.getSpinnerHTML("Removing Hoop...");
-            await sleep(2000);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: baseCharmStoragePath,
@@ -9618,11 +9680,12 @@ window.regenCharmQuad = async function(folderId) {
             const btn1 = document.getElementById(`redo_${folderId}_1`);
             if(btn1) btn1.disabled = false;
 
+              })(),
+              (async () => {
             // STEP 3
             setStatus("Generating B&W Line Art (Standard)...");
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
             if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
-            await sleep(2000);
             // Style sample goes in ONLY when one exists (never a duplicate of
             // the charm), and it is labeled "line_art_style": image 1 is the
             // subject truth, image 2 contributes drawing style only.
@@ -9651,7 +9714,6 @@ window.regenCharmQuad = async function(folderId) {
             setStatus("Generating B&W Line Art (Earrings)...");
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
             if(prev3) prev3.innerHTML = window.getSpinnerHTML("Removing Hoop...");
-            await sleep(2000);
             await postImageGeneration({
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: charmBWRes.storagePath,
@@ -9671,6 +9733,11 @@ window.regenCharmQuad = async function(folderId) {
             const btn3 = document.getElementById(`redo_${folderId}_3`);
             if(btn3) btn3.disabled = false;
 
+              })()
+            ]);
+            const derivativeFailure = derivativeResults.find(r => r.status === "rejected");
+            if (derivativeFailure) throw derivativeFailure.reason;
+
             setStatus("Derivatives & Line Art Loop Complete.");
         } catch (err) {
             console.error("Master Generation Catch (Continue):", err);
@@ -9681,7 +9748,7 @@ window.regenCharmQuad = async function(folderId) {
                 const p = document.getElementById(`prevBox_${folderId}_${i}`);
                 if(p) {
                     p.classList.remove("working-box");
-                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                    if (p.querySelector(".spinner-container")) {
                         p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
                     }
                 }
@@ -9947,7 +10014,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
                 const p = document.getElementById(`prevBox_${folderId}_${i}`);
                 if(p) {
                     p.classList.remove("working-box");
-                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                    if (p.querySelector(".spinner-container")) {
                         p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
                     }
                 }
@@ -9964,7 +10031,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         const batchCount = parseInt(document.getElementById("batchProcessCountInput").value) || 1;
         const derivCount = Math.max(1, Math.min(8, parseInt(document.getElementById("derivativesPerCharmInput").value, 10) || 1));
 
-        // Gemini Batch mode (50% off): queue the base charms asynchronously
+        // OpenAI Batch mode (50% off): queue the base charms asynchronously
         // instead of running the interactive Standard loop.
         if (typeof _isCharmBatchModeActive === "function" && _isCharmBatchModeActive()) {
             await runCharmBatchSubmission(null, batchCount, derivCount);
@@ -13721,17 +13788,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     });
 
     // ============================================================
-    // Batch generate — loops generateSet() N times sequentially.
-    // Each iteration picks fresh randomized refs from the shared
-    // charm pool (same logic as a single click), so over N runs
-    // the system naturally cycles through the available charms.
-    // Sequential (not parallel) on purpose:
-    //   - alloc_set is server-side and assigns Set_N atomically;
-    //     parallel calls would risk gaps or contention
-    //   - Gemini image generation is rate-limited; a tight serial
-    //     loop is the safest pattern that still fully utilizes the
-    //     pipeline
-    // ============================================================
+    // Independent sets run concurrently; each owns its manifest and output
+    // path. Browser and shared server gates bound the actual image traffic.
     const generateBatchBtn = document.getElementById('generateBatchBtn');
     const cancelBatchBtn = document.getElementById('cancelBatchBtn');
     const batchGenerateCountInput = document.getElementById('batchGenerateCount');
@@ -13755,7 +13813,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         if (_batchInFlight) return;
 
         // Mode-aware dispatch: if Batch mode is on, route to the
-        // Gemini Batch API submission flow defined later in this script.
+        // OpenAI Batch API submission flow defined later in this script.
         // Otherwise fall through to the existing Standard-mode loop.
         if (typeof _isBatchModeActive === "function" && _isBatchModeActive()) {
           if (typeof runBatchModeSubmission === "function") {
@@ -13772,7 +13830,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           alert('Batch capped at 1000 sets per run. Adjust the count.');
           return;
         }
-        const ok = confirm(`Generate ${count} sets sequentially? This will run in the background — you can switch tabs but keep this page open.`);
+        const ok = confirm(`Generate ${count} sets with up to 3 sets in parallel? This will run in the background — you can switch tabs but keep this page open.`);
         if (!ok) return;
 
         _batchInFlight = true;
@@ -13789,25 +13847,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         let failed = 0;
         _setBatchProgress(0, count, `Starting batch of ${count}…`);
 
-        for (let i = 0; i < count; i++) {
-          if (_batchCancelRequested) {
-            _setBatchProgress(succeeded, count, `Cancelled at ${i}/${count}`);
-            break;
+        const batchCategory = String(categoryEl.value || "").trim();
+        const batchModel = getSelectedImageModel();
+        let nextSet = 0;
+        await Promise.all(Array.from({ length: Math.min(3, count) }, async () => {
+          while (!_batchCancelRequested && nextSet < count) {
+            const i = nextSet++;
+            try {
+              await generateSet({ headless: true, category: batchCategory, model: batchModel });
+              succeeded++;
+            } catch (e) {
+              console.error(`[Batch] Set ${i + 1} failed:`, e);
+              failed++;
+            }
+            _setBatchProgress(succeeded + failed, count, `${succeeded} done · ${failed} failed · up to 3 sets in parallel; results in Review`);
           }
-          _setBatchProgress(i, count, `Generating ${i + 1}/${count}…`);
-          try {
-            // generateSet() handles its own setBusy / status / errors.
-            // Awaiting it serializes the loop on the natural critical
-            // path (alloc → fetch refs → call gemini → upload → manifest).
-            await generateSet();
-            succeeded++;
-          } catch (e) {
-            console.error(`[Batch] Set ${i + 1} failed:`, e);
-            failed++;
-            // Continue the batch even if one set fails — we surface
-            // the failures in the final summary.
-          }
-        }
+        }));
 
         const finalPhase = _batchCancelRequested
           ? `Cancelled · ${succeeded} done, ${failed} failed`
@@ -13846,10 +13901,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     }
 
     // ============================================================
-    // GEMINI BATCH API — Listing Generator integration
+    // OPENAI BATCH API — Listing Generator integration
     // ------------------------------------------------------------
     // The toggle below routes Generate Set / Generate Batch through
-    // the Gemini Batch API at 50% of standard cost. Output is locked
+    // the OpenAI Batch API at 50% of standard cost. Output is locked
     // to 2K (2048×2048) via imageConfig.imageSize, identical to the
     // resolution Standard mode produces today. Up to 24h turnaround.
     //
@@ -13857,7 +13912,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     //   - Submission: client builds a list of sets (each with allocSet
     //     reservation + resolved random refs) and POSTs to the new
     //     `batch_submit` kind. Server handles JSONL build, Files API
-    //     upload, Gemini batch creation, and Firestore persistence.
+    //     upload, OpenAI batch creation, and Firestore persistence.
     //   - Polling: client polls `batch_status` every 60s while the
     //     panel is visible. Even if user closes the tab, Firestore
     //     keeps the record for later.
@@ -13922,13 +13977,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       batchBtn.style.opacity = canBatch ? "1" : "0.45";
       batchBtn.style.cursor = canBatch ? "pointer" : "not-allowed";
       batchBtn.title = canBatch
-        ? `Run ${modelConfig.label} through the Gemini Batch API at reduced cost.`
+        ? `Run ${modelConfig.label} through the OpenAI Batch API at reduced cost.`
         : `${modelConfig.label} currently uses Standard mode in this app.`;
 
       if (info) {
         info.style.display = isBatch ? "block" : "none";
         info.textContent =
-          `${modelConfig.label} batch jobs run on Google's asynchronous Gemini endpoint at reduced cost. ` +
+          `${modelConfig.label} batch jobs run on OpenAI's asynchronous Batch endpoint at reduced cost. ` +
           `Output stays at 2K (2048×2048); results land in Firebase Storage and the manifest writes automatically.`;
       }
       if (batchHint) {
@@ -13955,7 +14010,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       // directly through the generation API without the resumable JSONL
       // upload flow).
       const cleanupRow = document.getElementById("filesApiCleanupRow");
-      if (cleanupRow) cleanupRow.style.display = isBatch ? "block" : "none";
+      if (cleanupRow) cleanupRow.style.display = "block";
 
       // Color-shift the Generate Batch button so users see at a glance
       // whether they're firing a batch job.
@@ -13978,7 +14033,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       if (m === "batch" && !getImageModelConfig().supportsBatch) {
         _writeGenMode("standard");
         _renderGenModeButtons();
-        setStatus(`${getImageModelConfig().label} uses Standard mode. Select a Gemini model to enable Gemini Batch.`);
+        setStatus(`${getImageModelConfig().label} uses Standard mode. Select Sunburst to enable OpenAI Batch.`);
         return;
       }
       _writeGenMode(m);
@@ -14011,7 +14066,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         return;
       }
       // Per-submission sanity cap. Each submission gets sliced into
-      // CHUNK_SIZE-sized Gemini batches (see below) so this is just an
+      // CHUNK_SIZE-sized OpenAI batches (see below) so this is just an
       // upper bound on how many sets the user can prep with one click.
       if (count > 1000) {
         alert("Batch mode supports up to 1000 sets per submission. Split into multiple submissions for more.");
@@ -14026,11 +14081,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const batchModelConfig = getImageModelConfig(batchModel);
       if (!batchModelConfig.supportsBatch) {
         _setGenMode("standard");
-        alert(`${batchModelConfig.label} uses Standard mode. Select a Gemini model before submitting a Gemini batch.`);
+        alert(`${batchModelConfig.label} uses Standard mode. Select Sunburst before submitting a OpenAI batch.`);
         return;
       }
 
-      // Auto-chunk. Each chunk = one Gemini batch job.
+      // Auto-chunk. Each chunk = one OpenAI batch job.
       // CHUNK_SIZE is hoisted to module scope (see near postJson around
       // line ~5246) so resume_empty_sets can share it. CHUNK_SIZE history:
       // 8 OOM'd, 4 OOM'd. Currently set to 1 as a diagnostic — if a 1-set
@@ -14046,7 +14101,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           `· Turnaround: usually 2–6h, up to 24h\n\n` +
           `You can close this tab — results land in Firebase automatically.`
         : `Submit ${count} set(s) of ${category}?\n\n` +
-          `Will be split into ${chunkCount} Gemini batch job(s) of up to ${CHUNK_SIZE} sets each ` +
+          `Will be split into ${chunkCount} OpenAI batch job(s) of up to ${CHUNK_SIZE} sets each ` +
           `to stay under server memory limits.\n\n` +
           `· Cost: ~50% of Standard mode\n` +
           `· Output: 2K (2048×2048)\n` +
@@ -14159,7 +14214,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           allSets.push({ category, outputBasePath, setN, tasks });
         }
 
-        // Slice into chunks and submit each as its own Gemini batch.
+        // Slice into chunks and submit each as its own OpenAI batch.
         // Each call to batch_submit creates one Files-API upload and one
         // batchGenerateContent job, which appears as a separate row in
         // the in-flight panel. The display name carries the part index
@@ -14222,7 +14277,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
             }
             // Otherwise: don't abort the whole submission — keep going so
             // that remaining chunks still get submitted. Each chunk is an
-            // independent Gemini batch.
+            // independent OpenAI batch.
           }
 
           // Adaptive stagger between chunks. Starts at CHUNK_STAGGER_MS,
@@ -14607,7 +14662,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const batchModelConfig = getImageModelConfig(batchModel);
       if (!batchModelConfig.supportsBatch) {
         _setGenMode("standard");
-        alert(`${batchModelConfig.label} uses Standard mode. Select a Gemini model before resuming Gemini batches.`);
+        alert(`${batchModelConfig.label} uses Standard mode. Select Sunburst before resuming OpenAI batches.`);
         return;
       }
 
@@ -14904,25 +14959,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         const storageQuotaHit = submitErrors.some((e) => _isStorageQuotaError({ message: e.error }));
         if (storageQuotaHit) {
           alert(
-            `⚠ GEMINI FILES API STORAGE QUOTA EXCEEDED\n\n` +
-            `Submission aborted after ${submitted.length}/${effectiveChunkCount} chunks.\n\n` +
-            `The Gemini Files API has a cumulative storage limit (default 20 GB) ` +
-            `across ALL uploaded reference files. Each batch_submit uploads the ` +
-            `set's reference images and a JSONL manifest to Files API; over many ` +
-            `batches these accumulate.\n\n` +
-            `IMPORTANT: This is NOT a per-minute rate limit. Retrying immediately ` +
-            `won't help. The cap is reset by:\n\n` +
-            `  1. WAIT for TTL: Files API auto-deletes uploads after 48 hours. ` +
-            `Wait ~24-48h and try Resume again — by then enough old files will ` +
-            `have expired.\n\n` +
-            `  2. ACTIVE DELETE: List & delete old files via the Gemini Files ` +
-            `API yourself. This requires a server-side endpoint (the current ` +
-            `geminiImageProxy doesn't expose files.delete). If you want this, ` +
-            `you'll need to add a "kind: files_cleanup" handler that calls ` +
-            `https://generativelanguage.googleapis.com/v1beta/files (list + delete).\n\n` +
-            `The ${effectiveChunkCount - submitted.length} unfilled empty set(s) ` +
-            `will still be detected on the next Resume run — no folder state was ` +
-            `corrupted by the partial run.`
+            `Batch file storage quota exceeded. Submission stopped after ${submitted.length}/${effectiveChunkCount} chunks.\n\n` +
+            `Use Purge temporary batch files below to clear uploads and results from collected batches, then retry Resume empty sets. ` +
+            `Active and uncollected batches stay protected. The original provider error is: ${submitErrors.find(e => _isStorageQuotaError({ message: e.error }))?.error || "Storage quota exceeded"}`
           );
           // Skip the generic submission-result alert below.
           await refreshBatchJobsPanel();
@@ -14970,134 +15009,75 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     document.getElementById("resumeEmptySetsBtn")?.addEventListener("click", runResumeEmptySetsSubmission);
 
     // ------------------------------------------------------------
-    // Files API cleanup — frees the Gemini Files API 20 GB cumulative
-    // storage cap by deleting all old uploaded files.
-    //
-    // SERVER-SIDE REQUIREMENT (this is the part you need to add to
-    // your geminiImageProxy Netlify function):
-    //
-    //   case 'files_cleanup': {
-    //     const API_KEY = process.env.GEMINI_API_KEY;
-    //     const baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
-    //
-    //     // Paginate through all files
-    //     const listed = [];
-    //     let pageToken = null;
-    //     do {
-    //       const url = `${baseUrl}/files?key=${API_KEY}&pageSize=100` +
-    //                   (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
-    //       const r = await fetch(url);
-    //       if (!r.ok) throw new Error(`Files API list failed: HTTP ${r.status} ${await r.text()}`);
-    //       const data = await r.json();
-    //       for (const f of (data.files || [])) listed.push(f);
-    //       pageToken = data.nextPageToken;
-    //     } while (pageToken);
-    //
-    //     // Delete each file (parallelism 10 to avoid hammering the API)
-    //     let deleted = 0;
-    //     let bytesFreed = 0;
-    //     const errors = [];
-    //     const CONC = 10;
-    //     let idx = 0;
-    //     async function worker() {
-    //       while (idx < listed.length) {
-    //         const f = listed[idx++];
-    //         try {
-    //           const delUrl = `${baseUrl}/${f.name}?key=${API_KEY}`;
-    //           const r = await fetch(delUrl, { method: 'DELETE' });
-    //           if (!r.ok) errors.push(`${f.name}: HTTP ${r.status} ${(await r.text()).slice(0, 80)}`);
-    //           else { deleted++; bytesFreed += Number(f.sizeBytes || 0); }
-    //         } catch (e) { errors.push(`${f.name}: ${e.message}`); }
-    //       }
-    //     }
-    //     const workers = []; for (let i = 0; i < CONC; i++) workers.push(worker());
-    //     await Promise.all(workers);
-    //
-    //     return res.status(200).json({
-    //       deleted, totalListed: listed.length, bytesFreed,
-    //       errors: errors.slice(0, 20),  // cap the error list size
-    //     });
-    //   }
-    //
-    // NOTE on Netlify function timeout: default is 10 seconds. If you have
-    // many hundreds of files to delete, you may need either:
-    //   (a) a background function (`yourname-background.js`) for 15-min limit, or
-    //   (b) chunked cleanup via a `maxDelete` param (delete N per call, repeat)
-    // Until then, this button works fine for typical accumulations.
-    //
-    // CAUTION: deleting Files API uploads breaks any IN-FLIGHT batch jobs
-    // that still reference those input files. Only clean up when your
-    // submitted batches have either completed or you're OK with losing
-    // unfinished ones (Google would just fail those output sets).
-    // ------------------------------------------------------------
+    // Scan first; confirmation authorizes only collected batch temporary files.
+    let filesCleanupPlan = null;
+    let filesCleanupCancelled = false;
+    const cleanupLabel = "🗑 Purge temporary batch files…";
+    document.getElementById("filesApiCleanupCancel")?.addEventListener("click", () => {
+      filesCleanupCancelled = true;
+      filesCleanupPlan = null;
+      const btn = document.getElementById("filesApiCleanupBtn");
+      if (!btn.disabled) {
+        btn.textContent = cleanupLabel;
+        document.getElementById("filesApiCleanupCancel").hidden = true;
+        document.getElementById("filesApiCleanupStatus").textContent = "Cleanup cancelled. No files deleted.";
+      }
+    });
     async function runFilesApiCleanup() {
       const btn = document.getElementById("filesApiCleanupBtn");
       if (!btn || btn.disabled) return;
-
-      const proceed = confirm(
-        `⚠ DELETE ALL FILES from Gemini Files API?\n\n` +
-        `This permanently removes EVERY file you've uploaded to the Gemini ` +
-        `Files API across all your batch submissions.\n\n` +
-        `WARNING: This will BREAK any in-flight batch jobs that are still ` +
-        `running on Google's side and reference those input files. Only do ` +
-        `this when:\n\n` +
-        `  • Your in-flight batches have all completed (check the panel below), OR\n` +
-        `  • You accept that running batches may produce incomplete output.\n\n` +
-        `Click OK to delete all files. Click Cancel to keep them.`
-      );
-      if (!proceed) return;
-
-      const originalText = btn.textContent;
+      const status = document.getElementById("filesApiCleanupStatus");
+      const cancel = document.getElementById("filesApiCleanupCancel");
+      const report = text => { status.textContent = text; };
       btn.disabled = true;
-      btn.textContent = "🗑 Deleting files… (this can take a minute)";
-      setStatus("Clearing Gemini Files API storage…");
-
+      cancel.hidden = false;
+      filesCleanupCancelled = false;
+      const call = body => postJson("geminiImageProxy", { kind: "files_cleanup", ...body }, AbortSignal.timeout(30000));
       try {
-        const result = await postJson("geminiImageProxy", { kind: "files_cleanup" });
-        const deleted = Number(result?.deleted || 0);
-        const totalListed = Number(result?.totalListed || 0);
-        const bytesFreed = Number(result?.bytesFreed || 0);
-        const errors = Array.isArray(result?.errors) ? result.errors : [];
-
-        const gbFreed = bytesFreed > 0
-          ? ` (~${(bytesFreed / 1024 / 1024 / 1024).toFixed(2)} GB freed)`
-          : "";
-        const errorBlock = errors.length > 0
-          ? `\n\n⚠ ${errors.length} file(s) failed to delete:\n` +
-            errors.slice(0, 5).map((e) => `  • ${e}`).join("\n") +
-            (errors.length > 5 ? `\n  …and ${errors.length - 5} more (check function logs)` : "")
-          : "";
-
-        setStatus(`Files API cleanup: deleted ${deleted}/${totalListed}`);
-        alert(
-          `Gemini Files API cleanup complete:\n\n` +
-          `Files listed: ${totalListed}\n` +
-          `Files deleted: ${deleted}${gbFreed}` +
-          errorBlock +
-          `\n\nThe 20 GB cap should now have room. You can re-run Resume ` +
-          `empty sets if you have unfilled folders.`
-        );
+        if (!filesCleanupPlan) {
+          btn.textContent = "Scanning temporary batch files…";
+          let cursor = null, scanned = 0, protectedCount = 0;
+          const candidates = [];
+          do {
+            const page = await call({ action: "scan", cursor });
+            candidates.push(...(page.candidates || []));
+            scanned += page.scanned || 0;
+            protectedCount += page.protected || 0;
+            cursor = page.cursor;
+            report(`Checked ${scanned} batches · ${candidates.length} collected batches eligible · ${protectedCount} uncollected batches protected`);
+          } while (cursor && !filesCleanupCancelled);
+          if (filesCleanupCancelled) { report("Scan cancelled. No files deleted."); return; }
+          if (!candidates.length) { report(`No collected batch files need cleanup. ${protectedCount} uncollected batches protected.`); return; }
+          filesCleanupPlan = [...new Set(candidates)];
+          report(`Ready to check and purge temporary files from ${filesCleanupPlan.length} collected batches. Active batches will be skipped. Firebase images remain saved.
+Click the button again to permanently delete eligible temporary files, or cancel.`);
+          btn.textContent = `Confirm purge · ${filesCleanupPlan.length} collected batches`;
+          return;
+        }
+        const plan = filesCleanupPlan;
+        filesCleanupPlan = null;
+        let deleted = 0, absent = 0, bytes = 0, skipped = 0, processed = 0;
+        const errors = [];
+        for (const docId of plan) {
+          if (filesCleanupCancelled) break;
+          btn.textContent = `Purging batch ${processed + 1} of ${plan.length}…`;
+          try {
+            const r = await call({ action: "delete", confirm: true, docId });
+            deleted += r.deleted || 0; absent += r.alreadyAbsent || 0;
+            bytes += r.bytesFreed || 0; skipped += r.skipped ? 1 : 0;
+            errors.push(...(r.errors || []));
+          } catch (e) { errors.push(`${docId}: ${e.message}`); }
+          processed++;
+          report(`${processed}/${plan.length} batches checked · ${deleted} files deleted · ${(bytes / 1024 ** 3).toFixed(3)} GB freed`);
+        }
+        report(`${filesCleanupCancelled ? "Stopped" : "Cleanup finished"}: ${processed}/${plan.length} batches checked. ${deleted} files deleted; ${absent} already absent; ${skipped} batches protected or unavailable. ${(bytes / 1024 ** 3).toFixed(3)} GB freed. Firebase images preserved.` +
+          (errors.length ? `\n${errors.length} errors. You can scan again to retry:\n${errors.slice(0, 5).join("\n")}` : ""));
       } catch (e) {
-        console.error("[files_cleanup] failed:", e);
-        const msg = e?.message || String(e);
-        const looksLikeMissingHandler = /unknown.*kind|invalid.*kind|400|files_cleanup/i.test(msg);
-        setStatus("Files API cleanup failed");
-        alert(
-          `Files API cleanup failed:\n\n${msg}\n\n` +
-          (looksLikeMissingHandler
-            ? `This usually means your server-side geminiImageProxy function ` +
-              `doesn't have a "kind: files_cleanup" handler yet. See the ` +
-              `comment block above the runFilesApiCleanup function in this ` +
-              `file's source code for the exact server-side code to add.\n\n` +
-              `Until that handler is deployed, your options are to wait ~48h ` +
-              `for the Files API TTL to clear old uploads, or to delete files ` +
-              `manually via the gcloud CLI or Google AI Studio.`
-            : `Check the browser console and your Netlify function logs for ` +
-              `details.`)
-        );
+        filesCleanupPlan = null;
+        report(`Cleanup failed: ${e.message}. Scan again to retry.`);
       } finally {
         btn.disabled = false;
-        btn.textContent = originalText;
+        if (!filesCleanupPlan) { btn.textContent = cleanupLabel; cancel.hidden = true; }
       }
     }
 
@@ -15308,7 +15288,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected;
       });
       if (targets.length === 0) return;
-      const ok = confirm(`Recover partial results from ${targets.length} failed batch(es)?\n\nThis pulls whatever images Google managed to finish before the failure. Successful images land in Firebase; failed slots stay empty.`);
+      const ok = confirm(`Recover partial results from ${targets.length} failed batch(es)?\n\nThis pulls whatever images the provider managed to finish before the failure. Successful images land in Firebase; failed slots stay empty.`);
       if (!ok) return;
       for (const b of targets) {
         try { await postJson("geminiImageProxy", { kind: "batch_collect", batchName: b.batchName, force: true }); }
@@ -15335,8 +15315,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     async function collectOneBatch(batchName, force) {
       const isForce = !!force;
       const confirmMsg = isForce
-        ? `Force-download partial results for ${batchName}?\n\nThis pulls whatever images Google has finished, even if the job failed, expired, or is still running. Successful images land in Firebase; failed slots stay empty and can be regenerated later.`
-        : `Download results for ${batchName}?\n\nPulls all finished images from Google into Firebase Storage. The collection runs in the background — keep using the page if you want.`;
+        ? `Force-download partial results for ${batchName}?\n\nThis pulls whatever images the provider has finished, even if the job failed, expired, or is still running. Successful images land in Firebase; failed slots stay empty and can be regenerated later.`
+        : `Download results for ${batchName}?\n\nPulls all finished images from the image provider into Firebase Storage. The collection runs in the background — keep using the page if you want.`;
       const ok = confirm(confirmMsg);
       if (!ok) return;
       try {
@@ -15423,7 +15403,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         const charmVisible = !!(charmPanel && charmPanel.style.display !== "none");
         if (!genVisible && !charmVisible) return;
 
-        // Step 1: refresh state from Google for any non-final batch.
+        // Step 1: refresh state from the image provider for any non-final batch.
         for (const b of _lastBatchList) {
           if (b.collected) continue;
           const st = _normState(b.state);
@@ -15471,7 +15451,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     }
 
     // ============================================================
-    // GEMINI BATCH API — Charm Maker integration
+    // OPENAI BATCH API — Charm Maker integration
     // ------------------------------------------------------------
     // The exact same half-price batch pipeline the Generate tab uses,
     // applied to Charm Maker base-charm generation:
@@ -15541,13 +15521,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       batchBtn.style.opacity = canBatch ? "1" : "0.45";
       batchBtn.style.cursor = canBatch ? "pointer" : "not-allowed";
       batchBtn.title = canBatch
-        ? `Run ${modelConfig.label} base-charm generation through the Gemini Batch API at reduced cost.`
+        ? `Run ${modelConfig.label} base-charm generation through the OpenAI Batch API at reduced cost.`
         : `${modelConfig.label} currently uses Standard mode in this app.`;
 
       if (info) {
         info.style.display = isBatch ? "block" : "none";
         info.textContent =
-          `${modelConfig.label} batch jobs generate the BASE charms on Google's asynchronous endpoint at ~50% cost ` +
+          `${modelConfig.label} batch jobs generate the BASE charms on OpenAI's asynchronous endpoint at ~50% cost ` +
           `(2K output, usually 2–6h, up to 24h). You can close this tab — results land in Firebase automatically. ` +
           `When a base arrives, its card shows "Waiting for Base Approval" and you continue slots 2–4 as usual.`;
       }
@@ -15572,7 +15552,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       if (m === "batch" && !getImageModelConfig().supportsBatch) {
         _writeCharmGenMode("standard");
         _renderCharmGenModeButtons();
-        setStatus(`${getImageModelConfig().label} uses Standard mode. Select a Gemini model to enable Gemini Batch.`);
+        setStatus(`${getImageModelConfig().label} uses Standard mode. Select Sunburst to enable OpenAI Batch.`);
         return;
       }
       _writeCharmGenMode(m);
@@ -15599,7 +15579,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       try {
         // Server-side orchestrations (prep/submission progress) — rendered
         // above the per-batch rows so an in-flight hand-off is visible even
-        // before its first Gemini batch exists. Purely informational: the
+        // before its first OpenAI batch exists. Purely informational: the
         // server runs with or without this panel open.
         let orchRows = "";
         try {
@@ -15700,15 +15680,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const btn = document.getElementById("charmBatchRecoverBtn");
       const modelId = getSelectedImageModel();
       if (!getImageModelConfig(modelId).supportsBatch) {
-        alert(`${getImageModelConfig(modelId).label} uses Standard mode. Select a Gemini model before recovering via batch.`);
+        alert(`${getImageModelConfig(modelId).label} uses Standard mode. Select Sunburst before recovering via batch.`);
         return;
       }
       const ok = confirm(
         `Recover unfinished charm sets?\n\n` +
         `The server will scan every set folder, find those with a saved concept/manifest but NO base image ` +
-        `(from a submission that died mid-run), and resubmit them as half-price Gemini batch jobs.\n\n` +
+        `(from a submission that died mid-run), and resubmit them as half-price OpenAI batch jobs.\n\n` +
         `· Uses the ALREADY-PLANNED concepts — no re-planning cost\n` +
-        `· Skips finished sets and sets already waiting at Gemini — no double spend\n` +
+        `· Skips finished sets and sets already waiting at OpenAI — no double spend\n` +
         `· Runs entirely on the server — you can close this tab right after it's accepted\n\n` +
         `Progress appears in this panel as a "recovery run" row.`
       );
@@ -15776,7 +15756,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const modelConfig = getImageModelConfig(modelId);
       if (!modelConfig.supportsBatch) {
         _setCharmGenMode("standard");
-        alert(`${modelConfig.label} uses Standard mode. Select a Gemini model before submitting a Gemini batch.`);
+        alert(`${modelConfig.label} uses Standard mode. Select Sunburst before submitting a OpenAI batch.`);
         return;
       }
 
@@ -16878,9 +16858,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
           return { from: _startOfDayMs(d), to: _endOfDayMs(now) };
         }
         case '7d':
-          return { from: _startOfDayMs(new Date(ref0 - 6 * 86400000)), to: _endOfDayMs(now) };
-        case '30d':
-          return { from: _startOfDayMs(new Date(ref0 - 29 * 86400000)), to: _endOfDayMs(now) };
+        case '30d': {
+          const d = new Date(now);
+          d.setDate(d.getDate() - (preset === '7d' ? 6 : 29));
+          return { from: _startOfDayMs(d), to: _endOfDayMs(now) };
+        }
         default:
           return null; // 'all' | 'latest10' | 'latest25' | 'custom' | unknown
       }
@@ -16922,7 +16904,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         // folder is owned/populated by an external app and is read-only
         // from this software's perspective (and excluded from this view).
         const r = ref(storage, `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`);
-        const res = await listAll(r).catch(() => ({ prefixes: [] }));
+        const res = await listAll(r);
         const items = (res.prefixes || []).map(p => {
           const meta = _parseListingId(p.name);
           return { ...meta, fullPath: p.fullPath };
@@ -17177,8 +17159,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       let text;
       if (win.source === 'latest') text = `newest ${win.latestN} by date`;
       else if (win.source === 'all') text = 'no date limit · showing everything';
+      else if (win.from != null && win.to != null && win.from > win.to) text = 'Invalid range: start date must be on or before end date';
       else text = _describeWindow(win.from, win.to, win.source === 'custom' ? 'custom range' : null);
-      const parts = [text, `${filteredCount} of ${all.length} sets`];
+      const parts = [text, `${filteredCount} of ${all.length} sets`, 'dates use set creation time'];
       if (undated > 0 && (win.from != null || win.to != null)) {
         parts.push(`${undated} undated set${undated === 1 ? '' : 's'} excluded`);
       }
@@ -17188,8 +17171,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     function _renderCharmsPage() {
       const cs = _approvedSubState.charms;
       // Re-entrancy guard: prevent recursive render
-      if (cs._rendering) return;
+      if (cs._rendering) { cs._renderPending = true; return; }
       cs._rendering = true;
+      cs._renderPending = false;
       try {
         const filtered = _filterAndSortCharms();
 
@@ -17245,7 +17229,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       } finally {
         // Clear flag asynchronously so the MutationObserver triggered by
         // our own innerHTML writes sees it as still-rendering and skips.
-        setTimeout(() => { cs._rendering = false; }, 50);
+        setTimeout(() => {
+          cs._rendering = false;
+          if (cs._renderPending) _renderCharmsPage();
+        }, 0);
       }
     }
 
@@ -17388,24 +17375,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       chip.addEventListener('click', () => {
         const cat = chip.dataset.cat;
         const ls = _approvedSubState.listings;
-        if (cat === '*') {
-          // "All" toggles the entire selection
-          const allActive = chip.classList.contains('active');
-          if (allActive) {
-            ls.categories.clear();
-            document.querySelectorAll('#approvedListCategories .cat-chip').forEach(c => c.classList.remove('active'));
-          } else {
-            _LISTING_CATEGORIES.forEach(c => ls.categories.add(c));
-            document.querySelectorAll('#approvedListCategories .cat-chip').forEach(c => c.classList.add('active'));
-          }
-        } else {
-          chip.classList.toggle('active');
-          if (chip.classList.contains('active')) ls.categories.add(cat);
-          else ls.categories.delete(cat);
-          // Update "All" chip state
-          const allChip = document.querySelector('#approvedListCategories .cat-chip[data-cat="*"]');
-          if (allChip) allChip.classList.toggle('active', ls.categories.size === _LISTING_CATEGORIES.length);
-        }
+        ls.categories = new Set(cat === '*' ? _LISTING_CATEGORIES : [cat]);
+        document.querySelectorAll('#approvedListCategories .cat-chip').forEach(c => {
+          const active = c.dataset.cat === cat;
+          c.classList.toggle('active', active);
+          c.setAttribute('aria-pressed', String(active));
+        });
         ls.page = 1;
         _renderListingsPage();
       });
@@ -17475,7 +17450,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         _renderCharmsPage();
       });
     });
-    document.getElementById('approvedCharmDateFrom').addEventListener('change', e => {
+    document.getElementById('approvedCharmDateFrom').addEventListener('input', e => {
       const v = e.target.value; // YYYY-MM-DD, interpreted in local time
       const cs = _approvedSubState.charms;
       cs.dateFrom = v ? _startOfDayMs(new Date(v + 'T12:00:00')) : null;
@@ -17484,7 +17459,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       cs.page = 1;
       _renderCharmsPage();
     });
-    document.getElementById('approvedCharmDateTo').addEventListener('change', e => {
+    document.getElementById('approvedCharmDateTo').addEventListener('input', e => {
       const v = e.target.value;
       const cs = _approvedSubState.charms;
       // End of day must include the final 999ms or sets approved in the last
@@ -19547,7 +19522,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       const execBtn = e.currentTarget;
       const ordered = [..._charmRefSelection.values()].sort((a, b) => a.order - b.order);
 
-      // Gemini Batch mode (50% off) with a mosaic selection: queue the
+      // OpenAI Batch mode (50% off) with a mosaic selection: queue the
       // selected charms' bases asynchronously in click order.
       if (typeof _isCharmBatchModeActive === 'function' && _isCharmBatchModeActive()) {
         const derivCountB = Math.max(1, Math.min(8, parseInt(document.getElementById('derivativesPerCharmInput')?.value, 10) || 1));
@@ -20366,3 +20341,4 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
 </body>
 </html>
+

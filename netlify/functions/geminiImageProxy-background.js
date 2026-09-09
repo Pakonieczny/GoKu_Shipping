@@ -30,8 +30,8 @@ function getBucket() {
 // of these models, but it cannot turn this function into an arbitrary upstream
 // proxy. Old preview IDs are normalized so in-flight manifests and saved local
 // preferences continue to work after the stable model migration.
-const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
-const DEFAULT_RENDER_IMAGE_MODEL = "gemini-3-pro-image";
+const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-sunburst";
+const DEFAULT_RENDER_IMAGE_MODEL = "gpt-image-2.5-sunburst";
 /* ── THE READING JOBS GET A READING MODEL ─────────────────────────────────
    Every fallback chain in this file used to end at DEFAULT_IMAGE_MODEL — an
    image GENERATOR — including the four jobs that never draw anything: the
@@ -96,7 +96,7 @@ const IMAGE_MODEL_CONFIG = Object.freeze({
   "gpt-image-2.5-sunburst": Object.freeze({
     id: "gpt-image-2.5-sunburst",
     provider: "openai",
-    supportsBatch: false,
+    supportsBatch: true,
   }),
 });
 
@@ -455,7 +455,7 @@ async function firestoreRetry(fn, label = "firestore") {
 // -------------------------
 // IMAGE PROVIDER RETRY HELPER (aggressive 6s+ backoff & 10 retries)
 // -------------------------
-async function callImageWithRetry(fn, label = "image-provider", maxRetries = 10) {
+async function callImageWithRetry(fn, label = "image-provider", maxRetries = 2) {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -479,12 +479,12 @@ async function callImageWithRetry(fn, label = "image-provider", maxRetries = 10)
         msg.includes("internal error") || 
         msg.includes("resource exhausted");
 
-      if (!isOverloaded || attempt === maxRetries) {
+      if (!isOverloaded || err?.imageRetryExhausted || ["insufficient_quota", "billing_hard_limit_reached"].includes(err?.code) || attempt === maxRetries) {
         throw err; // Fatal error or out of retries
       }
 
       // Aggressive Backoff: 6s, 12s, 24s, 48s... + random jitter
-      const backoff = (6000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 2000);
+      const backoff = Math.min(30000, 6000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 2000);
       console.log(`[${label}] Model overloaded/failed (attempt ${attempt + 1}/${maxRetries}), retrying in ${backoff}ms...`, safeErr(err));
       await sleep(backoff);
     }
@@ -845,6 +845,7 @@ async function readUpstreamJson(resp, providerLabel) {
       `${providerLabel} failed with HTTP ${resp.status} (empty body)`;
     const err = new Error(requestId ? `${message} [request ${requestId}]` : message);
     err.status = resp.status;
+    err.code = data?.error?.code || null;
     throw err;
   }
   if (!data) throw new Error(`${providerLabel} returned an empty or non-JSON response`);
@@ -867,7 +868,107 @@ function normalizeOpenAIOutputFormat(value) {
   return ["png", "jpeg", "webp"].includes(v) ? v : "png";
 }
 
+// Shared across tabs, background workers and the Studio's Sunburst calls.
+// Keep 10% headroom beneath the account's 250 IPM / 8M TPM limits.
+const SUNBURST_RATE = Object.freeze({ images: 225, tokens: 7200000, concurrent: 32, windowMs: 61000 });
+function sunburstTokenReservation(prompt, images = []) {
+  // Conservative admission estimate; reconcile with reported usage, and also
+  // honor provider remaining-token/reset headers. Do not treat this as billing.
+  return Math.max(200000, Buffer.byteLength(String(prompt || ""), "utf8") + 65536 * (images.length + 1));
+}
+function rateDurationMs(value) {
+  if (!value) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(String(value))) return Number(value) * 1000;
+  let ms = 0;
+  for (const m of String(value).matchAll(/([\d.]+)(ms|s|m|h)/g)) ms += Number(m[1]) * ({ms:1,s:1000,m:60000,h:3600000}[m[2]]);
+  return ms || Math.max(0, Date.parse(value) - Date.now()) || 0;
+}
+async function reserveSunburstCapacity(tokens, deadline, imageCount = 1, jobId = null) {
+  let reportedWait = false;
+  if (tokens > SUNBURST_RATE.tokens) throw new Error("Image request exceeds the token admission budget; reduce input images or prompt length.");
+  const db = getDb();
+  const doc = db.collection("ImageProviderRateLimits").doc("gpt-image-2_5-sunburst");
+  const id = require("crypto").randomUUID();
+  while (Date.now() < deadline) {
+    const wait = await firestoreRetry(() => db.runTransaction(async tx => {
+      const snap = await tx.get(doc), data = snap.exists ? snap.data() : {};
+      const now = Date.now();
+      const entries = (data.entries || []).filter(e => e.at > now - SUNBURST_RATE.windowMs || e.until > now);
+      const active = entries.filter(e => e.until > now);
+      const used = entries.reduce((n,e) => n + e.tokens, 0);
+      const images = entries.filter(e => e.at > now - SUNBURST_RATE.windowMs).reduce((n,e) => n + (e.images || 1), 0);
+      const tokenCap = Math.min(SUNBURST_RATE.tokens, Number(data.tokenCap) || SUNBURST_RATE.tokens);
+      const imageCap = Math.min(SUNBURST_RATE.images, Number(data.imageCap) || SUNBURST_RATE.images);
+      if (tokens > tokenCap) throw new Error("This image request is larger than the provider's current token limit.");
+      let delay = Math.max(0, (data.blockedUntil || 0) - now, (data.nextAt || 0) - now);
+      if (active.length >= SUNBURST_RATE.concurrent) delay = Math.max(delay, 1000);
+      if (images + imageCount > imageCap || used + tokens > tokenCap) delay = Math.max(delay, 1000);
+      if (delay) return Math.min(delay, 5000);
+      // A dead worker releases its concurrency lease automatically. Its token
+      // reservation remains held throughout the longest allowed model call.
+      entries.push({id, at:now, until:now + 180000, tokens, images:imageCount});
+      tx.set(doc, {entries, nextAt:now + Math.ceil(60000 * imageCount / imageCap), updatedAt:now}, {merge:true});
+      return 0;
+    }), "sunburst.admit");
+    if (!wait) {
+      if (reportedWait && jobId) await db.collection(JOBS_COLL).doc(jobId).set({stage:"generating"},{merge:true});
+      return {id, doc};
+    }
+    if (!reportedWait && jobId) {
+      await db.collection(JOBS_COLL).doc(jobId).set({stage:"rate_limit"},{merge:true});
+      reportedWait = true;
+    }
+    await sleep(wait + Math.floor(Math.random() * 200));
+  }
+  throw new Error("Image queue is at API capacity. Please retry this image when current jobs finish.");
+}
+async function finishSunburstCapacity(ticket, response, usage, error) {
+  const headers = response?.headers;
+  const get = name => headers?.get?.(name);
+  const tokens = Number(usage?.total_tokens) || (Number(usage?.input_tokens || 0) + Number(usage?.output_tokens || 0));
+  await firestoreRetry(() => getDb().runTransaction(async tx => {
+    const snap = await tx.get(ticket.doc), data = snap.exists ? snap.data() : {};
+    const now = Date.now();
+    const entries = (data.entries || []).filter(e => e.at > now - SUNBURST_RATE.windowMs || e.until > now);
+    const entry = entries.find(e => e.id === ticket.id);
+    if (entry) { entry.until = 0; if (tokens > 0) entry.tokens = Math.max(entry.tokens * 0.1, tokens); entry.at = now; }
+    let blockedUntil = Number(data.blockedUntil) || 0;
+    if (response?.status === 429 && error?.code !== "insufficient_quota") {
+      blockedUntil = Math.max(blockedUntil, now + Math.max(6000, rateDurationMs(get("retry-after")), rateDurationMs(get("x-ratelimit-reset-tokens")), rateDurationMs(get("x-ratelimit-reset-requests"))));
+    }
+    for (const scope of ["tokens", "project-tokens", "requests"]) {
+      const remaining = get(`x-ratelimit-remaining-${scope}`);
+      if (remaining != null && Number(remaining) < (scope === "requests" ? 1 : 200000)) {
+        blockedUntil = Math.max(blockedUntil, now + (rateDurationMs(get(`x-ratelimit-reset-${scope}`)) || 60000));
+      }
+    }
+    const limits = {};
+    const tokenLimits = [get("x-ratelimit-limit-tokens"), get("x-ratelimit-limit-project-tokens")].map(Number).filter(n=>n>0);
+    if (tokenLimits.length) limits.tokenCap = Math.floor(Math.min(SUNBURST_RATE.tokens, ...tokenLimits.map(n=>n*0.9)));
+    const requests = Number(get("x-ratelimit-limit-requests"));
+    if (requests > 0) limits.imageCap = Math.max(1, Math.floor(Math.min(SUNBURST_RATE.images, requests*0.9)));
+    tx.set(ticket.doc, {entries, blockedUntil, ...limits, updatedAt:now}, {merge:true});
+  }), "sunburst.finish");
+}
+async function limitedOpenAIImageJson(url, options, reservation, imageCount = 1, jobId = null) {
+  const deadline = Date.now() + 480000;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ticket = await reserveSunburstCapacity(reservation, deadline, imageCount, jobId);
+    let response, data, error;
+    try {
+      response = await studioFetchWithTimeout(url, options, STUDIO_UPSTREAM_TIMEOUT_MS, "OpenAI image generation");
+      data = await readUpstreamJson(response, "OpenAI image generation");
+    } catch (err) { error = err; }
+    // Fail closed on admission errors; completion accounting must never turn
+    // an already-generated image into a retry (and a duplicate paid request).
+    await finishSunburstCapacity(ticket, response, data?.usage, error).catch(err => console.error("Image quota accounting:", err.message));
+    if (!error) return data;
+    if (error.status !== 429 || ["insufficient_quota", "billing_hard_limit_reached"].includes(error.code) || attempt === 2 || Date.now() >= deadline) { error.imageRetryExhausted = true; throw error; }
+  }
+}
+
 async function callOpenAIImagesEdits({
+  jobId,
   apiKey,
   model,
   prompt,
@@ -903,7 +1004,8 @@ async function callOpenAIImagesEdits({
   if (policyText) promptText = `${promptText}\n\n${policyText}`;
   form.append("prompt", promptText);
   form.append("size", String(size || "2048x2048"));
-  form.append("quality", normalizeOpenAIQuality(quality));
+  form.append("quality", "high");
+  // Sunburst does not accept input_fidelity; output quality remains high.
   form.append("output_format", normalizeOpenAIOutputFormat(output_format));
   form.append("n", "1");
 
@@ -917,17 +1019,16 @@ async function callOpenAIImagesEdits({
     );
   }
 
-  const resp = await studioFetchWithTimeout("https://api.openai.com/v1/images/edits", {
+  const data = await limitedOpenAIImageJson("https://api.openai.com/v1/images/edits", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
-  }, STUDIO_UPSTREAM_TIMEOUT_MS, "OpenAI images/edits");
-  return openAIImageBufferFromResponse(
-    await readUpstreamJson(resp, "OpenAI images/edits")
-  );
+  }, sunburstTokenReservation(promptText, images), 1, jobId);
+  return openAIImageBufferFromResponse(data);
 }
 
 async function callOpenAIImagesGenerations({
+  jobId,
   apiKey,
   model,
   prompt,
@@ -935,7 +1036,7 @@ async function callOpenAIImagesGenerations({
   quality,
   output_format,
 }) {
-  const resp = await studioFetchWithTimeout("https://api.openai.com/v1/images/generations", {
+  const data = await limitedOpenAIImageJson("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -945,14 +1046,12 @@ async function callOpenAIImagesGenerations({
       model,
       prompt: String(prompt || ""),
       size: String(size || "2048x2048"),
-      quality: normalizeOpenAIQuality(quality),
+      quality: "high",
       output_format: normalizeOpenAIOutputFormat(output_format),
       n: 1,
     }),
- }, STUDIO_UPSTREAM_TIMEOUT_MS, "OpenAI images/generations");
-  return openAIImageBufferFromResponse(
-    await readUpstreamJson(resp, "OpenAI images/generations")
-  );
+ }, sunburstTokenReservation(prompt), 1, jobId);
+  return openAIImageBufferFromResponse(data);
 }
 
 /* ── NO CALL WAITS FOR EVER ──────────────────────────────────────────────
@@ -2112,6 +2211,168 @@ function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBa
   };
 }
 
+// OpenAI Batch adapter. Existing Google records remain readable; new jobs use
+// Sunburst only. Normalize lifecycle fields to the established dashboard schema.
+function batchApiKey(batchName) {
+  const provider = String(batchName || "").startsWith("batch_") ? "OPENAI" : "GEMINI";
+  const key = process.env[`${provider}_API_KEY`];
+  if (!key) throw new Error(`Missing ${provider}_API_KEY env var`);
+  return key;
+}
+
+async function openAIBatchRequest(apiKey, path, options = {}) {
+  const resp = await studioFetchWithTimeout(`https://api.openai.com/v1${path}`, {
+    ...options,
+    headers: { Authorization: `Bearer ${apiKey}`, ...options.headers },
+  }, 120000, "OpenAI Batch");
+  return readUpstreamJson(resp, "OpenAI Batch");
+}
+
+function normalizeOpenAIBatch(raw) {
+  const states = { validating: "JOB_STATE_PENDING", in_progress: "JOB_STATE_RUNNING",
+    finalizing: "JOB_STATE_RUNNING", cancelling: "JOB_STATE_RUNNING",
+    completed: "JOB_STATE_SUCCEEDED", failed: "JOB_STATE_FAILED",
+    expired: "JOB_STATE_EXPIRED", cancelled: "JOB_STATE_CANCELLED" };
+  const state = states[raw.status] || "UNKNOWN";
+  const counts = raw.request_counts || {};
+  const batchStats = { requestCount: counts.total || 0,
+    successfulRequestCount: counts.completed || 0, failedRequestCount: counts.failed || 0,
+    pendingRequestCount: Math.max(0, (counts.total || 0) - (counts.completed || 0) - (counts.failed || 0)) };
+  return { state, metadata: { state, batchStats },
+    response: { responsesFile: [raw.output_file_id, raw.error_file_id].filter(Boolean).join(",") || null },
+    providerStatus: raw.status, errors: raw.errors || null };
+}
+
+// Cleanup is scoped to this application's recorded, collected batches.
+// Never list/delete an entire provider account or touch Firebase image objects.
+async function cleanupBatchFiles(body) {
+  const collection = getDb().collection(BATCHES_COLL);
+  const eligible = d => d.collected === true && !d.filesPurgedAt &&
+    /^(batch_[A-Za-z0-9_-]+|batches\/[A-Za-z0-9_-]+)$/.test(d.batchName || "");
+  if (body.action !== "delete") {
+    let query = collection.orderBy(admin.firestore.FieldPath.documentId()).limit(50);
+    if (body.cursor) {
+      if (!/^[A-Za-z0-9_-]{1,200}$/.test(body.cursor)) throw new Error("Invalid cleanup cursor");
+      query = query.startAfter(body.cursor);
+    }
+    const snap = await query.select("batchName", "collected", "filesPurgedAt").get();
+    return { ok: true, scanned: snap.size,
+      candidates: snap.docs.filter(d => eligible(d.data())).map(d => d.id),
+      protected: snap.docs.filter(d => d.data().collected !== true).length,
+      cursor: snap.size === 50 ? snap.docs[snap.docs.length - 1].id : null };
+  }
+  if (body.confirm !== true || !/^[A-Za-z0-9_-]{1,200}$/.test(body.docId || "")) {
+    throw new Error("Cleanup requires confirmation and a valid batch record");
+  }
+  const ref = collection.doc(body.docId), snap = await ref.get();
+  if (!snap.exists || !eligible(snap.data())) return { ok: true, skipped: true, deleted: 0 };
+  const d = snap.data(), openai = d.batchName.startsWith("batch_");
+  const apiKey = batchApiKey(d.batchName);
+  const root = openai ? "https://api.openai.com/v1" : "https://generativelanguage.googleapis.com/v1beta";
+  const headers = openai ? { Authorization: `Bearer ${apiKey}` } : { "x-goog-api-key": apiKey };
+  // One batch per request, short upstream deadlines, at most three files.
+  const request = async (path, method = "GET") => {
+    const r = await fetch(`${root}/${path}`, { method, headers, signal: AbortSignal.timeout(5000) });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`Temporary file ${method} failed: HTTP ${r.status}`);
+    return method === "DELETE" ? true : await r.json();
+  };
+  const live = await request(openai ? `batches/${d.batchName}` : d.batchName);
+  // Missing/unknown batch status cannot establish safe ownership/lifecycle.
+  if (!live) return { ok: true, skipped: true, reason: "Batch status is unavailable", deleted: 0 };
+  const state = openai ? live.status : String(live.metadata?.state || live.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_");
+  const terminal = openai ? ["completed", "failed", "expired", "cancelled"] :
+    ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_CANCELLED"];
+  if (!terminal.includes(state)) return { ok: true, skipped: true, reason: "Batch is still active", deleted: 0 };
+  const ids = [...new Set(openai ? [d.inputFileName, live.input_file_id, live.output_file_id, live.error_file_id] :
+    [d.inputFileName, live.response?.responsesFile, live.dest?.fileName])].filter(Boolean);
+  const valid = openai ? /^file-[A-Za-z0-9_-]+$/ : /^files\/[A-Za-z0-9_-]+$/;
+  if (ids.length > 4 || ids.some(id => !valid.test(id))) throw new Error("Invalid recorded temporary file identifier");
+  let deleted = 0, alreadyAbsent = 0, bytesFreed = 0;
+  const errors = [];
+  await Promise.all(ids.map(async id => {
+    try {
+      const path = openai ? `files/${id}` : id;
+      const file = await request(path);
+      if (!file) { alreadyAbsent++; return; }
+      if (await request(path, "DELETE")) {
+        deleted++; bytesFreed += Number(file.bytes || file.sizeBytes || 0);
+      } else alreadyAbsent++;
+    } catch (e) { errors.push(`${id}: ${e.message}`); }
+  }));
+  if (!errors.length) await ref.set({ filesPurgedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true, deleted, alreadyAbsent, bytesFreed, errors };
+}
+
+
+// Slots 3 and 4 of a Charm Maker quad are the two B&W outline images.
+// Keep this rule server-side so old tabs, redos and batch recovery agree.
+function listingImageSize(outputBasePath, slotIndex, fallback = "2048x2048") {
+  const charmQuad = /\/Charm_Maker\/(?:Generated_Charm_Sets|Completed_Approved_Charm_Sets)\//.test(String(outputBasePath || ""));
+  return charmQuad && [2, 3].includes(Number(slotIndex)) ? "1024x1024" : fallback;
+}
+
+function buildOpenAIBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize, opts) {
+  // Preserve the existing prompt's image roles and final geometry/background
+  // rules while translating the transport to OpenAI's JSON image-edit schema.
+  const legacy = buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize, opts);
+  const parts = legacy.request.contents[0].parts;
+  const images = parts.filter(p => p.inline_data?.data).map(p => ({
+    image_url: `data:${p.inline_data.mime_type};base64,${p.inline_data.data}`,
+  }));
+  const text = parts.filter(p => p.text).map(p => p.text).join("\n\n");
+  if (!images.length || !text.trim()) throw new Error("Batch edit requires a prompt and source image");
+  if (text.length > 32000) throw new Error("Batch edit prompt exceeds 32000 characters");
+  return { custom_id: key, method: "POST", url: "/v1/images/edits",
+    body: { model: "gpt-image-2.5-sunburst", prompt: text, images,
+      quality: "high", size: imageSize === "1K" ? "1024x1024" : "2048x2048", output_format: "png", n: 1 } };
+}
+
+async function uploadOpenAIBatchFile(apiKey, buffer, displayName) {
+  const form = new FormData();
+  form.append("purpose", "batch");
+  form.append("file", new Blob([buffer], { type: "application/jsonl" }), "listing-images.jsonl");
+  const raw = await openAIBatchRequest(apiKey, "/files", { method: "POST", body: form });
+  if (!raw.id) throw new Error("OpenAI file upload returned no file ID");
+  return raw.id;
+}
+
+async function createOpenAIImageBatch(apiKey, fileName, displayName) {
+  const raw = await openAIBatchRequest(apiKey, "/batches", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input_file_id: fileName, endpoint: "/v1/images/edits",
+      completion_window: "24h", metadata: { application: "listing-generator-1", displayName } }),
+  });
+  if (!/^batch_[A-Za-z0-9_-]+$/.test(raw.id || "")) throw new Error("OpenAI batch returned no valid ID");
+  return { batchName: raw.id, raw };
+}
+
+async function* streamOpenAIBatchFile(apiKey, fileId) {
+  if (!/^file-[A-Za-z0-9_-]+$/.test(fileId)) throw new Error("Invalid OpenAI result file ID");
+  const resp = await fetch(`https://api.openai.com/v1/files/${fileId}/content`, {
+    headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(600000),
+  });
+  if (!resp.ok) throw new Error(`OpenAI batch download failed: HTTP ${resp.status}`);
+  if (!resp.body) throw new Error("OpenAI batch download has no body");
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      let newline;
+      while ((newline = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, newline).trim();
+        pending = pending.slice(newline + 1);
+        if (line) yield JSON.parse(line);
+      }
+      if (done) break;
+    }
+    if (pending.trim()) yield JSON.parse(pending);
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
 // Upload a JSONL file via the Files API using the resumable protocol
 // (the only protocol Google documents for the Batch flow). Returns the
 // `files/abc123` resource name.
@@ -2189,6 +2450,7 @@ async function createGeminiBatchJob(apiKey, model, fileName, displayName) {
 }
 
 async function getGeminiBatchJob(apiKey, batchName) {
+  if (batchName.startsWith("batch_")) return normalizeOpenAIBatch(await openAIBatchRequest(apiKey, `/batches/${batchName}`));
   // batchName is "batches/abc123" — keep it as-is in the URL.
   const resp = await fetch(`${GEMINI_BASE}/${batchName}`, {
     method: "GET",
@@ -2215,6 +2477,7 @@ async function getGeminiBatchJob(apiKey, batchName) {
 }
 
 async function cancelGeminiBatchJob(apiKey, batchName) {
+  if (batchName.startsWith("batch_")) return normalizeOpenAIBatch(await openAIBatchRequest(apiKey, `/batches/${batchName}/cancel`, { method: "POST" }));
   const resp = await fetch(`${GEMINI_BASE}/${batchName}:cancel`, {
     method: "POST",
     headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
@@ -2232,6 +2495,10 @@ async function cancelGeminiBatchJob(apiKey, batchName) {
 // yields each JSON-parsed line. Throws on non-OK HTTP. Empty/blank
 // lines and parse errors are silently skipped (mirrors the older code).
 async function* streamGeminiResultLines(apiKey, fileName) {
+  if (fileName.startsWith("file-")) {
+    for (const id of fileName.split(",")) yield* streamOpenAIBatchFile(apiKey, id);
+    return;
+  }
   const url = `https://generativelanguage.googleapis.com/download/v1beta/${fileName}:download?alt=media`;
   const resp = await fetch(url, {
     method: "GET",
@@ -12959,7 +13226,7 @@ async function handleStudioKind({ kind, body, event }) {
   }
 }
 
-exports.handler = async (event) => {
+async function imageHandlerWithSafetyNet(event) {
   // Top-level safety net. Any error inside the handler that isn't
   // caught by the inner try/catch blocks would otherwise bubble up to
   // Netlify and surface as an opaque "Internal Error. ID: xxx" 500
@@ -12989,6 +13256,30 @@ exports.handler = async (event) => {
   }
 };
 
+// Netlify background replies have no response body. Persist the result for
+// every image route, including legacy edits that return before job-based code.
+exports.handler = async (event) => {
+  const body = parseJsonBody(event);
+  const tracked = event?.httpMethod === "POST" &&
+    ["edits", "generations", "charm_postscale"].includes(body?.kind || "edits");
+  if (!tracked) return imageHandlerWithSafetyNet(event);
+  const id = String(body.jobId || `lg1_${Date.now()}_${require("crypto").randomUUID()}`);
+  if (!/^[A-Za-z0-9_-]{1,160}$/.test(id)) return json(400, { ok: false, error: { message: "Invalid jobId" } });
+  const job = getDb().collection(JOBS_COLL).doc(id);
+  await firestoreRetry(() => job.set({status: "running", stage: "generating", model: "gpt-image-2.5-sunburst",
+    outputBasePath: body.output_base_path || null, slotIndex: body.slotIndex ?? null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp()}, {merge:true}), "image.start");
+  const result = await imageHandlerWithSafetyNet({...event, body: JSON.stringify({...body,jobId:id}),isBase64Encoded:false});
+  let payload;
+  try { payload = JSON.parse(result.body || "{}"); } catch (_) { payload = {}; }
+  const failed = result.statusCode >= 400 || payload.ok === false;
+  await firestoreRetry(() => job.set({status: failed ? "error" : "done", stage: failed ? "error" : "done",
+    error: failed ? {message: String(payload.error?.message || payload.error || `HTTP ${result.statusCode}`)} : null,
+    storagePath: payload.storagePath || null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()}, {merge:true}), "image.finish");
+  return result;
+};
+
 async function _handlerImpl(event) {
   if (event.httpMethod === "OPTIONS") return json(200, { ok: true });
   if (event.httpMethod !== "POST") return json(405, { error: { message: "Method not allowed" } });
@@ -13006,6 +13297,12 @@ async function _handlerImpl(event) {
   if (STUDIO_KINDS.has(body.kind)) {
     return await handleStudioKind({ kind: body.kind, body, event });
   }
+
+  // All new Listing Generator image work uses Sunburst, including saved
+  // Gemini selections and resumed orchestration tasks. Studio dispatch is above.
+  body.model = "gpt-image-2.5-sunburst";
+  body.quality = "high";
+  body.size = listingImageSize(body.output_base_path, body.slotIndex, body.size || "2048x2048");
 
   const {
     jobId,
@@ -13788,6 +14085,20 @@ async function _handlerImpl(event) {
     }
   }
 
+  if (kind === "job_status") {
+    if (!/^[A-Za-z0-9_-]{1,160}$/.test(String(jobId || ""))) {
+      return json(400, { ok: false, error: { message: "Invalid jobId" } });
+    }
+    const snapshot = await getDb().collection(JOBS_COLL).doc(jobId).get();
+    if (!snapshot.exists) return json(200, { ok: true, jobId, status: "pending" });
+    const data = snapshot.data();
+    return json(200, {
+      ok: true, jobId, status: data.status || "pending", stage: data.stage || null,
+      model: data.model || null,
+      error: data.error ? { message: String(data.error.message || data.error) } : null,
+    });
+  }
+
   // ---------- NEW: non-job operations (no jobId required) ----------
   try {
     if (kind === "alloc_set") {
@@ -14140,11 +14451,11 @@ async function _handlerImpl(event) {
       };
       memLog("entry");
 
-      if (modelConfig.provider !== "gemini" || !modelConfig.supportsBatch) {
+      if (modelConfig.id !== "gpt-image-2.5-sunburst" || !modelConfig.supportsBatch) {
         return json(400, {
           error: {
             message:
-              "Batch mode is available for Gemini 3.1 Flash Image and Gemini 3 Pro Image. Use Standard mode for OpenAI GPT Image 2.",
+              "Batch image generation requires GPT Image 2.5 Sunburst.",
           },
         });
       }
@@ -14287,11 +14598,11 @@ async function _handlerImpl(event) {
         // Build the line, stringify, encode to Buffer, then explicitly
         // null out big locals so V8 has a strong hint to free them
         // before the next worker iteration starts.
-        let line = buildBatchJsonlLine(
+        let line = buildOpenAIBatchJsonlLine(
           key, j.promptT,
           ref.mime, ref.buffer.toString("base64"),
           charm ? charm.mime : null, charm ? charm.buffer.toString("base64") : null,
-          imageSize,
+          listingImageSize(j.outputBasePath, j.slot) === "1024x1024" ? "1K" : imageSize,
           { imageRoles: j.imageRoles, backgroundPolicy: j.backgroundPolicy, geometryPolicy: j.geometryPolicy }
         );
         let jsonStr = JSON.stringify(line) + "\n";
@@ -14393,17 +14704,17 @@ async function _handlerImpl(event) {
       jsonlChunks.length = 0;
       memLog(`after Buffer.concat (${(jsonlBytes/1e6).toFixed(1)}MB JSONL)`);
 
-      // Hard cap: Files API limit is 2GB. We reject early to avoid uploading.
-      if (jsonlBytes > 1.9 * 1024 * 1024 * 1024) {
+      // OpenAI Batch input files must remain below 200 MB.
+      if (jsonlBytes > 190000000 || routes.length > 50000) {
         return json(400, {
           error: { message: `JSONL too large (${(jsonlBytes / 1e9).toFixed(2)} GB). Reduce sets per batch.` }
         });
       }
 
       // Step C: Upload JSONL to Gemini Files API, then create the batch.
-      const fileName = await uploadJsonlToGeminiFiles(apiKey, jsonlBuffer, displayName);
+      const fileName = await uploadOpenAIBatchFile(apiKey, jsonlBuffer, displayName);
       memLog(`after Files API upload`);
-      const { batchName, raw } = await createGeminiBatchJob(apiKey, batchModel, fileName, displayName);
+      const { batchName, raw } = await createOpenAIImageBatch(apiKey, fileName, displayName);
       memLog(`after batch create`);
 
       // Step D: Persist routing data in Firestore. The doc id is a
@@ -14420,6 +14731,8 @@ async function _handlerImpl(event) {
         state: "JOB_STATE_PENDING",
         collected: false,
         model: batchModel,
+        provider: "openai",
+        quality: "high",
         imageSize,
         inputFileName: fileName,
         inputJsonlBytes: jsonlBytes,
@@ -14458,12 +14771,12 @@ async function _handlerImpl(event) {
 
     if (kind === "batch_status") {
       let apiKey;
-      try { apiKey = apiKeyForImageModel(modelConfig); }
+      try { apiKey = batchApiKey(body?.batchName); }
       catch (err) { return json(400, { error: safeErr(err) }); }
 
       const batchName = String(body?.batchName || "").trim();
-      if (!batchName.startsWith("batches/")) {
-        return json(400, { error: { message: "batchName must start with batches/" } });
+      if (!/^(batches\/[A-Za-z0-9_-]+|batch_[A-Za-z0-9_-]+)$/.test(batchName)) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
       }
 
       const data = await getGeminiBatchJob(apiKey, batchName);
@@ -14498,12 +14811,11 @@ async function _handlerImpl(event) {
     }
 
     if (kind === "batch_collect") {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      const apiKey = batchApiKey(body?.batchName);
 
       const batchName = String(body?.batchName || "").trim();
-      if (!batchName.startsWith("batches/")) {
-        return json(400, { error: { message: "batchName must start with batches/" } });
+      if (!/^(batches\/[A-Za-z0-9_-]+|batch_[A-Za-z0-9_-]+)$/.test(batchName)) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
       }
 
       const db = getDb();
@@ -14585,6 +14897,7 @@ async function _handlerImpl(event) {
       // queue concurrently. We use a simple semaphore (slots[]) to
       // throttle in-flight uploads without buffering the whole list.
       const inFlight = new Set();
+      const seenResultKeys = new Set();
       const recordResult = (route, ok, storagePath, error) => {
         const arr = perSetSlotResults.get(route.setIndex) || [];
         if (ok) {
@@ -14623,20 +14936,22 @@ async function _handlerImpl(event) {
       // memory bounded by UPLOAD_CONCURRENCY × per-image size.
       try {
         for await (const parsed of streamGeminiResultLines(apiKey, respFileName)) {
-          const key = parsed?.key;
+          const key = parsed?.custom_id || parsed?.key;
           const route = routeByKey.get(key);
           if (!route) {
             failures.push({ key: key || "(none)", error: "no route for key" });
             continue;
           }
-          if (parsed?.error) {
-            recordResult(route, false, null, parsed.error?.message || "batch error");
+          if (seenResultKeys.has(key)) continue;
+          seenResultKeys.add(key);
+          if (parsed?.error || parsed?.response?.body?.error) {
+            recordResult(route, false, null, parsed.error?.message || parsed.response.body.error.message || "batch error");
             continue;
           }
           const partsOut = parsed?.response?.candidates?.[0]?.content?.parts || [];
           const imgPart = partsOut.find((p) => p?.inline_data?.data) ||
                           partsOut.find((p) => p?.inlineData?.data) || null;
-          const b64 = imgPart?.inline_data?.data || imgPart?.inlineData?.data;
+          const b64 = parsed?.response?.body?.data?.[0]?.b64_json || imgPart?.inline_data?.data || imgPart?.inlineData?.data;
           if (!b64) {
             recordResult(route, false, null, "no inline_data in response");
             continue;
@@ -14656,7 +14971,12 @@ async function _handlerImpl(event) {
         // If the stream itself fails, surface the partial state so the
         // user can see what was already uploaded before the break.
         await Promise.all(inFlight);
-        failures.push({ key: "(stream)", error: String(streamErr?.message || streamErr) });
+        throw new Error(`Batch collection interrupted; retry collection: ${streamErr?.message || streamErr}`);
+      }
+
+      // Missing upstream results must remain visible as failed slots.
+      for (const [key, route] of routeByKey) {
+        if (!seenResultKeys.has(key)) recordResult(route, false, null, "No result returned for this image");
       }
 
       // Step: write a manifest per set, mirroring what Standard mode writes.
@@ -14910,18 +15230,17 @@ async function _handlerImpl(event) {
     }
 
     if (kind === "batch_cancel") {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      const apiKey = batchApiKey(body?.batchName);
       const batchName = String(body?.batchName || "").trim();
-      if (!batchName.startsWith("batches/")) {
-        return json(400, { error: { message: "batchName must start with batches/" } });
+      if (!/^(batches\/[A-Za-z0-9_-]+|batch_[A-Za-z0-9_-]+)$/.test(batchName)) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
       }
-      await cancelGeminiBatchJob(apiKey, batchName);
+      const cancellation = await cancelGeminiBatchJob(apiKey, batchName);
       try {
         const db = getDb();
         await firestoreRetry(
           () => db.collection(BATCHES_COLL).doc(batchDocIdFromName(batchName)).set({
-            state: "JOB_STATE_CANCELLED",
+            state: cancellation?.state || "JOB_STATE_CANCELLED",
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }),
           "batch.cancelMirror"
@@ -14931,116 +15250,9 @@ async function _handlerImpl(event) {
     }
 
     // ------------------------------------------------------------
-    // files_cleanup
-    //   Lists ALL files uploaded to the Gemini Files API for this API key
-    //   and deletes them. Used to free the 20 GB cumulative
-    //   file_storage_bytes quota that accumulates across batch_submit
-    //   JSONL/reference uploads.
-    //
-    //   Optional body params:
-    //     maxDelete  number  — cap deletion at N files this call (default:
-    //                          no cap; use for chunked cleanup if you
-    //                          have thousands of files and the function
-    //                          might time out)
-    //     prefix     string  — only delete files whose displayName starts
-    //                          with this prefix (e.g., "lg1-Beady_Necklace-").
-    //                          Useful if the same API key is shared with
-    //                          other projects.
-    //
-    //   Returns:
-    //     { ok, deleted, totalListed, candidateCount, bytesFreed,
-    //       truncated, errors }
-    //
-    //   CAUTION: deleting Files API uploads breaks any in-flight batch
-    //   jobs that still reference those input files. Caller is responsible
-    //   for confirmation before invoking.
-    // ------------------------------------------------------------
-    if (kind === "files_cleanup") {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
-
-      const maxDeleteRaw = Number(body?.maxDelete);
-      const maxDelete = Number.isFinite(maxDeleteRaw) && maxDeleteRaw > 0 ? maxDeleteRaw : Infinity;
-      const prefix = typeof body?.prefix === "string" && body.prefix.length > 0 ? body.prefix : null;
-
-      const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
-
-      // 1) Paginate through all files. Hard guard against runaway
-      //    pagination at 200 pages × 100/page = 20,000 files.
-      const listed = [];
-      let pageToken = null;
-      let pages = 0;
-      const MAX_PAGES = 200;
-      do {
-        const url = `${baseUrl}/files?key=${encodeURIComponent(apiKey)}&pageSize=100` +
-                    (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
-        const r = await fetch(url);
-        if (!r.ok) {
-          const errBody = await r.text().catch(() => "");
-          return json(r.status, {
-            error: { message: `Files API list failed: HTTP ${r.status}: ${errBody.slice(0, 300)}` },
-          });
-        }
-        const data = await r.json();
-        for (const f of (data.files || [])) listed.push(f);
-        pageToken = data.nextPageToken || null;
-        pages++;
-      } while (pageToken && pages < MAX_PAGES);
-
-      // 2) Optional displayName prefix filter
-      const candidates = prefix
-        ? listed.filter((f) => typeof f.displayName === "string" && f.displayName.startsWith(prefix))
-        : listed.slice();
-
-      // 3) Cap deletion count (for chunked cleanup if maxDelete supplied)
-      const toDelete = maxDelete === Infinity
-        ? candidates
-        : candidates.slice(0, maxDelete);
-
-      // 4) Delete with concurrency 10 — fast enough that even 1000s of
-      //    files complete inside the 15-minute background-function budget,
-      //    while not so parallel that we trigger our own rate-limit on
-      //    the Files API delete endpoint.
-      let deleted = 0;
-      let bytesFreed = 0;
-      const errors = [];
-      let idx = 0;
-      const CONC = 10;
-
-      async function deleteWorker() {
-        while (idx < toDelete.length) {
-          const myIdx = idx++;
-          const f = toDelete[myIdx];
-          try {
-            const delUrl = `${baseUrl}/${f.name}?key=${encodeURIComponent(apiKey)}`;
-            const r = await fetch(delUrl, { method: "DELETE" });
-            if (!r.ok) {
-              const errBody = await r.text().catch(() => "");
-              errors.push(`${f.name}: HTTP ${r.status} ${errBody.slice(0, 80)}`);
-            } else {
-              deleted++;
-              bytesFreed += Number(f.sizeBytes || 0);
-            }
-          } catch (e) {
-            errors.push(`${f.name}: ${e?.message || e}`);
-          }
-        }
-      }
-
-      const workers = [];
-      for (let i = 0; i < CONC; i++) workers.push(deleteWorker());
-      await Promise.all(workers);
-
-      return json(200, {
-        ok: true,
-        deleted,
-        totalListed: listed.length,
-        candidateCount: candidates.length,
-        bytesFreed,
-        truncated: candidates.length > toDelete.length,
-        errors: errors.slice(0, 20),
-      });
-    }
+    // Paginated scan and one collected batch per purge request keep cleanup
+    // below the synchronous deadline. Bare legacy requests only scan.
+    if (kind === "files_cleanup") return json(200, await cleanupBatchFiles(body));
 
 // ------------------------------------------------------------
     // NEW: run_set_async
@@ -15121,12 +15333,8 @@ async function _handlerImpl(event) {
               apiKey,
               model,
               prompt: promptT,
-              size: String(t?.size || body?.size || "2048x2048"),
-              quality: String(
-                t?.quality ||
-                body?.quality ||
-                (modelConfig.provider === "openai" ? "medium" : "high")
-              ),
+              size: listingImageSize(base, slot, String(t?.size || body?.size || "2048x2048")),
+              quality: "high",
               output_format: "png",
               images: [
                 { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
@@ -15276,6 +15484,7 @@ async function _handlerImpl(event) {
         apiKey,
         model,
         prompt: effectivePrompt,
+        jobId,
         size,
         quality,
         output_format,
@@ -15763,3 +15972,8 @@ async function _handlerImpl(event) {
     return json(202, { ok: false, jobId, error: safeErr(err) });
   }
 };
+
+
+// Compatibility endpoint shares the same provider quota ledger.
+exports.limitedOpenAIImageJson = limitedOpenAIImageJson;
+exports.sunburstTokenReservation = sunburstTokenReservation;
