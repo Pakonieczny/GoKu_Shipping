@@ -177,7 +177,7 @@ async function latestRunDoc(D, ctrl) {
       .filter(j=>j.task==='premarket_manager').sort((a,b)=>Number(b.segmentStartedAtMs||b.enqueuedAtMs||0)-Number(a.segmentStartedAtMs||a.enqueuedAtMs||0));
     const job=jobs[0];
     if(job){
-      run.worker={state:job.status,leaseExpiresAt:iso(job.workerLeaseExpiresAt),heartbeatAt:iso(job.lastHeartbeatAtMs),resumeAt:iso(job.resumeAtMs),reason:job.yieldReason||null};
+      run.worker={state:job.status,leaseExpiresAt:iso(job.workerLeaseExpiresAt),heartbeatAt:iso(job.lastHeartbeatAtMs),resumeAt:iso(job.resumeAtMs),reason:job.yieldReason||null,error:job.lastError?{code:job.lastError.code||null,message:clip(job.lastError.message,300)}:null};
       if(['failed','dead','cancelled'].includes(job.status)){
         run.status=job.status==='cancelled'?'cancelled':'failed_closed';
         run.failureReason=job.lastError?.message||job.lastError?.code||'Review worker stopped';
@@ -205,7 +205,7 @@ function runView(run) {
     managerRunId: run.managerRunId, state: runState(run), tradingDate: run.tradingDate || null, accountId: run.accountId || null, universeVersion: run.universeVersion || null, universeHash: run.universeHash || null,
     contextManifestHash: run.contextManifestHash || null, policyHash: run.policyHash || null, portfolioVersion: run.activation && run.activation.activationSnapshotId ? run.activation.activationSnapshotId : null,
     startedAt: iso(run.startedAtMs), updatedAt: iso(run.updatedAtMs), cutoffAt: iso(run.cutoffMs), deadlineAt: iso(run.deadlineMs || run.hardDeadlineMs), completedAt: iso(run.completedAtMs),
-    decisionProcess:run.decisionProcess||null, shortlist:run.shortlist||null, worker:run.worker||null,
+    decisionProcess:run.decisionProcess||null, shortlist:run.shortlist||null, worker:run.worker||null, activity:run.activity||null,
     investmentNote: run.investmentNote ? clip(run.investmentNote,1600) : null, stage: run.stage || null, checkpoints: (run.checkpoints || run.lineage || []).slice(0, 40), segments: Number(run.segments) || null,
     coverage: { eligibleCount: Number(cov.eligibleCount ?? run.eligibleCount) || 0, completedCount: Number(cov.completedCount) || 0, missing: list(cov.missing).slice(0, 400), missingCount: Array.isArray(cov.missing) ? cov.missing.length : Number(cov.missing) || 0, duplicates: list(cov.duplicates).slice(0, 100), unknown: list(cov.unknown).slice(0, 100), ok: cov.ok === true, repaired: Number(cov.repaired) || 0 },
     countsByDecision: run.byDecision || {}, decisionCount: Number(run.decisionCount) || 0, buys: (run.buys || []).slice(0, 40),
@@ -293,21 +293,34 @@ function laneAsOf(ctrl) {
   return { sources: iso(ingest.finishedAtMs || ingest.atMs), dossiers: iso(ingest.finishedAtMs || ingest.atMs), managerReview: iso(run.completedAtMs), mandates: iso((run.activation && run.activation.committedAtMs) || run.completedAtMs), marks: iso(tick.atMs || (ctrl.lastPostclose && ctrl.lastPostclose.elapsedMs ? ctrl.lastPostcloseAtMs : null)) };
 }
 function workflowOf(ctrl, run) {
-  const ingest = ctrl.lastIngestPass || null, tick = ctrl.lastExecutionTick || null;
-  const stage = run ? String(run.stage || "") : "";
-  const after = (s) => ["freeze", "shortlist", "review", "coverage", "maintenance", "research", "synthesis", "activation", "persist", "complete"].indexOf(stage) > ["freeze", "shortlist", "review", "coverage", "maintenance", "research", "synthesis", "activation", "persist", "complete"].indexOf(s);
-  const st = (s, done, running) => (done ? "complete" : running ? "running" : "pending");
-  const failed = run && run.status === "failed_closed";
+  const tick=ctrl.lastExecutionTick||null,a=run?.activity||{},research=run?.research||{},stage=run?.stage||'',phase=a.phase||research.phase;
+  const stages=['freeze','shortlist','review','coverage','maintenance','research','synthesis','activation','persist','complete'];
+  const terminal=run?.status==='complete',failed=['failed_closed','failed','dead','cancelled'].includes(run?.status);
+  const after=s=>terminal||stages.indexOf(stage)>stages.indexOf(s);
+  const state=(s,done,active)=>done?'complete':failed&&active?'failed':active?'running':'pending';
+  const at=iso(a.changedAtMs||run?.updatedAtMs||run?.startedAtMs),total=Number(run?.eligibleCount||run?.coverage?.eligibleCount)||null;
+  const companies=a.companies||[],requested=research.requested??(companies.length||null),shared=!!run?.decisionProcess;
+  const sourcesDone=companies.filter(c=>c.sourcesReady).length,docsDone=companies.filter(c=>c.documentReady).length||Number(research.documentsPrepared)||0;
+  const prepComplete=terminal||phase==='decision'||phase==='complete'||after('research');
+  const row=(step,status,detail,done=null,count=null,extra={})=>({step,state:status,detail,at:['running','failed'].includes(status)?at:null,progress:{completed:done,total:count},...extra});
+  const activeCompany=a.currentSymbol?' · '+a.currentSymbol:'';
+  const shortlistCount=run?.shortlist?.count||a.shortlisted||null;
+  const compared=run?.coverage?.ok?(shortlistCount||total):a.compared||0;
   const executionError=ctrl.lastExecutionError&&Number(ctrl.lastExecutionError.atMs)>Number(tick?.atMs||0)?ctrl.lastExecutionError:null;
-  return [
-    { step: "evidence", state: ingest ? (ingest.error ? "failed" : "complete") : "pending", detail: ingest ? `${ingest.companies || ingest.refreshed || 0} companies refreshed` : "overnight ingest pending", at: iso(ingest && (ingest.finishedAtMs || ingest.atMs)) },
-    { step: "coverage", state: !run ? "pending" : failed && !after("coverage") ? "failed" : st("coverage", after("coverage") || run.status === "complete", ["freeze", "shortlist", "review", "coverage"].includes(stage)), detail: run && run.coverage ? `${run.coverage.completedCount}/${run.coverage.eligibleCount} reviewed` : "not started", at: iso(run && run.cutoffMs) },
-    { step: "research", state: !run ? "pending" : failed && !after("research") ? "failed" : st("research", after("research") || run.status === "complete", stage === "research"), detail: run && run.research ? run.research.detail || `${run.research.completed} completed, ${run.research.deferred} deferred, ${run.research.failed} failed` : "no research yet", at: null },
-    { step: "revisions", state: !run ? "pending" : st("maintenance", after("maintenance") || run.status === "complete", stage === "maintenance"), detail: run && run.maintenance ? `${run.maintenance.actionable} actionable, ${(run.maintenance.actionRequired || []).length} action required` : "no holdings reviewed", at: null },
-    { step: "synthesis", state: !run ? "pending" : failed && stage === "synthesis" ? "failed" : st("synthesis", after("synthesis") || run.status === "complete", stage === "synthesis"), detail: "Portfolio comparison and quantity review", at: null },
-    { step: "mandates", state: !run ? "pending" : run.activation ? (run.activation.status === "COMMITTED" ? "complete" : run.activation.status === "EMPTY" ? "skipped" : "failed") : st("activation", after("activation"), stage === "activation"), detail: run && run.activation ? `${run.activation.status}${run.activation.planId ? ` plan ${run.activation.planId}` : ""}` : "no plan staged", at: iso(run && run.completedAtMs) },
-    { step: "execution", state: executionError?"failed":tick ? (tick.conservation && tick.conservation.pass === false ? "failed" : "running") : "pending", detail: executionError?executionError.message:tick ? `${tick.outboxApplied || 0} transitions applied, ${(tick.fills && tick.fills.fills) || 0} fills` : "executor has not ticked", at: iso(executionError?.atMs || tick && tick.atMs) },
+  const noBuys=terminal&&!(run.buys||[]).length,approved=!!run?.activation&&(run.buys||[]).length>0;
+  const result=[
+    row('evidence',state('freeze',!!run?.contextManifestHash,stage==='freeze'),run?.contextManifestHash?'Review input snapshot saved':'Preparing the dated company and portfolio inputs',run?.contextManifestHash?1:0,1),
+    row('shortlist',shared?state('shortlist',!!run?.shortlist,stage==='shortlist'):'skipped',!shared?'This saved review uses the earlier screening process':run?.shortlist?`${run.shortlist.screened} companies ranked; ${run.shortlist.count} shortlisted`:'Luna is ranking the universe; the model returns one complete batch',run?.shortlist?.screened||0,run?.shortlist?.screened||a.rankable||total),
+    row('coverage',state('coverage',after('coverage'),['review','coverage'].includes(stage)),after('coverage')?`${compared} shortlisted companies compared; ${requested??'the'} finalists selected`:stage==='review'?`Astra is comparing ${shortlistCount||total||'the'} company summaries; waiting for its result`:'Waiting for the ranked shortlist',compared,shortlistCount||total),
+    row('revisions',state('maintenance',after('maintenance'),stage==='maintenance'),after('maintenance')?(Number(run?.heldCount)===0?'No existing holdings to review':`${run?.maintenance?.actionable||0} actionable; ${run?.maintenance?.actionRequired?.length||0} need attention`):'Waiting for the company comparison',after('maintenance')?1:0,1),
+    row('sources',state('research',prepComplete||phase==='documents',stage==='research'&&phase==='sources'),prepComplete||phase==='documents'?'Finalist source collection finished':stage==='research'&&phase==='sources'?'Collecting current public sources'+activeCompany:'Waiting for finalists',prepComplete||phase==='documents'?requested:sourcesDone,requested,{companies:companies.map(c=>({symbol:c.symbol,completed:c.sourcesReady||prepComplete?1:0,total:1,detail:c.sourceErrors?.length?c.sourceErrors.map(e=>e.source+': '+e.error).join('; '):c.sourcesReady?'Sources collected':a.currentSymbol===c.symbol&&phase==='sources'?'Collecting sources':'Waiting'}))}),
+    row('research',state('research',prepComplete,stage==='research'&&phase!=='sources'&&phase!=='decision'),prepComplete?'Prepared research documents saved':stage==='research'?'Luna is preparing sourced research'+activeCompany:'Waiting for source collection',prepComplete?requested:docsDone,requested,{companies:companies.map(c=>({symbol:c.symbol,completed:c.documentReady?1:0,total:1,detail:c.documentReady?'Research document saved':a.currentSymbol===c.symbol&&phase==='documents'?'Luna is preparing this company':'Waiting'}))}),
+    row('synthesis',state(stage,terminal||after('synthesis'),stage==='synthesis'||stage==='research'&&phase==='decision'),terminal?'Joint investment decision saved':phase==='decision'?'Astra is comparing all prepared research and choosing BUY or PASS; the provider supplies no percentage':'Waiting for prepared research',terminal||after('synthesis')?1:0,1),
+    row('mandates',run?.activation?(run.activation.status==='COMMITTED'?'complete':run.activation.status==='EMPTY'?'skipped':'failed'):state('activation',false,stage==='activation'||stage==='persist'),run?.activation?(noBuys?'Decision saved: no new buys approved':'Investment plan committed; execution checks apply'):'Waiting for an investment decision',run?.activation?1:0,1),
+    row('execution',executionError?'failed':noBuys?'skipped':approved&&tick?'running':'pending',executionError?executionError.message:noBuys?'No new orders: the AI chose cash for this review':approved?`Monitoring approved buys against observed market bars. Latest check: ${tick?.fills?.fills||0} fills`:'Waiting for this review to approve buys; existing orders are monitored separately',null,null,{at:iso(executionError?.atMs||tick?.atMs)})
   ];
+  if(failed){const active=result.find(x=>x.state==='running'||x.state==='failed');if(active){active.state='failed';active.detail=run.failureReason||run.noBuyReasons?.[0]?.error||run.failure?.message||'Review stopped; inspect the saved error';}}
+  return result;
 }
 
 /* ── managerDashboard (summaries only, §11.4) ─────────────────────────── */
@@ -672,16 +685,23 @@ function jobView(j) {
   const cp = j.checkpoint || null;
   const progress = cp && cp.data && cp.data.coverage ? { numerator: Number(cp.data.coverage.completedCount) || 0, denominator: Number(cp.data.coverage.eligibleCount) || null } : cp && cp.progress ? cp.progress : { numerator: null, denominator: null };
   return { jobId: j.jobId, task: j.task, handler: j.targetFunction || null, attempt: Number(j.attempts) || 0, state: String(j.status || "queued").toUpperCase(), priority: Number(j.priority) || 100, lease: j.workerLeaseExpiresAt ? { expiresAt: iso(j.workerLeaseExpiresAt), owner: j.workerOwner || null } : null,
-    checkpoint: cp ? { stage: cp.stage || null, at: iso(cp.atMs), segment: cp.segment == null ? null : cp.segment } : null, createdAt: iso(j.enqueuedAtMs), dueAt: iso(j.dueAtMs || j.resumeAtMs), heartbeatAt: iso(j.heartbeatAtMs), completedAt: iso(j.finishedAtMs), pollingSlaSeconds: j.heavy ? 900 : 60,
+    checkpoint: cp ? { stage: cp.stage || null, at: iso(cp.atMs), segment: cp.segment == null ? null : cp.segment } : null, createdAt: iso(j.enqueuedAtMs), dueAt: iso(j.dueAtMs || j.resumeAtMs), heartbeatAt: iso(j.lastHeartbeatAtMs || j.heartbeatAtMs), completedAt: iso(j.finishedAtMs), pollingSlaSeconds: j.heavy ? 900 : 60,
     progress, cost: j.summary && j.summary.costMinor != null ? money(j.summary.costMinor) : null, retryLineage: (j.lineage || []).map((l) => `${l.jobId}#${l.attempt}`).slice(0, 20), error: j.lastError ? { code: j.lastError.code || null, message: clip(j.lastError.message, 300), retryable: j.lastError.retryable === true } : null,
     accountId: j.accountId || null, runId: j.runId || null, sessionDate: j.sessionDate || null, symbol: j.payload && j.payload.symbol || null, segments: Number(j.segments) || 0, summary: j.summary ? clip(JSON.stringify(j.summary), 400) : null };
 }
 async function readJobs({ params, ctx }) {
   const { admin: D, nowMs } = ctx;
   if (params.jobId) { const s = await D.col(D.COL.jobs).doc(params.jobId).get(); return { data: s.exists ? page([jobView(s.data())], { keyOf: (v) => v.jobId, snapshotId: params.jobId, asOf: new Date(nowMs).toISOString() }) : emptyCollection(new Date(nowMs).toISOString(), S.errorShape("NOT_FOUND", "unknown job")) }; }
-  let list = rows(await (params.status ? D.col(D.COL.jobs).where("status", "==", params.status).limit(300) : D.col(D.COL.jobs).limit(300)).get()).filter((j) => j && j.jobId && j.kind !== "run_lease");
-  if (params.task) list = list.filter((j) => j.task === params.task);
-  list = list.sort((a, b) => Number(b.enqueuedAtMs || 0) - Number(a.enqueuedAtMs || 0)).map(jobView);
+  let query=D.col(D.COL.jobs);
+  if(params.task)query=query.where('task','==',params.task);
+  if(params.status)query=query.where('status','==',params.status);
+  let list=rows(await query.limit(300).get()).filter(j=>j&&j.jobId&&j.kind!=='run_lease');
+  const activeId=ctx.control.activeManagerRunId;
+  if(activeId){
+    const active=rows(await D.col(D.COL.jobs).where('runId','==',activeId).limit(20).get()).filter(j=>j.jobId&&(!params.task||j.task===params.task)&&(!params.status||j.status===params.status));
+    list=[...new Map([...list,...active].map(j=>[j.jobId,j])).values()];
+  }
+  list=list.sort((a,b)=>Number(b.runId===activeId)-Number(a.runId===activeId)||Number(b.enqueuedAtMs||0)-Number(a.enqueuedAtMs||0)).map(jobView);
   const p = page(list, { cursor: params.cursor, pageSize: params.pageSize, keyOf: (v) => v.jobId, snapshotId: `jobs:${list.length}:${list[0] ? list[0].jobId : ""}`, filterHash: filterHashOf(params, ["status", "task"]), asOf: new Date(nowMs).toISOString(), buckets: { byState: count(list, "state"), byTask: count(list, "task") } });
   return { data: p, nextCursor: p.nextCursor };
 }

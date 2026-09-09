@@ -5264,6 +5264,24 @@ function runFixtures() {
     return true;
   }));
 
+  cases.push(fixture("dashboard_individual_progress_and_active_job_are_recorded_not_inferred",async()=>{
+    const assert=require('assert/strict'),W=apiWorld(),M=require('./_investorManager'),id='current_progress';W.ctrl().activeManagerRunId=id;
+    const activity={stage:'research',phase:'documents',currentSymbol:'BBB',changedAtMs:W.nowMs-1000,ranked:304,shortlisted:50,compared:50,companies:[{symbol:'AAA',sourcesReady:true,documentReady:true,sourceErrors:[]},{symbol:'BBB',sourcesReady:true,documentReady:false,sourceErrors:[]}]};
+    await M.writeRun({admin:W.fake,managerRunId:id,status:'running',stage:'research',accountId:'paper-1',contextManifestHash:'saved',universeVersion:'fixture',universeHash:'fixture',decisionProcess:{version:'fixture'},eligibleCount:304,shortlist:{screened:304,count:50},coverage:{completedCount:304,eligibleCount:304,ok:true},research:{requested:2,completed:0,phase:'documents'},activity});
+    let d=(await W.read('managerDashboard')).body.data,step=s=>d.workflow.find(w=>w.step===s);
+    assert.deepEqual(step('coverage').progress,{completed:50,total:50});assert.equal(step('evidence').state,'complete');
+    assert.deepEqual(step('research').progress,{completed:1,total:2});assert.equal(step('research').companies[1].symbol,'BBB');
+    assert.equal(step('synthesis').state,'pending');assert.equal(step('execution').state,'pending');
+    await M.writeRun({admin:W.fake,managerRunId:id,stage:'research',activity:{...activity,phase:'decision',currentSymbol:null,companies:activity.companies.map(c=>({...c,documentReady:true}))}});
+    d=(await W.read('managerDashboard')).body.data;assert.equal(step('research').state,'complete');assert.equal(step('synthesis').state,'running');assert.equal(step('synthesis').progress.completed,0);
+    for(let i=0;i<310;i++)await W.fake.col(W.C.jobs).doc('old_'+String(i).padStart(3,'0')).set({jobId:'old_'+i,task:'premarket_manager',status:'complete',enqueuedAtMs:W.nowMs-10000});
+    await W.fake.col(W.C.jobs).doc('zz_active').set({jobId:'zz_active',runId:id,task:'premarket_manager',status:'yielded_resumable',lastHeartbeatAtMs:W.nowMs-2000,enqueuedAtMs:W.nowMs});
+    const jobs=(await W.read('jobs',{pageSize:50})).body.data.items;assert.equal(jobs[0].jobId,'zz_active');assert.equal(Date.parse(jobs[0].heartbeatAt),W.nowMs-2000);
+    await M.writeRun({admin:W.fake,managerRunId:id,status:'complete',stage:'complete',buys:[],activation:{status:'COMMITTED'}});
+    d=(await W.read('managerDashboard')).body.data;assert.equal(step('execution').state,'skipped');assert.match(step('execution').detail,/AI chose cash/);
+    return true;
+  }));
+
   cases.push(fixture("dashboard_reports_worker_failure_and_saved_research_instead_of_an_endless_spinner", async () => {
     const assert=require('assert'),W=apiWorld(),id='interrupted_review';
     W.ctrl().activeManagerRunId=id;
@@ -5273,7 +5291,7 @@ function runFixtures() {
     await ref.set({jobId:'interrupted_job',runId:id,task:'premarket_manager',status:'running',workerLeaseExpiresAt:W.nowMs-1,lastHeartbeatAtMs:W.nowMs-900000});
     let d=(await W.read('managerDashboard')).body.data;
     assert.equal(d.latestRun.worker.state,'running');assert.equal(Date.parse(d.latestRun.worker.leaseExpiresAt),W.nowMs-1);
-    assert.equal(d.workflow.find(s=>s.step==='research').detail,'Luna prepared 2 of 2 research documents');
+    assert.equal(d.workflow.find(s=>s.step==='research').state,'running');
     await ref.set({status:'dead',lastError:{code:'PROVIDER_FAILURE',message:'Saved response could not be retrieved'}},{merge:true});
     d=(await W.read('managerDashboard')).body.data;
     assert.equal(d.latestRun.state,'FAILED');assert.equal(d.latestRun.failure.reason,'Saved response could not be retrieved');
@@ -5318,7 +5336,7 @@ function runFixtures() {
     if (dash.data.account.accountMode !== "PAPER_AI" || dash.data.account.nav.amountMinor !== "6020000") throw new Error(`account ${JSON.stringify(dash.data.account)}`);
     if (dash.data.models.investment.snapshot !== "gpt-6-astra" || dash.data.models.investment.reasoningEffort !== "high") throw new Error("model routing");
     if (!dash.data.alerts.length || dash.data.alerts[0].conditionId !== "buys_frozen") throw new Error("alerts");
-    if (dash.data.evidenceDeltas.length !== 1 || dash.data.workflow.length !== 7 || !dash.data.workflow.some(w => w.step === "synthesis")) throw new Error("deltas/workflow");
+    if (dash.data.evidenceDeltas.length !== 1 || dash.data.workflow.length !== 9 || !dash.data.workflow.some(w => w.step === "synthesis")) throw new Error("deltas/workflow");
     if (JSON.stringify(dash.data).length > 200000) throw new Error("the dashboard must stay a summary");
     view("SpendView", dash.data.spend);
     if (dash.data.spend.actual.amountMinor !== "420" || dash.data.spend.dailyLimit.amountMinor === "0") throw new Error("spend");

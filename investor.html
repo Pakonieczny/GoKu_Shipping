@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-kYz6sY1WnxS5C083WUjBkZSZcMTywfz41LQeHjIY2sE='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-qKzCPDCctjApBFUzoM3WP1VrtdvkZeh8MjhTeeMteRw='; style-src 'self' 'sha256-zAugEgSKUXp+OYboQ9bXIrKJyQgTN3H6TIw9cExekXQ='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -862,9 +862,11 @@ var FREEZE_REASONS={STALE_BROKER_TRUTH:'the broker snapshot is older than 10 min
 function freezeReasonText(ctrl){var c=ctrl&&(ctrl.blockingConditions||[]).find(function(x){return x.conditionId==='buys_frozen';}),d=c&&c.detail;if(!d)return '';var key=String(d).split(/[\s:]/)[0];return ' Reason: '+(FREEZE_REASONS[key]||FREEZE_REASONS[d]||String(d))+'.';}
 function reviewDelayText(run,nowMs){
   if(!run||!['RUNNING','QUEUED'].includes(run.state))return '';
-  var now=nowMs==null?Date.now():nowMs,w=run.worker||{},lease=Date.parse(w.leaseExpiresAt),last=Date.parse(run.updatedAt||run.startedAt);
+  var now=nowMs==null?Date.now():nowMs,w=run.worker||{},lease=Date.parse(w.leaseExpiresAt),last=run.activity&&run.activity.changedAtMs||Date.parse(run.updatedAt||run.startedAt);
   if(w.state==='running'&&Number.isFinite(lease)&&lease<=now)return 'The review worker stopped responding. Saved work is waiting for scheduler recovery.';
-  if(Number.isFinite(last)&&now-last>20*60000)return 'Last recorded review progress: '+fmtAgo(run.updatedAt||run.startedAt)+'. Check job details; refreshing this page does not restart the review.';
+  if(w.error)return 'The saved review is waiting to retry: '+(w.error.message||w.error.code)+(w.resumeAt?' · retry '+fmtTimeFull(w.resumeAt):'')+'.';
+  if(w.state==='yielded_resumable')return 'Work is saved. Waiting for the next worker check'+(w.resumeAt?' · scheduled '+fmtTimeFull(w.resumeAt):'')+'.';
+  if(Number.isFinite(last)&&now-last>10*60000)return 'Last recorded review progress: '+fmtAgo(run.updatedAt||run.startedAt)+'. Check job details; refreshing this page does not restart the review.';
   return '';
 }
 function dailyControl(ctrl,action,label,cls) { var cap=ctrl&&capOf(ctrl,action);return cap&&cap.enabled?capButton(ctrl,action,label,{icon:action==='activateAccountMode'||action==='resumeBuys'?'play':action==='runManagerReview'?'refresh':'pause',cls:cls||'sm'}):null; }
@@ -890,10 +892,10 @@ function renderManagerBrief(dash,ctrl) {
   if(observe&&!action){copy='The account is not ready to start. Check the setup status in Advanced.';action=el('a',{class:'btn sm',href:'#/system',text:'Check setup'});}
   var cov=r&&r.coverage,research=r&&r.researchJobs,reason=r&&((r.noBuyReasons||[])[0]),sp=dash.spend;
   var cadence=observe?'Starts after you turn on AI investing':paused||emergency?'Scheduled reviews are paused':cad.reviewMinuteEt==null?'Review schedule not available':'Daily review from '+minuteEt(cad.reviewMinuteEt)+' on trading days';
-  var next=active?'Last progress update '+fmtAgo(r.updatedAt||r.startedAt):o.nextReview?(o.nextReview.due?'Next review · due in this morning’s window':'Next review · '+fmtTimeFull(o.nextReview.startsAt)):r&&r.completedAt?'Last review '+fmtAgo(r.completedAt):'First review pending';
+  var next=active?'Last progress update '+fmtAgo(r.activity&&r.activity.changedAtMs||r.updatedAt||r.startedAt):o.nextReview?(o.nextReview.due?'Next review · due in this morning’s window':'Next review · '+fmtTimeFull(o.nextReview.startsAt)):r&&r.completedAt?'Last review '+fmtAgo(r.completedAt):'First review pending';
   setChildren($('managerBrief'),[
     el('div',{class:'ai-head'},el('div',null,el('div',{class:'eyebrow',text:'YOUR AI MANAGER'}),el('h3',{class:'brief-title',text:title}),el('p',{class:'brief-copy',text:copy})),el('div',{class:'actions'},reviewNow,resumeBuys,action)),
-    active?el('div',{class:'ai-progress'},progressRow(r.decisionProcess?'Company coverage · Luna + Astra':'Companies reviewed',cov&&cov.completedCount,cov&&cov.eligibleCount,!delay&&r.stage==='review'),progressRow('In-depth research finished',research&&research.completed,research&&research.requested,!delay&&r.stage==='research')):null,
+    active?el('div',{class:'ai-progress'},progressRow(r.decisionProcess?'Universe ranked · Luna':'Companies reviewed',r.decisionProcess?r.shortlist&&r.shortlist.screened||0:cov&&cov.completedCount,r.decisionProcess?(r.shortlist&&r.shortlist.screened||r.activity&&r.activity.rankable||cov&&cov.eligibleCount):cov&&cov.eligibleCount,!delay&&r.stage==='shortlist'),progressRow('In-depth research finished',research&&research.completed,research&&research.requested,!delay&&r.stage==='research')):null,
     r&&r.failure&&r.failure.reason?el('p',{class:'warnline',text:r.failure.reason}):null,
     active?el('p',{class:'daily-foot',text:'Progress shows recorded work, not a time estimate. '+next+'.'}):null,
     r&&r.decisionProcess?el('p',{class:'daily-foot',text:'This review: '+({flex3:'0–3 finalists, cash allowed',top1:'exactly 1 finalist',range1:'1–2 finalists',range2:'3–5 finalists',range3:'6–8 finalists'}[r.decisionProcess.companyRange]||r.decisionProcess.companyRange)+' · Astra medium · Strategy '+r.decisionProcess.strategyVersionId}):null,
@@ -1085,7 +1087,7 @@ function fmtTime(iso) { if (!iso) return "—"; var d = new Date(iso); if (isNaN
 function fmtTimeFull(iso) { if (!iso) return "—"; var d = new Date(iso); if (isNaN(d)) return String(iso); return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short" }).format(d); }
 function fmtDate(iso) { if (!iso) return "—"; if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso; var d = new Date(iso); if (isNaN(d)) return String(iso); return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(d); }
 function fmtAgeSeconds(s) { if (s == null || !Number.isFinite(Number(s))) return "—"; s = Math.max(0, Math.round(Number(s))); if (s < 60) return s + " s"; if (s < 3600) return Math.round(s / 60) + " min"; if (s < 86400) return (s / 3600).toFixed(1).replace(/\.0$/, "") + " h"; return (s / 86400).toFixed(1).replace(/\.0$/, "") + " d"; }
-function fmtAgo(iso) { if (!iso) return "never"; var t = Date.parse(iso); if (isNaN(t)) return String(iso); var s = (Date.now() - t) / 1000; return s < 0 ? "in " + fmtAgeSeconds(-s) : fmtAgeSeconds(s) + " ago"; }
+function fmtAgo(iso) { if (!iso) return "never"; var t = typeof iso === "number" ? iso : Date.parse(iso); if (isNaN(t)) return String(iso); var s = (Date.now() - t) / 1000; return s < 0 ? "in " + fmtAgeSeconds(-s) : fmtAgeSeconds(s) + " ago"; }
 function shortHash(h) { return h ? String(h).slice(0, 12) : "—"; }
 function dollarsToScaled(str, scale) {
   var s = String(str == null ? "" : str).trim().replace(/[$,\s]/g, ""); if (!s) return null;
@@ -1811,11 +1813,25 @@ async function loadManager(fresh) {
 async function loadSystemIdentity() { try { await loadRes("system", "systemHealth", {}); renderShell(); } catch (e) { /* the system view shows the failure */ } }
 // Live activity: what the AI is doing now, what it is waiting for, the latest decisions, active work and recent order events.
 var LIVE_STAGES={freeze:'Gathering the evidence',shortlist:'Luna selecting research candidates',review:'Reviewing companies',coverage:'Checking company coverage',maintenance:'Reviewing what you own',research:'Researching the strongest ideas',synthesis:'Choosing the investment plan',activation:'Checking prices and share quantities',persist:'Saving the investment plan',complete:'Review complete'};
-function workflowStepper(dash){
-  var order=["evidence","coverage","revisions","research","synthesis","mandates","execution"],names={evidence:"Gather the evidence",coverage:"Review every company",revisions:"Review existing investments",research:"Research promising ideas",synthesis:"Compare the portfolio choices",mandates:"Check prices, size and cash",execution:"Place and track orders"};
-  var byStep={};(dash.workflow||[]).forEach(function(w){byStep[w.step]=w;});
-  return el("div",{class:"stepper"},order.map(function(s){var w=byStep[s]||{state:"pending",detail:null,at:null};var t=w.state==="complete"?"check":w.state==="running"?"spin":w.state==="failed"?"block":w.state==="skipped"?"ignore":"clock";return el("div",{class:"step "+w.state},el("div",{class:"step__h"},icon(t),el("span",{text:names[s]||plainLabel(s)})),el("div",{class:"step__d",text:plainLabel(w.state)+(w.detail?" — "+w.detail:"")}),w.at?el("div",{class:"step__t",text:fmtTimeFull(w.at)}):null);}));
+function workflowMeter(label,p,state,atomic){
+  p=p||{};var known=Number(p.total)>0,done=Math.max(0,Math.min(Number(p.completed)||0,Number(p.total)||0)),busy=state==='running'&&(!known||atomic&&done===0);
+  var attrs={max:known?Number(p.total):1,'aria-label':label};if(!busy)attrs.value=known?done:state==='complete'?1:0;
+  attrs['aria-valuetext']=busy?'Working; no partial percentage is reported':known?done+' of '+p.total+' completed':plainLabel(state);
+  return el('div',null,el('div',{class:'tiny muted',text:busy?(known?done+' / '+p.total+' results saved · awaiting the complete result':'Monitoring · percentage not available'):known?done+' / '+p.total+' completed':plainLabel(state)}),el('progress',attrs));
 }
+function workflowStepper(dash){
+  var order=['evidence','shortlist','coverage','revisions','sources','research','synthesis','mandates','execution'];
+  var names={evidence:'Prepare review inputs',shortlist:'Rank companies · Luna',coverage:'Choose finalists · Astra',revisions:'Review existing investments',sources:'Collect finalist sources',research:'Prepare company research · Luna',synthesis:'Make investment decision · Astra',mandates:'Check prices, size and cash',execution:'Place and track orders'};
+  var byStep={};(dash.workflow||[]).forEach(function(w){byStep[w.step]=w;});
+  return el('div',{class:'stepper'},order.filter(function(s){return byStep[s];}).map(function(s){
+    var w=byStep[s],t=w.state==='complete'?'check':w.state==='running'?'spin':w.state==='failed'?'block':w.state==='skipped'?'ignore':'clock';
+    return el('div',{class:'step '+w.state},el('div',{class:'step__h'},icon(t),el('span',{text:names[s]||plainLabel(s)})),el('div',{class:'step__d',text:w.detail||plainLabel(w.state)}),
+      workflowMeter(names[s],w.progress,w.state,['evidence','shortlist','coverage','revisions','synthesis','mandates'].includes(s)),
+      (w.companies||[]).map(function(c){var active=w.state==='running'&&/^(Luna is|Collecting sources)/.test(c.detail);return el('div',{class:'step__d'},el('b',{text:c.symbol}),el('div',{text:c.detail}),workflowMeter(c.symbol+' · '+names[s],c,c.completed===c.total?'complete':active?'running':'pending',true));}),
+      w.at&&w.state!=='pending'?el('div',{class:'step__t',text:(s==='execution'?'Last check ':'Last recorded progress ')+fmtAgo(w.at)}):null);
+  }));
+}
+
 function liveActivityChildren(){
   var dash=getRes("dash"),ctrl=getRes("ctrl"),jobs=getRes("jobs"),ev=getRes("execEvents");
   if(!dash)return [cardHead("Live activity","clock"),stateBox("loading","Loading live activity…")];
@@ -1825,9 +1841,10 @@ function liveActivityChildren(){
   var activeJobs=(jobs&&jobs.items||[]).filter(function(j){return LIVE_TASKS[j.task]&&isActiveJob(j);}),sp=dash.spend,acct=dash.account;
   var now=observe?'AI investing is off. Turn it on to start the first review.':emergency?'Emergency stop is on. Nothing new will be bought.':active?(r.state==='QUEUED'?'Review queued · waiting for a worker to start':LIVE_STAGES[r.stage]||'Review in progress'):activeJobs.length?'Working: '+activeJobs.map(function(j){return LIVE_TASKS[j.task]||plainLabel(j.task);}).join(', '):paused?'Reviews are paused.':frozen?'Watching. New purchases are paused until buys are resumed.'+freezeReasonText(ctrl):'Watching your investments. Planned orders are checked every minute during trading hours.';
   var waiting=observe?null:active?'Progress updates as work is recorded. Last update '+fmtAgo(r.updatedAt||r.startedAt)+'.':o.nextReview?(o.nextReview.due?'Next review is due in this morning’s window.':'Next scheduled review · '+fmtTimeFull(o.nextReview.startsAt)+'. Use Review now to start one immediately.'):r&&r.completedAt?'Last review finished '+fmtAgo(r.completedAt)+'. Use Review now to run another.':'No review has run yet. Use Review now to start one.';
+  if(active&&r.activity){var activityRow=(dash.workflow||[]).find(function(w){return w.state==='running';});if(activityRow)now=activityRow.detail;waiting='Last recorded progress '+fmtAgo(r.activity.changedAtMs)+'.'+(r.worker&&r.worker.heartbeatAt?' Worker last checked in '+fmtAgo(r.worker.heartbeatAt)+'.':'')+' AI calls do not report a partial percentage.';}
   var delay=reviewDelayText(r);if(delay&&!observe&&!emergency){now='Review delayed';waiting=delay;}else if(r&&r.state==='FAILED'&&!observe&&!emergency){now='The review could not finish';waiting=r.failure&&r.failure.reason||'Check the saved run details for the failure reason.';}
   var tone=emergency?'bad':active||activeJobs.length?'gold':frozen||paused?'warn':'ok';
-  var head=el("div",{class:"tl__i"},el("span",{class:"tl__dot "+tone}),el("div",{class:"tl__b"},el("b",{text:'Now: '+now}),waiting?el("div",{class:"tiny muted",text:waiting}):null),el("span",{class:"tl__t",text:'Updated '+fmtTime(new Date().toISOString())}));
+  var head=el("div",{class:"tl__i"},el("span",{class:"tl__dot "+tone}),el("div",{class:"tl__b"},el("b",{text:'Now: '+now}),waiting?el("div",{class:"tiny muted",text:waiting}):null),el("span",{class:"tl__t",text:'Display refreshed '+fmtTime(new Date().toISOString())}));
   var reviewNow=!observe&&!active&&!emergency&&ctrl?dailyControl(ctrl,'runManagerReview','Review now','sm gold'):null,resumeBuys=frozen&&!observe&&!emergency&&ctrl?dailyControl(ctrl,'resumeBuys','Resume buys','sm'):null;
   var out=[el("div",{class:"card__h"},el("h3",null,icon("clock"),document.createTextNode(" Live activity")),el("div",{class:"actions"},reviewNow,resumeBuys)),head];
   if(!observe)out.push(el("div",null,el("div",{class:"tiny muted",text:"Review stages"}),workflowStepper(dash)));

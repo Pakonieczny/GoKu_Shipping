@@ -353,7 +353,14 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
   const addCost = (c) => { st.costMinor = (BigInt(st.costMinor || "0") + BigInt(c || "0")).toString(); };
   let recordQueue = Promise.resolve();
   const record = (fields) => {
-    const saved = { managerRunId, admin: deps.admin, tradingDate, accountId, status: fields.status || "running", stage, costMinor: st.costMinor, ...(st.paperProcess?{decisionProcess:{version:st.paperProcess.version,companyRange:st.paperProcess.companyRange,strategyVersionId:st.paperProcess.strategy?.versionId||"baseline",rulesHash:st.paperProcess.strategy?.rulesHash||require("./_investorSimulationStrategy").hash(require("./_investorSimulationStrategy").DEFAULT),reasoningEffort:"medium",settingsRevision:st.paperProcess.settingsRevision}}:{}), ...fields };
+    const handoff=st.handoff||{},requests=st.effective?.researchRequests||[];
+    const activity={stage:fields.status==='complete'?'complete':stage,phase:handoff.phase||null,currentSymbol:handoff.currentSymbol||null,
+      rankable:st.shortlistScreened||null,ranked:st.shortlist?Number(st.shortlistScreened||st.roster?.eligibleCount||0):0,shortlisted:st.shortlist?.length||0,
+      compared:st.review?.ok?(st.shortlist?.length||st.roster?.eligibleCount||0):0,
+      companies:requests.map(r=>({symbol:r.symbol,sourcesReady:!!handoff.liveSources?.[r.symbol],documentReady:!!handoff.documents?.[r.symbol],
+        sourceErrors:(handoff.liveSources?.[r.symbol]?.errors||[]).map(e=>({source:e.source,error:String(e.error).slice(0,160)}))}))};
+    const prior=st.activity;activity.changedAtMs=prior&&JSON.stringify({...prior,changedAtMs:0})===JSON.stringify({...activity,changedAtMs:0})?prior.changedAtMs:now();st.activity=activity;
+    const saved = { managerRunId, admin: deps.admin, tradingDate, accountId, status: fields.status || "running", stage, activity, costMinor: st.costMinor, ...(st.paperProcess?{decisionProcess:{version:st.paperProcess.version,companyRange:st.paperProcess.companyRange,strategyVersionId:st.paperProcess.strategy?.versionId||"baseline",rulesHash:st.paperProcess.strategy?.rulesHash||require("./_investorSimulationStrategy").hash(require("./_investorSimulationStrategy").DEFAULT),reasoningEffort:"medium",settingsRevision:st.paperProcess.settingsRevision}}:{}), ...fields };
     recordQueue = recordQueue.then(() => writeRun(saved)).catch(e => { console.error("manager run record", e.message); });
     return recordQueue;
   };
@@ -414,11 +421,12 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
     if(stage==='shortlist') {
       const {cards}=await rebuildContext(st,deps,accountId);
       const eligible=new Set(st.workset.rows.filter(r=>r.entryEligible&&!r.held&&!r.pending).map(r=>r.symbol));
+      st.shortlistScreened=eligible.size;await record({});
       const r=await deps.gateway.shortlistCandidates({cards:cards.cards.filter(c=>eligible.has(c.symbol)),count:50,contextManifestHash:st.contextManifestHash});
       if(r.pending)return yieldNow('luna_shortlist_pending');
       if(!r.ok)throw typed('PAPER_SHORTLIST_FAILED',r.error);
       if(r.selected.length!==Math.min(50,eligible.size)||new Set(r.selected).size!==r.selected.length||r.selected.some(s=>!eligible.has(s)))throw typed('PAPER_SHORTLIST_INVALID');
-      st.shortlist=r.selected;addCost(r.costMinor);if(r.requestId)st.requestIds.push(r.requestId);
+      st.shortlist=r.selected;st.shortlistScreened=eligible.size;addCost(r.costMinor);if(r.requestId)st.requestIds.push(r.requestId);
       await record({shortlist:{symbols:st.shortlist,count:st.shortlist.length,screened:eligible.size,model:r.model||null}});
       stage='review';continue;
     }
@@ -517,18 +525,19 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
           for(const request of requests){
             if(st.handoff.liveSources[request.symbol])continue;
             if(budget()<minStageMs)return yieldNow('current_sources_pending');
-            st.handoff.phase='sources';await saveHandoff();
+            st.handoff.phase='sources';st.handoff.currentSymbol=request.symbol;await saveHandoff();
             st.handoff.liveSources[request.symbol]=await (deps.preparePaperEvidence||require('./_investorPaperEvidence').prepare)(request.symbol,{admin:deps.admin||A,now});
             await saveHandoff();
           }
           st.handoff.liveCutoff={...st.cutoff,cutoffMs:now(),cutoff:new Date(now()).toISOString(),source:'current_finalist_sources'};
-          st.handoff.phase='documents';await saveHandoff();
+          st.handoff.phase='documents';st.handoff.currentSymbol=null;await saveHandoff();
         }
         const researchCutoff=st.handoff.liveCutoff||st.cutoff;
         const context=await rebuildContext(st,deps,accountId),packets=[],documents=[];
         const marks=await liquidityMarks(requests.map(r=>r.symbol),deps,{policy,cutoffMs:researchCutoff.cutoffMs});
         for(const request of requests) {
           if(deps.shouldYield&&await deps.shouldYield())return yieldNow('simulation_paused');
+          st.handoff.currentSymbol=request.symbol;
           const recovered=st.handoff.recoveredPackets?.[request.symbol];
           let packetId=recovered?.packetId||`${managerRunId}_research_${request.symbol}`;
           const packetCutoff=recovered?{...researchCutoff,cutoffMs:recovered.cutoffMs,cutoff:new Date(recovered.cutoffMs).toISOString()}:researchCutoff;
@@ -590,7 +599,7 @@ async function runMeetingProcess({ claim, deps: partial = {}, budget = () => 10 
           const claims=document.evidence.filter(e=>e.kind==='claim');
           packets.push({...packet,claims,claimIds:claims.map(c=>c.claimId)});
         }
-        st.handoff.phase='decision';await saveHandoff();
+        st.handoff.phase='decision';st.handoff.currentSymbol=null;await saveHandoff();
         let joint;
         if(st.handoff.resultRef)joint=(await C.read({runId:st.handoff.resultRef,admin:deps.admin})).joint;
         else {
