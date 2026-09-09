@@ -4209,13 +4209,13 @@ function buildMaterialSpecToCharmPrompt(opts) {
   return `Render IMAGE 1 as a photorealistic 14K gold charm. Trace its silhouette and markings exactly; never infer features from familiar shapes.
 
 MATERIAL MAP — classify by the input tone, never by shape:
-LIGHT GREY: solid, smooth polished gold.
-DARK GREY: shallow engraving in solid gold, never holes. Match each stroke's varying width and endpoints; use finer grooves and bevels for fine detail. Keep paired lines separate; light grey between or inside them stays polished.
+LIGHT GREY: polished gold at full surface height, including gaps between dark lines.
+DARK GREY: shallow engraving, never holes. Two lines mean two narrow grooves, not one filled band. Match widths and endpoints; keep bevels inside the dark marks. Filled dark shapes have solid gold floors.
 WHITE: through-cut to white ground. Preserve each connected region, including narrow branches; gold rims must not bridge or fill the opening.
 
 FINISH: thin flat yellow-gold sheet with crisp edges, ${hoop}. A warm red-copper undertone, lively lustre and luminous reflections: gold that feels alive, not pink or orange. Engraving: the same alloy, a touch redder, brightness around 0.93 of adjacent gold, never below 0.86; no black or grey.
 
-LIGHTING: upper-left light, plain white ground, one soft contact shadow beneath the centred charm. ONLY white-map cutouts receive inner-wall depth and shadows on the ground visible through them. Scale these neutral grey shadows to each opening, including tiny ones, keeping a bright open centre. Engravings retain a solid gold floor.
+LIGHTING: upper-left light, white ground, one soft contact shadow beneath the charm. Every white-map cutout, large or tiny, shows a visible gold inner wall of the sheet's thickness and a neutral grey shadow on the ground below. Scale the visible wall and shadow to the opening, keeping a bright open centre.
 
 IMAGE 2 guides material and lighting only, never geometry or artwork. Show only the charm, without captions or references.`;
 }
