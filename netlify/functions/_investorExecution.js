@@ -649,7 +649,7 @@ async function tickInvestmentPlan({admin=null,accountId,control={},barsBySymbol=
           }
           if(plan.policy.coreVersion){
             const book=rows(await tx.get(D.col(D.COL.positions).where('accountId','==',accountId).where('open','==',true)));
-            budget=sharedEntryBudget({budget,entryPx,stopLossBps,balance,positions:book,symbol,policy:plan.policy,liquidity:plan.liquidityBySymbol?.[symbol]});
+            budget=sharedEntryBudget({budget,entryPx,stopLossBps,balance,positions:book,symbol,policy:plan.policy,liquidity:plan.liquidityBySymbol?.[symbol],laneReserveMinor:liveControl.dip&&liveControl.dip.enabled===true?BigInt(Math.max(0,Math.round(Number(liveControl.dip.budgetUsd||0)*100))):0n});
           }
           const quantity=budget*10000n/(entryPx+feeMicros);
           // Whole shares; wait for sufficient observed liquidity, never invent volume.
@@ -723,7 +723,7 @@ async function tickInvestmentPlan({admin=null,accountId,control={},barsBySymbol=
 
 // Shared core: a single deterministic execution function above consumes either
 // a historical clock/namespace or current observed bars in the paper account.
-function sharedEntryBudget({budget,entryPx,stopLossBps,balance,positions,symbol,policy,liquidity}) {
+function sharedEntryBudget({budget,entryPx,stopLossBps,balance,positions,symbol,policy,liquidity,laneReserveMinor=0n}) {
   const rm=policy.riskMandate||POLICY.RISK_MANDATE;
   const adv=big(liquidity?.advMinor);if(adv<big(rm.liquidity.minAdvMinor)||big(policy.spreadBps)>big(rm.liquidity.maxSpreadBps))return 0n;
   const universe=require('./_investorUniverse'),sector=s=>[...(universe.tradeTier||[]),...(universe.researchTier||[])].find(r=>r.symbol===s)?.sector||'unknown';
@@ -739,7 +739,7 @@ function sharedEntryBudget({budget,entryPx,stopLossBps,balance,positions,symbol,
   const stressBps=BigInt(Math.max(stopLossBps*2,Number(rm.stress.gapHaltAdverseBps),Number(rm.stress.overnightGapBps)));
   const stressed=positions.reduce((n,p)=>n+value(p)*BigInt(Math.max(Number(p.stopLossBps||10000)*2,Number(rm.stress.gapHaltAdverseBps),Number(rm.stress.overnightGapBps)))/100000000n,0n);
   const stressRate=stressBps+big(rm.stress.stressCostPerShareMicros)*10000n/entryPx;
-  const limits=[budget,adv*big(rm.liquidity.maxOrderPctOfAdvBps)/10000n,adv*big(rm.liquidity.maxPositionPctOfAdvBps)/10000n,(nav*big(rm.losses.maxAggregateStressedLossBps)/10000n-stressed)*10000n/stressRate,nav*big(rm.losses.maxStressedLossPerPositionBps)/stressRate,weight('maxNetExposureBps')-invested,weight('maxOvernightExposureBps')-invested,weight('maxSingleNameWeightBps'),weight('maxGrossExposureBps')-invested,weight('maxSectorWeightBps')-sectorExposure,weight('maxCorrelatedClusterWeightBps')-clusterExposure,room*10000n/BigInt(stopLossBps),perLoss*10000n/BigInt(stopLossBps),nav-invested-weight('minSettledCashReserveBps')];
+  const limits=[budget,adv*big(rm.liquidity.maxOrderPctOfAdvBps)/10000n,adv*big(rm.liquidity.maxPositionPctOfAdvBps)/10000n,(nav*big(rm.losses.maxAggregateStressedLossBps)/10000n-stressed)*10000n/stressRate,nav*big(rm.losses.maxStressedLossPerPositionBps)/stressRate,weight('maxNetExposureBps')-invested,weight('maxOvernightExposureBps')-invested,weight('maxSingleNameWeightBps'),weight('maxGrossExposureBps')-invested,weight('maxSectorWeightBps')-sectorExposure,weight('maxCorrelatedClusterWeightBps')-clusterExposure,room*10000n/BigInt(stopLossBps),perLoss*10000n/BigInt(stopLossBps),nav-invested-weight('minSettledCashReserveBps')-big(laneReserveMinor)];
   const result=limits.reduce((a,b)=>a<b?a:b);return result>0n?result:0n;
 }
 function sharedLegs(id,p){const q=String(p.quantityUnits||'0');return ['STOP','TARGET','TIME_LIMIT'].map(role=>({legId:id+'_'+role,role,side:'sell',type:role==='STOP'?'STOP':role==='TARGET'?'LIMIT':'MARKET',status:p.open?(role==='TIME_LIMIT'?'ARMED':'WORKING'):p.exitRole===role?'FILLED':'CANCELLED',quantityUnits:q,remainingUnits:q,...(role==='STOP'?{stopMicros:p.lossBoundaryPriceMicros}:role==='TARGET'?{priceMicros:p.takeProfitPriceMicros}:{submitAt:'CHOSEN_SESSION_CLOSE'})}));}

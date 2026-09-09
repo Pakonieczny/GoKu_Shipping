@@ -54,7 +54,8 @@ exports.handler = async (event) => {
       await JOBS.complete(claim, summary); return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: summary.skipped }) };
     }
     const state = await DIP.loadState(D, accountId);
-    const symbols = await DIP.watchlist(D, accountId, settings);
+    const wl = await DIP.watchlist(D, accountId, settings, { control: ctrl, state });
+    const symbols = wl.symbols; state.excludedAiHeld = wl.excludedAiHeld;
     summary.symbols = symbols;
     const bars = await DIP.seedBars(symbols);
     for (const s of symbols) bars[s] = bars[s] || [];

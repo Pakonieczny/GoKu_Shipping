@@ -26,24 +26,31 @@ const MAX_BARS = 90;                     // one-minute bars kept per symbol
 
 const DEFAULTS = Object.freeze({
   enabled: false,
-  symbols: [],              // extra symbols to watch (uppercase)
-  watchHeld: true,          // also watch what the account already owns
+  symbols: [],              // your chosen symbols (uppercase), up to 50
+  watchShortlist: true,     // fill the list up to 50 from the AI's latest daily shortlist
+  budgetUsd: 50000,         // the lane's own capital; the AI lane never sizes into it
   allocationUsd: 5000,      // paper dollars per entry
-  maxOpen: 2,               // dip positions open at once
-  maxTradesPerDay: 6,
-  dropBps: 150,             // minimum fall, high to low, in basis points (150 = 1.5%)
-  dropWindowMin: 20,        // the fall must happen within this many minutes
+  maxOpen: 5,               // dip positions open at once
+  maxTradesPerDay: 20,
+  /* The fall. `dropBps` is the floor for a calm stock; the real requirement
+     rises with how hard the stock is falling relative to its own normal
+     minute-to-minute noise (see measureDrop). */
+  dropBps: 100,             // minimum fall, high to low, in basis points (100 = 1.0%)
+  dropWindowMin: 30,        // the fall must happen within this many minutes
+  zMinTenths: 20,           // the fall must be at least z = 2.0 noise units (sigma * sqrt(minutes))
+  speedFactorPct: 50,       // each extra unit of fall speed above normal adds 50% to the required fall and settle
+  /* The settle. Base bars for a normal fall; scaled up for fast falls. */
   settleBars: 3,            // completed one-minute bars with no new low
-  settleRangeBps: 40,       // those bars must close within this many bps above the low
-  retracePct: 50,           // sell when this share of the fall is recovered
+  stabilitySigmaTenths: 20, // settle closes must sit within 2.0 sigma above the low
+  retracePct: 80,           // sell when this share of the fall is recovered
   stopPct: 60,              // stop this share of the fall below the low
   maxHoldMin: 90,           // time exit
-  cooldownMin: 30,          // per-symbol pause after an exit
+  cooldownMin: 20,          // per-symbol pause after an exit
   closeBeforeCloseMin: 5,   // flatten this many minutes before the close
 });
 const BOUNDS = Object.freeze({
-  allocationUsd: [500, 95000], maxOpen: [1, 5], maxTradesPerDay: [1, 40], dropBps: [30, 1500], dropWindowMin: [3, 120],
-  settleBars: [1, 15], settleRangeBps: [5, 500], retracePct: [10, 150], stopPct: [10, 200], maxHoldMin: [5, 390], cooldownMin: [0, 390], closeBeforeCloseMin: [0, 60],
+  budgetUsd: [1000, 95000], allocationUsd: [500, 95000], maxOpen: [1, 10], maxTradesPerDay: [1, 80], dropBps: [30, 1500], dropWindowMin: [3, 120], zMinTenths: [5, 80], speedFactorPct: [0, 300],
+  settleBars: [1, 15], stabilitySigmaTenths: [5, 100], retracePct: [10, 150], stopPct: [10, 200], maxHoldMin: [5, 390], cooldownMin: [0, 390], closeBeforeCloseMin: [0, 60],
 });
 
 function sha(s) { return crypto.createHash("sha256").update(String(s)).digest("hex"); }
@@ -57,8 +64,8 @@ function normalizeSettings(raw) {
   const s = { ...DEFAULTS };
   const r = raw && typeof raw === "object" ? raw : {};
   s.enabled = r.enabled === true;
-  s.watchHeld = r.watchHeld !== false;
-  s.symbols = [...new Set((Array.isArray(r.symbols) ? r.symbols : String(r.symbols || "").split(/[\s,]+/)).map((x) => String(x || "").trim().toUpperCase()).filter((x) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(x)))].slice(0, 20);
+  s.watchShortlist = r.watchShortlist !== false;
+  s.symbols = [...new Set((Array.isArray(r.symbols) ? r.symbols : String(r.symbols || "").split(/[\s,]+/)).map((x) => String(x || "").trim().toUpperCase()).filter((x) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(x)))].slice(0, 50);
   for (const k of Object.keys(BOUNDS)) { const [lo, hi] = BOUNDS[k]; s[k] = Math.min(hi, Math.max(lo, num(r[k], DEFAULTS[k]))); }
   for (const k of Object.keys(BOUNDS)) s[k] = Math.round(s[k]);
   s.version = Number(r.version) || 0;
@@ -101,8 +108,26 @@ function applyPrint(bars, print) {
 }
 
 /* ── the detector: a sharp fall, then a settle, then an entry ──────────── */
+/** The stock's own noise: the standard deviation of one-minute log returns
+ *  over the last hour of completed bars, in percent per minute. This is the
+ *  yardstick every threshold is measured against, so a jumpy stock needs a
+ *  bigger fall than a quiet one. */
+function minuteSigmaPct(bars, beforeMs = Infinity) {
+  let done = bars.filter((b) => b.done && b.c > 0 && b.t <= beforeMs).slice(-61);
+  if (done.length < 6) done = bars.filter((b) => b.done && b.c > 0).slice(-61);
+  const r = []; for (let i = 1; i < done.length; i++) r.push(Math.log(done[i].c / done[i - 1].c));
+  if (r.length < 5) return 0.08;
+  const mean = r.reduce((a, b) => a + b, 0) / r.length;
+  const v = r.reduce((a, b) => a + (b - mean) * (b - mean), 0) / (r.length - 1);
+  return Math.max(0.02, Math.sqrt(v) * 100);
+}
 /** Look back over the window for the highest high and the lowest low after
- *  it. Returns null when there is no fall big or fast enough. */
+ *  it, then judge the fall against the stock's noise:
+ *    z        = fall% / (sigma% * sqrt(minutes))   how unusual the fall is
+ *    speed    = (fall% / minutes) / sigma%          how hard it fell, in noise units per minute
+ *    required = dropBps * (1 + speedFactor * max(0, speed - 1))  a faster fall must go further before it counts
+ *  Returns null when there is no fall, or the fall is too small for its speed
+ *  or too ordinary for the stock. */
 function measureDrop(bars, settings, nowMs) {
   const windowStart = nowMs - settings.dropWindowMin * 60000;
   const recent = bars.filter((b) => b.t >= windowStart);
@@ -111,22 +136,37 @@ function measureDrop(bars, settings, nowMs) {
   let loIdx = -1; for (let i = hiIdx; i < recent.length; i++) if (loIdx < 0 || recent[i].l < recent[loIdx].l) loIdx = i;
   if (loIdx <= hiIdx) return null;
   const high = recent[hiIdx].h, low = recent[loIdx].l, dropPct = (high - low) / high * 100;
-  if (!(dropPct >= settings.dropBps / 100)) return null;
   const minutes = Math.max(1, (recent[loIdx].t - recent[hiIdx].t) / 60000);
-  return { high, low, highAt: recent[hiIdx].t, lowAt: recent[loIdx].t, dropPct, minutes, speedPctPerMin: dropPct / minutes, barsSinceLow: recent.length - 1 - loIdx };
+  const sigmaPct = minuteSigmaPct(bars, recent[hiIdx].t);   // the stock's noise before the fall began
+  const z = dropPct / (sigmaPct * Math.sqrt(minutes));
+  const speed = (dropPct / minutes) / sigmaPct;
+  const speedFactor = settings.speedFactorPct / 100;
+  const requiredPct = Math.min(settings.dropBps / 100 * 3, settings.dropBps / 100 * (1 + speedFactor * Math.max(0, speed - 1)));
+  const settleBarsNeeded = Math.min(settings.settleBars * 4, Math.max(settings.settleBars, Math.round(settings.settleBars * (1 + speedFactor * Math.max(0, speed - 1)))));
+  const out = { high, low, highAt: recent[hiIdx].t, lowAt: recent[loIdx].t, dropPct, minutes, speedPctPerMin: dropPct / minutes, sigmaPct, z, speed, requiredPct, settleBarsNeeded, barsSinceLow: recent.length - 1 - loIdx };
+  if (!(dropPct >= requiredPct)) return { ...out, qualifies: false, why: `fell ${dropPct.toFixed(2)}%, needs ${requiredPct.toFixed(2)}% at this speed` };
+  if (!(z >= settings.zMinTenths / 10)) return { ...out, qualifies: false, why: `fall is ordinary for this stock (z ${z.toFixed(1)} < ${(settings.zMinTenths / 10).toFixed(1)})` };
+  return { ...out, qualifies: true };
 }
-/** The settle: the required number of completed bars after the low, none of
- *  them making a new low, all closing inside a tight band above the low, and
- *  the latest print a touch above the low. */
+/** The settle, scaled to the fall: the required number of completed bars
+ *  after the low (more for a fast fall), none making a new low, closes held
+ *  inside `stabilitySigma` noise units above the low, not drifting down, and
+ *  the latest print above the low. Returns a stability score 0..1 (1 = the
+ *  closes barely moved). */
 function settled(bars, drop, settings, lastPrice) {
+  const need = drop.settleBarsNeeded || settings.settleBars;
   const after = bars.filter((b) => b.t > drop.lowAt && b.done);
-  if (after.length < settings.settleBars) return { ok: false, why: `settling ${after.length}/${settings.settleBars}` };
-  const tail = after.slice(-settings.settleBars);
-  const band = drop.low * (1 + settings.settleRangeBps / 10000);
-  if (tail.some((b) => b.l < drop.low)) return { ok: false, why: "new low" };
-  if (tail.some((b) => b.c > band * (1 + settings.settleRangeBps / 10000))) return { ok: false, why: "already ran away" };
-  if (!(lastPrice > drop.low)) return { ok: false, why: "still at the low" };
-  return { ok: true, why: `${tail.length} steady bars` };
+  if (after.length < need) return { ok: false, why: `settling ${after.length}/${need} bars` };
+  const tail = after.slice(-need);
+  const bandPct = (settings.stabilitySigmaTenths / 10) * drop.sigmaPct;
+  const band = drop.low * (1 + bandPct / 100);
+  if (tail.some((b) => b.l < drop.low)) return { ok: false, why: "made a new low" };
+  if (tail.some((b) => b.c > band * (1 + bandPct / 100))) return { ok: false, why: "already ran away from the low" };
+  const closes = tail.map((b) => b.c), range = Math.max(...closes) - Math.min(...closes);
+  const stability = Math.max(0, 1 - range / Math.max(1e-9, drop.low * bandPct / 100));
+  if (closes[closes.length - 1] < closes[0]) return { ok: false, why: "still drifting down", stability };
+  if (!(lastPrice > drop.low)) return { ok: false, why: "still at the low", stability };
+  return { ok: true, why: `${tail.length} steady bars, stability ${Math.round(stability * 100)}%`, stability };
 }
 
 /* ── persistence ───────────────────────────────────────────────────────── */
@@ -150,9 +190,9 @@ function legsFor(setId, symbol, qty, stopMicros, targetMicros, deadlineMs) {
     { legId: `${setId}_TIME_LIMIT`, orderSetId: setId, symbol, role: "TIME_LIMIT", side: "sell", type: "MARKET", status: "ARMED", quantityUnits: q, remainingUnits: q, submitAtMs: deadlineMs },
   ];
 }
-async function enter({ D, accountId, symbol, price, drop, settings, nowMs, reason }) {
+async function enter({ D, accountId, symbol, price, drop, settings, nowMs, reason, laneAvailableUsd: lane = Infinity }) {
   const cash = await cashCents(D, accountId);
-  const budgetCents = Math.min(Math.round(settings.allocationUsd * 100), cash - 100);
+  const budgetCents = Math.min(Math.round(settings.allocationUsd * 100), Math.round(lane * 100), cash - 100);
   const fillMicros = micros(price) + micros(price) * SLIPPAGE_BPS / 10000n;
   const perShareCents = Number(fillMicros / 10000n) + 1;
   const qty = Math.floor(budgetCents / perShareCents);
@@ -189,10 +229,27 @@ async function exit({ D, accountId, open, price, role, nowMs, why }) {
 }
 
 /* ── one pass over every watched symbol ────────────────────────────────── */
-async function watchlist(D, accountId, settings) {
+/** Up to 50 names: your list first, then the AI's latest daily shortlist.
+ *  Companies the AI lane currently holds are left out so the two lanes never
+ *  trade the same stock; the dip lane's own open positions are always kept. */
+async function watchlist(D, accountId, settings, { control = null, state = null } = {}) {
   const set = new Set(settings.symbols);
-  if (settings.watchHeld) { const snap = await D.col(D.COL.positions).where("accountId", "==", accountId).where("open", "==", true).get(); snap.docs.forEach((d) => { const s = d.data().symbol; if (s) set.add(String(s).toUpperCase()); }); }
-  return [...set].slice(0, 25);
+  if (settings.watchShortlist && set.size < 50) {
+    let short = control && control.lastManagerRun && control.lastManagerRun.shortlist && control.lastManagerRun.shortlist.symbols;
+    if (!Array.isArray(short) && control && control.lastManagerRunId) { try { const run = await D.col(D.COL.managerRuns).doc(String(control.lastManagerRunId)).get(); short = run.exists && run.data().shortlist ? run.data().shortlist.symbols : null; } catch (e) { short = null; } }
+    for (const s of (Array.isArray(short) ? short : [])) { if (set.size >= 50) break; const u = String(s || "").toUpperCase(); if (/^[A-Z][A-Z0-9.-]{0,9}$/.test(u)) set.add(u); }
+  }
+  const snap = await D.col(D.COL.positions).where("accountId", "==", accountId).where("open", "==", true).get();
+  const aiHeld = new Set(); snap.docs.forEach((d) => { const p = d.data(); if (p.symbol && p.engine !== "dip") aiHeld.add(String(p.symbol).toUpperCase()); });
+  for (const s of aiHeld) set.delete(s);
+  for (const s of Object.keys((state && state.open) || {})) set.add(s);
+  return { symbols: [...set].slice(0, 50), excludedAiHeld: [...aiHeld] };
+}
+/** Lane capital: the budget plus what the lane has made or lost, minus what
+ *  it holds right now. */
+function laneAvailableUsd(settings, state) {
+  const openUsd = Object.values((state && state.open) || {}).reduce((n, o) => n + (Number(o.entry) || 0) * (Number(o.qty) || 0), 0);
+  return settings.budgetUsd + (Number(state && state.realizedUsd) || 0) - openUsd;
 }
 function newDay(state, date) { if (state.day !== date) { state.day = date; state.tradesToday = 0; for (const s of Object.values(state.symbols || {})) { s.cooldownUntilMs = null; } } }
 
@@ -219,7 +276,7 @@ async function evaluate({ D, accountId, settings, state, bars, prints, session, 
       else if (nowMs >= flattenFromMs) { role = "TIME_LIMIT"; why = "flattened before the close"; }
       if (role) {
         const r = await exit({ D, accountId, open, price: print.p, role, nowMs, why });
-        if (r.exited) { delete state.open[symbol]; sym.status = "cooldown"; sym.cooldownUntilMs = nowMs + settings.cooldownMin * 60000; sym.lastExit = { atMs: nowMs, role, pnlUsd: r.pnlUsd, exit: r.exit };
+        if (r.exited) { delete state.open[symbol]; state.realizedUsd = Math.round(((Number(state.realizedUsd) || 0) + r.pnlUsd) * 100) / 100; sym.status = "cooldown"; sym.cooldownUntilMs = nowMs + settings.cooldownMin * 60000; sym.lastExit = { atMs: nowMs, role, pnlUsd: r.pnlUsd, exit: r.exit };
           const ev = { kind: "EXIT", symbol, atMs: nowMs, role, price: r.exit, quantity: open.qty, entry: open.entry, pnlUsd: r.pnlUsd, detail: why, orderSetId: open.orderSetId, fillId: r.fillId, holdMin: Math.round((nowMs - open.enteredAtMs) / 60000) };
           events.push(ev); await logSignal(D, accountId, ev); }
         else { sym.note = r.why; }
@@ -228,10 +285,11 @@ async function evaluate({ D, accountId, settings, state, bars, prints, session, 
     }
     if (sym.cooldownUntilMs && nowMs < sym.cooldownUntilMs) { sym.status = "cooldown"; sym.note = `cooling down ${Math.ceil((sym.cooldownUntilMs - nowMs) / 60000)} min`; sym.drop = null; continue; }
     const drop = measureDrop(bars[symbol], settings, nowMs);
-    sym.drop = drop ? { high: drop.high, low: drop.low, dropPct: Math.round(drop.dropPct * 100) / 100, minutes: Math.round(drop.minutes), speed: Math.round(drop.speedPctPerMin * 100) / 100, lowAt: drop.lowAt } : null;
-    if (!drop) { sym.status = "watching"; sym.note = "no fall of " + (settings.dropBps / 100).toFixed(2) + "% or more in the last " + settings.dropWindowMin + " min"; continue; }
+    sym.drop = drop ? { high: drop.high, low: drop.low, dropPct: Math.round(drop.dropPct * 100) / 100, minutes: Math.round(drop.minutes), speed: Math.round(drop.speed * 100) / 100, z: Math.round(drop.z * 10) / 10, sigmaPct: Math.round(drop.sigmaPct * 1000) / 1000, requiredPct: Math.round(drop.requiredPct * 100) / 100, settleBarsNeeded: drop.settleBarsNeeded, qualifies: drop.qualifies, lowAt: drop.lowAt } : null;
+    if (!drop) { sym.status = "watching"; sym.note = "no fall in the last " + settings.dropWindowMin + " min"; continue; }
+    if (!drop.qualifies) { sym.status = "watching"; sym.note = drop.why; continue; }
     const key = `${symbol}_${drop.lowAt}`;
-    if (sym.seenDropKey !== key) { sym.seenDropKey = key; const ev = { kind: "DROP", symbol, atMs: nowMs, price: print.p, high: drop.high, low: drop.low, dropPct: Math.round(drop.dropPct * 100) / 100, minutes: Math.round(drop.minutes), detail: `fell ${drop.dropPct.toFixed(2)}% in ${Math.round(drop.minutes)} min` }; events.push(ev); await logSignal(D, accountId, ev); }
+    if (sym.seenDropKey !== key) { sym.seenDropKey = key; const ev = { kind: "DROP", symbol, atMs: nowMs, price: print.p, high: drop.high, low: drop.low, dropPct: Math.round(drop.dropPct * 100) / 100, minutes: Math.round(drop.minutes), z: Math.round(drop.z * 10) / 10, speed: Math.round(drop.speed * 100) / 100, sigmaPct: Math.round(drop.sigmaPct * 1000) / 1000, settleBarsNeeded: drop.settleBarsNeeded, detail: `fell ${drop.dropPct.toFixed(2)}% in ${Math.round(drop.minutes)} min (z ${drop.z.toFixed(1)}, speed ${drop.speed.toFixed(1)}× normal) · needs ${drop.settleBarsNeeded} steady bars` }; events.push(ev); await logSignal(D, accountId, ev); }
     const st = settled(bars[symbol], drop, settings, print.p);
     if (!st.ok) { sym.status = "settling"; sym.note = st.why; continue; }
     const blockers = [];
@@ -239,13 +297,15 @@ async function evaluate({ D, accountId, settings, state, bars, prints, session, 
     if (nowMs >= flattenFromMs - settings.maxHoldMin * 60000 / 3) blockers.push("too close to the end of the session");
     if (Object.keys(state.open).length >= settings.maxOpen) blockers.push(`${settings.maxOpen} dip position(s) already open`);
     if (state.tradesToday >= settings.maxTradesPerDay) blockers.push("daily trade limit reached");
+    const laneUsd = laneAvailableUsd(settings, state);
+    if (laneUsd < 500) blockers.push(`lane budget used up (${Math.round(laneUsd)} left of ${settings.budgetUsd})`);
     if (sym.enteredDropKey === key) blockers.push("already traded this fall");
     if (blockers.length) { sym.status = "armed"; sym.note = "ready but " + blockers.join("; "); continue; }
-    const r = await enter({ D, accountId, symbol, price: print.p, drop, settings, nowMs, reason: `Fell ${drop.dropPct.toFixed(2)}% in ${Math.round(drop.minutes)} min, then held above ${drop.low.toFixed(2)} for ${settings.settleBars} bars; buying the settle with a target ${settings.retracePct}% back up the fall and a stop ${settings.stopPct}% below the low.` });
+    const r = await enter({ D, accountId, symbol, price: print.p, drop, settings, nowMs, laneAvailableUsd: laneUsd, reason: `Fell ${drop.dropPct.toFixed(2)}% in ${Math.round(drop.minutes)} min (${drop.speed.toFixed(1)}× its normal pace, z ${drop.z.toFixed(1)}), then held above ${drop.low.toFixed(2)} for ${drop.settleBarsNeeded} bars (${st.why}); buying the settle with a target ${settings.retracePct}% back up the fall and a stop ${settings.stopPct}% of the fall below the low.` });
     sym.enteredDropKey = key;
     if (!r.entered) { sym.status = "armed"; sym.note = r.why; const ev = { kind: "SKIP", symbol, atMs: nowMs, price: print.p, detail: r.why }; events.push(ev); await logSignal(D, accountId, ev); continue; }
     state.tradesToday += 1;
-    state.open[symbol] = { orderSetId: r.orderSetId, qty: r.qty, entry: r.entry, stop: r.stop, target: r.target, deadlineMs: r.deadlineMs, enteredAtMs: nowMs, drop: sym.drop, feeUsd: Math.round(r.qty * 0.005 * 100) / 100 };
+    state.open[symbol] = { orderSetId: r.orderSetId, qty: r.qty, entry: r.entry, stop: r.stop, target: r.target, deadlineMs: r.deadlineMs, enteredAtMs: nowMs, drop: sym.drop, stability: st.stability == null ? null : Math.round(st.stability * 100) / 100, feeUsd: Math.round(r.qty * 0.005 * 100) / 100 };
     sym.status = "holding"; sym.note = `bought ${r.qty} @ ${r.entry.toFixed(2)}`;
     const ev = { kind: "ENTER", symbol, atMs: nowMs, price: r.entry, quantity: r.qty, stop: r.stop, target: r.target, dropPct: sym.drop.dropPct, minutes: sym.drop.minutes, detail: r.reason, orderSetId: r.orderSetId, fillId: r.fillId };
     events.push(ev); await logSignal(D, accountId, ev);
@@ -263,8 +323,8 @@ async function status(D, accountId, settingsRaw) {
   const exits = signals.filter((s) => s.kind === "EXIT");
   const todayExits = exits.filter((s) => new Date(Number(s.atMs)).toISOString().slice(0, 10) === today);
   const sum = (xs) => Math.round(xs.reduce((n, s) => n + (Number(s.pnlUsd) || 0), 0) * 100) / 100;
-  return { settings, state: { day: state.day || null, tradesToday: Number(state.tradesToday) || 0, updatedAtMs: state.updatedAtMs || null, loopAliveAtMs: state.loopAliveAtMs || null, loopNote: state.loopNote || null, symbols: state.symbols || {}, open: state.open || {} },
+  return { settings, state: { day: state.day || null, tradesToday: Number(state.tradesToday) || 0, updatedAtMs: state.updatedAtMs || null, loopAliveAtMs: state.loopAliveAtMs || null, loopNote: state.loopNote || null, symbols: state.symbols || {}, open: state.open || {}, realizedUsd: Number(state.realizedUsd) || 0, laneAvailableUsd: Math.round(laneAvailableUsd(settings, state)), excludedAiHeld: state.excludedAiHeld || [] },
     signals, results: { todayPnlUsd: sum(todayExits), todayTrades: todayExits.length, allPnlUsd: sum(exits), allTrades: exits.length, wins: exits.filter((s) => Number(s.pnlUsd) > 0).length } };
 }
 
-module.exports = { VERSION, DEFAULTS, BOUNDS, normalizeSettings, latestTrades, seedBars, applyPrint, measureDrop, settled, loadState, saveState, watchlist, evaluate, status, enter, exit };
+module.exports = { VERSION, DEFAULTS, BOUNDS, normalizeSettings, latestTrades, seedBars, applyPrint, minuteSigmaPct, measureDrop, settled, loadState, saveState, watchlist, laneAvailableUsd, evaluate, status, enter, exit };

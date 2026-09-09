@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-cZin3tcvbz0TnN1qSf2gvkzpRhhVj3ESVCfjlBSIOvI='; style-src 'self' 'sha256-IK9yc8xXTN0i5lEZev3wNWeeMr+ivb1stDeSr4ZCUzc='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-N1f4FxdEPfpZLwbjCrAcyIP6oIbpEXDCwO66NT4TU3A='; style-src 'self' 'sha256-IK9yc8xXTN0i5lEZev3wNWeeMr+ivb1stDeSr4ZCUzc='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -2861,8 +2861,9 @@ window.addEventListener("resize", function () { clearTimeout(resizeTimer); resiz
 /* ── 17c. Dip-reversal lane (paper experiment) ──────────────────────────── */
 var DIPUI = { at: 0, loading: false };
 var DIP_FIELDS = [
-  ["allocationUsd", "Dollars per trade", "$", 1], ["maxOpen", "Positions open at once", "", 1], ["maxTradesPerDay", "Trades per day, max", "", 1],
-  ["dropBps", "Fall needed", "bps (100 = 1%)", 1], ["dropWindowMin", "…within", "minutes", 1], ["settleBars", "Steady bars before buying", "1-min bars", 1], ["settleRangeBps", "Steady band above the low", "bps", 1],
+  ["budgetUsd", "Lane budget", "$ · the AI lane can't use this", 1], ["allocationUsd", "Dollars per trade", "$", 1], ["maxOpen", "Positions open at once", "", 1], ["maxTradesPerDay", "Trades per day, max", "", 1],
+  ["dropBps", "Fall needed for a calm stock", "bps (100 = 1%)", 1], ["dropWindowMin", "…within", "minutes", 1], ["zMinTenths", "Fall must be this unusual", "tenths of a noise unit (20 = 2.0σ)", 1], ["speedFactorPct", "Faster fall → deeper fall & longer settle", "% per extra unit of speed", 1],
+  ["settleBars", "Steady bars before buying (normal fall)", "1-min bars", 1], ["stabilitySigmaTenths", "Steady band above the low", "tenths of σ (20 = 2.0σ)", 1],
   ["retracePct", "Sell target", "% of the fall recovered", 1], ["stopPct", "Stop", "% of the fall below the low", 1], ["maxHoldMin", "Give up after", "minutes", 1], ["cooldownMin", "Pause after a trade", "minutes", 1], ["closeBeforeCloseMin", "Flatten before the close", "minutes", 1]];
 async function loadDip(force) {
   if (DIPUI.loading) return; if (!force && Date.now() - DIPUI.at < 3000) return;
@@ -2884,17 +2885,17 @@ function renderDipWatch() {
     el("div", { class: "tile" }, el("div", { class: "k", text: "All time" }), el("div", { class: "v pnl " + toneOf(res.allPnlUsd), text: liveNum(res.allPnlUsd) ? signedUsd(res.allPnlUsd) : "—" }), el("div", { class: "u tiny muted", text: (res.allTrades || 0) + " closed · " + (res.wins || 0) + " winners" })),
     el("div", { class: "tile" }, el("div", { class: "k", text: "Holding now" }), el("div", { class: "v", text: String(Object.keys(open).length) }), el("div", { class: "u tiny muted", text: "of " + (st.maxOpen || 0) + " allowed" })),
     el("div", { class: "tile" }, el("div", { class: "k", text: "Watching" }), el("div", { class: "v", text: String(syms.length) }), el("div", { class: "u tiny muted", text: "fall ≥ " + ((st.dropBps || 0) / 100).toFixed(1) + "% in " + (st.dropWindowMin || 0) + " min" })),
-    el("div", { class: "tile" }, el("div", { class: "k", text: "Per trade" }), el("div", { class: "v", text: st.allocationUsd ? usd(st.allocationUsd, 0) : "—" }), el("div", { class: "u tiny muted", text: "target " + (st.retracePct || 0) + "% of the fall · stop " + (st.stopPct || 0) + "% below" })));
+    el("div", { class: "tile" }, el("div", { class: "k", text: "Lane budget" }), el("div", { class: "v", text: liveNum(state.laneAvailableUsd) ? usd(state.laneAvailableUsd, 0) : (st.budgetUsd ? usd(st.budgetUsd, 0) : "—") }), el("div", { class: "u tiny muted", text: "free of " + usd(st.budgetUsd || 0, 0) + " · " + usd(st.allocationUsd || 0, 0) + " per trade · target " + (st.retracePct || 0) + "% of the fall" })));
   var rows = syms.map(function (sym) {
     var x = state.symbols[sym] || {}, o = open[sym], lp = livePriceOf(sym), price = lp ? lp.price : x.last && x.last.p, drop = x.drop;
     var stateTxt = { watching: "Watching", settling: "Fell — waiting for it to settle", armed: "Ready", holding: "Holding", cooldown: "Cooling down" }[x.status] || plainLabel(x.status || "watching");
     var tone = x.status === "holding" ? "ok" : x.status === "settling" || x.status === "armed" ? "warn" : x.status === "cooldown" ? "info" : "";
-    var fallTxt = drop ? "−" + Number(drop.dropPct).toFixed(2) + "% in " + drop.minutes + " min · low " + usd(drop.low) : "no qualifying fall";
+    var fallTxt = drop ? "−" + Number(drop.dropPct).toFixed(2) + "% in " + drop.minutes + " min · low " + usd(drop.low) + (drop.z != null ? " · z " + drop.z + " · " + drop.speed + "× normal pace · needs " + Number(drop.requiredPct).toFixed(2) + "% and " + drop.settleBarsNeeded + " steady bars" : "") : "no fall in the window";
     var posTxt = o ? "bought " + o.qty + " @ " + usd(o.entry) + " · target " + usd(o.target) + " · stop " + usd(o.stop) + (liveNum(price) ? " · now " + signedUsd((price - o.entry) * o.qty) : "") : (x.note || "");
     return el("div", { class: "diprow" }, el("div", { class: "diprow__sym" }, symButton(sym), el("span", { class: "n", text: liveNum(price) ? usd(price) : "—" })), el("div", { class: "diprow__mid" }, badge(stateTxt, tone, x.status === "holding" ? "check" : x.status === "watching" ? "dot" : "warn"), el("div", { class: "tiny muted", text: fallTxt }), el("div", { class: "small", text: posTxt })));
   });
   var sigs = (d.signals || []).slice(0, 12).map(function (sg) { return el("div", { class: "tl__i" }, el("span", { class: "tl__dot " + (sg.kind === "ENTER" ? "ok" : sg.kind === "EXIT" ? (Number(sg.pnlUsd) >= 0 ? "ok" : "bad") : sg.kind === "SKIP" ? "warn" : "") }), el("div", { class: "tl__b" }, el("div", { class: "inline" }, dipKindBadge(sg.kind), symButton(sg.symbol, "link"), sg.kind === "EXIT" ? el("b", { class: "pnl " + toneOf(Number(sg.pnlUsd)), text: signedUsd(Number(sg.pnlUsd)) + " · " + plainLabel(sg.role || "") + (sg.holdMin != null ? " · held " + sg.holdMin + " min" : "") }) : sg.kind === "ENTER" ? el("b", { text: sg.quantity + " sh @ " + usd(sg.price) + " · target " + usd(sg.target) + " · stop " + usd(sg.stop) }) : null), el("div", { class: "tiny muted", text: sg.detail || "" })), el("span", { class: "tl__t", text: fmtTime(sg.at) })); });
-  setChildren(host, [head, tiles, el("div", { class: "explainer" }, el("b", { text: "How it works. " }), "Every 5 seconds it checks the live IEX print for each watched company. A fall of at least " + ((st.dropBps || 0) / 100).toFixed(1) + "% inside " + (st.dropWindowMin || 0) + " minutes, followed by " + (st.settleBars || 0) + " steady one-minute bars with no new low, triggers a paper buy. It sells when " + (st.retracePct || 0) + "% of the fall is recovered, if the price breaks " + (st.stopPct || 0) + "% of the fall below the low, or after " + (st.maxHoldMin || 0) + " minutes. Fills are the IEX print plus a small slippage allowance; IEX is a thin slice of the market, so treat results as an estimate."),
+  setChildren(host, [head, tiles, el("div", { class: "explainer" }, el("b", { text: "How it works. " }), "Every 5 seconds it checks the live IEX print for up to 50 companies. A fall of at least " + ((st.dropBps || 0) / 100).toFixed(1) + "% inside " + (st.dropWindowMin || 0) + " minutes counts only if it is unusual for that stock (at least " + ((st.zMinTenths || 0) / 10).toFixed(1) + " noise units); a faster fall must go further and settle longer. After " + (st.settleBars || 0) + "+ steady one-minute bars with no new low it buys. It sells when " + (st.retracePct || 0) + "% of the fall is recovered, if the price breaks " + (st.stopPct || 0) + "% of the fall below the low, or after " + (st.maxHoldMin || 0) + " minutes. The lane trades only from its own budget and never a company the AI lane holds. Fills are the IEX print plus a small slippage allowance; IEX is a thin slice of the market, so treat results as an estimate."),
     rows.length ? el("div", { class: "diplist" }, rows) : el("div", { class: "muted small", text: st.enabled ? "Nothing on the watch list yet. Add symbols under Advanced workspace, or hold a position — held companies are watched automatically." : "" }),
     el("div", { class: "card__h" }, el("h3", { text: "What it did" }), el("span", { class: "sub", text: (d.signals || []).length ? "latest first" : "" })), sigs.length ? el("div", { class: "tl" }, sigs) : el("div", { class: "muted small", text: "No falls, buys or sells recorded yet." }),
     state.loopNote ? el("div", { class: "tiny muted", text: "Loop: " + state.loopNote + (state.updatedAtMs ? " · updated " + ageText(new Date(Number(state.updatedAtMs)).toISOString()) : "") }) : null]);
@@ -2906,14 +2907,14 @@ function renderDipSettings() {
   host.dataset.version = String(st.version);
   var form = el("form", { class: "stack", id: "dipForm" });
   var onoff = el("label", { class: "inline" }, el("input", { type: "checkbox", id: "dipEnabled", checked: !!st.enabled }), el("b", { text: " Watch for dips and trade them (paper only)" }));
-  var held = el("label", { class: "inline" }, el("input", { type: "checkbox", id: "dipWatchHeld", checked: st.watchHeld !== false }), " Also watch every company the account holds");
-  var symbols = el("label", { class: "field" }, "Extra companies to watch (symbols, comma separated)", el("input", { type: "text", id: "dipSymbols", value: (st.symbols || []).join(", "), placeholder: "NVDA, AMD, TSLA" }));
+  var held = el("label", { class: "inline" }, el("input", { type: "checkbox", id: "dipWatchShortlist", checked: st.watchShortlist !== false }), " Fill the list up to 50 from the AI's latest daily shortlist");
+  var symbols = el("label", { class: "field" }, "Your chosen companies (symbols, comma separated, up to 50)", el("input", { type: "text", id: "dipSymbols", value: (st.symbols || []).join(", "), placeholder: "NVDA, AMD, TSLA …" }));
   var grid = el("div", { class: "ctlgrid dipgrid" }, DIP_FIELDS.map(function (f) { return el("label", { class: "field" }, f[1] + (f[2] ? " (" + f[2] + ")" : ""), el("input", { type: "number", step: "1", "data-dip": f[0], value: String(st[f[0]] != null ? st[f[0]] : "") })); }));
   var save = el("button", { type: "submit", class: "btn", text: "Save dip settings" });
   form.appendChild(onoff); form.appendChild(held); form.appendChild(symbols); form.appendChild(grid); form.appendChild(el("div", { class: "actions" }, save));
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
-    var params = { enabled: $("dipEnabled").checked, watchHeld: $("dipWatchHeld").checked, symbols: $("dipSymbols").value.split(/[\s,]+/).map(function (x) { return x.trim().toUpperCase(); }).filter(function (x) { return /^[A-Z][A-Z0-9.-]{0,9}$/.test(x); }).slice(0, 20) };
+    var params = { enabled: $("dipEnabled").checked, watchShortlist: $("dipWatchShortlist").checked, symbols: $("dipSymbols").value.split(/[\s,]+/).map(function (x) { return x.trim().toUpperCase(); }).filter(function (x) { return /^[A-Z][A-Z0-9.-]{0,9}$/.test(x); }).slice(0, 50) };
     var bad = null;
     grid.querySelectorAll("input[data-dip]").forEach(function (i) { var v = Number(i.value); if (!Number.isFinite(v)) bad = i.dataset.dip; params[i.dataset.dip] = Math.round(v); });
     if (bad) { toast("Enter a whole number for " + bad, { icon: "warn" }); return; }
@@ -2921,7 +2922,7 @@ function renderDipSettings() {
     try { var r = await runMutation({ action: "dipSettingsSave", params: params, silent: true, title: "Save dip settings" }); if (r) { toast(params.enabled ? "Dip lane on. The loop starts within a minute during market hours." : "Dip lane off.", { icon: "check" }); host.dataset.version = ""; await loadDip(true); } }
     finally { save.disabled = false; }
   });
-  setChildren(host, [cardHead("Dip reversal (paper experiment)", "learning", st.updatedAtMs ? "settings v" + st.version + " · " + fmtTime(new Date(Number(st.updatedAtMs)).toISOString()) : "defaults"), el("div", { class: "explainer" }, el("b", { text: "What this is. " }), "A rule-based lane that buys a sharp intraday fall once it stops falling and sells on a partial recovery, a break of the low, or a time limit. It runs on the paper account only, never touches the AI's plans, and logs every fall it sees so you can judge whether the pattern pays."), form]);
+  setChildren(host, [cardHead("Dip reversal (paper experiment)", "learning", st.updatedAtMs ? "settings v" + st.version + " · " + fmtTime(new Date(Number(st.updatedAtMs)).toISOString()) : "defaults"), el("div", { class: "explainer" }, el("b", { text: "What this is. " }), "A rule-based lane with its own budget that buys a sharp intraday fall once it stops falling and sells on a partial recovery, a break of the low, or a time limit. Every threshold is measured against the stock's own minute-to-minute noise (σ): a fall must be at least the base size and at least the chosen number of noise units, a faster fall must go further and settle longer before it counts, and the settle must hold inside a σ-sized band above the low without drifting down. Paper only; it never trades a company the AI lane holds, and it logs every fall it sees so you can judge whether the pattern pays."), form]);
 }
 
 /* ── 18. Portfolio view ─────────────────────────────────────────────────── */
