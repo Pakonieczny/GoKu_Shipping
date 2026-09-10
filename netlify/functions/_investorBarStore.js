@@ -16,7 +16,9 @@ const COL = "InvestorAI_MinuteBars";
 const STATUS_COL = "InvestorAI_BarRepository";
 const STATUS_DOC = "status";
 const MONTHS_BACK = 60;               // five years
-const REQUESTS_PER_MINUTE = 160;      // Alpaca allows 200; leave headroom
+const RECENT_MONTHS = 5;              // stage one: about the last 100 trading days, built first
+const REQUESTS_PER_MINUTE = 190;      // Alpaca Basic allows 200 per key; workers share it
+const CONCURRENCY = 6;                // parallel fetches inside one worker
 const VERSION = "bars.v1";
 
 function pad(n) { return String(n).padStart(2, "0"); }
@@ -56,13 +58,15 @@ function unpack(buf, symbolMonth) {
 }
 
 /* ── provider fetch: one company, one month ── */
-let lastRequestAt = 0, requestsThisMinute = 0, minuteStart = 0;
+/* token bucket shared by every concurrent fetch in this process */
+const bucket = { tokens: REQUESTS_PER_MINUTE, refilledAt: Date.now() };
 async function pace() {
-  const now = Date.now();
-  if (now - minuteStart > 60000) { minuteStart = now; requestsThisMinute = 0; }
-  requestsThisMinute += 1;
-  if (requestsThisMinute > REQUESTS_PER_MINUTE) { await new Promise((r) => setTimeout(r, 60000 - (now - minuteStart) + 50)); minuteStart = Date.now(); requestsThisMinute = 1; }
-  lastRequestAt = Date.now();
+  for (;;) {
+    const now = Date.now(), elapsed = now - bucket.refilledAt;
+    if (elapsed > 0) { bucket.tokens = Math.min(REQUESTS_PER_MINUTE, bucket.tokens + elapsed * REQUESTS_PER_MINUTE / 60000); bucket.refilledAt = now; }
+    if (bucket.tokens >= 1) { bucket.tokens -= 1; return; }
+    await new Promise((r) => setTimeout(r, 250));
+  }
 }
 async function fetchMonth(symbol, ym, { fetchImpl = globalThis.fetch } = {}) {
   await M.loadMarketSettings();
@@ -133,7 +137,7 @@ async function status(D) {
   const s = await D.col(STATUS_COL).doc(STATUS_DOC).get();
   const d = s.exists ? s.data() : {};
   const symbols = universeSymbols(), months = monthsList();
-  return { version: VERSION, symbols: symbols.length, months: months.length, total: symbols.length * months.length, done: Number(d.done) || 0, failed: Number(d.failed) || 0, status: d.status || "idle", current: d.current || null, startedAtMs: d.startedAtMs || null, updatedAtMs: d.updatedAtMs || null, completedAtMs: d.completedAtMs || null, ratePerMin: d.ratePerMin || null, oldestMonth: months[months.length - 1], newestMonth: months[0], cursor: d.cursor || null, recentErrors: (d.recentErrors || []).slice(-5), note: d.note || null };
+  return { version: VERSION, symbols: symbols.length, months: months.length, total: symbols.length * months.length, done: Number(d.done) || 0, failed: Number(d.failed) || 0, recentMonths: RECENT_MONTHS, recentTotal: symbols.length * RECENT_MONTHS, recentDone: Number(d.recentDone) || 0, status: d.status || "idle", current: d.current || null, startedAtMs: d.startedAtMs || null, updatedAtMs: d.updatedAtMs || null, completedAtMs: d.completedAtMs || null, ratePerMin: d.ratePerMin || null, oldestMonth: months[months.length - 1], newestMonth: months[0], cursor: d.cursor || null, recentErrors: (d.recentErrors || []).slice(-5), note: d.note || null };
 }
 async function setStatus(D, patch) { await D.col(STATUS_COL).doc(STATUS_DOC).set({ ...patch, updatedAtMs: Date.now() }, { merge: true }); }
 /** Work through (month, symbol) pairs newest month first, skipping what the
@@ -143,33 +147,47 @@ async function buildSegment(D, { budgetMs = 11 * 60000, fetchImpl = globalThis.f
   const startedAt = Date.now();
   const st = await status(D);
   if (st.status === "paused") return { more: false, paused: true };
-  let done = 0, failed = 0, checked = 0, fetchedThisSegment = 0;
   const errors = [];
-  /* count what is already there once per segment start so the bar is honest */
+  /* what the library already holds, counted once per segment so the bar is honest */
   const existing = new Set();
-  const snap = await D.col(COL).select("symbol", "month").get();
-  snap.docs.forEach((d) => { const x = d.data(); existing.add(docId(x.symbol, x.month)); });
-  done = [...existing].length;
-  await setStatus(D, { status: "running", startedAtMs: st.startedAtMs || Date.now(), done, total: symbols.length * months.length });
-  let lastStatusAt = Date.now();
-  for (const ym of months) {
-    const complete = monthComplete(ym);
-    for (const symbol of symbols) {
-      const id = docId(symbol, ym);
-      if (existing.has(id) && complete) continue;
-      if (existing.has(id) && !complete) { const m = await readMonth(D, symbol, ym); if (m && m.fetchedAtMs && Date.now() - m.fetchedAtMs < 6 * 3600000) continue; }
-      if (Date.now() - startedAt > budgetMs) { await setStatus(D, { done, failed: st.failed + failed, current: { symbol, month: ym }, ratePerMin: Math.round(fetchedThisSegment / Math.max(1, (Date.now() - startedAt) / 60000) * 10) / 10, recentErrors: errors.slice(-5) }); return { more: true, done, fetched: fetchedThisSegment }; }
-      try {
-        const fetched = await fetchMonth(symbol, ym, { fetchImpl });
-        await writeMonth(D, symbol, ym, fetched, { complete });
-        if (!existing.has(id)) { existing.add(id); done += 1; }
-        fetchedThisSegment += 1;
-      } catch (e) { failed += 1; errors.push(`${symbol} ${ym}: ${String(e.message).slice(0, 60)}`); if (e.code === "HISTORICAL_BARS_MISSING") { await setStatus(D, { status: "failed", note: e.message, recentErrors: errors.slice(-5) }); return { more: false, failed: true }; } }
-      checked += 1;
-      if (Date.now() - lastStatusAt > 8000) { lastStatusAt = Date.now(); await setStatus(D, { done, failed: st.failed + failed, current: { symbol, month: ym }, ratePerMin: Math.round(fetchedThisSegment / Math.max(1, (Date.now() - startedAt) / 60000) * 10) / 10, recentErrors: errors.slice(-5) }); }
-    }
+  const snap = await D.col(COL).select("symbol", "month", "fetchedAtMs", "complete").get();
+  const fetchedAt = {};
+  snap.docs.forEach((d) => { const x = d.data(); const id = docId(x.symbol, x.month); existing.add(id); fetchedAt[id] = { at: Number(x.fetchedAtMs) || 0, complete: x.complete !== false }; });
+  const recentSet = new Set(months.slice(0, RECENT_MONTHS));
+  const countDone = () => { let done = 0, recent = 0; for (const id of existing) { done += 1; if (recentSet.has(id.slice(id.lastIndexOf("_") + 1))) recent += 1; } return { done, recent }; };
+  let counts = countDone(), failed = 0, fetched = 0;
+  await setStatus(D, { status: "running", startedAtMs: st.startedAtMs || Date.now(), done: counts.done, recentDone: counts.recent, total: symbols.length * months.length });
+  /* work list: stage one is the newest months for every company, then the rest, newest first */
+  const work = [];
+  for (const ym of months) for (const symbol of symbols) {
+    const id = docId(symbol, ym), have = existing.has(id), complete = monthComplete(ym);
+    if (have && complete) continue;
+    if (have && !complete && fetchedAt[id] && Date.now() - fetchedAt[id].at < 6 * 3600000) continue;
+    work.push({ symbol, ym, id });
   }
-  await setStatus(D, { status: "complete", done, failed: st.failed + failed, current: null, completedAtMs: Date.now(), recentErrors: errors.slice(-5) });
-  return { more: false, done, fetched: fetchedThisSegment };
+  if (!work.length) { await setStatus(D, { status: "complete", done: counts.done, recentDone: counts.recent, current: null, completedAtMs: Date.now() }); return { more: false, done: counts.done, fetched: 0 }; }
+  let cursor = 0, stop = false, lastStatusAt = Date.now(), current = null;
+  const worker = async () => {
+    while (!stop && cursor < work.length) {
+      if (Date.now() - startedAt > budgetMs) { stop = true; break; }
+      const item = work[cursor++]; current = item;
+      try {
+        const got = await fetchMonth(item.symbol, item.ym, { fetchImpl });
+        await writeMonth(D, item.symbol, item.ym, got, { complete: monthComplete(item.ym) });
+        if (!existing.has(item.id)) existing.add(item.id);
+        fetched += 1;
+      } catch (e) {
+        failed += 1; errors.push(`${item.symbol} ${item.ym}: ${String(e.message).slice(0, 60)}`);
+        if (e.code === "HISTORICAL_BARS_MISSING") { stop = true; await setStatus(D, { status: "failed", note: e.message, recentErrors: errors.slice(-5) }); return; }
+      }
+      if (Date.now() - lastStatusAt > 6000) { lastStatusAt = Date.now(); counts = countDone(); await setStatus(D, { done: counts.done, recentDone: counts.recent, failed: st.failed + failed, current: { symbol: current.symbol, month: current.ym }, ratePerMin: Math.round(fetched / Math.max(0.1, (Date.now() - startedAt) / 60000) * 10) / 10, recentErrors: errors.slice(-5) }); }
+    }
+  };
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  counts = countDone();
+  const more = cursor < work.length || stop;
+  const finished = !more && work.every((w) => existing.has(w.id));
+  await setStatus(D, { status: finished ? "complete" : "running", done: counts.done, recentDone: counts.recent, failed: st.failed + failed, current: finished ? null : current && { symbol: current.symbol, month: current.ym }, ratePerMin: Math.round(fetched / Math.max(0.1, (Date.now() - startedAt) / 60000) * 10) / 10, completedAtMs: finished ? Date.now() : null, recentErrors: errors.slice(-5) });
+  return { more: !finished, done: counts.done, fetched };
 }
 module.exports = { COL, STATUS_COL, VERSION, MONTHS_BACK, monthsList, monthBounds, universeSymbols, pack, unpack, fetchMonth, readMonth, writeMonth, barsFor, status, setStatus, buildSegment, monthComplete };

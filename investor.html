@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vWbvQV3XjG1MyBBbi43FuW2cw+20jwPPjph3UU8Ydlc='; style-src 'self' 'sha256-bj4DZjwDsxYC44LM9zLibXiInrSfOBArO6FUayBKXmw='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-OwHZRwFPErfpoOLkydyBJGc5wwuHlDG7MuNLCP3V8zw='; style-src 'self' 'sha256-+meK0+R8acPPXA6CI4xy4sXsqK5ljlUdpdv17UxFBFY='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -657,6 +657,10 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
 .libbar__pct{font-size:26px;font-weight:650;letter-spacing:-.03em;font-variant-numeric:tabular-nums;min-width:64px}
 .libbar__body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
 .progress--lib{height:10px}
+.libbar--sm .libbar__pct{font-size:20px;min-width:56px}
+.libstage__k{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin-top:4px}
+.libstage__k b{font-size:13px}
+.progress__bar.is-done{background:var(--sage)}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
@@ -1297,6 +1301,7 @@ function el(tag, attrs) {
     if (k === "class") node.className = v;
     else if (k === "text") node.textContent = v;
     else if (k === "dataset") Object.keys(v).forEach(function (d) { node.dataset[d] = v[d]; });
+    else if (k === "style") node.style.cssText = v;
     else if (k === "disabled" || k === "checked" || k === "selected" || k === "hidden" || k === "open") node[k] = !!v;
     else node.setAttribute(k, v === true ? "" : v);
   });
@@ -3163,9 +3168,14 @@ function renderBarLibrary() {
   var etaMin = running && d.ratePerMin ? Math.round(remaining / d.ratePerMin) : null;
   var statusText = d.status === "complete" ? "Complete · every company, five years, one-minute prices" : running ? (d.current ? "Fetching " + d.current.symbol + " · " + d.current.month : "Starting…") + (etaMin != null ? " · about " + (etaMin > 90 ? Math.round(etaMin / 60) + " h" : etaMin + " min") + " left" : "") : d.status === "paused" ? "Paused · resume any time" : d.status === "failed" ? "Stopped: " + (d.note || "see notes below") : "Not built yet";
   var fill = el("div", { class: "progress progress--lib" }, el("div", { class: "progress__bar", style: "width:" + Math.max(pct ? 1 : 0, pct) + "%" }));
+  var rTot = Number(d.recentTotal) || 0, rDone = Math.min(rTot, Number(d.recentDone) || 0), rPct = rTot ? Math.min(100, Math.round(rDone / rTot * 100)) : 0, rReady = rTot && rDone >= rTot;
+  var rFill = el("div", { class: "progress progress--lib" }, el("div", { class: "progress__bar" + (rReady ? " is-done" : ""), style: "width:" + Math.max(rPct ? 1 : 0, rPct) + "%" }));
+  var stageOne = el("div", { class: "libstage" }, el("div", { class: "libstage__k" }, el("b", { text: "Step 1 · last ~100 trading days" }), el("span", { class: "tiny muted", text: rReady ? "ready — recent simulations replay instantly" : running ? "fetched first, in parallel, so simulations can start in minutes" : "" })), el("div", { class: "libbar libbar--sm" }, el("div", { class: "libbar__pct pnl " + (rReady ? "up" : ""), text: rPct + "%" }), el("div", { class: "libbar__body" }, rFill, el("div", { class: "tiny muted", text: fmtInt(rDone) + " of " + fmtInt(rTot) + " company-months · " + d.symbols + " companies × " + (d.recentMonths || 5) + " months" }))));
   setChildren(host, [el("div", { class: "card__h" }, el("h3", null, icon("learning"), " Historical price library"), el("span", { class: "sub" }, running ? el("span", { class: "livestat" }, liveDot("on"), el("span", { class: "livestat__t", text: "building" })) : el("span", { text: d.updatedAtMs ? "updated " + ageText(new Date(Number(d.updatedAtMs)).toISOString()) : "" }))),
+    rTot ? stageOne : null,
+    el("div", { class: "libstage__k" }, el("b", { text: "Step 2 · full five years" })),
     el("div", { class: "libbar" }, el("div", { class: "libbar__pct pnl " + (d.status === "complete" ? "up" : ""), text: pct + "%" }), el("div", { class: "libbar__body" }, fill, el("div", { class: "tiny muted", text: fmtInt(d.done) + " of " + fmtInt(d.total) + " company-months · " + d.symbols + " companies × " + d.months + " months (" + d.oldestMonth + " to " + d.newestMonth + ") · " + statusText }))),
-    el("div", { class: "actions" }, running ? actionBtn("Pause", "sm ghost", function () { barLibraryCommand("pause"); }) : actionBtn(d.status === "complete" ? "Refresh newest month" : d.done ? "Resume building" : "Build the library", "sm gold", function () { barLibraryCommand("start"); }), el("span", { class: "tiny muted", text: d.status === "complete" ? "Simulations replay from the library instantly; new months are added as they finish." : "First build takes a couple of hours in the background. Simulations you start before it finishes fetch what they need on the fly and add it to the library." })),
+    el("div", { class: "actions" }, running ? actionBtn("Pause", "sm ghost", function () { barLibraryCommand("pause"); }) : actionBtn(d.status === "complete" ? "Refresh newest month" : d.done ? "Resume building" : "Build the library", "sm gold", function () { barLibraryCommand("start"); }), el("span", { class: "tiny muted", text: d.status === "complete" ? "Simulations replay from the library instantly; new months are added as they finish." : "Runs in the background with several fetches in parallel: the most recent 100 trading days for every company land first (about 10 minutes), then the rest of the five years fills in behind. Simulations you start early fetch anything missing on the fly." })),
     d.recentErrors && d.recentErrors.length ? el("div", { class: "tiny muted", text: "Notes: " + d.recentErrors.join(" · ") }) : null]);
 }
 
