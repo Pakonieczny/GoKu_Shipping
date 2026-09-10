@@ -250,7 +250,7 @@ async function handleAction(body) {
     try { return (await E.getGenStatus("diag-" + String(body.runId))) || { pending: true }; }
     catch (e) { return { error: e.message }; }
   }
-  if (a === "playbook") { try { return (await E.getPlaybook()) || { empty: true }; } catch (e) { return { error: e.message }; } }
+  if (a === "playbook") { try { return await E.learningOverview(); } catch (e) { return { error: e.message }; } }
   if (a === "distill") return await dispatchTask("distill", {genId:String(body.genId||Date.now())});
   if (a === "adReviewStatus") { try { return await E.adReviewStatus({ adIds: body.adIds }); } catch (e) { return { statuses: {}, error: e.message }; } }
   if (a === "remedyHistory") { try { return await E.remedyHistory({ limit: body.limit || 100 }); } catch (e) { return { items: [], error: e.message }; } }

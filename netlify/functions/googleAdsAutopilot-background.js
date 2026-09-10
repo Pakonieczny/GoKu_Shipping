@@ -210,7 +210,7 @@ exports.handler = async (event) => {
       else if (task === "distill") {
         const genId=String(body.genId||Date.now());
         await E.setGenStatus(genId,{phase:"running",kind:"learning",startedAt:Date.now()});
-        try {result.distill=await E.distillLessons();await E.setGenStatus(genId,{phase:"done",ok:true,result:result.distill});}
+        try {result.distill=await E.distillLessons({refreshEvidence:true,onProgress:progress=>E.setGenStatus(genId,{phase:"running",kind:"learning",...progress})});await E.setGenStatus(genId,{phase:"done",kind:"learning",ok:!result.distill.error,pct:100,label:result.distill.unchanged?"Existing guidance retained":"Learning updated",result:result.distill});}
         catch(e){await E.setGenStatus(genId,{phase:"done",ok:false,error:e.message});throw e;}
       }
       else if (task === "generate") {
