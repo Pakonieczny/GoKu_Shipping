@@ -37,21 +37,22 @@ const DEFAULTS = Object.freeze({
   /* The fall. `dropBps` is the floor for a calm stock; the real requirement
      rises with how hard the stock is falling relative to its own normal
      minute-to-minute noise (see measureDrop). */
-  dropBps: 100,             // minimum fall, high to low, in basis points (100 = 1.0%)
+  dropBps: 150,             // minimum fall, high to low, in basis points (150 = 1.5%)
   dropWindowMin: 30,        // the fall must happen within this many minutes
-  zMinTenths: 20,           // the fall must be at least z = 2.0 noise units (sigma * sqrt(minutes))
+  zMinTenths: 30,           // the fall must be at least z = 3.0 noise units (sigma * sqrt(minutes))
+  noEntryBeforeMin: 45,     // no new entries until this many minutes after the open (45 = 10:15 AM ET); opening noise scores as a fall
   speedFactorPct: 50,       // each extra unit of fall speed above normal adds 50% to the required fall and settle
   /* The settle. Base bars for a normal fall; scaled up for fast falls. */
-  settleBars: 3,            // completed one-minute bars with no new low
+  settleBars: 3,            // completed one-minute bars with no new low; the last two must each close above the low
   stabilitySigmaTenths: 20, // settle closes must sit within 2.0 sigma above the low
   retracePct: 80,           // sell when this share of the fall is recovered
-  stopPct: 60,              // stop this share of the fall below the low
+  stopPct: 60,              // stop this share of the fall below the low, but never further from the entry than the target (see stopLevel)
   maxHoldMin: 90,           // time exit
   cooldownMin: 20,          // per-symbol pause after an exit
   closeBeforeCloseMin: 5,   // flatten this many minutes before the close
 });
 const BOUNDS = Object.freeze({
-  budgetUsd: [1000, 95000], minTradeUsd: [500, 95000], maxTradeUsd: [500, 95000], dropBps: [30, 1500], dropWindowMin: [3, 120], zMinTenths: [5, 80], speedFactorPct: [0, 300],
+  budgetUsd: [1000, 95000], minTradeUsd: [500, 95000], maxTradeUsd: [500, 95000], dropBps: [30, 1500], dropWindowMin: [3, 120], zMinTenths: [5, 80], noEntryBeforeMin: [0, 180], speedFactorPct: [0, 300],
   settleBars: [1, 15], stabilitySigmaTenths: [5, 100], retracePct: [10, 150], stopPct: [10, 200], maxHoldMin: [5, 390], cooldownMin: [0, 390], closeBeforeCloseMin: [0, 60],
 });
 
@@ -168,8 +169,22 @@ function settled(bars, drop, settings, lastPrice) {
   const closes = tail.map((b) => b.c), range = Math.max(...closes) - Math.min(...closes);
   const stability = Math.max(0, 1 - range / Math.max(1e-9, drop.low * bandPct / 100));
   if (closes[closes.length - 1] < closes[0]) return { ok: false, why: "still drifting down", stability };
+  if (tail.slice(-2).some((b) => !(b.c > drop.low))) return { ok: false, why: "last two bars did not close above the low", stability };
   if (!(lastPrice > drop.low)) return { ok: false, why: "still at the low", stability };
   return { ok: true, why: `${tail.length} steady bars, stability ${Math.round(stability * 100)}%`, stability };
+}
+
+/** The stop: `stopPct` of the fall below the low, but never further below the
+ *  entry than the target sits above it. With ~45% winners a stop wider than the
+ *  target cannot break even, so the loss per trade is capped at the win per trade. */
+function stopLevel(entry, drop, settings) {
+  const fall = drop.high - drop.low;
+  return Math.max(drop.low - fall * settings.stopPct / 100, entry - fall * settings.retracePct / 100);
+}
+/** True while new entries are blocked after the open. */
+function inOpeningBlackout(settings, session, nowMs) {
+  if (!settings.noEntryBeforeMin || !session || !session.date) return false;
+  try { return nowMs < M.nyWallClockToUtcMs(session.date, 570 + settings.noEntryBeforeMin); } catch (e) { return false; }
 }
 
 /* ── persistence ───────────────────────────────────────────────────────── */
@@ -210,10 +225,11 @@ async function enter({ D, accountId, symbol, price, drop, settings, nowMs, reaso
   const budgetCents = Math.min(Math.round((tradeUsd || settings.minTradeUsd) * 100), Math.round(lane * 100), cash - 100);
   const fillMicros = micros(price) + micros(price) * SLIPPAGE_BPS / 10000n;
   const perShareCents = Number(fillMicros / 10000n) + 1;
+  if (budgetCents < Math.round(settings.minTradeUsd * 100)) return { entered: false, why: `only ${Math.floor(budgetCents / 100).toLocaleString()} free, under the ${settings.minTradeUsd.toLocaleString()} smallest trade` };
   const qty = Math.floor(budgetCents / perShareCents);
   if (qty < 1) return { entered: false, why: "not enough paper cash for one share" };
   const targetMicros = fillMicros + micros((drop.high - drop.low) * settings.retracePct / 100);
-  const stopMicros = micros(drop.low) - micros((drop.high - drop.low) * settings.stopPct / 100);
+  const stopMicros = micros(stopLevel(usdOf(fillMicros), drop, settings));
   const deadlineMs = nowMs + settings.maxHoldMin * 60000;
   const setId = `os_dip_${sha([accountId, symbol, nowMs].join("|")).slice(0, 24)}`;
   const set = { orderSetId: setId, accountId, symbol, purpose: "DIP_REVERSAL", authority: "DIP_REVERSAL", status: "ENTERED", entered: true, createdAtMs: nowMs, expiresAtMs: deadlineMs, mandateVersionId: null, sector: null, version: 1,
@@ -310,12 +326,13 @@ async function evaluate({ D, accountId, settings, state, bars, prints, session, 
     const blockers = [];
     if (!session.open) blockers.push("market closed");
     if (nowMs >= flattenFromMs - settings.maxHoldMin * 60000 / 3) blockers.push("too close to the end of the session");
+    if (inOpeningBlackout(settings, session, nowMs)) blockers.push(`no entries in the first ${settings.noEntryBeforeMin} min after the open`);
     const laneUsd = laneAvailableUsd(settings, state);
-    if (laneUsd < Math.min(500, settings.minTradeUsd)) blockers.push(`lane budget used up (${Math.round(laneUsd)} left of ${settings.budgetUsd})`);
+    if (laneUsd < settings.minTradeUsd) blockers.push(`lane budget below the smallest trade (${Math.round(laneUsd).toLocaleString()} left of ${settings.budgetUsd.toLocaleString()})`);
     const conf = confidenceOf(drop, st, settings), tradeUsd = Math.min(sizeFor(conf.confidence, settings), Math.max(0, Math.floor(laneUsd)));
     if (sym.enteredDropKey === key) blockers.push("already traded this fall");
     if (blockers.length) { sym.status = "armed"; sym.note = "ready but " + blockers.join("; "); continue; }
-    const r = await enter({ D, accountId, symbol, price: print.p, drop, settings, nowMs, laneAvailableUsd: laneUsd, tradeUsd, reason: `Fell ${drop.dropPct.toFixed(2)}% in ${Math.round(drop.minutes)} min (${drop.speed.toFixed(1)}× its normal pace, z ${drop.z.toFixed(1)}), then held above ${drop.low.toFixed(2)} for ${drop.settleBarsNeeded} bars (${st.why}). Confidence ${Math.round(conf.confidence * 100)}% → $${tradeUsd.toLocaleString()} of $${settings.minTradeUsd.toLocaleString()}–$${settings.maxTradeUsd.toLocaleString()}; target ${settings.retracePct}% back up the fall, stop ${settings.stopPct}% of the fall below the low.` });
+    const r = await enter({ D, accountId, symbol, price: print.p, drop, settings, nowMs, laneAvailableUsd: laneUsd, tradeUsd, reason: `Fell ${drop.dropPct.toFixed(2)}% in ${Math.round(drop.minutes)} min (${drop.speed.toFixed(1)}× its normal pace, z ${drop.z.toFixed(1)}), then held above ${drop.low.toFixed(2)} for ${drop.settleBarsNeeded} bars (${st.why}). Confidence ${Math.round(conf.confidence * 100)}% → $${tradeUsd.toLocaleString()} of $${settings.minTradeUsd.toLocaleString()}–$${settings.maxTradeUsd.toLocaleString()}; target ${settings.retracePct}% back up the fall, stop ${settings.stopPct}% of the fall below the low or the target's distance below entry, whichever is nearer.` });
     sym.enteredDropKey = key;
     if (!r.entered) { sym.status = "armed"; sym.note = r.why; const ev = { kind: "SKIP", symbol, atMs: nowMs, price: print.p, detail: r.why }; events.push(ev); await logSignal(D, accountId, ev); continue; }
     state.tradesToday += 1;
@@ -341,4 +358,4 @@ async function status(D, accountId, settingsRaw) {
     signals, results: { todayPnlUsd: sum(todayExits), todayTrades: todayExits.length, allPnlUsd: sum(exits), allTrades: exits.length, wins: exits.filter((s) => Number(s.pnlUsd) > 0).length } };
 }
 
-module.exports = { VERSION, DEFAULTS, BOUNDS, normalizeSettings, latestTrades, seedBars, applyPrint, minuteSigmaPct, measureDrop, settled, confidenceOf, sizeFor, loadState, saveState, watchlist, laneAvailableUsd, evaluate, status, enter, exit };
+module.exports = { VERSION, DEFAULTS, BOUNDS, normalizeSettings, stopLevel, inOpeningBlackout, latestTrades, seedBars, applyPrint, minuteSigmaPct, measureDrop, settled, confidenceOf, sizeFor, loadState, saveState, watchlist, laneAvailableUsd, evaluate, status, enter, exit };

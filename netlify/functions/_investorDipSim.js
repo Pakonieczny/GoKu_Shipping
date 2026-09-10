@@ -106,6 +106,7 @@ function replayDate({ date, barsBySymbol, settings, state }) {
         continue;
       }
       if (nowMs >= flattenMs - settings.maxHoldMin * 60000 / 3) continue;
+      if (nowMs < openMs + (settings.noEntryBeforeMin || 0) * 60000) continue;
       if (cooldown[symbol] && nowMs < cooldown[symbol]) continue;
       const drop = DIP.measureDrop(seen, settings, nowMs);
       if (!drop || !drop.qualifies) continue;
@@ -115,6 +116,7 @@ function replayDate({ date, barsBySymbol, settings, state }) {
       if (!st.ok) continue;
       const conf = DIP.confidenceOf(drop, st, settings);
       const free = state.cash - 1;
+      if (free < settings.minTradeUsd) continue;   // never buy a token position; wait for the floor
       const tradeUsd = Math.min(DIP.sizeFor(conf.confidence, settings), Math.floor(free));
       const entryPx = bar.c * (1 + SLIPPAGE);
       const qty = Math.floor(tradeUsd / (entryPx + FEE_PER_SHARE));
@@ -122,7 +124,7 @@ function replayDate({ date, barsBySymbol, settings, state }) {
       if (qty < 1) continue;
       const fee = qty * FEE_PER_SHARE;
       state.cash -= entryPx * qty + fee;
-      open[symbol] = { qty, entry: entryPx, fee, stop: drop.low - (drop.high - drop.low) * settings.stopPct / 100, target: entryPx + (drop.high - drop.low) * settings.retracePct / 100, deadlineMs: nowMs + settings.maxHoldMin * 60000, enteredMs: nowMs, confidence: conf.confidence, tradeUsd, dropPct: r2(drop.dropPct), z: Math.round(drop.z * 10) / 10, speed: r2(drop.speed) };
+      open[symbol] = { qty, entry: entryPx, fee, stop: DIP.stopLevel(entryPx, drop, settings), target: entryPx + (drop.high - drop.low) * settings.retracePct / 100, deadlineMs: nowMs + settings.maxHoldMin * 60000, enteredMs: nowMs, confidence: conf.confidence, tradeUsd, dropPct: r2(drop.dropPct), z: Math.round(drop.z * 10) / 10, speed: r2(drop.speed) };
     }
     if (minute % 5 === 4 || minute === 389) {
       const marked = Object.keys(open).reduce((n, s) => n + open[s].qty * (priceAt[s] || open[s].entry), 0);
