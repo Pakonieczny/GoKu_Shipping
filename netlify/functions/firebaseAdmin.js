@@ -44,10 +44,10 @@ if (!admin.apps.length) {
 
 /* ─── bucket CORS — SINGLE SOURCE OF TRUTH ──────────────────────────────
    setCorsConfiguration REPLACES the whole config, it does not merge, so this
-   list is the complete set of browser origins allowed to talk to Storage.
-   Anything not named here cannot upload or read a download URL from the
-   browser. Add stations here and nowhere else — setCorsRule.js imports this
-   same array rather than keeping its own copy.                             */
+   configuration is the complete set of browser origins allowed to talk to
+   Storage. Existing stations retain upload access; the Ads app only needs
+   image reads. Add origins here — setCorsRule.js reapplies this same complete
+   configuration rather than keeping its own copy.                          */
 const CORS_ORIGINS = [
   "https://shipping-1.goldenspike.app",
   "https://listing-generator-1.goldenspike.app",
@@ -87,6 +87,11 @@ const CORS_CONFIG = [{
   method        : ["GET","POST","PUT","DELETE","HEAD","OPTIONS","PATCH"],
   responseHeader: CORS_RESPONSE_HEADERS,
   maxAgeSeconds : 3600
+}, {
+  origin        : ["https://goldenspike.app", "https://brites-adwords.goldenspike.app"],
+  method        : ["GET", "HEAD"],
+  responseHeader: ["Content-Type", "Content-Length", "Content-Range", "ETag"],
+  maxAgeSeconds : 3600
 }];
 
 function applyBucketCors() {
@@ -99,7 +104,7 @@ function applyBucketCors() {
 /* ─── ensure CORS rule (runs once per cold-start) ───────── */
 if (!process.env.CORS_SET) {
   applyBucketCors()
-    .then(() => console.log("CORS confirmed for", CORS_ORIGINS.length, "origins"))
+    .then(() => console.log("CORS confirmed for", new Set(CORS_CONFIG.flatMap(rule => rule.origin)).size, "origins"))
     .catch(err => console.error("CORS error:", err));
   process.env.CORS_SET = "1";   // prevent repeats on warm invokes
 }

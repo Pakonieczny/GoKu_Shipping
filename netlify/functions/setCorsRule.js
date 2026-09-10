@@ -28,7 +28,7 @@ exports.handler = async () => {
       body: JSON.stringify({
         success: true,
         bucket : admin.DEFAULT_BUCKET,
-        origins: admin.CORS_ORIGINS
+        origins: [...new Set(admin.CORS_CONFIG.flatMap(rule => rule.origin))]
       })
     };
   } catch (err) {
