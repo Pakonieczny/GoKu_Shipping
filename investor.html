@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-r+SB+LlcONGo5JDBkD5QCeSxqSS6Vn/gD9oFyLXhH40='; style-src 'self' 'sha256-gQubBm50Ufs+FXw/idMcbnszSDt+wyJf7QuND45pjs4='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-SvmpnUefR2G0L/9uJfGldxNusuri50JHkPKE+mBm4dg='; style-src 'self' 'sha256-GLCzjVsswEblsA79UF0j0YtbA6N7W+gPlkJcclt/pv4='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -641,6 +641,17 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
 .row.row--holding .row__side .d{width:auto;font-size:10.5px}
 .row.row--holding .row__mid{grid-column:1/-1;grid-row:2;min-width:0;width:100%}
 @media(max-width:700px){.row.row--holding{grid-template-columns:1fr}.row.row--holding .row__sym{grid-column:1;grid-row:1}.row.row--holding .row__side{grid-column:1;grid-row:2;justify-content:flex-start}.row.row--holding .row__mid{grid-column:1;grid-row:3}}
+
+.simgroup{border:1px solid var(--line);border-left:4px solid var(--gold);border-radius:14px;padding:14px 16px;margin-bottom:18px;background:var(--bg-2)}
+.simgroup--dip{border-left-color:var(--slate)}
+.simgroup__h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.simgroup .sim-section{margin-bottom:10px}
+.keyfacts--sim .kf__v{font-size:18px}
+.progress{height:6px;border-radius:999px;background:var(--line);overflow:hidden}
+.progress__bar{height:100%;background:var(--slate);transition:width .4s}
+.dipsim.selected{outline:2px solid var(--slate-line)}
+#dipSimDetail .livechart__wrap{height:260px}
+#dipSimDetail .chartwrap canvas{width:100%;height:100%;display:block}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
@@ -750,7 +761,8 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
 
 <section class="view" id="v-simulation" hidden aria-labelledby="h-simulation">
 <div class="sim-notice"><strong>SIMULATION</strong><span>Historical simulation · fictitious money · SEC research rebuilt when needed</span></div>
-<div class="view__h"><div><div class="eyebrow">LEARN FROM PAST MARKET DAYS</div><h2 id="h-simulation" tabindex="-1">Test your AI manager</h2></div></div>
+<div class="view__h"><div><div class="eyebrow">LEARN FROM PAST MARKET DAYS</div><h2 id="h-simulation" tabindex="-1">Test your strategies</h2><p>Two separate simulators, each with its own switch: the AI manager (research, decisions, AI cost) and the dip trader (rules only, no AI).</p></div></div>
+<div class="simgroup simgroup--ai" id="simGroupAi"><div class="simgroup__h"><span class="lanetag lane-ai"><svg aria-hidden="true" class="ic sm"><use href="#i-manager"/></svg><span>AI manager simulation</span></span><span class="tiny muted">Runs the full AI review on past days · uses AI budget · saves every decision</span></div>
 <details class="sim-section" id="simSectionSetup" open><summary><span class="k">SET UP</span><h3>Start a simulation</h3><svg aria-hidden="true" class="ic chev"><use href="#i-chevron"/></svg></summary><div class="sim-section-body"><form class="card" id="simForm"><div class="sim-selection"><label for="simStrategyVersion"><strong>Strategy for new simulations</strong><span class="tiny">Saved versions · Select by name or date</span></label><select id="simStrategyVersion"><option value="">Loading saved strategies…</option></select><div class="filters"><label>Filter version date<input type="date" id="simStrategyDate"></label><button class="btn ghost sm" id="learningVersionsMore" type="button" hidden>Load more versions</button></div><p id="simStrategyDescription" class="tiny"></p><details id="simStrategyDetails"><summary>Selected version · What changed and why</summary><div id="simStrategyDetailsBody"></div></details></div><div class="sim-selection"><label for="simCompanyRange"><strong>Companies per simulation</strong><span class="tiny">Required · Astra chooses within your range</span></label><select id="simCompanyRange" required aria-describedby="simHoldingPolicy"><option value="flex3" selected>Flexible · 0–3 companies, cash allowed</option><option value="top1">Top pick · Exactly 1 company</option><option value="range1">Range 1 · 1–2 companies</option><option value="range2">Range 2 · 3–5 companies</option><option value="range3">Range 3 · 6–8 companies</option></select><p id="simHoldingPolicy" class="tiny">Astra chooses a 1–3 trading-session limit for each company during initial research, weighing extra upside against risk and locked capital. Targets and stops can exit sooner.</p></div><div class="sim-row"><label class="sim-count">Simulations<input id="simCount" type="number" value="10" min="1" max="500" required></label><div class="segs" id="simChoices"><button type="button" data-count="10">10</button><button type="button" data-count="25">25</button><button type="button" data-count="50">50</button><button type="button" data-count="100">100</button></div><button class="btn gold" id="simStart" type="submit">Start simulations</button></div><label class="tiny"><input id="simMeasureCost" type="checkbox"> Measure actual AI cost — one simulation, no spending limit</label><p id="simEstimate" class="tiny"></p><details><summary>Advanced · historical dates and assumptions</summary><div class="filters"><label>From<input id="simFrom" type="date" required></label><label>To<input id="simTo" type="date" required></label></div><p class="tiny muted">New simulations share paper trading’s decision and execution core. The default is up to three finalists, with cash allowed. The selection is required before starting. Astra returns BUY or PASS for every finalist, with a base allocation of $5,000–$30,000 for BUY and at most $95,000 combined. The shared executor applies strategy multipliers and reduces quantities for cash, concentration, liquidity and loss limits. Baseline purchases use the first available session price; a learned strategy may defer or condition entry, with whole-share rounding, spread and fees. Astra compares one-, two- and three-session horizons, fixes each holding deadline, profit target and stop during initial research, and explains the capital tradeoff. An open position exits at the observed close of its chosen session. A missing or insufficiently liquid deadline bar makes the result unavailable; the holding is never silently extended. No intraday AI research or allocation reruns. Saved older simulations retain their original rules. Each run starts with $100,000 fictitious money. Dates are sampled without repeats. Missing research is built automatically from dated SEC filings and financial statements. Broader historical news and confirmed earnings dates may be unavailable. Company research and daily price history are prepared once in a shared Firebase library. Session prices are downloaded in groups. Simulations read saved data filtered to their own date; they do not download company information separately. Small gaps remain recorded; no prices are invented and no trades execute in missing intervals. Sessions with large gaps cannot run. Prices have the paper feed’s 15-minute delay. Each run follows a common three-session window. Holidays and weekends do not count. Cash released by early exits stays cash; alternative next-day investments are assessed as opportunity cost, not actually traded. Returns exclude dividends and cash interest. Suspected split-like price changes are quarantined; these are exploratory price returns, not total-return accounting. The company range selects research finalists, not mandatory purchases. Risk limits can reduce executable allocations or keep an entire plan in cash. The date range selects starting dates; all three sessions must have ended. Execution assumes a 0.10% spread and $0.005 per share fee, plus the existing stop-slippage rules.</p><p class="tiny muted">The $1.7635 target allows up to $1.88985 per run, shared across all AI steps without stage-specific holdbacks. Runs stop if the maximum is reached. First-time preparation can take several minutes or longer; saved downloads are reused. Five minutes is a replay target after preparation, not a guaranteed finish. SEC evidence preparation uses no AI tokens; Firebase and data charges are separate.</p><p id="simPricing" class="tiny muted"></p></details></form>
 </div></details>
 <details class="sim-section" id="simSectionLearning" open><summary><span class="k">LEARN FROM SAVED SIMULATIONS</span><h3 id="learningTitle">Research &amp; strategy learning</h3><svg aria-hidden="true" class="ic chev"><use href="#i-chevron"/></svg></summary><div class="sim-section-body">
@@ -780,6 +792,25 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
 <div class="sim-row"><button class="btn sm ghost" type="button" id="simPrev">Previous</button><span id="simPage" class="tiny muted"></span><button class="btn sm ghost" type="button" id="simNext">Next</button></div>
 <div class="card" id="simDetail" hidden><div class="sim-row"><h3 id="simDetailTitle"></h3><button type="button" class="btn sm ghost" id="simDetailClose">Close details</button></div><p id="simDetailClock" class="tiny muted"></p><div class="sim-row tiny" id="simDetailCosts"></div><canvas id="simReturnChart" height="230" aria-label="Saved simulation return chart"></canvas><p id="simChartPoint" class="tiny muted"></p><div id="simDetailHoldings"></div><div class="sim-row"><label>Review<select id="simDetailTab"><option value="curve">Return chart</option><option value="decisions">AI decisions</option><option value="fills">Buys and sells</option><option value="requests">AI costs and tokens</option><option value="orders">Orders</option><option value="events">Investment events</option></select></label><button class="btn sm ghost" type="button" id="simDetailMore">More records</button></div><div id="simDetailData"></div></div>
 </div></details>
+</div>
+<div class="simgroup simgroup--dip" id="simGroupDip"><div class="simgroup__h"><span class="lanetag lane-dip"><svg aria-hidden="true" class="ic sm"><use href="#i-learning"/></svg><span>Dip trader simulation</span></span><span class="tiny muted">Replays the dip rules over past minutes · no AI, no AI cost · uses your current dip settings</span></div>
+<details class="sim-section" id="simSectionDipSetup" open data-fold="dipSimSetup"><summary><span class="k">SET UP</span><h3>Start a dip simulation</h3><svg aria-hidden="true" class="ic chev"><use href="#i-chevron"/></svg></summary><div class="sim-section-body"><form class="card" id="dipSimForm">
+  <div class="sim-selection">
+    <label class="field">Companies to watch<select id="dipSimSource"><option value="shortlist">Latest daily review shortlist (up to 50)</option><option value="run">A saved AI simulation's shortlist…</option><option value="custom">My own list</option></select></label>
+    <label class="field" id="dipSimRunField" hidden>Saved AI simulation<select id="dipSimRun"></select></label>
+    <label class="field" id="dipSimCustomField" hidden>Symbols (comma separated, up to 50)<input type="text" id="dipSimSymbols" placeholder="NVDA, AMD, TSLA …"></label>
+    <label class="field">From<input type="date" id="dipSimFrom" required></label>
+    <label class="field">To<input type="date" id="dipSimTo" required></label>
+    <div class="actions"><button type="submit" class="btn gold" id="dipSimStart">Start dip simulation</button><a class="link" href="#/system">Dip settings →</a></div>
+  </div>
+  <p class="note" id="dipSimNote">Fictitious money equal to the dip lane budget. Fills are the minute's closing price plus the same slippage and fees as the live lane. Regular hours only; everything is flattened before the close.</p>
+  <p class="note neg" id="dipSimError" role="alert"></p>
+</form></div></details>
+<details class="sim-section" id="simSectionDipRuns" open data-fold="dipSimRuns"><summary><span class="k">RESULTS</span><h3>Your dip simulations</h3><svg aria-hidden="true" class="ic chev"><use href="#i-chevron"/></svg></summary><div class="sim-section-body">
+<div class="sim-grid" id="dipSimRuns"></div>
+<div class="card" id="dipSimDetail" hidden></div>
+</div></details>
+</div>
 
 </section>
 
@@ -1097,7 +1128,7 @@ var ACTION_SPECS = {
   freezeBuys: M(false, true, "version", "confirm_with_reason", true), resumeBuys: M(true, false, "version", "reauth"),
   emergencyStop: M(false, true, "none", "confirm_with_reason", true), resumeSystem: M(true, false, "version", "reauth"),
   activateAccountMode: M(true, false, "version", "reauth"), deactivateAccountMode: M(true, true, "version", "reauth"),
-  setBudget: M(false, false, "version", "confirm"), dipSettingsSave: M(false, false, "none", "none"), setRiskMandate: M(true, false, "version", "reauth"), setEmergencyRiskPolicy: M(true, false, "preview", "reauth_with_preview"),
+  setBudget: M(false, false, "version", "confirm"), dipSettingsSave: M(false, false, "none", "none"), dipSimulationStart: M(false, false, "none", "none"), dipSimulationControl: M(false, false, "none", "confirm"), setRiskMandate: M(true, false, "version", "reauth"), setEmergencyRiskPolicy: M(true, false, "preview", "reauth_with_preview"),
   setMarketConfig: M(true, false, "version", "reauth"), confirmSplit: M(true, false, "version", "reauth"), confirmCashDividend: M(true, false, "version", "reauth"),
   requestAuditExport: M(false, false, "none", "confirm"), createPaperAccount: M(true, false, "absent", "reauth"), previewPaperAccountReset: M(false, false, "none", "none"),
   resetPaperAccount: M(true, false, "preview", "reauth_with_preview"), reconcile: M(false, false, "none", "none"), freezeUniverse: M(true, false, "none", "reauth"),
@@ -1601,7 +1632,7 @@ function toggleAlertPanel(force) { var p = $("alertPanel"), b = $("alertToggle")
 async function loadAlerts() { try { await loadRes("alerts", "alerts", { status: "active", pageSize: 100 }); renderAlertCenter(); } catch (e) { /* the dashboard copy stays */ } }
 
 /* ── 9. polling (display only; paused while hidden) ─────────────────────── */
-var POLL = { dash: null, jobs: null, quotes: null, session: null, simulation: null, portfolio: null, charts: null, dip: null };
+var POLL = { dash: null, jobs: null, quotes: null, session: null, simulation: null, portfolio: null, charts: null, dip: null, dipsim: null };
 function startPolling() {
   stopPolling();
   POLL.simulation = setInterval(loadSimulation, 3000);
@@ -1612,6 +1643,7 @@ function startPolling() {
   POLL.quotes = setInterval(function(){ var open = marketOpen(), due = Date.now() - LIVE.quotesAt >= (open ? 4500 : 14500); if (due) pollQuotes(); if(open && drawer.open && drawer.panel==="c-chart" && drawer.days===0 && $("chartAuto").checked && Date.now() - (drawer.intradayAt || 0) >= 14500){drawer.intradayAt = Date.now(); loadCompanyIntraday();} }, 5000);
   POLL.portfolio = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "portfolio") return; loadPortfolio(); }, 10000);
   POLL.charts = setInterval(holdChartsTick, 5000);
+  POLL.dipsim = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "simulation") return; var active = DIPSIM.items.some(function (x) { return x.status === "running" || x.status === "queued"; }); if (active || Date.now() - DIPSIM.at > 30000) loadDipSims(); }, 5000);
   POLL.dip = setInterval(function () { if (document.hidden || $("app").hidden) return; var d = getRes("dip"), on = !!(d && d.settings && d.settings.enabled); if ((route.view === "manager" && (on || Date.now() - (DIPUI.at || 0) > 30000)) || (route.view === "system" && Date.now() - (DIPUI.at || 0) > 30000)) loadDip(); }, 5000);
   POLL.session = setInterval(sessionRefreshTick, 20 * 60 * 1000);
 }
@@ -3015,6 +3047,92 @@ function renderDipSettings() {
   setChildren(host, [cardHead("Dip reversal (paper experiment)", "learning", st.updatedAtMs ? "settings v" + st.version + " · " + fmtTime(new Date(Number(st.updatedAtMs)).toISOString()) : "defaults"), el("div", { class: "explainer" }, el("b", { text: "What this is. " }), "A rule-based lane with its own budget that buys a sharp intraday fall once it stops falling and sells on a partial recovery, a break of the low, or a time limit. Every threshold is measured against the stock's own minute-to-minute noise (σ): a fall must be at least the base size and at least the chosen number of noise units, a faster fall must go further and settle longer before it counts, and the settle must hold inside a σ-sized band above the low without drifting down. Paper only; it never trades a company the AI lane holds, and it logs every fall it sees so you can judge whether the pattern pays."), form]);
 }
 
+
+/* ── 17d. Dip trader simulation (deterministic replay; no AI) ───────────── */
+var DIPSIM = { items: [], selected: null, detail: null, loading: false, at: 0, busy: false };
+function actionBtn(text, cls, handler) { var b = el("button", { type: "button", class: "btn " + (cls || "sm"), text: text }); b.addEventListener("click", handler); return b; }
+function dipSimDefaults() {
+  var to = $("dipSimTo"), from = $("dipSimFrom"); if (!to || !from || to.value) return;
+  var d = new Date(); d.setDate(d.getDate() - 1); while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+  to.value = d.toISOString().slice(0, 10); var f = new Date(d); f.setDate(f.getDate() - 28); from.value = f.toISOString().slice(0, 10);
+}
+function dipSimSourceOptions() {
+  var sel = $("dipSimRun"); if (!sel) return;
+  var runs = (simUI.data && simUI.data.runs || []).filter(function (r) { return r.shortlist && (r.shortlist.count || (r.shortlist.symbols || []).length); });
+  setChildren(sel, runs.length ? runs.map(function (r) { return el("option", { value: r.runId, text: (r.date || r.runId) + " · " + (r.shortlist.count || (r.shortlist.symbols || []).length) + " companies" }); }) : [el("option", { value: "", text: "No saved AI simulation has a shortlist yet" })]);
+}
+function bindDipSim() {
+  var form = $("dipSimForm"); if (!form || form.dataset.bound) return; form.dataset.bound = "1";
+  dipSimDefaults();
+  $("dipSimSource").addEventListener("change", function () { $("dipSimRunField").hidden = this.value !== "run"; $("dipSimCustomField").hidden = this.value !== "custom"; if (this.value === "run") dipSimSourceOptions(); });
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault(); if (DIPSIM.busy) return;
+    var src = $("dipSimSource").value, params = { source: src, from: $("dipSimFrom").value, to: $("dipSimTo").value };
+    if (src === "run") { params.sourceRunId = $("dipSimRun").value; if (!params.sourceRunId) { setText("dipSimError", "Choose a saved AI simulation, or pick another source."); return; } }
+    if (src === "custom") { params.symbols = $("dipSimSymbols").value.split(/[\s,]+/).map(function (x) { return x.trim().toUpperCase(); }).filter(function (x) { return /^[A-Z][A-Z0-9.-]{0,9}$/.test(x); }).slice(0, 50); if (!params.symbols.length) { setText("dipSimError", "Enter at least one symbol."); return; } }
+    DIPSIM.busy = true; $("dipSimStart").disabled = true; setText("dipSimError", ""); setText("dipSimStart", "Starting…");
+    try { var r = await runMutation({ action: "dipSimulationStart", params: params, silent: true, title: "Start dip simulation" }); if (r && r.data) { DIPSIM.selected = r.data.simId; toast("Dip simulation started: " + r.data.symbols.length + " companies over " + r.data.days + " trading days.", { icon: "check" }); await loadDipSims(true); } }
+    catch (err) { setText("dipSimError", err && err.message || "Could not start the simulation."); }
+    finally { DIPSIM.busy = false; $("dipSimStart").disabled = false; setText("dipSimStart", "Start dip simulation"); }
+  });
+}
+async function loadDipSims(force) {
+  if (DIPSIM.loading) return; if (!force && Date.now() - DIPSIM.at < 3000) return;
+  DIPSIM.loading = true;
+  try { var d = await loadRes("dipSims", "dipSimulations", {}); if (d) { DIPSIM.items = d.items || []; DIPSIM.at = Date.now(); } }
+  catch (e) { /* keep the last list */ }
+  finally { DIPSIM.loading = false; renderDipSims(); if (DIPSIM.selected) loadDipSimDetail(DIPSIM.selected); }
+}
+function dipSimStatusBadge(x) { var st = x.status; return badge(st === "complete" ? "Complete" : st === "running" ? "Running · " + x.progressPct + "%" : st === "queued" ? "Queued" : st === "cancelled" ? "Cancelled" : st === "failed" ? "Failed" : plainLabel(st), st === "complete" ? "ok" : st === "running" || st === "queued" ? "info" : st === "failed" ? "bad" : "warn", st === "complete" ? "check" : st === "failed" ? "block" : "dot"); }
+function dipSimCard(x) {
+  var s = x.stats || {}, pnl = liveNum(s.pnlUsd) ? s.pnlUsd : NaN, active = x.status === "running" || x.status === "queued";
+  var stalled = x.status === "running" && x.leaseUntilMs && Date.now() > Number(x.leaseUntilMs) + 90000;
+  return el("div", { class: "card sim-run dipsim" + (DIPSIM.selected === x.simId ? " selected" : "") },
+    el("div", { class: "sim-run-head" }, el("div", null, el("b", { text: x.from + " → " + x.to }), el("div", { class: "tiny muted", text: (x.source && x.source.label || "") + " · " + x.symbolCount + " companies · " + x.daysTotal + " trading days" })), dipSimStatusBadge(x)),
+    active ? el("div", { class: "progress" }, el("div", { class: "progress__bar", style: "width:" + Math.max(2, x.progressPct) + "%" })) : null,
+    el("div", { class: "keyfacts keyfacts--sim" },
+      keyFact("Result", null, liveNum(pnl) ? signedUsd(pnl) : "—", liveNum(s.returnPct) ? signedPct(s.returnPct) + " on " + usd(x.settings.budgetUsd, 0) : "", toneOf(pnl)),
+      keyFact("Trades", null, s.trades != null ? String(s.trades) : "—", s.winRatePct != null ? s.winRatePct + "% winners" : ""),
+      keyFact("Per trade", null, liveNum(s.avgTradeUsd) ? signedUsd(s.avgTradeUsd) : "—", s.profitFactor != null ? "profit factor " + s.profitFactor : "", toneOf(s.avgTradeUsd)),
+      keyFact("Worst dip in equity", null, liveNum(s.maxDrawdownUsd) ? "−" + usd(s.maxDrawdownUsd, 0) : "—", s.daysDone != null ? s.daysDone + " of " + x.daysTotal + " days replayed" : "", "down")),
+    stalled ? el("div", { class: "tiny muted", text: "No progress for a while; the scheduler retries it within a minute." }) : null,
+    x.error ? el("div", { class: "note neg", text: x.error }) : null,
+    el("div", { class: "actions" }, actionBtn(DIPSIM.selected === x.simId ? "Hide details" : "Details", "sm", function () { DIPSIM.selected = DIPSIM.selected === x.simId ? null : x.simId; renderDipSims(); if (DIPSIM.selected) loadDipSimDetail(x.simId); else $("dipSimDetail").hidden = true; }),
+      active ? actionBtn("Cancel", "sm ghost", function () { dipSimControl(x.simId, "cancel"); }) : actionBtn("Delete", "sm ghost", function () { dipSimControl(x.simId, "delete"); })));
+}
+async function dipSimControl(simId, command) { try { var r = await runMutation({ action: "dipSimulationControl", params: { simId: simId, command: command }, title: command === "delete" ? "Delete this dip simulation" : "Cancel this dip simulation", lines: [["Simulation", simId, "mono"]], confirmLabel: command === "delete" ? "Delete" : "Cancel simulation", dangerButton: command === "delete" }); if (r) { if (DIPSIM.selected === simId && command === "delete") { DIPSIM.selected = null; $("dipSimDetail").hidden = true; } await loadDipSims(true); } } catch (e) { toast(e.message || "Could not update the simulation", { icon: "warn" }); } }
+function renderDipSims() {
+  var host = $("dipSimRuns"); if (!host) return;
+  bindDipSim();
+  if (!DIPSIM.items.length) { setChildren(host, [el("div", { class: "card" }, el("h3", { text: "No dip simulations yet" }), el("p", { class: "muted", text: "Pick the companies and a date range above. The replay uses the dip rules exactly as they run live, minute by minute, with no AI involved." }))]); return; }
+  setChildren(host, DIPSIM.items.map(dipSimCard));
+}
+async function loadDipSimDetail(simId) {
+  try { var d = await loadRes("dipSim:" + simId, "dipSimulationDetail", { simId: simId }); if (d && DIPSIM.selected === simId) { DIPSIM.detail = d; renderDipSimDetail(); } }
+  catch (e) { toast("Could not load the simulation details: " + (e.message || ""), { icon: "warn" }); }
+}
+function renderDipSimDetail() {
+  var host = $("dipSimDetail"), d = DIPSIM.detail; if (!host || !d) return;
+  host.hidden = false;
+  var s = d.stats || {}, budget = d.settings.budgetUsd;
+  var pts = (d.curve || []).map(function (p) { return { t: Number(p.t), c: Number(p.equity) - budget, equity: Number(p.equity) }; }).filter(function (p) { return liveNum(p.t) && liveNum(p.c); });
+  var canvas = host.querySelector("canvas");
+  if (!canvas) { setChildren(host, [el("div", { class: "sim-row" }, el("h3", { id: "dipSimTitle" }), actionBtn("Close details", "sm ghost", function () { DIPSIM.selected = null; host.hidden = true; renderDipSims(); })), el("div", { class: "livechart__hero" }, el("div", { class: "livechart__price" }, el("span", { class: "livechart__big pnl", id: "dipSimBig" }), el("span", { class: "livechart__chg", id: "dipSimChg" }))), el("div", { class: "chartwrap livechart__wrap" }, el("canvas", { id: "dipSimChart", tabindex: "0", "aria-label": "Dip simulation profit and loss over time; hover to inspect" }), el("div", { class: "tip", hidden: true })), el("div", { class: "legend", id: "dipSimLegend" }), el("div", { class: "card__h" }, el("h3", { text: "Day by day" })), el("div", { class: "scroll", id: "dipSimDays" }), el("div", { class: "card__h" }, el("h3", { text: "Trades" }), el("span", { class: "sub", id: "dipSimTradesSub" })), el("div", { class: "scroll", id: "dipSimTrades" }), el("div", { class: "tiny muted", id: "dipSimWarn" })]); canvas = host.querySelector("canvas"); }
+  var tip = host.querySelector(".tip");
+  setText("dipSimTitle", d.from + " → " + d.to + " · " + (d.source && d.source.label || "") + " · " + d.symbolCount + " companies");
+  var last = pts.length ? pts[pts.length - 1].c : NaN, C = chartColors(), up = !liveNum(last) || last >= 0;
+  setLiveVal($("dipSimBig"), liveNum(last) ? signedUsd(last) : "—", toneOf(last)); setLiveVal($("dipSimChg"), liveNum(s.returnPct) ? signedPct(s.returnPct) + " on " + usd(budget, 0) + (d.status === "running" ? " · " + d.progressPct + "% replayed" : "") : "", toneOf(last));
+  drawSeriesChart(canvas, { points: pts, series: [{ label: "Profit / loss", color: up ? C.sage : C.clay, width: 1.8, values: pts.map(function (p) { return p.c; }) }], area: true, levels: [{ y: 0, label: "Break-even", color: C.ink45, dash: [2, 4] }], crosshair: true, yFmt: function (v) { return (v < 0 ? "−" : "+") + "$" + fmtFloat(Math.abs(v), 0); }, emptyText: d.status === "running" || d.status === "queued" ? "Replaying… the line appears as days complete" : "No equity points",
+    xFmt: function (dt) { return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(dt); },
+    tip: function (i) { var p = pts[i]; if (!p) return ""; return [signedUsd(p.c), new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(p.t)) + " ET · equity " + usd(p.equity, 0)].join("\n"); } });
+  bindChartPointer(canvas, tip);
+  setChildren($("dipSimLegend"), [legendItem(up ? "sage" : "clay", "Profit / loss"), legendItem("ink dot", "Break-even"), el("span", { class: "muted", text: "5-minute equity marks · " + pts.length + " points" })]);
+  setChildren($("dipSimDays"), [(d.days || []).length ? tableNode([{ label: "Day", k: "date" }, { label: "Trades", num: true, k: "trades" }, { label: "Winners", num: true, k: "wins" }, { label: "Result", num: true, render: function (r) { return el("span", { class: "pnl " + toneOf(r.pnlUsd), text: signedUsd(r.pnlUsd) }); } }, { label: "Equity at close", num: true, render: function (r) { return usd(r.endEquity, 0); } }, { label: "Companies with prices", num: true, k: "symbolsWithBars" }], (d.days || []).slice().reverse()) : el("div", { class: "muted small", text: "No days replayed yet." })]);
+  setText("dipSimTradesSub", (d.trades || []).length ? "latest first · " + (s.trades || 0) + " total" : "");
+  setChildren($("dipSimTrades"), [(d.trades || []).length ? tableNode([{ label: "Company", render: function (t) { return symButton(t.symbol, "link"); } }, { label: "Bought", render: function (t) { return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(t.enteredAt)); } }, { label: "Shares", num: true, k: "qty" }, { label: "In → out", render: function (t) { return usd(t.entry) + " → " + usd(t.exit); } }, { label: "Held", render: function (t) { return t.holdMin + " min"; } }, { label: "Exit", render: function (t) { return plainLabel(t.role) + " · " + (t.why || ""); } }, { label: "Fall", render: function (t) { return "−" + t.dropPct + "% · z " + t.z + " · " + t.speed + "×"; } }, { label: "Confidence", num: true, render: function (t) { return Math.round((t.confidence || 0) * 100) + "% · " + usd(t.tradeUsd, 0); } }, { label: "Result", num: true, render: function (t) { return el("span", { class: "pnl " + toneOf(t.pnlUsd), text: signedUsd(t.pnlUsd) }); } }], d.trades) : el("div", { class: "muted small", text: "No trades yet." })]);
+  setText("dipSimWarn", (d.warningsList || []).length ? "Price data notes: " + d.warningsList.slice(0, 5).join(" · ") : "");
+}
+
 /* ── 18. Portfolio view ─────────────────────────────────────────────────── */
 async function loadPortfolio(fresh) {
   if (fresh || !getRes("portfolio")) renderPortfolio(true);
@@ -3428,6 +3546,7 @@ async function loadSimulation(){
  finally{clearTimeout(timer);if(generation===(simUI.generation||0)){simUI.loading=false;simUI.pollController=null;}}
  // A slow detail request must not block updates to the other simulation cards.
  if(simUI.selected)loadSimDetail();
+ loadDipSims(); dipSimSourceOptions();
 }
 function simPreparationItem(item){
  var stateNames={complete:'Complete',working:'Working',waiting:'Waiting for source',queued:'Queued',starting:'Starting worker',pending:'Not started',failed:'Needs attention',paused:'Paused — saved'};

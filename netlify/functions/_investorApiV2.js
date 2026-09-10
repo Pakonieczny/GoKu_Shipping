@@ -136,7 +136,7 @@ function controlCapabilities(ctrl, { attested = attestationOk(ctrl), reconciled 
   caps.push(em === "ENGAGED" || em === "RECOVERING" ? on("resumeSystem") : off("resumeSystem", "emergency state is clear"));
   caps.push(mode === "OBSERVE" ? (attested ? on("activateAccountMode") : off("activateAccountMode", "deployed build attestation failing")) : off("activateAccountMode", `account mode is ${mode}`));
   caps.push(mode === "PAPER_AI" ? on("deactivateAccountMode") : off("deactivateAccountMode", `account mode is ${mode}`));
-  for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset", "dipSettingsSave"]) caps.push(on(a));
+  for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset", "dipSettingsSave", "dipSimulationStart", "dipSimulationControl"]) caps.push(on(a));
   caps.push(enabled ? on("resetPaperAccount") : off("resetPaperAccount", "account is in OBSERVE mode"));
   return caps;
 }
@@ -1465,6 +1465,42 @@ const MUTATIONS = {
     return { data: { overrideId: os.overrideId, orderSetId: os.orderSetId, state: "CANCEL_PENDING", transitionId, note: "the executor cancels the working sell and restores protection to the whole owned quantity" }, resourceVersion: String((Number(os.version) || 1) + 1), requestedState: { sell: "CANCELLED" }, appliedState: { sell: "CANCEL_PENDING" } };
   },
   /* ── administration ─────────────────────────────────────────────────── */
+  /* dip-reversal historical simulation: deterministic, no AI, its own fictitious budget */
+  async dipSimulationStart(params, ctx, env) {
+    const D = ctx.admin, SIM = require("./_investorDipSim"), DIP = require("./_investorDipReversal");
+    let symbols = [], source = { kind: params.source };
+    if (params.source === "run") {
+      if (!params.sourceRunId) throw typed("SEMANTIC_REJECTED", "choose a saved AI simulation to take its companies from");
+      const run = await D.col("InvestorAI_Simulations").doc(String(params.sourceRunId)).get();
+      if (!run.exists || run.data().owner !== ctx.actorId) throw typed("NOT_FOUND", "that saved simulation was not found");
+      symbols = (run.data().shortlist && run.data().shortlist.symbols) || [];
+      source = { kind: "run", runId: params.sourceRunId, date: run.data().date || null, label: `AI simulation ${run.data().date || ""}`.trim() };
+      if (!symbols.length) throw typed("SEMANTIC_REJECTED", "that simulation has not saved its company shortlist yet");
+    } else if (params.source === "shortlist") {
+      const run = ctx.control && ctx.control.lastManagerRun;
+      symbols = (run && run.shortlist && run.shortlist.symbols) || [];
+      source = { kind: "shortlist", date: (ctx.control && ctx.control.lastManagerRunDate) || null, label: "Latest daily review shortlist" };
+      if (!symbols.length) throw typed("SEMANTIC_REJECTED", "no completed daily review has saved a shortlist yet");
+    } else {
+      symbols = params.symbols || [];
+      source = { kind: "custom", label: "Your list" };
+      if (!symbols.length) throw typed("SEMANTIC_REJECTED", "enter at least one symbol");
+    }
+    symbols = [...new Set(symbols.map((s) => String(s).toUpperCase()))].slice(0, 50);
+    const settings = DIP.normalizeSettings(ctx.control && ctx.control.dip);
+    const today = require("./_investorMarket").sessionState(new Date(ctx.nowMs)).date;
+    if (params.to >= today) throw typed("SEMANTIC_REJECTED", "the range must end before today; today's bars are still being written");
+    const doc = await SIM.create(D, { owner: ctx.actorId, symbols, from: params.from, to: params.to, settings: { ...settings, enabled: true }, source, nowMs: ctx.nowMs });
+    const J = jobsFor(D);
+    const job = await J.enqueueOnce({ task: "dip_simulation", dedupeId: `${doc.simId}_0`, accountId: ctx.accountId, priority: 40, payload: { simId: doc.simId, accountId: ctx.accountId, segment: 0 }, createdBy: `apiV2:${ctx.actorId}` });
+    try { const K = require("./investorKick"); const jref = await D.col(D.COL.jobs).doc(job.jobId).get(); if (K.dispatchJob && jref.exists) await K.dispatchJob(jref.data(), { admin: D, jobs: J }); } catch (e) { /* the kick dispatches it within a minute */ }
+    await writeAudit(D, { action: "dipSimulationStart", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: env.auditReason || "dip simulation", after: { simId: doc.simId, symbols: symbols.length, from: params.from, to: params.to }, correlationId: ctx.correlationId, nowMs: ctx.nowMs }).catch(() => {});
+    return { data: { simId: doc.simId, symbols, days: doc.dates.length, jobId: job.jobId, note: "replays stored one-minute prices with the current dip settings; no AI is used" } };
+  },
+  async dipSimulationControl(params, ctx) {
+    const out = await require("./_investorDipSim").control(ctx.admin, ctx.actorId, params.simId, params.command);
+    return { data: out };
+  },
   /* dip-reversal lane settings: bounded, versioned, paper only */
   async dipSettingsSave(params, ctx, env) {
     const D = ctx.admin, ctrl = ctx.control, DIP = require("./_investorDipReversal");
@@ -1693,6 +1729,8 @@ const MUTATIONS = {
 /* ═══ DISPATCH ════════════════════════════════════════════════════════════ */
 const READS = {
   dipStatus: async ({ ctx }) => ({ data: await require("./_investorDipReversal").status(ctx.admin, ctx.accountId, ctx.control && ctx.control.dip) }),
+  dipSimulations: async ({ ctx }) => ({ data: { items: await require("./_investorDipSim").list(ctx.admin, ctx.actorId), asOf: new Date(ctx.nowMs).toISOString() } }),
+  dipSimulationDetail: async ({ params, ctx }) => ({ data: await require("./_investorDipSim").detail(ctx.admin, ctx.actorId, params.simId) }),
   paperDecisionSettings:async({ctx})=>{const store=require("./_investorPaperProcess").create({admin:ctx.admin}),settings=await store.settings(),resolved=await store.resolve(settings);return {data:{settings:{companyRange:settings.companyRange,strategyVersionId:settings.strategyVersionId,revision:settings.revision,updatedAtMs:settings.updatedAtMs||null},resolved}};},
   simulationAnalysisOverview:async({params,ctx})=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).view(ctx.actorId,params)}),
   simulationOverview:async({params,ctx})=>({data:await require("./_investorEvals").Simulator.create({admin:ctx.admin}).overview({...params,owner:ctx.actorId})}),
