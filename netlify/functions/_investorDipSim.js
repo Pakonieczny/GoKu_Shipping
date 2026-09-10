@@ -170,7 +170,7 @@ async function advance(D, simId, { budgetMs = 11 * 60000, fetchImpl = globalThis
   const settings = DIP.normalizeSettings(doc.settings);
   try {
     while (doc.cursor < doc.dates.length) {
-      if (Date.now() - startedAt > budgetMs) break;
+      if (Date.now() - startedAt > budgetMs || await A.isStopped()) break;
       const chunk = doc.dates.slice(doc.cursor, doc.cursor + CHUNK_DAYS);
       const barsBySymbolByDate = {};
       for (const symbol of doc.symbols) {

@@ -5593,7 +5593,7 @@ function runFixtures() {
     const S = require("./_investorApiSchemas");
     const c = S.compileAll();
     if (!c || c.count < 60) throw new Error(`compiled ${c && c.count}`);
-    if (S.READ_ACTIONS.length !== 36 || S.MUTATION_ACTIONS.length !== 45) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
+    if (S.READ_ACTIONS.length !== 36 || S.MUTATION_ACTIONS.length !== 46) throw new Error(`actions ${S.READ_ACTIONS.length}/${S.MUTATION_ACTIONS.length}`);
     const req = (body) => S.validateRequest(body);
     const base = { apiVersion: "investor.v2", requestId: "req_0000000001" };
     if (!req({ ...base, action: "companies", params: { pageSize: 200, bucket: "eligible" } }).ok) throw new Error("valid read rejected");

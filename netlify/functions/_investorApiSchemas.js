@@ -131,7 +131,7 @@ const HTTP_STATUS = Object.freeze({
   VERSION_CONFLICT: 409, STATE_CONFLICT: 409, IDEMPOTENCY_KEY_REUSED: 409, IN_PROGRESS: 409, PREVIEW_TOKEN_INVALID: 409,
   SEMANTIC_REJECTED: 422, TRANSITION_UNSUPPORTED: 422, RISK_BOUND_EXCEEDED: 422, PREFLIGHT_FAILED: 422,
   BUDGET_EXHAUSTED: 429, RATE_LIMITED: 429,
-  DEPENDENCY_DEGRADED: 503, ATTESTATION_FAILED: 503, INTERNAL: 500,
+  DEPENDENCY_DEGRADED: 503, ATTESTATION_FAILED: 503, FIREBASE_STOPPED: 503, INTERNAL: 500,
 });
 const RETRYABLE = new Set(["RATE_LIMITED", "DEPENDENCY_DEGRADED", "IN_PROGRESS", "BUDGET_EXHAUSTED"]);
 function errorShape(code, message, { fieldIssues = [], correlationId = null, severity = null } = {}) {
@@ -158,6 +158,7 @@ const ACTIONS_V2 = Object.freeze({
   dipTunerSettingsSave: mutation({ enabled: T.bool(), autoApply: T.bool(), nightStartHour: T.int({ minimum: 0, maximum: 23 }), nightEndHour: T.int({ minimum: 0, maximum: 23 }), nightEffortPct: T.int({ minimum: 5, maximum: 100 }), dayEffortPct: T.int({ minimum: 0, maximum: 100 }), holdoutMonths: T.int({ minimum: 3, maximum: 36 }), minTrades: T.int({ minimum: 10, maximum: 5000 }),
     variables: T.arr(T.obj({ key: T.str({ minLength: 1, maxLength: 40 }), tune: T.bool(), values: T.arr(T.int({ minimum: 0, maximum: 1000000 }), 12) }, ["key"]), 20) }, { concurrency: "none", confirmationKind: "none", required: [] }),
   dipTunerKeyIssue: mutation({}, { concurrency: "none", confirmationKind: "none", required: [] }),
+  firebaseStop: mutation({ command: T.str({ enum: ["stop", "resume"] }) }, { concurrency: "none", confirmationKind: "none", required: ["command"] }),
   dipTunerApply: mutation({ index: T.int({ minimum: 0, maximum: 1000000000 }), specHash: T.str({ minLength: 4, maxLength: 32 }) }, { concurrency: "none", confirmationKind: "none", required: ["index", "specHash"] }),
   barRepositoryBuild: mutation({ command: T.str({ enum: ["start", "pause"] }) }, { concurrency: "none", confirmationKind: "none", required: ["command"] }),
   dipSimulationDetail: read({ simId: T.str({ minLength: 8, maxLength: 64 }) }, { required: ["simId"] }),

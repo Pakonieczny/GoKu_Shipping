@@ -137,6 +137,7 @@ function controlCapabilities(ctrl, { attested = attestationOk(ctrl), reconciled 
   caps.push(mode === "OBSERVE" ? (attested ? on("activateAccountMode") : off("activateAccountMode", "deployed build attestation failing")) : off("activateAccountMode", `account mode is ${mode}`));
   caps.push(mode === "PAPER_AI" ? on("deactivateAccountMode") : off("deactivateAccountMode", `account mode is ${mode}`));
   for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset", "dipSettingsSave", "dipSimulationStart", "dipSimulationControl", "barRepositoryBuild", "dipTunerSettingsSave", "dipTunerKeyIssue", "dipTunerApply"]) caps.push(on(a));
+  caps.push(S.capability("firebaseStop"));
   caps.push(enabled ? on("resetPaperAccount") : off("resetPaperAccount", "account is in OBSERVE mode"));
   return caps;
 }
@@ -1514,6 +1515,15 @@ const MUTATIONS = {
     await writeAudit(D, { action: "barRepositoryBuild", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: env.auditReason || "price library build", after: { jobId: job.jobId }, correlationId: ctx.correlationId, nowMs: ctx.nowMs }).catch(() => {});
     return { data: { ...(await BARS.status(D)), jobId: job.jobId } };
   },
+  /* the Firebase stop switch: stops every scheduled and background job, every worker loop and every API action except this one */
+  async firebaseStop(params, ctx, env) {
+    const D = ctx.admin, active = params.command === "stop";
+    const firebaseStop = { active, atMs: ctx.nowMs, by: ctx.actorId, reason: env.auditReason || (active ? "operator stop" : "operator resume") };
+    await D.col(D.COL.control).doc("control").set({ firebaseStop, ...(active ? {} : { lastExecutionError: null }) }, { merge: true });
+    await writeAudit(D, { action: "firebaseStop", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: firebaseStop.reason, after: firebaseStop, correlationId: ctx.correlationId, nowMs: ctx.nowMs }).catch(() => {});
+    forgetMemo("");
+    return { data: { firebaseStop, note: active ? "Stopped. The minute cron, every background worker and every API action now exit immediately. Open positions are NOT protected while stopped." : "Resumed. The next minute cron starts scheduled work again." } };
+  },
   /* the dip-rule tuner: schedule, effort, variables, runner key, apply a winning set */
   async dipTunerSettingsSave(params, ctx, env) {
     const D = ctx.admin, TUNER = require("./_investorDipTuner");
@@ -1809,6 +1819,7 @@ async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), au
   // V2 bypasses the V1 dashboard loader; load the same saved feed as workers.
   if (!admin) await require('./_investorMarket').loadMarketSettings();
   const ctrl = await controlDoc(D);
+  if (A.stopState(ctrl) && action !== "firebaseStop") return { statusCode: 503, body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape("FIREBASE_STOPPED", "Firebase is stopped by the operator (" + new Date(Number(ctrl.firebaseStop.atMs) || nowMs).toISOString() + "). Nothing reads or writes the database until you press Resume.", { correlationId }) }) };
   const accountId = String(params.accountId || ctrl.accountId || "paper-1");
   const policy = POLICY.loadActiveSync(ctrl);
   const ctx = { admin: D, control: ctrl, accountId, nowMs, policy, auth, actorId: auth.subject || "operator", correlationId, mutationId: null };

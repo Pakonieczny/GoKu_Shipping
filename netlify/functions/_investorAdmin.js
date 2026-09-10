@@ -340,7 +340,23 @@ function envelope(extra = {}) {
   };
 }
 
+/* ── the operator's Firebase stop switch ─────────────────────────────────
+   control.firebaseStop = { active, atMs, by }. Every entry point (API, the
+   minute cron, every background worker, the tuner door) checks it and does
+   nothing while it is active, so the only Firestore traffic left is one
+   small read per invocation. `isStopped` caches for 15 s for long loops. */
+const STOP_CACHE = { at: 0, active: false };
+function stopState(ctrl) { const s = ctrl && ctrl.firebaseStop; return s && s.active === true ? s : null; }
+async function isStopped({ force = false } = {}) {
+  if (!force && Date.now() - STOP_CACHE.at < 15000) return STOP_CACHE.active;
+  try { const s = await col(COL.control).doc("control").get(); STOP_CACHE.active = !!stopState(s.exists ? s.data() : {}); }
+  catch (e) { /* a failed read never silently unstops: keep the last answer */ }
+  STOP_CACHE.at = Date.now();
+  return STOP_CACHE.active;
+}
+
 module.exports = {
+  stopState, isStopped,
   currentScope, withSimulationScope, now,
   firestoreSafe, installNestedArrayGuard, rawDb,
   FV, TS, col, doc, runTransaction, batch,

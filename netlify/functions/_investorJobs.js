@@ -264,6 +264,7 @@ function createJobs(A) {
   /** The worker's claim. Verifies the signed binding, consumes the nonce and
    *  claims the job attempt in ONE transaction. A replay is refused. */
   async function claimOnce({ jobId, task, targetFunction, token, payload = null, leaseTtlMs = SEGMENT_LEASE_TTL_MS, key = null }) {
+    if (!REAL_ADMIN.currentScope() && await REAL_ADMIN.isStopped({ force: true })) return { claimed: false, httpStatus: 503, reason: "firebase_stopped" };
     const binding = AUTH.verifyBoundWorkerNonce(token, targetFunction, key ? { key } : {});
     if (!binding) return { claimed: false, httpStatus: 403, reason: "invalid_or_expired_nonce" };
     if (binding.jobId !== jobId || binding.task !== task) return { claimed: false, httpStatus: 403, reason: "binding_mismatch" };

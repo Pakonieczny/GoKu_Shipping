@@ -658,6 +658,7 @@ exports.handler = async (event) => {
      before dispatch. An unresolved secret mints nothing and the worker
      rejects the invocation — the cycle stops rather than running unsigned. */
   await loadAuthSecrets();
+  if (await A.isStopped({ force: true })) return { statusCode: 200, body: JSON.stringify({ ok: true, stopped: true, note: "Firebase stop switch is on: nothing dispatched" }) };
 
   const startedAt = Date.now();
   // Launch the independent simulation scheduler before paper work can exhaust the invocation.

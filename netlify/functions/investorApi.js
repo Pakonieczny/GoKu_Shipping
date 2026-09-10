@@ -2573,6 +2573,11 @@ exports.handler = async (event) => {
   if ((event.body || "").length > MAX_BODY) {
     return AUTH.json(event, 413, { error: "request too large" });
   }
+  /* The operator's Firebase stop switch: one small read, then nothing else touches the database. Only the resume action passes. */
+  try {
+    let peek = null; try { peek = JSON.parse(event.body || "{}"); } catch { peek = null; }
+    if (!(peek && peek.action === "firebaseStop") && await A.isStopped({ force: true })) return AUTH.json(event, 503, { ok: false, error: { code: "FIREBASE_STOPPED", message: "Firebase is stopped by the operator. Nothing reads or writes the database until you press Resume." } });
+  } catch (e) { /* the gate never blocks the resume path */ }
   /* Resolve the operator secrets before the guard reads them. A failed read
      leaves requireOperator answering AUTH_NOT_CONFIGURED, never open. Nothing
      may escape this handler as an unhandled rejection: the platform turns

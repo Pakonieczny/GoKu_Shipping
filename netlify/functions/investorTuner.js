@@ -26,6 +26,7 @@ exports.handler = async (event) => {
   try { body = JSON.parse(event.body || "{}"); } catch { return reply(400, { error: "invalid JSON" }); }
   const auth = String(event.headers.authorization || event.headers.Authorization || "");
   const key = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (await A.isStopped({ force: true })) return reply(503, { error: "Firebase is stopped by the operator; the tuner waits" });
   const control = await TUNER.readControl(A);
   if (!TUNER.keyMatches(key, control.keyHash)) return reply(401, { error: "runner key not accepted; issue a new key in the console's Dip tuner section" });
   const nowMs = Date.now();

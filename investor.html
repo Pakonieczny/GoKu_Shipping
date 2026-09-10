@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8mMIy/4QaduLR7PPbv6BU7TB4L8jXw/uszIwyf/X0ls='; style-src 'self' 'sha256-VcKqr/d/XFPijnGWkopLbFcRJkgK6mUfFm+z/+iym0E='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Un8c3IZHdwd/zoBWSpFtqniOIivLYrZxbuFu2PDAJfg='; style-src 'self' 'sha256-4dNgC357AKHF26BDhTWRMDIWQUirG590ttMxJpaIKlw='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -131,6 +131,9 @@ h1,h2,h3,h4{font-weight:500;line-height:1.2}
 .btn.gold:hover:not(:disabled){background:var(--gold-2)}
 .btn.ghost{background:transparent}
 .btn.danger{background:var(--clay-soft);border-color:var(--clay-line);color:var(--clay)}
+.fbstop{background:#8a3a26;color:#fff;padding:12px 18px;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;font-size:14px}
+.fbstop .actions{margin:0}.fbstop .btn{background:#fff;color:#8a3a26;border-color:#fff}
+#fbStopBtn{white-space:nowrap}
 .btn.danger:hover:not(:disabled){background:#edd5ca}
 .btn.sm{padding:5px 10px;font-size:12px;border-radius:8px}
 .btn.xs{padding:3px 8px;font-size:11.5px;border-radius:7px;font-weight:500}
@@ -769,6 +772,7 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
   </aside>
 
   <div class="main">
+    <div class="fbstop" id="fbStop" hidden><div><b>Firebase is stopped.</b> <span id="fbStopText">Nothing in this app reads or writes the database: no scheduled review, no dip trading, no simulations, no library build, no charts. Open positions are not being protected.</span></div><div class="actions"><button type="button" class="btn sm" id="fbResumeBtn">Resume Firebase</button></div></div>
     <header class="topbar">
       <div class="topbar-title"><h1 id="pageLocation">Overview</h1></div>
       <div class="topbar-status">
@@ -781,6 +785,7 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
         <div class="alertc__panel" id="alertPanel" hidden></div>
       </div>
       <button class="icbtn" id="refreshBtn" aria-label="Refresh display" title="Refresh display (reads only)"><svg aria-hidden="true" class="ic"><use href="#i-refresh"/></svg></button>
+      <button class="btn danger sm" id="fbStopBtn" title="Stops every scheduled job, background worker and API call from touching Firebase until you press Resume">Stop Firebase</button>
       <button class="btn ghost sm" id="signOut"><svg aria-hidden="true" class="ic"><use href="#i-signout"/></svg>Sign out</button>
       </div>
     </header>
@@ -1168,7 +1173,7 @@ var ACTION_SPECS = {
   setMarketConfig: M(true, false, "version", "reauth"), confirmSplit: M(true, false, "version", "reauth"), confirmCashDividend: M(true, false, "version", "reauth"),
   requestAuditExport: M(false, false, "none", "confirm"), createPaperAccount: M(true, false, "absent", "reauth"), previewPaperAccountReset: M(false, false, "none", "none"),
   resetPaperAccount: M(true, false, "preview", "reauth_with_preview"), reconcile: M(false, false, "none", "none"), freezeUniverse: M(true, false, "none", "reauth"),
-  resolveCiks: M(true, false, "none", "reauth"), setIssuerDomains: M(true, true, "none", "reauth"), acknowledgeAlert: M(false, false, "none", "none")
+  resolveCiks: M(true, false, "none", "reauth"), setIssuerDomains: M(true, true, "none", "reauth"), acknowledgeAlert: M(false, false, "none", "none"), firebaseStop: M(false, false, "none", "none")
 };
 var ENUM = {
   Decision: ["BUY", "WATCH", "IGNORE", "HOLD", "REDUCE", "SELL", "ABSTAIN"],
@@ -1497,7 +1502,7 @@ async function postJson(url, body, signal, quiet401) {
   catch (e) { if (e && e.name === "AbortError") throw e; throw mkError(0, null, "Network error: " + (e && e.message ? e.message : "fetch failed")); }
   var json = null; try { json = await res.json(); } catch (e) { json = null; }
   if (json && json.payloadVersion && json.payloadVersion !== PAYLOAD_VERSION) showOutOfDate(json.payloadVersion);
-  if (!res.ok || !json || json.ok === false) { var err = mkError(res.status, json); if (!(quiet401 && res.status === 401)) onApiFailure(err); throw err; }
+  if (!res.ok || !json || json.ok === false) { var err = mkError(res.status, json); if (err && err.code === "FIREBASE_STOPPED") fbStopShow(true); if (!(quiet401 && res.status === 401)) onApiFailure(err); throw err; }
   if (json.payloadVersion === PAYLOAD_VERSION) clearBanner("degraded");
   return json;
 }
@@ -1670,7 +1675,29 @@ async function loadAlerts() { try { await loadRes("alerts", "alerts", { status: 
 
 /* ── 9. polling (display only; paused while hidden) ─────────────────────── */
 var POLL = { dash: null, jobs: null, quotes: null, session: null, simulation: null, portfolio: null, charts: null, dip: null, dipsim: null };
+var FBSTOP = { active: false, bound: false };
+function fbStopShow(active) {
+  FBSTOP.active = !!active; var b = $("fbStop"); if (b) b.hidden = !active; var btn = $("fbStopBtn"); if (btn) btn.hidden = !!active;
+  if (active) stopPolling();
+}
+function bindFbStop() {
+  if (FBSTOP.bound) return; FBSTOP.bound = true;
+  var stopBtn = $("fbStopBtn"), resumeBtn = $("fbResumeBtn");
+  if (stopBtn) stopBtn.addEventListener("click", async function () {
+    if (!confirm("Stop Firebase now?\n\nEvery scheduled job, background worker and API call will exit immediately and nothing will read or write the database until you press Resume. Open positions will NOT be protected while stopped.")) return;
+    stopBtn.disabled = true;
+    try { var r = await runMutation({ action: "firebaseStop", params: { command: "stop" }, silent: true, title: "Stop Firebase" }); if (r) { fbStopShow(true); toast("Firebase stopped. Nothing touches the database until you press Resume.", { icon: "check" }); } }
+    finally { stopBtn.disabled = false; }
+  });
+  if (resumeBtn) resumeBtn.addEventListener("click", async function () {
+    resumeBtn.disabled = true;
+    try { var r = await runMutation({ action: "firebaseStop", params: { command: "resume" }, silent: true, title: "Resume Firebase" }); if (r) { fbStopShow(false); toast("Firebase resumed. Reloading…", { icon: "check" }); setTimeout(function () { location.reload(); }, 800); } }
+    finally { resumeBtn.disabled = false; }
+  });
+}
 function startPolling() {
+  bindFbStop();
+  if (FBSTOP.active) return;
   stopPolling();
   POLL.simulation = setInterval(loadSimulation, 3000);
   POLL.dash = setInterval(pollDashboard, 30000);

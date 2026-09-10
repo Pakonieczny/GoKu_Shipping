@@ -83,7 +83,7 @@ exports.handler = async (event) => {
       else await stateRef.set({ loopAliveAtMs: Date.now(), loopNote: state.loopNote }, { merge: true });
       if (Date.now() - lastHeartbeat > 60000) { await JOBS.heartbeat(claim).catch(() => {}); lastHeartbeat = Date.now(); }
       const fresh = await controlDoc();
-      if (!(fresh.dip && fresh.dip.enabled === true) || fresh.killSwitch || fresh.emergencyState === "ENGAGED" || fresh.executorState === "PAUSED_SAFETY") { state.loopNote = "stopped: lane disabled or execution paused"; break; }
+      if (A.stopState(fresh) || !(fresh.dip && fresh.dip.enabled === true) || fresh.killSwitch || fresh.emergencyState === "ENGAGED" || fresh.executorState === "PAUSED_SAFETY") { state.loopNote = "stopped: lane disabled or execution paused"; break; }
       const spent = Date.now() - nowMs;
       if (spent < TICK_MS) await sleep(TICK_MS - spent);
     }

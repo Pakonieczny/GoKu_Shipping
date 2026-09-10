@@ -169,7 +169,7 @@ async function buildSegment(D, { budgetMs = 11 * 60000, fetchImpl = globalThis.f
   let cursor = 0, stop = false, lastStatusAt = Date.now(), current = null;
   const worker = async () => {
     while (!stop && cursor < work.length) {
-      if (Date.now() - startedAt > budgetMs) { stop = true; break; }
+      if (Date.now() - startedAt > budgetMs || await A.isStopped()) { stop = true; break; }
       const item = work[cursor++]; current = item;
       try {
         const got = await fetchMonth(item.symbol, item.ym, { fetchImpl });
